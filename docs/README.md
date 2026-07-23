@@ -14,6 +14,7 @@
 - [系统架构](architecture/overview.md)
 - [Server + Agent 架构](architecture/server-agent.md)
 - [应用作用域与资源模型](architecture/resource-model.md)
+- [技术基础设计](architecture/technical-foundation.md)
 
 ## 功能
 
