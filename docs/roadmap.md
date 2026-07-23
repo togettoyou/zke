@@ -4,6 +4,8 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 
 ## Phase 1：平台基础
 
+- [x] Server、Agent、Console 可运行工程骨架
+- [x] PostgreSQL 本地开发环境
 - [ ] ZKE Server
 - [ ] ZKE Agent
 - [ ] Agent 主动连接
@@ -81,4 +83,3 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [ ] Agent 执行
 - [ ] 结果验证
 - [ ] 操作审计
-

@@ -27,6 +27,7 @@ profile.cov
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+/web/console/node_modules/
 
 # Go workspace file
 go.work
@@ -34,6 +35,12 @@ go.work.sum
 
 # env file
 .env
+
+# Local build and runtime output
+/.local/
+/bin/
+/web/console/dist/
+*.log
 
 # worker runtime data (default DATA_DIR — chart cache, helm repo state)
 /data/

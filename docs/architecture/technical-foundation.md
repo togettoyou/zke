@@ -475,7 +475,7 @@ Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 ├── cmd/
 │   ├── zke-server/
 │   └── zke-agent/
-├── internal/
+├── pkg/
 │   ├── server/
 │   ├── agent/
 │   └── shared/            # 严格限制为真实共享的基础代码
@@ -486,17 +486,44 @@ Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 ```
 
 - `cmd` 只负责进程装配和生命周期，不承载业务逻辑。
-- Server 和 Agent 的实现分别留在 `internal/server` 与 `internal/agent`。
+- Server 和 Agent 的实现分别留在 `pkg/server` 与 `pkg/agent`。
 - Protobuf、OpenAPI 和数据库代码生成工具必须固定版本并提供单一生成命令。
 - 生成文件是否入库在工程初始化时统一决定，生成产物通过统一命令更新。
 
+### 11.1 本地启动与验证
+
+本地开发环境需要 Go 1.26.4、Node.js 24 LTS、pnpm 11、Docker 与 Docker Compose。Go 命令在仓库根目录
+执行，pnpm 命令只在 `web/console` 中执行。
+
+分别启动 PostgreSQL、Server、Agent 和 Console：
+
+```bash
+docker compose -f deploy/development/compose.yaml up -d
+go run ./cmd/zke-server --config configs/zke-server.yaml
+go run ./cmd/zke-agent --config configs/zke-agent.yaml
+cd web/console && pnpm install --frozen-lockfile && pnpm dev
+```
+
+Agent 工程骨架当前不会尝试注册或建立 QUIC 连接。Server 提供 `GET /healthz` 存活检查和使用 PostgreSQL
+连接状态的 `GET /readyz` 就绪检查。
+
+构建与检查：
+
+```bash
+go build ./cmd/...
+go test ./...
+go vet ./...
+cd web/console && pnpm typecheck && pnpm build
+```
+
 ## 12. 配置与敏感信息
 
-配置来源按“命令行参数覆盖环境变量，环境变量覆盖配置文件，配置文件覆盖默认值”的顺序合并，并在启动日志
-中只输出经过脱敏的最终配置摘要。
+Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除 `--config` 指定文件路径外，进程配置全部
+来自 YAML，不支持环境变量或单项命令行覆盖。部署配置与 Secret 注入计划在 Chart 实现时单独定义。
 
-- 示例只使用明显的占位值。
-- Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和数据库密码通过 Secret 文件或安全注入提供。
+- 仓库内配置只包含明显的本地开发值，不得复用于共享或生产环境。
+- Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；未来由 Chart 管理的
+  Secret 注入。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - Server 地址、超时、心跳和重试参数需要上下限校验。
 - 启动时对缺失、冲突和不安全配置快速失败，并返回可定位但不泄密的错误。

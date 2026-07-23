@@ -1,0 +1,2 @@
+server_address: https://zke-server.example.invalid:8443
+log_level: debug

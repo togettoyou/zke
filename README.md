@@ -98,22 +98,6 @@ flowchart TB
 - AI 辅助故障定位
 - 受控的智能运维
 
-## 快速开始
-
-> ZKE 正处于早期开发阶段，安装文档将在首个可用版本发布后提供。
-
-规划中的组件均尚未正式发布：
-
-| 组件 | 规划职责 |
-| --- | --- |
-| `zke-server` | 统一控制端与平台服务 |
-| `zke-agent` | 集群连接、资源查询与定域执行 |
-| `zke-console` | Web Desktop |
-
-- TODO：安装文档
-- TODO：部署要求
-- TODO：Helm Chart
-
 ## Roadmap
 
 当前规划分为七个阶段：

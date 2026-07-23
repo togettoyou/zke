@@ -1,0 +1,13 @@
+http:
+  address: 127.0.0.1:8080
+  read_header_timeout: 5s
+  read_timeout: 15s
+  write_timeout: 15s
+  idle_timeout: 60s
+
+database:
+  url: postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable
+  connect_timeout: 5s
+
+shutdown_timeout: 10s
+log_level: debug

@@ -1,0 +1,72 @@
+:root {
+  color: #172033;
+  background: #f3f5fa;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+.console-shell {
+  min-height: 100vh;
+  padding: 72px 24px;
+  background:
+    radial-gradient(circle at 10% 10%, rgb(99 91 255 / 14%), transparent 32%),
+    radial-gradient(circle at 90% 0%, rgb(31 197 168 / 12%), transparent 28%),
+    #f3f5fa;
+}
+
+.hero {
+  width: min(960px, 100%);
+  margin: 0 auto;
+}
+
+.hero h1.ant-typography {
+  margin: 0;
+  font-size: clamp(40px, 8vw, 76px);
+  letter-spacing: -0.045em;
+}
+
+.hero-copy {
+  max-width: 680px;
+  font-size: 20px;
+  line-height: 1.7;
+}
+
+.status-card {
+  flex: 1 1 220px;
+  min-width: 0;
+  box-shadow: 0 18px 50px rgb(31 42 68 / 8%);
+}
+
+.status-card h4.ant-typography {
+  margin: 10px 0 0;
+}
+
+.notice-card {
+  margin-top: 24px;
+  background: rgb(255 255 255 / 72%);
+  backdrop-filter: blur(14px);
+}
+
+.notice-card .ant-typography:last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 600px) {
+  .console-shell {
+    padding: 44px 18px;
+  }
+
+  .hero-copy {
+    font-size: 17px;
+  }
+}
