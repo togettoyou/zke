@@ -1,0 +1,52 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Compiled binaries
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts.
+# `coverage.*` is intentionally narrow — the original `coverage.*` rule
+# masked vendor files like x/text/language/coverage.go and broke CI.
+/coverage.out
+/coverage.html
+/coverage.txt
+/coverage.json
+*.coverprofile
+profile.cov
+*.out
+!vendor/**/*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# worker runtime data (default DATA_DIR — chart cache, helm repo state)
+/data/
+
+# Editor/IDE
+.vscode/
+.idea/
+
+.DS_Store
+
+# Helm subchart cache (downloaded by `helm dependency build`). The
+# pinned versions live in Chart.lock, which IS committed.
+deploy/chart/charts/*.tgz
+
+# Local perf reports (not tracked)
+PERF.md
