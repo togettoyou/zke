@@ -21,6 +21,7 @@ http:
 database:
   url: postgres://file-value
   connect_timeout: 4s
+  migration_timeout: 90s
 shutdown_timeout: 8s
 log_level: warn
 `)
@@ -41,6 +42,9 @@ log_level: warn
 	}
 	if cfg.HTTP.ReadTimeout != 20*time.Second {
 		t.Fatalf("read timeout = %s, want YAML value", cfg.HTTP.ReadTimeout)
+	}
+	if cfg.Database.MigrationTimeout != 90*time.Second {
+		t.Fatalf("migration timeout = %s, want YAML value", cfg.Database.MigrationTimeout)
 	}
 	if cfg.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("shutdown timeout = %s, want YAML value", cfg.ShutdownTimeout)
@@ -68,8 +72,9 @@ func TestConfigRejectsUnboundedTimeout(t *testing.T) {
 			IdleTimeout:       60 * time.Second,
 		},
 		Database: DatabaseConfig{
-			URL:            "postgres://example",
-			ConnectTimeout: 5 * time.Second,
+			URL:              "postgres://example",
+			ConnectTimeout:   5 * time.Second,
+			MigrationTimeout: time.Minute,
 		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",

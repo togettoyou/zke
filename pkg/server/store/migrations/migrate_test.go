@@ -1,0 +1,361 @@
+package migrations
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestEmbeddedMigrationsAreContiguous(t *testing.T) {
+	t.Parallel()
+
+	available, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(available) != 1 {
+		t.Fatalf("migration count = %d, want 1", len(available))
+	}
+	if available[0].version != 1 {
+		t.Fatalf("migration version = %d, want 1", available[0].version)
+	}
+	if available[0].checksum == "" {
+		t.Fatal("migration checksum is empty")
+	}
+}
+
+func TestValidateAppliedRejectsChecksumMismatch(t *testing.T) {
+	t.Parallel()
+
+	available, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := map[int64]appliedMigration{
+		available[0].version: {
+			name:     available[0].name,
+			checksum: "changed",
+		},
+	}
+
+	if err := validateApplied(available, applied); err == nil {
+		t.Fatal("validateApplied() accepted a changed migration")
+	}
+}
+
+func TestValidateAppliedRejectsMigrationGap(t *testing.T) {
+	t.Parallel()
+
+	available := []migration{
+		{version: 1, name: "first", checksum: "first"},
+		{version: 2, name: "second", checksum: "second"},
+	}
+	applied := map[int64]appliedMigration{
+		2: {name: "second", checksum: "second"},
+	}
+
+	if err := validateApplied(available, applied); err == nil {
+		t.Fatal("validateApplied() accepted a non-contiguous migration history")
+	}
+}
+
+func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
+	t.Parallel()
+
+	available, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, required := range []string{
+		"CONSTRAINT role_bindings_scope_shape",
+		"UNIQUE NULLS NOT DISTINCT",
+		"CONSTRAINT clusters_project_scope_fk",
+		"CONSTRAINT agents_cluster_scope_fk",
+		"actor_user_id uuid REFERENCES users (id)",
+		"actor_agent_id uuid REFERENCES agents (id)",
+		"CONSTRAINT audit_events_actor_shape",
+		"CREATE INDEX enrollments_active_expiry_idx",
+		"CREATE INDEX audit_events_scope_time_idx",
+	} {
+		if !strings.Contains(available[0].sql, required) {
+			t.Errorf("foundation migration is missing %q", required)
+		}
+	}
+}
+
+func TestApplyIsIdempotent(t *testing.T) {
+	databaseURL := os.Getenv("ZKE_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		if os.Getenv("CI") != "" {
+			t.Fatal("ZKE_TEST_DATABASE_URL is required in CI")
+		}
+		t.Skip("ZKE_TEST_DATABASE_URL is not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	adminPool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var randomValue [8]byte
+	if _, err := rand.Read(randomValue[:]); err != nil {
+		t.Fatal(err)
+	}
+	schemaName := "zke_migration_test_" + hex.EncodeToString(randomValue[:])
+	quotedSchemaName := pgx.Identifier{schemaName}.Sanitize()
+	if _, err := adminPool.Exec(ctx, "CREATE SCHEMA "+quotedSchemaName); err != nil {
+		adminPool.Close()
+		t.Fatal(err)
+	}
+
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		_, _ = adminPool.Exec(ctx, "DROP SCHEMA "+quotedSchemaName+" CASCADE")
+		adminPool.Close()
+		t.Fatal(err)
+	}
+	poolConfig.ConnConfig.RuntimeParams["search_path"] = schemaName
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		_, _ = adminPool.Exec(ctx, "DROP SCHEMA "+quotedSchemaName+" CASCADE")
+		adminPool.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Close()
+		if _, err := adminPool.Exec(context.Background(), "DROP SCHEMA "+quotedSchemaName+" CASCADE"); err != nil {
+			t.Errorf("drop integration test schema: %v", err)
+		}
+		adminPool.Close()
+	})
+
+	type applyResult struct {
+		result Result
+		err    error
+	}
+	results := make(chan applyResult, 2)
+	for range 2 {
+		go func() {
+			result, err := Apply(ctx, pool)
+			results <- applyResult{result: result, err: err}
+		}()
+	}
+
+	appliedCount := 0
+	for range 2 {
+		outcome := <-results
+		if outcome.err != nil {
+			t.Fatal(outcome.err)
+		}
+		if outcome.result.CurrentVersion != 1 {
+			t.Fatalf("current version = %d, want 1", outcome.result.CurrentVersion)
+		}
+		appliedCount += len(outcome.result.AppliedVersions)
+	}
+	if appliedCount != 1 {
+		t.Fatalf("concurrent apply changed %d versions, want 1", appliedCount)
+	}
+
+	idempotentResult, err := Apply(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idempotentResult.AppliedVersions) != 0 {
+		t.Fatalf("idempotent apply changed versions: %v", idempotentResult.AppliedVersions)
+	}
+
+	var tableCount int
+	err = pool.QueryRow(ctx, `
+SELECT count(*)
+FROM information_schema.tables
+WHERE table_schema = current_schema()
+  AND table_name IN (
+      'tenants',
+      'projects',
+      'users',
+      'user_sessions',
+      'role_bindings',
+      'clusters',
+      'agents',
+      'agent_credentials',
+      'enrollments',
+      'enrollment_attempts',
+      'audit_events'
+  )`).Scan(&tableCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableCount != 11 {
+		t.Fatalf("foundation table count = %d, want 11", tableCount)
+	}
+
+	testScopeAndAuditConstraints(t, ctx, pool)
+	testRequiredIndexes(t, ctx, pool)
+}
+
+func testScopeAndAuditConstraints(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+
+	const (
+		tenantA  = "00000000-0000-0000-0000-000000000001"
+		tenantB  = "00000000-0000-0000-0000-000000000002"
+		projectA = "10000000-0000-0000-0000-000000000001"
+		userA    = "20000000-0000-0000-0000-000000000001"
+	)
+
+	_, err := pool.Exec(ctx, `
+INSERT INTO tenants (id, name, status)
+VALUES ($1, 'tenant-a', 'active'), ($2, 'tenant-b', 'active')
+`, tenantA, tenantB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+INSERT INTO projects (id, tenant_id, name, status)
+VALUES ($1, $2, 'project-a', 'active')
+`, projectA, tenantA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+INSERT INTO users (
+    id, username_normalized, display_name, password_hash, status, password_changed_at
+)
+VALUES ($1, 'review-user', 'Review User', 'argon2id-placeholder', 'active', now())
+`, userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = pool.Exec(ctx, `
+INSERT INTO clusters (id, tenant_id, project_id, name, status)
+VALUES ('30000000-0000-0000-0000-000000000001', $1, $2, 'wrong-scope', 'pending')
+`, tenantB, projectA)
+	requirePostgreSQLCode(t, err, "23503")
+
+	_, err = pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type, tenant_id)
+VALUES ('50000000-0000-0000-0000-000000000001', $1, 'admin', 'global', $2)
+`, userA, tenantA)
+	requirePostgreSQLCode(t, err, "23514")
+
+	_, err = pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES ('50000000-0000-0000-0000-000000000002', $1, 'admin', 'global')
+`, userA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES ('50000000-0000-0000-0000-000000000003', $1, 'admin', 'global')
+`, userA)
+	requirePostgreSQLCode(t, err, "23505")
+
+	_, err = pool.Exec(ctx, `
+INSERT INTO audit_events (
+    id, actor_type, scope_type, action, target_type, result, request_id
+)
+VALUES (
+    '60000000-0000-0000-0000-000000000001',
+    'user',
+    'global',
+    'review.invalid_actor',
+    'test',
+    'denied',
+    'request-1'
+)
+`)
+	requirePostgreSQLCode(t, err, "23514")
+
+	_, err = pool.Exec(ctx, `
+INSERT INTO audit_events (
+    id,
+    actor_type,
+    actor_user_id,
+    scope_type,
+    action,
+    target_type,
+    result,
+    request_id
+)
+VALUES (
+    '60000000-0000-0000-0000-000000000002',
+    'user',
+    '20000000-0000-0000-0000-000000000099',
+    'global',
+    'review.unknown_actor',
+    'test',
+    'denied',
+    'request-2'
+)
+`)
+	requirePostgreSQLCode(t, err, "23503")
+}
+
+func testRequiredIndexes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+
+	rows, err := pool.Query(ctx, `
+SELECT indexname
+FROM pg_indexes
+WHERE schemaname = current_schema()
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	found := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		found[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, required := range []string{
+		"role_bindings_scope_idx",
+		"clusters_project_scope_idx",
+		"agents_project_scope_idx",
+		"enrollments_active_expiry_idx",
+		"audit_events_scope_time_idx",
+		"audit_events_request_id_idx",
+	} {
+		if !found[required] {
+			t.Errorf("required PostgreSQL index %q is missing", required)
+		}
+	}
+}
+
+func requirePostgreSQLCode(t *testing.T, err error, code string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("PostgreSQL operation succeeded, want SQLSTATE %s", code)
+	}
+
+	var postgresError *pgconn.PgError
+	if !errors.As(err, &postgresError) {
+		t.Fatalf("error type = %T, want *pgconn.PgError: %v", err, err)
+	}
+	if postgresError.Code != code {
+		t.Fatalf("PostgreSQL SQLSTATE = %s, want %s: %v", postgresError.Code, code, err)
+	}
+}

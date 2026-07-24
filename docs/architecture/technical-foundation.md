@@ -78,7 +78,7 @@ service          注册、集群查询和任务等业务流程
 store            PostgreSQL 数据访问
 auth             用户、会话、Agent 身份和权限校验
 audit            审计事件
-observability    日志、指标和追踪
+observability    Server 专属指标、追踪和日志字段
 ```
 
 `httpapi` 和 `agentconn` 调用 `service`，`service` 调用 `store`、`auth` 和 `audit`。Gin、`quic-go` 和 `pgx`
@@ -101,6 +101,11 @@ observability    日志、指标和追踪
 - 同时定义升级和失败处理方式；
 - 由独立迁移步骤或单一实例执行；
 - 对唯一约束、外键、作用域字段和查询索引进行测试。
+
+当前迁移实现位于 `pkg/server/store/migrations`，由 ZKE Server 在开始监听 HTTP 请求前自动执行。迁移文件嵌入
+Server 二进制并按连续版本顺序执行；执行器使用 PostgreSQL advisory lock 串行化迁移，每个版本在独立事务中应用，
+并保存名称和 SHA-256 校验和。多个 Server 同时启动时只有持有锁的实例执行迁移，其余实例等待并复核结果。迁移失败或
+超过配置的迁移超时时，Server 启动失败。已经应用的迁移文件不得修改，结构调整必须新增更高版本的前向迁移。
 
 ### 4.3 用户认证与会话
 
@@ -448,13 +453,13 @@ POST /agent-api/v1/enroll
 | Project | `id`, `tenant_id`, `name`, `status` | Cluster 的直接管理范围 |
 | User | `id`, `username_normalized`, `display_name`, `password_hash`, `status`, `password_changed_at` | 本地用户，规范化用户名唯一；只保存 Argon2id 摘要 |
 | UserSession | `id`, `user_id`, `token_digest`, `idle_expires_at`, `expires_at`, `revoked_at` | Server 端不透明会话，只保存 Token 摘要 |
-| RoleBinding | `subject_id`, `role`, `scope_type`, `scope_id` | 服务端授权依据 |
+| RoleBinding | `subject_id`, `role`, `scope_type`, `tenant_id`, `project_id` | 服务端授权依据；作用域形状由约束校验 |
 | Cluster | `id`, `tenant_id`, `project_id`, `name`, `status`, `last_seen_at` | 全局逻辑资源；操作仍在该集群执行 |
 | Agent | `id`, `cluster_id`, `version`, `protocol_version`, `lifecycle_status`, `health_status`, `last_seen_at` | Agent 逻辑身份与持久状态 |
 | AgentCredential | `id`, `agent_id`, `serial`, `csr_fingerprint`, `certificate_pem`, `expires_at`, `revoked_at` | 客户端证书及元数据 |
 | Enrollment | `id`, `tenant_id`, `project_id`, `token_digest`, `expires_at`, `consumed_at` | 一次性注册凭证 |
 | EnrollmentAttempt | `id`, `enrollment_id`, `idempotency_key`, `csr_fingerprint`, `status`, `response`, `created_at` | 注册幂等与结果恢复 |
-| AuditEvent | `id`, `actor`, `scope`, `action`, `target`, `result`, `request_id`, `created_at` | 审计元数据 |
+| AuditEvent | `id`, `actor_type`, `actor_user_id`, `actor_agent_id`, `scope_type`, `tenant_id`, `project_id`, `cluster_id`, `action`, `target_type`, `target_id`, `result`, `request_id`, `created_at` | 审计元数据；发起者按类型使用外键约束，不保存敏感操作正文 |
 
 所有从属资源表都保留足够的作用域字段或可验证外键，防止仅凭资源 ID 造成跨 Tenant、Project 数据串扰。
 Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
@@ -478,7 +483,8 @@ Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 ├── pkg/
 │   ├── server/
 │   ├── agent/
-│   └── shared/            # 严格限制为真实共享的基础代码
+│   └── shared/
+│       └── logging/       # Server 与 Agent 共用的结构化日志初始化
 ├── web/
 │   └── console/
 ├── deploy/
@@ -504,8 +510,8 @@ go run ./cmd/zke-agent --config configs/zke-agent.yaml
 cd web/console && pnpm install --frozen-lockfile && pnpm dev
 ```
 
-Agent 工程骨架当前不会尝试注册或建立 QUIC 连接。Server 提供 `GET /healthz` 存活检查和使用 PostgreSQL
-连接状态的 `GET /readyz` 就绪检查。
+Server 启动时自动执行数据库迁移；没有待应用版本时不会修改业务表。Agent 工程骨架当前不会尝试注册或建立 QUIC
+连接。Server 提供 `GET /healthz` 存活检查和使用 PostgreSQL 连接状态的 `GET /readyz` 就绪检查。
 
 构建与检查：
 
@@ -515,6 +521,9 @@ go test ./...
 go vet ./...
 cd web/console && pnpm typecheck && pnpm build
 ```
+
+数据库迁移集成测试使用 `ZKE_TEST_DATABASE_URL` 指向专用 PostgreSQL，并在随机临时 Schema 中验证后自动清理；
+CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一约束和索引测试。
 
 ## 12. 配置与敏感信息
 

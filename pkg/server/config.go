@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	maxHTTPTimeout     = 5 * time.Minute
-	maxIdleTimeout     = 10 * time.Minute
-	maxDatabaseTimeout = time.Minute
-	maxShutdownTimeout = 2 * time.Minute
+	maxHTTPTimeout      = 5 * time.Minute
+	maxIdleTimeout      = 10 * time.Minute
+	maxDatabaseTimeout  = time.Minute
+	maxMigrationTimeout = 10 * time.Minute
+	maxShutdownTimeout  = 2 * time.Minute
 )
 
 type Config struct {
@@ -35,8 +36,9 @@ type HTTPConfig struct {
 }
 
 type DatabaseConfig struct {
-	URL            string
-	ConnectTimeout time.Duration
+	URL              string
+	ConnectTimeout   time.Duration
+	MigrationTimeout time.Duration
 }
 
 type fileConfig struct {
@@ -48,8 +50,9 @@ type fileConfig struct {
 		IdleTimeout       string `yaml:"idle_timeout"`
 	} `yaml:"http"`
 	Database struct {
-		URL            string `yaml:"url"`
-		ConnectTimeout string `yaml:"connect_timeout"`
+		URL              string `yaml:"url"`
+		ConnectTimeout   string `yaml:"connect_timeout"`
+		MigrationTimeout string `yaml:"migration_timeout"`
 	} `yaml:"database"`
 	ShutdownTimeout string `yaml:"shutdown_timeout"`
 	LogLevel        string `yaml:"log_level"`
@@ -113,6 +116,9 @@ func applyFile(cfg *Config, path string) error {
 	if err := applyDuration(&cfg.Database.ConnectTimeout, raw.Database.ConnectTimeout, "database.connect_timeout"); err != nil {
 		return err
 	}
+	if err := applyDuration(&cfg.Database.MigrationTimeout, raw.Database.MigrationTimeout, "database.migration_timeout"); err != nil {
+		return err
+	}
 	if err := applyDuration(&cfg.ShutdownTimeout, raw.ShutdownTimeout, "shutdown_timeout"); err != nil {
 		return err
 	}
@@ -160,6 +166,7 @@ func (cfg Config) Validate() error {
 		{cfg.HTTP.WriteTimeout, maxHTTPTimeout, "http write timeout"},
 		{cfg.HTTP.IdleTimeout, maxIdleTimeout, "http idle timeout"},
 		{cfg.Database.ConnectTimeout, maxDatabaseTimeout, "database connect timeout"},
+		{cfg.Database.MigrationTimeout, maxMigrationTimeout, "database migration timeout"},
 		{cfg.ShutdownTimeout, maxShutdownTimeout, "shutdown timeout"},
 	} {
 		if item.value <= 0 {

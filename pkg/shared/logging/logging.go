@@ -1,4 +1,4 @@
-package observability
+package logging
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func NewLogger(level string) (*slog.Logger, error) {
+func New(level, component string) (*slog.Logger, error) {
 	var parsed slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
@@ -22,6 +22,11 @@ func NewLogger(level string) (*slog.Logger, error) {
 		return nil, errors.New("log level must be one of debug, info, warn, or error")
 	}
 
+	component = strings.TrimSpace(component)
+	if component == "" {
+		return nil, errors.New("logger component is required")
+	}
+
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parsed})
-	return slog.New(handler).With("component", "zke-server"), nil
+	return slog.New(handler).With(slog.String("component", component)), nil
 }

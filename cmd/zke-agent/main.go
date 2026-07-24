@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"zke/pkg/agent"
+	"zke/pkg/shared/logging"
 )
 
 func main() {
@@ -27,7 +28,7 @@ func run() error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 
-	logger, err := agent.NewLogger(cfg.LogLevel)
+	logger, err := logging.New(cfg.LogLevel, "zke-agent")
 	if err != nil {
 		return fmt.Errorf("configure logging: %w", err)
 	}

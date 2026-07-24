@@ -9,6 +9,7 @@ import (
 
 	"zke/pkg/server/httpapi"
 	"zke/pkg/server/store"
+	"zke/pkg/server/store/migrations"
 )
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
@@ -19,6 +20,17 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return err
 	}
 	defer database.Close()
+
+	migrationContext, cancelMigration := context.WithTimeout(ctx, cfg.Database.MigrationTimeout)
+	migrationResult, err := migrations.Apply(migrationContext, database)
+	cancelMigration()
+	if err != nil {
+		return fmt.Errorf("migrate PostgreSQL database: %w", err)
+	}
+	logger.Info("database schema ready",
+		slog.Int64("current_version", migrationResult.CurrentVersion),
+		slog.Int("applied_count", len(migrationResult.AppliedVersions)),
+	)
 
 	handler := httpapi.New(logger, database.Ping)
 	httpServer := &http.Server{
