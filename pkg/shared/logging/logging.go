@@ -27,6 +27,6 @@ func New(level, component string) (*slog.Logger, error) {
 		return nil, errors.New("logger component is required")
 	}
 
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parsed})
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parsed})
 	return slog.New(handler).With(slog.String("component", component)), nil
 }
