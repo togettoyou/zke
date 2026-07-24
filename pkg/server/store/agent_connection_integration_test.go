@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -152,9 +153,10 @@ WHERE agent.id = $1
 	if err := connectionStore.RecordHeartbeat(
 		ctx,
 		store.RecordAgentHeartbeatParams{
-			Identity:     identity,
-			HealthStatus: "degraded",
-			Now:          heartbeatAt,
+			Identity:          identity,
+			CertificateSerial: "42",
+			HealthStatus:      "degraded",
+			Now:               heartbeatAt,
 		},
 	); err != nil {
 		t.Fatal(err)
@@ -174,17 +176,94 @@ WHERE agent.id = $1
 		)
 	}
 
+	renewedExpiresAt := heartbeatAt.Add(24 * time.Hour)
+	renewed, err := connectionStore.RenewCredential(
+		ctx,
+		store.RenewAgentCredentialParams{
+			Identity:                 identity,
+			CurrentCertificateSerial: "42",
+			CSRFingerprint:           bytes.Repeat([]byte{0x02}, 32),
+			NewCertificateSerial:     "43",
+			CertificatePEM:           "renewed-certificate",
+			CertificateExpiresAt:     renewedExpiresAt,
+			RequestID:                "renew-agent-certificate-0001",
+			Now:                      heartbeatAt,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.Serial != "43" ||
+		renewed.PEM != "renewed-certificate" ||
+		!renewed.ExpiresAt.Equal(renewedExpiresAt) {
+		t.Fatalf("unexpected renewed credential: %+v", renewed)
+	}
+	replayed, err := connectionStore.RenewCredential(
+		ctx,
+		store.RenewAgentCredentialParams{
+			Identity:                 identity,
+			CurrentCertificateSerial: "42",
+			CSRFingerprint:           bytes.Repeat([]byte{0x02}, 32),
+			NewCertificateSerial:     "44",
+			CertificatePEM:           "different-replay-certificate",
+			CertificateExpiresAt:     renewedExpiresAt,
+			RequestID:                "renew-agent-certificate-0001",
+			Now:                      heartbeatAt,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Serial != renewed.Serial ||
+		replayed.PEM != renewed.PEM ||
+		!replayed.ExpiresAt.Equal(renewed.ExpiresAt) {
+		t.Fatalf("renewal replay changed the result: %+v", replayed)
+	}
+	if err := connectionStore.Activate(
+		ctx,
+		store.ActivateAgentConnectionParams{
+			Identity:          identity,
+			CertificateSerial: renewed.Serial,
+			AgentVersion:      "development",
+			ProtocolVersion:   "v1",
+			HealthStatus:      "healthy",
+			Now:               heartbeatAt.Add(time.Second),
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	var oldRevokedAt *time.Time
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT revoked_at FROM agent_credentials WHERE serial = '42'",
+	).Scan(&oldRevokedAt); err != nil {
+		t.Fatal(err)
+	}
+	if oldRevokedAt == nil {
+		t.Fatal("activating the renewed credential did not revoke the old one")
+	}
+	statuses, err := store.NewAgentStatusStore(pool).
+		ListProjectAgentCertificates(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 1 ||
+		statuses[0].CertificateSerial != renewed.Serial ||
+		!statuses[0].CertificateExpiresAt.Equal(renewedExpiresAt) {
+		t.Fatalf("Agent status did not select the active credential: %+v", statuses)
+	}
+
 	if _, err := pool.Exec(
 		ctx,
-		"UPDATE agent_credentials SET revoked_at = $2 WHERE id = $1",
-		credentialID,
-		heartbeatAt,
+		"UPDATE agent_credentials SET revoked_at = $2 WHERE serial = $1",
+		renewed.Serial,
+		heartbeatAt.Add(2*time.Second),
 	); err != nil {
 		t.Fatal(err)
 	}
 	err = connectionStore.Activate(ctx, store.ActivateAgentConnectionParams{
 		Identity:          identity,
-		CertificateSerial: "42",
+		CertificateSerial: renewed.Serial,
 		AgentVersion:      "development",
 		ProtocolVersion:   "v1",
 		HealthStatus:      "healthy",

@@ -31,6 +31,7 @@ const (
 	identityCertificateExpiry = "certificate-expires-at"
 	enrollmentCSRKey          = "enrollment.csr"
 	enrollmentIdempotencyKey  = "enrollment.idempotency-key"
+	renewalCSRKey             = "certificate.renewal.csr"
 )
 
 type IdentityStore struct {
@@ -227,6 +228,145 @@ func (store *IdentityStore) Complete(
 	return stored, nil
 }
 
+func (store *IdentityStore) LoadOrCreateRenewalCSR(
+	ctx context.Context,
+	identity LocalIdentity,
+) ([]byte, error) {
+	if err := validateLocalIdentity(identity, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	var result []byte
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		secret, err := store.client.CoreV1().
+			Secrets(store.namespace).
+			Get(ctx, store.secretName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("read Agent identity Secret for renewal: %w", err)
+		}
+		state, empty, err := parseIdentitySecret(secret, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if empty || state.Identity == nil ||
+			!sameLocalIdentity(*state.Identity, identity) {
+			return errors.New(
+				"Agent identity Secret changed before certificate renewal",
+			)
+		}
+		if existing := secret.Data[renewalCSRKey]; len(existing) != 0 {
+			if err := validateRenewalCSR(identity, existing); err != nil {
+				return err
+			}
+			result = append([]byte(nil), existing...)
+			return nil
+		}
+		csrPEM, err := createIdentityCSR(identity.PrivateKeyPEM)
+		if err != nil {
+			return err
+		}
+		updated := secret.DeepCopy()
+		if updated.Data == nil {
+			updated.Data = make(map[string][]byte)
+		}
+		updated.Data[renewalCSRKey] = append([]byte(nil), csrPEM...)
+		updated, err = store.client.CoreV1().
+			Secrets(store.namespace).
+			Update(ctx, updated, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf(
+				"store Agent certificate renewal CSR: %w",
+				err,
+			)
+		}
+		result = append([]byte(nil), updated.Data[renewalCSRKey]...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (store *IdentityStore) CompleteRenewal(
+	ctx context.Context,
+	previous LocalIdentity,
+	csrPEM []byte,
+	certificatePEM []byte,
+	expiresAt time.Time,
+	now time.Time,
+) (LocalIdentity, error) {
+	if err := validateRenewalCSR(previous, csrPEM); err != nil {
+		return LocalIdentity{}, err
+	}
+	renewed := LocalIdentity{
+		ClusterID:            previous.ClusterID,
+		AgentID:              previous.AgentID,
+		PrivateKeyPEM:        append([]byte(nil), previous.PrivateKeyPEM...),
+		CertificatePEM:       append([]byte(nil), certificatePEM...),
+		CertificateExpiresAt: expiresAt,
+	}
+	if err := validateLocalIdentity(renewed, now); err != nil {
+		return LocalIdentity{}, err
+	}
+
+	var stored LocalIdentity
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		secret, err := store.client.CoreV1().
+			Secrets(store.namespace).
+			Get(ctx, store.secretName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf(
+				"read Agent identity Secret for renewed certificate: %w",
+				err,
+			)
+		}
+		state, empty, err := parseIdentitySecret(secret, now)
+		if err != nil {
+			return err
+		}
+		if empty || state.Identity == nil {
+			return errors.New(
+				"Agent identity Secret lost its completed identity",
+			)
+		}
+		if sameLocalIdentity(*state.Identity, renewed) {
+			stored = *state.Identity
+			return nil
+		}
+		if !sameLocalIdentity(*state.Identity, previous) ||
+			!bytes.Equal(secret.Data[renewalCSRKey], csrPEM) {
+			return errors.New(
+				"Agent identity Secret changed during certificate renewal",
+			)
+		}
+		updated := secret.DeepCopy()
+		updated.Data[identityCertificateKey] =
+			append([]byte(nil), renewed.CertificatePEM...)
+		updated.Data[identityCertificateExpiry] =
+			[]byte(renewed.CertificateExpiresAt.Format(time.RFC3339Nano))
+		delete(updated.Data, renewalCSRKey)
+		updated, err = store.client.CoreV1().
+			Secrets(store.namespace).
+			Update(ctx, updated, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf(
+				"store renewed Agent certificate: %w",
+				err,
+			)
+		}
+		state, _, err = parseIdentitySecret(updated, now)
+		if err != nil {
+			return err
+		}
+		stored = *state.Identity
+		return nil
+	})
+	if err != nil {
+		return LocalIdentity{}, err
+	}
+	return stored, nil
+}
+
 func parseIdentitySecret(
 	secret *corev1.Secret,
 	now time.Time,
@@ -325,6 +465,42 @@ func newPendingIdentity() (*PendingIdentity, error) {
 		CSRPEM:         csrPEM,
 		IdempotencyKey: base64.RawURLEncoding.EncodeToString(idempotencyValue),
 	}, nil
+}
+
+func createIdentityCSR(privateKeyPEM []byte) ([]byte, error) {
+	privateKey, err := parseIdentityPrivateKey(privateKeyPEM)
+	if err != nil {
+		return nil, err
+	}
+	csrDER, err := x509.CreateCertificateRequest(
+		rand.Reader,
+		&x509.CertificateRequest{},
+		privateKey,
+	)
+	if err != nil {
+		return nil, errors.New("create Agent identity renewal CSR")
+	}
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE REQUEST",
+		Bytes: csrDER,
+	}), nil
+}
+
+func validateRenewalCSR(identity LocalIdentity, csrPEM []byte) error {
+	privateKey, err := parseIdentityPrivateKey(identity.PrivateKeyPEM)
+	if err != nil {
+		return err
+	}
+	csr, err := parseIdentityCSR(csrPEM)
+	if err != nil {
+		return err
+	}
+	if !publicKeysMatch(&privateKey.PublicKey, csr.PublicKey) {
+		return errors.New(
+			"Agent certificate renewal CSR does not match its private key",
+		)
+	}
+	return nil
 }
 
 func validatePendingIdentity(pending PendingIdentity) error {
@@ -454,8 +630,8 @@ func parseIdentityCertificate(
 		certificates = append(certificates, certificate)
 		remaining = rest
 	}
-	if len(certificates) < 2 {
-		return nil, errors.New("Agent identity certificate signing chain is missing")
+	if len(certificates) == 0 {
+		return nil, errors.New("Agent identity certificate PEM is empty")
 	}
 	for index := 1; index < len(certificates); index++ {
 		issuer := certificates[index]

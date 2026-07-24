@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -15,49 +16,56 @@ import (
 )
 
 const (
-	defaultEnrollmentTokenFile = "/var/run/secrets/zke-enrollment/token"
-	defaultIdentityNamespace   = "zke-system"
-	defaultIdentitySecretName  = "zke-agent-identity"
-	defaultLogLevel            = "info"
+	defaultIdentityNamespace  = "zke-system"
+	defaultIdentitySecretName = "zke-agent-identity"
+	defaultLogLevel           = "info"
 )
 
 type Config struct {
-	ServerAddress        string
-	ServerCAFile         string
-	KubeconfigFile       string
-	EnrollmentTokenFile  string
-	IdentityNamespace    string
-	IdentitySecretName   string
-	RegistrationTimeout  time.Duration
+	KubeconfigFile         string
+	IdentityNamespace      string
+	IdentitySecretName     string
+	CertificateRenewBefore time.Duration
+	Registration           RegistrationConfig
+	Connection             ConnectionConfig
+	LogLevel               string
+}
+
+type RegistrationConfig struct {
+	ServerURL            string
+	CACertificateFile    string
+	CACertificatePEM     []byte
+	Timeout              time.Duration
 	RetryInitialInterval time.Duration
 	RetryMaxInterval     time.Duration
-	Connection           ConnectionConfig
-	LogLevel             string
 }
 
 type ConnectionConfig struct {
-	ServerCAFile         string
+	ServerAddress        string
+	CACertificateFile    string
+	CACertificatePEM     []byte
 	ConnectTimeout       time.Duration
 	RetryInitialInterval time.Duration
 	RetryMaxInterval     time.Duration
 }
 
 type fileConfig struct {
-	ServerAddress       string `yaml:"server_address"`
-	ServerCAFile        string `yaml:"server_ca_file"`
-	KubeconfigFile      string `yaml:"kubeconfig_file"`
-	EnrollmentTokenFile string `yaml:"enrollment_token_file"`
-	Identity            struct {
-		Namespace  string `yaml:"namespace"`
-		SecretName string `yaml:"secret_name"`
+	KubeconfigFile string `yaml:"kubeconfig_file"`
+	Identity       struct {
+		Namespace   string `yaml:"namespace"`
+		SecretName  string `yaml:"secret_name"`
+		RenewBefore string `yaml:"renew_before"`
 	} `yaml:"identity"`
 	Registration struct {
+		ServerURL            string `yaml:"server_url"`
+		CACertificateFile    string `yaml:"ca_certificate_file"`
 		Timeout              string `yaml:"timeout"`
 		RetryInitialInterval string `yaml:"retry_initial_interval"`
 		RetryMaxInterval     string `yaml:"retry_max_interval"`
 	} `yaml:"registration"`
 	Connection struct {
-		ServerCAFile         string `yaml:"server_ca_file"`
+		ServerAddress        string `yaml:"server_address"`
+		CACertificateFile    string `yaml:"ca_certificate_file"`
 		ConnectTimeout       string `yaml:"connect_timeout"`
 		RetryInitialInterval string `yaml:"retry_initial_interval"`
 		RetryMaxInterval     string `yaml:"retry_max_interval"`
@@ -75,12 +83,14 @@ func LoadConfig(args []string) (Config, error) {
 	}
 
 	cfg := Config{
-		EnrollmentTokenFile:  defaultEnrollmentTokenFile,
-		IdentityNamespace:    defaultIdentityNamespace,
-		IdentitySecretName:   defaultIdentitySecretName,
-		RegistrationTimeout:  10 * time.Second,
-		RetryInitialInterval: time.Second,
-		RetryMaxInterval:     15 * time.Second,
+		IdentityNamespace:      defaultIdentityNamespace,
+		IdentitySecretName:     defaultIdentitySecretName,
+		CertificateRenewBefore: 7 * 24 * time.Hour,
+		Registration: RegistrationConfig{
+			Timeout:              10 * time.Second,
+			RetryInitialInterval: time.Second,
+			RetryMaxInterval:     15 * time.Second,
+		},
 		Connection: ConnectionConfig{
 			ConnectTimeout:       10 * time.Second,
 			RetryInitialInterval: time.Second,
@@ -119,17 +129,8 @@ func applyFile(cfg *Config, path string) error {
 		return fmt.Errorf("decode config file %q: %w", path, err)
 	}
 
-	if raw.ServerAddress != "" {
-		cfg.ServerAddress = raw.ServerAddress
-	}
-	if raw.ServerCAFile != "" {
-		cfg.ServerCAFile = raw.ServerCAFile
-	}
 	if raw.KubeconfigFile != "" {
 		cfg.KubeconfigFile = raw.KubeconfigFile
-	}
-	if raw.EnrollmentTokenFile != "" {
-		cfg.EnrollmentTokenFile = raw.EnrollmentTokenFile
 	}
 	if raw.Identity.Namespace != "" {
 		cfg.IdentityNamespace = raw.Identity.Namespace
@@ -138,28 +139,46 @@ func applyFile(cfg *Config, path string) error {
 		cfg.IdentitySecretName = raw.Identity.SecretName
 	}
 	if err := applyAgentDuration(
-		&cfg.RegistrationTimeout,
+		&cfg.CertificateRenewBefore,
+		raw.Identity.RenewBefore,
+		"identity.renew_before",
+	); err != nil {
+		return err
+	}
+	if raw.Registration.ServerURL != "" {
+		cfg.Registration.ServerURL = raw.Registration.ServerURL
+	}
+	if raw.Registration.CACertificateFile != "" {
+		cfg.Registration.CACertificateFile =
+			raw.Registration.CACertificateFile
+	}
+	if err := applyAgentDuration(
+		&cfg.Registration.Timeout,
 		raw.Registration.Timeout,
 		"registration.timeout",
 	); err != nil {
 		return err
 	}
 	if err := applyAgentDuration(
-		&cfg.RetryInitialInterval,
+		&cfg.Registration.RetryInitialInterval,
 		raw.Registration.RetryInitialInterval,
 		"registration.retry_initial_interval",
 	); err != nil {
 		return err
 	}
 	if err := applyAgentDuration(
-		&cfg.RetryMaxInterval,
+		&cfg.Registration.RetryMaxInterval,
 		raw.Registration.RetryMaxInterval,
 		"registration.retry_max_interval",
 	); err != nil {
 		return err
 	}
-	if raw.Connection.ServerCAFile != "" {
-		cfg.Connection.ServerCAFile = raw.Connection.ServerCAFile
+	if raw.Connection.ServerAddress != "" {
+		cfg.Connection.ServerAddress = raw.Connection.ServerAddress
+	}
+	if raw.Connection.CACertificateFile != "" {
+		cfg.Connection.CACertificateFile =
+			raw.Connection.CACertificateFile
 	}
 	if err := applyAgentDuration(
 		&cfg.Connection.ConnectTimeout,
@@ -206,41 +225,45 @@ func findConfigPath(args []string) (string, error) {
 }
 
 func (cfg Config) Validate() error {
-	serverURL, err := url.Parse(cfg.ServerAddress)
+	serverURL, err := url.Parse(cfg.Registration.ServerURL)
 	if err != nil {
-		return errors.New("server address must be a valid URL")
+		return errors.New("registration Server URL must be a valid URL")
 	}
 	if serverURL.Host == "" {
-		return errors.New("server address must include a host")
+		return errors.New("registration Server URL must include a host")
 	}
 	switch serverURL.Scheme {
 	case "https":
 	case "http":
-		if cfg.ServerCAFile != "" {
-			return errors.New("Server CA file cannot be used with an HTTP Server address")
+		if cfg.Registration.CACertificateFile != "" {
+			return errors.New(
+				"registration CA certificate file cannot be used with HTTP",
+			)
+		}
+		if !isLoopbackHost(serverURL.Hostname()) {
+			return errors.New(
+				"HTTP registration Server URL is only allowed for a loopback host",
+			)
 		}
 	default:
-		return errors.New("server address must use HTTPS")
+		return errors.New("registration Server URL must use HTTPS")
 	}
 	if serverURL.User != nil {
-		return errors.New("server address must not contain credentials")
+		return errors.New("registration Server URL must not contain credentials")
 	}
 	if (serverURL.Path != "" && serverURL.Path != "/") ||
 		serverURL.RawQuery != "" ||
 		serverURL.Fragment != "" {
-		return errors.New("server address must not contain a path, query, or fragment")
+		return errors.New("registration Server URL must not contain a path, query, or fragment")
 	}
-	if strings.TrimSpace(cfg.ServerCAFile) != cfg.ServerCAFile {
-		return errors.New("server CA file path must not contain surrounding whitespace")
+	if strings.TrimSpace(cfg.Registration.CACertificateFile) !=
+		cfg.Registration.CACertificateFile {
+		return errors.New(
+			"registration CA certificate file path must not contain surrounding whitespace",
+		)
 	}
 	if strings.TrimSpace(cfg.KubeconfigFile) != cfg.KubeconfigFile {
 		return errors.New("kubeconfig file path must not contain surrounding whitespace")
-	}
-	if strings.TrimSpace(cfg.EnrollmentTokenFile) == "" ||
-		strings.TrimSpace(cfg.EnrollmentTokenFile) != cfg.EnrollmentTokenFile {
-		return errors.New(
-			"enrollment token file is required and must not contain surrounding whitespace",
-		)
 	}
 	if errors := k8svalidation.IsDNS1123Label(cfg.IdentityNamespace); len(errors) != 0 {
 		return fmt.Errorf("identity namespace is invalid: %s", strings.Join(errors, "; "))
@@ -248,14 +271,20 @@ func (cfg Config) Validate() error {
 	if errors := k8svalidation.IsDNS1123Subdomain(cfg.IdentitySecretName); len(errors) != 0 {
 		return fmt.Errorf("identity Secret name is invalid: %s", strings.Join(errors, "; "))
 	}
+	if cfg.CertificateRenewBefore <= 0 ||
+		cfg.CertificateRenewBefore > 365*24*time.Hour {
+		return errors.New(
+			"identity certificate renewal window must be greater than zero and not exceed 365 days",
+		)
+	}
 	for _, item := range []struct {
 		value time.Duration
 		max   time.Duration
 		name  string
 	}{
-		{cfg.RegistrationTimeout, time.Minute, "registration timeout"},
-		{cfg.RetryInitialInterval, time.Minute, "registration initial retry interval"},
-		{cfg.RetryMaxInterval, 5 * time.Minute, "registration maximum retry interval"},
+		{cfg.Registration.Timeout, time.Minute, "registration timeout"},
+		{cfg.Registration.RetryInitialInterval, time.Minute, "registration initial retry interval"},
+		{cfg.Registration.RetryMaxInterval, 5 * time.Minute, "registration maximum retry interval"},
 	} {
 		if item.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", item.name)
@@ -264,16 +293,22 @@ func (cfg Config) Validate() error {
 			return fmt.Errorf("%s must not exceed %s", item.name, item.max)
 		}
 	}
-	if cfg.RetryInitialInterval > cfg.RetryMaxInterval {
+	if cfg.Registration.RetryInitialInterval >
+		cfg.Registration.RetryMaxInterval {
 		return errors.New(
 			"registration initial retry interval must not exceed maximum retry interval",
 		)
 	}
-	if strings.TrimSpace(cfg.Connection.ServerCAFile) == "" ||
-		strings.TrimSpace(cfg.Connection.ServerCAFile) !=
-			cfg.Connection.ServerCAFile {
+	connectionHost, _, err := net.SplitHostPort(cfg.Connection.ServerAddress)
+	if err != nil || strings.TrimSpace(connectionHost) == "" {
 		return errors.New(
-			"connection Server CA file is required and must not contain surrounding whitespace",
+			"connection Server address must include a valid host and port",
+		)
+	}
+	if strings.TrimSpace(cfg.Connection.CACertificateFile) !=
+		cfg.Connection.CACertificateFile {
+		return errors.New(
+			"connection CA certificate file path must not contain surrounding whitespace",
 		)
 	}
 	for _, item := range []struct {
@@ -315,18 +350,22 @@ func applyAgentDuration(target *time.Duration, value, name string) error {
 	return nil
 }
 
-func (cfg Config) ServerHost() string {
-	serverURL, err := url.Parse(cfg.ServerAddress)
-	if err != nil {
-		return ""
-	}
-	return serverURL.Host
+func (cfg Config) ConnectionServerAddress() string {
+	return cfg.Connection.ServerAddress
 }
 
-func (cfg Config) ServerName() string {
-	serverURL, err := url.Parse(cfg.ServerAddress)
+func (cfg Config) ConnectionServerName() string {
+	host, _, err := net.SplitHostPort(cfg.Connection.ServerAddress)
 	if err != nil {
 		return ""
 	}
-	return serverURL.Hostname()
+	return host
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

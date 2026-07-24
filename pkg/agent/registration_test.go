@@ -70,9 +70,11 @@ func TestRegistrationClientEnrollsOverTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	client, err := newRegistrationClient(Config{
-		ServerAddress:       server.URL,
-		ServerCAFile:        caPath,
-		RegistrationTimeout: 5 * time.Second,
+		Registration: RegistrationConfig{
+			ServerURL:         server.URL,
+			CACertificateFile: caPath,
+			Timeout:           5 * time.Second,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -106,8 +108,10 @@ func TestRegistrationClientAllowsHTTP(t *testing.T) {
 	defer server.Close()
 
 	client, err := newRegistrationClient(Config{
-		ServerAddress:       server.URL,
-		RegistrationTimeout: time.Second,
+		Registration: RegistrationConfig{
+			ServerURL: server.URL,
+			Timeout:   time.Second,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -230,19 +234,15 @@ func TestRegistrationClientRetriesTruncatedSuccessResponse(t *testing.T) {
 	}
 }
 
-func TestReadEnrollmentToken(t *testing.T) {
+func TestValidateEnrollmentToken(t *testing.T) {
 	t.Parallel()
 
 	expected := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	path := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(path, []byte(expected+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	token, err := readEnrollmentToken(path)
+	token, err := validateEnrollmentToken([]byte(expected + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if token != expected {
-		t.Fatalf("token = %q, want mounted token", token)
+		t.Fatalf("token = %q, want Secret token", token)
 	}
 }

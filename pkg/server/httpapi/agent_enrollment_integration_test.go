@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/togettoyou/zke/pkg/server/agentinstall"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
@@ -74,15 +77,28 @@ RETURNING id::text
 		store.NewEnrollmentStore(pool),
 		enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL},
 	)
+	installationService := agentinstall.NewService(
+		enrollmentService,
+		agentinstall.Config{
+			Enabled:                  true,
+			PublicHTTPURL:            "https://zke.example.com",
+			PublicQUICAddress:        "zke.example.com:8443",
+			Image:                    "registry.example.com/zke-agent:test",
+			Namespace:                "zke-system",
+			ImagePullPolicy:          corev1.PullIfNotPresent,
+			ListenerCACertificatePEM: []byte("test-listener-ca"),
+		},
+	)
 	auditService := audit.NewService(store.NewAuditStore(pool))
 	router := New(
 		discardLogger(),
 		Dependencies{
-			ReadinessCheck:    pool.Ping,
-			AuthService:       authService,
-			AuditService:      auditService,
-			RBACService:       rbac.NewService(store.NewRBACStore(pool)),
-			EnrollmentService: enrollmentService,
+			ReadinessCheck:           pool.Ping,
+			AuthService:              authService,
+			AuditService:             auditService,
+			RBACService:              rbac.NewService(store.NewRBACStore(pool)),
+			EnrollmentService:        enrollmentService,
+			AgentInstallationService: installationService,
 		},
 		Config{Authentication: defaultAuthenticationTestConfig()},
 	)
@@ -260,6 +276,75 @@ WHERE action = 'agent.enrollment.create'
 			enrollmentCount,
 			succeededAuditCount,
 		)
+	}
+
+	installationPath := "/api/v1/projects/" + projectID + "/agent-installations"
+	installationResponse := httptest.NewRecorder()
+	installationRequest := httptest.NewRequest(
+		http.MethodPost,
+		installationPath,
+		strings.NewReader(`{"cluster_name":"installed-cluster"}`),
+	)
+	installationRequest.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: login.SessionToken,
+	})
+	installationRequest.Header.Set(csrfHeaderName, login.CSRFToken)
+	installationRequest.Header.Set(
+		idempotencyKeyHeaderName,
+		"11111111-2222-3333-4444-555555555555",
+	)
+	router.ServeHTTP(installationResponse, installationRequest)
+	if installationResponse.Code != http.StatusCreated {
+		t.Fatalf(
+			"create installation status = %d, want %d: %s",
+			installationResponse.Code,
+			http.StatusCreated,
+			installationResponse.Body,
+		)
+	}
+	var installationBody createAgentInstallationResponse
+	if err := json.Unmarshal(
+		installationResponse.Body.Bytes(),
+		&installationBody,
+	); err != nil {
+		t.Fatal(err)
+	}
+	const bearerPrefix = "Authorization: Bearer "
+	bearerStart := strings.Index(installationBody.InstallCommand, bearerPrefix)
+	if bearerStart < 0 {
+		t.Fatalf("install command is missing Bearer header: %s", installationBody.InstallCommand)
+	}
+	tokenStart := bearerStart + len(bearerPrefix)
+	tokenEnd := strings.Index(installationBody.InstallCommand[tokenStart:], "'")
+	if tokenEnd < 0 {
+		t.Fatalf("install command has an invalid Bearer header: %s", installationBody.InstallCommand)
+	}
+	installationToken := installationBody.InstallCommand[tokenStart : tokenStart+tokenEnd]
+	manifestResponse := httptest.NewRecorder()
+	manifestRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/agent-install/v1/manifest",
+		nil,
+	)
+	manifestRequest.Header.Set("Authorization", "Bearer "+installationToken)
+	router.ServeHTTP(manifestResponse, manifestRequest)
+	if manifestResponse.Code != http.StatusOK {
+		t.Fatalf(
+			"manifest status = %d, want %d: %s",
+			manifestResponse.Code,
+			http.StatusOK,
+			manifestResponse.Body,
+		)
+	}
+	for _, required := range []string{
+		"kind: Deployment",
+		"name: zke-agent-enrollment",
+		"server_address: zke.example.com:8443",
+	} {
+		if !strings.Contains(manifestResponse.Body.String(), required) {
+			t.Errorf("manifest is missing %q", required)
+		}
 	}
 
 	if _, err := pool.Exec(

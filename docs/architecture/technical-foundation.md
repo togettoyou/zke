@@ -132,7 +132,7 @@ Phase 1 使用 ZKE 内置本地用户认证：
 - Session Token 只通过 `HttpOnly`、`Secure`、`SameSite` Cookie 传输，不写入 `localStorage`；
 - 会话具有空闲超时、绝对超时、主动注销、管理员撤销和权限变更后轮换机制；
 - 变更请求使用 Server 端 Synchronizer Token 防护 CSRF，并使用 Go 标准库跨源保护作为纵深防御；
-- 首个管理员通过初始化命令创建，密码从交互式标准输入或安全文件读取；
+- Server 启动时只在用户表为空时创建首个管理员，密码从安全文件读取；
 - 管理员通过一次性、短有效期重置流程协助账户恢复。
 
 Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、`agent.read` 和 `agent.revoke`。内置
@@ -161,8 +161,9 @@ Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、
 - RBAC Service、PostgreSQL Store 和 HTTP 授权 middleware 已实现；Project middleware 会根据 `project_id`
   解析 Tenant 归属，并在业务 Handler 前完成权限检查。
 
-持久化账户锁定与恢复、管理员密码重置和 Console 登录流程尚未实现。RBAC 已接入 Agent 注册凭证创建接口，但
-Project、Cluster 和 Agent 查询、撤销等 API 尚未实现，因此 Roadmap 中的“用户认证”和“RBAC”仍未完成。
+持久化账户锁定与恢复、管理员密码重置和 Console 登录流程尚未实现。RBAC 已接入 Agent 注册凭证创建、安装
+Manifest 和 Agent 证书状态查询接口，但 Project/Cluster 管理与撤销等 API 尚未实现，因此 Roadmap 中的
+“用户认证”和“RBAC”仍未完成。
 登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
@@ -181,9 +182,10 @@ Project、Cluster 和 Agent 查询、撤销等 API 尚未实现，因此 Roadmap
 
 ### 5.2 连接行为
 
-- Agent 主动解析并连接配置的 Server 地址。
-- 注册默认使用 HTTPS；只有 Agent 与 Server 都显式开启回环地址开发模式时才允许本地 HTTP。完成注册后，Agent
-  使用 `quic-go` 和 mTLS 主动建立到 Agent Listener 的 QUIC 长连接。
+- Agent 分别配置注册 Server URL 与 QUIC Connection 地址，不从其中一个端点隐式推导另一个端点。
+- Agent 在生产环境通过 HTTPS 地址注册；TLS 可以由 ZKE Server 原生终止，也可以由上游网关终止。仓库中的本地
+  配置只允许对回环地址使用明文 HTTP。完成注册后，Agent 使用 `quic-go` 和 mTLS 主动连接独立的 Agent
+  Listener UDP 地址。
 - Agent 和 Server 都持续接受对方创建的新逻辑 Stream；每个独立请求或流式会话使用独立 Stream。
 - Hello 和心跳使用专用 Control Stream，与业务请求和数据分离。
 - 断线重连使用有上限的指数退避和随机抖动，避免大量 Agent 同时重连。
@@ -215,11 +217,11 @@ Project、Cluster 和 Agent 查询、撤销等 API 尚未实现，因此 Roadmap
 7. Agent 通过 Kubernetes API 创建或更新身份 Secret，将私钥和证书持久化；
 8. 后续连接使用 mTLS，注册凭证不再参与认证。
 
-Server 配置服务端证书及 Agent 客户端证书签发 CA；Agent 配置 Server 信任根。私钥始终保存在目标集群，Server
-只保存客户端证书及其元数据。签发或持久化失败时注册尝试保持可重试状态。
+Server 配置 Agent Listener 服务端证书及 Agent Client CA；Agent 配置 Agent Listener CA 作为 Server 信任根。
+Agent 私钥始终保存在目标集群，Server 只保存客户端证书及其元数据。签发或持久化失败时注册尝试保持可重试状态。
 
 当前已实现注册流程的 Handler/Service/Store：校验一次性 Token 与 CSR，将注册尝试绑定到幂等键和 CSR 指纹，
-由配置的 Agent CA 签发仅用于 ClientAuth 的客户端证书，并在单个 PostgreSQL 事务中创建 Cluster、Agent 与
+由配置的 Agent Client CA 签发仅用于 ClientAuth 的客户端证书，并在单个 PostgreSQL 事务中创建 Cluster、Agent 与
 证书元数据、消费 Token、保存可恢复响应和成功审计；签发或持久化失败另行记录失败审计。证书的 URI SAN 使用
 `zke://agent/...` 身份 URI 显式绑定 Tenant、Project、Cluster 和 Agent，CSR 中由 Agent 自行提供的 Subject
 不会成为平台身份。
@@ -228,15 +230,20 @@ Server 配置服务端证书及 Agent 客户端证书签发 CA；Agent 配置 Se
 注册尝试保持 `pending`，之后可使用原幂等键和 CSR 重试。Agent 侧私钥生成、注册调用和身份 Secret 持久化已经
 实现。注册完成后，Agent 使用客户端证书主动建立 QUIC/mTLS Connection，完成 `ClientHello`、证书身份交叉校验、
 `ServerHello`、心跳确认和有界重连；Server 会校验数据库中的证书序列号、有效期与撤销状态，并将首次有效连接
-持久化为 active。证书自动续期、撤销后的现有连接关闭和业务 Request/Data Stream 仍未实现。
+持久化为 active。Agent 会在配置的续期窗口内通过 Control Stream 自动续期；新证书成功连接后旧 Credential
+被撤销。Credential、Agent 或 Cluster 撤销会通过 PostgreSQL 通知各 Server 实例关闭对应现有连接。业务
+Request/Data Stream 仍未实现。
 
 ### 6.3 证书生命周期
 
-- Agent 在证书到期前，通过现有 mTLS Connection 的独立 Request Stream 提交新 CSR；
-- Server 验证当前 Agent 身份后签发新证书，新旧证书保留短暂重叠期；
-- Agent 更新身份 Secret 后使用新证书建立后续连接；
-- 撤销 Agent 时，Server 关闭其当前 Connection，并拒绝该 Agent 或已撤销证书再次连接；
-- Server 与 Agent 的信任根轮换使用双信任窗口。
+- Agent 在证书到期前，通过现有 mTLS Connection 的 Control Stream 提交新 CSR；
+- CSR 在网络请求前写入 identity Secret，Server 以 CSR 指纹保证续期幂等；
+- Server 验证当前 Agent 身份后签发新叶子证书，旧 Credential 保留到新证书成功连接；
+- Agent 原子更新身份 Secret 并用新证书重连，Server 激活新 Credential 后撤销旧 Credential；
+- Credential、Agent 或 Cluster 撤销通过 PostgreSQL 通知关闭当前 Connection，并阻止后续连接；
+- 已建立连接会在客户端证书自然到期时关闭；
+- Agent 离线至证书过期后不能再通过 mTLS 续期，当前需要重新 Enrollment；
+- Server 与 Agent 信任根的双信任窗口轮换仍属于后续工作。
 
 ## 7. Server–Agent 连接与协议
 
@@ -458,13 +465,21 @@ Phase 1 API 权限映射：
 
 `/api/v1/events` 根据订阅者已有的读取权限和作用域过滤事件。
 
-首个闭环包含：
+当前已实现的管理端点包括：
 
 ```text
 POST /api/v1/auth/login
 POST /api/v1/auth/logout
 GET  /api/v1/auth/me
 POST /api/v1/projects/{project_id}/agent-enrollments
+POST /api/v1/projects/{project_id}/agent-installations
+GET  /api/v1/projects/{project_id}/agents
+GET  /agent-install/v1/manifest
+```
+
+以下首个闭环端点仍在规划中：
+
+```text
 GET  /api/v1/projects/{project_id}/clusters
 GET  /api/v1/clusters/{cluster_id}
 GET  /api/v1/clusters/{cluster_id}/agent
@@ -511,14 +526,15 @@ Content-Type: application/json
 
 ### 9.2 Agent 注册 API
 
-Agent 初次注册通过 Gin HTTPS Listener：
+Agent 初次注册通过 Gin HTTP Listener。生产环境必须提供 HTTPS，可由 ZKE Server 原生终止 TLS，也可由上游
+网关终止 TLS：
 
 ```text
 POST /agent-api/v1/enroll
 ```
 
 该接口使用注册凭证认证，接受 CSR、Agent 版本、协议版本和幂等键。Tenant、Project 和集群名称由注册凭证确定。
-注册接口与 Console API 可以共用 HTTPS Server，但使用独立路由组、认证中间件、请求体上限和限流策略。
+注册接口与 Console API 共用 HTTP Server，但使用独立路由组、认证中间件、请求体上限和限流策略。
 
 当前接口约定：
 
@@ -536,13 +552,14 @@ Content-Type: application/json
 ```
 
 请求正文最大 128 KiB，不接受未知 JSON 字段。首次成功返回 `201`；相同 Token、幂等键和 CSR 的结果恢复返回
-`200`；响应包含 `cluster_id`、`agent_id`、客户端证书链和证书过期时间，并设置 `Cache-Control: no-store`。
+`200`；响应包含 `cluster_id`、`agent_id`、客户端叶子证书和证书过期时间，并设置 `Cache-Control: no-store`。
 无效或已消费 Token 返回统一的 `401 invalid_enrollment_token`，幂等键绑定其他 CSR 返回
 `409 idempotency_conflict`。接口按直接网络来源限流。
 
-Agent 注册接口属于普通 HTTP API，可以由 Server 直接提供 HTTP 或 HTTPS。生产部署若由 Ingress 或网关终止
-TLS，Server 内部可以继续监听 HTTP；不得把包含注册 Token 的明文 HTTP 直接暴露到不可信网络。注册完成后的
-Agent 长连接是独立的 QUIC/UDP Listener，始终使用 TLS 1.3 和 mTLS，不受 HTTP Listener 是否启用 HTTPS 影响。
+`http.tls.certificate_file` 与 `http.tls.private_key_file` 同时配置时，ZKE Server 原生提供 HTTPS；两项都省略
+时提供 HTTP，适用于回环开发或由 Ingress/网关终止 TLS 的部署。不得把包含注册 Token、Session Cookie 或 CSRF
+Token 的明文 HTTP 直接暴露到不可信网络。注册完成后的 Agent 长连接是独立的 QUIC/UDP Listener，始终使用
+TLS 1.3 和 mTLS，不经过 HTTP 网关，也不复用 HTTP TLS 身份。
 
 ## 10. 最小数据模型
 
@@ -554,10 +571,11 @@ Agent 长连接是独立的 QUIC/UDP Listener，始终使用 TLS 1.3 和 mTLS，
 | UserSession | `id`, `user_id`, `token_digest`, `idle_expires_at`, `expires_at`, `revoked_at` | Server 端不透明会话，只保存 Token 摘要 |
 | RoleBinding | `subject_id`, `role`, `scope_type`, `tenant_id`, `project_id` | 服务端授权依据；作用域形状由约束校验 |
 | Cluster | `id`, `tenant_id`, `project_id`, `name`, `status`, `last_seen_at` | 全局逻辑资源；操作仍在该集群执行 |
-| Agent | `id`, `cluster_id`, `version`, `protocol_version`, `lifecycle_status`, `health_status`, `last_seen_at` | Agent 逻辑身份与持久状态 |
+| Agent | `id`, `cluster_id`, `version`, `protocol_version`, `lifecycle_status`, `health_status`, `active_credential_serial`, `last_seen_at` | Agent 逻辑身份、当前连接凭据与持久状态 |
 | AgentCredential | `id`, `agent_id`, `serial`, `csr_fingerprint`, `certificate_pem`, `expires_at`, `revoked_at` | 客户端证书及元数据 |
 | Enrollment | `id`, `tenant_id`, `project_id`, `cluster_name`, `token_digest`, `expires_at`, `consumed_at` | 绑定集群名称的一次性注册凭证 |
 | EnrollmentAttempt | `id`, `enrollment_id`, `idempotency_key`, `csr_fingerprint`, `status`, `response`, `created_at` | 注册幂等与结果恢复 |
+| ServerPKIState | Client/Listener CA 与 Listener 叶子证书的 `fingerprint`, `expires_at` | Managed PKI 的数据库绑定和 PV 丢失保护 |
 | AuditEvent | `id`, `actor_type`, `actor_user_id`, `actor_agent_id`, `scope_type`, `tenant_id`, `project_id`, `cluster_id`, `action`, `target_type`, `target_id`, `result`, `request_id`, `created_at` | 审计元数据；发起者按类型使用外键约束，不保存敏感操作正文 |
 
 所有从属资源表都保留足够的作用域字段或可验证外键，防止仅凭资源 ID 造成跨 Tenant、Project 数据串扰。
@@ -606,31 +624,42 @@ bash hack/generate-agent-protocol.sh
 本地开发环境需要 Go 1.26.4、Node.js 24 LTS、pnpm 11、Docker 与 Docker Compose。Go 命令在仓库根目录
 执行，pnpm 命令只在 `web/console` 中执行。
 
-本地 Agent CA、Server CA 和 QUIC Server 身份只由 `hack` 脚本生成，保存到被 Git 忽略的
-`.local/development`：
+本地配置使用 Server Managed PKI。首次正常启动会在被 Git 忽略的 `.local/development` 自动生成 Agent
+Client CA、Agent Listener CA 和 Agent Listener 身份；`hack` 脚本仅作为 external 模式和迁移辅助工具保留。
+这些文件仅用于 Agent QUIC/mTLS，不包含 HTTP TLS 证书：
+
+- Agent Client CA：10 年；
+- Agent Listener CA：20 年；
+- Agent Listener 服务端证书：10 年。
 
 ```bash
 docker compose -f deploy/development/compose.yaml up -d
-bash hack/generate-dev-certificates.sh
-go run ./cmd/zke-server create-admin --config configs/zke-server.yaml --username admin --display-name "ZKE Administrator"
 go run ./cmd/zke-server --config configs/zke-server.yaml
+# 在另一个终端输入刚创建的 Enrollment Token：
+hack/setup-local-agent-resources.sh
+go run ./cmd/zke-agent --config configs/zke-agent.yaml
 cd web/console && pnpm install --frozen-lockfile && pnpm dev
 ```
 
-`create-admin` 是建立首个可信管理员的初始化入口，因此不能依赖尚未登录的 Web 界面；它默认通过终端无回显读取
-并确认密码。自动化环境使用 `--password-file` 指向受保护的单行密码文件，不得通过命令行参数传递密码。该命令
-只能在空用户库中成功一次。
+Server 必须先成功启动一次，以便 Managed PKI 生成 `.local/development/agent-listener-ca.crt`。随后从已有
+Project 创建 Enrollment，把响应中的一次性 Token 输入 `hack/setup-local-agent-resources.sh`。脚本使用当前
+kubectl context 创建 Namespace、Enrollment Secret 和 Trust Secret，不创建或覆盖 identity Secret；如需避免
+误用其他集群，可显式传入 `--context`。
+
+Server 在迁移完成后检查用户表，只在空表时按 `auth.initial_admin` 创建首个全局管理员；管理员、Global
+`admin` RoleBinding 和审计事件仍在同一事务中创建。仓库的本地配置会生成
+`.local/development/admin-password`，权限为 `0600`，密码不会写入日志。已有用户时启动过程完全跳过该文件。
+部署环境应关闭 `auto_generate_password`，并将 `password_file` 指向由 Kubernetes Secret 或等价机制挂载的
+受保护文件。
 
 Tenant、Project 和 Enrollment 属于正常产品资源，应由对应 Web/API 创建，不由本地脚本写数据库。当前 Tenant
 与 Project 管理 API/界面尚未实现，因此目前可以启动 Server 和 Console，但还不能完全通过正常产品流程在本地
-新建 Project 并接入 Agent。已有 Project 的环境可以调用 Enrollment API，把返回的一次性 Token 写入
-`.local/development/enrollment-token`，确保目标 Kubernetes 集群存在 `zke-system` Namespace 后再启动：
+新建 Project。已有 Project 的环境应启用 `agent_install`，由安装 API 返回
+`curl | kubectl apply` 命令，将 Agent、Secret 和最小 RBAC 一次部署到目标集群。
 
-```bash
-go run ./cmd/zke-agent --config configs/zke-agent.yaml
-```
-
-Agent 会自行创建 `zke-agent-identity` Secret。若开发期间直接修改了尚未提交的 `000001`，现有开发数据库会因
+`configs/zke-agent.yaml` 使用本机 HTTP `127.0.0.1:8080` 和 QUIC `127.0.0.1:8443`，可以配合当前
+kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernetes Secret，不混入宿主机 `.local`
+凭据路径。若开发期间直接修改了尚未提交的 `000001`，现有开发数据库会因
 迁移校验和变化而拒绝启动；此时需要明确执行 `docker compose -f deploy/development/compose.yaml down --volumes`
 后重新启动数据库，而不是让应用静默改写已执行迁移。
 
@@ -639,31 +668,32 @@ Server 启动时自动执行数据库迁移；没有待应用版本时不会修�
 Stream 上执行 Hello 与心跳。Server 提供 `GET /healthz` 存活检查和使用 PostgreSQL 连接状态的 `GET /readyz`
 就绪检查。
 
-Agent 为身份 Secret、注册 Token 路径、注册重试参数和日志级别提供默认值，但示例 YAML 显式展示这些部署约定。
-身份 Secret 默认是 `zke-system/zke-agent-identity`，由 Agent 通过 client-go 创建并使用 `get`、`update`
-访问。Kubernetes 部署中的注册 Token 默认从 `/var/run/secrets/zke-enrollment/token` 读取；该文件由 Agent
-Deployment 把独立临时 Secret 的 `token` Key 只读挂载而来，Agent 不通过 client-go 查询这个 Secret。本地配置
-改用 `.local/development/enrollment-token`。
+Agent 为固定的 Enrollment、Trust 和 identity Secret 名称、注册重试参数和日志级别提供默认值。identity
+Secret 默认是 `zke-system/zke-agent-identity`，由 Agent 通过 client-go 创建并使用 `get`、`update`
+访问。没有完整身份时，Agent 从同一 Namespace 的 `zke-agent-enrollment` Secret 读取 `token` Key；建立
+QUIC/mTLS 信任时，从 `zke-agent-trust` Secret 读取 `agent-listener-ca.crt`。凭据不落宿主机文件。
 
 `kubeconfig_file` 仅用于本地开发或特殊环境：显式配置时只使用指定文件；未配置时优先加载 Pod 内
 ServiceAccount 提供的 InCluster 配置，不在集群内时再按 `client-go` 默认规则读取 `KUBECONFIG`，未设置该
-环境变量则读取 `~/.kube/config`。因此上面的本地 Agent 命令要求当前用户已有可用的默认 kubeconfig，或者在
-Agent YAML 中显式指定文件。若已经检测到集群环境但 ServiceAccount Token 或 CA 文件损坏，Agent 会直接报错，
+环境变量则读取 `~/.kube/config`。若已经检测到集群环境但 ServiceAccount Token 或 CA 文件损坏，Agent 会直接报错，
 不会回退到其他 kubeconfig，避免意外访问错误集群。
 
-顶层 `server_ca_file` 只用于可选的 HTTP API HTTPS 信任根；`connection.server_ca_file` 专门用于验证 QUIC
-Server 身份，两者不应混用。`enrollment_token_file` 仅在非标准 Secret 挂载路径下覆盖默认值。配置文件只保存
-证书或文件路径，不保存私钥与 Token 正文。
+`registration.server_url`、Enrollment Secret 与可选的 `registration.ca_certificate_file` 只用于 HTTP(S)
+注册；其中 CA 文件信任实际终止注册 HTTPS 的 ZKE Server 或上游网关。`connection.server_address` 与 Trust
+Secret 中的 Listener CA 专门用于 QUIC/mTLS 长连接。特殊部署可用 `connection.ca_certificate_file` 覆盖。
+两类地址和信任根相互独立，不应隐式派生或混用。配置文件不保存私钥与 Token 正文。
 
-当前仓库尚未提供 Helm Chart 或 Kubernetes Deployment/RBAC 清单，因此注册 Token Secret 与对应 VolumeMount
-仍由部署者负责；身份 Secret 已由 Agent 自动创建。后续 Chart 需要按实际资源管理能力配置 Agent 权限，并确保
-身份凭据不会被日志或业务 API 暴露。
+Server 可按配置生成完整的 Agent 安装 Manifest，包括 Token/Trust Secret、ConfigMap、ServiceAccount、
+Role/RoleBinding 和 Deployment；当前仍未提供 Helm Chart。资源包不创建 Service、PVC 或 identity Secret。
 
-`agent_enrollment.signing_ca_certificate_file` 与 `agent_enrollment.signing_ca_private_key_file` 用于签发
-Agent 客户端身份；Agent Listener 直接复用该 CA 证书验证客户端，不重复配置 Client CA。`agent_listener` 使用
-独立的 Server 证书和私钥，并在 UDP 上复用 `http.address` 的主机与数字端口。任一必需证书配置缺失时 Server
-拒绝启动。私钥文件应由部署 Secret 挂载，不能提交到仓库。客户端证书默认有效 30 天，可通过
-`agent_enrollment.certificate_ttl` 调整，但当前证书自动续期尚未实现。
+`agent_pki.mode: managed` 时，Server 从持久目录加载或首次生成 Agent Client CA、Agent Listener CA 和
+Listener 身份。初始化由 PostgreSQL advisory lock 串行化，数据库保存证书指纹；已有数据库状态但文件丢失、
+目录只有部分文件或指纹冲突时拒绝启动。Listener 叶子在启动时自动续期，CA 不自动轮换。external 模式所需的
+Agent Client CA、Agent Listener CA 和 Listener 身份文件全部集中在 `agent_pki.external`。
+`agent_listener.address` 不得与 `http.address` 使用相同端口。
+
+客户端证书默认有效 30 天，可通过 `agent_pki.agent_client_certificate_validity` 调整。Agent 默认在到期前 7 天进入自动
+续期窗口，可通过 `identity.renew_before` 调整；若 Agent 离线直到旧证书过期，仍需重新 Enrollment。
 
 构建与检查：
 
@@ -685,15 +715,20 @@ Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除
 - 仓库内配置只包含明显的本地开发值，不得复用于共享或生产环境。
 - Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；未来由 Chart 管理的
   Secret 注入。
-- HTTP TLS、QUIC Server 与 Agent 签发 CA 私钥只通过受保护文件或部署 Secret 提供；缺失时不会自动生成临时
-  身份，避免 Server 重启后丢失信任根。
-- Agent 一次性注册 Token 只通过独立临时 Secret 挂载的文件读取。Agent 自行创建身份 Secret；ServiceAccount
-  需要 Namespace 内 Secret 的 `create` 权限，并将 `get`、`update` 尽量限定到固定身份 Secret，不需要为注册
-  Token Secret 授予 API 读取权限。
+- 首个管理员密码只从 `auth.initial_admin.password_file` 读取。本地开发可以在空用户库首次启动时生成权限为
+  `0600` 的随机密码文件；部署环境应挂载预置 Secret 并关闭自动生成。密码正文不得写入日志。
+- Managed PKI 私钥只保存在权限受限的持久目录；只在全新数据库状态和空目录组合下首次生成。已有数据库状态时
+  缺失 PV 会失败关闭。external 模式的私钥只通过受保护文件或部署 Secret 提供。
+- 可选的 HTTP TLS 私钥同样只通过受保护文件或部署 Secret 提供；它属于浏览器/API HTTPS 身份，不属于 Agent
+  QUIC/mTLS Managed PKI。
+- Agent 一次性注册 Token 只通过独立 Secret 读取。Agent 自行创建身份 Secret；ServiceAccount 需要 Namespace
+  内 Secret 的 `create` 权限，对固定的 Enrollment、Trust 和 identity Secret 具有 `get` 权限，并只能更新
+  identity Secret。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
-- Server 地址、超时、心跳和重试参数需要上下限校验。
-- 认证配置包含操作超时、会话空闲与绝对超时、Argon2id 最大并发校验数、Cookie `Secure` 开关、账户和来源登录限流；仓库中的
-  `cookie_secure: false` 仅用于本地明文 HTTP 开发，TLS 部署必须设为 `true`。
+- HTTP 注册 URL、QUIC Connection 地址、超时、心跳和重试参数需要上下限校验。
+- 认证配置包含操作超时、会话空闲与绝对超时、Argon2id 最大并发校验数、Cookie `Secure` 开关、账户和来源
+  登录限流；仓库中的 `cookie_secure: false` 仅用于本地明文 HTTP 开发。只要浏览器通过 HTTPS 访问，无论 TLS
+  由 ZKE Server 还是网关终止，都必须设为 `true`。
 - 启动时对缺失、冲突和不安全配置快速失败，并返回可定位但不泄密的错误。
 
 ## 13. 可观测性与审计

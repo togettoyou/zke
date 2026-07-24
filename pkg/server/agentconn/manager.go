@@ -17,50 +17,56 @@ import (
 
 	"github.com/quic-go/quic-go"
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
 type Config struct {
-	Address                string
-	TLSCertificateFile     string
-	TLSPrivateKeyFile      string
-	AgentCACertificateFile string
-	HandshakeTimeout       time.Duration
-	HeartbeatInterval      time.Duration
-	HeartbeatTimeout       time.Duration
-	LastSeenWriteInterval  time.Duration
-	OperationTimeout       time.Duration
+	Address                 string
+	TLSCertificateFile      string
+	TLSPrivateKeyFile       string
+	ClientCACertificateFile string
+	HandshakeTimeout        time.Duration
+	HeartbeatInterval       time.Duration
+	HeartbeatTimeout        time.Duration
+	LastSeenWriteInterval   time.Duration
+	OperationTimeout        time.Duration
 }
 
 type Manager struct {
-	config Config
-	logger *slog.Logger
-	store  *store.AgentConnectionStore
-	tls    *tls.Config
+	config  Config
+	logger  *slog.Logger
+	store   *store.AgentConnectionStore
+	renewal *enrollment.CertificateRenewalService
+	tls     *tls.Config
 
 	mutex       sync.Mutex
 	connections map[string]*session
 }
 
 type session struct {
-	id       string
-	identity store.AgentConnectionIdentity
-	conn     *quic.Conn
-	stream   *quic.Stream
-	writeMu  sync.Mutex
+	id                   string
+	identity             store.AgentConnectionIdentity
+	certificateSerial    string
+	certificateExpiresAt time.Time
+	conn                 *quic.Conn
+	stream               *quic.Stream
+	writeMu              sync.Mutex
 }
 
 type certificateIdentity struct {
 	store.AgentConnectionIdentity
-	CertificateSerial string
+	CertificateSerial    string
+	CertificateExpiresAt time.Time
 }
 
 func New(
 	config Config,
 	logger *slog.Logger,
 	connectionStore *store.AgentConnectionStore,
+	renewalService *enrollment.CertificateRenewalService,
 ) (*Manager, error) {
 	tlsConfig, err := loadTLSConfig(config)
 	if err != nil {
@@ -70,12 +76,15 @@ func New(
 		config:      config,
 		logger:      logger,
 		store:       connectionStore,
+		renewal:     renewalService,
 		tls:         tlsConfig,
 		connections: make(map[string]*session),
 	}, nil
 }
 
 func (manager *Manager) Run(ctx context.Context) error {
+	runContext, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	listener, err := quic.ListenAddr(
 		manager.config.Address,
 		manager.tls,
@@ -93,16 +102,46 @@ func (manager *Manager) Run(ctx context.Context) error {
 	}
 	defer listener.Close()
 
+	revocationErrors := make(chan error, 1)
+	revocationsReady := make(chan struct{})
+	go func() {
+		revocationErrors <- manager.store.WatchRevocations(
+			runContext,
+			revocationsReady,
+			manager.handleRevocation,
+		)
+		cancelRun()
+	}()
+	select {
+	case <-revocationsReady:
+	case revocationErr := <-revocationErrors:
+		if revocationErr == nil {
+			return nil
+		}
+		return revocationErr
+	case <-ctx.Done():
+		return nil
+	}
+
 	manager.logger.Info(
 		"Agent QUIC listener starting",
 		slog.String("address", listener.Addr().String()),
 	)
 	for {
-		connection, err := listener.Accept(ctx)
+		connection, err := listener.Accept(runContext)
 		if err != nil {
 			if ctx.Err() != nil {
 				manager.closeAll()
 				return nil
+			}
+			select {
+			case revocationErr := <-revocationErrors:
+				manager.closeAll()
+				if revocationErr == nil {
+					return nil
+				}
+				return revocationErr
+			default:
 			}
 			return fmt.Errorf("accept Agent QUIC connection: %w", err)
 		}
@@ -173,10 +212,12 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 		return
 	}
 	current := &session{
-		id:       connectionID,
-		identity: identity.AgentConnectionIdentity,
-		conn:     connection,
-		stream:   controlStream,
+		id:                   connectionID,
+		identity:             identity.AgentConnectionIdentity,
+		certificateSerial:    identity.CertificateSerial,
+		certificateExpiresAt: identity.CertificateExpiresAt,
+		conn:                 connection,
+		stream:               controlStream,
 	}
 	previous := manager.register(current)
 	if previous != nil {
@@ -201,6 +242,9 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 				ServerTimeUnixMilli:     now.UnixMilli(),
 				HeartbeatIntervalMillis: uint64(manager.config.HeartbeatInterval.Milliseconds()),
 				HeartbeatTimeoutMillis:  uint64(manager.config.HeartbeatTimeout.Milliseconds()),
+				Capabilities: []string{
+					agentprotocol.CapabilityCertificateRenewal,
+				},
 			},
 		},
 	}); err != nil {
@@ -242,13 +286,30 @@ func (manager *Manager) serveControl(
 	var lastSequence uint64
 	healthStatus := "healthy"
 	for {
-		if err := current.stream.SetReadDeadline(
-			time.Now().Add(manager.config.HeartbeatTimeout),
-		); err != nil {
+		now := time.Now().UTC()
+		if !current.certificateExpiresAt.After(now) {
+			_ = current.conn.CloseWithError(
+				agentprotocol.CloseAuthenticationError,
+				"Agent certificate expired",
+			)
+			return errors.New("Agent certificate expired")
+		}
+		readDeadline := now.Add(manager.config.HeartbeatTimeout)
+		if current.certificateExpiresAt.Before(readDeadline) {
+			readDeadline = current.certificateExpiresAt
+		}
+		if err := current.stream.SetReadDeadline(readDeadline); err != nil {
 			return err
 		}
 		frame, err := agentprotocol.ReadFrame(current.stream)
 		if err != nil {
+			if !current.certificateExpiresAt.After(time.Now().UTC()) {
+				_ = current.conn.CloseWithError(
+					agentprotocol.CloseAuthenticationError,
+					"Agent certificate expired",
+				)
+				return errors.New("Agent certificate expired")
+			}
 			if ctx.Err() == nil && current.conn.Context().Err() == nil {
 				_ = current.conn.CloseWithError(
 					agentprotocol.CloseHeartbeatTimeout,
@@ -271,6 +332,25 @@ func (manager *Manager) serveControl(
 			)
 			return nil
 		}
+		if renewalRequest := frame.GetCertificateRenewalRequest(); renewalRequest != nil {
+			if err := manager.renewCertificate(
+				ctx,
+				current,
+				renewalRequest,
+			); err != nil {
+				closeCode := agentprotocol.CloseInternalError
+				if errors.Is(err, enrollment.ErrInvalidInput) ||
+					errors.Is(err, enrollment.ErrCredentialRejected) {
+					closeCode = agentprotocol.CloseAuthenticationError
+				}
+				_ = current.conn.CloseWithError(
+					closeCode,
+					"Agent certificate renewal rejected",
+				)
+				return err
+			}
+			continue
+		}
 		heartbeat := frame.GetHeartbeat()
 		if heartbeat == nil ||
 			heartbeat.GetSequence() == 0 ||
@@ -290,7 +370,7 @@ func (manager *Manager) serveControl(
 			return err
 		}
 		lastSequence = heartbeat.GetSequence()
-		now := time.Now().UTC()
+		now = time.Now().UTC()
 		if nextHealthStatus != healthStatus ||
 			now.Sub(lastPersisted) >= manager.config.LastSeenWriteInterval {
 			operationContext, cancelOperation := context.WithTimeout(
@@ -300,13 +380,20 @@ func (manager *Manager) serveControl(
 			err = manager.store.RecordHeartbeat(
 				operationContext,
 				store.RecordAgentHeartbeatParams{
-					Identity:     current.identity,
-					HealthStatus: nextHealthStatus,
-					Now:          now,
+					Identity:          current.identity,
+					CertificateSerial: current.certificateSerial,
+					HealthStatus:      nextHealthStatus,
+					Now:               now,
 				},
 			)
 			cancelOperation()
 			if err != nil {
+				if errors.Is(err, store.ErrAgentCredentialRejected) {
+					_ = current.conn.CloseWithError(
+						agentprotocol.CloseAuthenticationError,
+						"Agent credential rejected",
+					)
+				}
 				return fmt.Errorf("persist Agent heartbeat: %w", err)
 			}
 			lastPersisted = now
@@ -324,6 +411,44 @@ func (manager *Manager) serveControl(
 			return err
 		}
 	}
+}
+
+func (manager *Manager) renewCertificate(
+	ctx context.Context,
+	current *session,
+	request *agentv1.CertificateRenewalRequest,
+) error {
+	if manager.renewal == nil || request == nil {
+		return errors.New("Agent certificate renewal is unavailable")
+	}
+	operationContext, cancelOperation := context.WithTimeout(
+		ctx,
+		manager.config.OperationTimeout,
+	)
+	defer cancelOperation()
+	result, err := manager.renewal.Renew(
+		operationContext,
+		enrollment.RenewCertificateInput{
+			Identity:                 current.identity,
+			CurrentCertificateSerial: current.certificateSerial,
+			CSRPEM:                   []byte(request.GetCsrPem()),
+			RequestID:                current.id,
+			Now:                      time.Now().UTC(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+	return current.write(&agentv1.ControlFrame{
+		ProtocolVersion: agentprotocol.ProtocolVersion,
+		Message: &agentv1.ControlFrame_CertificateRenewalResponse{
+			CertificateRenewalResponse: &agentv1.CertificateRenewalResponse{
+				CertificatePem: result.CertificatePEM,
+				CertificateExpiresAtUnixMilli: result.CertificateExpiresAt.
+					UnixMilli(),
+			},
+		},
+	})
 }
 
 func (manager *Manager) register(current *session) *session {
@@ -361,6 +486,41 @@ func (manager *Manager) closeAll() {
 	}
 }
 
+func (manager *Manager) handleRevocation(
+	event store.AgentConnectionRevocation,
+) {
+	manager.mutex.Lock()
+	connections := make([]*session, 0)
+	for _, current := range manager.connections {
+		if event.AgentID != "" && current.identity.AgentID != event.AgentID {
+			continue
+		}
+		if event.ClusterID != "" &&
+			current.identity.ClusterID != event.ClusterID {
+			continue
+		}
+		if event.CertificateSerial != "" &&
+			current.certificateSerial != event.CertificateSerial {
+			continue
+		}
+		connections = append(connections, current)
+	}
+	manager.mutex.Unlock()
+
+	for _, current := range connections {
+		_ = current.write(&agentv1.ControlFrame{
+			ProtocolVersion: agentprotocol.ProtocolVersion,
+			Message: &agentv1.ControlFrame_GoAway{
+				GoAway: &agentv1.GoAway{Reason: "credential_revoked"},
+			},
+		})
+		_ = current.conn.CloseWithError(
+			agentprotocol.CloseAuthenticationError,
+			"Agent credential revoked",
+		)
+	}
+}
+
 func (current *session) write(frame *agentv1.ControlFrame) error {
 	current.writeMu.Lock()
 	defer current.writeMu.Unlock()
@@ -393,7 +553,7 @@ func loadTLSConfig(config Config) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load Agent Listener TLS certificate: %w", err)
 	}
-	clientCAPEM, err := os.ReadFile(config.AgentCACertificateFile)
+	clientCAPEM, err := os.ReadFile(config.ClientCACertificateFile)
 	if err != nil {
 		return nil, fmt.Errorf("read Agent client CA certificate: %w", err)
 	}
@@ -474,7 +634,8 @@ func identityFromCertificate(certificate *x509.Certificate) (certificateIdentity
 			ClusterID: parts[5],
 			AgentID:   parts[7],
 		},
-		CertificateSerial: certificate.SerialNumber.String(),
+		CertificateSerial:    certificate.SerialNumber.String(),
+		CertificateExpiresAt: certificate.NotAfter,
 	}, nil
 }
 

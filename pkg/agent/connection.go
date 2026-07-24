@@ -21,14 +21,11 @@ import (
 func runConnectionLoop(
 	ctx context.Context,
 	cfg Config,
+	store *IdentityStore,
 	identity LocalIdentity,
 	version string,
 	logger *slog.Logger,
 ) error {
-	tlsConfig, err := connectionTLSConfig(cfg, identity)
-	if err != nil {
-		return err
-	}
 	startupID, err := newConnectionID()
 	if err != nil {
 		return err
@@ -36,9 +33,35 @@ func runConnectionLoop(
 
 	interval := cfg.Connection.RetryInitialInterval
 	for {
-		err := runConnection(ctx, cfg, tlsConfig, identity, version, startupID, logger)
+		tlsConfig, err := connectionTLSConfig(cfg, identity)
+		if err != nil {
+			return err
+		}
+		err = runConnection(
+			ctx,
+			cfg,
+			store,
+			tlsConfig,
+			identity,
+			version,
+			startupID,
+			logger,
+		)
 		if ctx.Err() != nil {
 			return nil
+		}
+		var renewed *certificateRenewedError
+		if errors.As(err, &renewed) {
+			identity = renewed.identity
+			interval = cfg.Connection.RetryInitialInterval
+			logger.Info(
+				"Agent certificate renewed",
+				slog.Time(
+					"certificate_expires_at",
+					identity.CertificateExpiresAt,
+				),
+			)
+			continue
 		}
 		if permanentAgentConnectionError(err) {
 			return err
@@ -68,6 +91,7 @@ func runConnectionLoop(
 func runConnection(
 	ctx context.Context,
 	cfg Config,
+	store *IdentityStore,
 	tlsConfig *tls.Config,
 	identity LocalIdentity,
 	version string,
@@ -80,7 +104,7 @@ func runConnection(
 	)
 	connection, err := quic.DialAddr(
 		connectContext,
-		cfg.ServerHost(),
+		cfg.ConnectionServerAddress(),
 		tlsConfig,
 		&quic.Config{
 			HandshakeIdleTimeout:  cfg.Connection.ConnectTimeout,
@@ -120,6 +144,9 @@ func runConnection(
 				ClusterId:    identity.ClusterID,
 				AgentVersion: version,
 				StartupId:    startupID,
+				Capabilities: []string{
+					agentprotocol.CapabilityCertificateRenewal,
+				},
 			},
 		},
 	}); err != nil {
@@ -147,6 +174,39 @@ func runConnection(
 		slog.Duration("heartbeat_interval", heartbeatInterval),
 		slog.Duration("heartbeat_timeout", heartbeatTimeout),
 	)
+	renewalRequired := time.Until(identity.CertificateExpiresAt) <=
+		cfg.CertificateRenewBefore
+	if renewalRequired &&
+		!serverSupportsCapability(
+			serverHello,
+			agentprotocol.CapabilityCertificateRenewal,
+		) {
+		logger.Warn(
+			"Agent certificate is within the renewal window but the Server does not support renewal",
+			slog.Time(
+				"certificate_expires_at",
+				identity.CertificateExpiresAt,
+			),
+		)
+	}
+	if store != nil &&
+		renewalRequired &&
+		serverSupportsCapability(
+			serverHello,
+			agentprotocol.CapabilityCertificateRenewal,
+		) {
+		renewed, err := renewAgentCertificate(
+			ctx,
+			cfg,
+			store,
+			controlStream,
+			identity,
+		)
+		if err != nil {
+			return err
+		}
+		return &certificateRenewedError{identity: renewed}
+	}
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
@@ -165,8 +225,30 @@ func runConnection(
 			})
 			return nil
 		case <-connection.Context().Done():
+			if cause := context.Cause(connection.Context()); cause != nil {
+				return cause
+			}
 			return connection.Context().Err()
 		case <-ticker.C:
+			if store != nil &&
+				serverSupportsCapability(
+					serverHello,
+					agentprotocol.CapabilityCertificateRenewal,
+				) &&
+				time.Until(identity.CertificateExpiresAt) <=
+					cfg.CertificateRenewBefore {
+				renewed, err := renewAgentCertificate(
+					ctx,
+					cfg,
+					store,
+					controlStream,
+					identity,
+				)
+				if err != nil {
+					return err
+				}
+				return &certificateRenewedError{identity: renewed}
+			}
 			sequence++
 			now := time.Now().UTC()
 			if err := controlStream.SetWriteDeadline(
@@ -208,6 +290,83 @@ func runConnection(
 	}
 }
 
+type certificateRenewedError struct {
+	identity LocalIdentity
+}
+
+func (err *certificateRenewedError) Error() string {
+	return "Agent certificate renewed; reconnecting with the new identity"
+}
+
+func renewAgentCertificate(
+	ctx context.Context,
+	cfg Config,
+	store *IdentityStore,
+	controlStream *quic.Stream,
+	identity LocalIdentity,
+) (LocalIdentity, error) {
+	csrPEM, err := store.LoadOrCreateRenewalCSR(ctx, identity)
+	if err != nil {
+		return LocalIdentity{}, err
+	}
+	deadline := time.Now().Add(cfg.Connection.ConnectTimeout)
+	if err := controlStream.SetDeadline(deadline); err != nil {
+		return LocalIdentity{}, fmt.Errorf(
+			"set Agent certificate renewal deadline: %w",
+			err,
+		)
+	}
+	if err := agentprotocol.WriteFrame(controlStream, &agentv1.ControlFrame{
+		ProtocolVersion: agentprotocol.ProtocolVersion,
+		Message: &agentv1.ControlFrame_CertificateRenewalRequest{
+			CertificateRenewalRequest: &agentv1.CertificateRenewalRequest{
+				CsrPem: string(csrPEM),
+			},
+		},
+	}); err != nil {
+		return LocalIdentity{}, err
+	}
+	frame, err := agentprotocol.ReadFrame(controlStream)
+	if err != nil {
+		return LocalIdentity{}, err
+	}
+	response := frame.GetCertificateRenewalResponse()
+	if frame.GetProtocolVersion() != agentprotocol.ProtocolVersion ||
+		response == nil ||
+		strings.TrimSpace(response.GetCertificatePem()) == "" ||
+		response.GetCertificateExpiresAtUnixMilli() <= 0 {
+		return LocalIdentity{}, errors.New(
+			"Agent certificate renewal response is invalid",
+		)
+	}
+	expiresAt := time.UnixMilli(
+		response.GetCertificateExpiresAtUnixMilli(),
+	).UTC()
+	if !expiresAt.After(time.Now().Add(cfg.CertificateRenewBefore)) {
+		return LocalIdentity{}, errors.New(
+			"renewed Agent certificate does not extend beyond the renewal window",
+		)
+	}
+	renewed, err := store.CompleteRenewal(
+		ctx,
+		identity,
+		csrPEM,
+		[]byte(response.GetCertificatePem()),
+		expiresAt,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return LocalIdentity{}, err
+	}
+	if err := controlStream.SetDeadline(time.Time{}); err != nil {
+		return LocalIdentity{}, fmt.Errorf(
+			"clear Agent certificate renewal deadline: %w",
+			err,
+		)
+	}
+	return renewed, nil
+}
+
 func connectionTLSConfig(
 	cfg Config,
 	identity LocalIdentity,
@@ -221,22 +380,26 @@ func connectionTLSConfig(
 	}
 	tlsConfig := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
-		ServerName:   cfg.ServerName(),
+		ServerName:   cfg.ConnectionServerName(),
 		Certificates: []tls.Certificate{certificate},
 		NextProtos:   []string{agentprotocol.ALPN},
 	}
 
-	roots, err := x509.SystemCertPool()
-	if err != nil || roots == nil {
-		roots = x509.NewCertPool()
+	roots := x509.NewCertPool()
+	serverCAPEM := cfg.Connection.CACertificatePEM
+	if cfg.Connection.CACertificateFile != "" {
+		var readErr error
+		serverCAPEM, readErr = readBoundedFile(
+			cfg.Connection.CACertificateFile,
+			maxCACertificateFileBytes,
+			"Agent connection CA certificate file",
+		)
+		if readErr != nil {
+			return nil, readErr
+		}
 	}
-	serverCAPEM, readErr := readBoundedFile(
-		cfg.Connection.ServerCAFile,
-		maxServerCAFileBytes,
-		"Agent connection Server CA file",
-	)
-	if readErr != nil {
-		return nil, readErr
+	if len(serverCAPEM) == 0 {
+		return nil, errors.New("Agent connection CA certificate is required")
 	}
 	if err := appendRootCertificates(roots, serverCAPEM); err != nil {
 		return nil, err
@@ -282,7 +445,32 @@ func validateServerHello(
 		heartbeatTimeout > 15*time.Minute {
 		return 0, 0, errors.New("Server heartbeat configuration is invalid")
 	}
+	if len(hello.GetCapabilities()) > 64 {
+		return 0, 0, errors.New("Server capability count exceeds the limit")
+	}
+	for _, capability := range hello.GetCapabilities() {
+		if capability == "" ||
+			strings.TrimSpace(capability) != capability ||
+			len(capability) > 128 {
+			return 0, 0, errors.New("Server capability is invalid")
+		}
+	}
 	return heartbeatInterval, heartbeatTimeout, nil
+}
+
+func serverSupportsCapability(
+	hello *agentv1.ServerHello,
+	expected string,
+) bool {
+	if hello == nil {
+		return false
+	}
+	for _, capability := range hello.GetCapabilities() {
+		if capability == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func permanentAgentConnectionError(err error) bool {
@@ -305,5 +493,7 @@ func permanentAgentConnectionError(err error) bool {
 	}
 	return strings.Contains(err.Error(), "Agent heartbeat acknowledgement is invalid") ||
 		strings.Contains(err.Error(), "ServerHello is invalid") ||
-		strings.Contains(err.Error(), "Server heartbeat configuration is invalid")
+		strings.Contains(err.Error(), "Server heartbeat configuration is invalid") ||
+		strings.Contains(err.Error(), "credential_revoked") ||
+		strings.Contains(err.Error(), "Agent certificate expired")
 }

@@ -11,6 +11,17 @@ import (
 
 const initialAdminLockID int64 = 0x5a4b4541555448
 
+func (store *AuthStore) HasUsers(ctx context.Context) (bool, error) {
+	var exists bool
+	if err := store.pool.QueryRow(
+		ctx,
+		"SELECT EXISTS (SELECT 1 FROM users)",
+	).Scan(&exists); err != nil {
+		return false, errors.New("check existing users")
+	}
+	return exists, nil
+}
+
 func (store *AuthStore) CreateInitialAdmin(ctx context.Context, input InitialAdmin) (User, error) {
 	if strings.TrimSpace(input.UsernameNormalized) == "" ||
 		strings.TrimSpace(input.DisplayName) == "" ||

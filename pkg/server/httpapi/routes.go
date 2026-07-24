@@ -36,7 +36,27 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.enrollment.create,
 	)
+	projectRoutes.GET(
+		"/:project_id/agents",
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionAgentRead,
+			"project_id",
+		),
+		handlers.agentStatus.list,
+	)
+	projectRoutes.POST(
+		"/:project_id/agent-installations",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionAgentEnrollmentCreate,
+			"project_id",
+		),
+		handlers.agentInstallation.create,
+	)
 
 	agentAPIV1 := router.Group("/agent-api/v1")
 	agentAPIV1.POST("/enroll", handlers.agentRegistration.enroll)
+
+	agentInstallV1 := router.Group("/agent-install/v1")
+	agentInstallV1.GET("/manifest", handlers.agentInstallation.manifest)
 }

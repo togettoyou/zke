@@ -1,0 +1,161 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type AgentStatusStore struct {
+	pool *pgxpool.Pool
+}
+
+type ProjectAgentCertificate struct {
+	TenantID             string
+	ProjectID            string
+	ClusterID            string
+	ClusterName          string
+	AgentID              string
+	LifecycleStatus      string
+	HealthStatus         string
+	LastSeenAt           *time.Time
+	CertificateSerial    string
+	CertificateExpiresAt time.Time
+	CertificateRevokedAt *time.Time
+}
+
+func NewAgentStatusStore(pool *pgxpool.Pool) *AgentStatusStore {
+	return &AgentStatusStore{pool: pool}
+}
+
+func (store *AgentStatusStore) ListProjectAgentCertificates(
+	ctx context.Context,
+	projectID string,
+) ([]ProjectAgentCertificate, error) {
+	rows, err := store.pool.Query(ctx, `
+SELECT
+    agent.tenant_id::text,
+    agent.project_id::text,
+    agent.cluster_id::text,
+    cluster.name,
+    agent.id::text,
+    agent.lifecycle_status,
+    agent.health_status,
+    agent.last_seen_at,
+    credential.serial,
+    credential.expires_at,
+    credential.revoked_at
+FROM agents AS agent
+JOIN clusters AS cluster
+  ON cluster.tenant_id = agent.tenant_id
+ AND cluster.project_id = agent.project_id
+ AND cluster.id = agent.cluster_id
+JOIN LATERAL (
+    SELECT serial, expires_at, revoked_at
+    FROM agent_credentials
+    WHERE tenant_id = agent.tenant_id
+      AND project_id = agent.project_id
+      AND cluster_id = agent.cluster_id
+      AND agent_id = agent.id
+    ORDER BY
+      (serial = agent.active_credential_serial) DESC,
+      created_at DESC
+    LIMIT 1
+) AS credential ON true
+WHERE agent.project_id = $1
+ORDER BY cluster.name, agent.id
+`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list project Agent certificates: %w", err)
+	}
+	defer rows.Close()
+	var result []ProjectAgentCertificate
+	for rows.Next() {
+		var item ProjectAgentCertificate
+		if err := rows.Scan(
+			&item.TenantID,
+			&item.ProjectID,
+			&item.ClusterID,
+			&item.ClusterName,
+			&item.AgentID,
+			&item.LifecycleStatus,
+			&item.HealthStatus,
+			&item.LastSeenAt,
+			&item.CertificateSerial,
+			&item.CertificateExpiresAt,
+			&item.CertificateRevokedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan project Agent certificate: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project Agent certificates: %w", err)
+	}
+	return result, nil
+}
+
+func (store *AgentStatusStore) ListExpiringAgentCertificates(
+	ctx context.Context,
+	deadline time.Time,
+) ([]ProjectAgentCertificate, error) {
+	rows, err := store.pool.Query(ctx, `
+SELECT
+    credential.tenant_id::text,
+    credential.project_id::text,
+    credential.cluster_id::text,
+    cluster.name,
+    credential.agent_id::text,
+    agent.lifecycle_status,
+    agent.health_status,
+    agent.last_seen_at,
+    credential.serial,
+    credential.expires_at,
+    credential.revoked_at
+FROM agent_credentials AS credential
+JOIN agents AS agent
+  ON agent.tenant_id = credential.tenant_id
+ AND agent.project_id = credential.project_id
+ AND agent.cluster_id = credential.cluster_id
+ AND agent.id = credential.agent_id
+JOIN clusters AS cluster
+  ON cluster.tenant_id = credential.tenant_id
+ AND cluster.project_id = credential.project_id
+ AND cluster.id = credential.cluster_id
+WHERE credential.revoked_at IS NULL
+  AND credential.expires_at <= $1
+  AND agent.lifecycle_status <> 'revoked'
+  AND cluster.status <> 'revoked'
+ORDER BY credential.expires_at
+`, deadline)
+	if err != nil {
+		return nil, fmt.Errorf("list expiring Agent certificates: %w", err)
+	}
+	defer rows.Close()
+	var result []ProjectAgentCertificate
+	for rows.Next() {
+		var item ProjectAgentCertificate
+		if err := rows.Scan(
+			&item.TenantID,
+			&item.ProjectID,
+			&item.ClusterID,
+			&item.ClusterName,
+			&item.AgentID,
+			&item.LifecycleStatus,
+			&item.HealthStatus,
+			&item.LastSeenAt,
+			&item.CertificateSerial,
+			&item.CertificateExpiresAt,
+			&item.CertificateRevokedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan expiring Agent certificate: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate expiring Agent certificates: %w", err)
+	}
+	return result, nil
+}

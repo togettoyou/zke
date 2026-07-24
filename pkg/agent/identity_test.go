@@ -193,8 +193,101 @@ func TestIdentityStoreRejectsPartialState(t *testing.T) {
 	}
 }
 
+func TestIdentityStoreCompletesCertificateRenewal(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewClientset()
+	store := NewIdentityStore(client, testIdentityNamespace, testIdentitySecret)
+	state, err := store.LoadOrCreatePending(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	certificatePEM, expiresAt := issueTestAgentCertificate(
+		t,
+		*state.Pending,
+		now,
+	)
+	identity, err := store.Complete(
+		context.Background(),
+		*state.Pending,
+		RegistrationIdentity{
+			ClusterID:            testClusterID,
+			AgentID:              testAgentID,
+			CertificatePEM:       certificatePEM,
+			CertificateExpiresAt: expiresAt,
+		},
+		now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	csrPEM, err := store.LoadOrCreateRenewalCSR(
+		context.Background(),
+		identity,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedCSR, err := store.LoadOrCreateRenewalCSR(
+		context.Background(),
+		identity,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(csrPEM, reloadedCSR) {
+		t.Fatal("certificate renewal did not reuse its persisted CSR")
+	}
+
+	renewedCertificatePEM, renewedExpiresAt := issueTestAgentCertificate(
+		t,
+		PendingIdentity{PrivateKeyPEM: identity.PrivateKeyPEM},
+		now.Add(time.Minute),
+	)
+	renewed, err := store.CompleteRenewal(
+		context.Background(),
+		identity,
+		csrPEM,
+		renewedCertificatePEM,
+		renewedExpiresAt,
+		now.Add(time.Minute),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.CertificateExpiresAt != renewedExpiresAt ||
+		bytes.Equal(renewed.CertificatePEM, identity.CertificatePEM) {
+		t.Fatalf("unexpected renewed identity: %+v", renewed)
+	}
+	secret, err := client.CoreV1().
+		Secrets(testIdentityNamespace).
+		Get(context.Background(), testIdentitySecret, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secret.Data[renewalCSRKey]) != 0 {
+		t.Fatal("completed identity Secret retained the renewal CSR")
+	}
+}
+
+func BenchmarkCreateIdentityRenewalCSR(b *testing.B) {
+	pending, err := newPendingIdentity()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := createIdentityCSR(pending.PrivateKeyPEM); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func issueTestAgentCertificate(
-	t *testing.T,
+	t testing.TB,
 	pending PendingIdentity,
 	now time.Time,
 ) ([]byte, time.Time) {

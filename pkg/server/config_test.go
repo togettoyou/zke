@@ -14,8 +14,9 @@ func TestLoadConfigYAML(t *testing.T) {
 	content := []byte(`
 http:
   address: 127.0.0.1:9000
-  tls_certificate_file: /run/secrets/server.crt
-  tls_private_key_file: /run/secrets/server.key
+  tls:
+    certificate_file: /run/secrets/http.crt
+    private_key_file: /run/secrets/http.key
   read_header_timeout: 5s
   read_timeout: 20s
   write_timeout: 15s
@@ -29,22 +30,36 @@ auth:
   session_absolute_timeout: 12h
   operation_timeout: 12s
   max_concurrent_password_checks: 3
-  cookie_secure: false
+  cookie_secure: true
   login_rate_limit:
     window: 2m
     max_attempts_per_account: 6
     max_attempts_per_source: 24
+  initial_admin:
+    enabled: true
+    username: admin
+    display_name: ZKE Administrator
+    password_file: /run/secrets/zke-admin/password
+    auto_generate_password: false
+agent_pki:
+  mode: external
+  agent_client_certificate_validity: 48h
+  external:
+    agent_client_ca:
+      certificate_file: /run/secrets/agent-client-ca.crt
+      private_key_file: /run/secrets/agent-client-ca.key
+    agent_listener_ca:
+      certificate_file: /run/secrets/agent-listener-ca.crt
+    agent_listener:
+      certificate_file: /run/secrets/agent-listener.crt
+      private_key_file: /run/secrets/agent-listener.key
 agent_enrollment:
-  signing_ca_certificate_file: /run/secrets/agent-ca.crt
-  signing_ca_private_key_file: /run/secrets/agent-ca.key
-  certificate_ttl: 48h
   operation_timeout: 9s
   rate_limit:
     window: 3m
     max_attempts_per_source: 42
 agent_listener:
-  tls_certificate_file: /run/secrets/zke-server.crt
-  tls_private_key_file: /run/secrets/zke-server.key
+  address: 127.0.0.1:9443
   handshake_timeout: 8s
   heartbeat_interval: 12s
   heartbeat_timeout: 36s
@@ -65,9 +80,9 @@ log_level: warn
 	if cfg.HTTP.Address != "127.0.0.1:9000" {
 		t.Fatalf("HTTP address = %q, want YAML value", cfg.HTTP.Address)
 	}
-	if cfg.HTTP.TLSCertificateFile != "/run/secrets/server.crt" ||
-		cfg.HTTP.TLSPrivateKeyFile != "/run/secrets/server.key" {
-		t.Fatalf("unexpected HTTP TLS config: %+v", cfg.HTTP)
+	if cfg.HTTP.TLS.CertificateFile != "/run/secrets/http.crt" ||
+		cfg.HTTP.TLS.PrivateKeyFile != "/run/secrets/http.key" {
+		t.Fatalf("unexpected HTTP TLS config: %+v", cfg.HTTP.TLS)
 	}
 	if cfg.Database.URL != "postgres://file-value" {
 		t.Fatalf("database URL = %q, want YAML value", cfg.Database.URL)
@@ -93,8 +108,8 @@ log_level: warn
 			cfg.Auth.MaxConcurrentPasswordChecks,
 		)
 	}
-	if cfg.Auth.CookieSecure {
-		t.Fatal("cookie secure = true, want YAML value false")
+	if !cfg.Auth.CookieSecure {
+		t.Fatal("cookie secure = false, want YAML value true")
 	}
 	if cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount != 6 {
 		t.Fatalf(
@@ -102,16 +117,30 @@ log_level: warn
 			cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,
 		)
 	}
-	if cfg.AgentEnrollment.SigningCACertificateFile != "/run/secrets/agent-ca.crt" ||
-		cfg.AgentEnrollment.SigningCAPrivateKeyFile != "/run/secrets/agent-ca.key" ||
-		cfg.AgentEnrollment.CertificateTTL != 48*time.Hour ||
-		cfg.AgentEnrollment.OperationTimeout != 9*time.Second ||
+	if !cfg.Auth.InitialAdmin.Enabled ||
+		cfg.Auth.InitialAdmin.Username != "admin" ||
+		cfg.Auth.InitialAdmin.DisplayName != "ZKE Administrator" ||
+		cfg.Auth.InitialAdmin.PasswordFile !=
+			"/run/secrets/zke-admin/password" ||
+		cfg.Auth.InitialAdmin.AutoGeneratePassword {
+		t.Fatalf(
+			"unexpected initial administrator config: %+v",
+			cfg.Auth.InitialAdmin,
+		)
+	}
+	if cfg.AgentIdentity.CACertificateFile != "/run/secrets/agent-client-ca.crt" ||
+		cfg.AgentIdentity.CAPrivateKeyFile != "/run/secrets/agent-client-ca.key" ||
+		cfg.AgentIdentity.CertificateTTL != 48*time.Hour {
+		t.Fatalf("unexpected Agent identity config: %+v", cfg.AgentIdentity)
+	}
+	if cfg.AgentEnrollment.OperationTimeout != 9*time.Second ||
 		cfg.AgentEnrollment.RateLimit.Window != 3*time.Minute ||
 		cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource != 42 {
 		t.Fatalf("unexpected Agent enrollment config: %+v", cfg.AgentEnrollment)
 	}
-	if cfg.AgentListener.TLSCertificateFile != "/run/secrets/zke-server.crt" ||
-		cfg.AgentListener.TLSPrivateKeyFile != "/run/secrets/zke-server.key" ||
+	if cfg.AgentListener.Address != "127.0.0.1:9443" ||
+		cfg.AgentListener.TLS.CertificateFile != "/run/secrets/agent-listener.crt" ||
+		cfg.AgentListener.TLS.PrivateKeyFile != "/run/secrets/agent-listener.key" ||
 		cfg.AgentListener.HandshakeTimeout != 8*time.Second ||
 		cfg.AgentListener.HeartbeatInterval != 12*time.Second ||
 		cfg.AgentListener.HeartbeatTimeout != 36*time.Second ||
@@ -126,14 +155,29 @@ log_level: warn
 		t.Fatal("Validate() accepted an Agent heartbeat interval at the timeout")
 	}
 	partialCAConfig := cfg
-	partialCAConfig.AgentEnrollment.SigningCAPrivateKeyFile = ""
+	partialCAConfig.AgentIdentity.CAPrivateKeyFile = ""
 	if err := partialCAConfig.Validate(); err == nil {
-		t.Fatal("Validate() accepted a signing CA certificate without its private key")
+		t.Fatal("Validate() accepted an Agent identity CA certificate without its private key")
 	}
-	partialTLSConfig := cfg
-	partialTLSConfig.HTTP.TLSPrivateKeyFile = ""
-	if err := partialTLSConfig.Validate(); err == nil {
+	partialHTTPTLSConfig := cfg
+	partialHTTPTLSConfig.HTTP.TLS.PrivateKeyFile = ""
+	if err := partialHTTPTLSConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted an HTTP TLS certificate without its private key")
+	}
+	insecureHTTPTLSConfig := cfg
+	insecureHTTPTLSConfig.Auth.CookieSecure = false
+	if err := insecureHTTPTLSConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted HTTP TLS with insecure session cookies")
+	}
+	missingInitialAdminPassword := cfg
+	missingInitialAdminPassword.Auth.InitialAdmin.PasswordFile = ""
+	if err := missingInitialAdminPassword.Validate(); err == nil {
+		t.Fatal("Validate() accepted an initial administrator without a password file")
+	}
+	sharedListenerConfig := cfg
+	sharedListenerConfig.AgentListener.Address = "localhost:9000"
+	if err := sharedListenerConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted the HTTP port for the Agent Listener")
 	}
 	if cfg.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("shutdown timeout = %s, want YAML value", cfg.ShutdownTimeout)
@@ -146,6 +190,100 @@ func TestLoadConfigRequiresPath(t *testing.T) {
 	_, err := LoadConfig(nil)
 	if err == nil {
 		t.Fatal("LoadConfig() succeeded without --config")
+	}
+}
+
+func TestRepositoryServerConfigLoads(t *testing.T) {
+	t.Parallel()
+
+	if _, err := LoadConfig([]string{
+		"--config",
+		filepath.Join("..", "..", "configs", "zke-server.yaml"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadConfigManagedPKIAndAgentInstall(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "managed-server.yaml")
+	content := []byte(`
+http:
+  address: 127.0.0.1:8080
+  read_header_timeout: 5s
+  read_timeout: 15s
+  write_timeout: 15s
+  idle_timeout: 60s
+database:
+  url: postgres://example
+  connect_timeout: 5s
+  migration_timeout: 2m
+auth:
+  session_idle_timeout: 30m
+  session_absolute_timeout: 8h
+  operation_timeout: 10s
+  max_concurrent_password_checks: 4
+  cookie_secure: false
+  login_rate_limit:
+    window: 1m
+    max_attempts_per_account: 5
+    max_attempts_per_source: 20
+agent_pki:
+  mode: managed
+  agent_client_certificate_validity: 720h
+  managed:
+    directory: /var/lib/zke/pki
+    auto_generate: true
+    agent_client_ca_validity: 87600h
+    agent_listener_ca_validity: 175200h
+    agent_listener_certificate_validity: 87600h
+    agent_listener_renew_before: 8760h
+    listener_sans:
+      dns_names: [zke.example.com]
+      ip_addresses: [127.0.0.1]
+agent_enrollment:
+  operation_timeout: 10s
+  rate_limit:
+    window: 1m
+    max_attempts_per_source: 30
+agent_install:
+  enabled: true
+  public_http_url: https://zke.example.com
+  public_quic_address: zke.example.com:8443
+  image: registry.example.com/zke-agent:test
+  namespace: zke-system
+  image_pull_policy: IfNotPresent
+agent_listener:
+  address: 127.0.0.1:8443
+  handshake_timeout: 10s
+  heartbeat_interval: 10s
+  heartbeat_timeout: 30s
+  last_seen_write_interval: 1m
+  operation_timeout: 10s
+certificate_monitor:
+  warning_before: 720h
+  check_interval: 1h
+shutdown_timeout: 10s
+log_level: info
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig([]string{"--config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AgentPKI.Mode != "managed" ||
+		cfg.AgentPKI.Directory != "/var/lib/zke/pki" ||
+		!cfg.AgentPKI.AutoGenerate ||
+		len(cfg.AgentPKI.AgentListenerDNSNames) != 1 {
+		t.Fatalf("unexpected managed Agent PKI config: %+v", cfg.AgentPKI)
+	}
+	if !cfg.AgentInstall.Enabled ||
+		cfg.AgentInstall.PublicHTTPURL != "https://zke.example.com" ||
+		cfg.AgentInstall.Image != "registry.example.com/zke-agent:test" {
+		t.Fatalf("unexpected Agent installation config: %+v", cfg.AgentInstall)
 	}
 }
 
@@ -177,19 +315,24 @@ func TestConfigRejectsUnboundedTimeout(t *testing.T) {
 				MaxAttemptsPerSource:  20,
 			},
 		},
+		AgentIdentity: AgentIdentityConfig{
+			CACertificateFile: "/agent-client-ca.crt",
+			CAPrivateKeyFile:  "/agent-client-ca.key",
+			CertificateTTL:    30 * 24 * time.Hour,
+		},
 		AgentEnrollment: AgentEnrollmentConfig{
-			SigningCACertificateFile: "/agent-ca.crt",
-			SigningCAPrivateKeyFile:  "/agent-ca.key",
-			CertificateTTL:           30 * 24 * time.Hour,
-			OperationTimeout:         10 * time.Second,
+			OperationTimeout: 10 * time.Second,
 			RateLimit: AgentEnrollmentRateLimitConfig{
 				Window:               time.Minute,
 				MaxAttemptsPerSource: 30,
 			},
 		},
 		AgentListener: AgentListenerConfig{
-			TLSCertificateFile:    "/server.crt",
-			TLSPrivateKeyFile:     "/server.key",
+			Address: "127.0.0.1:8443",
+			TLS: TLSIdentityConfig{
+				CertificateFile: "/server.crt",
+				PrivateKeyFile:  "/server.key",
+			},
 			HandshakeTimeout:      10 * time.Second,
 			HeartbeatInterval:     10 * time.Second,
 			HeartbeatTimeout:      30 * time.Second,
@@ -233,19 +376,24 @@ func TestConfigRejectsSessionIdleAboveAbsoluteTimeout(t *testing.T) {
 				MaxAttemptsPerSource:  20,
 			},
 		},
+		AgentIdentity: AgentIdentityConfig{
+			CACertificateFile: "/agent-client-ca.crt",
+			CAPrivateKeyFile:  "/agent-client-ca.key",
+			CertificateTTL:    30 * 24 * time.Hour,
+		},
 		AgentEnrollment: AgentEnrollmentConfig{
-			SigningCACertificateFile: "/agent-ca.crt",
-			SigningCAPrivateKeyFile:  "/agent-ca.key",
-			CertificateTTL:           30 * 24 * time.Hour,
-			OperationTimeout:         10 * time.Second,
+			OperationTimeout: 10 * time.Second,
 			RateLimit: AgentEnrollmentRateLimitConfig{
 				Window:               time.Minute,
 				MaxAttemptsPerSource: 30,
 			},
 		},
 		AgentListener: AgentListenerConfig{
-			TLSCertificateFile:    "/server.crt",
-			TLSPrivateKeyFile:     "/server.key",
+			Address: "127.0.0.1:8443",
+			TLS: TLSIdentityConfig{
+				CertificateFile: "/server.crt",
+				PrivateKeyFile:  "/server.key",
+			},
 			HandshakeTimeout:      10 * time.Second,
 			HeartbeatInterval:     10 * time.Second,
 			HeartbeatTimeout:      30 * time.Second,
@@ -289,19 +437,24 @@ func TestConfigRejectsOperationTimeoutAtOrAboveWriteTimeout(t *testing.T) {
 				MaxAttemptsPerSource:  20,
 			},
 		},
+		AgentIdentity: AgentIdentityConfig{
+			CACertificateFile: "/agent-client-ca.crt",
+			CAPrivateKeyFile:  "/agent-client-ca.key",
+			CertificateTTL:    30 * 24 * time.Hour,
+		},
 		AgentEnrollment: AgentEnrollmentConfig{
-			SigningCACertificateFile: "/agent-ca.crt",
-			SigningCAPrivateKeyFile:  "/agent-ca.key",
-			CertificateTTL:           30 * 24 * time.Hour,
-			OperationTimeout:         9 * time.Second,
+			OperationTimeout: 9 * time.Second,
 			RateLimit: AgentEnrollmentRateLimitConfig{
 				Window:               time.Minute,
 				MaxAttemptsPerSource: 30,
 			},
 		},
 		AgentListener: AgentListenerConfig{
-			TLSCertificateFile:    "/server.crt",
-			TLSPrivateKeyFile:     "/server.key",
+			Address: "127.0.0.1:8443",
+			TLS: TLSIdentityConfig{
+				CertificateFile: "/server.crt",
+				PrivateKeyFile:  "/server.key",
+			},
 			HandshakeTimeout:      10 * time.Second,
 			HeartbeatInterval:     10 * time.Second,
 			HeartbeatTimeout:      30 * time.Second,
@@ -332,6 +485,24 @@ unknown_field: true
 
 	if _, err := LoadConfig([]string{"--config", path}); err == nil {
 		t.Fatal("LoadConfig() accepted an unknown YAML field")
+	}
+}
+
+func TestLoadConfigRejectsFlatNativeHTTPTLSFields(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	content := []byte(`
+http:
+  address: 127.0.0.1:8080
+  tls_certificate_file: /run/secrets/http.crt
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadConfig([]string{"--config", path}); err == nil {
+		t.Fatal("LoadConfig() accepted flat native HTTP TLS configuration")
 	}
 }
 

@@ -91,7 +91,13 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"CONSTRAINT enrollments_cluster_name_format",
 		"CONSTRAINT enrollments_creator_idempotency_unique",
 		"CREATE INDEX enrollments_active_expiry_idx",
+		"CREATE UNIQUE INDEX agent_credentials_agent_csr_unique",
+		"CREATE TRIGGER agent_credentials_notify_revocation",
+		"CREATE TRIGGER agents_notify_revocation",
+		"CREATE TRIGGER clusters_notify_revocation",
 		"CREATE INDEX audit_events_scope_time_idx",
+		"CREATE TABLE server_pki_state",
+		"active_credential_serial text",
 	} {
 		if !strings.Contains(available[0].sql, required) {
 			t.Errorf("foundation migration is missing %q", required)
@@ -197,6 +203,7 @@ WHERE table_schema = current_schema()
       'clusters',
       'agents',
       'agent_credentials',
+      'server_pki_state',
       'enrollments',
       'enrollment_attempts',
       'audit_events'
@@ -204,8 +211,8 @@ WHERE table_schema = current_schema()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tableCount != 11 {
-		t.Fatalf("foundation table count = %d, want 11", tableCount)
+	if tableCount != 12 {
+		t.Fatalf("foundation table count = %d, want 12", tableCount)
 	}
 
 	var csrfColumnNullable string

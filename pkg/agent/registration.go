@@ -21,11 +21,11 @@ import (
 )
 
 const (
-	agentEnrollmentPath         = "/agent-api/v1/enroll"
-	agentProtocolVersion        = "v1"
-	maxEnrollmentTokenFileBytes = 4 << 10
-	maxEnrollmentResponseBytes  = 2 << 20
-	maxServerCAFileBytes        = 1 << 20
+	agentEnrollmentPath        = "/agent-api/v1/enroll"
+	agentProtocolVersion       = "v1"
+	maxEnrollmentTokenBytes    = 4 << 10
+	maxEnrollmentResponseBytes = 2 << 20
+	maxCACertificateFileBytes  = 1 << 20
 )
 
 type registrationClient struct {
@@ -82,7 +82,7 @@ func (err *registrationError) Error() string {
 }
 
 func newRegistrationClient(cfg Config) (*registrationClient, error) {
-	serverURL, err := url.Parse(cfg.ServerAddress)
+	serverURL, err := url.Parse(cfg.Registration.ServerURL)
 	if err != nil {
 		return nil, errors.New("parse Agent Server address")
 	}
@@ -92,17 +92,29 @@ func newRegistrationClient(cfg Config) (*registrationClient, error) {
 	if err != nil || rootCAs == nil {
 		rootCAs = x509.NewCertPool()
 	}
-	if cfg.ServerCAFile != "" {
+	if cfg.Registration.CACertificateFile != "" {
 		certificatePEM, err := readBoundedFile(
-			cfg.ServerCAFile,
-			maxServerCAFileBytes,
-			"Server CA file",
+			cfg.Registration.CACertificateFile,
+			maxCACertificateFileBytes,
+			"registration CA certificate file",
 		)
 		if err != nil {
 			return nil, err
 		}
 		if err := appendRootCertificates(rootCAs, certificatePEM); err != nil {
-			return nil, errors.New("Server CA file does not contain a valid certificate")
+			return nil, errors.New(
+				"registration CA certificate file does not contain a valid certificate",
+			)
+		}
+	}
+	if len(cfg.Registration.CACertificatePEM) != 0 {
+		if err := appendRootCertificates(
+			rootCAs,
+			cfg.Registration.CACertificatePEM,
+		); err != nil {
+			return nil, errors.New(
+				"registration CA certificate Secret does not contain a valid certificate",
+			)
 		}
 	}
 
@@ -116,7 +128,7 @@ func newRegistrationClient(cfg Config) (*registrationClient, error) {
 		MaxIdleConns:          10,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: cfg.RegistrationTimeout,
+		ResponseHeaderTimeout: cfg.Registration.Timeout,
 		ExpectContinueTimeout: time.Second,
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
@@ -127,7 +139,7 @@ func newRegistrationClient(cfg Config) (*registrationClient, error) {
 		endpoint: serverURL.String(),
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   cfg.RegistrationTimeout,
+			Timeout:   cfg.Registration.Timeout,
 			CheckRedirect: func(
 				_ *http.Request,
 				_ []*http.Request,
@@ -204,19 +216,18 @@ func retryableResponseReadError(err error) bool {
 	return errors.As(err, &networkError)
 }
 
-func readEnrollmentToken(path string) (string, error) {
-	value, err := readBoundedFile(
-		path,
-		maxEnrollmentTokenFileBytes,
-		"Agent enrollment token file",
-	)
-	if err != nil {
-		return "", err
+func validateEnrollmentToken(value []byte) (string, error) {
+	if len(value) == 0 || len(value) > maxEnrollmentTokenBytes {
+		return "", errors.New(
+			"Agent enrollment Secret contains an invalid token",
+		)
 	}
 	token := strings.TrimSpace(string(value))
 	decoded, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(decoded) != 32 {
-		return "", errors.New("Agent enrollment token file contains an invalid token")
+		return "", errors.New(
+			"Agent enrollment Secret contains an invalid token",
+		)
 	}
 	return token, nil
 }

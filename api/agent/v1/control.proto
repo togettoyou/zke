@@ -14,6 +14,8 @@ message ControlFrame {
     HeartbeatAck heartbeat_ack = 13;
     ClientGoodbye client_goodbye = 14;
     GoAway go_away = 15;
+    CertificateRenewalRequest certificate_renewal_request = 16;
+    CertificateRenewalResponse certificate_renewal_response = 17;
   }
 }
 
@@ -30,6 +32,7 @@ message ServerHello {
   int64 server_time_unix_milli = 2;
   uint64 heartbeat_interval_millis = 3;
   uint64 heartbeat_timeout_millis = 4;
+  repeated string capabilities = 5;
 }
 
 message Heartbeat {
@@ -49,6 +52,15 @@ message ClientGoodbye {
 
 message GoAway {
   string reason = 1;
+}
+
+message CertificateRenewalRequest {
+  string csr_pem = 1;
+}
+
+message CertificateRenewalResponse {
+  string certificate_pem = 1;
+  int64 certificate_expires_at_unix_milli = 2;
 }
 
 enum HealthStatus {

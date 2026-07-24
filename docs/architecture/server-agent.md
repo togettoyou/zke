@@ -1,5 +1,8 @@
 # Server + Agent 架构
 
+Agent 首次注册、identity Secret、证书信任链和 QUIC/mTLS 长连接的逐步说明参见
+[Agent 注册与连接](agent-enrollment-and-connection.md)。
+
 ## ZKE Server
 
 ZKE Server 是平台统一控制端，规划负责：
@@ -40,25 +43,37 @@ ZKE Server 是平台统一控制端，规划负责：
 身份存储使用固定名称 Kubernetes Secret。Agent 通过 client-go 按配置的 `identity.namespace` 和
 `identity.secret_name` 查找它；不存在时直接创建并写入待注册私钥、CSR 和幂等键，存在时读取或更新。部署清单
 不再需要预创建空 Secret。ServiceAccount 至少需要所在 Namespace 的 Secret `create` 权限，以及身份 Secret 的
-`get`、`update` 权限；不需要通过 API 读取注册 Token Secret。
+`get`、`update` 权限。
 
 一次性注册 Token 的来源不同：Server 创建 Enrollment 后只返回一次 Token，运维系统负责把它写入独立的临时
-Kubernetes Secret，并由 Agent Deployment 将其中的 `token` Key 只读挂载到
-`/var/run/secrets/zke-enrollment/token`。这里的路径由 Pod VolumeMount 决定，不是 Kubernetes Secret 的资源名；
-Agent 只读取文件，不通过 Kubernetes API 查询这个临时 Secret，因此无需相应的 Secret `get` 权限。完整身份存在
-后，Agent 不再读取注册 Token，临时 Secret 应由运维系统删除。
+Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollment` 的 `token` Key，不把 Token
+写入 YAML 或宿主机文件。完整身份存在后，Agent 不再读取注册 Token；Secret 可以保留以简化 Pod 重建，也可以
+由外部生命周期策略清理。
 
-当前仓库还没有提供 Helm Chart 或 Kubernetes Deployment/RBAC 清单。身份 Secret 已由 Agent 自动创建；一次性
-Token Secret、VolumeMount 和实际资源管理 RBAC 仍必须由部署者准备，部署清单自动化属于待实现范围。
+当前仓库还没有提供 Helm Chart，但 Server 已能生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC
+清单。ServiceAccount 对 Enrollment、Trust 和 identity Secret 具有定域的 `get` 权限，只能更新 identity
+Secret。
+ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
+`http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
+原生 HTTPS 或由上游网关终止 TLS。
 注册后的 QUIC/mTLS 主动连接、证书身份与 `ClientHello` 交叉校验、`ServerHello`、心跳确认、有界重连和
-`last_seen_at` 限频持久化已经实现。HTTP API 使用 TCP；QUIC 使用 UDP，并复用 `http.address` 的主机与数字端口。
-任务路由、业务 Stream、证书续期、撤销后的现有连接关闭以及对外 Agent 在线状态查询仍未实现。
+`last_seen_at` 限频持久化已经实现。Agent 会在证书进入配置的续期窗口后，通过已认证的 Control Stream 自动
+续期并使用新证书重连；凭据、Agent 或 Cluster 被撤销时，PostgreSQL 通知会让所有 Server 实例关闭匹配的现有
+连接。HTTP API 使用 `http.address` 的 TCP Listener；QUIC 使用独立
+`agent_listener.address` 的 UDP Listener，两者必须分别配置。任务路由、业务 Stream 以及对外 Agent 在线状态
+查询仍未实现。
 
-Agent 为固定身份 Secret、注册 Token 路径、注册重试参数和日志级别提供默认值，但示例配置会显式展示这些部署
-约定，避免隐藏运维依赖。Agent 默认使用 Pod 内的 InCluster Kubernetes 配置；本地开发或特殊环境可以显式设置
+Agent 为固定的 Enrollment、Trust 和 identity Secret 名称以及注册重试参数和日志级别提供默认值。Agent 默认
+使用 Pod 内的 InCluster Kubernetes 配置；本地开发或特殊环境可以显式设置
 `kubeconfig_file`，未设置时回退到 `KUBECONFIG` 或 `~/.kube/config`。显式文件始终优先于环境自动识别。
-顶层 `server_ca_file` 只用于可选的 HTTP API HTTPS；`connection.server_ca_file` 用于验证 QUIC Server 身份，
-两者都与 Kubernetes API 使用的 CA 无关。`enrollment_token_file` 也可以在非标准挂载场景覆盖默认路径。
+`registration.server_url`、Enrollment Secret 与可选的 `registration.ca_certificate_file` 用于 HTTP(S)
+注册；`connection.server_address` 与 Trust Secret 中的 Listener CA 用于 QUIC/mTLS 长连接。特殊部署可以
+用 CA 文件覆盖 Trust Secret。两类端点独立配置，信任根也不混用；它们都与 Kubernetes API 使用的 CA 无关。
+
+Agent mTLS 使用两条独立信任链：`agent-client-ca` 签发并验证 Agent 客户端身份，`agent-listener-ca` 签发
+Agent Listener 服务端证书。Managed PKI 模式在受保护的 Server PV 中保存两套 CA 与 Listener 身份，Server
+首次启动自动生成，并在 Listener 叶子证书进入续期窗口时复用原私钥续期；数据库保存证书指纹，PV 丢失时拒绝
+静默重建 CA。需要离线 Listener CA 或外部密钥管理时可以使用 external 模式。
 
 ## 连接模型
 

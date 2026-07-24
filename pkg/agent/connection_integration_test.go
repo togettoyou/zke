@@ -24,6 +24,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestAgentQUICConnectionAndHeartbeat(t *testing.T) {
@@ -50,20 +51,30 @@ func TestAgentQUICConnectionAndHeartbeat(t *testing.T) {
 		credentialID = "00000000-0000-4000-8000-000000000005"
 	)
 	now := time.Now().UTC()
-	agentCACertificate, agentCAPrivateKey, agentCAPEM, agentCAKeyPEM :=
-		createConnectionTestCA(t, "Agent CA", 1, now)
-	_, serverCAPrivateKey, serverCAPEM, _ :=
-		createConnectionTestCA(t, "Server CA", 2, now)
-	serverCertificatePEM, serverPrivateKeyPEM := createConnectionTestServerCertificate(
-		t,
-		serverCAPEM,
-		serverCAPrivateKey,
-		now,
-	)
+	clientCACertificate, clientCAPrivateKey, clientCAPEM, clientCAKeyPEM :=
+		createConnectionTestCA(t, "Agent Client CA", 1, now)
+	_, listenerCAPrivateKey, listenerCAPEM, _ :=
+		createConnectionTestCA(t, "Agent Listener CA", 2, now)
+	listenerCertificatePEM, listenerPrivateKeyPEM :=
+		createConnectionTestListenerCertificate(
+			t,
+			listenerCAPEM,
+			listenerCAPrivateKey,
+			now,
+		)
 
-	pending, err := newPendingIdentity()
+	identityStore := NewIdentityStore(
+		fake.NewClientset(),
+		"zke-system",
+		"zke-agent-identity",
+	)
+	identityState, err := identityStore.LoadOrCreatePending(setupContext)
 	if err != nil {
 		t.Fatal(err)
+	}
+	pending := identityState.Pending
+	if pending == nil {
+		t.Fatal("identity store did not create a pending identity")
 	}
 	csrBlock, _ := pem.Decode(pending.CSRPEM)
 	if csrBlock == nil {
@@ -73,15 +84,15 @@ func TestAgentQUICConnectionAndHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer, err := enrollment.NewCertificateSigner(
-		agentCAPEM,
-		agentCAKeyPEM,
-		time.Hour,
+	initialSigner, err := enrollment.NewCertificateSigner(
+		clientCAPEM,
+		clientCAKeyPEM,
+		5*time.Second,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	signedAgentCertificate, err := signer.Sign(
+	signedAgentCertificate, err := initialSigner.Sign(
 		certificateRequest,
 		enrollment.CertificateIdentity{
 			TenantID:  tenantID,
@@ -94,8 +105,22 @@ func TestAgentQUICConnectionAndHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if agentCACertificate == nil || agentCAPrivateKey == nil {
-		t.Fatal("Agent CA generation failed")
+	if clientCACertificate == nil || clientCAPrivateKey == nil {
+		t.Fatal("Agent Client CA generation failed")
+	}
+	localIdentity, err := identityStore.Complete(
+		setupContext,
+		*pending,
+		RegistrationIdentity{
+			ClusterID:            clusterID,
+			AgentID:              agentID,
+			CertificatePEM:       []byte(signedAgentCertificate.PEM),
+			CertificateExpiresAt: signedAgentCertificate.ExpiresAt,
+		},
+		now,
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	batch := &pgx.Batch{}
@@ -145,15 +170,15 @@ VALUES ($3, $1, $2, 'cluster', 'pending')`,
 	}
 
 	certificateDirectory := t.TempDir()
-	serverCertificateFile := filepath.Join(certificateDirectory, "server.crt")
-	serverPrivateKeyFile := filepath.Join(certificateDirectory, "server.key")
-	serverCAFile := filepath.Join(certificateDirectory, "server-ca.crt")
-	agentCAFile := filepath.Join(certificateDirectory, "agent-ca.crt")
+	listenerCertificateFile := filepath.Join(certificateDirectory, "agent-listener.crt")
+	listenerPrivateKeyFile := filepath.Join(certificateDirectory, "agent-listener.key")
+	listenerCAFile := filepath.Join(certificateDirectory, "agent-listener-ca.crt")
+	clientCAFile := filepath.Join(certificateDirectory, "agent-client-ca.crt")
 	for path, content := range map[string][]byte{
-		serverCertificateFile: serverCertificatePEM,
-		serverPrivateKeyFile:  serverPrivateKeyPEM,
-		serverCAFile:          serverCAPEM,
-		agentCAFile:           agentCAPEM,
+		listenerCertificateFile: listenerCertificatePEM,
+		listenerPrivateKeyFile:  listenerPrivateKeyPEM,
+		listenerCAFile:          listenerCAPEM,
+		clientCAFile:            clientCAPEM,
 	} {
 		if err := os.WriteFile(path, content, 0o600); err != nil {
 			t.Fatal(err)
@@ -162,89 +187,158 @@ VALUES ($3, $1, $2, 'cluster', 'pending')`,
 
 	address := reserveUDPAddress(t)
 	logger := discardAgentLogger()
+	connectionStore := store.NewAgentConnectionStore(pool)
+	renewalSigner, err := enrollment.NewCertificateSigner(
+		clientCAPEM,
+		clientCAKeyPEM,
+		2*time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	manager, err := agentconn.New(
 		agentconn.Config{
-			Address:                address,
-			TLSCertificateFile:     serverCertificateFile,
-			TLSPrivateKeyFile:      serverPrivateKeyFile,
-			AgentCACertificateFile: agentCAFile,
-			HandshakeTimeout:       time.Second,
-			HeartbeatInterval:      time.Second,
-			HeartbeatTimeout:       3 * time.Second,
-			LastSeenWriteInterval:  time.Second,
-			OperationTimeout:       time.Second,
+			Address:                 address,
+			TLSCertificateFile:      listenerCertificateFile,
+			TLSPrivateKeyFile:       listenerPrivateKeyFile,
+			ClientCACertificateFile: clientCAFile,
+			HandshakeTimeout:        time.Second,
+			HeartbeatInterval:       time.Second,
+			HeartbeatTimeout:        3 * time.Second,
+			LastSeenWriteInterval:   time.Second,
+			OperationTimeout:        time.Second,
 		},
 		logger,
-		store.NewAgentConnectionStore(pool),
+		connectionStore,
+		enrollment.NewCertificateRenewalService(
+			connectionStore,
+			renewalSigner,
+		),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	runContext, cancelRun := context.WithTimeout(context.Background(), 2300*time.Millisecond)
+	runContext, cancelRun := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancelRun()
 	managerErrors := make(chan error, 1)
 	go func() {
 		managerErrors <- manager.Run(runContext)
 	}()
 
-	err = runConnectionLoop(
-		runContext,
-		Config{
-			ServerAddress: "http://" + address,
-			Connection: ConnectionConfig{
-				ServerCAFile:         serverCAFile,
-				ConnectTimeout:       time.Second,
-				RetryInitialInterval: 10 * time.Millisecond,
-				RetryMaxInterval:     50 * time.Millisecond,
+	agentErrors := make(chan error, 1)
+	go func() {
+		agentErrors <- runConnectionLoop(
+			runContext,
+			Config{
+				CertificateRenewBefore: 2 * time.Second,
+				Connection: ConnectionConfig{
+					ServerAddress:        address,
+					CACertificateFile:    listenerCAFile,
+					ConnectTimeout:       time.Second,
+					RetryInitialInterval: 10 * time.Millisecond,
+					RetryMaxInterval:     50 * time.Millisecond,
+				},
 			},
-		},
-		LocalIdentity{
-			ClusterID:            clusterID,
-			AgentID:              agentID,
-			PrivateKeyPEM:        pending.PrivateKeyPEM,
-			CertificatePEM:       []byte(signedAgentCertificate.PEM),
-			CertificateExpiresAt: signedAgentCertificate.ExpiresAt,
-		},
-		"development",
-		logger,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if managerErr := <-managerErrors; managerErr != nil {
-		t.Fatal(managerErr)
-	}
+			identityStore,
+			localIdentity,
+			"development",
+			logger,
+		)
+	}()
 
 	var lifecycleStatus, healthStatus, protocolVersion string
-	var lastSeenAt time.Time
-	if err := pool.QueryRow(
-		setupContext,
-		`
+	var lastSeenAt *time.Time
+	var credentialCount, activeCredentialCount int
+	var activeCertificateSerial string
+	stateReady := false
+	pollTicker := time.NewTicker(20 * time.Millisecond)
+	defer pollTicker.Stop()
+	for !stateReady {
+		select {
+		case agentErr := <-agentErrors:
+			t.Fatalf("Agent stopped before renewal completed: %v", agentErr)
+		case <-runContext.Done():
+			t.Fatal("timed out waiting for Agent certificate renewal")
+		case <-pollTicker.C:
+		}
+		err = pool.QueryRow(setupContext, `
 SELECT lifecycle_status, health_status, protocol_version, last_seen_at
 FROM agents
 WHERE id = $1
 `,
+			agentID,
+		).Scan(
+			&lifecycleStatus,
+			&healthStatus,
+			&protocolVersion,
+			&lastSeenAt,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = pool.QueryRow(setupContext, `
+SELECT
+    count(*),
+    count(*) FILTER (WHERE revoked_at IS NULL),
+    COALESCE(max(serial) FILTER (WHERE revoked_at IS NULL), '')
+FROM agent_credentials
+WHERE agent_id = $1
+`, agentID).Scan(
+			&credentialCount,
+			&activeCredentialCount,
+			&activeCertificateSerial,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateReady = lifecycleStatus == "active" &&
+			healthStatus == "healthy" &&
+			protocolVersion == "v1" &&
+			lastSeenAt != nil &&
+			lastSeenAt.After(now) &&
+			credentialCount == 2 &&
+			activeCredentialCount == 1 &&
+			activeCertificateSerial != signedAgentCertificate.Serial
+	}
+
+	renewedState, err := identityStore.LoadOrCreatePending(setupContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewedState.Identity == nil ||
+		!renewedState.Identity.CertificateExpiresAt.After(
+			signedAgentCertificate.ExpiresAt,
+		) {
+		t.Fatalf("Agent identity was not renewed: %+v", renewedState)
+	}
+	if _, err := pool.Exec(
+		setupContext,
+		`UPDATE agent_credentials
+SET revoked_at = now()
+WHERE agent_id = $1
+  AND serial = $2
+  AND revoked_at IS NULL`,
 		agentID,
-	).Scan(
-		&lifecycleStatus,
-		&healthStatus,
-		&protocolVersion,
-		&lastSeenAt,
+		activeCertificateSerial,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if lifecycleStatus != "active" ||
-		healthStatus != "healthy" ||
-		protocolVersion != "v1" ||
-		!lastSeenAt.After(now) {
-		t.Fatalf(
-			"unexpected connected Agent state: %s %s %s %s",
-			lifecycleStatus,
-			healthStatus,
-			protocolVersion,
-			lastSeenAt,
-		)
+	select {
+	case agentErr := <-agentErrors:
+		if agentErr == nil ||
+			!permanentAgentConnectionError(agentErr) {
+			t.Fatalf(
+				"Agent revocation error = %v, want permanent rejection",
+				agentErr,
+			)
+		}
+	case <-runContext.Done():
+		t.Fatal("revoked Agent connection did not close")
+	}
+	cancelRun()
+	if managerErr := <-managerErrors; managerErr != nil {
+		t.Fatal(managerErr)
 	}
 }
 
@@ -291,7 +385,7 @@ func createConnectionTestCA(
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privateKeyDER})
 }
 
-func createConnectionTestServerCertificate(
+func createConnectionTestListenerCertificate(
 	t *testing.T,
 	caPEM []byte,
 	caPrivateKey *ecdsa.PrivateKey,
@@ -300,7 +394,7 @@ func createConnectionTestServerCertificate(
 	t.Helper()
 	caBlock, _ := pem.Decode(caPEM)
 	if caBlock == nil {
-		t.Fatal("decode Server CA")
+		t.Fatal("decode Agent Listener CA")
 	}
 	caCertificate, err := x509.ParseCertificate(caBlock.Bytes)
 	if err != nil {

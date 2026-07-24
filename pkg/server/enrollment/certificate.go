@@ -28,10 +28,9 @@ const (
 )
 
 type CertificateSigner struct {
-	certificate    *x509.Certificate
-	certificatePEM string
-	privateKey     crypto.Signer
-	ttl            time.Duration
+	certificate *x509.Certificate
+	privateKey  crypto.Signer
+	ttl         time.Duration
 }
 
 type CertificateIdentity struct {
@@ -65,24 +64,23 @@ func NewCertificateSigner(
 	}
 	certificatePublicKey, err := x509.MarshalPKIXPublicKey(certificate.PublicKey)
 	if err != nil {
-		return nil, errors.New("marshal Agent CA certificate public key")
+		return nil, errors.New("marshal Agent client CA certificate public key")
 	}
 	privatePublicKey, err := x509.MarshalPKIXPublicKey(privateKey.Public())
 	if err != nil {
-		return nil, errors.New("marshal Agent CA private key public key")
+		return nil, errors.New("marshal Agent client CA private key public key")
 	}
 	if !bytes.Equal(certificatePublicKey, privatePublicKey) {
-		return nil, errors.New("Agent CA certificate and private key do not match")
+		return nil, errors.New("Agent client CA certificate and private key do not match")
 	}
 	now := time.Now().UTC()
 	if now.Before(certificate.NotBefore) || !now.Before(certificate.NotAfter) {
-		return nil, errors.New("Agent CA certificate is not currently valid")
+		return nil, errors.New("Agent client CA certificate is not currently valid")
 	}
 	return &CertificateSigner{
-		certificate:    certificate,
-		certificatePEM: string(certificatePEM),
-		privateKey:     privateKey,
-		ttl:            ttl,
+		certificate: certificate,
+		privateKey:  privateKey,
+		ttl:         ttl,
 	}, nil
 }
 
@@ -103,23 +101,23 @@ func (signer *CertificateSigner) Sign(
 		return SignedCertificate{}, err
 	}
 	if now.Before(signer.certificate.NotBefore) || !now.Before(signer.certificate.NotAfter) {
-		return SignedCertificate{}, errors.New("Agent CA certificate is not valid at signing time")
+		return SignedCertificate{}, errors.New("Agent client CA certificate is not valid at signing time")
 	}
 
 	serialNumber, err := newCertificateSerial()
 	if err != nil {
 		return SignedCertificate{}, err
 	}
-	notBefore := now.Add(-certificateClockSkew)
+	notBefore := now.Add(-certificateClockSkew).Truncate(time.Second)
 	if notBefore.Before(signer.certificate.NotBefore) {
 		notBefore = signer.certificate.NotBefore
 	}
-	notAfter := now.Add(signer.ttl)
+	notAfter := now.Add(signer.ttl).Truncate(time.Second)
 	if notAfter.After(signer.certificate.NotAfter) {
 		notAfter = signer.certificate.NotAfter
 	}
 	if !notAfter.After(now) {
-		return SignedCertificate{}, errors.New("Agent CA expires before client certificate")
+		return SignedCertificate{}, errors.New("Agent client CA expires before client certificate")
 	}
 	identityURI := &url.URL{
 		Scheme: "zke",
@@ -167,7 +165,7 @@ func (signer *CertificateSigner) Sign(
 		Bytes: certificateDER,
 	})
 	return SignedCertificate{
-		PEM:       string(leafPEM) + signer.certificatePEM,
+		PEM:       string(leafPEM),
 		Serial:    serialNumber.String(),
 		ExpiresAt: notAfter,
 	}, nil
@@ -175,25 +173,25 @@ func (signer *CertificateSigner) Sign(
 
 func parseCACertificate(value []byte) (*x509.Certificate, error) {
 	if len(value) == 0 || len(value) > maxCAPEMBytes {
-		return nil, errors.New("Agent CA certificate PEM size is invalid")
+		return nil, errors.New("Agent client CA certificate PEM size is invalid")
 	}
 	block, rest := pem.Decode(value)
 	if block == nil ||
 		block.Type != "CERTIFICATE" ||
 		len(block.Headers) != 0 ||
 		len(bytes.TrimSpace(rest)) != 0 {
-		return nil, errors.New("Agent CA certificate PEM is invalid")
+		return nil, errors.New("Agent client CA certificate PEM is invalid")
 	}
 	certificate, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, errors.New("parse Agent CA certificate")
+		return nil, errors.New("parse Agent client CA certificate")
 	}
 	if !certificate.IsCA ||
 		!certificate.BasicConstraintsValid ||
 		certificate.KeyUsage&x509.KeyUsageCertSign == 0 {
-		return nil, errors.New("Agent CA certificate cannot sign certificates")
+		return nil, errors.New("Agent client CA certificate cannot sign certificates")
 	}
-	if err := validateCertificatePublicKey(certificate.PublicKey, "Agent CA"); err != nil {
+	if err := validateCertificatePublicKey(certificate.PublicKey, "Agent client CA"); err != nil {
 		return nil, err
 	}
 	return certificate, nil
@@ -201,11 +199,11 @@ func parseCACertificate(value []byte) (*x509.Certificate, error) {
 
 func parseCAPrivateKey(value []byte) (crypto.Signer, error) {
 	if len(value) == 0 || len(value) > maxCAKeyPEMBytes {
-		return nil, errors.New("Agent CA private key PEM size is invalid")
+		return nil, errors.New("Agent client CA private key PEM size is invalid")
 	}
 	block, rest := pem.Decode(value)
 	if block == nil || len(block.Headers) != 0 || len(bytes.TrimSpace(rest)) != 0 {
-		return nil, errors.New("Agent CA private key PEM is invalid")
+		return nil, errors.New("Agent client CA private key PEM is invalid")
 	}
 	var key any
 	var err error
@@ -217,14 +215,14 @@ func parseCAPrivateKey(value []byte) (crypto.Signer, error) {
 	case "RSA PRIVATE KEY":
 		key, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 	default:
-		return nil, errors.New("Agent CA private key type is unsupported")
+		return nil, errors.New("Agent client CA private key type is unsupported")
 	}
 	if err != nil {
-		return nil, errors.New("parse Agent CA private key")
+		return nil, errors.New("parse Agent client CA private key")
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, errors.New("Agent CA private key cannot sign certificates")
+		return nil, errors.New("Agent client CA private key cannot sign certificates")
 	}
 	return signer, nil
 }

@@ -79,3 +79,35 @@ func (service *Service) Create(
 		ExpiresAt:   storedEnrollment.ExpiresAt,
 	}, nil
 }
+
+func (service *Service) ResolveManifest(
+	ctx context.Context,
+	token string,
+	now time.Time,
+) (ManifestEnrollment, error) {
+	if now.IsZero() {
+		return ManifestEnrollment{}, ErrInvalidInput
+	}
+	tokenDigest, err := digestToken(token)
+	if err != nil {
+		return ManifestEnrollment{}, ErrTokenRejected
+	}
+	stored, err := service.store.FindActiveEnrollmentByTokenDigest(
+		ctx,
+		tokenDigest,
+		now,
+	)
+	if errors.Is(err, store.ErrEnrollmentTokenRejected) {
+		return ManifestEnrollment{}, ErrTokenRejected
+	}
+	if err != nil {
+		return ManifestEnrollment{}, err
+	}
+	return ManifestEnrollment{
+		ID:          stored.ID,
+		TenantID:    stored.TenantID,
+		ProjectID:   stored.ProjectID,
+		ClusterName: stored.ClusterName,
+		ExpiresAt:   stored.ExpiresAt,
+	}, nil
+}

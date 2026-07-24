@@ -42,8 +42,8 @@ func TestCertificateSignerIssuesScopedClientCertificate(t *testing.T) {
 	if leafBlock == nil || leafBlock.Type != "CERTIFICATE" {
 		t.Fatal("signed certificate has no leaf certificate")
 	}
-	if len(bytes.TrimSpace(remaining)) == 0 {
-		t.Fatal("signed certificate does not include the CA chain")
+	if len(bytes.TrimSpace(remaining)) != 0 {
+		t.Fatal("signed certificate unexpectedly includes its trust root")
 	}
 	leaf, err := x509.ParseCertificate(leafBlock.Bytes)
 	if err != nil {
@@ -143,7 +143,35 @@ func TestCertificateSignerRejectsWeakAgentRSAKey(t *testing.T) {
 	}
 }
 
-func createTestCA(t *testing.T, now time.Time) ([]byte, []byte) {
+func BenchmarkCertificateSignerSign(b *testing.B) {
+	now := time.Now().UTC().Truncate(time.Second)
+	caPEM, caKeyPEM := createTestCA(b, now)
+	signer, err := NewCertificateSigner(
+		caPEM,
+		caKeyPEM,
+		DefaultCertificateTTL,
+	)
+	if err != nil {
+		b.Fatal(err)
+	}
+	csr, _ := createSignerTestCSR(b)
+	identity := CertificateIdentity{
+		TenantID:  "00000000-0000-4000-8000-000000000001",
+		ProjectID: "00000000-0000-4000-8000-000000000002",
+		ClusterID: "00000000-0000-4000-8000-000000000003",
+		AgentID:   "00000000-0000-4000-8000-000000000004",
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := signer.Sign(csr, identity, now); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func createTestCA(t testing.TB, now time.Time) ([]byte, []byte) {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -151,7 +179,7 @@ func createTestCA(t *testing.T, now time.Time) ([]byte, []byte) {
 	}
 	template := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "ZKE Test Agent CA"},
+		Subject:               pkix.Name{CommonName: "ZKE Test Agent Client CA"},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
@@ -182,7 +210,7 @@ func createTestCA(t *testing.T, now time.Time) ([]byte, []byte) {
 		})
 }
 
-func createSignerTestCSR(t *testing.T) (*x509.CertificateRequest, any) {
+func createSignerTestCSR(t testing.TB) (*x509.CertificateRequest, any) {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

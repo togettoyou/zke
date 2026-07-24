@@ -37,7 +37,8 @@ func run() error {
 	defer stop()
 
 	logger.Info("agent configuration loaded",
-		slog.String("server_host", cfg.ServerHost()),
+		slog.String("registration_server", cfg.Registration.ServerURL),
+		slog.String("connection_server", cfg.Connection.ServerAddress),
 	)
 
 	return agent.Run(ctx, cfg, logger)

@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/agentinstall"
+	"github.com/togettoyou/zke/pkg/server/agentstatus"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
@@ -17,11 +19,13 @@ import (
 type ReadinessCheck func(context.Context) error
 
 type Dependencies struct {
-	ReadinessCheck    ReadinessCheck
-	AuthService       *auth.Service
-	AuditService      *audit.Service
-	RBACService       *rbac.Service
-	EnrollmentService *enrollment.Service
+	ReadinessCheck           ReadinessCheck
+	AuthService              *auth.Service
+	AuditService             *audit.Service
+	RBACService              *rbac.Service
+	EnrollmentService        *enrollment.Service
+	AgentInstallationService *agentinstall.Service
+	AgentStatusService       *agentstatus.Service
 }
 
 type Config struct {
@@ -34,6 +38,8 @@ type handlers struct {
 	auth                    *authHandler
 	enrollment              *enrollmentHandler
 	agentRegistration       *agentRegistrationHandler
+	agentInstallation       *agentInstallationHandler
+	agentStatus             *agentStatusHandler
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
 	requestTimeout          gin.HandlerFunc
@@ -74,6 +80,17 @@ func New(
 			logger,
 			dependencies.EnrollmentService,
 			config.AgentEnrollment,
+		),
+		agentInstallation: newAgentInstallationHandler(
+			logger,
+			dependencies.AgentInstallationService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		agentStatus: newAgentStatusHandler(
+			logger,
+			dependencies.AgentStatusService,
+			config.Authentication.OperationTimeout,
 		),
 		authMiddleware: httpmiddleware.NewAuthentication(
 			logger,

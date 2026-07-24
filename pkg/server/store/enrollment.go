@@ -6,9 +6,53 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+func (store *EnrollmentStore) FindActiveEnrollmentByTokenDigest(
+	ctx context.Context,
+	tokenDigest []byte,
+	now time.Time,
+) (ActiveEnrollment, error) {
+	if len(tokenDigest) != sha256.Size || now.IsZero() {
+		return ActiveEnrollment{}, errors.New("active enrollment lookup fields are required")
+	}
+	var enrollment ActiveEnrollment
+	err := store.pool.QueryRow(ctx, `
+SELECT
+    enrollment.id::text,
+    enrollment.tenant_id::text,
+    enrollment.project_id::text,
+    enrollment.cluster_name,
+    enrollment.expires_at
+FROM enrollments AS enrollment
+JOIN tenants AS tenant ON tenant.id = enrollment.tenant_id
+JOIN projects AS project
+  ON project.tenant_id = enrollment.tenant_id
+ AND project.id = enrollment.project_id
+WHERE enrollment.token_digest = $1
+  AND enrollment.consumed_at IS NULL
+  AND enrollment.revoked_at IS NULL
+  AND enrollment.expires_at > $2
+  AND tenant.status = 'active'
+  AND project.status = 'active'
+`, tokenDigest, now).Scan(
+		&enrollment.ID,
+		&enrollment.TenantID,
+		&enrollment.ProjectID,
+		&enrollment.ClusterName,
+		&enrollment.ExpiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ActiveEnrollment{}, ErrEnrollmentTokenRejected
+	}
+	if err != nil {
+		return ActiveEnrollment{}, fmt.Errorf("find active enrollment: %w", err)
+	}
+	return enrollment, nil
+}
 
 func (store *EnrollmentStore) CreateEnrollment(
 	ctx context.Context,

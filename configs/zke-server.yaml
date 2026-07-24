@@ -1,8 +1,12 @@
 http:
+  # HTTP API and Console backend endpoint.
   address: 127.0.0.1:8080
-  # Optional native HTTPS for the HTTP API. QUIC uses agent_listener TLS instead.
-  tls_certificate_file: ""
-  tls_private_key_file: ""
+  # Optional native HTTPS. Leave this block omitted for loopback HTTP or when
+  # an upstream gateway terminates TLS. These files are independent from the
+  # Agent QUIC/mTLS certificates below and must be configured together.
+  # tls:
+  #   certificate_file: /var/run/secrets/zke-http/tls.crt
+  #   private_key_file: /var/run/secrets/zke-http/tls.key
   read_header_timeout: 5s
   read_timeout: 15s
   write_timeout: 15s
@@ -19,33 +23,94 @@ auth:
   operation_timeout: 10s
   # Each password check uses the Argon2id memory setting (currently 64 MiB).
   max_concurrent_password_checks: 4
-  # Local HTTP development only. TLS deployments must set this to true.
+  # Controls the browser session cookie's Secure attribute. Keep false only for
+  # loopback HTTP; set true for HTTPS, whether TLS ends here or at a gateway.
   cookie_secure: false
   login_rate_limit:
     window: 1m
     max_attempts_per_account: 5
     max_attempts_per_source: 20
+  initial_admin:
+    # Applied once, only while the users table is empty. The generated password
+    # is written with mode 0600 and is never logged. This automatic generation
+    # is for local development; deployments should mount a pre-created Secret.
+    enabled: true
+    username: admin
+    display_name: ZKE Administrator
+    password_file: .local/development/admin-password
+    auto_generate_password: true
+
+agent_pki:
+  # "managed" lets Server create and renew its Agent-side PKI. "external"
+  # loads a complete certificate set supplied by the deployment.
+  mode: managed
+  # Lifetime of Agent client certificates issued at enrollment and renewal.
+  agent_client_certificate_validity: 720h
+
+  managed:
+    # Mount this directory on a private PV in a deployment. If database PKI
+    # state exists but the directory is lost, Server fails closed.
+    directory: .local/development
+    auto_generate: true
+    agent_client_ca_validity: 87600h
+    agent_listener_ca_validity: 175200h
+    agent_listener_certificate_validity: 87600h
+    # Listener leaf renewal happens at Server startup. CAs never auto-rotate.
+    agent_listener_renew_before: 8760h
+    # Replace with exact public QUIC names/IPs; never inferred from bind.
+    listener_sans:
+      dns_names:
+        - localhost
+      ip_addresses:
+        - 127.0.0.1
+
+  # Used only with mode: external. Server loads these files but never generates
+  # or renews them. The Agent Listener CA private key stays outside Server.
+  # external:
+  #   agent_client_ca:
+  #     certificate_file: /var/run/secrets/zke-agent-pki/agent-client-ca.crt
+  #     private_key_file: /var/run/secrets/zke-agent-pki/agent-client-ca.key
+  #   agent_listener_ca:
+  #     certificate_file: /var/run/secrets/zke-agent-pki/agent-listener-ca.crt
+  #   agent_listener:
+  #     certificate_file: /var/run/secrets/zke-agent-pki/agent-listener.crt
+  #     private_key_file: /var/run/secrets/zke-agent-pki/agent-listener.key
 
 agent_enrollment:
-  # Run hack/generate-dev-certificates.sh once for local development.
-  signing_ca_certificate_file: .local/development/agent-ca.crt
-  signing_ca_private_key_file: .local/development/agent-ca.key
-  certificate_ttl: 720h
+  # Controls the one-time HTTP(S) bootstrap operation.
   operation_timeout: 10s
   rate_limit:
     window: 1m
     max_attempts_per_source: 30
 
+agent_install:
+  # Keep disabled with loopback endpoints: a Kubernetes Pod cannot reach the
+  # host Server through its own 127.0.0.1. Before enabling, replace both public
+  # endpoints and the image with values reachable from the target cluster.
+  enabled: false
+  public_http_url: http://127.0.0.1:8080
+  public_quic_address: 127.0.0.1:8443
+  image: registry.example.com/zke/zke-agent:replace-me
+  namespace: zke-system
+  image_pull_policy: IfNotPresent
+  # Set only when the HTTPS registration endpoint uses a private CA.
+  # registration_ca_certificate_file: /var/run/secrets/zke-http/ca.crt
+
 agent_listener:
-  # QUIC listens on UDP using the host and port from http.address.
-  tls_certificate_file: .local/development/zke-server.crt
-  tls_private_key_file: .local/development/zke-server.key
+  # Dedicated QUIC/UDP endpoint for persistent Agent mTLS connections.
+  address: 127.0.0.1:8443
   handshake_timeout: 10s
   heartbeat_interval: 10s
   heartbeat_timeout: 30s
   # Heartbeats update in-memory liveness immediately and persist at this cadence.
   last_seen_write_interval: 1m
   operation_timeout: 10s
+
+certificate_monitor:
+  # Drives the Agent status API's expiring state and periodic structured
+  # warnings. Agent renewal normally happens earlier (seven days by default).
+  warning_before: 720h
+  check_interval: 1h
 
 shutdown_timeout: 10s
 log_level: debug

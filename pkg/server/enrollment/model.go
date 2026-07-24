@@ -15,6 +15,7 @@ var (
 	ErrAttemptConflict     = errors.New("enrollment attempt conflict")
 	ErrAttemptFailed       = errors.New("enrollment attempt failed")
 	ErrSigningUnavailable  = errors.New("agent certificate signing unavailable")
+	ErrCredentialRejected  = errors.New("agent credential rejected")
 )
 
 type CreateInput struct {
@@ -30,6 +31,14 @@ type CreateResult struct {
 	ID          string
 	ClusterName string
 	Token       string
+	ExpiresAt   time.Time
+}
+
+type ManifestEnrollment struct {
+	ID          string
+	TenantID    string
+	ProjectID   string
+	ClusterName string
 	ExpiresAt   time.Time
 }
 

@@ -40,12 +40,19 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := loadTrust(ctx, kubernetesClient, &cfg); err != nil {
+		return err
+	}
 	var identity LocalIdentity
 	version := agentVersion()
 	if state.Identity != nil {
 		identity = *state.Identity
 	} else {
-		token, err := readEnrollmentToken(cfg.EnrollmentTokenFile)
+		token, err := loadEnrollmentToken(
+			ctx,
+			kubernetesClient,
+			cfg.IdentityNamespace,
+		)
 		if err != nil {
 			return err
 		}
@@ -82,6 +89,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	err = runConnectionLoop(
 		ctx,
 		cfg,
+		store,
 		identity,
 		version,
 		logger,
@@ -100,7 +108,7 @@ func enrollWithRetry(
 	pending PendingIdentity,
 	version string,
 ) (LocalIdentity, error) {
-	interval := cfg.RetryInitialInterval
+	interval := cfg.Registration.RetryInitialInterval
 	for {
 		registration, err := client.Enroll(
 			ctx,
@@ -118,7 +126,11 @@ func enrollWithRetry(
 		if !retry {
 			return LocalIdentity{}, err
 		}
-		delay := retryDelay(interval, retryAfter, cfg.RetryMaxInterval)
+		delay := retryDelay(
+			interval,
+			retryAfter,
+			cfg.Registration.RetryMaxInterval,
+		)
 		logger.Warn(
 			"Agent enrollment will be retried",
 			slog.String("error", err.Error()),
@@ -136,7 +148,7 @@ func enrollWithRetry(
 			return LocalIdentity{}, nil
 		case <-timer.C:
 		}
-		interval = min(interval*2, cfg.RetryMaxInterval)
+		interval = min(interval*2, cfg.Registration.RetryMaxInterval)
 	}
 }
 

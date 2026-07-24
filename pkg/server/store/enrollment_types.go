@@ -30,6 +30,14 @@ type Enrollment struct {
 	CreatedAt       time.Time
 }
 
+type ActiveEnrollment struct {
+	ID          string
+	TenantID    string
+	ProjectID   string
+	ClusterName string
+	ExpiresAt   time.Time
+}
+
 type CreateEnrollmentParams struct {
 	ProjectID       string
 	ClusterName     string

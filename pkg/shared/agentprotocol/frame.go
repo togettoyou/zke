@@ -12,16 +12,18 @@ import (
 )
 
 const (
-	ProtocolVersion      uint32 = 1
-	ProtocolVersionLabel        = "v1"
-	ALPN                        = "zke-agent/1"
-	MaxFrameSize                = 64 * 1024
+	ProtocolVersion              uint32 = 1
+	ProtocolVersionLabel                = "v1"
+	ALPN                                = "zke-agent/1"
+	MaxFrameSize                        = 64 * 1024
+	CapabilityCertificateRenewal        = "certificate-renewal-v1"
 
 	CloseNormal              quic.ApplicationErrorCode = 0
 	CloseProtocolError       quic.ApplicationErrorCode = 1
 	CloseAuthenticationError quic.ApplicationErrorCode = 2
 	CloseHeartbeatTimeout    quic.ApplicationErrorCode = 3
 	CloseConnectionReplaced  quic.ApplicationErrorCode = 4
+	CloseInternalError       quic.ApplicationErrorCode = 5
 )
 
 var (

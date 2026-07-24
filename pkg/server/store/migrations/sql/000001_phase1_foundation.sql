@@ -95,6 +95,7 @@ CREATE TABLE agents (
     protocol_version text NOT NULL CHECK (length(btrim(protocol_version)) > 0),
     lifecycle_status text NOT NULL CHECK (lifecycle_status IN ('pending', 'active', 'revoked')),
     health_status text NOT NULL CHECK (health_status IN ('unknown', 'healthy', 'degraded')),
+    active_credential_serial text,
     last_seen_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -127,6 +128,94 @@ CREATE INDEX agent_credentials_agent_id_idx ON agent_credentials (agent_id);
 CREATE INDEX agent_credentials_active_expiry_idx
     ON agent_credentials (expires_at)
     WHERE revoked_at IS NULL;
+
+CREATE TABLE server_pki_state (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    agent_client_ca_fingerprint text NOT NULL
+        CHECK (length(agent_client_ca_fingerprint) = 64),
+    agent_client_ca_expires_at timestamptz NOT NULL,
+    agent_listener_ca_fingerprint text NOT NULL
+        CHECK (length(agent_listener_ca_fingerprint) = 64),
+    agent_listener_ca_expires_at timestamptz NOT NULL,
+    agent_listener_certificate_fingerprint text NOT NULL
+        CHECK (length(agent_listener_certificate_fingerprint) = 64),
+    agent_listener_certificate_expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX agent_credentials_agent_csr_unique
+    ON agent_credentials (
+        tenant_id,
+        project_id,
+        cluster_id,
+        agent_id,
+        csr_fingerprint
+    );
+
+CREATE FUNCTION notify_agent_credential_revocation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL THEN
+        PERFORM pg_notify(
+            'zke_agent_connection_revocations',
+            json_build_object(
+                'agent_id', NEW.agent_id,
+                'certificate_serial', NEW.serial
+            )::text
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER agent_credentials_notify_revocation
+AFTER UPDATE OF revoked_at ON agent_credentials
+FOR EACH ROW
+EXECUTE FUNCTION notify_agent_credential_revocation();
+
+CREATE FUNCTION notify_agent_lifecycle_revocation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.lifecycle_status <> 'revoked'
+       AND NEW.lifecycle_status = 'revoked' THEN
+        PERFORM pg_notify(
+            'zke_agent_connection_revocations',
+            json_build_object('agent_id', NEW.id)::text
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER agents_notify_revocation
+AFTER UPDATE OF lifecycle_status ON agents
+FOR EACH ROW
+EXECUTE FUNCTION notify_agent_lifecycle_revocation();
+
+CREATE FUNCTION notify_cluster_status_revocation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.status <> 'revoked' AND NEW.status = 'revoked' THEN
+        PERFORM pg_notify(
+            'zke_agent_connection_revocations',
+            json_build_object('cluster_id', NEW.id)::text
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER clusters_notify_revocation
+AFTER UPDATE OF status ON clusters
+FOR EACH ROW
+EXECUTE FUNCTION notify_cluster_status_revocation();
 
 CREATE TABLE enrollments (
     id uuid PRIMARY KEY,

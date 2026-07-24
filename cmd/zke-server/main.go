@@ -23,10 +23,6 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) > 0 && args[0] == "create-admin" {
-		return runCreateAdmin(args[1:])
-	}
-
 	cfg, err := server.LoadConfig(args)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)

@@ -1,30 +1,37 @@
-server_address: http://127.0.0.1:8080
-
-# Optional HTTP API HTTPS trust root. It is unused with the HTTP address above.
-# server_ca_file: /var/run/secrets/zke-server/ca.crt
-
+# For a host-run Agent, start Server first and run
+# hack/setup-local-agent-resources.sh to initialize Kubernetes Secrets.
+#
 # Optional local-development override. In a cluster, the Agent uses its
 # ServiceAccount; outside a cluster, client-go uses KUBECONFIG or ~/.kube/config.
 # kubeconfig_file: /path/to/kubeconfig
 
-# For local development, write the Token returned by the Enrollment API here.
-# A Kubernetes deployment instead mounts a bootstrap Secret at
-# /var/run/secrets/zke-enrollment/token.
-enrollment_token_file: .local/development/enrollment-token
-
-# The Agent creates and updates this persistent Secret through client-go.
 identity:
+  # The Agent stores its issued client certificate and private key in this
+  # persistent Kubernetes Secret. It survives Pod recreation.
   namespace: zke-system
   secret_name: zke-agent-identity
+  # Renew the Agent client certificate over the authenticated QUIC connection
+  # before it enters the final seven days of validity.
+  renew_before: 168h
 
 registration:
+  # One-time local HTTP endpoint used to bootstrap the persistent Agent identity.
+  server_url: http://127.0.0.1:8080
+  # Agent reads the "token" key from the zke-agent-enrollment Kubernetes
+  # Secret through client-go; no Token value or local file path lives in YAML.
+  # Optional private CA for the HTTPS endpoint above, whether TLS terminates at
+  # ZKE Server or a gateway. It is unused by the local HTTP endpoint.
+  # ca_certificate_file: /path/to/registration-ca.crt
   timeout: 10s
   retry_initial_interval: 1s
   retry_max_interval: 15s
 
 connection:
-  # QUIC always validates the ZKE Server identity, independently of HTTP.
-  server_ca_file: .local/development/server-ca.crt
+  # Dedicated QUIC/UDP endpoint; this is a host:port, not a URL.
+  server_address: 127.0.0.1:8443
+  # Agent reads "agent-listener-ca.crt" from the zke-agent-trust Kubernetes
+  # Secret through client-go. Special deployments may override it with:
+  # ca_certificate_file: /path/to/agent-listener-ca.crt
   connect_timeout: 10s
   retry_initial_interval: 1s
   retry_max_interval: 30s
