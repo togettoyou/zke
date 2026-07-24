@@ -30,5 +30,11 @@ Agent 版本和协议版本发起注册。Server 校验 Token 与 CSR，由配�
 接口限制 128 KiB 请求正文、拒绝未知字段、按来源限流且默认要求 TLS；只允许在监听回环地址时显式开启本地明文
 开发模式。未配置 Agent CA 时 Server 仍可启动，但注册接口返回服务不可用。
 
-Agent 侧生成私钥、调用注册接口、将证书写入 Kubernetes Secret，以及注册后的 QUIC/mTLS 主动连接仍属于后续
-实现范围。
+Agent 已实现首次注册流程：在集群内生成 ECDSA P-256 私钥和 CSR，先把私钥、原始 CSR 与幂等键写入预创建的
+固定名称 Kubernetes Secret，再通过 HTTPS 调用注册接口。网络错误、`429` 和 Server `5xx` 会使用相同 CSR 与
+幂等键重试；成功响应中的证书、Cluster ID、Agent ID 和过期时间会原子写回同一 Secret。Agent 重启后直接复用
+完整身份，不再读取一次性 Token；部分写入、私钥与证书不匹配、证书作用域错误或证书过期都会拒绝启动。
+
+注册后的 QUIC/mTLS 主动连接、证书自动续期以及 Helm Chart/RBAC 清单仍属于后续实现范围。当前部署必须预先创建
+身份 Secret，并只授予 Agent 对该固定 Secret 的 `get`、`update` 权限；注册 Token 应通过独立的临时 Secret
+挂载为文件，不能写入 Agent YAML、日志或身份 Secret。

@@ -8,18 +8,42 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 type Config struct {
-	ServerAddress string
-	LogLevel      string
+	ServerAddress        string
+	ServerCAFile         string
+	KubeconfigFile       string
+	ClusterName          string
+	EnrollmentTokenFile  string
+	IdentityNamespace    string
+	IdentitySecretName   string
+	RegistrationTimeout  time.Duration
+	RetryInitialInterval time.Duration
+	RetryMaxInterval     time.Duration
+	LogLevel             string
 }
 
 type fileConfig struct {
-	ServerAddress string `yaml:"server_address"`
-	LogLevel      string `yaml:"log_level"`
+	ServerAddress       string `yaml:"server_address"`
+	ServerCAFile        string `yaml:"server_ca_file"`
+	KubeconfigFile      string `yaml:"kubeconfig_file"`
+	ClusterName         string `yaml:"cluster_name"`
+	EnrollmentTokenFile string `yaml:"enrollment_token_file"`
+	Identity            struct {
+		Namespace  string `yaml:"namespace"`
+		SecretName string `yaml:"secret_name"`
+	} `yaml:"identity"`
+	Registration struct {
+		Timeout              string `yaml:"timeout"`
+		RetryInitialInterval string `yaml:"retry_initial_interval"`
+		RetryMaxInterval     string `yaml:"retry_max_interval"`
+	} `yaml:"registration"`
+	LogLevel string `yaml:"log_level"`
 }
 
 func LoadConfig(args []string) (Config, error) {
@@ -31,7 +55,11 @@ func LoadConfig(args []string) (Config, error) {
 		return Config{}, errors.New("--config is required")
 	}
 
-	var cfg Config
+	cfg := Config{
+		RegistrationTimeout:  10 * time.Second,
+		RetryInitialInterval: time.Second,
+		RetryMaxInterval:     15 * time.Second,
+	}
 	if err := applyFile(&cfg, configPath); err != nil {
 		return Config{}, err
 	}
@@ -65,6 +93,45 @@ func applyFile(cfg *Config, path string) error {
 
 	if raw.ServerAddress != "" {
 		cfg.ServerAddress = raw.ServerAddress
+	}
+	if raw.ServerCAFile != "" {
+		cfg.ServerCAFile = raw.ServerCAFile
+	}
+	if raw.KubeconfigFile != "" {
+		cfg.KubeconfigFile = raw.KubeconfigFile
+	}
+	if raw.ClusterName != "" {
+		cfg.ClusterName = raw.ClusterName
+	}
+	if raw.EnrollmentTokenFile != "" {
+		cfg.EnrollmentTokenFile = raw.EnrollmentTokenFile
+	}
+	if raw.Identity.Namespace != "" {
+		cfg.IdentityNamespace = raw.Identity.Namespace
+	}
+	if raw.Identity.SecretName != "" {
+		cfg.IdentitySecretName = raw.Identity.SecretName
+	}
+	if err := applyAgentDuration(
+		&cfg.RegistrationTimeout,
+		raw.Registration.Timeout,
+		"registration.timeout",
+	); err != nil {
+		return err
+	}
+	if err := applyAgentDuration(
+		&cfg.RetryInitialInterval,
+		raw.Registration.RetryInitialInterval,
+		"registration.retry_initial_interval",
+	); err != nil {
+		return err
+	}
+	if err := applyAgentDuration(
+		&cfg.RetryMaxInterval,
+		raw.Registration.RetryMaxInterval,
+		"registration.retry_max_interval",
+	); err != nil {
+		return err
 	}
 	if raw.LogLevel != "" {
 		cfg.LogLevel = raw.LogLevel
@@ -100,9 +167,70 @@ func (cfg Config) Validate() error {
 	if serverURL.User != nil {
 		return errors.New("server address must not contain credentials")
 	}
+	if (serverURL.Path != "" && serverURL.Path != "/") ||
+		serverURL.RawQuery != "" ||
+		serverURL.Fragment != "" {
+		return errors.New("server address must not contain a path, query, or fragment")
+	}
+	if strings.TrimSpace(cfg.ServerCAFile) != cfg.ServerCAFile {
+		return errors.New("server CA file path must not contain surrounding whitespace")
+	}
+	if strings.TrimSpace(cfg.KubeconfigFile) != cfg.KubeconfigFile {
+		return errors.New("kubeconfig file path must not contain surrounding whitespace")
+	}
+	if strings.TrimSpace(cfg.ClusterName) != cfg.ClusterName ||
+		len(cfg.ClusterName) == 0 ||
+		len(cfg.ClusterName) > 253 {
+		return errors.New("cluster name must contain between 1 and 253 bytes")
+	}
+	if strings.TrimSpace(cfg.EnrollmentTokenFile) == "" ||
+		strings.TrimSpace(cfg.EnrollmentTokenFile) != cfg.EnrollmentTokenFile {
+		return errors.New(
+			"enrollment token file is required and must not contain surrounding whitespace",
+		)
+	}
+	if errors := k8svalidation.IsDNS1123Label(cfg.IdentityNamespace); len(errors) != 0 {
+		return fmt.Errorf("identity namespace is invalid: %s", strings.Join(errors, "; "))
+	}
+	if errors := k8svalidation.IsDNS1123Subdomain(cfg.IdentitySecretName); len(errors) != 0 {
+		return fmt.Errorf("identity Secret name is invalid: %s", strings.Join(errors, "; "))
+	}
+	for _, item := range []struct {
+		value time.Duration
+		max   time.Duration
+		name  string
+	}{
+		{cfg.RegistrationTimeout, time.Minute, "registration timeout"},
+		{cfg.RetryInitialInterval, time.Minute, "registration initial retry interval"},
+		{cfg.RetryMaxInterval, 5 * time.Minute, "registration maximum retry interval"},
+	} {
+		if item.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero", item.name)
+		}
+		if item.value > item.max {
+			return fmt.Errorf("%s must not exceed %s", item.name, item.max)
+		}
+	}
+	if cfg.RetryInitialInterval > cfg.RetryMaxInterval {
+		return errors.New(
+			"registration initial retry interval must not exceed maximum retry interval",
+		)
+	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {
 		return errors.New("log level is required")
 	}
+	return nil
+}
+
+func applyAgentDuration(target *time.Duration, value, name string) error {
+	if value == "" {
+		return nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid duration: %w", name, err)
+	}
+	*target = duration
 	return nil
 }
 

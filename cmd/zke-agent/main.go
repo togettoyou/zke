@@ -40,5 +40,5 @@ func run() error {
 		slog.String("server_host", cfg.ServerHost()),
 	)
 
-	return agent.Run(ctx, logger)
+	return agent.Run(ctx, cfg, logger)
 }

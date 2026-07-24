@@ -1,2 +1,17 @@
 server_address: https://zke-server.example.invalid:8443
+# Optional when the Server certificate chains to the system trust store.
+server_ca_file: /var/run/secrets/zke-server/ca.crt
+# Optional. When omitted, the Agent uses in-cluster configuration first and
+# falls back to KUBECONFIG or ~/.kube/config outside a cluster.
+# kubeconfig_file: /path/to/kubeconfig
+cluster_name: example-cluster
+# Mount the one-time registration Token from a separate bootstrap Secret.
+enrollment_token_file: /var/run/secrets/zke-enrollment/token
+identity:
+  namespace: zke-system
+  secret_name: zke-agent-identity
+registration:
+  timeout: 10s
+  retry_initial_interval: 1s
+  retry_max_interval: 15s
 log_level: debug
