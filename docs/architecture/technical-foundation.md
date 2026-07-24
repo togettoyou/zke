@@ -127,6 +127,17 @@ Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、
 `admin` 与 `viewer` 角色通过 RoleBinding 绑定到 Global、Tenant 或 Project；`admin` 包含全部权限，`viewer`
 只包含读取权限，首个管理员拥有 Global `admin` 角色。
 
+当前认证基础已经实现：
+
+- 密码使用 Argon2id PHC 格式保存算法版本、内存、迭代、并行度、Salt 和摘要；
+- 默认参数为 64 MiB 内存、3 次迭代和 4 路并行，部署前仍需在目标资源上完成基准测试；
+- 单因素认证的新密码至少包含 15 个字符，支持 Unicode、空格和最长 1024 字节，不要求固定字符组合；
+- 首个管理员、Global `admin` RoleBinding 和审计事件在同一事务中创建，并使用 advisory lock 防止并发重复初始化；
+- 会话令牌使用 256 位安全随机值，数据库只保存 SHA-256 摘要；
+- 用户和会话 Store 已支持按规范化用户名查询、创建会话、原子校验并续期有效会话，以及撤销会话；密码变更前创建的会话会自动失效。
+
+登录、Cookie、CSRF、限流以及 HTTP 认证与授权中间件尚未实现，因此 Roadmap 中的“用户认证”和“RBAC”仍未完成。
+
 ## 5. Agent 技术基线
 
 ### 5.1 运行与权限
@@ -505,10 +516,14 @@ Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 
 ```bash
 docker compose -f deploy/development/compose.yaml up -d
+go run ./cmd/zke-server create-admin --config configs/zke-server.yaml --username admin --display-name "ZKE Administrator"
 go run ./cmd/zke-server --config configs/zke-server.yaml
 go run ./cmd/zke-agent --config configs/zke-agent.yaml
 cd web/console && pnpm install --frozen-lockfile && pnpm dev
 ```
+
+`create-admin` 默认通过终端无回显读取并确认密码；自动化环境使用 `--password-file` 指向受保护的单行密码文件，
+不得通过命令行参数传递密码。该命令只能在空用户库中成功一次。
 
 Server 启动时自动执行数据库迁移；没有待应用版本时不会修改业务表。Agent 工程骨架当前不会尝试注册或建立 QUIC
 连接。Server 提供 `GET /healthz` 存活检查和使用 PostgreSQL 连接状态的 `GET /readyz` 就绪检查。

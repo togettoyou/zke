@@ -14,7 +14,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		logger := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With(
+		logger := slog.New(slog.NewTextHandler(os.Stderr, nil)).With(
 			slog.String("component", "zke-agent"),
 		)
 		logger.Error("process exited", slog.String("error", err.Error()))

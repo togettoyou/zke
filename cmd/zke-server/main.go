@@ -13,8 +13,8 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		logger := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With(
+	if err := run(os.Args[1:]); err != nil {
+		logger := slog.New(slog.NewTextHandler(os.Stderr, nil)).With(
 			slog.String("component", "zke-server"),
 		)
 		logger.Error("process exited", slog.String("error", err.Error()))
@@ -22,8 +22,12 @@ func main() {
 	}
 }
 
-func run() error {
-	cfg, err := server.LoadConfig(os.Args[1:])
+func run(args []string) error {
+	if len(args) > 0 && args[0] == "create-admin" {
+		return runCreateAdmin(args[1:])
+	}
+
+	cfg, err := server.LoadConfig(args)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
