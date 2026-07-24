@@ -7,15 +7,21 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
 type ReadinessCheck func(context.Context) error
 
 type Dependencies struct {
-	ReadinessCheck ReadinessCheck
-	AuthService    *auth.Service
+	ReadinessCheck    ReadinessCheck
+	AuthService       *auth.Service
+	AuditService      *audit.Service
+	RBACService       *rbac.Service
+	EnrollmentService *enrollment.Service
 }
 
 type Config struct {
@@ -23,9 +29,12 @@ type Config struct {
 }
 
 type handlers struct {
-	health         *healthHandler
-	auth           *authHandler
-	authMiddleware *httpmiddleware.Authentication
+	health                  *healthHandler
+	auth                    *authHandler
+	enrollment              *enrollmentHandler
+	authMiddleware          *httpmiddleware.Authentication
+	authorizationMiddleware *httpmiddleware.Authorization
+	requestTimeout          gin.HandlerFunc
 }
 
 var configureGinMode sync.Once
@@ -53,6 +62,12 @@ func New(
 			dependencies.AuthService,
 			config.Authentication,
 		),
+		enrollment: newEnrollmentHandler(
+			logger,
+			dependencies.EnrollmentService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
 		authMiddleware: httpmiddleware.NewAuthentication(
 			logger,
 			dependencies.AuthService,
@@ -60,6 +75,17 @@ func New(
 				CookieSecure:     config.Authentication.CookieSecure,
 				OperationTimeout: config.Authentication.OperationTimeout,
 			},
+		),
+		authorizationMiddleware: httpmiddleware.NewAuthorization(
+			logger,
+			dependencies.RBACService,
+			dependencies.AuditService,
+			httpmiddleware.AuthorizationConfig{
+				OperationTimeout: config.Authentication.OperationTimeout,
+			},
+		),
+		requestTimeout: httpmiddleware.RequestTimeout(
+			config.Authentication.OperationTimeout,
 		),
 	}
 	registerRoutes(router, routeHandlers)

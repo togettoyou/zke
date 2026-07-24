@@ -86,6 +86,9 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"CONSTRAINT audit_events_actor_shape",
 		"token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) = 32)",
 		"csrf_token_digest bytea NOT NULL CHECK (octet_length(csrf_token_digest) = 32)",
+		"idempotency_key text NOT NULL",
+		"CONSTRAINT enrollments_idempotency_key_format",
+		"CONSTRAINT enrollments_creator_idempotency_unique",
 		"CREATE INDEX enrollments_active_expiry_idx",
 		"CREATE INDEX audit_events_scope_time_idx",
 	} {

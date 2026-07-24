@@ -82,7 +82,7 @@ auth             用户认证和会话业务流程
 rbac             固定权限、角色矩阵和 Global/Tenant/Project 作用域授权
 project          Project 业务流程（规划）
 cluster          Cluster 业务流程（规划）
-enrollment       Agent 注册业务流程（规划）
+enrollment       一次性 Agent 注册凭证创建业务流程
 store            PostgreSQL 数据访问
 audit            审计事件
 observability    Server 专属指标、追踪和日志字段
@@ -161,9 +161,9 @@ Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、
 - RBAC Service、PostgreSQL Store 和 HTTP 授权 middleware 已实现；Project middleware 会根据 `project_id`
   解析 Tenant 归属，并在业务 Handler 前完成权限检查。
 
-持久化账户锁定与恢复、管理员密码重置和 Console 登录流程尚未实现。RBAC 基础已经实现，但尚未接入实际的
-Project、Cluster 或 Agent 业务 API，因此 Roadmap 中的“用户认证”和“RBAC”仍未完成。登录来源当前使用直接
-TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
+持久化账户锁定与恢复、管理员密码重置和 Console 登录流程尚未实现。RBAC 已接入 Agent 注册凭证创建接口，但
+Project、Cluster 和 Agent 查询、撤销等 API 尚未实现，因此 Roadmap 中的“用户认证”和“RBAC”仍未完成。
+登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
 
@@ -457,6 +457,13 @@ GET  /api/v1/clusters/{cluster_id}/agent
 POST /api/v1/agents/{agent_id}/revoke
 GET  /api/v1/events
 ```
+
+创建 Agent 注册凭证时，Server 生成 15 分钟有效的一次性随机 Token。Token 明文只在成功响应中返回一次，
+响应禁止缓存；数据库只保存 SHA-256 摘要。凭证记录和成功审计事件在同一事务内写入。请求必须携带 16 至 128
+字符的 `Idempotency-Key`；同一用户、Project 和 Key 只允许创建一次，重复请求返回
+`409 idempotency_conflict`，不会生成新凭证或重复成功审计。认证、授权和创建操作共享一个端到端 Deadline，
+避免数据库已提交但 Token 响应因累计超时丢失。该接口只负责创建凭证，Agent 使用凭证提交 CSR 的
+`/agent-api/v1/enroll` 尚未实现。
 
 登录成功只在响应正文返回用户身份与会话绝对过期时间；Session Token 和 CSRF Token 分别通过 `zke_session`
 与 `zke_csrf` Cookie 交付，不进入 JSON、日志或审计正文。除登录外的变更请求必须同时携带 Session Cookie 和

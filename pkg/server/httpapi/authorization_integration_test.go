@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/rbac"
@@ -128,6 +129,7 @@ VALUES (gen_random_uuid(), $1, 'viewer', 'project', $2, $3)
 	authorization := httpmiddleware.NewAuthorization(
 		discardLogger(),
 		rbac.NewService(store.NewRBACStore(pool)),
+		audit.NewService(store.NewAuditStore(pool)),
 		httpmiddleware.AuthorizationConfig{
 			OperationTimeout: 5 * time.Second,
 		},
@@ -154,6 +156,7 @@ VALUES (gen_random_uuid(), $1, 'viewer', 'project', $2, $3)
 	timeoutAuthorization := httpmiddleware.NewAuthorization(
 		discardLogger(),
 		rbac.NewService(store.NewRBACStore(pool)),
+		nil,
 		httpmiddleware.AuthorizationConfig{OperationTimeout: 0},
 	)
 	router.GET(
@@ -231,5 +234,20 @@ VALUES (gen_random_uuid(), $1, 'viewer', 'project', $2, $3)
 				assertErrorCode(t, response, test.wantCode)
 			}
 		})
+	}
+
+	var deniedAuditCount int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+FROM audit_events
+WHERE actor_user_id = $1
+  AND project_id = $2
+  AND action = 'agent.enrollment.create'
+  AND result = 'denied'
+`, userID, allowedProjectID).Scan(&deniedAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if deniedAuditCount != 1 {
+		t.Fatalf("authorization denial audit count = %d, want 1", deniedAuditCount)
 	}
 }

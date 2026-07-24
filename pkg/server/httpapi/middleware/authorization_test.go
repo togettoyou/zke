@@ -20,6 +20,7 @@ func TestAuthorizationRequiresAuthenticatedIdentity(t *testing.T) {
 	authorization := NewAuthorization(
 		discardAuthorizationLogger(),
 		rbac.NewService(nil),
+		nil,
 		AuthorizationConfig{OperationTimeout: time.Second},
 	)
 	router.GET(
@@ -51,6 +52,7 @@ func TestAuthorizationRejectsInvalidProjectIDBeforeStoreAccess(t *testing.T) {
 	})
 	authorization := NewAuthorization(
 		discardAuthorizationLogger(),
+		nil,
 		nil,
 		AuthorizationConfig{OperationTimeout: time.Second},
 	)

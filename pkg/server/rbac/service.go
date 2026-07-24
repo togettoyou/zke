@@ -2,12 +2,11 @@ package rbac
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
 var (
@@ -50,7 +49,7 @@ func (service *Service) AuthorizeProject(
 	if err := validateSubjectPermission(userID, permission); err != nil {
 		return err
 	}
-	if !validUUID(projectID) {
+	if !validation.IsUUID(projectID) {
 		return ErrInvalidScope
 	}
 	tenantID, err := service.store.FindProjectTenant(ctx, projectID)
@@ -100,7 +99,7 @@ func (service *Service) authorizeValidated(
 }
 
 func validateSubjectPermission(userID string, permission Permission) error {
-	if !validUUID(userID) {
+	if !validation.IsUUID(userID) {
 		return ErrDenied
 	}
 	if !permission.valid() {
@@ -128,11 +127,11 @@ func (scope scope) validate() error {
 			return nil
 		}
 	case scopeTenant:
-		if validUUID(scope.TenantID) && scope.ProjectID == "" {
+		if validation.IsUUID(scope.TenantID) && scope.ProjectID == "" {
 			return nil
 		}
 	case scopeProject:
-		if validUUID(scope.TenantID) && validUUID(scope.ProjectID) {
+		if validation.IsUUID(scope.TenantID) && validation.IsUUID(scope.ProjectID) {
 			return nil
 		}
 	}
@@ -165,21 +164,4 @@ func bindingApplies(binding store.RoleBinding, scope scope) bool {
 	default:
 		return false
 	}
-}
-
-func validUUID(value string) bool {
-	if len(value) != 36 ||
-		value[8] != '-' ||
-		value[13] != '-' ||
-		value[18] != '-' ||
-		value[23] != '-' {
-		return false
-	}
-	compact := strings.NewReplacer("-", "").Replace(value)
-	if len(compact) != 32 {
-		return false
-	}
-	decoded := make([]byte, 16)
-	_, err := hex.Decode(decoded, []byte(compact))
-	return err == nil
 }

@@ -7,8 +7,11 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
@@ -41,11 +44,20 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxConcurrentPasswordChecks: cfg.Auth.MaxConcurrentPasswordChecks,
 		},
 	)
+	rbacService := rbac.NewService(store.NewRBACStore(database))
+	auditService := audit.NewService(store.NewAuditStore(database))
+	enrollmentService := enrollment.NewService(
+		store.NewEnrollmentStore(database),
+		enrollment.DefaultTokenTTL,
+	)
 	handler := httpapi.New(
 		logger,
 		httpapi.Dependencies{
-			ReadinessCheck: database.Ping,
-			AuthService:    authenticationService,
+			ReadinessCheck:    database.Ping,
+			AuthService:       authenticationService,
+			AuditService:      auditService,
+			RBACService:       rbacService,
+			EnrollmentService: enrollmentService,
 		},
 		httpapi.Config{
 			Authentication: httpapi.AuthenticationConfig{

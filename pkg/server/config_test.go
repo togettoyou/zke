@@ -168,6 +168,43 @@ func TestConfigRejectsSessionIdleAboveAbsoluteTimeout(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsOperationTimeoutAtOrAboveWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		HTTP: HTTPConfig{
+			Address:           "127.0.0.1:8080",
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		},
+		Database: DatabaseConfig{
+			URL:              "postgres://example",
+			ConnectTimeout:   5 * time.Second,
+			MigrationTimeout: time.Minute,
+		},
+		Auth: AuthConfig{
+			SessionIdleTimeout:          30 * time.Minute,
+			SessionAbsoluteTimeout:      8 * time.Hour,
+			OperationTimeout:            10 * time.Second,
+			MaxConcurrentPasswordChecks: 4,
+			CookieSecure:                true,
+			LoginRateLimit: LoginRateLimitConfig{
+				Window:                time.Minute,
+				MaxAttemptsPerAccount: 5,
+				MaxAttemptsPerSource:  20,
+			},
+		},
+		ShutdownTimeout: 10 * time.Second,
+		LogLevel:        "info",
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted an operation timeout at the HTTP write timeout")
+	}
+}
+
 func TestLoadConfigRejectsUnknownYAMLField(t *testing.T) {
 	t.Parallel()
 

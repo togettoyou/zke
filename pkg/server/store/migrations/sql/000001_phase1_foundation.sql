@@ -134,12 +134,19 @@ CREATE TABLE enrollments (
     project_id uuid NOT NULL,
     token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) > 0),
     created_by_user_id uuid NOT NULL REFERENCES users (id),
+    idempotency_key text NOT NULL,
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz,
     revoked_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT enrollments_project_scope_fk
         FOREIGN KEY (tenant_id, project_id) REFERENCES projects (tenant_id, id),
+    CONSTRAINT enrollments_idempotency_key_format CHECK (
+        idempotency_key = btrim(idempotency_key)
+        AND length(idempotency_key) BETWEEN 16 AND 128
+    ),
+    CONSTRAINT enrollments_creator_idempotency_unique
+        UNIQUE (created_by_user_id, project_id, idempotency_key),
     CHECK (consumed_at IS NULL OR revoked_at IS NULL)
 );
 

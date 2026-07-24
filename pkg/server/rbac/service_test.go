@@ -119,14 +119,3 @@ func TestRoleAndScopeRules(t *testing.T) {
 		t.Fatal("different project binding applied")
 	}
 }
-
-func TestValidUUID(t *testing.T) {
-	t.Parallel()
-
-	if !validUUID("01234567-89ab-cdef-0123-456789abcdef") {
-		t.Fatal("validUUID() rejected a UUID")
-	}
-	if validUUID("01234567-89ab-cdef-0123-456789abcdeg") {
-		t.Fatal("validUUID() accepted a non-hex UUID")
-	}
-}

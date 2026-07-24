@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
@@ -16,20 +17,23 @@ type AuthorizationConfig struct {
 }
 
 type Authorization struct {
-	logger  *slog.Logger
-	service *rbac.Service
-	config  AuthorizationConfig
+	logger       *slog.Logger
+	service      *rbac.Service
+	auditService *audit.Service
+	config       AuthorizationConfig
 }
 
 func NewAuthorization(
 	logger *slog.Logger,
 	service *rbac.Service,
+	auditService *audit.Service,
 	config AuthorizationConfig,
 ) *Authorization {
 	return &Authorization{
-		logger:  logger,
-		service: service,
-		config:  config,
+		logger:       logger,
+		service:      service,
+		auditService: auditService,
+		config:       config,
 	}
 }
 
@@ -112,6 +116,7 @@ func (authorization *Authorization) require(
 			return
 		}
 		if errors.Is(err, rbac.ErrDenied) {
+			authorization.recordDenied(c, identity.User.ID, permission, scopeType, scopeParameter)
 			authorization.logger.Warn(
 				"HTTP authorization denied",
 				authorization.logAttributes(
@@ -158,6 +163,44 @@ func (authorization *Authorization) require(
 		authorization.logger.Error("authorize HTTP request", attributes...)
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
 		c.Abort()
+	}
+}
+
+func (authorization *Authorization) recordDenied(
+	c *gin.Context,
+	userID string,
+	permission rbac.Permission,
+	scopeType string,
+	scopeParameter string,
+) {
+	if authorization.auditService == nil || scopeType != "project" {
+		return
+	}
+	auditContext, cancelAudit := context.WithTimeout(
+		c.Request.Context(),
+		authorization.config.OperationTimeout,
+	)
+	err := authorization.auditService.RecordProjectEvent(
+		auditContext,
+		audit.ProjectEventInput{
+			ActorUserID: userID,
+			ProjectID:   c.Param(scopeParameter),
+			Action:      string(permission),
+			Result:      "denied",
+			RequestID:   RequestID(c),
+		},
+	)
+	cancelAudit()
+	if err != nil {
+		attributes := authorization.logAttributes(
+			c,
+			userID,
+			permission,
+			scopeType,
+			scopeParameter,
+		)
+		attributes = append(attributes, slog.String("error", err.Error()))
+		authorization.logger.Error("record HTTP authorization denial audit", attributes...)
 	}
 }
 

@@ -271,6 +271,9 @@ func (cfg Config) Validate() error {
 	if cfg.Auth.SessionIdleTimeout > cfg.Auth.SessionAbsoluteTimeout {
 		return errors.New("session idle timeout must not exceed session absolute timeout")
 	}
+	if cfg.Auth.OperationTimeout >= cfg.HTTP.WriteTimeout {
+		return errors.New("authentication operation timeout must be below HTTP write timeout")
+	}
 	if cfg.Auth.MaxConcurrentPasswordChecks <= 0 ||
 		cfg.Auth.MaxConcurrentPasswordChecks > maxPasswordChecks {
 		return fmt.Errorf(

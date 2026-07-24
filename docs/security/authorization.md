@@ -33,6 +33,12 @@ RBAC 基础已经实现固定权限、`admin/viewer` 角色矩阵、Global/Tenan
 Project 归属解析和 HTTP 授权 middleware。Global `admin` 拥有全部固定权限；`viewer` 只拥有 Cluster 与 Agent
 读取权限。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标 Project，跨作用域访问会被拒绝。
 
-RBAC 尚未接入实际 Project、Cluster 或 Agent 业务 API。持久化账户锁定与恢复、管理员密码重置、可信反向代理来源
-解析、Console 登录流程、授权拒绝的持久化审计和敏感操作确认也尚未实现；因此当前实现仍不能描述为完整认证或
-RBAC 系统，也不适用于生产环境。
+RBAC 已接入 `POST /api/v1/projects/{project_id}/agent-enrollments`：该接口同时要求有效 Session、CSRF Token
+和 `agent.enrollment.create` 权限；Project 的 Tenant 归属由 Server 查询，不接受调用方提供。一次性注册 Token
+明文只返回一次，数据库只保存 SHA-256 摘要，凭证与成功审计在同一事务写入。接口强制使用
+`Idempotency-Key`，重复 Key 不会创建额外凭证或重复成功审计。Project 授权拒绝以及凭证创建的输入、状态和内部
+失败会写入不含 Token 的审计事件；数据库不可用或请求 Deadline 已耗尽时降级为安全错误日志。
+
+其他 Project、Cluster 或 Agent 业务 API 尚未实现。持久化账户锁定与恢复、管理员密码重置、可信反向代理来源解析、
+Console 登录流程、Global/Tenant 授权拒绝的持久化审计和敏感操作确认也尚未实现；因此当前实现仍不能描述为完整
+认证或 RBAC 系统，也不适用于生产环境。

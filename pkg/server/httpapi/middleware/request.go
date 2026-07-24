@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"io"
@@ -21,6 +22,18 @@ func RequestID(c *gin.Context) string {
 	}
 	id, _ := value.(string)
 	return id
+}
+
+func RequestTimeout(timeout time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestContext, cancelRequest := context.WithTimeout(
+			c.Request.Context(),
+			timeout,
+		)
+		defer cancelRequest()
+		c.Request = c.Request.WithContext(requestContext)
+		c.Next()
+	}
 }
 
 func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
