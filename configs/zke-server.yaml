@@ -10,5 +10,18 @@ database:
   connect_timeout: 5s
   migration_timeout: 2m
 
+auth:
+  session_idle_timeout: 30m
+  session_absolute_timeout: 8h
+  operation_timeout: 10s
+  # Each password check uses the Argon2id memory setting (currently 64 MiB).
+  max_concurrent_password_checks: 4
+  # Local HTTP development only. TLS deployments must set this to true.
+  cookie_secure: false
+  login_rate_limit:
+    window: 1m
+    max_attempts_per_account: 5
+    max_attempts_per_source: 20
+
 shutdown_timeout: 10s
 log_level: debug

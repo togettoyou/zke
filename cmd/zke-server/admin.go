@@ -75,7 +75,7 @@ func runCreateAdmin(args []string) error {
 		return fmt.Errorf("create initial administrator: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "created initial administrator %s (%s)\n", user.UsernameNormalized, user.ID)
+	fmt.Fprintf(os.Stdout, "created initial administrator %s (%s)\n", user.Username, user.ID)
 	return nil
 }
 

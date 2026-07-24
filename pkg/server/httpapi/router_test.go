@@ -9,14 +9,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/auth"
+	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	apiresponse "github.com/togettoyou/zke/pkg/server/httpapi/response"
 )
 
 func TestHealth(t *testing.T) {
 	t.Parallel()
 
-	router := New(discardLogger(), func(context.Context) error { return nil })
+	router := testRouter(func(context.Context) error { return nil })
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 
@@ -33,7 +37,7 @@ func TestHealth(t *testing.T) {
 func TestReadinessUnavailable(t *testing.T) {
 	t.Parallel()
 
-	router := New(discardLogger(), func(context.Context) error {
+	router := testRouter(func(context.Context) error {
 		return errors.New("database unavailable")
 	})
 	response := httptest.NewRecorder()
@@ -54,7 +58,7 @@ func TestRecoveryReturnsInternalServerError(t *testing.T) {
 	})
 	router := gin.New()
 	logger := discardLogger()
-	router.Use(recovery(logger), requestLogger(logger))
+	router.Use(httpmiddleware.Recovery(logger), httpmiddleware.RequestLogger(logger))
 	router.GET("/panic", func(*gin.Context) {
 		panic("test panic")
 	})
@@ -67,7 +71,7 @@ func TestRecoveryReturnsInternalServerError(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
 	}
 
-	var body errorResponse
+	var body apiresponse.Error
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -83,6 +87,50 @@ func TestRecoveryReturnsInternalServerError(t *testing.T) {
 	if body.RequestID != response.Header().Get("X-Request-ID") {
 		t.Errorf("request_id = %q, header = %q", body.RequestID, response.Header().Get("X-Request-ID"))
 	}
+}
+
+func TestRoutesAreRegisteredCentrally(t *testing.T) {
+	t.Parallel()
+
+	engine := testRouter(func(context.Context) error { return nil })
+	routes, ok := engine.(*gin.Engine)
+	if !ok {
+		t.Fatalf("handler type = %T, want *gin.Engine", engine)
+	}
+
+	actual := make(map[string]bool)
+	for _, route := range routes.Routes() {
+		actual[route.Method+" "+route.Path] = true
+	}
+	for _, expected := range []string{
+		"GET /healthz",
+		"GET /readyz",
+		"POST /api/v1/auth/login",
+		"GET /api/v1/auth/me",
+		"POST /api/v1/auth/logout",
+	} {
+		if !actual[expected] {
+			t.Errorf("route %q is not registered", expected)
+		}
+	}
+}
+
+func testRouter(readinessCheck ReadinessCheck) http.Handler {
+	authService := auth.NewService(nil, auth.ServiceConfig{
+		SessionIdleTimeout:          30 * time.Minute,
+		SessionAbsoluteTimeout:      8 * time.Hour,
+		MaxConcurrentPasswordChecks: 1,
+	})
+	return New(
+		discardLogger(),
+		Dependencies{
+			ReadinessCheck: readinessCheck,
+			AuthService:    authService,
+		},
+		Config{
+			Authentication: defaultAuthenticationTestConfig(),
+		},
+	)
 }
 
 func discardLogger() *slog.Logger {

@@ -21,9 +21,13 @@ AI 发起的操作与用户直接发起的操作遵守相同权限规则，并�
 
 ## 当前实现状态
 
-Phase 1 已实现本地用户密码安全基础、首个管理员初始化事务以及用户和会话的数据访问层。首个管理员拥有 Global
-`admin` RoleBinding，创建过程会写入不包含密码正文的审计事件。数据库只保存 Argon2id 密码摘要和 Session Token
-摘要。
+Phase 1 已实现本地用户密码安全基础、首个管理员初始化事务、用户与会话数据访问层，以及 Server 端
+`login`、`logout`、`me` 认证 API。首个管理员拥有 Global `admin` RoleBinding。数据库只保存 Argon2id
+密码摘要、Session Token 摘要和独立的 CSRF Token 摘要。
 
-登录接口、安全 Cookie、CSRF、登录限流、权限中间件和敏感操作确认尚未实现；因此当前实现不能描述为完整认证或
-RBAC 系统，也不适用于生产环境。
+认证 API 使用统一登录错误、请求体上限、账户与直接网络来源限流、Argon2id 全局并发上限、Server 端 Session、
+Cookie 属性、Synchronizer CSRF Token、应用层操作超时和 Go 标准库跨源保护。密码凭证版本校验、可选摘要参数升级、
+Session 创建与成功审计在同一事务中完成；登录成功、失败、限流拒绝与注销均写入不包含凭证明文的审计事件。
+
+持久化账户锁定与恢复、管理员密码重置、可信反向代理来源解析、Console 登录流程、RBAC 授权中间件和敏感操作确认
+尚未实现；因此当前实现仍不能描述为完整认证或 RBAC 系统，也不适用于生产环境。

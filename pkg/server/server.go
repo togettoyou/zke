@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
@@ -32,7 +33,30 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		slog.Int("applied_count", len(migrationResult.AppliedVersions)),
 	)
 
-	handler := httpapi.New(logger, database.Ping)
+	authenticationService := auth.NewService(
+		store.NewAuthStore(database),
+		auth.ServiceConfig{
+			SessionIdleTimeout:          cfg.Auth.SessionIdleTimeout,
+			SessionAbsoluteTimeout:      cfg.Auth.SessionAbsoluteTimeout,
+			MaxConcurrentPasswordChecks: cfg.Auth.MaxConcurrentPasswordChecks,
+		},
+	)
+	handler := httpapi.New(
+		logger,
+		httpapi.Dependencies{
+			ReadinessCheck: database.Ping,
+			AuthService:    authenticationService,
+		},
+		httpapi.Config{
+			Authentication: httpapi.AuthenticationConfig{
+				CookieSecure:          cfg.Auth.CookieSecure,
+				OperationTimeout:      cfg.Auth.OperationTimeout,
+				LoginRateLimitWindow:  cfg.Auth.LoginRateLimit.Window,
+				MaxAttemptsPerAccount: cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,
+				MaxAttemptsPerSource:  cfg.Auth.LoginRateLimit.MaxAttemptsPerSource,
+			},
+		},
+	)
 	httpServer := &http.Server{
 		Addr:              cfg.HTTP.Address,
 		Handler:           handler,

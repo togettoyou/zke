@@ -34,7 +34,8 @@ CREATE TABLE users (
 CREATE TABLE user_sessions (
     id uuid PRIMARY KEY,
     user_id uuid NOT NULL REFERENCES users (id),
-    token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) > 0),
+    token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) = 32),
+    csrf_token_digest bytea NOT NULL CHECK (octet_length(csrf_token_digest) = 32),
     idle_expires_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
     last_seen_at timestamptz NOT NULL DEFAULT now(),

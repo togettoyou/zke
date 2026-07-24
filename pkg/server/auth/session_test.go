@@ -30,3 +30,18 @@ func TestNewSessionToken(t *testing.T) {
 		t.Fatal("session digest contains the plaintext token")
 	}
 }
+
+func TestNewCSRFToken(t *testing.T) {
+	t.Parallel()
+
+	token, digest, err := NewCSRFToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token == "" {
+		t.Fatal("CSRF token is empty")
+	}
+	if !bytes.Equal(digest, DigestCSRFToken(token)) {
+		t.Fatal("CSRF token digest cannot be reproduced")
+	}
+}

@@ -28,34 +28,42 @@ func CreateInitialAdmin(
 	ctx context.Context,
 	authStore *store.AuthStore,
 	input InitialAdminInput,
-) (store.User, error) {
+) (User, error) {
 	username, err := NormalizeUsername(input.Username)
 	if err != nil {
-		return store.User{}, err
+		return User{}, err
 	}
 	displayName, err := normalizeDisplayName(input.DisplayName)
 	if err != nil {
-		return store.User{}, err
+		return User{}, err
 	}
 	if err := ValidateNewPassword(input.Password); err != nil {
-		return store.User{}, err
+		return User{}, err
 	}
 
 	passwordHash, err := HashPassword(input.Password, DefaultPasswordParams())
 	if err != nil {
-		return store.User{}, err
+		return User{}, err
 	}
 	requestID, err := newInitializationRequestID()
 	if err != nil {
-		return store.User{}, err
+		return User{}, err
 	}
 
-	return authStore.CreateInitialAdmin(ctx, store.InitialAdmin{
+	user, err := authStore.CreateInitialAdmin(ctx, store.InitialAdmin{
 		UsernameNormalized: username,
 		DisplayName:        displayName,
 		PasswordHash:       passwordHash,
 		RequestID:          requestID,
 	})
+	if err != nil {
+		return User{}, err
+	}
+	return User{
+		ID:          user.ID,
+		Username:    user.UsernameNormalized,
+		DisplayName: user.DisplayName,
+	}, nil
 }
 
 func NormalizeUsername(username string) (string, error) {

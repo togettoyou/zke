@@ -22,6 +22,16 @@ database:
   url: postgres://file-value
   connect_timeout: 4s
   migration_timeout: 90s
+auth:
+  session_idle_timeout: 45m
+  session_absolute_timeout: 12h
+  operation_timeout: 12s
+  max_concurrent_password_checks: 3
+  cookie_secure: false
+  login_rate_limit:
+    window: 2m
+    max_attempts_per_account: 6
+    max_attempts_per_source: 24
 shutdown_timeout: 8s
 log_level: warn
 `)
@@ -45,6 +55,30 @@ log_level: warn
 	}
 	if cfg.Database.MigrationTimeout != 90*time.Second {
 		t.Fatalf("migration timeout = %s, want YAML value", cfg.Database.MigrationTimeout)
+	}
+	if cfg.Auth.SessionIdleTimeout != 45*time.Minute {
+		t.Fatalf("session idle timeout = %s, want YAML value", cfg.Auth.SessionIdleTimeout)
+	}
+	if cfg.Auth.SessionAbsoluteTimeout != 12*time.Hour {
+		t.Fatalf("session absolute timeout = %s, want YAML value", cfg.Auth.SessionAbsoluteTimeout)
+	}
+	if cfg.Auth.OperationTimeout != 12*time.Second {
+		t.Fatalf("authentication operation timeout = %s, want YAML value", cfg.Auth.OperationTimeout)
+	}
+	if cfg.Auth.MaxConcurrentPasswordChecks != 3 {
+		t.Fatalf(
+			"maximum concurrent password checks = %d, want YAML value",
+			cfg.Auth.MaxConcurrentPasswordChecks,
+		)
+	}
+	if cfg.Auth.CookieSecure {
+		t.Fatal("cookie secure = true, want YAML value false")
+	}
+	if cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount != 6 {
+		t.Fatalf(
+			"account attempt limit = %d, want YAML value",
+			cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,
+		)
 	}
 	if cfg.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("shutdown timeout = %s, want YAML value", cfg.ShutdownTimeout)
@@ -76,12 +110,61 @@ func TestConfigRejectsUnboundedTimeout(t *testing.T) {
 			ConnectTimeout:   5 * time.Second,
 			MigrationTimeout: time.Minute,
 		},
+		Auth: AuthConfig{
+			SessionIdleTimeout:          30 * time.Minute,
+			SessionAbsoluteTimeout:      8 * time.Hour,
+			OperationTimeout:            10 * time.Second,
+			MaxConcurrentPasswordChecks: 4,
+			CookieSecure:                true,
+			LoginRateLimit: LoginRateLimitConfig{
+				Window:                time.Minute,
+				MaxAttemptsPerAccount: 5,
+				MaxAttemptsPerSource:  20,
+			},
+		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",
 	}
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() accepted an HTTP timeout above its maximum")
+	}
+}
+
+func TestConfigRejectsSessionIdleAboveAbsoluteTimeout(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		HTTP: HTTPConfig{
+			Address:           "127.0.0.1:8080",
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		},
+		Database: DatabaseConfig{
+			URL:              "postgres://example",
+			ConnectTimeout:   5 * time.Second,
+			MigrationTimeout: time.Minute,
+		},
+		Auth: AuthConfig{
+			SessionIdleTimeout:          9 * time.Hour,
+			SessionAbsoluteTimeout:      8 * time.Hour,
+			OperationTimeout:            10 * time.Second,
+			MaxConcurrentPasswordChecks: 4,
+			CookieSecure:                true,
+			LoginRateLimit: LoginRateLimitConfig{
+				Window:                time.Minute,
+				MaxAttemptsPerAccount: 5,
+				MaxAttemptsPerSource:  20,
+			},
+		},
+		ShutdownTimeout: 10 * time.Second,
+		LogLevel:        "info",
+	}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted an idle timeout above the absolute timeout")
 	}
 }
 

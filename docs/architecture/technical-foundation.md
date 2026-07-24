@@ -66,24 +66,35 @@ flowchart LR
   并由 ZKE 控制全部中间件配置。
 - Gin Engine 作为标准库 `http.Server` 的 Handler；由 ZKE 显式配置 Header、读取和空闲超时，并执行优雅关闭。
   普通 API 使用写超时，SSE 使用独立写入 Deadline、心跳和最长连接时限。
-- 包之间保持单向依赖，接口仅在测试隔离或实现替换确有需要时定义。
+- Server HTTP API 使用具体类型组成 `Handler → Service → Store` 三层，不为测试目的预先定义 Repository 或
+  Service 接口，也不引入依赖注入框架。
 - 共享代码只包含确实被 Server 和 Agent 共同使用的协议、标识、版本与安全基础类型。
 
 Server 按职责组织：
 
 ```text
-httpapi          Gin HTTP、SSE、参数与响应转换
+httpapi          Gin Handler、集中路由、参数与响应转换
+httpapi/middleware
+                 Request ID、日志、恢复、跨源保护、认证和 CSRF 中间件
+httpapi/response  Handler 与 middleware 共用的稳定 HTTP 错误响应
 agentconn        QUIC 连接、Stream、心跳和请求分发
-service          注册、集群查询和任务等业务流程
+auth             用户认证、会话和权限业务流程
+project          Project 业务流程（规划）
+cluster          Cluster 业务流程（规划）
+enrollment       Agent 注册业务流程（规划）
 store            PostgreSQL 数据访问
-auth             用户、会话、Agent 身份和权限校验
 audit            审计事件
 observability    Server 专属指标、追踪和日志字段
 ```
 
-`httpapi` 和 `agentconn` 调用 `service`，`service` 调用 `store`、`auth` 和 `audit`。Gin、`quic-go` 和 `pgx`
-类型不进入 `service`。参数绑定后由 `service` 校验资源作用域、状态和业务约束。恢复中间件返回统一错误并记录
-请求关联 ID。
+每个 HTTP 业务模块由具体 Handler 调用对应的具体 Service，Service 再调用具体 Store。Handler 不直接访问
+Store，也不使用 Store 的数据结构；Service 将数据库结构转换为对外业务结构。Gin 类型只存在于 `httpapi`，
+`pgx` 类型只存在于 `store`，`quic-go` 类型只存在于 `agentconn`。参数绑定后由 Service 校验资源作用域、状态和
+业务约束。
+
+所有 HTTP Method、路径和局部中间件统一在 `pkg/server/httpapi/routes.go` 注册。`router.go` 只创建 Gin
+Engine、装配全局中间件和构造 Handler；具体 Handler 文件不得自行向根 Router 注册路径。Console API 使用
+`/api/v1` 路由组，Agent 注册 API 使用独立的 `/agent-api/v1` 路由组。恢复中间件返回统一错误并记录请求关联 ID。
 
 ### 4.2 数据存储
 
@@ -130,13 +141,21 @@ Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、
 当前认证基础已经实现：
 
 - 密码使用 Argon2id PHC 格式保存算法版本、内存、迭代、并行度、Salt 和摘要；
-- 默认参数为 64 MiB 内存、3 次迭代和 4 路并行，部署前仍需在目标资源上完成基准测试；
+- 默认参数为每次校验总计 64 MiB 内存、3 次迭代和 4 路并行，部署前仍需在目标资源上完成基准测试；
+- 密码校验使用全局并发信号量，默认最多同时执行 4 次，按当前参数将 Argon2id 校验内存峰值约束在 256 MiB；
 - 单因素认证的新密码至少包含 15 个字符，支持 Unicode、空格和最长 1024 字节，不要求固定字符组合；
 - 首个管理员、Global `admin` RoleBinding 和审计事件在同一事务中创建，并使用 advisory lock 防止并发重复初始化；
-- 会话令牌使用 256 位安全随机值，数据库只保存 SHA-256 摘要；
-- 用户和会话 Store 已支持按规范化用户名查询、创建会话、原子校验并续期有效会话，以及撤销会话；密码变更前创建的会话会自动失效。
+- Session 与 CSRF Token 分别使用独立的 256 位安全随机值，数据库只保存 SHA-256 摘要；
+- `POST /api/v1/auth/login`、`POST /api/v1/auth/logout` 与 `GET /api/v1/auth/me` 已实现统一认证错误、Session Cookie、CSRF 校验和安全错误响应；
+- 登录按规范化账户和直接网络来源执行有界内存限流，同一限流窗口只写入一次拒绝审计，避免审计写放大；
+- 登录成功、失败、限流拒绝和注销会写入安全审计；密码凭证版本校验、可选摘要参数升级、Session 和成功审计在同一事务中完成，避免并发改密后继续签发会话或恢复旧密码；
+- 认证数据库操作使用有界应用层超时，默认 10 秒；超时返回稳定的 `timeout` 错误，不依赖 HTTP 写超时取消数据库工作；
+- 有效会话查询会原子续期空闲时间且不超过绝对过期时间，用户禁用、会话撤销、超时或密码变更会使会话失效；
+- Session Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，CSRF Token 通过 `SameSite=Strict` Cookie 交付并要求 `X-CSRF-Token` 请求头；两者在 TLS 部署中必须启用 `Secure`；
+- Go 标准库跨源保护会在业务 Handler 之前拒绝非安全的跨源浏览器请求。
 
-登录、Cookie、CSRF、限流以及 HTTP 认证与授权中间件尚未实现，因此 Roadmap 中的“用户认证”和“RBAC”仍未完成。
+持久化账户锁定与恢复、管理员密码重置、Console 登录流程以及 RBAC 授权中间件尚未实现，因此 Roadmap 中的
+“用户认证”和“RBAC”仍未完成。登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
 
@@ -431,6 +450,10 @@ POST /api/v1/agents/{agent_id}/revoke
 GET  /api/v1/events
 ```
 
+登录成功只在响应正文返回用户身份与会话绝对过期时间；Session Token 和 CSRF Token 分别通过 `zke_session`
+与 `zke_csrf` Cookie 交付，不进入 JSON、日志或审计正文。除登录外的变更请求必须同时携带 Session Cookie 和
+`X-CSRF-Token`。登录接口也使用标准库 Origin 与 Fetch Metadata 保护。
+
 错误响应至少区分：
 
 - 未认证；
@@ -550,6 +573,8 @@ Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除
   Secret 注入。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - Server 地址、超时、心跳和重试参数需要上下限校验。
+- 认证配置包含操作超时、会话空闲与绝对超时、Argon2id 最大并发校验数、Cookie `Secure` 开关、账户和来源登录限流；仓库中的
+  `cookie_secure: false` 仅用于本地明文 HTTP 开发，TLS 部署必须设为 `true`。
 - 启动时对缺失、冲突和不安全配置快速失败，并返回可定位但不泄密的错误。
 
 ## 13. 可观测性与审计
@@ -580,6 +605,7 @@ Token、证书、Secret 或完整敏感请求正文。
 
 - 业务规则和状态机单元测试；
 - Argon2id 参数编码、密码校验、登录限流、会话轮换、撤销、过期和 CSRF 测试；
+- 使用 `BenchmarkVerifyPasswordDefault` 在目标部署资源上验证 Argon2id 单次延迟与内存分配，再决定是否调整工作因子；
 - 注册凭证单次消费、过期、撤销和并发消费测试；
 - PostgreSQL `store` 集成测试；
 - QUIC、mTLS 和 Protobuf 协议兼容、ALPN、0-RTT 禁用、身份不匹配、重连、证书续期撤销和心跳超时测试；

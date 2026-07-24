@@ -84,6 +84,8 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"actor_user_id uuid REFERENCES users (id)",
 		"actor_agent_id uuid REFERENCES agents (id)",
 		"CONSTRAINT audit_events_actor_shape",
+		"token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) = 32)",
+		"csrf_token_digest bytea NOT NULL CHECK (octet_length(csrf_token_digest) = 32)",
 		"CREATE INDEX enrollments_active_expiry_idx",
 		"CREATE INDEX audit_events_scope_time_idx",
 	} {
@@ -200,6 +202,21 @@ WHERE table_schema = current_schema()
 	}
 	if tableCount != 11 {
 		t.Fatalf("foundation table count = %d, want 11", tableCount)
+	}
+
+	var csrfColumnNullable string
+	err = pool.QueryRow(ctx, `
+SELECT is_nullable
+FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = 'user_sessions'
+  AND column_name = 'csrf_token_digest'
+`).Scan(&csrfColumnNullable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if csrfColumnNullable != "NO" {
+		t.Fatalf("user_sessions.csrf_token_digest nullable = %q, want NO", csrfColumnNullable)
 	}
 
 	testScopeAndAuditConstraints(t, ctx, pool)

@@ -119,3 +119,23 @@ func TestValidateNewPassword(t *testing.T) {
 		t.Fatal("ValidateNewPassword() accepted an oversized password")
 	}
 }
+
+func BenchmarkVerifyPasswordDefault(b *testing.B) {
+	password := []byte("a sufficiently long benchmark passphrase")
+	encoded, err := HashPassword(password, DefaultPasswordParams())
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		matches, _, err := VerifyPassword(password, encoded)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if !matches {
+			b.Fatal("benchmark password did not match")
+		}
+	}
+}
