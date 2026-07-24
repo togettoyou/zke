@@ -32,7 +32,9 @@ openssl ecparam \
   -noout \
   -out "${temporary_directory}/agent-ca.key"
 
-openssl req \
+# Git Bash/MSYS otherwise rewrites the slash-prefixed subject as a Windows path.
+# Exclude only this argument so certificate and key paths are still converted.
+MSYS2_ARG_CONV_EXCL="/O=" openssl req \
   -x509 \
   -new \
   -sha256 \
