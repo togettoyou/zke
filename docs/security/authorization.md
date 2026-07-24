@@ -29,5 +29,10 @@ Phase 1 已实现本地用户密码安全基础、首个管理员初始化事务
 Cookie 属性、Synchronizer CSRF Token、应用层操作超时和 Go 标准库跨源保护。密码凭证版本校验、可选摘要参数升级、
 Session 创建与成功审计在同一事务中完成；登录成功、失败、限流拒绝与注销均写入不包含凭证明文的审计事件。
 
-持久化账户锁定与恢复、管理员密码重置、可信反向代理来源解析、Console 登录流程、RBAC 授权中间件和敏感操作确认
-尚未实现；因此当前实现仍不能描述为完整认证或 RBAC 系统，也不适用于生产环境。
+RBAC 基础已经实现固定权限、`admin/viewer` 角色矩阵、Global/Tenant/Project RoleBinding 继承规则、默认拒绝、
+Project 归属解析和 HTTP 授权 middleware。Global `admin` 拥有全部固定权限；`viewer` 只拥有 Cluster 与 Agent
+读取权限。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标 Project，跨作用域访问会被拒绝。
+
+RBAC 尚未接入实际 Project、Cluster 或 Agent 业务 API。持久化账户锁定与恢复、管理员密码重置、可信反向代理来源
+解析、Console 登录流程、授权拒绝的持久化审计和敏感操作确认也尚未实现；因此当前实现仍不能描述为完整认证或
+RBAC 系统，也不适用于生产环境。

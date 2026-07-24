@@ -78,7 +78,8 @@ httpapi/middleware
                  Request ID、日志、恢复、跨源保护、认证和 CSRF 中间件
 httpapi/response  Handler 与 middleware 共用的稳定 HTTP 错误响应
 agentconn        QUIC 连接、Stream、心跳和请求分发
-auth             用户认证、会话和权限业务流程
+auth             用户认证和会话业务流程
+rbac             固定权限、角色矩阵和 Global/Tenant/Project 作用域授权
 project          Project 业务流程（规划）
 cluster          Cluster 业务流程（规划）
 enrollment       Agent 注册业务流程（规划）
@@ -153,9 +154,16 @@ Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、
 - 有效会话查询会原子续期空闲时间且不超过绝对过期时间，用户禁用、会话撤销、超时或密码变更会使会话失效；
 - Session Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，CSRF Token 通过 `SameSite=Strict` Cookie 交付并要求 `X-CSRF-Token` 请求头；两者在 TLS 部署中必须启用 `Secure`；
 - Go 标准库跨源保护会在业务 Handler 之前拒绝非安全的跨源浏览器请求。
+- RBAC 使用固定权限 `agent.enrollment.create`、`cluster.read`、`agent.read` 和 `agent.revoke`；`admin`
+  拥有全部固定权限，`viewer` 只拥有 Cluster 与 Agent 读取权限。
+- RoleBinding 支持 Global、Tenant 和 Project 作用域；Global 绑定向下覆盖全部作用域，Tenant 绑定覆盖对应
+  Tenant 及其 Project，Project 绑定只覆盖目标 Project。未命中有效绑定时默认拒绝。
+- RBAC Service、PostgreSQL Store 和 HTTP 授权 middleware 已实现；Project middleware 会根据 `project_id`
+  解析 Tenant 归属，并在业务 Handler 前完成权限检查。
 
-持久化账户锁定与恢复、管理员密码重置、Console 登录流程以及 RBAC 授权中间件尚未实现，因此 Roadmap 中的
-“用户认证”和“RBAC”仍未完成。登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
+持久化账户锁定与恢复、管理员密码重置和 Console 登录流程尚未实现。RBAC 基础已经实现，但尚未接入实际的
+Project、Cluster 或 Agent 业务 API，因此 Roadmap 中的“用户认证”和“RBAC”仍未完成。登录来源当前使用直接
+TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
 
