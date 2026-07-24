@@ -36,4 +36,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.enrollment.create,
 	)
+
+	agentAPIV1 := router.Group("/agent-api/v1")
+	agentAPIV1.POST("/enroll", handlers.agentRegistration.enroll)
 }

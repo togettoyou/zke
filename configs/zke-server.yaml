@@ -1,5 +1,8 @@
 http:
   address: 127.0.0.1:8080
+  # Configure both files for native HTTPS. The local loopback setup below may use HTTP.
+  tls_certificate_file: ""
+  tls_private_key_file: ""
   read_header_timeout: 5s
   read_timeout: 15s
   write_timeout: 15s
@@ -22,6 +25,19 @@ auth:
     window: 1m
     max_attempts_per_account: 5
     max_attempts_per_source: 20
+
+agent_enrollment:
+  # Configure both files to enable POST /agent-api/v1/enroll.
+  # Mount the private key from a Secret; do not commit it to this repository.
+  signing_ca_certificate_file: ""
+  signing_ca_private_key_file: ""
+  certificate_ttl: 720h
+  operation_timeout: 10s
+  # Development only; validation rejects this when http.address is not loopback.
+  allow_insecure_loopback: true
+  rate_limit:
+    window: 1m
+    max_attempts_per_source: 30
 
 shutdown_timeout: 10s
 log_level: debug

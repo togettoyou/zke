@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
@@ -17,6 +20,10 @@ import (
 )
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
+	certificateSigner, err := loadAgentCertificateSigner(cfg.AgentEnrollment)
+	if err != nil {
+		return err
+	}
 	databaseContext, cancelDatabase := context.WithTimeout(ctx, cfg.Database.ConnectTimeout)
 	database, err := store.Open(databaseContext, cfg.Database.URL)
 	cancelDatabase()
@@ -48,7 +55,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	auditService := audit.NewService(store.NewAuditStore(database))
 	enrollmentService := enrollment.NewService(
 		store.NewEnrollmentStore(database),
-		enrollment.DefaultTokenTTL,
+		enrollment.ServiceConfig{
+			TokenTTL:          enrollment.DefaultTokenTTL,
+			CertificateSigner: certificateSigner,
+		},
 	)
 	handler := httpapi.New(
 		logger,
@@ -67,6 +77,12 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				MaxAttemptsPerAccount: cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,
 				MaxAttemptsPerSource:  cfg.Auth.LoginRateLimit.MaxAttemptsPerSource,
 			},
+			AgentEnrollment: httpapi.AgentEnrollmentHTTPConfig{
+				OperationTimeout:      cfg.AgentEnrollment.OperationTimeout,
+				RateLimitWindow:       cfg.AgentEnrollment.RateLimit.Window,
+				MaxAttemptsPerSource:  cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource,
+				AllowInsecureLoopback: cfg.AgentEnrollment.AllowInsecureLoopback,
+			},
 		},
 	)
 	httpServer := &http.Server{
@@ -76,11 +92,21 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,
 		IdleTimeout:       cfg.HTTP.IdleTimeout,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
 	}
 
 	serverErrors := make(chan error, 1)
 	go func() {
 		logger.Info("HTTP server starting", slog.String("address", cfg.HTTP.Address))
+		if strings.TrimSpace(cfg.HTTP.TLSCertificateFile) != "" {
+			serverErrors <- httpServer.ListenAndServeTLS(
+				cfg.HTTP.TLSCertificateFile,
+				cfg.HTTP.TLSPrivateKeyFile,
+			)
+			return
+		}
 		serverErrors <- httpServer.ListenAndServe()
 	}()
 
@@ -100,4 +126,31 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		logger.Info("server stopped")
 		return nil
 	}
+}
+
+func loadAgentCertificateSigner(
+	config AgentEnrollmentConfig,
+) (*enrollment.CertificateSigner, error) {
+	certificatePath := strings.TrimSpace(config.SigningCACertificateFile)
+	privateKeyPath := strings.TrimSpace(config.SigningCAPrivateKeyFile)
+	if certificatePath == "" && privateKeyPath == "" {
+		return nil, nil
+	}
+	certificatePEM, err := os.ReadFile(certificatePath)
+	if err != nil {
+		return nil, fmt.Errorf("read Agent signing CA certificate: %w", err)
+	}
+	privateKeyPEM, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("read Agent signing CA private key: %w", err)
+	}
+	signer, err := enrollment.NewCertificateSigner(
+		certificatePEM,
+		privateKeyPEM,
+		config.CertificateTTL,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("configure Agent certificate signer: %w", err)
+	}
+	return signer, nil
 }

@@ -25,13 +25,15 @@ type Dependencies struct {
 }
 
 type Config struct {
-	Authentication AuthenticationConfig
+	Authentication  AuthenticationConfig
+	AgentEnrollment AgentEnrollmentHTTPConfig
 }
 
 type handlers struct {
 	health                  *healthHandler
 	auth                    *authHandler
 	enrollment              *enrollmentHandler
+	agentRegistration       *agentRegistrationHandler
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
 	requestTimeout          gin.HandlerFunc
@@ -67,6 +69,11 @@ func New(
 			dependencies.EnrollmentService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
+		),
+		agentRegistration: newAgentRegistrationHandler(
+			logger,
+			dependencies.EnrollmentService,
+			config.AgentEnrollment,
 		),
 		authMiddleware: httpmiddleware.NewAuthentication(
 			logger,

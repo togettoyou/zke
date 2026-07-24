@@ -11,14 +11,21 @@ import (
 )
 
 type Service struct {
-	store    *store.EnrollmentStore
-	tokenTTL time.Duration
+	store             *store.EnrollmentStore
+	tokenTTL          time.Duration
+	certificateSigner *CertificateSigner
 }
 
-func NewService(enrollmentStore *store.EnrollmentStore, tokenTTL time.Duration) *Service {
+type ServiceConfig struct {
+	TokenTTL          time.Duration
+	CertificateSigner *CertificateSigner
+}
+
+func NewService(enrollmentStore *store.EnrollmentStore, config ServiceConfig) *Service {
 	return &Service{
-		store:    enrollmentStore,
-		tokenTTL: tokenTTL,
+		store:             enrollmentStore,
+		tokenTTL:          config.TokenTTL,
+		certificateSigner: config.CertificateSigner,
 	}
 }
 
@@ -29,7 +36,7 @@ func (service *Service) Create(
 	if !validation.IsUUID(input.ProjectID) ||
 		!validation.IsUUID(input.UserID) ||
 		strings.TrimSpace(input.RequestID) == "" ||
-		!validIdempotencyKey(input.IdempotencyKey) ||
+		!validation.IsIdempotencyKey(input.IdempotencyKey) ||
 		input.Now.IsZero() {
 		return CreateResult{}, ErrInvalidInput
 	}
@@ -66,20 +73,4 @@ func (service *Service) Create(
 		Token:     token,
 		ExpiresAt: storedEnrollment.ExpiresAt,
 	}, nil
-}
-
-func validIdempotencyKey(value string) bool {
-	if len(value) < 16 || len(value) > 128 || strings.TrimSpace(value) != value {
-		return false
-	}
-	for _, character := range value {
-		if (character >= 'a' && character <= 'z') ||
-			(character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') ||
-			strings.ContainsRune("-._:", character) {
-			continue
-		}
-		return false
-	}
-	return true
 }

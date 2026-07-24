@@ -109,6 +109,7 @@ func TestRoutesAreRegisteredCentrally(t *testing.T) {
 		"GET /api/v1/auth/me",
 		"POST /api/v1/auth/logout",
 		"POST /api/v1/projects/:project_id/agent-enrollments",
+		"POST /agent-api/v1/enroll",
 	} {
 		if !actual[expected] {
 			t.Errorf("route %q is not registered", expected)

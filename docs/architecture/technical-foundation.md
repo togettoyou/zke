@@ -216,6 +216,16 @@ Project、Cluster 和 Agent 查询、撤销等 API 尚未实现，因此 Roadmap
 Server 配置服务端证书及 Agent 客户端证书签发 CA；Agent 配置 Server 信任根。私钥始终保存在目标集群，Server
 只保存客户端证书及其元数据。签发或持久化失败时注册尝试保持可重试状态。
 
+当前已实现注册流程的 Handler/Service/Store：校验一次性 Token 与 CSR，将注册尝试绑定到幂等键和 CSR 指纹，
+由配置的 Agent CA 签发仅用于 ClientAuth 的客户端证书，并在单个 PostgreSQL 事务中创建 Cluster、Agent 与
+证书元数据、消费 Token、保存可恢复响应和成功审计；签发或持久化失败另行记录失败审计。证书的 URI SAN 使用
+`zke://agent/...` 身份 URI 显式绑定 Tenant、Project、Cluster 和 Agent，CSR 中由 Agent 自行提供的 Subject
+不会成为平台身份。
+
+并发提交会在注册凭证上串行化；相同幂等键与 CSR 恢复同一结果，绑定不同 CSR 时拒绝。CA 或持久化暂时失败时
+注册尝试保持 `pending`，之后可使用原幂等键和 CSR 重试。Agent 侧生成私钥、调用注册接口、写入身份 Secret 和
+建立 mTLS 连接尚未实现，因此当前仍未形成完整的 Agent 接入闭环。
+
 ### 6.3 证书生命周期
 
 - Agent 在证书到期前，通过现有 mTLS Connection 的独立 Request Stream 提交新 CSR；
@@ -463,7 +473,7 @@ GET  /api/v1/events
 字符的 `Idempotency-Key`；同一用户、Project 和 Key 只允许创建一次，重复请求返回
 `409 idempotency_conflict`，不会生成新凭证或重复成功审计。认证、授权和创建操作共享一个端到端 Deadline，
 避免数据库已提交但 Token 响应因累计超时丢失。该接口只负责创建凭证，Agent 使用凭证提交 CSR 的
-`/agent-api/v1/enroll` 尚未实现。
+`/agent-api/v1/enroll` 尚未实现；其底层注册尝试和原子持久化状态机已经实现，等待接入 CA 签发与 HTTP Handler。
 
 登录成功只在响应正文返回用户身份与会话绝对过期时间；Session Token 和 CSRF Token 分别通过 `zke_session`
 与 `zke_csrf` Cookie 交付，不进入 JSON、日志或审计正文。除登录外的变更请求必须同时携带 Session Cookie 和
@@ -493,6 +503,31 @@ POST /agent-api/v1/enroll
 
 该接口使用注册凭证认证，接受 CSR、Agent 版本、幂等键和最小集群元数据。Tenant 和 Project 由注册凭证确定。
 注册接口与 Console API 可以共用 HTTPS Server，但使用独立路由组、认证中间件、请求体上限和限流策略。
+
+当前接口约定：
+
+```http
+POST /agent-api/v1/enroll
+Authorization: Bearer <一次性注册 Token>
+Idempotency-Key: <16 至 128 字符>
+Content-Type: application/json
+
+{
+  "csr_pem": "-----BEGIN CERTIFICATE REQUEST-----\n...\n",
+  "cluster_name": "cluster-a",
+  "agent_version": "v0.1.0",
+  "protocol_version": "v1"
+}
+```
+
+请求正文最大 128 KiB，不接受未知 JSON 字段。首次成功返回 `201`；相同 Token、幂等键和 CSR 的结果恢复返回
+`200`；响应包含 `cluster_id`、`agent_id`、客户端证书链和证书过期时间，并设置 `Cache-Control: no-store`。
+无效或已消费 Token 返回统一的 `401 invalid_enrollment_token`，幂等键绑定其他 CSR 返回
+`409 idempotency_conflict`。接口按直接网络来源限流。
+
+Agent 注册默认要求 TLS。Server 支持通过 `http.tls_certificate_file` 和 `http.tls_private_key_file` 直接启用
+HTTPS；只有 `agent_enrollment.allow_insecure_loopback: true` 且 Server 监听回环地址时，才允许本地开发使用
+明文 HTTP。
 
 ## 10. 最小数据模型
 
@@ -566,6 +601,11 @@ cd web/console && pnpm install --frozen-lockfile && pnpm dev
 Server 启动时自动执行数据库迁移；没有待应用版本时不会修改业务表。Agent 工程骨架当前不会尝试注册或建立 QUIC
 连接。Server 提供 `GET /healthz` 存活检查和使用 PostgreSQL 连接状态的 `GET /readyz` 就绪检查。
 
+`POST /agent-api/v1/enroll` 只有同时配置 `agent_enrollment.signing_ca_certificate_file` 与
+`agent_enrollment.signing_ca_private_key_file` 后才能签发身份；两项为空时 Server 仍可启动和创建注册 Token，
+但 Agent 注册返回 `503 service_unavailable`。私钥文件应由部署 Secret 挂载，不能提交到仓库。客户端证书默认
+有效 30 天，可通过 `agent_enrollment.certificate_ttl` 调整，但当前证书自动续期尚未实现。
+
 构建与检查：
 
 ```bash
@@ -586,6 +626,8 @@ Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除
 - 仓库内配置只包含明显的本地开发值，不得复用于共享或生产环境。
 - Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；未来由 Chart 管理的
   Secret 注入。
+- HTTP TLS 私钥和 Agent 签发 CA 私钥只通过受保护文件或部署 Secret 提供；Agent 签发 CA 缺失时不会自动生成
+  临时 CA，避免 Server 重启后丢失信任根。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - Server 地址、超时、心跳和重试参数需要上下限校验。
 - 认证配置包含操作超时、会话空闲与绝对超时、Argon2id 最大并发校验数、Cookie `Secure` 开关、账户和来源登录限流；仓库中的

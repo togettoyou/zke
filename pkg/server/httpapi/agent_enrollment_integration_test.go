@@ -71,7 +71,7 @@ RETURNING id::text
 
 	enrollmentService := enrollment.NewService(
 		store.NewEnrollmentStore(pool),
-		enrollment.DefaultTokenTTL,
+		enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL},
 	)
 	auditService := audit.NewService(store.NewAuditStore(pool))
 	router := New(

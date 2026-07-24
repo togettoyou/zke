@@ -14,6 +14,8 @@ func TestLoadConfigYAML(t *testing.T) {
 	content := []byte(`
 http:
   address: 127.0.0.1:9000
+  tls_certificate_file: /run/secrets/server.crt
+  tls_private_key_file: /run/secrets/server.key
   read_header_timeout: 5s
   read_timeout: 20s
   write_timeout: 15s
@@ -32,6 +34,15 @@ auth:
     window: 2m
     max_attempts_per_account: 6
     max_attempts_per_source: 24
+agent_enrollment:
+  signing_ca_certificate_file: /run/secrets/agent-ca.crt
+  signing_ca_private_key_file: /run/secrets/agent-ca.key
+  certificate_ttl: 48h
+  operation_timeout: 9s
+  allow_insecure_loopback: false
+  rate_limit:
+    window: 3m
+    max_attempts_per_source: 42
 shutdown_timeout: 8s
 log_level: warn
 `)
@@ -46,6 +57,10 @@ log_level: warn
 
 	if cfg.HTTP.Address != "127.0.0.1:9000" {
 		t.Fatalf("HTTP address = %q, want YAML value", cfg.HTTP.Address)
+	}
+	if cfg.HTTP.TLSCertificateFile != "/run/secrets/server.crt" ||
+		cfg.HTTP.TLSPrivateKeyFile != "/run/secrets/server.key" {
+		t.Fatalf("unexpected HTTP TLS config: %+v", cfg.HTTP)
 	}
 	if cfg.Database.URL != "postgres://file-value" {
 		t.Fatalf("database URL = %q, want YAML value", cfg.Database.URL)
@@ -79,6 +94,30 @@ log_level: warn
 			"account attempt limit = %d, want YAML value",
 			cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,
 		)
+	}
+	if cfg.AgentEnrollment.SigningCACertificateFile != "/run/secrets/agent-ca.crt" ||
+		cfg.AgentEnrollment.SigningCAPrivateKeyFile != "/run/secrets/agent-ca.key" ||
+		cfg.AgentEnrollment.CertificateTTL != 48*time.Hour ||
+		cfg.AgentEnrollment.OperationTimeout != 9*time.Second ||
+		cfg.AgentEnrollment.RateLimit.Window != 3*time.Minute ||
+		cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource != 42 {
+		t.Fatalf("unexpected Agent enrollment config: %+v", cfg.AgentEnrollment)
+	}
+	partialCAConfig := cfg
+	partialCAConfig.AgentEnrollment.SigningCAPrivateKeyFile = ""
+	if err := partialCAConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted a signing CA certificate without its private key")
+	}
+	partialTLSConfig := cfg
+	partialTLSConfig.HTTP.TLSPrivateKeyFile = ""
+	if err := partialTLSConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted an HTTP TLS certificate without its private key")
+	}
+	insecureExternalConfig := cfg
+	insecureExternalConfig.HTTP.Address = "0.0.0.0:9000"
+	insecureExternalConfig.AgentEnrollment.AllowInsecureLoopback = true
+	if err := insecureExternalConfig.Validate(); err == nil {
+		t.Fatal("Validate() allowed insecure Agent enrollment on a non-loopback address")
 	}
 	if cfg.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("shutdown timeout = %s, want YAML value", cfg.ShutdownTimeout)
@@ -122,6 +161,14 @@ func TestConfigRejectsUnboundedTimeout(t *testing.T) {
 				MaxAttemptsPerSource:  20,
 			},
 		},
+		AgentEnrollment: AgentEnrollmentConfig{
+			CertificateTTL:   30 * 24 * time.Hour,
+			OperationTimeout: 10 * time.Second,
+			RateLimit: AgentEnrollmentRateLimitConfig{
+				Window:               time.Minute,
+				MaxAttemptsPerSource: 30,
+			},
+		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",
 	}
@@ -159,6 +206,14 @@ func TestConfigRejectsSessionIdleAboveAbsoluteTimeout(t *testing.T) {
 				MaxAttemptsPerSource:  20,
 			},
 		},
+		AgentEnrollment: AgentEnrollmentConfig{
+			CertificateTTL:   30 * 24 * time.Hour,
+			OperationTimeout: 10 * time.Second,
+			RateLimit: AgentEnrollmentRateLimitConfig{
+				Window:               time.Minute,
+				MaxAttemptsPerSource: 30,
+			},
+		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",
 	}
@@ -194,6 +249,14 @@ func TestConfigRejectsOperationTimeoutAtOrAboveWriteTimeout(t *testing.T) {
 				Window:                time.Minute,
 				MaxAttemptsPerAccount: 5,
 				MaxAttemptsPerSource:  20,
+			},
+		},
+		AgentEnrollment: AgentEnrollmentConfig{
+			CertificateTTL:   30 * 24 * time.Hour,
+			OperationTimeout: 9 * time.Second,
+			RateLimit: AgentEnrollmentRateLimitConfig{
+				Window:               time.Minute,
+				MaxAttemptsPerSource: 30,
 			},
 		},
 		ShutdownTimeout: 10 * time.Second,

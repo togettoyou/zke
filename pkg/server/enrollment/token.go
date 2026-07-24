@@ -18,3 +18,12 @@ func newToken() (string, []byte, error) {
 	digest := sha256.Sum256([]byte(token))
 	return token, digest[:], nil
 }
+
+func digestToken(token string) ([]byte, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(decoded) != tokenBytes {
+		return nil, ErrTokenRejected
+	}
+	digest := sha256.Sum256([]byte(token))
+	return digest[:], nil
+}
