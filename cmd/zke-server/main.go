@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"zke/pkg/server"
-	"zke/pkg/shared/logging"
+	"github.com/togettoyou/zke/pkg/server"
+	"github.com/togettoyou/zke/pkg/shared/logging"
 )
 
 func main() {

@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"zke/pkg/server/httpapi"
-	"zke/pkg/server/store"
-	"zke/pkg/server/store/migrations"
+	"github.com/togettoyou/zke/pkg/server/httpapi"
+	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {

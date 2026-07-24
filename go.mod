@@ -1,4 +1,4 @@
-module zke
+module github.com/togettoyou/zke
 
 go 1.26.0
 
