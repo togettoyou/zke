@@ -26,6 +26,11 @@ registration:
   timeout: 12s
   retry_initial_interval: 2s
   retry_max_interval: 20s
+connection:
+  server_ca_file: /var/run/secrets/zke-agent-listener/ca.crt
+  connect_timeout: 9s
+  retry_initial_interval: 3s
+  retry_max_interval: 25s
 log_level: debug
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
@@ -52,6 +57,12 @@ log_level: debug
 		cfg.RetryMaxInterval != 20*time.Second {
 		t.Fatalf("unexpected Agent registration config: %+v", cfg)
 	}
+	if cfg.Connection.ServerCAFile != "/var/run/secrets/zke-agent-listener/ca.crt" ||
+		cfg.Connection.ConnectTimeout != 9*time.Second ||
+		cfg.Connection.RetryInitialInterval != 3*time.Second ||
+		cfg.Connection.RetryMaxInterval != 25*time.Second {
+		t.Fatalf("unexpected Agent connection config: %+v", cfg.Connection)
+	}
 }
 
 func TestConfigRejectsCredentialsInServerAddress(t *testing.T) {
@@ -65,48 +76,65 @@ func TestConfigRejectsCredentialsInServerAddress(t *testing.T) {
 		RegistrationTimeout:  10 * time.Second,
 		RetryInitialInterval: time.Second,
 		RetryMaxInterval:     15 * time.Second,
-		LogLevel:             "info",
+		Connection: ConnectionConfig{
+			ServerCAFile:         "/server-ca.crt",
+			ConnectTimeout:       10 * time.Second,
+			RetryInitialInterval: time.Second,
+			RetryMaxInterval:     30 * time.Second,
+		},
+		LogLevel: "info",
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() accepted credentials in the Server address")
 	}
 }
 
-func TestConfigAllowsExplicitInsecureLoopbackDevelopment(t *testing.T) {
+func TestConfigAllowsHTTPServerAddress(t *testing.T) {
 	t.Parallel()
 
 	cfg := Config{
-		ServerAddress:         "http://127.0.0.1:8080",
-		AllowInsecureLoopback: true,
-		EnrollmentTokenFile:   "/token",
-		IdentityNamespace:     "zke-system",
-		IdentitySecretName:    "zke-agent-identity",
-		RegistrationTimeout:   10 * time.Second,
-		RetryInitialInterval:  time.Second,
-		RetryMaxInterval:      15 * time.Second,
-		LogLevel:              "info",
+		ServerAddress:        "http://127.0.0.1:8080",
+		EnrollmentTokenFile:  "/token",
+		IdentityNamespace:    "zke-system",
+		IdentitySecretName:   "zke-agent-identity",
+		RegistrationTimeout:  10 * time.Second,
+		RetryInitialInterval: time.Second,
+		RetryMaxInterval:     15 * time.Second,
+		Connection: ConnectionConfig{
+			ServerCAFile:         "/server-ca.crt",
+			ConnectTimeout:       10 * time.Second,
+			RetryInitialInterval: time.Second,
+			RetryMaxInterval:     30 * time.Second,
+		},
+		LogLevel: "info",
 	}
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() rejected explicit loopback development HTTP: %v", err)
+		t.Fatalf("Validate() rejected HTTP Server address: %v", err)
 	}
 }
 
-func TestConfigRejectsInsecureNonLoopbackServer(t *testing.T) {
+func TestConfigRejectsHTTPServerCA(t *testing.T) {
 	t.Parallel()
 
 	cfg := Config{
-		ServerAddress:         "http://192.0.2.1:8080",
-		AllowInsecureLoopback: true,
-		EnrollmentTokenFile:   "/token",
-		IdentityNamespace:     "zke-system",
-		IdentitySecretName:    "zke-agent-identity",
-		RegistrationTimeout:   10 * time.Second,
-		RetryInitialInterval:  time.Second,
-		RetryMaxInterval:      15 * time.Second,
-		LogLevel:              "info",
+		ServerAddress:        "http://192.0.2.1:8080",
+		ServerCAFile:         "/http-server-ca.crt",
+		EnrollmentTokenFile:  "/token",
+		IdentityNamespace:    "zke-system",
+		IdentitySecretName:   "zke-agent-identity",
+		RegistrationTimeout:  10 * time.Second,
+		RetryInitialInterval: time.Second,
+		RetryMaxInterval:     15 * time.Second,
+		Connection: ConnectionConfig{
+			ServerCAFile:         "/server-ca.crt",
+			ConnectTimeout:       10 * time.Second,
+			RetryInitialInterval: time.Second,
+			RetryMaxInterval:     30 * time.Second,
+		},
+		LogLevel: "info",
 	}
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() accepted insecure HTTP on a non-loopback host")
+		t.Fatal("Validate() accepted an HTTP Server CA for a plaintext address")
 	}
 }
 
@@ -116,6 +144,8 @@ func TestLoadConfigUsesDeploymentDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.yaml")
 	content := []byte(`
 server_address: https://server.example.invalid:8443
+connection:
+  server_ca_file: /var/run/secrets/zke-agent-listener/ca.crt
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
@@ -131,6 +161,10 @@ server_address: https://server.example.invalid:8443
 		cfg.RegistrationTimeout != 10*time.Second ||
 		cfg.RetryInitialInterval != time.Second ||
 		cfg.RetryMaxInterval != 15*time.Second ||
+		cfg.Connection.ServerCAFile != "/var/run/secrets/zke-agent-listener/ca.crt" ||
+		cfg.Connection.ConnectTimeout != 10*time.Second ||
+		cfg.Connection.RetryInitialInterval != time.Second ||
+		cfg.Connection.RetryMaxInterval != 30*time.Second ||
 		cfg.LogLevel != defaultLogLevel {
 		t.Fatalf("unexpected Agent deployment defaults: %+v", cfg)
 	}

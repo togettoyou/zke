@@ -41,6 +41,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return err
 	}
 	var identity LocalIdentity
+	version := agentVersion()
 	if state.Identity != nil {
 		identity = *state.Identity
 	} else {
@@ -60,6 +61,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			client,
 			token,
 			*state.Pending,
+			version,
 		)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -77,10 +79,15 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		slog.String("agent_id", identity.AgentID),
 		slog.Time("certificate_expires_at", identity.CertificateExpiresAt),
 	)
-	logger.Info("agent started", slog.String("state", "awaiting_protocol_implementation"))
-	<-ctx.Done()
+	err = runConnectionLoop(
+		ctx,
+		cfg,
+		identity,
+		version,
+		logger,
+	)
 	logger.Info("agent stopped")
-	return nil
+	return err
 }
 
 func enrollWithRetry(
@@ -91,6 +98,7 @@ func enrollWithRetry(
 	client *registrationClient,
 	token string,
 	pending PendingIdentity,
+	version string,
 ) (LocalIdentity, error) {
 	interval := cfg.RetryInitialInterval
 	for {
@@ -98,7 +106,7 @@ func enrollWithRetry(
 			ctx,
 			token,
 			pending,
-			agentVersion(),
+			version,
 		)
 		if err == nil {
 			return store.Complete(ctx, pending, registration, time.Now().UTC())

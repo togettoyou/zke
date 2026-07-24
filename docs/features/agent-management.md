@@ -29,15 +29,17 @@ CSR，由配置的 Agent CA 签发 ClientAuth 证书，并以单个
 并保留可重试的注册尝试。证书身份显式绑定 Tenant、Project、Cluster 和 Agent，Agent 私钥不会发送给 Server。
 
 相同幂等键与 CSR 可以恢复已有结果，换用 CSR 会被拒绝，过期、撤销或已由其他尝试消费的凭证不能继续使用。
-接口限制 128 KiB 请求正文、拒绝未知字段、按来源限流且默认要求 TLS；只允许在监听回环地址时显式开启本地明文
-开发模式。未配置 Agent CA 时 Server 仍可启动，但注册接口返回服务不可用。
+接口限制 128 KiB 请求正文、拒绝未知字段并按来源限流。HTTP 是否启用 TLS 由 Server HTTP Listener 或上游网关
+决定；包含注册 Token 的明文 HTTP 不得直接暴露到不可信网络。
 
 Agent 已实现首次注册流程：在集群内生成 ECDSA P-256 私钥和 CSR，自行创建固定名称 Kubernetes Secret 并写入
 私钥、原始 CSR 与幂等键，再调用注册接口。网络错误、`429` 和 Server `5xx` 会使用相同 CSR 与幂等键重试；
 成功响应中的证书、Cluster ID、Agent ID 和过期时间会原子写回同一 Secret。Agent 重启后直接复用完整身份，
 不再读取一次性 Token；部分写入、私钥与证书不匹配、证书作用域错误或证书过期都会拒绝启动。
 
-注册后的 QUIC/mTLS 主动连接、证书自动续期以及 Helm Chart/RBAC 清单仍属于后续实现范围。Agent ServiceAccount
+注册后的 QUIC/mTLS 主动连接、Hello、心跳和重连已经实现。Server 使用证书序列号和 URI SAN 校验 Agent 身份，
+并在首次有效连接后激活 Cluster 与 Agent；心跳限频更新健康状态和 `last_seen_at`。证书自动续期、撤销后的现有
+连接关闭、业务任务 Stream、在线状态查询 API 以及 Helm Chart/RBAC 清单仍属于后续实现范围。Agent ServiceAccount
 需要 Secret 的 `create` 权限，并需要固定身份 Secret 的 `get`、`update` 权限。注册 Token 应通过独立的临时
 Secret 挂载为文件，不能写入 Agent YAML、日志或身份 Secret。身份 Secret 由 Agent 通过 client-go 创建和访问；
 注册 Token Secret 由 Kubelet 挂载，Agent 只读取挂载文件。当前仓库尚无自动完成 Token 挂载和 RBAC 配置的部署

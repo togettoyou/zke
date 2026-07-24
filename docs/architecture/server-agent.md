@@ -50,13 +50,15 @@ Agent 只读取文件，不通过 Kubernetes API 查询这个临时 Secret，因
 
 当前仓库还没有提供 Helm Chart 或 Kubernetes Deployment/RBAC 清单。身份 Secret 已由 Agent 自动创建；一次性
 Token Secret、VolumeMount 和实际资源管理 RBAC 仍必须由部署者准备，部署清单自动化属于待实现范围。
-QUIC/mTLS 长连接、心跳、任务路由、证书续期和撤销后的连接处理尚未实现。
+注册后的 QUIC/mTLS 主动连接、证书身份与 `ClientHello` 交叉校验、`ServerHello`、心跳确认、有界重连和
+`last_seen_at` 限频持久化已经实现。HTTP API 使用 TCP；QUIC 使用 UDP，并复用 `http.address` 的主机与数字端口。
+任务路由、业务 Stream、证书续期、撤销后的现有连接关闭以及对外 Agent 在线状态查询仍未实现。
 
 Agent 为固定身份 Secret、注册 Token 路径、注册重试参数和日志级别提供默认值，但示例配置会显式展示这些部署
 约定，避免隐藏运维依赖。Agent 默认使用 Pod 内的 InCluster Kubernetes 配置；本地开发或特殊环境可以显式设置
 `kubeconfig_file`，未设置时回退到 `KUBECONFIG` 或 `~/.kube/config`。显式文件始终优先于环境自动识别。
-`server_ca_file` 只在 ZKE Server 证书无法由系统信任根验证时配置，它与 Kubernetes API 使用的 CA 无关；
-`enrollment_token_file` 也可以在非标准挂载场景覆盖默认路径。
+顶层 `server_ca_file` 只用于可选的 HTTP API HTTPS；`connection.server_ca_file` 用于验证 QUIC Server 身份，
+两者都与 Kubernetes API 使用的 CA 无关。`enrollment_token_file` 也可以在非标准挂载场景覆盖默认路径。
 
 ## 连接模型
 

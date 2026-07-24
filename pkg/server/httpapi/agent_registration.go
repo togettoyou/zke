@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"math"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,18 +18,16 @@ import (
 const maxAgentEnrollmentRequestBytes = 128 * 1024
 
 type AgentEnrollmentHTTPConfig struct {
-	OperationTimeout      time.Duration
-	RateLimitWindow       time.Duration
-	MaxAttemptsPerSource  int
-	AllowInsecureLoopback bool
+	OperationTimeout     time.Duration
+	RateLimitWindow      time.Duration
+	MaxAttemptsPerSource int
 }
 
 type agentRegistrationHandler struct {
-	logger                *slog.Logger
-	service               *enrollment.Service
-	operationTimeout      time.Duration
-	limiter               *sourceLimiter
-	allowInsecureLoopback bool
+	logger           *slog.Logger
+	service          *enrollment.Service
+	operationTimeout time.Duration
+	limiter          *sourceLimiter
 }
 
 type agentRegistrationRequest struct {
@@ -52,10 +49,9 @@ func newAgentRegistrationHandler(
 	config AgentEnrollmentHTTPConfig,
 ) *agentRegistrationHandler {
 	return &agentRegistrationHandler{
-		logger:                logger,
-		service:               service,
-		operationTimeout:      config.OperationTimeout,
-		allowInsecureLoopback: config.AllowInsecureLoopback,
+		logger:           logger,
+		service:          service,
+		operationTimeout: config.OperationTimeout,
 		limiter: newSourceLimiter(
 			config.RateLimitWindow,
 			config.MaxAttemptsPerSource,
@@ -65,16 +61,6 @@ func newAgentRegistrationHandler(
 
 func (handler *agentRegistrationHandler) enroll(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	if c.Request.TLS == nil &&
-		(!handler.allowInsecureLoopback || !loopbackClient(c.Request)) {
-		writeError(
-			c,
-			http.StatusUpgradeRequired,
-			"tls_required",
-			"TLS is required for Agent enrollment",
-		)
-		return
-	}
 	now := time.Now().UTC()
 	allowed, retry := handler.limiter.allow(clientAddress(c.Request), now)
 	if !allowed {
@@ -224,9 +210,4 @@ func bearerToken(value string) (string, bool) {
 		return "", false
 	}
 	return parts[1], true
-}
-
-func loopbackClient(request *http.Request) bool {
-	address := net.ParseIP(clientAddress(request))
-	return address != nil && address.IsLoopback()
 }

@@ -226,7 +226,9 @@ Server 配置服务端证书及 Agent 客户端证书签发 CA；Agent 配置 Se
 
 并发提交会在注册凭证上串行化；相同幂等键与 CSR 恢复同一结果，绑定不同 CSR 时拒绝。CA 或持久化暂时失败时
 注册尝试保持 `pending`，之后可使用原幂等键和 CSR 重试。Agent 侧私钥生成、注册调用和身份 Secret 持久化已经
-实现；QUIC/mTLS 长连接仍未实现，因此当前尚未形成完整的 Agent 接入闭环。
+实现。注册完成后，Agent 使用客户端证书主动建立 QUIC/mTLS Connection，完成 `ClientHello`、证书身份交叉校验、
+`ServerHello`、心跳确认和有界重连；Server 会校验数据库中的证书序列号、有效期与撤销状态，并将首次有效连接
+持久化为 active。证书自动续期、撤销后的现有连接关闭和业务 Request/Data Stream 仍未实现。
 
 ### 6.3 证书生命周期
 
@@ -538,10 +540,9 @@ Content-Type: application/json
 无效或已消费 Token 返回统一的 `401 invalid_enrollment_token`，幂等键绑定其他 CSR 返回
 `409 idempotency_conflict`。接口按直接网络来源限流。
 
-Agent 注册默认要求 TLS。Server 支持通过 `http.tls_certificate_file` 和 `http.tls_private_key_file` 直接启用
-HTTPS；只有 `agent_enrollment.allow_insecure_loopback: true` 且 Server 监听回环地址时，才允许本地开发使用
-明文 HTTP。Agent 端也必须同时设置 `allow_insecure_loopback: true`，并且 `server_address` 必须是回环 HTTP
-地址；任一条件不满足都会拒绝启动。
+Agent 注册接口属于普通 HTTP API，可以由 Server 直接提供 HTTP 或 HTTPS。生产部署若由 Ingress 或网关终止
+TLS，Server 内部可以继续监听 HTTP；不得把包含注册 Token 的明文 HTTP 直接暴露到不可信网络。注册完成后的
+Agent 长连接是独立的 QUIC/UDP Listener，始终使用 TLS 1.3 和 mTLS，不受 HTTP Listener 是否启用 HTTPS 影响。
 
 ## 10. 最小数据模型
 
@@ -594,16 +595,23 @@ Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 - Protobuf、OpenAPI 和数据库代码生成工具必须固定版本并提供单一生成命令。
 - 生成文件是否入库在工程初始化时统一决定，生成产物通过统一命令更新。
 
+Agent Protobuf 使用 `go.mod` 的 `tool` 指令固定 `protoc-gen-go`，生成命令为：
+
+```bash
+bash hack/generate-agent-protocol.sh
+```
+
 ### 11.1 本地启动与验证
 
 本地开发环境需要 Go 1.26.4、Node.js 24 LTS、pnpm 11、Docker 与 Docker Compose。Go 命令在仓库根目录
 执行，pnpm 命令只在 `web/console` 中执行。
 
-本地 Agent 签发 CA 只由 `hack` 脚本生成，保存到被 Git 忽略的 `.local/development`：
+本地 Agent CA、Server CA 和 QUIC Server 身份只由 `hack` 脚本生成，保存到被 Git 忽略的
+`.local/development`：
 
 ```bash
 docker compose -f deploy/development/compose.yaml up -d
-bash hack/generate-dev-agent-ca.sh
+bash hack/generate-dev-certificates.sh
 go run ./cmd/zke-server create-admin --config configs/zke-server.yaml --username admin --display-name "ZKE Administrator"
 go run ./cmd/zke-server --config configs/zke-server.yaml
 cd web/console && pnpm install --frozen-lockfile && pnpm dev
@@ -627,8 +635,9 @@ Agent 会自行创建 `zke-agent-identity` Secret。若开发期间直接修改�
 后重新启动数据库，而不是让应用静默改写已执行迁移。
 
 Server 启动时自动执行数据库迁移；没有待应用版本时不会修改业务表。Agent 会使用 client-go 创建或访问固定名称
-身份 Secret，并在没有完整身份时调用注册接口；注册完成后暂不建立 QUIC 连接。Server 提供 `GET /healthz`
-存活检查和使用 PostgreSQL 连接状态的 `GET /readyz` 就绪检查。
+身份 Secret，并在没有完整身份时调用注册接口；注册完成后使用该身份建立 QUIC/mTLS Connection，并在 Control
+Stream 上执行 Hello 与心跳。Server 提供 `GET /healthz` 存活检查和使用 PostgreSQL 连接状态的 `GET /readyz`
+就绪检查。
 
 Agent 为身份 Secret、注册 Token 路径、注册重试参数和日志级别提供默认值，但示例 YAML 显式展示这些部署约定。
 身份 Secret 默认是 `zke-system/zke-agent-identity`，由 Agent 通过 client-go 创建并使用 `get`、`update`
@@ -642,18 +651,19 @@ ServiceAccount 提供的 InCluster 配置，不在集群内时再按 `client-go`
 Agent YAML 中显式指定文件。若已经检测到集群环境但 ServiceAccount Token 或 CA 文件损坏，Agent 会直接报错，
 不会回退到其他 kubeconfig，避免意外访问错误集群。
 
-`server_ca_file` 只在 ZKE Server HTTPS 证书无法由操作系统信任根验证时配置；它认证的是 ZKE Server，不是
-Kubernetes API。`enrollment_token_file` 仅在非标准 Secret 挂载路径下覆盖默认值。两项都不应把凭据正文写入
-Agent YAML。
+顶层 `server_ca_file` 只用于可选的 HTTP API HTTPS 信任根；`connection.server_ca_file` 专门用于验证 QUIC
+Server 身份，两者不应混用。`enrollment_token_file` 仅在非标准 Secret 挂载路径下覆盖默认值。配置文件只保存
+证书或文件路径，不保存私钥与 Token 正文。
 
 当前仓库尚未提供 Helm Chart 或 Kubernetes Deployment/RBAC 清单，因此注册 Token Secret 与对应 VolumeMount
 仍由部署者负责；身份 Secret 已由 Agent 自动创建。后续 Chart 需要按实际资源管理能力配置 Agent 权限，并确保
 身份凭据不会被日志或业务 API 暴露。
 
-`POST /agent-api/v1/enroll` 只有同时配置 `agent_enrollment.signing_ca_certificate_file` 与
-`agent_enrollment.signing_ca_private_key_file` 后才能签发身份；两项为空时 Server 仍可启动和创建注册 Token，
-但 Agent 注册返回 `503 service_unavailable`。私钥文件应由部署 Secret 挂载，不能提交到仓库。客户端证书默认
-有效 30 天，可通过 `agent_enrollment.certificate_ttl` 调整，但当前证书自动续期尚未实现。
+`agent_enrollment.signing_ca_certificate_file` 与 `agent_enrollment.signing_ca_private_key_file` 用于签发
+Agent 客户端身份；Agent Listener 直接复用该 CA 证书验证客户端，不重复配置 Client CA。`agent_listener` 使用
+独立的 Server 证书和私钥，并在 UDP 上复用 `http.address` 的主机与数字端口。任一必需证书配置缺失时 Server
+拒绝启动。私钥文件应由部署 Secret 挂载，不能提交到仓库。客户端证书默认有效 30 天，可通过
+`agent_enrollment.certificate_ttl` 调整，但当前证书自动续期尚未实现。
 
 构建与检查：
 
@@ -675,8 +685,8 @@ Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除
 - 仓库内配置只包含明显的本地开发值，不得复用于共享或生产环境。
 - Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；未来由 Chart 管理的
   Secret 注入。
-- HTTP TLS 私钥和 Agent 签发 CA 私钥只通过受保护文件或部署 Secret 提供；Agent 签发 CA 缺失时不会自动生成
-  临时 CA，避免 Server 重启后丢失信任根。
+- HTTP TLS、QUIC Server 与 Agent 签发 CA 私钥只通过受保护文件或部署 Secret 提供；缺失时不会自动生成临时
+  身份，避免 Server 重启后丢失信任根。
 - Agent 一次性注册 Token 只通过独立临时 Secret 挂载的文件读取。Agent 自行创建身份 Secret；ServiceAccount
   需要 Namespace 内 Secret 的 `create` 权限，并将 `get`、`update` 尽量限定到固定身份 Secret，不需要为注册
   Token Secret 授予 API 读取权限。

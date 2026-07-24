@@ -39,10 +39,17 @@ agent_enrollment:
   signing_ca_private_key_file: /run/secrets/agent-ca.key
   certificate_ttl: 48h
   operation_timeout: 9s
-  allow_insecure_loopback: false
   rate_limit:
     window: 3m
     max_attempts_per_source: 42
+agent_listener:
+  tls_certificate_file: /run/secrets/zke-server.crt
+  tls_private_key_file: /run/secrets/zke-server.key
+  handshake_timeout: 8s
+  heartbeat_interval: 12s
+  heartbeat_timeout: 36s
+  last_seen_write_interval: 2m
+  operation_timeout: 7s
 shutdown_timeout: 8s
 log_level: warn
 `)
@@ -103,6 +110,21 @@ log_level: warn
 		cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource != 42 {
 		t.Fatalf("unexpected Agent enrollment config: %+v", cfg.AgentEnrollment)
 	}
+	if cfg.AgentListener.TLSCertificateFile != "/run/secrets/zke-server.crt" ||
+		cfg.AgentListener.TLSPrivateKeyFile != "/run/secrets/zke-server.key" ||
+		cfg.AgentListener.HandshakeTimeout != 8*time.Second ||
+		cfg.AgentListener.HeartbeatInterval != 12*time.Second ||
+		cfg.AgentListener.HeartbeatTimeout != 36*time.Second ||
+		cfg.AgentListener.LastSeenWriteInterval != 2*time.Minute ||
+		cfg.AgentListener.OperationTimeout != 7*time.Second {
+		t.Fatalf("unexpected Agent Listener config: %+v", cfg.AgentListener)
+	}
+	invalidHeartbeatConfig := cfg
+	invalidHeartbeatConfig.AgentListener.HeartbeatTimeout =
+		invalidHeartbeatConfig.AgentListener.HeartbeatInterval
+	if err := invalidHeartbeatConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted an Agent heartbeat interval at the timeout")
+	}
 	partialCAConfig := cfg
 	partialCAConfig.AgentEnrollment.SigningCAPrivateKeyFile = ""
 	if err := partialCAConfig.Validate(); err == nil {
@@ -112,12 +134,6 @@ log_level: warn
 	partialTLSConfig.HTTP.TLSPrivateKeyFile = ""
 	if err := partialTLSConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted an HTTP TLS certificate without its private key")
-	}
-	insecureExternalConfig := cfg
-	insecureExternalConfig.HTTP.Address = "0.0.0.0:9000"
-	insecureExternalConfig.AgentEnrollment.AllowInsecureLoopback = true
-	if err := insecureExternalConfig.Validate(); err == nil {
-		t.Fatal("Validate() allowed insecure Agent enrollment on a non-loopback address")
 	}
 	if cfg.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("shutdown timeout = %s, want YAML value", cfg.ShutdownTimeout)
@@ -162,12 +178,23 @@ func TestConfigRejectsUnboundedTimeout(t *testing.T) {
 			},
 		},
 		AgentEnrollment: AgentEnrollmentConfig{
-			CertificateTTL:   30 * 24 * time.Hour,
-			OperationTimeout: 10 * time.Second,
+			SigningCACertificateFile: "/agent-ca.crt",
+			SigningCAPrivateKeyFile:  "/agent-ca.key",
+			CertificateTTL:           30 * 24 * time.Hour,
+			OperationTimeout:         10 * time.Second,
 			RateLimit: AgentEnrollmentRateLimitConfig{
 				Window:               time.Minute,
 				MaxAttemptsPerSource: 30,
 			},
+		},
+		AgentListener: AgentListenerConfig{
+			TLSCertificateFile:    "/server.crt",
+			TLSPrivateKeyFile:     "/server.key",
+			HandshakeTimeout:      10 * time.Second,
+			HeartbeatInterval:     10 * time.Second,
+			HeartbeatTimeout:      30 * time.Second,
+			LastSeenWriteInterval: time.Minute,
+			OperationTimeout:      10 * time.Second,
 		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",
@@ -207,12 +234,23 @@ func TestConfigRejectsSessionIdleAboveAbsoluteTimeout(t *testing.T) {
 			},
 		},
 		AgentEnrollment: AgentEnrollmentConfig{
-			CertificateTTL:   30 * 24 * time.Hour,
-			OperationTimeout: 10 * time.Second,
+			SigningCACertificateFile: "/agent-ca.crt",
+			SigningCAPrivateKeyFile:  "/agent-ca.key",
+			CertificateTTL:           30 * 24 * time.Hour,
+			OperationTimeout:         10 * time.Second,
 			RateLimit: AgentEnrollmentRateLimitConfig{
 				Window:               time.Minute,
 				MaxAttemptsPerSource: 30,
 			},
+		},
+		AgentListener: AgentListenerConfig{
+			TLSCertificateFile:    "/server.crt",
+			TLSPrivateKeyFile:     "/server.key",
+			HandshakeTimeout:      10 * time.Second,
+			HeartbeatInterval:     10 * time.Second,
+			HeartbeatTimeout:      30 * time.Second,
+			LastSeenWriteInterval: time.Minute,
+			OperationTimeout:      10 * time.Second,
 		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",
@@ -252,12 +290,23 @@ func TestConfigRejectsOperationTimeoutAtOrAboveWriteTimeout(t *testing.T) {
 			},
 		},
 		AgentEnrollment: AgentEnrollmentConfig{
-			CertificateTTL:   30 * 24 * time.Hour,
-			OperationTimeout: 9 * time.Second,
+			SigningCACertificateFile: "/agent-ca.crt",
+			SigningCAPrivateKeyFile:  "/agent-ca.key",
+			CertificateTTL:           30 * 24 * time.Hour,
+			OperationTimeout:         9 * time.Second,
 			RateLimit: AgentEnrollmentRateLimitConfig{
 				Window:               time.Minute,
 				MaxAttemptsPerSource: 30,
 			},
+		},
+		AgentListener: AgentListenerConfig{
+			TLSCertificateFile:    "/server.crt",
+			TLSPrivateKeyFile:     "/server.key",
+			HandshakeTimeout:      10 * time.Second,
+			HeartbeatInterval:     10 * time.Second,
+			HeartbeatTimeout:      30 * time.Second,
+			LastSeenWriteInterval: time.Minute,
+			OperationTimeout:      10 * time.Second,
 		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",

@@ -24,8 +24,8 @@ export function ConsoleApp() {
         <Card className="notice-card" bordered={false}>
           <Text strong>当前状态</Text>
           <Paragraph>
-            这是可运行的最小工程骨架。Agent 注册、QUIC/mTLS
-            协议、用户认证、RBAC 和 Kubernetes 资源操作尚未实现。
+            Agent 注册、QUIC/mTLS 心跳、用户认证和 RBAC
+            基础已经实现；管理界面与 Kubernetes 资源操作仍在开发中。
           </Paragraph>
         </Card>
       </section>

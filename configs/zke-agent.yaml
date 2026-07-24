@@ -1,9 +1,6 @@
 server_address: http://127.0.0.1:8080
-# Development only. HTTP is rejected unless both this flag and a loopback host are used.
-allow_insecure_loopback: true
 
-# Production HTTPS only. Configure this when the ZKE Server certificate is not
-# trusted by the operating system trust store.
+# Optional HTTP API HTTPS trust root. It is unused with the HTTP address above.
 # server_ca_file: /var/run/secrets/zke-server/ca.crt
 
 # Optional local-development override. In a cluster, the Agent uses its
@@ -24,5 +21,12 @@ registration:
   timeout: 10s
   retry_initial_interval: 1s
   retry_max_interval: 15s
+
+connection:
+  # QUIC always validates the ZKE Server identity, independently of HTTP.
+  server_ca_file: .local/development/server-ca.crt
+  connect_timeout: 10s
+  retry_initial_interval: 1s
+  retry_max_interval: 30s
 
 log_level: info

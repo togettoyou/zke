@@ -1,6 +1,6 @@
 http:
   address: 127.0.0.1:8080
-  # Configure both files for native HTTPS. The local loopback setup below may use HTTP.
+  # Optional native HTTPS for the HTTP API. QUIC uses agent_listener TLS instead.
   tls_certificate_file: ""
   tls_private_key_file: ""
   read_header_timeout: 5s
@@ -27,16 +27,25 @@ auth:
     max_attempts_per_source: 20
 
 agent_enrollment:
-  # Run hack/generate-dev-agent-ca.sh once for local development.
+  # Run hack/generate-dev-certificates.sh once for local development.
   signing_ca_certificate_file: .local/development/agent-ca.crt
   signing_ca_private_key_file: .local/development/agent-ca.key
   certificate_ttl: 720h
   operation_timeout: 10s
-  # Development only; validation rejects this when http.address is not loopback.
-  allow_insecure_loopback: true
   rate_limit:
     window: 1m
     max_attempts_per_source: 30
+
+agent_listener:
+  # QUIC listens on UDP using the host and port from http.address.
+  tls_certificate_file: .local/development/zke-server.crt
+  tls_private_key_file: .local/development/zke-server.key
+  handshake_timeout: 10s
+  heartbeat_interval: 10s
+  heartbeat_timeout: 30s
+  # Heartbeats update in-memory liveness immediately and persist at this cadence.
+  last_seen_write_interval: 1m
+  operation_timeout: 10s
 
 shutdown_timeout: 10s
 log_level: debug

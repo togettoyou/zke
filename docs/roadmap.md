@@ -8,7 +8,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] PostgreSQL 本地开发环境、版本化迁移与 Phase 1 最小数据模型
 - [ ] ZKE Server
 - [ ] ZKE Agent
-- [ ] Agent 主动连接
+- [x] Agent 主动连接
 - [ ] 用户认证
 - [ ] RBAC
 - [ ] 集群接入

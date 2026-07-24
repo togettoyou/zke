@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -23,26 +22,32 @@ const (
 )
 
 type Config struct {
-	ServerAddress         string
-	AllowInsecureLoopback bool
-	ServerCAFile          string
-	KubeconfigFile        string
-	EnrollmentTokenFile   string
-	IdentityNamespace     string
-	IdentitySecretName    string
-	RegistrationTimeout   time.Duration
-	RetryInitialInterval  time.Duration
-	RetryMaxInterval      time.Duration
-	LogLevel              string
+	ServerAddress        string
+	ServerCAFile         string
+	KubeconfigFile       string
+	EnrollmentTokenFile  string
+	IdentityNamespace    string
+	IdentitySecretName   string
+	RegistrationTimeout  time.Duration
+	RetryInitialInterval time.Duration
+	RetryMaxInterval     time.Duration
+	Connection           ConnectionConfig
+	LogLevel             string
+}
+
+type ConnectionConfig struct {
+	ServerCAFile         string
+	ConnectTimeout       time.Duration
+	RetryInitialInterval time.Duration
+	RetryMaxInterval     time.Duration
 }
 
 type fileConfig struct {
-	ServerAddress         string `yaml:"server_address"`
-	AllowInsecureLoopback *bool  `yaml:"allow_insecure_loopback"`
-	ServerCAFile          string `yaml:"server_ca_file"`
-	KubeconfigFile        string `yaml:"kubeconfig_file"`
-	EnrollmentTokenFile   string `yaml:"enrollment_token_file"`
-	Identity              struct {
+	ServerAddress       string `yaml:"server_address"`
+	ServerCAFile        string `yaml:"server_ca_file"`
+	KubeconfigFile      string `yaml:"kubeconfig_file"`
+	EnrollmentTokenFile string `yaml:"enrollment_token_file"`
+	Identity            struct {
 		Namespace  string `yaml:"namespace"`
 		SecretName string `yaml:"secret_name"`
 	} `yaml:"identity"`
@@ -51,6 +56,12 @@ type fileConfig struct {
 		RetryInitialInterval string `yaml:"retry_initial_interval"`
 		RetryMaxInterval     string `yaml:"retry_max_interval"`
 	} `yaml:"registration"`
+	Connection struct {
+		ServerCAFile         string `yaml:"server_ca_file"`
+		ConnectTimeout       string `yaml:"connect_timeout"`
+		RetryInitialInterval string `yaml:"retry_initial_interval"`
+		RetryMaxInterval     string `yaml:"retry_max_interval"`
+	} `yaml:"connection"`
 	LogLevel string `yaml:"log_level"`
 }
 
@@ -70,7 +81,12 @@ func LoadConfig(args []string) (Config, error) {
 		RegistrationTimeout:  10 * time.Second,
 		RetryInitialInterval: time.Second,
 		RetryMaxInterval:     15 * time.Second,
-		LogLevel:             defaultLogLevel,
+		Connection: ConnectionConfig{
+			ConnectTimeout:       10 * time.Second,
+			RetryInitialInterval: time.Second,
+			RetryMaxInterval:     30 * time.Second,
+		},
+		LogLevel: defaultLogLevel,
 	}
 	if err := applyFile(&cfg, configPath); err != nil {
 		return Config{}, err
@@ -105,9 +121,6 @@ func applyFile(cfg *Config, path string) error {
 
 	if raw.ServerAddress != "" {
 		cfg.ServerAddress = raw.ServerAddress
-	}
-	if raw.AllowInsecureLoopback != nil {
-		cfg.AllowInsecureLoopback = *raw.AllowInsecureLoopback
 	}
 	if raw.ServerCAFile != "" {
 		cfg.ServerCAFile = raw.ServerCAFile
@@ -145,6 +158,30 @@ func applyFile(cfg *Config, path string) error {
 	); err != nil {
 		return err
 	}
+	if raw.Connection.ServerCAFile != "" {
+		cfg.Connection.ServerCAFile = raw.Connection.ServerCAFile
+	}
+	if err := applyAgentDuration(
+		&cfg.Connection.ConnectTimeout,
+		raw.Connection.ConnectTimeout,
+		"connection.connect_timeout",
+	); err != nil {
+		return err
+	}
+	if err := applyAgentDuration(
+		&cfg.Connection.RetryInitialInterval,
+		raw.Connection.RetryInitialInterval,
+		"connection.retry_initial_interval",
+	); err != nil {
+		return err
+	}
+	if err := applyAgentDuration(
+		&cfg.Connection.RetryMaxInterval,
+		raw.Connection.RetryMaxInterval,
+		"connection.retry_max_interval",
+	); err != nil {
+		return err
+	}
 	if raw.LogLevel != "" {
 		cfg.LogLevel = raw.LogLevel
 	}
@@ -178,18 +215,7 @@ func (cfg Config) Validate() error {
 	}
 	switch serverURL.Scheme {
 	case "https":
-		if cfg.AllowInsecureLoopback {
-			return errors.New("insecure loopback mode requires an HTTP Server address")
-		}
 	case "http":
-		host := serverURL.Hostname()
-		ip := net.ParseIP(host)
-		if !cfg.AllowInsecureLoopback ||
-			(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
-			return errors.New(
-				"HTTP Server address is only allowed with insecure loopback mode on a loopback host",
-			)
-		}
 		if cfg.ServerCAFile != "" {
 			return errors.New("Server CA file cannot be used with an HTTP Server address")
 		}
@@ -243,6 +269,34 @@ func (cfg Config) Validate() error {
 			"registration initial retry interval must not exceed maximum retry interval",
 		)
 	}
+	if strings.TrimSpace(cfg.Connection.ServerCAFile) == "" ||
+		strings.TrimSpace(cfg.Connection.ServerCAFile) !=
+			cfg.Connection.ServerCAFile {
+		return errors.New(
+			"connection Server CA file is required and must not contain surrounding whitespace",
+		)
+	}
+	for _, item := range []struct {
+		value time.Duration
+		max   time.Duration
+		name  string
+	}{
+		{cfg.Connection.ConnectTimeout, time.Minute, "connection timeout"},
+		{cfg.Connection.RetryInitialInterval, time.Minute, "connection initial retry interval"},
+		{cfg.Connection.RetryMaxInterval, 5 * time.Minute, "connection maximum retry interval"},
+	} {
+		if item.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero", item.name)
+		}
+		if item.value > item.max {
+			return fmt.Errorf("%s must not exceed %s", item.name, item.max)
+		}
+	}
+	if cfg.Connection.RetryInitialInterval > cfg.Connection.RetryMaxInterval {
+		return errors.New(
+			"connection initial retry interval must not exceed maximum retry interval",
+		)
+	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {
 		return errors.New("log level is required")
 	}
@@ -267,4 +321,12 @@ func (cfg Config) ServerHost() string {
 		return ""
 	}
 	return serverURL.Host
+}
+
+func (cfg Config) ServerName() string {
+	serverURL, err := url.Parse(cfg.ServerAddress)
+	if err != nil {
+		return ""
+	}
+	return serverURL.Hostname()
 }

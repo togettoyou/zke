@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+message ControlFrame {
+  uint32 protocol_version = 1;
+
+  oneof message {
+    ClientHello client_hello = 10;
+    ServerHello server_hello = 11;
+    Heartbeat heartbeat = 12;
+    HeartbeatAck heartbeat_ack = 13;
+    ClientGoodbye client_goodbye = 14;
+    GoAway go_away = 15;
+  }
+}
+
+message ClientHello {
+  string agent_id = 1;
+  string cluster_id = 2;
+  string agent_version = 3;
+  string startup_id = 4;
+  repeated string capabilities = 5;
+}
+
+message ServerHello {
+  string connection_id = 1;
+  int64 server_time_unix_milli = 2;
+  uint64 heartbeat_interval_millis = 3;
+  uint64 heartbeat_timeout_millis = 4;
+}
+
+message Heartbeat {
+  uint64 sequence = 1;
+  int64 sent_at_unix_milli = 2;
+  HealthStatus health = 3;
+}
+
+message HeartbeatAck {
+  uint64 sequence = 1;
+  int64 server_time_unix_milli = 2;
+}
+
+message ClientGoodbye {
+  string reason = 1;
+}
+
+message GoAway {
+  string reason = 1;
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+}

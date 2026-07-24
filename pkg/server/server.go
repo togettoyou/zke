@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
@@ -20,6 +22,9 @@ import (
 )
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
+	runContext, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
 	certificateSigner, err := loadAgentCertificateSigner(cfg.AgentEnrollment)
 	if err != nil {
 		return err
@@ -78,13 +83,30 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				MaxAttemptsPerSource:  cfg.Auth.LoginRateLimit.MaxAttemptsPerSource,
 			},
 			AgentEnrollment: httpapi.AgentEnrollmentHTTPConfig{
-				OperationTimeout:      cfg.AgentEnrollment.OperationTimeout,
-				RateLimitWindow:       cfg.AgentEnrollment.RateLimit.Window,
-				MaxAttemptsPerSource:  cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource,
-				AllowInsecureLoopback: cfg.AgentEnrollment.AllowInsecureLoopback,
+				OperationTimeout:     cfg.AgentEnrollment.OperationTimeout,
+				RateLimitWindow:      cfg.AgentEnrollment.RateLimit.Window,
+				MaxAttemptsPerSource: cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource,
 			},
 		},
 	)
+	agentConnectionManager, err := agentconn.New(
+		agentconn.Config{
+			Address:                cfg.HTTP.Address,
+			TLSCertificateFile:     cfg.AgentListener.TLSCertificateFile,
+			TLSPrivateKeyFile:      cfg.AgentListener.TLSPrivateKeyFile,
+			AgentCACertificateFile: cfg.AgentEnrollment.SigningCACertificateFile,
+			HandshakeTimeout:       cfg.AgentListener.HandshakeTimeout,
+			HeartbeatInterval:      cfg.AgentListener.HeartbeatInterval,
+			HeartbeatTimeout:       cfg.AgentListener.HeartbeatTimeout,
+			LastSeenWriteInterval:  cfg.AgentListener.LastSeenWriteInterval,
+			OperationTimeout:       cfg.AgentListener.OperationTimeout,
+		},
+		logger,
+		store.NewAgentConnectionStore(database),
+	)
+	if err != nil {
+		return err
+	}
 	httpServer := &http.Server{
 		Addr:              cfg.HTTP.Address,
 		Handler:           handler,
@@ -109,23 +131,45 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		}
 		serverErrors <- httpServer.ListenAndServe()
 	}()
+	agentErrors := make(chan error, 1)
+	go func() {
+		agentErrors <- agentConnectionManager.Run(runContext)
+	}()
 
 	select {
 	case err := <-serverErrors:
+		cancelRun()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
+	case err := <-agentErrors:
+		cancelRun()
+		if shutdownErr := shutdownHTTPServer(httpServer, cfg.ShutdownTimeout); shutdownErr != nil {
+			return errors.Join(err, shutdownErr)
+		}
+		if err == nil {
+			return errors.New("Agent QUIC listener stopped unexpectedly")
+		}
+		return err
 	case <-ctx.Done():
 		logger.Info("server shutdown requested")
-		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-		defer cancelShutdown()
-		if err := httpServer.Shutdown(shutdownContext); err != nil {
-			return fmt.Errorf("gracefully shut down HTTP server: %w", err)
+		cancelRun()
+		if err := shutdownHTTPServer(httpServer, cfg.ShutdownTimeout); err != nil {
+			return err
 		}
 		logger.Info("server stopped")
 		return nil
 	}
+}
+
+func shutdownHTTPServer(server *http.Server, timeout time.Duration) error {
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), timeout)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownContext); err != nil {
+		return fmt.Errorf("gracefully shut down HTTP server: %w", err)
+	}
+	return nil
 }
 
 func loadAgentCertificateSigner(

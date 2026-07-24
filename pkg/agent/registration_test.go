@@ -94,7 +94,7 @@ func TestRegistrationClientEnrollsOverTLS(t *testing.T) {
 	}
 }
 
-func TestRegistrationClientAllowsExplicitLoopbackHTTP(t *testing.T) {
+func TestRegistrationClientAllowsHTTP(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(
@@ -106,9 +106,8 @@ func TestRegistrationClientAllowsExplicitLoopbackHTTP(t *testing.T) {
 	defer server.Close()
 
 	client, err := newRegistrationClient(Config{
-		ServerAddress:         server.URL,
-		AllowInsecureLoopback: true,
-		RegistrationTimeout:   time.Second,
+		ServerAddress:       server.URL,
+		RegistrationTimeout: time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -106,10 +106,9 @@ RETURNING id::text
 		Config{
 			Authentication: defaultAuthenticationTestConfig(),
 			AgentEnrollment: AgentEnrollmentHTTPConfig{
-				OperationTimeout:      5 * time.Second,
-				RateLimitWindow:       time.Minute,
-				MaxAttemptsPerSource:  100,
-				AllowInsecureLoopback: true,
+				OperationTimeout:     5 * time.Second,
+				RateLimitWindow:      time.Minute,
+				MaxAttemptsPerSource: 100,
 			},
 		},
 	)
@@ -281,10 +280,9 @@ WHERE action = 'agent.enroll' AND result = 'succeeded'`: &successAuditCount,
 		Config{
 			Authentication: defaultAuthenticationTestConfig(),
 			AgentEnrollment: AgentEnrollmentHTTPConfig{
-				OperationTimeout:      5 * time.Second,
-				RateLimitWindow:       time.Minute,
-				MaxAttemptsPerSource:  100,
-				AllowInsecureLoopback: true,
+				OperationTimeout:     5 * time.Second,
+				RateLimitWindow:      time.Minute,
+				MaxAttemptsPerSource: 100,
 			},
 		},
 	)
@@ -342,10 +340,9 @@ func TestAgentRegistrationRejectsMissingTokenAndOversizedBody(t *testing.T) {
 		Config{
 			Authentication: defaultAuthenticationTestConfig(),
 			AgentEnrollment: AgentEnrollmentHTTPConfig{
-				OperationTimeout:      time.Second,
-				RateLimitWindow:       time.Minute,
-				MaxAttemptsPerSource:  10,
-				AllowInsecureLoopback: true,
+				OperationTimeout:     time.Second,
+				RateLimitWindow:      time.Minute,
+				MaxAttemptsPerSource: 10,
 			},
 		},
 	)
@@ -400,7 +397,7 @@ func TestAgentRegistrationRejectsMissingTokenAndOversizedBody(t *testing.T) {
 	assertErrorCode(t, agentNamedClusterResponse, "invalid_request")
 }
 
-func TestAgentRegistrationRequiresTLSOutsideLoopbackDevelopment(t *testing.T) {
+func TestAgentRegistrationAllowsHTTPTransport(t *testing.T) {
 	router := New(
 		discardLogger(),
 		Dependencies{},
@@ -420,10 +417,10 @@ func TestAgentRegistrationRequiresTLSOutsideLoopbackDevelopment(t *testing.T) {
 		strings.NewReader(`{}`),
 	)
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusUpgradeRequired {
-		t.Fatalf("insecure status = %d, want %d", response.Code, http.StatusUpgradeRequired)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("HTTP status = %d, want %d", response.Code, http.StatusUnauthorized)
 	}
-	assertErrorCode(t, response, "tls_required")
+	assertErrorCode(t, response, "invalid_enrollment_token")
 }
 
 func performAgentRegistrationRequest(

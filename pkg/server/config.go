@@ -14,19 +14,23 @@ import (
 )
 
 const (
-	maxHTTPTimeout               = 5 * time.Minute
-	maxIdleTimeout               = 10 * time.Minute
-	maxDatabaseTimeout           = time.Minute
-	maxMigrationTimeout          = 10 * time.Minute
-	maxShutdownTimeout           = 2 * time.Minute
-	maxSessionIdle               = 24 * time.Hour
-	maxSessionAbsolute           = 30 * 24 * time.Hour
-	maxLoginRateWindow           = 24 * time.Hour
-	maxAuthOperation             = time.Minute
-	maxPasswordChecks            = 64
-	maxAgentCertificateTTL       = 365 * 24 * time.Hour
-	maxAgentEnrollmentRateWindow = 24 * time.Hour
-	maxAgentEnrollmentAttempts   = 10_000
+	maxHTTPTimeout                = 5 * time.Minute
+	maxIdleTimeout                = 10 * time.Minute
+	maxDatabaseTimeout            = time.Minute
+	maxMigrationTimeout           = 10 * time.Minute
+	maxShutdownTimeout            = 2 * time.Minute
+	maxSessionIdle                = 24 * time.Hour
+	maxSessionAbsolute            = 30 * 24 * time.Hour
+	maxLoginRateWindow            = 24 * time.Hour
+	maxAuthOperation              = time.Minute
+	maxPasswordChecks             = 64
+	maxAgentCertificateTTL        = 365 * 24 * time.Hour
+	maxAgentEnrollmentRateWindow  = 24 * time.Hour
+	maxAgentEnrollmentAttempts    = 10_000
+	maxAgentHandshakeTimeout      = time.Minute
+	maxAgentHeartbeatInterval     = 5 * time.Minute
+	maxAgentHeartbeatTimeout      = 15 * time.Minute
+	maxAgentLastSeenWriteInterval = 15 * time.Minute
 )
 
 type Config struct {
@@ -34,6 +38,7 @@ type Config struct {
 	Database        DatabaseConfig
 	Auth            AuthConfig
 	AgentEnrollment AgentEnrollmentConfig
+	AgentListener   AgentListenerConfig
 	ShutdownTimeout time.Duration
 	LogLevel        string
 }
@@ -74,13 +79,22 @@ type AgentEnrollmentConfig struct {
 	SigningCAPrivateKeyFile  string
 	CertificateTTL           time.Duration
 	OperationTimeout         time.Duration
-	AllowInsecureLoopback    bool
 	RateLimit                AgentEnrollmentRateLimitConfig
 }
 
 type AgentEnrollmentRateLimitConfig struct {
 	Window               time.Duration
 	MaxAttemptsPerSource int
+}
+
+type AgentListenerConfig struct {
+	TLSCertificateFile    string
+	TLSPrivateKeyFile     string
+	HandshakeTimeout      time.Duration
+	HeartbeatInterval     time.Duration
+	HeartbeatTimeout      time.Duration
+	LastSeenWriteInterval time.Duration
+	OperationTimeout      time.Duration
 }
 
 type fileConfig struct {
@@ -115,12 +129,20 @@ type fileConfig struct {
 		SigningCAPrivateKeyFile  string `yaml:"signing_ca_private_key_file"`
 		CertificateTTL           string `yaml:"certificate_ttl"`
 		OperationTimeout         string `yaml:"operation_timeout"`
-		AllowInsecureLoopback    *bool  `yaml:"allow_insecure_loopback"`
 		RateLimit                struct {
 			Window               string `yaml:"window"`
 			MaxAttemptsPerSource *int   `yaml:"max_attempts_per_source"`
 		} `yaml:"rate_limit"`
 	} `yaml:"agent_enrollment"`
+	AgentListener struct {
+		TLSCertificateFile    string `yaml:"tls_certificate_file"`
+		TLSPrivateKeyFile     string `yaml:"tls_private_key_file"`
+		HandshakeTimeout      string `yaml:"handshake_timeout"`
+		HeartbeatInterval     string `yaml:"heartbeat_interval"`
+		HeartbeatTimeout      string `yaml:"heartbeat_timeout"`
+		LastSeenWriteInterval string `yaml:"last_seen_write_interval"`
+		OperationTimeout      string `yaml:"operation_timeout"`
+	} `yaml:"agent_listener"`
 	ShutdownTimeout string `yaml:"shutdown_timeout"`
 	LogLevel        string `yaml:"log_level"`
 }
@@ -154,6 +176,13 @@ func LoadConfig(args []string) (Config, error) {
 				Window:               time.Minute,
 				MaxAttemptsPerSource: 30,
 			},
+		},
+		AgentListener: AgentListenerConfig{
+			HandshakeTimeout:      10 * time.Second,
+			HeartbeatInterval:     10 * time.Second,
+			HeartbeatTimeout:      30 * time.Second,
+			LastSeenWriteInterval: time.Minute,
+			OperationTimeout:      10 * time.Second,
 		},
 	}
 	if err := applyFile(&cfg, configPath); err != nil {
@@ -277,10 +306,6 @@ func applyFile(cfg *Config, path string) error {
 	); err != nil {
 		return err
 	}
-	if raw.AgentEnrollment.AllowInsecureLoopback != nil {
-		cfg.AgentEnrollment.AllowInsecureLoopback =
-			*raw.AgentEnrollment.AllowInsecureLoopback
-	}
 	if err := applyDuration(
 		&cfg.AgentEnrollment.RateLimit.Window,
 		raw.AgentEnrollment.RateLimit.Window,
@@ -291,6 +316,49 @@ func applyFile(cfg *Config, path string) error {
 	if raw.AgentEnrollment.RateLimit.MaxAttemptsPerSource != nil {
 		cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource =
 			*raw.AgentEnrollment.RateLimit.MaxAttemptsPerSource
+	}
+	if raw.AgentListener.TLSCertificateFile != "" {
+		cfg.AgentListener.TLSCertificateFile =
+			raw.AgentListener.TLSCertificateFile
+	}
+	if raw.AgentListener.TLSPrivateKeyFile != "" {
+		cfg.AgentListener.TLSPrivateKeyFile =
+			raw.AgentListener.TLSPrivateKeyFile
+	}
+	if err := applyDuration(
+		&cfg.AgentListener.HandshakeTimeout,
+		raw.AgentListener.HandshakeTimeout,
+		"agent_listener.handshake_timeout",
+	); err != nil {
+		return err
+	}
+	if err := applyDuration(
+		&cfg.AgentListener.HeartbeatInterval,
+		raw.AgentListener.HeartbeatInterval,
+		"agent_listener.heartbeat_interval",
+	); err != nil {
+		return err
+	}
+	if err := applyDuration(
+		&cfg.AgentListener.HeartbeatTimeout,
+		raw.AgentListener.HeartbeatTimeout,
+		"agent_listener.heartbeat_timeout",
+	); err != nil {
+		return err
+	}
+	if err := applyDuration(
+		&cfg.AgentListener.LastSeenWriteInterval,
+		raw.AgentListener.LastSeenWriteInterval,
+		"agent_listener.last_seen_write_interval",
+	); err != nil {
+		return err
+	}
+	if err := applyDuration(
+		&cfg.AgentListener.OperationTimeout,
+		raw.AgentListener.OperationTimeout,
+		"agent_listener.operation_timeout",
+	); err != nil {
+		return err
 	}
 	if err := applyDuration(&cfg.ShutdownTimeout, raw.ShutdownTimeout, "shutdown_timeout"); err != nil {
 		return err
@@ -416,19 +484,49 @@ func (cfg Config) Validate() error {
 			maxAgentEnrollmentAttempts,
 		)
 	}
-	if cfg.AgentEnrollment.AllowInsecureLoopback {
-		host, _, err := net.SplitHostPort(cfg.HTTP.Address)
-		if err != nil {
-			return errors.New(
-				"HTTP address must include a valid host and port when insecure Agent enrollment is enabled",
+	if _, _, err := net.SplitHostPort(cfg.HTTP.Address); err != nil {
+		return errors.New("HTTP address must include a valid host and port")
+	}
+	for _, item := range []struct {
+		value string
+		name  string
+	}{
+		{cfg.AgentListener.TLSCertificateFile, "Agent Listener TLS certificate file"},
+		{cfg.AgentListener.TLSPrivateKeyFile, "Agent Listener TLS private key file"},
+		{cfg.AgentEnrollment.SigningCACertificateFile, "Agent signing CA certificate file"},
+		{cfg.AgentEnrollment.SigningCAPrivateKeyFile, "Agent signing CA private key file"},
+	} {
+		if strings.TrimSpace(item.value) == "" ||
+			strings.TrimSpace(item.value) != item.value {
+			return fmt.Errorf(
+				"%s is required and must not contain surrounding whitespace",
+				item.name,
 			)
 		}
-		ip := net.ParseIP(host)
-		if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
-			return errors.New(
-				"insecure Agent enrollment is only allowed on a loopback HTTP address",
-			)
+	}
+	for _, item := range []struct {
+		value time.Duration
+		max   time.Duration
+		name  string
+	}{
+		{cfg.AgentListener.HandshakeTimeout, maxAgentHandshakeTimeout, "Agent handshake timeout"},
+		{cfg.AgentListener.HeartbeatInterval, maxAgentHeartbeatInterval, "Agent heartbeat interval"},
+		{cfg.AgentListener.HeartbeatTimeout, maxAgentHeartbeatTimeout, "Agent heartbeat timeout"},
+		{cfg.AgentListener.LastSeenWriteInterval, maxAgentLastSeenWriteInterval, "Agent last-seen write interval"},
+		{cfg.AgentListener.OperationTimeout, maxAuthOperation, "Agent connection operation timeout"},
+	} {
+		if item.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero", item.name)
 		}
+		if item.value > item.max {
+			return fmt.Errorf("%s must not exceed %s", item.name, item.max)
+		}
+	}
+	if cfg.AgentListener.HeartbeatInterval >= cfg.AgentListener.HeartbeatTimeout {
+		return errors.New("Agent heartbeat interval must be below heartbeat timeout")
+	}
+	if cfg.AgentListener.LastSeenWriteInterval < cfg.AgentListener.HeartbeatInterval {
+		return errors.New("Agent last-seen write interval must not be below heartbeat interval")
 	}
 
 	return nil
