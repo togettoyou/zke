@@ -32,6 +32,7 @@ func TestCreateEnrollmentStoresDigestAndAuditAtomically(t *testing.T) {
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       projectID,
+			ClusterName:     "enrollment-cluster",
 			CreatedByUserID: userID,
 			TokenDigest:     tokenDigest[:],
 			ExpiresAt:       expiresAt,
@@ -42,7 +43,9 @@ func TestCreateEnrollmentStoresDigestAndAuditAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.TenantID != tenantID || created.ProjectID != projectID {
+	if created.TenantID != tenantID ||
+		created.ProjectID != projectID ||
+		created.ClusterName != "enrollment-cluster" {
 		t.Fatalf(
 			"created scope = %s/%s, want %s/%s",
 			created.TenantID,
@@ -98,6 +101,7 @@ WHERE target_id = $1
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       projectID,
+			ClusterName:     "conflicting-enrollment-cluster",
 			CreatedByUserID: userID,
 			TokenDigest:     secondTokenDigest[:],
 			ExpiresAt:       expiresAt,
@@ -147,6 +151,7 @@ WHERE action = 'agent.enrollment.create'
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       projectID,
+			ClusterName:     "suspended-enrollment-cluster",
 			CreatedByUserID: userID,
 			TokenDigest:     tokenDigest[:],
 			ExpiresAt:       expiresAt,

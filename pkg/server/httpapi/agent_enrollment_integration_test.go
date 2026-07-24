@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,7 @@ RETURNING id::text
 		Config{Authentication: defaultAuthenticationTestConfig()},
 	)
 	path := "/api/v1/projects/" + projectID + "/agent-enrollments"
+	requestBody := `{"cluster_name":"integration-cluster"}`
 
 	missingCSRFResponse := httptest.NewRecorder()
 	missingCSRFRequest := httptest.NewRequest(http.MethodPost, path, nil)
@@ -105,7 +107,11 @@ RETURNING id::text
 	assertErrorCode(t, missingCSRFResponse, "csrf_invalid")
 
 	missingIdempotencyResponse := httptest.NewRecorder()
-	missingIdempotencyRequest := httptest.NewRequest(http.MethodPost, path, nil)
+	missingIdempotencyRequest := httptest.NewRequest(
+		http.MethodPost,
+		path,
+		strings.NewReader(requestBody),
+	)
 	missingIdempotencyRequest.AddCookie(&http.Cookie{
 		Name:  sessionCookieName,
 		Value: login.SessionToken,
@@ -138,7 +144,7 @@ WHERE action = 'agent.enrollment.create'
 
 	idempotencyKey := "01234567-89ab-cdef-0123-456789abcdef"
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, path, nil)
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(requestBody))
 	request.AddCookie(&http.Cookie{
 		Name:  sessionCookieName,
 		Value: login.SessionToken,
@@ -162,24 +168,34 @@ WHERE action = 'agent.enrollment.create'
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.ID == "" || body.Token == "" || body.ExpiresAt.IsZero() {
+	if body.ID == "" ||
+		body.ClusterName != "integration-cluster" ||
+		body.Token == "" ||
+		body.ExpiresAt.IsZero() {
 		t.Fatalf("incomplete enrollment response: %+v", body)
 	}
 
 	expectedDigest := sha256.Sum256([]byte(body.Token))
 	var storedDigest []byte
+	var storedClusterName string
 	if err := pool.QueryRow(ctx, `
-SELECT token_digest
+SELECT token_digest, cluster_name
 FROM enrollments
 WHERE id = $1
   AND tenant_id = $2
   AND project_id = $3
   AND created_by_user_id = $4
-`, body.ID, tenantID, projectID, admin.ID).Scan(&storedDigest); err != nil {
+`, body.ID, tenantID, projectID, admin.ID).Scan(
+		&storedDigest,
+		&storedClusterName,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if string(storedDigest) != string(expectedDigest[:]) {
 		t.Fatal("database did not store the returned token's SHA-256 digest")
+	}
+	if storedClusterName != "integration-cluster" {
+		t.Fatalf("stored cluster name = %q, want integration-cluster", storedClusterName)
 	}
 
 	var auditCount int
@@ -200,7 +216,11 @@ WHERE action = 'agent.enrollment.create'
 	}
 
 	retryResponse := httptest.NewRecorder()
-	retryRequest := httptest.NewRequest(http.MethodPost, path, nil)
+	retryRequest := httptest.NewRequest(
+		http.MethodPost,
+		path,
+		strings.NewReader(requestBody),
+	)
 	retryRequest.AddCookie(&http.Cookie{
 		Name:  sessionCookieName,
 		Value: login.SessionToken,
@@ -250,7 +270,11 @@ WHERE action = 'agent.enrollment.create'
 		t.Fatal(err)
 	}
 	suspendedResponse := httptest.NewRecorder()
-	suspendedRequest := httptest.NewRequest(http.MethodPost, path, nil)
+	suspendedRequest := httptest.NewRequest(
+		http.MethodPost,
+		path,
+		strings.NewReader(`{"cluster_name":"suspended-cluster"}`),
+	)
 	suspendedRequest.AddCookie(&http.Cookie{
 		Name:  sessionCookieName,
 		Value: login.SessionToken,

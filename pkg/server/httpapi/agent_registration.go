@@ -35,7 +35,6 @@ type agentRegistrationHandler struct {
 
 type agentRegistrationRequest struct {
 	CSRPEM          string `json:"csr_pem"`
-	ClusterName     string `json:"cluster_name"`
 	AgentVersion    string `json:"agent_version"`
 	ProtocolVersion string `json:"protocol_version"`
 }
@@ -128,7 +127,6 @@ func (handler *agentRegistrationHandler) enroll(c *gin.Context) {
 		Token:           token,
 		IdempotencyKey:  c.GetHeader(idempotencyKeyHeaderName),
 		CSRPEM:          []byte(request.CSRPEM),
-		ClusterName:     request.ClusterName,
 		AgentVersion:    request.AgentVersion,
 		ProtocolVersion: request.ProtocolVersion,
 		RequestID:       httpmiddleware.RequestID(c),

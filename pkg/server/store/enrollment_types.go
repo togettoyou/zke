@@ -24,6 +24,7 @@ type Enrollment struct {
 	ID              string
 	TenantID        string
 	ProjectID       string
+	ClusterName     string
 	CreatedByUserID string
 	ExpiresAt       time.Time
 	CreatedAt       time.Time
@@ -31,6 +32,7 @@ type Enrollment struct {
 
 type CreateEnrollmentParams struct {
 	ProjectID       string
+	ClusterName     string
 	CreatedByUserID string
 	TokenDigest     []byte
 	ExpiresAt       time.Time
@@ -58,6 +60,7 @@ type AgentEnrollmentAttempt struct {
 	EnrollmentID   string
 	TenantID       string
 	ProjectID      string
+	ClusterName    string
 	IdempotencyKey string
 	CSRFingerprint []byte
 	Status         EnrollmentAttemptStatus
@@ -79,7 +82,6 @@ type CompleteAgentEnrollmentParams struct {
 	CSRFingerprint       []byte
 	ClusterID            string
 	AgentID              string
-	ClusterName          string
 	AgentVersion         string
 	ProtocolVersion      string
 	CertificateSerial    string

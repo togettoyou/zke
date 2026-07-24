@@ -38,6 +38,7 @@ func TestCreateRejectsInvalidInputBeforeStoreAccess(t *testing.T) {
 	service := NewService(nil, ServiceConfig{TokenTTL: DefaultTokenTTL})
 	_, err := service.Create(context.Background(), CreateInput{
 		ProjectID:      "not-a-uuid",
+		ClusterName:    "test-cluster",
 		UserID:         "00000000-0000-0000-0000-000000000001",
 		RequestID:      "request-1",
 		IdempotencyKey: "01234567-89ab-cdef-0123-456789abcdef",
@@ -54,6 +55,7 @@ func TestCreateRejectsInvalidTokenTTLBeforeStoreAccess(t *testing.T) {
 	service := NewService(nil, ServiceConfig{})
 	_, err := service.Create(context.Background(), CreateInput{
 		ProjectID:      "00000000-0000-0000-0000-000000000001",
+		ClusterName:    "test-cluster",
 		UserID:         "00000000-0000-0000-0000-000000000002",
 		RequestID:      "request-1",
 		IdempotencyKey: "01234567-89ab-cdef-0123-456789abcdef",
@@ -70,9 +72,27 @@ func TestCreateRejectsInvalidIdempotencyKeyBeforeStoreAccess(t *testing.T) {
 	service := NewService(nil, ServiceConfig{TokenTTL: DefaultTokenTTL})
 	_, err := service.Create(context.Background(), CreateInput{
 		ProjectID:      "00000000-0000-0000-0000-000000000001",
+		ClusterName:    "test-cluster",
 		UserID:         "00000000-0000-0000-0000-000000000002",
 		RequestID:      "request-1",
 		IdempotencyKey: "too-short",
+		Now:            time.Now(),
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Create() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestCreateRejectsInvalidClusterNameBeforeStoreAccess(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(nil, ServiceConfig{TokenTTL: DefaultTokenTTL})
+	_, err := service.Create(context.Background(), CreateInput{
+		ProjectID:      "00000000-0000-0000-0000-000000000001",
+		ClusterName:    " ",
+		UserID:         "00000000-0000-0000-0000-000000000002",
+		RequestID:      "request-1",
+		IdempotencyKey: "01234567-89ab-cdef-0123-456789abcdef",
 		Now:            time.Now(),
 	})
 	if !errors.Is(err, ErrInvalidInput) {
@@ -127,7 +147,6 @@ func TestCompleteRejectsCertificateForDifferentCSRBeforeStoreAccess(t *testing.T
 		CSRPEM:          csrPEM,
 		ClusterID:       "00000000-0000-0000-0000-000000000003",
 		AgentID:         "00000000-0000-0000-0000-000000000004",
-		ClusterName:     "test-cluster",
 		AgentVersion:    "v0.1.0",
 		ProtocolVersion: "v1",
 		CertificatePEM:  string(certificatePEM),

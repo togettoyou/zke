@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -14,27 +15,34 @@ import (
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
+const (
+	defaultEnrollmentTokenFile = "/var/run/secrets/zke-enrollment/token"
+	defaultIdentityNamespace   = "zke-system"
+	defaultIdentitySecretName  = "zke-agent-identity"
+	defaultLogLevel            = "info"
+)
+
 type Config struct {
-	ServerAddress        string
-	ServerCAFile         string
-	KubeconfigFile       string
-	ClusterName          string
-	EnrollmentTokenFile  string
-	IdentityNamespace    string
-	IdentitySecretName   string
-	RegistrationTimeout  time.Duration
-	RetryInitialInterval time.Duration
-	RetryMaxInterval     time.Duration
-	LogLevel             string
+	ServerAddress         string
+	AllowInsecureLoopback bool
+	ServerCAFile          string
+	KubeconfigFile        string
+	EnrollmentTokenFile   string
+	IdentityNamespace     string
+	IdentitySecretName    string
+	RegistrationTimeout   time.Duration
+	RetryInitialInterval  time.Duration
+	RetryMaxInterval      time.Duration
+	LogLevel              string
 }
 
 type fileConfig struct {
-	ServerAddress       string `yaml:"server_address"`
-	ServerCAFile        string `yaml:"server_ca_file"`
-	KubeconfigFile      string `yaml:"kubeconfig_file"`
-	ClusterName         string `yaml:"cluster_name"`
-	EnrollmentTokenFile string `yaml:"enrollment_token_file"`
-	Identity            struct {
+	ServerAddress         string `yaml:"server_address"`
+	AllowInsecureLoopback *bool  `yaml:"allow_insecure_loopback"`
+	ServerCAFile          string `yaml:"server_ca_file"`
+	KubeconfigFile        string `yaml:"kubeconfig_file"`
+	EnrollmentTokenFile   string `yaml:"enrollment_token_file"`
+	Identity              struct {
 		Namespace  string `yaml:"namespace"`
 		SecretName string `yaml:"secret_name"`
 	} `yaml:"identity"`
@@ -56,9 +64,13 @@ func LoadConfig(args []string) (Config, error) {
 	}
 
 	cfg := Config{
+		EnrollmentTokenFile:  defaultEnrollmentTokenFile,
+		IdentityNamespace:    defaultIdentityNamespace,
+		IdentitySecretName:   defaultIdentitySecretName,
 		RegistrationTimeout:  10 * time.Second,
 		RetryInitialInterval: time.Second,
 		RetryMaxInterval:     15 * time.Second,
+		LogLevel:             defaultLogLevel,
 	}
 	if err := applyFile(&cfg, configPath); err != nil {
 		return Config{}, err
@@ -94,14 +106,14 @@ func applyFile(cfg *Config, path string) error {
 	if raw.ServerAddress != "" {
 		cfg.ServerAddress = raw.ServerAddress
 	}
+	if raw.AllowInsecureLoopback != nil {
+		cfg.AllowInsecureLoopback = *raw.AllowInsecureLoopback
+	}
 	if raw.ServerCAFile != "" {
 		cfg.ServerCAFile = raw.ServerCAFile
 	}
 	if raw.KubeconfigFile != "" {
 		cfg.KubeconfigFile = raw.KubeconfigFile
-	}
-	if raw.ClusterName != "" {
-		cfg.ClusterName = raw.ClusterName
 	}
 	if raw.EnrollmentTokenFile != "" {
 		cfg.EnrollmentTokenFile = raw.EnrollmentTokenFile
@@ -161,8 +173,28 @@ func (cfg Config) Validate() error {
 	if err != nil {
 		return errors.New("server address must be a valid URL")
 	}
-	if serverURL.Scheme != "https" || serverURL.Host == "" {
-		return errors.New("server address must use HTTPS and include a host")
+	if serverURL.Host == "" {
+		return errors.New("server address must include a host")
+	}
+	switch serverURL.Scheme {
+	case "https":
+		if cfg.AllowInsecureLoopback {
+			return errors.New("insecure loopback mode requires an HTTP Server address")
+		}
+	case "http":
+		host := serverURL.Hostname()
+		ip := net.ParseIP(host)
+		if !cfg.AllowInsecureLoopback ||
+			(!strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())) {
+			return errors.New(
+				"HTTP Server address is only allowed with insecure loopback mode on a loopback host",
+			)
+		}
+		if cfg.ServerCAFile != "" {
+			return errors.New("Server CA file cannot be used with an HTTP Server address")
+		}
+	default:
+		return errors.New("server address must use HTTPS")
 	}
 	if serverURL.User != nil {
 		return errors.New("server address must not contain credentials")
@@ -177,11 +209,6 @@ func (cfg Config) Validate() error {
 	}
 	if strings.TrimSpace(cfg.KubeconfigFile) != cfg.KubeconfigFile {
 		return errors.New("kubeconfig file path must not contain surrounding whitespace")
-	}
-	if strings.TrimSpace(cfg.ClusterName) != cfg.ClusterName ||
-		len(cfg.ClusterName) == 0 ||
-		len(cfg.ClusterName) > 253 {
-		return errors.New("cluster name must contain between 1 and 253 bytes")
 	}
 	if strings.TrimSpace(cfg.EnrollmentTokenFile) == "" ||
 		strings.TrimSpace(cfg.EnrollmentTokenFile) != cfg.EnrollmentTokenFile {

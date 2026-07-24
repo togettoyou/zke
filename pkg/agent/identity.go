@@ -82,12 +82,44 @@ func (store *IdentityStore) LoadOrCreatePending(
 ) (IdentityState, error) {
 	var result IdentityState
 	var candidate *PendingIdentity
-	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+	err := retry.OnError(retry.DefaultBackoff, func(err error) bool {
+		return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
+	}, func() error {
 		secret, err := store.client.CoreV1().
 			Secrets(store.namespace).
 			Get(ctx, store.secretName, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			return errors.New("pre-created Agent identity Secret was not found")
+			if candidate == nil {
+				candidate, err = newPendingIdentity()
+				if err != nil {
+					return err
+				}
+			}
+			created, err := store.client.CoreV1().
+				Secrets(store.namespace).
+				Create(ctx, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: store.namespace,
+						Name:      store.secretName,
+					},
+					Type: corev1.SecretTypeOpaque,
+					Data: map[string][]byte{
+						identityPrivateKeyKey: append(
+							[]byte(nil),
+							candidate.PrivateKeyPEM...,
+						),
+						enrollmentCSRKey: append(
+							[]byte(nil),
+							candidate.CSRPEM...,
+						),
+						enrollmentIdempotencyKey: []byte(candidate.IdempotencyKey),
+					},
+				}, metav1.CreateOptions{})
+			if err != nil {
+				return fmt.Errorf("create Agent identity Secret: %w", err)
+			}
+			result, _, err = parseIdentitySecret(created, time.Now().UTC())
+			return err
 		}
 		if err != nil {
 			return fmt.Errorf("read Agent identity Secret: %w", err)

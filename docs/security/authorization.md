@@ -35,6 +35,7 @@ Project 归属解析和 HTTP 授权 middleware。Global `admin` 拥有全部固�
 
 RBAC 已接入 `POST /api/v1/projects/{project_id}/agent-enrollments`：该接口同时要求有效 Session、CSRF Token
 和 `agent.enrollment.create` 权限；Project 的 Tenant 归属由 Server 查询，不接受调用方提供。一次性注册 Token
+创建请求同时指定集群名称，该名称持久化在 Server 的 Enrollment 中，Agent 消费 Token 时不能覆盖。Token
 明文只返回一次，数据库只保存 SHA-256 摘要，凭证与成功审计在同一事务写入。接口强制使用
 `Idempotency-Key`，重复 Key 不会创建额外凭证或重复成功审计。Project 授权拒绝以及凭证创建的输入、状态和内部
 失败会写入不含 Token 的审计事件；数据库不可用或请求 Deadline 已耗尽时降级为安全错误日志。

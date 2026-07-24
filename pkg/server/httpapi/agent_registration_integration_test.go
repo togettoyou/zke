@@ -88,6 +88,7 @@ RETURNING id::text
 	)
 	created, err := enrollmentService.Create(ctx, enrollment.CreateInput{
 		ProjectID:      projectID,
+		ClusterName:    "integration-cluster",
 		UserID:         userID,
 		RequestID:      "request-create-registration-token",
 		IdempotencyKey: "create-registration-token-0001",
@@ -116,7 +117,6 @@ RETURNING id::text
 	csrPEM, csrPublicKey := createHTTPTestAgentCSR(t)
 	requestBody := agentRegistrationRequest{
 		CSRPEM:          string(csrPEM),
-		ClusterName:     "integration-cluster",
 		AgentVersion:    "v0.1.0",
 		ProtocolVersion: "v1",
 	}
@@ -248,6 +248,17 @@ WHERE action = 'agent.enroll' AND result = 'succeeded'`: &successAuditCount,
 			successAuditCount,
 		)
 	}
+	var storedClusterName string
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT name FROM clusters WHERE id = $1",
+		result.ClusterID,
+	).Scan(&storedClusterName); err != nil {
+		t.Fatal(err)
+	}
+	if storedClusterName != "integration-cluster" {
+		t.Fatalf("registered cluster name = %q, want integration-cluster", storedClusterName)
+	}
 
 	unavailableService := enrollment.NewService(
 		store.NewEnrollmentStore(pool),
@@ -255,6 +266,7 @@ WHERE action = 'agent.enroll' AND result = 'succeeded'`: &successAuditCount,
 	)
 	unavailableToken, err := unavailableService.Create(ctx, enrollment.CreateInput{
 		ProjectID:      projectID,
+		ClusterName:    "unavailable-integration-cluster",
 		UserID:         userID,
 		RequestID:      "request-create-unavailable-registration-token",
 		IdempotencyKey: "create-unavailable-registration-token-0001",
@@ -363,6 +375,29 @@ func TestAgentRegistrationRejectsMissingTokenAndOversizedBody(t *testing.T) {
 		t.Fatalf("oversized body status = %d, want %d", oversizedResponse.Code, http.StatusBadRequest)
 	}
 	assertErrorCode(t, oversizedResponse, "invalid_request")
+
+	agentNamedClusterResponse := httptest.NewRecorder()
+	agentNamedClusterRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/agent-api/v1/enroll",
+		strings.NewReader(`{
+			"csr_pem":"csr",
+			"cluster_name":"agent-controlled-name",
+			"agent_version":"development",
+			"protocol_version":"v1"
+		}`),
+	)
+	agentNamedClusterRequest.Header.Set("Authorization", "Bearer token")
+	agentNamedClusterRequest.RemoteAddr = "127.0.0.1:12345"
+	router.ServeHTTP(agentNamedClusterResponse, agentNamedClusterRequest)
+	if agentNamedClusterResponse.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"Agent-provided cluster name status = %d, want %d",
+			agentNamedClusterResponse.Code,
+			http.StatusBadRequest,
+		)
+	}
+	assertErrorCode(t, agentNamedClusterResponse, "invalid_request")
 }
 
 func TestAgentRegistrationRequiresTLSOutsideLoopbackDevelopment(t *testing.T) {

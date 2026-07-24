@@ -17,6 +17,7 @@ type lockedEnrollment struct {
 	ID            string
 	TenantID      string
 	ProjectID     string
+	ClusterName   string
 	TenantStatus  string
 	ProjectStatus string
 	ExpiresAt     time.Time
@@ -176,7 +177,6 @@ func (store *EnrollmentStore) CompleteAgentEnrollment(
 		len(input.CSRFingerprint) != sha256.Size ||
 		strings.TrimSpace(input.ClusterID) == "" ||
 		strings.TrimSpace(input.AgentID) == "" ||
-		strings.TrimSpace(input.ClusterName) == "" ||
 		strings.TrimSpace(input.AgentVersion) == "" ||
 		strings.TrimSpace(input.ProtocolVersion) == "" ||
 		strings.TrimSpace(input.CertificateSerial) == "" ||
@@ -268,7 +268,7 @@ VALUES ($1, $2, $3, $4, 'pending')
 		result.ClusterID,
 		enrollment.TenantID,
 		enrollment.ProjectID,
-		input.ClusterName,
+		enrollment.ClusterName,
 	)
 	if err != nil {
 		return AgentEnrollmentResult{}, fmt.Errorf("create enrolled cluster: %w", err)
@@ -400,6 +400,7 @@ SELECT
     enrollment.id::text,
     enrollment.tenant_id::text,
     enrollment.project_id::text,
+    enrollment.cluster_name,
     tenant.status,
     project.status,
     enrollment.expires_at,
@@ -425,6 +426,7 @@ SELECT
     enrollment.id::text,
     enrollment.tenant_id::text,
     enrollment.project_id::text,
+    enrollment.cluster_name,
     tenant.status,
     project.status,
     enrollment.expires_at,
@@ -446,6 +448,7 @@ func scanLockedEnrollment(row pgx.Row) (lockedEnrollment, error) {
 		&enrollment.ID,
 		&enrollment.TenantID,
 		&enrollment.ProjectID,
+		&enrollment.ClusterName,
 		&enrollment.TenantStatus,
 		&enrollment.ProjectStatus,
 		&enrollment.ExpiresAt,
@@ -539,6 +542,7 @@ func scanEnrollmentAttempt(
 	}
 	attempt.TenantID = enrollment.TenantID
 	attempt.ProjectID = enrollment.ProjectID
+	attempt.ClusterName = enrollment.ClusterName
 	if attempt.Status == EnrollmentAttemptSucceeded {
 		if len(responseJSON) == 0 {
 			return AgentEnrollmentAttempt{}, errors.New(

@@ -19,6 +19,7 @@ var (
 
 type CreateInput struct {
 	ProjectID      string
+	ClusterName    string
 	UserID         string
 	RequestID      string
 	IdempotencyKey string
@@ -26,9 +27,10 @@ type CreateInput struct {
 }
 
 type CreateResult struct {
-	ID        string
-	Token     string
-	ExpiresAt time.Time
+	ID          string
+	ClusterName string
+	Token       string
+	ExpiresAt   time.Time
 }
 
 type AttemptStatus string
@@ -58,6 +60,7 @@ type BeginResult struct {
 	EnrollmentID   string
 	TenantID       string
 	ProjectID      string
+	ClusterName    string
 	IdempotencyKey string
 	CSRFingerprint []byte
 	Status         AttemptStatus
@@ -71,7 +74,6 @@ type CompleteInput struct {
 	CSRPEM          []byte
 	ClusterID       string
 	AgentID         string
-	ClusterName     string
 	AgentVersion    string
 	ProtocolVersion string
 	CertificatePEM  string
@@ -83,7 +85,6 @@ type EnrollInput struct {
 	Token           string
 	IdempotencyKey  string
 	CSRPEM          []byte
-	ClusterName     string
 	AgentVersion    string
 	ProtocolVersion string
 	RequestID       string

@@ -27,10 +27,9 @@ auth:
     max_attempts_per_source: 20
 
 agent_enrollment:
-  # Configure both files to enable POST /agent-api/v1/enroll.
-  # Mount the private key from a Secret; do not commit it to this repository.
-  signing_ca_certificate_file: ""
-  signing_ca_private_key_file: ""
+  # Run hack/generate-dev-agent-ca.sh once for local development.
+  signing_ca_certificate_file: .local/development/agent-ca.crt
+  signing_ca_private_key_file: .local/development/agent-ca.key
   certificate_ttl: 720h
   operation_timeout: 10s
   # Development only; validation rejects this when http.address is not loopback.

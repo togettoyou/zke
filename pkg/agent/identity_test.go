@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,12 +32,7 @@ const (
 func TestIdentityStorePersistsPendingEnrollment(t *testing.T) {
 	t.Parallel()
 
-	client := fake.NewClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: testIdentityNamespace,
-			Name:      testIdentitySecret,
-		},
-	})
+	client := fake.NewClientset()
 	store := NewIdentityStore(client, testIdentityNamespace, testIdentitySecret)
 
 	first, err := store.LoadOrCreatePending(context.Background())
@@ -50,6 +46,15 @@ func TestIdentityStorePersistsPendingEnrollment(t *testing.T) {
 		t.Fatalf("stored pending identity is invalid: %v", err)
 	}
 	assertPendingKeyMatchesCSR(t, *first.Pending)
+	secret, err := client.CoreV1().
+		Secrets(testIdentityNamespace).
+		Get(context.Background(), testIdentitySecret, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret.Type != corev1.SecretTypeOpaque {
+		t.Fatalf("identity Secret type = %q, want Opaque", secret.Type)
+	}
 
 	second, err := store.LoadOrCreatePending(context.Background())
 	if err != nil {
@@ -61,15 +66,60 @@ func TestIdentityStorePersistsPendingEnrollment(t *testing.T) {
 	}
 }
 
+func TestIdentityStoreConcurrentCreationConverges(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewClientset()
+	store := NewIdentityStore(client, testIdentityNamespace, testIdentitySecret)
+	results := make(chan IdentityState, 2)
+	failures := make(chan error, 2)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Add(2)
+	for range 2 {
+		go func() {
+			defer workers.Done()
+			<-start
+			state, err := store.LoadOrCreatePending(context.Background())
+			if err != nil {
+				failures <- err
+				return
+			}
+			results <- state
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	close(failures)
+
+	for err := range failures {
+		t.Fatal(err)
+	}
+	var first *PendingIdentity
+	count := 0
+	for state := range results {
+		count++
+		if state.Pending == nil {
+			t.Fatalf("concurrent state has no pending identity: %+v", state)
+		}
+		if first == nil {
+			first = state.Pending
+			continue
+		}
+		if !samePendingIdentity(*first, *state.Pending) {
+			t.Fatal("concurrent Secret creation did not converge on one pending identity")
+		}
+	}
+	if count != 2 {
+		t.Fatalf("concurrent result count = %d, want 2", count)
+	}
+}
+
 func TestIdentityStoreCompletesAndReloadsIdentity(t *testing.T) {
 	t.Parallel()
 
-	client := fake.NewClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: testIdentityNamespace,
-			Name:      testIdentitySecret,
-		},
-	})
+	client := fake.NewClientset()
 	store := NewIdentityStore(client, testIdentityNamespace, testIdentitySecret)
 	state, err := store.LoadOrCreatePending(context.Background())
 	if err != nil {

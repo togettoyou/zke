@@ -35,7 +35,6 @@ type registrationClient struct {
 
 type registrationRequest struct {
 	CSRPEM          string `json:"csr_pem"`
-	ClusterName     string `json:"cluster_name"`
 	AgentVersion    string `json:"agent_version"`
 	ProtocolVersion string `json:"protocol_version"`
 }
@@ -143,12 +142,10 @@ func (client *registrationClient) Enroll(
 	ctx context.Context,
 	token string,
 	pending PendingIdentity,
-	clusterName string,
 	agentVersion string,
 ) (RegistrationIdentity, error) {
 	requestBody, err := json.Marshal(registrationRequest{
 		CSRPEM:          string(pending.CSRPEM),
-		ClusterName:     clusterName,
 		AgentVersion:    agentVersion,
 		ProtocolVersion: agentProtocolVersion,
 	})

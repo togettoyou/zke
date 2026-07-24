@@ -98,7 +98,6 @@ func enrollWithRetry(
 			ctx,
 			token,
 			pending,
-			cfg.ClusterName,
 			agentVersion(),
 		)
 		if err == nil {

@@ -1,17 +1,28 @@
-server_address: https://zke-server.example.invalid:8443
-# Optional when the Server certificate chains to the system trust store.
-server_ca_file: /var/run/secrets/zke-server/ca.crt
-# Optional. When omitted, the Agent uses in-cluster configuration first and
-# falls back to KUBECONFIG or ~/.kube/config outside a cluster.
+server_address: http://127.0.0.1:8080
+# Development only. HTTP is rejected unless both this flag and a loopback host are used.
+allow_insecure_loopback: true
+
+# Production HTTPS only. Configure this when the ZKE Server certificate is not
+# trusted by the operating system trust store.
+# server_ca_file: /var/run/secrets/zke-server/ca.crt
+
+# Optional local-development override. In a cluster, the Agent uses its
+# ServiceAccount; outside a cluster, client-go uses KUBECONFIG or ~/.kube/config.
 # kubeconfig_file: /path/to/kubeconfig
-cluster_name: example-cluster
-# Mount the one-time registration Token from a separate bootstrap Secret.
-enrollment_token_file: /var/run/secrets/zke-enrollment/token
+
+# For local development, write the Token returned by the Enrollment API here.
+# A Kubernetes deployment instead mounts a bootstrap Secret at
+# /var/run/secrets/zke-enrollment/token.
+enrollment_token_file: .local/development/enrollment-token
+
+# The Agent creates and updates this persistent Secret through client-go.
 identity:
   namespace: zke-system
   secret_name: zke-agent-identity
+
 registration:
   timeout: 10s
   retry_initial_interval: 1s
   retry_max_interval: 15s
-log_level: debug
+
+log_level: info

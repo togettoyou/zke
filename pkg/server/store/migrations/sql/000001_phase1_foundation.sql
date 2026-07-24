@@ -132,6 +132,7 @@ CREATE TABLE enrollments (
     id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES tenants (id),
     project_id uuid NOT NULL,
+    cluster_name text NOT NULL,
     token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) > 0),
     created_by_user_id uuid NOT NULL REFERENCES users (id),
     idempotency_key text NOT NULL,
@@ -144,6 +145,10 @@ CREATE TABLE enrollments (
     CONSTRAINT enrollments_idempotency_key_format CHECK (
         idempotency_key = btrim(idempotency_key)
         AND length(idempotency_key) BETWEEN 16 AND 128
+    ),
+    CONSTRAINT enrollments_cluster_name_format CHECK (
+        cluster_name = btrim(cluster_name)
+        AND octet_length(cluster_name) BETWEEN 1 AND 253
     ),
     CONSTRAINT enrollments_creator_idempotency_unique
         UNIQUE (created_by_user_id, project_id, idempotency_key),

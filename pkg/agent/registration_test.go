@@ -46,7 +46,6 @@ func TestRegistrationClientEnrollsOverTLS(t *testing.T) {
 			t.Errorf("decode request: %v", err)
 		}
 		if body.CSRPEM != string(pending.CSRPEM) ||
-			body.ClusterName != "test-cluster" ||
 			body.ProtocolVersion != agentProtocolVersion ||
 			body.AgentVersion == "" {
 			t.Errorf("unexpected enrollment body: %+v", body)
@@ -82,7 +81,6 @@ func TestRegistrationClientEnrollsOverTLS(t *testing.T) {
 		context.Background(),
 		token,
 		*pending,
-		"test-cluster",
 		"development",
 	)
 	if err != nil {
@@ -93,6 +91,30 @@ func TestRegistrationClientEnrollsOverTLS(t *testing.T) {
 		string(result.CertificatePEM) != "certificate" ||
 		!result.CertificateExpiresAt.Equal(expiresAt) {
 		t.Fatalf("unexpected enrollment result: %+v", result)
+	}
+}
+
+func TestRegistrationClientAllowsExplicitLoopbackHTTP(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		_ *http.Request,
+	) {
+		writer.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	client, err := newRegistrationClient(Config{
+		ServerAddress:         server.URL,
+		AllowInsecureLoopback: true,
+		RegistrationTimeout:   time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.endpoint != server.URL+agentEnrollmentPath {
+		t.Fatalf("endpoint = %q, want loopback enrollment endpoint", client.endpoint)
 	}
 }
 
@@ -123,7 +145,6 @@ func TestRegistrationClientClassifiesRateLimitAsRetryable(t *testing.T) {
 		context.Background(),
 		"redacted-token",
 		*pending,
-		"test-cluster",
 		"development",
 	)
 	retry, retryAfter := registrationRetry(err)
@@ -202,7 +223,6 @@ func TestRegistrationClientRetriesTruncatedSuccessResponse(t *testing.T) {
 		context.Background(),
 		"redacted-token",
 		*pending,
-		"test-cluster",
 		"development",
 	)
 	retry, _ := registrationRetry(err)

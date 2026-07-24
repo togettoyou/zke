@@ -14,6 +14,7 @@ import (
 )
 
 const idempotencyKeyHeaderName = "Idempotency-Key"
+const maxCreateAgentEnrollmentRequestBytes = 16 * 1024
 
 type enrollmentHandler struct {
 	logger           *slog.Logger
@@ -23,9 +24,14 @@ type enrollmentHandler struct {
 }
 
 type createEnrollmentResponse struct {
-	ID        string    `json:"id"`
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID          string    `json:"id"`
+	ClusterName string    `json:"cluster_name"`
+	Token       string    `json:"token"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type createEnrollmentRequest struct {
+	ClusterName string `json:"cluster_name"`
 }
 
 func newEnrollmentHandler(
@@ -45,6 +51,16 @@ func newEnrollmentHandler(
 func (handler *enrollmentHandler) create(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)
+	var request createEnrollmentRequest
+	if err := decodeJSONRequest(
+		c,
+		&request,
+		maxCreateAgentEnrollmentRequestBytes,
+	); err != nil {
+		handler.recordFailure(c, identity.User.ID, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid enrollment request")
+		return
+	}
 	operationContext, cancelOperation := context.WithTimeout(
 		c.Request.Context(),
 		handler.operationTimeout,
@@ -53,6 +69,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 		operationContext,
 		enrollment.CreateInput{
 			ProjectID:      c.Param("project_id"),
+			ClusterName:    request.ClusterName,
 			UserID:         identity.User.ID,
 			RequestID:      httpmiddleware.RequestID(c),
 			IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
@@ -104,9 +121,10 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, createEnrollmentResponse{
-		ID:        result.ID,
-		Token:     result.Token,
-		ExpiresAt: result.ExpiresAt,
+		ID:          result.ID,
+		ClusterName: result.ClusterName,
+		Token:       result.Token,
+		ExpiresAt:   result.ExpiresAt,
 	})
 }
 

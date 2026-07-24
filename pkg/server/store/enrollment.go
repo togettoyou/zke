@@ -15,6 +15,7 @@ func (store *EnrollmentStore) CreateEnrollment(
 	input CreateEnrollmentParams,
 ) (Enrollment, error) {
 	if strings.TrimSpace(input.ProjectID) == "" ||
+		strings.TrimSpace(input.ClusterName) == "" ||
 		strings.TrimSpace(input.CreatedByUserID) == "" ||
 		strings.TrimSpace(input.RequestID) == "" ||
 		strings.TrimSpace(input.IdempotencyKey) == "" ||
@@ -37,6 +38,7 @@ INSERT INTO enrollments (
     id,
     tenant_id,
     project_id,
+    cluster_name,
     token_digest,
     created_by_user_id,
     idempotency_key,
@@ -47,9 +49,10 @@ SELECT
     project.tenant_id,
     project.id,
     $3,
-    users.id,
     $4,
-    $5
+    users.id,
+    $5,
+    $6
 FROM projects AS project
 JOIN tenants AS tenant ON tenant.id = project.tenant_id
 JOIN users ON users.id = $2
@@ -62,12 +65,14 @@ RETURNING
     id::text,
     tenant_id::text,
     project_id::text,
+    cluster_name,
     created_by_user_id::text,
     expires_at,
     created_at
 `,
 		input.ProjectID,
 		input.CreatedByUserID,
+		input.ClusterName,
 		input.TokenDigest,
 		input.IdempotencyKey,
 		input.ExpiresAt,
@@ -75,6 +80,7 @@ RETURNING
 		&created.ID,
 		&created.TenantID,
 		&created.ProjectID,
+		&created.ClusterName,
 		&created.CreatedByUserID,
 		&created.ExpiresAt,
 		&created.CreatedAt,

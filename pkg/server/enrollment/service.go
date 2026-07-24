@@ -10,6 +10,8 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
+const maxClusterNameBytes = 253
+
 type Service struct {
 	store             *store.EnrollmentStore
 	tokenTTL          time.Duration
@@ -35,6 +37,7 @@ func (service *Service) Create(
 ) (CreateResult, error) {
 	if !validation.IsUUID(input.ProjectID) ||
 		!validation.IsUUID(input.UserID) ||
+		!validBoundedValue(input.ClusterName, maxClusterNameBytes) ||
 		strings.TrimSpace(input.RequestID) == "" ||
 		!validation.IsIdempotencyKey(input.IdempotencyKey) ||
 		input.Now.IsZero() {
@@ -52,6 +55,7 @@ func (service *Service) Create(
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       input.ProjectID,
+			ClusterName:     input.ClusterName,
 			CreatedByUserID: input.UserID,
 			TokenDigest:     tokenDigest,
 			ExpiresAt:       input.Now.Add(service.tokenTTL),
@@ -69,8 +73,9 @@ func (service *Service) Create(
 		return CreateResult{}, err
 	}
 	return CreateResult{
-		ID:        storedEnrollment.ID,
-		Token:     token,
-		ExpiresAt: storedEnrollment.ExpiresAt,
+		ID:          storedEnrollment.ID,
+		ClusterName: storedEnrollment.ClusterName,
+		Token:       token,
+		ExpiresAt:   storedEnrollment.ExpiresAt,
 	}, nil
 }

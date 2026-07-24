@@ -34,6 +34,7 @@ func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       projectID,
+			ClusterName:     "integration-cluster",
 			CreatedByUserID: userID,
 			TokenDigest:     tokenDigest[:],
 			ExpiresAt:       now.Add(15 * time.Minute),
@@ -74,7 +75,8 @@ func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
 	}
 	if attempts[0].ID != attempts[1].ID ||
 		attempts[0].Status != store.EnrollmentAttemptPending ||
-		attempts[0].EnrollmentID != created.ID {
+		attempts[0].EnrollmentID != created.ID ||
+		attempts[0].ClusterName != "integration-cluster" {
 		t.Fatalf("concurrent attempts are not the same pending attempt: %#v", attempts)
 	}
 
@@ -101,7 +103,6 @@ func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
 		CSRFingerprint:       attempts[0].CSRFingerprint,
 		ClusterID:            newEnrollmentTestUUID(t),
 		AgentID:              newEnrollmentTestUUID(t),
-		ClusterName:          "integration-cluster",
 		AgentVersion:         "v0.1.0",
 		ProtocolVersion:      "v1",
 		CertificateSerial:    "1001",
@@ -168,8 +169,9 @@ func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
 	var clusterCount, agentCount, credentialCount, succeededAuditCount int
 	if err := pool.QueryRow(
 		ctx,
-		"SELECT count(*) FROM clusters WHERE project_id = $1",
+		"SELECT count(*) FROM clusters WHERE project_id = $1 AND name = $2",
 		projectID,
+		"integration-cluster",
 	).Scan(&clusterCount); err != nil {
 		t.Fatal(err)
 	}
@@ -231,6 +233,7 @@ func TestAgentEnrollmentRejectsExpiredTokenAndRollsBackFailedCompletion(t *testi
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       projectID,
+			ClusterName:     "expired-cluster",
 			CreatedByUserID: userID,
 			TokenDigest:     expiredTokenDigest[:],
 			ExpiresAt:       now.Add(-time.Minute),
@@ -286,6 +289,7 @@ WHERE action = 'agent.enroll'
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       projectID,
+			ClusterName:     "second-rollback-cluster",
 			CreatedByUserID: userID,
 			TokenDigest:     secondTokenDigest[:],
 			ExpiresAt:       now.Add(15 * time.Minute),
@@ -319,7 +323,6 @@ WHERE action = 'agent.enroll'
 			CSRFingerprint:       secondAttempt.CSRFingerprint,
 			ClusterID:            newEnrollmentTestUUID(t),
 			AgentID:              newEnrollmentTestUUID(t),
-			ClusterName:          "rolled-back-cluster",
 			AgentVersion:         "v0.1.0",
 			ProtocolVersion:      "v1",
 			CertificateSerial:    "2001",
@@ -349,7 +352,7 @@ WHERE attempt.id = $1
 	var rolledBackClusterCount int
 	if err := pool.QueryRow(
 		ctx,
-		"SELECT count(*) FROM clusters WHERE name = 'rolled-back-cluster'",
+		"SELECT count(*) FROM clusters WHERE name = 'second-rollback-cluster'",
 	).Scan(&rolledBackClusterCount); err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +382,7 @@ func createCompletedEnrollmentForSerial(
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       projectID,
+			ClusterName:     "completed-cluster-" + token,
 			CreatedByUserID: userID,
 			TokenDigest:     tokenDigest[:],
 			ExpiresAt:       now.Add(15 * time.Minute),
@@ -412,7 +416,6 @@ func createCompletedEnrollmentForSerial(
 			CSRFingerprint:       attempt.CSRFingerprint,
 			ClusterID:            newEnrollmentTestUUID(t),
 			AgentID:              newEnrollmentTestUUID(t),
-			ClusterName:          "completed-cluster-" + serial,
 			AgentVersion:         "v0.1.0",
 			ProtocolVersion:      "v1",
 			CertificateSerial:    serial,

@@ -17,7 +17,6 @@ import (
 const (
 	maxCSRPEMBytes         = 64 << 10
 	maxCertificatePEMBytes = 1 << 20
-	maxClusterNameBytes    = 253
 	maxVersionBytes        = 128
 )
 
@@ -57,6 +56,7 @@ func (service *Service) Begin(
 		EnrollmentID:   attempt.EnrollmentID,
 		TenantID:       attempt.TenantID,
 		ProjectID:      attempt.ProjectID,
+		ClusterName:    attempt.ClusterName,
 		IdempotencyKey: attempt.IdempotencyKey,
 		CSRFingerprint: append([]byte(nil), attempt.CSRFingerprint...),
 		Status:         AttemptStatus(attempt.Status),
@@ -81,7 +81,6 @@ func (service *Service) Complete(
 		!validation.IsIdempotencyKey(input.IdempotencyKey) ||
 		!validation.IsUUID(input.ClusterID) ||
 		!validation.IsUUID(input.AgentID) ||
-		!validBoundedValue(input.ClusterName, maxClusterNameBytes) ||
 		!validBoundedValue(input.AgentVersion, maxVersionBytes) ||
 		!validBoundedValue(input.ProtocolVersion, maxVersionBytes) ||
 		strings.TrimSpace(input.RequestID) == "" ||
@@ -108,7 +107,6 @@ func (service *Service) Complete(
 			CSRFingerprint:       csrFingerprint,
 			ClusterID:            input.ClusterID,
 			AgentID:              input.AgentID,
-			ClusterName:          input.ClusterName,
 			AgentVersion:         input.AgentVersion,
 			ProtocolVersion:      input.ProtocolVersion,
 			CertificateSerial:    certificate.SerialNumber.String(),
@@ -133,8 +131,7 @@ func (service *Service) Enroll(
 	ctx context.Context,
 	input EnrollInput,
 ) (EnrollResult, error) {
-	if !validBoundedValue(input.ClusterName, maxClusterNameBytes) ||
-		!validBoundedValue(input.AgentVersion, maxVersionBytes) ||
+	if !validBoundedValue(input.AgentVersion, maxVersionBytes) ||
 		!validBoundedValue(input.ProtocolVersion, maxVersionBytes) {
 		return EnrollResult{}, ErrInvalidInput
 	}
@@ -210,7 +207,6 @@ func (service *Service) Enroll(
 		CSRPEM:          input.CSRPEM,
 		ClusterID:       clusterID,
 		AgentID:         agentID,
-		ClusterName:     input.ClusterName,
 		AgentVersion:    input.AgentVersion,
 		ProtocolVersion: input.ProtocolVersion,
 		CertificatePEM:  signedCertificate.PEM,
