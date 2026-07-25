@@ -22,6 +22,14 @@ type GlobalAuditEvent struct {
 	RequestID   string
 }
 
+type AgentAuditEvent struct {
+	ActorUserID string
+	AgentID     string
+	Action      string
+	Result      string
+	RequestID   string
+}
+
 func NewAuditStore(pool *pgxpool.Pool) *AuditStore {
 	return &AuditStore{pool: pool}
 }

@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"net/url"
 	"testing"
+	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/store"
@@ -86,5 +87,56 @@ func TestHealthStatusValue(t *testing.T) {
 		agentv1.HealthStatus_HEALTH_STATUS_UNSPECIFIED,
 	); err == nil {
 		t.Fatal("healthStatusValue() accepted an unspecified status")
+	}
+}
+
+func TestManagerConnectionSnapshotLifecycle(t *testing.T) {
+	t.Parallel()
+
+	connectedAt := time.Date(2026, 7, 25, 8, 0, 0, 0, time.UTC)
+	heartbeatAt := connectedAt.Add(10 * time.Second)
+	manager := &Manager{
+		connections:      make(map[string]*session),
+		lastDisconnected: make(map[string]ConnectionStatus),
+	}
+	current := &session{
+		id: "connection-1",
+		identity: store.AgentConnectionIdentity{
+			AgentID: testAgentID,
+		},
+		connectedAt:      connectedAt,
+		disconnectReason: "connection_closed",
+	}
+	if previous := manager.register(current); previous != nil {
+		t.Fatal("first connection unexpectedly replaced another session")
+	}
+	current.recordHeartbeat(heartbeatAt)
+
+	online := manager.Snapshot([]string{testAgentID})[testAgentID]
+	if online.State != "online" ||
+		online.ConnectionID != "connection-1" ||
+		!online.ConnectedAt.Equal(connectedAt) ||
+		!online.LastHeartbeatAt.Equal(heartbeatAt) {
+		t.Fatalf("unexpected online snapshot: %+v", online)
+	}
+
+	current.setDisconnectReason("agent_revoked")
+	current.setDisconnectReason("credential_revoked")
+	manager.unregister(current)
+	offline := manager.Snapshot([]string{testAgentID})[testAgentID]
+	if offline.State != "offline" ||
+		offline.ConnectionID != "" ||
+		offline.LastDisconnectedAt.IsZero() ||
+		offline.LastDisconnectReason != "agent_revoked" ||
+		!offline.LastHeartbeatAt.Equal(heartbeatAt) {
+		t.Fatalf("unexpected offline snapshot: %+v", offline)
+	}
+
+	unknownID := "00000000-0000-4000-8000-000000000099"
+	unknown := manager.Snapshot([]string{unknownID})[unknownID]
+	if unknown.State != "offline" ||
+		!unknown.LastDisconnectedAt.IsZero() ||
+		unknown.LastDisconnectReason != "" {
+		t.Fatalf("unexpected unknown Agent snapshot: %+v", unknown)
 	}
 }

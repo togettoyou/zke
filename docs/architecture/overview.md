@@ -1,8 +1,8 @@
 # 系统架构
 
 > 状态：目标架构。当前已完成 Phase 1 可运行工程骨架，以及本地认证与 RBAC 基础、Agent 注册与安装
-> Manifest、QUIC/mTLS 连接、心跳、证书续期与撤销通知、证书状态查询。业务 Stream、集群资源管理、Web
-> Desktop 和其余平台组件仍处于规划阶段。
+> Manifest、QUIC/mTLS 连接、心跳、证书续期、撤销 API 与通知断连、实时连接和证书状态查询。业务 Stream、
+> 集群资源管理、Web Desktop 和其余平台组件仍处于规划阶段。
 
 ZKE 的目标架构采用 Server + Agent 模型。用户计划通过 Web Desktop 使用各桌面应用；ZKE Server 负责统一控制与编排；每个 Kubernetes 集群中的 ZKE Agent 负责资源查询和定域执行。
 

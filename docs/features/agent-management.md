@@ -55,7 +55,14 @@ Service、PVC 或 identity Secret。Enrollment Secret 保留不会导致重复�
 Secret，Server 也已单次消费 Token。
 
 Server 已实现 `GET /api/v1/projects/{project_id}/agents`，返回 Agent 当前证书过期时间、剩余秒数和证书状态，
-供后续 Web 使用；同时按配置周期输出临近过期的结构化告警。
+并合并当前 Server 实例内存中的 `online`/`offline` 状态、Connection ID、连接时间、最近心跳、断开时间和断开
+原因，供后续 Web 使用；同时按配置周期输出临近过期的结构化告警。连接快照不写数据库，Server 重启后离线 Agent
+的历史断开信息会丢失；多 Server 实例的全局连接视图仍需后续的连接所有权与路由设计。
+
+Server 已实现 `POST /api/v1/agents/{agent_id}/revoke`。接口要求 Session、CSRF、
+`agent.revoke` 权限和正文中的显式 `{"confirm":true}`；成功后在一个事务中把 Agent 生命周期置为 `revoked`、
+撤销全部客户端 Credential 并写入集群作用域审计。重复撤销返回原撤销时间并标记 `already_revoked`，不会恢复或
+改变身份。数据库撤销通知会让持有连接的 Server 立即向 Agent 发送 `GoAway(agent_revoked)` 并关闭 QUIC 连接。
 
 HTTP 注册与 QUIC 长连接使用独立端点。Server 分别配置 `http.address` 和 `agent_listener.address`；Agent 分别
 配置 `registration.server_url` 和 `connection.server_address`，不从注册 URL 隐式派生 QUIC 地址。

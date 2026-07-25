@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
+	"github.com/togettoyou/zke/pkg/server/agentmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
@@ -25,6 +26,7 @@ type Dependencies struct {
 	RBACService              *rbac.Service
 	EnrollmentService        *enrollment.Service
 	AgentInstallationService *agentinstall.Service
+	AgentManagementService   *agentmanagement.Service
 	AgentStatusService       *agentstatus.Service
 }
 
@@ -39,6 +41,7 @@ type handlers struct {
 	enrollment              *enrollmentHandler
 	agentRegistration       *agentRegistrationHandler
 	agentInstallation       *agentInstallationHandler
+	agentManagement         *agentManagementHandler
 	agentStatus             *agentStatusHandler
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
@@ -84,6 +87,12 @@ func New(
 		agentInstallation: newAgentInstallationHandler(
 			logger,
 			dependencies.AgentInstallationService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		agentManagement: newAgentManagementHandler(
+			logger,
+			dependencies.AgentManagementService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

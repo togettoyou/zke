@@ -422,8 +422,14 @@ Agent 默认在证书剩余有效期进入 `identity.renew_before` 窗口时续�
 ### 6.6 撤销和连接关闭
 
 Credential、Agent 或 Cluster 被撤销时，数据库触发器通过 PostgreSQL `NOTIFY` 广播撤销事件。每个 Server
-实例监听该事件，匹配当前内存中的 Agent 会话，发送 `GoAway(credential_revoked)` 并用认证错误关闭 QUIC
-连接；后续重连仍会经过数据库状态校验并被拒绝。
+实例监听该事件，匹配当前内存中的 Agent 会话，分别发送 `GoAway(credential_revoked)`、
+`GoAway(agent_revoked)` 或 `GoAway(cluster_revoked)`，并用认证错误关闭 QUIC 连接；后续重连仍会经过数据库
+状态校验并被拒绝。
+
+当前管理端提供 `POST /api/v1/agents/{agent_id}/revoke`。请求必须通过 Session、CSRF 和 `agent.revoke`
+权限检查，并提交 `{"confirm":true}` 显式确认。Server 在同一数据库事务中把 Agent 生命周期置为 `revoked`、
+撤销全部 Credential 并写入成功审计。接口具有状态幂等性，重复调用返回 `200` 和首次撤销时间，同时以
+`already_revoked` 标识没有发生新的状态变化。
 
 Server 也会按当前客户端证书的 `NotAfter` 安排连接关闭，避免一条在证书有效期内建立的长连接越过证书到期时间
 后继续存活。PostgreSQL 通知用于多 Server 实例间传播，不依赖撤销请求落到持有连接的同一实例。

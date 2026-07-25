@@ -162,8 +162,8 @@ Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、
   解析 Tenant 归属，并在业务 Handler 前完成权限检查。
 
 持久化账户锁定与恢复、管理员密码重置和 Console 登录流程尚未实现。RBAC 已接入 Agent 注册凭证创建、安装
-Manifest 和 Agent 证书状态查询接口，但 Project/Cluster 管理与撤销等 API 尚未实现，因此 Roadmap 中的
-“用户认证”和“RBAC”仍未完成。
+Manifest、Agent 状态查询和 Agent 撤销接口，但 Tenant/Project/Cluster 管理等 API 尚未实现，因此 Roadmap
+中的“用户认证”和“RBAC”仍未完成。
 登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
@@ -370,7 +370,8 @@ Agent 状态拆分为：
 注册完成后生命周期为 `pending`，首次有效连接后转为 `active`。
 
 心跳间隔和离线阈值由 Server 下发并设置上下限。心跳先更新内存状态，`last_seen_at` 限频写入数据库；生命周期和
-健康状态跃迁立即持久化，连接变化记录事件。撤销状态同时触发连接关闭和安全审计。
+健康状态跃迁立即持久化，连接变化写入结构化日志。状态 API 合并当前 Server 实例的实时连接快照；撤销状态同时
+触发连接关闭和安全审计。
 
 ## 8. Console 技术基线
 
@@ -474,6 +475,7 @@ GET  /api/v1/auth/me
 POST /api/v1/projects/{project_id}/agent-enrollments
 POST /api/v1/projects/{project_id}/agent-installations
 GET  /api/v1/projects/{project_id}/agents
+POST /api/v1/agents/{agent_id}/revoke
 GET  /agent-install/v1/manifest
 ```
 
@@ -483,9 +485,13 @@ GET  /agent-install/v1/manifest
 GET  /api/v1/projects/{project_id}/clusters
 GET  /api/v1/clusters/{cluster_id}
 GET  /api/v1/clusters/{cluster_id}/agent
-POST /api/v1/agents/{agent_id}/revoke
 GET  /api/v1/events
 ```
+
+Agent 撤销接口要求 Session、CSRF、`agent.revoke` 权限和 `{"confirm":true}` 显式确认。Server 在同一事务中
+更新 Agent 生命周期、撤销全部客户端 Credential 并写入集群作用域成功审计；重复撤销返回 `200`、原撤销时间和
+`already_revoked: true`。数据库触发器向全部 Server 实例广播撤销通知，持有连接的实例立即关闭对应 QUIC
+Connection。
 
 创建 Agent 注册凭证时，Server 生成 15 分钟有效的一次性随机 Token。Token 明文只在成功响应中返回一次，
 响应禁止缓存；数据库只保存 SHA-256 摘要。凭证记录和成功审计事件在同一事务内写入。请求必须携带 16 至 128
@@ -582,7 +588,9 @@ TLS 1.3 和 mTLS，不经过 HTTP 网关，也不复用 HTTP TLS 身份。
 Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 
 连接状态由 Server 内存和 `agentconn` 维护，数据库保存限频的 `last_seen_at`、生命周期与健康状态。Phase 1
-不包含 Cluster Group；Server 多副本方案落地前，需要补充 Agent 连接所有权和跨实例任务路由设计。
+状态 API 会把当前 Server 实例的连接快照与数据库记录合并，返回 `online`/`offline`、Connection ID、连接与
+心跳时间、最近断开时间和原因。离线历史不持久化，Server 重启后丢失；多实例部署也尚未汇总其他实例的连接，
+因此 Server 多副本方案落地前仍需补充 Agent 连接所有权和跨实例任务路由设计。Phase 1 不包含 Cluster Group。
 
 ## 11. 仓库结构
 

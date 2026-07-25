@@ -42,8 +42,9 @@ type Manager struct {
 	renewal *enrollment.CertificateRenewalService
 	tls     *tls.Config
 
-	mutex       sync.Mutex
-	connections map[string]*session
+	mutex            sync.Mutex
+	connections      map[string]*session
+	lastDisconnected map[string]ConnectionStatus
 }
 
 type session struct {
@@ -51,10 +52,28 @@ type session struct {
 	identity             store.AgentConnectionIdentity
 	certificateSerial    string
 	certificateExpiresAt time.Time
+	connectedAt          time.Time
 	conn                 *quic.Conn
 	stream               *quic.Stream
 	writeMu              sync.Mutex
+	statusMu             sync.Mutex
+	lastHeartbeatAt      time.Time
+	disconnectReason     string
 }
+
+type ConnectionStatus struct {
+	State                string
+	ConnectionID         string
+	ConnectedAt          time.Time
+	LastHeartbeatAt      time.Time
+	LastDisconnectedAt   time.Time
+	LastDisconnectReason string
+}
+
+const (
+	ConnectionStateOnline  = "online"
+	ConnectionStateOffline = "offline"
+)
 
 type certificateIdentity struct {
 	store.AgentConnectionIdentity
@@ -73,12 +92,13 @@ func New(
 		return nil, err
 	}
 	return &Manager{
-		config:      config,
-		logger:      logger,
-		store:       connectionStore,
-		renewal:     renewalService,
-		tls:         tlsConfig,
-		connections: make(map[string]*session),
+		config:           config,
+		logger:           logger,
+		store:            connectionStore,
+		renewal:          renewalService,
+		tls:              tlsConfig,
+		connections:      make(map[string]*session),
+		lastDisconnected: make(map[string]ConnectionStatus),
 	}, nil
 }
 
@@ -216,11 +236,14 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 		identity:             identity.AgentConnectionIdentity,
 		certificateSerial:    identity.CertificateSerial,
 		certificateExpiresAt: identity.CertificateExpiresAt,
+		connectedAt:          now,
 		conn:                 connection,
 		stream:               controlStream,
+		disconnectReason:     "connection_closed",
 	}
 	previous := manager.register(current)
 	if previous != nil {
+		previous.setDisconnectReason("connection_replaced")
 		_ = previous.write(&agentv1.ControlFrame{
 			ProtocolVersion: agentprotocol.ProtocolVersion,
 			Message: &agentv1.ControlFrame_GoAway{
@@ -288,6 +311,7 @@ func (manager *Manager) serveControl(
 	for {
 		now := time.Now().UTC()
 		if !current.certificateExpiresAt.After(now) {
+			current.setDisconnectReason("certificate_expired")
 			_ = current.conn.CloseWithError(
 				agentprotocol.CloseAuthenticationError,
 				"Agent certificate expired",
@@ -304,6 +328,7 @@ func (manager *Manager) serveControl(
 		frame, err := agentprotocol.ReadFrame(current.stream)
 		if err != nil {
 			if !current.certificateExpiresAt.After(time.Now().UTC()) {
+				current.setDisconnectReason("certificate_expired")
 				_ = current.conn.CloseWithError(
 					agentprotocol.CloseAuthenticationError,
 					"Agent certificate expired",
@@ -311,6 +336,7 @@ func (manager *Manager) serveControl(
 				return errors.New("Agent certificate expired")
 			}
 			if ctx.Err() == nil && current.conn.Context().Err() == nil {
+				current.setDisconnectReason("heartbeat_timeout")
 				_ = current.conn.CloseWithError(
 					agentprotocol.CloseHeartbeatTimeout,
 					"heartbeat timeout",
@@ -319,6 +345,7 @@ func (manager *Manager) serveControl(
 			return err
 		}
 		if frame.GetProtocolVersion() != agentprotocol.ProtocolVersion {
+			current.setDisconnectReason("protocol_version_mismatch")
 			_ = current.conn.CloseWithError(
 				agentprotocol.CloseProtocolError,
 				"protocol version mismatch",
@@ -326,6 +353,7 @@ func (manager *Manager) serveControl(
 			return errors.New("Agent protocol version mismatch")
 		}
 		if goodbye := frame.GetClientGoodbye(); goodbye != nil {
+			current.setDisconnectReason("client_goodbye")
 			logger.Info(
 				"Agent sent goodbye",
 				slog.String("reason", goodbye.GetReason()),
@@ -338,6 +366,7 @@ func (manager *Manager) serveControl(
 				current,
 				renewalRequest,
 			); err != nil {
+				current.setDisconnectReason("certificate_renewal_rejected")
 				closeCode := agentprotocol.CloseInternalError
 				if errors.Is(err, enrollment.ErrInvalidInput) ||
 					errors.Is(err, enrollment.ErrCredentialRejected) {
@@ -355,6 +384,7 @@ func (manager *Manager) serveControl(
 		if heartbeat == nil ||
 			heartbeat.GetSequence() == 0 ||
 			heartbeat.GetSequence() <= lastSequence {
+			current.setDisconnectReason("invalid_heartbeat")
 			_ = current.conn.CloseWithError(
 				agentprotocol.CloseProtocolError,
 				"invalid heartbeat",
@@ -371,6 +401,7 @@ func (manager *Manager) serveControl(
 		}
 		lastSequence = heartbeat.GetSequence()
 		now = time.Now().UTC()
+		current.recordHeartbeat(now)
 		if nextHealthStatus != healthStatus ||
 			now.Sub(lastPersisted) >= manager.config.LastSeenWriteInterval {
 			operationContext, cancelOperation := context.WithTimeout(
@@ -388,7 +419,9 @@ func (manager *Manager) serveControl(
 			)
 			cancelOperation()
 			if err != nil {
+				current.setDisconnectReason("heartbeat_persistence_failed")
 				if errors.Is(err, store.ErrAgentCredentialRejected) {
+					current.setDisconnectReason("credential_rejected")
 					_ = current.conn.CloseWithError(
 						agentprotocol.CloseAuthenticationError,
 						"Agent credential rejected",
@@ -408,6 +441,7 @@ func (manager *Manager) serveControl(
 				},
 			},
 		}); err != nil {
+			current.setDisconnectReason("heartbeat_ack_failed")
 			return err
 		}
 	}
@@ -464,7 +498,29 @@ func (manager *Manager) unregister(current *session) {
 	defer manager.mutex.Unlock()
 	if manager.connections[current.identity.AgentID] == current {
 		delete(manager.connections, current.identity.AgentID)
+		manager.lastDisconnected[current.identity.AgentID] =
+			current.disconnectedStatus(time.Now().UTC())
 	}
+}
+
+func (manager *Manager) Snapshot(
+	agentIDs []string,
+) map[string]ConnectionStatus {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	result := make(map[string]ConnectionStatus, len(agentIDs))
+	for _, agentID := range agentIDs {
+		if current := manager.connections[agentID]; current != nil {
+			result[agentID] = current.onlineStatus()
+			continue
+		}
+		if previous, exists := manager.lastDisconnected[agentID]; exists {
+			result[agentID] = previous
+			continue
+		}
+		result[agentID] = ConnectionStatus{State: ConnectionStateOffline}
+	}
+	return result
 }
 
 func (manager *Manager) closeAll() {
@@ -476,6 +532,7 @@ func (manager *Manager) closeAll() {
 	manager.mutex.Unlock()
 
 	for _, connection := range connections {
+		connection.setDisconnectReason("server_shutdown")
 		_ = connection.write(&agentv1.ControlFrame{
 			ProtocolVersion: agentprotocol.ProtocolVersion,
 			Message: &agentv1.ControlFrame_GoAway{
@@ -508,16 +565,82 @@ func (manager *Manager) handleRevocation(
 	manager.mutex.Unlock()
 
 	for _, current := range connections {
+		reason := "credential_revoked"
+		switch {
+		case event.AgentID != "" && event.CertificateSerial == "":
+			reason = "agent_revoked"
+		case event.ClusterID != "":
+			reason = "cluster_revoked"
+		}
+		current.setDisconnectReason(reason)
 		_ = current.write(&agentv1.ControlFrame{
 			ProtocolVersion: agentprotocol.ProtocolVersion,
 			Message: &agentv1.ControlFrame_GoAway{
-				GoAway: &agentv1.GoAway{Reason: "credential_revoked"},
+				GoAway: &agentv1.GoAway{Reason: reason},
 			},
 		})
 		_ = current.conn.CloseWithError(
 			agentprotocol.CloseAuthenticationError,
-			"Agent credential revoked",
+			"Agent access revoked",
 		)
+	}
+}
+
+func (current *session) recordHeartbeat(at time.Time) {
+	current.statusMu.Lock()
+	defer current.statusMu.Unlock()
+	current.lastHeartbeatAt = at
+}
+
+func (current *session) setDisconnectReason(reason string) {
+	current.statusMu.Lock()
+	defer current.statusMu.Unlock()
+	if disconnectReasonPriority(reason) <
+		disconnectReasonPriority(current.disconnectReason) {
+		return
+	}
+	current.disconnectReason = reason
+}
+
+func disconnectReasonPriority(reason string) int {
+	switch reason {
+	case "agent_revoked", "cluster_revoked":
+		return 4
+	case "credential_revoked", "credential_rejected",
+		"certificate_expired":
+		return 3
+	case "connection_replaced", "server_shutdown", "client_goodbye":
+		return 2
+	case "":
+		return 0
+	default:
+		return 1
+	}
+}
+
+func (current *session) onlineStatus() ConnectionStatus {
+	current.statusMu.Lock()
+	defer current.statusMu.Unlock()
+	return ConnectionStatus{
+		State:           ConnectionStateOnline,
+		ConnectionID:    current.id,
+		ConnectedAt:     current.connectedAt,
+		LastHeartbeatAt: current.lastHeartbeatAt,
+	}
+}
+
+func (current *session) disconnectedStatus(at time.Time) ConnectionStatus {
+	current.statusMu.Lock()
+	defer current.statusMu.Unlock()
+	reason := current.disconnectReason
+	if strings.TrimSpace(reason) == "" {
+		reason = "connection_closed"
+	}
+	return ConnectionStatus{
+		State:                ConnectionStateOffline,
+		LastHeartbeatAt:      current.lastHeartbeatAt,
+		LastDisconnectedAt:   at,
+		LastDisconnectReason: reason,
 	}
 }
 

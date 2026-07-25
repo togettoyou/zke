@@ -13,6 +13,11 @@ type RoleBinding struct {
 	ProjectID string
 }
 
+type AgentAuthorizationScope struct {
+	TenantID  string
+	ProjectID string
+}
+
 func NewRBACStore(pool *pgxpool.Pool) *RBACStore {
 	return &RBACStore{pool: pool}
 }

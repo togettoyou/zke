@@ -15,6 +15,7 @@ import (
 
 	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
+	"github.com/togettoyou/zke/pkg/server/agentmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
@@ -149,37 +150,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			RegistrationCACertificatePEM: registrationCACertificate,
 		},
 	)
-	agentStatusStore := store.NewAgentStatusStore(database)
-	agentStatusService := agentstatus.NewService(
-		agentStatusStore,
-		cfg.CertificateMonitor.WarningBefore,
-	)
-	handler := httpapi.New(
-		logger,
-		httpapi.Dependencies{
-			ReadinessCheck:           database.Ping,
-			AuthService:              authenticationService,
-			AuditService:             auditService,
-			RBACService:              rbacService,
-			EnrollmentService:        enrollmentService,
-			AgentInstallationService: agentInstallationService,
-			AgentStatusService:       agentStatusService,
-		},
-		httpapi.Config{
-			Authentication: httpapi.AuthenticationConfig{
-				CookieSecure:          cfg.Auth.CookieSecure,
-				OperationTimeout:      cfg.Auth.OperationTimeout,
-				LoginRateLimitWindow:  cfg.Auth.LoginRateLimit.Window,
-				MaxAttemptsPerAccount: cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,
-				MaxAttemptsPerSource:  cfg.Auth.LoginRateLimit.MaxAttemptsPerSource,
-			},
-			AgentEnrollment: httpapi.AgentEnrollmentHTTPConfig{
-				OperationTimeout:     cfg.AgentEnrollment.OperationTimeout,
-				RateLimitWindow:      cfg.AgentEnrollment.RateLimit.Window,
-				MaxAttemptsPerSource: cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource,
-			},
-		},
-	)
 	agentConnectionStore := store.NewAgentConnectionStore(database)
 	agentConnectionManager, err := agentconn.New(
 		agentconn.Config{
@@ -203,6 +173,42 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	agentManagementService := agentmanagement.NewService(
+		store.NewAgentManagementStore(database),
+	)
+	agentStatusStore := store.NewAgentStatusStore(database)
+	agentStatusService := agentstatus.NewService(
+		agentStatusStore,
+		agentConnectionManager,
+		cfg.CertificateMonitor.WarningBefore,
+	)
+	handler := httpapi.New(
+		logger,
+		httpapi.Dependencies{
+			ReadinessCheck:           database.Ping,
+			AuthService:              authenticationService,
+			AuditService:             auditService,
+			RBACService:              rbacService,
+			EnrollmentService:        enrollmentService,
+			AgentInstallationService: agentInstallationService,
+			AgentManagementService:   agentManagementService,
+			AgentStatusService:       agentStatusService,
+		},
+		httpapi.Config{
+			Authentication: httpapi.AuthenticationConfig{
+				CookieSecure:          cfg.Auth.CookieSecure,
+				OperationTimeout:      cfg.Auth.OperationTimeout,
+				LoginRateLimitWindow:  cfg.Auth.LoginRateLimit.Window,
+				MaxAttemptsPerAccount: cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,
+				MaxAttemptsPerSource:  cfg.Auth.LoginRateLimit.MaxAttemptsPerSource,
+			},
+			AgentEnrollment: httpapi.AgentEnrollmentHTTPConfig{
+				OperationTimeout:     cfg.AgentEnrollment.OperationTimeout,
+				RateLimitWindow:      cfg.AgentEnrollment.RateLimit.Window,
+				MaxAttemptsPerSource: cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource,
+			},
+		},
+	)
 	go monitorAgentCertificates(
 		runContext,
 		logger,

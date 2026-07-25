@@ -49,6 +49,7 @@ func TestAgentQUICConnectionAndHeartbeat(t *testing.T) {
 		clusterID    = "00000000-0000-4000-8000-000000000003"
 		agentID      = "00000000-0000-4000-8000-000000000004"
 		credentialID = "00000000-0000-4000-8000-000000000005"
+		userID       = "00000000-0000-4000-8000-000000000006"
 	)
 	now := time.Now().UTC()
 	clientCACertificate, clientCAPrivateKey, clientCAPEM, clientCAKeyPEM :=
@@ -164,6 +165,13 @@ VALUES ($3, $1, $2, 'cluster', 'pending')`,
 		signedAgentCertificate.Serial,
 		signedAgentCertificate.PEM,
 		signedAgentCertificate.ExpiresAt,
+	)
+	batch.Queue(
+		`INSERT INTO users (
+    id, username_normalized, display_name, password_hash, status,
+    password_changed_at
+) VALUES ($1, 'agent-revoker', 'Agent Revoker', 'not-used', 'active', now())`,
+		userID,
 	)
 	if err := pool.SendBatch(setupContext, batch).Close(); err != nil {
 		t.Fatal(err)
@@ -312,15 +320,31 @@ WHERE agent_id = $1
 		) {
 		t.Fatalf("Agent identity was not renewed: %+v", renewedState)
 	}
-	if _, err := pool.Exec(
+	onlineStatus := manager.Snapshot([]string{agentID})[agentID]
+	for onlineStatus.LastHeartbeatAt.IsZero() {
+		select {
+		case agentErr := <-agentErrors:
+			t.Fatalf("Agent stopped before heartbeat snapshot: %v", agentErr)
+		case <-runContext.Done():
+			t.Fatal("timed out waiting for Agent heartbeat snapshot")
+		case <-pollTicker.C:
+		}
+		onlineStatus = manager.Snapshot([]string{agentID})[agentID]
+	}
+	if onlineStatus.State != "online" ||
+		onlineStatus.ConnectionID == "" ||
+		onlineStatus.ConnectedAt.IsZero() ||
+		onlineStatus.LastHeartbeatAt.IsZero() {
+		t.Fatalf("unexpected online Agent status: %+v", onlineStatus)
+	}
+	if _, err := store.NewAgentManagementStore(pool).Revoke(
 		setupContext,
-		`UPDATE agent_credentials
-SET revoked_at = now()
-WHERE agent_id = $1
-  AND serial = $2
-  AND revoked_at IS NULL`,
-		agentID,
-		activeCertificateSerial,
+		store.RevokeAgentParams{
+			AgentID:     agentID,
+			ActorUserID: userID,
+			RequestID:   "request-revoke-connected-agent",
+			Now:         time.Now().UTC(),
+		},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -335,6 +359,12 @@ WHERE agent_id = $1
 		}
 	case <-runContext.Done():
 		t.Fatal("revoked Agent connection did not close")
+	}
+	offlineStatus := manager.Snapshot([]string{agentID})[agentID]
+	if offlineStatus.State != "offline" ||
+		offlineStatus.LastDisconnectedAt.IsZero() ||
+		offlineStatus.LastDisconnectReason != "agent_revoked" {
+		t.Fatalf("unexpected revoked Agent status: %+v", offlineStatus)
 	}
 	cancelRun()
 	if managerErr := <-managerErrors; managerErr != nil {

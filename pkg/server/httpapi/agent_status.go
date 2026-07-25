@@ -29,6 +29,12 @@ type agentStatusResponse struct {
 	CertificateExpiresAt        time.Time  `json:"certificate_expires_at"`
 	CertificateRemainingSeconds int64      `json:"certificate_remaining_seconds"`
 	CertificateStatus           string     `json:"certificate_status"`
+	ConnectionStatus            string     `json:"connection_status"`
+	ConnectionID                string     `json:"connection_id,omitempty"`
+	ConnectedAt                 *time.Time `json:"connected_at,omitempty"`
+	LastHeartbeatAt             *time.Time `json:"last_heartbeat_at,omitempty"`
+	LastDisconnectedAt          *time.Time `json:"last_disconnected_at,omitempty"`
+	LastDisconnectReason        string     `json:"last_disconnect_reason,omitempty"`
 }
 
 func newAgentStatusHandler(
@@ -42,6 +48,7 @@ func newAgentStatusHandler(
 }
 
 func (handler *agentStatusHandler) list(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	if handler.service == nil {
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent status is unavailable")
 		return
@@ -83,6 +90,12 @@ func (handler *agentStatusHandler) list(c *gin.Context) {
 				CertificateExpiresAt:        item.CertificateExpiresAt,
 				CertificateRemainingSeconds: item.CertificateRemainingSeconds,
 				CertificateStatus:           item.CertificateStatus,
+				ConnectionStatus:            item.ConnectionStatus,
+				ConnectionID:                item.ConnectionID,
+				ConnectedAt:                 item.ConnectedAt,
+				LastHeartbeatAt:             item.LastHeartbeatAt,
+				LastDisconnectedAt:          item.LastDisconnectedAt,
+				LastDisconnectReason:        item.LastDisconnectReason,
 			})
 		}
 		c.JSON(http.StatusOK, gin.H{"agents": response})

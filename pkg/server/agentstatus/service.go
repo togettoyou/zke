@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
@@ -13,7 +14,12 @@ var ErrInvalidInput = errors.New("invalid Agent status input")
 
 type Service struct {
 	store         *store.AgentStatusStore
+	connections   ConnectionStatusSource
 	warningBefore time.Duration
+}
+
+type ConnectionStatusSource interface {
+	Snapshot(agentIDs []string) map[string]agentconn.ConnectionStatus
 }
 
 type Agent struct {
@@ -27,13 +33,24 @@ type Agent struct {
 	CertificateExpiresAt        time.Time
 	CertificateRemainingSeconds int64
 	CertificateStatus           string
+	ConnectionStatus            string
+	ConnectionID                string
+	ConnectedAt                 *time.Time
+	LastHeartbeatAt             *time.Time
+	LastDisconnectedAt          *time.Time
+	LastDisconnectReason        string
 }
 
 func NewService(
 	agentStore *store.AgentStatusStore,
+	connections ConnectionStatusSource,
 	warningBefore time.Duration,
 ) *Service {
-	return &Service{store: agentStore, warningBefore: warningBefore}
+	return &Service{
+		store:         agentStore,
+		connections:   connections,
+		warningBefore: warningBefore,
+	}
 }
 
 func (service *Service) ListProject(
@@ -48,6 +65,14 @@ func (service *Service) ListProject(
 	if err != nil {
 		return nil, err
 	}
+	agentIDs := make([]string, 0, len(stored))
+	for _, item := range stored {
+		agentIDs = append(agentIDs, item.AgentID)
+	}
+	connectionStatuses := make(map[string]agentconn.ConnectionStatus)
+	if service.connections != nil {
+		connectionStatuses = service.connections.Snapshot(agentIDs)
+	}
 	result := make([]Agent, 0, len(stored))
 	for _, item := range stored {
 		remaining := item.CertificateExpiresAt.Sub(now)
@@ -61,7 +86,7 @@ func (service *Service) ListProject(
 		if remainingSeconds < 0 {
 			remainingSeconds = 0
 		}
-		result = append(result, Agent{
+		agent := Agent{
 			ClusterID:                   item.ClusterID,
 			ClusterName:                 item.ClusterName,
 			AgentID:                     item.AgentID,
@@ -72,9 +97,30 @@ func (service *Service) ListProject(
 			CertificateExpiresAt:        item.CertificateExpiresAt,
 			CertificateRemainingSeconds: remainingSeconds,
 			CertificateStatus:           status,
-		})
+			ConnectionStatus:            agentconn.ConnectionStateOffline,
+		}
+		if connection, exists := connectionStatuses[item.AgentID]; exists {
+			if connection.State == agentconn.ConnectionStateOnline {
+				agent.ConnectionStatus = agentconn.ConnectionStateOnline
+			}
+			agent.ConnectionID = connection.ConnectionID
+			agent.ConnectedAt = timePointer(connection.ConnectedAt)
+			agent.LastHeartbeatAt = timePointer(connection.LastHeartbeatAt)
+			agent.LastDisconnectedAt = timePointer(
+				connection.LastDisconnectedAt,
+			)
+			agent.LastDisconnectReason = connection.LastDisconnectReason
+		}
+		result = append(result, agent)
 	}
 	return result, nil
+}
+
+func timePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 func certificateStatus(

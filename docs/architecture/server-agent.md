@@ -61,8 +61,10 @@ ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certifica
 续期并使用新证书重连；凭据、Agent 或 Cluster 被撤销时，PostgreSQL 通知会让所有 Server 实例关闭匹配的现有
 连接。HTTP API 使用 `http.address` 的 TCP Listener；QUIC 使用独立
 `agent_listener.address` 的 UDP Listener，两者必须分别配置。Server 已提供按 Project 查询 Agent 生命周期、
-健康、最后心跳和当前证书有效期的 HTTP API；任务路由、业务 Stream 以及基于当前内存连接的实时
-`online`/`offline` 状态查询仍未实现。
+健康、最后心跳和当前证书有效期的 HTTP API，并合并当前 Server 实例内存中的实时 `online`/`offline`、
+Connection ID 和最近断开信息。Server 也已提供需要显式确认的 Agent 撤销 API；它在事务中撤销 Agent 和全部
+Credential，数据库通知会关闭现有连接。当前连接快照只代表处理请求的 Server 实例，重启后不保留离线历史；
+多实例全局连接视图、任务路由和业务 Stream 仍未实现。
 
 Agent 为固定的 Enrollment、Trust 和 identity Secret 名称以及注册重试参数和日志级别提供默认值。Agent 默认
 使用 Pod 内的 InCluster Kubernetes 配置；本地开发或特殊环境可以显式设置

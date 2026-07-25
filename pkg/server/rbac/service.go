@@ -64,6 +64,34 @@ func (service *Service) AuthorizeProject(
 	)
 }
 
+func (service *Service) AuthorizeAgent(
+	ctx context.Context,
+	userID string,
+	permission Permission,
+	agentID string,
+) (store.AgentAuthorizationScope, error) {
+	if err := validateSubjectPermission(userID, permission); err != nil {
+		return store.AgentAuthorizationScope{}, err
+	}
+	if !validation.IsUUID(agentID) {
+		return store.AgentAuthorizationScope{}, ErrInvalidScope
+	}
+	agentScope, err := service.store.FindAgentAuthorizationScope(ctx, agentID)
+	if errors.Is(err, store.ErrAgentNotFound) {
+		return store.AgentAuthorizationScope{}, ErrDenied
+	}
+	if err != nil {
+		return store.AgentAuthorizationScope{}, err
+	}
+	err = service.authorizeValidated(
+		ctx,
+		userID,
+		permission,
+		projectScope(agentScope.TenantID, agentScope.ProjectID),
+	)
+	return agentScope, err
+}
+
 func (service *Service) authorize(
 	ctx context.Context,
 	userID string,

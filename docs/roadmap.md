@@ -10,7 +10,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Global、Tenant、Project RoleBinding 与 Project HTTP 授权基础
 - [x] Agent Enrollment、一次性 Token 与一键安装 Manifest
 - [x] Agent identity Secret、QUIC/mTLS、Hello、心跳与断线重连
-- [x] Agent 客户端证书自动续期、撤销通知断连与证书状态 API
+- [x] Agent 客户端证书自动续期、撤销 API、通知断连与实时连接/证书状态 API
 - [x] Server Managed Agent PKI 初始化与 Listener 叶子证书自动续期
 - [ ] ZKE Server
 - [ ] ZKE Agent

@@ -54,6 +54,21 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.agentInstallation.create,
 	)
 
+	agentRoutes := apiV1.Group("/agents")
+	agentRoutes.Use(
+		handlers.requestTimeout,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	agentRoutes.POST(
+		"/:agent_id/revoke",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireAgent(
+			rbac.PermissionAgentRevoke,
+			"agent_id",
+		),
+		handlers.agentManagement.revoke,
+	)
+
 	agentAPIV1 := router.Group("/agent-api/v1")
 	agentAPIV1.POST("/enroll", handlers.agentRegistration.enroll)
 

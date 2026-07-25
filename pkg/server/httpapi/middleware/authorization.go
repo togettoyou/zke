@@ -91,6 +91,25 @@ func (authorization *Authorization) RequireProject(
 	})
 }
 
+func (authorization *Authorization) RequireAgent(
+	permission rbac.Permission,
+	agentParameter string,
+) gin.HandlerFunc {
+	return authorization.require(permission, "agent", agentParameter, func(
+		ctx context.Context,
+		userID string,
+		c *gin.Context,
+	) error {
+		_, err := authorization.service.AuthorizeAgent(
+			ctx,
+			userID,
+			permission,
+			c.Param(agentParameter),
+		)
+		return err
+	})
+}
+
 func (authorization *Authorization) require(
 	permission rbac.Permission,
 	scopeType string,
@@ -173,23 +192,38 @@ func (authorization *Authorization) recordDenied(
 	scopeType string,
 	scopeParameter string,
 ) {
-	if authorization.auditService == nil || scopeType != "project" {
+	if authorization.auditService == nil {
 		return
 	}
 	auditContext, cancelAudit := context.WithTimeout(
 		c.Request.Context(),
 		authorization.config.OperationTimeout,
 	)
-	err := authorization.auditService.RecordProjectEvent(
-		auditContext,
-		audit.ProjectEventInput{
-			ActorUserID: userID,
-			ProjectID:   c.Param(scopeParameter),
-			Action:      string(permission),
-			Result:      "denied",
-			RequestID:   RequestID(c),
-		},
-	)
+	var err error
+	switch scopeType {
+	case "project":
+		err = authorization.auditService.RecordProjectEvent(
+			auditContext,
+			audit.ProjectEventInput{
+				ActorUserID: userID,
+				ProjectID:   c.Param(scopeParameter),
+				Action:      string(permission),
+				Result:      "denied",
+				RequestID:   RequestID(c),
+			},
+		)
+	case "agent":
+		err = authorization.auditService.RecordAgentEvent(
+			auditContext,
+			audit.AgentEventInput{
+				ActorUserID: userID,
+				AgentID:     c.Param(scopeParameter),
+				Action:      string(permission),
+				Result:      "denied",
+				RequestID:   RequestID(c),
+			},
+		)
+	}
 	cancelAudit()
 	if err != nil {
 		attributes := authorization.logAttributes(
