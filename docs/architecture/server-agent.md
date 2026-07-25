@@ -51,8 +51,8 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 由外部生命周期策略清理。
 
 当前仓库还没有提供 Helm Chart，但 Server 已能生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC
-清单。ServiceAccount 对 Enrollment、Trust 和 identity Secret 具有定域的 `get` 权限，只能更新 identity
-Secret。
+清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
+`get` 权限，并且只能更新 identity Secret。
 ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
 `http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
 原生 HTTPS 或由上游网关终止 TLS。
@@ -60,8 +60,9 @@ ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certifica
 `last_seen_at` 限频持久化已经实现。Agent 会在证书进入配置的续期窗口后，通过已认证的 Control Stream 自动
 续期并使用新证书重连；凭据、Agent 或 Cluster 被撤销时，PostgreSQL 通知会让所有 Server 实例关闭匹配的现有
 连接。HTTP API 使用 `http.address` 的 TCP Listener；QUIC 使用独立
-`agent_listener.address` 的 UDP Listener，两者必须分别配置。任务路由、业务 Stream 以及对外 Agent 在线状态
-查询仍未实现。
+`agent_listener.address` 的 UDP Listener，两者必须分别配置。Server 已提供按 Project 查询 Agent 生命周期、
+健康、最后心跳和当前证书有效期的 HTTP API；任务路由、业务 Stream 以及基于当前内存连接的实时
+`online`/`offline` 状态查询仍未实现。
 
 Agent 为固定的 Enrollment、Trust 和 identity Secret 名称以及注册重试参数和日志级别提供默认值。Agent 默认
 使用 Pod 内的 InCluster Kubernetes 配置；本地开发或特殊环境可以显式设置

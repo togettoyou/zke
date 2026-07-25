@@ -625,8 +625,9 @@ bash hack/generate-agent-protocol.sh
 执行，pnpm 命令只在 `web/console` 中执行。
 
 本地配置使用 Server Managed PKI。首次正常启动会在被 Git 忽略的 `.local/development` 自动生成 Agent
-Client CA、Agent Listener CA 和 Agent Listener 身份；`hack` 脚本仅作为 external 模式和迁移辅助工具保留。
-这些文件仅用于 Agent QUIC/mTLS，不包含 HTTP TLS 证书：
+Client CA、Agent Listener CA 和 Agent Listener 身份，不再需要独立的开发 PKI 生成脚本。
+`hack/setup-local-agent-resources.sh` 只负责为宿主机运行的 Agent 初始化 Namespace、Enrollment Secret 和
+Trust Secret。这些 PKI 文件仅用于 Agent QUIC/mTLS，不包含 HTTP TLS 证书：
 
 - Agent Client CA：10 年；
 - Agent Listener CA：20 年；

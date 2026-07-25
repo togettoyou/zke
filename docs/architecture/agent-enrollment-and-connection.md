@@ -186,11 +186,11 @@ curl -fsSL -H 'Authorization: Bearer <Enrollment Token>' \
 Manifest 下载端点是 `GET /agent-install/v1/manifest`。Token 放在 Authorization Header 而不是 URL，避免进入
 常见的 URL、访问日志和代理查询参数记录；端点只接受仍未消费、未撤销、未过期且作用域有效的 Enrollment。
 
-生成资源包括 Namespace、Enrollment Secret、Listener/可选 Registration CA Secret、Agent ConfigMap、
-ServiceAccount、最小 Role/RoleBinding 和单副本 Deployment。不会创建 Kubernetes Service，因为 Agent 只主动
-出站连接；不会创建 PVC，因为长期身份由 `zke-agent-identity` Secret 持久化；也不会预创建或 `apply` 该
-identity Secret，避免覆盖 Agent 已签发的身份。Enrollment Secret 默认保留；Agent 通过 Kubernetes API 读取
-Enrollment/Trust Secret，Deployment 不挂载这两个 Secret。
+生成资源包括 Namespace、Enrollment Secret、包含 Listener CA（以及可选 Registration CA）的 Trust Secret、
+Agent ConfigMap、ServiceAccount、最小 Role/RoleBinding 和单副本 Deployment。不会创建 Kubernetes Service，
+因为 Agent 只主动出站连接；不会创建 PVC，因为长期身份由 `zke-agent-identity` Secret 持久化；也不会预创建
+或 `apply` 该 identity Secret，避免覆盖 Agent 已签发的身份。Enrollment Secret 默认保留；Agent 通过
+Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Secret。
 
 ## 4. Agent 首次注册
 
@@ -317,8 +317,8 @@ Agent -> HTTPS Gateway -> ZKE Server HTTP Listener
 Server 原生 HTTP TLS 是可选的，但生产注册链路上的 HTTPS 不是可选的。仓库只允许回环地址使用明文 HTTP；包含
 Token 的明文注册请求不得进入不可信网络。
 
-HTTP TLS 身份与 Agent Listener TLS 身份相互独立，不建议复用证书、私钥或 CA。开发 Agent mTLS 脚本不生成
-HTTP TLS 证书。
+HTTP TLS 身份与 Agent Listener TLS 身份相互独立，不建议复用证书、私钥或 CA。Server 的 Managed Agent PKI
+只生成 Agent Client CA、Agent Listener CA 和 Listener 身份，不生成 HTTP TLS 证书。
 
 ## 6. QUIC/mTLS 连接
 
