@@ -203,7 +203,12 @@ func (permission Permission) valid() bool {
 		PermissionAgentEnrollmentCreate,
 		PermissionClusterRead,
 		PermissionAgentRead,
-		PermissionAgentRevoke:
+		PermissionAgentRevoke,
+		PermissionUserRead,
+		PermissionUserManage,
+		PermissionRBACRead,
+		PermissionRBACManage,
+		PermissionAuditRead:
 		return true
 	default:
 		return false

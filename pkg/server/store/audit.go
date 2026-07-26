@@ -7,6 +7,100 @@ import (
 	"strings"
 )
 
+func (store *AuditStore) ListRecords(
+	ctx context.Context,
+	input ListAuditRecordsParams,
+) ([]AuditRecord, error) {
+	rows, err := store.pool.Query(ctx, `
+SELECT
+    id::text,
+    actor_type,
+    COALESCE(actor_user_id::text, ''),
+    COALESCE(actor_agent_id::text, ''),
+    scope_type,
+    COALESCE(tenant_id::text, ''),
+    COALESCE(project_id::text, ''),
+    COALESCE(cluster_id::text, ''),
+    action,
+    target_type,
+    COALESCE(target_id::text, ''),
+    result,
+    request_id,
+    created_at
+FROM audit_events
+WHERE (
+        $1::boolean
+        OR (
+            scope_type <> 'global'
+            AND (
+                tenant_id = ANY($2::uuid[])
+                OR project_id = ANY($3::uuid[])
+            )
+        )
+    )
+  AND ($4 = '' OR actor_type = $4)
+  AND ($5 = '' OR result = $5)
+  AND ($6 = '' OR action = $6)
+  AND ($7 = '' OR target_type = $7)
+  AND ($8 = '' OR request_id = $8)
+  AND ($9 = '' OR tenant_id = $9::uuid)
+  AND ($10 = '' OR project_id = $10::uuid)
+  AND ($11 = '' OR cluster_id = $11::uuid)
+  AND (
+      $12::timestamptz IS NULL
+      OR (created_at, id) < ($12::timestamptz, NULLIF($13, '')::uuid)
+  )
+ORDER BY created_at DESC, id DESC
+LIMIT $14
+`,
+		input.GlobalVisible,
+		input.TenantIDs,
+		input.ProjectIDs,
+		input.ActorType,
+		input.Result,
+		input.Action,
+		input.TargetType,
+		input.RequestID,
+		input.TenantID,
+		input.ProjectID,
+		input.ClusterID,
+		input.BeforeAt,
+		input.BeforeID,
+		input.Limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list audit records: %w", err)
+	}
+	defer rows.Close()
+	var result []AuditRecord
+	for rows.Next() {
+		var item AuditRecord
+		if err := rows.Scan(
+			&item.ID,
+			&item.ActorType,
+			&item.ActorUserID,
+			&item.ActorAgentID,
+			&item.ScopeType,
+			&item.TenantID,
+			&item.ProjectID,
+			&item.ClusterID,
+			&item.Action,
+			&item.TargetType,
+			&item.TargetID,
+			&item.Result,
+			&item.RequestID,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan audit record: %w", err)
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate audit records: %w", err)
+	}
+	return result, nil
+}
+
 func (store *AuditStore) RecordTenantEvent(
 	ctx context.Context,
 	input TenantAuditEvent,

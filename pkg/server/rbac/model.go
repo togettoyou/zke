@@ -9,6 +9,11 @@ const (
 	PermissionClusterRead           Permission = "cluster.read"
 	PermissionAgentRead             Permission = "agent.read"
 	PermissionAgentRevoke           Permission = "agent.revoke"
+	PermissionUserRead              Permission = "user.read"
+	PermissionUserManage            Permission = "user.manage"
+	PermissionRBACRead              Permission = "rbac.read"
+	PermissionRBACManage            Permission = "rbac.manage"
+	PermissionAuditRead             Permission = "audit.read"
 )
 
 type scopeType string
@@ -57,6 +62,32 @@ func (visibility Visibility) AllowsProject(
 		return true
 	}
 	return visibility.projectOnly[projectID] == tenantID
+}
+
+func (visibility Visibility) IsGlobal() bool {
+	return visibility.global
+}
+
+func (visibility Visibility) HasAny() bool {
+	return visibility.global ||
+		len(visibility.tenantWide) > 0 ||
+		len(visibility.projectOnly) > 0
+}
+
+func (visibility Visibility) TenantIDs() []string {
+	result := make([]string, 0, len(visibility.tenantWide))
+	for tenantID := range visibility.tenantWide {
+		result = append(result, tenantID)
+	}
+	return result
+}
+
+func (visibility Visibility) ProjectIDs() []string {
+	result := make([]string, 0, len(visibility.projectOnly))
+	for projectID := range visibility.projectOnly {
+		result = append(result, projectID)
+	}
+	return result
 }
 
 func globalScope() scope {

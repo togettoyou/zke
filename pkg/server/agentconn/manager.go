@@ -44,6 +44,8 @@ type Manager struct {
 	mutex            sync.Mutex
 	connections      map[string]*session
 	lastDisconnected map[string]ConnectionStatus
+	subscribers      map[uint64]chan ConnectionEvent
+	nextSubscriberID uint64
 }
 
 type session struct {
@@ -67,6 +69,16 @@ type ConnectionStatus struct {
 	LastHeartbeatAt      time.Time
 	LastDisconnectedAt   time.Time
 	LastDisconnectReason string
+}
+
+type ConnectionEvent struct {
+	ID         string
+	TenantID   string
+	ProjectID  string
+	ClusterID  string
+	AgentID    string
+	State      string
+	OccurredAt time.Time
 }
 
 const (
@@ -98,6 +110,7 @@ func New(
 		tls:              tlsConfig,
 		connections:      make(map[string]*session),
 		lastDisconnected: make(map[string]ConnectionStatus),
+		subscribers:      make(map[uint64]chan ConnectionEvent),
 	}, nil
 }
 
@@ -429,6 +442,9 @@ func (manager *Manager) serveControl(
 				return fmt.Errorf("persist Agent heartbeat: %w", err)
 			}
 			lastPersisted = now
+			if nextHealthStatus != healthStatus {
+				manager.publish(current, ConnectionStateOnline, now)
+			}
 			healthStatus = nextHealthStatus
 		}
 		if err := current.write(&agentv1.ControlFrame{
@@ -489,6 +505,7 @@ func (manager *Manager) register(current *session) *session {
 	defer manager.mutex.Unlock()
 	previous := manager.connections[current.identity.AgentID]
 	manager.connections[current.identity.AgentID] = current
+	manager.publishLocked(current, ConnectionStateOnline, current.connectedAt)
 	return previous
 }
 
@@ -499,6 +516,104 @@ func (manager *Manager) unregister(current *session) {
 		delete(manager.connections, current.identity.AgentID)
 		manager.lastDisconnected[current.identity.AgentID] =
 			current.disconnectedStatus(time.Now().UTC())
+		manager.publishLocked(
+			current,
+			ConnectionStateOffline,
+			manager.lastDisconnected[current.identity.AgentID].LastDisconnectedAt,
+		)
+	}
+}
+
+func (manager *Manager) Subscribe() (<-chan ConnectionEvent, func()) {
+	manager.mutex.Lock()
+	if manager.subscribers == nil {
+		manager.subscribers = make(map[uint64]chan ConnectionEvent)
+	}
+	manager.nextSubscriberID++
+	id := manager.nextSubscriberID
+	channel := make(chan ConnectionEvent, 128)
+	manager.subscribers[id] = channel
+	manager.mutex.Unlock()
+	var once sync.Once
+	return channel, func() {
+		once.Do(func() {
+			manager.mutex.Lock()
+			delete(manager.subscribers, id)
+			manager.mutex.Unlock()
+		})
+	}
+}
+
+func (manager *Manager) PublishAgentStatusChange(
+	tenantID string,
+	projectID string,
+	clusterID string,
+	agentID string,
+) {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	state := ConnectionStateOffline
+	if manager.connections[agentID] != nil {
+		state = ConnectionStateOnline
+	}
+	manager.publishIdentityLocked(
+		store.AgentConnectionIdentity{
+			TenantID:  tenantID,
+			ProjectID: projectID,
+			ClusterID: clusterID,
+			AgentID:   agentID,
+		},
+		state,
+		time.Now().UTC(),
+	)
+}
+
+func (manager *Manager) publish(
+	current *session,
+	state string,
+	at time.Time,
+) {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	manager.publishLocked(current, state, at)
+}
+
+func (manager *Manager) publishLocked(
+	current *session,
+	state string,
+	at time.Time,
+) {
+	manager.publishIdentityLocked(current.identity, state, at)
+}
+
+func (manager *Manager) publishIdentityLocked(
+	identity store.AgentConnectionIdentity,
+	state string,
+	at time.Time,
+) {
+	eventID, err := identifier.NewUUID()
+	if err != nil {
+		manager.logger.Error(
+			"generate Agent connection event ID",
+			slog.String("agent_id", identity.AgentID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	event := ConnectionEvent{
+		ID:         eventID,
+		TenantID:   identity.TenantID,
+		ProjectID:  identity.ProjectID,
+		ClusterID:  identity.ClusterID,
+		AgentID:    identity.AgentID,
+		State:      state,
+		OccurredAt: at,
+	}
+	for _, subscriber := range manager.subscribers {
+		select {
+		case subscriber <- event:
+		default:
+		}
 	}
 }
 

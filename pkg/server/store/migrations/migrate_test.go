@@ -102,6 +102,9 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"UNIQUE (actor_user_id, tenant_id, idempotency_key)",
 		"CREATE TABLE server_pki_state",
 		"active_credential_serial text",
+		"failed_login_count integer NOT NULL DEFAULT 0",
+		"CONSTRAINT users_lock_shape",
+		"CREATE INDEX users_status_idx",
 	} {
 		if !strings.Contains(available[0].sql, required) {
 			t.Errorf("foundation migration is missing %q", required)

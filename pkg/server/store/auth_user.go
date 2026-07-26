@@ -65,7 +65,12 @@ RETURNING
     display_name,
     password_hash,
     status,
-    password_changed_at
+    failed_login_count,
+    locked_at,
+    lock_expires_at,
+    password_changed_at,
+    created_at,
+    updated_at
 `,
 		input.UsernameNormalized,
 		input.DisplayName,
@@ -76,7 +81,12 @@ RETURNING
 		&user.DisplayName,
 		&user.PasswordHash,
 		&user.Status,
+		&user.FailedLoginCount,
+		&user.LockedAt,
+		&user.LockExpiresAt,
 		&user.PasswordChangedAt,
+		&user.CreatedAt,
+		&user.UpdatedAt,
 	)
 	if err != nil {
 		return User{}, fmt.Errorf("insert initial administrator: %w", err)
@@ -134,7 +144,12 @@ SELECT
     display_name,
     password_hash,
     status,
-    password_changed_at
+    failed_login_count,
+    locked_at,
+    lock_expires_at,
+    password_changed_at,
+    created_at,
+    updated_at
 FROM users
 WHERE username_normalized = $1
 `, usernameNormalized).Scan(
@@ -143,7 +158,12 @@ WHERE username_normalized = $1
 		&user.DisplayName,
 		&user.PasswordHash,
 		&user.Status,
+		&user.FailedLoginCount,
+		&user.LockedAt,
+		&user.LockExpiresAt,
 		&user.PasswordChangedAt,
+		&user.CreatedAt,
+		&user.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrUserNotFound

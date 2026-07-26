@@ -13,14 +13,16 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Agent 客户端证书自动续期、撤销 API、通知断连与实时连接/证书状态 API
 - [x] Server Managed Agent PKI 初始化与 Listener 叶子证书自动续期
 - [x] Tenant/Project 创建与权限范围列表、Cluster/Agent 定域查询 API
-- [ ] ZKE Server
-- [ ] ZKE Agent
-- [ ] 用户认证
-- [ ] RBAC
+- [x] 用户、RoleBinding、账户锁定恢复与管理员密码重置 API
+- [x] 权限定域审计查询、Agent 状态 SSE 与 OpenAPI 3.1 契约
+- [x] ZKE Server Phase 1 后端
+- [x] ZKE Agent Phase 1 身份与连接
+- [x] 用户认证后端
+- [x] RBAC 后端
 - [x] 集群接入
 - [ ] Web Desktop
 - [ ] 桌面应用窗口管理
-- [ ] Agent 管理
+- [ ] Agent 管理 Console
 
 ## Phase 2：容器服务
 

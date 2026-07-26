@@ -77,6 +77,7 @@ type AuthConfig struct {
 	MaxConcurrentPasswordChecks int
 	CookieSecure                bool
 	LoginRateLimit              LoginRateLimitConfig
+	AccountLockout              AccountLockoutConfig
 	InitialAdmin                InitialAdminConfig
 }
 
@@ -84,6 +85,11 @@ type LoginRateLimitConfig struct {
 	Window                time.Duration
 	MaxAttemptsPerAccount int
 	MaxAttemptsPerSource  int
+}
+
+type AccountLockoutConfig struct {
+	MaxFailedAttempts int
+	Duration          time.Duration
 }
 
 type InitialAdminConfig struct {
@@ -180,6 +186,10 @@ type fileConfig struct {
 			MaxAttemptsPerAccount *int   `yaml:"max_attempts_per_account"`
 			MaxAttemptsPerSource  *int   `yaml:"max_attempts_per_source"`
 		} `yaml:"login_rate_limit"`
+		AccountLockout struct {
+			MaxFailedAttempts *int   `yaml:"max_failed_attempts"`
+			Duration          string `yaml:"duration"`
+		} `yaml:"account_lockout"`
 		InitialAdmin struct {
 			Enabled              *bool  `yaml:"enabled"`
 			Username             string `yaml:"username"`
@@ -269,6 +279,10 @@ func LoadConfig(args []string) (Config, error) {
 				Window:                time.Minute,
 				MaxAttemptsPerAccount: 5,
 				MaxAttemptsPerSource:  20,
+			},
+			AccountLockout: AccountLockoutConfig{
+				MaxFailedAttempts: 5,
+				Duration:          15 * time.Minute,
 			},
 		},
 		AgentPKI: AgentPKIConfig{
@@ -418,6 +432,17 @@ func applyFile(cfg *Config, path string) error {
 	if raw.Auth.LoginRateLimit.MaxAttemptsPerSource != nil {
 		cfg.Auth.LoginRateLimit.MaxAttemptsPerSource =
 			*raw.Auth.LoginRateLimit.MaxAttemptsPerSource
+	}
+	if raw.Auth.AccountLockout.MaxFailedAttempts != nil {
+		cfg.Auth.AccountLockout.MaxFailedAttempts =
+			*raw.Auth.AccountLockout.MaxFailedAttempts
+	}
+	if err := applyDuration(
+		&cfg.Auth.AccountLockout.Duration,
+		raw.Auth.AccountLockout.Duration,
+		"auth.account_lockout.duration",
+	); err != nil {
+		return err
 	}
 	if raw.Auth.InitialAdmin.Enabled != nil {
 		cfg.Auth.InitialAdmin.Enabled = *raw.Auth.InitialAdmin.Enabled
@@ -653,6 +678,7 @@ func (cfg Config) Validate() error {
 		{cfg.Auth.SessionAbsoluteTimeout, maxSessionAbsolute, "session absolute timeout"},
 		{cfg.Auth.OperationTimeout, maxAuthOperation, "authentication operation timeout"},
 		{cfg.Auth.LoginRateLimit.Window, maxLoginRateWindow, "login rate limit window"},
+		{cfg.Auth.AccountLockout.Duration, maxLoginRateWindow, "account lock duration"},
 		{
 			cfg.AgentIdentity.CertificateTTL,
 			maxAgentCertificateTTL,
@@ -702,6 +728,10 @@ func (cfg Config) Validate() error {
 	if cfg.Auth.LoginRateLimit.MaxAttemptsPerSource <
 		cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount {
 		return errors.New("login source attempt limit must not be below account attempt limit")
+	}
+	if cfg.Auth.AccountLockout.MaxFailedAttempts <= 0 ||
+		cfg.Auth.AccountLockout.MaxFailedAttempts > 100 {
+		return errors.New("account lock failed attempt limit must be between 1 and 100")
 	}
 	if cfg.Auth.InitialAdmin.Enabled {
 		if strings.TrimSpace(cfg.Auth.InitialAdmin.Username) == "" ||

@@ -13,6 +13,7 @@ import (
 var (
 	ErrInvalidInput = errors.New("invalid Agent status input")
 	ErrNotFound     = store.ErrAgentNotFound
+	ErrEventsUnavailable = errors.New("Agent status events unavailable")
 )
 
 type Service struct {
@@ -23,6 +24,10 @@ type Service struct {
 
 type ConnectionStatusSource interface {
 	Snapshot(agentIDs []string) map[string]agentconn.ConnectionStatus
+}
+
+type ConnectionEventSource interface {
+	Subscribe() (<-chan agentconn.ConnectionEvent, func())
 }
 
 type Agent struct {
@@ -42,6 +47,16 @@ type Agent struct {
 	LastHeartbeatAt             *time.Time
 	LastDisconnectedAt          *time.Time
 	LastDisconnectReason        string
+}
+
+func (service *Service) Subscribe(
+) (<-chan agentconn.ConnectionEvent, func(), error) {
+	source, ok := service.connections.(ConnectionEventSource)
+	if !ok || source == nil {
+		return nil, nil, ErrEventsUnavailable
+	}
+	events, unsubscribe := source.Subscribe()
+	return events, unsubscribe, nil
 }
 
 func NewService(

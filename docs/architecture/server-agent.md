@@ -66,6 +66,10 @@ Connection ID 和最近断开信息。Server 也已提供需要显式确认的 A
 Credential，数据库通知会关闭现有连接。当前连接快照只代表处理请求的 Server 实例，重启后不保留离线历史；
 多实例全局连接视图、任务路由和业务 Stream 仍未实现。
 
+当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Agent 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
+`agent.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Request/Data Stream，也不包含
+Kubernetes 资源查询。
+
 Agent 为固定的 Enrollment、Trust 和 identity Secret 名称以及注册重试参数和日志级别提供默认值。Agent 默认
 使用 Pod 内的 InCluster Kubernetes 配置；本地开发或特殊环境可以显式设置
 `kubeconfig_file`，未设置时回退到 `KUBECONFIG` 或 `~/.kube/config`。显式文件始终优先于环境自动识别。

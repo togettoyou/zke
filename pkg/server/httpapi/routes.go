@@ -22,6 +22,82 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.auth.logout,
 	)
 
+	userRoutes := apiV1.Group("/users")
+	userRoutes.Use(
+		handlers.requestTimeout,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	userRoutes.GET(
+		"",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserRead),
+		handlers.accessManagement.listUsers,
+	)
+	userRoutes.POST(
+		"",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserManage),
+		handlers.accessManagement.createUser,
+	)
+	userRoutes.GET(
+		"/:user_id",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserRead),
+		handlers.accessManagement.getUser,
+	)
+	userRoutes.PUT(
+		"/:user_id/status",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserManage),
+		handlers.accessManagement.setUserStatus,
+	)
+	userRoutes.POST(
+		"/:user_id/unlock",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserManage),
+		handlers.accessManagement.unlockUser,
+	)
+	userRoutes.POST(
+		"/:user_id/password-reset",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserManage),
+		handlers.accessManagement.resetPassword,
+	)
+
+	roleBindingRoutes := apiV1.Group("/role-bindings")
+	roleBindingRoutes.Use(
+		handlers.requestTimeout,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	roleBindingRoutes.GET(
+		"",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACRead),
+		handlers.accessManagement.listRoleBindings,
+	)
+	roleBindingRoutes.POST(
+		"",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACManage),
+		handlers.accessManagement.createRoleBinding,
+	)
+	roleBindingRoutes.DELETE(
+		"/:role_binding_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACManage),
+		handlers.accessManagement.deleteRoleBinding,
+	)
+
+	auditRoutes := apiV1.Group("/audit-events")
+	auditRoutes.Use(
+		handlers.requestTimeout,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	auditRoutes.GET("", handlers.auditQuery.list)
+
+	apiV1.GET(
+		"/events",
+		handlers.authMiddleware.RequireAuthentication,
+		handlers.agentStatus.events,
+	)
+
 	tenantRoutes := apiV1.Group("/tenants")
 	tenantRoutes.Use(
 		handlers.requestTimeout,

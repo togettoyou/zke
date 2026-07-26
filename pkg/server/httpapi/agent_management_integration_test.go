@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 
 type fakeAgentConnections struct {
 	statuses map[string]agentconn.ConnectionStatus
+	events   chan agentconn.ConnectionEvent
 }
 
 func (connections *fakeAgentConnections) Snapshot(
@@ -33,6 +35,34 @@ func (connections *fakeAgentConnections) Snapshot(
 		}
 	}
 	return result
+}
+
+func (connections *fakeAgentConnections) Subscribe() (<-chan agentconn.ConnectionEvent, func()) {
+	return connections.events, func() {}
+}
+
+func (connections *fakeAgentConnections) PublishAgentStatusChange(
+	tenantID string,
+	projectID string,
+	clusterID string,
+	agentID string,
+) {
+	if connections.events == nil {
+		return
+	}
+	state := agentconn.ConnectionStateOffline
+	if status, exists := connections.statuses[agentID]; exists {
+		state = status.State
+	}
+	connections.events <- agentconn.ConnectionEvent{
+		ID:         "00000000-0000-4000-8000-000000000098",
+		TenantID:   tenantID,
+		ProjectID:  projectID,
+		ClusterID:  clusterID,
+		AgentID:    agentID,
+		State:      state,
+		OccurredAt: time.Now().UTC(),
+	}
 }
 
 func TestAgentManagementHTTPFlow(t *testing.T) {
@@ -156,14 +186,17 @@ VALUES (
 
 	connectedAt := time.Now().UTC().Add(-time.Minute)
 	heartbeatAt := time.Now().UTC()
-	connections := &fakeAgentConnections{statuses: map[string]agentconn.ConnectionStatus{
-		agentID: {
-			State:           "online",
-			ConnectionID:    "connection-1",
-			ConnectedAt:     connectedAt,
-			LastHeartbeatAt: heartbeatAt,
+	connections := &fakeAgentConnections{
+		statuses: map[string]agentconn.ConnectionStatus{
+			agentID: {
+				State:           "online",
+				ConnectionID:    "connection-1",
+				ConnectedAt:     connectedAt,
+				LastHeartbeatAt: heartbeatAt,
+			},
 		},
-	}}
+		events: make(chan agentconn.ConnectionEvent, 1),
+	}
 	auditService := audit.NewService(store.NewAuditStore(pool))
 	router := New(
 		discardLogger(),
@@ -174,6 +207,7 @@ VALUES (
 			RBACService:    rbac.NewService(store.NewRBACStore(pool)),
 			AgentManagementService: agentmanagement.NewService(
 				store.NewAgentManagementStore(pool),
+				connections,
 			),
 			AgentStatusService: agentstatus.NewService(
 				store.NewAgentStatusStore(pool),
@@ -222,6 +256,63 @@ VALUES (
 		"certificate_expires_at",
 		listed.Agents[0].CertificateExpiresAt,
 	)
+
+	httpServer := httptest.NewServer(router)
+	defer httpServer.Close()
+	eventRequest, err := http.NewRequest(
+		http.MethodGet,
+		httpServer.URL+"/api/v1/events",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventRequest.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: viewerLogin.SessionToken,
+	})
+	eventResponse, err := httpServer.Client().Do(eventRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eventResponse.Body.Close()
+	if eventResponse.StatusCode != http.StatusOK {
+		t.Fatalf("event stream status = %d", eventResponse.StatusCode)
+	}
+	connections.events <- agentconn.ConnectionEvent{
+		ID:         "00000000-0000-4000-8000-000000000099",
+		TenantID:   tenantID,
+		ProjectID:  projectID,
+		ClusterID:  clusterID,
+		AgentID:    agentID,
+		State:      agentconn.ConnectionStateOnline,
+		OccurredAt: time.Now().UTC(),
+	}
+	scanner := bufio.NewScanner(eventResponse.Body)
+	var sawAgentEvent bool
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "event: agent.status" {
+			sawAgentEvent = true
+		}
+		if sawAgentEvent && strings.HasPrefix(line, "data: ") {
+			var eventAgent agentStatusResponse
+			if err := json.Unmarshal(
+				[]byte(strings.TrimPrefix(line, "data: ")),
+				&eventAgent,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if eventAgent.AgentID != agentID ||
+				eventAgent.ConnectionStatus != agentconn.ConnectionStateOnline {
+				t.Fatalf("unexpected Agent SSE payload: %+v", eventAgent)
+			}
+			break
+		}
+	}
+	if !sawAgentEvent {
+		t.Fatal("Agent status SSE event was not received")
+	}
 	assertUTC8TimePointer(t, "connected_at", listed.Agents[0].ConnectedAt)
 	assertUTC8TimePointer(t, "last_heartbeat_at", listed.Agents[0].LastHeartbeatAt)
 

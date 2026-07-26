@@ -29,6 +29,7 @@
 ## 安全
 
 - [安全与权限](security/authorization.md)
+- [Server OpenAPI 3.1 契约](../api/openapi/zke-server.v1.yaml)
 
 ## 规划
 

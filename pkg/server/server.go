@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/togettoyou/zke/pkg/server/accessmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
 	"github.com/togettoyou/zke/pkg/server/agentmanagement"
@@ -109,10 +111,12 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			SessionIdleTimeout:          cfg.Auth.SessionIdleTimeout,
 			SessionAbsoluteTimeout:      cfg.Auth.SessionAbsoluteTimeout,
 			MaxConcurrentPasswordChecks: cfg.Auth.MaxConcurrentPasswordChecks,
+			MaxFailedLoginAttempts:      cfg.Auth.AccountLockout.MaxFailedAttempts,
+			AccountLockDuration:         cfg.Auth.AccountLockout.Duration,
 		},
 	)
 	rbacService := rbac.NewService(store.NewRBACStore(database))
-	auditService := audit.NewService(store.NewAuditStore(database))
+	auditService := audit.NewService(store.NewAuditStore(database), rbacService)
 	enrollmentService := enrollment.NewService(
 		store.NewEnrollmentStore(database),
 		enrollment.ServiceConfig{
@@ -176,6 +180,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}
 	agentManagementService := agentmanagement.NewService(
 		store.NewAgentManagementStore(database),
+		agentConnectionManager,
 	)
 	agentStatusStore := store.NewAgentStatusStore(database)
 	agentStatusService := agentstatus.NewService(
@@ -186,6 +191,12 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	resourceManagementService := resourcemanagement.NewService(
 		store.NewResourceManagementStore(database),
 		rbacService,
+	)
+	accessManagementService := accessmanagement.NewService(
+		store.NewAccessManagementStore(database),
+		accessmanagement.Config{
+			MaxConcurrentPasswordHashes: cfg.Auth.MaxConcurrentPasswordChecks,
+		},
 	)
 	handler := httpapi.New(
 		logger,
@@ -199,6 +210,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			AgentManagementService:    agentManagementService,
 			AgentStatusService:        agentStatusService,
 			ResourceManagementService: resourceManagementService,
+			AccessManagementService:   accessManagementService,
 		},
 		httpapi.Config{
 			Authentication: httpapi.AuthenticationConfig{
@@ -228,6 +240,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,
 		IdleTimeout:       cfg.HTTP.IdleTimeout,
+		BaseContext: func(net.Listener) context.Context {
+			return runContext
+		},
 		TLSConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		},

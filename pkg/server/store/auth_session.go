@@ -80,6 +80,10 @@ func (store *AuthStore) CompleteLogin(
 	if strings.TrimSpace(input.RequestID) == "" {
 		return Session{}, errors.New("session audit request ID is required")
 	}
+	loginTime := input.Now
+	if loginTime.IsZero() {
+		loginTime = time.Now().UTC()
+	}
 
 	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -88,11 +92,15 @@ func (store *AuthStore) CompleteLogin(
 	defer rollbackTransaction(transaction)
 
 	var lockedUserID string
+	var previousStatus string
 	err = transaction.QueryRow(ctx, `
-SELECT id::text
+SELECT id::text, status
 FROM users
 WHERE id = $1
-  AND status = 'active'
+  AND (
+      status = 'active'
+      OR (status = 'locked' AND lock_expires_at <= $4)
+  )
   AND password_hash = $2
   AND password_changed_at = $3
 FOR UPDATE
@@ -100,7 +108,8 @@ FOR UPDATE
 		input.UserID,
 		input.ExpectedPasswordHash,
 		input.ExpectedPasswordChangedAt,
-	).Scan(&lockedUserID)
+		loginTime,
+	).Scan(&lockedUserID, &previousStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrCredentialsChanged
 	}
@@ -117,6 +126,32 @@ SET
 WHERE id = $1
 `, input.UserID, input.ReplacementPasswordHash); err != nil {
 			return Session{}, errors.New("upgrade password hash parameters")
+		}
+	}
+	if _, err := transaction.Exec(ctx, `
+UPDATE users
+SET
+    status = 'active',
+    failed_login_count = 0,
+    locked_at = NULL,
+    lock_expires_at = NULL,
+    updated_at = GREATEST(updated_at, $2)
+WHERE id = $1
+`, input.UserID, loginTime); err != nil {
+		return Session{}, errors.New("clear successful login failures")
+	}
+	if previousStatus == "locked" {
+		if _, err := transaction.Exec(ctx, `
+INSERT INTO audit_events (
+    id, actor_type, scope_type, action, target_type, target_id,
+    result, request_id, created_at
+)
+VALUES (
+    gen_random_uuid(), 'system', 'global', 'auth.account.auto_unlock',
+    'user', $1, 'succeeded', $2, $3
+)
+`, input.UserID, input.RequestID, loginTime); err != nil {
+			return Session{}, fmt.Errorf("audit expired account lock recovery: %w", err)
 		}
 	}
 

@@ -135,9 +135,10 @@ Phase 1 使用 ZKE 内置本地用户认证：
 - Server 启动时只在用户表为空时创建首个管理员，密码从安全文件读取；
 - 管理员通过一次性、短有效期重置流程协助账户恢复。
 
-Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、`agent.read` 和 `agent.revoke`。内置
-`admin` 与 `viewer` 角色通过 RoleBinding 绑定到 Global、Tenant 或 Project；`admin` 包含全部权限，`viewer`
-只包含读取权限，首个管理员拥有 Global `admin` 角色。
+Phase 1 使用固定权限标识：`tenant.create`、`project.create`、`agent.enrollment.create`、`cluster.read`、
+`agent.read`、`agent.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`。
+内置 `admin` 与 `viewer` 角色通过 RoleBinding 绑定到 Global、Tenant 或 Project；`admin` 包含全部权限，
+`viewer` 只包含 Cluster 与 Agent 读取权限，首个管理员拥有 Global `admin` 角色。
 
 当前认证基础已经实现：
 
@@ -155,15 +156,17 @@ Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、
 - Session Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，CSRF Token 通过 `SameSite=Strict` Cookie 交付并要求 `X-CSRF-Token` 请求头；两者在 TLS 部署中必须启用 `Secure`；
 - Go 标准库跨源保护会在业务 Handler 之前拒绝非安全的跨源浏览器请求。
 - RBAC 使用固定权限 `tenant.create`、`project.create`、`agent.enrollment.create`、`cluster.read`、
-  `agent.read` 和 `agent.revoke`；`admin` 拥有全部固定权限，`viewer` 只拥有 Cluster 与 Agent 读取权限。
+  `agent.read`、`agent.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`；
+  `admin` 拥有全部固定权限，`viewer` 只拥有 Cluster 与 Agent 读取权限。
 - RoleBinding 支持 Global、Tenant 和 Project 作用域；Global 绑定向下覆盖全部作用域，Tenant 绑定覆盖对应
   Tenant 及其 Project，Project 绑定只覆盖目标 Project。未命中有效绑定时默认拒绝。
 - RBAC Service、PostgreSQL Store 和 HTTP 授权 middleware 已实现；Project middleware 会根据 `project_id`
   解析 Tenant 归属，并在业务 Handler 前完成权限检查。
 
-持久化账户锁定与恢复、管理员密码重置、RoleBinding 管理 API 和 Console 登录流程尚未实现。RBAC 已接入
-Tenant/Project 创建、Cluster/Agent 查询、Agent 注册凭证创建、安装 Manifest 和 Agent 撤销接口，因此
-Roadmap 中的“用户认证”和“RBAC”仍未完成，但资源接入不再依赖直接写数据库。
+持久化账户锁定与到期自动恢复、管理员解锁和密码重置已经实现；锁定、禁用和密码重置均撤销现有 Session。
+用户与 RoleBinding 管理 API 仅允许 Global 管理员调用，保留最后一个有效 Global 管理员并记录事务内成功审计。
+RBAC 已接入 Tenant/Project 创建、Cluster/Agent 查询、Agent 注册凭证创建、安装 Manifest、Agent 撤销和
+审计查询。Console 登录流程尚未实现，但 Phase 1 后端认证与 RBAC 闭环不再依赖直接写数据库。
 登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
@@ -468,6 +471,9 @@ Phase 1 API 权限映射：
 | 查看 Cluster | `cluster.read` |
 | 查看 Agent | `agent.read` |
 | 撤销 Agent | `agent.revoke` |
+| 查看和管理用户 | `user.read`、`user.manage`（Global） |
+| 查看和管理 RoleBinding | `rbac.read`、`rbac.manage`（Global） |
+| 查询审计事件 | `audit.read`（按 RoleBinding 作用域过滤） |
 
 `/api/v1/events` 根据订阅者已有的读取权限和作用域过滤事件。
 
@@ -477,6 +483,17 @@ Phase 1 API 权限映射：
 POST /api/v1/auth/login
 POST /api/v1/auth/logout
 GET  /api/v1/auth/me
+GET  /api/v1/users
+POST /api/v1/users
+GET  /api/v1/users/{user_id}
+PUT  /api/v1/users/{user_id}/status
+POST /api/v1/users/{user_id}/unlock
+POST /api/v1/users/{user_id}/password-reset
+GET  /api/v1/role-bindings
+POST /api/v1/role-bindings
+DELETE /api/v1/role-bindings/{role_binding_id}
+GET  /api/v1/audit-events
+GET  /api/v1/events
 GET  /api/v1/tenants
 POST /api/v1/tenants
 GET  /api/v1/tenants/{tenant_id}/projects
@@ -491,11 +508,9 @@ POST /api/v1/agents/{agent_id}/revoke
 GET  /agent-install/v1/manifest
 ```
 
-以下实时事件端点仍在规划中：
-
-```text
-GET  /api/v1/events
-```
+SSE 发送 `ready`、`agent.status`、`close` 和注释心跳。Agent 连接建立、健康变化、生命周期撤销和断开触发状态事件；
+Server 定期重新验证 Session，并在发送每个事件前重新执行 Cluster `agent.read` 授权。事件不持久化，客户端
+断线重连后重新查询当前状态。
 
 Tenant 和 Project 创建要求 Session、CSRF、对应创建权限以及 `Idempotency-Key`。首次创建返回 `201`，相同用户、
 作用域、Key 和名称的恢复返回 `200` 与 `replayed: true`，同一 Key 换用其他名称返回
@@ -588,7 +603,7 @@ TLS 1.3 和 mTLS，不经过 HTTP 网关，也不复用 HTTP TLS 身份。
 | --- | --- | --- |
 | Tenant | `id`, `name`, `status` | 顶层权限边界 |
 | Project | `id`, `tenant_id`, `name`, `status` | Cluster 的直接管理范围 |
-| User | `id`, `username_normalized`, `display_name`, `password_hash`, `status`, `password_changed_at` | 本地用户，规范化用户名唯一；只保存 Argon2id 摘要 |
+| User | `id`, `username_normalized`, `display_name`, `password_hash`, `status`, `failed_login_count`, `locked_at`, `lock_expires_at`, `password_changed_at` | 本地用户，规范化用户名唯一；只保存 Argon2id 摘要，锁定状态持久化 |
 | UserSession | `id`, `user_id`, `token_digest`, `idle_expires_at`, `expires_at`, `revoked_at` | Server 端不透明会话，只保存 Token 摘要 |
 | RoleBinding | `subject_id`, `role`, `scope_type`, `tenant_id`, `project_id` | 服务端授权依据；作用域形状由约束校验 |
 | Cluster | `id`, `tenant_id`, `project_id`, `name`, `status`, `last_seen_at` | 全局逻辑资源；操作仍在该集群执行 |
@@ -616,7 +631,7 @@ Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 .
 ├── api/
 │   ├── agent/v1/          # Protobuf 源文件
-│   └── openapi/v1/        # Console HTTP API 定义
+│   └── openapi/           # Console HTTP API 定义
 ├── cmd/
 │   ├── zke-server/
 │   └── zke-agent/
@@ -641,6 +656,10 @@ Agent Protobuf 使用 `go.mod` 的 `tool` 指令固定 `protoc-gen-go`，生成�
 ```bash
 bash hack/generate-agent-protocol.sh
 ```
+
+Server HTTP API 的 OpenAPI 3.1 契约位于 `api/openapi/zke-server.v1.yaml`。测试会比较契约中的 Method/Path 与
+Gin 实际注册路由，并检查 `operationId` 唯一性；Console TypeScript Client 的生成会在 Console 接入时基于该
+契约完成。
 
 ### 11.1 本地启动与验证
 

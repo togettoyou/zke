@@ -32,9 +32,16 @@ CREATE TABLE users (
     display_name text NOT NULL CHECK (length(btrim(display_name)) > 0),
     password_hash text NOT NULL CHECK (length(password_hash) > 0),
     status text NOT NULL CHECK (status IN ('active', 'locked', 'disabled')),
+    failed_login_count integer NOT NULL DEFAULT 0 CHECK (failed_login_count >= 0),
+    locked_at timestamptz,
+    lock_expires_at timestamptz,
     password_changed_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT users_lock_shape CHECK (
+        (status = 'locked' AND locked_at IS NOT NULL AND lock_expires_at IS NOT NULL)
+        OR (status <> 'locked' AND locked_at IS NULL AND lock_expires_at IS NULL)
+    )
 );
 
 CREATE TABLE user_sessions (
@@ -75,6 +82,7 @@ CREATE TABLE role_bindings (
 
 CREATE INDEX role_bindings_subject_id_idx ON role_bindings (subject_id);
 CREATE INDEX role_bindings_scope_idx ON role_bindings (scope_type, tenant_id, project_id);
+CREATE INDEX users_status_idx ON users (status);
 
 CREATE TABLE clusters (
     id uuid PRIMARY KEY,

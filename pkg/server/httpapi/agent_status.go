@@ -9,13 +9,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
+	"github.com/togettoyou/zke/pkg/server/auth"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
 type agentStatusHandler struct {
 	logger           *slog.Logger
 	service          *agentstatus.Service
 	operationTimeout time.Duration
+	authService      *auth.Service
+	rbacService      *rbac.Service
 }
 
 type agentStatusResponse struct {
@@ -40,10 +44,13 @@ type agentStatusResponse struct {
 func newAgentStatusHandler(
 	logger *slog.Logger,
 	service *agentstatus.Service,
+	authService *auth.Service,
+	rbacService *rbac.Service,
 	operationTimeout time.Duration,
 ) *agentStatusHandler {
 	return &agentStatusHandler{
-		logger: logger, service: service, operationTimeout: operationTimeout,
+		logger: logger, service: service, authService: authService,
+		rbacService: rbacService, operationTimeout: operationTimeout,
 	}
 }
 

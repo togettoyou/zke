@@ -34,6 +34,17 @@ RBAC 基础已经实现固定权限、`admin/viewer` 角色矩阵、Global/Tenan
 Project 归属解析和 HTTP 授权 middleware。Global `admin` 拥有全部固定权限；`viewer` 只拥有 Cluster 与 Agent
 读取权限。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标 Project，跨作用域访问会被拒绝。
 
+当前固定权限还包括 `user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`。Phase 1 的用户与
+RoleBinding 管理入口只允许 Global `admin` 使用，避免在委派规则尚未扩展前出现权限提升；创建的 RoleBinding
+仍可绑定 Global、Tenant 或 Project 作用域。Server 提供用户列表、详情、创建、启用/禁用、解锁和管理员密码
+重置 API，以及 RoleBinding 列表、幂等创建和删除 API。禁止当前用户禁用自身，也禁止禁用或移除最后一个有效的
+Global `admin`。权限授予、权限移除、用户状态变更、解锁和密码重置均要求显式确认；禁用、锁定和密码重置都会
+撤销目标用户现有 Session。
+
+账户错误密码计数和锁定期限持久化在 PostgreSQL，不因 Server 重启丢失。达到配置阈值后账户进入 `locked`，
+现有 Session 被撤销；锁定期满后的首次正确登录会自动恢复，Global 管理员也可显式解锁。登录错误、账户锁定、
+自动恢复、管理员解锁和密码重置均写入不包含密码的审计事件。
+
 RBAC 已接入 Tenant/Project 创建、Cluster/Agent 定域查询、
 `POST /api/v1/projects/{project_id}/agent-enrollments`、
 `POST /api/v1/projects/{project_id}/agent-installations` 和
@@ -52,6 +63,9 @@ Agent 撤销接口按 Agent ID 解析 Project 作用域，要求 `agent.revoke` 
 
 Project 授权拒绝以及凭证创建的输入、状态和内部失败会写入不含 Token 的审计事件；数据库不可用或请求 Deadline
 已耗尽时降级为安全错误日志。Tenant/Project 创建与权限范围列表、Cluster 列表/详情、Cluster Agent 详情以及
-Global/Tenant/Project/Cluster 授权拒绝审计已经实现。持久化账户锁定与恢复、管理员密码重置、RoleBinding 管理
-API、可信反向代理来源解析、Console 登录流程和通用敏感操作确认尚未实现。
-因此当前实现仍不能描述为完整认证或 RBAC 系统，也不适用于生产环境。
+Global/Tenant/Project/Cluster 授权拒绝审计已经实现。`GET /api/v1/audit-events` 按调用者 `audit.read`
+RoleBinding 的 Global、Tenant 或 Project 可见范围过滤结果，支持条件过滤和基于游标的有界分页。用户、
+RoleBinding、账户恢复和密码重置的成功、失败与权限拒绝也会写入审计。
+
+可信反向代理来源解析、Console 登录流程和跨组织的细粒度委派管理仍属于后续工作。Phase 1 后端认证与 RBAC
+闭环已经实现，但项目仍处于早期开发阶段，不适用于生产环境。

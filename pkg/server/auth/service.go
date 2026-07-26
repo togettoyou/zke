@@ -21,6 +21,8 @@ type ServiceConfig struct {
 	SessionIdleTimeout          time.Duration
 	SessionAbsoluteTimeout      time.Duration
 	MaxConcurrentPasswordChecks int
+	MaxFailedLoginAttempts      int
+	AccountLockDuration         time.Duration
 }
 
 type Service struct {
@@ -40,6 +42,12 @@ type LoginInput struct {
 
 func NewService(authStore *store.AuthStore, config ServiceConfig) *Service {
 	maxConcurrentPasswordChecks := max(1, config.MaxConcurrentPasswordChecks)
+	if config.MaxFailedLoginAttempts <= 0 {
+		config.MaxFailedLoginAttempts = 5
+	}
+	if config.AccountLockDuration <= 0 {
+		config.AccountLockDuration = 15 * time.Minute
+	}
 	return &Service{
 		store:            authStore,
 		config:           config,
@@ -54,7 +62,7 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 		return LoginResult{}, errors.New("login request ID and time are required")
 	}
 	if len(input.Password) > MaximumPasswordBytes {
-		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID)
+		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.Now)
 	}
 
 	username, err := NormalizeUsername(input.Username)
@@ -62,7 +70,7 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 		if err := service.verifyDummyPassword(ctx, input.Password); err != nil {
 			return LoginResult{}, err
 		}
-		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID)
+		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.Now)
 	}
 
 	user, err := service.store.FindUserByUsername(ctx, username)
@@ -70,7 +78,7 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 		if err := service.verifyDummyPassword(ctx, input.Password); err != nil {
 			return LoginResult{}, err
 		}
-		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID)
+		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.Now)
 	}
 	if err != nil {
 		return LoginResult{}, err
@@ -80,8 +88,11 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("verify stored password hash: %w", err)
 	}
-	if !matches || user.Status != "active" {
-		return LoginResult{}, service.rejectLogin(ctx, &user.ID, input.RequestID)
+	lockActive := user.Status == "locked" &&
+		user.LockExpiresAt != nil &&
+		user.LockExpiresAt.After(input.Now)
+	if !matches || user.Status == "disabled" || lockActive {
+		return LoginResult{}, service.rejectLogin(ctx, &user.ID, input.RequestID, input.Now)
 	}
 	var replacementPasswordHash string
 	if needsRehash {
@@ -120,10 +131,11 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 				ExpiresAt:       input.Now.Add(service.config.SessionAbsoluteTimeout),
 			},
 			RequestID: input.RequestID,
+			Now:       input.Now,
 		},
 	)
 	if errors.Is(err, store.ErrCredentialsChanged) {
-		return LoginResult{}, service.rejectLogin(ctx, &user.ID, input.RequestID)
+		return LoginResult{}, service.rejectLogin(ctx, &user.ID, input.RequestID, input.Now)
 	}
 	if err != nil {
 		return LoginResult{}, err
@@ -215,8 +227,15 @@ func (service *Service) rejectLogin(
 	ctx context.Context,
 	targetUserID *string,
 	requestID string,
+	now time.Time,
 ) error {
-	if err := service.store.RecordLoginAudit(ctx, targetUserID, "failed", requestID); err != nil {
+	if err := service.store.RecordLoginFailure(ctx, store.RecordLoginFailureParams{
+		UserID:       targetUserID,
+		RequestID:    requestID,
+		Now:          now,
+		MaxFailures:  service.config.MaxFailedLoginAttempts,
+		LockDuration: service.config.AccountLockDuration,
+	}); err != nil {
 		return err
 	}
 	return ErrInvalidCredentials

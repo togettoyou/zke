@@ -15,7 +15,17 @@ var (
 )
 
 type Service struct {
-	store *store.AgentManagementStore
+	store  *store.AgentManagementStore
+	events StatusEventPublisher
+}
+
+type StatusEventPublisher interface {
+	PublishAgentStatusChange(
+		tenantID string,
+		projectID string,
+		clusterID string,
+		agentID string,
+	)
 }
 
 type RevokeInput struct {
@@ -31,8 +41,15 @@ type RevokeResult struct {
 	AlreadyRevoked bool
 }
 
-func NewService(agentStore *store.AgentManagementStore) *Service {
-	return &Service{store: agentStore}
+func NewService(
+	agentStore *store.AgentManagementStore,
+	events ...StatusEventPublisher,
+) *Service {
+	service := &Service{store: agentStore}
+	if len(events) > 0 {
+		service.events = events[0]
+	}
+	return service
 }
 
 func (service *Service) Revoke(
@@ -53,6 +70,14 @@ func (service *Service) Revoke(
 	})
 	if err != nil {
 		return RevokeResult{}, err
+	}
+	if service.events != nil && !result.AlreadyRevoked {
+		service.events.PublishAgentStatusChange(
+			result.TenantID,
+			result.ProjectID,
+			result.ClusterID,
+			result.AgentID,
+		)
 	}
 	return RevokeResult{
 		AgentID:        result.AgentID,

@@ -59,6 +59,10 @@ Server 已实现 `GET /api/v1/projects/{project_id}/agents`，返回 Agent 当�
 原因，供后续 Web 使用；同时按配置周期输出临近过期的结构化告警。连接快照不写数据库，Server 重启后离线 Agent
 的历史断开信息会丢失；多 Server 实例的全局连接视图仍需后续的连接所有权与路由设计。
 
+Server 已实现 `GET /api/v1/events` SSE。连接建立、健康状态变化、生命周期撤销和断开会发送权限过滤后的 `agent.status`
+事件；事件携带完整的当前 Agent 状态。SSE 会定期重新验证 Session，每个事件也重新执行 Cluster 定域的
+`agent.read` 授权。客户端断线重连后必须重新查询状态，当前单实例内存事件流不提供历史事件重放。
+
 Server 已实现 Tenant/Project 创建和权限范围列表，以及
 `GET /api/v1/projects/{project_id}/clusters`、`GET /api/v1/clusters/{cluster_id}` 和
 `GET /api/v1/clusters/{cluster_id}/agent`。创建请求要求 CSRF、创建权限和幂等键；资源、幂等记录与成功审计

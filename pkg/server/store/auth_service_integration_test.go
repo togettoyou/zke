@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -193,6 +194,120 @@ WHERE target_id = $1
 	}
 	if failedAuditCount != 1 {
 		t.Fatalf("failed login audit count = %d, want 1", failedAuditCount)
+	}
+}
+
+func TestPersistentAccountLockExpiresAndRecovers(t *testing.T) {
+	databaseURL := requireAuthTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool := openIsolatedDatabase(t, ctx, databaseURL)
+	if _, err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	password := []byte("a sufficiently long account recovery passphrase")
+	passwordHash, err := auth.HashPassword(password, auth.DefaultPasswordParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var userID string
+	if err := pool.QueryRow(ctx, `
+INSERT INTO users (
+    id, username_normalized, display_name, password_hash, status,
+    password_changed_at
+)
+VALUES (
+    gen_random_uuid(), 'lock-recovery-user', 'Lock Recovery User',
+    $1, 'active', now()
+)
+RETURNING id::text
+`, passwordHash).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	service := auth.NewService(store.NewAuthStore(pool), auth.ServiceConfig{
+		SessionIdleTimeout:          30 * time.Minute,
+		SessionAbsoluteTimeout:      8 * time.Hour,
+		MaxConcurrentPasswordChecks: 1,
+		MaxFailedLoginAttempts:      2,
+		AccountLockDuration:         time.Hour,
+	})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for attempt := range 2 {
+		_, err := service.Login(ctx, auth.LoginInput{
+			Username:  "lock-recovery-user",
+			Password:  []byte("an intentionally incorrect passphrase"),
+			RequestID: fmt.Sprintf("request-lock-recovery-%d", attempt),
+			Now:       now.Add(time.Duration(attempt) * time.Second),
+		})
+		if !errors.Is(err, auth.ErrInvalidCredentials) {
+			t.Fatalf("failed login %d error = %v", attempt, err)
+		}
+	}
+	var status string
+	var lockExpiresAt time.Time
+	if err := pool.QueryRow(ctx, `
+SELECT status, lock_expires_at
+FROM users
+WHERE id = $1
+`, userID).Scan(&status, &lockExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "locked" {
+		t.Fatalf("locked account status = %q, want locked", status)
+	}
+	if _, err := service.Login(ctx, auth.LoginInput{
+		Username:  "lock-recovery-user",
+		Password:  password,
+		RequestID: "request-lock-active",
+		Now:       lockExpiresAt.Add(-time.Second),
+	}); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("active lock login error = %v, want invalid credentials", err)
+	}
+	if _, err := service.Login(ctx, auth.LoginInput{
+		Username:  "lock-recovery-user",
+		Password:  password,
+		RequestID: "request-lock-expired",
+		Now:       lockExpiresAt.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("expired lock recovery login: %v", err)
+	}
+	var failedLoginCount int
+	var lockedAt, storedLockExpiresAt *time.Time
+	if err := pool.QueryRow(ctx, `
+SELECT status, failed_login_count, locked_at, lock_expires_at
+FROM users
+WHERE id = $1
+`, userID).Scan(
+		&status,
+		&failedLoginCount,
+		&lockedAt,
+		&storedLockExpiresAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" || failedLoginCount != 0 ||
+		lockedAt != nil || storedLockExpiresAt != nil {
+		t.Fatalf(
+			"recovered account = %s/%d/%v/%v",
+			status,
+			failedLoginCount,
+			lockedAt,
+			storedLockExpiresAt,
+		)
+	}
+	var recoveryAuditCount int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+FROM audit_events
+WHERE target_id = $1
+  AND action = 'auth.account.auto_unlock'
+  AND result = 'succeeded'
+`, userID).Scan(&recoveryAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if recoveryAuditCount != 1 {
+		t.Fatalf("account recovery audit count = %d, want 1", recoveryAuditCount)
 	}
 }
 

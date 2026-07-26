@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/accessmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
 	"github.com/togettoyou/zke/pkg/server/agentmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
@@ -30,6 +31,7 @@ type Dependencies struct {
 	AgentManagementService    *agentmanagement.Service
 	AgentStatusService        *agentstatus.Service
 	ResourceManagementService *resourcemanagement.Service
+	AccessManagementService   *accessmanagement.Service
 }
 
 type Config struct {
@@ -46,6 +48,8 @@ type handlers struct {
 	agentManagement         *agentManagementHandler
 	agentStatus             *agentStatusHandler
 	resourceManagement      *resourceManagementHandler
+	accessManagement        *accessManagementHandler
+	auditQuery              *auditQueryHandler
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
 	requestTimeout          gin.HandlerFunc
@@ -102,11 +106,24 @@ func New(
 		agentStatus: newAgentStatusHandler(
 			logger,
 			dependencies.AgentStatusService,
+			dependencies.AuthService,
+			dependencies.RBACService,
 			config.Authentication.OperationTimeout,
 		),
 		resourceManagement: newResourceManagementHandler(
 			logger,
 			dependencies.ResourceManagementService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		accessManagement: newAccessManagementHandler(
+			logger,
+			dependencies.AccessManagementService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		auditQuery: newAuditQueryHandler(
+			logger,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

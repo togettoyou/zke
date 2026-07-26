@@ -1,0 +1,1155 @@
+openapi: 3.1.0
+info:
+  title: ZKE Server API
+  version: v1
+  description: |
+    ZKE Console、Agent Enrollment 和 Agent 安装使用的 HTTP API 契约。
+    所有 JSON 时间均为 RFC 3339，并由当前 API 以 UTC+8 偏移返回。
+servers:
+  - url: http://127.0.0.1:8080
+    description: 本地开发
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Users
+  - name: RBAC
+  - name: Resources
+  - name: Agents
+  - name: Audit
+  - name: Events
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      responses:
+        "200":
+          description: 进程存活
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /readyz:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Server 已就绪
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功；Session 和 CSRF Token 通过 Cookie 返回
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Authentication"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/v1/auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentSession
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 当前身份
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Authentication"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: 已注销
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 用户列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ManagedUser"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Users]
+      operationId: createUser
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: 用户已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/users/{user_id}:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    get:
+      tags: [Users]
+      operationId: getUser
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 用户详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/users/{user_id}/status:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    put:
+      tags: [Users]
+      operationId: setUserStatus
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetUserStatusRequest"
+      responses:
+        "200":
+          description: 用户状态已更新，禁用会撤销现有 Session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/users/{user_id}/unlock:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    post:
+      tags: [Users]
+      operationId: unlockUser
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "200":
+          description: 锁定计数已清除，账户恢复为 active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/users/{user_id}/password-reset:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    post:
+      tags: [Users]
+      operationId: resetUserPassword
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetRequest"
+      responses:
+        "200":
+          description: 密码已重置，目标用户全部 Session 已撤销
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/role-bindings:
+    get:
+      tags: [RBAC]
+      operationId: listRoleBindings
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: RoleBinding 列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [role_bindings]
+                properties:
+                  role_bindings:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RoleBinding"
+    post:
+      tags: [RBAC]
+      operationId: createRoleBinding
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleBindingRequest"
+      responses:
+        "201":
+          description: RoleBinding 已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleBinding"
+        "200":
+          description: 相同 RoleBinding 已存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleBinding"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/role-bindings/{role_binding_id}:
+    delete:
+      tags: [RBAC]
+      operationId: deleteRoleBinding
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/RoleBindingID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "204":
+          description: RoleBinding 已删除
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/audit-events:
+    get:
+      tags: [Audit]
+      operationId: listAuditEvents
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: actor_type
+          in: query
+          schema:
+            type: string
+            enum: [user, agent, system]
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum: [succeeded, failed, denied]
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: target_type
+          in: query
+          schema:
+            type: string
+        - name: request_id
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/OptionalTenantID"
+        - $ref: "#/components/parameters/OptionalProjectID"
+        - $ref: "#/components/parameters/OptionalClusterID"
+      responses:
+        "200":
+          description: 当前用户 `audit.read` 可见范围内的审计事件
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventPage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/events:
+    get:
+      tags: [Events]
+      operationId: streamAgentStatusEvents
+      description: |
+        发送 `ready`、`agent.status` 和 `close` 事件以及注释心跳。
+        断线重连后客户端应重新查询 Agent 状态；当前不承诺历史事件重放。
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Agent 状态事件流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/tenants:
+    get:
+      tags: [Resources]
+      operationId: listTenants
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 可见 Tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tenants]
+                properties:
+                  tenants:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tenant"
+    post:
+      tags: [Resources]
+      operationId: createTenant
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/CreateNamedResource"
+      responses:
+        "201":
+          description: Tenant 已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "200":
+          description: 幂等恢复
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/tenants/{tenant_id}/projects:
+    parameters:
+      - $ref: "#/components/parameters/TenantID"
+    get:
+      tags: [Resources]
+      operationId: listProjects
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 可见 Project
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Project"
+    post:
+      tags: [Resources]
+      operationId: createProject
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/CreateNamedResource"
+      responses:
+        "201":
+          description: Project 已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "200":
+          description: 幂等恢复
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/projects/{project_id}/clusters:
+    get:
+      tags: [Resources]
+      operationId: listClusters
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Project Cluster 列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [clusters]
+                properties:
+                  clusters:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Cluster"
+  /api/v1/clusters/{cluster_id}:
+    get:
+      tags: [Resources]
+      operationId: getCluster
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: Cluster 详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cluster"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/clusters/{cluster_id}/agent:
+    get:
+      tags: [Agents]
+      operationId: getClusterAgent
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: Cluster Agent 状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentStatus"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/projects/{project_id}/agents:
+    get:
+      tags: [Agents]
+      operationId: listProjectAgents
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Project Agent 状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents]
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AgentStatus"
+  /api/v1/projects/{project_id}/agent-enrollments:
+    post:
+      tags: [Agents]
+      operationId: createAgentEnrollment
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [cluster_name]
+              properties:
+                cluster_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+      responses:
+        "201":
+          description: 一次性注册凭证
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollment_id, token, expires_at]
+                properties:
+                  enrollment_id:
+                    $ref: "#/components/schemas/UUID"
+                  token:
+                    type: string
+                  expires_at:
+                    $ref: "#/components/schemas/Timestamp"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/projects/{project_id}/agent-installations:
+    post:
+      tags: [Agents]
+      operationId: createAgentInstallation
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [cluster_name]
+              properties:
+                cluster_name:
+                  type: string
+      responses:
+        "201":
+          description: 安装命令
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/v1/agents/{agent_id}/revoke:
+    post:
+      tags: [Agents]
+      operationId: revokeAgent
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/AgentID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "200":
+          description: Agent 已撤销
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /agent-api/v1/enroll:
+    post:
+      tags: [Agents]
+      operationId: enrollAgent
+      security:
+        - enrollmentToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: 幂等恢复的 Agent 身份
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "201":
+          description: 新签发的 Agent 身份
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /agent-install/v1/manifest:
+    get:
+      tags: [Agents]
+      operationId: getAgentInstallationManifest
+      security:
+        - installationToken: []
+      responses:
+        "200":
+          description: Kubernetes 多文档 YAML
+          content:
+            application/yaml:
+              schema:
+                type: string
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: zke_session
+    enrollmentToken:
+      type: http
+      scheme: bearer
+      bearerFormat: Agent enrollment token
+    installationToken:
+      type: http
+      scheme: bearer
+      bearerFormat: Agent installation token
+  parameters:
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+    UserID:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
+    RoleBindingID:
+      name: role_binding_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
+    TenantID:
+      name: tenant_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
+    ProjectID:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
+    ClusterID:
+      name: cluster_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
+    AgentID:
+      name: agent_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
+    OptionalTenantID:
+      name: tenant_id
+      in: query
+      schema:
+        $ref: "#/components/schemas/UUID"
+    OptionalProjectID:
+      name: project_id
+      in: query
+      schema:
+        $ref: "#/components/schemas/UUID"
+    OptionalClusterID:
+      name: cluster_id
+      in: query
+      schema:
+        $ref: "#/components/schemas/UUID"
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+  requestBodies:
+    CreateNamedResource:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 253
+  responses:
+    InvalidRequest:
+      description: 输入无效
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthenticated:
+      description: 未认证或 Session 已失效
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: CSRF 或权限检查失败
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: 目标不存在或不可见
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: 幂等、生命周期或安全不变量冲突
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: 请求被限流
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: 服务暂不可用
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    UUID:
+      type: string
+      format: uuid
+    Timestamp:
+      type: string
+      format: date-time
+      examples:
+        - "2026-07-26T14:30:00+08:00"
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+    Health:
+      type: object
+      additionalProperties: true
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          maxLength: 1024
+    Authentication:
+      type: object
+      additionalProperties: false
+      required: [user, expires_at]
+      properties:
+        user:
+          $ref: "#/components/schemas/UserIdentity"
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+    UserIdentity:
+      type: object
+      additionalProperties: false
+      required: [id, username, display_name]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        username:
+          type: string
+        display_name:
+          type: string
+    ManagedUser:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/UserIdentity"
+        - type: object
+          required:
+            - status
+            - failed_login_count
+            - password_changed_at
+            - created_at
+            - updated_at
+          properties:
+            status:
+              type: string
+              enum: [active, locked, disabled]
+            failed_login_count:
+              type: integer
+              minimum: 0
+            locked_at:
+              $ref: "#/components/schemas/Timestamp"
+            lock_expires_at:
+              $ref: "#/components/schemas/Timestamp"
+            password_changed_at:
+              $ref: "#/components/schemas/Timestamp"
+            created_at:
+              $ref: "#/components/schemas/Timestamp"
+            updated_at:
+              $ref: "#/components/schemas/Timestamp"
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required: [username, display_name, password]
+      properties:
+        username:
+          type: string
+        display_name:
+          type: string
+          maxLength: 253
+        password:
+          type: string
+          format: password
+          minLength: 15
+          maxLength: 1024
+    SetUserStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status, confirm]
+      properties:
+        status:
+          type: string
+          enum: [active, disabled]
+        confirm:
+          const: true
+    Confirmation:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        confirm:
+          const: true
+    PasswordResetRequest:
+      type: object
+      additionalProperties: false
+      required: [password, confirm]
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 15
+          maxLength: 1024
+        confirm:
+          const: true
+    RoleBinding:
+      type: object
+      additionalProperties: false
+      required: [id, subject_id, role, scope_type, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        subject_id:
+          $ref: "#/components/schemas/UUID"
+        role:
+          type: string
+          enum: [admin, viewer]
+        scope_type:
+          type: string
+          enum: [global, tenant, project]
+        tenant_id:
+          $ref: "#/components/schemas/UUID"
+        project_id:
+          $ref: "#/components/schemas/UUID"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        replayed:
+          type: boolean
+    CreateRoleBindingRequest:
+      type: object
+      additionalProperties: false
+      required: [subject_id, role, scope_type, confirm]
+      properties:
+        subject_id:
+          $ref: "#/components/schemas/UUID"
+        role:
+          type: string
+          enum: [admin, viewer]
+        scope_type:
+          type: string
+          enum: [global, tenant, project]
+        tenant_id:
+          $ref: "#/components/schemas/UUID"
+        project_id:
+          $ref: "#/components/schemas/UUID"
+        confirm:
+          const: true
+    ResourceBase:
+      type: object
+      required: [id, name, status, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        name:
+          type: string
+        status:
+          type: string
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        replayed:
+          type: boolean
+    Tenant:
+      allOf:
+        - $ref: "#/components/schemas/ResourceBase"
+    Project:
+      allOf:
+        - $ref: "#/components/schemas/ResourceBase"
+        - type: object
+          required: [tenant_id]
+          properties:
+            tenant_id:
+              $ref: "#/components/schemas/UUID"
+    Cluster:
+      allOf:
+        - $ref: "#/components/schemas/ResourceBase"
+        - type: object
+          required: [tenant_id, project_id]
+          properties:
+            tenant_id:
+              $ref: "#/components/schemas/UUID"
+            project_id:
+              $ref: "#/components/schemas/UUID"
+            last_seen_at:
+              $ref: "#/components/schemas/Timestamp"
+    AgentStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - cluster_id
+        - cluster_name
+        - agent_id
+        - lifecycle_status
+        - health_status
+        - certificate_serial
+        - certificate_expires_at
+        - certificate_remaining_seconds
+        - certificate_status
+        - connection_status
+      properties:
+        cluster_id:
+          $ref: "#/components/schemas/UUID"
+        cluster_name:
+          type: string
+        agent_id:
+          $ref: "#/components/schemas/UUID"
+        lifecycle_status:
+          type: string
+        health_status:
+          type: string
+        last_seen_at:
+          $ref: "#/components/schemas/Timestamp"
+        certificate_serial:
+          type: string
+        certificate_expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        certificate_remaining_seconds:
+          type: integer
+          minimum: 0
+        certificate_status:
+          type: string
+          enum: [valid, expiring, expired, revoked]
+        connection_status:
+          type: string
+          enum: [online, offline]
+        connection_id:
+          type: string
+        connected_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_heartbeat_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_disconnected_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_disconnect_reason:
+          type: string
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - actor_type
+        - scope_type
+        - action
+        - target_type
+        - result
+        - request_id
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        actor_type:
+          type: string
+          enum: [user, agent, system]
+        actor_user_id:
+          $ref: "#/components/schemas/UUID"
+        actor_agent_id:
+          $ref: "#/components/schemas/UUID"
+        scope_type:
+          type: string
+          enum: [global, tenant, project, cluster]
+        tenant_id:
+          $ref: "#/components/schemas/UUID"
+        project_id:
+          $ref: "#/components/schemas/UUID"
+        cluster_id:
+          $ref: "#/components/schemas/UUID"
+        action:
+          type: string
+        target_type:
+          type: string
+        target_id:
+          $ref: "#/components/schemas/UUID"
+        result:
+          type: string
+          enum: [succeeded, failed, denied]
+        request_id:
+          type: string
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+    AuditEventPage:
+      type: object
+      additionalProperties: false
+      required: [audit_events, next_cursor]
+      properties:
+        audit_events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        next_cursor:
+          type: string

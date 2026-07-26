@@ -98,17 +98,28 @@ func TestManagerConnectionSnapshotLifecycle(t *testing.T) {
 	manager := &Manager{
 		connections:      make(map[string]*session),
 		lastDisconnected: make(map[string]ConnectionStatus),
+		subscribers:      make(map[uint64]chan ConnectionEvent),
 	}
+	events, unsubscribe := manager.Subscribe()
+	defer unsubscribe()
 	current := &session{
 		id: "connection-1",
 		identity: store.AgentConnectionIdentity{
-			AgentID: testAgentID,
+			TenantID:  testTenantID,
+			ProjectID: testProjectID,
+			ClusterID: testClusterID,
+			AgentID:   testAgentID,
 		},
 		connectedAt:      connectedAt,
 		disconnectReason: "connection_closed",
 	}
 	if previous := manager.register(current); previous != nil {
 		t.Fatal("first connection unexpectedly replaced another session")
+	}
+	connectedEvent := <-events
+	if connectedEvent.AgentID != testAgentID ||
+		connectedEvent.State != ConnectionStateOnline {
+		t.Fatalf("unexpected connected event: %+v", connectedEvent)
 	}
 	current.recordHeartbeat(heartbeatAt)
 
@@ -123,6 +134,11 @@ func TestManagerConnectionSnapshotLifecycle(t *testing.T) {
 	current.setDisconnectReason("agent_revoked")
 	current.setDisconnectReason("credential_revoked")
 	manager.unregister(current)
+	disconnectedEvent := <-events
+	if disconnectedEvent.AgentID != testAgentID ||
+		disconnectedEvent.State != ConnectionStateOffline {
+		t.Fatalf("unexpected disconnected event: %+v", disconnectedEvent)
+	}
 	offline := manager.Snapshot([]string{testAgentID})[testAgentID]
 	if offline.State != "offline" ||
 		offline.ConnectionID != "" ||

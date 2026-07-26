@@ -35,6 +35,9 @@ auth:
     window: 2m
     max_attempts_per_account: 6
     max_attempts_per_source: 24
+  account_lockout:
+    max_failed_attempts: 7
+    duration: 20m
   initial_admin:
     enabled: true
     username: admin
@@ -116,6 +119,10 @@ log_level: warn
 			"account attempt limit = %d, want YAML value",
 			cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,
 		)
+	}
+	if cfg.Auth.AccountLockout.MaxFailedAttempts != 7 ||
+		cfg.Auth.AccountLockout.Duration != 20*time.Minute {
+		t.Fatalf("unexpected account lockout config: %+v", cfg.Auth.AccountLockout)
 	}
 	if !cfg.Auth.InitialAdmin.Enabled ||
 		cfg.Auth.InitialAdmin.Username != "admin" ||

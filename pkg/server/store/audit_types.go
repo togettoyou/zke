@@ -1,6 +1,10 @@
 package store
 
-import "github.com/jackc/pgx/v5/pgxpool"
+import (
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
 
 type AuditStore struct {
 	pool *pgxpool.Pool
@@ -45,6 +49,40 @@ type AgentAuditEvent struct {
 	Action      string
 	Result      string
 	RequestID   string
+}
+
+type AuditRecord struct {
+	ID           string
+	ActorType    string
+	ActorUserID  string
+	ActorAgentID string
+	ScopeType    string
+	TenantID     string
+	ProjectID    string
+	ClusterID    string
+	Action       string
+	TargetType   string
+	TargetID     string
+	Result       string
+	RequestID    string
+	CreatedAt    time.Time
+}
+
+type ListAuditRecordsParams struct {
+	GlobalVisible bool
+	TenantIDs     []string
+	ProjectIDs    []string
+	ActorType     string
+	Result        string
+	Action        string
+	TargetType    string
+	RequestID     string
+	TenantID      string
+	ProjectID     string
+	ClusterID     string
+	BeforeAt      *time.Time
+	BeforeID      string
+	Limit         int
 }
 
 func NewAuditStore(pool *pgxpool.Pool) *AuditStore {

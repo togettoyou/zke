@@ -113,6 +113,20 @@ func TestRoleAndScopeRules(t *testing.T) {
 		roleGrants("viewer", PermissionProjectCreate) {
 		t.Fatal("viewer role granted resource creation permissions")
 	}
+	for _, permission := range []Permission{
+		PermissionUserRead,
+		PermissionUserManage,
+		PermissionRBACRead,
+		PermissionRBACManage,
+		PermissionAuditRead,
+	} {
+		if !roleGrants("admin", permission) {
+			t.Errorf("admin role did not grant %s", permission)
+		}
+		if roleGrants("viewer", permission) {
+			t.Errorf("viewer role unexpectedly granted %s", permission)
+		}
+	}
 	if !bindingApplies(store.RoleBinding{
 		ScopeType: "tenant",
 		TenantID:  testTenantID,

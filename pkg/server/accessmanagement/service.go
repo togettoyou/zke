@@ -1,0 +1,450 @@
+package accessmanagement
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/identifier"
+	"github.com/togettoyou/zke/pkg/shared/validation"
+)
+
+const maxDisplayNameBytes = 253
+
+var (
+	ErrInvalidInput = errors.New("invalid access management input")
+	ErrNotFound     = errors.New("access management target not found")
+	ErrConflict     = errors.New("access management conflict")
+	ErrLastAdmin    = errors.New("last global administrator")
+	ErrSelfDisable  = errors.New("cannot disable the authenticated user")
+)
+
+type Config struct {
+	MaxConcurrentPasswordHashes int
+}
+
+type Service struct {
+	store          *store.AccessManagementStore
+	passwordHashes chan struct{}
+}
+
+type User struct {
+	ID                string
+	Username          string
+	DisplayName       string
+	Status            string
+	FailedLoginCount  int
+	LockedAt          *time.Time
+	LockExpiresAt     *time.Time
+	PasswordChangedAt time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type CreateUserInput struct {
+	Username    string
+	DisplayName string
+	Password    []byte
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type SetUserStatusInput struct {
+	UserID      string
+	Status      string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type ConfirmUserActionInput struct {
+	UserID      string
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type ResetPasswordInput struct {
+	UserID      string
+	Password    []byte
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type RoleBinding struct {
+	ID        string
+	SubjectID string
+	Role      string
+	ScopeType string
+	TenantID  string
+	ProjectID string
+	CreatedAt time.Time
+}
+
+type CreateRoleBindingInput struct {
+	SubjectID   string
+	Role        string
+	ScopeType   string
+	TenantID    string
+	ProjectID   string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type CreateRoleBindingResult struct {
+	RoleBinding
+	Replayed bool
+}
+
+type DeleteRoleBindingInput struct {
+	BindingID   string
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+func NewService(
+	accessStore *store.AccessManagementStore,
+	config Config,
+) *Service {
+	maxHashes := max(1, config.MaxConcurrentPasswordHashes)
+	return &Service{
+		store:          accessStore,
+		passwordHashes: make(chan struct{}, maxHashes),
+	}
+}
+
+func (service *Service) ListUsers(ctx context.Context) ([]User, error) {
+	stored, err := service.store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]User, 0, len(stored))
+	for _, item := range stored {
+		result = append(result, userFromStore(item))
+	}
+	return result, nil
+}
+
+func (service *Service) GetUser(
+	ctx context.Context,
+	userID string,
+) (User, error) {
+	if !validation.IsUUID(userID) {
+		return User{}, ErrInvalidInput
+	}
+	item, err := service.store.GetUser(ctx, userID)
+	if errors.Is(err, store.ErrAccessUserNotFound) {
+		return User{}, ErrNotFound
+	}
+	if err != nil {
+		return User{}, err
+	}
+	return userFromStore(item), nil
+}
+
+func (service *Service) CreateUser(
+	ctx context.Context,
+	input CreateUserInput,
+) (User, error) {
+	username, err := auth.NormalizeUsername(input.Username)
+	if err != nil ||
+		!validDisplayName(input.DisplayName) ||
+		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
+		return User{}, ErrInvalidInput
+	}
+	passwordHash, err := service.hashPassword(ctx, input.Password)
+	if err != nil {
+		if errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) {
+			return User{}, err
+		}
+		return User{}, ErrInvalidInput
+	}
+	id, err := identifier.NewUUID()
+	if err != nil {
+		return User{}, err
+	}
+	item, err := service.store.CreateUser(ctx, store.CreateManagedUserParams{
+		ID:           id,
+		Username:     username,
+		DisplayName:  input.DisplayName,
+		PasswordHash: passwordHash,
+		ActorUserID:  input.ActorUserID,
+		RequestID:    input.RequestID,
+		Now:          input.Now,
+	})
+	switch {
+	case errors.Is(err, store.ErrAccessUserConflict):
+		return User{}, ErrConflict
+	case errors.Is(err, store.ErrAccessStateConflict):
+		return User{}, ErrConflict
+	case err != nil:
+		return User{}, err
+	default:
+		return userFromStore(item), nil
+	}
+}
+
+func (service *Service) SetUserStatus(
+	ctx context.Context,
+	input SetUserStatusInput,
+) (User, error) {
+	if !validation.IsUUID(input.UserID) ||
+		(input.Status != "active" && input.Status != "disabled") ||
+		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
+		return User{}, ErrInvalidInput
+	}
+	if input.UserID == input.ActorUserID && input.Status == "disabled" {
+		return User{}, ErrSelfDisable
+	}
+	item, err := service.store.SetUserStatus(ctx, store.SetManagedUserStatusParams{
+		UserID:      input.UserID,
+		Status:      input.Status,
+		ActorUserID: input.ActorUserID,
+		RequestID:   input.RequestID,
+		Now:         input.Now,
+	})
+	return mapUserMutation(item, err)
+}
+
+func (service *Service) UnlockUser(
+	ctx context.Context,
+	input ConfirmUserActionInput,
+) (User, error) {
+	if !input.Confirm ||
+		!validation.IsUUID(input.UserID) ||
+		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
+		return User{}, ErrInvalidInput
+	}
+	item, err := service.store.UnlockUser(ctx, store.UnlockManagedUserParams{
+		UserID:      input.UserID,
+		ActorUserID: input.ActorUserID,
+		RequestID:   input.RequestID,
+		Now:         input.Now,
+	})
+	return mapUserMutation(item, err)
+}
+
+func (service *Service) ResetUserPassword(
+	ctx context.Context,
+	input ResetPasswordInput,
+) (User, error) {
+	if !input.Confirm ||
+		!validation.IsUUID(input.UserID) ||
+		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
+		return User{}, ErrInvalidInput
+	}
+	passwordHash, err := service.hashPassword(ctx, input.Password)
+	if err != nil {
+		if errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) {
+			return User{}, err
+		}
+		return User{}, ErrInvalidInput
+	}
+	item, err := service.store.ResetUserPassword(
+		ctx,
+		store.ResetManagedUserPasswordParams{
+			UserID:       input.UserID,
+			PasswordHash: passwordHash,
+			ActorUserID:  input.ActorUserID,
+			RequestID:    input.RequestID,
+			Now:          input.Now,
+		},
+	)
+	return mapUserMutation(item, err)
+}
+
+func (service *Service) ListRoleBindings(
+	ctx context.Context,
+) ([]RoleBinding, error) {
+	stored, err := service.store.ListRoleBindings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]RoleBinding, 0, len(stored))
+	for _, item := range stored {
+		result = append(result, roleBindingFromStore(item))
+	}
+	return result, nil
+}
+
+func (service *Service) CreateRoleBinding(
+	ctx context.Context,
+	input CreateRoleBindingInput,
+) (CreateRoleBindingResult, error) {
+	if !validRoleScope(
+		input.Role, input.ScopeType, input.TenantID, input.ProjectID,
+	) || !validation.IsUUID(input.SubjectID) ||
+		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
+		return CreateRoleBindingResult{}, ErrInvalidInput
+	}
+	id, err := identifier.NewUUID()
+	if err != nil {
+		return CreateRoleBindingResult{}, err
+	}
+	item, replayed, err := service.store.CreateRoleBinding(
+		ctx,
+		store.CreateManagedRoleBindingParams{
+			ID:          id,
+			SubjectID:   input.SubjectID,
+			Role:        input.Role,
+			ScopeType:   input.ScopeType,
+			TenantID:    input.TenantID,
+			ProjectID:   input.ProjectID,
+			ActorUserID: input.ActorUserID,
+			RequestID:   input.RequestID,
+			Now:         input.Now,
+		},
+	)
+	switch {
+	case errors.Is(err, store.ErrAccessUserNotFound):
+		return CreateRoleBindingResult{}, ErrNotFound
+	case errors.Is(err, store.ErrRoleBindingConflict),
+		errors.Is(err, store.ErrAccessStateConflict):
+		return CreateRoleBindingResult{}, ErrConflict
+	case err != nil:
+		return CreateRoleBindingResult{}, err
+	default:
+		return CreateRoleBindingResult{
+			RoleBinding: roleBindingFromStore(item),
+			Replayed:    replayed,
+		}, nil
+	}
+}
+
+func (service *Service) DeleteRoleBinding(
+	ctx context.Context,
+	input DeleteRoleBindingInput,
+) (RoleBinding, error) {
+	if !input.Confirm ||
+		!validation.IsUUID(input.BindingID) ||
+		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
+		return RoleBinding{}, ErrInvalidInput
+	}
+	item, err := service.store.DeleteRoleBinding(
+		ctx,
+		store.DeleteManagedRoleBindingParams{
+			BindingID:   input.BindingID,
+			ActorUserID: input.ActorUserID,
+			RequestID:   input.RequestID,
+			Now:         input.Now,
+		},
+	)
+	switch {
+	case errors.Is(err, store.ErrRoleBindingNotFound):
+		return RoleBinding{}, ErrNotFound
+	case errors.Is(err, store.ErrLastGlobalAdmin):
+		return RoleBinding{}, ErrLastAdmin
+	case err != nil:
+		return RoleBinding{}, err
+	default:
+		return roleBindingFromStore(item), nil
+	}
+}
+
+func (service *Service) hashPassword(
+	ctx context.Context,
+	password []byte,
+) (string, error) {
+	select {
+	case service.passwordHashes <- struct{}{}:
+		defer func() { <-service.passwordHashes }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	result, err := auth.HashPassword(password, auth.DefaultPasswordParams())
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+func validDisplayName(value string) bool {
+	return strings.TrimSpace(value) == value &&
+		len(value) > 0 &&
+		len(value) <= maxDisplayNameBytes
+}
+
+func validActorRequest(actorUserID string, requestID string, now time.Time) bool {
+	return validation.IsUUID(actorUserID) &&
+		strings.TrimSpace(requestID) != "" &&
+		!now.IsZero()
+}
+
+func validRoleScope(
+	role string,
+	scopeType string,
+	tenantID string,
+	projectID string,
+) bool {
+	if role != "admin" && role != "viewer" {
+		return false
+	}
+	switch scopeType {
+	case "global":
+		return tenantID == "" && projectID == ""
+	case "tenant":
+		return validation.IsUUID(tenantID) && projectID == ""
+	case "project":
+		return validation.IsUUID(tenantID) &&
+			validation.IsUUID(projectID)
+	default:
+		return false
+	}
+}
+
+func userFromStore(item store.ManagedUser) User {
+	return User{
+		ID:                item.ID,
+		Username:          item.Username,
+		DisplayName:       item.DisplayName,
+		Status:            item.Status,
+		FailedLoginCount:  item.FailedLoginCount,
+		LockedAt:          item.LockedAt,
+		LockExpiresAt:     item.LockExpiresAt,
+		PasswordChangedAt: item.PasswordChangedAt,
+		CreatedAt:         item.CreatedAt,
+		UpdatedAt:         item.UpdatedAt,
+	}
+}
+
+func roleBindingFromStore(item store.ManagedRoleBinding) RoleBinding {
+	return RoleBinding{
+		ID:        item.ID,
+		SubjectID: item.SubjectID,
+		Role:      item.Role,
+		ScopeType: item.ScopeType,
+		TenantID:  item.TenantID,
+		ProjectID: item.ProjectID,
+		CreatedAt: item.CreatedAt,
+	}
+}
+
+func mapUserMutation(item store.ManagedUser, err error) (User, error) {
+	switch {
+	case errors.Is(err, store.ErrAccessUserNotFound):
+		return User{}, ErrNotFound
+	case errors.Is(err, store.ErrAccessStateConflict):
+		return User{}, ErrConflict
+	case errors.Is(err, store.ErrLastGlobalAdmin):
+		return User{}, ErrLastAdmin
+	case err != nil:
+		return User{}, err
+	default:
+		return userFromStore(item), nil
+	}
+}

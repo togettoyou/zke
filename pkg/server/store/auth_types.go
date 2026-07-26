@@ -24,7 +24,12 @@ type User struct {
 	DisplayName        string
 	PasswordHash       string
 	Status             string
+	FailedLoginCount   int
+	LockedAt           *time.Time
+	LockExpiresAt      *time.Time
 	PasswordChangedAt  time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type InitialAdmin struct {
@@ -61,6 +66,15 @@ type CompleteLoginParams struct {
 	ReplacementPasswordHash   string
 	Session                   CreateSessionParams
 	RequestID                 string
+	Now                       time.Time
+}
+
+type RecordLoginFailureParams struct {
+	UserID       *string
+	RequestID    string
+	Now          time.Time
+	MaxFailures  int
+	LockDuration time.Duration
 }
 
 type AuthenticatedSession struct {
