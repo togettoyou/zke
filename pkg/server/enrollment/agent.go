@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/identifier"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
@@ -160,7 +161,7 @@ func (service *Service) Enroll(
 		)
 	}
 
-	clusterID, err := newUUID()
+	clusterID, err := identifier.NewUUID()
 	if err != nil {
 		return EnrollResult{}, service.recordEnrollmentFailure(
 			ctx,
@@ -169,7 +170,7 @@ func (service *Service) Enroll(
 			err,
 		)
 	}
-	agentID, err := newUUID()
+	agentID, err := identifier.NewUUID()
 	if err != nil {
 		return EnrollResult{}, service.recordEnrollmentFailure(
 			ctx,

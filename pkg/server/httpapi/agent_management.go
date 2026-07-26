@@ -112,7 +112,7 @@ func (handler *agentManagementHandler) revoke(c *gin.Context) {
 		c.JSON(http.StatusOK, revokeAgentResponse{
 			AgentID:         result.AgentID,
 			LifecycleStatus: "revoked",
-			RevokedAt:       result.RevokedAt,
+			RevokedAt:       responseTime(result.RevokedAt),
 			AlreadyRevoked:  result.AlreadyRevoked,
 		})
 	}

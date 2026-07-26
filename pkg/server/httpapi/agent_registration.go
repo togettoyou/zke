@@ -198,7 +198,7 @@ func (handler *agentRegistrationHandler) enroll(c *gin.Context) {
 		ClusterID:            result.ClusterID,
 		AgentID:              result.AgentID,
 		CertificatePEM:       result.CertificatePEM,
-		CertificateExpiresAt: result.CertificateExpiresAt,
+		CertificateExpiresAt: responseTime(result.CertificateExpiresAt),
 	})
 }
 

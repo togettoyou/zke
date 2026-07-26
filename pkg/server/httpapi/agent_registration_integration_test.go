@@ -147,6 +147,7 @@ RETURNING id::text
 		result.CertificateExpiresAt.IsZero() {
 		t.Fatalf("incomplete registration response: %+v", result)
 	}
+	assertUTC8Time(t, "certificate_expires_at", result.CertificateExpiresAt)
 
 	leafBlock, _ := pem.Decode([]byte(result.CertificatePEM))
 	if leafBlock == nil {

@@ -142,7 +142,7 @@ func (handler *authHandler) login(c *gin.Context) {
 	handler.setAuthenticationCookies(c, result)
 	c.JSON(http.StatusOK, authenticationResponse{
 		User:      responseUser(result.User),
-		ExpiresAt: result.ExpiresAt,
+		ExpiresAt: responseTime(result.ExpiresAt),
 	})
 }
 
@@ -151,7 +151,7 @@ func (handler *authHandler) me(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	c.JSON(http.StatusOK, authenticationResponse{
 		User:      responseUser(identity.User),
-		ExpiresAt: identity.ExpiresAt,
+		ExpiresAt: responseTime(identity.ExpiresAt),
 	})
 }
 

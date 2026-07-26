@@ -124,7 +124,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 		ID:          result.ID,
 		ClusterName: result.ClusterName,
 		Token:       result.Token,
-		ExpiresAt:   result.ExpiresAt,
+		ExpiresAt:   responseTime(result.ExpiresAt),
 	})
 }
 

@@ -108,7 +108,7 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 		c.JSON(http.StatusCreated, createAgentInstallationResponse{
 			ID:             result.ID,
 			ClusterName:    result.ClusterName,
-			ExpiresAt:      result.ExpiresAt,
+			ExpiresAt:      responseTime(result.ExpiresAt),
 			ManifestURL:    result.ManifestURL,
 			InstallCommand: result.InstallCommand,
 		})

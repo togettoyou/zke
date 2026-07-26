@@ -190,6 +190,7 @@ WHERE action = 'agent.enrollment.create'
 		body.ExpiresAt.IsZero() {
 		t.Fatalf("incomplete enrollment response: %+v", body)
 	}
+	assertUTC8Time(t, "enrollment expires_at", body.ExpiresAt)
 
 	expectedDigest := sha256.Sum256([]byte(body.Token))
 	var storedDigest []byte
@@ -310,6 +311,7 @@ WHERE action = 'agent.enrollment.create'
 	); err != nil {
 		t.Fatal(err)
 	}
+	assertUTC8Time(t, "installation expires_at", installationBody.ExpiresAt)
 	const bearerPrefix = "Authorization: Bearer "
 	bearerStart := strings.Index(installationBody.InstallCommand, bearerPrefix)
 	if bearerStart < 0 {

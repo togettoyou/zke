@@ -10,6 +10,7 @@ import (
 	"github.com/quic-go/quic-go"
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
+	"github.com/togettoyou/zke/pkg/shared/identifier"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -75,7 +76,7 @@ func BenchmarkLiveAgentHeartbeatRoundTrip(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer stream.Close()
-	startupID, err := newConnectionID()
+	startupID, err := identifier.NewUUID()
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -1,15 +1,16 @@
-package enrollment
+package identifier
 
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
+	"fmt"
 )
 
-func newUUID() (string, error) {
+// NewUUID returns a cryptographically random RFC 4122 version 4 UUID.
+func NewUUID() (string, error) {
 	var value [16]byte
 	if _, err := rand.Read(value[:]); err != nil {
-		return "", errors.New("generate UUID")
+		return "", fmt.Errorf("generate UUID: %w", err)
 	}
 	value[6] = value[6]&0x0f | 0x40
 	value[8] = value[8]&0x3f | 0x80

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,6 +77,11 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 			loginResponse.Body,
 		)
 	}
+	var loginBody authenticationResponse
+	if err := json.Unmarshal(loginResponse.Body.Bytes(), &loginBody); err != nil {
+		t.Fatal(err)
+	}
+	assertUTC8Time(t, "login expires_at", loginBody.ExpiresAt)
 	sessionCookie := findCookie(t, loginResponse.Result().Cookies(), sessionCookieName)
 	csrfCookie := findCookie(t, loginResponse.Result().Cookies(), csrfCookieName)
 
@@ -90,6 +96,11 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 			meResponse.Body,
 		)
 	}
+	var meBody authenticationResponse
+	if err := json.Unmarshal(meResponse.Body.Bytes(), &meBody); err != nil {
+		t.Fatal(err)
+	}
+	assertUTC8Time(t, "current session expires_at", meBody.ExpiresAt)
 
 	missingCSRFResponse := httptest.NewRecorder()
 	missingCSRFRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)

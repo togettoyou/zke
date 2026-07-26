@@ -455,6 +455,9 @@ Console 作为 `zke-console` 独立构建产物和容器：
 HTTP API 使用显式版本前缀，例如 `/api/v1`。Server 从会话解析用户身份，并对每次访问校验 Tenant、Project 和
 Cluster 关系。
 
+HTTP JSON 响应中的时间统一使用 RFC 3339 和固定 `UTC+8` 偏移（`+08:00`）。PostgreSQL 继续使用
+`timestamptz` 保存绝对时间，HTTP Cookie 的 `Expires` 继续遵循协议使用 GMT，不把展示时区写入存储或协议字段。
+
 Phase 1 API 权限映射：
 
 | API | 权限 |

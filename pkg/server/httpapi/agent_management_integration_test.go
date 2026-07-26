@@ -216,6 +216,14 @@ VALUES (
 		listed.Agents[0].LastHeartbeatAt == nil {
 		t.Fatalf("unexpected online Agent status: %+v", listed.Agents)
 	}
+	assertUTC8TimePointer(t, "last_seen_at", listed.Agents[0].LastSeenAt)
+	assertUTC8Time(
+		t,
+		"certificate_expires_at",
+		listed.Agents[0].CertificateExpiresAt,
+	)
+	assertUTC8TimePointer(t, "connected_at", listed.Agents[0].ConnectedAt)
+	assertUTC8TimePointer(t, "last_heartbeat_at", listed.Agents[0].LastHeartbeatAt)
 
 	revokePath := "/api/v1/agents/" + agentID + "/revoke"
 	missingCSRF := authenticatedRequest(
@@ -312,6 +320,7 @@ VALUES (
 		revokedBody.RevokedAt.IsZero() {
 		t.Fatalf("unexpected revoke response: %+v", revokedBody)
 	}
+	assertUTC8Time(t, "revoked_at", revokedBody.RevokedAt)
 
 	disconnectedAt := time.Now().UTC()
 	connections.statuses[agentID] = agentconn.ConnectionStatus{
@@ -344,6 +353,11 @@ VALUES (
 		listed.Agents[0].LastDisconnectReason != "agent_revoked" {
 		t.Fatalf("unexpected offline Agent status: %+v", listed.Agents)
 	}
+	assertUTC8TimePointer(
+		t,
+		"last_disconnected_at",
+		listed.Agents[0].LastDisconnectedAt,
+	)
 
 	repeated := authenticatedRequest(
 		t,
@@ -365,6 +379,7 @@ VALUES (
 		!repeatedBody.RevokedAt.Equal(revokedBody.RevokedAt) {
 		t.Fatalf("unexpected repeated revoke response: %+v", repeatedBody)
 	}
+	assertUTC8Time(t, "repeated revoked_at", repeatedBody.RevokedAt)
 
 	var deniedAudits, failedAudits, succeededAudits int
 	if err := pool.QueryRow(ctx, `
