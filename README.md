@@ -8,16 +8,8 @@
 
 ZKE 是一款构建在 Kubernetes 之上的云原生管理平台，面向多集群管理、容器服务、作业调度、AI 算力、模型服务、统一可观测性与 AI 辅助排障场景。
 
-用户登录后将进入具有桌面操作体验的 Web 工作空间。不同平台能力以桌面应用呈现，并在独立窗口中运行。
-
 > [!IMPORTANT]
 > ZKE 当前处于早期设计与开发阶段。部分模块尚未实现，产品范围与技术选型仍可能调整，当前版本不适用于生产环境。
-
-## 产品预览
-
-<!-- TODO: 产品截图 -->
-
-> 产品界面仍在设计中。后续将在此处补充 Web Desktop、多集群管理、算力平台与 ZKE Copilot 的产品截图。
 
 ## 核心能力
 
@@ -46,20 +38,13 @@ ZKE 是一款构建在 Kubernetes 之上的云原生管理平台，面向多集�
 
 [了解产品愿景与完整设计原则](docs/product/vision.md)
 
-## Web Desktop
-
-ZKE Web Desktop 是具有桌面操作体验的 Kubernetes 管理工作空间。Agent 管理、容器服务、作业平台、算力平台、可观测性平台与 ZKE Copilot 将以桌面应用呈现，并支持独立窗口与多任务操作。
-
-[了解 Web Desktop](docs/product/web-desktop.md)
-
 ## 系统架构
 
 ZKE 采用 Server + Agent 架构。每个接入的 Kubernetes 集群部署一个 ZKE Agent，由 Agent 主动连接 ZKE Server，不要求 Server 直接访问 Kubernetes API Server。
 
 ```mermaid
 flowchart TB
-    User["用户"] --> Desktop["ZKE Web Desktop"]
-    Desktop --> Server["ZKE Server"]
+    User["用户或平台客户端"] --> Server["ZKE Server"]
     Server <--> AgentA["ZKE Agent A"]
     Server <--> AgentB["ZKE Agent B"]
     AgentA <--> ClusterA["Kubernetes Cluster A"]
@@ -74,9 +59,9 @@ flowchart TB
 - [应用作用域与资源模型](docs/architecture/resource-model.md)
 - [安全与权限](docs/security/authorization.md)
 
-## 桌面应用
+## 功能领域
 
-| 应用 | 作用域 | 说明 | 详细文档 |
+| 领域 | 作用域 | 说明 | 详细文档 |
 | --- | --- | --- | --- |
 | Agent 管理 | 多集群 | 接入、诊断和统一管理集群 Agent | [查看](docs/features/agent-management.md) |
 | 容器服务 | 单集群 | 管理当前集群的 Kubernetes 资源 | [查看](docs/features/container-service.md) |

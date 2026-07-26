@@ -7,7 +7,6 @@
 ## 产品
 
 - [产品愿景与设计原则](product/vision.md)
-- [Web Desktop](product/web-desktop.md)
 
 ## 架构
 

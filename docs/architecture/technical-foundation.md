@@ -14,7 +14,7 @@ ZKE Copilot 提供稳定边界。
 1. 已授权用户为指定 Tenant 和 Project 创建一次性 Agent 注册凭证；
 2. ZKE Agent 从 Kubernetes 集群主动连接 ZKE Server；
 3. Server 完成 Agent 注册、身份建立、心跳接收与连接状态维护；
-4. ZKE Console 通过 Server API 查看权限范围内的集群和 Agent 状态；
+4. Server API 按权限范围返回集群和 Agent 状态；
 5. Agent 断开后，Server 能够判定离线；Agent 重启后使用原身份恢复连接；
 6. 注册、拒绝、连接、断开和凭证撤销均留下不含敏感正文的审计记录。
 
@@ -24,45 +24,40 @@ ZKE Copilot 提供稳定边界。
 | --- | --- | --- |
 | ZKE Server | 已确定 | Go 1.26 |
 | ZKE Agent | 已确定 | Go 1.26 |
-| ZKE Console | 已确定 | React 19 + TypeScript + Vite 8 的客户端 SPA |
-| Console 构建环境 | 已确定 | Node.js 24 LTS + pnpm，具体补丁版本通过项目文件和 lockfile 固定 |
-| Console 组件体系 | 已确定 | Ant Design 6 作为基础组件库，ZKE 自行维护主题 Token 和桌面交互组件 |
 | Server HTTP 框架 | 已确定 | Gin；使用自建 `http.Server` 承载并统一配置超时 |
 | Server–Agent 传输 | 已确定 | QUIC/`quic-go` + mTLS，Agent 主动建立连接 |
 | Agent 消息编码 | 已确定 | 版本化 Protobuf 消息和长度前缀帧 |
-| Console–Server API | 已确定 | HTTP/JSON + OpenAPI；SSE 提供单向实时状态，WebSocket 仅用于交互式会话 |
+| 用户管理 API | 已确定 | HTTP/JSON + OpenAPI；SSE 提供单向实时状态，WebSocket 仅用于交互式会话 |
 | 主数据存储 | 已确定 | PostgreSQL |
 | 用户认证 | 已确定 | ZKE 内置本地用户、Argon2id 密码摘要和 Server 端不透明会话 |
 | Agent 身份 | 已确定 | 一次性注册凭证完成引导，注册后使用 mTLS |
-| 仓库组织 | 已确定 | 单仓库；Server 与 Agent 初期共用一个 Go module；Console 位于同仓库的 `web/console` 前端工作区 |
+| 仓库组织 | 已确定 | 单仓库；Server 与 Agent 初期共用一个 Go module |
 
-初始化工程时显式设置 Go 1.26 的 `go` 与 `toolchain` 指令，并提交 `packageManager`、Node.js 版本文件和依赖
-lockfile；补丁版本由这些文件固定。
+初始化工程时显式设置 Go 1.26 的 `go` 与 `toolchain` 指令，工具版本通过 Go module 固定。
 
 ## 3. 总体边界
 
 ```mermaid
 flowchart LR
-    User["用户"] --> Console["ZKE Console<br/>React SPA"]
-    Console -->|"HTTP/JSON + SSE"| Server["ZKE Server<br/>Go 1.26"]
+    Client["用户或平台客户端"] -->|"HTTP/JSON + SSE"| Server["ZKE Server<br/>Go 1.26"]
     Server --> DB["PostgreSQL"]
     Server <-->|"QUIC + mTLS<br/>独立双向 Stream"| Agent["ZKE Agent<br/>Go 1.26"]
     Agent --> K8s["目标 Kubernetes 集群"]
 ```
 
-- Console 通过 ZKE Server 访问平台能力。
+- 用户或平台客户端通过 ZKE Server API 访问平台能力。
 - Server 负责用户认证、RBAC、作用域校验、Agent 连接管理、任务编排、持久化和审计。
 - Agent 主动连接 Server，仅使用出站连接。
 - 所有集群查询和操作最终由对应集群中的 Agent 定域执行。
 - Server 从用户会话或 Agent 身份推导 Tenant、Project 和 Cluster 权限作用域。
-- Console HTTP API 与 Agent QUIC 连接使用不同 Listener；Agent Listener 使用 UDP。
+- 管理 HTTP API 与 Agent QUIC 连接使用不同 Listener；Agent Listener 使用 UDP。
 
 ## 4. Server 技术基线
 
 ### 4.1 运行时与代码组织
 
 - 使用 Go 1.26。
-- Console HTTP API 使用 Gin。使用 `gin.New()` 显式装配日志、恢复、认证、授权、CSRF、限流和审计中间件，
+- 管理 HTTP API 使用 Gin。使用 `gin.New()` 显式装配日志、恢复、认证、授权、CSRF、限流和审计中间件，
   并由 ZKE 控制全部中间件配置。
 - Gin Engine 作为标准库 `http.Server` 的 Handler；由 ZKE 显式配置 Header、读取和空闲超时，并执行优雅关闭。
   普通 API 使用写超时，SSE 使用独立写入 Deadline、心跳和最长连接时限。
@@ -94,7 +89,7 @@ Store，也不使用 Store 的数据结构；Service 将数据库结构转换为
 业务约束。
 
 所有 HTTP Method、路径和局部中间件统一在 `pkg/server/httpapi/routes.go` 注册。`router.go` 只创建 Gin
-Engine、装配全局中间件和构造 Handler；具体 Handler 文件不得自行向根 Router 注册路径。Console API 使用
+Engine、装配全局中间件和构造 Handler；具体 Handler 文件不得自行向根 Router 注册路径。管理 API 使用
 `/api/v1` 路由组，Agent 注册 API 使用独立的 `/agent-api/v1` 路由组。恢复中间件返回统一错误并记录请求关联 ID。
 
 ### 4.2 数据存储
@@ -166,7 +161,7 @@ Phase 1 使用固定权限标识：`tenant.create`、`project.create`、`agent.e
 持久化账户锁定与到期自动恢复、管理员解锁和密码重置已经实现；锁定、禁用和密码重置均撤销现有 Session。
 用户与 RoleBinding 管理 API 仅允许 Global 管理员调用，保留最后一个有效 Global 管理员并记录事务内成功审计。
 RBAC 已接入 Tenant/Project 创建、Cluster/Agent 查询、Agent 注册凭证创建、安装 Manifest、Agent 撤销和
-审计查询。Console 登录流程尚未实现，但 Phase 1 后端认证与 RBAC 闭环不再依赖直接写数据库。
+审计查询；Phase 1 认证与 RBAC 后端闭环不再依赖直接写数据库。
 登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
@@ -273,7 +268,7 @@ UDP
 - QUIC 内建 TLS 1.3；Agent 验证 Server 证书，Server 验证 Agent 客户端证书。
 - TLS ALPN 固定为 `zke-agent/1`。
 - Phase 1 不使用 QUIC 0-RTT，应用消息在 mTLS 握手完成后发送。
-- Console HTTP Listener 与 Agent QUIC Listener 分离；Agent Listener 需要 UDP 入口。
+- 管理 HTTP Listener 与 Agent QUIC Listener 分离；Agent Listener 需要 UDP 入口。
 - Agent 始终作为连接发起方，但双方都可以创建双向 Stream。
 
 ### 7.3 Connection 建立
@@ -376,84 +371,9 @@ Agent 状态拆分为：
 健康状态跃迁立即持久化，连接变化写入结构化日志。状态 API 合并当前 Server 实例的实时连接快照；撤销状态同时
 触发连接关闭和安全审计。
 
-## 8. Console 技术基线
+## 8. HTTP API
 
-### 8.1 基础组合
-
-| 层次 | 基线 |
-| --- | --- |
-| UI 运行时 | React 19 + TypeScript |
-| 构建工具 | Vite 8 |
-| 路由 | React Router，客户端路由模式 |
-| Server 状态 | TanStack Query |
-| 桌面与窗口状态 | Zustand |
-| 基础组件 | Ant Design 6 |
-| 样式 | Ant Design Token + ZKE CSS 变量 + CSS Modules |
-| 国际化 | 从入口预留 locale 层，基础组件使用 Ant Design locale |
-| 单元与组件测试 | Vitest + React Testing Library |
-| API Mock | Mock Service Worker |
-| 端到端测试 | Playwright |
-
-具体依赖补丁版本在初始化时锁定，升级由自动化检查和测试验证。
-
-### 8.2 应用形态
-
-Console 是登录后的高交互管理工作区，采用 React SPA。Vite 负责 TypeScript 和 React 构建，生产环境仅部署静态资源。
-
-### 8.3 状态边界
-
-必须区分以下三类状态：
-
-1. **Server 状态**：Cluster、Agent、权限和审计等，以 Server 为事实来源，由 TanStack Query 管理缓存、失效和重取；
-2. **桌面状态**：已打开窗口、位置、大小、层级、最小化状态和当前焦点，由 Zustand 管理；
-3. **作用域状态**：当前 Tenant、Project、Cluster 和 Namespace，必须显式展示，并由路由或窗口实例持有。
-
-Cluster 数据保留在 TanStack Query；每个窗口保存自己的作用域快照，或明确声明跟随全局作用域。
-
-### 8.4 应用与窗口模型
-
-每个桌面应用提供静态 Manifest：
-
-```text
-id
-title
-icon
-scope_mode          global / project / cluster / namespace
-required_permissions
-instance_mode       singleton / multiple
-entry
-```
-
-Manifest 用于 Console 展示和交互控制，Server 始终执行权限校验。窗口状态按 `window_id` 归一化保存；
-业务应用按路由懒加载。
-
-Ant Design 用于表格、表单、弹窗、通知和基础可访问性能力。桌面、窗口、任务栏、作用域指示器和敏感操作确认属于
-ZKE 产品核心交互，由 ZKE 自有组件实现。
-
-### 8.5 API 与实时更新
-
-- Console 使用从 OpenAPI 生成或严格校验的 TypeScript Client。
-- 普通查询和变更使用 HTTP/JSON。
-- Agent 状态等 Server 到浏览器的单向更新优先使用 SSE；断线后通过事件 ID 或重新查询恢复。SSE 使用心跳、
-  单次写入 Deadline 和最长连接时限。
-- WebSocket 用于 Web Terminal 等双向会话。
-- SSE 或 WebSocket 事件只携带资源标识和变化摘要，收到事件后由 TanStack Query 精确失效对应缓存。
-- 实时连接按当前会话和 RBAC 过滤事件；会话撤销或权限变化时立即关闭。
-- 所有敏感变更均由 Server 执行 RBAC、目标和影响校验。
-
-### 8.6 构建与部署
-
-Console 作为 `zke-console` 独立构建产物和容器：
-
-- 生产产物为静态文件；
-- 网关保持 Console 与 `/api`、`/events` 同源，减少 Cookie、CORS 和 CSRF 配置复杂度；
-- 本地开发由 Vite 代理 API 和事件连接到本地 Server；
-- 部署时使用不可变资源文件名，并确保 `index.html` 不被长期缓存；
-- Browser Router 的非根路径由静态服务回退到 `index.html`。
-
-## 9. HTTP API
-
-### 9.1 Console–Server API
+### 8.1 用户管理 API
 
 HTTP API 使用显式版本前缀，例如 `/api/v1`。Server 从会话解析用户身份，并对每次访问校验 Tenant、Project 和
 Cluster 关系。
@@ -560,7 +480,7 @@ Content-Type: application/json
 
 错误正文只包含可安全展示的错误码、消息和请求关联 ID。
 
-### 9.2 Agent 注册 API
+### 8.2 Agent 注册 API
 
 Agent 初次注册通过 Gin HTTP Listener。生产环境必须提供 HTTPS，可由 ZKE Server 原生终止 TLS，也可由上游
 网关终止 TLS：
@@ -570,7 +490,7 @@ POST /agent-api/v1/enroll
 ```
 
 该接口使用注册凭证认证，接受 CSR、Agent 版本、协议版本和幂等键。Tenant、Project 和集群名称由注册凭证确定。
-注册接口与 Console API 共用 HTTP Server，但使用独立路由组、认证中间件、请求体上限和限流策略。
+注册接口与管理 API 共用 HTTP Server，但使用独立路由组、认证中间件、请求体上限和限流策略。
 
 当前接口约定：
 
@@ -597,7 +517,7 @@ Content-Type: application/json
 Token 的明文 HTTP 直接暴露到不可信网络。注册完成后的 Agent 长连接是独立的 QUIC/UDP Listener，始终使用
 TLS 1.3 和 mTLS，不经过 HTTP 网关，也不复用 HTTP TLS 身份。
 
-## 10. 最小数据模型
+## 9. 最小数据模型
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
@@ -622,16 +542,15 @@ Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 心跳时间、最近断开时间和原因。离线历史不持久化，Server 重启后丢失；多实例部署也尚未汇总其他实例的连接，
 因此 Server 多副本方案落地前仍需补充 Agent 连接所有权和跨实例任务路由设计。Phase 1 不包含 Cluster Group。
 
-## 11. 仓库结构
+## 10. 仓库结构
 
-初期使用单仓库。Server 与 Agent 共用一个 Go module，减少共享协议与工具链的版本协调成本；Console 位于同仓库
-的 `web/console`，使用独立的前端 `package.json`、构建和测试配置：
+初期使用单仓库。Server 与 Agent 共用一个 Go module，减少共享协议与工具链的版本协调成本：
 
 ```text
 .
 ├── api/
 │   ├── agent/v1/          # Protobuf 源文件
-│   └── openapi/           # Console HTTP API 定义
+│   └── openapi/           # Server HTTP API 定义
 ├── cmd/
 │   ├── zke-server/
 │   └── zke-agent/
@@ -640,8 +559,6 @@ Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
 │   ├── agent/
 │   └── shared/
 │       └── logging/       # Server 与 Agent 共用的结构化日志初始化
-├── web/
-│   └── console/
 ├── deploy/
 └── docs/
 ```
@@ -658,13 +575,11 @@ bash hack/generate-agent-protocol.sh
 ```
 
 Server HTTP API 的 OpenAPI 3.1 契约位于 `api/openapi/zke-server.v1.yaml`。测试会比较契约中的 Method/Path 与
-Gin 实际注册路由，并检查 `operationId` 唯一性；Console TypeScript Client 的生成会在 Console 接入时基于该
-契约完成。
+Gin 实际注册路由，并检查 `operationId` 唯一性。
 
-### 11.1 本地启动与验证
+### 10.1 本地启动与验证
 
-本地开发环境需要 Go 1.26.4、Node.js 24 LTS、pnpm 11、Docker 与 Docker Compose。Go 命令在仓库根目录
-执行，pnpm 命令只在 `web/console` 中执行。
+本地开发环境需要 Go 1.26.4、Docker 与 Docker Compose。Go 命令在仓库根目录执行。
 
 本地配置使用 Server Managed PKI。首次正常启动会在被 Git 忽略的 `.local/development` 自动生成 Agent
 Client CA、Agent Listener CA 和 Agent Listener 身份，不再需要独立的开发 PKI 生成脚本。
@@ -681,7 +596,6 @@ go run ./cmd/zke-server --config configs/zke-server.yaml
 # 在另一个终端输入刚创建的 Enrollment Token：
 hack/setup-local-agent-resources.sh
 go run ./cmd/zke-agent --config configs/zke-agent.yaml
-cd web/console && pnpm install --frozen-lockfile && pnpm dev
 ```
 
 Server 必须先成功启动一次，以便 Managed PKI 生成 `.local/development/agent-listener-ca.crt`。随后从已有
@@ -695,10 +609,9 @@ Server 在迁移完成后检查用户表，只在空表时按 `auth.initial_admi
 部署环境应关闭 `auto_generate_password`，并将 `password_file` 指向由 Kubernetes Secret 或等价机制挂载的
 受保护文件。
 
-Tenant、Project 和 Enrollment 属于正常产品资源，应由对应 Web/API 创建，不由本地脚本写数据库。当前 Server
-已经提供 Tenant/Project 创建与权限范围列表 API；Console 界面尚未接入，因此本地开发暂时通过这些 HTTP API
-创建 Project。随后启用 `agent_install`，由安装 API 返回 `curl | kubectl apply` 命令，将 Agent、Secret 和
-最小 RBAC 一次部署到目标集群。
+Tenant、Project 和 Enrollment 属于正常产品资源，应由管理 API 创建，不由本地脚本写数据库。启用
+`agent_install` 后，安装 API 可返回 `curl | kubectl apply` 命令，将 Agent、Secret 和最小 RBAC 一次部署到
+目标集群。
 
 `configs/zke-agent.yaml` 使用本机 HTTP `127.0.0.1:8080` 和 QUIC `127.0.0.1:8443`，可以配合当前
 kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernetes Secret，不混入宿主机 `.local`
@@ -744,13 +657,12 @@ Agent Client CA、Agent Listener CA 和 Listener 身份文件全部集中在 `ag
 go build ./cmd/...
 go test ./...
 go vet ./...
-cd web/console && pnpm typecheck && pnpm build
 ```
 
 数据库迁移集成测试使用 `ZKE_TEST_DATABASE_URL` 指向专用 PostgreSQL，并在随机临时 Schema 中验证后自动清理；
 CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一约束和索引测试。
 
-## 12. 配置与敏感信息
+## 11. 配置与敏感信息
 
 Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除 `--config` 指定文件路径外，进程配置全部
 来自 YAML，不支持环境变量或单项命令行覆盖。部署配置与 Secret 注入计划在 Chart 实现时单独定义。
@@ -774,7 +686,7 @@ Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除
   由 ZKE Server 还是网关终止，都必须设为 `true`。
 - 启动时对缺失、冲突和不安全配置快速失败，并返回可定位但不泄密的错误。
 
-## 13. 可观测性与审计
+## 12. 可观测性与审计
 
 Server 和 Agent 使用结构化日志，并在适用时携带：
 
@@ -796,7 +708,7 @@ resource_name
 审计与普通运行日志分离。审计事件至少记录发起者、作用域、操作、目标、结果、时间和请求关联 ID，不记录注册
 Token、证书、Secret 或完整敏感请求正文。
 
-## 14. 验证策略
+## 13. 验证策略
 
 ### Go
 
@@ -809,14 +721,6 @@ Token、证书、Secret 或完整敏感请求正文。
 - 使用 Kubernetes fake client 验证 Agent 权限内的读取行为；
 - 验证 RBAC 清单只允许 Agent 更新固定名称的身份 Secret；
 - `go test`、静态检查、竞态检测和构建验证。
-
-### Console
-
-- 窗口状态、作用域隔离和权限展示的单元测试；
-- Agent 列表、状态变化和错误路径的组件测试；
-- 使用 Mock Service Worker 覆盖成功、未认证、无权限、离线和超时；
-- 使用 Playwright 验证登录、创建注册凭证、Agent 上线、离线和恢复的完整流程；
-- 独立执行 TypeScript 类型检查。
 
 ### 安全与协议
 
@@ -832,21 +736,21 @@ Token、证书、Secret 或完整敏感请求正文。
 - 日志和审计输出经过敏感信息扫描；
 - Protobuf breaking-change 和 OpenAPI 兼容性检查进入 CI。
 
-## 15. 首个里程碑完成标准
+## 14. 首个里程碑完成标准
 
 只有同时满足以下条件，Agent 接入闭环才算完成：
 
-- 可以在本地开发环境启动 PostgreSQL、Server、Agent 和 Console；
+- 可以在本地开发环境启动 PostgreSQL、Server 和 Agent；
 - 已认证且有权限的用户可以创建短期一次性注册凭证；
 - Agent 能完成注册并使用注册后身份建立 QUIC/mTLS 长连接；
 - Agent 能更新身份 Secret，并在证书到期前完成轮换；
-- Console 能在正确 Tenant 和 Project 边界内显示 Cluster、Agent 版本、在线状态和最后心跳；
+- 状态 API 能在正确 Tenant 和 Project 边界内返回 Cluster、Agent 版本、在线状态和最后心跳；
 - Agent 停止后在规定阈值内变为离线，重启后恢复同一身份；
 - 无权限、无效、过期、重复使用和已撤销凭证路径均经过测试；
 - 关键操作具有审计记录，日志中不包含凭证明文；
 - 相关协议、API、本地开发和部署文档同步更新。
 
-## 16. 暂不确定的事项
+## 15. 暂不确定的事项
 
 以下事项后续单独设计：
 
@@ -862,10 +766,6 @@ Token、证书、Secret 或完整敏感请求正文。
 
 ## 参考资料
 
-- [React 版本](https://react.dev/versions)
-- [Vite 8 发布说明](https://vite.dev/blog/announcing-vite8)
-- [Ant Design React 介绍](https://ant.design/docs/react/introduce)
-- [Node.js 发布状态](https://nodejs.org/en/about/previous-releases)
 - [Gin](https://github.com/gin-gonic/gin)
 - [Go net/http](https://pkg.go.dev/net/http)
 - [quic-go Streams](https://quic-go.net/docs/quic/streams/)

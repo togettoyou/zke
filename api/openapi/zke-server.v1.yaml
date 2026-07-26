@@ -3,7 +3,7 @@ info:
   title: ZKE Server API
   version: v1
   description: |
-    ZKE Console、Agent Enrollment 和 Agent 安装使用的 HTTP API 契约。
+    ZKE 用户管理、资源管理、Agent Enrollment 和 Agent 安装使用的 HTTP API 契约。
     所有 JSON 时间均为 RFC 3339，并由当前 API 以 UTC+8 偏移返回。
 servers:
   - url: http://127.0.0.1:8080
@@ -584,15 +584,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [enrollment_id, token, expires_at]
-                properties:
-                  enrollment_id:
-                    $ref: "#/components/schemas/UUID"
-                  token:
-                    type: string
-                  expires_at:
-                    $ref: "#/components/schemas/Timestamp"
+                $ref: "#/components/schemas/AgentEnrollment"
         "409":
           $ref: "#/components/responses/Conflict"
   /api/v1/projects/{project_id}/agent-installations:
@@ -622,8 +614,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/AgentInstallation"
   /api/v1/agents/{agent_id}/revoke:
     post:
       tags: [Agents]
@@ -645,8 +636,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/AgentRevocation"
         "404":
           $ref: "#/components/responses/NotFound"
   /agent-api/v1/enroll:
@@ -1098,6 +1088,54 @@ components:
           $ref: "#/components/schemas/Timestamp"
         last_disconnect_reason:
           type: string
+    AgentEnrollment:
+      type: object
+      additionalProperties: false
+      required: [id, cluster_name, token, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        cluster_name:
+          type: string
+        token:
+          type: string
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+    AgentInstallation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - cluster_name
+        - expires_at
+        - manifest_url
+        - install_command
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        cluster_name:
+          type: string
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        manifest_url:
+          type: string
+          format: uri
+        install_command:
+          type: string
+    AgentRevocation:
+      type: object
+      additionalProperties: false
+      required: [agent_id, lifecycle_status, revoked_at, already_revoked]
+      properties:
+        agent_id:
+          $ref: "#/components/schemas/UUID"
+        lifecycle_status:
+          type: string
+          const: revoked
+        revoked_at:
+          $ref: "#/components/schemas/Timestamp"
+        already_revoked:
+          type: boolean
     AuditEvent:
       type: object
       additionalProperties: false

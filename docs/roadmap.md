@@ -4,7 +4,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 
 ## Phase 1：平台基础
 
-- [x] Server、Agent、Console 可运行工程骨架
+- [x] Server、Agent 可运行工程骨架
 - [x] PostgreSQL 本地开发环境、版本化迁移与 Phase 1 最小数据模型
 - [x] 首个管理员自动引导、本地登录、Session 与 CSRF 安全基础
 - [x] Global、Tenant、Project RoleBinding 与 Project HTTP 授权基础
@@ -20,9 +20,6 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] 用户认证后端
 - [x] RBAC 后端
 - [x] 集群接入
-- [ ] Web Desktop
-- [ ] 桌面应用窗口管理
-- [ ] Agent 管理 Console
 
 ## Phase 2：容器服务
 

@@ -67,5 +67,5 @@ Global/Tenant/Project/Cluster 授权拒绝审计已经实现。`GET /api/v1/audi
 RoleBinding 的 Global、Tenant 或 Project 可见范围过滤结果，支持条件过滤和基于游标的有界分页。用户、
 RoleBinding、账户恢复和密码重置的成功、失败与权限拒绝也会写入审计。
 
-可信反向代理来源解析、Console 登录流程和跨组织的细粒度委派管理仍属于后续工作。Phase 1 后端认证与 RBAC
-闭环已经实现，但项目仍处于早期开发阶段，不适用于生产环境。
+可信反向代理来源解析和跨组织的细粒度委派管理仍属于后续工作。Phase 1 认证、用户与 RoleBinding 管理以及
+审计查询后端已经实现，但项目仍处于早期开发阶段，不适用于生产环境。

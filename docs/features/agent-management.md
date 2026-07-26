@@ -43,7 +43,7 @@ Agent 已实现首次注册流程：在集群内生成 ECDSA P-256 私钥和 CSR
 并在首次有效连接后激活 Cluster 与 Agent；心跳限频更新健康状态和 `last_seen_at`。Agent 会在证书到期前通过
 Control Stream 自动续期，持久化 CSR 以支持幂等恢复，并在新证书连接成功后撤销旧 Credential。Credential、
 Agent 或 Cluster 被撤销时，Server 通过 PostgreSQL 通知关闭现有连接；连接也不会越过客户端证书自然过期时间。
-业务任务 Stream、Web 展示、Helm Chart 和升级管理仍属于后续实现范围。
+业务任务 Stream、Helm Chart 和升级管理仍属于后续实现范围。
 Agent ServiceAccount 需要 Secret 的 `create` 权限，对固定的 Enrollment、Trust 和 identity Secret 具有
 `get` 权限，并只能更新 identity Secret。注册 Token 只保存在独立 Secret 中，不能写入 Agent YAML、日志或
 身份 Secret；Agent 通过 client-go 定域读取它。
@@ -56,7 +56,7 @@ Secret，Server 也已单次消费 Token。
 
 Server 已实现 `GET /api/v1/projects/{project_id}/agents`，返回 Agent 当前证书过期时间、剩余秒数和证书状态，
 并合并当前 Server 实例内存中的 `online`/`offline` 状态、Connection ID、连接时间、最近心跳、断开时间和断开
-原因，供后续 Web 使用；同时按配置周期输出临近过期的结构化告警。连接快照不写数据库，Server 重启后离线 Agent
+原因，供管理客户端使用；同时按配置周期输出临近过期的结构化告警。连接快照不写数据库，Server 重启后离线 Agent
 的历史断开信息会丢失；多 Server 实例的全局连接视图仍需后续的连接所有权与路由设计。
 
 Server 已实现 `GET /api/v1/events` SSE。连接建立、健康状态变化、生命周期撤销和断开会发送权限过滤后的 `agent.status`

@@ -7,7 +7,6 @@ Agent 首次注册、identity Secret、证书信任链和 QUIC/mTLS 长连接的
 
 ZKE Server 是平台统一控制端，规划负责：
 
-- Web Desktop；
 - 用户认证；
 - RBAC 权限控制；
 - 多租户与项目管理；
