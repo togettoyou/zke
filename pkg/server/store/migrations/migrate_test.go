@@ -96,6 +96,10 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"CREATE TRIGGER agents_notify_revocation",
 		"CREATE TRIGGER clusters_notify_revocation",
 		"CREATE INDEX audit_events_scope_time_idx",
+		"CREATE TABLE tenant_creation_requests",
+		"CREATE TABLE project_creation_requests",
+		"UNIQUE (actor_user_id, idempotency_key)",
+		"UNIQUE (actor_user_id, tenant_id, idempotency_key)",
 		"CREATE TABLE server_pki_state",
 		"active_credential_serial text",
 	} {

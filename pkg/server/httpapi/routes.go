@@ -22,6 +22,34 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.auth.logout,
 	)
 
+	tenantRoutes := apiV1.Group("/tenants")
+	tenantRoutes.Use(
+		handlers.requestTimeout,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	tenantRoutes.GET("", handlers.resourceManagement.listTenants)
+	tenantRoutes.POST(
+		"",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(
+			rbac.PermissionTenantCreate,
+		),
+		handlers.resourceManagement.createTenant,
+	)
+	tenantRoutes.GET(
+		"/:tenant_id/projects",
+		handlers.resourceManagement.listProjects,
+	)
+	tenantRoutes.POST(
+		"/:tenant_id/projects",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireTenant(
+			rbac.PermissionProjectCreate,
+			"tenant_id",
+		),
+		handlers.resourceManagement.createProject,
+	)
+
 	projectRoutes := apiV1.Group("/projects")
 	projectRoutes.Use(
 		handlers.requestTimeout,
@@ -52,6 +80,36 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"project_id",
 		),
 		handlers.agentInstallation.create,
+	)
+	projectRoutes.GET(
+		"/:project_id/clusters",
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionClusterRead,
+			"project_id",
+		),
+		handlers.resourceManagement.listClusters,
+	)
+
+	clusterRoutes := apiV1.Group("/clusters")
+	clusterRoutes.Use(
+		handlers.requestTimeout,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.resourceManagement.getCluster,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/agent",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionAgentRead,
+			"cluster_id",
+		),
+		handlers.agentStatus.getCluster,
 	)
 
 	agentRoutes := apiV1.Group("/agents")

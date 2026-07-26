@@ -23,6 +23,38 @@ func NewService(rbacStore *store.RBACStore) *Service {
 	return &Service{store: rbacStore}
 }
 
+func (service *Service) ResolveVisibility(
+	ctx context.Context,
+	userID string,
+	permission Permission,
+) (Visibility, error) {
+	if err := validateSubjectPermission(userID, permission); err != nil {
+		return Visibility{}, err
+	}
+	bindings, err := service.store.ListRoleBindings(ctx, userID)
+	if err != nil {
+		return Visibility{}, err
+	}
+	visibility := Visibility{
+		tenantWide:  make(map[string]struct{}),
+		projectOnly: make(map[string]string),
+	}
+	for _, binding := range bindings {
+		if !roleGrants(binding.Role, permission) {
+			continue
+		}
+		switch binding.ScopeType {
+		case string(scopeGlobal):
+			visibility.global = true
+		case string(scopeTenant):
+			visibility.tenantWide[binding.TenantID] = struct{}{}
+		case string(scopeProject):
+			visibility.projectOnly[binding.ProjectID] = binding.TenantID
+		}
+	}
+	return visibility, nil
+}
+
 func (service *Service) AuthorizeGlobal(
 	ctx context.Context,
 	userID string,
@@ -92,6 +124,34 @@ func (service *Service) AuthorizeAgent(
 	return agentScope, err
 }
 
+func (service *Service) AuthorizeCluster(
+	ctx context.Context,
+	userID string,
+	permission Permission,
+	clusterID string,
+) (store.ClusterAuthorizationScope, error) {
+	if err := validateSubjectPermission(userID, permission); err != nil {
+		return store.ClusterAuthorizationScope{}, err
+	}
+	if !validation.IsUUID(clusterID) {
+		return store.ClusterAuthorizationScope{}, ErrInvalidScope
+	}
+	clusterScope, err := service.store.FindClusterAuthorizationScope(ctx, clusterID)
+	if errors.Is(err, store.ErrClusterNotFound) {
+		return store.ClusterAuthorizationScope{}, ErrDenied
+	}
+	if err != nil {
+		return store.ClusterAuthorizationScope{}, err
+	}
+	err = service.authorizeValidated(
+		ctx,
+		userID,
+		permission,
+		projectScope(clusterScope.TenantID, clusterScope.ProjectID),
+	)
+	return clusterScope, err
+}
+
 func (service *Service) authorize(
 	ctx context.Context,
 	userID string,
@@ -138,7 +198,9 @@ func validateSubjectPermission(userID string, permission Permission) error {
 
 func (permission Permission) valid() bool {
 	switch permission {
-	case PermissionAgentEnrollmentCreate,
+	case PermissionTenantCreate,
+		PermissionProjectCreate,
+		PermissionAgentEnrollmentCreate,
 		PermissionClusterRead,
 		PermissionAgentRead,
 		PermissionAgentRevoke:

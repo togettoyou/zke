@@ -79,25 +79,65 @@ func (handler *agentStatusHandler) list(c *gin.Context) {
 	default:
 		response := make([]agentStatusResponse, 0, len(result))
 		for _, item := range result {
-			response = append(response, agentStatusResponse{
-				ClusterID:                   item.ClusterID,
-				ClusterName:                 item.ClusterName,
-				AgentID:                     item.AgentID,
-				LifecycleStatus:             item.LifecycleStatus,
-				HealthStatus:                item.HealthStatus,
-				LastSeenAt:                  responseTimePointer(item.LastSeenAt),
-				CertificateSerial:           item.CertificateSerial,
-				CertificateExpiresAt:        responseTime(item.CertificateExpiresAt),
-				CertificateRemainingSeconds: item.CertificateRemainingSeconds,
-				CertificateStatus:           item.CertificateStatus,
-				ConnectionStatus:            item.ConnectionStatus,
-				ConnectionID:                item.ConnectionID,
-				ConnectedAt:                 responseTimePointer(item.ConnectedAt),
-				LastHeartbeatAt:             responseTimePointer(item.LastHeartbeatAt),
-				LastDisconnectedAt:          responseTimePointer(item.LastDisconnectedAt),
-				LastDisconnectReason:        item.LastDisconnectReason,
-			})
+			response = append(response, responseAgentStatus(item))
 		}
 		c.JSON(http.StatusOK, gin.H{"agents": response})
+	}
+}
+
+func (handler *agentStatusHandler) getCluster(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if handler.service == nil {
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent status is unavailable")
+		return
+	}
+	operationContext, cancel := context.WithTimeout(
+		c.Request.Context(),
+		handler.operationTimeout,
+	)
+	result, err := handler.service.GetCluster(
+		operationContext,
+		c.Param("cluster_id"),
+		time.Now().UTC(),
+	)
+	cancel()
+	switch {
+	case errors.Is(err, agentstatus.ErrInvalidInput):
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid cluster")
+	case errors.Is(err, agentstatus.ErrNotFound):
+		writeError(c, http.StatusNotFound, "not_found", "Agent not found")
+	case errors.Is(err, context.DeadlineExceeded):
+		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
+	case err != nil:
+		handler.logger.Error(
+			"get cluster Agent status",
+			slog.String("request_id", httpmiddleware.RequestID(c)),
+			slog.String("cluster_id", c.Param("cluster_id")),
+			slog.String("error", err.Error()),
+		)
+		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
+	default:
+		c.JSON(http.StatusOK, responseAgentStatus(result))
+	}
+}
+
+func responseAgentStatus(item agentstatus.Agent) agentStatusResponse {
+	return agentStatusResponse{
+		ClusterID:                   item.ClusterID,
+		ClusterName:                 item.ClusterName,
+		AgentID:                     item.AgentID,
+		LifecycleStatus:             item.LifecycleStatus,
+		HealthStatus:                item.HealthStatus,
+		LastSeenAt:                  responseTimePointer(item.LastSeenAt),
+		CertificateSerial:           item.CertificateSerial,
+		CertificateExpiresAt:        responseTime(item.CertificateExpiresAt),
+		CertificateRemainingSeconds: item.CertificateRemainingSeconds,
+		CertificateStatus:           item.CertificateStatus,
+		ConnectionStatus:            item.ConnectionStatus,
+		ConnectionID:                item.ConnectionID,
+		ConnectedAt:                 responseTimePointer(item.ConnectedAt),
+		LastHeartbeatAt:             responseTimePointer(item.LastHeartbeatAt),
+		LastDisconnectedAt:          responseTimePointer(item.LastDisconnectedAt),
+		LastDisconnectReason:        item.LastDisconnectReason,
 	}
 }

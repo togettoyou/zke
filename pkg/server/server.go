@@ -23,6 +23,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/pki"
 	"github.com/togettoyou/zke/pkg/server/rbac"
+	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
@@ -182,17 +183,22 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		agentConnectionManager,
 		cfg.CertificateMonitor.WarningBefore,
 	)
+	resourceManagementService := resourcemanagement.NewService(
+		store.NewResourceManagementStore(database),
+		rbacService,
+	)
 	handler := httpapi.New(
 		logger,
 		httpapi.Dependencies{
-			ReadinessCheck:           database.Ping,
-			AuthService:              authenticationService,
-			AuditService:             auditService,
-			RBACService:              rbacService,
-			EnrollmentService:        enrollmentService,
-			AgentInstallationService: agentInstallationService,
-			AgentManagementService:   agentManagementService,
-			AgentStatusService:       agentStatusService,
+			ReadinessCheck:            database.Ping,
+			AuthService:               authenticationService,
+			AuditService:              auditService,
+			RBACService:               rbacService,
+			EnrollmentService:         enrollmentService,
+			AgentInstallationService:  agentInstallationService,
+			AgentManagementService:    agentManagementService,
+			AgentStatusService:        agentStatusService,
+			ResourceManagementService: resourceManagementService,
 		},
 		httpapi.Config{
 			Authentication: httpapi.AuthenticationConfig{

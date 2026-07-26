@@ -110,6 +110,25 @@ func (authorization *Authorization) RequireAgent(
 	})
 }
 
+func (authorization *Authorization) RequireCluster(
+	permission rbac.Permission,
+	clusterParameter string,
+) gin.HandlerFunc {
+	return authorization.require(permission, "cluster", clusterParameter, func(
+		ctx context.Context,
+		userID string,
+		c *gin.Context,
+	) error {
+		_, err := authorization.service.AuthorizeCluster(
+			ctx,
+			userID,
+			permission,
+			c.Param(clusterParameter),
+		)
+		return err
+	})
+}
+
 func (authorization *Authorization) require(
 	permission rbac.Permission,
 	scopeType string,
@@ -201,12 +220,46 @@ func (authorization *Authorization) recordDenied(
 	)
 	var err error
 	switch scopeType {
+	case "global":
+		err = authorization.auditService.RecordGlobalEvent(
+			auditContext,
+			audit.GlobalEventInput{
+				ActorUserID: userID,
+				Action:      string(permission),
+				TargetType:  permissionTargetType(permission),
+				Result:      "denied",
+				RequestID:   RequestID(c),
+			},
+		)
+	case "tenant":
+		err = authorization.auditService.RecordTenantEvent(
+			auditContext,
+			audit.TenantEventInput{
+				ActorUserID: userID,
+				TenantID:    c.Param(scopeParameter),
+				Action:      string(permission),
+				TargetType:  permissionTargetType(permission),
+				Result:      "denied",
+				RequestID:   RequestID(c),
+			},
+		)
 	case "project":
 		err = authorization.auditService.RecordProjectEvent(
 			auditContext,
 			audit.ProjectEventInput{
 				ActorUserID: userID,
 				ProjectID:   c.Param(scopeParameter),
+				Action:      string(permission),
+				Result:      "denied",
+				RequestID:   RequestID(c),
+			},
+		)
+	case "cluster":
+		err = authorization.auditService.RecordClusterEvent(
+			auditContext,
+			audit.ClusterEventInput{
+				ActorUserID: userID,
+				ClusterID:   c.Param(scopeParameter),
 				Action:      string(permission),
 				Result:      "denied",
 				RequestID:   RequestID(c),
@@ -236,6 +289,16 @@ func (authorization *Authorization) recordDenied(
 		attributes = append(attributes, slog.String("error", err.Error()))
 		authorization.logger.Error("record HTTP authorization denial audit", attributes...)
 	}
+}
+
+func permissionTargetType(permission rbac.Permission) string {
+	value := string(permission)
+	for index, character := range value {
+		if character == '.' {
+			return value[:index]
+		}
+	}
+	return "resource"
 }
 
 func (authorization *Authorization) logAttributes(

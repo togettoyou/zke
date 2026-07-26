@@ -12,11 +12,12 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Agent identity Secret、QUIC/mTLS、Hello、心跳与断线重连
 - [x] Agent 客户端证书自动续期、撤销 API、通知断连与实时连接/证书状态 API
 - [x] Server Managed Agent PKI 初始化与 Listener 叶子证书自动续期
+- [x] Tenant/Project 创建与权限范围列表、Cluster/Agent 定域查询 API
 - [ ] ZKE Server
 - [ ] ZKE Agent
 - [ ] 用户认证
 - [ ] RBAC
-- [ ] 集群接入
+- [x] 集群接入
 - [ ] Web Desktop
 - [ ] 桌面应用窗口管理
 - [ ] Agent 管理

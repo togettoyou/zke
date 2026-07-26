@@ -95,3 +95,25 @@ WHERE id = $1
 	}
 	return scope, nil
 }
+
+func (store *RBACStore) FindClusterAuthorizationScope(
+	ctx context.Context,
+	clusterID string,
+) (ClusterAuthorizationScope, error) {
+	var scope ClusterAuthorizationScope
+	err := store.pool.QueryRow(ctx, `
+SELECT tenant_id::text, project_id::text
+FROM clusters
+WHERE id = $1
+`, clusterID).Scan(&scope.TenantID, &scope.ProjectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ClusterAuthorizationScope{}, ErrClusterNotFound
+	}
+	if err != nil {
+		return ClusterAuthorizationScope{}, fmt.Errorf(
+			"find cluster authorization scope: %w",
+			err,
+		)
+	}
+	return scope, nil
+}

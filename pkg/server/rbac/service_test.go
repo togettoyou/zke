@@ -105,6 +105,14 @@ func TestRoleAndScopeRules(t *testing.T) {
 	if roleGrants("viewer", PermissionAgentEnrollmentCreate) {
 		t.Fatal("viewer role granted agent.enrollment.create")
 	}
+	if !roleGrants("admin", PermissionTenantCreate) ||
+		!roleGrants("admin", PermissionProjectCreate) {
+		t.Fatal("admin role did not grant resource creation permissions")
+	}
+	if roleGrants("viewer", PermissionTenantCreate) ||
+		roleGrants("viewer", PermissionProjectCreate) {
+		t.Fatal("viewer role granted resource creation permissions")
+	}
 	if !bindingApplies(store.RoleBinding{
 		ScopeType: "tenant",
 		TenantID:  testTenantID,

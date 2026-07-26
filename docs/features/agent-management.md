@@ -59,6 +59,11 @@ Server 已实现 `GET /api/v1/projects/{project_id}/agents`，返回 Agent 当�
 原因，供后续 Web 使用；同时按配置周期输出临近过期的结构化告警。连接快照不写数据库，Server 重启后离线 Agent
 的历史断开信息会丢失；多 Server 实例的全局连接视图仍需后续的连接所有权与路由设计。
 
+Server 已实现 Tenant/Project 创建和权限范围列表，以及
+`GET /api/v1/projects/{project_id}/clusters`、`GET /api/v1/clusters/{cluster_id}` 和
+`GET /api/v1/clusters/{cluster_id}/agent`。创建请求要求 CSRF、创建权限和幂等键；资源、幂等记录与成功审计
+原子提交。列表只返回当前 RoleBinding 可见范围，Cluster 与 Agent 详情在目标 Cluster 所属 Project 内授权。
+
 Server 已实现 `POST /api/v1/agents/{agent_id}/revoke`。接口要求 Session、CSRF、
 `agent.revoke` 权限和正文中的显式 `{"confirm":true}`；成功后在一个事务中把 Agent 生命周期置为 `revoked`、
 撤销全部客户端 Credential 并写入集群作用域审计。重复撤销返回原撤销时间并标记 `already_revoked`，不会恢复或

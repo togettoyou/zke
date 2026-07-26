@@ -76,7 +76,8 @@ func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
 	if attempts[0].ID != attempts[1].ID ||
 		attempts[0].Status != store.EnrollmentAttemptPending ||
 		attempts[0].EnrollmentID != created.ID ||
-		attempts[0].ClusterName != "integration-cluster" {
+		attempts[0].ClusterName != "integration-cluster" ||
+		attempts[1].ClusterName != "integration-cluster" {
 		t.Fatalf("concurrent attempts are not the same pending attempt: %#v", attempts)
 	}
 

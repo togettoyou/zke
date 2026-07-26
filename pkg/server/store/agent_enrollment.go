@@ -136,6 +136,7 @@ func (store *EnrollmentStore) BeginAgentEnrollment(
 		EnrollmentID:   enrollment.ID,
 		TenantID:       enrollment.TenantID,
 		ProjectID:      enrollment.ProjectID,
+		ClusterName:    enrollment.ClusterName,
 		IdempotencyKey: input.IdempotencyKey,
 		CSRFingerprint: append([]byte(nil), input.CSRFingerprint...),
 		Status:         EnrollmentAttemptPending,

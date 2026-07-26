@@ -14,10 +14,27 @@ type ProjectAuditEvent struct {
 	RequestID   string
 }
 
+type TenantAuditEvent struct {
+	ActorUserID string
+	TenantID    string
+	Action      string
+	TargetType  string
+	Result      string
+	RequestID   string
+}
+
 type GlobalAuditEvent struct {
 	ActorUserID string
 	Action      string
 	TargetType  string
+	Result      string
+	RequestID   string
+}
+
+type ClusterAuditEvent struct {
+	ActorUserID string
+	ClusterID   string
+	Action      string
 	Result      string
 	RequestID   string
 }

@@ -15,19 +15,21 @@ import (
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/rbac"
+	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 )
 
 type ReadinessCheck func(context.Context) error
 
 type Dependencies struct {
-	ReadinessCheck           ReadinessCheck
-	AuthService              *auth.Service
-	AuditService             *audit.Service
-	RBACService              *rbac.Service
-	EnrollmentService        *enrollment.Service
-	AgentInstallationService *agentinstall.Service
-	AgentManagementService   *agentmanagement.Service
-	AgentStatusService       *agentstatus.Service
+	ReadinessCheck            ReadinessCheck
+	AuthService               *auth.Service
+	AuditService              *audit.Service
+	RBACService               *rbac.Service
+	EnrollmentService         *enrollment.Service
+	AgentInstallationService  *agentinstall.Service
+	AgentManagementService    *agentmanagement.Service
+	AgentStatusService        *agentstatus.Service
+	ResourceManagementService *resourcemanagement.Service
 }
 
 type Config struct {
@@ -43,6 +45,7 @@ type handlers struct {
 	agentInstallation       *agentInstallationHandler
 	agentManagement         *agentManagementHandler
 	agentStatus             *agentStatusHandler
+	resourceManagement      *resourceManagementHandler
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
 	requestTimeout          gin.HandlerFunc
@@ -99,6 +102,12 @@ func New(
 		agentStatus: newAgentStatusHandler(
 			logger,
 			dependencies.AgentStatusService,
+			config.Authentication.OperationTimeout,
+		),
+		resourceManagement: newResourceManagementHandler(
+			logger,
+			dependencies.ResourceManagementService,
+			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),
 		authMiddleware: httpmiddleware.NewAuthentication(

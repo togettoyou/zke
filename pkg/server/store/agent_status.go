@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -95,6 +97,64 @@ ORDER BY cluster.name, agent.id
 		return nil, fmt.Errorf("iterate project Agent certificates: %w", err)
 	}
 	return result, nil
+}
+
+func (store *AgentStatusStore) GetClusterAgentCertificate(
+	ctx context.Context,
+	clusterID string,
+) (ProjectAgentCertificate, error) {
+	var item ProjectAgentCertificate
+	err := store.pool.QueryRow(ctx, `
+SELECT
+    agent.tenant_id::text,
+    agent.project_id::text,
+    agent.cluster_id::text,
+    cluster.name,
+    agent.id::text,
+    agent.lifecycle_status,
+    agent.health_status,
+    agent.last_seen_at,
+    credential.serial,
+    credential.expires_at,
+    credential.revoked_at
+FROM agents AS agent
+JOIN clusters AS cluster
+  ON cluster.tenant_id = agent.tenant_id
+ AND cluster.project_id = agent.project_id
+ AND cluster.id = agent.cluster_id
+JOIN LATERAL (
+    SELECT serial, expires_at, revoked_at
+    FROM agent_credentials
+    WHERE tenant_id = agent.tenant_id
+      AND project_id = agent.project_id
+      AND cluster_id = agent.cluster_id
+      AND agent_id = agent.id
+    ORDER BY
+      (serial = agent.active_credential_serial) DESC,
+      created_at DESC
+    LIMIT 1
+) AS credential ON true
+WHERE agent.cluster_id = $1
+`, clusterID).Scan(
+		&item.TenantID,
+		&item.ProjectID,
+		&item.ClusterID,
+		&item.ClusterName,
+		&item.AgentID,
+		&item.LifecycleStatus,
+		&item.HealthStatus,
+		&item.LastSeenAt,
+		&item.CertificateSerial,
+		&item.CertificateExpiresAt,
+		&item.CertificateRevokedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ProjectAgentCertificate{}, ErrAgentNotFound
+	}
+	if err != nil {
+		return ProjectAgentCertificate{}, fmt.Errorf("get cluster Agent certificate: %w", err)
+	}
+	return item, nil
 }
 
 func (store *AgentStatusStore) ListExpiringAgentCertificates(

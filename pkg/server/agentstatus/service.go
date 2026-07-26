@@ -10,7 +10,10 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
-var ErrInvalidInput = errors.New("invalid Agent status input")
+var (
+	ErrInvalidInput = errors.New("invalid Agent status input")
+	ErrNotFound     = store.ErrAgentNotFound
+)
 
 type Service struct {
 	store         *store.AgentStatusStore
@@ -65,6 +68,29 @@ func (service *Service) ListProject(
 	if err != nil {
 		return nil, err
 	}
+	return service.buildAgents(stored, now), nil
+}
+
+func (service *Service) GetCluster(
+	ctx context.Context,
+	clusterID string,
+	now time.Time,
+) (Agent, error) {
+	if !validation.IsUUID(clusterID) || now.IsZero() {
+		return Agent{}, ErrInvalidInput
+	}
+	stored, err := service.store.GetClusterAgentCertificate(ctx, clusterID)
+	if err != nil {
+		return Agent{}, err
+	}
+	result := service.buildAgents([]store.ProjectAgentCertificate{stored}, now)
+	return result[0], nil
+}
+
+func (service *Service) buildAgents(
+	stored []store.ProjectAgentCertificate,
+	now time.Time,
+) []Agent {
 	agentIDs := make([]string, 0, len(stored))
 	for _, item := range stored {
 		agentIDs = append(agentIDs, item.AgentID)
@@ -113,7 +139,7 @@ func (service *Service) ListProject(
 		}
 		result = append(result, agent)
 	}
-	return result, nil
+	return result
 }
 
 func timePointer(value time.Time) *time.Time {

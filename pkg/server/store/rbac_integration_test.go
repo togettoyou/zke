@@ -27,6 +27,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 	projectA1 := insertRBACProject(t, ctx, pool, tenantA, "Project A1")
 	projectA2 := insertRBACProject(t, ctx, pool, tenantA, "Project A2")
 	projectB1 := insertRBACProject(t, ctx, pool, tenantB, "Project B1")
+	clusterA1 := insertRBACCluster(t, ctx, pool, tenantA, projectA1, "Cluster A1")
 
 	globalAdmin := insertRBACUser(t, ctx, pool, "global-admin")
 	globalViewer := insertRBACUser(t, ctx, pool, "global-viewer")
@@ -50,6 +51,27 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		projectID  string
 		allowed    bool
 	}{
+		{
+			name:       "global admin creates tenant",
+			userID:     globalAdmin,
+			permission: rbac.PermissionTenantCreate,
+			scopeType:  "global",
+			allowed:    true,
+		},
+		{
+			name:       "tenant admin creates project",
+			userID:     tenantAdmin,
+			permission: rbac.PermissionProjectCreate,
+			scopeType:  "tenant",
+			tenantID:   tenantA,
+			allowed:    true,
+		},
+		{
+			name:       "global viewer cannot create tenant",
+			userID:     globalViewer,
+			permission: rbac.PermissionTenantCreate,
+			scopeType:  "global",
+		},
 		{
 			name:       "global admin creates enrollment in any project",
 			userID:     globalAdmin,
@@ -110,6 +132,14 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 			projectID:  projectB1,
 		},
 		{
+			name:       "project viewer reads cluster detail",
+			userID:     projectViewer,
+			permission: rbac.PermissionClusterRead,
+			scopeType:  "cluster",
+			projectID:  clusterA1,
+			allowed:    true,
+		},
+		{
 			name:       "project viewer reads its project",
 			userID:     projectViewer,
 			permission: rbac.PermissionAgentRead,
@@ -160,6 +190,10 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 				err = service.AuthorizeProject(
 					ctx, test.userID, test.permission, test.projectID,
 				)
+			case "cluster":
+				_, err = service.AuthorizeCluster(
+					ctx, test.userID, test.permission, test.projectID,
+				)
 			default:
 				t.Fatalf("unknown test scope type %q", test.scopeType)
 			}
@@ -172,6 +206,56 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		})
 	}
 
+	globalVisibility, err := service.ResolveVisibility(
+		ctx,
+		globalViewer,
+		rbac.PermissionClusterRead,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !globalVisibility.AllowsTenant(tenantA) ||
+		!globalVisibility.AllowsProject(tenantB, projectB1) {
+		t.Fatal("global viewer visibility did not cover all resources")
+	}
+	tenantVisibility, err := service.ResolveVisibility(
+		ctx,
+		tenantAdmin,
+		rbac.PermissionClusterRead,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tenantVisibility.AllowsTenant(tenantA) ||
+		!tenantVisibility.AllowsProject(tenantA, projectA2) ||
+		tenantVisibility.AllowsTenant(tenantB) {
+		t.Fatal("tenant visibility crossed its Tenant scope")
+	}
+	projectVisibility, err := service.ResolveVisibility(
+		ctx,
+		projectViewer,
+		rbac.PermissionClusterRead,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !projectVisibility.AllowsTenant(tenantA) ||
+		!projectVisibility.AllowsProject(tenantA, projectA1) ||
+		projectVisibility.AllowsProject(tenantA, projectA2) {
+		t.Fatal("project visibility crossed its Project scope")
+	}
+	createVisibility, err := service.ResolveVisibility(
+		ctx,
+		projectViewer,
+		rbac.PermissionTenantCreate,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createVisibility.AllowsTenant(tenantA) {
+		t.Fatal("viewer visibility granted tenant.create")
+	}
+
 	if err := service.AuthorizeProject(
 		ctx,
 		projectViewer,
@@ -179,6 +263,14 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		projectA1,
 	); err != nil {
 		t.Fatalf("AuthorizeProject() error = %v, want allowed", err)
+	}
+	if _, err := service.AuthorizeCluster(
+		ctx,
+		globalAdmin,
+		rbac.PermissionClusterRead,
+		"00000000-0000-4000-8000-000000000001",
+	); !errors.Is(err, rbac.ErrDenied) {
+		t.Fatalf("missing cluster error = %v, want ErrDenied", err)
 	}
 	if _, err := pool.Exec(
 		ctx,
@@ -218,6 +310,26 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 	); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled project query error = %v, want context.Canceled", err)
 	}
+}
+
+func insertRBACCluster(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	tenantID string,
+	projectID string,
+	name string,
+) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(ctx, `
+INSERT INTO clusters (id, tenant_id, project_id, name, status)
+VALUES (gen_random_uuid(), $1, $2, $3, 'active')
+RETURNING id::text
+`, tenantID, projectID, name).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func insertRBACUser(

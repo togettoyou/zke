@@ -15,7 +15,8 @@
 
 ## 资源层次
 
-ZKE 计划使用以下资源层次组织权限与作用域：
+ZKE 使用以下资源层次组织权限与作用域；当前已实现 Global、Tenant、Project、Cluster 和 Agent，Cluster Group
+与 Namespace 业务管理仍在规划中：
 
 ```text
 Global
@@ -28,4 +29,3 @@ Global
 ```
 
 不同用户只能查看和操作其权限范围内的资源。所有跨集群查询均需遵守租户、项目和 RBAC 权限边界。
-

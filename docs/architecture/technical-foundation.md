@@ -80,8 +80,8 @@ httpapi/response  Handler 与 middleware 共用的稳定 HTTP 错误响应
 agentconn        QUIC 连接、Stream、心跳和请求分发
 auth             用户认证和会话业务流程
 rbac             固定权限、角色矩阵和 Global/Tenant/Project 作用域授权
-project          Project 业务流程（规划）
-cluster          Cluster 业务流程（规划）
+resourcemanagement
+                 Tenant/Project 创建、可见范围列表和 Cluster 查询业务流程
 enrollment       一次性 Agent 注册凭证创建业务流程
 store            PostgreSQL 数据访问
 audit            审计事件
@@ -154,16 +154,16 @@ Phase 1 使用固定权限标识：`agent.enrollment.create`、`cluster.read`、
 - 有效会话查询会原子续期空闲时间且不超过绝对过期时间，用户禁用、会话撤销、超时或密码变更会使会话失效；
 - Session Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，CSRF Token 通过 `SameSite=Strict` Cookie 交付并要求 `X-CSRF-Token` 请求头；两者在 TLS 部署中必须启用 `Secure`；
 - Go 标准库跨源保护会在业务 Handler 之前拒绝非安全的跨源浏览器请求。
-- RBAC 使用固定权限 `agent.enrollment.create`、`cluster.read`、`agent.read` 和 `agent.revoke`；`admin`
-  拥有全部固定权限，`viewer` 只拥有 Cluster 与 Agent 读取权限。
+- RBAC 使用固定权限 `tenant.create`、`project.create`、`agent.enrollment.create`、`cluster.read`、
+  `agent.read` 和 `agent.revoke`；`admin` 拥有全部固定权限，`viewer` 只拥有 Cluster 与 Agent 读取权限。
 - RoleBinding 支持 Global、Tenant 和 Project 作用域；Global 绑定向下覆盖全部作用域，Tenant 绑定覆盖对应
   Tenant 及其 Project，Project 绑定只覆盖目标 Project。未命中有效绑定时默认拒绝。
 - RBAC Service、PostgreSQL Store 和 HTTP 授权 middleware 已实现；Project middleware 会根据 `project_id`
   解析 Tenant 归属，并在业务 Handler 前完成权限检查。
 
-持久化账户锁定与恢复、管理员密码重置和 Console 登录流程尚未实现。RBAC 已接入 Agent 注册凭证创建、安装
-Manifest、Agent 状态查询和 Agent 撤销接口，但 Tenant/Project/Cluster 管理等 API 尚未实现，因此 Roadmap
-中的“用户认证”和“RBAC”仍未完成。
+持久化账户锁定与恢复、管理员密码重置、RoleBinding 管理 API 和 Console 登录流程尚未实现。RBAC 已接入
+Tenant/Project 创建、Cluster/Agent 查询、Agent 注册凭证创建、安装 Manifest 和 Agent 撤销接口，因此
+Roadmap 中的“用户认证”和“RBAC”仍未完成，但资源接入不再依赖直接写数据库。
 登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
@@ -462,6 +462,8 @@ Phase 1 API 权限映射：
 
 | API | 权限 |
 | --- | --- |
+| 创建 Tenant | `tenant.create`（Global） |
+| 创建 Project | `project.create`（Tenant） |
 | 创建 Agent 注册凭证 | `agent.enrollment.create` |
 | 查看 Cluster | `cluster.read` |
 | 查看 Agent | `agent.read` |
@@ -475,6 +477,13 @@ Phase 1 API 权限映射：
 POST /api/v1/auth/login
 POST /api/v1/auth/logout
 GET  /api/v1/auth/me
+GET  /api/v1/tenants
+POST /api/v1/tenants
+GET  /api/v1/tenants/{tenant_id}/projects
+POST /api/v1/tenants/{tenant_id}/projects
+GET  /api/v1/projects/{project_id}/clusters
+GET  /api/v1/clusters/{cluster_id}
+GET  /api/v1/clusters/{cluster_id}/agent
 POST /api/v1/projects/{project_id}/agent-enrollments
 POST /api/v1/projects/{project_id}/agent-installations
 GET  /api/v1/projects/{project_id}/agents
@@ -482,14 +491,17 @@ POST /api/v1/agents/{agent_id}/revoke
 GET  /agent-install/v1/manifest
 ```
 
-以下首个闭环端点仍在规划中：
+以下实时事件端点仍在规划中：
 
 ```text
-GET  /api/v1/projects/{project_id}/clusters
-GET  /api/v1/clusters/{cluster_id}
-GET  /api/v1/clusters/{cluster_id}/agent
 GET  /api/v1/events
 ```
+
+Tenant 和 Project 创建要求 Session、CSRF、对应创建权限以及 `Idempotency-Key`。首次创建返回 `201`，相同用户、
+作用域、Key 和名称的恢复返回 `200` 与 `replayed: true`，同一 Key 换用其他名称返回
+`409 idempotency_conflict`；资源、幂等记录和成功审计在同一事务中提交。Tenant/Project 列表根据当前用户的
+Global、Tenant 和 Project RoleBinding 过滤，不返回不可见资源。Cluster 列表、详情和单 Cluster Agent 详情
+分别执行 Project 或 Cluster 定域的读取授权。
 
 Agent 撤销接口要求 Session、CSRF、`agent.revoke` 权限和 `{"confirm":true}` 显式确认。Server 在同一事务中
 更新 Agent 生命周期、撤销全部客户端 Credential 并写入集群作用域成功审计；重复撤销返回 `200`、原撤销时间和
@@ -664,10 +676,10 @@ Server 在迁移完成后检查用户表，只在空表时按 `auth.initial_admi
 部署环境应关闭 `auto_generate_password`，并将 `password_file` 指向由 Kubernetes Secret 或等价机制挂载的
 受保护文件。
 
-Tenant、Project 和 Enrollment 属于正常产品资源，应由对应 Web/API 创建，不由本地脚本写数据库。当前 Tenant
-与 Project 管理 API/界面尚未实现，因此目前可以启动 Server 和 Console，但还不能完全通过正常产品流程在本地
-新建 Project。已有 Project 的环境应启用 `agent_install`，由安装 API 返回
-`curl | kubectl apply` 命令，将 Agent、Secret 和最小 RBAC 一次部署到目标集群。
+Tenant、Project 和 Enrollment 属于正常产品资源，应由对应 Web/API 创建，不由本地脚本写数据库。当前 Server
+已经提供 Tenant/Project 创建与权限范围列表 API；Console 界面尚未接入，因此本地开发暂时通过这些 HTTP API
+创建 Project。随后启用 `agent_install`，由安装 API 返回 `curl | kubectl apply` 命令，将 Agent、Secret 和
+最小 RBAC 一次部署到目标集群。
 
 `configs/zke-agent.yaml` 使用本机 HTTP `127.0.0.1:8080` 和 QUIC `127.0.0.1:8443`，可以配合当前
 kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernetes Secret，不混入宿主机 `.local`

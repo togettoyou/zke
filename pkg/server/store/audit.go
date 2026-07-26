@@ -7,6 +7,50 @@ import (
 	"strings"
 )
 
+func (store *AuditStore) RecordTenantEvent(
+	ctx context.Context,
+	input TenantAuditEvent,
+) error {
+	if strings.TrimSpace(input.ActorUserID) == "" ||
+		strings.TrimSpace(input.TenantID) == "" ||
+		strings.TrimSpace(input.Action) == "" ||
+		strings.TrimSpace(input.TargetType) == "" ||
+		strings.TrimSpace(input.RequestID) == "" ||
+		(input.Result != "failed" && input.Result != "denied") {
+		return errors.New("tenant audit event fields are invalid")
+	}
+	if _, err := store.pool.Exec(ctx, `
+WITH tenant_scope AS (
+    SELECT id AS tenant_id
+    FROM tenants
+    WHERE id = $2::uuid
+)
+INSERT INTO audit_events (
+    id, actor_type, actor_user_id, scope_type, tenant_id, action,
+    target_type, target_id, result, request_id
+)
+SELECT
+    gen_random_uuid(), 'user', $1::uuid, 'tenant',
+    tenant_scope.tenant_id, $3, $4, NULL::uuid, $5, $6
+FROM tenant_scope
+UNION ALL
+SELECT
+    gen_random_uuid(), 'user', $1::uuid, 'global',
+    NULL::uuid, $3, $4, NULL::uuid, $5, $6
+WHERE NOT EXISTS (SELECT 1 FROM tenant_scope)
+`,
+		input.ActorUserID,
+		input.TenantID,
+		input.Action,
+		input.TargetType,
+		input.Result,
+		input.RequestID,
+	); err != nil {
+		return fmt.Errorf("record tenant audit event: %w", err)
+	}
+	return nil
+}
+
 func (store *AuditStore) RecordProjectEvent(
 	ctx context.Context,
 	input ProjectAuditEvent,
@@ -190,6 +234,50 @@ WHERE NOT EXISTS (SELECT 1 FROM agent_scope)
 		input.RequestID,
 	); err != nil {
 		return fmt.Errorf("record Agent audit event: %w", err)
+	}
+	return nil
+}
+
+func (store *AuditStore) RecordClusterEvent(
+	ctx context.Context,
+	input ClusterAuditEvent,
+) error {
+	if strings.TrimSpace(input.ActorUserID) == "" ||
+		strings.TrimSpace(input.ClusterID) == "" ||
+		strings.TrimSpace(input.Action) == "" ||
+		strings.TrimSpace(input.RequestID) == "" ||
+		(input.Result != "failed" && input.Result != "denied") {
+		return errors.New("cluster audit event fields are invalid")
+	}
+	if _, err := store.pool.Exec(ctx, `
+WITH cluster_scope AS (
+    SELECT tenant_id, project_id, id AS cluster_id
+    FROM clusters
+    WHERE id = $2::uuid
+)
+INSERT INTO audit_events (
+    id, actor_type, actor_user_id, scope_type, tenant_id, project_id,
+    cluster_id, action, target_type, target_id, result, request_id
+)
+SELECT
+    gen_random_uuid(), 'user', $1::uuid, 'cluster',
+    cluster_scope.tenant_id, cluster_scope.project_id,
+    cluster_scope.cluster_id, $3, 'cluster', cluster_scope.cluster_id, $4, $5
+FROM cluster_scope
+UNION ALL
+SELECT
+    gen_random_uuid(), 'user', $1::uuid, 'global',
+    NULL::uuid, NULL::uuid, NULL::uuid,
+    $3, 'cluster', $2::uuid, $4, $5
+WHERE NOT EXISTS (SELECT 1 FROM cluster_scope)
+`,
+		input.ActorUserID,
+		input.ClusterID,
+		input.Action,
+		input.Result,
+		input.RequestID,
+	); err != nil {
+		return fmt.Errorf("record cluster audit event: %w", err)
 	}
 	return nil
 }

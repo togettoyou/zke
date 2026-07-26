@@ -1,6 +1,9 @@
 CREATE TABLE tenants (
     id uuid PRIMARY KEY,
-    name text NOT NULL CHECK (length(btrim(name)) > 0),
+    name text NOT NULL CHECK (
+        name = btrim(name)
+        AND octet_length(name) BETWEEN 1 AND 253
+    ),
     status text NOT NULL CHECK (status IN ('active', 'suspended')),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
@@ -9,7 +12,10 @@ CREATE TABLE tenants (
 CREATE TABLE projects (
     id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES tenants (id),
-    name text NOT NULL CHECK (length(btrim(name)) > 0),
+    name text NOT NULL CHECK (
+        name = btrim(name)
+        AND octet_length(name) BETWEEN 1 AND 253
+    ),
     status text NOT NULL CHECK (status IN ('active', 'suspended')),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -74,7 +80,10 @@ CREATE TABLE clusters (
     id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES tenants (id),
     project_id uuid NOT NULL,
-    name text NOT NULL CHECK (length(btrim(name)) > 0),
+    name text NOT NULL CHECK (
+        name = btrim(name)
+        AND octet_length(name) BETWEEN 1 AND 253
+    ),
     status text NOT NULL CHECK (status IN ('pending', 'active', 'revoked')),
     last_seen_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -306,3 +315,34 @@ CREATE TABLE audit_events (
 CREATE INDEX audit_events_scope_time_idx
     ON audit_events (tenant_id, project_id, cluster_id, created_at DESC);
 CREATE INDEX audit_events_request_id_idx ON audit_events (request_id);
+
+CREATE TABLE tenant_creation_requests (
+    id uuid PRIMARY KEY,
+    actor_user_id uuid NOT NULL REFERENCES users (id),
+    idempotency_key text NOT NULL,
+    requested_name text NOT NULL,
+    tenant_id uuid NOT NULL UNIQUE REFERENCES tenants (id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT tenant_creation_requests_key_format CHECK (
+        idempotency_key = btrim(idempotency_key)
+        AND length(idempotency_key) BETWEEN 16 AND 128
+    ),
+    UNIQUE (actor_user_id, idempotency_key)
+);
+
+CREATE TABLE project_creation_requests (
+    id uuid PRIMARY KEY,
+    actor_user_id uuid NOT NULL REFERENCES users (id),
+    tenant_id uuid NOT NULL REFERENCES tenants (id),
+    idempotency_key text NOT NULL,
+    requested_name text NOT NULL,
+    project_id uuid NOT NULL UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT project_creation_requests_project_fk
+        FOREIGN KEY (tenant_id, project_id) REFERENCES projects (tenant_id, id),
+    CONSTRAINT project_creation_requests_key_format CHECK (
+        idempotency_key = btrim(idempotency_key)
+        AND length(idempotency_key) BETWEEN 16 AND 128
+    ),
+    UNIQUE (actor_user_id, tenant_id, idempotency_key)
+);
