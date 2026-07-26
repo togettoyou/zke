@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
@@ -49,6 +51,7 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 		Dependencies{
 			ReadinessCheck: pool.Ping,
 			AuthService:    authService,
+			RBACService:    rbac.NewService(store.NewRBACStore(pool)),
 		},
 		Config{
 			Authentication: AuthenticationConfig{
@@ -96,11 +99,17 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 			meResponse.Body,
 		)
 	}
-	var meBody authenticationResponse
+	var meBody currentSessionResponse
 	if err := json.Unmarshal(meResponse.Body.Bytes(), &meBody); err != nil {
 		t.Fatal(err)
 	}
 	assertUTC8Time(t, "current session expires_at", meBody.ExpiresAt)
+	if len(meBody.Capabilities) != 1 ||
+		meBody.Capabilities[0].Role != "admin" ||
+		meBody.Capabilities[0].ScopeType != "global" ||
+		len(meBody.Capabilities[0].Permissions) == 0 {
+		t.Fatalf("unexpected current capabilities: %+v", meBody.Capabilities)
+	}
 
 	missingCSRFResponse := httptest.NewRecorder()
 	missingCSRFRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
@@ -140,6 +149,147 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 		t.Fatalf("revoked session status = %d, want %d",
 			revokedResponse.Code,
 			http.StatusUnauthorized,
+		)
+	}
+}
+
+func TestCurrentUserPasswordChange(t *testing.T) {
+	databaseURL := requireHTTPTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool := openHTTPTestDatabase(t, ctx, databaseURL)
+	if _, err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	authStore := store.NewAuthStore(pool)
+	const oldPassword = "a sufficiently long original password"
+	const newPassword = "a sufficiently long replacement password"
+	if _, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+		Username: "password-admin", DisplayName: "Password Administrator",
+		Password: []byte(oldPassword),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	authService := auth.NewService(authStore, auth.ServiceConfig{
+		SessionIdleTimeout: 30 * time.Minute, SessionAbsoluteTimeout: 8 * time.Hour,
+		MaxConcurrentPasswordChecks: 1,
+	})
+	rbacService := rbac.NewService(store.NewRBACStore(pool))
+	router := New(discardLogger(), Dependencies{
+		ReadinessCheck: pool.Ping, AuthService: authService, RBACService: rbacService,
+	}, Config{Authentication: defaultAuthenticationTestConfig()})
+
+	login, err := authService.Login(ctx, auth.LoginInput{
+		Username: "password-admin", Password: []byte(oldPassword),
+		RequestID: "password-change-login", Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidNewPasswordResponse := httptest.NewRecorder()
+	invalidNewPasswordRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/password",
+		strings.NewReader(
+			`{"current_password":"`+oldPassword+
+				`","new_password":"too short","confirm":true}`,
+		),
+	)
+	invalidNewPasswordRequest.AddCookie(&http.Cookie{
+		Name: sessionCookieName, Value: login.SessionToken,
+	})
+	invalidNewPasswordRequest.Header.Set(csrfHeaderName, login.CSRFToken)
+	router.ServeHTTP(invalidNewPasswordResponse, invalidNewPasswordRequest)
+	if invalidNewPasswordResponse.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"invalid new password status = %d: %s",
+			invalidNewPasswordResponse.Code,
+			invalidNewPasswordResponse.Body,
+		)
+	}
+	assertErrorCode(t, invalidNewPasswordResponse, "invalid_new_password")
+	if _, err := authService.Authenticate(
+		ctx, login.SessionToken, time.Now().UTC(),
+	); err != nil {
+		t.Fatalf("session after rejected password change: %v", err)
+	}
+
+	unchangedPasswordResponse := httptest.NewRecorder()
+	unchangedPasswordRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/password",
+		strings.NewReader(
+			`{"current_password":"`+oldPassword+
+				`","new_password":"`+oldPassword+`","confirm":true}`,
+		),
+	)
+	unchangedPasswordRequest.AddCookie(&http.Cookie{
+		Name: sessionCookieName, Value: login.SessionToken,
+	})
+	unchangedPasswordRequest.Header.Set(csrfHeaderName, login.CSRFToken)
+	router.ServeHTTP(unchangedPasswordResponse, unchangedPasswordRequest)
+	if unchangedPasswordResponse.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"unchanged password status = %d: %s",
+			unchangedPasswordResponse.Code,
+			unchangedPasswordResponse.Body,
+		)
+	}
+	assertErrorCode(t, unchangedPasswordResponse, "password_unchanged")
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/password",
+		strings.NewReader(
+			`{"current_password":"`+oldPassword+
+				`","new_password":"`+newPassword+`","confirm":true}`,
+		),
+	)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: login.SessionToken})
+	request.Header.Set(csrfHeaderName, login.CSRFToken)
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("password change status = %d: %s", response.Code, response.Body)
+	}
+
+	if _, err := authService.Authenticate(
+		ctx, login.SessionToken, time.Now().UTC(),
+	); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatalf("old session authentication error = %v, want unauthenticated", err)
+	}
+	if _, err := authService.Login(ctx, auth.LoginInput{
+		Username: "password-admin", Password: []byte(oldPassword),
+		RequestID: "old-password-login", Now: time.Now().UTC(),
+	}); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("old password login error = %v, want invalid credentials", err)
+	}
+	if _, err := authService.Login(ctx, auth.LoginInput{
+		Username: "password-admin", Password: []byte(newPassword),
+		RequestID: "new-password-login", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("new password login: %v", err)
+	}
+	var auditCount int
+	var succeededAuditCount int
+	var failedAuditCount int
+	if err := pool.QueryRow(ctx, `
+SELECT
+    count(*),
+    count(*) FILTER (WHERE result = 'succeeded'),
+    count(*) FILTER (WHERE result = 'failed')
+FROM audit_events
+WHERE action = 'auth.password.change'
+`).Scan(&auditCount, &succeededAuditCount, &failedAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 3 || succeededAuditCount != 1 || failedAuditCount != 2 {
+		t.Fatalf(
+			"password change audit counts = total %d, succeeded %d, failed %d",
+			auditCount,
+			succeededAuditCount,
+			failedAuditCount,
 		)
 	}
 }

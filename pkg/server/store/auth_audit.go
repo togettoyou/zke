@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -49,6 +50,34 @@ VALUES (
 )
 `, targetID, result, requestID); err != nil {
 		return fmt.Errorf("record login audit: %w", err)
+	}
+	return nil
+}
+
+func (store *AuthStore) RecordPasswordChangeAudit(
+	ctx context.Context,
+	userID string,
+	result string,
+	requestID string,
+	now time.Time,
+) error {
+	if strings.TrimSpace(userID) == "" ||
+		(result != "failed" && result != "denied") ||
+		strings.TrimSpace(requestID) == "" ||
+		now.IsZero() {
+		return errors.New("password change audit fields are invalid")
+	}
+	if _, err := store.pool.Exec(ctx, `
+INSERT INTO audit_events (
+    id, actor_type, actor_user_id, scope_type, action, target_type,
+    target_id, result, request_id, created_at
+)
+VALUES (
+    gen_random_uuid(), 'user', $1, 'global', 'auth.password.change',
+    'user', $1, $2, $3, $4
+)
+`, userID, result, requestID, now); err != nil {
+		return fmt.Errorf("record password change audit: %w", err)
 	}
 	return nil
 }

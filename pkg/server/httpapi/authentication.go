@@ -15,6 +15,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	apiresponse "github.com/togettoyou/zke/pkg/server/httpapi/response"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
 const (
@@ -35,6 +36,7 @@ type AuthenticationConfig struct {
 type authHandler struct {
 	logger       *slog.Logger
 	service      *auth.Service
+	rbacService  *rbac.Service
 	config       AuthenticationConfig
 	loginLimiter *loginLimiter
 }
@@ -55,15 +57,37 @@ type authenticationResponse struct {
 	ExpiresAt time.Time    `json:"expires_at"`
 }
 
+type capabilityResponse struct {
+	Role        string   `json:"role"`
+	ScopeType   string   `json:"scope_type"`
+	TenantID    string   `json:"tenant_id,omitempty"`
+	ProjectID   string   `json:"project_id,omitempty"`
+	Permissions []string `json:"permissions"`
+}
+
+type currentSessionResponse struct {
+	User         userResponse         `json:"user"`
+	ExpiresAt    time.Time            `json:"expires_at"`
+	Capabilities []capabilityResponse `json:"capabilities"`
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+	Confirm         bool   `json:"confirm"`
+}
+
 func newAuthHandler(
 	logger *slog.Logger,
 	service *auth.Service,
+	rbacService *rbac.Service,
 	config AuthenticationConfig,
 ) *authHandler {
 	return &authHandler{
-		logger:  logger,
-		service: service,
-		config:  config,
+		logger:      logger,
+		service:     service,
+		rbacService: rbacService,
+		config:      config,
 		loginLimiter: newLoginLimiter(loginLimiterConfig{
 			window:                config.LoginRateLimitWindow,
 			maxAttemptsPerAccount: config.MaxAttemptsPerAccount,
@@ -149,10 +173,83 @@ func (handler *authHandler) login(c *gin.Context) {
 func (handler *authHandler) me(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)
-	c.JSON(http.StatusOK, authenticationResponse{
-		User:      responseUser(identity.User),
-		ExpiresAt: responseTime(identity.ExpiresAt),
+	capabilities := make([]capabilityResponse, 0)
+	if handler.rbacService != nil {
+		operationContext, cancelOperation := handler.operationContext(c)
+		items, err := handler.rbacService.ListCapabilities(
+			operationContext,
+			identity.User.ID,
+		)
+		cancelOperation()
+		if err != nil {
+			handler.serviceError(c, "resolve current user capabilities", err)
+			return
+		}
+		for _, item := range items {
+			permissions := make([]string, 0, len(item.Permissions))
+			for _, permission := range item.Permissions {
+				permissions = append(permissions, string(permission))
+			}
+			capabilities = append(capabilities, capabilityResponse{
+				Role: item.Role, ScopeType: item.ScopeType,
+				TenantID: item.TenantID, ProjectID: item.ProjectID,
+				Permissions: permissions,
+			})
+		}
+	}
+	c.JSON(http.StatusOK, currentSessionResponse{
+		User:         responseUser(identity.User),
+		ExpiresAt:    responseTime(identity.ExpiresAt),
+		Capabilities: capabilities,
 	})
+}
+
+func (handler *authHandler) changePassword(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	identity, _ := httpmiddleware.Identity(c)
+	var request changePasswordRequest
+	if err := decodeJSONRequest(c, &request, maxLoginRequestBytes); err != nil {
+		request.CurrentPassword = ""
+		request.NewPassword = ""
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid password change request")
+		return
+	}
+	if !request.Confirm {
+		request.CurrentPassword = ""
+		request.NewPassword = ""
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	currentPassword := []byte(request.CurrentPassword)
+	newPassword := []byte(request.NewPassword)
+	request.CurrentPassword = ""
+	request.NewPassword = ""
+	defer clear(currentPassword)
+	defer clear(newPassword)
+
+	operationContext, cancelOperation := handler.operationContext(c)
+	err := handler.service.ChangePassword(operationContext, auth.ChangePasswordInput{
+		Identity: identity, CurrentPassword: currentPassword,
+		NewPassword: newPassword, RequestID: httpmiddleware.RequestID(c),
+		Now: time.Now().UTC(),
+	})
+	cancelOperation()
+	switch {
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		writeError(c, http.StatusBadRequest, "invalid_current_password", "current password is invalid")
+	case errors.Is(err, auth.ErrInvalidNewPassword):
+		writeError(c, http.StatusBadRequest, "invalid_new_password", "new password does not satisfy password policy")
+	case errors.Is(err, auth.ErrPasswordUnchanged):
+		writeError(c, http.StatusBadRequest, "password_unchanged", "new password must differ from current password")
+	case errors.Is(err, auth.ErrUnauthenticated):
+		httpmiddleware.ClearAuthenticationCookies(c, handler.config.CookieSecure)
+		writeError(c, http.StatusUnauthorized, "unauthenticated", "authentication required")
+	case err != nil:
+		handler.serviceError(c, "change current user password", err)
+	default:
+		httpmiddleware.ClearAuthenticationCookies(c, handler.config.CookieSecure)
+		c.Status(http.StatusNoContent)
+	}
 }
 
 func (handler *authHandler) logout(c *gin.Context) {

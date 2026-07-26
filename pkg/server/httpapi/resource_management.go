@@ -82,6 +82,12 @@ func newResourceManagementHandler(
 
 func (handler *resourceManagementHandler) listTenants(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	query, queryErr := parseListQuery(c)
+	if queryErr != nil || !allowed(query.Status, "active", "suspended") ||
+		query.Role != "" || query.ScopeType != "" {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid tenant query")
+		return
+	}
 	identity, _ := httpmiddleware.Identity(c)
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.ListTenants(ctx, identity.User.ID)
@@ -96,9 +102,19 @@ func (handler *resourceManagementHandler) listTenants(c *gin.Context) {
 	default:
 		response := make([]tenantResponse, 0, len(result))
 		for _, item := range result {
+			if query.Status != "" && item.Status != query.Status {
+				continue
+			}
+			if !containsFold(query.Search, item.ID, item.Name) {
+				continue
+			}
 			response = append(response, responseTenant(item, false))
 		}
-		c.JSON(http.StatusOK, gin.H{"tenants": response})
+		response, pagination := paginate(response, query)
+		c.JSON(http.StatusOK, gin.H{
+			"tenants":    response,
+			"pagination": pagination,
+		})
 	}
 }
 
@@ -214,6 +230,12 @@ func (handler *resourceManagementHandler) deleteTenant(c *gin.Context) {
 
 func (handler *resourceManagementHandler) listProjects(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	query, queryErr := parseListQuery(c)
+	if queryErr != nil || !allowed(query.Status, "active", "suspended") ||
+		query.Role != "" || query.ScopeType != "" {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid project query")
+		return
+	}
 	identity, _ := httpmiddleware.Identity(c)
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.ListProjects(
@@ -232,9 +254,19 @@ func (handler *resourceManagementHandler) listProjects(c *gin.Context) {
 	default:
 		response := make([]projectResponse, 0, len(result))
 		for _, item := range result {
+			if query.Status != "" && item.Status != query.Status {
+				continue
+			}
+			if !containsFold(query.Search, item.ID, item.Name) {
+				continue
+			}
 			response = append(response, responseProject(item, false))
 		}
-		c.JSON(http.StatusOK, gin.H{"projects": response})
+		response, pagination := paginate(response, query)
+		c.JSON(http.StatusOK, gin.H{
+			"projects":   response,
+			"pagination": pagination,
+		})
 	}
 }
 

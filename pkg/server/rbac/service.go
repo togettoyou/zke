@@ -4,10 +4,31 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
+
+var allPermissions = []Permission{
+	PermissionTenantCreate,
+	PermissionTenantRead,
+	PermissionTenantManage,
+	PermissionProjectCreate,
+	PermissionProjectRead,
+	PermissionProjectManage,
+	PermissionClusterEnrollmentCreate,
+	PermissionClusterEnrollmentRead,
+	PermissionClusterEnrollmentRevoke,
+	PermissionClusterRead,
+	PermissionClusterManage,
+	PermissionClusterConnectionRevoke,
+	PermissionUserRead,
+	PermissionUserManage,
+	PermissionRBACRead,
+	PermissionRBACManage,
+	PermissionAuditRead,
+}
 
 var (
 	ErrDenied            = errors.New("permission denied")
@@ -21,6 +42,39 @@ type Service struct {
 
 func NewService(rbacStore *store.RBACStore) *Service {
 	return &Service{store: rbacStore}
+}
+
+func (service *Service) ListCapabilities(
+	ctx context.Context,
+	userID string,
+) ([]Capability, error) {
+	if !validation.IsUUID(userID) {
+		return nil, ErrDenied
+	}
+	bindings, err := service.store.ListRoleBindings(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Capability, 0, len(bindings))
+	for _, binding := range bindings {
+		permissions := make([]Permission, 0, len(allPermissions))
+		for _, permission := range allPermissions {
+			if roleGrants(binding.Role, permission) {
+				permissions = append(permissions, permission)
+			}
+		}
+		sort.Slice(permissions, func(left int, right int) bool {
+			return permissions[left] < permissions[right]
+		})
+		result = append(result, Capability{
+			Role:        binding.Role,
+			ScopeType:   binding.ScopeType,
+			TenantID:    binding.TenantID,
+			ProjectID:   binding.ProjectID,
+			Permissions: permissions,
+		})
+	}
+	return result, nil
 }
 
 func (service *Service) ResolveVisibility(

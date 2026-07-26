@@ -108,6 +108,7 @@ func TestRoutesAreRegisteredCentrally(t *testing.T) {
 		"POST /api/v1/auth/login",
 		"GET /api/v1/auth/me",
 		"POST /api/v1/auth/logout",
+		"POST /api/v1/auth/password",
 		"GET /api/v1/users",
 		"POST /api/v1/users",
 		"GET /api/v1/users/:user_id",

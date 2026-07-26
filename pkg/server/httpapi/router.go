@@ -78,6 +78,7 @@ func New(
 		auth: newAuthHandler(
 			logger,
 			dependencies.AuthService,
+			dependencies.RBACService,
 			config.Authentication,
 		),
 		enrollment: newEnrollmentHandler(

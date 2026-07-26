@@ -112,6 +112,40 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 	if managed.DisplayName != "Updated Managed User" {
 		t.Fatalf("updated display name = %q", managed.DisplayName)
 	}
+	filteredUsers := accessAPIRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/users?limit=1&offset=0&q=updated&status=active",
+		"",
+		adminLogin,
+	)
+	if filteredUsers.Code != http.StatusOK {
+		t.Fatalf("filtered user list status = %d: %s", filteredUsers.Code, filteredUsers.Body)
+	}
+	var filteredUsersBody struct {
+		Users      []managedUserResponse `json:"users"`
+		Pagination listMetadata          `json:"pagination"`
+	}
+	if err := json.Unmarshal(filteredUsers.Body.Bytes(), &filteredUsersBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(filteredUsersBody.Users) != 1 ||
+		filteredUsersBody.Users[0].ID != managed.ID ||
+		filteredUsersBody.Pagination.Total != 1 ||
+		filteredUsersBody.Pagination.Limit != 1 ||
+		filteredUsersBody.Pagination.HasMore {
+		t.Fatalf("unexpected filtered user page: %+v", filteredUsersBody)
+	}
+	invalidUserQuery := accessAPIRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/users?status=unknown",
+		"",
+		adminLogin,
+	)
+	if invalidUserQuery.Code != http.StatusBadRequest {
+		t.Fatalf("invalid user query status = %d: %s", invalidUserQuery.Code, invalidUserQuery.Body)
+	}
 	userDetail := accessAPIRequest(
 		router,
 		http.MethodGet,
@@ -197,6 +231,27 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 	)
 	if replayedBinding.Code != http.StatusOK {
 		t.Fatalf("replay role binding status = %d: %s", replayedBinding.Code, replayedBinding.Body)
+	}
+	viewerSession := accessAPIRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/auth/me",
+		"",
+		userLogin,
+	)
+	if viewerSession.Code != http.StatusOK {
+		t.Fatalf("viewer session status = %d: %s", viewerSession.Code, viewerSession.Body)
+	}
+	var viewerSessionBody currentSessionResponse
+	if err := json.Unmarshal(viewerSession.Body.Bytes(), &viewerSessionBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(viewerSessionBody.Capabilities) != 1 ||
+		viewerSessionBody.Capabilities[0].Role != "viewer" ||
+		viewerSessionBody.Capabilities[0].ScopeType != "global" ||
+		!containsPermission(viewerSessionBody.Capabilities[0].Permissions, "tenant.read") ||
+		containsPermission(viewerSessionBody.Capabilities[0].Permissions, "user.read") {
+		t.Fatalf("unexpected viewer capabilities: %+v", viewerSessionBody.Capabilities)
 	}
 	var tenantID string
 	if err := pool.QueryRow(ctx, `
@@ -496,4 +551,13 @@ func accessAPIRequest(
 	}
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func containsPermission(permissions []string, expected string) bool {
+	for _, permission := range permissions {
+		if permission == expected {
+			return true
+		}
+	}
+	return false
 }

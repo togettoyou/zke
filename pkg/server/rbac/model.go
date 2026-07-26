@@ -42,6 +42,14 @@ type Visibility struct {
 	projectOnly map[string]string
 }
 
+type Capability struct {
+	Role        string
+	ScopeType   string
+	TenantID    string
+	ProjectID   string
+	Permissions []Permission
+}
+
 func (visibility Visibility) AllowsTenant(tenantID string) bool {
 	if visibility.global {
 		return true

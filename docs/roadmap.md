@@ -15,6 +15,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Tenant、Project 与 Cluster 查询、更新和逻辑删除生命周期 API
 - [x] Cluster 聚合外部模型，内部 Agent 身份不独立暴露
 - [x] 用户完整管理生命周期、RoleBinding 查询/创建/删除、账户锁定恢复与管理员密码重置 API
+- [x] Console 权限能力发现、当前用户自助改密与管理列表分页筛选
 - [x] 权限定域审计查询、Cluster 状态 SSE 与 OpenAPI 3.1 契约
 - [x] ZKE Server Phase 1 后端
 - [x] ZKE Agent Phase 1 身份与连接

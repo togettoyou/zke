@@ -6,8 +6,8 @@ info:
     ZKE 用户管理、资源管理、Cluster 接入管理和内部 Agent 注册使用的 HTTP API 契约。
     所有 JSON 时间均为 RFC 3339，并由当前 API 以 UTC+8 偏移返回。
 servers:
-  - url: http://127.0.0.1:8080
-    description: 本地开发
+  - url: /
+    description: Console 与 API 使用同源入口；本地开发通过前端代理转发
 tags:
   - name: Health
   - name: Authentication
@@ -66,10 +66,10 @@ paths:
                 $ref: "#/components/schemas/Authentication"
         "400":
           $ref: "#/components/responses/InvalidRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
   /api/v1/auth/me:
@@ -84,7 +84,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Authentication"
+                $ref: "#/components/schemas/CurrentSession"
         "401":
           $ref: "#/components/responses/Unauthenticated"
   /api/v1/auth/logout:
@@ -102,12 +102,44 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/auth/password:
+    post:
+      tags: [Authentication]
+      operationId: changeCurrentUserPassword
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: 密码已修改，当前用户全部 Session 已撤销
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/users:
     get:
       tags: [Users]
       operationId: listUsers
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOffset"
+        - $ref: "#/components/parameters/ListSearch"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, locked, disabled]
       responses:
         "200":
           description: 用户列表
@@ -115,12 +147,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [users]
+                required: [users, pagination]
                 properties:
                   users:
                     type: array
                     items:
                       $ref: "#/components/schemas/ManagedUser"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -151,6 +187,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
   /api/v1/users/{user_id}:
     parameters:
       - $ref: "#/components/parameters/UserID"
@@ -168,6 +206,10 @@ paths:
                 $ref: "#/components/schemas/ManagedUser"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     put:
       tags: [Users]
       operationId: updateUser
@@ -190,6 +232,10 @@ paths:
                 $ref: "#/components/schemas/ManagedUser"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Users]
       operationId: deleteUser
@@ -214,6 +260,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/users/{user_id}/status:
     parameters:
       - $ref: "#/components/parameters/UserID"
@@ -241,6 +291,10 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/users/{user_id}/unlock:
     parameters:
       - $ref: "#/components/parameters/UserID"
@@ -268,6 +322,10 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/users/{user_id}/password-reset:
     parameters:
       - $ref: "#/components/parameters/UserID"
@@ -295,12 +353,30 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/role-bindings:
     get:
       tags: [RBAC]
       operationId: listRoleBindings
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOffset"
+        - $ref: "#/components/parameters/ListSearch"
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [admin, viewer]
+        - name: scope_type
+          in: query
+          schema:
+            type: string
+            enum: [global, tenant, project]
       responses:
         "200":
           description: RoleBinding 列表
@@ -308,12 +384,20 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [role_bindings]
+                required: [role_bindings, pagination]
                 properties:
                   role_bindings:
                     type: array
                     items:
                       $ref: "#/components/schemas/RoleBinding"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       tags: [RBAC]
       operationId: createRoleBinding
@@ -344,6 +428,10 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/role-bindings/{role_binding_id}:
     get:
       tags: [RBAC]
@@ -361,6 +449,10 @@ paths:
                 $ref: "#/components/schemas/RoleBinding"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [RBAC]
       operationId: deleteRoleBinding
@@ -384,6 +476,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/audit-events:
     get:
       tags: [Audit]
@@ -430,6 +526,8 @@ paths:
                 $ref: "#/components/schemas/AuditEventPage"
         "400":
           $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
   /api/v1/events:
@@ -458,6 +556,15 @@ paths:
       operationId: listTenants
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOffset"
+        - $ref: "#/components/parameters/ListSearch"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended]
       responses:
         "200":
           description: 可见 Tenant
@@ -465,12 +572,18 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [tenants]
+                required: [tenants, pagination]
                 properties:
                   tenants:
                     type: array
                     items:
                       $ref: "#/components/schemas/Tenant"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
     post:
       tags: [Resources]
       operationId: createTenant
@@ -496,6 +609,10 @@ paths:
                 $ref: "#/components/schemas/Tenant"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/tenants/{tenant_id}:
     parameters:
       - $ref: "#/components/parameters/TenantID"
@@ -513,6 +630,8 @@ paths:
                 $ref: "#/components/schemas/Tenant"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
     put:
       tags: [Resources]
       operationId: updateTenant
@@ -535,6 +654,10 @@ paths:
                 $ref: "#/components/schemas/Tenant"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Resources]
       operationId: deleteTenant
@@ -555,6 +678,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Tenant"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/tenants/{tenant_id}/projects:
     parameters:
       - $ref: "#/components/parameters/TenantID"
@@ -563,6 +690,15 @@ paths:
       operationId: listProjects
       security:
         - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOffset"
+        - $ref: "#/components/parameters/ListSearch"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended]
       responses:
         "200":
           description: 可见 Project
@@ -570,12 +706,18 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [projects]
+                required: [projects, pagination]
                 properties:
                   projects:
                     type: array
                     items:
                       $ref: "#/components/schemas/Project"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
     post:
       tags: [Resources]
       operationId: createProject
@@ -601,6 +743,10 @@ paths:
                 $ref: "#/components/schemas/Project"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/projects/{project_id}:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -618,6 +764,10 @@ paths:
                 $ref: "#/components/schemas/Project"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     put:
       tags: [Resources]
       operationId: updateProject
@@ -640,6 +790,10 @@ paths:
                 $ref: "#/components/schemas/Project"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Resources]
       operationId: deleteProject
@@ -660,6 +814,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/projects/{project_id}/clusters:
     get:
       tags: [Resources]
@@ -668,6 +826,14 @@ paths:
         - sessionCookie: []
       parameters:
         - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOffset"
+        - $ref: "#/components/parameters/ListSearch"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, active, revoked]
       responses:
         "200":
           description: Project Cluster 列表
@@ -675,12 +841,20 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [clusters]
+                required: [clusters, pagination]
                 properties:
                   clusters:
                     type: array
                     items:
                       $ref: "#/components/schemas/ClusterAggregate"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/clusters/{cluster_id}:
     get:
       tags: [Resources]
@@ -698,6 +872,10 @@ paths:
                 $ref: "#/components/schemas/ClusterAggregate"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     put:
       tags: [Resources]
       operationId: updateCluster
@@ -723,6 +901,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Resources]
       operationId: deleteCluster
@@ -744,6 +926,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Cluster"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/projects/{project_id}/cluster-enrollments:
     get:
       tags: [Clusters]
@@ -752,6 +938,14 @@ paths:
         - sessionCookie: []
       parameters:
         - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOffset"
+        - $ref: "#/components/parameters/ListSearch"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, consumed, expired, revoked]
       responses:
         "200":
           description: Cluster Enrollment 列表
@@ -759,12 +953,20 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [cluster_enrollments]
+                required: [cluster_enrollments, pagination]
                 properties:
                   cluster_enrollments:
                     type: array
                     items:
                       $ref: "#/components/schemas/ClusterEnrollmentRecord"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       tags: [Clusters]
       operationId: createClusterEnrollment
@@ -796,6 +998,10 @@ paths:
                 $ref: "#/components/schemas/ClusterEnrollment"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/projects/{project_id}/cluster-enrollments/{enrollment_id}:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -814,6 +1020,10 @@ paths:
                 $ref: "#/components/schemas/ClusterEnrollmentRecord"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       tags: [Clusters]
       operationId: revokeClusterEnrollment
@@ -836,6 +1046,10 @@ paths:
                 $ref: "#/components/schemas/ClusterEnrollmentRecord"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/projects/{project_id}/cluster-installations:
     post:
       tags: [Clusters]
@@ -864,6 +1078,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClusterInstallation"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/connection/revoke:
     post:
       tags: [Clusters]
@@ -888,6 +1114,10 @@ paths:
                 $ref: "#/components/schemas/ClusterConnectionRevocation"
         "404":
           $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/clusters/{cluster_id}/connection/reenroll:
     post:
       tags: [Clusters]
@@ -913,6 +1143,10 @@ paths:
                 $ref: "#/components/schemas/ClusterEnrollment"
         "409":
           $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /agent-api/v1/enroll:
     post:
       tags: [Agent Protocol]
@@ -926,23 +1160,32 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/AgentEnrollmentRequest"
       responses:
         "200":
           description: 幂等恢复的 Agent 身份
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/AgentEnrollmentResponse"
         "201":
           description: 新签发的 Agent 身份
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/AgentEnrollmentResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /agent-install/v1/manifest:
     get:
       tags: [Agent Protocol]
@@ -956,6 +1199,12 @@ paths:
             application/yaml:
               schema:
                 type: string
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
 components:
   securitySchemes:
     sessionCookie:
@@ -1044,6 +1293,28 @@ components:
         minimum: 1
         maximum: 100
         default: 50
+    ListLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    ListOffset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 1000000
+        default: 0
+    ListSearch:
+      name: q
+      in: query
+      schema:
+        type: string
+        maxLength: 253
   requestBodies:
     CreateNamedResource:
       required: true
@@ -1105,6 +1376,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    Timeout:
+      description: 请求处理超时
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     UUID:
       type: string
@@ -1148,6 +1425,73 @@ components:
           $ref: "#/components/schemas/UserIdentity"
         expires_at:
           $ref: "#/components/schemas/Timestamp"
+    CurrentSession:
+      type: object
+      additionalProperties: false
+      required: [user, expires_at, capabilities]
+      properties:
+        user:
+          $ref: "#/components/schemas/UserIdentity"
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Capability"
+    Capability:
+      type: object
+      additionalProperties: false
+      required: [role, scope_type, permissions]
+      properties:
+        role:
+          type: string
+          enum: [admin, viewer]
+        scope_type:
+          type: string
+          enum: [global, tenant, project]
+        tenant_id:
+          $ref: "#/components/schemas/UUID"
+        project_id:
+          $ref: "#/components/schemas/UUID"
+        permissions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - tenant.create
+              - tenant.read
+              - tenant.manage
+              - project.create
+              - project.read
+              - project.manage
+              - cluster.enrollment.create
+              - cluster.enrollment.read
+              - cluster.enrollment.revoke
+              - cluster.read
+              - cluster.manage
+              - cluster.connection.revoke
+              - user.read
+              - user.manage
+              - rbac.read
+              - rbac.manage
+              - audit.read
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password, confirm]
+      properties:
+        current_password:
+          type: string
+          format: password
+          maxLength: 1024
+        new_password:
+          type: string
+          format: password
+          minLength: 15
+          maxLength: 1024
+        confirm:
+          const: true
     UserIdentity:
       type: object
       additionalProperties: false
@@ -1322,6 +1666,23 @@ components:
           $ref: "#/components/schemas/Timestamp"
         replayed:
           type: boolean
+    Pagination:
+      type: object
+      additionalProperties: false
+      required: [limit, offset, total, has_more]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        offset:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        has_more:
+          type: boolean
     Tenant:
       allOf:
         - $ref: "#/components/schemas/ResourceBase"
@@ -1486,6 +1847,38 @@ components:
           $ref: "#/components/schemas/Timestamp"
         already_revoked:
           type: boolean
+    AgentEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [csr_pem, agent_version, protocol_version]
+      properties:
+        csr_pem:
+          type: string
+          description: PEM 编码的 ECDSA P-256 PKCS#10 CSR
+        agent_version:
+          type: string
+          minLength: 1
+          maxLength: 128
+        protocol_version:
+          type: string
+          const: v1
+    AgentEnrollmentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - cluster_id
+        - agent_id
+        - certificate_pem
+        - certificate_expires_at
+      properties:
+        cluster_id:
+          $ref: "#/components/schemas/UUID"
+        agent_id:
+          $ref: "#/components/schemas/UUID"
+        certificate_pem:
+          type: string
+        certificate_expires_at:
+          $ref: "#/components/schemas/Timestamp"
     AuditEvent:
       type: object
       additionalProperties: false

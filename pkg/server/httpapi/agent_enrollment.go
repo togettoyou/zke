@@ -156,6 +156,13 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 
 func (handler *enrollmentHandler) list(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	query, queryErr := parseListQuery(c)
+	if queryErr != nil ||
+		!allowed(query.Status, "active", "consumed", "expired", "revoked") ||
+		query.Role != "" || query.ScopeType != "" {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster enrollment query")
+		return
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), handler.operationTimeout)
 	result, err := handler.service.List(ctx, c.Param("project_id"), time.Now().UTC())
 	cancel()
@@ -164,9 +171,19 @@ func (handler *enrollmentHandler) list(c *gin.Context) {
 	}
 	response := make([]enrollmentResponse, 0, len(result))
 	for _, item := range result {
+		if query.Status != "" && item.Status != query.Status {
+			continue
+		}
+		if !containsFold(query.Search, item.ID, item.ClusterID, item.ClusterName) {
+			continue
+		}
 		response = append(response, responseEnrollment(item))
 	}
-	c.JSON(http.StatusOK, gin.H{"cluster_enrollments": response})
+	response, pagination := paginate(response, query)
+	c.JSON(http.StatusOK, gin.H{
+		"cluster_enrollments": response,
+		"pagination":          pagination,
+	})
 }
 
 func (handler *enrollmentHandler) get(c *gin.Context) {

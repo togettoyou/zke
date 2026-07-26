@@ -95,6 +95,12 @@ func newAccessManagementHandler(
 
 func (handler *accessManagementHandler) listUsers(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	query, err := parseListQuery(c)
+	if err != nil || !allowed(query.Status, "active", "locked", "disabled") ||
+		query.Role != "" || query.ScopeType != "" {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid user query")
+		return
+	}
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.ListUsers(ctx)
 	cancel()
@@ -103,9 +109,16 @@ func (handler *accessManagementHandler) listUsers(c *gin.Context) {
 	}
 	response := make([]managedUserResponse, 0, len(result))
 	for _, item := range result {
+		if query.Status != "" && item.Status != query.Status {
+			continue
+		}
+		if !containsFold(query.Search, item.Username, item.DisplayName, item.ID) {
+			continue
+		}
 		response = append(response, responseManagedUser(item))
 	}
-	c.JSON(http.StatusOK, gin.H{"users": response})
+	response, pagination := paginate(response, query)
+	c.JSON(http.StatusOK, gin.H{"users": response, "pagination": pagination})
 }
 
 func (handler *accessManagementHandler) getUser(c *gin.Context) {
@@ -306,6 +319,13 @@ func (handler *accessManagementHandler) resetPassword(c *gin.Context) {
 
 func (handler *accessManagementHandler) listRoleBindings(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	query, err := parseListQuery(c)
+	if err != nil || query.Status != "" ||
+		!allowed(query.Role, "admin", "viewer") ||
+		!allowed(query.ScopeType, "global", "tenant", "project") {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid role binding query")
+		return
+	}
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.ListRoleBindings(ctx)
 	cancel()
@@ -314,9 +334,28 @@ func (handler *accessManagementHandler) listRoleBindings(c *gin.Context) {
 	}
 	response := make([]roleBindingResponse, 0, len(result))
 	for _, item := range result {
+		if query.Role != "" && item.Role != query.Role {
+			continue
+		}
+		if query.ScopeType != "" && item.ScopeType != query.ScopeType {
+			continue
+		}
+		if !containsFold(
+			query.Search,
+			item.ID,
+			item.SubjectID,
+			item.TenantID,
+			item.ProjectID,
+		) {
+			continue
+		}
 		response = append(response, responseRoleBinding(item, false))
 	}
-	c.JSON(http.StatusOK, gin.H{"role_bindings": response})
+	response, pagination := paginate(response, query)
+	c.JSON(http.StatusOK, gin.H{
+		"role_bindings": response,
+		"pagination":    pagination,
+	})
 }
 
 func (handler *accessManagementHandler) getRoleBinding(c *gin.Context) {

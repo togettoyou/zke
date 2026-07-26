@@ -21,6 +21,7 @@ func TestLoginSetsProtectedAuthenticationCookies(t *testing.T) {
 	handler := newAuthHandler(
 		discardLogger(),
 		nil,
+		nil,
 		AuthenticationConfig{CookieSecure: true},
 	)
 	response := httptest.NewRecorder()
@@ -117,6 +118,7 @@ func TestServiceErrorReturnsTimeout(t *testing.T) {
 
 	handler := newAuthHandler(
 		discardLogger(),
+		nil,
 		nil,
 		defaultAuthenticationTestConfig(),
 	)

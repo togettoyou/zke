@@ -30,6 +30,10 @@ Phase 1 已实现本地用户密码安全基础、首个管理员初始化事务
 Cookie 属性、Synchronizer CSRF Token、应用层操作超时和 Go 标准库跨源保护。密码凭证版本校验、可选摘要参数升级、
 Session 创建与成功审计在同一事务中完成；登录成功、失败、限流拒绝与注销均写入不包含凭证明文的审计事件。
 
+`me` API 返回按 RoleBinding 作用域展开的权限能力，供 Console 展示当前用户可执行的操作；该信息只用于界面
+能力发现，不能替代服务端授权。当前用户自助改密要求有效 Session、CSRF、当前密码、新密码和显式确认；成功后
+撤销该用户全部 Session、写入 `auth.password.change` 审计并要求重新登录。
+
 RBAC 基础已经实现固定权限、`admin/viewer` 角色矩阵、Global/Tenant/Project RoleBinding 继承规则、默认拒绝、
 Project/Cluster 归属解析和 HTTP 授权 middleware。Global `admin` 拥有全部固定权限；`viewer` 只拥有 Tenant、
 Project 和 Cluster 读取权限。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标 Project，跨作用域

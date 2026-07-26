@@ -487,6 +487,20 @@ Content-Type: application/json
 与 `zke_csrf` Cookie 交付，不进入 JSON、日志或审计正文。除登录外的变更请求必须同时携带 Session Cookie 和
 `X-CSRF-Token`。登录接口也使用标准库 Origin 与 Fetch Metadata 保护。
 
+Console 与管理 API 采用同源部署模型。生产环境由同一 Origin 提供 Console 静态资源和 `/api`、`/agent-install`
+入口；本地前端开发服务器必须通过同源代理转发 `/api`、`/healthz` 和 `/readyz` 到 ZKE Server。Server 不提供
+宽松 CORS，也不支持浏览器从任意 Origin 携带 Session Cookie 直接调用 API。
+
+`GET /api/v1/auth/me` 除用户和 Session 过期时间外，还返回当前用户的 `capabilities`。每项能力包含 RoleBinding
+作用域以及该角色在该作用域授予的权限，Console 应据此控制操作入口，但服务端仍会对每次请求重新授权。
+
+当前用户可以通过 `POST /api/v1/auth/password` 提交当前密码、新密码和显式确认来自助改密。成功后 Server
+撤销该用户的全部 Session 并清除当前认证 Cookie，用户必须使用新密码重新登录。
+
+用户、RoleBinding、Tenant、Project、Cluster 和 Enrollment 列表支持 `limit`、`offset` 和 `q`；资源列表还
+支持 `status`，RoleBinding 列表支持 `role` 与 `scope_type`。默认 `limit` 为 50，最大为 100，响应使用统一的
+`pagination` 返回 `limit`、`offset`、`total` 和 `has_more`。
+
 错误响应至少区分：
 
 - 未认证；

@@ -21,6 +21,11 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authMiddleware.RequireCSRF,
 		handlers.auth.logout,
 	)
+	authenticatedAuthRoutes.POST(
+		"/password",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.auth.changePassword,
+	)
 
 	userRoutes := apiV1.Group("/users")
 	userRoutes.Use(

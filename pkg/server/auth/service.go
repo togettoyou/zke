@@ -17,6 +17,10 @@ var ErrInvalidCredentials = errors.New("invalid username or password")
 
 var ErrUnauthenticated = errors.New("authentication required")
 
+var ErrInvalidNewPassword = errors.New("new password does not satisfy password policy")
+
+var ErrPasswordUnchanged = errors.New("new password must differ from current password")
+
 type ServiceConfig struct {
 	SessionIdleTimeout          time.Duration
 	SessionAbsoluteTimeout      time.Duration
@@ -38,6 +42,14 @@ type LoginInput struct {
 	Password  []byte
 	RequestID string
 	Now       time.Time
+}
+
+type ChangePasswordInput struct {
+	Identity        Identity
+	CurrentPassword []byte
+	NewPassword     []byte
+	RequestID       string
+	Now             time.Time
 }
 
 func NewService(authStore *store.AuthStore, config ServiceConfig) *Service {
@@ -205,6 +217,106 @@ func (service *Service) Logout(
 		return ErrUnauthenticated
 	}
 	return err
+}
+
+func (service *Service) ChangePassword(
+	ctx context.Context,
+	input ChangePasswordInput,
+) error {
+	if strings.TrimSpace(input.Identity.User.ID) == "" ||
+		strings.TrimSpace(input.Identity.SessionID) == "" ||
+		strings.TrimSpace(input.RequestID) == "" ||
+		input.Now.IsZero() {
+		return ErrInvalidCredentials
+	}
+	if len(input.CurrentPassword) == 0 ||
+		len(input.CurrentPassword) > MaximumPasswordBytes {
+		return service.rejectPasswordChange(ctx, input, "denied", ErrInvalidCredentials)
+	}
+	if err := ValidateNewPassword(input.NewPassword); err != nil {
+		return service.rejectPasswordChange(ctx, input, "failed", ErrInvalidNewPassword)
+	}
+	user, err := service.store.FindUserByID(ctx, input.Identity.User.ID)
+	if errors.Is(err, store.ErrUserNotFound) {
+		return service.rejectPasswordChange(ctx, input, "denied", ErrUnauthenticated)
+	}
+	if err != nil {
+		return err
+	}
+	if user.Status != "active" {
+		return service.rejectPasswordChange(ctx, input, "denied", ErrUnauthenticated)
+	}
+	matches, _, err := service.verifyPassword(
+		ctx,
+		input.CurrentPassword,
+		user.PasswordHash,
+	)
+	if err != nil {
+		return service.rejectPasswordChange(
+			ctx, input, "failed", fmt.Errorf("verify current password: %w", err),
+		)
+	}
+	if !matches {
+		return service.rejectPasswordChange(ctx, input, "denied", ErrInvalidCredentials)
+	}
+	samePassword, _, err := service.verifyPassword(
+		ctx,
+		input.NewPassword,
+		user.PasswordHash,
+	)
+	if err != nil {
+		return service.rejectPasswordChange(
+			ctx, input, "failed", fmt.Errorf("compare new password: %w", err),
+		)
+	}
+	if samePassword {
+		return service.rejectPasswordChange(ctx, input, "failed", ErrPasswordUnchanged)
+	}
+	passwordHash, err := service.hashPassword(
+		ctx,
+		input.NewPassword,
+		service.passwordParams,
+	)
+	if err != nil {
+		if errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return service.rejectPasswordChange(
+			ctx, input, "failed", fmt.Errorf("hash new password: %w", err),
+		)
+	}
+	err = service.store.ChangeOwnPassword(ctx, store.ChangeOwnPasswordParams{
+		UserID:                    user.ID,
+		SessionID:                 input.Identity.SessionID,
+		ExpectedPasswordHash:      user.PasswordHash,
+		ExpectedPasswordChangedAt: user.PasswordChangedAt,
+		NewPasswordHash:           passwordHash,
+		RequestID:                 input.RequestID,
+		Now:                       input.Now,
+	})
+	if errors.Is(err, store.ErrCredentialsChanged) {
+		return service.rejectPasswordChange(ctx, input, "denied", ErrUnauthenticated)
+	}
+	return err
+}
+
+func (service *Service) rejectPasswordChange(
+	ctx context.Context,
+	input ChangePasswordInput,
+	result string,
+	rejection error,
+) error {
+	if err := service.store.RecordPasswordChangeAudit(
+		ctx,
+		input.Identity.User.ID,
+		result,
+		input.RequestID,
+		input.Now,
+	); err != nil {
+		return err
+	}
+	return rejection
 }
 
 func (service *Service) CSRFTokenMatches(identity Identity, token string) bool {

@@ -77,6 +77,16 @@ type RecordLoginFailureParams struct {
 	LockDuration time.Duration
 }
 
+type ChangeOwnPasswordParams struct {
+	UserID                    string
+	SessionID                 string
+	ExpectedPasswordHash      string
+	ExpectedPasswordChangedAt time.Time
+	NewPasswordHash           string
+	RequestID                 string
+	Now                       time.Time
+}
+
 type AuthenticatedSession struct {
 	Session Session
 	User    SessionUser

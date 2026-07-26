@@ -66,6 +66,13 @@ func newAgentStatusHandler(
 
 func (handler *agentStatusHandler) list(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	query, queryErr := parseListQuery(c)
+	if queryErr != nil ||
+		!allowed(query.Status, "pending", "active", "revoked") ||
+		query.Role != "" || query.ScopeType != "" {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster query")
+		return
+	}
 	if handler.service == nil {
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster status is unavailable")
 		return
@@ -96,9 +103,19 @@ func (handler *agentStatusHandler) list(c *gin.Context) {
 	default:
 		response := make([]agentStatusResponse, 0, len(result))
 		for _, item := range result {
+			if query.Status != "" && item.ClusterStatus != query.Status {
+				continue
+			}
+			if !containsFold(query.Search, item.ClusterID, item.ClusterName) {
+				continue
+			}
 			response = append(response, responseAgentStatus(item))
 		}
-		c.JSON(http.StatusOK, gin.H{"clusters": response})
+		response, pagination := paginate(response, query)
+		c.JSON(http.StatusOK, gin.H{
+			"clusters":   response,
+			"pagination": pagination,
+		})
 	}
 }
 
