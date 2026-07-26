@@ -18,7 +18,7 @@
 
 ## 功能
 
-- [Agent 管理](features/agent-management.md)
+- [集群接入管理](features/agent-management.md)
 - [容器服务](features/container-service.md)
 - [作业平台](features/job-platform.md)
 - [算力平台](features/compute-platform.md)

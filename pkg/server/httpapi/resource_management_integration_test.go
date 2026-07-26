@@ -148,6 +148,32 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 	}
 	assertErrorCode(t, conflictingTenant, "idempotency_conflict")
 
+	tenantDetail := resourceAPIRequest(
+		router, http.MethodGet, "/api/v1/tenants/"+tenant.ID, "",
+		adminLogin, false, "",
+	)
+	if tenantDetail.Code != http.StatusOK {
+		t.Fatalf("get tenant status = %d: %s", tenantDetail.Code, tenantDetail.Body)
+	}
+	updatedTenant := resourceAPIRequest(
+		router,
+		http.MethodPut,
+		"/api/v1/tenants/"+tenant.ID,
+		`{"name":"Updated Primary Tenant","status":"active","confirm":true}`,
+		adminLogin,
+		true,
+		"",
+	)
+	if updatedTenant.Code != http.StatusOK {
+		t.Fatalf("update tenant status = %d: %s", updatedTenant.Code, updatedTenant.Body)
+	}
+	if err := json.Unmarshal(updatedTenant.Body.Bytes(), &tenant); err != nil {
+		t.Fatal(err)
+	}
+	if tenant.Name != "Updated Primary Tenant" {
+		t.Fatalf("updated tenant name = %q", tenant.Name)
+	}
+
 	tenantList := resourceAPIRequest(
 		router,
 		http.MethodGet,
@@ -228,6 +254,32 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 	}
 	assertErrorCode(t, conflictingProject, "idempotency_conflict")
 
+	projectDetail := resourceAPIRequest(
+		router, http.MethodGet, "/api/v1/projects/"+project.ID, "",
+		adminLogin, false, "",
+	)
+	if projectDetail.Code != http.StatusOK {
+		t.Fatalf("get project status = %d: %s", projectDetail.Code, projectDetail.Body)
+	}
+	updatedProject := resourceAPIRequest(
+		router,
+		http.MethodPut,
+		"/api/v1/projects/"+project.ID,
+		`{"name":"Updated Primary Project","status":"active","confirm":true}`,
+		adminLogin,
+		true,
+		"",
+	)
+	if updatedProject.Code != http.StatusOK {
+		t.Fatalf("update project status = %d: %s", updatedProject.Code, updatedProject.Body)
+	}
+	if err := json.Unmarshal(updatedProject.Body.Bytes(), &project); err != nil {
+		t.Fatal(err)
+	}
+	if project.Name != "Updated Primary Project" {
+		t.Fatalf("updated project name = %q", project.Name)
+	}
+
 	var clusterID, agentID string
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if err := pool.QueryRow(ctx, `
@@ -284,7 +336,7 @@ VALUES (
 		t.Fatalf("list clusters status = %d: %s", clusterList.Code, clusterList.Body)
 	}
 	var listedClusters struct {
-		Clusters []clusterResponse `json:"clusters"`
+		Clusters []agentStatusResponse `json:"clusters"`
 	}
 	if err := json.Unmarshal(clusterList.Body.Bytes(), &listedClusters); err != nil {
 		t.Fatal(err)
@@ -293,7 +345,7 @@ VALUES (
 		listedClusters.Clusters[0].ID != clusterID {
 		t.Fatalf("unexpected clusters: %+v", listedClusters.Clusters)
 	}
-	assertUTC8TimePointer(t, "cluster last_seen_at", listedClusters.Clusters[0].LastSeenAt)
+	assertUTC8TimePointer(t, "cluster last_seen_at", listedClusters.Clusters[0].Connection.LastSeenAt)
 	assertUTC8Time(t, "cluster created_at", listedClusters.Clusters[0].CreatedAt)
 
 	clusterDetail := resourceAPIRequest(
@@ -308,36 +360,36 @@ VALUES (
 	if clusterDetail.Code != http.StatusOK {
 		t.Fatalf("cluster detail status = %d: %s", clusterDetail.Code, clusterDetail.Body)
 	}
-	var cluster clusterResponse
+	var cluster agentStatusResponse
 	if err := json.Unmarshal(clusterDetail.Body.Bytes(), &cluster); err != nil {
 		t.Fatal(err)
 	}
-	if cluster.ID != clusterID || cluster.ProjectID != project.ID {
+	if cluster.ID != clusterID || cluster.ProjectID != project.ID ||
+		cluster.Connection.Status != agentconn.ConnectionStateOnline ||
+		cluster.Connection.ConnectionID != "resource-connection" {
 		t.Fatalf("unexpected cluster detail: %+v", cluster)
 	}
+	assertUTC8Time(t, "Cluster certificate_expires_at", cluster.Connection.CertificateExpiresAt)
 
-	agentDetail := resourceAPIRequest(
+	updatedCluster := resourceAPIRequest(
 		router,
-		http.MethodGet,
-		"/api/v1/clusters/"+clusterID+"/agent",
-		"",
+		http.MethodPut,
+		"/api/v1/clusters/"+clusterID,
+		`{"name":"Updated Primary Cluster"}`,
 		adminLogin,
-		false,
+		true,
 		"",
 	)
-	if agentDetail.Code != http.StatusOK {
-		t.Fatalf("cluster Agent status = %d: %s", agentDetail.Code, agentDetail.Body)
+	if updatedCluster.Code != http.StatusOK {
+		t.Fatalf("update cluster status = %d: %s", updatedCluster.Code, updatedCluster.Body)
 	}
-	var agent agentStatusResponse
-	if err := json.Unmarshal(agentDetail.Body.Bytes(), &agent); err != nil {
+	var updatedClusterBody clusterResponse
+	if err := json.Unmarshal(updatedCluster.Body.Bytes(), &updatedClusterBody); err != nil {
 		t.Fatal(err)
 	}
-	if agent.AgentID != agentID ||
-		agent.ConnectionStatus != agentconn.ConnectionStateOnline ||
-		agent.ConnectionID != "resource-connection" {
-		t.Fatalf("unexpected cluster Agent: %+v", agent)
+	if updatedClusterBody.Name != "Updated Primary Cluster" {
+		t.Fatalf("updated cluster name = %q", updatedClusterBody.Name)
 	}
-	assertUTC8Time(t, "Agent certificate_expires_at", agent.CertificateExpiresAt)
 
 	var emptyClusterID string
 	if err := pool.QueryRow(ctx, `
@@ -350,7 +402,7 @@ RETURNING id::text
 	missingAgent := resourceAPIRequest(
 		router,
 		http.MethodGet,
-		"/api/v1/clusters/"+emptyClusterID+"/agent",
+		"/api/v1/clusters/"+emptyClusterID,
 		"",
 		adminLogin,
 		false,
@@ -545,6 +597,83 @@ FROM audit_events
 	}
 	if otherProjectID == "" {
 		t.Fatal("resource viewer fixture did not create the hidden project")
+	}
+
+	deletedCluster := resourceAPIRequest(
+		router,
+		http.MethodDelete,
+		"/api/v1/clusters/"+clusterID,
+		`{"confirm":true}`,
+		adminLogin,
+		true,
+		"",
+	)
+	if deletedCluster.Code != http.StatusOK {
+		t.Fatalf("delete cluster status = %d: %s", deletedCluster.Code, deletedCluster.Body)
+	}
+	var deletedClusterBody clusterResponse
+	if err := json.Unmarshal(deletedCluster.Body.Bytes(), &deletedClusterBody); err != nil {
+		t.Fatal(err)
+	}
+	if deletedClusterBody.Status != "revoked" {
+		t.Fatalf("deleted cluster status = %q, want revoked", deletedClusterBody.Status)
+	}
+	var deletedAgentStatus string
+	var credentialRevokedAt *time.Time
+	if err := pool.QueryRow(ctx, `
+SELECT agent.lifecycle_status, credential.revoked_at
+FROM agents AS agent
+JOIN agent_credentials AS credential ON credential.agent_id = agent.id
+WHERE agent.cluster_id = $1
+`, clusterID).Scan(&deletedAgentStatus, &credentialRevokedAt); err != nil {
+		t.Fatal(err)
+	}
+	if deletedAgentStatus != "revoked" || credentialRevokedAt == nil {
+		t.Fatalf(
+			"deleted cluster connection state = %s/%v",
+			deletedAgentStatus,
+			credentialRevokedAt,
+		)
+	}
+
+	deletedProject := resourceAPIRequest(
+		router,
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID,
+		`{"confirm":true}`,
+		adminLogin,
+		true,
+		"",
+	)
+	if deletedProject.Code != http.StatusOK {
+		t.Fatalf("delete project status = %d: %s", deletedProject.Code, deletedProject.Body)
+	}
+	var deletedProjectBody projectResponse
+	if err := json.Unmarshal(deletedProject.Body.Bytes(), &deletedProjectBody); err != nil {
+		t.Fatal(err)
+	}
+	if deletedProjectBody.Status != "suspended" {
+		t.Fatalf("deleted project status = %q, want suspended", deletedProjectBody.Status)
+	}
+
+	deletedTenant := resourceAPIRequest(
+		router,
+		http.MethodDelete,
+		"/api/v1/tenants/"+tenant.ID,
+		`{"confirm":true}`,
+		adminLogin,
+		true,
+		"",
+	)
+	if deletedTenant.Code != http.StatusOK {
+		t.Fatalf("delete tenant status = %d: %s", deletedTenant.Code, deletedTenant.Body)
+	}
+	var deletedTenantBody tenantResponse
+	if err := json.Unmarshal(deletedTenant.Body.Bytes(), &deletedTenantBody); err != nil {
+		t.Fatal(err)
+	}
+	if deletedTenantBody.Status != "suspended" {
+		t.Fatalf("deleted tenant status = %q, want suspended", deletedTenantBody.Status)
 	}
 }
 

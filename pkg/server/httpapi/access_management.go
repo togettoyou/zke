@@ -28,6 +28,10 @@ type createUserRequest struct {
 	Password    string `json:"password"`
 }
 
+type updateUserRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
 type setUserStatusRequest struct {
 	Status  string `json:"status"`
 	Confirm bool   `json:"confirm"`
@@ -148,6 +152,57 @@ func (handler *accessManagementHandler) createUser(c *gin.Context) {
 	c.JSON(http.StatusCreated, responseManagedUser(result))
 }
 
+func (handler *accessManagementHandler) updateUser(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	identity, _ := httpmiddleware.Identity(c)
+	var request updateUserRequest
+	if err := decodeJSONRequest(c, &request, maxAccessManagementRequestBytes); err != nil {
+		handler.recordFailure(c, identity.User.ID, "user.update", "user")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid user request")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.UpdateUser(ctx, accessmanagement.UpdateUserInput{
+		UserID: c.Param("user_id"), DisplayName: request.DisplayName,
+		ActorUserID: identity.User.ID, RequestID: httpmiddleware.RequestID(c),
+		Now: time.Now().UTC(),
+	})
+	cancel()
+	if err != nil {
+		handler.recordFailure(c, identity.User.ID, "user.update", "user")
+	}
+	if handler.handleError(c, "update user", err) {
+		return
+	}
+	c.JSON(http.StatusOK, responseManagedUser(result))
+}
+
+func (handler *accessManagementHandler) deleteUser(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	identity, _ := httpmiddleware.Identity(c)
+	var request confirmRequest
+	if err := decodeJSONRequest(c, &request, maxAccessManagementRequestBytes); err != nil ||
+		!request.Confirm {
+		handler.recordFailure(c, identity.User.ID, "user.delete", "user")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.DeleteUser(ctx, accessmanagement.DeleteUserInput{
+		UserID: c.Param("user_id"), Confirm: request.Confirm,
+		ActorUserID: identity.User.ID, RequestID: httpmiddleware.RequestID(c),
+		Now: time.Now().UTC(),
+	})
+	cancel()
+	if err != nil {
+		handler.recordFailure(c, identity.User.ID, "user.delete", "user")
+	}
+	if handler.handleError(c, "delete user", err) {
+		return
+	}
+	c.JSON(http.StatusOK, responseManagedUser(result))
+}
+
 func (handler *accessManagementHandler) setUserStatus(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)
@@ -262,6 +317,17 @@ func (handler *accessManagementHandler) listRoleBindings(c *gin.Context) {
 		response = append(response, responseRoleBinding(item, false))
 	}
 	c.JSON(http.StatusOK, gin.H{"role_bindings": response})
+}
+
+func (handler *accessManagementHandler) getRoleBinding(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.GetRoleBinding(ctx, c.Param("role_binding_id"))
+	cancel()
+	if handler.handleError(c, "get role binding", err) {
+		return
+	}
+	c.JSON(http.StatusOK, responseRoleBinding(result, false))
 }
 
 func (handler *accessManagementHandler) createRoleBinding(c *gin.Context) {

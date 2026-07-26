@@ -74,28 +74,6 @@ WHERE id = $1
 	return tenantID, nil
 }
 
-func (store *RBACStore) FindAgentAuthorizationScope(
-	ctx context.Context,
-	agentID string,
-) (AgentAuthorizationScope, error) {
-	var scope AgentAuthorizationScope
-	err := store.pool.QueryRow(ctx, `
-SELECT tenant_id::text, project_id::text
-FROM agents
-WHERE id = $1
-`, agentID).Scan(&scope.TenantID, &scope.ProjectID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return AgentAuthorizationScope{}, ErrAgentNotFound
-	}
-	if err != nil {
-		return AgentAuthorizationScope{}, fmt.Errorf(
-			"find Agent authorization scope: %w",
-			err,
-		)
-	}
-	return scope, nil
-}
-
 func (store *RBACStore) FindClusterAuthorizationScope(
 	ctx context.Context,
 	clusterID string,

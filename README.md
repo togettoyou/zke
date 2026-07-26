@@ -63,7 +63,7 @@ flowchart TB
 
 | 领域 | 作用域 | 说明 | 详细文档 |
 | --- | --- | --- | --- |
-| Agent 管理 | 多集群 | 接入、诊断和统一管理集群 Agent | [查看](docs/features/agent-management.md) |
+| 集群接入管理 | 多集群 | 以 Cluster 聚合接入状态、连接身份和诊断信息 | [查看](docs/features/agent-management.md) |
 | 容器服务 | 单集群 | 管理当前集群的 Kubernetes 资源 | [查看](docs/features/container-service.md) |
 | 作业平台 | 单集群为主 | 管理批处理、训练和 GPU 作业 | [查看](docs/features/job-platform.md) |
 | 算力平台 | 多集群 | 统一管理算力、模型与 API 服务 | [查看](docs/features/compute-platform.md) |

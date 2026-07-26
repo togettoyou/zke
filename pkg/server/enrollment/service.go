@@ -35,7 +35,9 @@ func (service *Service) Create(
 	ctx context.Context,
 	input CreateInput,
 ) (CreateResult, error) {
+	newCluster := input.ClusterID == ""
 	if !validation.IsUUID(input.ProjectID) ||
+		(!newCluster && !validation.IsUUID(input.ClusterID)) ||
 		!validation.IsUUID(input.UserID) ||
 		!validBoundedValue(input.ClusterName, maxClusterNameBytes) ||
 		strings.TrimSpace(input.RequestID) == "" ||
@@ -55,6 +57,7 @@ func (service *Service) Create(
 		ctx,
 		store.CreateEnrollmentParams{
 			ProjectID:       input.ProjectID,
+			ClusterID:       input.ClusterID,
 			ClusterName:     input.ClusterName,
 			CreatedByUserID: input.UserID,
 			TokenDigest:     tokenDigest,
@@ -74,10 +77,123 @@ func (service *Service) Create(
 	}
 	return CreateResult{
 		ID:          storedEnrollment.ID,
+		ClusterID:   storedEnrollment.ClusterID,
 		ClusterName: storedEnrollment.ClusterName,
 		Token:       token,
 		ExpiresAt:   storedEnrollment.ExpiresAt,
 	}, nil
+}
+
+func (service *Service) CreateReenrollment(
+	ctx context.Context,
+	input ReenrollInput,
+) (CreateResult, error) {
+	if !validation.IsUUID(input.ClusterID) || !validation.IsUUID(input.UserID) ||
+		strings.TrimSpace(input.RequestID) == "" ||
+		!validation.IsIdempotencyKey(input.IdempotencyKey) || input.Now.IsZero() {
+		return CreateResult{}, ErrInvalidInput
+	}
+	target, err := service.store.GetClusterEnrollmentTarget(ctx, input.ClusterID)
+	if errors.Is(err, store.ErrClusterNotFound) {
+		return CreateResult{}, ErrNotFound
+	}
+	if err != nil {
+		return CreateResult{}, err
+	}
+	result, err := service.Create(ctx, CreateInput{
+		ProjectID: target.ProjectID, ClusterID: input.ClusterID,
+		ClusterName: target.ClusterName, UserID: input.UserID,
+		RequestID: input.RequestID, IdempotencyKey: input.IdempotencyKey,
+		Now: input.Now,
+	})
+	if errors.Is(err, ErrDenied) {
+		return CreateResult{}, ErrStateConflict
+	}
+	return result, err
+}
+
+func (service *Service) List(
+	ctx context.Context,
+	projectID string,
+	now time.Time,
+) ([]Enrollment, error) {
+	if !validation.IsUUID(projectID) || now.IsZero() {
+		return nil, ErrInvalidInput
+	}
+	items, err := service.store.ListEnrollments(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Enrollment, 0, len(items))
+	for _, item := range items {
+		result = append(result, enrollmentFromStore(item, now))
+	}
+	return result, nil
+}
+
+func (service *Service) Get(
+	ctx context.Context,
+	projectID string,
+	enrollmentID string,
+	now time.Time,
+) (Enrollment, error) {
+	if !validation.IsUUID(projectID) || !validation.IsUUID(enrollmentID) ||
+		now.IsZero() {
+		return Enrollment{}, ErrInvalidInput
+	}
+	item, err := service.store.GetEnrollment(ctx, projectID, enrollmentID)
+	if errors.Is(err, store.ErrEnrollmentNotFound) {
+		return Enrollment{}, ErrNotFound
+	}
+	if err != nil {
+		return Enrollment{}, err
+	}
+	return enrollmentFromStore(item, now), nil
+}
+
+func (service *Service) Revoke(
+	ctx context.Context,
+	input RevokeInput,
+) (Enrollment, error) {
+	if !input.Confirm || !validation.IsUUID(input.ProjectID) ||
+		!validation.IsUUID(input.EnrollmentID) ||
+		!validation.IsUUID(input.UserID) ||
+		strings.TrimSpace(input.RequestID) == "" || input.Now.IsZero() {
+		return Enrollment{}, ErrInvalidInput
+	}
+	item, err := service.store.RevokeEnrollment(ctx, store.RevokeEnrollmentParams{
+		ProjectID: input.ProjectID, EnrollmentID: input.EnrollmentID,
+		ActorUserID: input.UserID, RequestID: input.RequestID, Now: input.Now,
+	})
+	switch {
+	case errors.Is(err, store.ErrEnrollmentNotFound):
+		return Enrollment{}, ErrNotFound
+	case errors.Is(err, store.ErrEnrollmentStateConflict):
+		return Enrollment{}, ErrStateConflict
+	case err != nil:
+		return Enrollment{}, err
+	default:
+		return enrollmentFromStore(item, input.Now), nil
+	}
+}
+
+func enrollmentFromStore(item store.Enrollment, now time.Time) Enrollment {
+	status := "active"
+	switch {
+	case item.RevokedAt != nil:
+		status = "revoked"
+	case item.ConsumedAt != nil:
+		status = "consumed"
+	case !item.ExpiresAt.After(now):
+		status = "expired"
+	}
+	return Enrollment{
+		ID: item.ID, TenantID: item.TenantID, ProjectID: item.ProjectID,
+		ClusterID: item.ClusterID, ClusterName: item.ClusterName,
+		CreatedByUserID: item.CreatedByUserID,
+		Status:          status, ExpiresAt: item.ExpiresAt, ConsumedAt: item.ConsumedAt,
+		RevokedAt: item.RevokedAt, CreatedAt: item.CreatedAt,
+	}
 }
 
 func (service *Service) ResolveManifest(

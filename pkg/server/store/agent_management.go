@@ -18,7 +18,7 @@ type AgentManagementStore struct {
 }
 
 type RevokeAgentParams struct {
-	AgentID     string
+	ClusterID   string
 	ActorUserID string
 	RequestID   string
 	Now         time.Time
@@ -41,7 +41,7 @@ func (store *AgentManagementStore) Revoke(
 	ctx context.Context,
 	params RevokeAgentParams,
 ) (RevokeAgentResult, error) {
-	if strings.TrimSpace(params.AgentID) == "" ||
+	if strings.TrimSpace(params.ClusterID) == "" ||
 		strings.TrimSpace(params.ActorUserID) == "" ||
 		strings.TrimSpace(params.RequestID) == "" ||
 		params.Now.IsZero() {
@@ -64,9 +64,11 @@ SELECT
     lifecycle_status,
     updated_at
 FROM agents
-WHERE id = $1
+WHERE cluster_id = $1
+ORDER BY (lifecycle_status <> 'revoked') DESC, created_at DESC
+LIMIT 1
 FOR UPDATE
-`, params.AgentID).Scan(
+`, params.ClusterID).Scan(
 		&result.AgentID,
 		&result.TenantID,
 		&result.ProjectID,
@@ -129,21 +131,20 @@ VALUES (
     $2,
     $3,
     $4,
-    'agent.revoke',
-    'agent',
-    $5,
+    'cluster.connection.revoke',
+    'cluster',
+    $4,
     'succeeded',
-    $6
+    $5
 )
 `,
 		params.ActorUserID,
 		result.TenantID,
 		result.ProjectID,
 		result.ClusterID,
-		result.AgentID,
 		params.RequestID,
 	); err != nil {
-		return RevokeAgentResult{}, fmt.Errorf("audit Agent revocation: %w", err)
+		return RevokeAgentResult{}, fmt.Errorf("audit Cluster connection revocation: %w", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return RevokeAgentResult{}, fmt.Errorf("commit Agent revocation: %w", err)

@@ -53,7 +53,7 @@ func newAgentInstallationHandler(
 func (handler *agentInstallationHandler) create(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	if handler.service == nil {
-		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent installation is not configured")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster installation is not configured")
 		return
 	}
 	var request createAgentInstallationRequest
@@ -64,7 +64,7 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 	); err != nil {
 		identity, _ := httpmiddleware.Identity(c)
 		handler.recordFailure(c, identity.User.ID, "failed")
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Agent installation request")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster installation request")
 		return
 	}
 	identity, _ := httpmiddleware.Identity(c)
@@ -83,10 +83,10 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 	cancel()
 	switch {
 	case errors.Is(err, agentinstall.ErrDisabled):
-		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent installation is disabled")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster installation is disabled")
 	case errors.Is(err, enrollment.ErrInvalidInput):
 		handler.recordFailure(c, identity.User.ID, "failed")
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Agent installation request")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster installation request")
 	case errors.Is(err, enrollment.ErrDenied):
 		handler.recordFailure(c, identity.User.ID, "denied")
 		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
@@ -98,7 +98,7 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 	case err != nil:
 		handler.recordFailure(c, identity.User.ID, "failed")
 		handler.logger.Error(
-			"create Agent installation",
+			"create Cluster installation",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
 			slog.String("project_id", c.Param("project_id")),
 			slog.String("error", err.Error()),
@@ -133,13 +133,13 @@ func (handler *agentInstallationHandler) recordFailure(
 		audit.ProjectEventInput{
 			ActorUserID: userID,
 			ProjectID:   c.Param("project_id"),
-			Action:      audit.ActionAgentEnrollmentCreate,
+			Action:      audit.ActionClusterEnrollmentCreate,
 			Result:      result,
 			RequestID:   httpmiddleware.RequestID(c),
 		},
 	); err != nil {
 		handler.logger.Error(
-			"record Agent installation failure audit",
+			"record Cluster installation failure audit",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
 			slog.String("user_id", userID),
 			slog.String("project_id", c.Param("project_id")),

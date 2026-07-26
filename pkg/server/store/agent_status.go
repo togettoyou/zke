@@ -19,7 +19,12 @@ type ProjectAgentCertificate struct {
 	ProjectID            string
 	ClusterID            string
 	ClusterName          string
+	ClusterStatus        string
+	ClusterCreatedAt     time.Time
+	ClusterUpdatedAt     time.Time
 	AgentID              string
+	AgentVersion         string
+	ProtocolVersion      string
 	LifecycleStatus      string
 	HealthStatus         string
 	LastSeenAt           *time.Time
@@ -42,7 +47,12 @@ SELECT
     agent.project_id::text,
     agent.cluster_id::text,
     cluster.name,
+    cluster.status,
+    cluster.created_at,
+    cluster.updated_at,
     agent.id::text,
+    agent.version,
+    agent.protocol_version,
     agent.lifecycle_status,
     agent.health_status,
     agent.last_seen_at,
@@ -67,6 +77,15 @@ JOIN LATERAL (
     LIMIT 1
 ) AS credential ON true
 WHERE agent.project_id = $1
+  AND agent.id = (
+      SELECT candidate.id
+      FROM agents AS candidate
+      WHERE candidate.cluster_id = agent.cluster_id
+      ORDER BY
+          (candidate.lifecycle_status <> 'revoked') DESC,
+          candidate.created_at DESC
+      LIMIT 1
+  )
 ORDER BY cluster.name, agent.id
 `, projectID)
 	if err != nil {
@@ -81,7 +100,12 @@ ORDER BY cluster.name, agent.id
 			&item.ProjectID,
 			&item.ClusterID,
 			&item.ClusterName,
+			&item.ClusterStatus,
+			&item.ClusterCreatedAt,
+			&item.ClusterUpdatedAt,
 			&item.AgentID,
+			&item.AgentVersion,
+			&item.ProtocolVersion,
 			&item.LifecycleStatus,
 			&item.HealthStatus,
 			&item.LastSeenAt,
@@ -110,7 +134,12 @@ SELECT
     agent.project_id::text,
     agent.cluster_id::text,
     cluster.name,
+    cluster.status,
+    cluster.created_at,
+    cluster.updated_at,
     agent.id::text,
+    agent.version,
+    agent.protocol_version,
     agent.lifecycle_status,
     agent.health_status,
     agent.last_seen_at,
@@ -135,12 +164,26 @@ JOIN LATERAL (
     LIMIT 1
 ) AS credential ON true
 WHERE agent.cluster_id = $1
+  AND agent.id = (
+      SELECT candidate.id
+      FROM agents AS candidate
+      WHERE candidate.cluster_id = agent.cluster_id
+      ORDER BY
+          (candidate.lifecycle_status <> 'revoked') DESC,
+          candidate.created_at DESC
+      LIMIT 1
+  )
 `, clusterID).Scan(
 		&item.TenantID,
 		&item.ProjectID,
 		&item.ClusterID,
 		&item.ClusterName,
+		&item.ClusterStatus,
+		&item.ClusterCreatedAt,
+		&item.ClusterUpdatedAt,
 		&item.AgentID,
+		&item.AgentVersion,
+		&item.ProtocolVersion,
 		&item.LifecycleStatus,
 		&item.HealthStatus,
 		&item.LastSeenAt,
@@ -167,7 +210,12 @@ SELECT
     credential.project_id::text,
     credential.cluster_id::text,
     cluster.name,
+    cluster.status,
+    cluster.created_at,
+    cluster.updated_at,
     credential.agent_id::text,
+    agent.version,
+    agent.protocol_version,
     agent.lifecycle_status,
     agent.health_status,
     agent.last_seen_at,
@@ -202,7 +250,12 @@ ORDER BY credential.expires_at
 			&item.ProjectID,
 			&item.ClusterID,
 			&item.ClusterName,
+			&item.ClusterStatus,
+			&item.ClusterCreatedAt,
+			&item.ClusterUpdatedAt,
 			&item.AgentID,
+			&item.AgentVersion,
+			&item.ProtocolVersion,
 			&item.LifecycleStatus,
 			&item.HealthStatus,
 			&item.LastSeenAt,

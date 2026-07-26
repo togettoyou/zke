@@ -5,6 +5,10 @@
 
 ## 1. 总体模型
 
+管理面把 Kubernetes Cluster 与其中的 ZKE Agent 视为一个共同体，只暴露稳定的 Cluster 资源。下文中的 Agent ID
+是证书、连接和 Credential 使用的内部身份，不是独立的管理 API 资源。首次接入创建 Cluster 和内部 Agent 身份；
+重新接入保持 Cluster ID 不变并替换内部身份。
+
 同一个 Agent 进程使用两个独立端点：
 
 - `registration.server_url`：一次性 HTTP(S) 注册端点；
@@ -131,7 +135,7 @@ Enrollment Token 是 Agent 尚未取得客户端证书时使用的引导凭据�
 - PostgreSQL 只保存 SHA-256 摘要；
 - 当前有效期为 15 分钟；
 - Token 与 Tenant、Project 和集群名称间接绑定；
-- 成功注册后被消费，不能注册第二个 Agent。
+- 成功注册后被消费，不能创建第二个并行有效连接身份。
 
 部署系统应把 Token 写入独立的 Kubernetes Secret。Agent 通过 client-go 读取固定名称
 `zke-agent-enrollment` 的 `token` Key，不把 Token 写入 YAML 或宿主机文件。Agent 完成身份后不会再读取
@@ -143,14 +147,14 @@ Token，Server 也已经单次消费该 Token，因此 Secret 可以保留以简
 管理员或部署系统调用：
 
 ```text
-POST /api/v1/projects/{project_id}/agent-enrollments
+POST /api/v1/projects/{project_id}/cluster-enrollments
 ```
 
 当前接口要求：
 
 - 已认证 Session；
 - CSRF Token；
-- `agent.enrollment.create` Project 权限；
+- `cluster.enrollment.create` Project 权限；
 - 集群显示名称；
 - 调用方提供的 `Idempotency-Key`。
 
@@ -172,7 +176,7 @@ Enrollment 的幂等键用于防止调用方因网络重试而生成多个 Token
 启用 `agent_install` 后，管理员可以调用：
 
 ```text
-POST /api/v1/projects/{project_id}/agent-installations
+POST /api/v1/projects/{project_id}/cluster-installations
 ```
 
 认证、CSRF、Project RBAC、请求幂等和 15 分钟 Token 规则与 Enrollment 创建相同。响应不要求管理员手写 Secret
@@ -426,10 +430,15 @@ Credential、Agent 或 Cluster 被撤销时，数据库触发器通过 PostgreSQ
 `GoAway(agent_revoked)` 或 `GoAway(cluster_revoked)`，并用认证错误关闭 QUIC 连接；后续重连仍会经过数据库
 状态校验并被拒绝。
 
-当前管理端提供 `POST /api/v1/agents/{agent_id}/revoke`。请求必须通过 Session、CSRF 和 `agent.revoke`
-权限检查，并提交 `{"confirm":true}` 显式确认。Server 在同一数据库事务中把 Agent 生命周期置为 `revoked`、
-撤销全部 Credential 并写入成功审计。接口具有状态幂等性，重复调用返回 `200` 和首次撤销时间，同时以
-`already_revoked` 标识没有发生新的状态变化。
+管理端将 Cluster 与 Agent 视为一个聚合资源，不暴露内部 Agent ID。当前连接通过
+`POST /api/v1/clusters/{cluster_id}/connection/revoke` 撤销，请求必须通过 Session、CSRF 和
+`cluster.connection.revoke` 权限检查，并提交 `{"confirm":true}` 显式确认。Server 在同一数据库事务中把当前
+内部 Agent 身份置为 `revoked`、撤销全部 Credential 并写入成功审计。接口具有状态幂等性，重复调用返回 `200`
+和首次撤销时间，同时以 `already_revoked` 标识没有发生新的状态变化。
+
+连接撤销后，管理端可调用 `POST /api/v1/clusters/{cluster_id}/connection/reenroll` 创建重新接入凭证。该凭证
+绑定现有 Cluster；消费时保留原 `cluster_id`、创建新的内部 Agent 身份并保留历史身份。连接尚未撤销或 Cluster
+已逻辑删除时，重新接入返回状态冲突。
 
 Server 也会按当前客户端证书的 `NotAfter` 安排连接关闭，避免一条在证书有效期内建立的长连接越过证书到期时间
 后继续存活。PostgreSQL 通知用于多 Server 实例间传播，不依赖撤销请求落到持有连接的同一实例。
@@ -490,8 +499,8 @@ Server 也会按当前客户端证书的 `NotAfter` 安排连接关闭，避免�
    兼容编排。
 2. **在线 CA 私钥保护**：Managed 模式把两个 CA 私钥保存在 Server PV；需要更强隔离时应使用 external 模式接入
    受控的离线流程、KMS 或 HSM。项目不强制引入独立签发服务。
-3. **过期后的自动恢复**：正常续期已实现，但 Agent 离线至证书过期后仍需重新 Enrollment。
+3. **过期后的自动恢复**：正常续期已实现，但 Agent 离线至证书过期后仍需通过 Cluster 重新接入流程恢复。
 4. **CA 无中断轮换**：当前连接 CA 使用单一专用信任根，双信任窗口和 Listener/Client CA 自动轮换尚未实现。
-5. **Web 界面**：`GET /api/v1/projects/{project_id}/agents` 已返回当前凭据序列号、过期时间、剩余秒数以及
-   `valid`、`expiring`、`expired`、`revoked` 状态，并以首次成功连接记录的 active serial 解决续期重叠期选择；
-   Web 展示尚未实现。Server 还会周期扫描并输出结构化到期告警。
+5. **Web 界面**：`GET /api/v1/projects/{project_id}/clusters` 已在 `connection` 中返回当前凭据序列号、过期
+   时间、剩余秒数以及 `valid`、`expiring`、`expired`、`revoked` 状态，并以首次成功连接记录的 active serial
+   解决续期重叠期选择；Web 展示尚未实现。Server 还会周期扫描并输出结构化到期告警。

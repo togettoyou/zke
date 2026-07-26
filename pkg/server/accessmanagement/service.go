@@ -61,6 +61,22 @@ type SetUserStatusInput struct {
 	Now         time.Time
 }
 
+type UpdateUserInput struct {
+	UserID      string
+	DisplayName string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteUserInput struct {
+	UserID      string
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
 type ConfirmUserActionInput struct {
 	UserID      string
 	Confirm     bool
@@ -195,6 +211,40 @@ func (service *Service) CreateUser(
 	}
 }
 
+func (service *Service) UpdateUser(
+	ctx context.Context,
+	input UpdateUserInput,
+) (User, error) {
+	if !validation.IsUUID(input.UserID) ||
+		!validDisplayName(input.DisplayName) ||
+		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
+		return User{}, ErrInvalidInput
+	}
+	item, err := service.store.UpdateUser(ctx, store.UpdateManagedUserParams{
+		UserID: input.UserID, DisplayName: input.DisplayName,
+		ActorUserID: input.ActorUserID, RequestID: input.RequestID, Now: input.Now,
+	})
+	return mapUserMutation(item, err)
+}
+
+func (service *Service) DeleteUser(
+	ctx context.Context,
+	input DeleteUserInput,
+) (User, error) {
+	if !input.Confirm || !validation.IsUUID(input.UserID) ||
+		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
+		return User{}, ErrInvalidInput
+	}
+	if input.UserID == input.ActorUserID {
+		return User{}, ErrSelfDisable
+	}
+	item, err := service.store.DeleteUser(ctx, store.DeleteManagedUserParams{
+		UserID: input.UserID, ActorUserID: input.ActorUserID,
+		RequestID: input.RequestID, Now: input.Now,
+	})
+	return mapUserMutation(item, err)
+}
+
 func (service *Service) SetUserStatus(
 	ctx context.Context,
 	input SetUserStatusInput,
@@ -277,6 +327,23 @@ func (service *Service) ListRoleBindings(
 		result = append(result, roleBindingFromStore(item))
 	}
 	return result, nil
+}
+
+func (service *Service) GetRoleBinding(
+	ctx context.Context,
+	bindingID string,
+) (RoleBinding, error) {
+	if !validation.IsUUID(bindingID) {
+		return RoleBinding{}, ErrInvalidInput
+	}
+	item, err := service.store.GetRoleBinding(ctx, bindingID)
+	if errors.Is(err, store.ErrRoleBindingNotFound) {
+		return RoleBinding{}, ErrNotFound
+	}
+	if err != nil {
+		return RoleBinding{}, err
+	}
+	return roleBindingFromStore(item), nil
 }
 
 func (service *Service) CreateRoleBinding(

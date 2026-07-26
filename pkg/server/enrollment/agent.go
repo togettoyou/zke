@@ -57,6 +57,7 @@ func (service *Service) Begin(
 		EnrollmentID:   attempt.EnrollmentID,
 		TenantID:       attempt.TenantID,
 		ProjectID:      attempt.ProjectID,
+		ClusterID:      attempt.ClusterID,
 		ClusterName:    attempt.ClusterName,
 		IdempotencyKey: attempt.IdempotencyKey,
 		CSRFingerprint: append([]byte(nil), attempt.CSRFingerprint...),
@@ -161,14 +162,17 @@ func (service *Service) Enroll(
 		)
 	}
 
-	clusterID, err := identifier.NewUUID()
-	if err != nil {
-		return EnrollResult{}, service.recordEnrollmentFailure(
-			ctx,
-			attempt.EnrollmentID,
-			input.RequestID,
-			err,
-		)
+	clusterID := attempt.ClusterID
+	if clusterID == "" {
+		clusterID, err = identifier.NewUUID()
+		if err != nil {
+			return EnrollResult{}, service.recordEnrollmentFailure(
+				ctx,
+				attempt.EnrollmentID,
+				input.RequestID,
+				err,
+			)
+		}
 	}
 	agentID, err := identifier.NewUUID()
 	if err != nil {

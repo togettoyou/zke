@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	ErrInvalidInput = errors.New("invalid Agent status input")
-	ErrNotFound     = store.ErrAgentNotFound
+	ErrInvalidInput      = errors.New("invalid Agent status input")
+	ErrNotFound          = store.ErrAgentNotFound
 	ErrEventsUnavailable = errors.New("Agent status events unavailable")
 )
 
@@ -31,9 +31,16 @@ type ConnectionEventSource interface {
 }
 
 type Agent struct {
+	TenantID                    string
+	ProjectID                   string
 	ClusterID                   string
 	ClusterName                 string
+	ClusterStatus               string
+	ClusterCreatedAt            time.Time
+	ClusterUpdatedAt            time.Time
 	AgentID                     string
+	AgentVersion                string
+	ProtocolVersion             string
 	LifecycleStatus             string
 	HealthStatus                string
 	LastSeenAt                  *time.Time
@@ -49,8 +56,7 @@ type Agent struct {
 	LastDisconnectReason        string
 }
 
-func (service *Service) Subscribe(
-) (<-chan agentconn.ConnectionEvent, func(), error) {
+func (service *Service) Subscribe() (<-chan agentconn.ConnectionEvent, func(), error) {
 	source, ok := service.connections.(ConnectionEventSource)
 	if !ok || source == nil {
 		return nil, nil, ErrEventsUnavailable
@@ -128,9 +134,16 @@ func (service *Service) buildAgents(
 			remainingSeconds = 0
 		}
 		agent := Agent{
+			TenantID:                    item.TenantID,
+			ProjectID:                   item.ProjectID,
 			ClusterID:                   item.ClusterID,
 			ClusterName:                 item.ClusterName,
+			ClusterStatus:               item.ClusterStatus,
+			ClusterCreatedAt:            item.ClusterCreatedAt,
+			ClusterUpdatedAt:            item.ClusterUpdatedAt,
 			AgentID:                     item.AgentID,
+			AgentVersion:                item.AgentVersion,
+			ProtocolVersion:             item.ProtocolVersion,
 			LifecycleStatus:             item.LifecycleStatus,
 			HealthStatus:                item.HealthStatus,
 			LastSeenAt:                  item.LastSeenAt,

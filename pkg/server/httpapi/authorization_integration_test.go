@@ -143,10 +143,10 @@ VALUES (gen_random_uuid(), $1, 'viewer', 'project', $2, $3)
 		},
 	)
 	router.POST(
-		"/test/projects/:project_id/agent-enrollments",
+		"/test/projects/:project_id/cluster-enrollments",
 		authentication.RequireAuthentication,
 		authorization.RequireProject(
-			rbac.PermissionAgentEnrollmentCreate,
+			rbac.PermissionClusterEnrollmentCreate,
 			"project_id",
 		),
 		func(c *gin.Context) {
@@ -194,7 +194,7 @@ VALUES (gen_random_uuid(), $1, 'viewer', 'project', $2, $3)
 		{
 			name:       "project viewer cannot create enrollment",
 			method:     http.MethodPost,
-			path:       "/test/projects/" + allowedProjectID + "/agent-enrollments",
+			path:       "/test/projects/" + allowedProjectID + "/cluster-enrollments",
 			wantStatus: http.StatusForbidden,
 			wantCode:   "forbidden",
 		},
@@ -242,7 +242,7 @@ SELECT count(*)
 FROM audit_events
 WHERE actor_user_id = $1
   AND project_id = $2
-  AND action = 'agent.enrollment.create'
+  AND action = 'cluster.enrollment.create'
   AND result = 'denied'
 `, userID, allowedProjectID).Scan(&deniedAuditCount); err != nil {
 		t.Fatal(err)

@@ -3,7 +3,7 @@ info:
   title: ZKE Server API
   version: v1
   description: |
-    ZKE 用户管理、资源管理、Agent Enrollment 和 Agent 安装使用的 HTTP API 契约。
+    ZKE 用户管理、资源管理、Cluster 接入管理和内部 Agent 注册使用的 HTTP API 契约。
     所有 JSON 时间均为 RFC 3339，并由当前 API 以 UTC+8 偏移返回。
 servers:
   - url: http://127.0.0.1:8080
@@ -14,7 +14,8 @@ tags:
   - name: Users
   - name: RBAC
   - name: Resources
-  - name: Agents
+  - name: Clusters
+  - name: Agent Protocol
   - name: Audit
   - name: Events
 paths:
@@ -167,6 +168,52 @@ paths:
                 $ref: "#/components/schemas/ManagedUser"
         "404":
           $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Users]
+      operationId: updateUser
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: 用户资料已更新
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Users]
+      operationId: deleteUser
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "200":
+          description: 用户已逻辑删除并撤销全部 Session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/users/{user_id}/status:
     parameters:
       - $ref: "#/components/parameters/UserID"
@@ -298,6 +345,22 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
   /api/v1/role-bindings/{role_binding_id}:
+    get:
+      tags: [RBAC]
+      operationId: getRoleBinding
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/RoleBindingID"
+      responses:
+        "200":
+          description: RoleBinding 详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleBinding"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       tags: [RBAC]
       operationId: deleteRoleBinding
@@ -372,15 +435,15 @@ paths:
   /api/v1/events:
     get:
       tags: [Events]
-      operationId: streamAgentStatusEvents
+      operationId: streamClusterStatusEvents
       description: |
-        发送 `ready`、`agent.status` 和 `close` 事件以及注释心跳。
-        断线重连后客户端应重新查询 Agent 状态；当前不承诺历史事件重放。
+        发送 `ready`、`cluster.status` 和 `close` 事件以及注释心跳。
+        断线重连后客户端应重新查询 Cluster 状态；当前不承诺历史事件重放。
       security:
         - sessionCookie: []
       responses:
         "200":
-          description: Agent 状态事件流
+          description: Cluster 状态事件流
           content:
             text/event-stream:
               schema:
@@ -433,6 +496,65 @@ paths:
                 $ref: "#/components/schemas/Tenant"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/tenants/{tenant_id}:
+    parameters:
+      - $ref: "#/components/parameters/TenantID"
+    get:
+      tags: [Resources]
+      operationId: getTenant
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Tenant 详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Resources]
+      operationId: updateTenant
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateScopedResourceRequest"
+      responses:
+        "200":
+          description: Tenant 已更新
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Resources]
+      operationId: deleteTenant
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "200":
+          description: Tenant 已停用，下属接入身份已撤销
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
   /api/v1/tenants/{tenant_id}/projects:
     parameters:
       - $ref: "#/components/parameters/TenantID"
@@ -479,6 +601,65 @@ paths:
                 $ref: "#/components/schemas/Project"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/projects/{project_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      tags: [Resources]
+      operationId: getProject
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Project 详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Resources]
+      operationId: updateProject
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateScopedResourceRequest"
+      responses:
+        "200":
+          description: Project 已更新
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Resources]
+      operationId: deleteProject
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "200":
+          description: Project 已停用，下属接入身份已撤销
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
   /api/v1/projects/{project_id}/clusters:
     get:
       tags: [Resources]
@@ -499,7 +680,7 @@ paths:
                   clusters:
                     type: array
                     items:
-                      $ref: "#/components/schemas/Cluster"
+                      $ref: "#/components/schemas/ClusterAggregate"
   /api/v1/clusters/{cluster_id}:
     get:
       tags: [Resources]
@@ -514,51 +695,79 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Cluster"
+                $ref: "#/components/schemas/ClusterAggregate"
         "404":
           $ref: "#/components/responses/NotFound"
-  /api/v1/clusters/{cluster_id}/agent:
-    get:
-      tags: [Agents]
-      operationId: getClusterAgent
+    put:
+      tags: [Resources]
+      operationId: updateCluster
       security:
         - sessionCookie: []
       parameters:
         - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClusterRequest"
       responses:
         "200":
-          description: Cluster Agent 状态
+          description: Cluster 名称已更新
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentStatus"
+                $ref: "#/components/schemas/Cluster"
         "404":
           $ref: "#/components/responses/NotFound"
-  /api/v1/projects/{project_id}/agents:
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Resources]
+      operationId: deleteCluster
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "200":
+          description: Cluster 已退役，内部接入身份和凭证已撤销
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cluster"
+  /api/v1/projects/{project_id}/cluster-enrollments:
     get:
-      tags: [Agents]
-      operationId: listProjectAgents
+      tags: [Clusters]
+      operationId: listClusterEnrollments
       security:
         - sessionCookie: []
       parameters:
         - $ref: "#/components/parameters/ProjectID"
       responses:
         "200":
-          description: Project Agent 状态
+          description: Cluster Enrollment 列表
           content:
             application/json:
               schema:
                 type: object
-                required: [agents]
+                required: [cluster_enrollments]
                 properties:
-                  agents:
+                  cluster_enrollments:
                     type: array
                     items:
-                      $ref: "#/components/schemas/AgentStatus"
-  /api/v1/projects/{project_id}/agent-enrollments:
+                      $ref: "#/components/schemas/ClusterEnrollmentRecord"
     post:
-      tags: [Agents]
-      operationId: createAgentEnrollment
+      tags: [Clusters]
+      operationId: createClusterEnrollment
       security:
         - sessionCookie: []
       parameters:
@@ -584,13 +793,53 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentEnrollment"
+                $ref: "#/components/schemas/ClusterEnrollment"
         "409":
           $ref: "#/components/responses/Conflict"
-  /api/v1/projects/{project_id}/agent-installations:
+  /api/v1/projects/{project_id}/cluster-enrollments/{enrollment_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - $ref: "#/components/parameters/EnrollmentID"
+    get:
+      tags: [Clusters]
+      operationId: getClusterEnrollment
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Cluster Enrollment 详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterEnrollmentRecord"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Clusters]
+      operationId: revokeClusterEnrollment
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "200":
+          description: Cluster Enrollment 已撤销
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterEnrollmentRecord"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/projects/{project_id}/cluster-installations:
     post:
-      tags: [Agents]
-      operationId: createAgentInstallation
+      tags: [Clusters]
+      operationId: createClusterInstallation
       security:
         - sessionCookie: []
       parameters:
@@ -614,15 +863,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentInstallation"
-  /api/v1/agents/{agent_id}/revoke:
+                $ref: "#/components/schemas/ClusterInstallation"
+  /api/v1/clusters/{cluster_id}/connection/revoke:
     post:
-      tags: [Agents]
-      operationId: revokeAgent
+      tags: [Clusters]
+      operationId: revokeClusterConnection
       security:
         - sessionCookie: []
       parameters:
-        - $ref: "#/components/parameters/AgentID"
+        - $ref: "#/components/parameters/ClusterID"
         - $ref: "#/components/parameters/CSRFToken"
       requestBody:
         required: true
@@ -632,16 +881,41 @@ paths:
               $ref: "#/components/schemas/Confirmation"
       responses:
         "200":
-          description: Agent 已撤销
+          description: Cluster 当前接入身份已撤销
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentRevocation"
+                $ref: "#/components/schemas/ClusterConnectionRevocation"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/clusters/{cluster_id}/connection/reenroll:
+    post:
+      tags: [Clusters]
+      operationId: reenrollClusterConnection
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "201":
+          description: 原 Cluster 的新一次性接入凭证
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterEnrollment"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /agent-api/v1/enroll:
     post:
-      tags: [Agents]
+      tags: [Agent Protocol]
       operationId: enrollAgent
       security:
         - enrollmentToken: []
@@ -671,7 +945,7 @@ paths:
                 additionalProperties: true
   /agent-install/v1/manifest:
     get:
-      tags: [Agents]
+      tags: [Agent Protocol]
       operationId: getAgentInstallationManifest
       security:
         - installationToken: []
@@ -741,8 +1015,8 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/UUID"
-    AgentID:
-      name: agent_id
+    EnrollmentID:
+      name: enrollment_id
       in: path
       required: true
       schema:
@@ -928,6 +1202,15 @@ components:
           format: password
           minLength: 15
           maxLength: 1024
+    UpdateUserRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 253
     SetUserStatusRequest:
       type: object
       additionalProperties: false
@@ -945,6 +1228,30 @@ components:
       properties:
         confirm:
           const: true
+    UpdateScopedResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [name, status, confirm]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        status:
+          type: string
+          enum: [active, suspended]
+        confirm:
+          type: boolean
+          description: status=suspended 时必须为 true
+    UpdateClusterRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 253
     PasswordResetRequest:
       type: object
       additionalProperties: false
@@ -1038,30 +1345,30 @@ components:
               $ref: "#/components/schemas/UUID"
             last_seen_at:
               $ref: "#/components/schemas/Timestamp"
-    AgentStatus:
+    ClusterConnection:
       type: object
       additionalProperties: false
       required:
-        - cluster_id
-        - cluster_name
-        - agent_id
+        - status
         - lifecycle_status
         - health_status
+        - version
+        - protocol_version
         - certificate_serial
         - certificate_expires_at
         - certificate_remaining_seconds
         - certificate_status
-        - connection_status
       properties:
-        cluster_id:
-          $ref: "#/components/schemas/UUID"
-        cluster_name:
+        status:
           type: string
-        agent_id:
-          $ref: "#/components/schemas/UUID"
+          enum: [online, offline]
         lifecycle_status:
           type: string
         health_status:
+          type: string
+        version:
+          type: string
+        protocol_version:
           type: string
         last_seen_at:
           $ref: "#/components/schemas/Timestamp"
@@ -1075,9 +1382,6 @@ components:
         certificate_status:
           type: string
           enum: [valid, expiring, expired, revoked]
-        connection_status:
-          type: string
-          enum: [online, offline]
         connection_id:
           type: string
         connected_at:
@@ -1088,12 +1392,22 @@ components:
           $ref: "#/components/schemas/Timestamp"
         last_disconnect_reason:
           type: string
-    AgentEnrollment:
+    ClusterAggregate:
+      allOf:
+        - $ref: "#/components/schemas/Cluster"
+        - type: object
+          required: [connection]
+          properties:
+            connection:
+              $ref: "#/components/schemas/ClusterConnection"
+    ClusterEnrollment:
       type: object
       additionalProperties: false
       required: [id, cluster_name, token, expires_at]
       properties:
         id:
+          $ref: "#/components/schemas/UUID"
+        cluster_id:
           $ref: "#/components/schemas/UUID"
         cluster_name:
           type: string
@@ -1101,7 +1415,43 @@ components:
           type: string
         expires_at:
           $ref: "#/components/schemas/Timestamp"
-    AgentInstallation:
+    ClusterEnrollmentRecord:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenant_id
+        - project_id
+        - cluster_name
+        - created_by_user_id
+        - status
+        - expires_at
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        tenant_id:
+          $ref: "#/components/schemas/UUID"
+        project_id:
+          $ref: "#/components/schemas/UUID"
+        cluster_id:
+          $ref: "#/components/schemas/UUID"
+        cluster_name:
+          type: string
+        created_by_user_id:
+          $ref: "#/components/schemas/UUID"
+        status:
+          type: string
+          enum: [active, consumed, expired, revoked]
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        consumed_at:
+          $ref: "#/components/schemas/Timestamp"
+        revoked_at:
+          $ref: "#/components/schemas/Timestamp"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+    ClusterInstallation:
       type: object
       additionalProperties: false
       required:
@@ -1122,14 +1472,14 @@ components:
           format: uri
         install_command:
           type: string
-    AgentRevocation:
+    ClusterConnectionRevocation:
       type: object
       additionalProperties: false
-      required: [agent_id, lifecycle_status, revoked_at, already_revoked]
+      required: [cluster_id, connection_status, revoked_at, already_revoked]
       properties:
-        agent_id:
+        cluster_id:
           $ref: "#/components/schemas/UUID"
-        lifecycle_status:
+        connection_status:
           type: string
           const: revoked
         revoked_at:

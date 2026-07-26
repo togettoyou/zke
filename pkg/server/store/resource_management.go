@@ -46,6 +46,24 @@ ORDER BY lower(tenant.name), tenant.id
 	return result, nil
 }
 
+func (store *ResourceManagementStore) GetTenant(
+	ctx context.Context,
+	tenantID string,
+) (TenantResource, error) {
+	item, err := scanTenant(store.pool.QueryRow(ctx, `
+SELECT id::text, name, status, created_at, updated_at
+FROM tenants
+WHERE id = $1
+`, tenantID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TenantResource{}, ErrTenantNotFound
+	}
+	if err != nil {
+		return TenantResource{}, fmt.Errorf("get tenant: %w", err)
+	}
+	return item, nil
+}
+
 func (store *ResourceManagementStore) ListTenantProjects(
 	ctx context.Context,
 	tenantID string,
@@ -88,6 +106,24 @@ ORDER BY lower(project.name), project.id
 		return nil, fmt.Errorf("iterate visible projects: %w", err)
 	}
 	return result, nil
+}
+
+func (store *ResourceManagementStore) GetProject(
+	ctx context.Context,
+	projectID string,
+) (ProjectResource, error) {
+	item, err := scanProject(store.pool.QueryRow(ctx, `
+SELECT id::text, tenant_id::text, name, status, created_at, updated_at
+FROM projects
+WHERE id = $1
+`, projectID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ProjectResource{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return ProjectResource{}, fmt.Errorf("get project: %w", err)
+	}
+	return item, nil
 }
 
 func (store *ResourceManagementStore) ListProjectClusters(
@@ -386,6 +422,31 @@ WHERE request.actor_user_id = $1
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+func scanTenant(row rowScanner) (TenantResource, error) {
+	var item TenantResource
+	err := row.Scan(
+		&item.ID,
+		&item.Name,
+		&item.Status,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
+}
+
+func scanProject(row rowScanner) (ProjectResource, error) {
+	var item ProjectResource
+	err := row.Scan(
+		&item.ID,
+		&item.TenantID,
+		&item.Name,
+		&item.Status,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	)
+	return item, err
 }
 
 func scanCluster(row rowScanner) (ClusterResource, error) {

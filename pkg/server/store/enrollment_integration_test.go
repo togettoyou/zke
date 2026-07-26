@@ -81,7 +81,7 @@ WHERE target_id = $1
 	); err != nil {
 		t.Fatal(err)
 	}
-	if action != "agent.enrollment.create" ||
+	if action != "cluster.enrollment.create" ||
 		targetType != "enrollment" ||
 		targetID != created.ID ||
 		result != "succeeded" ||
@@ -126,7 +126,7 @@ WHERE target_id = $1
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.enrollment.create'
+WHERE action = 'cluster.enrollment.create'
   AND project_id = $1
   AND result = 'succeeded'
 `, projectID).Scan(&auditCount); err != nil {

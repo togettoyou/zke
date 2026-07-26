@@ -29,14 +29,14 @@ type StatusEventPublisher interface {
 }
 
 type RevokeInput struct {
-	AgentID     string
+	ClusterID   string
 	ActorUserID string
 	RequestID   string
 	Now         time.Time
 }
 
 type RevokeResult struct {
-	AgentID        string
+	ClusterID      string
 	RevokedAt      time.Time
 	AlreadyRevoked bool
 }
@@ -56,14 +56,14 @@ func (service *Service) Revoke(
 	ctx context.Context,
 	input RevokeInput,
 ) (RevokeResult, error) {
-	if !validation.IsUUID(input.AgentID) ||
+	if !validation.IsUUID(input.ClusterID) ||
 		!validation.IsUUID(input.ActorUserID) ||
 		input.RequestID == "" ||
 		input.Now.IsZero() {
 		return RevokeResult{}, ErrInvalidInput
 	}
 	result, err := service.store.Revoke(ctx, store.RevokeAgentParams{
-		AgentID:     input.AgentID,
+		ClusterID:   input.ClusterID,
 		ActorUserID: input.ActorUserID,
 		RequestID:   input.RequestID,
 		Now:         input.Now,
@@ -80,7 +80,7 @@ func (service *Service) Revoke(
 		)
 	}
 	return RevokeResult{
-		AgentID:        result.AgentID,
+		ClusterID:      result.ClusterID,
 		RevokedAt:      result.RevokedAt,
 		AlreadyRevoked: result.AlreadyRevoked,
 	}, nil

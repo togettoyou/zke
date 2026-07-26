@@ -1,80 +1,71 @@
-# Agent 管理
+# 集群接入管理
 
-Agent 管理是多集群应用，用户无需预先选择集群。
+集群接入管理是多集群应用，用户无需预先选择集群。
 
-规划能力包括：
+## Cluster 与 Agent 的统一语义
 
-- 集群接入与 Agent 安装引导；
-- Agent 在线状态、版本、升级与最后心跳时间；
-- 集群连接状态和基本信息；
-- Agent 日志、配置与连接诊断；
-- 多集群统一管理、集群分组与标签管理；
-- Agent 权限控制。
+管理端只暴露 `Cluster` 资源。一个接入 ZKE 的 Kubernetes Cluster 与部署在其中的 ZKE Agent 构成同一个
+管理共同体：Cluster 是稳定的外部资源和权限目标，Agent 是该 Cluster 当前使用的内部连接与执行身份。
+
+数据库仍分别保存 `clusters`、`agents` 和 `agent_credentials`，以保留重新接入、证书轮换、撤销和审计历史；
+这些内部 Agent ID 不出现在管理 API。重新接入会保留原 `cluster_id`，撤销旧内部身份并创建一个新的内部身份，
+同一 Cluster 同一时刻最多只有一个未撤销 Agent。
 
 Agent 主动连接 ZKE Server，不要求 Server 直接访问 Kubernetes API Server。总体模型参见
 [Server + Agent 架构](../architecture/server-agent.md)，注册、证书与连接过程参见
 [Agent 注册与连接](../architecture/agent-enrollment-and-connection.md)。
 
-## 当前实现进度
+## 当前已实现
 
-Server 已实现 `POST /api/v1/projects/{project_id}/agent-enrollments`，用于由具备
-`agent.enrollment.create` 权限的用户创建 15 分钟有效的一次性 Agent 注册凭证。接口要求有效 Session 和 CSRF
-Token，并在请求正文中指定集群名称。Project 归属由 Server 解析，集群名称随注册凭证持久化；注册 Token 明文只
-返回一次，数据库只保存 SHA-256 摘要，并同步记录成功审计。
-请求还必须携带 16 至 128 字符的 `Idempotency-Key`；重复 Key 返回 `409 idempotency_conflict`，不会生成额外
-凭证。Project 权限拒绝和创建失败会在数据库可用且请求 Deadline 尚未耗尽时记录安全审计。
+### 接入凭证和安装
 
-Server 已实现 `POST /agent-api/v1/enroll`。Agent 通过 Bearer 注册 Token、`Idempotency-Key`、CSR、Agent
-版本和协议版本发起注册，不提交或覆盖集群名称。Server 从注册凭证读取由用户预先指定的名称，校验 Token 与
-CSR，由配置的 Agent Client CA 签发 ClientAuth 证书，并以单个
-事务创建 Cluster、Agent 与证书元数据、消费凭证、保存幂等响应和成功审计；签发或持久化失败会记录失败审计，
-并保留可重试的注册尝试。证书身份显式绑定 Tenant、Project、Cluster 和 Agent，Agent 私钥不会发送给 Server。
+- `POST /api/v1/projects/{project_id}/cluster-enrollments` 创建 15 分钟有效的一次性接入凭证；
+- `GET /api/v1/projects/{project_id}/cluster-enrollments` 查询凭证列表；
+- `GET /api/v1/projects/{project_id}/cluster-enrollments/{enrollment_id}` 查询凭证详情；
+- `DELETE /api/v1/projects/{project_id}/cluster-enrollments/{enrollment_id}` 撤销未消费的凭证；
+- `POST /api/v1/projects/{project_id}/cluster-installations` 生成一键安装命令；
+- `GET /agent-install/v1/manifest` 使用 Bearer Token 获取 Kubernetes Manifest。
 
-相同幂等键与 CSR 可以恢复已有结果，换用 CSR 会被拒绝，过期、撤销或已由其他尝试消费的凭证不能继续使用。
-接口限制 128 KiB 请求正文、拒绝未知字段并按来源限流。ZKE Server 可选原生 HTTP TLS；生产环境必须使用
-Server 原生 HTTPS 或由上游网关终止 TLS，包含注册 Token 的明文 HTTP 不得直接暴露到不可信网络。
+创建接口要求 Session、CSRF、`cluster.enrollment.create` 权限和 16 至 128 字符的
+`Idempotency-Key`。Token 明文只返回一次，数据库只保存 SHA-256 摘要；凭证与 Project、集群显示名称绑定。
+查询和撤销分别要求 `cluster.enrollment.read` 与 `cluster.enrollment.revoke`。已消费凭证不可撤销。
 
-Agent 已实现首次注册流程：在集群内生成 ECDSA P-256 私钥和 CSR，自行创建固定名称 Kubernetes Secret 并写入
-私钥、原始 CSR 与幂等键，再调用注册接口。网络错误、`429` 和 Server `5xx` 会使用相同 CSR 与幂等键重试；
-成功响应中的证书、Cluster ID、Agent ID 和过期时间会原子写回同一 Secret。Agent 重启后直接复用完整身份，
-不再读取一次性 Token；部分写入、私钥与证书不匹配、证书作用域错误或证书过期都会拒绝启动。
+### 首次注册和主动连接
 
-注册后的 QUIC/mTLS 主动连接、Hello、心跳和重连已经实现。Server 使用证书序列号和 URI SAN 校验 Agent 身份，
-并在首次有效连接后激活 Cluster 与 Agent；心跳限频更新健康状态和 `last_seen_at`。Agent 会在证书到期前通过
-Control Stream 自动续期，持久化 CSR 以支持幂等恢复，并在新证书连接成功后撤销旧 Credential。Credential、
-Agent 或 Cluster 被撤销时，Server 通过 PostgreSQL 通知关闭现有连接；连接也不会越过客户端证书自然过期时间。
-业务任务 Stream、Helm Chart 和升级管理仍属于后续实现范围。
-Agent ServiceAccount 需要 Secret 的 `create` 权限，对固定的 Enrollment、Trust 和 identity Secret 具有
-`get` 权限，并只能更新 identity Secret。注册 Token 只保存在独立 Secret 中，不能写入 Agent YAML、日志或
-身份 Secret；Agent 通过 client-go 定域读取它。
+`POST /agent-api/v1/enroll` 是内部 Agent 注册端点。Agent 在集群内生成 ECDSA P-256 私钥和 CSR，Server 从
+Enrollment 读取作用域和集群名称，原子创建 Cluster、内部 Agent 身份、Credential、幂等结果和审计记录。
+Agent 私钥不会发送给 Server。
 
-Server 已实现 `POST /api/v1/projects/{project_id}/agent-installations` 和 Bearer 保护的
-`GET /agent-install/v1/manifest`。前者返回可直接执行的 `curl | kubectl apply` 命令；后者生成 Namespace、
-Enrollment/Trust Secret、ConfigMap、ServiceAccount、最小 Role/RoleBinding 和 Deployment。资源包不创建
-Service、PVC 或 identity Secret。Enrollment Secret 保留不会导致重复注册，因为 Agent 重启优先使用 identity
-Secret，Server 也已单次消费 Token。
+完成注册后，Agent 使用 QUIC/mTLS 主动连接 Server，执行 Hello、心跳、断线重连和证书自动续期。首次有效连接
+激活 Cluster；状态 API 将数据库状态与当前 Server 实例内存中的连接快照合并。
 
-Server 已实现 `GET /api/v1/projects/{project_id}/agents`，返回 Agent 当前证书过期时间、剩余秒数和证书状态，
-并合并当前 Server 实例内存中的 `online`/`offline` 状态、Connection ID、连接时间、最近心跳、断开时间和断开
-原因，供管理客户端使用；同时按配置周期输出临近过期的结构化告警。连接快照不写数据库，Server 重启后离线 Agent
-的历史断开信息会丢失；多 Server 实例的全局连接视图仍需后续的连接所有权与路由设计。
+### Cluster 聚合查询和生命周期
 
-Server 已实现 `GET /api/v1/events` SSE。连接建立、健康状态变化、生命周期撤销和断开会发送权限过滤后的 `agent.status`
-事件；事件携带完整的当前 Agent 状态。SSE 会定期重新验证 Session，每个事件也重新执行 Cluster 定域的
-`agent.read` 授权。客户端断线重连后必须重新查询状态，当前单实例内存事件流不提供历史事件重放。
+- `GET /api/v1/projects/{project_id}/clusters` 查询 Project 内的 Cluster；
+- `GET /api/v1/clusters/{cluster_id}` 查询 Cluster 及其 `connection`；
+- `PUT /api/v1/clusters/{cluster_id}` 修改显示名称；
+- `DELETE /api/v1/clusters/{cluster_id}` 逻辑删除 Cluster，并撤销内部身份和全部 Credential；
+- `POST /api/v1/clusters/{cluster_id}/connection/revoke` 撤销当前连接身份；
+- `POST /api/v1/clusters/{cluster_id}/connection/reenroll` 为同一 Cluster 创建重新接入凭证；
+- `GET /api/v1/events` 发送权限过滤后的 `cluster.status` SSE 事件。
 
-Server 已实现 Tenant/Project 创建和权限范围列表，以及
-`GET /api/v1/projects/{project_id}/clusters`、`GET /api/v1/clusters/{cluster_id}` 和
-`GET /api/v1/clusters/{cluster_id}/agent`。创建请求要求 CSRF、创建权限和幂等键；资源、幂等记录与成功审计
-原子提交。列表只返回当前 RoleBinding 可见范围，Cluster 与 Agent 详情在目标 Cluster 所属 Project 内授权。
+连接信息嵌套在 Cluster 的 `connection` 字段中，包括生命周期、健康状态、Agent/协议版本、证书状态、
+`online`/`offline` 状态、Connection ID、最近心跳和断开原因。外部响应不返回内部 `agent_id`。
 
-Server 已实现 `POST /api/v1/agents/{agent_id}/revoke`。接口要求 Session、CSRF、
-`agent.revoke` 权限和正文中的显式 `{"confirm":true}`；成功后在一个事务中把 Agent 生命周期置为 `revoked`、
-撤销全部客户端 Credential 并写入集群作用域审计。重复撤销返回原撤销时间并标记 `already_revoked`，不会恢复或
-改变身份。数据库撤销通知会让持有连接的 Server 立即向 Agent 发送 `GoAway(agent_revoked)` 并关闭 QUIC 连接。
+连接撤销要求 `cluster.connection.revoke` 和显式 `{"confirm":true}`；它不会删除 Cluster。重新接入仅允许在
+当前连接身份已撤销后执行，要求 `cluster.enrollment.create`、确认和幂等键，并始终复用原 `cluster_id`。
+Cluster 删除使用 `cluster.manage`，属于不可重新接入的逻辑撤销。
 
-HTTP 注册与 QUIC 长连接使用独立端点。Server 分别配置 `http.address` 和 `agent_listener.address`；Agent 分别
-配置 `registration.server_url` 和 `connection.server_address`，不从注册 URL 隐式派生 QUIC 地址。
+Tenant、Project、User 和 RoleBinding 的 Phase 1 管理生命周期也已实现；Tenant/Project 删除为逻辑
+`suspended`，并级联撤销未消费 Enrollment、Cluster 连接身份和 Credential。
 
-集群名称当前是便于用户识别的显示名称，不承担唯一身份语义，也不要求唯一；Server 生成的 `cluster_id` 才是
-跨接口、权限和 Agent 身份绑定使用的唯一标识。
+## 当前限制
+
+- 连接快照不写数据库，Server 重启后离线断开详情会丢失；
+- 多 Server 实例尚未汇总全局连接视图和任务路由；
+- Agent 离线直至证书过期后，需要执行 Cluster 重新接入；
+- Helm Chart、Agent 升级、日志、配置与连接诊断仍属于后续规划；
+- 项目仍处于早期开发阶段，不适用于生产环境。
+
+集群显示名称只用于识别且允许修改，不承担唯一身份语义；`cluster_id` 是跨接口、权限和内部身份绑定使用的稳定
+唯一标识。

@@ -112,7 +112,9 @@ Engine、装配全局中间件和构造 Handler；具体 Handler 文件不得自
 当前迁移实现位于 `pkg/server/store/migrations`，由 ZKE Server 在开始监听 HTTP 请求前自动执行。迁移文件嵌入
 Server 二进制并按连续版本顺序执行；执行器使用 PostgreSQL advisory lock 串行化迁移，每个版本在独立事务中应用，
 并保存名称和 SHA-256 校验和。多个 Server 同时启动时只有持有锁的实例执行迁移，其余实例等待并复核结果。迁移失败或
-超过配置的迁移超时时，Server 启动失败。已经应用的迁移文件不得修改，结构调整必须新增更高版本的前向迁移。
+超过配置的迁移超时时，Server 启动失败。当前尚处于开发阶段，Phase 1 基线结构统一维护在
+`000001_phase1_foundation.sql`，修改后需要重建已应用旧校验值的开发数据库；进入共享环境或发布阶段后，已经
+应用的迁移文件不得修改，结构调整必须新增更高版本的前向迁移。
 
 ### 4.3 用户认证与会话
 
@@ -130,10 +132,13 @@ Phase 1 使用 ZKE 内置本地用户认证：
 - Server 启动时只在用户表为空时创建首个管理员，密码从安全文件读取；
 - 管理员通过一次性、短有效期重置流程协助账户恢复。
 
-Phase 1 使用固定权限标识：`tenant.create`、`project.create`、`agent.enrollment.create`、`cluster.read`、
-`agent.read`、`agent.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`。
+Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.manage`、`project.create`、
+`project.read`、`project.manage`、
+`cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke`、`cluster.read`、
+`cluster.manage`、`cluster.connection.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage`
+和 `audit.read`。
 内置 `admin` 与 `viewer` 角色通过 RoleBinding 绑定到 Global、Tenant 或 Project；`admin` 包含全部权限，
-`viewer` 只包含 Cluster 与 Agent 读取权限，首个管理员拥有 Global `admin` 角色。
+`viewer` 只包含 Tenant、Project 与 Cluster 读取权限，首个管理员拥有 Global `admin` 角色。
 
 当前认证基础已经实现：
 
@@ -150,9 +155,11 @@ Phase 1 使用固定权限标识：`tenant.create`、`project.create`、`agent.e
 - 有效会话查询会原子续期空闲时间且不超过绝对过期时间，用户禁用、会话撤销、超时或密码变更会使会话失效；
 - Session Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，CSRF Token 通过 `SameSite=Strict` Cookie 交付并要求 `X-CSRF-Token` 请求头；两者在 TLS 部署中必须启用 `Secure`；
 - Go 标准库跨源保护会在业务 Handler 之前拒绝非安全的跨源浏览器请求。
-- RBAC 使用固定权限 `tenant.create`、`project.create`、`agent.enrollment.create`、`cluster.read`、
-  `agent.read`、`agent.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`；
-  `admin` 拥有全部固定权限，`viewer` 只拥有 Cluster 与 Agent 读取权限。
+- RBAC 使用固定权限 `tenant.create`、`tenant.read`、`tenant.manage`、`project.create`、`project.read`、
+  `project.manage`、
+  `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke`、`cluster.read`、
+  `cluster.manage`、`cluster.connection.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage`
+  和 `audit.read`；`admin` 拥有全部固定权限，`viewer` 只拥有 Tenant、Project 和 Cluster 读取权限。
 - RoleBinding 支持 Global、Tenant 和 Project 作用域；Global 绑定向下覆盖全部作用域，Tenant 绑定覆盖对应
   Tenant 及其 Project，Project 绑定只覆盖目标 Project。未命中有效绑定时默认拒绝。
 - RBAC Service、PostgreSQL Store 和 HTTP 授权 middleware 已实现；Project middleware 会根据 `project_id`
@@ -160,7 +167,7 @@ Phase 1 使用固定权限标识：`tenant.create`、`project.create`、`agent.e
 
 持久化账户锁定与到期自动恢复、管理员解锁和密码重置已经实现；锁定、禁用和密码重置均撤销现有 Session。
 用户与 RoleBinding 管理 API 仅允许 Global 管理员调用，保留最后一个有效 Global 管理员并记录事务内成功审计。
-RBAC 已接入 Tenant/Project 创建、Cluster/Agent 查询、Agent 注册凭证创建、安装 Manifest、Agent 撤销和
+RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Cluster 注册凭证管理、安装 Manifest、连接撤销和
 审计查询；Phase 1 认证与 RBAC 后端闭环不再依赖直接写数据库。
 登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
@@ -385,12 +392,12 @@ Phase 1 API 权限映射：
 
 | API | 权限 |
 | --- | --- |
-| 创建 Tenant | `tenant.create`（Global） |
-| 创建 Project | `project.create`（Tenant） |
-| 创建 Agent 注册凭证 | `agent.enrollment.create` |
+| 创建/查看/管理 Tenant | `tenant.create`、`tenant.read`、`tenant.manage`（管理权限为 Global） |
+| 创建/查看/管理 Project | `project.create`、`project.read`、`project.manage` |
+| 创建/查看/撤销 Cluster 接入凭证 | `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` |
 | 查看 Cluster | `cluster.read` |
-| 查看 Agent | `agent.read` |
-| 撤销 Agent | `agent.revoke` |
+| 管理 Cluster | `cluster.manage` |
+| 撤销 Cluster 当前连接 | `cluster.connection.revoke` |
 | 查看和管理用户 | `user.read`、`user.manage`（Global） |
 | 查看和管理 RoleBinding | `rbac.read`、`rbac.manage`（Global） |
 | 查询审计事件 | `audit.read`（按 RoleBinding 作用域过滤） |
@@ -406,42 +413,56 @@ GET  /api/v1/auth/me
 GET  /api/v1/users
 POST /api/v1/users
 GET  /api/v1/users/{user_id}
+PUT  /api/v1/users/{user_id}
+DELETE /api/v1/users/{user_id}
 PUT  /api/v1/users/{user_id}/status
 POST /api/v1/users/{user_id}/unlock
 POST /api/v1/users/{user_id}/password-reset
 GET  /api/v1/role-bindings
 POST /api/v1/role-bindings
+GET  /api/v1/role-bindings/{role_binding_id}
 DELETE /api/v1/role-bindings/{role_binding_id}
 GET  /api/v1/audit-events
 GET  /api/v1/events
 GET  /api/v1/tenants
 POST /api/v1/tenants
+GET  /api/v1/tenants/{tenant_id}
+PUT  /api/v1/tenants/{tenant_id}
+DELETE /api/v1/tenants/{tenant_id}
 GET  /api/v1/tenants/{tenant_id}/projects
 POST /api/v1/tenants/{tenant_id}/projects
+GET  /api/v1/projects/{project_id}
+PUT  /api/v1/projects/{project_id}
+DELETE /api/v1/projects/{project_id}
 GET  /api/v1/projects/{project_id}/clusters
 GET  /api/v1/clusters/{cluster_id}
-GET  /api/v1/clusters/{cluster_id}/agent
-POST /api/v1/projects/{project_id}/agent-enrollments
-POST /api/v1/projects/{project_id}/agent-installations
-GET  /api/v1/projects/{project_id}/agents
-POST /api/v1/agents/{agent_id}/revoke
+PUT  /api/v1/clusters/{cluster_id}
+DELETE /api/v1/clusters/{cluster_id}
+POST /api/v1/clusters/{cluster_id}/connection/revoke
+POST /api/v1/clusters/{cluster_id}/connection/reenroll
+GET  /api/v1/projects/{project_id}/cluster-enrollments
+POST /api/v1/projects/{project_id}/cluster-enrollments
+GET  /api/v1/projects/{project_id}/cluster-enrollments/{enrollment_id}
+DELETE /api/v1/projects/{project_id}/cluster-enrollments/{enrollment_id}
+POST /api/v1/projects/{project_id}/cluster-installations
 GET  /agent-install/v1/manifest
 ```
 
-SSE 发送 `ready`、`agent.status`、`close` 和注释心跳。Agent 连接建立、健康变化、生命周期撤销和断开触发状态事件；
-Server 定期重新验证 Session，并在发送每个事件前重新执行 Cluster `agent.read` 授权。事件不持久化，客户端
+SSE 发送 `ready`、`cluster.status`、`close` 和注释心跳。Agent 连接建立、健康变化、生命周期撤销和断开触发
+Cluster 聚合状态事件；Server 定期重新验证 Session，并在发送每个事件前重新执行 `cluster.read` 授权。事件
+不持久化，客户端
 断线重连后重新查询当前状态。
 
 Tenant 和 Project 创建要求 Session、CSRF、对应创建权限以及 `Idempotency-Key`。首次创建返回 `201`，相同用户、
 作用域、Key 和名称的恢复返回 `200` 与 `replayed: true`，同一 Key 换用其他名称返回
 `409 idempotency_conflict`；资源、幂等记录和成功审计在同一事务中提交。Tenant/Project 列表根据当前用户的
-Global、Tenant 和 Project RoleBinding 过滤，不返回不可见资源。Cluster 列表、详情和单 Cluster Agent 详情
-分别执行 Project 或 Cluster 定域的读取授权。
+Global、Tenant 和 Project RoleBinding 过滤，不返回不可见资源。Cluster 列表和详情返回稳定 Cluster 字段及
+嵌套的 `connection` 状态，不暴露内部 Agent ID。
 
-Agent 撤销接口要求 Session、CSRF、`agent.revoke` 权限和 `{"confirm":true}` 显式确认。Server 在同一事务中
-更新 Agent 生命周期、撤销全部客户端 Credential 并写入集群作用域成功审计；重复撤销返回 `200`、原撤销时间和
-`already_revoked: true`。数据库触发器向全部 Server 实例广播撤销通知，持有连接的实例立即关闭对应 QUIC
-Connection。
+Cluster 当前连接撤销要求 Session、CSRF、`cluster.connection.revoke` 权限和 `{"confirm":true}` 显式确认。
+Server 在同一事务中更新内部 Agent 生命周期、撤销全部客户端 Credential 并写入 Cluster 作用域成功审计；重复
+撤销返回 `200`、原撤销时间和 `already_revoked: true`。撤销后可使用重新接入接口生成绑定同一 `cluster_id`
+的一次性 Enrollment。Cluster 逻辑删除则将 Cluster 置为 `revoked`，不允许重新接入。
 
 创建 Agent 注册凭证时，Server 生成 15 分钟有效的一次性随机 Token。Token 明文只在成功响应中返回一次，
 响应禁止缓存；数据库只保存 SHA-256 摘要。凭证记录和成功审计事件在同一事务内写入。请求必须携带 16 至 128
@@ -453,7 +474,7 @@ Connection。
 创建请求由 Server API 调用方指定集群名称，并将名称绑定到 Enrollment：
 
 ```http
-POST /api/v1/projects/{project_id}/agent-enrollments
+POST /api/v1/projects/{project_id}/cluster-enrollments
 Idempotency-Key: <16 至 128 字符>
 Content-Type: application/json
 
@@ -527,15 +548,16 @@ TLS 1.3 和 mTLS，不经过 HTTP 网关，也不复用 HTTP TLS 身份。
 | UserSession | `id`, `user_id`, `token_digest`, `idle_expires_at`, `expires_at`, `revoked_at` | Server 端不透明会话，只保存 Token 摘要 |
 | RoleBinding | `subject_id`, `role`, `scope_type`, `tenant_id`, `project_id` | 服务端授权依据；作用域形状由约束校验 |
 | Cluster | `id`, `tenant_id`, `project_id`, `name`, `status`, `last_seen_at` | 全局逻辑资源；操作仍在该集群执行 |
-| Agent | `id`, `cluster_id`, `version`, `protocol_version`, `lifecycle_status`, `health_status`, `active_credential_serial`, `last_seen_at` | Agent 逻辑身份、当前连接凭据与持久状态 |
+| Agent | `id`, `cluster_id`, `version`, `protocol_version`, `lifecycle_status`, `health_status`, `active_credential_serial`, `last_seen_at` | Cluster 的内部连接身份；不作为独立管理资源暴露，可保留多次接入历史 |
 | AgentCredential | `id`, `agent_id`, `serial`, `csr_fingerprint`, `certificate_pem`, `expires_at`, `revoked_at` | 客户端证书及元数据 |
-| Enrollment | `id`, `tenant_id`, `project_id`, `cluster_name`, `token_digest`, `expires_at`, `consumed_at` | 绑定集群名称的一次性注册凭证 |
+| Enrollment | `id`, `tenant_id`, `project_id`, `cluster_id`, `cluster_name`, `token_digest`, `expires_at`, `consumed_at`, `revoked_at` | 首次接入绑定名称，重新接入绑定现有 Cluster 的一次性凭证 |
 | EnrollmentAttempt | `id`, `enrollment_id`, `idempotency_key`, `csr_fingerprint`, `status`, `response`, `created_at` | 注册幂等与结果恢复 |
 | ServerPKIState | Client/Listener CA 与 Listener 叶子证书的 `fingerprint`, `expires_at` | Managed PKI 的数据库绑定和 PV 丢失保护 |
 | AuditEvent | `id`, `actor_type`, `actor_user_id`, `actor_agent_id`, `scope_type`, `tenant_id`, `project_id`, `cluster_id`, `action`, `target_type`, `target_id`, `result`, `request_id`, `created_at` | 审计元数据；发起者按类型使用外键约束，不保存敏感操作正文 |
 
 所有从属资源表都保留足够的作用域字段或可验证外键，防止仅凭资源 ID 造成跨 Tenant、Project 数据串扰。
-Cluster 和 Agent 使用稳定 ID 作为协议身份，名称可修改。
+管理 API、RBAC 和审计使用稳定 `cluster_id`。内部 Agent ID 只用于连接协议、Credential 归属和历史追踪；
+Cluster 名称可修改。重新接入保持 `cluster_id` 不变，并创建新的内部 Agent 身份。
 
 连接状态由 Server 内存和 `agentconn` 维护，数据库保存限频的 `last_seen_at`、生命周期与健康状态。Phase 1
 状态 API 会把当前 Server 实例的连接快照与数据库记录合并，返回 `online`/`offline`、Connection ID、连接与

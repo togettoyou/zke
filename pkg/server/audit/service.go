@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	ActionAgentEnrollmentCreate = "agent.enrollment.create"
-	ActionAgentRevoke           = "agent.revoke"
-	ActionTenantCreate          = "tenant.create"
-	ActionProjectCreate         = "project.create"
+	ActionClusterEnrollmentCreate   = "cluster.enrollment.create"
+	ActionClusterEnrollmentRevoke   = "cluster.enrollment.revoke"
+	ActionClusterConnectionRevoke   = "cluster.connection.revoke"
+	ActionClusterConnectionReenroll = "cluster.connection.reenroll"
+	ActionTenantCreate              = "tenant.create"
+	ActionProjectCreate             = "project.create"
 )
 
 type Service struct {

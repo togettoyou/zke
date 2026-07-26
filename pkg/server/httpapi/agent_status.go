@@ -22,23 +22,33 @@ type agentStatusHandler struct {
 	rbacService      *rbac.Service
 }
 
-type agentStatusResponse struct {
-	ClusterID                   string     `json:"cluster_id"`
-	ClusterName                 string     `json:"cluster_name"`
-	AgentID                     string     `json:"agent_id"`
+type clusterConnectionResponse struct {
+	Status                      string     `json:"status"`
 	LifecycleStatus             string     `json:"lifecycle_status"`
 	HealthStatus                string     `json:"health_status"`
+	Version                     string     `json:"version"`
+	ProtocolVersion             string     `json:"protocol_version"`
 	LastSeenAt                  *time.Time `json:"last_seen_at,omitempty"`
 	CertificateSerial           string     `json:"certificate_serial"`
 	CertificateExpiresAt        time.Time  `json:"certificate_expires_at"`
 	CertificateRemainingSeconds int64      `json:"certificate_remaining_seconds"`
 	CertificateStatus           string     `json:"certificate_status"`
-	ConnectionStatus            string     `json:"connection_status"`
 	ConnectionID                string     `json:"connection_id,omitempty"`
 	ConnectedAt                 *time.Time `json:"connected_at,omitempty"`
 	LastHeartbeatAt             *time.Time `json:"last_heartbeat_at,omitempty"`
 	LastDisconnectedAt          *time.Time `json:"last_disconnected_at,omitempty"`
 	LastDisconnectReason        string     `json:"last_disconnect_reason,omitempty"`
+}
+
+type agentStatusResponse struct {
+	ID         string                    `json:"id"`
+	TenantID   string                    `json:"tenant_id"`
+	ProjectID  string                    `json:"project_id"`
+	Name       string                    `json:"name"`
+	Status     string                    `json:"status"`
+	CreatedAt  time.Time                 `json:"created_at"`
+	UpdatedAt  time.Time                 `json:"updated_at"`
+	Connection clusterConnectionResponse `json:"connection"`
 }
 
 func newAgentStatusHandler(
@@ -57,7 +67,7 @@ func newAgentStatusHandler(
 func (handler *agentStatusHandler) list(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	if handler.service == nil {
-		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent status is unavailable")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster status is unavailable")
 		return
 	}
 	operationContext, cancel := context.WithTimeout(
@@ -77,7 +87,7 @@ func (handler *agentStatusHandler) list(c *gin.Context) {
 		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
 	case err != nil:
 		handler.logger.Error(
-			"list Agent certificate status",
+			"list Cluster connection status",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
 			slog.String("project_id", c.Param("project_id")),
 			slog.String("error", err.Error()),
@@ -88,14 +98,14 @@ func (handler *agentStatusHandler) list(c *gin.Context) {
 		for _, item := range result {
 			response = append(response, responseAgentStatus(item))
 		}
-		c.JSON(http.StatusOK, gin.H{"agents": response})
+		c.JSON(http.StatusOK, gin.H{"clusters": response})
 	}
 }
 
 func (handler *agentStatusHandler) getCluster(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	if handler.service == nil {
-		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent status is unavailable")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster status is unavailable")
 		return
 	}
 	operationContext, cancel := context.WithTimeout(
@@ -112,12 +122,12 @@ func (handler *agentStatusHandler) getCluster(c *gin.Context) {
 	case errors.Is(err, agentstatus.ErrInvalidInput):
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid cluster")
 	case errors.Is(err, agentstatus.ErrNotFound):
-		writeError(c, http.StatusNotFound, "not_found", "Agent not found")
+		writeError(c, http.StatusNotFound, "not_found", "Cluster not found")
 	case errors.Is(err, context.DeadlineExceeded):
 		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
 	case err != nil:
 		handler.logger.Error(
-			"get cluster Agent status",
+			"get Cluster connection status",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
 			slog.String("cluster_id", c.Param("cluster_id")),
 			slog.String("error", err.Error()),
@@ -130,21 +140,29 @@ func (handler *agentStatusHandler) getCluster(c *gin.Context) {
 
 func responseAgentStatus(item agentstatus.Agent) agentStatusResponse {
 	return agentStatusResponse{
-		ClusterID:                   item.ClusterID,
-		ClusterName:                 item.ClusterName,
-		AgentID:                     item.AgentID,
-		LifecycleStatus:             item.LifecycleStatus,
-		HealthStatus:                item.HealthStatus,
-		LastSeenAt:                  responseTimePointer(item.LastSeenAt),
-		CertificateSerial:           item.CertificateSerial,
-		CertificateExpiresAt:        responseTime(item.CertificateExpiresAt),
-		CertificateRemainingSeconds: item.CertificateRemainingSeconds,
-		CertificateStatus:           item.CertificateStatus,
-		ConnectionStatus:            item.ConnectionStatus,
-		ConnectionID:                item.ConnectionID,
-		ConnectedAt:                 responseTimePointer(item.ConnectedAt),
-		LastHeartbeatAt:             responseTimePointer(item.LastHeartbeatAt),
-		LastDisconnectedAt:          responseTimePointer(item.LastDisconnectedAt),
-		LastDisconnectReason:        item.LastDisconnectReason,
+		ID:        item.ClusterID,
+		TenantID:  item.TenantID,
+		ProjectID: item.ProjectID,
+		Name:      item.ClusterName,
+		Status:    item.ClusterStatus,
+		CreatedAt: responseTime(item.ClusterCreatedAt),
+		UpdatedAt: responseTime(item.ClusterUpdatedAt),
+		Connection: clusterConnectionResponse{
+			Status:                      item.ConnectionStatus,
+			LifecycleStatus:             item.LifecycleStatus,
+			HealthStatus:                item.HealthStatus,
+			Version:                     item.AgentVersion,
+			ProtocolVersion:             item.ProtocolVersion,
+			LastSeenAt:                  responseTimePointer(item.LastSeenAt),
+			CertificateSerial:           item.CertificateSerial,
+			CertificateExpiresAt:        responseTime(item.CertificateExpiresAt),
+			CertificateRemainingSeconds: item.CertificateRemainingSeconds,
+			CertificateStatus:           item.CertificateStatus,
+			ConnectionID:                item.ConnectionID,
+			ConnectedAt:                 responseTimePointer(item.ConnectedAt),
+			LastHeartbeatAt:             responseTimePointer(item.LastHeartbeatAt),
+			LastDisconnectedAt:          responseTimePointer(item.LastDisconnectedAt),
+			LastDisconnectReason:        item.LastDisconnectReason,
+		},
 	}
 }

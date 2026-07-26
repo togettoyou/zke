@@ -31,38 +31,37 @@ Cookie 属性、Synchronizer CSRF Token、应用层操作超时和 Go 标准库�
 Session 创建与成功审计在同一事务中完成；登录成功、失败、限流拒绝与注销均写入不包含凭证明文的审计事件。
 
 RBAC 基础已经实现固定权限、`admin/viewer` 角色矩阵、Global/Tenant/Project RoleBinding 继承规则、默认拒绝、
-Project 归属解析和 HTTP 授权 middleware。Global `admin` 拥有全部固定权限；`viewer` 只拥有 Cluster 与 Agent
-读取权限。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标 Project，跨作用域访问会被拒绝。
+Project/Cluster 归属解析和 HTTP 授权 middleware。Global `admin` 拥有全部固定权限；`viewer` 只拥有 Tenant、
+Project 和 Cluster 读取权限。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标 Project，跨作用域
+访问会被拒绝。
 
 当前固定权限还包括 `user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`。Phase 1 的用户与
 RoleBinding 管理入口只允许 Global `admin` 使用，避免在委派规则尚未扩展前出现权限提升；创建的 RoleBinding
-仍可绑定 Global、Tenant 或 Project 作用域。Server 提供用户列表、详情、创建、启用/禁用、解锁和管理员密码
-重置 API，以及 RoleBinding 列表、幂等创建和删除 API。禁止当前用户禁用自身，也禁止禁用或移除最后一个有效的
-Global `admin`。权限授予、权限移除、用户状态变更、解锁和密码重置均要求显式确认；禁用、锁定和密码重置都会
-撤销目标用户现有 Session。
+仍可绑定 Global、Tenant 或 Project 作用域。Server 提供用户列表、详情、创建、修改显示名称、启用/禁用、
+逻辑删除、解锁和管理员密码重置 API，以及 RoleBinding 列表、详情、幂等创建和删除 API。RoleBinding 是不可变
+授权关系，修改通过删除后重新创建完成。禁止当前用户禁用或删除自身，也禁止禁用、删除或移除最后一个有效的
+Global `admin`。权限授予、权限移除、用户状态变更、删除、解锁和密码重置均要求显式确认；禁用、删除、锁定和
+密码重置都会撤销目标用户现有 Session。
 
 账户错误密码计数和锁定期限持久化在 PostgreSQL，不因 Server 重启丢失。达到配置阈值后账户进入 `locked`，
 现有 Session 被撤销；锁定期满后的首次正确登录会自动恢复，Global 管理员也可显式解锁。登录错误、账户锁定、
 自动恢复、管理员解锁和密码重置均写入不包含密码的审计事件。
 
-RBAC 已接入 Tenant/Project 创建、Cluster/Agent 定域查询、
-`POST /api/v1/projects/{project_id}/agent-enrollments`、
-`POST /api/v1/projects/{project_id}/agent-installations` 和
-`GET /api/v1/projects/{project_id}/agents`，并已接入
-`POST /api/v1/agents/{agent_id}/revoke`。Tenant/Project 创建分别要求 Global `tenant.create` 和 Tenant
-`project.create`；Agent 接入创建接口要求 `agent.enrollment.create`；状态查询要求 `cluster.read` 或
-`agent.read`。所有变更还要求有效 Session 和 CSRF Token。Project 的 Tenant 归属由 Server 查询，不接受调用方
-提供。一次性注册 Token 创建请求同时指定集群名称，该名称持久化在 Server 的 Enrollment 中，Agent 消费 Token
-时不能覆盖。Token 明文只返回一次，数据库只保存 SHA-256 摘要，凭证与成功审计在同一事务写入。创建接口强制
-使用 `Idempotency-Key`，重复 Key 不会创建额外资源或重复成功审计。安装 Manifest 下载和 Agent 注册不使用用户
-Session，而是使用创建时已经绑定 Project 的一次性 Bearer Token。
+RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚合查询。固定资源权限包括
+`tenant.create`、`tenant.read`、`tenant.manage`、`project.create`、`project.read`、`project.manage`、
+`cluster.read`、`cluster.manage`、
+`cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` 和
+`cluster.connection.revoke`。所有变更要求有效 Session 和 CSRF Token；创建 Enrollment 和重新接入还要求
+`Idempotency-Key`。Project、Cluster 的归属由 Server 查询，不接受调用方覆盖。
 
-Agent 撤销接口按 Agent ID 解析 Project 作用域，要求 `agent.revoke` 权限、CSRF Token 和请求正文中的显式确认。
-撤销状态、全部客户端 Credential 和成功审计在同一事务内处理；权限拒绝、确认缺失和执行失败分别记录
-`denied` 或 `failed` 审计。接口不会接受调用方提供 Tenant、Project 或 Cluster 作用域。
+管理端不暴露独立 Agent 资源。连接身份属于 Cluster 聚合内部状态，连接撤销接口
+`POST /api/v1/clusters/{cluster_id}/connection/revoke` 按 Cluster ID 解析 Project 作用域，要求
+`cluster.connection.revoke` 和显式确认。重新接入接口
+`POST /api/v1/clusters/{cluster_id}/connection/reenroll` 仅在当前内部身份撤销后创建绑定原 `cluster_id` 的
+一次性凭证。Cluster 逻辑删除使用 `cluster.manage`，同时撤销全部内部身份和 Credential。
 
 Project 授权拒绝以及凭证创建的输入、状态和内部失败会写入不含 Token 的审计事件；数据库不可用或请求 Deadline
-已耗尽时降级为安全错误日志。Tenant/Project 创建与权限范围列表、Cluster 列表/详情、Cluster Agent 详情以及
+已耗尽时降级为安全错误日志。Tenant/Project/Cluster 生命周期、Cluster 列表/详情以及
 Global/Tenant/Project/Cluster 授权拒绝审计已经实现。`GET /api/v1/audit-events` 按调用者 `audit.read`
 RoleBinding 的 Global、Tenant 或 Project 可见范围过滤结果，支持条件过滤和基于游标的有界分页。用户、
 RoleBinding、账户恢复和密码重置的成功、失败与权限拒绝也会写入审计。

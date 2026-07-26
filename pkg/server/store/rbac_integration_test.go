@@ -75,7 +75,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		{
 			name:       "global admin creates enrollment in any project",
 			userID:     globalAdmin,
-			permission: rbac.PermissionAgentEnrollmentCreate,
+			permission: rbac.PermissionClusterEnrollmentCreate,
 			scopeType:  "project",
 			projectID:  projectB1,
 			allowed:    true,
@@ -98,14 +98,14 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		{
 			name:       "global viewer cannot revoke agent",
 			userID:     globalViewer,
-			permission: rbac.PermissionAgentRevoke,
+			permission: rbac.PermissionClusterConnectionRevoke,
 			scopeType:  "project",
 			projectID:  projectB1,
 		},
 		{
 			name:       "tenant admin manages its project",
 			userID:     tenantAdmin,
-			permission: rbac.PermissionAgentEnrollmentCreate,
+			permission: rbac.PermissionClusterEnrollmentCreate,
 			scopeType:  "project",
 			projectID:  projectA2,
 			allowed:    true,
@@ -113,7 +113,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		{
 			name:       "tenant admin reads its tenant",
 			userID:     tenantAdmin,
-			permission: rbac.PermissionAgentRead,
+			permission: rbac.PermissionClusterRead,
 			scopeType:  "tenant",
 			tenantID:   tenantA,
 			allowed:    true,
@@ -121,13 +121,13 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		{
 			name:       "tenant admin cannot use global scope",
 			userID:     tenantAdmin,
-			permission: rbac.PermissionAgentRead,
+			permission: rbac.PermissionClusterRead,
 			scopeType:  "global",
 		},
 		{
 			name:       "tenant admin cannot cross tenant",
 			userID:     tenantAdmin,
-			permission: rbac.PermissionAgentEnrollmentCreate,
+			permission: rbac.PermissionClusterEnrollmentCreate,
 			scopeType:  "project",
 			projectID:  projectB1,
 		},
@@ -142,7 +142,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		{
 			name:       "project viewer reads its project",
 			userID:     projectViewer,
-			permission: rbac.PermissionAgentRead,
+			permission: rbac.PermissionClusterRead,
 			scopeType:  "project",
 			projectID:  projectA1,
 			allowed:    true,
@@ -164,7 +164,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		{
 			name:       "project viewer cannot create enrollment",
 			userID:     projectViewer,
-			permission: rbac.PermissionAgentEnrollmentCreate,
+			permission: rbac.PermissionClusterEnrollmentCreate,
 			scopeType:  "project",
 			projectID:  projectA1,
 		},

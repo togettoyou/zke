@@ -26,7 +26,7 @@ func TestRecordProjectAuditEventPreservesScope(t *testing.T) {
 	if err := auditStore.RecordProjectEvent(ctx, store.ProjectAuditEvent{
 		ActorUserID: userID,
 		ProjectID:   projectID,
-		Action:      "agent.enrollment.create",
+		Action:      "cluster.enrollment.create",
 		Result:      "denied",
 		RequestID:   "request-project-audit",
 	}); err != nil {

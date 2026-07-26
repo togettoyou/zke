@@ -82,6 +82,58 @@ type CreateProjectResult struct {
 	Replayed bool
 }
 
+type UpdateTenantInput struct {
+	TenantID    string
+	Name        string
+	Status      string
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteTenantInput struct {
+	TenantID    string
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type UpdateProjectInput struct {
+	ProjectID   string
+	Name        string
+	Status      string
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteProjectInput struct {
+	ProjectID   string
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type UpdateClusterInput struct {
+	ClusterID   string
+	Name        string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteClusterInput struct {
+	ClusterID   string
+	Confirm     bool
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
 func NewService(
 	resourceStore *store.ResourceManagementStore,
 	authorization *rbac.Service,
@@ -102,7 +154,7 @@ func (service *Service) ListTenants(
 	visibility, err := service.authorization.ResolveVisibility(
 		ctx,
 		userID,
-		rbac.PermissionClusterRead,
+		rbac.PermissionTenantRead,
 	)
 	if err != nil {
 		return nil, err
@@ -158,6 +210,72 @@ func (service *Service) CreateTenant(
 	}, nil
 }
 
+func (service *Service) GetTenant(
+	ctx context.Context,
+	userID string,
+	tenantID string,
+) (Tenant, error) {
+	if !validation.IsUUID(userID) || !validation.IsUUID(tenantID) {
+		return Tenant{}, ErrInvalidInput
+	}
+	visibility, err := service.authorization.ResolveVisibility(
+		ctx, userID, rbac.PermissionTenantRead,
+	)
+	if err != nil {
+		return Tenant{}, err
+	}
+	if !visibility.AllowsTenant(tenantID) {
+		return Tenant{}, ErrDenied
+	}
+	item, err := service.store.GetTenant(ctx, tenantID)
+	if errors.Is(err, store.ErrTenantNotFound) {
+		return Tenant{}, ErrNotFound
+	}
+	if err != nil {
+		return Tenant{}, err
+	}
+	return tenantFromStore(item), nil
+}
+
+func (service *Service) UpdateTenant(
+	ctx context.Context,
+	input UpdateTenantInput,
+) (Tenant, error) {
+	if !validation.IsUUID(input.TenantID) ||
+		!validName(input.Name) ||
+		(input.Status != "active" && input.Status != "suspended") ||
+		(input.Status == "suspended" && !input.Confirm) ||
+		!validMutationActor(input.ActorUserID, input.RequestID, input.Now) {
+		return Tenant{}, ErrInvalidInput
+	}
+	item, err := service.store.UpdateTenant(ctx, store.UpdateTenantParams{
+		TenantID:    input.TenantID,
+		Name:        input.Name,
+		Status:      input.Status,
+		ActorUserID: input.ActorUserID,
+		RequestID:   input.RequestID,
+		Now:         input.Now,
+	})
+	return mapTenantMutation(item, err)
+}
+
+func (service *Service) DeleteTenant(
+	ctx context.Context,
+	input DeleteTenantInput,
+) (Tenant, error) {
+	if !input.Confirm || !validation.IsUUID(input.TenantID) ||
+		!validMutationActor(input.ActorUserID, input.RequestID, input.Now) {
+		return Tenant{}, ErrInvalidInput
+	}
+	item, err := service.store.DeleteTenant(ctx, store.DeleteTenantParams{
+		TenantID:    input.TenantID,
+		ActorUserID: input.ActorUserID,
+		RequestID:   input.RequestID,
+		Now:         input.Now,
+	})
+	return mapTenantMutation(item, err)
+}
+
 func (service *Service) ListProjects(
 	ctx context.Context,
 	userID string,
@@ -169,7 +287,7 @@ func (service *Service) ListProjects(
 	visibility, err := service.authorization.ResolveVisibility(
 		ctx,
 		userID,
-		rbac.PermissionClusterRead,
+		rbac.PermissionProjectRead,
 	)
 	if err != nil {
 		return nil, err
@@ -231,6 +349,62 @@ func (service *Service) CreateProject(
 	}, nil
 }
 
+func (service *Service) GetProject(
+	ctx context.Context,
+	projectID string,
+) (Project, error) {
+	if !validation.IsUUID(projectID) {
+		return Project{}, ErrInvalidInput
+	}
+	item, err := service.store.GetProject(ctx, projectID)
+	if errors.Is(err, store.ErrProjectNotFound) {
+		return Project{}, ErrNotFound
+	}
+	if err != nil {
+		return Project{}, err
+	}
+	return projectFromStore(item), nil
+}
+
+func (service *Service) UpdateProject(
+	ctx context.Context,
+	input UpdateProjectInput,
+) (Project, error) {
+	if !validation.IsUUID(input.ProjectID) ||
+		!validName(input.Name) ||
+		(input.Status != "active" && input.Status != "suspended") ||
+		(input.Status == "suspended" && !input.Confirm) ||
+		!validMutationActor(input.ActorUserID, input.RequestID, input.Now) {
+		return Project{}, ErrInvalidInput
+	}
+	item, err := service.store.UpdateProject(ctx, store.UpdateProjectParams{
+		ProjectID:   input.ProjectID,
+		Name:        input.Name,
+		Status:      input.Status,
+		ActorUserID: input.ActorUserID,
+		RequestID:   input.RequestID,
+		Now:         input.Now,
+	})
+	return mapProjectMutation(item, err)
+}
+
+func (service *Service) DeleteProject(
+	ctx context.Context,
+	input DeleteProjectInput,
+) (Project, error) {
+	if !input.Confirm || !validation.IsUUID(input.ProjectID) ||
+		!validMutationActor(input.ActorUserID, input.RequestID, input.Now) {
+		return Project{}, ErrInvalidInput
+	}
+	item, err := service.store.DeleteProject(ctx, store.DeleteProjectParams{
+		ProjectID:   input.ProjectID,
+		ActorUserID: input.ActorUserID,
+		RequestID:   input.RequestID,
+		Now:         input.Now,
+	})
+	return mapProjectMutation(item, err)
+}
+
 func (service *Service) ListClusters(
 	ctx context.Context,
 	projectID string,
@@ -266,10 +440,94 @@ func (service *Service) GetCluster(
 	return clusterFromStore(item), nil
 }
 
+func (service *Service) UpdateCluster(
+	ctx context.Context,
+	input UpdateClusterInput,
+) (Cluster, error) {
+	if !validation.IsUUID(input.ClusterID) ||
+		!validName(input.Name) ||
+		!validMutationActor(input.ActorUserID, input.RequestID, input.Now) {
+		return Cluster{}, ErrInvalidInput
+	}
+	item, err := service.store.UpdateCluster(ctx, store.UpdateClusterParams{
+		ClusterID:   input.ClusterID,
+		Name:        input.Name,
+		ActorUserID: input.ActorUserID,
+		RequestID:   input.RequestID,
+		Now:         input.Now,
+	})
+	return mapClusterMutation(item, err)
+}
+
+func (service *Service) DeleteCluster(
+	ctx context.Context,
+	input DeleteClusterInput,
+) (Cluster, error) {
+	if !input.Confirm || !validation.IsUUID(input.ClusterID) ||
+		!validMutationActor(input.ActorUserID, input.RequestID, input.Now) {
+		return Cluster{}, ErrInvalidInput
+	}
+	item, err := service.store.DeleteCluster(ctx, store.DeleteClusterParams{
+		ClusterID:   input.ClusterID,
+		ActorUserID: input.ActorUserID,
+		RequestID:   input.RequestID,
+		Now:         input.Now,
+	})
+	return mapClusterMutation(item, err)
+}
+
 func validName(value string) bool {
 	return strings.TrimSpace(value) == value &&
 		len(value) > 0 &&
 		len(value) <= maxResourceNameBytes
+}
+
+func validMutationActor(actorUserID string, requestID string, now time.Time) bool {
+	return validation.IsUUID(actorUserID) &&
+		strings.TrimSpace(requestID) != "" &&
+		!now.IsZero()
+}
+
+func mapTenantMutation(item store.TenantResource, err error) (Tenant, error) {
+	switch {
+	case errors.Is(err, store.ErrTenantNotFound):
+		return Tenant{}, ErrNotFound
+	case errors.Is(err, store.ErrResourceStateConflict),
+		errors.Is(err, store.ErrResourceCreationNotAllowed):
+		return Tenant{}, ErrStateConflict
+	case err != nil:
+		return Tenant{}, err
+	default:
+		return tenantFromStore(item), nil
+	}
+}
+
+func mapProjectMutation(item store.ProjectResource, err error) (Project, error) {
+	switch {
+	case errors.Is(err, store.ErrProjectNotFound):
+		return Project{}, ErrNotFound
+	case errors.Is(err, store.ErrResourceStateConflict),
+		errors.Is(err, store.ErrResourceCreationNotAllowed):
+		return Project{}, ErrStateConflict
+	case err != nil:
+		return Project{}, err
+	default:
+		return projectFromStore(item), nil
+	}
+}
+
+func mapClusterMutation(item store.ClusterResource, err error) (Cluster, error) {
+	switch {
+	case errors.Is(err, store.ErrClusterNotFound):
+		return Cluster{}, ErrNotFound
+	case errors.Is(err, store.ErrResourceStateConflict),
+		errors.Is(err, store.ErrResourceCreationNotAllowed):
+		return Cluster{}, ErrStateConflict
+	case err != nil:
+		return Cluster{}, err
+	default:
+		return clusterFromStore(item), nil
+	}
 }
 
 func tenantFromStore(item store.TenantResource) Tenant {

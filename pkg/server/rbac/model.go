@@ -3,17 +3,23 @@ package rbac
 type Permission string
 
 const (
-	PermissionTenantCreate          Permission = "tenant.create"
-	PermissionProjectCreate         Permission = "project.create"
-	PermissionAgentEnrollmentCreate Permission = "agent.enrollment.create"
-	PermissionClusterRead           Permission = "cluster.read"
-	PermissionAgentRead             Permission = "agent.read"
-	PermissionAgentRevoke           Permission = "agent.revoke"
-	PermissionUserRead              Permission = "user.read"
-	PermissionUserManage            Permission = "user.manage"
-	PermissionRBACRead              Permission = "rbac.read"
-	PermissionRBACManage            Permission = "rbac.manage"
-	PermissionAuditRead             Permission = "audit.read"
+	PermissionTenantCreate            Permission = "tenant.create"
+	PermissionTenantRead              Permission = "tenant.read"
+	PermissionTenantManage            Permission = "tenant.manage"
+	PermissionProjectCreate           Permission = "project.create"
+	PermissionProjectRead             Permission = "project.read"
+	PermissionProjectManage           Permission = "project.manage"
+	PermissionClusterEnrollmentCreate Permission = "cluster.enrollment.create"
+	PermissionClusterEnrollmentRead   Permission = "cluster.enrollment.read"
+	PermissionClusterEnrollmentRevoke Permission = "cluster.enrollment.revoke"
+	PermissionClusterRead             Permission = "cluster.read"
+	PermissionClusterManage           Permission = "cluster.manage"
+	PermissionClusterConnectionRevoke Permission = "cluster.connection.revoke"
+	PermissionUserRead                Permission = "user.read"
+	PermissionUserManage              Permission = "user.manage"
+	PermissionRBACRead                Permission = "rbac.read"
+	PermissionRBACManage              Permission = "rbac.manage"
+	PermissionAuditRead               Permission = "audit.read"
 )
 
 type scopeType string

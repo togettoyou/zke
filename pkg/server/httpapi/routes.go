@@ -44,6 +44,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.accessManagement.getUser,
 	)
 	userRoutes.PUT(
+		"/:user_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserManage),
+		handlers.accessManagement.updateUser,
+	)
+	userRoutes.DELETE(
+		"/:user_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserManage),
+		handlers.accessManagement.deleteUser,
+	)
+	userRoutes.PUT(
 		"/:user_id/status",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionUserManage),
@@ -84,6 +96,11 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACManage),
 		handlers.accessManagement.deleteRoleBinding,
 	)
+	roleBindingRoutes.GET(
+		"/:role_binding_id",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACRead),
+		handlers.accessManagement.getRoleBinding,
+	)
 
 	auditRoutes := apiV1.Group("/audit-events")
 	auditRoutes.Use(
@@ -113,6 +130,22 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.resourceManagement.createTenant,
 	)
 	tenantRoutes.GET(
+		"/:tenant_id",
+		handlers.resourceManagement.getTenant,
+	)
+	tenantRoutes.PUT(
+		"/:tenant_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionTenantManage),
+		handlers.resourceManagement.updateTenant,
+	)
+	tenantRoutes.DELETE(
+		"/:tenant_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionTenantManage),
+		handlers.resourceManagement.deleteTenant,
+	)
+	tenantRoutes.GET(
 		"/:tenant_id/projects",
 		handlers.resourceManagement.listProjects,
 	)
@@ -132,30 +165,38 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	projectRoutes.POST(
-		"/:project_id/agent-enrollments",
+		"/:project_id/cluster-enrollments",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireProject(
-			rbac.PermissionAgentEnrollmentCreate,
+			rbac.PermissionClusterEnrollmentCreate,
 			"project_id",
 		),
 		handlers.enrollment.create,
 	)
 	projectRoutes.GET(
-		"/:project_id/agents",
+		"/:project_id/cluster-enrollments",
 		handlers.authorizationMiddleware.RequireProject(
-			rbac.PermissionAgentRead,
+			rbac.PermissionClusterEnrollmentRead,
 			"project_id",
 		),
-		handlers.agentStatus.list,
+		handlers.enrollment.list,
 	)
-	projectRoutes.POST(
-		"/:project_id/agent-installations",
+	projectRoutes.GET(
+		"/:project_id/cluster-enrollments/:enrollment_id",
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionClusterEnrollmentRead,
+			"project_id",
+		),
+		handlers.enrollment.get,
+	)
+	projectRoutes.DELETE(
+		"/:project_id/cluster-enrollments/:enrollment_id",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireProject(
-			rbac.PermissionAgentEnrollmentCreate,
+			rbac.PermissionClusterEnrollmentRevoke,
 			"project_id",
 		),
-		handlers.agentInstallation.create,
+		handlers.enrollment.revoke,
 	)
 	projectRoutes.GET(
 		"/:project_id/clusters",
@@ -163,7 +204,42 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			rbac.PermissionClusterRead,
 			"project_id",
 		),
-		handlers.resourceManagement.listClusters,
+		handlers.agentStatus.list,
+	)
+	projectRoutes.POST(
+		"/:project_id/cluster-installations",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionClusterEnrollmentCreate,
+			"project_id",
+		),
+		handlers.agentInstallation.create,
+	)
+	projectRoutes.GET(
+		"/:project_id",
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionProjectRead,
+			"project_id",
+		),
+		handlers.resourceManagement.getProject,
+	)
+	projectRoutes.PUT(
+		"/:project_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionProjectManage,
+			"project_id",
+		),
+		handlers.resourceManagement.updateProject,
+	)
+	projectRoutes.DELETE(
+		"/:project_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionProjectManage,
+			"project_id",
+		),
+		handlers.resourceManagement.deleteProject,
 	)
 
 	clusterRoutes := apiV1.Group("/clusters")
@@ -177,30 +253,43 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			rbac.PermissionClusterRead,
 			"cluster_id",
 		),
-		handlers.resourceManagement.getCluster,
-	)
-	clusterRoutes.GET(
-		"/:cluster_id/agent",
-		handlers.authorizationMiddleware.RequireCluster(
-			rbac.PermissionAgentRead,
-			"cluster_id",
-		),
 		handlers.agentStatus.getCluster,
 	)
-
-	agentRoutes := apiV1.Group("/agents")
-	agentRoutes.Use(
-		handlers.requestTimeout,
-		handlers.authMiddleware.RequireAuthentication,
-	)
-	agentRoutes.POST(
-		"/:agent_id/revoke",
+	clusterRoutes.PUT(
+		"/:cluster_id",
 		handlers.authMiddleware.RequireCSRF,
-		handlers.authorizationMiddleware.RequireAgent(
-			rbac.PermissionAgentRevoke,
-			"agent_id",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterManage,
+			"cluster_id",
+		),
+		handlers.resourceManagement.updateCluster,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterManage,
+			"cluster_id",
+		),
+		handlers.resourceManagement.deleteCluster,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/connection/revoke",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterConnectionRevoke,
+			"cluster_id",
 		),
 		handlers.agentManagement.revoke,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/connection/reenroll",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEnrollmentCreate,
+			"cluster_id",
+		),
+		handlers.enrollment.reenroll,
 	)
 
 	agentAPIV1 := router.Group("/agent-api/v1")

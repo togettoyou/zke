@@ -15,6 +15,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
@@ -214,11 +215,15 @@ VALUES (
 				connections,
 				7*24*time.Hour,
 			),
+			EnrollmentService: enrollment.NewService(
+				store.NewEnrollmentStore(pool),
+				enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL},
+			),
 		},
 		Config{Authentication: defaultAuthenticationTestConfig()},
 	)
 
-	listPath := "/api/v1/projects/" + projectID + "/agents"
+	listPath := "/api/v1/projects/" + projectID + "/clusters"
 	listResponse := authenticatedRequest(
 		t,
 		router,
@@ -238,23 +243,23 @@ VALUES (
 		)
 	}
 	var listed struct {
-		Agents []agentStatusResponse `json:"agents"`
+		Clusters []agentStatusResponse `json:"clusters"`
 	}
 	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Agents) != 1 ||
-		listed.Agents[0].ConnectionStatus != "online" ||
-		listed.Agents[0].ConnectionID != "connection-1" ||
-		listed.Agents[0].ConnectedAt == nil ||
-		listed.Agents[0].LastHeartbeatAt == nil {
-		t.Fatalf("unexpected online Agent status: %+v", listed.Agents)
+	if len(listed.Clusters) != 1 ||
+		listed.Clusters[0].Connection.Status != "online" ||
+		listed.Clusters[0].Connection.ConnectionID != "connection-1" ||
+		listed.Clusters[0].Connection.ConnectedAt == nil ||
+		listed.Clusters[0].Connection.LastHeartbeatAt == nil {
+		t.Fatalf("unexpected online Cluster status: %+v", listed.Clusters)
 	}
-	assertUTC8TimePointer(t, "last_seen_at", listed.Agents[0].LastSeenAt)
+	assertUTC8TimePointer(t, "last_seen_at", listed.Clusters[0].Connection.LastSeenAt)
 	assertUTC8Time(
 		t,
 		"certificate_expires_at",
-		listed.Agents[0].CertificateExpiresAt,
+		listed.Clusters[0].Connection.CertificateExpiresAt,
 	)
 
 	httpServer := httptest.NewServer(router)
@@ -292,7 +297,7 @@ VALUES (
 	var sawAgentEvent bool
 	for scanner.Scan() {
 		line := scanner.Text()
-		if line == "event: agent.status" {
+		if line == "event: cluster.status" {
 			sawAgentEvent = true
 		}
 		if sawAgentEvent && strings.HasPrefix(line, "data: ") {
@@ -303,8 +308,8 @@ VALUES (
 			); err != nil {
 				t.Fatal(err)
 			}
-			if eventAgent.AgentID != agentID ||
-				eventAgent.ConnectionStatus != agentconn.ConnectionStateOnline {
+			if eventAgent.ID != clusterID ||
+				eventAgent.Connection.Status != agentconn.ConnectionStateOnline {
 				t.Fatalf("unexpected Agent SSE payload: %+v", eventAgent)
 			}
 			break
@@ -313,10 +318,26 @@ VALUES (
 	if !sawAgentEvent {
 		t.Fatal("Agent status SSE event was not received")
 	}
-	assertUTC8TimePointer(t, "connected_at", listed.Agents[0].ConnectedAt)
-	assertUTC8TimePointer(t, "last_heartbeat_at", listed.Agents[0].LastHeartbeatAt)
+	assertUTC8TimePointer(t, "connected_at", listed.Clusters[0].Connection.ConnectedAt)
+	assertUTC8TimePointer(t, "last_heartbeat_at", listed.Clusters[0].Connection.LastHeartbeatAt)
 
-	revokePath := "/api/v1/agents/" + agentID + "/revoke"
+	reenrollPath := "/api/v1/clusters/" + clusterID + "/connection/reenroll"
+	activeReenrollment := clusterReenrollmentRequest(
+		router,
+		reenrollPath,
+		adminLogin,
+		"cluster-reenrollment-active-0001",
+	)
+	if activeReenrollment.Code != http.StatusConflict {
+		t.Fatalf(
+			"active connection reenrollment status = %d: %s",
+			activeReenrollment.Code,
+			activeReenrollment.Body,
+		)
+	}
+	assertErrorCode(t, activeReenrollment, "resource_state_conflict")
+
+	revokePath := "/api/v1/clusters/" + clusterID + "/connection/revoke"
 	missingCSRF := authenticatedRequest(
 		t,
 		router,
@@ -364,7 +385,7 @@ VALUES (
 		t,
 		router,
 		http.MethodPost,
-		"/api/v1/agents/not-a-uuid/revoke",
+		"/api/v1/clusters/not-a-uuid/connection/revoke",
 		`{"confirm":true}`,
 		adminLogin,
 		true,
@@ -379,7 +400,7 @@ VALUES (
 		t,
 		router,
 		http.MethodPost,
-		"/api/v1/agents/"+missingAgentID+"/revoke",
+		"/api/v1/clusters/"+missingAgentID+"/connection/revoke",
 		`{"confirm":true}`,
 		adminLogin,
 		true,
@@ -405,13 +426,61 @@ VALUES (
 	if err := json.Unmarshal(revoked.Body.Bytes(), &revokedBody); err != nil {
 		t.Fatal(err)
 	}
-	if revokedBody.AgentID != agentID ||
-		revokedBody.LifecycleStatus != "revoked" ||
+	if revokedBody.ClusterID != clusterID ||
+		revokedBody.ConnectionStatus != "revoked" ||
 		revokedBody.AlreadyRevoked ||
 		revokedBody.RevokedAt.IsZero() {
 		t.Fatalf("unexpected revoke response: %+v", revokedBody)
 	}
 	assertUTC8Time(t, "revoked_at", revokedBody.RevokedAt)
+
+	reenrolled := clusterReenrollmentRequest(
+		router,
+		reenrollPath,
+		adminLogin,
+		"cluster-reenrollment-revoked-0001",
+	)
+	if reenrolled.Code != http.StatusCreated {
+		t.Fatalf("reenrollment status = %d: %s", reenrolled.Code, reenrolled.Body)
+	}
+	var reenrollmentBody createEnrollmentResponse
+	if err := json.Unmarshal(reenrolled.Body.Bytes(), &reenrollmentBody); err != nil {
+		t.Fatal(err)
+	}
+	if reenrollmentBody.ID == "" || reenrollmentBody.Token == "" ||
+		reenrollmentBody.ClusterID != clusterID ||
+		reenrollmentBody.ClusterName != "Agent Cluster" {
+		t.Fatalf("unexpected reenrollment response: %+v", reenrollmentBody)
+	}
+	var reenrollmentClusterID string
+	if err := pool.QueryRow(
+		ctx,
+		"SELECT cluster_id::text FROM enrollments WHERE id = $1",
+		reenrollmentBody.ID,
+	).Scan(&reenrollmentClusterID); err != nil {
+		t.Fatal(err)
+	}
+	if reenrollmentClusterID != clusterID {
+		t.Fatalf(
+			"reenrollment cluster ID = %q, want %q",
+			reenrollmentClusterID,
+			clusterID,
+		)
+	}
+	duplicateReenrollment := clusterReenrollmentRequest(
+		router,
+		reenrollPath,
+		adminLogin,
+		"cluster-reenrollment-revoked-0002",
+	)
+	if duplicateReenrollment.Code != http.StatusConflict {
+		t.Fatalf(
+			"duplicate active reenrollment status = %d: %s",
+			duplicateReenrollment.Code,
+			duplicateReenrollment.Body,
+		)
+	}
+	assertErrorCode(t, duplicateReenrollment, "resource_state_conflict")
 
 	disconnectedAt := time.Now().UTC()
 	connections.statuses[agentID] = agentconn.ConnectionStatus{
@@ -432,22 +501,22 @@ VALUES (
 	if offlineResponse.Code != http.StatusOK {
 		t.Fatalf("offline list status = %d", offlineResponse.Code)
 	}
-	listed.Agents = nil
+	listed.Clusters = nil
 	if err := json.Unmarshal(offlineResponse.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Agents) != 1 ||
-		listed.Agents[0].LifecycleStatus != "revoked" ||
-		listed.Agents[0].CertificateStatus != "revoked" ||
-		listed.Agents[0].ConnectionStatus != "offline" ||
-		listed.Agents[0].LastDisconnectedAt == nil ||
-		listed.Agents[0].LastDisconnectReason != "agent_revoked" {
-		t.Fatalf("unexpected offline Agent status: %+v", listed.Agents)
+	if len(listed.Clusters) != 1 ||
+		listed.Clusters[0].Connection.LifecycleStatus != "revoked" ||
+		listed.Clusters[0].Connection.CertificateStatus != "revoked" ||
+		listed.Clusters[0].Connection.Status != "offline" ||
+		listed.Clusters[0].Connection.LastDisconnectedAt == nil ||
+		listed.Clusters[0].Connection.LastDisconnectReason != "agent_revoked" {
+		t.Fatalf("unexpected offline Cluster status: %+v", listed.Clusters)
 	}
 	assertUTC8TimePointer(
 		t,
 		"last_disconnected_at",
-		listed.Agents[0].LastDisconnectedAt,
+		listed.Clusters[0].Connection.LastDisconnectedAt,
 	)
 
 	repeated := authenticatedRequest(
@@ -479,9 +548,9 @@ SELECT
     count(*) FILTER (WHERE result = 'failed'),
     count(*) FILTER (WHERE result = 'succeeded')
 FROM audit_events
-WHERE action = 'agent.revoke'
+WHERE action = 'cluster.connection.revoke'
   AND target_id = $1
-`, agentID).Scan(
+`, clusterID).Scan(
 		&deniedAudits,
 		&failedAudits,
 		&succeededAudits,
@@ -500,7 +569,7 @@ WHERE action = 'agent.revoke'
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.revoke'
+WHERE action = 'cluster.connection.revoke'
   AND target_id = $1
   AND scope_type = 'global'
   AND result = 'denied'
@@ -513,6 +582,46 @@ WHERE action = 'agent.revoke'
 			missingDeniedAudits,
 		)
 	}
+	var reenrollmentSucceeded, reenrollmentFailed int
+	if err := pool.QueryRow(ctx, `
+SELECT
+    count(*) FILTER (WHERE result = 'succeeded'),
+    count(*) FILTER (WHERE result = 'failed')
+FROM audit_events
+WHERE action = 'cluster.connection.reenroll'
+  AND cluster_id = $1
+`, clusterID).Scan(&reenrollmentSucceeded, &reenrollmentFailed); err != nil {
+		t.Fatal(err)
+	}
+	if reenrollmentSucceeded != 1 || reenrollmentFailed != 2 {
+		t.Fatalf(
+			"Cluster reenrollment audits succeeded/failed = %d/%d, want 1/2",
+			reenrollmentSucceeded,
+			reenrollmentFailed,
+		)
+	}
+}
+
+func clusterReenrollmentRequest(
+	handler http.Handler,
+	path string,
+	login auth.LoginResult,
+	idempotencyKey string,
+) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		path,
+		strings.NewReader(`{"confirm":true}`),
+	)
+	request.AddCookie(&http.Cookie{
+		Name: sessionCookieName, Value: login.SessionToken,
+	})
+	request.Header.Set(csrfHeaderName, login.CSRFToken)
+	request.Header.Set(idempotencyKeyHeaderName, idempotencyKey)
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+	return response
 }
 
 func authenticatedRequest(

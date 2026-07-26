@@ -107,7 +107,7 @@ CREATE TABLE agents (
     id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES tenants (id),
     project_id uuid NOT NULL,
-    cluster_id uuid NOT NULL UNIQUE,
+    cluster_id uuid NOT NULL,
     version text NOT NULL CHECK (length(btrim(version)) > 0),
     protocol_version text NOT NULL CHECK (length(btrim(protocol_version)) > 0),
     lifecycle_status text NOT NULL CHECK (lifecycle_status IN ('pending', 'active', 'revoked')),
@@ -123,6 +123,10 @@ CREATE TABLE agents (
 );
 
 CREATE INDEX agents_project_scope_idx ON agents (tenant_id, project_id);
+
+CREATE UNIQUE INDEX agents_active_cluster_unique
+    ON agents (cluster_id)
+    WHERE lifecycle_status <> 'revoked';
 
 CREATE TABLE agent_credentials (
     id uuid PRIMARY KEY,
@@ -238,6 +242,7 @@ CREATE TABLE enrollments (
     id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES tenants (id),
     project_id uuid NOT NULL,
+    cluster_id uuid,
     cluster_name text NOT NULL,
     token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) > 0),
     created_by_user_id uuid NOT NULL REFERENCES users (id),
@@ -248,6 +253,9 @@ CREATE TABLE enrollments (
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT enrollments_project_scope_fk
         FOREIGN KEY (tenant_id, project_id) REFERENCES projects (tenant_id, id),
+    CONSTRAINT enrollments_cluster_scope_fk
+        FOREIGN KEY (tenant_id, project_id, cluster_id)
+        REFERENCES clusters (tenant_id, project_id, id),
     CONSTRAINT enrollments_idempotency_key_format CHECK (
         idempotency_key = btrim(idempotency_key)
         AND length(idempotency_key) BETWEEN 16 AND 128
@@ -262,6 +270,9 @@ CREATE TABLE enrollments (
 );
 
 CREATE INDEX enrollments_project_scope_idx ON enrollments (tenant_id, project_id);
+CREATE INDEX enrollments_cluster_id_idx
+    ON enrollments (cluster_id)
+    WHERE cluster_id IS NOT NULL;
 CREATE INDEX enrollments_active_expiry_idx
     ON enrollments (expires_at)
     WHERE consumed_at IS NULL AND revoked_at IS NULL;

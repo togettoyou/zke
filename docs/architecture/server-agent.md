@@ -59,14 +59,14 @@ ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certifica
 `last_seen_at` 限频持久化已经实现。Agent 会在证书进入配置的续期窗口后，通过已认证的 Control Stream 自动
 续期并使用新证书重连；凭据、Agent 或 Cluster 被撤销时，PostgreSQL 通知会让所有 Server 实例关闭匹配的现有
 连接。HTTP API 使用 `http.address` 的 TCP Listener；QUIC 使用独立
-`agent_listener.address` 的 UDP Listener，两者必须分别配置。Server 已提供按 Project 查询 Agent 生命周期、
-健康、最后心跳和当前证书有效期的 HTTP API，并合并当前 Server 实例内存中的实时 `online`/`offline`、
-Connection ID 和最近断开信息。Server 也已提供需要显式确认的 Agent 撤销 API；它在事务中撤销 Agent 和全部
-Credential，数据库通知会关闭现有连接。当前连接快照只代表处理请求的 Server 实例，重启后不保留离线历史；
-多实例全局连接视图、任务路由和业务 Stream 仍未实现。
+`agent_listener.address` 的 UDP Listener，两者必须分别配置。管理面把 Cluster 和其中的 Agent 视为一个
+聚合资源：Server 按 Project 查询 Cluster，并在 `connection` 字段中返回内部连接身份的生命周期、健康、版本、
+最后心跳、证书有效期和当前 Server 实例内存中的 `online`/`offline` 状态；管理 API 不暴露内部 Agent ID。
+Server 也已提供以 Cluster ID 为目标且需要显式确认的连接撤销和重新接入 API。当前连接快照只代表处理请求的
+Server 实例，重启后不保留离线历史；多实例全局连接视图、任务路由和业务 Stream 仍未实现。
 
-当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Agent 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
-`agent.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Request/Data Stream，也不包含
+当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
+`cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Request/Data Stream，也不包含
 Kubernetes 资源查询。
 
 Agent 为固定的 Enrollment、Trust 和 identity Secret 名称以及注册重试参数和日志级别提供默认值。Agent 默认

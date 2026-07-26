@@ -193,7 +193,7 @@ func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.enroll'
+WHERE action = 'cluster.enroll'
   AND project_id = $1
   AND result = 'succeeded'
 `, projectID).Scan(&succeededAuditCount); err != nil {
@@ -209,6 +209,101 @@ WHERE action = 'agent.enroll'
 			agentCount,
 			credentialCount,
 			succeededAuditCount,
+		)
+	}
+
+	if _, err := store.NewAgentManagementStore(pool).Revoke(
+		ctx,
+		store.RevokeAgentParams{
+			ClusterID: results[0].ClusterID, ActorUserID: userID,
+			RequestID: "request-revoke-before-reenrollment", Now: now.Add(time.Minute),
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	reenrollmentDigest := sha256.Sum256([]byte("cluster-reenrollment-token"))
+	reenrollment, err := enrollmentStore.CreateEnrollment(
+		ctx,
+		store.CreateEnrollmentParams{
+			ProjectID: projectID, ClusterID: results[0].ClusterID,
+			ClusterName: "integration-cluster", CreatedByUserID: userID,
+			TokenDigest: reenrollmentDigest[:], ExpiresAt: now.Add(20 * time.Minute),
+			RequestID:      "request-create-cluster-reenrollment",
+			IdempotencyKey: "create-cluster-reenrollment-0001",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reenrollmentFingerprint := sha256.Sum256([]byte("cluster-reenrollment-csr"))
+	reenrollmentAttempt, err := enrollmentStore.BeginAgentEnrollment(
+		ctx,
+		store.BeginAgentEnrollmentParams{
+			TokenDigest:    reenrollmentDigest[:],
+			IdempotencyKey: "consume-cluster-reenrollment-0001",
+			CSRFingerprint: reenrollmentFingerprint[:],
+			RequestID:      "request-begin-cluster-reenrollment",
+			Now:            now.Add(2 * time.Minute),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reenrollment.ClusterID != results[0].ClusterID ||
+		reenrollmentAttempt.ClusterID != results[0].ClusterID {
+		t.Fatalf(
+			"reenrollment cluster IDs = %q/%q, want %q",
+			reenrollment.ClusterID,
+			reenrollmentAttempt.ClusterID,
+			results[0].ClusterID,
+		)
+	}
+	secondAgentID := newEnrollmentTestUUID(t)
+	reenrollmentResult, err := enrollmentStore.CompleteAgentEnrollment(
+		ctx,
+		store.CompleteAgentEnrollmentParams{
+			EnrollmentID: reenrollment.ID, AttemptID: reenrollmentAttempt.ID,
+			IdempotencyKey: reenrollmentAttempt.IdempotencyKey,
+			CSRFingerprint: reenrollmentAttempt.CSRFingerprint,
+			ClusterID:      results[0].ClusterID, AgentID: secondAgentID,
+			AgentVersion: "v0.2.0", ProtocolVersion: "v1",
+			CertificateSerial: "1002", CertificatePEM: "second-test-certificate",
+			CertificateExpiresAt: now.Add(48 * time.Hour),
+			RequestID:            "request-complete-cluster-reenrollment",
+			Now:                  now.Add(2 * time.Minute),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reenrollmentResult.ClusterID != results[0].ClusterID ||
+		reenrollmentResult.AgentID != secondAgentID {
+		t.Fatalf("unexpected reenrollment result: %+v", reenrollmentResult)
+	}
+	var clustersAfterReenrollment, agentsAfterReenrollment, activeAgents int
+	if err := pool.QueryRow(ctx, `
+SELECT
+    (SELECT count(*) FROM clusters WHERE id = $1),
+    (SELECT count(*) FROM agents WHERE cluster_id = $1),
+    (
+        SELECT count(*) FROM agents
+        WHERE cluster_id = $1 AND lifecycle_status <> 'revoked'
+    )
+`, results[0].ClusterID).Scan(
+		&clustersAfterReenrollment,
+		&agentsAfterReenrollment,
+		&activeAgents,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if clustersAfterReenrollment != 1 ||
+		agentsAfterReenrollment != 2 ||
+		activeAgents != 1 {
+		t.Fatalf(
+			"reenrollment clusters/agents/active = %d/%d/%d, want 1/2/1",
+			clustersAfterReenrollment,
+			agentsAfterReenrollment,
+			activeAgents,
 		)
 	}
 }
@@ -263,7 +358,7 @@ func TestAgentEnrollmentRejectsExpiredTokenAndRollsBackFailedCompletion(t *testi
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.enroll'
+WHERE action = 'cluster.enroll'
   AND target_id = $1
   AND result = 'denied'
 `, expired.ID).Scan(&deniedAuditCount); err != nil {

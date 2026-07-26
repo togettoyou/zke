@@ -27,10 +27,10 @@ type revokeAgentRequest struct {
 }
 
 type revokeAgentResponse struct {
-	AgentID         string    `json:"agent_id"`
-	LifecycleStatus string    `json:"lifecycle_status"`
-	RevokedAt       time.Time `json:"revoked_at"`
-	AlreadyRevoked  bool      `json:"already_revoked"`
+	ClusterID        string    `json:"cluster_id"`
+	ConnectionStatus string    `json:"connection_status"`
+	RevokedAt        time.Time `json:"revoked_at"`
+	AlreadyRevoked   bool      `json:"already_revoked"`
 }
 
 func newAgentManagementHandler(
@@ -56,7 +56,7 @@ func (handler *agentManagementHandler) revoke(c *gin.Context) {
 			c,
 			http.StatusServiceUnavailable,
 			"unavailable",
-			"Agent management is unavailable",
+			"Cluster connection management is unavailable",
 		)
 		return
 	}
@@ -71,7 +71,7 @@ func (handler *agentManagementHandler) revoke(c *gin.Context) {
 			c,
 			http.StatusBadRequest,
 			"confirmation_required",
-			"Agent revocation requires explicit confirmation",
+			"Cluster connection revocation requires explicit confirmation",
 		)
 		return
 	}
@@ -82,7 +82,7 @@ func (handler *agentManagementHandler) revoke(c *gin.Context) {
 	result, err := handler.service.Revoke(
 		operationContext,
 		agentmanagement.RevokeInput{
-			AgentID:     c.Param("agent_id"),
+			ClusterID:   c.Param("cluster_id"),
 			ActorUserID: identity.User.ID,
 			RequestID:   httpmiddleware.RequestID(c),
 			Now:         time.Now().UTC(),
@@ -92,28 +92,28 @@ func (handler *agentManagementHandler) revoke(c *gin.Context) {
 	switch {
 	case errors.Is(err, agentmanagement.ErrInvalidInput):
 		handler.recordFailure(c, identity.User.ID)
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Agent")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster")
 	case errors.Is(err, agentmanagement.ErrNotFound):
 		handler.recordFailure(c, identity.User.ID)
-		writeError(c, http.StatusNotFound, "not_found", "Agent not found")
+		writeError(c, http.StatusNotFound, "not_found", "Cluster connection not found")
 	case errors.Is(err, context.DeadlineExceeded):
 		handler.recordFailure(c, identity.User.ID)
 		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
 	case err != nil:
 		handler.recordFailure(c, identity.User.ID)
 		handler.logger.Error(
-			"revoke Agent",
+			"revoke Cluster connection",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("agent_id", c.Param("agent_id")),
+			slog.String("cluster_id", c.Param("cluster_id")),
 			slog.String("error", err.Error()),
 		)
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
 	default:
 		c.JSON(http.StatusOK, revokeAgentResponse{
-			AgentID:         result.AgentID,
-			LifecycleStatus: "revoked",
-			RevokedAt:       responseTime(result.RevokedAt),
-			AlreadyRevoked:  result.AlreadyRevoked,
+			ClusterID:        result.ClusterID,
+			ConnectionStatus: "revoked",
+			RevokedAt:        responseTime(result.RevokedAt),
+			AlreadyRevoked:   result.AlreadyRevoked,
 		})
 	}
 }
@@ -130,21 +130,21 @@ func (handler *agentManagementHandler) recordFailure(
 		handler.operationTimeout,
 	)
 	defer cancel()
-	if err := handler.auditService.RecordAgentEvent(
+	if err := handler.auditService.RecordClusterEvent(
 		auditContext,
-		audit.AgentEventInput{
+		audit.ClusterEventInput{
 			ActorUserID: userID,
-			AgentID:     c.Param("agent_id"),
-			Action:      audit.ActionAgentRevoke,
+			ClusterID:   c.Param("cluster_id"),
+			Action:      audit.ActionClusterConnectionRevoke,
 			Result:      "failed",
 			RequestID:   httpmiddleware.RequestID(c),
 		},
 	); err != nil {
 		handler.logger.Error(
-			"record Agent revocation failure audit",
+			"record Cluster connection revocation failure audit",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
 			slog.String("user_id", userID),
-			slog.String("agent_id", c.Param("agent_id")),
+			slog.String("cluster_id", c.Param("cluster_id")),
 			slog.String("error", err.Error()),
 		)
 	}

@@ -16,10 +16,13 @@ var (
 	ErrAttemptFailed       = errors.New("enrollment attempt failed")
 	ErrSigningUnavailable  = errors.New("agent certificate signing unavailable")
 	ErrCredentialRejected  = errors.New("agent credential rejected")
+	ErrNotFound            = errors.New("enrollment not found")
+	ErrStateConflict       = errors.New("enrollment state conflict")
 )
 
 type CreateInput struct {
 	ProjectID      string
+	ClusterID      string
 	ClusterName    string
 	UserID         string
 	RequestID      string
@@ -29,9 +32,41 @@ type CreateInput struct {
 
 type CreateResult struct {
 	ID          string
+	ClusterID   string
 	ClusterName string
 	Token       string
 	ExpiresAt   time.Time
+}
+
+type Enrollment struct {
+	ID              string
+	TenantID        string
+	ProjectID       string
+	ClusterID       string
+	ClusterName     string
+	CreatedByUserID string
+	Status          string
+	ExpiresAt       time.Time
+	ConsumedAt      *time.Time
+	RevokedAt       *time.Time
+	CreatedAt       time.Time
+}
+
+type RevokeInput struct {
+	ProjectID    string
+	EnrollmentID string
+	Confirm      bool
+	UserID       string
+	RequestID    string
+	Now          time.Time
+}
+
+type ReenrollInput struct {
+	ClusterID      string
+	UserID         string
+	RequestID      string
+	IdempotencyKey string
+	Now            time.Time
 }
 
 type ManifestEnrollment struct {
@@ -69,6 +104,7 @@ type BeginResult struct {
 	EnrollmentID   string
 	TenantID       string
 	ProjectID      string
+	ClusterID      string
 	ClusterName    string
 	IdempotencyKey string
 	CSRFingerprint []byte

@@ -61,6 +61,87 @@ WHERE id = $1
 	return item, nil
 }
 
+func (store *AccessManagementStore) UpdateUser(
+	ctx context.Context,
+	input UpdateManagedUserParams,
+) (ManagedUser, error) {
+	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ManagedUser{}, fmt.Errorf("begin managed user update: %w", err)
+	}
+	defer rollbackTransaction(transaction)
+	item, err := scanManagedUser(transaction.QueryRow(ctx, `
+UPDATE users
+SET display_name = $2, updated_at = GREATEST(updated_at, $4)
+WHERE id = $1
+  AND EXISTS (SELECT 1 FROM users WHERE id = $3 AND status = 'active')
+RETURNING
+    id::text, username_normalized, display_name, status,
+    failed_login_count, locked_at, lock_expires_at,
+    password_changed_at, created_at, updated_at
+`, input.UserID, input.DisplayName, input.ActorUserID, input.Now))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ManagedUser{}, ErrAccessUserNotFound
+	}
+	if err != nil {
+		return ManagedUser{}, fmt.Errorf("update managed user: %w", err)
+	}
+	if err := insertGlobalAccessAudit(
+		ctx, transaction, input.ActorUserID, "user.update", "user",
+		input.UserID, "succeeded", input.RequestID, input.Now,
+	); err != nil {
+		return ManagedUser{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return ManagedUser{}, fmt.Errorf("commit managed user update: %w", err)
+	}
+	return item, nil
+}
+
+func (store *AccessManagementStore) DeleteUser(
+	ctx context.Context,
+	input DeleteManagedUserParams,
+) (ManagedUser, error) {
+	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ManagedUser{}, fmt.Errorf("begin managed user deletion: %w", err)
+	}
+	defer rollbackTransaction(transaction)
+	if err := ensureNotLastGlobalAdmin(ctx, transaction, input.UserID); err != nil {
+		return ManagedUser{}, err
+	}
+	item, err := scanManagedUser(transaction.QueryRow(ctx, `
+UPDATE users
+SET status = 'disabled', locked_at = NULL, lock_expires_at = NULL,
+    updated_at = GREATEST(updated_at, $3)
+WHERE id = $1
+  AND EXISTS (SELECT 1 FROM users WHERE id = $2 AND status = 'active')
+RETURNING
+    id::text, username_normalized, display_name, status,
+    failed_login_count, locked_at, lock_expires_at,
+    password_changed_at, created_at, updated_at
+`, input.UserID, input.ActorUserID, input.Now))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ManagedUser{}, ErrAccessUserNotFound
+	}
+	if err != nil {
+		return ManagedUser{}, fmt.Errorf("disable deleted user: %w", err)
+	}
+	if err := revokeUserSessions(ctx, transaction, input.UserID, input.Now); err != nil {
+		return ManagedUser{}, err
+	}
+	if err := insertGlobalAccessAudit(
+		ctx, transaction, input.ActorUserID, "user.delete", "user",
+		input.UserID, "succeeded", input.RequestID, input.Now,
+	); err != nil {
+		return ManagedUser{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return ManagedUser{}, fmt.Errorf("commit managed user deletion: %w", err)
+	}
+	return item, nil
+}
+
 func (store *AccessManagementStore) CreateUser(
 	ctx context.Context,
 	input CreateManagedUserParams,
@@ -308,6 +389,27 @@ ORDER BY created_at, id
 		return nil, fmt.Errorf("iterate managed role bindings: %w", err)
 	}
 	return result, nil
+}
+
+func (store *AccessManagementStore) GetRoleBinding(
+	ctx context.Context,
+	bindingID string,
+) (ManagedRoleBinding, error) {
+	item, err := scanManagedRoleBinding(store.pool.QueryRow(ctx, `
+SELECT
+    id::text, subject_id::text, role, scope_type,
+    COALESCE(tenant_id::text, ''), COALESCE(project_id::text, ''),
+    created_at
+FROM role_bindings
+WHERE id = $1
+`, bindingID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ManagedRoleBinding{}, ErrRoleBindingNotFound
+	}
+	if err != nil {
+		return ManagedRoleBinding{}, fmt.Errorf("get managed role binding: %w", err)
+	}
+	return item, nil
 }
 
 func (store *AccessManagementStore) CreateRoleBinding(

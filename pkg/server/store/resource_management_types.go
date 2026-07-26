@@ -76,6 +76,53 @@ type CreateProjectResult struct {
 	Replayed bool
 }
 
+type UpdateTenantParams struct {
+	TenantID    string
+	Name        string
+	Status      string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteTenantParams struct {
+	TenantID    string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type UpdateProjectParams struct {
+	ProjectID   string
+	Name        string
+	Status      string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteProjectParams struct {
+	ProjectID   string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type UpdateClusterParams struct {
+	ClusterID   string
+	Name        string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteClusterParams struct {
+	ClusterID   string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
 func NewResourceManagementStore(pool *pgxpool.Pool) *ResourceManagementStore {
 	return &ResourceManagementStore{pool: pool}
 }

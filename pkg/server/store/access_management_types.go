@@ -51,6 +51,21 @@ type SetManagedUserStatusParams struct {
 	Now         time.Time
 }
 
+type UpdateManagedUserParams struct {
+	UserID      string
+	DisplayName string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteManagedUserParams struct {
+	UserID      string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
 type UnlockManagedUserParams struct {
 	UserID      string
 	ActorUserID string

@@ -102,7 +102,7 @@ RETURNING id::text
 		},
 		Config{Authentication: defaultAuthenticationTestConfig()},
 	)
-	path := "/api/v1/projects/" + projectID + "/agent-enrollments"
+	path := "/api/v1/projects/" + projectID + "/cluster-enrollments"
 	requestBody := `{"cluster_name":"integration-cluster"}`
 
 	missingCSRFResponse := httptest.NewRecorder()
@@ -147,7 +147,7 @@ RETURNING id::text
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.enrollment.create'
+WHERE action = 'cluster.enrollment.create'
   AND project_id = $1
   AND actor_user_id = $2
   AND result = 'failed'
@@ -219,7 +219,7 @@ WHERE id = $1
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.enrollment.create'
+WHERE action = 'cluster.enrollment.create'
   AND target_id = $1
   AND actor_user_id = $2
   AND tenant_id = $3
@@ -265,7 +265,7 @@ WHERE action = 'agent.enrollment.create'
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.enrollment.create'
+WHERE action = 'cluster.enrollment.create'
   AND project_id = $1
   AND result = 'succeeded'
 `, projectID).Scan(&succeededAuditCount); err != nil {
@@ -279,7 +279,32 @@ WHERE action = 'agent.enrollment.create'
 		)
 	}
 
-	installationPath := "/api/v1/projects/" + projectID + "/agent-installations"
+	enrollmentDetailResponse := httptest.NewRecorder()
+	enrollmentDetailRequest := httptest.NewRequest(
+		http.MethodGet,
+		path+"/"+body.ID,
+		nil,
+	)
+	enrollmentDetailRequest.AddCookie(&http.Cookie{
+		Name: sessionCookieName, Value: login.SessionToken,
+	})
+	router.ServeHTTP(enrollmentDetailResponse, enrollmentDetailRequest)
+	if enrollmentDetailResponse.Code != http.StatusOK {
+		t.Fatalf(
+			"get enrollment status = %d: %s",
+			enrollmentDetailResponse.Code,
+			enrollmentDetailResponse.Body,
+		)
+	}
+	var enrollmentDetail enrollmentResponse
+	if err := json.Unmarshal(enrollmentDetailResponse.Body.Bytes(), &enrollmentDetail); err != nil {
+		t.Fatal(err)
+	}
+	if enrollmentDetail.ID != body.ID || enrollmentDetail.Status != "active" {
+		t.Fatalf("unexpected enrollment detail: %+v", enrollmentDetail)
+	}
+
+	installationPath := "/api/v1/projects/" + projectID + "/cluster-installations"
 	installationResponse := httptest.NewRecorder()
 	installationRequest := httptest.NewRequest(
 		http.MethodPost,
@@ -349,6 +374,56 @@ WHERE action = 'agent.enrollment.create'
 		}
 	}
 
+	enrollmentListResponse := httptest.NewRecorder()
+	enrollmentListRequest := httptest.NewRequest(http.MethodGet, path, nil)
+	enrollmentListRequest.AddCookie(&http.Cookie{
+		Name: sessionCookieName, Value: login.SessionToken,
+	})
+	router.ServeHTTP(enrollmentListResponse, enrollmentListRequest)
+	if enrollmentListResponse.Code != http.StatusOK {
+		t.Fatalf(
+			"list enrollments status = %d: %s",
+			enrollmentListResponse.Code,
+			enrollmentListResponse.Body,
+		)
+	}
+	var enrollmentList struct {
+		Items []enrollmentResponse `json:"cluster_enrollments"`
+	}
+	if err := json.Unmarshal(enrollmentListResponse.Body.Bytes(), &enrollmentList); err != nil {
+		t.Fatal(err)
+	}
+	if len(enrollmentList.Items) != 2 {
+		t.Fatalf("listed enrollment count = %d, want 2", len(enrollmentList.Items))
+	}
+
+	revokeEnrollmentResponse := httptest.NewRecorder()
+	revokeEnrollmentRequest := httptest.NewRequest(
+		http.MethodDelete,
+		path+"/"+installationBody.ID,
+		strings.NewReader(`{"confirm":true}`),
+	)
+	revokeEnrollmentRequest.AddCookie(&http.Cookie{
+		Name: sessionCookieName, Value: login.SessionToken,
+	})
+	revokeEnrollmentRequest.Header.Set(csrfHeaderName, login.CSRFToken)
+	revokeEnrollmentRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(revokeEnrollmentResponse, revokeEnrollmentRequest)
+	if revokeEnrollmentResponse.Code != http.StatusOK {
+		t.Fatalf(
+			"revoke enrollment status = %d: %s",
+			revokeEnrollmentResponse.Code,
+			revokeEnrollmentResponse.Body,
+		)
+	}
+	var revokedEnrollment enrollmentResponse
+	if err := json.Unmarshal(revokeEnrollmentResponse.Body.Bytes(), &revokedEnrollment); err != nil {
+		t.Fatal(err)
+	}
+	if revokedEnrollment.Status != "revoked" || revokedEnrollment.RevokedAt == nil {
+		t.Fatalf("unexpected revoked enrollment: %+v", revokedEnrollment)
+	}
+
 	if _, err := pool.Exec(
 		ctx,
 		"UPDATE projects SET status = 'suspended' WHERE id = $1",
@@ -385,7 +460,7 @@ WHERE action = 'agent.enrollment.create'
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.enrollment.create'
+WHERE action = 'cluster.enrollment.create'
   AND project_id = $1
   AND actor_user_id = $2
   AND result = 'denied'
@@ -399,7 +474,7 @@ WHERE action = 'agent.enrollment.create'
 	invalidResponse := httptest.NewRecorder()
 	invalidRequest := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/projects/not-a-uuid/agent-enrollments",
+		"/api/v1/projects/not-a-uuid/cluster-enrollments",
 		nil,
 	)
 	invalidRequest.AddCookie(&http.Cookie{

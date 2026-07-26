@@ -26,17 +26,17 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 	if handler.service == nil ||
 		handler.authService == nil ||
 		handler.rbacService == nil {
-		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent events are unavailable")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster events are unavailable")
 		return
 	}
 	events, unsubscribe, err := handler.service.Subscribe()
 	if errors.Is(err, agentstatus.ErrEventsUnavailable) {
-		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent events are unavailable")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster events are unavailable")
 		return
 	}
 	if err != nil {
 		handler.logger.Error(
-			"subscribe to Agent events",
+			"subscribe to Cluster events",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
 			slog.String("error", err.Error()),
 		)
@@ -90,7 +90,7 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 			_, authorizeErr := handler.rbacService.AuthorizeCluster(
 				operationContext,
 				mustIdentity(c).User.ID,
-				rbac.PermissionAgentRead,
+				rbac.PermissionClusterRead,
 				event.ClusterID,
 			)
 			if authorizeErr != nil {
@@ -99,7 +99,7 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 					continue
 				}
 				handler.logger.Error(
-					"authorize Agent status event",
+					"authorize Cluster status event",
 					slog.String("request_id", httpmiddleware.RequestID(c)),
 					slog.String("agent_id", event.AgentID),
 					slog.String("error", authorizeErr.Error()),
@@ -115,7 +115,7 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 			if statusErr != nil {
 				if !errors.Is(statusErr, agentstatus.ErrNotFound) {
 					handler.logger.Error(
-						"load Agent status event",
+						"load Cluster status event",
 						slog.String("request_id", httpmiddleware.RequestID(c)),
 						slog.String("agent_id", event.AgentID),
 						slog.String("error", statusErr.Error()),
@@ -126,7 +126,7 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 			if err := writeSSE(
 				c.Writer,
 				event.ID,
-				"agent.status",
+				"cluster.status",
 				responseAgentStatus(status),
 			); err != nil {
 				return

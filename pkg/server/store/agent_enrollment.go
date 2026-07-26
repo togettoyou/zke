@@ -17,6 +17,7 @@ type lockedEnrollment struct {
 	ID            string
 	TenantID      string
 	ProjectID     string
+	ClusterID     string
 	ClusterName   string
 	TenantStatus  string
 	ProjectStatus string
@@ -136,6 +137,7 @@ func (store *EnrollmentStore) BeginAgentEnrollment(
 		EnrollmentID:   enrollment.ID,
 		TenantID:       enrollment.TenantID,
 		ProjectID:      enrollment.ProjectID,
+		ClusterID:      enrollment.ClusterID,
 		ClusterName:    enrollment.ClusterName,
 		IdempotencyKey: input.IdempotencyKey,
 		CSRFingerprint: append([]byte(nil), input.CSRFingerprint...),
@@ -256,7 +258,8 @@ func (store *EnrollmentStore) CompleteAgentEnrollment(
 		CertificatePEM:       input.CertificatePEM,
 		CertificateExpiresAt: input.CertificateExpiresAt,
 	}
-	_, err = transaction.Exec(ctx, `
+	if enrollment.ClusterID == "" {
+		_, err = transaction.Exec(ctx, `
 INSERT INTO clusters (
     id,
     tenant_id,
@@ -266,13 +269,16 @@ INSERT INTO clusters (
 )
 VALUES ($1, $2, $3, $4, 'pending')
 `,
-		result.ClusterID,
-		enrollment.TenantID,
-		enrollment.ProjectID,
-		enrollment.ClusterName,
-	)
-	if err != nil {
-		return AgentEnrollmentResult{}, fmt.Errorf("create enrolled cluster: %w", err)
+			result.ClusterID,
+			enrollment.TenantID,
+			enrollment.ProjectID,
+			enrollment.ClusterName,
+		)
+		if err != nil {
+			return AgentEnrollmentResult{}, fmt.Errorf("create enrolled cluster: %w", err)
+		}
+	} else if enrollment.ClusterID != result.ClusterID {
+		return AgentEnrollmentResult{}, ErrEnrollmentAttemptConflict
 	}
 	_, err = transaction.Exec(ctx, `
 INSERT INTO agents (
@@ -367,9 +373,9 @@ VALUES (
     $2,
     $3,
     $4,
-    'agent.enroll',
-    'agent',
-    $1,
+    'cluster.enroll',
+    'cluster',
+    $4,
     'succeeded',
     $5
 )
@@ -401,6 +407,7 @@ SELECT
     enrollment.id::text,
     enrollment.tenant_id::text,
     enrollment.project_id::text,
+    COALESCE(enrollment.cluster_id::text, ''),
     enrollment.cluster_name,
     tenant.status,
     project.status,
@@ -427,6 +434,7 @@ SELECT
     enrollment.id::text,
     enrollment.tenant_id::text,
     enrollment.project_id::text,
+    COALESCE(enrollment.cluster_id::text, ''),
     enrollment.cluster_name,
     tenant.status,
     project.status,
@@ -449,6 +457,7 @@ func scanLockedEnrollment(row pgx.Row) (lockedEnrollment, error) {
 		&enrollment.ID,
 		&enrollment.TenantID,
 		&enrollment.ProjectID,
+		&enrollment.ClusterID,
 		&enrollment.ClusterName,
 		&enrollment.TenantStatus,
 		&enrollment.ProjectStatus,
@@ -543,6 +552,7 @@ func scanEnrollmentAttempt(
 	}
 	attempt.TenantID = enrollment.TenantID
 	attempt.ProjectID = enrollment.ProjectID
+	attempt.ClusterID = enrollment.ClusterID
 	attempt.ClusterName = enrollment.ClusterName
 	if attempt.Status == EnrollmentAttemptSucceeded {
 		if len(responseJSON) == 0 {
@@ -595,7 +605,7 @@ VALUES (
     $1,
     $2,
     $3,
-    'agent.enroll',
+    'cluster.enroll',
     'enrollment',
     $4,
     'denied',
@@ -635,7 +645,7 @@ SELECT
     'project',
     tenant_id,
     project_id,
-    'agent.enroll',
+    'cluster.enroll',
     'enrollment',
     id,
     'failed',

@@ -13,11 +13,6 @@ type RoleBinding struct {
 	ProjectID string
 }
 
-type AgentAuthorizationScope struct {
-	TenantID  string
-	ProjectID string
-}
-
 type ClusterAuthorizationScope struct {
 	TenantID  string
 	ProjectID string

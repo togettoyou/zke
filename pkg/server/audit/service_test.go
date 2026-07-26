@@ -12,7 +12,7 @@ func TestRecordProjectEventRejectsInvalidInputBeforeStoreAccess(t *testing.T) {
 	err := service.RecordProjectEvent(context.Background(), ProjectEventInput{
 		ActorUserID: "not-a-uuid",
 		ProjectID:   "00000000-0000-0000-0000-000000000001",
-		Action:      ActionAgentEnrollmentCreate,
+		Action:      ActionClusterEnrollmentCreate,
 		Result:      "denied",
 		RequestID:   "request-1",
 	})

@@ -91,25 +91,6 @@ func (authorization *Authorization) RequireProject(
 	})
 }
 
-func (authorization *Authorization) RequireAgent(
-	permission rbac.Permission,
-	agentParameter string,
-) gin.HandlerFunc {
-	return authorization.require(permission, "agent", agentParameter, func(
-		ctx context.Context,
-		userID string,
-		c *gin.Context,
-	) error {
-		_, err := authorization.service.AuthorizeAgent(
-			ctx,
-			userID,
-			permission,
-			c.Param(agentParameter),
-		)
-		return err
-	})
-}
-
 func (authorization *Authorization) RequireCluster(
 	permission rbac.Permission,
 	clusterParameter string,

@@ -96,6 +96,33 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 	}
 	assertUTC8Time(t, "managed user created_at", managed.CreatedAt)
 
+	updatedUser := accessAPIRequest(
+		router,
+		http.MethodPut,
+		"/api/v1/users/"+managed.ID,
+		`{"display_name":"Updated Managed User"}`,
+		adminLogin,
+	)
+	if updatedUser.Code != http.StatusOK {
+		t.Fatalf("update user status = %d: %s", updatedUser.Code, updatedUser.Body)
+	}
+	if err := json.Unmarshal(updatedUser.Body.Bytes(), &managed); err != nil {
+		t.Fatal(err)
+	}
+	if managed.DisplayName != "Updated Managed User" {
+		t.Fatalf("updated display name = %q", managed.DisplayName)
+	}
+	userDetail := accessAPIRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/users/"+managed.ID,
+		"",
+		adminLogin,
+	)
+	if userDetail.Code != http.StatusOK {
+		t.Fatalf("get user status = %d: %s", userDetail.Code, userDetail.Body)
+	}
+
 	duplicate := accessAPIRequest(
 		router,
 		http.MethodPost,
@@ -143,6 +170,23 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 	var binding roleBindingResponse
 	if err := json.Unmarshal(createdBinding.Body.Bytes(), &binding); err != nil {
 		t.Fatal(err)
+	}
+	bindingDetail := accessAPIRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/role-bindings/"+binding.ID,
+		"",
+		adminLogin,
+	)
+	if bindingDetail.Code != http.StatusOK {
+		t.Fatalf("get role binding status = %d: %s", bindingDetail.Code, bindingDetail.Body)
+	}
+	var detailedBinding roleBindingResponse
+	if err := json.Unmarshal(bindingDetail.Body.Bytes(), &detailedBinding); err != nil {
+		t.Fatal(err)
+	}
+	if detailedBinding.ID != binding.ID || detailedBinding.SubjectID != managed.ID {
+		t.Fatalf("unexpected role binding detail: %+v", detailedBinding)
 	}
 	replayedBinding := accessAPIRequest(
 		router,
@@ -374,6 +418,29 @@ WHERE id = $1
 	)
 	if deletedBinding.Code != http.StatusNoContent {
 		t.Fatalf("delete role binding status = %d: %s", deletedBinding.Code, deletedBinding.Body)
+	}
+	deletedUser := accessAPIRequest(
+		router,
+		http.MethodDelete,
+		"/api/v1/users/"+managed.ID,
+		`{"confirm":true}`,
+		adminLogin,
+	)
+	if deletedUser.Code != http.StatusOK {
+		t.Fatalf("delete user status = %d: %s", deletedUser.Code, deletedUser.Body)
+	}
+	var deletedManagedUser managedUserResponse
+	if err := json.Unmarshal(deletedUser.Body.Bytes(), &deletedManagedUser); err != nil {
+		t.Fatal(err)
+	}
+	if deletedManagedUser.Status != "disabled" {
+		t.Fatalf("deleted user status = %q, want disabled", deletedManagedUser.Status)
+	}
+	if _, err := authService.Login(ctx, auth.LoginInput{
+		Username: managed.Username, Password: []byte(newPassword),
+		RequestID: "request-managed-after-delete", Now: time.Now().UTC(),
+	}); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("deleted user login error = %v, want invalid credentials", err)
 	}
 	selfDisable := accessAPIRequest(
 		router,

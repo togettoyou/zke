@@ -8,13 +8,14 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] PostgreSQL 本地开发环境、版本化迁移与 Phase 1 最小数据模型
 - [x] 首个管理员自动引导、本地登录、Session 与 CSRF 安全基础
 - [x] Global、Tenant、Project RoleBinding 与 Project HTTP 授权基础
-- [x] Agent Enrollment、一次性 Token 与一键安装 Manifest
+- [x] Cluster Enrollment、一次性 Token、凭证查询/撤销与一键安装 Manifest
 - [x] Agent identity Secret、QUIC/mTLS、Hello、心跳与断线重连
-- [x] Agent 客户端证书自动续期、撤销 API、通知断连与实时连接/证书状态 API
+- [x] Agent 客户端证书自动续期、Cluster 连接撤销/重新接入、通知断连与实时连接/证书状态 API
 - [x] Server Managed Agent PKI 初始化与 Listener 叶子证书自动续期
-- [x] Tenant/Project 创建与权限范围列表、Cluster/Agent 定域查询 API
-- [x] 用户、RoleBinding、账户锁定恢复与管理员密码重置 API
-- [x] 权限定域审计查询、Agent 状态 SSE 与 OpenAPI 3.1 契约
+- [x] Tenant、Project 与 Cluster 查询、更新和逻辑删除生命周期 API
+- [x] Cluster 聚合外部模型，内部 Agent 身份不独立暴露
+- [x] 用户完整管理生命周期、RoleBinding 查询/创建/删除、账户锁定恢复与管理员密码重置 API
+- [x] 权限定域审计查询、Cluster 状态 SSE 与 OpenAPI 3.1 契约
 - [x] ZKE Server Phase 1 后端
 - [x] ZKE Agent Phase 1 身份与连接
 - [x] 用户认证后端

@@ -340,7 +340,7 @@ WHERE agent_id = $1
 	if _, err := store.NewAgentManagementStore(pool).Revoke(
 		setupContext,
 		store.RevokeAgentParams{
-			AgentID:     agentID,
+			ClusterID:   clusterID,
 			ActorUserID: userID,
 			RequestID:   "request-revoke-connected-agent",
 			Now:         time.Now().UTC(),

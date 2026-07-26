@@ -109,7 +109,7 @@ VALUES ($3, $1, $2, 'cluster', 'active')`,
 	revokedAt := time.Now().UTC().Truncate(time.Microsecond)
 	managementStore := store.NewAgentManagementStore(pool)
 	result, err := managementStore.Revoke(ctx, store.RevokeAgentParams{
-		AgentID:     agentID,
+		ClusterID:   clusterID,
 		ActorUserID: userID,
 		RequestID:   "request-agent-revoke-0001",
 		Now:         revokedAt,
@@ -158,7 +158,7 @@ WHERE agent.id = $1
 	}
 
 	repeated, err := managementStore.Revoke(ctx, store.RevokeAgentParams{
-		AgentID:     agentID,
+		ClusterID:   clusterID,
 		ActorUserID: userID,
 		RequestID:   "request-agent-revoke-0002",
 		Now:         revokedAt.Add(time.Minute),
@@ -178,11 +178,11 @@ FROM audit_events
 WHERE actor_user_id = $1
   AND actor_agent_id IS NULL
   AND cluster_id = $2
-  AND action = 'agent.revoke'
-  AND target_type = 'agent'
-  AND target_id = $3
+  AND action = 'cluster.connection.revoke'
+  AND target_type = 'cluster'
+  AND target_id = $2
   AND result = 'succeeded'
-`, userID, clusterID, agentID).Scan(&succeededAudits); err != nil {
+`, userID, clusterID).Scan(&succeededAudits); err != nil {
 		t.Fatal(err)
 	}
 	if succeededAudits != 2 {
@@ -190,7 +190,7 @@ WHERE actor_user_id = $1
 	}
 
 	_, err = managementStore.Revoke(ctx, store.RevokeAgentParams{
-		AgentID:     "10000000-0000-4000-8000-000000000099",
+		ClusterID:   "10000000-0000-4000-8000-000000000099",
 		ActorUserID: userID,
 		RequestID:   "request-agent-revoke-missing",
 		Now:         revokedAt,

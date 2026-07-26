@@ -230,7 +230,7 @@ RETURNING id::text
 		"SELECT count(*) FROM agents":            &agentCount,
 		"SELECT count(*) FROM agent_credentials": &credentialCount,
 		`SELECT count(*) FROM audit_events
-WHERE action = 'agent.enroll' AND result = 'succeeded'`: &successAuditCount,
+WHERE action = 'cluster.enroll' AND result = 'succeeded'`: &successAuditCount,
 	} {
 		if err := pool.QueryRow(ctx, query).Scan(target); err != nil {
 			t.Fatal(err)
@@ -307,7 +307,7 @@ WHERE action = 'agent.enroll' AND result = 'succeeded'`: &successAuditCount,
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)
 FROM audit_events
-WHERE action = 'agent.enroll'
+WHERE action = 'cluster.enroll'
   AND target_id = $1
   AND result = 'failed'
 `, unavailableToken.ID).Scan(&failedAuditCount); err != nil {

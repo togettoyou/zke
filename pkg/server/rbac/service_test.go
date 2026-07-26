@@ -96,14 +96,14 @@ func TestRoleAndScopeRules(t *testing.T) {
 	t.Parallel()
 
 	targetScope := projectScope(testTenantID, testProjectID)
-	if !roleGrants("admin", PermissionAgentRevoke) {
-		t.Fatal("admin role did not grant agent.revoke")
+	if !roleGrants("admin", PermissionClusterConnectionRevoke) {
+		t.Fatal("admin role did not grant cluster.connection.revoke")
 	}
 	if !roleGrants("viewer", PermissionClusterRead) {
 		t.Fatal("viewer role did not grant cluster.read")
 	}
-	if roleGrants("viewer", PermissionAgentEnrollmentCreate) {
-		t.Fatal("viewer role granted agent.enrollment.create")
+	if roleGrants("viewer", PermissionClusterEnrollmentCreate) {
+		t.Fatal("viewer role granted cluster.enrollment.create")
 	}
 	if !roleGrants("admin", PermissionTenantCreate) ||
 		!roleGrants("admin", PermissionProjectCreate) {
