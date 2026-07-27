@@ -341,6 +341,15 @@ idempotency_key    # 仅变更请求使用
 - 取消由 Control Stream 上的 `CancelRequest(request_id, reason)` 和业务 Stream 关闭共同表达；接收方将
   `request_id` 映射到对应 `context.CancelFunc`，只终止对应 Stream。
 
+并发由 QUIC 的 Stream 多路复用提供，这也是选择 QUIC 的主要原因之一：并发查询、日志和终端各自占用独立
+Stream，互不排队，慢的数据流不会阻塞其他请求，取消一个请求只重置它自己的 Stream。因此不需要在单条
+Stream 上再自建一层多路复用——那样会把 QUIC 已经消除的队头阻塞重新引入。
+
+**Phase 1 实现现状**：只实现了 Control Stream。Request 与 Data Stream、`StreamHeader`、`CancelRequest`
+以及 7.3 第 6 步要求的双向 accept 循环都尚未实现；Agent 侧当前不调用 `AcceptStream`，因此 Server 主动
+创建的 Stream 无人接收。双方 `max_incoming_streams` 额度已经放开，Phase 2 接入资源查询、日志和指标时
+按本节设计实现即可，不需要改变协议分层。
+
 Protobuf package 使用显式版本，例如 `zke.agent.v1`。协议版本与 Server、Agent 产品版本分离。已发布字段编号保留；
 删除的字段保留编号和名称；未识别字段按 Protobuf 兼容规则处理。代码生成工具固定版本，并在 CI 中执行 lint 和
 breaking-change 检查。
@@ -364,6 +373,11 @@ Server 到 Agent：
 
 Control Stream 每个方向使用一个串行 Writer，只承载控制消息。请求和数据使用独立 Stream。传输层 KeepAlive
 判断底层连接状态，ZKE Heartbeat 负责 Agent 应用健康与状态更新。
+
+**Phase 1 实现现状**：Agent 侧当前只在心跳发送后同步读取一帧应答，没有独立的 Control Stream 读取循环。
+因此 Server 主动下推的 `GoAway` 最长要等一个心跳间隔才被处理，且任何非 `HeartbeatAck` 的帧会被判为无效
+应答并断开连接。这只影响控制消息的处理时延，与业务并发能力无关——并发由独立 Stream 承担。实现
+`CancelRequest` 和 Server 主动下推之前，需要先把 Agent 侧的读取改为独立循环并按帧类型分发。
 
 ### 7.6 并发、背压与资源限制
 
@@ -847,11 +861,6 @@ Token、证书、Secret 或完整敏感请求正文。
 以下事项后续单独设计：
 
 - 支持的 Kubernetes 版本与发行版范围，需要通过测试矩阵单独定义；
-- 控制流从心跳请求/应答改为双向多路复用。这一项与 Server 副本数无关，单副本下同样需要：当前 Agent 在
-  两次心跳之间不读取控制流，Server 主动下推的 GoAway 最长要等一个心跳周期才被处理，且任何非
-  HeartbeatAck 帧都会被判为无效应答而断连，因此控制流一次只能承载一个在途请求。Phase 2 的节点与
-  Namespace 查询需要并发下发指令并等待响应，必须先把控制流改为读写分离、按帧类型分发并携带请求关联
-  ID，同时重新划分断连原因分类；
 - 跨请求的 RoleBinding 缓存及其失效机制：当前只在单个请求内做备忘，跨请求缓存需要先确定授权撤销的
   传播路径，避免出现已撤销权限继续生效的窗口；
 - 列表搜索的索引方案：当前按名称和 ID 的子串匹配无法利用索引，规模增长后需要评估 pg_trgm 等方案；
