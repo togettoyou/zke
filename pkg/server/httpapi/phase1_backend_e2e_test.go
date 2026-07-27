@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -468,7 +467,7 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 	requirePhase1Status(
 		t,
 		deletedBinding,
-		http.StatusNoContent,
+		http.StatusOK,
 		"delete role binding",
 	)
 	deletedCluster := phase1APIRequest(
@@ -652,7 +651,7 @@ func decodePhase1Response(
 	target any,
 ) {
 	t.Helper()
-	if err := json.Unmarshal(response.Body.Bytes(), target); err != nil {
+	if err := decodeSuccessResponse(response, target); err != nil {
 		t.Fatalf("decode response %q: %v", response.Body.String(), err)
 	}
 }

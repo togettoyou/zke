@@ -92,6 +92,29 @@ Store，也不使用 Store 的数据结构；Service 将数据库结构转换为
 Engine、装配全局中间件和构造 Handler；具体 Handler 文件不得自行向根 Router 注册路径。管理 API 使用
 `/api/v1` 路由组，Agent 注册 API 使用独立的 `/agent-api/v1` 路由组。恢复中间件返回统一错误并记录请求关联 ID。
 
+所有 JSON API（包括健康检查和 Agent 注册）使用统一响应信封，信封中的 `code` 必须与 HTTP 状态码一致：
+
+```json
+{
+  "code": 200,
+  "message": "Success",
+  "data": {}
+}
+```
+
+- 成功响应的 `message` 固定为 `Success`，`data` 保存业务对象、列表对象或 `null`；
+- 创建成功仍使用 HTTP `201`，对应信封中的 `code` 也为 `201`；
+- 无业务数据的成功操作使用 HTTP `200` 和 `data: null`，不返回无响应体的 `204`；
+- 失败响应保留具体 HTTP 状态码，`message` 提供安全的可读说明，`data.error_code` 提供稳定的机器错误码，
+  `data.request_id` 提供请求关联 ID；
+- 未注册路径和不支持的 HTTP Method 分别返回统一的 `404 not_found` 与
+  `405 method_not_allowed` JSON 错误；Server 不自动重定向尾斜杠路径；
+- SSE 事件流和 YAML Manifest 保持各自媒体类型，不套用 JSON 信封；在流建立前或 Manifest 生成失败时返回的
+  JSON 错误仍使用统一信封。
+
+完整字段与各接口的 `data` 类型以 `api/openapi/zke-server.v1.yaml` 为准。Handler 和 middleware 必须通过
+`httpapi/response` 写出 JSON 响应，不得自行构造另一套顶层结构。
+
 ### 4.2 数据存储
 
 使用 PostgreSQL 保存平台主数据：

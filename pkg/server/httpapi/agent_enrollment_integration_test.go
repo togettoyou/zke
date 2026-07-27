@@ -181,7 +181,7 @@ WHERE action = 'cluster.enrollment.create'
 	}
 
 	var body createEnrollmentResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+	if err := decodeSuccessResponse(response, &body); err != nil {
 		t.Fatal(err)
 	}
 	if body.ID == "" ||
@@ -297,7 +297,7 @@ WHERE action = 'cluster.enrollment.create'
 		)
 	}
 	var enrollmentDetail enrollmentResponse
-	if err := json.Unmarshal(enrollmentDetailResponse.Body.Bytes(), &enrollmentDetail); err != nil {
+	if err := decodeSuccessResponse(enrollmentDetailResponse, &enrollmentDetail); err != nil {
 		t.Fatal(err)
 	}
 	if enrollmentDetail.ID != body.ID || enrollmentDetail.Status != "active" {
@@ -390,7 +390,7 @@ WHERE action = 'cluster.enrollment.create'
 	var enrollmentList struct {
 		Items []enrollmentResponse `json:"cluster_enrollments"`
 	}
-	if err := json.Unmarshal(enrollmentListResponse.Body.Bytes(), &enrollmentList); err != nil {
+	if err := decodeSuccessResponse(enrollmentListResponse, &enrollmentList); err != nil {
 		t.Fatal(err)
 	}
 	if len(enrollmentList.Items) != 2 {
@@ -417,7 +417,7 @@ WHERE action = 'cluster.enrollment.create'
 		)
 	}
 	var revokedEnrollment enrollmentResponse
-	if err := json.Unmarshal(revokeEnrollmentResponse.Body.Bytes(), &revokedEnrollment); err != nil {
+	if err := decodeSuccessResponse(revokeEnrollmentResponse, &revokedEnrollment); err != nil {
 		t.Fatal(err)
 	}
 	if revokedEnrollment.Status != "revoked" || revokedEnrollment.RevokedAt == nil {

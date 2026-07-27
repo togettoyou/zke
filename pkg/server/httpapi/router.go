@@ -67,11 +67,24 @@ func New(
 	})
 
 	router := gin.New()
+	router.HandleMethodNotAllowed = true
+	router.RedirectTrailingSlash = false
 	router.Use(
 		httpmiddleware.Recovery(logger),
 		httpmiddleware.RequestLogger(logger),
 		httpmiddleware.CrossOriginProtection(),
 	)
+	router.NoRoute(func(c *gin.Context) {
+		writeError(c, http.StatusNotFound, "not_found", "route not found")
+	})
+	router.NoMethod(func(c *gin.Context) {
+		writeError(
+			c,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"method not allowed",
+		)
+	})
 
 	routeHandlers := handlers{
 		health: newHealthHandler(logger, dependencies.ReadinessCheck),

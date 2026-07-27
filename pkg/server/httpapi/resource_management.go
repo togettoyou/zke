@@ -111,7 +111,7 @@ func (handler *resourceManagementHandler) listTenants(c *gin.Context) {
 			response = append(response, responseTenant(item, false))
 		}
 		response, pagination := paginate(response, query)
-		c.JSON(http.StatusOK, gin.H{
+		writeSuccess(c, http.StatusOK, gin.H{
 			"tenants":    response,
 			"pagination": pagination,
 		})
@@ -159,7 +159,7 @@ func (handler *resourceManagementHandler) createTenant(c *gin.Context) {
 		if result.Replayed {
 			status = http.StatusOK
 		}
-		c.JSON(status, responseTenant(result.Tenant, result.Replayed))
+		writeSuccess(c, status, responseTenant(result.Tenant, result.Replayed))
 	}
 }
 
@@ -174,7 +174,7 @@ func (handler *resourceManagementHandler) getTenant(c *gin.Context) {
 	if handler.handleResourceError(c, "get tenant", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseTenant(result, false))
+	writeSuccess(c, http.StatusOK, responseTenant(result, false))
 }
 
 func (handler *resourceManagementHandler) updateTenant(c *gin.Context) {
@@ -199,7 +199,7 @@ func (handler *resourceManagementHandler) updateTenant(c *gin.Context) {
 	if handler.handleResourceError(c, "update tenant", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseTenant(result, false))
+	writeSuccess(c, http.StatusOK, responseTenant(result, false))
 }
 
 func (handler *resourceManagementHandler) deleteTenant(c *gin.Context) {
@@ -225,7 +225,7 @@ func (handler *resourceManagementHandler) deleteTenant(c *gin.Context) {
 	if handler.handleResourceError(c, "delete tenant", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseTenant(result, false))
+	writeSuccess(c, http.StatusOK, responseTenant(result, false))
 }
 
 func (handler *resourceManagementHandler) listProjects(c *gin.Context) {
@@ -263,7 +263,7 @@ func (handler *resourceManagementHandler) listProjects(c *gin.Context) {
 			response = append(response, responseProject(item, false))
 		}
 		response, pagination := paginate(response, query)
-		c.JSON(http.StatusOK, gin.H{
+		writeSuccess(c, http.StatusOK, gin.H{
 			"projects":   response,
 			"pagination": pagination,
 		})
@@ -318,7 +318,7 @@ func (handler *resourceManagementHandler) createProject(c *gin.Context) {
 		if result.Replayed {
 			status = http.StatusOK
 		}
-		c.JSON(status, responseProject(result.Project, result.Replayed))
+		writeSuccess(c, status, responseProject(result.Project, result.Replayed))
 	}
 }
 
@@ -330,7 +330,7 @@ func (handler *resourceManagementHandler) getProject(c *gin.Context) {
 	if handler.handleResourceError(c, "get project", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseProject(result, false))
+	writeSuccess(c, http.StatusOK, responseProject(result, false))
 }
 
 func (handler *resourceManagementHandler) updateProject(c *gin.Context) {
@@ -355,7 +355,7 @@ func (handler *resourceManagementHandler) updateProject(c *gin.Context) {
 	if handler.handleResourceError(c, "update project", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseProject(result, false))
+	writeSuccess(c, http.StatusOK, responseProject(result, false))
 }
 
 func (handler *resourceManagementHandler) deleteProject(c *gin.Context) {
@@ -381,7 +381,7 @@ func (handler *resourceManagementHandler) deleteProject(c *gin.Context) {
 	if handler.handleResourceError(c, "delete project", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseProject(result, false))
+	writeSuccess(c, http.StatusOK, responseProject(result, false))
 }
 
 func (handler *resourceManagementHandler) listClusters(c *gin.Context) {
@@ -401,7 +401,7 @@ func (handler *resourceManagementHandler) listClusters(c *gin.Context) {
 		for _, item := range result {
 			response = append(response, responseCluster(item))
 		}
-		c.JSON(http.StatusOK, gin.H{"clusters": response})
+		writeSuccess(c, http.StatusOK, gin.H{"clusters": response})
 	}
 }
 
@@ -420,7 +420,7 @@ func (handler *resourceManagementHandler) getCluster(c *gin.Context) {
 	case err != nil:
 		handler.internalError(c, "get cluster", err)
 	default:
-		c.JSON(http.StatusOK, responseCluster(result))
+		writeSuccess(c, http.StatusOK, responseCluster(result))
 	}
 }
 
@@ -446,7 +446,7 @@ func (handler *resourceManagementHandler) updateCluster(c *gin.Context) {
 	if handler.handleResourceError(c, "update cluster", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseCluster(result))
+	writeSuccess(c, http.StatusOK, responseCluster(result))
 }
 
 func (handler *resourceManagementHandler) deleteCluster(c *gin.Context) {
@@ -472,7 +472,7 @@ func (handler *resourceManagementHandler) deleteCluster(c *gin.Context) {
 	if handler.handleResourceError(c, "delete cluster", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseCluster(result))
+	writeSuccess(c, http.StatusOK, responseCluster(result))
 }
 
 func (handler *resourceManagementHandler) recordTenantFailure(

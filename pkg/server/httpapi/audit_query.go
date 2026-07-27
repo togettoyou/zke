@@ -114,7 +114,7 @@ func (handler *auditQueryHandler) list(c *gin.Context) {
 				CreatedAt:    responseTime(item.CreatedAt),
 			})
 		}
-		c.JSON(http.StatusOK, gin.H{
+		writeSuccess(c, http.StatusOK, gin.H{
 			"audit_events": events,
 			"next_cursor":  result.NextCursor,
 		})

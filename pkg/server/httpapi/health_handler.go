@@ -28,7 +28,7 @@ func newHealthHandler(
 }
 
 func (handler *healthHandler) health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	writeSuccess(c, http.StatusOK, gin.H{"status": "ok"})
 }
 
 func (handler *healthHandler) ready(c *gin.Context) {
@@ -39,8 +39,8 @@ func (handler *healthHandler) ready(c *gin.Context) {
 		handler.logger.Warn("readiness check failed",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
 		)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Server is not ready")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	writeSuccess(c, http.StatusOK, gin.H{"status": "ok"})
 }

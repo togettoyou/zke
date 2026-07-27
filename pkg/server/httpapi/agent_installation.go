@@ -105,7 +105,7 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 		)
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
 	default:
-		c.JSON(http.StatusCreated, createAgentInstallationResponse{
+		writeSuccess(c, http.StatusCreated, createAgentInstallationResponse{
 			ID:             result.ID,
 			ClusterName:    result.ClusterName,
 			ExpiresAt:      responseTime(result.ExpiresAt),

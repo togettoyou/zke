@@ -14,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
-	apiresponse "github.com/togettoyou/zke/pkg/server/httpapi/response"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
@@ -164,7 +163,7 @@ func (handler *authHandler) login(c *gin.Context) {
 	}
 
 	handler.setAuthenticationCookies(c, result)
-	c.JSON(http.StatusOK, authenticationResponse{
+	writeSuccess(c, http.StatusOK, authenticationResponse{
 		User:      responseUser(result.User),
 		ExpiresAt: responseTime(result.ExpiresAt),
 	})
@@ -197,7 +196,7 @@ func (handler *authHandler) me(c *gin.Context) {
 			})
 		}
 	}
-	c.JSON(http.StatusOK, currentSessionResponse{
+	writeSuccess(c, http.StatusOK, currentSessionResponse{
 		User:         responseUser(identity.User),
 		ExpiresAt:    responseTime(identity.ExpiresAt),
 		Capabilities: capabilities,
@@ -248,7 +247,7 @@ func (handler *authHandler) changePassword(c *gin.Context) {
 		handler.serviceError(c, "change current user password", err)
 	default:
 		httpmiddleware.ClearAuthenticationCookies(c, handler.config.CookieSecure)
-		c.Status(http.StatusNoContent)
+		writeSuccess(c, http.StatusOK, nil)
 	}
 }
 
@@ -269,7 +268,7 @@ func (handler *authHandler) logout(c *gin.Context) {
 	}
 
 	httpmiddleware.ClearAuthenticationCookies(c, handler.config.CookieSecure)
-	c.Status(http.StatusNoContent)
+	writeSuccess(c, http.StatusOK, nil)
 }
 
 func (handler *authHandler) setAuthenticationCookies(
@@ -334,8 +333,4 @@ func clientAddress(request *http.Request) string {
 		return host
 	}
 	return request.RemoteAddr
-}
-
-func writeError(c *gin.Context, status int, code string, message string) {
-	apiresponse.WriteError(c, status, code, message, httpmiddleware.RequestID(c))
 }

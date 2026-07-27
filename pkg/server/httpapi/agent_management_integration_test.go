@@ -245,7 +245,7 @@ VALUES (
 	var listed struct {
 		Clusters []agentStatusResponse `json:"clusters"`
 	}
-	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
+	if err := decodeSuccessResponse(listResponse, &listed); err != nil {
 		t.Fatal(err)
 	}
 	if len(listed.Clusters) != 1 ||
@@ -423,7 +423,7 @@ VALUES (
 		t.Fatalf("revoke status = %d: %s", revoked.Code, revoked.Body)
 	}
 	var revokedBody revokeAgentResponse
-	if err := json.Unmarshal(revoked.Body.Bytes(), &revokedBody); err != nil {
+	if err := decodeSuccessResponse(revoked, &revokedBody); err != nil {
 		t.Fatal(err)
 	}
 	if revokedBody.ClusterID != clusterID ||
@@ -444,7 +444,7 @@ VALUES (
 		t.Fatalf("reenrollment status = %d: %s", reenrolled.Code, reenrolled.Body)
 	}
 	var reenrollmentBody createEnrollmentResponse
-	if err := json.Unmarshal(reenrolled.Body.Bytes(), &reenrollmentBody); err != nil {
+	if err := decodeSuccessResponse(reenrolled, &reenrollmentBody); err != nil {
 		t.Fatal(err)
 	}
 	if reenrollmentBody.ID == "" || reenrollmentBody.Token == "" ||
@@ -502,7 +502,7 @@ VALUES (
 		t.Fatalf("offline list status = %d", offlineResponse.Code)
 	}
 	listed.Clusters = nil
-	if err := json.Unmarshal(offlineResponse.Body.Bytes(), &listed); err != nil {
+	if err := decodeSuccessResponse(offlineResponse, &listed); err != nil {
 		t.Fatal(err)
 	}
 	if len(listed.Clusters) != 1 ||
@@ -532,7 +532,7 @@ VALUES (
 		t.Fatalf("repeated revoke status = %d: %s", repeated.Code, repeated.Body)
 	}
 	var repeatedBody revokeAgentResponse
-	if err := json.Unmarshal(repeated.Body.Bytes(), &repeatedBody); err != nil {
+	if err := decodeSuccessResponse(repeated, &repeatedBody); err != nil {
 		t.Fatal(err)
 	}
 	if !repeatedBody.AlreadyRevoked ||

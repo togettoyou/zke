@@ -32,6 +32,15 @@ func TestHealth(t *testing.T) {
 	if response.Header().Get("X-Request-ID") == "" {
 		t.Fatal("X-Request-ID header is empty")
 	}
+	var data struct {
+		Status string `json:"status"`
+	}
+	if err := decodeSuccessResponse(response, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Status != "ok" {
+		t.Fatalf("health status = %q, want ok", data.Status)
+	}
 }
 
 func TestReadinessUnavailable(t *testing.T) {
@@ -47,6 +56,81 @@ func TestReadinessUnavailable(t *testing.T) {
 
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	var body apiresponse.Error
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Code != response.Code ||
+		body.Data.ErrorCode != "unavailable" ||
+		body.Data.RequestID == "" {
+		t.Fatalf("unexpected readiness error envelope: %+v", body)
+	}
+}
+
+func TestRoutingErrorsUseUniformEnvelope(t *testing.T) {
+	t.Parallel()
+
+	router := testRouter(func(context.Context) error { return nil })
+	testCases := []struct {
+		name      string
+		method    string
+		path      string
+		status    int
+		errorCode string
+	}{
+		{
+			name:      "unknown route",
+			method:    http.MethodGet,
+			path:      "/unknown",
+			status:    http.StatusNotFound,
+			errorCode: "not_found",
+		},
+		{
+			name:      "unsupported method",
+			method:    http.MethodPost,
+			path:      "/healthz",
+			status:    http.StatusMethodNotAllowed,
+			errorCode: "method_not_allowed",
+		},
+		{
+			name:      "trailing slash is not redirected",
+			method:    http.MethodGet,
+			path:      "/healthz/",
+			status:    http.StatusNotFound,
+			errorCode: "not_found",
+		},
+	}
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(
+				testCase.method,
+				testCase.path,
+				nil,
+			)
+			router.ServeHTTP(response, request)
+
+			if response.Code != testCase.status {
+				t.Fatalf(
+					"status = %d, want %d: %s",
+					response.Code,
+					testCase.status,
+					response.Body,
+				)
+			}
+			var body apiresponse.Error
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Code != testCase.status ||
+				body.Data.ErrorCode != testCase.errorCode ||
+				body.Data.RequestID == "" {
+				t.Fatalf("unexpected routing error envelope: %+v", body)
+			}
+		})
 	}
 }
 
@@ -75,17 +159,20 @@ func TestRecoveryReturnsInternalServerError(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.Code != "internal_error" {
-		t.Errorf("code = %q, want %q", body.Code, "internal_error")
+	if body.Code != http.StatusInternalServerError {
+		t.Errorf("code = %d, want %d", body.Code, http.StatusInternalServerError)
 	}
 	if body.Message != "internal server error" {
 		t.Errorf("message = %q, want %q", body.Message, "internal server error")
 	}
-	if body.RequestID == "" {
+	if body.Data.ErrorCode != "internal_error" {
+		t.Errorf("error_code = %q, want %q", body.Data.ErrorCode, "internal_error")
+	}
+	if body.Data.RequestID == "" {
 		t.Fatal("request_id is empty")
 	}
-	if body.RequestID != response.Header().Get("X-Request-ID") {
-		t.Errorf("request_id = %q, header = %q", body.RequestID, response.Header().Get("X-Request-ID"))
+	if body.Data.RequestID != response.Header().Get("X-Request-ID") {
+		t.Errorf("request_id = %q, header = %q", body.Data.RequestID, response.Header().Get("X-Request-ID"))
 	}
 }
 

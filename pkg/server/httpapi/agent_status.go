@@ -112,7 +112,7 @@ func (handler *agentStatusHandler) list(c *gin.Context) {
 			response = append(response, responseAgentStatus(item))
 		}
 		response, pagination := paginate(response, query)
-		c.JSON(http.StatusOK, gin.H{
+		writeSuccess(c, http.StatusOK, gin.H{
 			"clusters":   response,
 			"pagination": pagination,
 		})
@@ -151,7 +151,7 @@ func (handler *agentStatusHandler) getCluster(c *gin.Context) {
 		)
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
 	default:
-		c.JSON(http.StatusOK, responseAgentStatus(result))
+		writeSuccess(c, http.StatusOK, responseAgentStatus(result))
 	}
 }
 

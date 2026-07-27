@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +17,42 @@ import (
 )
 
 var ginPathParameter = regexp.MustCompile(`:([A-Za-z0-9_]+)`)
+
+func TestHandlersUseSharedJSONResponseWriter(t *testing.T) {
+	t.Parallel()
+
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSet := token.NewFileSet()
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fileSet, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "JSON" {
+				return true
+			}
+			position := fileSet.Position(call.Pos())
+			t.Errorf(
+				"%s:%d writes JSON directly; use the shared response writer",
+				path,
+				position.Line,
+			)
+			return true
+		})
+	}
+}
 
 func TestOpenAPIContractCoversRegisteredRoutes(t *testing.T) {
 	t.Parallel()
@@ -88,6 +127,7 @@ func TestOpenAPIContractCoversRegisteredRoutes(t *testing.T) {
 			validateOperationResponses(t, upperMethod, path, operation)
 		}
 	}
+	validateEnvelopeSchemas(t, document)
 	for route := range registered {
 		if _, exists := documented[route]; !exists {
 			t.Errorf("registered route %q is missing from OpenAPI", route)
@@ -118,6 +158,9 @@ func validateOperationResponses(
 	for status := range responses {
 		hasSuccess = hasSuccess || strings.HasPrefix(status, "2")
 		hasClientError = hasClientError || strings.HasPrefix(status, "4")
+		if strings.HasPrefix(status, "2") {
+			validateSuccessResponseEnvelope(t, method, path, status, responses[status])
+		}
 	}
 	if !hasSuccess {
 		t.Errorf("%s %s has no success response", method, path)
@@ -144,8 +187,12 @@ func validatePhaseOneFrontendContract(
 	t.Helper()
 	assertSchemaReference(
 		t,
-		operationAt(t, paths, "/api/v1/auth/me", "get"),
-		[]string{"responses", "200", "content", "application/json", "schema"},
+		successDataSchema(
+			t,
+			operationAt(t, paths, "/api/v1/auth/me", "get"),
+			"200",
+		),
+		nil,
 		"#/components/schemas/CurrentSession",
 	)
 	assertSchemaReference(
@@ -164,8 +211,8 @@ func validatePhaseOneFrontendContract(
 	for _, status := range []string{"200", "201"} {
 		assertSchemaReference(
 			t,
-			agentEnrollment,
-			[]string{"responses", status, "content", "application/json", "schema"},
+			successDataSchema(t, agentEnrollment, status),
+			nil,
 			"#/components/schemas/AgentEnrollmentResponse",
 		)
 	}
@@ -201,13 +248,140 @@ func validatePhaseOneFrontendContract(
 		}
 		assertSchemaReference(
 			t,
-			operation,
-			[]string{
-				"responses", "200", "content", "application/json",
-				"schema", "properties", "pagination",
-			},
+			successDataSchema(t, operation, "200"),
+			[]string{"properties", "pagination"},
 			"#/components/schemas/Pagination",
 		)
+	}
+}
+
+func validateSuccessResponseEnvelope(
+	t *testing.T,
+	method string,
+	path string,
+	status string,
+	rawResponse interface{},
+) {
+	t.Helper()
+	response, ok := rawResponse.(map[string]interface{})
+	if !ok {
+		return
+	}
+	content, _ := response["content"].(map[string]interface{})
+	if _, exists := content["application/json"]; !exists {
+		return
+	}
+	operation := map[string]interface{}{
+		"responses": map[string]interface{}{status: response},
+	}
+	if successDataSchema(t, operation, status) == nil {
+		t.Errorf(
+			"%s %s response %s has no data schema",
+			method,
+			path,
+			status,
+		)
+	}
+}
+
+func successDataSchema(
+	t *testing.T,
+	operation map[string]interface{},
+	status string,
+) map[string]interface{} {
+	t.Helper()
+	responses, ok := operation["responses"].(map[string]interface{})
+	if !ok {
+		t.Errorf("operation has no responses")
+		return nil
+	}
+	response, ok := responses[status].(map[string]interface{})
+	if !ok {
+		t.Errorf("response %s is not an object", status)
+		return nil
+	}
+	content, _ := response["content"].(map[string]interface{})
+	jsonContent, ok := content["application/json"].(map[string]interface{})
+	if !ok {
+		t.Errorf("response %s has no application/json content", status)
+		return nil
+	}
+	schema, _ := jsonContent["schema"].(map[string]interface{})
+	allOf, ok := schema["allOf"].([]interface{})
+	if !ok || len(allOf) != 2 {
+		t.Errorf("response %s does not use the success envelope", status)
+		return nil
+	}
+	base, _ := allOf[0].(map[string]interface{})
+	if base["$ref"] != "#/components/schemas/SuccessResponse" {
+		t.Errorf("response %s has invalid success envelope base", status)
+	}
+	extension, _ := allOf[1].(map[string]interface{})
+	properties, _ := extension["properties"].(map[string]interface{})
+	data, ok := properties["data"].(map[string]interface{})
+	if !ok {
+		t.Errorf("response %s success envelope has no data property", status)
+		return nil
+	}
+	return data
+}
+
+func validateEnvelopeSchemas(
+	t *testing.T,
+	document map[string]interface{},
+) {
+	t.Helper()
+	assertSchemaRequiredProperties(
+		t,
+		document,
+		"SuccessResponse",
+		"code",
+		"message",
+	)
+	assertSchemaRequiredProperties(
+		t,
+		document,
+		"Error",
+		"code",
+		"message",
+		"data",
+	)
+	assertSchemaRequiredProperties(
+		t,
+		document,
+		"ErrorData",
+		"error_code",
+		"request_id",
+	)
+}
+
+func assertSchemaRequiredProperties(
+	t *testing.T,
+	document map[string]interface{},
+	name string,
+	expected ...string,
+) {
+	t.Helper()
+	components, _ := document["components"].(map[string]interface{})
+	schemas, _ := components["schemas"].(map[string]interface{})
+	schema, ok := schemas[name].(map[string]interface{})
+	if !ok {
+		t.Errorf("OpenAPI schema %s does not exist", name)
+		return
+	}
+	required, _ := schema["required"].([]interface{})
+	properties, _ := schema["properties"].(map[string]interface{})
+	for _, property := range expected {
+		if _, exists := properties[property]; !exists {
+			t.Errorf("OpenAPI schema %s has no %s property", name, property)
+		}
+		found := false
+		for _, item := range required {
+			found = found || item == property
+		}
+		if !found {
+			t.Errorf("OpenAPI schema %s does not require %s", name, property)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package pki
 
 import (
 	"os"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -35,17 +36,19 @@ func TestGenerateAndValidateManagedMaterial(t *testing.T) {
 		len(state.AgentListenerCertificateFingerprint) != 64 {
 		t.Fatalf("unexpected certificate fingerprints: %+v", state)
 	}
-	for _, path := range []string{
-		paths.AgentClientCAPrivateKey,
-		paths.AgentListenerCAPrivateKey,
-		paths.AgentListenerPrivateKey,
-	} {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0o600 {
-			t.Errorf("%s permissions = %o, want 600", path, info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		for _, path := range []string{
+			paths.AgentClientCAPrivateKey,
+			paths.AgentListenerCAPrivateKey,
+			paths.AgentListenerPrivateKey,
+		} {
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o600 {
+				t.Errorf("%s permissions = %o, want 600", path, info.Mode().Perm())
+			}
 		}
 	}
 }

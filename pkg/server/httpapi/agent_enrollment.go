@@ -145,7 +145,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, createEnrollmentResponse{
+	writeSuccess(c, http.StatusCreated, createEnrollmentResponse{
 		ID:          result.ID,
 		ClusterID:   result.ClusterID,
 		ClusterName: result.ClusterName,
@@ -180,7 +180,7 @@ func (handler *enrollmentHandler) list(c *gin.Context) {
 		response = append(response, responseEnrollment(item))
 	}
 	response, pagination := paginate(response, query)
-	c.JSON(http.StatusOK, gin.H{
+	writeSuccess(c, http.StatusOK, gin.H{
 		"cluster_enrollments": response,
 		"pagination":          pagination,
 	})
@@ -196,7 +196,7 @@ func (handler *enrollmentHandler) get(c *gin.Context) {
 	if handler.handleManagementError(c, "get Cluster enrollment", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseEnrollment(result))
+	writeSuccess(c, http.StatusOK, responseEnrollment(result))
 }
 
 func (handler *enrollmentHandler) revoke(c *gin.Context) {
@@ -227,7 +227,7 @@ func (handler *enrollmentHandler) revoke(c *gin.Context) {
 	if handler.handleManagementError(c, "revoke Cluster enrollment", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseEnrollment(result))
+	writeSuccess(c, http.StatusOK, responseEnrollment(result))
 }
 
 func (handler *enrollmentHandler) reenroll(c *gin.Context) {
@@ -258,7 +258,7 @@ func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 	if handler.handleManagementError(c, "create Cluster reenrollment", err) {
 		return
 	}
-	c.JSON(http.StatusCreated, createEnrollmentResponse{
+	writeSuccess(c, http.StatusCreated, createEnrollmentResponse{
 		ID: result.ID, ClusterID: result.ClusterID, ClusterName: result.ClusterName,
 		Token: result.Token, ExpiresAt: responseTime(result.ExpiresAt),
 	})

@@ -194,7 +194,7 @@ func (handler *agentRegistrationHandler) enroll(c *gin.Context) {
 	if result.Replayed {
 		status = http.StatusOK
 	}
-	c.JSON(status, agentRegistrationResponse{
+	writeSuccess(c, status, agentRegistrationResponse{
 		ClusterID:            result.ClusterID,
 		AgentID:              result.AgentID,
 		CertificatePEM:       result.CertificatePEM,

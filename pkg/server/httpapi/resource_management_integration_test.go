@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,7 +104,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 		t.Fatalf("create tenant status = %d: %s", createdTenant.Code, createdTenant.Body)
 	}
 	var tenant tenantResponse
-	if err := json.Unmarshal(createdTenant.Body.Bytes(), &tenant); err != nil {
+	if err := decodeSuccessResponse(createdTenant, &tenant); err != nil {
 		t.Fatal(err)
 	}
 	if tenant.ID == "" || tenant.Name != "Primary Tenant" ||
@@ -128,7 +127,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 		t.Fatalf("replay tenant status = %d: %s", replayedTenant.Code, replayedTenant.Body)
 	}
 	var tenantReplay tenantResponse
-	if err := json.Unmarshal(replayedTenant.Body.Bytes(), &tenantReplay); err != nil {
+	if err := decodeSuccessResponse(replayedTenant, &tenantReplay); err != nil {
 		t.Fatal(err)
 	}
 	if !tenantReplay.Replayed || tenantReplay.ID != tenant.ID {
@@ -167,7 +166,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 	if updatedTenant.Code != http.StatusOK {
 		t.Fatalf("update tenant status = %d: %s", updatedTenant.Code, updatedTenant.Body)
 	}
-	if err := json.Unmarshal(updatedTenant.Body.Bytes(), &tenant); err != nil {
+	if err := decodeSuccessResponse(updatedTenant, &tenant); err != nil {
 		t.Fatal(err)
 	}
 	if tenant.Name != "Updated Primary Tenant" {
@@ -189,7 +188,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 	var listedTenants struct {
 		Tenants []tenantResponse `json:"tenants"`
 	}
-	if err := json.Unmarshal(tenantList.Body.Bytes(), &listedTenants); err != nil {
+	if err := decodeSuccessResponse(tenantList, &listedTenants); err != nil {
 		t.Fatal(err)
 	}
 	if len(listedTenants.Tenants) != 1 || listedTenants.Tenants[0].ID != tenant.ID {
@@ -211,7 +210,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 		t.Fatalf("create project status = %d: %s", createdProject.Code, createdProject.Body)
 	}
 	var project projectResponse
-	if err := json.Unmarshal(createdProject.Body.Bytes(), &project); err != nil {
+	if err := decodeSuccessResponse(createdProject, &project); err != nil {
 		t.Fatal(err)
 	}
 	if project.ID == "" || project.TenantID != tenant.ID ||
@@ -234,7 +233,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 		t.Fatalf("replay project status = %d: %s", replayedProject.Code, replayedProject.Body)
 	}
 	var projectReplay projectResponse
-	if err := json.Unmarshal(replayedProject.Body.Bytes(), &projectReplay); err != nil {
+	if err := decodeSuccessResponse(replayedProject, &projectReplay); err != nil {
 		t.Fatal(err)
 	}
 	if !projectReplay.Replayed || projectReplay.ID != project.ID {
@@ -273,7 +272,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 	if updatedProject.Code != http.StatusOK {
 		t.Fatalf("update project status = %d: %s", updatedProject.Code, updatedProject.Body)
 	}
-	if err := json.Unmarshal(updatedProject.Body.Bytes(), &project); err != nil {
+	if err := decodeSuccessResponse(updatedProject, &project); err != nil {
 		t.Fatal(err)
 	}
 	if project.Name != "Updated Primary Project" {
@@ -338,7 +337,7 @@ VALUES (
 	var listedClusters struct {
 		Clusters []agentStatusResponse `json:"clusters"`
 	}
-	if err := json.Unmarshal(clusterList.Body.Bytes(), &listedClusters); err != nil {
+	if err := decodeSuccessResponse(clusterList, &listedClusters); err != nil {
 		t.Fatal(err)
 	}
 	if len(listedClusters.Clusters) != 1 ||
@@ -361,7 +360,7 @@ VALUES (
 		t.Fatalf("cluster detail status = %d: %s", clusterDetail.Code, clusterDetail.Body)
 	}
 	var cluster agentStatusResponse
-	if err := json.Unmarshal(clusterDetail.Body.Bytes(), &cluster); err != nil {
+	if err := decodeSuccessResponse(clusterDetail, &cluster); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.ID != clusterID || cluster.ProjectID != project.ID ||
@@ -384,7 +383,7 @@ VALUES (
 		t.Fatalf("update cluster status = %d: %s", updatedCluster.Code, updatedCluster.Body)
 	}
 	var updatedClusterBody clusterResponse
-	if err := json.Unmarshal(updatedCluster.Body.Bytes(), &updatedClusterBody); err != nil {
+	if err := decodeSuccessResponse(updatedCluster, &updatedClusterBody); err != nil {
 		t.Fatal(err)
 	}
 	if updatedClusterBody.Name != "Updated Primary Cluster" {
@@ -428,7 +427,7 @@ RETURNING id::text
 		t.Fatalf("viewer tenant list status = %d: %s", viewerTenants.Code, viewerTenants.Body)
 	}
 	listedTenants.Tenants = nil
-	if err := json.Unmarshal(viewerTenants.Body.Bytes(), &listedTenants); err != nil {
+	if err := decodeSuccessResponse(viewerTenants, &listedTenants); err != nil {
 		t.Fatal(err)
 	}
 	if len(listedTenants.Tenants) != 1 || listedTenants.Tenants[0].ID != tenant.ID {
@@ -450,7 +449,7 @@ RETURNING id::text
 	if viewerProjects.Code != http.StatusOK {
 		t.Fatalf("viewer project list status = %d: %s", viewerProjects.Code, viewerProjects.Body)
 	}
-	if err := json.Unmarshal(viewerProjects.Body.Bytes(), &listedProjects); err != nil {
+	if err := decodeSuccessResponse(viewerProjects, &listedProjects); err != nil {
 		t.Fatal(err)
 	}
 	if len(listedProjects.Projects) != 1 || listedProjects.Projects[0].ID != project.ID {
@@ -469,7 +468,7 @@ RETURNING id::text
 		t.Fatalf("hidden project list status = %d: %s", hiddenProjects.Code, hiddenProjects.Body)
 	}
 	listedProjects.Projects = nil
-	if err := json.Unmarshal(hiddenProjects.Body.Bytes(), &listedProjects); err != nil {
+	if err := decodeSuccessResponse(hiddenProjects, &listedProjects); err != nil {
 		t.Fatal(err)
 	}
 	if len(listedProjects.Projects) != 0 {
@@ -612,7 +611,7 @@ FROM audit_events
 		t.Fatalf("delete cluster status = %d: %s", deletedCluster.Code, deletedCluster.Body)
 	}
 	var deletedClusterBody clusterResponse
-	if err := json.Unmarshal(deletedCluster.Body.Bytes(), &deletedClusterBody); err != nil {
+	if err := decodeSuccessResponse(deletedCluster, &deletedClusterBody); err != nil {
 		t.Fatal(err)
 	}
 	if deletedClusterBody.Status != "revoked" {
@@ -649,7 +648,7 @@ WHERE agent.cluster_id = $1
 		t.Fatalf("delete project status = %d: %s", deletedProject.Code, deletedProject.Body)
 	}
 	var deletedProjectBody projectResponse
-	if err := json.Unmarshal(deletedProject.Body.Bytes(), &deletedProjectBody); err != nil {
+	if err := decodeSuccessResponse(deletedProject, &deletedProjectBody); err != nil {
 		t.Fatal(err)
 	}
 	if deletedProjectBody.Status != "suspended" {
@@ -669,7 +668,7 @@ WHERE agent.cluster_id = $1
 		t.Fatalf("delete tenant status = %d: %s", deletedTenant.Code, deletedTenant.Body)
 	}
 	var deletedTenantBody tenantResponse
-	if err := json.Unmarshal(deletedTenant.Body.Bytes(), &deletedTenantBody); err != nil {
+	if err := decodeSuccessResponse(deletedTenant, &deletedTenantBody); err != nil {
 		t.Fatal(err)
 	}
 	if deletedTenantBody.Status != "suspended" {

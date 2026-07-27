@@ -138,7 +138,7 @@ RETURNING id::text
 		t.Fatalf("Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
 	}
 	var result agentRegistrationResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+	if err := decodeSuccessResponse(response, &result); err != nil {
 		t.Fatal(err)
 	}
 	if result.ClusterID == "" ||
@@ -190,7 +190,7 @@ RETURNING id::text
 		t.Fatalf("registration retry status = %d, want %d: %s", retry.Code, http.StatusOK, retry.Body)
 	}
 	var retryResult agentRegistrationResponse
-	if err := json.Unmarshal(retry.Body.Bytes(), &retryResult); err != nil {
+	if err := decodeSuccessResponse(retry, &retryResult); err != nil {
 		t.Fatal(err)
 	}
 	if retryResult != result {

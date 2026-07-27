@@ -118,7 +118,7 @@ func (handler *accessManagementHandler) listUsers(c *gin.Context) {
 		response = append(response, responseManagedUser(item))
 	}
 	response, pagination := paginate(response, query)
-	c.JSON(http.StatusOK, gin.H{"users": response, "pagination": pagination})
+	writeSuccess(c, http.StatusOK, gin.H{"users": response, "pagination": pagination})
 }
 
 func (handler *accessManagementHandler) getUser(c *gin.Context) {
@@ -129,7 +129,7 @@ func (handler *accessManagementHandler) getUser(c *gin.Context) {
 	if handler.handleError(c, "get user", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseManagedUser(result))
+	writeSuccess(c, http.StatusOK, responseManagedUser(result))
 }
 
 func (handler *accessManagementHandler) createUser(c *gin.Context) {
@@ -162,7 +162,7 @@ func (handler *accessManagementHandler) createUser(c *gin.Context) {
 	if handler.handleError(c, "create user", err) {
 		return
 	}
-	c.JSON(http.StatusCreated, responseManagedUser(result))
+	writeSuccess(c, http.StatusCreated, responseManagedUser(result))
 }
 
 func (handler *accessManagementHandler) updateUser(c *gin.Context) {
@@ -187,7 +187,7 @@ func (handler *accessManagementHandler) updateUser(c *gin.Context) {
 	if handler.handleError(c, "update user", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseManagedUser(result))
+	writeSuccess(c, http.StatusOK, responseManagedUser(result))
 }
 
 func (handler *accessManagementHandler) deleteUser(c *gin.Context) {
@@ -213,7 +213,7 @@ func (handler *accessManagementHandler) deleteUser(c *gin.Context) {
 	if handler.handleError(c, "delete user", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseManagedUser(result))
+	writeSuccess(c, http.StatusOK, responseManagedUser(result))
 }
 
 func (handler *accessManagementHandler) setUserStatus(c *gin.Context) {
@@ -245,7 +245,7 @@ func (handler *accessManagementHandler) setUserStatus(c *gin.Context) {
 	if handler.handleError(c, "update user status", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseManagedUser(result))
+	writeSuccess(c, http.StatusOK, responseManagedUser(result))
 }
 
 func (handler *accessManagementHandler) unlockUser(c *gin.Context) {
@@ -277,7 +277,7 @@ func (handler *accessManagementHandler) unlockUser(c *gin.Context) {
 	if handler.handleError(c, "unlock user", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseManagedUser(result))
+	writeSuccess(c, http.StatusOK, responseManagedUser(result))
 }
 
 func (handler *accessManagementHandler) resetPassword(c *gin.Context) {
@@ -314,7 +314,7 @@ func (handler *accessManagementHandler) resetPassword(c *gin.Context) {
 	if handler.handleError(c, "reset user password", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseManagedUser(result))
+	writeSuccess(c, http.StatusOK, responseManagedUser(result))
 }
 
 func (handler *accessManagementHandler) listRoleBindings(c *gin.Context) {
@@ -352,7 +352,7 @@ func (handler *accessManagementHandler) listRoleBindings(c *gin.Context) {
 		response = append(response, responseRoleBinding(item, false))
 	}
 	response, pagination := paginate(response, query)
-	c.JSON(http.StatusOK, gin.H{
+	writeSuccess(c, http.StatusOK, gin.H{
 		"role_bindings": response,
 		"pagination":    pagination,
 	})
@@ -366,7 +366,7 @@ func (handler *accessManagementHandler) getRoleBinding(c *gin.Context) {
 	if handler.handleError(c, "get role binding", err) {
 		return
 	}
-	c.JSON(http.StatusOK, responseRoleBinding(result, false))
+	writeSuccess(c, http.StatusOK, responseRoleBinding(result, false))
 }
 
 func (handler *accessManagementHandler) createRoleBinding(c *gin.Context) {
@@ -405,7 +405,7 @@ func (handler *accessManagementHandler) createRoleBinding(c *gin.Context) {
 	if result.Replayed {
 		status = http.StatusOK
 	}
-	c.JSON(status, responseRoleBinding(result.RoleBinding, result.Replayed))
+	writeSuccess(c, status, responseRoleBinding(result.RoleBinding, result.Replayed))
 }
 
 func (handler *accessManagementHandler) deleteRoleBinding(c *gin.Context) {
@@ -437,7 +437,7 @@ func (handler *accessManagementHandler) deleteRoleBinding(c *gin.Context) {
 	if handler.handleError(c, "delete role binding", err) {
 		return
 	}
-	c.Status(http.StatusNoContent)
+	writeSuccess(c, http.StatusOK, nil)
 }
 
 func (handler *accessManagementHandler) recordFailure(

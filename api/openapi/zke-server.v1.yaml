@@ -4,6 +4,10 @@ info:
   version: v1
   description: |
     ZKE 用户管理、资源管理、Cluster 接入管理和内部 Agent 注册使用的 HTTP API 契约。
+    除 SSE 事件流与 YAML Manifest 外，所有 JSON 响应统一使用
+    `code`、`message`、`data` 三字段信封。`code` 与 HTTP 状态码一致；
+    成功响应的 `message` 固定为 `Success`；失败响应的 `data` 包含稳定
+    `error_code` 和请求关联 `request_id`。
     所有 JSON 时间均为 RFC 3339，并由当前 API 以 UTC+8 偏移返回。
 servers:
   - url: /
@@ -29,7 +33,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Health"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Health"
   /readyz:
     get:
       tags: [Health]
@@ -40,7 +50,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Health"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Health"
         "503":
           $ref: "#/components/responses/Unavailable"
   /api/v1/auth/login:
@@ -63,7 +79,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Authentication"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Authentication"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -84,7 +106,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CurrentSession"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CurrentSession"
         "401":
           $ref: "#/components/responses/Unauthenticated"
   /api/v1/auth/logout:
@@ -96,8 +124,18 @@ paths:
       parameters:
         - $ref: "#/components/parameters/CSRFToken"
       responses:
-        "204":
+        "200":
           description: 已注销
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: "null"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -117,8 +155,18 @@ paths:
             schema:
               $ref: "#/components/schemas/ChangePasswordRequest"
       responses:
-        "204":
+        "200":
           description: 密码已修改，当前用户全部 Session 已撤销
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: "null"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -146,15 +194,21 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [users, pagination]
-                properties:
-                  users:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ManagedUser"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [users, pagination]
+                        properties:
+                          users:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ManagedUser"
+                          pagination:
+                            $ref: "#/components/schemas/Pagination"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -180,7 +234,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ManagedUser"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ManagedUser"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "403":
@@ -203,7 +263,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ManagedUser"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ManagedUser"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -229,7 +295,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ManagedUser"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ManagedUser"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -255,7 +327,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ManagedUser"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ManagedUser"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -286,7 +364,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ManagedUser"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ManagedUser"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "409":
@@ -317,7 +401,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ManagedUser"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ManagedUser"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "409":
@@ -348,7 +438,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ManagedUser"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ManagedUser"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "409":
@@ -383,15 +479,21 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [role_bindings, pagination]
-                properties:
-                  role_bindings:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/RoleBinding"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [role_bindings, pagination]
+                        properties:
+                          role_bindings:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/RoleBinding"
+                          pagination:
+                            $ref: "#/components/schemas/Pagination"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -417,13 +519,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RoleBinding"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleBinding"
         "200":
           description: 相同 RoleBinding 已存在
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RoleBinding"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleBinding"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "409":
@@ -446,7 +560,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RoleBinding"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleBinding"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -468,8 +588,18 @@ paths:
             schema:
               $ref: "#/components/schemas/Confirmation"
       responses:
-        "204":
+        "200":
           description: RoleBinding 已删除
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: "null"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "404":
@@ -523,7 +653,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuditEventPage"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuditEventPage"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -571,15 +707,21 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [tenants, pagination]
-                properties:
-                  tenants:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Tenant"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [tenants, pagination]
+                        properties:
+                          tenants:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Tenant"
+                          pagination:
+                            $ref: "#/components/schemas/Pagination"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -600,13 +742,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Tenant"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Tenant"
         "200":
           description: 幂等恢复
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Tenant"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Tenant"
         "409":
           $ref: "#/components/responses/Conflict"
         "401":
@@ -627,7 +781,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Tenant"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Tenant"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -651,7 +811,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Tenant"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Tenant"
         "409":
           $ref: "#/components/responses/Conflict"
         "401":
@@ -677,7 +843,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Tenant"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Tenant"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -705,15 +877,21 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [projects, pagination]
-                properties:
-                  projects:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Project"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [projects, pagination]
+                        properties:
+                          projects:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Project"
+                          pagination:
+                            $ref: "#/components/schemas/Pagination"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -734,13 +912,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Project"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Project"
         "200":
           description: 幂等恢复
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Project"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Project"
         "409":
           $ref: "#/components/responses/Conflict"
         "401":
@@ -761,7 +951,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Project"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Project"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -787,7 +983,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Project"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Project"
         "409":
           $ref: "#/components/responses/Conflict"
         "401":
@@ -813,7 +1015,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Project"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Project"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -840,15 +1048,21 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [clusters, pagination]
-                properties:
-                  clusters:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ClusterAggregate"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [clusters, pagination]
+                        properties:
+                          clusters:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ClusterAggregate"
+                          pagination:
+                            $ref: "#/components/schemas/Pagination"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -869,7 +1083,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClusterAggregate"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ClusterAggregate"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -896,7 +1116,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Cluster"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Cluster"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -925,7 +1151,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Cluster"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Cluster"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -952,15 +1184,21 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [cluster_enrollments, pagination]
-                properties:
-                  cluster_enrollments:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ClusterEnrollmentRecord"
-                  pagination:
-                    $ref: "#/components/schemas/Pagination"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [cluster_enrollments, pagination]
+                        properties:
+                          cluster_enrollments:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ClusterEnrollmentRecord"
+                          pagination:
+                            $ref: "#/components/schemas/Pagination"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -995,7 +1233,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClusterEnrollment"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ClusterEnrollment"
         "409":
           $ref: "#/components/responses/Conflict"
         "401":
@@ -1017,7 +1261,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClusterEnrollmentRecord"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ClusterEnrollmentRecord"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -1043,7 +1293,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClusterEnrollmentRecord"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ClusterEnrollmentRecord"
         "409":
           $ref: "#/components/responses/Conflict"
         "401":
@@ -1077,7 +1333,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClusterInstallation"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ClusterInstallation"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -1111,7 +1373,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClusterConnectionRevocation"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ClusterConnectionRevocation"
         "404":
           $ref: "#/components/responses/NotFound"
         "401":
@@ -1140,7 +1408,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClusterEnrollment"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ClusterEnrollment"
         "409":
           $ref: "#/components/responses/Conflict"
         "401":
@@ -1167,13 +1441,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentEnrollmentResponse"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AgentEnrollmentResponse"
         "201":
           description: 新签发的 Agent 身份
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AgentEnrollmentResponse"
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AgentEnrollmentResponse"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -1391,17 +1677,40 @@ components:
       format: date-time
       examples:
         - "2026-07-26T14:30:00+08:00"
+    SuccessResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          minimum: 200
+          maximum: 299
+        message:
+          type: string
+          const: Success
+    ErrorData:
+      type: object
+      additionalProperties: false
+      required: [error_code, request_id]
+      properties:
+        error_code:
+          type: string
+          pattern: "^[a-z0-9_]+$"
+        request_id:
+          type: string
     Error:
       type: object
       additionalProperties: false
-      required: [code, message, request_id]
+      required: [code, message, data]
       properties:
         code:
-          type: string
+          type: integer
+          minimum: 400
+          maximum: 599
         message:
           type: string
-        request_id:
-          type: string
+        data:
+          $ref: "#/components/schemas/ErrorData"
     Health:
       type: object
       additionalProperties: true

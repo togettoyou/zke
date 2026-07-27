@@ -46,8 +46,19 @@ type registrationResponse struct {
 	CertificateExpiresAt time.Time `json:"certificate_expires_at"`
 }
 
+type registrationResponseEnvelope struct {
+	Code    int                  `json:"code"`
+	Message string               `json:"message"`
+	Data    registrationResponse `json:"data"`
+}
+
+type registrationAPIErrorData struct {
+	ErrorCode string `json:"error_code"`
+}
+
 type registrationAPIError struct {
-	Code string `json:"code"`
+	Code int                      `json:"code"`
+	Data registrationAPIErrorData `json:"data"`
 }
 
 type registrationError struct {
@@ -188,17 +199,24 @@ func (client *registrationClient) Enroll(
 		return RegistrationIdentity{}, decodeRegistrationError(response)
 	}
 
-	var result registrationResponse
+	var envelope registrationResponseEnvelope
 	if err := decodeBoundedJSON(
 		response.Body,
 		maxEnrollmentResponseBytes,
-		&result,
+		&envelope,
 	); err != nil {
 		return RegistrationIdentity{}, &registrationResponseError{
 			retryable: retryableResponseReadError(err),
 			err:       err,
 		}
 	}
+	if envelope.Code != response.StatusCode ||
+		envelope.Message != "Success" {
+		return RegistrationIdentity{}, &registrationResponseError{
+			err: errors.New("invalid response envelope"),
+		}
+	}
+	result := envelope.Data
 	return RegistrationIdentity{
 		ClusterID:            result.ClusterID,
 		AgentID:              result.AgentID,
@@ -252,8 +270,9 @@ func readBoundedFile(path string, maximum int64, description string) ([]byte, er
 func decodeRegistrationError(response *http.Response) error {
 	var apiError registrationAPIError
 	_ = decodeBoundedJSON(response.Body, 64<<10, &apiError)
-	if !validRegistrationErrorCode(apiError.Code) {
-		apiError.Code = ""
+	if apiError.Code != response.StatusCode ||
+		!validRegistrationErrorCode(apiError.Data.ErrorCode) {
+		apiError.Data.ErrorCode = ""
 	}
 	retryable := response.StatusCode == http.StatusRequestTimeout ||
 		response.StatusCode == http.StatusTooEarly ||
@@ -261,7 +280,7 @@ func decodeRegistrationError(response *http.Response) error {
 		response.StatusCode >= http.StatusInternalServerError
 	return &registrationError{
 		statusCode: response.StatusCode,
-		code:       apiError.Code,
+		code:       apiError.Data.ErrorCode,
 		retryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now().UTC()),
 		retryable:  retryable,
 	}

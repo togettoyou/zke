@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -87,7 +86,7 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 		t.Fatalf("create user status = %d: %s", created.Code, created.Body)
 	}
 	var managed managedUserResponse
-	if err := json.Unmarshal(created.Body.Bytes(), &managed); err != nil {
+	if err := decodeSuccessResponse(created, &managed); err != nil {
 		t.Fatal(err)
 	}
 	if managed.ID == "" || managed.Username != "managed-user" ||
@@ -106,7 +105,7 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 	if updatedUser.Code != http.StatusOK {
 		t.Fatalf("update user status = %d: %s", updatedUser.Code, updatedUser.Body)
 	}
-	if err := json.Unmarshal(updatedUser.Body.Bytes(), &managed); err != nil {
+	if err := decodeSuccessResponse(updatedUser, &managed); err != nil {
 		t.Fatal(err)
 	}
 	if managed.DisplayName != "Updated Managed User" {
@@ -126,7 +125,7 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 		Users      []managedUserResponse `json:"users"`
 		Pagination listMetadata          `json:"pagination"`
 	}
-	if err := json.Unmarshal(filteredUsers.Body.Bytes(), &filteredUsersBody); err != nil {
+	if err := decodeSuccessResponse(filteredUsers, &filteredUsersBody); err != nil {
 		t.Fatal(err)
 	}
 	if len(filteredUsersBody.Users) != 1 ||
@@ -202,7 +201,7 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 		t.Fatalf("create role binding status = %d: %s", createdBinding.Code, createdBinding.Body)
 	}
 	var binding roleBindingResponse
-	if err := json.Unmarshal(createdBinding.Body.Bytes(), &binding); err != nil {
+	if err := decodeSuccessResponse(createdBinding, &binding); err != nil {
 		t.Fatal(err)
 	}
 	bindingDetail := accessAPIRequest(
@@ -216,7 +215,7 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 		t.Fatalf("get role binding status = %d: %s", bindingDetail.Code, bindingDetail.Body)
 	}
 	var detailedBinding roleBindingResponse
-	if err := json.Unmarshal(bindingDetail.Body.Bytes(), &detailedBinding); err != nil {
+	if err := decodeSuccessResponse(bindingDetail, &detailedBinding); err != nil {
 		t.Fatal(err)
 	}
 	if detailedBinding.ID != binding.ID || detailedBinding.SubjectID != managed.ID {
@@ -243,7 +242,7 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 		t.Fatalf("viewer session status = %d: %s", viewerSession.Code, viewerSession.Body)
 	}
 	var viewerSessionBody currentSessionResponse
-	if err := json.Unmarshal(viewerSession.Body.Bytes(), &viewerSessionBody); err != nil {
+	if err := decodeSuccessResponse(viewerSession, &viewerSessionBody); err != nil {
 		t.Fatal(err)
 	}
 	if len(viewerSessionBody.Capabilities) != 1 ||
@@ -285,7 +284,7 @@ RETURNING id::text
 	var scopedAuditBody struct {
 		Events []auditEventResponse `json:"audit_events"`
 	}
-	if err := json.Unmarshal(scopedAudit.Body.Bytes(), &scopedAuditBody); err != nil {
+	if err := decodeSuccessResponse(scopedAudit, &scopedAuditBody); err != nil {
 		t.Fatal(err)
 	}
 	if len(scopedAuditBody.Events) == 0 {
@@ -416,7 +415,7 @@ WHERE id = $1
 	var auditBody struct {
 		Events []auditEventResponse `json:"audit_events"`
 	}
-	if err := json.Unmarshal(auditResult.Body.Bytes(), &auditBody); err != nil {
+	if err := decodeSuccessResponse(auditResult, &auditBody); err != nil {
 		t.Fatal(err)
 	}
 	if len(auditBody.Events) != 1 ||
@@ -437,7 +436,7 @@ WHERE id = $1
 		Events     []auditEventResponse `json:"audit_events"`
 		NextCursor string               `json:"next_cursor"`
 	}
-	if err := json.Unmarshal(firstPageResponse.Body.Bytes(), &firstPage); err != nil {
+	if err := decodeSuccessResponse(firstPageResponse, &firstPage); err != nil {
 		t.Fatal(err)
 	}
 	if len(firstPage.Events) != 1 || firstPage.NextCursor == "" {
@@ -456,7 +455,7 @@ WHERE id = $1
 	var secondPage struct {
 		Events []auditEventResponse `json:"audit_events"`
 	}
-	if err := json.Unmarshal(secondPageResponse.Body.Bytes(), &secondPage); err != nil {
+	if err := decodeSuccessResponse(secondPageResponse, &secondPage); err != nil {
 		t.Fatal(err)
 	}
 	if len(secondPage.Events) != 1 ||
@@ -471,8 +470,12 @@ WHERE id = $1
 		`{"confirm":true}`,
 		adminLogin,
 	)
-	if deletedBinding.Code != http.StatusNoContent {
+	if deletedBinding.Code != http.StatusOK {
 		t.Fatalf("delete role binding status = %d: %s", deletedBinding.Code, deletedBinding.Body)
+	}
+	var deletedBindingData any
+	if err := decodeSuccessResponse(deletedBinding, &deletedBindingData); err != nil {
+		t.Fatal(err)
 	}
 	deletedUser := accessAPIRequest(
 		router,
@@ -485,7 +488,7 @@ WHERE id = $1
 		t.Fatalf("delete user status = %d: %s", deletedUser.Code, deletedUser.Body)
 	}
 	var deletedManagedUser managedUserResponse
-	if err := json.Unmarshal(deletedUser.Body.Bytes(), &deletedManagedUser); err != nil {
+	if err := decodeSuccessResponse(deletedUser, &deletedManagedUser); err != nil {
 		t.Fatal(err)
 	}
 	if deletedManagedUser.Status != "disabled" {

@@ -163,7 +163,10 @@ func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, expected
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Code != expected {
-		t.Fatalf("error code = %q, want %q", body.Code, expected)
+	if body.Code != response.Code {
+		t.Fatalf("response code = %d, want HTTP status %d", body.Code, response.Code)
+	}
+	if body.Data.ErrorCode != expected {
+		t.Fatalf("error code = %q, want %q", body.Data.ErrorCode, expected)
 	}
 }

@@ -52,11 +52,15 @@ func TestRegistrationClientEnrollsOverTLS(t *testing.T) {
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(writer).Encode(registrationResponse{
-			ClusterID:            testClusterID,
-			AgentID:              testAgentID,
-			CertificatePEM:       "certificate",
-			CertificateExpiresAt: expiresAt,
+		_ = json.NewEncoder(writer).Encode(registrationResponseEnvelope{
+			Code:    http.StatusCreated,
+			Message: "Success",
+			Data: registrationResponse{
+				ClusterID:            testClusterID,
+				AgentID:              testAgentID,
+				CertificatePEM:       "certificate",
+				CertificateExpiresAt: expiresAt,
+			},
 		})
 	}))
 	defer server.Close()
@@ -135,7 +139,8 @@ func TestRegistrationClientClassifiesRateLimitAsRetryable(t *testing.T) {
 		writer.Header().Set("Retry-After", "3")
 		writer.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(writer).Encode(registrationAPIError{
-			Code: "too_many_requests",
+			Code: http.StatusTooManyRequests,
+			Data: registrationAPIErrorData{ErrorCode: "too_many_requests"},
 		})
 	}))
 	defer server.Close()

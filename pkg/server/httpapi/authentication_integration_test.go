@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -81,7 +80,7 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 		)
 	}
 	var loginBody authenticationResponse
-	if err := json.Unmarshal(loginResponse.Body.Bytes(), &loginBody); err != nil {
+	if err := decodeSuccessResponse(loginResponse, &loginBody); err != nil {
 		t.Fatal(err)
 	}
 	assertUTC8Time(t, "login expires_at", loginBody.ExpiresAt)
@@ -100,7 +99,7 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 		)
 	}
 	var meBody currentSessionResponse
-	if err := json.Unmarshal(meResponse.Body.Bytes(), &meBody); err != nil {
+	if err := decodeSuccessResponse(meResponse, &meBody); err != nil {
 		t.Fatal(err)
 	}
 	assertUTC8Time(t, "current session expires_at", meBody.ExpiresAt)
@@ -128,12 +127,16 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 	logoutRequest.AddCookie(sessionCookie)
 	logoutRequest.Header.Set(csrfHeaderName, csrfCookie.Value)
 	router.ServeHTTP(logoutResponse, logoutRequest)
-	if logoutResponse.Code != http.StatusNoContent {
+	if logoutResponse.Code != http.StatusOK {
 		t.Fatalf("logout status = %d, want %d: %s",
 			logoutResponse.Code,
-			http.StatusNoContent,
+			http.StatusOK,
 			logoutResponse.Body,
 		)
+	}
+	var logoutData any
+	if err := decodeSuccessResponse(logoutResponse, &logoutData); err != nil {
+		t.Fatal(err)
 	}
 	for _, cookie := range logoutResponse.Result().Cookies() {
 		if cookie.MaxAge != -1 {
@@ -250,8 +253,12 @@ func TestCurrentUserPasswordChange(t *testing.T) {
 	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: login.SessionToken})
 	request.Header.Set(csrfHeaderName, login.CSRFToken)
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusNoContent {
+	if response.Code != http.StatusOK {
 		t.Fatalf("password change status = %d: %s", response.Code, response.Body)
+	}
+	var passwordChangeData any
+	if err := decodeSuccessResponse(response, &passwordChangeData); err != nil {
+		t.Fatal(err)
 	}
 
 	if _, err := authService.Authenticate(

@@ -109,7 +109,7 @@ func (handler *agentManagementHandler) revoke(c *gin.Context) {
 		)
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
 	default:
-		c.JSON(http.StatusOK, revokeAgentResponse{
+		writeSuccess(c, http.StatusOK, revokeAgentResponse{
 			ClusterID:        result.ClusterID,
 			ConnectionStatus: "revoked",
 			RevokedAt:        responseTime(result.RevokedAt),
