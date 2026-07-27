@@ -42,6 +42,14 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 		handler.respondError(c, "resolve Cluster event visibility", err)
 		return
 	}
+	// A caller who can observe no Cluster at all is refused before the stream
+	// opens. Accepting the connection and filtering every event away would let
+	// an unprivileged session hold a subscriber slot and a revalidation query
+	// budget for the whole maximum stream duration.
+	if !visibility.HasAny() {
+		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
+		return
+	}
 
 	events, unsubscribe, err := handler.service.Subscribe()
 	if errors.Is(err, agentstatus.ErrEventsUnavailable) {

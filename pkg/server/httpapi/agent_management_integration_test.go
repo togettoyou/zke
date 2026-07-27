@@ -198,7 +198,7 @@ VALUES (
 		},
 		events: make(chan agentconn.ConnectionEvent, 1),
 	}
-	auditService := audit.NewService(store.NewAuditStore(pool))
+	auditService := audit.NewService(store.NewAuditStore(pool), rbac.NewService(store.NewRBACStore(pool)))
 	router := New(
 		discardLogger(),
 		Dependencies{
@@ -212,6 +212,7 @@ VALUES (
 			),
 			AgentStatusService: agentstatus.NewService(
 				store.NewAgentStatusStore(pool),
+				connections,
 				connections,
 				7*24*time.Hour,
 			),

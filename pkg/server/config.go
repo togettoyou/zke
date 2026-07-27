@@ -307,7 +307,7 @@ func findConfigPath(args []string) (string, error) {
 
 func ensureYAMLEOF(decoder *yaml.Decoder) error {
 	var extra any
-	if err := decoder.Decode(&extra); err == io.EOF {
+	if err := decoder.Decode(&extra); errors.Is(err, io.EOF) {
 		return nil
 	} else if err != nil {
 		return err

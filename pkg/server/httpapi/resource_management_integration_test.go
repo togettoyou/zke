@@ -55,7 +55,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 	connections := &fakeAgentConnections{
 		statuses: make(map[string]agentconn.ConnectionStatus),
 	}
-	auditService := audit.NewService(store.NewAuditStore(pool))
+	auditService := audit.NewService(store.NewAuditStore(pool), rbac.NewService(store.NewRBACStore(pool)))
 	router := New(
 		discardLogger(),
 		Dependencies{
@@ -69,6 +69,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 			),
 			AgentStatusService: agentstatus.NewService(
 				store.NewAgentStatusStore(pool),
+				connections,
 				connections,
 				7*24*time.Hour,
 			),

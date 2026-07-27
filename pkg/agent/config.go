@@ -47,6 +47,17 @@ type ConnectionConfig struct {
 	ConnectTimeout       time.Duration
 	RetryInitialInterval time.Duration
 	RetryMaxInterval     time.Duration
+	// IdleTimeout and KeepAliveInterval configure the QUIC transport. They are
+	// applied when the connection is dialled, which is before the Server can
+	// announce its application-level heartbeat timings in ServerHello, so the
+	// two cannot be derived from each other. IdleTimeout must stay above the
+	// Server's heartbeat timeout, otherwise the transport would tear down a
+	// connection the application still considers healthy.
+	IdleTimeout       time.Duration
+	KeepAliveInterval time.Duration
+	// MaxIncomingStreams bounds the streams a Server may open towards this
+	// Agent. Phase 1 only uses the control stream.
+	MaxIncomingStreams int64
 }
 
 type fileConfig struct {
@@ -69,6 +80,9 @@ type fileConfig struct {
 		ConnectTimeout       string `yaml:"connect_timeout"`
 		RetryInitialInterval string `yaml:"retry_initial_interval"`
 		RetryMaxInterval     string `yaml:"retry_max_interval"`
+		IdleTimeout          string `yaml:"idle_timeout"`
+		KeepAliveInterval    string `yaml:"keep_alive_interval"`
+		MaxIncomingStreams   *int64 `yaml:"max_incoming_streams"`
 	} `yaml:"connection"`
 	LogLevel string `yaml:"log_level"`
 }
@@ -95,6 +109,9 @@ func LoadConfig(args []string) (Config, error) {
 			ConnectTimeout:       10 * time.Second,
 			RetryInitialInterval: time.Second,
 			RetryMaxInterval:     30 * time.Second,
+			IdleTimeout:          15 * time.Minute,
+			KeepAliveInterval:    10 * time.Second,
+			MaxIncomingStreams:   16,
 		},
 		LogLevel: defaultLogLevel,
 	}
@@ -122,7 +139,7 @@ func applyFile(cfg *Config, path string) error {
 		return fmt.Errorf("decode config file %q: %w", path, err)
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return fmt.Errorf("decode config file %q: multiple YAML documents", path)
 		}
@@ -200,6 +217,23 @@ func applyFile(cfg *Config, path string) error {
 		"connection.retry_max_interval",
 	); err != nil {
 		return err
+	}
+	if err := applyAgentDuration(
+		&cfg.Connection.IdleTimeout,
+		raw.Connection.IdleTimeout,
+		"connection.idle_timeout",
+	); err != nil {
+		return err
+	}
+	if err := applyAgentDuration(
+		&cfg.Connection.KeepAliveInterval,
+		raw.Connection.KeepAliveInterval,
+		"connection.keep_alive_interval",
+	); err != nil {
+		return err
+	}
+	if raw.Connection.MaxIncomingStreams != nil {
+		cfg.Connection.MaxIncomingStreams = *raw.Connection.MaxIncomingStreams
 	}
 	if raw.LogLevel != "" {
 		cfg.LogLevel = raw.LogLevel
@@ -319,6 +353,8 @@ func (cfg Config) Validate() error {
 		{cfg.Connection.ConnectTimeout, time.Minute, "connection timeout"},
 		{cfg.Connection.RetryInitialInterval, time.Minute, "connection initial retry interval"},
 		{cfg.Connection.RetryMaxInterval, 5 * time.Minute, "connection maximum retry interval"},
+		{cfg.Connection.IdleTimeout, time.Hour, "connection idle timeout"},
+		{cfg.Connection.KeepAliveInterval, 5 * time.Minute, "connection keep-alive interval"},
 	} {
 		if item.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", item.name)
@@ -330,6 +366,18 @@ func (cfg Config) Validate() error {
 	if cfg.Connection.RetryInitialInterval > cfg.Connection.RetryMaxInterval {
 		return errors.New(
 			"connection initial retry interval must not exceed maximum retry interval",
+		)
+	}
+	// A keep-alive at or above the idle timeout never refreshes the connection
+	// before the transport gives up on it.
+	if cfg.Connection.KeepAliveInterval >= cfg.Connection.IdleTimeout {
+		return errors.New(
+			"connection keep-alive interval must be shorter than the idle timeout",
+		)
+	}
+	if cfg.Connection.MaxIncomingStreams < 1 {
+		return errors.New(
+			"connection maximum incoming streams must be greater than zero",
 		)
 	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {

@@ -5,6 +5,29 @@ import (
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
+// registerRoutes wires every HTTP route.
+//
+// Authorization is enforced in one of two places, and which one a route uses is
+// decided by whether the request names a single scope:
+//
+//   - Route-level: the path identifies exactly one Tenant, Project or Cluster,
+//     so a Require* middleware can authorize it before the handler runs. Every
+//     mutation is route-level, and it is the default.
+//   - Service-level: the request has no single scope to check against, because
+//     the answer itself is the set of resources the caller may see. Listing
+//     Tenants, reading one Tenant (a Project-scoped user must still be able to
+//     see the Tenant holding their Project), listing a Tenant's Projects, the
+//     audit trail and the Cluster event stream fall in this group. These
+//     resolve the caller's RBAC visibility and push it into the query, so the
+//     reported total matches what the caller may read.
+//
+// A route with no Require* middleware is therefore not an omission, but it does
+// mean its handler must resolve visibility itself.
+//
+// The role-binding memo is installed alongside the request timeout, so it is
+// scoped to one short request. The Cluster event stream deliberately takes
+// neither: it is long-lived and re-resolves visibility periodically so that a
+// withdrawn RoleBinding ends the stream.
 func registerRoutes(router *gin.Engine, handlers handlers) {
 	router.GET("/healthz", handlers.health.health)
 	router.GET("/readyz", handlers.health.ready)
@@ -30,6 +53,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	userRoutes := apiV1.Group("/users")
 	userRoutes.Use(
 		handlers.requestTimeout,
+		handlers.roleBindingCache,
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	userRoutes.GET(
@@ -82,6 +106,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	roleBindingRoutes := apiV1.Group("/role-bindings")
 	roleBindingRoutes.Use(
 		handlers.requestTimeout,
+		handlers.roleBindingCache,
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	roleBindingRoutes.GET(
@@ -110,6 +135,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	auditRoutes := apiV1.Group("/audit-events")
 	auditRoutes.Use(
 		handlers.requestTimeout,
+		handlers.roleBindingCache,
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	auditRoutes.GET("", handlers.auditQuery.list)
@@ -123,6 +149,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	tenantRoutes := apiV1.Group("/tenants")
 	tenantRoutes.Use(
 		handlers.requestTimeout,
+		handlers.roleBindingCache,
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	tenantRoutes.GET("", handlers.resourceManagement.listTenants)
@@ -167,6 +194,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	projectRoutes := apiV1.Group("/projects")
 	projectRoutes.Use(
 		handlers.requestTimeout,
+		handlers.roleBindingCache,
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	projectRoutes.POST(
@@ -250,6 +278,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	clusterRoutes := apiV1.Group("/clusters")
 	clusterRoutes.Use(
 		handlers.requestTimeout,
+		handlers.roleBindingCache,
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	clusterRoutes.GET(

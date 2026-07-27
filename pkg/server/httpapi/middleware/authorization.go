@@ -44,8 +44,8 @@ func (authorization *Authorization) RequireGlobal(
 		ctx context.Context,
 		userID string,
 		_ *gin.Context,
-	) error {
-		return authorization.service.AuthorizeGlobal(
+	) (rbac.ResolvedScope, error) {
+		return rbac.ResolvedScope{}, authorization.service.AuthorizeGlobal(
 			ctx,
 			userID,
 			permission,
@@ -61,14 +61,15 @@ func (authorization *Authorization) RequireTenant(
 		ctx context.Context,
 		userID string,
 		c *gin.Context,
-	) error {
+	) (rbac.ResolvedScope, error) {
 		tenantID := c.Param(tenantParameter)
-		return authorization.service.AuthorizeTenant(
-			ctx,
-			userID,
-			permission,
-			tenantID,
-		)
+		return rbac.ResolvedScope{TenantID: tenantID},
+			authorization.service.AuthorizeTenant(
+				ctx,
+				userID,
+				permission,
+				tenantID,
+			)
 	})
 }
 
@@ -80,13 +81,12 @@ func (authorization *Authorization) RequireProject(
 		ctx context.Context,
 		userID string,
 		c *gin.Context,
-	) error {
-		projectID := c.Param(projectParameter)
+	) (rbac.ResolvedScope, error) {
 		return authorization.service.AuthorizeProject(
 			ctx,
 			userID,
 			permission,
-			projectID,
+			c.Param(projectParameter),
 		)
 	})
 }
@@ -99,14 +99,13 @@ func (authorization *Authorization) RequireCluster(
 		ctx context.Context,
 		userID string,
 		c *gin.Context,
-	) error {
-		_, err := authorization.service.AuthorizeCluster(
+	) (rbac.ResolvedScope, error) {
+		return authorization.service.AuthorizeCluster(
 			ctx,
 			userID,
 			permission,
 			c.Param(clusterParameter),
 		)
-		return err
 	})
 }
 
@@ -114,7 +113,7 @@ func (authorization *Authorization) require(
 	permission rbac.Permission,
 	scopeType string,
 	scopeParameter string,
-	check func(context.Context, string, *gin.Context) error,
+	check func(context.Context, string, *gin.Context) (rbac.ResolvedScope, error),
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		identity, exists := Identity(c)
@@ -128,9 +127,13 @@ func (authorization *Authorization) require(
 			c.Request.Context(),
 			authorization.config.OperationTimeout,
 		)
-		err := check(operationContext, identity.User.ID, c)
+		resolved, err := check(operationContext, identity.User.ID, c)
 		cancelOperation()
 		if err == nil {
+			// The check already resolved which Tenant and Project own the
+			// target. Keeping it means logs and audit records downstream carry
+			// the full scope without paying for the same lookup again.
+			setResolvedScope(c, resolved)
 			c.Next()
 			return
 		}

@@ -67,7 +67,8 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 Project 授权拒绝以及凭证创建的输入、状态和内部失败会写入不含 Token 的审计事件；数据库不可用或请求 Deadline
 已耗尽时降级为安全错误日志。Tenant/Project/Cluster 生命周期、Cluster 列表/详情以及
 Global/Tenant/Project/Cluster 授权拒绝审计已经实现。`GET /api/v1/audit-events` 按调用者 `audit.read`
-RoleBinding 的 Global、Tenant 或 Project 可见范围过滤结果，支持条件过滤和基于游标的有界分页。用户、
+RoleBinding 的 Global、Tenant 或 Project 可见范围过滤结果，支持条件过滤和与其他列表接口一致的有界
+offset 分页。过滤条件通过统一的列表参数解析，未声明的查询参数会被拒绝而不是被静默忽略。用户、
 RoleBinding、账户恢复和密码重置的成功、失败与权限拒绝也会写入审计。
 
 可信反向代理来源解析和跨组织的细粒度委派管理仍属于后续工作。Phase 1 认证、用户与 RoleBinding 管理以及

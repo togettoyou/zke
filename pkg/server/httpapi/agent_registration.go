@@ -117,8 +117,10 @@ func (handler *agentRegistrationHandler) enroll(c *gin.Context) {
 		Now:             now,
 	})
 	cancelOperation()
-	token = ""
-	request.CSRPEM = ""
+	// The enrollment token is deliberately not carried past this point: no
+	// branch below may put it in a response, a log or an audit record. There is
+	// no scrub to do here, because assigning to a Go string only drops a
+	// reference and leaves the decoded request bytes untouched.
 	if errors.Is(err, enrollment.ErrInvalidInput) {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid enrollment request")
 		return
@@ -163,6 +165,9 @@ func (handler *agentRegistrationHandler) enroll(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, enrollment.ErrSigningUnavailable) {
+		// Identity comparison on purpose: a wrapped sentinel means the audit
+		// write failed too, and only that case is worth logging.
+		//nolint:errorlint // distinguishing the bare sentinel is the intent
 		if err != enrollment.ErrSigningUnavailable {
 			handler.logger.Error(
 				"record unavailable Agent enrollment audit",

@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,7 @@ const maxCreateAgentInstallationRequestBytes = 16 * 1024
 type agentInstallationHandler struct {
 	baseHandler
 	service *agentinstall.Service
+	limiter *sourceLimiter
 }
 
 type createAgentInstallationRequest struct {
@@ -39,10 +41,15 @@ func newAgentInstallationHandler(
 	service *agentinstall.Service,
 	auditService *audit.Service,
 	operationTimeout time.Duration,
+	manifestRateLimit AgentEnrollmentHTTPConfig,
 ) *agentInstallationHandler {
 	return &agentInstallationHandler{
 		baseHandler: newBaseHandler(logger, auditService, operationTimeout),
 		service:     service,
+		limiter: newSourceLimiter(
+			manifestRateLimit.RateLimitWindow,
+			manifestRateLimit.MaxAttemptsPerSource,
+		),
 	}
 }
 
@@ -123,19 +130,34 @@ func (handler *agentInstallationHandler) recordInstallationFailure(
 
 func (handler *agentInstallationHandler) manifest(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	// The manifest is fetched with an installation token, so it is reachable
+	// without a session. It is rate limited per source before any other work,
+	// like the sibling enrollment endpoint: the token is not guessable, but an
+	// unauthenticated endpoint must not be freely repeatable whatever answer it
+	// ends up giving.
+	now := time.Now().UTC()
+	allowed, retry := handler.limiter.allow(clientAddress(c.Request), now)
+	if !allowed {
+		retrySeconds := max(1, int(math.Ceil(retry.Seconds())))
+		c.Header("Retry-After", strconv.Itoa(retrySeconds))
+		writeError(
+			c,
+			http.StatusTooManyRequests,
+			"too_many_requests",
+			"too many Agent installation manifest requests",
+		)
+		return
+	}
 	if handler.service == nil {
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent installation is not configured")
 		return
 	}
-	authorization := c.GetHeader("Authorization")
-	const prefix = "Bearer "
-	if !strings.HasPrefix(authorization, prefix) ||
-		strings.TrimSpace(strings.TrimPrefix(authorization, prefix)) == "" {
+	token, ok := bearerToken(c.GetHeader("Authorization"))
+	if !ok {
 		c.Header("WWW-Authenticate", `Bearer realm="zke-agent-install"`)
 		writeError(c, http.StatusUnauthorized, "token_rejected", "installation token rejected")
 		return
 	}
-	token := strings.TrimSpace(strings.TrimPrefix(authorization, prefix))
 	operationContext, cancel := handler.operationContext(c)
 	manifest, err := handler.service.Manifest(
 		operationContext,

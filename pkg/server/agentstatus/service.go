@@ -14,13 +14,14 @@ import (
 
 var (
 	ErrInvalidInput      = errors.New("invalid Agent status input")
-	ErrNotFound          = store.ErrAgentNotFound
+	ErrNotFound          = errors.New("Cluster Agent status not found")
 	ErrEventsUnavailable = errors.New("Agent status events unavailable")
 )
 
 type Service struct {
 	store         Store
 	connections   ConnectionStatusSource
+	events        ConnectionEventSource
 	warningBefore time.Duration
 }
 
@@ -59,22 +60,27 @@ type Agent struct {
 }
 
 func (service *Service) Subscribe() (<-chan agentconn.ConnectionEvent, func(), error) {
-	source, ok := service.connections.(ConnectionEventSource)
-	if !ok || source == nil {
+	if service.events == nil {
 		return nil, nil, ErrEventsUnavailable
 	}
-	events, unsubscribe := source.Subscribe()
+	events, unsubscribe := service.events.Subscribe()
 	return events, unsubscribe, nil
 }
 
+// NewService takes the connection event source as its own parameter. Both
+// sources are satisfied by the same connection manager, but declaring the
+// event dependency in the signature keeps it checkable at composition time
+// instead of discovering it with a runtime type assertion.
 func NewService(
 	agentStore Store,
 	connections ConnectionStatusSource,
+	events ConnectionEventSource,
 	warningBefore time.Duration,
 ) *Service {
 	return &Service{
 		store:         agentStore,
 		connections:   connections,
+		events:        events,
 		warningBefore: warningBefore,
 	}
 }
@@ -147,6 +153,9 @@ func (service *Service) GetCluster(
 		return Agent{}, ErrInvalidInput
 	}
 	stored, err := service.store.GetClusterAgentCertificate(ctx, clusterID)
+	if errors.Is(err, store.ErrAgentNotFound) {
+		return Agent{}, ErrNotFound
+	}
 	if err != nil {
 		return Agent{}, err
 	}

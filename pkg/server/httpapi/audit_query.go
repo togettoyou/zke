@@ -21,6 +21,20 @@ var auditQueryErrors = []errorMapping{
 	{audit.ErrInvalidQuery, http.StatusBadRequest, "invalid_request", "invalid audit query"},
 }
 
+// auditQueryFilters are the audit trail's own selectors. They go through the
+// shared list parser like every other filter so an unsupported or misspelled
+// parameter is refused instead of widening the result set unnoticed.
+var auditQueryFilters = []string{
+	"actor_type",
+	"result",
+	"action",
+	"target_type",
+	"request_id",
+	"tenant_id",
+	"project_id",
+	"cluster_id",
+}
+
 type auditEventResponse struct {
 	ID           string    `json:"id"`
 	ActorType    string    `json:"actor_type"`
@@ -52,7 +66,7 @@ func newAuditQueryHandler(
 func (handler *auditQueryHandler) list(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)
-	query, queryErr := parseListQuery(c, listFilters{})
+	query, queryErr := parseListQuery(c, listFilters{extra: auditQueryFilters})
 	if queryErr != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid audit query")
 		return
@@ -60,14 +74,14 @@ func (handler *auditQueryHandler) list(c *gin.Context) {
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.Query(ctx, audit.QueryInput{
 		UserID:     identity.User.ID,
-		ActorType:  c.Query("actor_type"),
-		Result:     c.Query("result"),
-		Action:     c.Query("action"),
-		TargetType: c.Query("target_type"),
-		RequestID:  c.Query("request_id"),
-		TenantID:   c.Query("tenant_id"),
-		ProjectID:  c.Query("project_id"),
-		ClusterID:  c.Query("cluster_id"),
+		ActorType:  query.Filter("actor_type"),
+		Result:     query.Filter("result"),
+		Action:     query.Filter("action"),
+		TargetType: query.Filter("target_type"),
+		RequestID:  query.Filter("request_id"),
+		TenantID:   query.Filter("tenant_id"),
+		ProjectID:  query.Filter("project_id"),
+		ClusterID:  query.Filter("cluster_id"),
 		Page:       query.Page,
 	})
 	cancel()

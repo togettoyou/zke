@@ -198,6 +198,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	agentStatusService := agentstatus.NewService(
 		agentStatusStore,
 		agentConnectionManager,
+		agentConnectionManager,
 		cfg.CertificateMonitor.WarningBefore,
 	)
 	resourceManagementService := resourcemanagement.NewService(

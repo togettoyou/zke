@@ -122,6 +122,9 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 			AgentStatusService: agentstatus.NewService(
 				store.NewAgentStatusStore(pool),
 				connections,
+				// This flow never opens the Cluster event stream, so it needs
+				// no event source.
+				nil,
 				7*24*time.Hour,
 			),
 			ResourceManagementService: resourcemanagement.NewService(

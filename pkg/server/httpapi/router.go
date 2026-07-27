@@ -53,6 +53,7 @@ type handlers struct {
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
 	requestTimeout          gin.HandlerFunc
+	roleBindingCache        gin.HandlerFunc
 }
 
 var configureGinMode sync.Once
@@ -110,6 +111,7 @@ func New(
 			dependencies.AgentInstallationService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
+			config.AgentEnrollment,
 		),
 		agentManagement: newAgentManagementHandler(
 			logger,
@@ -160,6 +162,7 @@ func New(
 		requestTimeout: httpmiddleware.RequestTimeout(
 			config.Authentication.OperationTimeout,
 		),
+		roleBindingCache: httpmiddleware.RoleBindingCache(),
 	}
 	registerRoutes(router, routeHandlers)
 	return router

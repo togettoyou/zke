@@ -187,7 +187,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 					ctx, test.userID, test.permission, test.tenantID,
 				)
 			case "project":
-				err = service.AuthorizeProject(
+				_, err = service.AuthorizeProject(
 					ctx, test.userID, test.permission, test.projectID,
 				)
 			case "cluster":
@@ -256,7 +256,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 		t.Fatal("viewer visibility granted tenant.create")
 	}
 
-	if err := service.AuthorizeProject(
+	if _, err := service.AuthorizeProject(
 		ctx,
 		projectViewer,
 		rbac.PermissionClusterRead,
@@ -279,7 +279,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.AuthorizeProject(
+	if _, err := service.AuthorizeProject(
 		ctx,
 		projectViewer,
 		rbac.PermissionClusterRead,
@@ -287,7 +287,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 	); !errors.Is(err, rbac.ErrDenied) {
 		t.Fatalf("disabled user authorization error = %v, want ErrDenied", err)
 	}
-	if err := service.AuthorizeProject(
+	if _, err := service.AuthorizeProject(
 		ctx,
 		globalAdmin,
 		rbac.PermissionClusterRead,

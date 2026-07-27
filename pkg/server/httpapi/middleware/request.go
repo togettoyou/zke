@@ -61,6 +61,11 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 // ScopeAttributes reports the authenticated actor and the resource scope the
 // request addresses, so that every log line can be correlated to a tenant,
 // project or cluster without cross-cluster ambiguity.
+//
+// A Cluster or Project route names only its own identifier in the path, so the
+// owning Tenant and Project are taken from what the authorization middleware
+// already resolved. Without that, a Cluster operation would log a cluster_id
+// with no tenant to attribute it to.
 func ScopeAttributes(c *gin.Context) []any {
 	var attributes []any
 	if identity, exists := Identity(c); exists {
@@ -69,9 +74,21 @@ func ScopeAttributes(c *gin.Context) []any {
 			slog.String("actor_user_id", identity.User.ID),
 		)
 	}
-	for _, parameter := range []string{"tenant_id", "project_id", "cluster_id"} {
-		if value := c.Param(parameter); value != "" {
-			attributes = append(attributes, slog.String(parameter, value))
+	resolved, _ := ResolvedScope(c)
+	for _, item := range []struct {
+		name     string
+		resolved string
+	}{
+		{"tenant_id", resolved.TenantID},
+		{"project_id", resolved.ProjectID},
+		{"cluster_id", ""},
+	} {
+		value := c.Param(item.name)
+		if value == "" {
+			value = item.resolved
+		}
+		if value != "" {
+			attributes = append(attributes, slog.String(item.name, value))
 		}
 	}
 	return attributes

@@ -104,15 +104,12 @@ type ClusterEventInput struct {
 	RequestID   string
 }
 
-func NewService(
-	auditStore Store,
-	authorization ...*rbac.Service,
-) *Service {
-	service := &Service{store: auditStore}
-	if len(authorization) > 0 {
-		service.authorization = authorization[0]
-	}
-	return service
+// NewService requires the authorization service rather than accepting it
+// optionally: Query cannot filter an audit trail to the caller's visible scope
+// without it, and a missing dependency must fail at composition time instead of
+// surfacing as a rejected query at runtime.
+func NewService(auditStore Store, authorization *rbac.Service) *Service {
+	return &Service{store: auditStore, authorization: authorization}
 }
 
 // Query returns one page of the audit events the caller may read. Visibility
@@ -122,8 +119,7 @@ func (service *Service) Query(
 	ctx context.Context,
 	input QueryInput,
 ) (QueryResult, error) {
-	if service.authorization == nil ||
-		!validation.IsUUID(input.UserID) ||
+	if !validation.IsUUID(input.UserID) ||
 		input.Page.Validate() != nil ||
 		!validOptionalUUID(input.TenantID) ||
 		!validOptionalUUID(input.ProjectID) ||

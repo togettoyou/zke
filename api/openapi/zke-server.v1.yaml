@@ -670,6 +670,8 @@ paths:
       description: |
         发送 `ready`、`cluster.status` 和 `close` 事件以及注释心跳。
         断线重连后客户端应重新查询 Cluster 状态；当前不承诺历史事件重放。
+        调用者必须至少对一个 Cluster 具有 `cluster.read` 可见范围，否则在建流前返回 403；
+        流建立后会周期性重新解析可见范围，权限被收回时结束该流。
       security:
         - sessionCookie: []
       responses:
@@ -681,6 +683,8 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/Unavailable"
   /api/v1/tenants:
@@ -1484,6 +1488,8 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/Unavailable"
         "504":

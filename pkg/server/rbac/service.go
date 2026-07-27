@@ -51,7 +51,7 @@ func (service *Service) ListCapabilities(
 	if !validation.IsUUID(userID) {
 		return nil, ErrDenied
 	}
-	bindings, err := service.store.ListRoleBindings(ctx, userID)
+	bindings, err := service.listRoleBindings(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (service *Service) ResolveVisibility(
 	if err := validateSubjectPermission(userID, permission); err != nil {
 		return Visibility{}, err
 	}
-	bindings, err := service.store.ListRoleBindings(ctx, userID)
+	bindings, err := service.listRoleBindings(ctx, userID)
 	if err != nil {
 		return Visibility{}, err
 	}
@@ -131,21 +131,22 @@ func (service *Service) AuthorizeProject(
 	userID string,
 	permission Permission,
 	projectID string,
-) error {
+) (ResolvedScope, error) {
 	if err := validateSubjectPermission(userID, permission); err != nil {
-		return err
+		return ResolvedScope{}, err
 	}
 	if !validation.IsUUID(projectID) {
-		return ErrInvalidScope
+		return ResolvedScope{}, ErrInvalidScope
 	}
 	tenantID, err := service.store.FindProjectTenant(ctx, projectID)
 	if errors.Is(err, store.ErrProjectNotFound) {
-		return ErrDenied
+		return ResolvedScope{}, ErrDenied
 	}
 	if err != nil {
-		return err
+		return ResolvedScope{}, err
 	}
-	return service.authorizeValidated(
+	resolved := ResolvedScope{TenantID: tenantID, ProjectID: projectID}
+	return resolved, service.authorizeValidated(
 		ctx, userID, permission, projectScope(tenantID, projectID),
 	)
 }
@@ -155,27 +156,30 @@ func (service *Service) AuthorizeCluster(
 	userID string,
 	permission Permission,
 	clusterID string,
-) (store.ClusterAuthorizationScope, error) {
+) (ResolvedScope, error) {
 	if err := validateSubjectPermission(userID, permission); err != nil {
-		return store.ClusterAuthorizationScope{}, err
+		return ResolvedScope{}, err
 	}
 	if !validation.IsUUID(clusterID) {
-		return store.ClusterAuthorizationScope{}, ErrInvalidScope
+		return ResolvedScope{}, ErrInvalidScope
 	}
 	clusterScope, err := service.store.FindClusterAuthorizationScope(ctx, clusterID)
 	if errors.Is(err, store.ErrClusterNotFound) {
-		return store.ClusterAuthorizationScope{}, ErrDenied
+		return ResolvedScope{}, ErrDenied
 	}
 	if err != nil {
-		return store.ClusterAuthorizationScope{}, err
+		return ResolvedScope{}, err
 	}
-	err = service.authorizeValidated(
+	resolved := ResolvedScope{
+		TenantID:  clusterScope.TenantID,
+		ProjectID: clusterScope.ProjectID,
+	}
+	return resolved, service.authorizeValidated(
 		ctx,
 		userID,
 		permission,
 		projectScope(clusterScope.TenantID, clusterScope.ProjectID),
 	)
-	return clusterScope, err
 }
 
 func (service *Service) authorize(
@@ -199,7 +203,7 @@ func (service *Service) authorizeValidated(
 	permission Permission,
 	scope scope,
 ) error {
-	bindings, err := service.store.ListRoleBindings(ctx, userID)
+	bindings, err := service.listRoleBindings(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -263,19 +267,6 @@ func (scope scope) validate() error {
 		}
 	}
 	return ErrInvalidScope
-}
-
-func roleGrants(role string, permission Permission) bool {
-	switch role {
-	case "admin":
-		return true
-	case "viewer":
-		return permission == PermissionTenantRead ||
-			permission == PermissionProjectRead ||
-			permission == PermissionClusterRead
-	default:
-		return false
-	}
 }
 
 func bindingApplies(binding store.RoleBinding, scope scope) bool {

@@ -36,6 +36,15 @@ type scope struct {
 	ProjectID string
 }
 
+// ResolvedScope reports the Tenant and Project a scoped authorization check
+// resolved its target to. Returning it lets the caller reuse the lookup the
+// check already paid for — for logging, auditing or a follow-up query —
+// instead of resolving the same ownership a second time.
+type ResolvedScope struct {
+	TenantID  string
+	ProjectID string
+}
+
 type Visibility struct {
 	global      bool
 	tenantWide  map[string]struct{}

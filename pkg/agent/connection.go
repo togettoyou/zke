@@ -62,6 +62,12 @@ func runConnectionLoop(
 			)
 			continue
 		}
+		if err == nil {
+			// Only a cancelled context ends a connection without an error, and
+			// that is handled above. Reconnect rather than dereference nil if a
+			// future return path ever breaks that invariant.
+			continue
+		}
 		if permanentAgentConnectionError(err) {
 			return err
 		}
@@ -107,9 +113,9 @@ func runConnection(
 		tlsConfig,
 		&quic.Config{
 			HandshakeIdleTimeout:  cfg.Connection.ConnectTimeout,
-			MaxIdleTimeout:        15 * time.Minute,
-			KeepAlivePeriod:       10 * time.Second,
-			MaxIncomingStreams:    16,
+			MaxIdleTimeout:        cfg.Connection.IdleTimeout,
+			KeepAlivePeriod:       cfg.Connection.KeepAliveInterval,
+			MaxIncomingStreams:    cfg.Connection.MaxIncomingStreams,
 			MaxIncomingUniStreams: -1,
 		},
 	)

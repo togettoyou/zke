@@ -219,6 +219,9 @@ func validAgentConfig() Config {
 			ConnectTimeout:       10 * time.Second,
 			RetryInitialInterval: time.Second,
 			RetryMaxInterval:     30 * time.Second,
+			IdleTimeout:          15 * time.Minute,
+			KeepAliveInterval:    10 * time.Second,
+			MaxIncomingStreams:   16,
 		},
 		LogLevel: "info",
 	}

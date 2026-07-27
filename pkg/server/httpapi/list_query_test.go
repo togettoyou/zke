@@ -84,6 +84,51 @@ func TestParseListQueryRejectsUnsupportedFilters(t *testing.T) {
 	}
 }
 
+// An unknown parameter is a caller mistake, and answering it with an
+// unfiltered page hides that mistake behind a plausible-looking result.
+func TestParseListQueryRejectsUnknownParameters(t *testing.T) {
+	t.Parallel()
+
+	for _, target := range []string{
+		"/items?unknown=1",
+		"/items?limit=2&typo_status=active",
+		"/items?actor_type=user",
+	} {
+		if _, err := parseListQuery(
+			listQueryContext(target),
+			listFilters{search: true, status: true},
+		); err == nil {
+			t.Errorf("parseListQuery(%q) accepted an unknown parameter", target)
+		}
+	}
+}
+
+// Endpoint-specific filters go through the same declaration, so the audit
+// trail's selectors are parsed rather than read straight off the request.
+func TestParseListQueryReadsDeclaredExtraFilters(t *testing.T) {
+	t.Parallel()
+
+	query, err := parseListQuery(
+		listQueryContext("/audit-events?actor_type=user&result=denied"),
+		listFilters{extra: auditQueryFilters},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query.Filter("actor_type") != "user" || query.Filter("result") != "denied" {
+		t.Fatalf("unexpected audit filters: %+v", query)
+	}
+	if query.Filter("action") != "" {
+		t.Fatalf("absent filter reported a value: %q", query.Filter("action"))
+	}
+	if _, err := parseListQuery(
+		listQueryContext("/audit-events?q=term"),
+		listFilters{extra: auditQueryFilters},
+	); err == nil {
+		t.Fatal("audit query accepted a search filter it does not implement")
+	}
+}
+
 func TestResponsePagination(t *testing.T) {
 	t.Parallel()
 

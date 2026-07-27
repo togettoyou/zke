@@ -28,7 +28,7 @@ func TestServiceRejectsUnknownPermissionBeforeStoreAccess(t *testing.T) {
 		t.Fatalf("AuthorizeGlobal() error = %v, want ErrUnknownPermission", err)
 	}
 
-	err = service.AuthorizeProject(
+	_, err = service.AuthorizeProject(
 		context.Background(),
 		testUserID,
 		Permission("unknown"),
@@ -74,12 +74,13 @@ func TestServiceRejectsInvalidIdentifiersBeforeStoreAccess(t *testing.T) {
 		{
 			name: "invalid project",
 			authorize: func() error {
-				return service.AuthorizeProject(
+				_, err := service.AuthorizeProject(
 					context.Background(),
 					testUserID,
 					PermissionClusterRead,
 					"not-a-uuid",
 				)
+				return err
 			},
 			want: ErrInvalidScope,
 		},

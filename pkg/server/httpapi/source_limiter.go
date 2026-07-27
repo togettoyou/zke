@@ -7,6 +7,17 @@ import (
 
 const maxSourceLimiterEntries = 10_000
 
+// Fallbacks for a limiter built without a configured budget. Server
+// configuration validation rejects a non-positive limit, so these only apply
+// when a handler is constructed directly. They exist because neither
+// degenerate reading of "no budget configured" is acceptable: treating it as
+// zero attempts silently disables the endpoint, and treating it as unlimited
+// silently removes the protection.
+const (
+	defaultSourceLimitWindow      = time.Minute
+	defaultSourceLimitMaxAttempts = 30
+)
+
 type sourceLimiter struct {
 	mutex       sync.Mutex
 	window      time.Duration
@@ -20,6 +31,12 @@ type sourceLimitEntry struct {
 }
 
 func newSourceLimiter(window time.Duration, maxAttempts int) *sourceLimiter {
+	if window <= 0 {
+		window = defaultSourceLimitWindow
+	}
+	if maxAttempts <= 0 {
+		maxAttempts = defaultSourceLimitMaxAttempts
+	}
 	return &sourceLimiter{
 		window:      window,
 		maxAttempts: maxAttempts,

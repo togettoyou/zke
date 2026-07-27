@@ -22,3 +22,21 @@ func TestSourceLimiterResetsAfterWindow(t *testing.T) {
 		t.Fatal("attempt was not allowed after the rate limit window")
 	}
 }
+
+// An unconfigured budget must not read as "zero attempts allowed", which would
+// disable the endpoint it guards instead of protecting it.
+func TestSourceLimiterFallsBackToADefaultBudget(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	limiter := newSourceLimiter(0, 0)
+	if allowed, _ := limiter.allow("127.0.0.1", now); !allowed {
+		t.Fatal("an unconfigured limiter rejected the first attempt")
+	}
+	for range defaultSourceLimitMaxAttempts {
+		limiter.allow("127.0.0.1", now)
+	}
+	if allowed, _ := limiter.allow("127.0.0.1", now); allowed {
+		t.Fatal("an unconfigured limiter never applied a budget")
+	}
+}

@@ -88,7 +88,7 @@ RETURNING id::text
 			ListenerCACertificatePEM: []byte("test-listener-ca"),
 		},
 	)
-	auditService := audit.NewService(store.NewAuditStore(pool))
+	auditService := audit.NewService(store.NewAuditStore(pool), rbac.NewService(store.NewRBACStore(pool)))
 	router := New(
 		discardLogger(),
 		Dependencies{

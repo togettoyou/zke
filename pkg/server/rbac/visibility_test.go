@@ -70,9 +70,10 @@ func TestAuthorizeAppliesScopeBoundaries(t *testing.T) {
 			name:     "global admin reaches a project",
 			bindings: []store.RoleBinding{{Role: "admin", ScopeType: "global"}},
 			authorize: func(service *Service) error {
-				return service.AuthorizeProject(
+				_, err := service.AuthorizeProject(
 					context.Background(), testUserID, PermissionProjectManage, testProjectID,
 				)
+				return err
 			},
 			allowed: true,
 		},
@@ -82,9 +83,10 @@ func TestAuthorizeAppliesScopeBoundaries(t *testing.T) {
 				{Role: "admin", ScopeType: "tenant", TenantID: testTenantID},
 			},
 			authorize: func(service *Service) error {
-				return service.AuthorizeProject(
+				_, err := service.AuthorizeProject(
 					context.Background(), testUserID, PermissionProjectManage, testProjectID,
 				)
+				return err
 			},
 			allowed: true,
 		},
@@ -94,9 +96,10 @@ func TestAuthorizeAppliesScopeBoundaries(t *testing.T) {
 				{Role: "admin", ScopeType: "tenant", TenantID: otherTenantID},
 			},
 			authorize: func(service *Service) error {
-				return service.AuthorizeProject(
+				_, err := service.AuthorizeProject(
 					context.Background(), testUserID, PermissionProjectManage, testProjectID,
 				)
+				return err
 			},
 			allowed: false,
 		},
@@ -197,7 +200,7 @@ func TestUnknownTargetsAreDeniedRatherThanDisclosed(t *testing.T) {
 	service := NewService(&fakeStore{
 		bindings: []store.RoleBinding{{Role: "admin", ScopeType: "global"}},
 	})
-	if err := service.AuthorizeProject(
+	if _, err := service.AuthorizeProject(
 		context.Background(), testUserID, PermissionProjectRead, testProjectID,
 	); !errors.Is(err, ErrDenied) {
 		t.Fatalf("AuthorizeProject(unknown) error = %v, want ErrDenied", err)

@@ -78,6 +78,7 @@ func TestListProjectPassesFiltersAndMergesConnectionState(t *testing.T) {
 				ConnectedAt:  connectedAt,
 			},
 		}},
+		nil,
 		30*24*time.Hour,
 	)
 
@@ -129,7 +130,7 @@ func TestListProjectReportsDisconnectedClusters(t *testing.T) {
 			CertificateExpiresAt: now.Add(time.Hour),
 		}},
 	}
-	service := NewService(fake, &fakeConnections{}, 30*24*time.Hour)
+	service := NewService(fake, &fakeConnections{}, nil, 30*24*time.Hour)
 	result, err := service.ListProject(context.Background(), ListProjectInput{
 		ProjectID: listProjectID,
 		Now:       now,
@@ -153,7 +154,7 @@ func TestListProjectReportsDisconnectedClusters(t *testing.T) {
 func TestListProjectRejectsUnusableRequests(t *testing.T) {
 	t.Parallel()
 
-	service := NewService(nil, nil, time.Hour)
+	service := NewService(nil, nil, nil, time.Hour)
 	now := time.Now().UTC()
 	validPage := pagination.Request{Limit: pagination.DefaultLimit}
 

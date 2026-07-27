@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
 	"github.com/togettoyou/zke/pkg/shared/pagination"
@@ -542,7 +543,10 @@ func validRoleScope(
 	tenantID string,
 	projectID string,
 ) bool {
-	if role != "admin" && role != "viewer" {
+	// The accepted roles come from the authorization package rather than a
+	// second list here, so a role can never be granted before authorization
+	// knows what it permits.
+	if !rbac.RoleExists(role) {
 		return false
 	}
 	switch scopeType {

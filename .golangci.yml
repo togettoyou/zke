@@ -1,0 +1,107 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+# The enabled set is deliberately narrow: a linter is kept only if the whole
+# repository passes it today, so `make lint` gates new code instead of
+# reporting a backlog everyone learns to ignore. Checks that contradict a
+# convention this codebase applies on purpose are listed below with the reason.
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - rowserrcheck
+    - errorlint
+    # Security-sensitive defaults
+    - gosec
+    - bidichk
+    # Style the repository already follows
+    - misspell
+    - unconvert
+    - revive
+
+  # Not enabled, and why:
+  #   contextcheck - every finding is a deferred rollback, shutdown or lock
+  #     release that must run on a fresh context precisely because the request
+  #     context is already cancelled.
+  #   nilerr - `if ctx.Err() != nil { return nil }` is how this codebase says a
+  #     cancelled operation is not a failure, which is exactly what nilerr
+  #     rejects.
+  #   noctx - the Agent's QUIC control loop is driven by stream deadlines
+  #     rather than per-write contexts.
+
+  settings:
+    errcheck:
+      exclude-functions:
+        # Closing a reader, a stream or a listener on the way out has no
+        # recovery path; the operation that matters already reported its error.
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (io.ReadCloser).Close
+        - (*github.com/quic-go/quic-go.Stream).Close
+        - (*github.com/quic-go/quic-go.Conn).CloseWithError
+        - (net.Listener).Close
+        - (*github.com/quic-go/quic-go.Listener).Close
+        - (github.com/jackc/pgx/v5.BatchResults).Close
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    gosec:
+      excludes:
+        # G101 flags Kubernetes object names and GoAway reason strings that
+        # contain "secret", "token" or "credential" as if they were literals.
+        - G101
+        # Server reads TLS material from operator-configured paths; that is the
+        # feature, not a traversal risk.
+        - G304
+        # G302 reads a directory mode as if it were a file mode: 0700 on the
+        # PKI directory is correct.
+        - G302
+        # Retry jitter is not a security decision.
+        - G404
+        # Integer conversions are bounded by configuration validation.
+        - G115
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
+    staticcheck:
+      checks:
+        - all
+        # ST1005: ZKE capitalizes its domain nouns (Agent, Cluster, Server,
+        # Tenant, Project) in error strings on purpose, so that a message reads
+        # the same way in an error, a log line and the documentation.
+        - -ST1005
+        # ST1000: package comments are written where a package needs
+        # explaining, not as a per-package obligation.
+        - -ST1000
+
+  exclusions:
+    rules:
+      # Tests may ignore errors on setup helpers and use fixed credentials.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+      # Generated protocol code is not hand-maintained.
+      - path: \.pb\.go$
+        linters:
+          - revive
+          - staticcheck
+          - unused
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax

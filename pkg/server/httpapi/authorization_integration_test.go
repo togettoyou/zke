@@ -129,7 +129,7 @@ VALUES (gen_random_uuid(), $1, 'viewer', 'project', $2, $3)
 	authorization := httpmiddleware.NewAuthorization(
 		discardLogger(),
 		rbac.NewService(store.NewRBACStore(pool)),
-		audit.NewService(store.NewAuditStore(pool)),
+		audit.NewService(store.NewAuditStore(pool), rbac.NewService(store.NewRBACStore(pool))),
 		httpmiddleware.AuthorizationConfig{
 			OperationTimeout: 5 * time.Second,
 		},
