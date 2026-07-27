@@ -15,7 +15,7 @@
 
 ## 资源层次
 
-ZKE 使用以下资源层次组织权限与作用域；当前已实现 Global、Tenant、Project 和 Cluster，Cluster Group
+ZKE 使用以下资源层次组织资源归属；当前已实现 Global、Tenant、Project 和 Cluster，Cluster Group
 与 Namespace 业务管理仍在规划中：
 
 ```text
@@ -29,6 +29,16 @@ Global
 ```
 
 不同用户只能查看和操作其权限范围内的资源。所有跨集群查询均需遵守租户、项目和 RBAC 权限边界。
+
+**授权作用域止于 Cluster：Namespace 不是授权层级。** 上面的层次同时表达资源归属和授权作用域，但两者
+的边界不同。RoleBinding 只能绑定 Global、Tenant 和 Project 三种作用域，Cluster 通过所属 Project 继承
+授权；Namespace 及其以下的 Workload 只是 Cluster 内部的资源维度，不能承载 RoleBinding，也不会出现在
+可见范围计算中。
+
+这意味着对某个 Cluster 具有某项权限的用户，在该 Cluster 的所有 Namespace 上都具有该权限。需要按
+Namespace 区分权限时，当前的做法是把工作负载放到不同 Cluster，或者由 Project 边界隔离，而不是细分
+授权层级。该决策影响 `scope` 结构、RoleBinding 校验、可见范围解析和全部按作用域过滤的查询，改变它需要
+成套修改上述位置，因此不应在单个功能中就地放宽。
 
 ## Cluster 与 Agent
 

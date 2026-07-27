@@ -15,6 +15,10 @@ ZKE 的安全模型仍在设计中，当前遵循以下原则：
 
 不同用户只能查看和操作其权限范围内的资源。所有跨集群查询均需遵守租户、项目和 RBAC 权限边界，全局视图不代表全局操作权限。
 
+授权作用域只有 Global、Tenant 和 Project 三层，Cluster 通过所属 Project 继承授权。Namespace 不是授权
+层级：对某个 Cluster 具有某项权限的用户，在该 Cluster 的所有 Namespace 上都具有该权限。详见
+[应用作用域与资源模型](../architecture/resource-model.md)。
+
 AI 发起的操作与用户直接发起的操作遵守相同权限规则，并额外要求展示分析依据、操作内容、目标资源和潜在影响。
 
 当前项目尚未通过任何安全、云原生或 Kubernetes 认证，也不对生产可用性作出承诺。

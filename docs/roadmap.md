@@ -2,6 +2,9 @@
 
 Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目均可能随产品设计和技术验证调整。
 
+已勾选条目表示该能力已实现，不代表已具备生产可用性或水平扩展能力。当前 ZKE Server 按单副本部署模型
+实现，详见[技术基础设计](architecture/technical-foundation.md)。
+
 ## Phase 1：平台基础
 
 - [x] Server、Agent 可运行工程骨架
