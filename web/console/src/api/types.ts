@@ -33,9 +33,18 @@ export type EnrollmentStatus = "active" | "consumed" | "expired" | "revoked";
 export type ConnectionStatus = ClusterConnection["status"];
 export type CertificateStatus = ClusterConnection["certificate_status"];
 
-export type ListParams = {
+/** Page position shared by every list endpoint. */
+export type PageParams = {
   limit?: number;
   offset?: number;
+};
+
+/**
+ * Page position plus free-text search. Endpoints reject filters they do not
+ * implement rather than ignoring them, so a list that has no search must use
+ * {@link PageParams} instead of widening this type.
+ */
+export type ListParams = PageParams & {
   q?: string;
 };
 

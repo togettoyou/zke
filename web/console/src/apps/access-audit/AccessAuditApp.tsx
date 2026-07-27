@@ -37,7 +37,6 @@ import {
   RelativeTime,
   StatusBadge,
 } from "@/components/common/status";
-import { ErrorState } from "@/components/common/state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -954,9 +953,18 @@ function CreateRoleBindingDialog({
 
 function AuditSection() {
   const [filters, setFilters] = useState<AuditFilters>({});
-  const query = useAuditEvents(filters);
+  const [offset, setOffset] = useState(0);
 
-  const events: AuditEvent[] = query.data?.pages.flatMap((page) => page.audit_events) ?? [];
+  const query = useAuditEvents({ limit: DEFAULT_PAGE_SIZE, offset, ...filters });
+
+  // Any filter change invalidates the current page position, so paging always
+  // restarts at the first page of the new result set.
+  const updateFilters = (update: (current: AuditFilters) => AuditFilters) => {
+    setFilters(update);
+    setOffset(0);
+  };
+
+  const events: AuditEvent[] = query.data?.audit_events ?? [];
 
   const columns = useMemo<ColumnDef<AuditEvent, unknown>[]>(
     () => [
@@ -1022,14 +1030,14 @@ function AuditSection() {
     <>
       <SectionTitle
         title="审计事件"
-        description="仅返回当前账号 audit.read 权限可见范围内的事件；游标分页，按时间倒序"
+        description="仅返回当前账号 audit.read 权限可见范围内的事件；按时间倒序分页"
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Select
           value={filters.actor_type ?? "all"}
           onValueChange={(value) =>
-            setFilters((current) => ({
+            updateFilters((current) => ({
               ...current,
               actor_type: value === "all" ? undefined : (value as AuditFilters["actor_type"]),
             }))
@@ -1049,7 +1057,7 @@ function AuditSection() {
         <Select
           value={filters.result ?? "all"}
           onValueChange={(value) =>
-            setFilters((current) => ({
+            updateFilters((current) => ({
               ...current,
               result: value === "all" ? undefined : (value as AuditFilters["result"]),
             }))
@@ -1071,7 +1079,7 @@ function AuditSection() {
           placeholder="按 action 精确筛选"
           value={filters.action ?? ""}
           onChange={(event) =>
-            setFilters((current) => ({ ...current, action: event.target.value || undefined }))
+            updateFilters((current) => ({ ...current, action: event.target.value || undefined }))
           }
         />
         <Input
@@ -1079,43 +1087,36 @@ function AuditSection() {
           placeholder="按请求 ID 追溯"
           value={filters.request_id ?? ""}
           onChange={(event) =>
-            setFilters((current) => ({ ...current, request_id: event.target.value || undefined }))
+            updateFilters((current) => ({
+              ...current,
+              request_id: event.target.value || undefined,
+            }))
           }
         />
-        <Button size="sm" variant="ghost" onClick={() => setFilters({})}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setFilters({});
+            setOffset(0);
+          }}
+        >
           清除筛选
         </Button>
       </div>
 
-      {query.error ? (
-        <ErrorState error={query.error} onRetry={() => void query.refetch()} />
-      ) : (
-        <>
-          <DataTable
-            columns={columns}
-            data={events}
-            isLoading={query.isLoading}
-            isFetching={query.isFetching}
-            rowKey={(row) => row.id}
-            emptyTitle="没有匹配的审计事件"
-            emptyDescription="调整筛选条件，或确认当前账号的 audit.read 可见范围。"
-          />
-          <div className="mt-3 flex justify-center">
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!query.hasNextPage || query.isFetchingNextPage}
-              onClick={() => void query.fetchNextPage()}
-            >
-              {query.isFetchingNextPage
-                ? "加载中…"
-                : query.hasNextPage
-                  ? "加载更多"
-                  : "没有更多事件"}
-            </Button>
-          </div>
-        </>
-      )}
+      <DataTable
+        columns={columns}
+        data={events}
+        isLoading={query.isLoading}
+        isFetching={query.isFetching}
+        error={query.error}
+        onRetry={() => void query.refetch()}
+        rowKey={(row) => row.id}
+        emptyTitle="没有匹配的审计事件"
+        emptyDescription="调整筛选条件，或确认当前账号的 audit.read 可见范围。"
+        pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+      />
     </>
   );
 }

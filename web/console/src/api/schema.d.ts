@@ -720,7 +720,7 @@ export interface components {
         };
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
-            next_cursor: string;
+            pagination: components["schemas"]["Pagination"];
         };
     };
     responses: {
@@ -810,7 +810,6 @@ export interface components {
         OptionalTenantID: components["schemas"]["UUID"];
         OptionalProjectID: components["schemas"]["UUID"];
         OptionalClusterID: components["schemas"]["UUID"];
-        Limit: number;
         ListLimit: number;
         ListOffset: number;
         ListSearch: string;
@@ -1388,8 +1387,8 @@ export interface operations {
     listAuditEvents: {
         parameters: {
             query?: {
-                limit?: components["parameters"]["Limit"];
-                cursor?: string;
+                limit?: components["parameters"]["ListLimit"];
+                offset?: components["parameters"]["ListOffset"];
                 actor_type?: "user" | "agent" | "system";
                 result?: "succeeded" | "failed" | "denied";
                 action?: string;

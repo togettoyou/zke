@@ -1,7 +1,8 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { api, unwrap } from "../client";
 import { queryKeys } from "../query-keys";
+import type { AuditEvent, PageParams, Pagination } from "../types";
 
 export type AuditFilters = {
   actor_type?: "user" | "agent" | "system";
@@ -14,33 +15,27 @@ export type AuditFilters = {
   cluster_id?: string;
 };
 
-const AUDIT_PAGE_SIZE = 50;
+export type AuditEventListResult = { audit_events: AuditEvent[]; pagination: Pagination };
+
+/** Audit events have no free-text search; only these filters are accepted. */
+type AuditListParams = PageParams & AuditFilters;
 
 /**
- * Audit events use cursor pagination, not `limit`/`offset`: the feed is
- * append-only and the Server scopes it to what `audit.read` allows.
+ * Audit events page the same way as every other list: `limit`/`offset` with a
+ * total for the whole filtered set. The Server scopes the result to what the
+ * caller's `audit.read` bindings allow, so the total already reflects
+ * visibility rather than the raw table size.
  */
-export function useAuditEvents(filters: AuditFilters = {}, enabled = true) {
+export function useAuditEvents(params: AuditListParams = {}, enabled = true) {
   const query = Object.fromEntries(
-    Object.entries(filters).filter(([, value]) => value !== undefined && value !== ""),
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== ""),
   );
 
-  return useInfiniteQuery({
+  return useQuery({
     queryKey: queryKeys.auditEvents(query),
     enabled,
-    initialPageParam: "",
-    queryFn: async ({ pageParam }) =>
-      unwrap(
-        await api.GET("/api/v1/audit-events", {
-          params: {
-            query: {
-              ...query,
-              limit: AUDIT_PAGE_SIZE,
-              ...(pageParam ? { cursor: pageParam as string } : {}),
-            },
-          },
-        }),
-      ),
-    getNextPageParam: (lastPage) => (lastPage.next_cursor ? lastPage.next_cursor : undefined),
+    queryFn: async () =>
+      unwrap(await api.GET("/api/v1/audit-events", { params: { query } })) as AuditEventListResult,
+    placeholderData: (previous) => previous,
   });
 }
