@@ -1,0 +1,108 @@
+import type { components } from "./schema";
+
+export type ErrorBody = components["schemas"]["Error"];
+
+/**
+ * Every ZKE Server error carries a stable code, a safe message and a request
+ * correlation id. The Console shows a localized message plus the request id so
+ * an operator can find the matching audit event and server log.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly requestId: string;
+  readonly retryAfterSeconds: number | null;
+
+  constructor(options: {
+    status: number;
+    code: string;
+    message: string;
+    requestId: string;
+    retryAfterSeconds?: number | null;
+  }) {
+    super(options.message);
+    this.name = "ApiError";
+    this.status = options.status;
+    this.code = options.code;
+    this.requestId = options.requestId;
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null;
+  }
+
+  get localizedMessage(): string {
+    return ERROR_MESSAGES[this.code] ?? ERROR_MESSAGES[String(this.status)] ?? this.message;
+  }
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
+
+export function isUnauthenticated(error: unknown): boolean {
+  return isApiError(error) && error.status === 401;
+}
+
+export function isForbidden(error: unknown): boolean {
+  return isApiError(error) && error.status === 403;
+}
+
+export const ERROR_MESSAGES: Record<string, string> = {
+  // Authentication and session
+  unauthenticated: "登录状态已失效，请重新登录",
+  invalid_credentials: "用户名或密码不正确",
+  csrf_invalid: "安全校验失败，请重新登录后重试",
+  cross_origin_forbidden: "跨源请求被拒绝，请通过同源入口访问 Console",
+  invalid_current_password: "当前密码不正确",
+  invalid_new_password: "新密码不满足密码策略（至少 15 个字符）",
+  password_unchanged: "新密码不能与当前密码相同",
+
+  // Authorization
+  forbidden: "当前账号没有执行该操作的权限",
+
+  // Request validation
+  invalid_request: "请求内容无效，请检查输入",
+  confirmation_required: "该操作需要显式确认",
+
+  // Lifecycle and idempotency
+  not_found: "目标不存在，或不在当前权限范围内",
+  resource_conflict: "资源状态与请求冲突",
+  resource_state_conflict: "目标资源当前状态不允许该操作",
+  idempotency_conflict: "幂等键已用于内容不同的请求，请重新发起",
+  last_global_admin: "必须保留最后一个有效的全局管理员",
+  self_disable_forbidden: "不能禁用当前登录的账号",
+  token_rejected: "凭证无效或已被使用",
+  credential_rejected: "接入凭证已失效或被撤销",
+
+  // Transport and availability
+  too_many_requests: "请求过于频繁，请稍后再试",
+  timeout: "请求处理超时，请稍后重试",
+  unavailable: "服务暂不可用，请稍后重试",
+  internal_error: "服务内部错误，请联系管理员并提供请求 ID",
+  network_error: "无法连接到 ZKE Server，请检查网络或服务状态",
+
+  // Status fallbacks
+  "400": "请求内容无效",
+  "401": "登录状态已失效，请重新登录",
+  "403": "当前账号没有执行该操作的权限",
+  "404": "目标不存在，或不在当前权限范围内",
+  "409": "资源状态与请求冲突",
+  "429": "请求过于频繁，请稍后再试",
+  "500": "服务内部错误",
+  "503": "服务暂不可用",
+  "504": "请求处理超时",
+};
+
+/** Message suitable for direct display, without the request id. */
+export function errorMessage(error: unknown): string {
+  if (isApiError(error)) {
+    return error.localizedMessage;
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return "请求已取消或超时";
+  }
+  return ERROR_MESSAGES.network_error as string;
+}
+
+/** Request id, when the failure actually reached the Server. */
+export function errorRequestId(error: unknown): string | null {
+  return isApiError(error) && error.requestId ? error.requestId : null;
+}

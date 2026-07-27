@@ -1,1 +1,7 @@
+# 仓库统一使用 LF：对象库和工作区都是 LF。eol=lf 会覆盖开发者本地的
+# core.autocrlf，避免 Windows 检出成 CRLF 后 prettier、gofmt 等工具把整棵
+# 树报成格式错误。二进制文件由 text=auto 的内容探测自动排除。
+* text=auto eol=lf
+
+# Shell 脚本必须是 LF，即使上面的全局规则将来被放宽。
 *.sh text eol=lf

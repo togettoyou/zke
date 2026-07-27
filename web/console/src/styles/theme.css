@@ -1,0 +1,227 @@
+@import "tailwindcss";
+
+/*
+ * ZKE Console theme.
+ *
+ * Light is the default; dark is a complete second theme. Both are driven by the
+ * same semantic variables, switched through `data-theme` on <html> so the shell
+ * can change themes without remounting anything.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: light;
+
+  --desktop-from: #f4f6f9;
+  --desktop-to: #e3e9f1;
+  --desktop-glow: rgb(59 91 219 / 0.07);
+
+  --surface: #ffffff;
+  --surface-muted: #f5f7fa;
+  --surface-raised: #ffffff;
+  --surface-overlay: rgb(255 255 255 / 0.82);
+
+  --foreground: #101821;
+  --muted-foreground: #57616f;
+  --subtle-foreground: #78828f;
+
+  --border: #dfe4ec;
+  --border-strong: #c3ccd9;
+
+  --primary: #3b5bdb;
+  --primary-hover: #33499e;
+  --primary-foreground: #ffffff;
+  --primary-surface: #eaeefc;
+
+  --success: #16704a;
+  --success-surface: #e3f4ea;
+  --warning: #8a5406;
+  --warning-surface: #fbf0da;
+  --danger: #ad2118;
+  --danger-surface: #fbeae8;
+  --info: #1a5a9e;
+  --info-surface: #e6eff9;
+  --neutral: #57616f;
+  --neutral-surface: #eef1f5;
+
+  --ring: #3b5bdb;
+
+  --window-shadow:
+    0 1px 2px rgb(16 24 33 / 0.06), 0 8px 24px -8px rgb(16 24 33 / 0.16),
+    0 24px 48px -24px rgb(16 24 33 / 0.22);
+  --window-shadow-focused:
+    0 1px 2px rgb(16 24 33 / 0.08), 0 12px 32px -8px rgb(16 24 33 / 0.22),
+    0 32px 64px -24px rgb(16 24 33 / 0.3);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --desktop-from: #0f141b;
+  --desktop-to: #1a2331;
+  --desktop-glow: rgb(124 148 244 / 0.1);
+
+  --surface: #161d27;
+  --surface-muted: #1b2431;
+  --surface-raised: #1f2937;
+  --surface-overlay: rgb(22 29 39 / 0.82);
+
+  --foreground: #e8edf4;
+  --muted-foreground: #a3aebd;
+  --subtle-foreground: #8794a5;
+
+  --border: #2b3543;
+  --border-strong: #3d4a5b;
+
+  --primary: #7f97f5;
+  --primary-hover: #9db0f8;
+  --primary-foreground: #0c111c;
+  --primary-surface: #1e2740;
+
+  --success: #5cd693;
+  --success-surface: #12331f;
+  --warning: #f2c264;
+  --warning-surface: #33280e;
+  --danger: #ff9086;
+  --danger-surface: #3b1815;
+  --info: #86baf7;
+  --info-surface: #12293f;
+  --neutral: #a3aebd;
+  --neutral-surface: #222c3a;
+
+  --ring: #7f97f5;
+
+  --window-shadow:
+    0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -8px rgb(0 0 0 / 0.5), 0 24px 48px -24px rgb(0 0 0 / 0.6);
+  --window-shadow-focused:
+    0 1px 2px rgb(0 0 0 / 0.5), 0 12px 32px -8px rgb(0 0 0 / 0.6),
+    0 32px 64px -24px rgb(0 0 0 / 0.7);
+}
+
+@theme inline {
+  --color-desktop-from: var(--desktop-from);
+  --color-desktop-to: var(--desktop-to);
+
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-surface: var(--primary-surface);
+
+  --color-success: var(--success);
+  --color-success-surface: var(--success-surface);
+  --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-danger: var(--danger);
+  --color-danger-surface: var(--danger-surface);
+  --color-info: var(--info);
+  --color-info-surface: var(--info-surface);
+  --color-neutral: var(--neutral);
+  --color-neutral-surface: var(--neutral-surface);
+
+  --color-ring: var(--ring);
+
+  --radius-window: 10px;
+
+  --shadow-window: var(--window-shadow);
+  --shadow-window-focused: var(--window-shadow-focused);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+  --font-mono:
+    "SF Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--desktop-from);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--primary-surface);
+    color: var(--foreground);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--subtle-foreground);
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  /* Applied while a window is dragged or resized: transitions and text
+     selection would both fight the pointer interaction. */
+  .zke-interacting,
+  .zke-interacting * {
+    transition: none !important;
+    user-select: none !important;
+    cursor: inherit !important;
+  }
+
+  .zke-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
