@@ -18,7 +18,15 @@ var (
 	ErrServerCapability       = errors.New("Server capability is invalid")
 	ErrHeartbeatAckInvalid    = errors.New("Agent heartbeat acknowledgement is invalid")
 	ErrCertificateExpired     = errors.New("Agent certificate expired")
+	ErrControlFrameUnexpected = errors.New("Server sent an unexpected Control Stream frame")
+	ErrControlProtocolVersion = errors.New("Server Control Stream protocol version is unsupported")
 )
+
+// ErrHeartbeatAckTimeout reports that the Server stopped acknowledging
+// heartbeats. Unlike the protocol failures above it is not permanent: an
+// unresponsive Server is exactly the case reconnecting is meant to recover
+// from.
+var ErrHeartbeatAckTimeout = errors.New("Server did not acknowledge an Agent heartbeat in time")
 
 // GoAwayError reports that the Server asked this Agent to disconnect.
 type GoAwayError struct {
@@ -45,7 +53,9 @@ func permanentAgentConnectionError(err error) bool {
 		errors.Is(err, ErrHeartbeatConfigInvalid) ||
 		errors.Is(err, ErrServerCapability) ||
 		errors.Is(err, ErrHeartbeatAckInvalid) ||
-		errors.Is(err, ErrCertificateExpired) {
+		errors.Is(err, ErrCertificateExpired) ||
+		errors.Is(err, ErrControlFrameUnexpected) ||
+		errors.Is(err, ErrControlProtocolVersion) {
 		return true
 	}
 	var goAway *GoAwayError

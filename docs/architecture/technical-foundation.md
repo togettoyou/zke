@@ -374,10 +374,13 @@ Server 到 Agent：
 Control Stream 每个方向使用一个串行 Writer，只承载控制消息。请求和数据使用独立 Stream。传输层 KeepAlive
 判断底层连接状态，ZKE Heartbeat 负责 Agent 应用健康与状态更新。
 
-**Phase 1 实现现状**：Agent 侧当前只在心跳发送后同步读取一帧应答，没有独立的 Control Stream 读取循环。
-因此 Server 主动下推的 `GoAway` 最长要等一个心跳间隔才被处理，且任何非 `HeartbeatAck` 的帧会被判为无效
-应答并断开连接。这只影响控制消息的处理时延，与业务并发能力无关——并发由独立 Stream 承担。实现
-`CancelRequest` 和 Server 主动下推之前，需要先把 Agent 侧的读取改为独立循环并按帧类型分发。
+Agent 侧由独立 goroutine 持续读取 Control Stream 并按帧类型分发：`GoAway` 在到达时立即生效，不再等待
+下一次心跳；`HeartbeatAck` 按累积序号校验，只接受严格递增且不超过已发送序号的确认；`CertificateRenewalResponse`
+交给发起续期的调用方。心跳应答超时由独立计时器判定，仅在有未确认心跳时计时。写入仍然只发生在连接主循环，
+Control Stream 因此保持单一串行 Writer。
+
+未识别的帧类型和协议版本不匹配按协议错误处理并停止重连，与 `ServerHello` 校验失败一致；读取失败和应答超时
+属于可重试错误，触发重新连接。
 
 ### 7.6 并发、背压与资源限制
 

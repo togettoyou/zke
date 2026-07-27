@@ -194,17 +194,23 @@ func runConnection(
 			),
 		)
 	}
-	if store != nil &&
-		renewalRequired &&
-		serverSupportsCapability(
-			serverHello,
-			agentprotocol.CapabilityCertificateRenewal,
-		) {
+	// From here on the Control Stream is read continuously by its own
+	// goroutine, so a Server-initiated frame is handled when it arrives rather
+	// than at the next heartbeat tick.
+	reader := startControlReader(controlStream)
+	defer reader.stop()
+
+	renewalSupported := store != nil && serverSupportsCapability(
+		serverHello,
+		agentprotocol.CapabilityCertificateRenewal,
+	)
+	if renewalRequired && renewalSupported {
 		renewed, err := renewAgentCertificate(
 			ctx,
 			cfg,
 			store,
 			controlStream,
+			reader,
 			identity,
 		)
 		if err != nil {
@@ -215,7 +221,14 @@ func runConnection(
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
-	var sequence uint64
+	// The acknowledgement timer runs only while a heartbeat is outstanding. It
+	// replaces the read deadline the lock-step loop used, and reports the same
+	// condition: the Server stopped answering.
+	acknowledgement := time.NewTimer(heartbeatTimeout)
+	stopTimer(acknowledgement)
+	defer acknowledgement.Stop()
+
+	var sentSequence, acknowledgedSequence uint64
 	for {
 		select {
 		case <-ctx.Done():
@@ -234,12 +247,32 @@ func runConnection(
 				return cause
 			}
 			return connection.Context().Err()
+		case err := <-reader.failures:
+			return err
+		case goAway := <-reader.goAways:
+			return &GoAwayError{Reason: goAway.GetReason()}
+		case <-reader.renewals:
+			// A renewal response that nothing asked for means the two sides
+			// disagree about the exchange in progress.
+			return ErrControlFrameUnexpected
+		case acknowledged := <-reader.heartbeatAcks:
+			sequence := acknowledged.GetSequence()
+			// Acknowledgements are cumulative and monotonic: anything that goes
+			// backwards, repeats, or claims a heartbeat that was never sent is
+			// a protocol violation.
+			if sequence <= acknowledgedSequence || sequence > sentSequence {
+				return ErrHeartbeatAckInvalid
+			}
+			acknowledgedSequence = sequence
+			if acknowledgedSequence == sentSequence {
+				stopTimer(acknowledgement)
+				continue
+			}
+			resetTimer(acknowledgement, heartbeatTimeout)
+		case <-acknowledgement.C:
+			return ErrHeartbeatAckTimeout
 		case <-ticker.C:
-			if store != nil &&
-				serverSupportsCapability(
-					serverHello,
-					agentprotocol.CapabilityCertificateRenewal,
-				) &&
+			if renewalSupported &&
 				time.Until(identity.CertificateExpiresAt) <=
 					cfg.CertificateRenewBefore {
 				renewed, err := renewAgentCertificate(
@@ -247,6 +280,7 @@ func runConnection(
 					cfg,
 					store,
 					controlStream,
+					reader,
 					identity,
 				)
 				if err != nil {
@@ -254,7 +288,7 @@ func runConnection(
 				}
 				return &certificateRenewedError{identity: renewed}
 			}
-			sequence++
+			sentSequence++
 			now := time.Now().UTC()
 			if err := controlStream.SetWriteDeadline(
 				now.Add(heartbeatTimeout),
@@ -265,7 +299,7 @@ func runConnection(
 				ProtocolVersion: agentprotocol.ProtocolVersion,
 				Message: &agentv1.ControlFrame_Heartbeat{
 					Heartbeat: &agentv1.Heartbeat{
-						Sequence:        sequence,
+						Sequence:        sentSequence,
 						SentAtUnixMilli: now.UnixMilli(),
 						Health:          agentv1.HealthStatus_HEALTH_STATUS_HEALTHY,
 					},
@@ -273,23 +307,8 @@ func runConnection(
 			}); err != nil {
 				return err
 			}
-			if err := controlStream.SetReadDeadline(
-				now.Add(heartbeatTimeout),
-			); err != nil {
-				return err
-			}
-			response, err := agentprotocol.ReadFrame(controlStream)
-			if err != nil {
-				return err
-			}
-			if goAway := response.GetGoAway(); goAway != nil {
-				return &GoAwayError{Reason: goAway.GetReason()}
-			}
-			ack := response.GetHeartbeatAck()
-			if response.GetProtocolVersion() != agentprotocol.ProtocolVersion ||
-				ack == nil ||
-				ack.GetSequence() != sequence {
-				return ErrHeartbeatAckInvalid
+			if sentSequence == acknowledgedSequence+1 {
+				resetTimer(acknowledgement, heartbeatTimeout)
 			}
 		}
 	}
@@ -308,16 +327,21 @@ func renewAgentCertificate(
 	cfg Config,
 	store *IdentityStore,
 	controlStream *quic.Stream,
+	reader *controlReader,
 	identity LocalIdentity,
 ) (LocalIdentity, error) {
 	csrPEM, err := store.LoadOrCreateRenewalCSR(ctx, identity)
 	if err != nil {
 		return LocalIdentity{}, err
 	}
-	deadline := time.Now().Add(cfg.Connection.ConnectTimeout)
-	if err := controlStream.SetDeadline(deadline); err != nil {
+	// Only the write side is bounded here. The read belongs to the Control
+	// Stream reader, and a read deadline set from this goroutine would abort
+	// the frame it is blocked on.
+	if err := controlStream.SetWriteDeadline(
+		time.Now().Add(cfg.Connection.ConnectTimeout),
+	); err != nil {
 		return LocalIdentity{}, fmt.Errorf(
-			"set Agent certificate renewal deadline: %w",
+			"set Agent certificate renewal write deadline: %w",
 			err,
 		)
 	}
@@ -331,14 +355,11 @@ func renewAgentCertificate(
 	}); err != nil {
 		return LocalIdentity{}, err
 	}
-	frame, err := agentprotocol.ReadFrame(controlStream)
+	response, err := awaitRenewalResponse(ctx, cfg, reader)
 	if err != nil {
 		return LocalIdentity{}, err
 	}
-	response := frame.GetCertificateRenewalResponse()
-	if frame.GetProtocolVersion() != agentprotocol.ProtocolVersion ||
-		response == nil ||
-		strings.TrimSpace(response.GetCertificatePem()) == "" ||
+	if strings.TrimSpace(response.GetCertificatePem()) == "" ||
 		response.GetCertificateExpiresAtUnixMilli() <= 0 {
 		return LocalIdentity{}, errors.New(
 			"Agent certificate renewal response is invalid",
@@ -363,13 +384,46 @@ func renewAgentCertificate(
 	if err != nil {
 		return LocalIdentity{}, err
 	}
-	if err := controlStream.SetDeadline(time.Time{}); err != nil {
+	if err := controlStream.SetWriteDeadline(time.Time{}); err != nil {
 		return LocalIdentity{}, fmt.Errorf(
-			"clear Agent certificate renewal deadline: %w",
+			"clear Agent certificate renewal write deadline: %w",
 			err,
 		)
 	}
 	return renewed, nil
+}
+
+// awaitRenewalResponse waits for the Server's answer while still reacting to
+// everything else the Control Stream can carry. Waiting only for the renewal
+// would leave a GoAway or a read failure unnoticed until the exchange timed
+// out, and would stall the reader on an undelivered heartbeat acknowledgement.
+func awaitRenewalResponse(
+	ctx context.Context,
+	cfg Config,
+	reader *controlReader,
+) (*agentv1.CertificateRenewalResponse, error) {
+	timeout := time.NewTimer(cfg.Connection.ConnectTimeout)
+	defer timeout.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case response := <-reader.renewals:
+			return response, nil
+		case err := <-reader.failures:
+			return nil, err
+		case goAway := <-reader.goAways:
+			return nil, &GoAwayError{Reason: goAway.GetReason()}
+		case <-reader.heartbeatAcks:
+			// An acknowledgement for a heartbeat sent before the renewal
+			// started. Nothing is waiting for it, but it must be consumed so
+			// the reader can move on to the renewal response.
+		case <-timeout.C:
+			return nil, errors.New(
+				"Server did not answer the Agent certificate renewal in time",
+			)
+		}
+	}
 }
 
 func connectionTLSConfig(
