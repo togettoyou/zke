@@ -47,7 +47,7 @@ export function SecretReveal({
 
       <pre
         className={cn(
-          "zke-mono border-border bg-surface-muted max-h-40 overflow-auto rounded-md border p-3 text-xs break-all whitespace-pre-wrap",
+          "zke-mono border-border bg-surface-muted rounded-control max-h-40 overflow-auto border p-3 text-xs break-all whitespace-pre-wrap",
           !revealed && "text-transparent select-none [text-shadow:0_0_8px_var(--muted-foreground)]",
         )}
         aria-label={revealed ? label : `${label}（已遮蔽）`}

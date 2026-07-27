@@ -171,14 +171,9 @@ export function Desktop() {
 
   return (
     <div className="from-desktop-from to-desktop-to relative h-full w-full overflow-hidden bg-linear-to-br">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{
-          backgroundImage:
-            "radial-gradient(60rem 40rem at 15% 10%, var(--desktop-glow), transparent 60%), radial-gradient(50rem 30rem at 85% 85%, var(--desktop-glow), transparent 65%)",
-        }}
-      />
+      {/* Light sources and a faint grid, so the backdrop reads as a surface the
+          windows rest on rather than a page they are printed on. */}
+      <div aria-hidden className="zke-desktop-surface pointer-events-none absolute inset-0" />
 
       <TopBar
         streamState={streamState}
@@ -191,8 +186,18 @@ export function Desktop() {
         )}
       />
 
+      {/* Dissolves the lower edge of the top bar into the desktop. It travels
+          with the bar so full screen takes both away together. */}
+      <div
+        aria-hidden
+        className={cn(
+          "zke-topbar-fade pointer-events-none absolute inset-x-0 top-11 z-0 h-4 transition-transform duration-200 ease-out",
+          immersive && "-translate-y-[3.75rem]",
+        )}
+      />
+
       <div className="absolute inset-x-0 top-11 bottom-0 overflow-y-auto">
-        <div className="max-w-3xl">
+        <div className="max-w-2xl">
           <IconGrid onOpen={handleOpenApp} />
         </div>
       </div>

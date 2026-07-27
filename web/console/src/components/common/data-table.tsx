@@ -62,7 +62,7 @@ export function DataTable<TData>({
     <div className="flex min-h-0 flex-col gap-3">
       {toolbar ? <div className="flex flex-wrap items-center gap-2">{toolbar}</div> : null}
 
-      <div className="border-border bg-surface min-h-0 flex-1 overflow-auto rounded-lg border">
+      <div className="border-border bg-surface rounded-panel shadow-e1 min-h-0 flex-1 overflow-auto border">
         {error ? (
           <ErrorState error={error} onRetry={onRetry} />
         ) : isLoading ? (
@@ -70,15 +70,17 @@ export function DataTable<TData>({
         ) : (data?.length ?? 0) === 0 ? (
           <EmptyState title={emptyTitle} description={emptyDescription} action={emptyAction} />
         ) : (
-          <table className="w-full border-collapse text-[13px]">
-            <thead className="bg-surface-muted sticky top-0 z-10">
+          <table className="zke-tnum w-full border-collapse text-[13px]">
+            {/* The header floats over scrolled rows, so it needs its own opaque
+                fill and a blur — a translucent one would let text show through. */}
+            <thead className="bg-surface-muted/95 sticky top-0 z-10 backdrop-blur-sm">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
                       scope="col"
-                      className="border-border text-muted-foreground border-b px-3 py-2 text-left font-medium whitespace-nowrap"
+                      className="border-border text-subtle-foreground border-b px-3 py-2 text-left text-[11px] font-semibold tracking-[0.06em] whitespace-nowrap uppercase"
                       style={
                         header.column.columnDef.size
                           ? { width: header.column.columnDef.size }
@@ -99,12 +101,14 @@ export function DataTable<TData>({
                   key={row.id}
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                   className={cn(
-                    "border-border/70 border-b last:border-b-0",
-                    onRowClick && "hover:bg-surface-muted cursor-pointer",
+                    "border-border/60 border-b transition-colors last:border-b-0",
+                    onRowClick
+                      ? "hover:bg-primary-surface/40 cursor-pointer"
+                      : "hover:bg-surface-muted/60",
                   )}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-3 py-2 align-middle">
+                    <td key={cell.id} className="px-3 py-2.5 align-middle">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}
@@ -116,13 +120,13 @@ export function DataTable<TData>({
       </div>
 
       {page ? (
-        <div className="text-muted-foreground flex items-center justify-between gap-3 text-xs">
-          <span>
+        <div className="text-muted-foreground flex items-center justify-between gap-3 px-0.5 text-xs">
+          <span className="zke-tnum">
             共 {page.total} 条
             {isFetching ? <span className="text-subtle-foreground ml-2">刷新中…</span> : null}
           </span>
-          <div className="flex items-center gap-2">
-            <span className="zke-mono">
+          <div className="flex items-center gap-1.5">
+            <span className="zke-mono text-subtle-foreground">
               {page.total === 0 ? 0 : page.offset + 1}–
               {Math.min(page.offset + page.limit, page.total)}
             </span>

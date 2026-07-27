@@ -84,9 +84,9 @@ export function describeCapability(capability: Capability): string {
     case "global":
       return `全局 ${role}`;
     case "tenant":
-      return `Tenant ${role}`;
+      return `租户 ${role}`;
     case "project":
-      return `Project ${role}`;
+      return `项目 ${role}`;
     default:
       return role;
   }

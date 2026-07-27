@@ -47,4 +47,19 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+  {
+    // `components/ui` re-exports Radix primitives next to the wrappers built on
+    // them (`export const Dialog = DialogPrimitive.Root`). The rule cannot tell
+    // that those assignments are components, so it fires on every one of them.
+    //
+    // The rule protects hot-module state, which these files do not hold: they are
+    // stateless primitive definitions that change rarely. Wrapping fifteen Radix
+    // roots in passthrough components to satisfy a heuristic would add real
+    // indirection for a development-time convenience, so the rule is switched
+    // off here rather than worked around.
+    files: ["src/components/ui/**/*.tsx"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
 );

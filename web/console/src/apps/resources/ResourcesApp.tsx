@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Building2, FolderKanban, PlusCircle, Server } from "lucide-react";
+import { Building2, ChevronRight, FolderKanban, PlusCircle, Server } from "lucide-react";
 import { toast } from "sonner";
 
 import { newIdempotencyKey } from "@/api/client";
+import { errorMessage, errorRequestId } from "@/api/errors";
 import {
   useCreateProject,
   useCreateTenant,
@@ -32,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Alert } from "@/components/ui/misc";
 import { useScopeStore } from "@/scope/scope-store";
 import {
   Select,
@@ -42,8 +44,8 @@ import {
 } from "@/components/ui/select";
 
 const NAV: AppNavItem[] = [
-  { id: "tenants", label: "Tenant", icon: Building2 },
-  { id: "projects", label: "Project", icon: FolderKanban },
+  { id: "tenants", label: "租户", icon: Building2 },
+  { id: "projects", label: "项目", icon: FolderKanban },
 ];
 
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
@@ -76,6 +78,7 @@ export function ResourcesApp({ openApp }: AppComponentProps) {
         <ProjectSection
           tenantId={tenant?.id ?? null}
           tenantName={tenant?.name ?? null}
+          onBack={() => setSection("tenants")}
           onSelectProject={(project) =>
             setScope({
               tenantId: project.tenant_id,
@@ -171,7 +174,7 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
           return (
             <div className="flex flex-wrap justify-end gap-1">
               <Button size="sm" variant="ghost" onClick={() => onOpenProjects(tenant)}>
-                查看 Project
+                查看项目
               </Button>
               {canManage ? (
                 <>
@@ -215,13 +218,13 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
   return (
     <>
       <SectionTitle
-        title="Tenant"
-        description="租户是权限与资源的顶层边界；停用会影响其下全部 Project 与 Cluster"
+        title="租户"
+        description="租户是权限与资源的顶层边界；停用会影响其下全部项目与集群"
         actions={
           canCreate ? (
             <Button size="sm" variant="primary" onClick={() => setNameDialog({ mode: "create" })}>
               <PlusCircle />
-              新建 Tenant
+              新建租户
             </Button>
           ) : null
         }
@@ -235,8 +238,8 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
         error={query.error}
         onRetry={() => void query.refetch()}
         rowKey={(row) => row.id}
-        emptyTitle="没有可见的 Tenant"
-        emptyDescription="当前账号的权限范围内没有 Tenant，或筛选条件过窄。"
+        emptyTitle="没有可见的租户"
+        emptyDescription="当前账号的权限范围内没有租户，或筛选条件过窄。"
         toolbar={
           <>
             <Input
@@ -273,20 +276,27 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
 
       <NameDialog
         state={nameDialog}
-        title={nameDialog?.mode === "create" ? "新建 Tenant" : "重命名 Tenant"}
+        title={nameDialog?.mode === "create" ? "新建租户" : "重命名租户"}
         pending={createTenant.isPending || updateTenant.isPending}
-        onClose={() => setNameDialog(null)}
+        error={createTenant.error ?? updateTenant.error}
+        onClose={() => {
+          setNameDialog(null);
+          // Reset so the next time the dialog opens it does not start out
+          // showing the previous attempt's failure.
+          createTenant.reset();
+          updateTenant.reset();
+        }}
         onSubmit={async (name) => {
           if (nameDialog?.mode === "create") {
             await createTenant.mutateAsync({ name, idempotencyKey: newIdempotencyKey() });
-            toast.success(`Tenant ${name} 已创建`);
+            toast.success(`租户 ${name} 已创建`);
           } else if (nameDialog?.target) {
             await updateTenant.mutateAsync({
               tenantId: nameDialog.target.id,
               name,
               status: nameDialog.target.status,
             });
-            toast.success("Tenant 已重命名");
+            toast.success("租户已重命名");
           }
           setNameDialog(null);
         }}
@@ -295,16 +305,13 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
       <SensitiveActionDialog
         open={Boolean(statusTarget)}
         onOpenChange={(open) => !open && setStatusTarget(null)}
-        title={statusTarget?.status === "active" ? "停用 Tenant" : "恢复 Tenant"}
+        title={statusTarget?.status === "active" ? "停用租户" : "恢复租户"}
         destructive={statusTarget?.status === "active"}
-        scopeLines={[{ label: "Tenant", name: statusTarget?.name ?? "", id: statusTarget?.id }]}
+        scopeLines={[{ label: "租户", name: statusTarget?.name ?? "", id: statusTarget?.id }]}
         impacts={
           statusTarget?.status === "active"
-            ? [
-                "该 Tenant 及其下的 Project 将被标记为停用",
-                "停用状态下不能创建新的 Project 与集群接入凭证",
-              ]
-            : ["该 Tenant 恢复为启用状态"]
+            ? ["该租户及其下的项目将被标记为停用", "停用状态下不能创建新的项目与集群接入凭证"]
+            : ["该租户恢复为启用状态"]
         }
         confirmationText={statusTarget?.status === "active" ? statusTarget?.name : undefined}
         pending={updateTenant.isPending}
@@ -319,7 +326,7 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
               name: statusTarget.name,
               status: statusTarget.status === "active" ? "suspended" : "active",
             });
-            toast.success("Tenant 状态已更新");
+            toast.success("租户状态已更新");
             setStatusTarget(null);
           } catch {
             // Error is rendered inside the dialog.
@@ -330,13 +337,13 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
       <SensitiveActionDialog
         open={Boolean(retireTarget)}
         onOpenChange={(open) => !open && setRetireTarget(null)}
-        title="退役 Tenant"
+        title="退役租户"
         destructive
-        description="退役会停用 Tenant，并撤销其下全部集群的接入身份与未使用凭证。"
-        scopeLines={[{ label: "Tenant", name: retireTarget?.name ?? "", id: retireTarget?.id }]}
+        description="退役会停用租户，并撤销其下全部集群的接入身份与未使用凭证。"
+        scopeLines={[{ label: "租户", name: retireTarget?.name ?? "", id: retireTarget?.id }]}
         impacts={[
-          "Tenant 及其下 Project 被停用",
-          "其下全部 Cluster 的 Agent 接入身份被撤销，已连接的 Agent 将断开",
+          "租户及其下项目被停用",
+          "其下全部集群的 Agent 接入身份被撤销，已连接的 Agent 将断开",
           "未使用的接入凭证全部失效",
           "该操作会写入审计记录，且不可自动回滚",
         ]}
@@ -350,7 +357,7 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
           }
           try {
             await deleteTenant.mutateAsync({ tenantId: retireTarget.id });
-            toast.success("Tenant 已退役");
+            toast.success("租户已退役");
             setRetireTarget(null);
           } catch {
             // Error is rendered inside the dialog.
@@ -364,11 +371,14 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
 function ProjectSection({
   tenantId,
   tenantName,
+  onBack,
   onSelectProject,
   onOpenClusters,
 }: {
   tenantId: string | null;
   tenantName: string | null;
+  /** Returns to the tenant list, which is the parent of this view. */
+  onBack: () => void;
   onSelectProject: (project: Project) => void;
   onOpenClusters: (project: Project) => void;
 }) {
@@ -479,22 +489,43 @@ function ProjectSection({
   if (!tenantId) {
     return (
       <EmptyState
-        title="请先选择 Tenant"
-        description="在 Tenant 列表中打开一个 Tenant，即可管理它下面的 Project。"
+        title="请先选择租户"
+        description="在租户列表中打开一个租户，即可管理它下面的项目。"
+        action={
+          <Button size="sm" variant="secondary" onClick={onBack}>
+            查看租户列表
+          </Button>
+        }
       />
     );
   }
 
   return (
     <>
+      {/* Which tenant's projects these are is the whole context of this view, so
+          it gets a trail back rather than only a title suffix. */}
+      <nav aria-label="层级" className="text-muted-foreground mb-3 flex items-center gap-1 text-xs">
+        <button
+          type="button"
+          onClick={onBack}
+          className="zke-focus hover:text-foreground rounded-control -mx-1 border border-transparent px-1 py-0.5 transition-colors"
+        >
+          租户
+        </button>
+        <ChevronRight className="size-3 shrink-0" aria-hidden />
+        <span className="text-foreground max-w-60 truncate font-medium">
+          {tenantName ?? tenantId}
+        </span>
+      </nav>
+
       <SectionTitle
-        title={`Project · ${tenantName ?? tenantId}`}
-        description="Project 是集群接入与资源操作的授权边界"
+        title="项目"
+        description="项目是集群接入与资源操作的授权边界"
         actions={
           canCreate ? (
             <Button size="sm" variant="primary" onClick={() => setNameDialog({ mode: "create" })}>
               <PlusCircle />
-              新建 Project
+              新建项目
             </Button>
           ) : null
         }
@@ -508,7 +539,7 @@ function ProjectSection({
         error={query.error}
         onRetry={() => void query.refetch()}
         rowKey={(row) => row.id}
-        emptyTitle="该 Tenant 下没有可见的 Project"
+        emptyTitle="该租户下没有可见的项目"
         toolbar={
           <>
             <Input
@@ -545,9 +576,14 @@ function ProjectSection({
 
       <NameDialog
         state={nameDialog}
-        title={nameDialog?.mode === "create" ? "新建 Project" : "重命名 Project"}
+        title={nameDialog?.mode === "create" ? "新建项目" : "重命名项目"}
         pending={createProject.isPending || updateProject.isPending}
-        onClose={() => setNameDialog(null)}
+        error={createProject.error ?? updateProject.error}
+        onClose={() => {
+          setNameDialog(null);
+          createProject.reset();
+          updateProject.reset();
+        }}
         onSubmit={async (name) => {
           if (nameDialog?.mode === "create") {
             await createProject.mutateAsync({
@@ -555,14 +591,14 @@ function ProjectSection({
               name,
               idempotencyKey: newIdempotencyKey(),
             });
-            toast.success(`Project ${name} 已创建`);
+            toast.success(`项目 ${name} 已创建`);
           } else if (nameDialog?.target) {
             await updateProject.mutateAsync({
               projectId: nameDialog.target.id,
               name,
               status: nameDialog.target.status,
             });
-            toast.success("Project 已重命名");
+            toast.success("项目已重命名");
           }
           setNameDialog(null);
         }}
@@ -571,16 +607,16 @@ function ProjectSection({
       <SensitiveActionDialog
         open={Boolean(statusTarget)}
         onOpenChange={(open) => !open && setStatusTarget(null)}
-        title={statusTarget?.status === "active" ? "停用 Project" : "恢复 Project"}
+        title={statusTarget?.status === "active" ? "停用项目" : "恢复项目"}
         destructive={statusTarget?.status === "active"}
         scopeLines={[
-          { label: "Tenant", name: tenantName ?? "", id: tenantId },
-          { label: "Project", name: statusTarget?.name ?? "", id: statusTarget?.id },
+          { label: "租户", name: tenantName ?? "", id: tenantId },
+          { label: "项目", name: statusTarget?.name ?? "", id: statusTarget?.id },
         ]}
         impacts={
           statusTarget?.status === "active"
             ? ["停用后不能创建集群接入凭证", "已有集群保持现状，但不可再新增接入"]
-            : ["Project 恢复为启用状态"]
+            : ["项目恢复为启用状态"]
         }
         confirmationText={statusTarget?.status === "active" ? statusTarget?.name : undefined}
         pending={updateProject.isPending}
@@ -595,7 +631,7 @@ function ProjectSection({
               name: statusTarget.name,
               status: statusTarget.status === "active" ? "suspended" : "active",
             });
-            toast.success("Project 状态已更新");
+            toast.success("项目状态已更新");
             setStatusTarget(null);
           } catch {
             // Error is rendered inside the dialog.
@@ -606,16 +642,16 @@ function ProjectSection({
       <SensitiveActionDialog
         open={Boolean(retireTarget)}
         onOpenChange={(open) => !open && setRetireTarget(null)}
-        title="退役 Project"
+        title="退役项目"
         destructive
-        description="退役会停用 Project，并撤销其下集群的接入身份与未使用凭证。"
+        description="退役会停用项目，并撤销其下集群的接入身份与未使用凭证。"
         scopeLines={[
-          { label: "Tenant", name: tenantName ?? "", id: tenantId },
-          { label: "Project", name: retireTarget?.name ?? "", id: retireTarget?.id },
+          { label: "租户", name: tenantName ?? "", id: tenantId },
+          { label: "项目", name: retireTarget?.name ?? "", id: retireTarget?.id },
         ]}
         impacts={[
-          "Project 被停用",
-          "其下全部 Cluster 的 Agent 接入身份被撤销，已连接的 Agent 将断开",
+          "项目被停用",
+          "其下全部集群的 Agent 接入身份被撤销，已连接的 Agent 将断开",
           "未使用的接入凭证全部失效",
           "该操作会写入审计记录，且不可自动回滚",
         ]}
@@ -629,7 +665,7 @@ function ProjectSection({
           }
           try {
             await deleteProject.mutateAsync({ projectId: retireTarget.id });
-            toast.success("Project 已退役");
+            toast.success("项目已退役");
             setRetireTarget(null);
           } catch {
             // Error is rendered inside the dialog.
@@ -644,12 +680,15 @@ function NameDialog({
   state,
   title,
   pending,
+  error,
   onClose,
   onSubmit,
 }: {
   state: NameDialogState;
   title: string;
   pending: boolean;
+  /** Rendered in place; a rejected submit must never fail silently. */
+  error?: unknown;
   onClose: () => void;
   onSubmit: (name: string) => Promise<void>;
 }) {
@@ -681,6 +720,18 @@ function NameDialog({
             onChange={(event) => setName(event.target.value)}
           />
         </div>
+
+        {error ? (
+          <Alert tone="danger" className="mt-3">
+            {errorMessage(error)}
+            {errorRequestId(error) ? (
+              <span className="zke-mono mt-1 block text-xs opacity-80">
+                请求 ID：{errorRequestId(error)}
+              </span>
+            ) : null}
+          </Alert>
+        ) : null}
+
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>
             取消
@@ -689,6 +740,8 @@ function NameDialog({
             variant="primary"
             disabled={pending || name.trim().length === 0}
             onClick={() => {
+              // The rejection is already surfaced through `error`; swallowing it
+              // here only stops an unhandled promise rejection.
               void onSubmit(name.trim()).catch(() => undefined);
             }}
           >

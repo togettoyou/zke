@@ -19,8 +19,8 @@ export function DialogContent({
       <DialogPrimitive.Overlay className="fixed inset-0 z-1000 bg-black/35 backdrop-blur-[1px]" />
       <DialogPrimitive.Content
         className={cn(
-          "fixed top-1/2 left-1/2 z-1001 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2",
-          "rounded-window border-border bg-surface shadow-window-focused border p-5",
+          "fixed top-1/2 left-1/2 z-1001 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2",
+          "rounded-window border-border bg-surface shadow-window-focused border p-6",
           "max-h-[calc(100vh-4rem)] overflow-y-auto",
           className,
         )}
@@ -29,7 +29,7 @@ export function DialogContent({
         {children}
         {showClose ? (
           <DialogPrimitive.Close
-            className="text-muted-foreground hover:bg-surface-muted hover:text-foreground absolute top-4 right-4 rounded-md p-1 transition-colors"
+            className="zke-focus text-subtle-foreground hover:bg-surface-muted hover:text-foreground rounded-control absolute top-4 right-4 border border-transparent p-1 transition-colors"
             aria-label="关闭"
           >
             <X className="size-4" />
@@ -54,7 +54,7 @@ export function DialogTitle({
 }: React.ComponentProps<typeof DialogPrimitive.Title>) {
   return (
     <DialogPrimitive.Title
-      className={cn("text-foreground text-base font-semibold", className)}
+      className={cn("text-foreground text-[15px] font-semibold tracking-tight", className)}
       {...props}
     />
   );

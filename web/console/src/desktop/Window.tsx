@@ -131,14 +131,17 @@ export function Window({
       >
         <header
           className={cn(
-            "border-border bg-surface-overlay flex shrink-0 items-center gap-2 border-b px-2 py-1.5 backdrop-blur-sm",
+            "border-border bg-surface-overlay flex h-10 shrink-0 items-center gap-2 border-b px-2.5 backdrop-blur-xl",
             !stacked && "cursor-grab active:cursor-grabbing",
           )}
           onDoubleClick={() => (stacked ? undefined : toggleMaximize(instance.id))}
           {...(stacked ? {} : interaction.dragHandleProps)}
         >
-          <Icon className="text-primary size-4 shrink-0" aria-hidden />
-          <h2 id={titleId} className="text-foreground shrink-0 text-[13px] font-semibold">
+          <Icon className="text-primary size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+          <h2
+            id={titleId}
+            className="text-foreground shrink-0 text-[13px] font-semibold tracking-tight"
+          >
             {instance.title}
           </h2>
 

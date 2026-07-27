@@ -12,8 +12,7 @@ type ResourceListParams = ListParams & { status?: ResourceStatus };
 export function useTenants(params: ResourceListParams = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.tenants(params),
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/tenants", { params: { query: params } })) as TenantListResult,
+    queryFn: async () => unwrap(await api.GET("/api/v1/tenants", { params: { query: params } })),
     enabled,
     placeholderData: (previous) => previous,
   });
@@ -100,7 +99,7 @@ export function useProjects(tenantId: string | null, params: ResourceListParams 
         await api.GET("/api/v1/tenants/{tenant_id}/projects", {
           params: { path: { tenant_id: tenantId as string }, query: params },
         }),
-      ) as ProjectListResult,
+      ),
     enabled: Boolean(tenantId),
     placeholderData: (previous) => previous,
   });

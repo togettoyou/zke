@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Separator } from "@/components/ui/misc";
 import { HintTooltip } from "@/components/ui/tooltip";
 import { useSessionContext } from "@/auth/session-context";
 import { cn } from "@/lib/cn";
@@ -56,16 +57,18 @@ export function TopBar({
       className={cn(
         // Sits at the very back: windows dragged upwards pass over it. Its own
         // popovers and menus are portalled, so they still open above windows.
-        "border-border bg-surface-overlay absolute inset-x-0 top-0 z-0 flex h-11 items-center gap-3 border-b px-3 backdrop-blur-md",
+        "zke-topbar absolute inset-x-0 top-0 z-0 flex h-11 items-center gap-2.5 px-3",
         className,
       )}
     >
       <div className="flex shrink-0 items-center gap-2">
-        <span className="bg-primary text-primary-foreground grid size-6 place-items-center rounded-md text-[11px] font-bold">
+        <span className="bg-primary text-primary-foreground shadow-e1 grid size-6 place-items-center rounded-[7px] text-[11px] font-bold">
           Z
         </span>
-        <span className="text-foreground text-[13px] font-semibold">ZKE Console</span>
+        <span className="text-foreground text-[13px] font-semibold tracking-tight">ZKE</span>
       </div>
+
+      <Separator orientation="vertical" className="h-4 shrink-0" />
 
       <div className="flex min-w-0 items-center gap-2">
         <span className="text-subtle-foreground shrink-0 text-xs">项目</span>
@@ -76,8 +79,8 @@ export function TopBar({
         <HintTooltip
           label={
             lastEventAt
-              ? `Cluster 状态事件流：${stream.label}，最近事件 ${formatRelative(lastEventAt)}`
-              : `Cluster 状态事件流：${stream.label}`
+              ? `集群状态事件流：${stream.label}，最近事件 ${formatRelative(lastEventAt)}`
+              : `集群状态事件流：${stream.label}`
           }
         >
           <Badge tone={stream.tone} className="hidden sm:inline-flex">

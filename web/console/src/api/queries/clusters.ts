@@ -30,7 +30,7 @@ export function useClusters(projectId: string | null, params: ClusterListParams 
         await api.GET("/api/v1/projects/{project_id}/clusters", {
           params: { path: { project_id: projectId as string }, query: params },
         }),
-      ) as ClusterListResult,
+      ),
     enabled: Boolean(projectId),
     placeholderData: (previous) => previous,
   });
@@ -91,7 +91,7 @@ export function useClusterOverview(enabled = true) {
         async (offset, limit) => {
           const page = unwrap(
             await api.GET("/api/v1/tenants", { params: { query: { limit, offset } } }),
-          ) as { tenants: Tenant[]; pagination: Pagination };
+          );
           return { items: page.tenants, hasMore: page.pagination.has_more };
         },
       );
@@ -110,14 +110,14 @@ export function useClusterOverview(enabled = true) {
                   await api.GET("/api/v1/tenants/{tenant_id}/projects", {
                     params: { path: { tenant_id: tenant.id }, query: { limit, offset } },
                   }),
-                ) as { projects: Project[]; pagination: Pagination };
+                );
                 return { items: page.projects, hasMore: page.pagination.has_more };
               },
             );
             truncated ||= projects.truncated;
             return projects.items.map((project) => ({ tenant, project }));
           } catch (error) {
-            failures.push({ scope: `Tenant ${tenant.name}`, message: errorMessage(error) });
+            failures.push({ scope: `租户 ${tenant.name}`, message: errorMessage(error) });
             return [];
           }
         },
@@ -136,7 +136,7 @@ export function useClusterOverview(enabled = true) {
                   await api.GET("/api/v1/projects/{project_id}/clusters", {
                     params: { path: { project_id: project.id }, query: { limit, offset } },
                   }),
-                ) as ClusterListResult;
+                );
                 return { items: page.clusters, hasMore: page.pagination.has_more };
               },
             );

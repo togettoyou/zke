@@ -77,7 +77,9 @@ export function ScopeSelector({
           type="button"
           aria-label="选择项目"
           className={cn(
-            "border-border bg-surface-muted hover:bg-surface flex max-w-72 min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-left transition-colors",
+            // Translucent on purpose: it sits on the top bar's glass, and an
+            // opaque fill would read as a chip stuck onto it.
+            "zke-focus border-border/70 bg-surface/55 hover:bg-surface/85 rounded-control flex max-w-72 min-w-0 items-center gap-1.5 border px-2 py-1 text-left transition-colors",
             className,
           )}
         >
@@ -101,11 +103,11 @@ export function ScopeSelector({
 
       <PopoverContent align="start" className="w-[26rem] p-0">
         <div className="border-border flex border-b">
-          <CascadeColumn title="Tenant">
+          <CascadeColumn title="租户">
             <CascadeState
               query={tenants}
               count={tenants.data?.tenants.length ?? 0}
-              empty="没有可见的 Tenant"
+              empty="没有可见的租户"
             >
               {tenants.data?.tenants.map((tenant: Tenant) => (
                 <CascadeItem
@@ -121,12 +123,12 @@ export function ScopeSelector({
           </CascadeColumn>
 
           <div className="border-border w-1/2 border-l">
-            <CascadeColumn title="Project">
+            <CascadeColumn title="项目">
               {activeTenant ? (
                 <CascadeState
                   query={projects}
                   count={projects.data?.projects.length ?? 0}
-                  empty="该 Tenant 下没有可见的 Project"
+                  empty="该租户下没有可见的项目"
                 >
                   {projects.data?.projects.map((project: Project) => (
                     <CascadeItem
@@ -138,14 +140,14 @@ export function ScopeSelector({
                   ))}
                 </CascadeState>
               ) : (
-                <CascadeHint>先选择左侧的 Tenant</CascadeHint>
+                <CascadeHint>先选择左侧的租户</CascadeHint>
               )}
             </CascadeColumn>
           </div>
         </div>
 
         <div className="flex items-center justify-between gap-2 px-2 py-1.5">
-          <p className="text-subtle-foreground text-xs">选择 Project 即确定当前作用域</p>
+          <p className="text-subtle-foreground text-xs">选择项目即确定当前作用域</p>
           <Button size="sm" variant="ghost" disabled={!scope.projectId} onClick={clear}>
             清除
           </Button>

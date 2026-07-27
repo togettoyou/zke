@@ -31,7 +31,7 @@ export function Checkbox({
   return (
     <CheckboxPrimitive.Root
       className={cn(
-        "peer border-border-strong bg-surface size-4 shrink-0 rounded border",
+        "zke-focus peer border-border-strong bg-surface size-4 shrink-0 rounded-[5px] border",
         "data-[state=checked]:border-primary data-[state=checked]:bg-primary",
         "disabled:cursor-not-allowed disabled:opacity-50",
         className,
@@ -63,7 +63,7 @@ export function Switch({ className, ...props }: React.ComponentProps<typeof Swit
 export function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("bg-surface-muted animate-pulse rounded-md", className)}
+      className={cn("bg-surface-muted rounded-control animate-pulse", className)}
       aria-hidden
       {...props}
     />
@@ -72,12 +72,20 @@ export function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
 
 export function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
-    <div className={cn("border-border bg-surface rounded-lg border p-4", className)} {...props} />
+    <div
+      className={cn("border-border bg-surface rounded-panel shadow-e1 border p-4", className)}
+      {...props}
+    />
   );
 }
 
 export function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
-  return <h3 className={cn("text-foreground text-sm font-semibold", className)} {...props} />;
+  return (
+    <h3
+      className={cn("text-foreground text-[13px] font-semibold tracking-tight", className)}
+      {...props}
+    />
+  );
 }
 
 type AlertTone = "info" | "warning" | "danger" | "success";
@@ -98,7 +106,7 @@ export function Alert({
     <div
       role="status"
       className={cn(
-        "rounded-md border px-3 py-2 text-[13px] leading-relaxed",
+        "rounded-control border px-3 py-2 text-[13px] leading-relaxed",
         ALERT_TONES[tone],
         className,
       )}

@@ -52,7 +52,7 @@ export const APP_MANIFESTS: AppManifest[] = [
   {
     id: "resources",
     title: "组织与资源",
-    description: "管理 Tenant、Project 及其生命周期",
+    description: "管理租户、项目及其生命周期",
     icon: Layers,
     requiredPermissions: ["tenant.read", "project.read"],
     availability: { state: "available" },
@@ -62,7 +62,7 @@ export const APP_MANIFESTS: AppManifest[] = [
   {
     id: "access-audit",
     title: "访问与审计",
-    description: "用户、RoleBinding 与审计事件",
+    description: "用户、角色绑定与审计事件",
     icon: ShieldCheck,
     requiredPermissions: ["user.read", "rbac.read", "audit.read"],
     availability: { state: "available" },
@@ -82,7 +82,7 @@ export const APP_MANIFESTS: AppManifest[] = [
   {
     id: "container-service",
     title: "容器服务",
-    description: "节点、Namespace、工作负载与 Pod 管理",
+    description: "节点、命名空间、工作负载与 Pod 管理",
     icon: Boxes,
     requiredPermissions: [],
     availability: {
@@ -90,7 +90,7 @@ export const APP_MANIFESTS: AppManifest[] = [
       phase: 2,
       plannedCapabilities: [
         "集群选择与节点管理",
-        "Namespace 与工作负载管理",
+        "命名空间与工作负载管理",
         "Pod 列表、日志与 Web Terminal",
         "YAML 管理与 Kubernetes Event",
       ],

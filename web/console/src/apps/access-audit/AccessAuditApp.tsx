@@ -29,6 +29,7 @@ import { AppShell, SectionTitle, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { notifyFailure } from "@/components/common/notify";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import {
   AbsoluteTime,
@@ -84,7 +85,7 @@ export function AccessAuditApp(_props: AppComponentProps) {
     return (
       <div className="p-4">
         <Alert tone="warning">
-          当前账号没有用户、RoleBinding 或审计的读取权限。相关入口已隐藏，服务端也会拒绝对应请求。
+          当前账号没有用户、角色绑定或审计的读取权限。相关入口已隐藏，服务端也会拒绝对应请求。
         </Alert>
       </div>
     );
@@ -307,7 +308,7 @@ function UserSection() {
         impacts={
           statusTarget?.status === "disabled"
             ? ["用户恢复为正常状态，可重新登录"]
-            : ["用户无法登录", "该用户的全部现有会话立即被撤销", "已授予的 RoleBinding 保持不变"]
+            : ["用户无法登录", "该用户的全部现有会话立即被撤销", "已授予的角色绑定保持不变"]
         }
         confirmationText={statusTarget?.status === "disabled" ? undefined : statusTarget?.username}
         pending={setUserStatus.isPending}
@@ -494,7 +495,7 @@ function CreateUserDialog({
                   setDisplayName("");
                   setPassword("");
                 })
-                .catch(() => toast.error("创建用户失败"));
+                .catch((error: unknown) => notifyFailure("创建用户失败", error));
             }}
           >
             {pending ? "创建中…" : "创建"}
@@ -550,7 +551,9 @@ function RenameUserDialog({
             variant="primary"
             disabled={pending || value.trim().length === 0}
             onClick={() => {
-              void onSubmit(value.trim()).catch(() => toast.error("修改失败"));
+              void onSubmit(value.trim()).catch((error: unknown) =>
+                notifyFailure("修改失败", error),
+              );
             }}
           >
             确认
@@ -667,8 +670,8 @@ function RoleBindingSection() {
               {row.original.scope_type === "global"
                 ? "全局"
                 : row.original.scope_type === "tenant"
-                  ? "Tenant"
-                  : "Project"}
+                  ? "租户"
+                  : "项目"}
             </span>
             {row.original.tenant_id ? <IdentifierLabel value={row.original.tenant_id} /> : null}
             {row.original.project_id ? <IdentifierLabel value={row.original.project_id} /> : null}
@@ -706,7 +709,7 @@ function RoleBindingSection() {
     <>
       <SectionTitle
         title="权限绑定"
-        description="RoleBinding 决定用户在 Global、Tenant 或 Project 作用域内的权限"
+        description="角色绑定决定用户在 Global、租户或项目作用域内的权限"
         actions={
           canManage ? (
             <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
@@ -725,7 +728,7 @@ function RoleBindingSection() {
         error={query.error}
         onRetry={() => void query.refetch()}
         rowKey={(row) => row.id}
-        emptyTitle="没有匹配的 RoleBinding"
+        emptyTitle="没有匹配的角色绑定"
         toolbar={
           <>
             <Select
@@ -773,7 +776,7 @@ function RoleBindingSection() {
         onClose={() => setCreateOpen(false)}
         onSubmit={async (input) => {
           await createRoleBinding.mutateAsync(input);
-          toast.success("RoleBinding 已创建");
+          toast.success("角色绑定已创建");
           setCreateOpen(false);
         }}
       />
@@ -781,7 +784,7 @@ function RoleBindingSection() {
       <SensitiveActionDialog
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="删除 RoleBinding"
+        title="删除角色绑定"
         destructive
         scopeLines={[
           { label: "Subject", name: deleteTarget?.subject_id ?? "" },
@@ -804,7 +807,7 @@ function RoleBindingSection() {
           }
           try {
             await deleteRoleBinding.mutateAsync({ roleBindingId: deleteTarget.id });
-            toast.success("RoleBinding 已删除");
+            toast.success("角色绑定已删除");
             setDeleteTarget(null);
           } catch {
             // Error is rendered inside the dialog.
@@ -851,7 +854,7 @@ function CreateRoleBindingDialog({
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>新建 RoleBinding</DialogTitle>
+          <DialogTitle>新建角色绑定</DialogTitle>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
@@ -919,9 +922,7 @@ function CreateRoleBindingDialog({
           ) : null}
 
           {scopeType === "global" && role === "admin" ? (
-            <Alert tone="warning">
-              全局管理员可以管理所有 Tenant、Project、用户与权限，请谨慎授予。
-            </Alert>
+            <Alert tone="warning">全局管理员可以管理所有租户、项目、用户与权限，请谨慎授予。</Alert>
           ) : null}
 
           {error ? <Alert tone="danger">创建失败，请检查输入的 ID 与权限。</Alert> : null}

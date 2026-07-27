@@ -5,14 +5,17 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  // `zke-focus` replaces the browser outline with the Console's halo; without it
+  // the earlier `outline-none` left keyboard focus invisible on every button.
+  "zke-focus rounded-control inline-flex items-center justify-center gap-1.5 border border-transparent text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        primary: "bg-primary text-primary-foreground hover:bg-primary-hover",
-        secondary: "border border-border bg-surface text-foreground hover:bg-surface-muted",
+        primary: "bg-primary text-primary-foreground shadow-e1 hover:bg-primary-hover",
+        secondary:
+          "border-border bg-surface text-foreground shadow-e1 hover:border-border-strong hover:bg-surface-muted",
         ghost: "text-muted-foreground hover:bg-surface-muted hover:text-foreground",
-        danger: "bg-danger text-surface hover:opacity-90",
+        danger: "bg-danger text-primary-foreground shadow-e1 hover:opacity-90",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

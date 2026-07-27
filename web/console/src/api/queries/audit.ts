@@ -2,7 +2,6 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 
 import { api, unwrap } from "../client";
 import { queryKeys } from "../query-keys";
-import type { AuditEventPage } from "../types";
 
 export type AuditFilters = {
   actor_type?: "user" | "agent" | "system";
@@ -41,7 +40,7 @@ export function useAuditEvents(filters: AuditFilters = {}, enabled = true) {
             },
           },
         }),
-      ) as AuditEventPage,
+      ),
     getNextPageParam: (lastPage) => (lastPage.next_cursor ? lastPage.next_cursor : undefined),
   });
 }

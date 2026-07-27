@@ -91,7 +91,7 @@ export function SensitiveActionDialog({
           {description ? <DialogDescription>{description}</DialogDescription> : null}
         </DialogHeader>
 
-        <section className="border-border bg-surface-muted rounded-md border p-3">
+        <section className="border-border bg-surface-muted rounded-panel border p-3">
           <h4 className="text-subtle-foreground mb-2 text-xs font-medium">操作目标</h4>
           <dl className="grid gap-1.5">
             {scopeLines.map((line) => (

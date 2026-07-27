@@ -63,8 +63,15 @@ function notifyUnauthenticated(): void {
   }
 }
 
+/**
+ * Every ZKE Server response is an envelope: `{ code, message, data }` on
+ * success, and `{ code, message, data: { error_code, request_id } }` on failure.
+ * The payload the Console actually wants is always one level down, in `data`.
+ */
+type Enveloped<T> = { data: T };
+
 export type ApiResult<T> = {
-  data?: T;
+  data?: Enveloped<T>;
   error?: unknown;
   response: Response;
 };
@@ -75,19 +82,22 @@ type UnwrapOptions = {
 };
 
 function toApiError(response: Response, body: unknown): ApiError {
-  const errorBody = (body ?? {}) as Partial<ErrorBody>;
+  const envelope = (body ?? {}) as Partial<ErrorBody>;
+  // The stable machine-readable code and the request correlation id live inside
+  // the envelope's `data`; the human-readable message sits alongside it.
+  const detail = envelope.data ?? { error_code: "", request_id: "" };
   const retryAfterHeader = response.headers.get("Retry-After");
   const retryAfterSeconds = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : null;
   return new ApiError({
     status: response.status,
-    code: errorBody.code ?? String(response.status),
-    message: errorBody.message ?? response.statusText,
-    requestId: errorBody.request_id ?? "",
+    code: detail.error_code || String(response.status),
+    message: envelope.message ?? response.statusText,
+    requestId: detail.request_id ?? "",
     retryAfterSeconds: Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : null,
   });
 }
 
-/** Throws {@link ApiError} on failure, returns the decoded body on success. */
+/** Throws {@link ApiError} on failure, returns the unwrapped payload on success. */
 export function unwrap<T>(result: ApiResult<T>, options: UnwrapOptions = {}): T {
   if (result.error !== undefined || !result.response.ok) {
     const error = toApiError(result.response, result.error);
@@ -96,12 +106,19 @@ export function unwrap<T>(result: ApiResult<T>, options: UnwrapOptions = {}): T 
     }
     throw error;
   }
-  return result.data as T;
+  return result.data?.data as T;
 }
 
-/** Same as {@link unwrap} for endpoints that answer 204 with no body. */
-export function unwrapEmpty(result: ApiResult<unknown>, options: UnwrapOptions = {}): void {
-  unwrap(result, options);
+/**
+ * Same as {@link unwrap} for endpoints whose payload carries no information.
+ * These answer 200 with `data: null` rather than 204, so the envelope is still
+ * parsed and a failure still raises.
+ */
+export function unwrapEmpty(
+  result: { data?: unknown; error?: unknown; response: Response },
+  options: UnwrapOptions = {},
+): void {
+  unwrap(result as ApiResult<unknown>, options);
 }
 
 /**

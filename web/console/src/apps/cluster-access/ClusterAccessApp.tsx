@@ -32,6 +32,7 @@ import { useSessionContext } from "@/auth/session-context";
 import { useScopeStore } from "@/scope/scope-store";
 import { DataTable } from "@/components/common/data-table";
 import { SecretReveal } from "@/components/common/secret-reveal";
+import { notifyFailure } from "@/components/common/notify";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import {
   AbsoluteTime,
@@ -50,7 +51,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
-import { Alert, Card, CardTitle, Separator } from "@/components/ui/misc";
+import { Alert, Card, CardTitle } from "@/components/ui/misc";
 import { formatDuration } from "@/lib/time";
 
 const NAV: AppNavItem[] = [
@@ -111,7 +112,7 @@ function OverviewSection({ onSelect }: { onSelect: (entry: ClusterOverviewEntry)
   const columns = useMemo<ColumnDef<ClusterOverviewEntry, unknown>[]>(
     () => [
       {
-        header: "Cluster",
+        header: "集群",
         cell: ({ row }) => (
           <div className="flex flex-col">
             <span className="text-foreground font-medium">{row.original.cluster.name}</span>
@@ -162,7 +163,7 @@ function OverviewSection({ onSelect }: { onSelect: (entry: ClusterOverviewEntry)
     <>
       <SectionTitle
         title="全局集群概览"
-        description="按当前权限范围聚合 Tenant → Project → Cluster；Server 暂未提供跨 Project 的集群列表接口"
+        description="按当前权限范围聚合租户 → 项目 → 集群；Server 暂未提供跨项目的集群列表接口"
         actions={
           <Button size="sm" variant="secondary" onClick={() => void overview.refetch()}>
             <RefreshCw />
@@ -173,8 +174,7 @@ function OverviewSection({ onSelect }: { onSelect: (entry: ClusterOverviewEntry)
 
       {overview.data?.truncated ? (
         <Alert tone="warning" className="mb-3">
-          结果已截断：可见资源数量超过单次聚合上限，列表并不完整。请使用 Project
-          视图查看完整集群列表。
+          结果已截断：可见资源数量超过单次聚合上限，列表并不完整。请切换到「集群」视图按项目查看完整列表。
         </Alert>
       ) : null}
 
@@ -346,7 +346,7 @@ function ClusterSection({
     <>
       <SectionTitle
         title={`集群 · ${scope.projectName ?? scope.projectId}`}
-        description="Cluster 与其中的 ZKE Agent 是同一个管理共同体，操作以 cluster_id 为目标"
+        description="集群与其中的 ZKE Agent 是同一个管理共同体，操作以 cluster_id 为目标"
       />
 
       <DataTable
@@ -357,7 +357,7 @@ function ClusterSection({
         error={query.error}
         onRetry={() => void query.refetch()}
         rowKey={(row) => row.id}
-        emptyTitle="该 Project 还没有集群"
+        emptyTitle="该项目还没有集群"
         emptyDescription="可在「接入凭证」中创建一次性凭证或一键安装命令，让集群中的 ZKE Agent 主动接入。"
         toolbar={
           <Input
@@ -376,7 +376,7 @@ function ClusterSection({
       <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => !open && setRenameTarget(null)}>
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>重命名 Cluster</DialogTitle>
+            <DialogTitle>重命名集群</DialogTitle>
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor="cluster-name">名称</Label>
@@ -404,10 +404,10 @@ function ClusterSection({
                     clusterId: renameTarget.id,
                     name: renameValue.trim(),
                   });
-                  toast.success("Cluster 已重命名");
+                  toast.success("集群已重命名");
                   setRenameTarget(null);
-                } catch {
-                  toast.error("重命名失败");
+                } catch (error) {
+                  notifyFailure("重命名集群失败", error);
                 }
               }}
             >
@@ -424,9 +424,9 @@ function ClusterSection({
         destructive
         description="撤销后当前 Agent 证书立即失效，连接会被服务端关闭。"
         scopeLines={[
-          { label: "Tenant", name: scope.tenantName ?? "", id: scope.tenantId },
-          { label: "Project", name: scope.projectName ?? "", id: scope.projectId },
-          { label: "Cluster", name: revokeTarget?.name ?? "", id: revokeTarget?.id },
+          { label: "租户", name: scope.tenantName ?? "", id: scope.tenantId },
+          { label: "项目", name: scope.projectName ?? "", id: scope.projectId },
+          { label: "集群", name: revokeTarget?.name ?? "", id: revokeTarget?.id },
         ]}
         impacts={[
           "该集群当前 Agent 的客户端证书被撤销",
@@ -455,15 +455,15 @@ function ClusterSection({
       <SensitiveActionDialog
         open={Boolean(retireTarget)}
         onOpenChange={(open) => !open && setRetireTarget(null)}
-        title="退役 Cluster"
+        title="退役集群"
         destructive
         scopeLines={[
-          { label: "Tenant", name: scope.tenantName ?? "", id: scope.tenantId },
-          { label: "Project", name: scope.projectName ?? "", id: scope.projectId },
-          { label: "Cluster", name: retireTarget?.name ?? "", id: retireTarget?.id },
+          { label: "租户", name: scope.tenantName ?? "", id: scope.tenantId },
+          { label: "项目", name: scope.projectName ?? "", id: scope.projectId },
+          { label: "集群", name: retireTarget?.name ?? "", id: retireTarget?.id },
         ]}
         impacts={[
-          "Cluster 标记为已退役，不再接受接入",
+          "集群标记为已退役，不再接受接入",
           "内部 Agent 身份与未使用的接入凭证被撤销",
           "已连接的 Agent 立即断开",
           "操作写入审计记录，且不可自动回滚",
@@ -478,7 +478,7 @@ function ClusterSection({
           }
           try {
             await deleteCluster.mutateAsync({ clusterId: retireTarget.id });
-            toast.success("Cluster 已退役");
+            toast.success("集群已退役");
             setRetireTarget(null);
           } catch {
             // Error is rendered inside the dialog.
@@ -496,8 +496,8 @@ function ClusterSection({
         title="为集群签发新的接入凭证"
         description="用于集群重新接入：复用原 cluster_id，创建新的内部 Agent 身份。"
         scopeLines={[
-          { label: "Project", name: scope.projectName ?? "", id: scope.projectId },
-          { label: "Cluster", name: reenrollTarget?.name ?? "", id: reenrollTarget?.id },
+          { label: "项目", name: scope.projectName ?? "", id: scope.projectId },
+          { label: "集群", name: reenrollTarget?.name ?? "", id: reenrollTarget?.id },
         ]}
         impacts={[
           "生成一枚一次性接入凭证，只在本次响应中明文返回",
@@ -690,7 +690,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
               autoFocus
               onChange={(event) => setClusterName(event.target.value)}
             />
-            <FieldHint>名称会绑定到凭证；Agent 注册成功后即以该名称创建 Cluster。</FieldHint>
+            <FieldHint>名称会绑定到凭证；Agent 注册成功后即以该名称创建集群。</FieldHint>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>
@@ -708,8 +708,8 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   });
                   setCreateOpen(false);
                   setTokenResult({ token: result.token, expiresAt: result.expires_at });
-                } catch {
-                  toast.error("创建接入凭证失败");
+                } catch (error) {
+                  notifyFailure("创建接入凭证失败", error);
                 }
               }}
             >
@@ -757,8 +757,8 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                     manifestUrl: result.manifest_url,
                     expiresAt: result.expires_at,
                   });
-                } catch {
-                  toast.error("生成安装命令失败；请确认 Server 已启用一键安装并配置公网入口");
+                } catch (error) {
+                  notifyFailure("生成安装命令失败", error);
                 }
               }}
             >
@@ -823,7 +823,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
         title="撤销接入凭证"
         destructive
         scopeLines={[
-          { label: "Project", name: scope.projectName ?? "", id: scope.projectId },
+          { label: "项目", name: scope.projectName ?? "", id: scope.projectId },
           { label: "凭证", name: revokeTarget?.cluster_name ?? "", id: revokeTarget?.id },
         ]}
         impacts={["该凭证立即失效，使用它的 Agent 注册请求将被拒绝", "操作写入审计记录"]}
@@ -899,10 +899,8 @@ function ClusterDetailSection({
       />
 
       <div className="grid gap-3 md:grid-cols-2">
-        <Card className="grid gap-2">
-          <CardTitle>接入</CardTitle>
-          <Separator />
-          <DetailRow label="Cluster ID" value={<IdentifierLabel value={cluster.id} />} />
+        <DetailCard title="接入">
+          <DetailRow label="集群 ID" value={<IdentifierLabel value={cluster.id} />} />
           <DetailRow
             label="接入状态"
             value={<StatusBadge kind="cluster" value={cluster.status} />}
@@ -911,8 +909,14 @@ function ClusterDetailSection({
             label="连接状态"
             value={<StatusBadge kind="connection" value={connection.status} />}
           />
-          <DetailRow label="生命周期" value={<span>{connection.lifecycle_status}</span>} />
-          <DetailRow label="健康状态" value={<span>{connection.health_status}</span>} />
+          <DetailRow
+            label="生命周期"
+            value={<StatusBadge kind="lifecycle" value={connection.lifecycle_status} />}
+          />
+          <DetailRow
+            label="健康状态"
+            value={<StatusBadge kind="health" value={connection.health_status} />}
+          />
           <DetailRow
             label="Agent 版本"
             value={<span className="zke-mono text-xs">{connection.version || "—"}</span>}
@@ -921,18 +925,16 @@ function ClusterDetailSection({
             label="协议版本"
             value={<span className="zke-mono text-xs">{connection.protocol_version || "—"}</span>}
           />
-        </Card>
+        </DetailCard>
 
-        <Card className="grid gap-2">
-          <CardTitle>证书</CardTitle>
-          <Separator />
+        <DetailCard title="证书">
           <DetailRow
             label="证书状态"
             value={<StatusBadge kind="certificate" value={connection.certificate_status} />}
           />
           <DetailRow
             label="剩余有效期"
-            value={<span>{formatDuration(connection.certificate_remaining_seconds)}</span>}
+            value={formatDuration(connection.certificate_remaining_seconds)}
           />
           <DetailRow
             label="到期时间"
@@ -946,11 +948,9 @@ function ClusterDetailSection({
               </span>
             }
           />
-        </Card>
+        </DetailCard>
 
-        <Card className="grid gap-2">
-          <CardTitle>连接历史</CardTitle>
-          <Separator />
+        <DetailCard title="连接历史">
           <DetailRow label="连接建立" value={<RelativeTime value={connection.connected_at} />} />
           <DetailRow
             label="最近心跳"
@@ -961,34 +961,46 @@ function ClusterDetailSection({
             label="最近断开"
             value={<RelativeTime value={connection.last_disconnected_at} />}
           />
-          <DetailRow
-            label="断开原因"
-            value={<span>{connection.last_disconnect_reason || "—"}</span>}
-          />
-        </Card>
+          <DetailRow label="断开原因" value={connection.last_disconnect_reason || "—"} />
+        </DetailCard>
 
-        <Card className="grid gap-2">
-          <CardTitle>作用域</CardTitle>
-          <Separator />
-          <DetailRow label="Tenant" value={<IdentifierLabel value={cluster.tenant_id} />} />
-          <DetailRow label="Project" value={<IdentifierLabel value={cluster.project_id} />} />
+        <DetailCard title="所属">
+          <DetailRow label="租户" value={<IdentifierLabel value={cluster.tenant_id} />} />
+          <DetailRow label="项目" value={<IdentifierLabel value={cluster.project_id} />} />
           <DetailRow label="创建时间" value={<AbsoluteTime value={cluster.created_at} />} />
           <DetailRow label="更新时间" value={<AbsoluteTime value={cluster.updated_at} />} />
-        </Card>
+        </DetailCard>
       </div>
 
       <p className="text-subtle-foreground text-xs">
-        Cluster 与其中的 Agent 对外是同一个管理共同体，界面不单独暴露内部 Agent 身份。
+        集群与其中的 Agent 对外是同一个管理共同体，界面不单独暴露内部 Agent 身份。
       </p>
     </div>
   );
 }
 
+function DetailCard({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Card>
+      <CardTitle>{title}</CardTitle>
+      <dl className="mt-2">{children}</dl>
+    </Card>
+  );
+}
+
+/**
+ * One fact in a detail card.
+ *
+ * A fixed label column with left-aligned values, not `justify-between`: pushing
+ * every value to the right edge means a badge, a mono string and a timestamp all
+ * start at a different place, and the card loses its vertical rhythm. Hairline
+ * separators make it read as a spec sheet.
+ */
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3 text-[13px]">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="text-foreground text-right">{value}</span>
+    <div className="border-border/50 grid grid-cols-[6.5rem_1fr] items-baseline gap-3 border-b py-2 text-[13px] last:border-b-0 last:pb-0">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-foreground min-w-0">{value}</dd>
     </div>
   );
 }

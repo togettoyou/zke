@@ -15,6 +15,20 @@
   --desktop-from: #f4f6f9;
   --desktop-to: #e3e9f1;
   --desktop-glow: rgb(59 91 219 / 0.07);
+  --desktop-grid: rgb(24 33 56 / 0.035);
+  --tile-highlight: rgb(255 255 255 / 0.9);
+
+  /* The top bar is a tint over the desktop, not a panel on top of it: it fades
+     out towards its lower edge so there is no seam to notice. */
+  --topbar-from: rgb(255 255 255 / 0.7);
+  --topbar-to: rgb(255 255 255 / 0.26);
+
+  /* The Dock floats above windows, so it stays more opaque than the top bar —
+     but far less than a solid surface, and with a gentler inner highlight than
+     the icon tiles: the same 0.9 white blows out over a panel this large. */
+  --dock-from: rgb(255 255 255 / 0.58);
+  --dock-to: rgb(255 255 255 / 0.42);
+  --dock-highlight: rgb(255 255 255 / 0.55);
 
   --surface: #ffffff;
   --surface-muted: #f5f7fa;
@@ -45,13 +59,24 @@
   --neutral-surface: #eef1f5;
 
   --ring: #3b5bdb;
+  /* The focus halo. Soft and tight: a full-width control must never grow a
+     heavy blue bar around itself. */
+  --ring-soft: rgb(59 91 219 / 0.16);
+
+  /* Elevation is tinted with the brand hue rather than pure black, which keeps
+     raised surfaces from looking grey and dirty on a cool background. */
+  --elevation-1: 0 1px 2px rgb(24 33 56 / 0.05);
+  --elevation-2: 0 1px 2px rgb(24 33 56 / 0.05), 0 2px 6px -2px rgb(24 33 56 / 0.1);
+  --elevation-3:
+    0 1px 2px rgb(24 33 56 / 0.06), 0 6px 16px -4px rgb(24 33 56 / 0.12),
+    0 12px 28px -12px rgb(24 33 56 / 0.14);
 
   --window-shadow:
-    0 1px 2px rgb(16 24 33 / 0.06), 0 8px 24px -8px rgb(16 24 33 / 0.16),
-    0 24px 48px -24px rgb(16 24 33 / 0.22);
+    0 0 0 0.5px rgb(24 33 56 / 0.06), 0 2px 6px -2px rgb(24 33 56 / 0.1),
+    0 12px 32px -8px rgb(24 33 56 / 0.14), 0 28px 64px -28px rgb(24 33 56 / 0.2);
   --window-shadow-focused:
-    0 1px 2px rgb(16 24 33 / 0.08), 0 12px 32px -8px rgb(16 24 33 / 0.22),
-    0 32px 64px -24px rgb(16 24 33 / 0.3);
+    0 0 0 0.5px rgb(24 33 56 / 0.1), 0 3px 8px -2px rgb(24 33 56 / 0.14),
+    0 18px 44px -10px rgb(24 33 56 / 0.2), 0 40px 80px -32px rgb(24 33 56 / 0.28);
 }
 
 [data-theme="dark"] {
@@ -60,6 +85,15 @@
   --desktop-from: #0f141b;
   --desktop-to: #1a2331;
   --desktop-glow: rgb(124 148 244 / 0.1);
+  --desktop-grid: rgb(255 255 255 / 0.025);
+  --tile-highlight: rgb(255 255 255 / 0.07);
+
+  --topbar-from: rgb(20 27 37 / 0.72);
+  --topbar-to: rgb(20 27 37 / 0.22);
+
+  --dock-from: rgb(34 44 58 / 0.66);
+  --dock-to: rgb(22 29 39 / 0.52);
+  --dock-highlight: rgb(255 255 255 / 0.08);
 
   --surface: #161d27;
   --surface-muted: #1b2431;
@@ -90,12 +124,22 @@
   --neutral-surface: #222c3a;
 
   --ring: #7f97f5;
+  --ring-soft: rgb(127 151 245 / 0.26);
 
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.3);
+  --elevation-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  --elevation-3:
+    0 1px 2px rgb(0 0 0 / 0.35), 0 6px 16px -4px rgb(0 0 0 / 0.45),
+    0 12px 28px -12px rgb(0 0 0 / 0.5);
+
+  /* A hairline highlight stands in for the light border that dark surfaces lose
+     against a dark backdrop. */
   --window-shadow:
-    0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -8px rgb(0 0 0 / 0.5), 0 24px 48px -24px rgb(0 0 0 / 0.6);
+    0 0 0 0.5px rgb(255 255 255 / 0.06), 0 2px 6px -2px rgb(0 0 0 / 0.5),
+    0 12px 32px -8px rgb(0 0 0 / 0.55), 0 28px 64px -28px rgb(0 0 0 / 0.65);
   --window-shadow-focused:
-    0 1px 2px rgb(0 0 0 / 0.5), 0 12px 32px -8px rgb(0 0 0 / 0.6),
-    0 32px 64px -24px rgb(0 0 0 / 0.7);
+    0 0 0 0.5px rgb(255 255 255 / 0.1), 0 3px 8px -2px rgb(0 0 0 / 0.55),
+    0 18px 44px -10px rgb(0 0 0 / 0.6), 0 40px 80px -32px rgb(0 0 0 / 0.7);
 }
 
 @theme inline {
@@ -132,8 +176,15 @@
 
   --color-ring: var(--ring);
 
-  --radius-window: 10px;
+  /* One radius scale, so a control never sits inside a container with a tighter
+     corner than its own. */
+  --radius-control: 7px;
+  --radius-panel: 10px;
+  --radius-window: 12px;
 
+  --shadow-e1: var(--elevation-1);
+  --shadow-e2: var(--elevation-2);
+  --shadow-e3: var(--elevation-3);
   --shadow-window: var(--window-shadow);
   --shadow-window-focused: var(--window-shadow-focused);
 
@@ -167,9 +218,16 @@
     text-rendering: optimizeLegibility;
   }
 
+  /*
+   * Safety net only. Every interactive primitive in `components/ui` opts into
+   * `.zke-focus` instead, which draws a tight halo rather than a detached
+   * outline — on a full-width field an offset outline reads as a heavy blue bar
+   * wrapped around the whole control.
+   */
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
+    border-radius: var(--radius-control);
   }
 
   ::selection {
@@ -212,6 +270,91 @@
   .zke-mono {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * The single focus treatment for interactive controls: the border picks up the
+   * accent and a 3px halo sits directly against it. No outline, no offset, so
+   * the control keeps its own footprint and its shape stays readable.
+   */
+  .zke-focus {
+    outline: none;
+  }
+
+  .zke-focus:focus-visible {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px var(--ring-soft);
+  }
+
+  /* Same halo for composites whose focus lands on an inner element. */
+  .zke-focus-within:focus-within {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px var(--ring-soft);
+  }
+
+  /* Numeric and identifier columns line up only with tabular figures. */
+  .zke-tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * The desktop surface: two soft light sources plus a faint grid. The grid is
+   * what makes the background read as a surface windows sit on rather than as a
+   * page they are drawn on, and it stays under 4% opacity so it never competes
+   * with content.
+   */
+  .zke-desktop-surface {
+    background-image:
+      radial-gradient(60rem 40rem at 12% 6%, var(--desktop-glow), transparent 62%),
+      radial-gradient(46rem 30rem at 88% 92%, var(--desktop-glow), transparent 65%),
+      linear-gradient(to right, var(--desktop-grid) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--desktop-grid) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      100% 100%,
+      64px 64px,
+      64px 64px;
+  }
+
+  /* App icon tiles: a hairline inner highlight reads as a raised, glassy face. */
+  .zke-tile {
+    box-shadow:
+      inset 0 1px 0 var(--tile-highlight),
+      var(--elevation-2);
+  }
+
+  /*
+   * The top bar. A vertical fade instead of a flat fill and a border: the
+   * desktop shows through it, and its lower edge dissolves rather than drawing a
+   * line that would split the screen into "bar" and "desktop".
+   */
+  .zke-topbar {
+    background-image: linear-gradient(to bottom, var(--topbar-from), var(--topbar-to));
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+  }
+
+  /*
+   * Continues the fade past the bar. `backdrop-filter` stops hard at an
+   * element's edge, so without this the blur boundary itself becomes the seam.
+   */
+  .zke-topbar-fade {
+    background-image: linear-gradient(to bottom, var(--topbar-to), transparent);
+  }
+
+  /*
+   * The Dock and its handle. Frosted rather than filled, so the desktop tints it
+   * instead of a slab of white sitting on the screen. It keeps a real shadow
+   * because unlike the top bar it floats over windows and has to stay legible
+   * against whatever is behind it.
+   */
+  .zke-dock {
+    background-image: linear-gradient(to bottom, var(--dock-from), var(--dock-to));
+    backdrop-filter: blur(24px) saturate(170%);
+    -webkit-backdrop-filter: blur(24px) saturate(170%);
+    box-shadow:
+      inset 0 1px 0 var(--dock-highlight),
+      var(--elevation-3);
   }
 }
 

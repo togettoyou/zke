@@ -36,7 +36,7 @@ export function AppShell({
       {visible.length > 1 ? (
         <nav
           aria-label="应用导航"
-          className="border-border bg-surface-muted flex w-40 shrink-0 flex-col gap-0.5 border-r p-2"
+          className="border-border bg-surface-muted/60 flex w-40 shrink-0 flex-col gap-0.5 border-r p-2"
         >
           {visible.map((item) => {
             const Icon = item.icon;
@@ -48,13 +48,25 @@ export function AppShell({
                 aria-current={active ? "page" : undefined}
                 onClick={() => onNavigate(item.id)}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors",
+                  "zke-focus rounded-control relative flex items-center gap-2 border border-transparent px-2 py-1.5 text-left text-[13px] transition-colors",
                   active
-                    ? "bg-surface text-foreground font-medium shadow-xs"
-                    : "text-muted-foreground hover:bg-surface hover:text-foreground",
+                    ? "border-border bg-surface text-foreground shadow-e1 font-medium"
+                    : "text-muted-foreground hover:bg-surface/70 hover:text-foreground",
                 )}
               >
-                <Icon className="size-4 shrink-0" aria-hidden />
+                {/* A rail on the active item: on a surface this quiet, a fill
+                    change alone is a weak signal. */}
+                {active ? (
+                  <span
+                    aria-hidden
+                    className="bg-primary absolute inset-y-1.5 left-0 w-0.5 rounded-full"
+                  />
+                ) : null}
+                <Icon
+                  className={cn("size-4 shrink-0", active && "text-primary")}
+                  strokeWidth={1.75}
+                  aria-hidden
+                />
                 <span className="truncate">{item.label}</span>
               </button>
             );
@@ -64,11 +76,11 @@ export function AppShell({
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {toolbar ? (
-          <div className="border-border flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
+          <div className="border-border bg-surface-muted/30 flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
             {toolbar}
           </div>
         ) : null}
-        <div className="min-h-0 flex-1 overflow-auto p-3">{children}</div>
+        <div className="min-h-0 flex-1 overflow-auto p-4">{children}</div>
         {statusBar ? (
           <div className="border-border text-subtle-foreground shrink-0 border-t px-3 py-1.5 text-xs">
             {statusBar}
@@ -89,12 +101,14 @@ export function SectionTitle({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-      <div>
-        <h3 className="text-foreground text-sm font-semibold">{title}</h3>
-        {description ? <p className="text-muted-foreground mt-0.5 text-xs">{description}</p> : null}
+    <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h3 className="text-foreground text-sm font-semibold tracking-tight">{title}</h3>
+        {description ? (
+          <p className="text-muted-foreground mt-1 text-xs leading-relaxed">{description}</p>
+        ) : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </div>
   );
 }
@@ -105,7 +119,7 @@ export function ScopeRequired() {
     <div className="flex h-full flex-col items-center justify-center gap-1.5 text-center">
       <p className="text-foreground text-sm font-medium">请先选择项目</p>
       <p className="text-muted-foreground max-w-sm text-[13px]">
-        该视图按 Project 定域执行。在顶部状态栏的项目选择器中选择一个 Project 后即可使用。
+        该视图按项目定域执行。在顶部状态栏的项目选择器中选择一个项目后即可使用。
       </p>
     </div>
   );

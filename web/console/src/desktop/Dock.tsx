@@ -52,7 +52,7 @@ export function Dock({
         onClick={onToggleVisible}
         aria-expanded={visible}
         aria-label={visible ? "隐藏任务栏" : "显示任务栏"}
-        className="border-border bg-surface-overlay text-subtle-foreground hover:text-foreground pointer-events-auto flex h-6 w-16 items-center justify-center rounded-full border backdrop-blur-md"
+        className="zke-focus zke-dock border-border/60 text-subtle-foreground hover:text-foreground pointer-events-auto flex h-6 w-16 items-center justify-center rounded-full border transition-colors"
       >
         {visible ? (
           <ChevronDown className="size-3.5" aria-hidden />
@@ -66,7 +66,7 @@ export function Dock({
       {!visible ? null : (
         <nav
           aria-label="运行中的应用"
-          className="border-border bg-surface-overlay shadow-window pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-1 overflow-x-auto rounded-2xl border p-1.5 backdrop-blur-md"
+          className="zke-dock border-border/60 pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-1 overflow-x-auto rounded-[18px] border p-2"
         >
           {items.map((instance) => {
             const manifest = findAppManifest(instance.appId);
@@ -84,9 +84,13 @@ export function Dock({
                   aria-label={instance.title}
                   aria-current={focused ? "true" : undefined}
                   className={cn(
-                    "relative flex size-11 flex-col items-center justify-center rounded-xl transition-colors",
-                    focused ? "bg-primary-surface text-primary" : "text-muted-foreground",
-                    "hover:bg-surface-muted hover:text-foreground",
+                    "zke-focus relative grid size-11 place-items-center rounded-[14px] border border-transparent transition-[transform,background-color,color] duration-150",
+                    "hover:-translate-y-0.5 active:translate-y-0",
+                    // Translucent fills so a highlighted icon tints the dock's
+                    // glass instead of punching an opaque chip through it.
+                    focused
+                      ? "bg-primary-surface/80 text-primary"
+                      : "text-muted-foreground hover:bg-surface/55 hover:text-foreground",
                   )}
                   onClick={() => {
                     if (minimized) {
@@ -98,12 +102,12 @@ export function Dock({
                     }
                   }}
                 >
-                  <Icon className="size-5" aria-hidden />
+                  <Icon className="size-5" strokeWidth={1.75} aria-hidden />
                   <span
                     aria-hidden
                     className={cn(
-                      "absolute bottom-1 h-1 rounded-full transition-all",
-                      minimized ? "bg-subtle-foreground w-1" : "bg-primary w-3",
+                      "absolute bottom-0.5 h-[3px] rounded-full transition-all duration-200",
+                      minimized ? "bg-subtle-foreground w-[3px]" : "bg-primary w-3.5",
                     )}
                   />
                 </button>

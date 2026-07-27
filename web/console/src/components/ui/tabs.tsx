@@ -9,7 +9,7 @@ export function TabsList({ className, ...props }: React.ComponentProps<typeof Ta
   return (
     <TabsPrimitive.List
       className={cn(
-        "border-border bg-surface-muted inline-flex items-center gap-1 rounded-lg border p-1",
+        "border-border bg-surface-muted rounded-panel inline-flex items-center gap-1 border p-1",
         className,
       )}
       {...props}
@@ -24,9 +24,9 @@ export function TabsTrigger({
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        "text-muted-foreground rounded-md px-3 py-1 text-[13px] font-medium transition-colors",
+        "zke-focus text-muted-foreground rounded-control border border-transparent px-3 py-1 text-[13px] font-medium transition-colors",
         "hover:text-foreground",
-        "data-[state=active]:bg-surface data-[state=active]:text-foreground data-[state=active]:shadow-xs",
+        "data-[state=active]:border-border data-[state=active]:bg-surface data-[state=active]:text-foreground data-[state=active]:shadow-e1",
         className,
       )}
       {...props}

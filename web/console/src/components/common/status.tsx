@@ -23,6 +23,18 @@ const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     online: { label: "在线", tone: "success" },
     offline: { label: "离线", tone: "neutral" },
   },
+  // Agent lifecycle and health, per the `agents` table's CHECK constraints.
+  // These reached the UI as raw enum values before.
+  lifecycle: {
+    pending: { label: "待激活", tone: "warning" },
+    active: { label: "已激活", tone: "success" },
+    revoked: { label: "已撤销", tone: "danger" },
+  },
+  health: {
+    unknown: { label: "未知", tone: "neutral" },
+    healthy: { label: "健康", tone: "success" },
+    degraded: { label: "降级", tone: "warning" },
+  },
   certificate: {
     valid: { label: "证书有效", tone: "success" },
     expiring: { label: "证书即将过期", tone: "warning" },
@@ -115,12 +127,56 @@ export function AbsoluteTime({
   );
 }
 
-/** Shortened identifier with the full value available on hover and on copy. */
+/**
+ * Shortened identifier that copies its full value on click.
+ *
+ * Identifiers are what an operator carries into a log query or a support
+ * thread, so the elided form has to give the whole thing back — the title
+ * attribute alone cannot be selected out of a table cell.
+ */
 export function IdentifierLabel({ value, className }: { value: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) {
+      return;
+    }
+    const timer = setTimeout(() => setCopied(false), 1_500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
   return (
-    <span className={cn("zke-mono text-muted-foreground text-xs", className)} title={value}>
+    <button
+      type="button"
+      title={`${value}（点击复制）`}
+      aria-label={`复制标识 ${value}`}
+      onClick={async (event) => {
+        // Identifiers often sit inside clickable rows.
+        event.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+        } catch {
+          setCopied(false);
+        }
+      }}
+      className={cn(
+        // `w-fit` and `whitespace-nowrap` for the same reason as the badge: an
+        // elided identifier that stretches or wraps is worse than useless.
+        "zke-focus zke-mono group text-muted-foreground hover:text-foreground hover:bg-surface-muted -mx-1 inline-flex w-fit items-center gap-1 rounded border border-transparent px-1 text-xs whitespace-nowrap transition-colors",
+        className,
+      )}
+    >
       {value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value}
-    </span>
+      {copied ? (
+        <Check className="text-success size-3 shrink-0" aria-hidden />
+      ) : (
+        <Copy
+          className="size-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-60"
+          aria-hidden
+        />
+      )}
+    </button>
   );
 }
 

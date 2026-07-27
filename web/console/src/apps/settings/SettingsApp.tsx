@@ -68,11 +68,11 @@ function IdentitySection() {
 
       <SectionTitle
         title="权限能力"
-        description="按 RoleBinding 作用域展开；界面据此控制入口，服务端仍会对每次请求重新授权"
+        description="按角色绑定作用域展开；界面据此控制入口，服务端仍会对每次请求重新授权"
       />
       {permissions.capabilities.length === 0 ? (
         <Alert tone="warning">
-          当前账号没有任何 RoleBinding，只能访问系统设置。请联系全局管理员授予权限。
+          当前账号没有任何角色绑定，只能访问系统设置。请联系全局管理员授予权限。
         </Alert>
       ) : (
         <div className="grid gap-2">

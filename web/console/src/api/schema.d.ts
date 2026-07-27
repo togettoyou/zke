@@ -484,10 +484,19 @@ export interface components {
          * @example 2026-07-26T14:30:00+08:00
          */
         Timestamp: string;
-        Error: {
-            code: string;
-            message: string;
+        SuccessResponse: {
+            code: number;
+            /** @constant */
+            message: "Success";
+        };
+        ErrorData: {
+            error_code: string;
             request_id: string;
+        };
+        Error: {
+            code: number;
+            message: string;
+            data: components["schemas"]["ErrorData"];
         };
         Health: {
             [key: string]: unknown;
@@ -835,7 +844,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Health"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Health"];
+                    };
                 };
             };
         };
@@ -855,7 +866,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Health"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Health"];
+                    };
                 };
             };
             503: components["responses"]["Unavailable"];
@@ -881,7 +894,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Authentication"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Authentication"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -905,7 +920,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CurrentSession"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["CurrentSession"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -923,11 +940,15 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description 已注销 */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: null;
+                    };
+                };
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
@@ -949,11 +970,15 @@ export interface operations {
         };
         responses: {
             /** @description 密码已修改，当前用户全部 Session 已撤销 */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: null;
+                    };
+                };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
@@ -980,9 +1005,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        users: components["schemas"]["ManagedUser"][];
-                        pagination: components["schemas"]["Pagination"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            users: components["schemas"]["ManagedUser"][];
+                            pagination: components["schemas"]["Pagination"];
+                        };
                     };
                 };
             };
@@ -1012,7 +1039,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagedUser"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ManagedUser"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -1038,7 +1067,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagedUser"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ManagedUser"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1069,7 +1100,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagedUser"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ManagedUser"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1100,7 +1133,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagedUser"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ManagedUser"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1132,7 +1167,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagedUser"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ManagedUser"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -1164,7 +1201,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagedUser"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ManagedUser"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -1196,7 +1235,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagedUser"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ManagedUser"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -1226,9 +1267,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        role_bindings: components["schemas"]["RoleBinding"][];
-                        pagination: components["schemas"]["Pagination"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            role_bindings: components["schemas"]["RoleBinding"][];
+                            pagination: components["schemas"]["Pagination"];
+                        };
                     };
                 };
             };
@@ -1258,7 +1301,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RoleBinding"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["RoleBinding"];
+                    };
                 };
             };
             /** @description RoleBinding 已创建 */
@@ -1267,7 +1312,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RoleBinding"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["RoleBinding"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -1293,7 +1340,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RoleBinding"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["RoleBinding"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1319,11 +1368,15 @@ export interface operations {
         };
         responses: {
             /** @description RoleBinding 已删除 */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: null;
+                    };
+                };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
@@ -1358,7 +1411,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuditEventPage"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AuditEventPage"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -1408,9 +1463,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        tenants: components["schemas"]["Tenant"][];
-                        pagination: components["schemas"]["Pagination"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            tenants: components["schemas"]["Tenant"][];
+                            pagination: components["schemas"]["Pagination"];
+                        };
                     };
                 };
             };
@@ -1436,7 +1493,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Tenant"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Tenant"];
+                    };
                 };
             };
             /** @description Tenant 已创建 */
@@ -1445,7 +1504,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Tenant"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Tenant"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1470,7 +1531,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Tenant"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Tenant"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1500,7 +1563,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Tenant"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Tenant"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1531,7 +1596,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Tenant"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Tenant"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1560,9 +1627,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        projects: components["schemas"]["Project"][];
-                        pagination: components["schemas"]["Pagination"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            projects: components["schemas"]["Project"][];
+                            pagination: components["schemas"]["Pagination"];
+                        };
                     };
                 };
             };
@@ -1590,7 +1659,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Project"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Project"];
+                    };
                 };
             };
             /** @description Project 已创建 */
@@ -1599,7 +1670,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Project"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Project"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1624,7 +1697,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Project"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Project"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1655,7 +1730,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Project"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Project"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1686,7 +1763,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Project"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Project"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1715,9 +1794,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        clusters: components["schemas"]["ClusterAggregate"][];
-                        pagination: components["schemas"]["Pagination"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            clusters: components["schemas"]["ClusterAggregate"][];
+                            pagination: components["schemas"]["Pagination"];
+                        };
                     };
                 };
             };
@@ -1743,7 +1824,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClusterAggregate"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ClusterAggregate"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1774,7 +1857,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Cluster"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Cluster"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1806,7 +1891,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Cluster"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Cluster"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1835,9 +1922,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        cluster_enrollments: components["schemas"]["ClusterEnrollmentRecord"][];
-                        pagination: components["schemas"]["Pagination"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            cluster_enrollments: components["schemas"]["ClusterEnrollmentRecord"][];
+                            pagination: components["schemas"]["Pagination"];
+                        };
                     };
                 };
             };
@@ -1872,7 +1961,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClusterEnrollment"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ClusterEnrollment"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1898,7 +1989,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClusterEnrollmentRecord"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ClusterEnrollmentRecord"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1930,7 +2023,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClusterEnrollmentRecord"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ClusterEnrollmentRecord"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -1964,7 +2059,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClusterInstallation"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ClusterInstallation"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -1998,7 +2095,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClusterConnectionRevocation"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ClusterConnectionRevocation"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -2030,7 +2129,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClusterEnrollment"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["ClusterEnrollment"];
+                    };
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -2059,7 +2160,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AgentEnrollmentResponse"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AgentEnrollmentResponse"];
+                    };
                 };
             };
             /** @description 新签发的 Agent 身份 */
@@ -2068,7 +2171,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AgentEnrollmentResponse"];
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AgentEnrollmentResponse"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];

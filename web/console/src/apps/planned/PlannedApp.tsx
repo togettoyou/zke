@@ -50,7 +50,7 @@ export function PlannedApp({ manifest }: AppComponentProps) {
 
       <p className="text-subtle-foreground text-xs">
         完整开发规划见仓库文档 <span className="zke-mono">docs/roadmap.md</span>
-        。规划内容可能随产品设计与 技术验证调整，不代表交付时间承诺。
+        。规划内容可能随产品设计与技术验证调整，不代表交付时间承诺。
       </p>
     </div>
   );
