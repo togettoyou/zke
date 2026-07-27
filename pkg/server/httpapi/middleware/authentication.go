@@ -17,7 +17,8 @@ const (
 	CSRFCookieName    = "zke_csrf"
 	CSRFHeaderName    = "X-CSRF-Token"
 
-	authIdentityKey = "authenticated_identity"
+	authIdentityKey     = "authenticated_identity"
+	authSessionTokenKey = "authenticated_session_token"
 )
 
 type AuthenticationConfig struct {
@@ -71,6 +72,7 @@ func (authMiddleware *Authentication) RequireAuthentication(c *gin.Context) {
 	}
 
 	c.Set(authIdentityKey, identity)
+	c.Set(authSessionTokenKey, sessionCookie.Value)
 	c.Next()
 }
 
@@ -92,6 +94,18 @@ func Identity(c *gin.Context) (auth.Identity, bool) {
 	}
 	identity, valid := value.(auth.Identity)
 	return identity, valid
+}
+
+// SessionToken reports the session token this request authenticated with. A
+// long-lived stream needs it to re-check that the session is still valid, and
+// keeping the cookie mechanics here means no handler has to parse cookies.
+func SessionToken(c *gin.Context) (string, bool) {
+	value, exists := c.Get(authSessionTokenKey)
+	if !exists {
+		return "", false
+	}
+	token, valid := value.(string)
+	return token, valid && token != ""
 }
 
 func ClearAuthenticationCookies(c *gin.Context, cookieSecure bool) {

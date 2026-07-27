@@ -617,11 +617,8 @@ paths:
       security:
         - sessionCookie: []
       parameters:
-        - $ref: "#/components/parameters/Limit"
-        - name: cursor
-          in: query
-          schema:
-            type: string
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOffset"
         - name: actor_type
           in: query
           schema:
@@ -1571,14 +1568,6 @@ components:
       in: query
       schema:
         $ref: "#/components/schemas/UUID"
-    Limit:
-      name: limit
-      in: query
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 100
-        default: 50
     ListLimit:
       name: limit
       in: query
@@ -2235,11 +2224,11 @@ components:
     AuditEventPage:
       type: object
       additionalProperties: false
-      required: [audit_events, next_cursor]
+      required: [audit_events, pagination]
       properties:
         audit_events:
           type: array
           items:
             $ref: "#/components/schemas/AuditEvent"
-        next_cursor:
-          type: string
+        pagination:
+          $ref: "#/components/schemas/Pagination"

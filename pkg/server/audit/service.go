@@ -2,15 +2,13 @@ package audit
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
-	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
@@ -24,7 +22,7 @@ const (
 )
 
 type Service struct {
-	store         *store.AuditStore
+	store         Store
 	authorization *rbac.Service
 }
 
@@ -55,13 +53,12 @@ type QueryInput struct {
 	TenantID   string
 	ProjectID  string
 	ClusterID  string
-	Cursor     string
-	Limit      int
+	Page       pagination.Request
 }
 
 type QueryResult struct {
-	Events     []Event
-	NextCursor string
+	Events []Event
+	Page   pagination.Result
 }
 
 var ErrInvalidQuery = errors.New("invalid audit query")
@@ -108,7 +105,7 @@ type ClusterEventInput struct {
 }
 
 func NewService(
-	auditStore *store.AuditStore,
+	auditStore Store,
 	authorization ...*rbac.Service,
 ) *Service {
 	service := &Service{store: auditStore}
@@ -118,23 +115,21 @@ func NewService(
 	return service
 }
 
+// Query returns one page of the audit events the caller may read. Visibility
+// is resolved once and pushed into the query so the reported total counts only
+// events inside the caller's Tenant and Project scope.
 func (service *Service) Query(
 	ctx context.Context,
 	input QueryInput,
 ) (QueryResult, error) {
 	if service.authorization == nil ||
 		!validation.IsUUID(input.UserID) ||
-		input.Limit < 1 ||
-		input.Limit > 100 ||
+		input.Page.Validate() != nil ||
 		!validOptionalUUID(input.TenantID) ||
 		!validOptionalUUID(input.ProjectID) ||
 		!validOptionalUUID(input.ClusterID) ||
 		!validAuditEnum(input.ActorType, "", "user", "agent", "system") ||
 		!validAuditEnum(input.Result, "", "succeeded", "failed", "denied") {
-		return QueryResult{}, ErrInvalidQuery
-	}
-	beforeAt, beforeID, err := decodeCursor(input.Cursor)
-	if err != nil {
 		return QueryResult{}, ErrInvalidQuery
 	}
 	visibility, err := service.authorization.ResolveVisibility(
@@ -148,7 +143,7 @@ func (service *Service) Query(
 	if !visibility.HasAny() {
 		return QueryResult{}, rbac.ErrDenied
 	}
-	records, err := service.store.ListRecords(ctx, store.ListAuditRecordsParams{
+	records, total, err := service.store.ListRecords(ctx, store.ListAuditRecordsParams{
 		GlobalVisible: visibility.IsGlobal(),
 		TenantIDs:     visibility.TenantIDs(),
 		ProjectIDs:    visibility.ProjectIDs(),
@@ -160,24 +155,19 @@ func (service *Service) Query(
 		TenantID:      input.TenantID,
 		ProjectID:     input.ProjectID,
 		ClusterID:     input.ClusterID,
-		BeforeAt:      beforeAt,
-		BeforeID:      beforeID,
-		Limit:         input.Limit + 1,
+		Page:          input.Page,
 	})
 	if err != nil {
 		return QueryResult{}, err
-	}
-	var nextCursor string
-	if len(records) > input.Limit {
-		records = records[:input.Limit]
-		last := records[len(records)-1]
-		nextCursor = encodeCursor(last.CreatedAt, last.ID)
 	}
 	events := make([]Event, 0, len(records))
 	for _, item := range records {
 		events = append(events, eventFromStore(item))
 	}
-	return QueryResult{Events: events, NextCursor: nextCursor}, nil
+	return QueryResult{
+		Events: events,
+		Page:   pagination.NewResult(input.Page, total, len(events)),
+	}, nil
 }
 
 func validOptionalUUID(value string) bool {
@@ -191,31 +181,6 @@ func validAuditEnum(value string, allowed ...string) bool {
 		}
 	}
 	return false
-}
-
-func encodeCursor(at time.Time, id string) string {
-	value := strconv.FormatInt(at.UnixNano(), 10) + ":" + id
-	return base64.RawURLEncoding.EncodeToString([]byte(value))
-}
-
-func decodeCursor(value string) (*time.Time, string, error) {
-	if value == "" {
-		return nil, "", nil
-	}
-	decoded, err := base64.RawURLEncoding.Strict().DecodeString(value)
-	if err != nil {
-		return nil, "", err
-	}
-	parts := strings.Split(string(decoded), ":")
-	if len(parts) != 2 || !validation.IsUUID(parts[1]) {
-		return nil, "", errors.New("invalid audit cursor")
-	}
-	nanoseconds, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return nil, "", fmt.Errorf("parse audit cursor: %w", err)
-	}
-	at := time.Unix(0, nanoseconds).UTC()
-	return &at, parts[1], nil
 }
 
 func eventFromStore(item store.AuditRecord) Event {

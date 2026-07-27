@@ -3,10 +3,12 @@ package agentstatus
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
@@ -17,7 +19,7 @@ var (
 )
 
 type Service struct {
-	store         *store.AgentStatusStore
+	store         Store
 	connections   ConnectionStatusSource
 	warningBefore time.Duration
 }
@@ -66,7 +68,7 @@ func (service *Service) Subscribe() (<-chan agentconn.ConnectionEvent, func(), e
 }
 
 func NewService(
-	agentStore *store.AgentStatusStore,
+	agentStore Store,
 	connections ConnectionStatusSource,
 	warningBefore time.Duration,
 ) *Service {
@@ -77,19 +79,63 @@ func NewService(
 	}
 }
 
+// ListProject returns one page of a project's Clusters with their Agent
+// status. Only the persisted Cluster attributes are filtered in SQL; live
+// connection state is merged in afterwards from the connection manager.
 func (service *Service) ListProject(
 	ctx context.Context,
-	projectID string,
-	now time.Time,
-) ([]Agent, error) {
-	if !validation.IsUUID(projectID) || now.IsZero() {
-		return nil, ErrInvalidInput
+	input ListProjectInput,
+) (AgentPage, error) {
+	if !validation.IsUUID(input.ProjectID) ||
+		input.Now.IsZero() ||
+		input.Page.Validate() != nil ||
+		!allowedValue(input.Status, "pending", "active", "revoked") {
+		return AgentPage{}, ErrInvalidInput
 	}
-	stored, err := service.store.ListProjectAgentCertificates(ctx, projectID)
+	stored, total, err := service.store.ListProjectAgentCertificates(
+		ctx,
+		store.ListProjectAgentCertificatesParams{
+			ProjectID: input.ProjectID,
+			Status:    input.Status,
+			Search:    strings.ToLower(strings.TrimSpace(input.Search)),
+			Page:      input.Page,
+		},
+	)
 	if err != nil {
-		return nil, err
+		return AgentPage{}, err
 	}
-	return service.buildAgents(stored, now), nil
+	agents := service.buildAgents(stored, input.Now)
+	return AgentPage{
+		Agents: agents,
+		Page:   pagination.NewResult(input.Page, total, len(agents)),
+	}, nil
+}
+
+// ListProjectInput selects one page of a project's Clusters.
+type ListProjectInput struct {
+	ProjectID string
+	Status    string
+	Search    string
+	Now       time.Time
+	Page      pagination.Request
+}
+
+// AgentPage is one page of Cluster status plus its position.
+type AgentPage struct {
+	Agents []Agent
+	Page   pagination.Result
+}
+
+func allowedValue(value string, candidates ...string) bool {
+	if value == "" {
+		return true
+	}
+	for _, candidate := range candidates {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (service *Service) GetCluster(
@@ -105,6 +151,9 @@ func (service *Service) GetCluster(
 		return Agent{}, err
 	}
 	result := service.buildAgents([]store.ProjectAgentCertificate{stored}, now)
+	if len(result) == 0 {
+		return Agent{}, ErrNotFound
+	}
 	return result[0], nil
 }
 

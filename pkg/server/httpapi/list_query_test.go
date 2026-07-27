@@ -6,47 +6,95 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 )
 
-func TestParseAndApplyListQuery(t *testing.T) {
-	t.Parallel()
+func listQueryContext(target string) *gin.Context {
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
-	context.Request = httptest.NewRequest(
-		http.MethodGet,
-		"/items?limit=2&offset=1&q=Beta&status=active",
-		nil,
+	context.Request = httptest.NewRequest(http.MethodGet, target, nil)
+	return context
+}
+
+func TestParseListQuery(t *testing.T) {
+	t.Parallel()
+
+	query, err := parseListQuery(
+		listQueryContext("/items?limit=2&offset=1&q=Beta&status=active"),
+		listFilters{search: true, status: true},
 	)
-	query, err := parseListQuery(context)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if query.Limit != 2 || query.Offset != 1 ||
+	if query.Page.Limit != 2 || query.Page.Offset != 1 ||
 		query.Search != "Beta" || query.Status != "active" {
 		t.Fatalf("unexpected list query: %+v", query)
 	}
-	items, metadata := paginate([]string{"a", "b", "c", "d"}, query)
-	if len(items) != 2 || items[0] != "b" || items[1] != "c" {
-		t.Fatalf("unexpected page: %+v", items)
+}
+
+func TestParseListQueryAppliesDefaultPage(t *testing.T) {
+	t.Parallel()
+
+	query, err := parseListQuery(listQueryContext("/items"), listFilters{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if metadata.Total != 4 || !metadata.HasMore {
-		t.Fatalf("unexpected pagination: %+v", metadata)
+	if query.Page.Limit != pagination.DefaultLimit || query.Page.Offset != 0 {
+		t.Fatalf("unexpected default page: %+v", query.Page)
 	}
 }
 
 func TestParseListQueryRejectsInvalidBounds(t *testing.T) {
 	t.Parallel()
+
 	for _, target := range []string{
 		"/items?limit=0",
 		"/items?limit=101",
+		"/items?limit=abc",
 		"/items?offset=-1",
 		"/items?offset=1000001",
+		"/items?offset=abc",
 	} {
-		response := httptest.NewRecorder()
-		context, _ := gin.CreateTestContext(response)
-		context.Request = httptest.NewRequest(http.MethodGet, target, nil)
-		if _, err := parseListQuery(context); err == nil {
+		if _, err := parseListQuery(listQueryContext(target), listFilters{}); err == nil {
 			t.Errorf("parseListQuery(%q) succeeded", target)
 		}
+	}
+}
+
+// An endpoint must refuse a filter it does not implement rather than accept
+// the request and silently return unfiltered rows.
+func TestParseListQueryRejectsUnsupportedFilters(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		target    string
+		supported listFilters
+	}{
+		{"/items?role=admin", listFilters{search: true, status: true}},
+		{"/items?scope_type=global", listFilters{search: true, status: true}},
+		{"/items?status=active", listFilters{search: true}},
+		{"/items?q=term", listFilters{status: true}},
+	} {
+		if _, err := parseListQuery(
+			listQueryContext(testCase.target),
+			testCase.supported,
+		); err == nil {
+			t.Errorf("parseListQuery(%q) accepted an unsupported filter", testCase.target)
+		}
+	}
+}
+
+func TestResponsePagination(t *testing.T) {
+	t.Parallel()
+
+	metadata := responsePagination(pagination.Result{
+		Limit:   10,
+		Offset:  20,
+		Total:   35,
+		HasMore: true,
+	})
+	if metadata.Limit != 10 || metadata.Offset != 20 ||
+		metadata.Total != 35 || !metadata.HasMore {
+		t.Fatalf("unexpected pagination metadata: %+v", metadata)
 	}
 }

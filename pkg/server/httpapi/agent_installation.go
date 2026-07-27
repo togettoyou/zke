@@ -18,10 +18,8 @@ import (
 const maxCreateAgentInstallationRequestBytes = 16 * 1024
 
 type agentInstallationHandler struct {
-	logger           *slog.Logger
-	service          *agentinstall.Service
-	auditService     *audit.Service
-	operationTimeout time.Duration
+	baseHandler
+	service *agentinstall.Service
 }
 
 type createAgentInstallationRequest struct {
@@ -43,10 +41,8 @@ func newAgentInstallationHandler(
 	operationTimeout time.Duration,
 ) *agentInstallationHandler {
 	return &agentInstallationHandler{
-		logger:           logger,
-		service:          service,
-		auditService:     auditService,
-		operationTimeout: operationTimeout,
+		baseHandler: newBaseHandler(logger, auditService, operationTimeout),
+		service:     service,
 	}
 }
 
@@ -63,15 +59,12 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 		maxCreateAgentInstallationRequestBytes,
 	); err != nil {
 		identity, _ := httpmiddleware.Identity(c)
-		handler.recordFailure(c, identity.User.ID, "failed")
+		handler.recordInstallationFailure(c, identity.User.ID, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster installation request")
 		return
 	}
 	identity, _ := httpmiddleware.Identity(c)
-	operationContext, cancel := context.WithTimeout(
-		c.Request.Context(),
-		handler.operationTimeout,
-	)
+	operationContext, cancel := handler.operationContext(c)
 	result, err := handler.service.Create(operationContext, agentinstall.CreateInput{
 		ProjectID:      c.Param("project_id"),
 		ClusterName:    request.ClusterName,
@@ -85,18 +78,18 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 	case errors.Is(err, agentinstall.ErrDisabled):
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster installation is disabled")
 	case errors.Is(err, enrollment.ErrInvalidInput):
-		handler.recordFailure(c, identity.User.ID, "failed")
+		handler.recordInstallationFailure(c, identity.User.ID, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster installation request")
 	case errors.Is(err, enrollment.ErrDenied):
-		handler.recordFailure(c, identity.User.ID, "denied")
+		handler.recordInstallationFailure(c, identity.User.ID, "denied")
 		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
 	case errors.Is(err, enrollment.ErrIdempotencyConflict):
 		writeError(c, http.StatusConflict, "idempotency_conflict", "idempotency key was already used")
 	case errors.Is(err, context.DeadlineExceeded):
-		handler.recordFailure(c, identity.User.ID, "failed")
+		handler.recordInstallationFailure(c, identity.User.ID, "failed")
 		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
 	case err != nil:
-		handler.recordFailure(c, identity.User.ID, "failed")
+		handler.recordInstallationFailure(c, identity.User.ID, "failed")
 		handler.logger.Error(
 			"create Cluster installation",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
@@ -115,38 +108,17 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 	}
 }
 
-func (handler *agentInstallationHandler) recordFailure(
+func (handler *agentInstallationHandler) recordInstallationFailure(
 	c *gin.Context,
 	userID string,
 	result string,
 ) {
-	if handler.auditService == nil {
-		return
-	}
-	auditContext, cancel := context.WithTimeout(
-		c.Request.Context(),
-		handler.operationTimeout,
-	)
-	defer cancel()
-	if err := handler.auditService.RecordProjectEvent(
-		auditContext,
-		audit.ProjectEventInput{
-			ActorUserID: userID,
-			ProjectID:   c.Param("project_id"),
-			Action:      audit.ActionClusterEnrollmentCreate,
-			Result:      result,
-			RequestID:   httpmiddleware.RequestID(c),
-		},
-	); err != nil {
-		handler.logger.Error(
-			"record Cluster installation failure audit",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("user_id", userID),
-			slog.String("project_id", c.Param("project_id")),
-			slog.String("result", result),
-			slog.String("error", err.Error()),
-		)
-	}
+	handler.recordFailure(c, failedOperation{
+		Scope:       auditScopeProject,
+		ActorUserID: userID,
+		Action:      audit.ActionClusterEnrollmentCreate,
+		Result:      result,
+	})
 }
 
 func (handler *agentInstallationHandler) manifest(c *gin.Context) {
@@ -164,10 +136,7 @@ func (handler *agentInstallationHandler) manifest(c *gin.Context) {
 		return
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(authorization, prefix))
-	operationContext, cancel := context.WithTimeout(
-		c.Request.Context(),
-		handler.operationTimeout,
-	)
+	operationContext, cancel := handler.operationContext(c)
 	manifest, err := handler.service.Manifest(
 		operationContext,
 		token,

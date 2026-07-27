@@ -9,6 +9,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
@@ -27,7 +28,7 @@ type Config struct {
 }
 
 type Service struct {
-	store          *store.AccessManagementStore
+	store          Store
 	passwordHashes chan struct{}
 }
 
@@ -42,6 +43,33 @@ type User struct {
 	PasswordChangedAt time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+// ListUsersInput selects one page of managed users.
+type ListUsersInput struct {
+	Status string
+	Search string
+	Page   pagination.Request
+}
+
+// UserPage is one page of managed users plus where it sits in the full set.
+type UserPage struct {
+	Users []User
+	Page  pagination.Result
+}
+
+// ListRoleBindingsInput selects one page of role bindings.
+type ListRoleBindingsInput struct {
+	Role      string
+	ScopeType string
+	Search    string
+	Page      pagination.Request
+}
+
+// RoleBindingPage is one page of role bindings plus its position.
+type RoleBindingPage struct {
+	RoleBindings []RoleBinding
+	Page         pagination.Result
 }
 
 type CreateUserInput struct {
@@ -129,7 +157,7 @@ type DeleteRoleBindingInput struct {
 }
 
 func NewService(
-	accessStore *store.AccessManagementStore,
+	accessStore Store,
 	config Config,
 ) *Service {
 	maxHashes := max(1, config.MaxConcurrentPasswordHashes)
@@ -139,16 +167,33 @@ func NewService(
 	}
 }
 
-func (service *Service) ListUsers(ctx context.Context) ([]User, error) {
-	stored, err := service.store.ListUsers(ctx)
+// ListUsers returns one page of managed users. Filtering, searching and
+// paging all happen in the database so that the reported total describes the
+// whole filtered set rather than whatever fit in memory.
+func (service *Service) ListUsers(
+	ctx context.Context,
+	input ListUsersInput,
+) (UserPage, error) {
+	if input.Page.Validate() != nil ||
+		!allowedValue(input.Status, "active", "locked", "disabled") {
+		return UserPage{}, ErrInvalidInput
+	}
+	stored, total, err := service.store.ListUsers(ctx, store.ListManagedUsersParams{
+		Status: input.Status,
+		Search: normalizeSearch(input.Search),
+		Page:   input.Page,
+	})
 	if err != nil {
-		return nil, err
+		return UserPage{}, err
 	}
 	result := make([]User, 0, len(stored))
 	for _, item := range stored {
 		result = append(result, userFromStore(item))
 	}
-	return result, nil
+	return UserPage{
+		Users: result,
+		Page:  pagination.NewResult(input.Page, total, len(result)),
+	}, nil
 }
 
 func (service *Service) GetUser(
@@ -315,18 +360,36 @@ func (service *Service) ResetUserPassword(
 	return mapUserMutation(item, err)
 }
 
+// ListRoleBindings returns one page of role bindings.
 func (service *Service) ListRoleBindings(
 	ctx context.Context,
-) ([]RoleBinding, error) {
-	stored, err := service.store.ListRoleBindings(ctx)
+	input ListRoleBindingsInput,
+) (RoleBindingPage, error) {
+	if input.Page.Validate() != nil ||
+		!allowedValue(input.Role, "admin", "viewer") ||
+		!allowedValue(input.ScopeType, "global", "tenant", "project") {
+		return RoleBindingPage{}, ErrInvalidInput
+	}
+	stored, total, err := service.store.ListRoleBindings(
+		ctx,
+		store.ListManagedRoleBindingsParams{
+			Role:      input.Role,
+			ScopeType: input.ScopeType,
+			Search:    normalizeSearch(input.Search),
+			Page:      input.Page,
+		},
+	)
 	if err != nil {
-		return nil, err
+		return RoleBindingPage{}, err
 	}
 	result := make([]RoleBinding, 0, len(stored))
 	for _, item := range stored {
 		result = append(result, roleBindingFromStore(item))
 	}
-	return result, nil
+	return RoleBindingPage{
+		RoleBindings: result,
+		Page:         pagination.NewResult(input.Page, total, len(result)),
+	}, nil
 }
 
 func (service *Service) GetRoleBinding(
@@ -438,6 +501,27 @@ func (service *Service) hashPassword(
 		return "", err
 	}
 	return result, nil
+}
+
+// allowedValue reports whether an optional enum filter is empty or known.
+// Rejecting unknown values in the service keeps the check on the path every
+// caller takes, rather than relying on each HTTP handler to remember it.
+func allowedValue(value string, candidates ...string) bool {
+	if value == "" {
+		return true
+	}
+	for _, candidate := range candidates {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeSearch lowercases the term so the store can compare it against
+// already-lowercased columns.
+func normalizeSearch(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func validDisplayName(value string) bool {

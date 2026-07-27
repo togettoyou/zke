@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 )
 
 var (
@@ -20,6 +21,17 @@ var (
 
 type EnrollmentStore struct {
 	pool *pgxpool.Pool
+}
+
+// ListEnrollmentsParams filters and pages one project's Cluster enrollments.
+// Now is passed in rather than read from the database clock so that the
+// derived expiry status matches the timestamp the caller reports.
+type ListEnrollmentsParams struct {
+	ProjectID string
+	Status    string
+	Search    string
+	Now       time.Time
+	Page      pagination.Request
 }
 
 type Enrollment struct {

@@ -10,8 +10,18 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
+// CredentialStore is the narrow persistence surface certificate renewal needs.
+// It is separate from Store because renewal runs on the Agent connection path,
+// not the HTTP enrollment path.
+type CredentialStore interface {
+	RenewCredential(
+		ctx context.Context,
+		params store.RenewAgentCredentialParams,
+	) (store.AgentCredentialResult, error)
+}
+
 type CertificateRenewalService struct {
-	store  *store.AgentConnectionStore
+	store  CredentialStore
 	signer *CertificateSigner
 }
 
@@ -29,7 +39,7 @@ type RenewCertificateResult struct {
 }
 
 func NewCertificateRenewalService(
-	connectionStore *store.AgentConnectionStore,
+	connectionStore CredentialStore,
 	signer *CertificateSigner,
 ) *CertificateRenewalService {
 	return &CertificateRenewalService{

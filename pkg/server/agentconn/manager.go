@@ -22,6 +22,19 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
+// ConnectionStore is the persistence surface the Agent connection manager
+// needs. Declaring it here keeps the manager testable without PostgreSQL and
+// documents exactly which writes an Agent connection can perform.
+type ConnectionStore interface {
+	Activate(ctx context.Context, params store.ActivateAgentConnectionParams) error
+	RecordHeartbeat(ctx context.Context, params store.RecordAgentHeartbeatParams) error
+	WatchRevocations(
+		ctx context.Context,
+		ready chan<- struct{},
+		handle func(store.AgentConnectionRevocation),
+	) error
+}
+
 type Config struct {
 	Address                 string
 	TLSCertificateFile      string
@@ -32,18 +45,33 @@ type Config struct {
 	HeartbeatTimeout        time.Duration
 	LastSeenWriteInterval   time.Duration
 	OperationTimeout        time.Duration
+	MaxConcurrentAgents     int
+	MaxIncomingStreams      int64
+	WriteTimeout            time.Duration
+	// MaxRememberedDisconnects bounds how many disconnected Agents keep a
+	// last-known status in memory, so Cluster churn cannot grow the Server
+	// heap without limit.
+	MaxRememberedDisconnects int
 }
 
 type Manager struct {
 	config  Config
 	logger  *slog.Logger
-	store   *store.AgentConnectionStore
+	store   ConnectionStore
 	renewal *enrollment.CertificateRenewalService
 	tls     *tls.Config
+
+	// handlers tracks in-flight connection goroutines so that Run only
+	// reports completion once none of them can still touch the database.
+	handlers sync.WaitGroup
+	// admissions bounds concurrent connection handling so that a burst of
+	// dials cannot exhaust Server memory before authentication completes.
+	admissions chan struct{}
 
 	mutex            sync.Mutex
 	connections      map[string]*session
 	lastDisconnected map[string]ConnectionStatus
+	disconnectOrder  []string
 	subscribers      map[uint64]chan ConnectionEvent
 	nextSubscriberID uint64
 }
@@ -56,6 +84,7 @@ type session struct {
 	connectedAt          time.Time
 	conn                 *quic.Conn
 	stream               *quic.Stream
+	writeTimeout         time.Duration
 	writeMu              sync.Mutex
 	statusMu             sync.Mutex
 	lastHeartbeatAt      time.Time
@@ -84,6 +113,9 @@ type ConnectionEvent struct {
 const (
 	ConnectionStateOnline  = "online"
 	ConnectionStateOffline = "offline"
+
+	defaultMaxRememberedDisconnects = 4096
+	defaultSessionWriteTimeout      = 5 * time.Second
 )
 
 type certificateIdentity struct {
@@ -95,7 +127,7 @@ type certificateIdentity struct {
 func New(
 	config Config,
 	logger *slog.Logger,
-	connectionStore *store.AgentConnectionStore,
+	connectionStore ConnectionStore,
 	renewalService *enrollment.CertificateRenewalService,
 ) (*Manager, error) {
 	tlsConfig, err := loadTLSConfig(config)
@@ -108,6 +140,7 @@ func New(
 		store:            connectionStore,
 		renewal:          renewalService,
 		tls:              tlsConfig,
+		admissions:       make(chan struct{}, max(1, config.MaxConcurrentAgents)),
 		connections:      make(map[string]*session),
 		lastDisconnected: make(map[string]ConnectionStatus),
 		subscribers:      make(map[uint64]chan ConnectionEvent),
@@ -124,7 +157,7 @@ func (manager *Manager) Run(ctx context.Context) error {
 			HandshakeIdleTimeout:  manager.config.HandshakeTimeout,
 			MaxIdleTimeout:        manager.config.HeartbeatTimeout,
 			KeepAlivePeriod:       manager.config.HeartbeatInterval,
-			MaxIncomingStreams:    16,
+			MaxIncomingStreams:    manager.config.MaxIncomingStreams,
 			MaxIncomingUniStreams: -1,
 			Allow0RTT:             false,
 		},
@@ -136,7 +169,10 @@ func (manager *Manager) Run(ctx context.Context) error {
 
 	revocationErrors := make(chan error, 1)
 	revocationsReady := make(chan struct{})
+	var watcher sync.WaitGroup
+	watcher.Add(1)
 	go func() {
+		defer watcher.Done()
 		revocationErrors <- manager.store.WatchRevocations(
 			runContext,
 			revocationsReady,
@@ -144,12 +180,20 @@ func (manager *Manager) Run(ctx context.Context) error {
 		)
 		cancelRun()
 	}()
+	// Every exit path must drain the connection handlers and the revocation
+	// watcher before returning: the caller closes the database pool as soon
+	// as Run reports completion, and an in-flight heartbeat write would then
+	// fail against a closed pool.
+	defer func() {
+		cancelRun()
+		manager.closeAll()
+		manager.handlers.Wait()
+		watcher.Wait()
+	}()
+
 	select {
 	case <-revocationsReady:
 	case revocationErr := <-revocationErrors:
-		if revocationErr == nil {
-			return nil
-		}
 		return revocationErr
 	case <-ctx.Done():
 		return nil
@@ -163,25 +207,40 @@ func (manager *Manager) Run(ctx context.Context) error {
 		connection, err := listener.Accept(runContext)
 		if err != nil {
 			if ctx.Err() != nil {
-				manager.closeAll()
 				return nil
 			}
 			select {
 			case revocationErr := <-revocationErrors:
-				manager.closeAll()
-				if revocationErr == nil {
-					return nil
-				}
 				return revocationErr
 			default:
 			}
 			return fmt.Errorf("accept Agent QUIC connection: %w", err)
 		}
-		go manager.handleConnection(ctx, connection)
+		manager.handlers.Add(1)
+		go func() {
+			defer manager.handlers.Done()
+			manager.handleConnection(runContext, connection)
+		}()
 	}
 }
 
 func (manager *Manager) handleConnection(parent context.Context, connection *quic.Conn) {
+	// Admission is checked before any work is done for the connection so
+	// that a dial burst cannot allocate unbounded Server state. A rejected
+	// Agent reconnects under its own backoff.
+	select {
+	case manager.admissions <- struct{}{}:
+		defer func() { <-manager.admissions }()
+	default:
+		manager.reject(
+			connection,
+			agentprotocol.CloseInternalError,
+			"Agent connection capacity reached",
+			errors.New("concurrent Agent connection limit reached"),
+		)
+		return
+	}
+
 	identity, err := identityFromConnection(connection)
 	if err != nil {
 		manager.reject(connection, agentprotocol.CloseAuthenticationError, "invalid Agent identity", err)
@@ -251,15 +310,18 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 		connectedAt:          now,
 		conn:                 connection,
 		stream:               controlStream,
+		writeTimeout:         manager.config.WriteTimeout,
 		disconnectReason:     "connection_closed",
 	}
 	previous := manager.register(current)
 	if previous != nil {
-		previous.setDisconnectReason("connection_replaced")
+		previous.setDisconnectReason(agentprotocol.GoAwayConnectionReplaced)
 		_ = previous.write(&agentv1.ControlFrame{
 			ProtocolVersion: agentprotocol.ProtocolVersion,
 			Message: &agentv1.ControlFrame_GoAway{
-				GoAway: &agentv1.GoAway{Reason: "connection_replaced"},
+				GoAway: &agentv1.GoAway{
+					Reason: agentprotocol.GoAwayConnectionReplaced,
+				},
 			},
 		})
 		_ = previous.conn.CloseWithError(
@@ -512,15 +574,44 @@ func (manager *Manager) register(current *session) *session {
 func (manager *Manager) unregister(current *session) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	if manager.connections[current.identity.AgentID] == current {
-		delete(manager.connections, current.identity.AgentID)
-		manager.lastDisconnected[current.identity.AgentID] =
-			current.disconnectedStatus(time.Now().UTC())
-		manager.publishLocked(
-			current,
-			ConnectionStateOffline,
-			manager.lastDisconnected[current.identity.AgentID].LastDisconnectedAt,
-		)
+	if manager.connections[current.identity.AgentID] != current {
+		return
+	}
+	agentID := current.identity.AgentID
+	delete(manager.connections, agentID)
+	manager.rememberDisconnectLocked(
+		agentID,
+		current.disconnectedStatus(time.Now().UTC()),
+	)
+	manager.publishLocked(
+		current,
+		ConnectionStateOffline,
+		manager.lastDisconnected[agentID].LastDisconnectedAt,
+	)
+}
+
+// rememberDisconnectLocked keeps the most recent disconnect reasons available
+// for status queries while evicting the oldest entries, so that Agent churn
+// cannot grow this map without bound.
+func (manager *Manager) rememberDisconnectLocked(
+	agentID string,
+	status ConnectionStatus,
+) {
+	if _, exists := manager.lastDisconnected[agentID]; !exists {
+		manager.disconnectOrder = append(manager.disconnectOrder, agentID)
+	}
+	manager.lastDisconnected[agentID] = status
+
+	limit := manager.config.MaxRememberedDisconnects
+	if limit <= 0 {
+		limit = defaultMaxRememberedDisconnects
+	}
+	for len(manager.disconnectOrder) > limit {
+		oldest := manager.disconnectOrder[0]
+		manager.disconnectOrder = manager.disconnectOrder[1:]
+		if _, connected := manager.connections[oldest]; !connected {
+			delete(manager.lastDisconnected, oldest)
+		}
 	}
 }
 
@@ -609,10 +700,22 @@ func (manager *Manager) publishIdentityLocked(
 		State:      state,
 		OccurredAt: at,
 	}
-	for _, subscriber := range manager.subscribers {
+	for id, subscriber := range manager.subscribers {
 		select {
 		case subscriber <- event:
 		default:
+			// A subscriber that cannot keep up loses this transition. Say so,
+			// because a silently dropped event leaves a Console showing a
+			// Cluster state that never converges.
+			manager.logger.Warn(
+				"Agent connection event dropped for a slow subscriber",
+				slog.Uint64("subscriber_id", id),
+				slog.String("tenant_id", identity.TenantID),
+				slog.String("project_id", identity.ProjectID),
+				slog.String("cluster_id", identity.ClusterID),
+				slog.String("agent_id", identity.AgentID),
+				slog.String("state", state),
+			)
 		}
 	}
 }
@@ -646,11 +749,13 @@ func (manager *Manager) closeAll() {
 	manager.mutex.Unlock()
 
 	for _, connection := range connections {
-		connection.setDisconnectReason("server_shutdown")
+		connection.setDisconnectReason(agentprotocol.GoAwayServerShutdown)
 		_ = connection.write(&agentv1.ControlFrame{
 			ProtocolVersion: agentprotocol.ProtocolVersion,
 			Message: &agentv1.ControlFrame_GoAway{
-				GoAway: &agentv1.GoAway{Reason: "server_shutdown"},
+				GoAway: &agentv1.GoAway{
+					Reason: agentprotocol.GoAwayServerShutdown,
+				},
 			},
 		})
 		_ = connection.conn.CloseWithError(agentprotocol.CloseNormal, "server shutdown")
@@ -679,12 +784,12 @@ func (manager *Manager) handleRevocation(
 	manager.mutex.Unlock()
 
 	for _, current := range connections {
-		reason := "credential_revoked"
+		reason := agentprotocol.GoAwayCredentialRevoked
 		switch {
 		case event.AgentID != "" && event.CertificateSerial == "":
-			reason = "agent_revoked"
+			reason = agentprotocol.GoAwayAgentRevoked
 		case event.ClusterID != "":
-			reason = "cluster_revoked"
+			reason = agentprotocol.GoAwayClusterRevoked
 		}
 		current.setDisconnectReason(reason)
 		_ = current.write(&agentv1.ControlFrame{
@@ -761,7 +866,11 @@ func (current *session) disconnectedStatus(at time.Time) ConnectionStatus {
 func (current *session) write(frame *agentv1.ControlFrame) error {
 	current.writeMu.Lock()
 	defer current.writeMu.Unlock()
-	if err := current.stream.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	timeout := current.writeTimeout
+	if timeout <= 0 {
+		timeout = defaultSessionWriteTimeout
+	}
+	if err := current.stream.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
 		return err
 	}
 	return agentprotocol.WriteFrame(current.stream, frame)

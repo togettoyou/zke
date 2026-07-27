@@ -282,9 +282,9 @@ log_level: info
 		t.Fatal(err)
 	}
 	if cfg.AgentPKI.Mode != "managed" ||
-		cfg.AgentPKI.Directory != "/var/lib/zke/pki" ||
-		!cfg.AgentPKI.AutoGenerate ||
-		len(cfg.AgentPKI.AgentListenerDNSNames) != 1 {
+		cfg.AgentPKI.Managed.Directory != "/var/lib/zke/pki" ||
+		!cfg.AgentPKI.Managed.AutoGenerate ||
+		len(cfg.AgentPKI.Managed.ListenerSANs.DNSNames) != 1 {
 		t.Fatalf("unexpected managed Agent PKI config: %+v", cfg.AgentPKI)
 	}
 	if !cfg.AgentInstall.Enabled ||

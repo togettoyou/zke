@@ -30,7 +30,7 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	store            *store.AuthStore
+	store            Store
 	config           ServiceConfig
 	passwordParams   PasswordParams
 	passwordChecks   chan struct{}
@@ -52,7 +52,7 @@ type ChangePasswordInput struct {
 	Now             time.Time
 }
 
-func NewService(authStore *store.AuthStore, config ServiceConfig) *Service {
+func NewService(authStore Store, config ServiceConfig) *Service {
 	maxConcurrentPasswordChecks := max(1, config.MaxConcurrentPasswordChecks)
 	if config.MaxFailedLoginAttempts <= 0 {
 		config.MaxFailedLoginAttempts = 5

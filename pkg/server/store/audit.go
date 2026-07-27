@@ -5,28 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
-func (store *AuditStore) ListRecords(
-	ctx context.Context,
-	input ListAuditRecordsParams,
-) ([]AuditRecord, error) {
-	rows, err := store.pool.Query(ctx, `
-SELECT
-    id::text,
-    actor_type,
-    COALESCE(actor_user_id::text, ''),
-    COALESCE(actor_agent_id::text, ''),
-    scope_type,
-    COALESCE(tenant_id::text, ''),
-    COALESCE(project_id::text, ''),
-    COALESCE(cluster_id::text, ''),
-    action,
-    target_type,
-    COALESCE(target_id::text, ''),
-    result,
-    request_id,
-    created_at
+const auditFilterSQL = `
 FROM audit_events
 WHERE (
         $1::boolean
@@ -46,59 +29,78 @@ WHERE (
   AND ($9 = '' OR tenant_id = $9::uuid)
   AND ($10 = '' OR project_id = $10::uuid)
   AND ($11 = '' OR cluster_id = $11::uuid)
-  AND (
-      $12::timestamptz IS NULL
-      OR (created_at, id) < ($12::timestamptz, NULLIF($13, '')::uuid)
-  )
+`
+
+// ListRecords pages audit events with the same offset contract as every other
+// ZKE list. Audit events are append-only and ordered newest first, so a page
+// boundary can shift as new events arrive; the trade is accepted to keep one
+// paging model across the API.
+func (store *AuditStore) ListRecords(
+	ctx context.Context,
+	input ListAuditRecordsParams,
+) ([]AuditRecord, int, error) {
+	return queryPage(
+		ctx,
+		store.pool,
+		"SELECT count(*) "+auditFilterSQL,
+		`
+SELECT
+    id::text,
+    actor_type,
+    COALESCE(actor_user_id::text, ''),
+    COALESCE(actor_agent_id::text, ''),
+    scope_type,
+    COALESCE(tenant_id::text, ''),
+    COALESCE(project_id::text, ''),
+    COALESCE(cluster_id::text, ''),
+    action,
+    target_type,
+    COALESCE(target_id::text, ''),
+    result,
+    request_id,
+    created_at
+`+auditFilterSQL+`
 ORDER BY created_at DESC, id DESC
-LIMIT $14
+LIMIT $12 OFFSET $13
 `,
-		input.GlobalVisible,
-		input.TenantIDs,
-		input.ProjectIDs,
-		input.ActorType,
-		input.Result,
-		input.Action,
-		input.TargetType,
-		input.RequestID,
-		input.TenantID,
-		input.ProjectID,
-		input.ClusterID,
-		input.BeforeAt,
-		input.BeforeID,
-		input.Limit,
+		[]any{
+			input.GlobalVisible,
+			input.TenantIDs,
+			input.ProjectIDs,
+			input.ActorType,
+			input.Result,
+			input.Action,
+			input.TargetType,
+			input.RequestID,
+			input.TenantID,
+			input.ProjectID,
+			input.ClusterID,
+		},
+		input.Page,
+		scanAuditRecord,
+		"audit records",
 	)
-	if err != nil {
-		return nil, fmt.Errorf("list audit records: %w", err)
-	}
-	defer rows.Close()
-	var result []AuditRecord
-	for rows.Next() {
-		var item AuditRecord
-		if err := rows.Scan(
-			&item.ID,
-			&item.ActorType,
-			&item.ActorUserID,
-			&item.ActorAgentID,
-			&item.ScopeType,
-			&item.TenantID,
-			&item.ProjectID,
-			&item.ClusterID,
-			&item.Action,
-			&item.TargetType,
-			&item.TargetID,
-			&item.Result,
-			&item.RequestID,
-			&item.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan audit record: %w", err)
-		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate audit records: %w", err)
-	}
-	return result, nil
+}
+
+func scanAuditRecord(rows pgx.Rows) (AuditRecord, error) {
+	var item AuditRecord
+	err := rows.Scan(
+		&item.ID,
+		&item.ActorType,
+		&item.ActorUserID,
+		&item.ActorAgentID,
+		&item.ScopeType,
+		&item.TenantID,
+		&item.ProjectID,
+		&item.ClusterID,
+		&item.Action,
+		&item.TargetType,
+		&item.TargetID,
+		&item.Result,
+		&item.RequestID,
+		&item.CreatedAt,
+	)
+	return item, err
 }
 
 func (store *AuditStore) RecordTenantEvent(

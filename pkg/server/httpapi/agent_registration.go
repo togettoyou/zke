@@ -24,10 +24,9 @@ type AgentEnrollmentHTTPConfig struct {
 }
 
 type agentRegistrationHandler struct {
-	logger           *slog.Logger
-	service          *enrollment.Service
-	operationTimeout time.Duration
-	limiter          *sourceLimiter
+	baseHandler
+	service *enrollment.Service
+	limiter *sourceLimiter
 }
 
 type agentRegistrationRequest struct {
@@ -49,9 +48,8 @@ func newAgentRegistrationHandler(
 	config AgentEnrollmentHTTPConfig,
 ) *agentRegistrationHandler {
 	return &agentRegistrationHandler{
-		logger:           logger,
-		service:          service,
-		operationTimeout: config.OperationTimeout,
+		baseHandler: newBaseHandler(logger, nil, config.OperationTimeout),
+		service:     service,
 		limiter: newSourceLimiter(
 			config.RateLimitWindow,
 			config.MaxAttemptsPerSource,

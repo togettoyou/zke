@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
-	"github.com/togettoyou/zke/pkg/server/auth"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
@@ -29,27 +27,33 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster events are unavailable")
 		return
 	}
+	sessionToken, exists := httpmiddleware.SessionToken(c)
+	if !exists {
+		writeError(c, http.StatusUnauthorized, "unauthenticated", "authentication required")
+		return
+	}
+
+	// Resolve the caller's Cluster visibility once and filter the fan-out
+	// against it in memory. Authorizing every event with a database round trip
+	// would multiply queries by subscribers times event rate, and the fan-out
+	// already carries the Tenant and Project each event belongs to.
+	visibility, err := handler.clusterVisibility(c)
+	if err != nil {
+		handler.respondError(c, "resolve Cluster event visibility", err)
+		return
+	}
+
 	events, unsubscribe, err := handler.service.Subscribe()
 	if errors.Is(err, agentstatus.ErrEventsUnavailable) {
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster events are unavailable")
 		return
 	}
 	if err != nil {
-		handler.logger.Error(
-			"subscribe to Cluster events",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("error", err.Error()),
-		)
-		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
+		handler.respondError(c, "subscribe to Cluster events", err)
 		return
 	}
 	defer unsubscribe()
 
-	sessionCookie, err := c.Request.Cookie(httpmiddleware.SessionCookieName)
-	if err != nil || sessionCookie.Value == "" {
-		writeError(c, http.StatusUnauthorized, "unauthenticated", "authentication required")
-		return
-	}
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-store")
 	c.Header("Connection", "keep-alive")
@@ -76,36 +80,29 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 			})
 			return
 		case <-heartbeat.C:
-			if !handler.sessionStillActive(c, sessionCookie.Value) {
+			// The heartbeat doubles as the revalidation point: a revoked
+			// session or a withdrawn RoleBinding must end the stream rather
+			// than keep feeding a caller who lost access.
+			if !handler.sessionStillActive(c, sessionToken) {
+				return
+			}
+			refreshed, err := handler.clusterVisibility(c)
+			if err != nil {
+				handler.logInternal(c, "refresh Cluster event visibility", err)
+				return
+			}
+			visibility = refreshed
+			if !visibility.HasAny() {
 				return
 			}
 			if err := writeSSEComment(c.Writer, "heartbeat"); err != nil {
 				return
 			}
 		case event := <-events:
-			operationContext, cancel := context.WithTimeout(
-				c.Request.Context(),
-				handler.operationTimeout,
-			)
-			_, authorizeErr := handler.rbacService.AuthorizeCluster(
-				operationContext,
-				mustIdentity(c).User.ID,
-				rbac.PermissionClusterRead,
-				event.ClusterID,
-			)
-			if authorizeErr != nil {
-				cancel()
-				if errors.Is(authorizeErr, rbac.ErrDenied) {
-					continue
-				}
-				handler.logger.Error(
-					"authorize Cluster status event",
-					slog.String("request_id", httpmiddleware.RequestID(c)),
-					slog.String("agent_id", event.AgentID),
-					slog.String("error", authorizeErr.Error()),
-				)
-				return
+			if !visibility.AllowsProject(event.TenantID, event.ProjectID) {
+				continue
 			}
+			operationContext, cancel := handler.operationContext(c)
 			status, statusErr := handler.service.GetCluster(
 				operationContext,
 				event.ClusterID,
@@ -114,12 +111,7 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 			cancel()
 			if statusErr != nil {
 				if !errors.Is(statusErr, agentstatus.ErrNotFound) {
-					handler.logger.Error(
-						"load Cluster status event",
-						slog.String("request_id", httpmiddleware.RequestID(c)),
-						slog.String("agent_id", event.AgentID),
-						slog.String("error", statusErr.Error()),
-					)
+					handler.logInternal(c, "load Cluster status event", statusErr)
 				}
 				continue
 			}
@@ -133,6 +125,20 @@ func (handler *agentStatusHandler) events(c *gin.Context) {
 			}
 		}
 	}
+}
+
+// clusterVisibility resolves which Clusters the caller may observe.
+func (handler *agentStatusHandler) clusterVisibility(
+	c *gin.Context,
+) (rbac.Visibility, error) {
+	ctx, cancel := handler.operationContext(c)
+	defer cancel()
+	identity, _ := httpmiddleware.Identity(c)
+	return handler.rbacService.ResolveVisibility(
+		ctx,
+		identity.User.ID,
+		rbac.PermissionClusterRead,
+	)
 }
 
 func (handler *agentStatusHandler) sessionStillActive(
@@ -152,14 +158,9 @@ func (handler *agentStatusHandler) sessionStillActive(
 	if err != nil {
 		return false
 	}
-	current := mustIdentity(c)
+	current, _ := httpmiddleware.Identity(c)
 	return identity.SessionID == current.SessionID &&
 		identity.User.ID == current.User.ID
-}
-
-func mustIdentity(c *gin.Context) auth.Identity {
-	identity, _ := httpmiddleware.Identity(c)
-	return identity
 }
 
 func writeSSE(

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -434,18 +433,23 @@ WHERE id = $1
 	}
 	var firstPage struct {
 		Events     []auditEventResponse `json:"audit_events"`
-		NextCursor string               `json:"next_cursor"`
+		Pagination listMetadata         `json:"pagination"`
 	}
 	if err := decodeSuccessResponse(firstPageResponse, &firstPage); err != nil {
 		t.Fatal(err)
 	}
-	if len(firstPage.Events) != 1 || firstPage.NextCursor == "" {
+	// The total must describe every visible audit event, not the page, and a
+	// first page of one out of many must report that more remain.
+	if len(firstPage.Events) != 1 ||
+		firstPage.Pagination.Total < 2 ||
+		firstPage.Pagination.Offset != 0 ||
+		!firstPage.Pagination.HasMore {
 		t.Fatalf("unexpected first audit page: %+v", firstPage)
 	}
 	secondPageResponse := accessAPIRequest(
 		router,
 		http.MethodGet,
-		"/api/v1/audit-events?limit=1&cursor="+url.QueryEscape(firstPage.NextCursor),
+		"/api/v1/audit-events?limit=1&offset=1",
 		"",
 		adminLogin,
 	)
@@ -453,7 +457,8 @@ WHERE id = $1
 		t.Fatalf("second audit page status = %d: %s", secondPageResponse.Code, secondPageResponse.Body)
 	}
 	var secondPage struct {
-		Events []auditEventResponse `json:"audit_events"`
+		Events     []auditEventResponse `json:"audit_events"`
+		Pagination listMetadata         `json:"pagination"`
 	}
 	if err := decodeSuccessResponse(secondPageResponse, &secondPage); err != nil {
 		t.Fatal(err)
@@ -461,6 +466,34 @@ WHERE id = $1
 	if len(secondPage.Events) != 1 ||
 		secondPage.Events[0].ID == firstPage.Events[0].ID {
 		t.Fatalf("unexpected second audit page: %+v", secondPage)
+	}
+	if secondPage.Pagination.Offset != 1 ||
+		secondPage.Pagination.Total != firstPage.Pagination.Total {
+		t.Fatalf("unexpected second audit pagination: %+v", secondPage.Pagination)
+	}
+	// Paging past the end must still report the filtered total rather than
+	// collapsing it to zero, which is what a window-count would do.
+	beyondResponse := accessAPIRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/audit-events?limit=1&offset=100000",
+		"",
+		adminLogin,
+	)
+	if beyondResponse.Code != http.StatusOK {
+		t.Fatalf("beyond-end audit page status = %d: %s", beyondResponse.Code, beyondResponse.Body)
+	}
+	var beyondPage struct {
+		Events     []auditEventResponse `json:"audit_events"`
+		Pagination listMetadata         `json:"pagination"`
+	}
+	if err := decodeSuccessResponse(beyondResponse, &beyondPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(beyondPage.Events) != 0 ||
+		beyondPage.Pagination.Total != firstPage.Pagination.Total ||
+		beyondPage.Pagination.HasMore {
+		t.Fatalf("unexpected beyond-end audit page: %+v", beyondPage)
 	}
 
 	deletedBinding := accessAPIRequest(

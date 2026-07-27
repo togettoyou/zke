@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -35,7 +36,13 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	defer cancelRun()
 
 	databaseContext, cancelDatabase := context.WithTimeout(ctx, cfg.Database.ConnectTimeout)
-	database, err := store.Open(databaseContext, cfg.Database.URL)
+	database, err := store.Open(databaseContext, store.PoolConfig{
+		URL:             cfg.Database.URL,
+		MaxConnections:  cfg.Database.MaxConnections,
+		MinConnections:  cfg.Database.MinConnections,
+		MaxConnLifetime: cfg.Database.MaxConnLifetime,
+		MaxConnIdleTime: cfg.Database.MaxConnIdleTime,
+	})
 	cancelDatabase()
 	if err != nil {
 		return err
@@ -53,20 +60,21 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		slog.Int("applied_count", len(migrationResult.AppliedVersions)),
 	)
 	agentListenerCACertificateFile :=
-		cfg.AgentPKI.ExternalAgentListenerCACertificate
+		cfg.AgentPKI.External.AgentListenerCA.CertificateFile
 	if cfg.AgentPKI.Mode == "managed" {
+		managed := cfg.AgentPKI.Managed
 		managedFiles, err := pki.Ensure(
 			ctx,
 			database,
 			pki.Config{
-				Directory:                cfg.AgentPKI.Directory,
-				AutoGenerate:             cfg.AgentPKI.AutoGenerate,
-				AgentClientCAValidity:    cfg.AgentPKI.AgentClientCAValidity,
-				AgentListenerCAValidity:  cfg.AgentPKI.AgentListenerCAValidity,
-				AgentListenerValidity:    cfg.AgentPKI.AgentListenerValidity,
-				AgentListenerRenewBefore: cfg.AgentPKI.AgentListenerRenewBefore,
-				ListenerDNSNames:         cfg.AgentPKI.AgentListenerDNSNames,
-				ListenerIPAddresses:      cfg.AgentPKI.AgentListenerIPAddresses,
+				Directory:                managed.Directory,
+				AutoGenerate:             managed.AutoGenerate,
+				AgentClientCAValidity:    managed.AgentClientCAValidity,
+				AgentListenerCAValidity:  managed.AgentListenerCAValidity,
+				AgentListenerValidity:    managed.AgentListenerValidity,
+				AgentListenerRenewBefore: managed.AgentListenerRenewBefore,
+				ListenerDNSNames:         managed.ListenerSANs.DNSNames,
+				ListenerIPAddresses:      managed.ListenerSANs.IPAddresses,
 			},
 			time.Now().UTC(),
 		)
@@ -158,15 +166,19 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	agentConnectionStore := store.NewAgentConnectionStore(database)
 	agentConnectionManager, err := agentconn.New(
 		agentconn.Config{
-			Address:                 cfg.AgentListener.Address,
-			TLSCertificateFile:      cfg.AgentListener.TLS.CertificateFile,
-			TLSPrivateKeyFile:       cfg.AgentListener.TLS.PrivateKeyFile,
-			ClientCACertificateFile: cfg.AgentIdentity.CACertificateFile,
-			HandshakeTimeout:        cfg.AgentListener.HandshakeTimeout,
-			HeartbeatInterval:       cfg.AgentListener.HeartbeatInterval,
-			HeartbeatTimeout:        cfg.AgentListener.HeartbeatTimeout,
-			LastSeenWriteInterval:   cfg.AgentListener.LastSeenWriteInterval,
-			OperationTimeout:        cfg.AgentListener.OperationTimeout,
+			Address:                  cfg.AgentListener.Address,
+			TLSCertificateFile:       cfg.AgentListener.TLS.CertificateFile,
+			TLSPrivateKeyFile:        cfg.AgentListener.TLS.PrivateKeyFile,
+			ClientCACertificateFile:  cfg.AgentIdentity.CACertificateFile,
+			HandshakeTimeout:         cfg.AgentListener.HandshakeTimeout,
+			HeartbeatInterval:        cfg.AgentListener.HeartbeatInterval,
+			HeartbeatTimeout:         cfg.AgentListener.HeartbeatTimeout,
+			LastSeenWriteInterval:    cfg.AgentListener.LastSeenWriteInterval,
+			OperationTimeout:         cfg.AgentListener.OperationTimeout,
+			WriteTimeout:             cfg.AgentListener.WriteTimeout,
+			MaxConcurrentAgents:      cfg.AgentListener.MaxConcurrentAgents,
+			MaxIncomingStreams:       cfg.AgentListener.MaxIncomingStreams,
+			MaxRememberedDisconnects: cfg.AgentListener.MaxRememberedDisconnects,
 		},
 		logger,
 		agentConnectionStore,
@@ -227,12 +239,19 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			},
 		},
 	)
-	go monitorAgentCertificates(
-		runContext,
-		logger,
-		agentStatusStore,
-		cfg.CertificateMonitor,
-	)
+	// Background tasks are tracked so that the deferred database.Close below
+	// only runs once nothing can still issue queries against the pool.
+	var backgroundTasks sync.WaitGroup
+	backgroundTasks.Add(1)
+	go func() {
+		defer backgroundTasks.Done()
+		monitorAgentCertificates(
+			runContext,
+			logger,
+			agentStatusStore,
+			cfg.CertificateMonitor,
+		)
+	}()
 	httpServer := &http.Server{
 		Addr:              cfg.HTTP.Address,
 		Handler:           handler,
@@ -249,7 +268,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}
 
 	serverErrors := make(chan error, 1)
+	backgroundTasks.Add(1)
 	go func() {
+		defer backgroundTasks.Done()
 		tlsEnabled := strings.TrimSpace(cfg.HTTP.TLS.CertificateFile) != ""
 		scheme := "http"
 		if tlsEnabled {
@@ -270,35 +291,36 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		serverErrors <- httpServer.ListenAndServe()
 	}()
 	agentErrors := make(chan error, 1)
+	backgroundTasks.Add(1)
 	go func() {
+		defer backgroundTasks.Done()
 		agentErrors <- agentConnectionManager.Run(runContext)
 	}()
 
+	var runError error
 	select {
 	case err := <-serverErrors:
-		cancelRun()
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+		if !errors.Is(err, http.ErrServerClosed) {
+			runError = fmt.Errorf("serve HTTP: %w", err)
 		}
-		return fmt.Errorf("serve HTTP: %w", err)
 	case err := <-agentErrors:
-		cancelRun()
-		if shutdownErr := shutdownHTTPServer(httpServer, cfg.ShutdownTimeout); shutdownErr != nil {
-			return errors.Join(err, shutdownErr)
-		}
+		runError = err
 		if err == nil {
-			return errors.New("Agent QUIC listener stopped unexpectedly")
+			runError = errors.New("Agent QUIC listener stopped unexpectedly")
 		}
-		return err
 	case <-ctx.Done():
 		logger.Info("server shutdown requested")
-		cancelRun()
-		if err := shutdownHTTPServer(httpServer, cfg.ShutdownTimeout); err != nil {
-			return err
-		}
-		logger.Info("server stopped")
-		return nil
 	}
+
+	cancelRun()
+	shutdownError := shutdownHTTPServer(httpServer, cfg.ShutdownTimeout)
+	// Wait before returning: the deferred database.Close runs on return, and
+	// Agent heartbeats or the certificate monitor may still be mid-query.
+	backgroundTasks.Wait()
+	if runError == nil && shutdownError == nil {
+		logger.Info("server stopped")
+	}
+	return errors.Join(runError, shutdownError)
 }
 
 func agentInstallPullPolicy(value string) corev1.PullPolicy {

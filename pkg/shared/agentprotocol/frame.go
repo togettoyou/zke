@@ -26,6 +26,29 @@ const (
 	CloseInternalError       quic.ApplicationErrorCode = 5
 )
 
+// GoAway reasons are part of the Server–Agent contract: the Agent decides
+// whether to reconnect from the reason alone, so both sides must use these
+// constants instead of ad-hoc strings.
+const (
+	GoAwayServerShutdown     = "server_shutdown"
+	GoAwayConnectionReplaced = "connection_replaced"
+	GoAwayCredentialRevoked  = "credential_revoked"
+	GoAwayAgentRevoked       = "agent_revoked"
+	GoAwayClusterRevoked     = "cluster_revoked"
+)
+
+// GoAwayIsPermanent reports whether a GoAway reason means the Agent must stop
+// reconnecting with its current identity. Unknown reasons are treated as
+// transient so that a newer Server cannot accidentally strand an older Agent.
+func GoAwayIsPermanent(reason string) bool {
+	switch reason {
+	case GoAwayCredentialRevoked, GoAwayAgentRevoked, GoAwayClusterRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 var (
 	ErrFrameTooLarge = errors.New("Agent protocol frame exceeds maximum size")
 	ErrEmptyFrame    = errors.New("Agent protocol frame is empty")

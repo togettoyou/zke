@@ -12,6 +12,7 @@ const (
 	testUserID    = "00000000-0000-0000-0000-000000000001"
 	testTenantID  = "00000000-0000-0000-0000-000000000002"
 	testProjectID = "00000000-0000-0000-0000-000000000003"
+	testClusterID = "00000000-0000-0000-0000-000000000007"
 )
 
 func TestServiceRejectsUnknownPermissionBeforeStoreAccess(t *testing.T) {

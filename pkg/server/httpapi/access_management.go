@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -16,10 +14,17 @@ import (
 const maxAccessManagementRequestBytes = 8 * 1024
 
 type accessManagementHandler struct {
-	logger           *slog.Logger
-	service          *accessmanagement.Service
-	auditService     *audit.Service
-	operationTimeout time.Duration
+	baseHandler
+	service *accessmanagement.Service
+}
+
+// accessManagementErrors maps this resource's sentinels onto the API contract.
+var accessManagementErrors = []errorMapping{
+	{accessmanagement.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid access management request"},
+	{accessmanagement.ErrNotFound, http.StatusNotFound, "not_found", "access management target not found"},
+	{accessmanagement.ErrSelfDisable, http.StatusConflict, "self_disable_forbidden", "the authenticated user cannot disable itself"},
+	{accessmanagement.ErrLastAdmin, http.StatusConflict, "last_global_admin", "the last active global administrator must be preserved"},
+	{accessmanagement.ErrConflict, http.StatusConflict, "resource_conflict", "access management state conflicts with the request"},
 }
 
 type createUserRequest struct {
@@ -86,39 +91,36 @@ func newAccessManagementHandler(
 	operationTimeout time.Duration,
 ) *accessManagementHandler {
 	return &accessManagementHandler{
-		logger:           logger,
-		service:          service,
-		auditService:     auditService,
-		operationTimeout: operationTimeout,
+		baseHandler: newBaseHandler(logger, auditService, operationTimeout),
+		service:     service,
 	}
 }
 
 func (handler *accessManagementHandler) listUsers(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	query, err := parseListQuery(c)
-	if err != nil || !allowed(query.Status, "active", "locked", "disabled") ||
-		query.Role != "" || query.ScopeType != "" {
+	query, err := parseListQuery(c, listFilters{search: true, status: true})
+	if err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid user query")
 		return
 	}
 	ctx, cancel := handler.operationContext(c)
-	result, err := handler.service.ListUsers(ctx)
+	result, err := handler.service.ListUsers(ctx, accessmanagement.ListUsersInput{
+		Status: query.Status,
+		Search: query.Search,
+		Page:   query.Page,
+	})
 	cancel()
-	if handler.handleError(c, "list users", err) {
+	if handler.respondError(c, "list users", err, accessManagementErrors...) {
 		return
 	}
-	response := make([]managedUserResponse, 0, len(result))
-	for _, item := range result {
-		if query.Status != "" && item.Status != query.Status {
-			continue
-		}
-		if !containsFold(query.Search, item.Username, item.DisplayName, item.ID) {
-			continue
-		}
+	response := make([]managedUserResponse, 0, len(result.Users))
+	for _, item := range result.Users {
 		response = append(response, responseManagedUser(item))
 	}
-	response, pagination := paginate(response, query)
-	writeSuccess(c, http.StatusOK, gin.H{"users": response, "pagination": pagination})
+	writeSuccess(c, http.StatusOK, gin.H{
+		"users":      response,
+		"pagination": responsePagination(result.Page),
+	})
 }
 
 func (handler *accessManagementHandler) getUser(c *gin.Context) {
@@ -126,7 +128,7 @@ func (handler *accessManagementHandler) getUser(c *gin.Context) {
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.GetUser(ctx, c.Param("user_id"))
 	cancel()
-	if handler.handleError(c, "get user", err) {
+	if handler.respondErrorAccess(c, "get user", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseManagedUser(result))
@@ -139,7 +141,7 @@ func (handler *accessManagementHandler) createUser(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil {
-		handler.recordFailure(c, identity.User.ID, "user.create", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.create", "user")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid user request")
 		return
 	}
@@ -157,9 +159,9 @@ func (handler *accessManagementHandler) createUser(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordFailure(c, identity.User.ID, "user.create", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.create", "user")
 	}
-	if handler.handleError(c, "create user", err) {
+	if handler.respondErrorAccess(c, "create user", err) {
 		return
 	}
 	writeSuccess(c, http.StatusCreated, responseManagedUser(result))
@@ -170,7 +172,7 @@ func (handler *accessManagementHandler) updateUser(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request updateUserRequest
 	if err := decodeJSONRequest(c, &request, maxAccessManagementRequestBytes); err != nil {
-		handler.recordFailure(c, identity.User.ID, "user.update", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.update", "user")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid user request")
 		return
 	}
@@ -182,9 +184,9 @@ func (handler *accessManagementHandler) updateUser(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordFailure(c, identity.User.ID, "user.update", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.update", "user")
 	}
-	if handler.handleError(c, "update user", err) {
+	if handler.respondErrorAccess(c, "update user", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseManagedUser(result))
@@ -196,7 +198,7 @@ func (handler *accessManagementHandler) deleteUser(c *gin.Context) {
 	var request confirmRequest
 	if err := decodeJSONRequest(c, &request, maxAccessManagementRequestBytes); err != nil ||
 		!request.Confirm {
-		handler.recordFailure(c, identity.User.ID, "user.delete", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.delete", "user")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -208,9 +210,9 @@ func (handler *accessManagementHandler) deleteUser(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordFailure(c, identity.User.ID, "user.delete", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.delete", "user")
 	}
-	if handler.handleError(c, "delete user", err) {
+	if handler.respondErrorAccess(c, "delete user", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseManagedUser(result))
@@ -223,7 +225,7 @@ func (handler *accessManagementHandler) setUserStatus(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
-		handler.recordFailure(c, identity.User.ID, "user.status.update", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.status.update", "user")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -240,9 +242,9 @@ func (handler *accessManagementHandler) setUserStatus(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordFailure(c, identity.User.ID, "user.status.update", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.status.update", "user")
 	}
-	if handler.handleError(c, "update user status", err) {
+	if handler.respondErrorAccess(c, "update user status", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseManagedUser(result))
@@ -255,7 +257,7 @@ func (handler *accessManagementHandler) unlockUser(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
-		handler.recordFailure(c, identity.User.ID, "user.unlock", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.unlock", "user")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -272,9 +274,9 @@ func (handler *accessManagementHandler) unlockUser(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordFailure(c, identity.User.ID, "user.unlock", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.unlock", "user")
 	}
-	if handler.handleError(c, "unlock user", err) {
+	if handler.respondErrorAccess(c, "unlock user", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseManagedUser(result))
@@ -288,7 +290,7 @@ func (handler *accessManagementHandler) resetPassword(c *gin.Context) {
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
 		request.Password = ""
-		handler.recordFailure(c, identity.User.ID, "user.password.reset", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.password.reset", "user")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -309,9 +311,9 @@ func (handler *accessManagementHandler) resetPassword(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordFailure(c, identity.User.ID, "user.password.reset", "user")
+		handler.recordAccessFailure(c, identity.User.ID, "user.password.reset", "user")
 	}
-	if handler.handleError(c, "reset user password", err) {
+	if handler.respondErrorAccess(c, "reset user password", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseManagedUser(result))
@@ -319,42 +321,36 @@ func (handler *accessManagementHandler) resetPassword(c *gin.Context) {
 
 func (handler *accessManagementHandler) listRoleBindings(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	query, err := parseListQuery(c)
-	if err != nil || query.Status != "" ||
-		!allowed(query.Role, "admin", "viewer") ||
-		!allowed(query.ScopeType, "global", "tenant", "project") {
+	query, err := parseListQuery(c, listFilters{
+		search:    true,
+		role:      true,
+		scopeType: true,
+	})
+	if err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid role binding query")
 		return
 	}
 	ctx, cancel := handler.operationContext(c)
-	result, err := handler.service.ListRoleBindings(ctx)
+	result, err := handler.service.ListRoleBindings(
+		ctx,
+		accessmanagement.ListRoleBindingsInput{
+			Role:      query.Role,
+			ScopeType: query.ScopeType,
+			Search:    query.Search,
+			Page:      query.Page,
+		},
+	)
 	cancel()
-	if handler.handleError(c, "list role bindings", err) {
+	if handler.respondError(c, "list role bindings", err, accessManagementErrors...) {
 		return
 	}
-	response := make([]roleBindingResponse, 0, len(result))
-	for _, item := range result {
-		if query.Role != "" && item.Role != query.Role {
-			continue
-		}
-		if query.ScopeType != "" && item.ScopeType != query.ScopeType {
-			continue
-		}
-		if !containsFold(
-			query.Search,
-			item.ID,
-			item.SubjectID,
-			item.TenantID,
-			item.ProjectID,
-		) {
-			continue
-		}
+	response := make([]roleBindingResponse, 0, len(result.RoleBindings))
+	for _, item := range result.RoleBindings {
 		response = append(response, responseRoleBinding(item, false))
 	}
-	response, pagination := paginate(response, query)
 	writeSuccess(c, http.StatusOK, gin.H{
 		"role_bindings": response,
-		"pagination":    pagination,
+		"pagination":    responsePagination(result.Page),
 	})
 }
 
@@ -363,7 +359,7 @@ func (handler *accessManagementHandler) getRoleBinding(c *gin.Context) {
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.GetRoleBinding(ctx, c.Param("role_binding_id"))
 	cancel()
-	if handler.handleError(c, "get role binding", err) {
+	if handler.respondErrorAccess(c, "get role binding", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseRoleBinding(result, false))
@@ -376,7 +372,7 @@ func (handler *accessManagementHandler) createRoleBinding(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
-		handler.recordFailure(c, identity.User.ID, "role_binding.create", "role_binding")
+		handler.recordAccessFailure(c, identity.User.ID, "role_binding.create", "role_binding")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -396,9 +392,9 @@ func (handler *accessManagementHandler) createRoleBinding(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordFailure(c, identity.User.ID, "role_binding.create", "role_binding")
+		handler.recordAccessFailure(c, identity.User.ID, "role_binding.create", "role_binding")
 	}
-	if handler.handleError(c, "create role binding", err) {
+	if handler.respondErrorAccess(c, "create role binding", err) {
 		return
 	}
 	status := http.StatusCreated
@@ -415,7 +411,7 @@ func (handler *accessManagementHandler) deleteRoleBinding(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
-		handler.recordFailure(c, identity.User.ID, "role_binding.delete", "role_binding")
+		handler.recordAccessFailure(c, identity.User.ID, "role_binding.delete", "role_binding")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -432,80 +428,35 @@ func (handler *accessManagementHandler) deleteRoleBinding(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordFailure(c, identity.User.ID, "role_binding.delete", "role_binding")
+		handler.recordAccessFailure(c, identity.User.ID, "role_binding.delete", "role_binding")
 	}
-	if handler.handleError(c, "delete role binding", err) {
+	if handler.respondErrorAccess(c, "delete role binding", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, nil)
 }
 
-func (handler *accessManagementHandler) recordFailure(
+func (handler *accessManagementHandler) respondErrorAccess(
+	c *gin.Context,
+	operation string,
+	err error,
+) bool {
+	return handler.respondError(c, operation, err, accessManagementErrors...)
+}
+
+// recordAccessFailure records a refused global access management operation.
+func (handler *accessManagementHandler) recordAccessFailure(
 	c *gin.Context,
 	actorUserID string,
 	action string,
 	targetType string,
 ) {
-	if handler.auditService == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(
-		c.Request.Context(),
-		handler.operationTimeout,
-	)
-	err := handler.auditService.RecordGlobalEvent(ctx, audit.GlobalEventInput{
+	handler.recordFailure(c, failedOperation{
+		Scope:       auditScopeGlobal,
 		ActorUserID: actorUserID,
 		Action:      action,
 		TargetType:  targetType,
-		Result:      "failed",
-		RequestID:   httpmiddleware.RequestID(c),
 	})
-	cancel()
-	if err != nil {
-		handler.logger.Error(
-			"record access management failure audit",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("action", action),
-			slog.String("error", err.Error()),
-		)
-	}
-}
-
-func (handler *accessManagementHandler) operationContext(
-	c *gin.Context,
-) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(c.Request.Context(), handler.operationTimeout)
-}
-
-func (handler *accessManagementHandler) handleError(
-	c *gin.Context,
-	operation string,
-	err error,
-) bool {
-	switch {
-	case err == nil:
-		return false
-	case errors.Is(err, accessmanagement.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid access management request")
-	case errors.Is(err, accessmanagement.ErrNotFound):
-		writeError(c, http.StatusNotFound, "not_found", "access management target not found")
-	case errors.Is(err, accessmanagement.ErrSelfDisable):
-		writeError(c, http.StatusConflict, "self_disable_forbidden", "the authenticated user cannot disable itself")
-	case errors.Is(err, accessmanagement.ErrLastAdmin):
-		writeError(c, http.StatusConflict, "last_global_admin", "the last active global administrator must be preserved")
-	case errors.Is(err, accessmanagement.ErrConflict):
-		writeError(c, http.StatusConflict, "resource_conflict", "access management state conflicts with the request")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	default:
-		handler.logger.Error(
-			operation,
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("error", err.Error()),
-		)
-		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
-	}
-	return true
 }
 
 func responseManagedUser(item accessmanagement.User) managedUserResponse {

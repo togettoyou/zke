@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -10,16 +8,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
 	"github.com/togettoyou/zke/pkg/server/auth"
-	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
 type agentStatusHandler struct {
-	logger           *slog.Logger
-	service          *agentstatus.Service
-	operationTimeout time.Duration
-	authService      *auth.Service
-	rbacService      *rbac.Service
+	baseHandler
+	service     *agentstatus.Service
+	authService *auth.Service
+	rbacService *rbac.Service
+}
+
+var agentStatusErrors = []errorMapping{
+	{agentstatus.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Cluster query"},
+	{agentstatus.ErrNotFound, http.StatusNotFound, "not_found", "Cluster not found"},
 }
 
 type clusterConnectionResponse struct {
@@ -59,17 +60,17 @@ func newAgentStatusHandler(
 	operationTimeout time.Duration,
 ) *agentStatusHandler {
 	return &agentStatusHandler{
-		logger: logger, service: service, authService: authService,
-		rbacService: rbacService, operationTimeout: operationTimeout,
+		baseHandler: newBaseHandler(logger, nil, operationTimeout),
+		service:     service,
+		authService: authService,
+		rbacService: rbacService,
 	}
 }
 
 func (handler *agentStatusHandler) list(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	query, queryErr := parseListQuery(c)
-	if queryErr != nil ||
-		!allowed(query.Status, "pending", "active", "revoked") ||
-		query.Role != "" || query.ScopeType != "" {
+	query, queryErr := parseListQuery(c, listFilters{search: true, status: true})
+	if queryErr != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster query")
 		return
 	}
@@ -77,46 +78,26 @@ func (handler *agentStatusHandler) list(c *gin.Context) {
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster status is unavailable")
 		return
 	}
-	operationContext, cancel := context.WithTimeout(
-		c.Request.Context(),
-		handler.operationTimeout,
-	)
-	result, err := handler.service.ListProject(
-		operationContext,
-		c.Param("project_id"),
-		time.Now().UTC(),
-	)
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.ListProject(ctx, agentstatus.ListProjectInput{
+		ProjectID: c.Param("project_id"),
+		Status:    query.Status,
+		Search:    query.Search,
+		Now:       time.Now().UTC(),
+		Page:      query.Page,
+	})
 	cancel()
-	switch {
-	case errors.Is(err, agentstatus.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid project")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	case err != nil:
-		handler.logger.Error(
-			"list Cluster connection status",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("project_id", c.Param("project_id")),
-			slog.String("error", err.Error()),
-		)
-		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
-	default:
-		response := make([]agentStatusResponse, 0, len(result))
-		for _, item := range result {
-			if query.Status != "" && item.ClusterStatus != query.Status {
-				continue
-			}
-			if !containsFold(query.Search, item.ClusterID, item.ClusterName) {
-				continue
-			}
-			response = append(response, responseAgentStatus(item))
-		}
-		response, pagination := paginate(response, query)
-		writeSuccess(c, http.StatusOK, gin.H{
-			"clusters":   response,
-			"pagination": pagination,
-		})
+	if handler.respondError(c, "list Cluster connection status", err, agentStatusErrors...) {
+		return
 	}
+	response := make([]agentStatusResponse, 0, len(result.Agents))
+	for _, item := range result.Agents {
+		response = append(response, responseAgentStatus(item))
+	}
+	writeSuccess(c, http.StatusOK, gin.H{
+		"clusters":   response,
+		"pagination": responsePagination(result.Page),
+	})
 }
 
 func (handler *agentStatusHandler) getCluster(c *gin.Context) {
@@ -125,34 +106,17 @@ func (handler *agentStatusHandler) getCluster(c *gin.Context) {
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster status is unavailable")
 		return
 	}
-	operationContext, cancel := context.WithTimeout(
-		c.Request.Context(),
-		handler.operationTimeout,
-	)
+	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.GetCluster(
-		operationContext,
+		ctx,
 		c.Param("cluster_id"),
 		time.Now().UTC(),
 	)
 	cancel()
-	switch {
-	case errors.Is(err, agentstatus.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid cluster")
-	case errors.Is(err, agentstatus.ErrNotFound):
-		writeError(c, http.StatusNotFound, "not_found", "Cluster not found")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	case err != nil:
-		handler.logger.Error(
-			"get Cluster connection status",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("cluster_id", c.Param("cluster_id")),
-			slog.String("error", err.Error()),
-		)
-		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
-	default:
-		writeSuccess(c, http.StatusOK, responseAgentStatus(result))
+	if handler.respondError(c, "get Cluster connection status", err, agentStatusErrors...) {
+		return
 	}
+	writeSuccess(c, http.StatusOK, responseAgentStatus(result))
 }
 
 func responseAgentStatus(item agentstatus.Agent) agentStatusResponse {

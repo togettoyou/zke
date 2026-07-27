@@ -217,6 +217,9 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 - Agent 和 Server 都持续接受对方创建的新逻辑 Stream；每个独立请求或流式会话使用独立 Stream。
 - Hello 和心跳使用专用 Control Stream，与业务请求和数据分离。
 - 断线重连使用有上限的指数退避和随机抖动，避免大量 Agent 同时重连。
+- 是否停止重连由类型化错误决定，不依赖错误文案匹配：凭证或 Cluster 被撤销、协议与心跳协商被拒绝、证书链
+  校验失败为永久失败；`server_shutdown`、`connection_replaced` 以及未知的 GoAway 原因按可重试处理，使较新的
+  Server 不会意外让较旧的 Agent 永久退出。
 - 同一 Agent 同一时刻只保留一个有效主连接；新连接替换旧连接时必须记录原因。
 - Server 根据连接和最后有效心跳计算在线状态。
 - Agent 只接受目标 `cluster_id` 与自身身份一致的任务。
@@ -472,9 +475,9 @@ GET  /agent-install/v1/manifest
 ```
 
 SSE 发送 `ready`、`cluster.status`、`close` 和注释心跳。Agent 连接建立、健康变化、生命周期撤销和断开触发
-Cluster 聚合状态事件；Server 定期重新验证 Session，并在发送每个事件前重新执行 `cluster.read` 授权。事件
-不持久化，客户端
-断线重连后重新查询当前状态。
+Cluster 聚合状态事件。订阅建立时解析一次调用方的 `cluster.read` 可见性，事件按该可见性在内存中过滤；心跳
+周期同时重新验证 Session 并刷新可见性，Session 失效或权限被收回时立即结束流，避免为每条事件执行一次授权
+查询。订阅方消费不及时导致事件被丢弃时会记录结构化警告。事件不持久化，客户端断线重连后重新查询当前状态。
 
 Tenant 和 Project 创建要求 Session、CSRF、对应创建权限以及 `Idempotency-Key`。首次创建返回 `201`，相同用户、
 作用域、Key 和名称的恢复返回 `200` 与 `replayed: true`，同一 Key 换用其他名称返回
@@ -520,9 +523,16 @@ Console 与管理 API 采用同源部署模型。生产环境由同一 Origin �
 当前用户可以通过 `POST /api/v1/auth/password` 提交当前密码、新密码和显式确认来自助改密。成功后 Server
 撤销该用户的全部 Session 并清除当前认证 Cookie，用户必须使用新密码重新登录。
 
-用户、RoleBinding、Tenant、Project、Cluster 和 Enrollment 列表支持 `limit`、`offset` 和 `q`；资源列表还
-支持 `status`，RoleBinding 列表支持 `role` 与 `scope_type`。默认 `limit` 为 50，最大为 100，响应使用统一的
-`pagination` 返回 `limit`、`offset`、`total` 和 `has_more`。
+全部列表接口使用同一套 offset 分页，包括审计事件查询。用户、RoleBinding、Tenant、Project、Cluster、
+Enrollment 和 Audit Event 列表支持 `limit` 与 `offset`；除审计事件外还支持 `q`，资源列表另外支持
+`status`，RoleBinding 列表支持 `role` 与 `scope_type`。默认 `limit` 为 50，最大为 100，`offset` 上限为
+1000000；响应使用统一的 `pagination` 返回 `limit`、`offset`、`total` 和 `has_more`。
+
+分页、过滤、搜索、排序以及 Tenant/Project 可见性判定全部下推到 SQL：Server 不会为了返回一页而加载整表。
+`total` 由与该页相同的过滤条件独立计数得出，因此即使 `offset` 越过结果集末尾，`total` 仍然描述完整的过滤
+结果集。搜索为大小写不敏感的子串匹配，`%` 和 `_` 按字面量处理。
+
+接口只接受自己实现的过滤参数，传入不支持的过滤参数会返回 `400`，而不是被静默忽略。
 
 错误响应至少区分：
 
@@ -598,8 +608,13 @@ Cluster 名称可修改。重新接入保持 `cluster_id` 不变，并创建新�
 
 连接状态由 Server 内存和 `agentconn` 维护，数据库保存限频的 `last_seen_at`、生命周期与健康状态。Phase 1
 状态 API 会把当前 Server 实例的连接快照与数据库记录合并，返回 `online`/`offline`、Connection ID、连接与
-心跳时间、最近断开时间和原因。离线历史不持久化，Server 重启后丢失；多实例部署也尚未汇总其他实例的连接，
-因此 Server 多副本方案落地前仍需补充 Agent 连接所有权和跨实例任务路由设计。Phase 1 不包含 Cluster Group。
+心跳时间、最近断开时间和原因。离线历史只在内存中按 `agent_listener.max_remembered_disconnects` 保留最近若干
+条，超出后淘汰最旧记录；Server 重启后全部丢失。并发连接数由 `agent_listener.max_concurrent_agents` 限制，
+超限连接在分配任何状态之前即被拒绝，由 Agent 按自身退避重连。
+
+多实例部署尚未汇总其他实例的连接，登录与注册限流也仅在进程内生效（多副本下实际阈值等于配置值乘以副本数），
+因此 Server 多副本方案落地前仍需补充 Agent 连接所有权、跨实例任务路由和共享限流设计。Phase 1 不包含
+Cluster Group。
 
 ## 10. 仓库结构
 
@@ -617,13 +632,18 @@ Cluster 名称可修改。重新接入保持 `cluster_id` 不变，并创建新�
 │   ├── server/
 │   ├── agent/
 │   └── shared/
-│       └── logging/       # Server 与 Agent 共用的结构化日志初始化
+│       ├── logging/       # Server 与 Agent 共用的结构化日志初始化
+│       └── pagination/    # 全部列表接口共用的 offset 分页契约
 ├── deploy/
 └── docs/
 ```
 
 - `cmd` 只负责进程装配和生命周期，不承载业务逻辑。
 - Server 和 Agent 的实现分别留在 `pkg/server` 与 `pkg/agent`。
+- `pkg/server` 按领域分包，每个领域包含服务逻辑、自身的错误语义和一个声明其持久化需求的窄 `Store` 接口；
+  这些接口的唯一实现在 `pkg/server/store`。
+- HTTP 处理器共用 `pkg/server/httpapi` 的 `baseHandler`，统一操作超时、错误到状态码的映射和失败审计写入，
+  各资源只声明自己领域错误的映射表。
 - Protobuf、OpenAPI 和数据库代码生成工具必须固定版本并提供单一生成命令。
 - 生成文件是否入库在工程初始化时统一决定，生成产物通过统一命令更新。
 
@@ -726,6 +746,10 @@ CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一�
 Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除 `--config` 指定文件路径外，进程配置全部
 来自 YAML，不支持环境变量或单项命令行覆盖。部署配置与 Secret 注入计划在 Chart 实现时单独定义。
 
+Server 配置结构体与 YAML 文件一一对应：加载时先构造带默认值的配置，再把 YAML 直接解码进去，未出现的键
+保留默认值，未知键直接报错。因此新增一个配置项只需在结构体上加一个带 `yaml` 标签的字段。`agent_listener.tls`
+与 Agent 身份 CA 路径属于派生值，由 `agent_pki` 的 managed/external 模式推导，不能在配置文件中直接指定。
+
 - 仓库内配置只包含明显的本地开发值，不得复用于共享或生产环境。
 - Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；未来由 Chart 管理的
   Secret 注入。
@@ -764,6 +788,10 @@ resource_name
 使用 OpenTelemetry 作为指标和追踪的抽象边界。最低指标包括连接数、注册结果、
 心跳延迟、重连次数、API 延迟和数据库错误。
 
+HTTP 访问日志在请求结束时携带 `request_id`、方法、路径、状态码、耗时，以及已认证的 `actor_user_id` 和
+路由上出现的 `tenant_id`、`project_id`、`cluster_id`。恢复的 panic 记录 panic 值与完整调用栈；返回给客户端
+的仍然只有 `internal_error` 和 `request_id`。
+
 审计与普通运行日志分离。审计事件至少记录发起者、作用域、操作、目标、结果、时间和请求关联 ID，不记录注册
 Token、证书、Secret 或完整敏感请求正文。
 
@@ -775,7 +803,8 @@ Token、证书、Secret 或完整敏感请求正文。
 - Argon2id 参数编码、密码校验、登录限流、会话轮换、撤销、过期和 CSRF 测试；
 - 使用 `BenchmarkVerifyPasswordDefault` 在目标部署资源上验证 Argon2id 单次延迟与内存分配，再决定是否调整工作因子；
 - 注册凭证单次消费、过期、撤销和并发消费测试；
-- PostgreSQL `store` 集成测试；
+- PostgreSQL `store` 集成测试，包含分页、过滤、搜索与作用域可见性下推的 SQL 行为；
+- 每个 service 通过自身声明的窄 store 接口依赖持久化，授权、状态机与输入校验用替身在无数据库环境下单测；
 - QUIC、mTLS 和 Protobuf 协议兼容、ALPN、0-RTT 禁用、身份不匹配、重连、证书续期撤销和心跳超时测试；
 - 使用 Kubernetes fake client 验证 Agent 权限内的读取行为；
 - 验证 RBAC 清单只允许 Agent 更新固定名称的身份 Secret；

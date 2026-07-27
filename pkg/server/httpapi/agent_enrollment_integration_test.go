@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -330,8 +329,8 @@ WHERE action = 'cluster.enrollment.create'
 		)
 	}
 	var installationBody createAgentInstallationResponse
-	if err := json.Unmarshal(
-		installationResponse.Body.Bytes(),
+	if err := decodeSuccessResponse(
+		installationResponse,
 		&installationBody,
 	); err != nil {
 		t.Fatal(err)

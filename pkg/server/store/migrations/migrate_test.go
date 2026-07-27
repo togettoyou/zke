@@ -22,14 +22,23 @@ func TestEmbeddedMigrationsAreContiguous(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(available) != 1 {
-		t.Fatalf("migration count = %d, want 1", len(available))
+	if len(available) == 0 {
+		t.Fatal("no embedded migrations were found")
 	}
-	if available[0].version != 1 {
-		t.Fatalf("migration version = %d, want 1", available[0].version)
-	}
-	if available[0].checksum == "" {
-		t.Fatal("migration checksum is empty")
+	// Versions must start at one and increase by one, because a gap would let
+	// a Server start against a schema it never fully applied.
+	for index, item := range available {
+		if item.version != int64(index+1) {
+			t.Fatalf(
+				"migration %d has version %d, want %d",
+				index,
+				item.version,
+				index+1,
+			)
+		}
+		if item.checksum == "" {
+			t.Fatalf("migration %d has an empty checksum", item.version)
+		}
 	}
 }
 
@@ -161,6 +170,14 @@ func TestApplyIsIdempotent(t *testing.T) {
 		adminPool.Close()
 	})
 
+	available, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two concurrent Apply calls must together apply each embedded migration
+	// exactly once, whatever the current migration count is.
+	expectedVersion := int64(len(available))
+
 	type applyResult struct {
 		result Result
 		err    error
@@ -179,18 +196,33 @@ func TestApplyIsIdempotent(t *testing.T) {
 		if outcome.err != nil {
 			t.Fatal(outcome.err)
 		}
-		if outcome.result.CurrentVersion != 1 {
-			t.Fatalf("current version = %d, want 1", outcome.result.CurrentVersion)
+		if outcome.result.CurrentVersion != expectedVersion {
+			t.Fatalf(
+				"current version = %d, want %d",
+				outcome.result.CurrentVersion,
+				expectedVersion,
+			)
 		}
 		appliedCount += len(outcome.result.AppliedVersions)
 	}
-	if appliedCount != 1 {
-		t.Fatalf("concurrent apply changed %d versions, want 1", appliedCount)
+	if appliedCount != len(available) {
+		t.Fatalf(
+			"concurrent apply changed %d versions, want %d",
+			appliedCount,
+			len(available),
+		)
 	}
 
 	idempotentResult, err := Apply(ctx, pool)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if idempotentResult.CurrentVersion != expectedVersion {
+		t.Fatalf(
+			"current version = %d, want %d",
+			idempotentResult.CurrentVersion,
+			expectedVersion,
+		)
 	}
 	if len(idempotentResult.AppliedVersions) != 0 {
 		t.Fatalf("idempotent apply changed versions: %v", idempotentResult.AppliedVersions)

@@ -11,33 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// userFilterSQL matches the Console's case-insensitive substring search over
+// the identifiers an operator can see. position() is used rather than LIKE so
+// that a search term containing % or _ needs no escaping.
+const userFilterSQL = `
+FROM users
+WHERE ($1 = '' OR status = $1)
+  AND (
+    $2 = ''
+    OR position($2 IN username_normalized) > 0
+    OR position($2 IN lower(display_name)) > 0
+    OR position($2 IN id::text) > 0
+  )
+`
+
 func (store *AccessManagementStore) ListUsers(
 	ctx context.Context,
-) ([]ManagedUser, error) {
-	rows, err := store.pool.Query(ctx, `
+	params ListManagedUsersParams,
+) ([]ManagedUser, int, error) {
+	return queryPage(
+		ctx,
+		store.pool,
+		"SELECT count(*) "+userFilterSQL,
+		`
 SELECT
     id::text, username_normalized, display_name, status,
     failed_login_count, locked_at, lock_expires_at,
     password_changed_at, created_at, updated_at
-FROM users
+`+userFilterSQL+`
 ORDER BY username_normalized, id
-`)
-	if err != nil {
-		return nil, fmt.Errorf("list managed users: %w", err)
-	}
-	defer rows.Close()
-	var result []ManagedUser
-	for rows.Next() {
-		item, err := scanManagedUser(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan managed user: %w", err)
-		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate managed users: %w", err)
-	}
-	return result, nil
+LIMIT $3 OFFSET $4
+`,
+		[]any{params.Status, params.Search},
+		params.Page,
+		func(rows pgx.Rows) (ManagedUser, error) {
+			return scanManagedUser(rows)
+		},
+		"managed users",
+	)
 }
 
 func (store *AccessManagementStore) GetUser(
@@ -362,33 +373,43 @@ RETURNING
 	return item, nil
 }
 
+const roleBindingFilterSQL = `
+FROM role_bindings
+WHERE ($1 = '' OR role = $1)
+  AND ($2 = '' OR scope_type = $2)
+  AND (
+    $3 = ''
+    OR position($3 IN id::text) > 0
+    OR position($3 IN subject_id::text) > 0
+    OR position($3 IN COALESCE(tenant_id::text, '')) > 0
+    OR position($3 IN COALESCE(project_id::text, '')) > 0
+  )
+`
+
 func (store *AccessManagementStore) ListRoleBindings(
 	ctx context.Context,
-) ([]ManagedRoleBinding, error) {
-	rows, err := store.pool.Query(ctx, `
+	params ListManagedRoleBindingsParams,
+) ([]ManagedRoleBinding, int, error) {
+	return queryPage(
+		ctx,
+		store.pool,
+		"SELECT count(*) "+roleBindingFilterSQL,
+		`
 SELECT
     id::text, subject_id::text, role, scope_type,
     COALESCE(tenant_id::text, ''), COALESCE(project_id::text, ''),
     created_at
-FROM role_bindings
+`+roleBindingFilterSQL+`
 ORDER BY created_at, id
-`)
-	if err != nil {
-		return nil, fmt.Errorf("list managed role bindings: %w", err)
-	}
-	defer rows.Close()
-	var result []ManagedRoleBinding
-	for rows.Next() {
-		item, err := scanManagedRoleBinding(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan managed role binding: %w", err)
-		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate managed role bindings: %w", err)
-	}
-	return result, nil
+LIMIT $4 OFFSET $5
+`,
+		[]any{params.Role, params.ScopeType, params.Search},
+		params.Page,
+		func(rows pgx.Rows) (ManagedRoleBinding, error) {
+			return scanManagedRoleBinding(rows)
+		},
+		"managed role bindings",
+	)
 }
 
 func (store *AccessManagementStore) GetRoleBinding(

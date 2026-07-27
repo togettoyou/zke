@@ -9,6 +9,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
@@ -23,7 +24,7 @@ var (
 )
 
 type Service struct {
-	store         *store.ResourceManagementStore
+	store         Store
 	authorization *rbac.Service
 }
 
@@ -53,6 +54,35 @@ type Cluster struct {
 	LastSeenAt *time.Time
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
+}
+
+// ListTenantsInput selects one page of visible tenants.
+type ListTenantsInput struct {
+	UserID string
+	Status string
+	Search string
+	Page   pagination.Request
+}
+
+// TenantPage is one page of tenants plus its position in the visible set.
+type TenantPage struct {
+	Tenants []Tenant
+	Page    pagination.Result
+}
+
+// ListProjectsInput selects one page of visible projects inside a tenant.
+type ListProjectsInput struct {
+	UserID   string
+	TenantID string
+	Status   string
+	Search   string
+	Page     pagination.Request
+}
+
+// ProjectPage is one page of projects plus its position.
+type ProjectPage struct {
+	Projects []Project
+	Page     pagination.Result
 }
 
 type CreateTenantInput struct {
@@ -135,7 +165,7 @@ type DeleteClusterInput struct {
 }
 
 func NewService(
-	resourceStore *store.ResourceManagementStore,
+	resourceStore Store,
 	authorization *rbac.Service,
 ) *Service {
 	return &Service{
@@ -144,33 +174,43 @@ func NewService(
 	}
 }
 
+// ListTenants returns one page of the tenants the caller may read. The
+// resolved RBAC visibility is pushed into the query, so the total reflects
+// exactly what this user is allowed to see.
 func (service *Service) ListTenants(
 	ctx context.Context,
-	userID string,
-) ([]Tenant, error) {
-	if !validation.IsUUID(userID) {
-		return nil, ErrInvalidInput
+	input ListTenantsInput,
+) (TenantPage, error) {
+	if !validation.IsUUID(input.UserID) ||
+		input.Page.Validate() != nil ||
+		!allowedValue(input.Status, "active", "suspended") {
+		return TenantPage{}, ErrInvalidInput
 	}
 	visibility, err := service.authorization.ResolveVisibility(
 		ctx,
-		userID,
+		input.UserID,
 		rbac.PermissionTenantRead,
 	)
 	if err != nil {
-		return nil, err
+		return TenantPage{}, err
 	}
-	stored, err := service.store.ListTenants(ctx)
+	stored, total, err := service.store.ListTenants(ctx, store.ListTenantsParams{
+		Visibility: scopeVisibility(visibility),
+		Status:     input.Status,
+		Search:     normalizeSearch(input.Search),
+		Page:       input.Page,
+	})
 	if err != nil {
-		return nil, err
+		return TenantPage{}, err
 	}
 	result := make([]Tenant, 0, len(stored))
 	for _, item := range stored {
-		if !visibility.AllowsTenant(item.ID) {
-			continue
-		}
 		result = append(result, tenantFromStore(item))
 	}
-	return result, nil
+	return TenantPage{
+		Tenants: result,
+		Page:    pagination.NewResult(input.Page, total, len(result)),
+	}, nil
 }
 
 func (service *Service) CreateTenant(
@@ -276,34 +316,47 @@ func (service *Service) DeleteTenant(
 	return mapTenantMutation(item, err)
 }
 
+// ListProjects returns one page of the projects the caller may read inside a
+// tenant.
 func (service *Service) ListProjects(
 	ctx context.Context,
-	userID string,
-	tenantID string,
-) ([]Project, error) {
-	if !validation.IsUUID(userID) || !validation.IsUUID(tenantID) {
-		return nil, ErrInvalidInput
+	input ListProjectsInput,
+) (ProjectPage, error) {
+	if !validation.IsUUID(input.UserID) ||
+		!validation.IsUUID(input.TenantID) ||
+		input.Page.Validate() != nil ||
+		!allowedValue(input.Status, "active", "suspended") {
+		return ProjectPage{}, ErrInvalidInput
 	}
 	visibility, err := service.authorization.ResolveVisibility(
 		ctx,
-		userID,
+		input.UserID,
 		rbac.PermissionProjectRead,
 	)
 	if err != nil {
-		return nil, err
+		return ProjectPage{}, err
 	}
-	stored, err := service.store.ListTenantProjects(ctx, tenantID)
+	stored, total, err := service.store.ListTenantProjects(
+		ctx,
+		store.ListTenantProjectsParams{
+			TenantID:   input.TenantID,
+			Visibility: scopeVisibility(visibility),
+			Status:     input.Status,
+			Search:     normalizeSearch(input.Search),
+			Page:       input.Page,
+		},
+	)
 	if err != nil {
-		return nil, err
+		return ProjectPage{}, err
 	}
 	result := make([]Project, 0, len(stored))
 	for _, item := range stored {
-		if !visibility.AllowsProject(item.TenantID, item.ID) {
-			continue
-		}
 		result = append(result, projectFromStore(item))
 	}
-	return result, nil
+	return ProjectPage{
+		Projects: result,
+		Page:     pagination.NewResult(input.Page, total, len(result)),
+	}, nil
 }
 
 func (service *Service) CreateProject(
@@ -405,41 +458,6 @@ func (service *Service) DeleteProject(
 	return mapProjectMutation(item, err)
 }
 
-func (service *Service) ListClusters(
-	ctx context.Context,
-	projectID string,
-) ([]Cluster, error) {
-	if !validation.IsUUID(projectID) {
-		return nil, ErrInvalidInput
-	}
-	stored, err := service.store.ListProjectClusters(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]Cluster, 0, len(stored))
-	for _, item := range stored {
-		result = append(result, clusterFromStore(item))
-	}
-	return result, nil
-}
-
-func (service *Service) GetCluster(
-	ctx context.Context,
-	clusterID string,
-) (Cluster, error) {
-	if !validation.IsUUID(clusterID) {
-		return Cluster{}, ErrInvalidInput
-	}
-	item, err := service.store.GetCluster(ctx, clusterID)
-	if errors.Is(err, store.ErrClusterNotFound) {
-		return Cluster{}, ErrNotFound
-	}
-	if err != nil {
-		return Cluster{}, err
-	}
-	return clusterFromStore(item), nil
-}
-
 func (service *Service) UpdateCluster(
 	ctx context.Context,
 	input UpdateClusterInput,
@@ -474,6 +492,33 @@ func (service *Service) DeleteCluster(
 		Now:         input.Now,
 	})
 	return mapClusterMutation(item, err)
+}
+
+// scopeVisibility translates a resolved RBAC visibility into the row filter
+// the store applies, keeping the authorization decision in one place.
+func scopeVisibility(visibility rbac.Visibility) store.ScopeVisibility {
+	return store.ScopeVisibility{
+		Global:           visibility.IsGlobal(),
+		TenantIDs:        visibility.TenantIDs(),
+		ProjectIDs:       visibility.ProjectIDs(),
+		ProjectTenantIDs: visibility.ProjectTenantIDs(),
+	}
+}
+
+func allowedValue(value string, candidates ...string) bool {
+	if value == "" {
+		return true
+	}
+	for _, candidate := range candidates {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeSearch(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func validName(value string) bool {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 )
 
 var (
@@ -18,6 +19,23 @@ var (
 
 type AccessManagementStore struct {
 	pool *pgxpool.Pool
+}
+
+// ListManagedUsersParams filters and pages the managed user list. Search must
+// already be lowercased by the caller so the comparison stays index-friendly
+// and matches the Console's case-insensitive behaviour.
+type ListManagedUsersParams struct {
+	Status string
+	Search string
+	Page   pagination.Request
+}
+
+// ListManagedRoleBindingsParams filters and pages the role binding list.
+type ListManagedRoleBindingsParams struct {
+	Role      string
+	ScopeType string
+	Search    string
+	Page      pagination.Request
 }
 
 type ManagedUser struct {

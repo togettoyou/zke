@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -16,10 +15,16 @@ import (
 const maxCreateResourceRequestBytes = 16 * 1024
 
 type resourceManagementHandler struct {
-	logger           *slog.Logger
-	service          *resourcemanagement.Service
-	auditService     *audit.Service
-	operationTimeout time.Duration
+	baseHandler
+	service *resourcemanagement.Service
+}
+
+var resourceManagementErrors = []errorMapping{
+	{resourcemanagement.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid resource request"},
+	{resourcemanagement.ErrDenied, http.StatusForbidden, "forbidden", "permission denied"},
+	{resourcemanagement.ErrNotFound, http.StatusNotFound, "not_found", "resource not found"},
+	{resourcemanagement.ErrStateConflict, http.StatusConflict, "resource_state_conflict", "resource state conflicts with the request"},
+	{resourcemanagement.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used"},
 }
 
 type createResourceRequest struct {
@@ -73,49 +78,38 @@ func newResourceManagementHandler(
 	operationTimeout time.Duration,
 ) *resourceManagementHandler {
 	return &resourceManagementHandler{
-		logger:           logger,
-		service:          service,
-		auditService:     auditService,
-		operationTimeout: operationTimeout,
+		baseHandler: newBaseHandler(logger, auditService, operationTimeout),
+		service:     service,
 	}
 }
 
 func (handler *resourceManagementHandler) listTenants(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	query, queryErr := parseListQuery(c)
-	if queryErr != nil || !allowed(query.Status, "active", "suspended") ||
-		query.Role != "" || query.ScopeType != "" {
+	query, queryErr := parseListQuery(c, listFilters{search: true, status: true})
+	if queryErr != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid tenant query")
 		return
 	}
 	identity, _ := httpmiddleware.Identity(c)
 	ctx, cancel := handler.operationContext(c)
-	result, err := handler.service.ListTenants(ctx, identity.User.ID)
+	result, err := handler.service.ListTenants(ctx, resourcemanagement.ListTenantsInput{
+		UserID: identity.User.ID,
+		Status: query.Status,
+		Search: query.Search,
+		Page:   query.Page,
+	})
 	cancel()
-	switch {
-	case errors.Is(err, resourcemanagement.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid tenant query")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	case err != nil:
-		handler.internalError(c, "list visible tenants", err)
-	default:
-		response := make([]tenantResponse, 0, len(result))
-		for _, item := range result {
-			if query.Status != "" && item.Status != query.Status {
-				continue
-			}
-			if !containsFold(query.Search, item.ID, item.Name) {
-				continue
-			}
-			response = append(response, responseTenant(item, false))
-		}
-		response, pagination := paginate(response, query)
-		writeSuccess(c, http.StatusOK, gin.H{
-			"tenants":    response,
-			"pagination": pagination,
-		})
+	if handler.respondError(c, "list visible tenants", err, resourceManagementErrors...) {
+		return
 	}
+	response := make([]tenantResponse, 0, len(result.Tenants))
+	for _, item := range result.Tenants {
+		response = append(response, responseTenant(item, false))
+	}
+	writeSuccess(c, http.StatusOK, gin.H{
+		"tenants":    response,
+		"pagination": responsePagination(result.Page),
+	})
 }
 
 func (handler *resourceManagementHandler) createTenant(c *gin.Context) {
@@ -139,28 +133,17 @@ func (handler *resourceManagementHandler) createTenant(c *gin.Context) {
 		},
 	)
 	cancel()
-	switch {
-	case errors.Is(err, resourcemanagement.ErrInvalidInput):
+	if err != nil && !errors.Is(err, resourcemanagement.ErrIdempotencyConflict) {
 		handler.recordTenantFailure(c, identity.User.ID)
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid tenant request")
-	case errors.Is(err, resourcemanagement.ErrIdempotencyConflict):
-		writeError(c, http.StatusConflict, "idempotency_conflict", "idempotency key was already used")
-	case errors.Is(err, resourcemanagement.ErrDenied):
-		handler.recordTenantFailure(c, identity.User.ID)
-		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
-	case errors.Is(err, context.DeadlineExceeded):
-		handler.recordTenantFailure(c, identity.User.ID)
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	case err != nil:
-		handler.recordTenantFailure(c, identity.User.ID)
-		handler.internalError(c, "create tenant", err)
-	default:
-		status := http.StatusCreated
-		if result.Replayed {
-			status = http.StatusOK
-		}
-		writeSuccess(c, status, responseTenant(result.Tenant, result.Replayed))
 	}
+	if handler.respondError(c, "create tenant", err, resourceManagementErrors...) {
+		return
+	}
+	status := http.StatusCreated
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	writeSuccess(c, status, responseTenant(result.Tenant, result.Replayed))
 }
 
 func (handler *resourceManagementHandler) getTenant(c *gin.Context) {
@@ -182,7 +165,7 @@ func (handler *resourceManagementHandler) updateTenant(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request updateResourceRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "tenant.update", "tenant", "global")
+		handler.recordResourceFailure(c, identity.User.ID, "tenant.update", "tenant", auditScopeGlobal)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid tenant request")
 		return
 	}
@@ -194,7 +177,7 @@ func (handler *resourceManagementHandler) updateTenant(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "tenant.update", "tenant", "global")
+		handler.recordResourceFailure(c, identity.User.ID, "tenant.update", "tenant", auditScopeGlobal)
 	}
 	if handler.handleResourceError(c, "update tenant", err) {
 		return
@@ -208,7 +191,7 @@ func (handler *resourceManagementHandler) deleteTenant(c *gin.Context) {
 	var request confirmRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil ||
 		!request.Confirm {
-		handler.recordResourceFailure(c, identity.User.ID, "tenant.delete", "tenant", "global")
+		handler.recordResourceFailure(c, identity.User.ID, "tenant.delete", "tenant", auditScopeGlobal)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -220,7 +203,7 @@ func (handler *resourceManagementHandler) deleteTenant(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "tenant.delete", "tenant", "global")
+		handler.recordResourceFailure(c, identity.User.ID, "tenant.delete", "tenant", auditScopeGlobal)
 	}
 	if handler.handleResourceError(c, "delete tenant", err) {
 		return
@@ -230,44 +213,32 @@ func (handler *resourceManagementHandler) deleteTenant(c *gin.Context) {
 
 func (handler *resourceManagementHandler) listProjects(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	query, queryErr := parseListQuery(c)
-	if queryErr != nil || !allowed(query.Status, "active", "suspended") ||
-		query.Role != "" || query.ScopeType != "" {
+	query, queryErr := parseListQuery(c, listFilters{search: true, status: true})
+	if queryErr != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid project query")
 		return
 	}
 	identity, _ := httpmiddleware.Identity(c)
 	ctx, cancel := handler.operationContext(c)
-	result, err := handler.service.ListProjects(
-		ctx,
-		identity.User.ID,
-		c.Param("tenant_id"),
-	)
+	result, err := handler.service.ListProjects(ctx, resourcemanagement.ListProjectsInput{
+		UserID:   identity.User.ID,
+		TenantID: c.Param("tenant_id"),
+		Status:   query.Status,
+		Search:   query.Search,
+		Page:     query.Page,
+	})
 	cancel()
-	switch {
-	case errors.Is(err, resourcemanagement.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid tenant")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	case err != nil:
-		handler.internalError(c, "list visible projects", err)
-	default:
-		response := make([]projectResponse, 0, len(result))
-		for _, item := range result {
-			if query.Status != "" && item.Status != query.Status {
-				continue
-			}
-			if !containsFold(query.Search, item.ID, item.Name) {
-				continue
-			}
-			response = append(response, responseProject(item, false))
-		}
-		response, pagination := paginate(response, query)
-		writeSuccess(c, http.StatusOK, gin.H{
-			"projects":   response,
-			"pagination": pagination,
-		})
+	if handler.respondError(c, "list visible projects", err, resourceManagementErrors...) {
+		return
 	}
+	response := make([]projectResponse, 0, len(result.Projects))
+	for _, item := range result.Projects {
+		response = append(response, responseProject(item, false))
+	}
+	writeSuccess(c, http.StatusOK, gin.H{
+		"projects":   response,
+		"pagination": responsePagination(result.Page),
+	})
 }
 
 func (handler *resourceManagementHandler) createProject(c *gin.Context) {
@@ -292,34 +263,17 @@ func (handler *resourceManagementHandler) createProject(c *gin.Context) {
 		},
 	)
 	cancel()
-	switch {
-	case errors.Is(err, resourcemanagement.ErrInvalidInput):
+	if err != nil && !errors.Is(err, resourcemanagement.ErrIdempotencyConflict) {
 		handler.recordProjectFailure(c, identity.User.ID)
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid project request")
-	case errors.Is(err, resourcemanagement.ErrNotFound):
-		handler.recordProjectFailure(c, identity.User.ID)
-		writeError(c, http.StatusNotFound, "not_found", "tenant not found")
-	case errors.Is(err, resourcemanagement.ErrStateConflict):
-		handler.recordProjectFailure(c, identity.User.ID)
-		writeError(c, http.StatusConflict, "resource_state_conflict", "tenant is not active")
-	case errors.Is(err, resourcemanagement.ErrIdempotencyConflict):
-		writeError(c, http.StatusConflict, "idempotency_conflict", "idempotency key was already used")
-	case errors.Is(err, resourcemanagement.ErrDenied):
-		handler.recordProjectFailure(c, identity.User.ID)
-		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
-	case errors.Is(err, context.DeadlineExceeded):
-		handler.recordProjectFailure(c, identity.User.ID)
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	case err != nil:
-		handler.recordProjectFailure(c, identity.User.ID)
-		handler.internalError(c, "create project", err)
-	default:
-		status := http.StatusCreated
-		if result.Replayed {
-			status = http.StatusOK
-		}
-		writeSuccess(c, status, responseProject(result.Project, result.Replayed))
 	}
+	if handler.respondError(c, "create project", err, resourceManagementErrors...) {
+		return
+	}
+	status := http.StatusCreated
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	writeSuccess(c, status, responseProject(result.Project, result.Replayed))
 }
 
 func (handler *resourceManagementHandler) getProject(c *gin.Context) {
@@ -338,7 +292,7 @@ func (handler *resourceManagementHandler) updateProject(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request updateResourceRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "project.update", "project", "project")
+		handler.recordResourceFailure(c, identity.User.ID, "project.update", "project", auditScopeProject)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid project request")
 		return
 	}
@@ -350,7 +304,7 @@ func (handler *resourceManagementHandler) updateProject(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "project.update", "project", "project")
+		handler.recordResourceFailure(c, identity.User.ID, "project.update", "project", auditScopeProject)
 	}
 	if handler.handleResourceError(c, "update project", err) {
 		return
@@ -364,7 +318,7 @@ func (handler *resourceManagementHandler) deleteProject(c *gin.Context) {
 	var request confirmRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil ||
 		!request.Confirm {
-		handler.recordResourceFailure(c, identity.User.ID, "project.delete", "project", "project")
+		handler.recordResourceFailure(c, identity.User.ID, "project.delete", "project", auditScopeProject)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -376,7 +330,7 @@ func (handler *resourceManagementHandler) deleteProject(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "project.delete", "project", "project")
+		handler.recordResourceFailure(c, identity.User.ID, "project.delete", "project", auditScopeProject)
 	}
 	if handler.handleResourceError(c, "delete project", err) {
 		return
@@ -384,52 +338,12 @@ func (handler *resourceManagementHandler) deleteProject(c *gin.Context) {
 	writeSuccess(c, http.StatusOK, responseProject(result, false))
 }
 
-func (handler *resourceManagementHandler) listClusters(c *gin.Context) {
-	c.Header("Cache-Control", "no-store")
-	ctx, cancel := handler.operationContext(c)
-	result, err := handler.service.ListClusters(ctx, c.Param("project_id"))
-	cancel()
-	switch {
-	case errors.Is(err, resourcemanagement.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid project")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	case err != nil:
-		handler.internalError(c, "list project clusters", err)
-	default:
-		response := make([]clusterResponse, 0, len(result))
-		for _, item := range result {
-			response = append(response, responseCluster(item))
-		}
-		writeSuccess(c, http.StatusOK, gin.H{"clusters": response})
-	}
-}
-
-func (handler *resourceManagementHandler) getCluster(c *gin.Context) {
-	c.Header("Cache-Control", "no-store")
-	ctx, cancel := handler.operationContext(c)
-	result, err := handler.service.GetCluster(ctx, c.Param("cluster_id"))
-	cancel()
-	switch {
-	case errors.Is(err, resourcemanagement.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid cluster")
-	case errors.Is(err, resourcemanagement.ErrNotFound):
-		writeError(c, http.StatusNotFound, "not_found", "cluster not found")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	case err != nil:
-		handler.internalError(c, "get cluster", err)
-	default:
-		writeSuccess(c, http.StatusOK, responseCluster(result))
-	}
-}
-
 func (handler *resourceManagementHandler) updateCluster(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)
 	var request updateClusterRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "cluster.update", "cluster", "cluster")
+		handler.recordResourceFailure(c, identity.User.ID, "cluster.update", "cluster", auditScopeCluster)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid cluster request")
 		return
 	}
@@ -441,7 +355,7 @@ func (handler *resourceManagementHandler) updateCluster(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "cluster.update", "cluster", "cluster")
+		handler.recordResourceFailure(c, identity.User.ID, "cluster.update", "cluster", auditScopeCluster)
 	}
 	if handler.handleResourceError(c, "update cluster", err) {
 		return
@@ -455,7 +369,7 @@ func (handler *resourceManagementHandler) deleteCluster(c *gin.Context) {
 	var request confirmRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil ||
 		!request.Confirm {
-		handler.recordResourceFailure(c, identity.User.ID, "cluster.delete", "cluster", "cluster")
+		handler.recordResourceFailure(c, identity.User.ID, "cluster.delete", "cluster", auditScopeCluster)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -467,7 +381,7 @@ func (handler *resourceManagementHandler) deleteCluster(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "cluster.delete", "cluster", "cluster")
+		handler.recordResourceFailure(c, identity.User.ID, "cluster.delete", "cluster", auditScopeCluster)
 	}
 	if handler.handleResourceError(c, "delete cluster", err) {
 		return
@@ -479,71 +393,24 @@ func (handler *resourceManagementHandler) recordTenantFailure(
 	c *gin.Context,
 	userID string,
 ) {
-	if handler.auditService == nil {
-		return
-	}
-	ctx, cancel := handler.operationContext(c)
-	defer cancel()
-	if err := handler.auditService.RecordGlobalEvent(ctx, audit.GlobalEventInput{
+	handler.recordFailure(c, failedOperation{
+		Scope:       auditScopeGlobal,
 		ActorUserID: userID,
 		Action:      audit.ActionTenantCreate,
 		TargetType:  "tenant",
-		Result:      "failed",
-		RequestID:   httpmiddleware.RequestID(c),
-	}); err != nil {
-		handler.logger.Error(
-			"record tenant creation failure audit",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("user_id", userID),
-			slog.String("error", err.Error()),
-		)
-	}
+	})
 }
 
 func (handler *resourceManagementHandler) recordProjectFailure(
 	c *gin.Context,
 	userID string,
 ) {
-	if handler.auditService == nil {
-		return
-	}
-	ctx, cancel := handler.operationContext(c)
-	defer cancel()
-	if err := handler.auditService.RecordTenantEvent(ctx, audit.TenantEventInput{
+	handler.recordFailure(c, failedOperation{
+		Scope:       auditScopeTenant,
 		ActorUserID: userID,
-		TenantID:    c.Param("tenant_id"),
 		Action:      audit.ActionProjectCreate,
 		TargetType:  "project",
-		Result:      "failed",
-		RequestID:   httpmiddleware.RequestID(c),
-	}); err != nil {
-		handler.logger.Error(
-			"record project creation failure audit",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("user_id", userID),
-			slog.String("tenant_id", c.Param("tenant_id")),
-			slog.String("error", err.Error()),
-		)
-	}
-}
-
-func (handler *resourceManagementHandler) operationContext(
-	c *gin.Context,
-) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(c.Request.Context(), handler.operationTimeout)
-}
-
-func (handler *resourceManagementHandler) internalError(
-	c *gin.Context,
-	operation string,
-	err error,
-) {
-	handler.logger.Error(
-		operation,
-		slog.String("request_id", httpmiddleware.RequestID(c)),
-		slog.String("error", err.Error()),
-	)
-	writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
+	})
 }
 
 func (handler *resourceManagementHandler) handleResourceError(
@@ -551,23 +418,7 @@ func (handler *resourceManagementHandler) handleResourceError(
 	operation string,
 	err error,
 ) bool {
-	switch {
-	case err == nil:
-		return false
-	case errors.Is(err, resourcemanagement.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid resource request")
-	case errors.Is(err, resourcemanagement.ErrDenied):
-		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
-	case errors.Is(err, resourcemanagement.ErrNotFound):
-		writeError(c, http.StatusNotFound, "not_found", "resource not found")
-	case errors.Is(err, resourcemanagement.ErrStateConflict):
-		writeError(c, http.StatusConflict, "resource_state_conflict", "resource state conflicts with the request")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	default:
-		handler.internalError(c, operation, err)
-	}
-	return true
+	return handler.respondError(c, operation, err, resourceManagementErrors...)
 }
 
 func (handler *resourceManagementHandler) recordResourceFailure(
@@ -575,39 +426,14 @@ func (handler *resourceManagementHandler) recordResourceFailure(
 	userID string,
 	action string,
 	targetType string,
-	scopeType string,
+	scope auditScope,
 ) {
-	if handler.auditService == nil {
-		return
-	}
-	ctx, cancel := handler.operationContext(c)
-	defer cancel()
-	var err error
-	switch scopeType {
-	case "project":
-		err = handler.auditService.RecordProjectEvent(ctx, audit.ProjectEventInput{
-			ActorUserID: userID, ProjectID: c.Param("project_id"), Action: action,
-			Result: "failed", RequestID: httpmiddleware.RequestID(c),
-		})
-	case "cluster":
-		err = handler.auditService.RecordClusterEvent(ctx, audit.ClusterEventInput{
-			ActorUserID: userID, ClusterID: c.Param("cluster_id"), Action: action,
-			Result: "failed", RequestID: httpmiddleware.RequestID(c),
-		})
-	default:
-		err = handler.auditService.RecordGlobalEvent(ctx, audit.GlobalEventInput{
-			ActorUserID: userID, Action: action, TargetType: targetType,
-			Result: "failed", RequestID: httpmiddleware.RequestID(c),
-		})
-	}
-	if err != nil {
-		handler.logger.Error(
-			"record resource mutation failure audit",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("action", action),
-			slog.String("error", err.Error()),
-		)
-	}
+	handler.recordFailure(c, failedOperation{
+		Scope:       scope,
+		ActorUserID: userID,
+		Action:      action,
+		TargetType:  targetType,
+	})
 }
 
 func responseTenant(

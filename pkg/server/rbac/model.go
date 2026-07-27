@@ -104,6 +104,22 @@ func (visibility Visibility) ProjectIDs() []string {
 	return result
 }
 
+// ProjectTenantIDs reports the tenants that own the individually granted
+// projects. A project-scoped user must still be able to see the tenant holding
+// their project, otherwise they could never navigate to it.
+func (visibility Visibility) ProjectTenantIDs() []string {
+	seen := make(map[string]struct{}, len(visibility.projectOnly))
+	result := make([]string, 0, len(visibility.projectOnly))
+	for _, tenantID := range visibility.projectOnly {
+		if _, exists := seen[tenantID]; exists {
+			continue
+		}
+		seen[tenantID] = struct{}{}
+		result = append(result, tenantID)
+	}
+	return result
+}
+
 func globalScope() scope {
 	return scope{Type: scopeGlobal}
 }

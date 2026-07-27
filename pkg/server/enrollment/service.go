@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
 const maxClusterNameBytes = 253
 
 type Service struct {
-	store             *store.EnrollmentStore
+	store             Store
 	tokenTTL          time.Duration
 	certificateSigner *CertificateSigner
 }
@@ -23,7 +24,7 @@ type ServiceConfig struct {
 	CertificateSigner *CertificateSigner
 }
 
-func NewService(enrollmentStore *store.EnrollmentStore, config ServiceConfig) *Service {
+func NewService(enrollmentStore Store, config ServiceConfig) *Service {
 	return &Service{
 		store:             enrollmentStore,
 		tokenTTL:          config.TokenTTL,
@@ -112,23 +113,67 @@ func (service *Service) CreateReenrollment(
 	return result, err
 }
 
+// List returns one page of a project's Cluster enrollments. The lifecycle
+// status is derived in SQL from the same timestamps enrollmentFromStore uses,
+// so a status filter applies before paging.
 func (service *Service) List(
 	ctx context.Context,
-	projectID string,
-	now time.Time,
-) ([]Enrollment, error) {
-	if !validation.IsUUID(projectID) || now.IsZero() {
-		return nil, ErrInvalidInput
+	input ListInput,
+) (Page, error) {
+	if !validation.IsUUID(input.ProjectID) ||
+		input.Now.IsZero() ||
+		input.Page.Validate() != nil ||
+		!allowedValue(input.Status, "active", "consumed", "expired", "revoked") {
+		return Page{}, ErrInvalidInput
 	}
-	items, err := service.store.ListEnrollments(ctx, projectID)
+	items, total, err := service.store.ListEnrollments(
+		ctx,
+		store.ListEnrollmentsParams{
+			ProjectID: input.ProjectID,
+			Status:    input.Status,
+			Search:    strings.ToLower(strings.TrimSpace(input.Search)),
+			Now:       input.Now,
+			Page:      input.Page,
+		},
+	)
 	if err != nil {
-		return nil, err
+		return Page{}, err
 	}
 	result := make([]Enrollment, 0, len(items))
 	for _, item := range items {
-		result = append(result, enrollmentFromStore(item, now))
+		result = append(result, enrollmentFromStore(item, input.Now))
 	}
-	return result, nil
+	return Page{
+		Enrollments: result,
+		Page:        pagination.NewResult(input.Page, total, len(result)),
+	}, nil
+}
+
+// ListInput selects one page of a project's Cluster enrollments.
+type ListInput struct {
+	ProjectID string
+	Status    string
+	Search    string
+	Now       time.Time
+	Page      pagination.Request
+}
+
+// Page is one page of Cluster enrollments plus its position.
+type Page struct {
+	Enrollments []Enrollment
+	Page        pagination.Result
+}
+
+func allowedValue(value string, candidates ...string) bool {
+	if value == "" {
+		return true
+	}
+	for _, candidate := range candidates {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (service *Service) Get(

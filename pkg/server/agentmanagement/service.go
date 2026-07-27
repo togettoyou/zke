@@ -15,7 +15,7 @@ var (
 )
 
 type Service struct {
-	store  *store.AgentManagementStore
+	store  Store
 	events StatusEventPublisher
 }
 
@@ -42,7 +42,7 @@ type RevokeResult struct {
 }
 
 func NewService(
-	agentStore *store.AgentManagementStore,
+	agentStore Store,
 	events ...StatusEventPublisher,
 ) *Service {
 	service := &Service{store: agentStore}

@@ -16,6 +16,12 @@ database:
   url: postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable
   connect_timeout: 5s
   migration_timeout: 2m
+  # Size the pool against the PostgreSQL connection budget shared by every
+  # Server replica, not against a single process.
+  max_connections: 16
+  min_connections: 2
+  max_connection_lifetime: 1h
+  max_connection_idle_time: 30m
 
 auth:
   session_idle_timeout: 30m
@@ -111,6 +117,15 @@ agent_listener:
   # Heartbeats update in-memory liveness immediately and persist at this cadence.
   last_seen_write_interval: 1m
   operation_timeout: 10s
+  # Deadline for a single control frame write towards an Agent.
+  write_timeout: 5s
+  # Connections beyond this limit are refused before any Server state is
+  # allocated for them; the rejected Agent reconnects under its own backoff.
+  max_concurrent_agents: 1024
+  max_incoming_streams: 16
+  # How many disconnected Agents keep a last-known status in memory, so that
+  # Cluster churn cannot grow the Server heap without bound.
+  max_remembered_disconnects: 4096
 
 certificate_monitor:
   # Drives the Agent status API's expiring state and periodic structured

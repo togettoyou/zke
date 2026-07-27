@@ -37,10 +37,10 @@ var (
 )
 
 type Service struct {
-	store *store.RBACStore
+	store Store
 }
 
-func NewService(rbacStore *store.RBACStore) *Service {
+func NewService(rbacStore Store) *Service {
 	return &Service{store: rbacStore}
 }
 

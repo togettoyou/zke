@@ -9,41 +9,55 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// tenantVisibilityFilterSQL applies the caller's RBAC visibility inside the
+// query. Filtering in SQL rather than after the fetch keeps the reported total
+// consistent with what the user may actually see, and stops a Server from
+// loading every tenant to answer one page.
+const tenantVisibilityFilterSQL = `
+FROM tenants AS tenant
+WHERE (
+    $1
+    OR tenant.id = ANY($2::uuid[])
+    OR tenant.id = ANY($3::uuid[])
+  )
+  AND ($4 = '' OR tenant.status = $4)
+  AND (
+    $5 = ''
+    OR position($5 IN lower(tenant.name)) > 0
+    OR position($5 IN tenant.id::text) > 0
+  )
+`
+
 func (store *ResourceManagementStore) ListTenants(
 	ctx context.Context,
-) ([]TenantResource, error) {
-	rows, err := store.pool.Query(ctx, `
+	params ListTenantsParams,
+) ([]TenantResource, int, error) {
+	return queryPage(
+		ctx,
+		store.pool,
+		"SELECT count(*) "+tenantVisibilityFilterSQL,
+		`
 SELECT
     tenant.id::text,
     tenant.name,
     tenant.status,
     tenant.created_at,
     tenant.updated_at
-FROM tenants AS tenant
+`+tenantVisibilityFilterSQL+`
 ORDER BY lower(tenant.name), tenant.id
-`)
-	if err != nil {
-		return nil, fmt.Errorf("list visible tenants: %w", err)
-	}
-	defer rows.Close()
-	var result []TenantResource
-	for rows.Next() {
-		var item TenantResource
-		if err := rows.Scan(
-			&item.ID,
-			&item.Name,
-			&item.Status,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan visible tenant: %w", err)
-		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visible tenants: %w", err)
-	}
-	return result, nil
+LIMIT $6 OFFSET $7
+`,
+		[]any{
+			params.Visibility.Global,
+			params.Visibility.TenantIDs,
+			params.Visibility.ProjectTenantIDs,
+			params.Status,
+			params.Search,
+		},
+		params.Page,
+		scanTenantRow,
+		"visible tenants",
+	)
 }
 
 func (store *ResourceManagementStore) GetTenant(
@@ -64,14 +78,37 @@ WHERE id = $1
 	return item, nil
 }
 
+// projectVisibilityFilterSQL mirrors the tenant filter for project scope. A
+// project-scoped binding grants exactly its own project, and the composite
+// foreign key guarantees a project identifier already implies its tenant.
+const projectVisibilityFilterSQL = `
+FROM projects AS project
+WHERE project.tenant_id = $1
+  AND (
+    $2
+    OR project.tenant_id = ANY($3::uuid[])
+    OR project.id = ANY($4::uuid[])
+  )
+  AND ($5 = '' OR project.status = $5)
+  AND (
+    $6 = ''
+    OR position($6 IN lower(project.name)) > 0
+    OR position($6 IN project.id::text) > 0
+  )
+`
+
 func (store *ResourceManagementStore) ListTenantProjects(
 	ctx context.Context,
-	tenantID string,
-) ([]ProjectResource, error) {
-	if strings.TrimSpace(tenantID) == "" {
-		return nil, errors.New("project list tenant ID is required")
+	params ListTenantProjectsParams,
+) ([]ProjectResource, int, error) {
+	if strings.TrimSpace(params.TenantID) == "" {
+		return nil, 0, errors.New("project list tenant ID is required")
 	}
-	rows, err := store.pool.Query(ctx, `
+	return queryPage(
+		ctx,
+		store.pool,
+		"SELECT count(*) "+projectVisibilityFilterSQL,
+		`
 SELECT
     project.id::text,
     project.tenant_id::text,
@@ -79,33 +116,22 @@ SELECT
     project.status,
     project.created_at,
     project.updated_at
-FROM projects AS project
-WHERE project.tenant_id = $1
+`+projectVisibilityFilterSQL+`
 ORDER BY lower(project.name), project.id
-`, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("list visible projects: %w", err)
-	}
-	defer rows.Close()
-	var result []ProjectResource
-	for rows.Next() {
-		var item ProjectResource
-		if err := rows.Scan(
-			&item.ID,
-			&item.TenantID,
-			&item.Name,
-			&item.Status,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan visible project: %w", err)
-		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate visible projects: %w", err)
-	}
-	return result, nil
+LIMIT $7 OFFSET $8
+`,
+		[]any{
+			params.TenantID,
+			params.Visibility.Global,
+			params.Visibility.TenantIDs,
+			params.Visibility.ProjectIDs,
+			params.Status,
+			params.Search,
+		},
+		params.Page,
+		scanProjectRow,
+		"visible projects",
+	)
 }
 
 func (store *ResourceManagementStore) GetProject(
@@ -122,74 +148,6 @@ WHERE id = $1
 	}
 	if err != nil {
 		return ProjectResource{}, fmt.Errorf("get project: %w", err)
-	}
-	return item, nil
-}
-
-func (store *ResourceManagementStore) ListProjectClusters(
-	ctx context.Context,
-	projectID string,
-) ([]ClusterResource, error) {
-	if strings.TrimSpace(projectID) == "" {
-		return nil, errors.New("cluster list project ID is required")
-	}
-	rows, err := store.pool.Query(ctx, `
-SELECT
-    id::text,
-    tenant_id::text,
-    project_id::text,
-    name,
-    status,
-    last_seen_at,
-    created_at,
-    updated_at
-FROM clusters
-WHERE project_id = $1
-ORDER BY lower(name), id
-`, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list project clusters: %w", err)
-	}
-	defer rows.Close()
-	var result []ClusterResource
-	for rows.Next() {
-		item, err := scanCluster(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan project cluster: %w", err)
-		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate project clusters: %w", err)
-	}
-	return result, nil
-}
-
-func (store *ResourceManagementStore) GetCluster(
-	ctx context.Context,
-	clusterID string,
-) (ClusterResource, error) {
-	if strings.TrimSpace(clusterID) == "" {
-		return ClusterResource{}, errors.New("cluster ID is required")
-	}
-	item, err := scanCluster(store.pool.QueryRow(ctx, `
-SELECT
-    id::text,
-    tenant_id::text,
-    project_id::text,
-    name,
-    status,
-    last_seen_at,
-    created_at,
-    updated_at
-FROM clusters
-WHERE id = $1
-`, clusterID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ClusterResource{}, ErrClusterNotFound
-	}
-	if err != nil {
-		return ClusterResource{}, fmt.Errorf("get cluster: %w", err)
 	}
 	return item, nil
 }
@@ -434,6 +392,14 @@ func scanTenant(row rowScanner) (TenantResource, error) {
 		&item.UpdatedAt,
 	)
 	return item, err
+}
+
+func scanTenantRow(rows pgx.Rows) (TenantResource, error) {
+	return scanTenant(rows)
+}
+
+func scanProjectRow(rows pgx.Rows) (ProjectResource, error) {
+	return scanProject(rows)
 }
 
 func scanProject(row rowScanner) (ProjectResource, error) {

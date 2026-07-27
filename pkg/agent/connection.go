@@ -277,13 +277,13 @@ func runConnection(
 				return err
 			}
 			if goAway := response.GetGoAway(); goAway != nil {
-				return fmt.Errorf("Server requested Agent disconnect: %s", goAway.GetReason())
+				return &GoAwayError{Reason: goAway.GetReason()}
 			}
 			ack := response.GetHeartbeatAck()
 			if response.GetProtocolVersion() != agentprotocol.ProtocolVersion ||
 				ack == nil ||
 				ack.GetSequence() != sequence {
-				return errors.New("Agent heartbeat acknowledgement is invalid")
+				return ErrHeartbeatAckInvalid
 			}
 		}
 	}
@@ -414,7 +414,7 @@ func validateServerHello(
 	if protocolVersion != agentprotocol.ProtocolVersion ||
 		hello == nil ||
 		!validation.IsUUID(hello.GetConnectionId()) {
-		return 0, 0, errors.New("ServerHello is invalid")
+		return 0, 0, ErrServerHelloInvalid
 	}
 	heartbeatInterval := time.Duration(hello.GetHeartbeatIntervalMillis()) * time.Millisecond
 	heartbeatTimeout := time.Duration(hello.GetHeartbeatTimeoutMillis()) * time.Millisecond
@@ -422,16 +422,16 @@ func validateServerHello(
 		heartbeatInterval > 5*time.Minute ||
 		heartbeatTimeout <= heartbeatInterval ||
 		heartbeatTimeout > 15*time.Minute {
-		return 0, 0, errors.New("Server heartbeat configuration is invalid")
+		return 0, 0, ErrHeartbeatConfigInvalid
 	}
 	if len(hello.GetCapabilities()) > 64 {
-		return 0, 0, errors.New("Server capability count exceeds the limit")
+		return 0, 0, fmt.Errorf("%w: capability count exceeds the limit", ErrServerCapability)
 	}
 	for _, capability := range hello.GetCapabilities() {
 		if capability == "" ||
 			strings.TrimSpace(capability) != capability ||
 			len(capability) > 128 {
-			return 0, 0, errors.New("Server capability is invalid")
+			return 0, 0, ErrServerCapability
 		}
 	}
 	return heartbeatInterval, heartbeatTimeout, nil
@@ -450,29 +450,4 @@ func serverSupportsCapability(
 		}
 	}
 	return false
-}
-
-func permanentAgentConnectionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	var unknownAuthority x509.UnknownAuthorityError
-	var hostnameError x509.HostnameError
-	var invalidCertificate x509.CertificateInvalidError
-	if errors.As(err, &unknownAuthority) ||
-		errors.As(err, &hostnameError) ||
-		errors.As(err, &invalidCertificate) {
-		return true
-	}
-	var applicationError *quic.ApplicationError
-	if errors.As(err, &applicationError) {
-		return applicationError.Remote &&
-			(applicationError.ErrorCode == agentprotocol.CloseProtocolError ||
-				applicationError.ErrorCode == agentprotocol.CloseAuthenticationError)
-	}
-	return strings.Contains(err.Error(), "Agent heartbeat acknowledgement is invalid") ||
-		strings.Contains(err.Error(), "ServerHello is invalid") ||
-		strings.Contains(err.Error(), "Server heartbeat configuration is invalid") ||
-		strings.Contains(err.Error(), "credential_revoked") ||
-		strings.Contains(err.Error(), "Agent certificate expired")
 }

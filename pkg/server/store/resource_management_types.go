@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 )
 
 var (
@@ -17,6 +18,36 @@ var (
 
 type ResourceManagementStore struct {
 	pool *pgxpool.Pool
+}
+
+// ScopeVisibility carries an already-resolved RBAC visibility into a query so
+// that the database, not the Server, decides which rows a caller may count and
+// page through.
+type ScopeVisibility struct {
+	// Global grants every tenant and project.
+	Global bool
+	// TenantIDs are tenants granted in full by a tenant-scoped binding.
+	TenantIDs []string
+	// ProjectIDs are individually granted projects.
+	ProjectIDs []string
+	// ProjectTenantIDs are the tenants owning ProjectIDs, which must stay
+	// listable so a project-scoped user can still reach their project.
+	ProjectTenantIDs []string
+}
+
+type ListTenantsParams struct {
+	Visibility ScopeVisibility
+	Status     string
+	Search     string
+	Page       pagination.Request
+}
+
+type ListTenantProjectsParams struct {
+	TenantID   string
+	Visibility ScopeVisibility
+	Status     string
+	Search     string
+	Page       pagination.Request
 }
 
 type TenantResource struct {

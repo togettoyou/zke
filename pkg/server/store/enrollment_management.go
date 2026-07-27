@@ -27,34 +27,52 @@ WHERE id = $1 AND status <> 'revoked'
 	return result, nil
 }
 
+// enrollmentFilterSQL derives the lifecycle status the same way the service
+// does, but in SQL, so that a status filter can be applied before paging
+// instead of after loading every enrollment in the project.
+const enrollmentFilterSQL = `
+FROM enrollments
+WHERE project_id = $1
+  AND (
+    $2 = ''
+    OR $2 = CASE
+        WHEN revoked_at IS NOT NULL THEN 'revoked'
+        WHEN consumed_at IS NOT NULL THEN 'consumed'
+        WHEN expires_at <= $3 THEN 'expired'
+        ELSE 'active'
+    END
+  )
+  AND (
+    $4 = ''
+    OR position($4 IN id::text) > 0
+    OR position($4 IN COALESCE(cluster_id::text, '')) > 0
+    OR position($4 IN lower(cluster_name)) > 0
+  )
+`
+
 func (store *EnrollmentStore) ListEnrollments(
 	ctx context.Context,
-	projectID string,
-) ([]Enrollment, error) {
-	rows, err := store.pool.Query(ctx, `
+	params ListEnrollmentsParams,
+) ([]Enrollment, int, error) {
+	return queryPage(
+		ctx,
+		store.pool,
+		"SELECT count(*) "+enrollmentFilterSQL,
+		`
 SELECT id::text, tenant_id::text, project_id::text,
     COALESCE(cluster_id::text, ''), cluster_name,
     created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at
-FROM enrollments
-WHERE project_id = $1
+`+enrollmentFilterSQL+`
 ORDER BY created_at DESC, id
-`, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list Cluster enrollments: %w", err)
-	}
-	defer rows.Close()
-	var result []Enrollment
-	for rows.Next() {
-		item, err := scanManagedEnrollment(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan Cluster enrollment: %w", err)
-		}
-		result = append(result, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate Cluster enrollments: %w", err)
-	}
-	return result, nil
+LIMIT $5 OFFSET $6
+`,
+		[]any{params.ProjectID, params.Status, params.Now, params.Search},
+		params.Page,
+		func(rows pgx.Rows) (Enrollment, error) {
+			return scanManagedEnrollment(rows)
+		},
+		"Cluster enrollments",
+	)
 }
 
 func (store *EnrollmentStore) GetEnrollment(

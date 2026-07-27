@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,14 +47,34 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 
 		c.Next()
 
-		logger.Info("HTTP request completed",
+		attributes := []any{
 			slog.String("request_id", id),
 			slog.String("method", c.Request.Method),
 			slog.String("path", c.Request.URL.Path),
 			slog.Int("status", c.Writer.Status()),
 			slog.Duration("duration", time.Since(started)),
+		}
+		logger.Info("HTTP request completed", append(attributes, ScopeAttributes(c)...)...)
+	}
+}
+
+// ScopeAttributes reports the authenticated actor and the resource scope the
+// request addresses, so that every log line can be correlated to a tenant,
+// project or cluster without cross-cluster ambiguity.
+func ScopeAttributes(c *gin.Context) []any {
+	var attributes []any
+	if identity, exists := Identity(c); exists {
+		attributes = append(
+			attributes,
+			slog.String("actor_user_id", identity.User.ID),
 		)
 	}
+	for _, parameter := range []string{"tenant_id", "project_id", "cluster_id"} {
+		if value := c.Param(parameter); value != "" {
+			attributes = append(attributes, slog.String(parameter, value))
+		}
+	}
+	return attributes
 }
 
 func Recovery(logger *slog.Logger) gin.HandlerFunc {
@@ -60,6 +82,10 @@ func Recovery(logger *slog.Logger) gin.HandlerFunc {
 		id := RequestID(c)
 		logger.Error("HTTP request panic recovered",
 			slog.String("request_id", id),
+			slog.String("method", c.Request.Method),
+			slog.String("path", c.Request.URL.Path),
+			slog.String("panic", fmt.Sprint(recovered)),
+			slog.String("stack", string(debug.Stack())),
 		)
 		apiresponse.WriteError(
 			c,

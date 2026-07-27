@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"math"
@@ -33,7 +32,7 @@ type AuthenticationConfig struct {
 }
 
 type authHandler struct {
-	logger       *slog.Logger
+	baseHandler
 	service      *auth.Service
 	rbacService  *rbac.Service
 	config       AuthenticationConfig
@@ -83,7 +82,7 @@ func newAuthHandler(
 	config AuthenticationConfig,
 ) *authHandler {
 	return &authHandler{
-		logger:      logger,
+		baseHandler: newBaseHandler(logger, nil, config.OperationTimeout),
 		service:     service,
 		rbacService: rbacService,
 		config:      config,
@@ -298,25 +297,8 @@ func (handler *authHandler) setAuthenticationCookies(
 	})
 }
 
-func (handler *authHandler) operationContext(
-	c *gin.Context,
-) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(c.Request.Context(), handler.config.OperationTimeout)
-}
-
 func (handler *authHandler) serviceError(c *gin.Context, operation string, err error) {
-	if errors.Is(err, context.DeadlineExceeded) {
-		handler.logger.Warn(operation+" timed out",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-		)
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-		return
-	}
-	handler.logger.Error(operation,
-		slog.String("request_id", httpmiddleware.RequestID(c)),
-		slog.String("error", err.Error()),
-	)
-	writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
+	handler.respondError(c, operation, err)
 }
 
 func responseUser(user auth.User) userResponse {

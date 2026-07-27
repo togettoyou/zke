@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 )
 
 func TestAgentConnectionStoreActivationAndHeartbeat(t *testing.T) {
@@ -242,10 +243,16 @@ WHERE agent.id = $1
 	if oldRevokedAt == nil {
 		t.Fatal("activating the renewed credential did not revoke the old one")
 	}
-	statuses, err := store.NewAgentStatusStore(pool).
-		ListProjectAgentCertificates(ctx, projectID)
+	statuses, total, err := store.NewAgentStatusStore(pool).
+		ListProjectAgentCertificates(ctx, store.ListProjectAgentCertificatesParams{
+			ProjectID: projectID,
+			Page:      pagination.Request{Limit: pagination.DefaultLimit},
+		})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Fatalf("Agent status total = %d, want 1", total)
 	}
 	if len(statuses) != 1 ||
 		statuses[0].CertificateSerial != renewed.Serial ||

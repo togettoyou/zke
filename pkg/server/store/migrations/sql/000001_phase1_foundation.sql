@@ -9,6 +9,10 @@ CREATE TABLE tenants (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Tenants are listed by case-insensitive name.
+CREATE INDEX tenants_name_idx ON tenants (lower(name), id);
+CREATE INDEX tenants_status_idx ON tenants (status);
+
 CREATE TABLE projects (
     id uuid PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES tenants (id),
@@ -23,6 +27,10 @@ CREATE TABLE projects (
 );
 
 CREATE INDEX projects_tenant_id_idx ON projects (tenant_id);
+-- Projects are listed by case-insensitive name inside a tenant.
+CREATE INDEX projects_tenant_name_idx
+    ON projects (tenant_id, lower(name), id);
+CREATE INDEX projects_status_idx ON projects (status);
 
 CREATE TABLE users (
     id uuid PRIMARY KEY,
@@ -82,6 +90,8 @@ CREATE TABLE role_bindings (
 
 CREATE INDEX role_bindings_subject_id_idx ON role_bindings (subject_id);
 CREATE INDEX role_bindings_scope_idx ON role_bindings (scope_type, tenant_id, project_id);
+-- Role bindings are listed oldest-first by creation time.
+CREATE INDEX role_bindings_created_at_idx ON role_bindings (created_at, id);
 CREATE INDEX users_status_idx ON users (status);
 
 CREATE TABLE clusters (
@@ -102,6 +112,9 @@ CREATE TABLE clusters (
 );
 
 CREATE INDEX clusters_project_scope_idx ON clusters (tenant_id, project_id);
+-- Clusters are listed by name inside a project.
+CREATE INDEX clusters_project_name_idx ON clusters (project_id, name, id);
+CREATE INDEX clusters_status_idx ON clusters (status);
 
 CREATE TABLE agents (
     id uuid PRIMARY KEY,
@@ -270,6 +283,9 @@ CREATE TABLE enrollments (
 );
 
 CREATE INDEX enrollments_project_scope_idx ON enrollments (tenant_id, project_id);
+-- Cluster enrollments are listed newest-first inside a project.
+CREATE INDEX enrollments_project_created_at_idx
+    ON enrollments (project_id, created_at DESC, id);
 CREATE INDEX enrollments_cluster_id_idx
     ON enrollments (cluster_id)
     WHERE cluster_id IS NOT NULL;
@@ -334,6 +350,9 @@ CREATE TABLE audit_events (
 CREATE INDEX audit_events_scope_time_idx
     ON audit_events (tenant_id, project_id, cluster_id, created_at DESC);
 CREATE INDEX audit_events_request_id_idx ON audit_events (request_id);
+-- Audit events are listed newest-first; this serves the globally visible
+-- ordering that audit_events_scope_time_idx does not cover.
+CREATE INDEX audit_events_created_at_idx ON audit_events (created_at DESC, id DESC);
 
 CREATE TABLE tenant_creation_requests (
     id uuid PRIMARY KEY,

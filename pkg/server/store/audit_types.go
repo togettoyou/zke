@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/togettoyou/zke/pkg/shared/pagination"
 )
 
 type AuditStore struct {
@@ -80,9 +81,7 @@ type ListAuditRecordsParams struct {
 	TenantID      string
 	ProjectID     string
 	ClusterID     string
-	BeforeAt      *time.Time
-	BeforeID      string
-	Limit         int
+	Page          pagination.Request
 }
 
 func NewAuditStore(pool *pgxpool.Pool) *AuditStore {

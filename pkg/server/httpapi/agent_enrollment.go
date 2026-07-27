@@ -17,10 +17,14 @@ const idempotencyKeyHeaderName = "Idempotency-Key"
 const maxCreateAgentEnrollmentRequestBytes = 16 * 1024
 
 type enrollmentHandler struct {
-	logger           *slog.Logger
-	service          *enrollment.Service
-	auditService     *audit.Service
-	operationTimeout time.Duration
+	baseHandler
+	service *enrollment.Service
+}
+
+var enrollmentErrors = []errorMapping{
+	{enrollment.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Cluster enrollment request"},
+	{enrollment.ErrNotFound, http.StatusNotFound, "not_found", "Cluster enrollment not found"},
+	{enrollment.ErrStateConflict, http.StatusConflict, "resource_state_conflict", "Cluster enrollment state conflicts with the request"},
 }
 
 type createEnrollmentResponse struct {
@@ -56,10 +60,8 @@ func newEnrollmentHandler(
 	operationTimeout time.Duration,
 ) *enrollmentHandler {
 	return &enrollmentHandler{
-		logger:           logger,
-		service:          service,
-		auditService:     auditService,
-		operationTimeout: operationTimeout,
+		baseHandler: newBaseHandler(logger, auditService, operationTimeout),
+		service:     service,
 	}
 }
 
@@ -156,33 +158,30 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 
 func (handler *enrollmentHandler) list(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	query, queryErr := parseListQuery(c)
-	if queryErr != nil ||
-		!allowed(query.Status, "active", "consumed", "expired", "revoked") ||
-		query.Role != "" || query.ScopeType != "" {
+	query, queryErr := parseListQuery(c, listFilters{search: true, status: true})
+	if queryErr != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster enrollment query")
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), handler.operationTimeout)
-	result, err := handler.service.List(ctx, c.Param("project_id"), time.Now().UTC())
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.List(ctx, enrollment.ListInput{
+		ProjectID: c.Param("project_id"),
+		Status:    query.Status,
+		Search:    query.Search,
+		Now:       time.Now().UTC(),
+		Page:      query.Page,
+	})
 	cancel()
-	if handler.handleManagementError(c, "list Cluster enrollments", err) {
+	if handler.respondError(c, "list Cluster enrollments", err, enrollmentErrors...) {
 		return
 	}
-	response := make([]enrollmentResponse, 0, len(result))
-	for _, item := range result {
-		if query.Status != "" && item.Status != query.Status {
-			continue
-		}
-		if !containsFold(query.Search, item.ID, item.ClusterID, item.ClusterName) {
-			continue
-		}
+	response := make([]enrollmentResponse, 0, len(result.Enrollments))
+	for _, item := range result.Enrollments {
 		response = append(response, responseEnrollment(item))
 	}
-	response, pagination := paginate(response, query)
 	writeSuccess(c, http.StatusOK, gin.H{
 		"cluster_enrollments": response,
-		"pagination":          pagination,
+		"pagination":          responsePagination(result.Page),
 	})
 }
 
@@ -193,7 +192,7 @@ func (handler *enrollmentHandler) get(c *gin.Context) {
 		ctx, c.Param("project_id"), c.Param("enrollment_id"), time.Now().UTC(),
 	)
 	cancel()
-	if handler.handleManagementError(c, "get Cluster enrollment", err) {
+	if handler.respondEnrollmentError(c, "get Cluster enrollment", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseEnrollment(result))
@@ -224,7 +223,7 @@ func (handler *enrollmentHandler) revoke(c *gin.Context) {
 			c, identity.User.ID, audit.ActionClusterEnrollmentRevoke, "failed",
 		)
 	}
-	if handler.handleManagementError(c, "revoke Cluster enrollment", err) {
+	if handler.respondEnrollmentError(c, "revoke Cluster enrollment", err) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, responseEnrollment(result))
@@ -255,7 +254,7 @@ func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 			c, identity.User.ID, audit.ActionClusterConnectionReenroll, "failed",
 		)
 	}
-	if handler.handleManagementError(c, "create Cluster reenrollment", err) {
+	if handler.respondEnrollmentError(c, "create Cluster reenrollment", err) {
 		return
 	}
 	writeSuccess(c, http.StatusCreated, createEnrollmentResponse{
@@ -264,31 +263,12 @@ func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 	})
 }
 
-func (handler *enrollmentHandler) handleManagementError(
+func (handler *enrollmentHandler) respondEnrollmentError(
 	c *gin.Context,
 	operation string,
 	err error,
 ) bool {
-	switch {
-	case err == nil:
-		return false
-	case errors.Is(err, enrollment.ErrInvalidInput):
-		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster enrollment request")
-	case errors.Is(err, enrollment.ErrNotFound):
-		writeError(c, http.StatusNotFound, "not_found", "Cluster enrollment not found")
-	case errors.Is(err, enrollment.ErrStateConflict):
-		writeError(c, http.StatusConflict, "resource_state_conflict", "Cluster enrollment state conflicts with the request")
-	case errors.Is(err, context.DeadlineExceeded):
-		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
-	default:
-		handler.logger.Error(
-			operation,
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("error", err.Error()),
-		)
-		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
-	}
-	return true
+	return handler.respondError(c, operation, err, enrollmentErrors...)
 }
 
 func responseEnrollment(item enrollment.Enrollment) enrollmentResponse {
@@ -309,34 +289,12 @@ func (handler *enrollmentHandler) recordProjectFailure(
 	action string,
 	result string,
 ) {
-	if handler.auditService == nil {
-		return
-	}
-	auditContext, cancelAudit := context.WithTimeout(
-		c.Request.Context(),
-		handler.operationTimeout,
-	)
-	err := handler.auditService.RecordProjectEvent(
-		auditContext,
-		audit.ProjectEventInput{
-			ActorUserID: userID,
-			ProjectID:   c.Param("project_id"),
-			Action:      action,
-			Result:      result,
-			RequestID:   httpmiddleware.RequestID(c),
-		},
-	)
-	cancelAudit()
-	if err != nil {
-		handler.logger.Error(
-			"record Cluster enrollment failure audit",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("user_id", userID),
-			slog.String("project_id", c.Param("project_id")),
-			slog.String("result", result),
-			slog.String("error", err.Error()),
-		)
-	}
+	handler.recordFailure(c, failedOperation{
+		Scope:       auditScopeProject,
+		ActorUserID: userID,
+		Action:      action,
+		Result:      result,
+	})
 }
 
 func (handler *enrollmentHandler) recordClusterFailure(
@@ -345,32 +303,10 @@ func (handler *enrollmentHandler) recordClusterFailure(
 	action string,
 	result string,
 ) {
-	if handler.auditService == nil {
-		return
-	}
-	auditContext, cancelAudit := context.WithTimeout(
-		c.Request.Context(),
-		handler.operationTimeout,
-	)
-	err := handler.auditService.RecordClusterEvent(
-		auditContext,
-		audit.ClusterEventInput{
-			ActorUserID: userID,
-			ClusterID:   c.Param("cluster_id"),
-			Action:      action,
-			Result:      result,
-			RequestID:   httpmiddleware.RequestID(c),
-		},
-	)
-	cancelAudit()
-	if err != nil {
-		handler.logger.Error(
-			"record Cluster reenrollment failure audit",
-			slog.String("request_id", httpmiddleware.RequestID(c)),
-			slog.String("user_id", userID),
-			slog.String("cluster_id", c.Param("cluster_id")),
-			slog.String("result", result),
-			slog.String("error", err.Error()),
-		)
-	}
+	handler.recordFailure(c, failedOperation{
+		Scope:       auditScopeCluster,
+		ActorUserID: userID,
+		Action:      action,
+		Result:      result,
+	})
 }
