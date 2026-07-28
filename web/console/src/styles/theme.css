@@ -18,6 +18,30 @@
   --desktop-grid: rgb(24 33 56 / 0.035);
   --tile-highlight: rgb(255 255 255 / 0.9);
 
+  /*
+   * Sign-in.
+   *
+   * One surface, driven by the same theme as everything else — a half held
+   * permanently dark would contradict a product that ships a theme switch. Two
+   * broad, soft light sources are the only diffuse thing on the view: one over
+   * the drawing, one lifting the field behind the form. Everything drawn on top
+   * of them is hard-edged, because a composition where nothing has a crisp edge
+   * reads as mush no matter how carefully the mush is tuned.
+   */
+  --auth-glow-key: rgb(59 91 219 / 0.1);
+  --auth-glow-fill: rgb(255 255 255 / 0.85);
+  --auth-grain: 0.035;
+
+  /* Diagram ink, derived from the foreground so the drawing inverts with the
+     theme instead of being pinned to one of them. */
+  --auth-line: rgb(24 33 56 / 0.16);
+  --auth-line-strong: rgb(24 33 56 / 0.3);
+  --auth-line-soft: rgb(24 33 56 / 0.07);
+  --auth-dot: rgb(24 33 56 / 0.13);
+  /* Node discs are filled with the field colour so a link passes behind a node
+     rather than through it. */
+  --auth-node: #f7f9fc;
+
   /* The top bar is a tint over the desktop, not a panel on top of it: it fades
      out towards its lower edge so there is no seam to notice. */
   --topbar-from: rgb(255 255 255 / 0.7);
@@ -63,6 +87,13 @@
      heavy blue bar around itself. */
   --ring-soft: rgb(59 91 219 / 0.16);
 
+  /* Selection gets its own value rather than reusing `--primary-surface`: that
+     token is tuned to sit quietly behind a badge, which is the wrong weight for
+     a highlight the user is meant to catch at a glance. Kept translucent so it
+     composites over whatever surface the text sits on — an opaque fill would
+     vanish against a panel of a similar tint. */
+  --selection: rgb(59 91 219 / 0.28);
+
   /* Elevation is tinted with the brand hue rather than pure black, which keeps
      raised surfaces from looking grey and dirty on a cool background. */
   --elevation-1: 0 1px 2px rgb(24 33 56 / 0.05);
@@ -87,6 +118,16 @@
   --desktop-glow: rgb(124 148 244 / 0.1);
   --desktop-grid: rgb(255 255 255 / 0.025);
   --tile-highlight: rgb(255 255 255 / 0.07);
+
+  --auth-glow-key: rgb(124 148 244 / 0.14);
+  --auth-glow-fill: rgb(124 148 244 / 0.05);
+  --auth-grain: 0.05;
+
+  --auth-line: rgb(226 234 250 / 0.16);
+  --auth-line-strong: rgb(226 234 250 / 0.32);
+  --auth-line-soft: rgb(226 234 250 / 0.07);
+  --auth-dot: rgb(226 234 250 / 0.1);
+  --auth-node: #131a24;
 
   --topbar-from: rgb(20 27 37 / 0.72);
   --topbar-to: rgb(20 27 37 / 0.22);
@@ -125,6 +166,9 @@
 
   --ring: #7f97f5;
   --ring-soft: rgb(127 151 245 / 0.26);
+
+  /* Dark surfaces swallow a tint, so the highlight carries more of it. */
+  --selection: rgb(127 151 245 / 0.34);
 
   --elevation-1: 0 1px 2px rgb(0 0 0 / 0.3);
   --elevation-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 6px -2px rgb(0 0 0 / 0.4);
@@ -230,8 +274,11 @@
     border-radius: var(--radius-control);
   }
 
+  /* Forcing the foreground colour is deliberate: muted and subtle text would
+     otherwise stay low-contrast while highlighted, which is the one moment it
+     has to be legible. */
   ::selection {
-    background: var(--primary-surface);
+    background: var(--selection);
     color: var(--foreground);
   }
 
@@ -356,6 +403,102 @@
       inset 0 1px 0 var(--dock-highlight),
       var(--elevation-3);
   }
+
+  /*
+   * The sign-in surface. One field across the whole view, not two.
+   *
+   * The desktop's 64px grid is deliberately not carried over. That grid earns
+   * its place under windows, where it reads as the surface they rest on; across
+   * an empty screen it reads as graph paper. These two sources are the only
+   * diffuse thing here — a key over the drawing and a fill lifting the field
+   * behind the form — and everything drawn on top of them keeps a hard edge.
+   */
+  .zke-auth-surface {
+    background-image:
+      radial-gradient(64rem 48rem at 24% 16%, var(--auth-glow-key), transparent 62%),
+      radial-gradient(50rem 42rem at 78% 54%, var(--auth-glow-fill), transparent 66%);
+  }
+
+  /*
+   * A drafting field under the topology: dots, not squares, and masked.
+   *
+   * Dots rather than a rule grid because the drawing itself is 1px hairlines —
+   * a 1px grid behind it competes at exactly the same weight and the drawing
+   * stops sitting on the surface and starts being tangled in it. Points and
+   * lines are different languages and stay out of each other's way.
+   *
+   * Masked rather than full bleed because texture that runs to the edge of the
+   * viewport reads as paper the page is printed on. Dissolving it well before
+   * the edge is what makes it read as the surface catching light instead. The
+   * mask is anchored on the drawing, so the field belongs to it and the form
+   * side stays calm — a form wants quiet behind it.
+   */
+  .zke-auth-dots {
+    background-image: radial-gradient(circle at center, var(--auth-dot) 0.9px, transparent 1.6px);
+    background-size: 22px 22px;
+    -webkit-mask-image: radial-gradient(46rem 42rem at 30% 48%, #000 0%, #000 26%, transparent 74%);
+    mask-image: radial-gradient(46rem 42rem at 30% 48%, #000 0%, #000 26%, transparent 74%);
+  }
+
+  /*
+   * The pulse that travels each link in the topology, from the cluster up to
+   * the Server. The direction is the point: Agents dial out to the Server, never
+   * the other way round. `pathLength="100"` normalises every path so all three
+   * run at one speed regardless of their real length.
+   *
+   * The element's own `stroke-dashoffset` parks the dash *before* the start of
+   * its path, so at rest nothing is drawn. That is what makes the drawing whole
+   * without motion: where a reader has asked for reduced motion the animation
+   * collapses to that resting state and simply is not there, instead of freezing
+   * a bright stub part-way along a link.
+   */
+  .zke-auth-flow {
+    animation: zke-auth-flow 4.5s linear infinite;
+  }
+
+  /*
+   * A film of grain over the whole surface. This is what separates a designed
+   * backdrop from a flat CSS gradient: it breaks the smooth ramps into
+   * something with a texture, and it is the only reliable cure for the banding
+   * that large, low-contrast gradients show on 8-bit displays. `overlay` lets
+   * the noise both lift and darken, which plain opacity cannot do — a dark
+   * noise layer alone would just grey the page down.
+   */
+  .zke-auth-grain {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size: 140px 140px;
+    opacity: var(--auth-grain);
+    mix-blend-mode: overlay;
+  }
+
+  /* A short settle on first paint. `both` holds the end state, so the global
+     reduced-motion rule collapses it to a plain appearance rather than to a
+     permanently transparent element. */
+  .zke-rise {
+    animation: zke-rise 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+@keyframes zke-auth-flow {
+  from {
+    stroke-dashoffset: 8;
+  }
+
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+@keyframes zke-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -367,4 +510,60 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
+  /*
+   * Two deliberate exceptions to the blanket rule above.
+   *
+   * The rule is a safety net cast over every animation at once, and these are
+   * the two it catches that carry no vestibular risk: a 1.5px dash travelling a
+   * hairline, and a 16px spinner. No parallax, no scaling, no large moving area
+   * — the things the preference exists to suppress.
+   *
+   * A spinner is the stronger case of the two. Frozen it does not merely lose
+   * an effect, it states the opposite of what it means: a stopped spinner on a
+   * pending request reads as a hung one, at the exact moment the control has to
+   * say that work is under way.
+   *
+   * Both sit outside `@layer utilities`, so they win over the layered
+   * declarations regardless of specificity; `!important` is what beats the
+   * universal selector above them.
+   */
+  .zke-auth-flow {
+    animation-duration: 4.5s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/*
+ * Autofill.
+ *
+ * Chrome paints an autofilled field with a background and text colour of its
+ * own — beside an otherwise white field that lands as a pale blue slab, which
+ * is the first thing an operator sees on this product. The background cannot be
+ * set directly, so it is covered: an inset shadow spread wider than the control
+ * repaints it, and `-webkit-text-fill-color` is the only way to reach the text.
+ *
+ * Unlayered on purpose. Inside `@layer base` the focus utility would win and
+ * take the inset fill away with it, uncovering the blue the moment the field is
+ * focused — so the focus state has to restate both the halo and the fill.
+ */
+input:-webkit-autofill,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--foreground);
+  caret-color: var(--foreground);
+  box-shadow: 0 0 0 1000px var(--surface) inset;
+}
+
+input:-webkit-autofill:focus-visible,
+textarea:-webkit-autofill:focus-visible,
+select:-webkit-autofill:focus-visible {
+  box-shadow:
+    0 0 0 3px var(--ring-soft),
+    0 0 0 1000px var(--surface) inset;
 }
