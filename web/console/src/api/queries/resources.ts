@@ -12,7 +12,8 @@ type ResourceListParams = ListParams & { status?: ResourceStatus };
 export function useTenants(params: ResourceListParams = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.tenants(params),
-    queryFn: async () => unwrap(await api.GET("/api/v1/tenants", { params: { query: params } })),
+    queryFn: async ({ signal }) =>
+      unwrap(await api.GET("/api/v1/tenants", { params: { query: params }, signal })),
     enabled,
     placeholderData: (previous) => previous,
   });
@@ -21,10 +22,11 @@ export function useTenants(params: ResourceListParams = {}, enabled = true) {
 export function useTenant(tenantId: string | null) {
   return useQuery({
     queryKey: queryKeys.tenant(tenantId ?? ""),
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       unwrap(
         await api.GET("/api/v1/tenants/{tenant_id}", {
           params: { path: { tenant_id: tenantId as string } },
+          signal,
         }),
       ),
     enabled: Boolean(tenantId),
@@ -94,10 +96,11 @@ export function useDeleteTenant() {
 export function useProjects(tenantId: string | null, params: ResourceListParams = {}) {
   return useQuery({
     queryKey: queryKeys.projects(tenantId ?? "", params),
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       unwrap(
         await api.GET("/api/v1/tenants/{tenant_id}/projects", {
           params: { path: { tenant_id: tenantId as string }, query: params },
+          signal,
         }),
       ),
     enabled: Boolean(tenantId),
@@ -108,10 +111,11 @@ export function useProjects(tenantId: string | null, params: ResourceListParams 
 export function useProject(projectId: string | null) {
   return useQuery({
     queryKey: queryKeys.project(projectId ?? ""),
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       unwrap(
         await api.GET("/api/v1/projects/{project_id}", {
           params: { path: { project_id: projectId as string } },
+          signal,
         }),
       ),
     enabled: Boolean(projectId),

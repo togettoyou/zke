@@ -13,6 +13,9 @@ export type StreamState = "connecting" | "open" | "reconnecting" | "closed";
 const EVENTS_URL = "/api/v1/events";
 const INITIAL_BACKOFF_MS = 1_000;
 const MAXIMUM_BACKOFF_MS = 30_000;
+// How long a burst of status events is allowed to accumulate before the list
+// views refetch once for all of it. Short enough to read as immediate.
+const LIST_REFRESH_COALESCE_MS = 400;
 
 function nextBackoff(previous: number): number {
   const doubled = Math.min(previous * 2, MAXIMUM_BACKOFF_MS);
@@ -185,25 +188,50 @@ export function useClusterEvents(enabled: boolean): ClusterEventsSnapshot {
       return;
     }
 
+    /*
+     * List refetches are coalesced; the event's own payload is not.
+     *
+     * A Server restart brings a whole fleet back one Agent at a time, so these
+     * events arrive in bursts. The cluster list is one request, but the overview
+     * is a Tenant → Project → Cluster walk, and invalidating it per event asked
+     * for that entire fan-out once for every Agent that reconnected. The events
+     * carry the full aggregate, so the detail entry is still written
+     * immediately and nothing an operator is looking at waits for the window.
+     */
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const refreshLists = () => {
+      if (refreshTimer) {
+        return;
+      }
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusters });
+        void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusterOverview });
+      }, LIST_REFRESH_COALESCE_MS);
+    };
+
     const stop = startClusterEventStream({
       onStatus: (cluster) => {
         setLastEventAt(new Date());
         queryClient.setQueryData(queryKeys.cluster(cluster.id), cluster);
-        void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusters });
-        void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusterOverview });
+        refreshLists();
       },
       onStateChange: (next) => {
         setState(next);
         // Nothing is replayed after a gap, so a fresh connection refetches.
         if (next === "open" && previousState.current === "reconnecting") {
-          void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusters });
-          void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusterOverview });
+          refreshLists();
         }
         previousState.current = next;
       },
     });
 
-    return stop;
+    return () => {
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+      stop();
+    };
   }, [enabled, queryClient]);
 
   return { state, lastEventAt };

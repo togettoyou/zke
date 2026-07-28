@@ -25,10 +25,11 @@ const AGGREGATION_MAX_PAGES = 20;
 export function useClusters(projectId: string | null, params: ClusterListParams = {}) {
   return useQuery({
     queryKey: queryKeys.clusters(projectId ?? "", params),
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       unwrap(
         await api.GET("/api/v1/projects/{project_id}/clusters", {
           params: { path: { project_id: projectId as string }, query: params },
+          signal,
         }),
       ),
     enabled: Boolean(projectId),
@@ -39,10 +40,11 @@ export function useClusters(projectId: string | null, params: ClusterListParams 
 export function useCluster(clusterId: string | null) {
   return useQuery({
     queryKey: queryKeys.cluster(clusterId ?? ""),
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       unwrap(
         await api.GET("/api/v1/clusters/{cluster_id}", {
           params: { path: { cluster_id: clusterId as string } },
+          signal,
         }),
       ),
     enabled: Boolean(clusterId),
@@ -81,7 +83,7 @@ export function useClusterOverview(enabled = true) {
     queryKey: queryKeys.clusterOverview(),
     enabled,
     staleTime: 30_000,
-    queryFn: async (): Promise<ClusterOverview> => {
+    queryFn: async ({ signal }): Promise<ClusterOverview> => {
       const failures: ClusterOverviewFailure[] = [];
       let truncated = false;
 
@@ -90,7 +92,10 @@ export function useClusterOverview(enabled = true) {
         AGGREGATION_MAX_PAGES,
         async (offset, limit) => {
           const page = unwrap(
-            await api.GET("/api/v1/tenants", { params: { query: { limit, offset } } }),
+            await api.GET("/api/v1/tenants", {
+              params: { query: { limit, offset } },
+              signal,
+            }),
           );
           return { items: page.tenants, hasMore: page.pagination.has_more };
         },
@@ -109,6 +114,7 @@ export function useClusterOverview(enabled = true) {
                 const page = unwrap(
                   await api.GET("/api/v1/tenants/{tenant_id}/projects", {
                     params: { path: { tenant_id: tenant.id }, query: { limit, offset } },
+                    signal,
                   }),
                 );
                 return { items: page.projects, hasMore: page.pagination.has_more };
@@ -135,6 +141,7 @@ export function useClusterOverview(enabled = true) {
                 const page = unwrap(
                   await api.GET("/api/v1/projects/{project_id}/clusters", {
                     params: { path: { project_id: project.id }, query: { limit, offset } },
+                    signal,
                   }),
                 );
                 return { items: page.clusters, hasMore: page.pagination.has_more };

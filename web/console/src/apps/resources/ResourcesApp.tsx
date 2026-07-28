@@ -3,7 +3,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Building2, ChevronRight, FolderKanban, MoreHorizontal, PlusCircle } from "lucide-react";
 import { toast } from "sonner";
 
-import { newIdempotencyKey } from "@/api/client";
 import { errorMessage, errorRequestId } from "@/api/errors";
 import {
   useCreateProject,
@@ -49,6 +48,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { useSubmissionKey } from "@/lib/use-submission-key";
 
 const NAV: AppNavItem[] = [
   { id: "tenants", label: "租户", icon: Building2 },
@@ -119,8 +120,20 @@ type NameDialogState = {
 function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) => void }) {
   const { permissions } = useSessionContext();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [status, setStatus] = useState<string>("all");
   const [offset, setOffset] = useState(0);
+  /*
+   * Paging restarts when the settled search does, not on each keystroke. The
+   * two used to be reset together, which — now that the term reaches the query
+   * a moment later — asked the Server for page one of the *previous* term on
+   * the way past.
+   */
+  const [appliedSearch, setAppliedSearch] = useState(debouncedSearch);
+  if (appliedSearch !== debouncedSearch) {
+    setAppliedSearch(debouncedSearch);
+    setOffset(0);
+  }
   const [nameDialog, setNameDialog] = useState<NameDialogState>(null);
   const [statusTarget, setStatusTarget] = useState<Tenant | null>(null);
   const [retireTarget, setRetireTarget] = useState<Tenant | null>(null);
@@ -128,7 +141,7 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
   const query = useTenants({
     limit: DEFAULT_PAGE_SIZE,
     offset,
-    ...(search ? { q: search } : {}),
+    ...(debouncedSearch ? { q: debouncedSearch } : {}),
     ...(status === "all" ? {} : { status: status as ResourceStatus }),
   });
 
@@ -276,10 +289,7 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
                 className="max-w-56"
                 placeholder="按名称搜索"
                 value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setOffset(0);
-                }}
+                onChange={(event) => setSearch(event.target.value)}
               />
               <Select
                 value={status}
@@ -317,9 +327,9 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
           createTenant.reset();
           updateTenant.reset();
         }}
-        onSubmit={async (name) => {
+        onSubmit={async (name, idempotencyKey) => {
           if (nameDialog?.mode === "create") {
-            await createTenant.mutateAsync({ name, idempotencyKey: newIdempotencyKey() });
+            await createTenant.mutateAsync({ name, idempotencyKey });
             toast.success(`租户 ${name} 已创建`);
           } else if (nameDialog?.target) {
             await updateTenant.mutateAsync({
@@ -415,8 +425,20 @@ function ProjectSection({
 }) {
   const { permissions } = useSessionContext();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [status, setStatus] = useState("all");
   const [offset, setOffset] = useState(0);
+  /*
+   * Paging restarts when the settled search does, not on each keystroke. The
+   * two used to be reset together, which — now that the term reaches the query
+   * a moment later — asked the Server for page one of the *previous* term on
+   * the way past.
+   */
+  const [appliedSearch, setAppliedSearch] = useState(debouncedSearch);
+  if (appliedSearch !== debouncedSearch) {
+    setAppliedSearch(debouncedSearch);
+    setOffset(0);
+  }
   const [nameDialog, setNameDialog] = useState<NameDialogState>(null);
   const [statusTarget, setStatusTarget] = useState<Project | null>(null);
   const [retireTarget, setRetireTarget] = useState<Project | null>(null);
@@ -424,7 +446,7 @@ function ProjectSection({
   const query = useProjects(tenantId, {
     limit: DEFAULT_PAGE_SIZE,
     offset,
-    ...(search ? { q: search } : {}),
+    ...(debouncedSearch ? { q: debouncedSearch } : {}),
     ...(status === "all" ? {} : { status: status as ResourceStatus }),
   });
 
@@ -590,10 +612,7 @@ function ProjectSection({
                 className="max-w-56"
                 placeholder="按名称搜索"
                 value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setOffset(0);
-                }}
+                onChange={(event) => setSearch(event.target.value)}
               />
               <Select
                 value={status}
@@ -629,12 +648,12 @@ function ProjectSection({
           createProject.reset();
           updateProject.reset();
         }}
-        onSubmit={async (name) => {
+        onSubmit={async (name, idempotencyKey) => {
           if (nameDialog?.mode === "create") {
             await createProject.mutateAsync({
               tenantId,
               name,
-              idempotencyKey: newIdempotencyKey(),
+              idempotencyKey,
             });
             toast.success(`项目 ${name} 已创建`);
           } else if (nameDialog?.target) {
@@ -735,10 +754,11 @@ function NameDialog({
   /** Rendered in place; a rejected submit must never fail silently. */
   error?: unknown;
   onClose: () => void;
-  onSubmit: (name: string) => Promise<void>;
+  onSubmit: (name: string, idempotencyKey: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [initialized, setInitialized] = useState<string | null>(null);
+  const idempotencyKey = useSubmissionKey(Boolean(state));
 
   const currentKey = state ? `${state.mode}:${state.target?.id ?? "new"}` : null;
   if (currentKey && initialized !== currentKey) {
@@ -787,7 +807,7 @@ function NameDialog({
             onClick={() => {
               // The rejection is already surfaced through `error`; swallowing it
               // here only stops an unhandled promise rejection.
-              void onSubmit(name.trim()).catch(() => undefined);
+              void onSubmit(name.trim(), idempotencyKey).catch(() => undefined);
             }}
           >
             {pending ? "提交中…" : "确认"}

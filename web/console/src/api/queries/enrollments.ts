@@ -14,9 +14,10 @@ type EnrollmentListParams = ListParams & { status?: EnrollmentStatus };
 export function useClusterEnrollments(projectId: string | null, params: EnrollmentListParams = {}) {
   return useQuery({
     queryKey: queryKeys.enrollments(projectId ?? "", params),
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       unwrap(
         await api.GET("/api/v1/projects/{project_id}/cluster-enrollments", {
+          signal,
           params: { path: { project_id: projectId as string }, query: params },
         }),
       ) as EnrollmentListResult,

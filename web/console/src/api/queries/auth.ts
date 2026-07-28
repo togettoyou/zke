@@ -7,6 +7,11 @@ import type { CurrentSession } from "../types";
 export function useSession(enabled = true): UseQueryResult<CurrentSession | null> {
   return useQuery({
     queryKey: queryKeys.session(),
+    // Deliberately not cancellable. Every other query passes the observer's
+    // signal so an abandoned view stops costing a request, but this one answers
+    // "is anyone logged in", the whole shell renders off it, and it is a single
+    // small request with no fan-out to save. There is nothing to gain by
+    // aborting it and a login view to flash by getting it wrong.
     queryFn: async () => {
       const result = await api.GET("/api/v1/auth/me", {});
       // An expired or missing session is a normal answer here, not a failure.
@@ -77,6 +82,8 @@ export function useChangePassword() {
 export function useHealth(enabled = true) {
   return useQuery({
     queryKey: queryKeys.health(),
+    // Same reasoning as the session probe: a polled singleton with nothing to
+    // cancel.
     queryFn: async () => unwrap(await api.GET("/readyz", {})),
     enabled,
     retry: false,

@@ -3,7 +3,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Globe2, KeyRound, MoreHorizontal, RefreshCw, Server, ServerCog } from "lucide-react";
 import { toast } from "sonner";
 
-import { newIdempotencyKey } from "@/api/client";
 import {
   useCluster,
   useClusterOverview,
@@ -59,6 +58,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
 import { Alert, Card, CardTitle } from "@/components/ui/misc";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
+import { useSubmissionKey } from "@/lib/use-submission-key";
 import { formatDuration } from "@/lib/time";
 
 const NAV: AppNavItem[] = [
@@ -227,12 +228,25 @@ function ClusterSection({
 }) {
   const { permissions } = useSessionContext();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [offset, setOffset] = useState(0);
+  /*
+   * Paging restarts when the settled search does, not on each keystroke. The
+   * two used to be reset together, which — now that the term reaches the query
+   * a moment later — asked the Server for page one of the *previous* term on
+   * the way past.
+   */
+  const [appliedSearch, setAppliedSearch] = useState(debouncedSearch);
+  if (appliedSearch !== debouncedSearch) {
+    setAppliedSearch(debouncedSearch);
+    setOffset(0);
+  }
   const [renameTarget, setRenameTarget] = useState<ClusterAggregate | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [revokeTarget, setRevokeTarget] = useState<ClusterAggregate | null>(null);
   const [retireTarget, setRetireTarget] = useState<ClusterAggregate | null>(null);
   const [reenrollTarget, setReenrollTarget] = useState<ClusterAggregate | null>(null);
+  const reenrollKey = useSubmissionKey(reenrollTarget !== null);
   const [reenrollResult, setReenrollResult] = useState<{ token: string; expiresAt: string } | null>(
     null,
   );
@@ -240,7 +254,7 @@ function ClusterSection({
   const query = useClusters(scope.projectId, {
     limit: DEFAULT_PAGE_SIZE,
     offset,
-    ...(search ? { q: search } : {}),
+    ...(debouncedSearch ? { q: debouncedSearch } : {}),
   });
   const updateCluster = useUpdateCluster();
   const deleteCluster = useDeleteCluster();
@@ -396,10 +410,7 @@ function ClusterSection({
               className="max-w-56"
               placeholder="按名称搜索"
               value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setOffset(0);
-              }}
+              onChange={(event) => setSearch(event.target.value)}
             />
           }
           pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
@@ -547,7 +558,7 @@ function ClusterSection({
           try {
             const result = await reenroll.mutateAsync({
               clusterId: reenrollTarget.id,
-              idempotencyKey: newIdempotencyKey(),
+              idempotencyKey: reenrollKey,
             });
             setReenrollResult({ token: result.token, expiresAt: result.expires_at });
             setReenrollTarget(null);
@@ -588,6 +599,8 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   const [offset, setOffset] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [installOpen, setInstallOpen] = useState(false);
+  const enrollmentKey = useSubmissionKey(createOpen);
+  const installationKey = useSubmissionKey(installOpen);
   const [clusterName, setClusterName] = useState("");
   const [tokenResult, setTokenResult] = useState<{ token: string; expiresAt: string } | null>(null);
   const [installResult, setInstallResult] = useState<{
@@ -739,7 +752,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   const result = await createEnrollment.mutateAsync({
                     projectId: scope.projectId as string,
                     clusterName: clusterName.trim(),
-                    idempotencyKey: newIdempotencyKey(),
+                    idempotencyKey: enrollmentKey,
                   });
                   setCreateOpen(false);
                   setTokenResult({ token: result.token, expiresAt: result.expires_at });
@@ -784,7 +797,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   const result = await createInstallation.mutateAsync({
                     projectId: scope.projectId as string,
                     clusterName: clusterName.trim(),
-                    idempotencyKey: newIdempotencyKey(),
+                    idempotencyKey: installationKey,
                   });
                   setInstallOpen(false);
                   setInstallResult({

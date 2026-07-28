@@ -34,8 +34,10 @@ export function useAuditEvents(params: AuditListParams = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.auditEvents(query),
     enabled,
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/audit-events", { params: { query } })) as AuditEventListResult,
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET("/api/v1/audit-events", { params: { query }, signal }),
+      ) as AuditEventListResult,
     placeholderData: (previous) => previous,
   });
 }
@@ -54,8 +56,8 @@ export function useAuditActions(enabled = true) {
     queryKey: queryKeys.auditActions(),
     enabled,
     staleTime: Infinity,
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/audit-events/actions", {})) as {
+    queryFn: async ({ signal }) =>
+      unwrap(await api.GET("/api/v1/audit-events/actions", { signal })) as {
         audit_actions: AuditAction[];
       },
   });

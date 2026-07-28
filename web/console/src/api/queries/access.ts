@@ -21,8 +21,10 @@ type RoleBindingListParams = ListParams & { role?: Role; scope_type?: ScopeType 
 export function useUsers(params: UserListParams = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.users(params),
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/users", { params: { query: params } })) as UserListResult,
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET("/api/v1/users", { params: { query: params }, signal }),
+      ) as UserListResult,
     enabled,
     placeholderData: (previous) => previous,
   });
@@ -135,9 +137,9 @@ export function useDeleteUser() {
 export function useRoleBindings(params: RoleBindingListParams = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.roleBindings(params),
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       unwrap(
-        await api.GET("/api/v1/role-bindings", { params: { query: params } }),
+        await api.GET("/api/v1/role-bindings", { params: { query: params }, signal }),
       ) as RoleBindingListResult,
     enabled,
     placeholderData: (previous) => previous,

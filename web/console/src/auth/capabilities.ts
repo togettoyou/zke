@@ -1,4 +1,23 @@
-import type { Capability, Permission } from "@/api/types";
+import type { Capability, Permission, Role } from "@/api/types";
+
+/**
+ * Display names for the Server's fixed roles.
+ *
+ * Written as a total map over `Role` rather than as `role === "admin" ? … : …`,
+ * which is what these used to be in four places. The ternary does not fail when
+ * the Server grows a third role — it silently labels it 只读, which is a claim
+ * about someone's access that may be false. `Role` is generated from the
+ * contract's enum, so a missing entry here is a type error instead.
+ */
+export const ROLE_LABELS: Record<Role, string> = {
+  admin: "管理员",
+  viewer: "只读",
+};
+
+/** Falls back to the raw name, the way an unknown status badge does. */
+export function roleLabel(role: string): string {
+  return ROLE_LABELS[role as Role] ?? role;
+}
 
 /**
  * Scope a permission check is made against. It mirrors the Server's scope model
@@ -79,7 +98,7 @@ export const EMPTY_PERMISSION_CHECKER: PermissionChecker = createPermissionCheck
  * here is a usability decision, never a security control.
  */
 export function describeCapability(capability: Capability): string {
-  const role = capability.role === "admin" ? "管理员" : "只读";
+  const role = roleLabel(capability.role);
   switch (capability.scope_type) {
     case "global":
       return `全局 ${role}`;

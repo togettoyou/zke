@@ -29,7 +29,15 @@ const csrfMiddleware: Middleware = {
 function timeoutFetch(input: Request): Promise<Response> {
   // Every request gets an upper bound so a hung connection cannot keep a
   // window's loading state forever. SSE does not use this client.
-  return fetch(input, { signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) });
+  //
+  // The timeout is combined with the request's own signal rather than passed
+  // alone: `fetch(input, { signal })` replaces whatever signal the Request
+  // already carried, which is how the caller's cancellation — a closed window,
+  // a superseded search — used to be dropped on the floor and every abandoned
+  // request ran to completion anyway.
+  return fetch(input, {
+    signal: AbortSignal.any([input.signal, AbortSignal.timeout(DEFAULT_TIMEOUT_MS)]),
+  });
 }
 
 // Requests are always same-origin. The origin is spelled out because `Request`

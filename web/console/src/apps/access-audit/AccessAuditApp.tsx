@@ -38,6 +38,7 @@ import {
 } from "@/api/types";
 import { AppShell, SectionTitle, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
+import { ROLE_LABELS, roleLabel } from "@/auth/capabilities";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { notifyFailure } from "@/components/common/notify";
@@ -69,6 +70,7 @@ import { FieldHint, Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/cn";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import {
   Select,
   SelectContent,
@@ -110,6 +112,13 @@ const ACTION_GROUP_LABELS: Record<string, string> = {
   cluster: "集群",
   denied: "权限拒绝",
 };
+
+/*
+ * Both role pickers render from here. Listing the options inline meant a role
+ * added to the contract would be labelled correctly everywhere it was shown and
+ * still be impossible to choose.
+ */
+const ROLE_OPTIONS = Object.entries(ROLE_LABELS);
 
 const SCOPE_LABELS: Record<string, string> = {
   global: "全局",
@@ -156,8 +165,20 @@ function UserSection() {
   const canManage = permissions.can("user.manage", GLOBAL);
 
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [status, setStatus] = useState("all");
   const [offset, setOffset] = useState(0);
+  /*
+   * Paging restarts when the settled search does, not on each keystroke. The
+   * two used to be reset together, which — now that the term reaches the query
+   * a moment later — asked the Server for page one of the *previous* term on
+   * the way past.
+   */
+  const [appliedSearch, setAppliedSearch] = useState(debouncedSearch);
+  if (appliedSearch !== debouncedSearch) {
+    setAppliedSearch(debouncedSearch);
+    setOffset(0);
+  }
   const [createOpen, setCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<ManagedUser | null>(null);
   const [statusTarget, setStatusTarget] = useState<ManagedUser | null>(null);
@@ -168,7 +189,7 @@ function UserSection() {
   const query = useUsers({
     limit: DEFAULT_PAGE_SIZE,
     offset,
-    ...(search ? { q: search } : {}),
+    ...(debouncedSearch ? { q: debouncedSearch } : {}),
     ...(status === "all" ? {} : { status: status as UserStatus }),
   });
 
@@ -328,10 +349,7 @@ function UserSection() {
                 className="max-w-56"
                 placeholder="按用户名或显示名搜索"
                 value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setOffset(0);
-                }}
+                onChange={(event) => setSearch(event.target.value)}
               />
               <Select
                 value={status}
@@ -774,7 +792,7 @@ function RoleBindingSection() {
         size: 100,
         cell: ({ row }) => (
           <Badge tone={row.original.role === "admin" ? "primary" : "neutral"}>
-            {row.original.role === "admin" ? "管理员" : "只读"}
+            {roleLabel(row.original.role)}
           </Badge>
         ),
       },
@@ -856,8 +874,11 @@ function RoleBindingSection() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">全部角色</SelectItem>
-                  <SelectItem value="admin">管理员</SelectItem>
-                  <SelectItem value="viewer">只读</SelectItem>
+                  {ROLE_OPTIONS.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <Select
@@ -913,7 +934,7 @@ function RoleBindingSection() {
           },
           {
             label: "角色",
-            name: `${deleteTarget?.role === "admin" ? "管理员" : "只读"} · ${SCOPE_LABELS[deleteTarget?.scope_type ?? "global"]}`,
+            name: `${roleLabel(deleteTarget?.role ?? "")} · ${SCOPE_LABELS[deleteTarget?.scope_type ?? "global"]}`,
             id: deleteTarget?.project_id ?? deleteTarget?.tenant_id ?? null,
           },
         ]}
@@ -966,6 +987,7 @@ function CreateRoleBindingDialog({
   const [tenant, setTenant] = useState<PickedRecord | null>(null);
   const [project, setProject] = useState<PickedRecord | null>(null);
   const [userSearch, setUserSearch] = useState("");
+  const debouncedUserSearch = useDebouncedValue(userSearch);
   const [wasOpen, setWasOpen] = useState(open);
 
   // Reset during render rather than in an effect, so a previous selection can
@@ -986,7 +1008,11 @@ function CreateRoleBindingDialog({
   const needsProject = scopeType === "project";
 
   const users = useUsers(
-    { limit: 50, status: "active", ...(userSearch.trim() ? { q: userSearch.trim() } : {}) },
+    {
+      limit: 50,
+      status: "active",
+      ...(debouncedUserSearch.trim() ? { q: debouncedUserSearch.trim() } : {}),
+    },
     open,
   );
   const tenants = useTenants({ limit: 100, status: "active" }, open && needsTenant);
@@ -1031,8 +1057,11 @@ function CreateRoleBindingDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="admin">管理员</SelectItem>
-                  <SelectItem value="viewer">只读</SelectItem>
+                  {ROLE_OPTIONS.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
