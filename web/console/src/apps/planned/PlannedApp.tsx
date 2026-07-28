@@ -15,14 +15,17 @@ export function PlannedApp({ manifest }: AppComponentProps) {
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-2xl flex-col justify-center gap-4 p-6">
-      <div className="flex items-center gap-3">
-        <span className="border-border-strong bg-surface-muted text-subtle-foreground grid size-11 place-items-center rounded-2xl border border-dashed">
-          <manifest.icon className="size-5" aria-hidden />
+    <div className="mx-auto flex h-full max-w-xl flex-col justify-center gap-5 p-6">
+      <div className="flex items-center gap-3.5">
+        {/* The same unlit face the launcher gives a planned tile. A dashed
+            outline is wireframe shorthand, and it would also say something
+            different here than the icon the operator just clicked. */}
+        <span className="bg-surface-muted/70 text-subtle-foreground grid size-12 shrink-0 place-items-center rounded-[15px]">
+          <manifest.icon className="size-5" strokeWidth={1.75} aria-hidden />
         </span>
-        <div>
-          <h3 className="text-foreground text-base font-semibold">{manifest.title}</h3>
-          <p className="text-muted-foreground text-[13px]">{manifest.description}</p>
+        <div className="min-w-0">
+          <h3 className="text-foreground text-[15px] font-semibold">{manifest.title}</h3>
+          <p className="text-muted-foreground mt-0.5 text-[13px]">{manifest.description}</p>
         </div>
       </div>
 
@@ -35,13 +38,17 @@ export function PlannedApp({ manifest }: AppComponentProps) {
       </Alert>
 
       <section>
-        <h4 className="text-foreground mb-2 text-[13px] font-medium">规划中的能力</h4>
-        <ul className="grid gap-1.5">
+        <h4 className="text-subtle-foreground mb-1 text-[11.5px] font-medium">规划中的能力</h4>
+        {/* An itemised list, not four filled boxes. Boxing each line gives every
+            one of them the weight of a control, on a screen whose whole point is
+            that there is nothing here to operate yet. */}
+        <ul className="divide-border/60 divide-y">
           {availability.plannedCapabilities.map((capability) => (
             <li
               key={capability}
-              className="border-border bg-surface-muted text-muted-foreground rounded-md border px-3 py-2 text-[13px]"
+              className="text-muted-foreground flex items-center gap-2.5 py-2 text-[13px]"
             >
+              <span aria-hidden className="bg-subtle-foreground/50 size-1 shrink-0 rounded-full" />
               {capability}
             </li>
           ))}

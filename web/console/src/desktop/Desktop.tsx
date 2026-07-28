@@ -197,12 +197,13 @@ export function Desktop() {
       <div
         aria-hidden
         className={cn(
-          "zke-topbar-fade pointer-events-none absolute inset-x-0 top-11 z-0 h-4 transition-transform duration-200 ease-out",
-          immersive && "-translate-y-[3.75rem]",
+          // Travels far enough to clear the bar's own height plus its own.
+          "zke-topbar-fade pointer-events-none absolute inset-x-0 top-10 z-0 h-4 transition-transform duration-200 ease-out",
+          immersive && "-translate-y-[3.5rem]",
         )}
       />
 
-      <div className="absolute inset-x-0 top-11 bottom-0 overflow-y-auto">
+      <div className="absolute inset-x-0 top-10 bottom-0 overflow-y-auto">
         <div className="max-w-2xl">
           <IconGrid onOpen={handleOpenApp} />
         </div>

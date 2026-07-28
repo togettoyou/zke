@@ -62,7 +62,11 @@ export function DataTable<TData>({
     <div className="flex min-h-0 flex-col gap-3">
       {toolbar ? <div className="flex flex-wrap items-center gap-2">{toolbar}</div> : null}
 
-      <div className="border-border bg-surface rounded-panel shadow-e1 min-h-0 flex-1 overflow-auto border">
+      {/* No shadow: this sits inside a window that already carries elevation,
+          and stacking one card's shadow inside another is what turns an
+          interface into a pile of cards. The hairline and the radius are enough
+          to say where the data begins. */}
+      <div className="border-border bg-surface rounded-panel min-h-0 flex-1 overflow-auto border">
         {error ? (
           <ErrorState error={error} onRetry={onRetry} />
         ) : isLoading ? (
@@ -71,16 +75,23 @@ export function DataTable<TData>({
           <EmptyState title={emptyTitle} description={emptyDescription} action={emptyAction} />
         ) : (
           <table className="zke-tnum w-full border-collapse text-[13px]">
-            {/* The header floats over scrolled rows, so it needs its own opaque
-                fill and a blur — a translucent one would let text show through. */}
-            <thead className="bg-surface-muted/95 sticky top-0 z-10 backdrop-blur-sm">
+            {/* The header floats over scrolled rows, so its fill is fully
+                opaque. It used to be 95% with a blur behind it, which is a
+                compositing layer bought to hide 5% of show-through — cheaper and
+                cleaner to just not be translucent. */}
+            <thead className="bg-surface-muted sticky top-0 z-10">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
                       scope="col"
-                      className="border-border text-subtle-foreground border-b px-3 py-2 text-left text-[11px] font-semibold tracking-[0.06em] whitespace-nowrap uppercase"
+                      // Neither uppercased nor letterspaced. Almost every header
+                      // here is Chinese: casing does nothing to it, tracking
+                      // just prises the characters apart, and a header like
+                      // 「Agent 版本」 ends up with the treatment applied to half
+                      // of itself.
+                      className="border-border text-muted-foreground border-b px-3 py-2 text-left text-[12px] font-medium whitespace-nowrap"
                       style={
                         header.column.columnDef.size
                           ? { width: header.column.columnDef.size }
@@ -101,10 +112,11 @@ export function DataTable<TData>({
                   key={row.id}
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                   className={cn(
-                    "border-border/60 border-b transition-colors last:border-b-0",
-                    onRowClick
-                      ? "hover:bg-primary-surface/40 cursor-pointer"
-                      : "hover:bg-surface-muted/60",
+                    // One neutral hover for both kinds of row. Tinting a
+                    // clickable row with the accent makes the pointer passing
+                    // over a long list look like a selection being made.
+                    "border-border/60 hover:bg-surface-muted/70 border-b transition-colors last:border-b-0",
+                    onRowClick && "cursor-pointer",
                   )}
                 >
                   {row.getVisibleCells().map((cell) => (

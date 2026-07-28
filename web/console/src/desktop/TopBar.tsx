@@ -1,7 +1,7 @@
 import { CircleDot, LayoutGrid, LogOut, Moon, Settings, Sun, UserRound } from "lucide-react";
 
 import type { StreamState } from "@/api/events";
-import { Badge, StatusDot } from "@/components/ui/badge";
+import { StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,7 +11,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Separator } from "@/components/ui/misc";
 import { HintTooltip } from "@/components/ui/tooltip";
 import { useSessionContext } from "@/auth/session-context";
 import { cn } from "@/lib/cn";
@@ -57,25 +56,28 @@ export function TopBar({
       className={cn(
         // Sits at the very back: windows dragged upwards pass over it. Its own
         // popovers and menus are portalled, so they still open above windows.
-        "zke-topbar absolute inset-x-0 top-0 z-0 flex h-11 items-center gap-2.5 px-3",
+        //
+        // The bar names nothing and frames nothing. No wordmark beside the mark,
+        // no rule between the mark and the scope, no "项目" caption in front of a
+        // control that already says which Project it holds: a bar that keeps
+        // announcing itself is the opposite of an immersive one.
+        "zke-topbar absolute inset-x-0 top-0 z-0 flex h-10 items-center gap-1.5 px-2.5",
         className,
       )}
     >
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="bg-primary text-primary-foreground shadow-e1 grid size-6 place-items-center rounded-[7px] text-[11px] font-bold">
-          Z
-        </span>
-        <span className="text-foreground text-[13px] font-semibold tracking-tight">ZKE</span>
-      </div>
+      <span
+        aria-hidden
+        className="bg-primary text-primary-foreground grid size-6 shrink-0 place-items-center rounded-[8px] text-[11px] font-bold"
+      >
+        Z
+      </span>
 
-      <Separator orientation="vertical" className="h-4 shrink-0" />
+      <ScopeSelector scope={scope} onChange={setScope} />
 
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="text-subtle-foreground shrink-0 text-xs">项目</span>
-        <ScopeSelector scope={scope} onChange={setScope} />
-      </div>
-
-      <div className="flex flex-1 items-center justify-end gap-2">
+      <div className="flex flex-1 items-center justify-end gap-1">
+        {/* Ambient status, so it is drawn as ambient: a dot and a quiet word.
+            The pill it used to wear gave a thing that changes on its own the
+            same weight as the controls beside it. */}
         <HintTooltip
           label={
             lastEventAt
@@ -83,10 +85,10 @@ export function TopBar({
               : `集群状态事件流：${stream.label}`
           }
         >
-          <Badge tone={stream.tone} className="hidden sm:inline-flex">
+          <span className="text-subtle-foreground mr-1 hidden items-center gap-1.5 text-[11.5px] sm:inline-flex">
             <StatusDot tone={stream.tone} />
             {stream.label}
-          </Badge>
+          </span>
         </HintTooltip>
 
         <Button
@@ -100,8 +102,8 @@ export function TopBar({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-2">
-              <UserRound />
+            <Button variant="ghost" size="sm" className="gap-1.5 px-2 text-[12.5px]">
+              <UserRound className="text-subtle-foreground" />
               <span className="max-w-32 truncate">{session?.user.display_name ?? "未登录"}</span>
             </Button>
           </DropdownMenuTrigger>

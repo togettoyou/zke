@@ -129,19 +129,33 @@ export function Window({
         style={{ ...geometry, zIndex }}
         onPointerDownCapture={() => focusWindow(instance.id)}
       >
+        {/*
+         * `bg-surface-muted/50` rather than the translucent overlay this used to
+         * carry: the overlay was paired with `backdrop-blur-xl`, and a backdrop
+         * filter over an opaque window body has nothing behind it to filter — it
+         * bought a compositing layer per window and rendered as plain white. A
+         * barely-tinted fill is what actually separates chrome from content.
+         */}
         <header
           className={cn(
-            "border-border bg-surface-overlay flex h-10 shrink-0 items-center gap-2 border-b px-2.5 backdrop-blur-xl",
+            "border-border bg-surface-muted/50 flex h-10 shrink-0 items-center gap-2 border-b px-2.5",
             !stacked && "cursor-grab active:cursor-grabbing",
           )}
           onDoubleClick={() => (stacked ? undefined : toggleMaximize(instance.id))}
           {...(stacked ? {} : interaction.dragHandleProps)}
         >
-          <Icon className="text-primary size-4 shrink-0" strokeWidth={1.75} aria-hidden />
-          <h2
-            id={titleId}
-            className="text-foreground shrink-0 text-[13px] font-semibold tracking-tight"
-          >
+          {/* The one spot of colour in the frame, and it follows focus: on a
+              desktop of open windows, which one is live should be readable from
+              the title bar alone. */}
+          <Icon
+            className={cn(
+              "size-4 shrink-0 transition-colors duration-150",
+              focused ? "text-primary" : "text-subtle-foreground",
+            )}
+            strokeWidth={1.75}
+            aria-hidden
+          />
+          <h2 id={titleId} className="text-foreground shrink-0 text-[13px] font-medium">
             {instance.title}
           </h2>
 
@@ -149,9 +163,12 @@ export function Window({
             className="ml-auto flex shrink-0 items-center gap-0.5"
             onPointerDown={(event) => event.stopPropagation()}
           >
+            {/* Frame controls sit back until they are wanted: at rest they are
+                the faintest ink in the bar, and hover is what brings them up. */}
             <Button
               size="icon-sm"
               variant="ghost"
+              className="text-subtle-foreground"
               aria-label="最小化窗口"
               onClick={() => minimizeWindow(instance.id)}
             >
@@ -160,6 +177,7 @@ export function Window({
             <Button
               size="icon-sm"
               variant="ghost"
+              className="text-subtle-foreground"
               aria-label={instance.mode === "maximized" ? "还原窗口" : "最大化窗口"}
               disabled={stacked}
               onClick={() => toggleMaximize(instance.id)}
@@ -169,7 +187,7 @@ export function Window({
             <Button
               size="icon-sm"
               variant="ghost"
-              className="hover:bg-danger-surface hover:text-danger"
+              className="text-subtle-foreground hover:bg-danger-surface hover:text-danger"
               aria-label="关闭窗口"
               onClick={() => closeWindow(instance.id)}
             >

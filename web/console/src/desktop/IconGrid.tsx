@@ -6,11 +6,17 @@ import { cn } from "@/lib/cn";
 /**
  * Desktop launcher.
  *
- * Applications the user has no permission for anywhere are hidden; planned
- * applications stay visible with a "规划中" marker so the product shape is clear
- * without implying the capability exists. Planned tiles are deliberately drawn
- * flat and dashed — the difference between "you can use this" and "this is where
- * it will go" has to be legible before the window opens, not after.
+ * Applications the user has no permission for anywhere are hidden. Planned ones
+ * stay visible so the product shape is legible, and each says so on its own
+ * face — the marker belongs to the tile, not to a section heading above a block
+ * of them. A desktop does not sort its icons under administrative captions, and
+ * per-tile marking states the case more directly anyway: it survives however the
+ * grid reflows, and it is impossible to read one icon without reading its own
+ * status.
+ *
+ * The difference between "you can use this" and "this is where it will go" has
+ * to be legible before the window opens, so a planned tile is drawn without the
+ * lit face and the raised edge that make an available one look pressable.
  */
 export function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
   const { permissions } = useSessionContext();
@@ -22,47 +28,24 @@ export function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
     return manifest.requiredPermissions.some((permission) => permissions.canAnywhere(permission));
   });
 
-  const available = visible.filter((manifest) => manifest.availability.state === "available");
-  const planned = visible.filter((manifest) => manifest.availability.state === "planned");
+  // Available first, then planned: what can be used should be reachable without
+  // reading past what cannot.
+  const ordered = [
+    ...visible.filter((manifest) => manifest.availability.state === "available"),
+    ...visible.filter((manifest) => manifest.availability.state === "planned"),
+  ];
 
   return (
-    <div className="grid gap-7 p-6">
-      <IconSection label="可用" manifests={available} onOpen={onOpen} />
-      {planned.length > 0 ? (
-        <IconSection label="规划中" manifests={planned} onOpen={onOpen} />
-      ) : null}
-    </div>
-  );
-}
-
-function IconSection({
-  label,
-  manifests,
-  onOpen,
-}: {
-  label: string;
-  manifests: AppManifest[];
-  onOpen: (appId: string) => void;
-}) {
-  if (manifests.length === 0) {
-    return null;
-  }
-  return (
-    <section>
-      <h2 className="text-subtle-foreground mb-2 px-1 text-[11px] font-semibold tracking-[0.14em] uppercase">
-        {label}
-      </h2>
-      <ul
-        className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-1"
-        aria-label={`平台应用 · ${label}`}
-      >
-        {manifests.map((manifest) => (
-          <li key={manifest.id}>
-            <AppIcon manifest={manifest} onOpen={() => onOpen(manifest.id)} />
-          </li>
-        ))}
-      </ul>
-    </section>
+    <ul
+      className="grid grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-x-1 gap-y-3 p-6"
+      aria-label="平台应用"
+    >
+      {ordered.map((manifest) => (
+        <li key={manifest.id}>
+          <AppIcon manifest={manifest} onOpen={() => onOpen(manifest.id)} />
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -76,27 +59,32 @@ function AppIcon({ manifest, onOpen }: { manifest: AppManifest; onOpen: () => vo
       type="button"
       onClick={onOpen}
       title={manifest.description}
-      className="zke-focus group rounded-panel hover:bg-surface-overlay flex w-full flex-col items-center gap-2 border border-transparent px-1.5 py-2.5 text-center transition-colors"
+      className="zke-focus group rounded-panel flex w-full flex-col items-center gap-2 px-1.5 py-2.5 text-center"
     >
       <span
         className={cn(
-          "relative grid size-14 place-items-center rounded-[16px] transition-[transform,box-shadow] duration-200",
+          "grid size-14 place-items-center rounded-[17px] transition-[transform,box-shadow] duration-200",
           "group-hover:-translate-y-1 group-active:translate-y-0",
           planned
-            ? "border-border-strong bg-surface-muted/70 text-subtle-foreground border border-dashed"
-            : "zke-tile border-border bg-surface text-primary group-hover:shadow-e3 border",
+            ? "bg-surface-muted/70 text-subtle-foreground"
+            : "zke-tile bg-primary-surface text-primary group-hover:shadow-e3",
         )}
       >
         <Icon className="size-6" strokeWidth={1.75} aria-hidden />
       </span>
 
-      <span className="flex min-w-0 flex-col items-center gap-1">
-        <span className="text-foreground w-full truncate text-[13px] leading-tight font-medium">
+      <span className="flex w-full min-w-0 flex-col items-center gap-0.5">
+        <span
+          className={cn(
+            "w-full truncate text-[12.5px] leading-tight font-medium",
+            planned ? "text-muted-foreground" : "text-foreground",
+          )}
+        >
           {manifest.title}
         </span>
         {planned ? (
-          <span className="text-subtle-foreground text-[10px] leading-4">
-            Phase {availability.phase}
+          <span className="text-subtle-foreground w-full truncate text-[10px] leading-4">
+            规划中 · Phase {availability.phase}
           </span>
         ) : null}
       </span>

@@ -48,14 +48,19 @@ export function AppShell({
                 aria-current={active ? "page" : undefined}
                 onClick={() => onNavigate(item.id)}
                 className={cn(
-                  "zke-focus rounded-control relative flex items-center gap-2 border border-transparent px-2 py-1.5 text-left text-[13px] transition-colors",
+                  "zke-focus rounded-control relative flex items-center gap-2 px-2 py-1.5 text-left text-[13px] transition-colors",
                   active
-                    ? "border-border bg-surface text-foreground shadow-e1 font-medium"
+                    ? "bg-surface text-foreground font-medium"
                     : "text-muted-foreground hover:bg-surface/70 hover:text-foreground",
                 )}
               >
-                {/* A rail on the active item: on a surface this quiet, a fill
-                    change alone is a weak signal. */}
+                {/*
+                 * A rail plus a fill, and that is all. The active item used to
+                 * carry a border and an elevation as well — six signals for one
+                 * piece of state, on a rail eight items long. Weight is only
+                 * legible against something lighter, so spending all of it at
+                 * once leaves nothing to spend.
+                 */}
                 {active ? (
                   <span
                     aria-hidden
