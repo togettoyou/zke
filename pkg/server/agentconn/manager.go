@@ -30,7 +30,7 @@ type ConnectionStore interface {
 	RecordHeartbeat(ctx context.Context, params store.RecordAgentHeartbeatParams) error
 	WatchRevocations(
 		ctx context.Context,
-		ready chan<- struct{},
+		onReady func(),
 		handle func(store.AgentConnectionRevocation),
 	) error
 }
@@ -116,6 +116,13 @@ const (
 
 	defaultMaxRememberedDisconnects = 4096
 	defaultSessionWriteTimeout      = 5 * time.Second
+
+	// Bounds for re-establishing the revocation watch after the listening
+	// PostgreSQL connection drops. The ceiling is kept well under the
+	// heartbeat persistence interval so that the immediate path is restored
+	// long before the fallback matters.
+	revocationRetryInitialInterval = time.Second
+	revocationRetryMaxInterval     = 30 * time.Second
 )
 
 type certificateIdentity struct {
@@ -173,10 +180,9 @@ func (manager *Manager) Run(ctx context.Context) error {
 	watcher.Add(1)
 	go func() {
 		defer watcher.Done()
-		revocationErrors <- manager.store.WatchRevocations(
+		revocationErrors <- manager.superviseRevocations(
 			runContext,
 			revocationsReady,
-			manager.handleRevocation,
 		)
 		cancelRun()
 	}()
@@ -759,6 +765,74 @@ func (manager *Manager) closeAll() {
 			},
 		})
 		_ = connection.conn.CloseWithError(agentprotocol.CloseNormal, "server shutdown")
+	}
+}
+
+// superviseRevocations keeps the revocation watch running for the lifetime of
+// the listener.
+//
+// The first attempt must succeed: accepting an Agent before revocation
+// enforcement is live would leave no way to disconnect a credential revoked
+// moments later, so a Server that cannot establish the watch at startup fails
+// to start.
+//
+// A later failure is different. The watch rides on one PostgreSQL connection,
+// and losing it is an ordinary event — a database restart, a failover, a
+// dropped TCP session. Ending the listener there would take the whole Server
+// down with it, which is a far worse outcome than a delayed disconnect: while
+// the watch is down, a revoked credential is still refused by the next
+// heartbeat write, so revocation degrades from immediate to bounded by
+// agent_listener.last_seen_write_interval rather than being lost.
+func (manager *Manager) superviseRevocations(
+	ctx context.Context,
+	ready chan<- struct{},
+) error {
+	signalReady := sync.OnceFunc(func() { close(ready) })
+	established := false
+	delay := revocationRetryInitialInterval
+
+	for {
+		watched := false
+		err := manager.store.WatchRevocations(
+			ctx,
+			func() {
+				watched = true
+				established = true
+				signalReady()
+			},
+			manager.handleRevocation,
+		)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil {
+			err = errors.New("Agent revocation watch ended unexpectedly")
+		}
+		if !established {
+			return err
+		}
+		if watched {
+			// The watch ran before dropping, so this is a fresh failure rather
+			// than a database that keeps refusing; start the backoff over.
+			delay = revocationRetryInitialInterval
+		}
+		manager.logger.Warn(
+			"Agent revocation watch dropped; retrying",
+			slog.String("error", err.Error()),
+			slog.Duration("retry_after", delay),
+			slog.Duration(
+				"revocation_delay_until_restored",
+				manager.config.LastSeenWriteInterval,
+			),
+		)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+		delay = min(delay*2, revocationRetryMaxInterval)
 	}
 }
 

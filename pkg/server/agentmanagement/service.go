@@ -11,7 +11,7 @@ import (
 
 var (
 	ErrInvalidInput = errors.New("invalid Agent management input")
-	ErrNotFound     = store.ErrAgentNotFound
+	ErrNotFound     = errors.New("Cluster connection not found")
 )
 
 type Service struct {
@@ -41,15 +41,12 @@ type RevokeResult struct {
 	AlreadyRevoked bool
 }
 
-func NewService(
-	agentStore Store,
-	events ...StatusEventPublisher,
-) *Service {
-	service := &Service{store: agentStore}
-	if len(events) > 0 {
-		service.events = events[0]
-	}
-	return service
+// NewService takes the status event publisher as a required parameter. A
+// revocation that never reaches the Console leaves it showing a Cluster as
+// connected, so a missing publisher must be visible at composition time rather
+// than as a Console that quietly stops converging.
+func NewService(agentStore Store, events StatusEventPublisher) *Service {
+	return &Service{store: agentStore, events: events}
 }
 
 func (service *Service) Revoke(
@@ -68,6 +65,9 @@ func (service *Service) Revoke(
 		RequestID:   input.RequestID,
 		Now:         input.Now,
 	})
+	if errors.Is(err, store.ErrAgentNotFound) {
+		return RevokeResult{}, ErrNotFound
+	}
 	if err != nil {
 		return RevokeResult{}, err
 	}

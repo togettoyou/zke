@@ -10,7 +10,7 @@ import (
 func TestRevokeRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 
-	service := NewService(nil)
+	service := NewService(nil, nil)
 	_, err := service.Revoke(context.Background(), RevokeInput{
 		ClusterID:   "not-a-uuid",
 		ActorUserID: "00000000-0000-4000-8000-000000000001",

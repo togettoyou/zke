@@ -92,7 +92,7 @@ VALUES ($3, $1, $2, 'cluster', 'active')`,
 	go func() {
 		watchErrors <- store.NewAgentConnectionStore(pool).WatchRevocations(
 			watchContext,
-			ready,
+			func() { close(ready) },
 			func(event store.AgentConnectionRevocation) {
 				events <- event
 			},
@@ -123,14 +123,11 @@ VALUES ($3, $1, $2, 'cluster', 'active')`,
 		t.Fatalf("unexpected revoke result: %+v", result)
 	}
 
-	select {
-	case event := <-events:
-		if event.AgentID != agentID {
-			t.Fatalf("revocation event = %+v, want Agent %s", event, agentID)
-		}
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
+	// LISTEN/NOTIFY is database-wide while openIsolatedDatabase only isolates a
+	// schema, so this channel also carries revocations raised by whatever else
+	// is running against the same database. Wait for the one this test caused
+	// instead of asserting on whichever notification arrives first.
+	waitForAgentRevocation(t, ctx, events, agentID)
 
 	var lifecycleStatus, healthStatus string
 	var storedRevokedAt time.Time
@@ -197,5 +194,28 @@ WHERE actor_user_id = $1
 	})
 	if !errors.Is(err, store.ErrAgentNotFound) {
 		t.Fatalf("missing Agent error = %v, want ErrAgentNotFound", err)
+	}
+}
+
+// waitForAgentRevocation consumes revocation notifications until the one for
+// agentID arrives, ignoring those raised by other work against the same
+// database.
+func waitForAgentRevocation(
+	t *testing.T,
+	ctx context.Context,
+	events <-chan store.AgentConnectionRevocation,
+	agentID string,
+) {
+	t.Helper()
+
+	for {
+		select {
+		case event := <-events:
+			if event.AgentID == agentID {
+				return
+			}
+		case <-ctx.Done():
+			t.Fatalf("no revocation notification for Agent %s: %v", agentID, ctx.Err())
+		}
 	}
 }

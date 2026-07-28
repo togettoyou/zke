@@ -410,9 +410,16 @@ VALUES (
 	}, nil
 }
 
+// WatchRevocations delivers revocation notifications until ctx is cancelled or
+// the listening connection fails. onReady is called once the LISTEN is
+// established.
+//
+// It reports readiness through a callback rather than by closing a channel so
+// that the caller can call it again after a failure: a supervisor that retries
+// cannot hand the same channel to a second attempt.
 func (store *AgentConnectionStore) WatchRevocations(
 	ctx context.Context,
-	ready chan<- struct{},
+	onReady func(),
 	handle func(AgentConnectionRevocation),
 ) error {
 	if handle == nil {
@@ -429,8 +436,8 @@ func (store *AgentConnectionStore) WatchRevocations(
 	); err != nil {
 		return errors.New("listen for Agent connection revocations")
 	}
-	if ready != nil {
-		close(ready)
+	if onReady != nil {
+		onReady()
 	}
 	defer func() {
 		cleanupContext, cancelCleanup := context.WithTimeout(

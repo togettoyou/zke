@@ -23,8 +23,14 @@ const PERSIST_DEBOUNCE_MS = 400;
  * make multi-window work practical.
  */
 export function Desktop() {
-  const { session } = useSessionContext();
+  const { session, permissions } = useSessionContext();
   const userId = session?.user.id ?? null;
+  // The Server refuses the event stream to a caller who can observe no Cluster
+  // at all, and `EventSource` never exposes that status, so an ungated stream
+  // would reconnect forever. Mirror the Server's own check here: it resolves
+  // `cluster.read` visibility across every binding, which is what
+  // `canAnywhere` reports.
+  const clusterEventsAllowed = Boolean(session) && permissions.canAnywhere("cluster.read");
 
   const setViewport = useWindowStore((state) => state.setViewport);
   const openWindow = useWindowStore((state) => state.openWindow);
@@ -53,7 +59,7 @@ export function Desktop() {
   const hydratedFor = useRef<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { state: streamState, lastEventAt } = useClusterEvents(Boolean(session));
+  const { state: streamState, lastEventAt } = useClusterEvents(clusterEventsAllowed);
 
   /**
    * A full-screen window owns the whole surface, so the top bar steps out of its

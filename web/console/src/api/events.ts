@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { createPermissionChecker } from "@/auth/capabilities";
+
 import { api, unwrap } from "./client";
 import { isUnauthenticated } from "./errors";
 import { queryKeys, queryKeyPrefixes } from "./query-keys";
@@ -23,23 +25,31 @@ type Handlers = {
   onStateChange: (state: StreamState) => void;
 };
 
+/** Why a dropped stream may or may not be worth reconnecting. */
+type StreamProbe = "retry" | "unauthenticated" | "forbidden";
+
 /**
  * `EventSource` never exposes the HTTP status of a failed connection, so an
- * expired session is indistinguishable from a transient network drop. The
- * session is therefore probed through the regular API client, which shares the
- * Server's `RequireAuthentication` middleware with the stream endpoint: a 401
- * there notifies the shell (see `onUnauthenticated`) and moves the Console back
- * to the login view. Without this the stream would reconnect forever against an
- * endpoint that keeps answering 401.
+ * expired session, a withdrawn permission and a transient network drop all look
+ * identical. The cause is therefore probed through the regular API client, and
+ * `/api/v1/auth/me` answers both questions in one round trip:
+ *
+ * - a 401 means the session is gone; the shell moves back to the login view;
+ * - capabilities without `cluster.read` anywhere mean the Server will keep
+ *   answering 403, which is what it does for a caller who can observe no
+ *   Cluster. Reconnecting would loop forever, so the stream stops instead.
+ *
+ * Anything else says nothing conclusive and is retried.
  */
-async function sessionRejected(): Promise<boolean> {
+async function probeStreamAccess(): Promise<StreamProbe> {
   try {
-    unwrap(await api.GET("/api/v1/auth/me", {}));
-    return false;
+    const session = unwrap(await api.GET("/api/v1/auth/me", {}));
+    const permissions = createPermissionChecker(session.capabilities ?? []);
+    return permissions.canAnywhere("cluster.read") ? "retry" : "forbidden";
   } catch (error) {
     // Only an explicit 401 is conclusive. A network error or timeout says
     // nothing about the session, so the stream must keep retrying.
-    return isUnauthenticated(error);
+    return isUnauthenticated(error) ? "unauthenticated" : "retry";
   }
 }
 
@@ -77,22 +87,23 @@ export function startClusterEventStream(handlers: Handlers): () => void {
   };
 
   /**
-   * A dropped connection is only retried while the session is still valid.
-   * Once the Server has rejected it, reconnecting would just reproduce the 401,
-   * so the stream stops and lets the shell return to the login view.
+   * A dropped connection is only retried while reconnecting could actually
+   * succeed. Once the Server has rejected the session or the caller has lost
+   * every Cluster they could observe, another attempt just reproduces the same
+   * status, so the stream stops.
    */
   const handleTransportError = async (): Promise<void> => {
     if (stopped) {
       return;
     }
     handlers.onStateChange("reconnecting");
-    const rejected = await sessionRejected();
+    const probe = await probeStreamAccess();
     // The probe can outlive the stream: the desktop may have unmounted, or the
     // operator may have logged out, while it was in flight.
     if (stopped) {
       return;
     }
-    if (rejected) {
+    if (probe !== "retry") {
       stopped = true;
       handlers.onStateChange("closed");
       return;
