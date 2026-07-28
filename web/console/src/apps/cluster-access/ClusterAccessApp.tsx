@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Globe2, KeyRound, RefreshCw, Server, ServerCog } from "lucide-react";
+import { Globe2, KeyRound, MoreHorizontal, RefreshCw, Server, ServerCog } from "lucide-react";
 import { toast } from "sonner";
 
 import { newIdempotencyKey } from "@/api/client";
@@ -49,6 +49,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
 import { Alert, Card, CardTitle } from "@/components/ui/misc";
@@ -161,48 +168,52 @@ function OverviewSection({ onSelect }: { onSelect: (entry: ClusterOverviewEntry)
 
   return (
     <>
-      <SectionTitle
-        title="全局集群概览"
-        description="按当前权限范围聚合租户 → 项目 → 集群；Server 暂未提供跨项目的集群列表接口"
-        actions={
-          <Button size="sm" variant="secondary" onClick={() => void overview.refetch()}>
-            <RefreshCw />
-            刷新
-          </Button>
-        }
-      />
+      {/* A full-height column: without it the table grows to fit its rows, the
+          whole view scrolls instead, and the sticky header sticks to nothing. */}
+      <div className="flex h-full min-h-0 flex-col">
+        <SectionTitle
+          title="全局集群概览"
+          description="按当前权限范围聚合租户 → 项目 → 集群；Server 暂未提供跨项目的集群列表接口"
+          actions={
+            <Button size="sm" variant="secondary" onClick={() => void overview.refetch()}>
+              <RefreshCw />
+              刷新
+            </Button>
+          }
+        />
 
-      {overview.data?.truncated ? (
-        <Alert tone="warning" className="mb-3">
-          结果已截断：可见资源数量超过单次聚合上限，列表并不完整。请切换到「集群」视图按项目查看完整列表。
-        </Alert>
-      ) : null}
+        {overview.data?.truncated ? (
+          <Alert tone="warning" className="mb-3">
+            结果已截断：可见资源数量超过单次聚合上限，列表并不完整。请切换到「集群」视图按项目查看完整列表。
+          </Alert>
+        ) : null}
 
-      {overview.data && overview.data.failures.length > 0 ? (
-        <Alert tone="warning" className="mb-3">
-          以下范围聚合失败，结果不完整：
-          <ul className="mt-1 list-disc pl-5">
-            {overview.data.failures.map((failure) => (
-              <li key={failure.scope}>
-                {failure.scope}：{failure.message}
-              </li>
-            ))}
-          </ul>
-        </Alert>
-      ) : null}
+        {overview.data && overview.data.failures.length > 0 ? (
+          <Alert tone="warning" className="mb-3">
+            以下范围聚合失败，结果不完整：
+            <ul className="mt-1 list-disc pl-5">
+              {overview.data.failures.map((failure) => (
+                <li key={failure.scope}>
+                  {failure.scope}：{failure.message}
+                </li>
+              ))}
+            </ul>
+          </Alert>
+        ) : null}
 
-      <DataTable
-        columns={columns}
-        data={overview.data?.entries}
-        isLoading={overview.isLoading}
-        isFetching={overview.isFetching}
-        error={overview.error}
-        onRetry={() => void overview.refetch()}
-        rowKey={(row) => row.cluster.id}
-        onRowClick={onSelect}
-        emptyTitle="没有可见的集群"
-        emptyDescription="当前账号的权限范围内还没有接入任何 Kubernetes 集群。"
-      />
+        <DataTable
+          columns={columns}
+          data={overview.data?.entries}
+          isLoading={overview.isLoading}
+          isFetching={overview.isFetching}
+          error={overview.error}
+          onRetry={() => void overview.refetch()}
+          rowKey={(row) => row.cluster.id}
+          onRowClick={onSelect}
+          emptyTitle="没有可见的集群"
+          emptyDescription="当前账号的权限范围内还没有接入任何 Kubernetes 集群。"
+        />
+      </div>
     </>
   );
 }
@@ -290,46 +301,65 @@ function ClusterSection({
       {
         id: "actions",
         header: "",
-        size: 300,
+        size: 56,
+        /*
+         * One menu, and the row itself opens the detail.
+         *
+         * Five buttons per line mixed navigation with three different kinds of
+         * change — renaming, cutting a live connection, and retiring — at one
+         * weight. Opening a cluster is what a row is for; the rest belong behind
+         * a menu, where the two that break a running connection can sit apart
+         * from the one that only edits a label.
+         */
         cell: ({ row }) => {
           const cluster = row.original;
+          const revocable = canRevoke && cluster.connection.certificate_status !== "revoked";
           return (
-            <div className="flex flex-wrap justify-end gap-1">
-              <Button size="sm" variant="ghost" onClick={() => onSelect(cluster)}>
-                详情
-              </Button>
-              {canManage ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setRenameTarget(cluster);
-                    setRenameValue(cluster.name);
-                  }}
-                >
-                  重命名
-                </Button>
-              ) : null}
-              {canRevoke && cluster.connection.certificate_status !== "revoked" ? (
-                <Button size="sm" variant="ghost" onClick={() => setRevokeTarget(cluster)}>
-                  撤销连接
-                </Button>
-              ) : null}
-              {canEnroll ? (
-                <Button size="sm" variant="ghost" onClick={() => setReenrollTarget(cluster)}>
-                  重新接入
-                </Button>
-              ) : null}
-              {canManage ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-danger"
-                  onClick={() => setRetireTarget(cluster)}
-                >
-                  退役
-                </Button>
-              ) : null}
+            <div
+              className="flex justify-end"
+              // The row opens the cluster; the menu must not, or every action
+              // would navigate away from the thing it just changed.
+              onClick={(event) => event.stopPropagation()}
+            >
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" aria-label={`${cluster.name} 的操作`}>
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem onSelect={() => onSelect(cluster)}>详情</DropdownMenuItem>
+                  {canManage ? (
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        setRenameTarget(cluster);
+                        setRenameValue(cluster.name);
+                      }}
+                    >
+                      重命名
+                    </DropdownMenuItem>
+                  ) : null}
+                  {revocable || canEnroll ? <DropdownMenuSeparator /> : null}
+                  {revocable ? (
+                    <DropdownMenuItem onSelect={() => setRevokeTarget(cluster)}>
+                      撤销连接
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canEnroll ? (
+                    <DropdownMenuItem onSelect={() => setReenrollTarget(cluster)}>
+                      重新接入
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canManage ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="danger" onSelect={() => setRetireTarget(cluster)}>
+                        退役
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           );
         },
@@ -344,34 +374,37 @@ function ClusterSection({
 
   return (
     <>
-      <SectionTitle
-        title={`集群 · ${scope.projectName ?? scope.projectId}`}
-        description="集群与其中的 ZKE Agent 是同一个管理共同体，操作以 cluster_id 为目标"
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <SectionTitle
+          title={`集群 · ${scope.projectName ?? scope.projectId}`}
+          description="集群与其中的 ZKE Agent 是同一个管理共同体，操作以 cluster_id 为目标"
+        />
 
-      <DataTable
-        columns={columns}
-        data={query.data?.clusters}
-        isLoading={query.isLoading}
-        isFetching={query.isFetching}
-        error={query.error}
-        onRetry={() => void query.refetch()}
-        rowKey={(row) => row.id}
-        emptyTitle="该项目还没有集群"
-        emptyDescription="可在「接入凭证」中创建一次性凭证或一键安装命令，让集群中的 ZKE Agent 主动接入。"
-        toolbar={
-          <Input
-            className="max-w-56"
-            placeholder="按名称搜索"
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              setOffset(0);
-            }}
-          />
-        }
-        pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
-      />
+        <DataTable
+          columns={columns}
+          data={query.data?.clusters}
+          isLoading={query.isLoading}
+          isFetching={query.isFetching}
+          error={query.error}
+          onRetry={() => void query.refetch()}
+          rowKey={(row) => row.id}
+          onRowClick={onSelect}
+          emptyTitle="该项目还没有集群"
+          emptyDescription="可在「接入凭证」中创建一次性凭证或一键安装命令，让集群中的 ZKE Agent 主动接入。"
+          toolbar={
+            <Input
+              className="max-w-56"
+              placeholder="按名称搜索"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setOffset(0);
+              }}
+            />
+          }
+          pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+        />
+      </div>
 
       <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => !open && setRenameTarget(null)}>
         <DialogContent aria-describedby={undefined}>
@@ -631,50 +664,52 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
 
   return (
     <>
-      <SectionTitle
-        title="接入凭证"
-        description="一次性凭证由集群内的 ZKE Agent 使用，Agent 主动连接 Server 完成注册"
-        actions={
-          canCreate ? (
-            <>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  setClusterName("");
-                  setInstallOpen(true);
-                }}
-              >
-                一键安装命令
-              </Button>
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => {
-                  setClusterName("");
-                  setCreateOpen(true);
-                }}
-              >
-                <KeyRound />
-                创建凭证
-              </Button>
-            </>
-          ) : null
-        }
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <SectionTitle
+          title="接入凭证"
+          description="一次性凭证由集群内的 ZKE Agent 使用，Agent 主动连接 Server 完成注册"
+          actions={
+            canCreate ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setClusterName("");
+                    setInstallOpen(true);
+                  }}
+                >
+                  一键安装命令
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => {
+                    setClusterName("");
+                    setCreateOpen(true);
+                  }}
+                >
+                  <KeyRound />
+                  创建凭证
+                </Button>
+              </>
+            ) : null
+          }
+        />
 
-      <DataTable
-        columns={columns}
-        data={query.data?.cluster_enrollments}
-        isLoading={query.isLoading}
-        isFetching={query.isFetching}
-        error={query.error}
-        onRetry={() => void query.refetch()}
-        rowKey={(row) => row.id}
-        emptyTitle="没有接入凭证"
-        emptyDescription="创建一次性凭证后，在目标集群部署 ZKE Agent 即可完成接入。"
-        pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
-      />
+        <DataTable
+          columns={columns}
+          data={query.data?.cluster_enrollments}
+          isLoading={query.isLoading}
+          isFetching={query.isFetching}
+          error={query.error}
+          onRetry={() => void query.refetch()}
+          rowKey={(row) => row.id}
+          emptyTitle="没有接入凭证"
+          emptyDescription="创建一次性凭证后，在目标集群部署 ZKE Agent 即可完成接入。"
+          pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+        />
+      </div>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent aria-describedby={undefined}>

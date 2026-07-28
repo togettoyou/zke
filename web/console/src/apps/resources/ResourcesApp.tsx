@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Building2, ChevronRight, FolderKanban, PlusCircle, Server } from "lucide-react";
+import { Building2, ChevronRight, FolderKanban, MoreHorizontal, PlusCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { newIdempotencyKey } from "@/api/client";
@@ -31,6 +31,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
@@ -164,7 +171,17 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
       {
         id: "actions",
         header: "",
-        size: 300,
+        size: 56,
+        /*
+         * One menu, and the row itself carries the drill-down.
+         *
+         * Four buttons on every line mixed two different kinds of thing:
+         * "查看项目" navigates into the tenant, the rest change it. Navigation
+         * belongs to the row — a tenant containing projects behaves like a
+         * folder — and the changes belong behind a menu, where the destructive
+         * one can sit below a separator instead of being the same control in a
+         * different colour.
+         */
         cell: ({ row }) => {
           const tenant = row.original;
           const canManage = permissions.can("tenant.manage", {
@@ -172,41 +189,50 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
             tenantId: tenant.id,
           });
           return (
-            <div className="flex flex-wrap justify-end gap-1">
-              <Button size="sm" variant="ghost" onClick={() => onOpenProjects(tenant)}>
-                查看项目
-              </Button>
-              {canManage ? (
-                <>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      setNameDialog({
-                        mode: "rename",
-                        target: {
-                          id: tenant.id,
-                          name: tenant.name,
-                          status: tenant.status as ResourceStatus,
-                        },
-                      })
-                    }
-                  >
-                    重命名
+            <div
+              className="flex justify-end"
+              // The row opens the tenant; the menu must not, or every management
+              // action would navigate away from the thing it just changed.
+              onClick={(event) => event.stopPropagation()}
+            >
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" aria-label={`${tenant.name} 的操作`}>
+                    <MoreHorizontal />
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setStatusTarget(tenant)}>
-                    {tenant.status === "active" ? "停用" : "恢复"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger"
-                    onClick={() => setRetireTarget(tenant)}
-                  >
-                    退役
-                  </Button>
-                </>
-              ) : null}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem onSelect={() => onOpenProjects(tenant)}>
+                    查看项目
+                  </DropdownMenuItem>
+                  {canManage ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setNameDialog({
+                            mode: "rename",
+                            target: {
+                              id: tenant.id,
+                              name: tenant.name,
+                              status: tenant.status as ResourceStatus,
+                            },
+                          })
+                        }
+                      >
+                        重命名
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setStatusTarget(tenant)}>
+                        {tenant.status === "active" ? "停用" : "恢复"}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="danger" onSelect={() => setRetireTarget(tenant)}>
+                        退役
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           );
         },
@@ -217,62 +243,67 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
 
   return (
     <>
-      <SectionTitle
-        title="租户"
-        description="租户是权限与资源的顶层边界；停用会影响其下全部项目与集群"
-        actions={
-          canCreate ? (
-            <Button size="sm" variant="primary" onClick={() => setNameDialog({ mode: "create" })}>
-              <PlusCircle />
-              新建租户
-            </Button>
-          ) : null
-        }
-      />
+      {/* A full-height column: without it the table grows to fit its rows, the
+          whole view scrolls instead, and the sticky header sticks to nothing. */}
+      <div className="flex h-full min-h-0 flex-col">
+        <SectionTitle
+          title="租户"
+          description="租户是权限与资源的顶层边界；停用会影响其下全部项目与集群"
+          actions={
+            canCreate ? (
+              <Button size="sm" variant="primary" onClick={() => setNameDialog({ mode: "create" })}>
+                <PlusCircle />
+                新建租户
+              </Button>
+            ) : null
+          }
+        />
 
-      <DataTable
-        columns={columns}
-        data={query.data?.tenants}
-        isLoading={query.isLoading}
-        isFetching={query.isFetching}
-        error={query.error}
-        onRetry={() => void query.refetch()}
-        rowKey={(row) => row.id}
-        emptyTitle="没有可见的租户"
-        emptyDescription="当前账号的权限范围内没有租户，或筛选条件过窄。"
-        toolbar={
-          <>
-            <Input
-              className="max-w-56"
-              placeholder="按名称搜索"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setOffset(0);
-              }}
-            />
-            <Select
-              value={status}
-              onValueChange={(value) => {
-                setStatus(value);
-                setOffset(0);
-              }}
-            >
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_FILTERS.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </>
-        }
-        pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
-      />
+        <DataTable
+          columns={columns}
+          data={query.data?.tenants}
+          isLoading={query.isLoading}
+          isFetching={query.isFetching}
+          error={query.error}
+          onRetry={() => void query.refetch()}
+          rowKey={(row) => row.id}
+          onRowClick={onOpenProjects}
+          emptyTitle="没有可见的租户"
+          emptyDescription="当前账号的权限范围内没有租户，或筛选条件过窄。"
+          toolbar={
+            <>
+              <Input
+                className="max-w-56"
+                placeholder="按名称搜索"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setOffset(0);
+                }}
+              />
+              <Select
+                value={status}
+                onValueChange={(value) => {
+                  setStatus(value);
+                  setOffset(0);
+                }}
+              >
+                <SelectTrigger className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_FILTERS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          }
+          pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+        />
+      </div>
 
       <NameDialog
         state={nameDialog}
@@ -422,6 +453,12 @@ function ProjectSection({
         cell: ({ row }) => <StatusBadge kind="resource" value={row.original.status} />,
       },
       {
+        header: "创建时间",
+        accessorKey: "created_at",
+        size: 140,
+        cell: ({ row }) => <RelativeTime value={row.original.created_at} />,
+      },
+      {
         header: "更新时间",
         accessorKey: "updated_at",
         size: 140,
@@ -430,7 +467,7 @@ function ProjectSection({
       {
         id: "actions",
         header: "",
-        size: 320,
+        size: 56,
         cell: ({ row }) => {
           const project = row.original;
           const canManage = permissions.can("project.manage", {
@@ -439,45 +476,48 @@ function ProjectSection({
             projectId: project.id,
           });
           return (
-            <div className="flex flex-wrap justify-end gap-1">
-              <Button size="sm" variant="ghost" onClick={() => onSelectProject(project)}>
-                设为当前项目
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => onOpenClusters(project)}>
-                <Server />
-                集群
-              </Button>
-              {canManage ? (
-                <>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      setNameDialog({
-                        mode: "rename",
-                        target: {
-                          id: project.id,
-                          name: project.name,
-                          status: project.status as ResourceStatus,
-                        },
-                      })
-                    }
-                  >
-                    重命名
+            <div className="flex justify-end">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" aria-label={`${project.name} 的操作`}>
+                    <MoreHorizontal />
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setStatusTarget(project)}>
-                    {project.status === "active" ? "停用" : "恢复"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger"
-                    onClick={() => setRetireTarget(project)}
-                  >
-                    退役
-                  </Button>
-                </>
-              ) : null}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem onSelect={() => onSelectProject(project)}>
+                    设为当前项目
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => onOpenClusters(project)}>
+                    打开集群接入
+                  </DropdownMenuItem>
+                  {canManage ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setNameDialog({
+                            mode: "rename",
+                            target: {
+                              id: project.id,
+                              name: project.name,
+                              status: project.status as ResourceStatus,
+                            },
+                          })
+                        }
+                      >
+                        重命名
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setStatusTarget(project)}>
+                        {project.status === "active" ? "停用" : "恢复"}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="danger" onSelect={() => setRetireTarget(project)}>
+                        退役
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           );
         },
@@ -502,77 +542,82 @@ function ProjectSection({
 
   return (
     <>
-      {/* Which tenant's projects these are is the whole context of this view, so
+      <div className="flex h-full min-h-0 flex-col">
+        {/* Which tenant's projects these are is the whole context of this view, so
           it gets a trail back rather than only a title suffix. */}
-      <nav aria-label="层级" className="text-muted-foreground mb-3 flex items-center gap-1 text-xs">
-        <button
-          type="button"
-          onClick={onBack}
-          className="zke-focus hover:text-foreground rounded-control -mx-1 border border-transparent px-1 py-0.5 transition-colors"
+        <nav
+          aria-label="层级"
+          className="text-muted-foreground mb-3 flex items-center gap-1 text-xs"
         >
-          租户
-        </button>
-        <ChevronRight className="size-3 shrink-0" aria-hidden />
-        <span className="text-foreground max-w-60 truncate font-medium">
-          {tenantName ?? tenantId}
-        </span>
-      </nav>
+          <button
+            type="button"
+            onClick={onBack}
+            className="zke-focus hover:text-foreground rounded-control -mx-1 border border-transparent px-1 py-0.5 transition-colors"
+          >
+            租户
+          </button>
+          <ChevronRight className="size-3 shrink-0" aria-hidden />
+          <span className="text-foreground max-w-60 truncate font-medium">
+            {tenantName ?? tenantId}
+          </span>
+        </nav>
 
-      <SectionTitle
-        title="项目"
-        description="项目是集群接入与资源操作的授权边界"
-        actions={
-          canCreate ? (
-            <Button size="sm" variant="primary" onClick={() => setNameDialog({ mode: "create" })}>
-              <PlusCircle />
-              新建项目
-            </Button>
-          ) : null
-        }
-      />
+        <SectionTitle
+          title="项目"
+          description="项目是集群接入与资源操作的授权边界"
+          actions={
+            canCreate ? (
+              <Button size="sm" variant="primary" onClick={() => setNameDialog({ mode: "create" })}>
+                <PlusCircle />
+                新建项目
+              </Button>
+            ) : null
+          }
+        />
 
-      <DataTable
-        columns={columns}
-        data={query.data?.projects}
-        isLoading={query.isLoading}
-        isFetching={query.isFetching}
-        error={query.error}
-        onRetry={() => void query.refetch()}
-        rowKey={(row) => row.id}
-        emptyTitle="该租户下没有可见的项目"
-        toolbar={
-          <>
-            <Input
-              className="max-w-56"
-              placeholder="按名称搜索"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setOffset(0);
-              }}
-            />
-            <Select
-              value={status}
-              onValueChange={(value) => {
-                setStatus(value);
-                setOffset(0);
-              }}
-            >
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_FILTERS.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </>
-        }
-        pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
-      />
+        <DataTable
+          columns={columns}
+          data={query.data?.projects}
+          isLoading={query.isLoading}
+          isFetching={query.isFetching}
+          error={query.error}
+          onRetry={() => void query.refetch()}
+          rowKey={(row) => row.id}
+          emptyTitle="该租户下没有可见的项目"
+          toolbar={
+            <>
+              <Input
+                className="max-w-56"
+                placeholder="按名称搜索"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setOffset(0);
+                }}
+              />
+              <Select
+                value={status}
+                onValueChange={(value) => {
+                  setStatus(value);
+                  setOffset(0);
+                }}
+              >
+                <SelectTrigger className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_FILTERS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          }
+          pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+        />
+      </div>
 
       <NameDialog
         state={nameDialog}
