@@ -61,10 +61,17 @@ export function TopBar({
         // no rule between the mark and the scope, no "项目" caption in front of a
         // control that already says which Project it holds: a bar that keeps
         // announcing itself is the opposite of an immersive one.
-        "zke-topbar absolute inset-x-0 top-0 z-0 flex h-10 items-center gap-1.5 px-2.5",
+        "absolute inset-x-0 top-0 z-0 flex h-10 items-center gap-1.5 px-2.5",
         className,
       )}
     >
+      {/* The glass is its own layer and reaches past the bar, so the blur has
+          room to fall off below the content instead of ending at its edge. */}
+      <div
+        aria-hidden
+        className="zke-topbar pointer-events-none absolute inset-x-0 top-0 -z-10 h-16"
+      />
+
       <span
         aria-hidden
         className="bg-primary text-primary-foreground grid size-6 shrink-0 place-items-center rounded-[8px] text-[11px] font-bold"
@@ -85,7 +92,9 @@ export function TopBar({
               : `集群状态事件流：${stream.label}`
           }
         >
-          <span className="text-subtle-foreground mr-1 hidden items-center gap-1.5 text-[11.5px] sm:inline-flex">
+          {/* A step up from `subtle`: the bar no longer lifts the ground under
+              it, so the faintest ink in it now stands on the wallpaper itself. */}
+          <span className="text-muted-foreground mr-1 hidden items-center gap-1.5 text-[11.5px] sm:inline-flex">
             <StatusDot tone={stream.tone} />
             {stream.label}
           </span>

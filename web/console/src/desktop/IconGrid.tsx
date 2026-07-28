@@ -1,3 +1,4 @@
+import { appFaceClass, appHoverClass } from "@/apps/accent";
 import { APP_MANIFESTS } from "@/apps/registry";
 import type { AppManifest } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
@@ -37,7 +38,7 @@ export function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
 
   return (
     <ul
-      className="grid grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-x-1 gap-y-3 p-6"
+      className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-x-2 gap-y-6 p-6"
       aria-label="平台应用"
     >
       {ordered.map((manifest) => (
@@ -51,8 +52,7 @@ export function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
 
 function AppIcon({ manifest, onOpen }: { manifest: AppManifest; onOpen: () => void }) {
   const Icon = manifest.icon;
-  const availability = manifest.availability;
-  const planned = availability.state === "planned";
+  const planned = manifest.availability.state === "planned";
 
   return (
     <button
@@ -63,29 +63,29 @@ function AppIcon({ manifest, onOpen }: { manifest: AppManifest; onOpen: () => vo
     >
       <span
         className={cn(
-          "grid size-14 place-items-center rounded-[17px] transition-[transform,box-shadow] duration-200",
-          "group-hover:-translate-y-1 group-active:translate-y-0",
-          planned
-            ? "bg-surface-muted/70 text-subtle-foreground"
-            : "zke-tile bg-primary-surface text-primary group-hover:shadow-e3",
+          "grid size-16 place-items-center rounded-[20px]",
+          appFaceClass(manifest),
+          appHoverClass(manifest),
+          !planned && "zke-tile",
         )}
       >
-        <Icon className="size-6" strokeWidth={1.75} aria-hidden />
+        <Icon className="size-7" strokeWidth={1.75} aria-hidden />
       </span>
 
       <span className="flex w-full min-w-0 flex-col items-center gap-0.5">
         <span
           className={cn(
-            "w-full truncate text-[12.5px] leading-tight font-medium",
+            "w-full truncate text-[13px] leading-tight font-medium",
             planned ? "text-muted-foreground" : "text-foreground",
           )}
         >
           {manifest.title}
         </span>
+        {/* The phase belongs in the window, not under every unlit tile: ten of
+            these captions is a wall of small grey type, and the unlit face has
+            already said the thing that matters. */}
         {planned ? (
-          <span className="text-subtle-foreground w-full truncate text-[10px] leading-4">
-            规划中 · Phase {availability.phase}
-          </span>
+          <span className="text-subtle-foreground text-[10.5px] leading-4">规划中</span>
         ) : null}
       </span>
     </button>

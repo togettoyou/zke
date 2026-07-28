@@ -177,9 +177,17 @@ export function Desktop() {
 
   return (
     <div className="from-desktop-from to-desktop-to relative h-full w-full overflow-hidden bg-linear-to-br">
-      {/* Light sources and a faint grid, so the backdrop reads as a surface the
-          windows rest on rather than a page they are printed on. */}
+      {/*
+       * The wallpaper: colour, then the polar field, then grain. Layers rather
+       * than a wash, because the chrome above it is frosted glass — a top bar and
+       * a Dock that blur and saturate whatever is behind them have to be given
+       * something worth sampling.
+       *
+       * All of it sits below the windows and takes no pointer.
+       */}
       <div aria-hidden className="zke-desktop-surface pointer-events-none absolute inset-0" />
+      <div aria-hidden className="zke-desktop-field pointer-events-none absolute inset-0" />
+      <div aria-hidden className="zke-grain pointer-events-none absolute inset-0" />
 
       <TopBar
         streamState={streamState}
@@ -188,23 +196,21 @@ export function Desktop() {
         onResetDesktop={handleResetDesktop}
         className={cn(
           "transition-transform duration-200 ease-out",
-          immersive && "pointer-events-none -translate-y-full",
+          // Clears the glass layer, not the content row: the bar's frosted
+          // backdrop hangs 64px below its own top edge so its blur can fade out,
+          // and `-translate-y-full` would only move the 40px header, leaving the
+          // tail of the glass on screen.
+          immersive && "pointer-events-none -translate-y-16",
         )}
       />
 
-      {/* Dissolves the lower edge of the top bar into the desktop. It travels
-          with the bar so full screen takes both away together. */}
-      <div
-        aria-hidden
-        className={cn(
-          // Travels far enough to clear the bar's own height plus its own.
-          "zke-topbar-fade pointer-events-none absolute inset-x-0 top-10 z-0 h-4 transition-transform duration-200 ease-out",
-          immersive && "-translate-y-[3.5rem]",
-        )}
-      />
-
+      {/* Centred and floated down the screen rather than jammed into the top
+          corner. Ten icons pinned to a corner of a wide display read as a list
+          that ran out; the same ten centred with air above them read as a
+          composition — and the launcher is the only thing on the desktop until a
+          window opens. */}
       <div className="absolute inset-x-0 top-10 bottom-0 overflow-y-auto">
-        <div className="max-w-2xl">
+        <div className="mx-auto max-w-3xl px-4 pt-[9vh] pb-10">
           <IconGrid onOpen={handleOpenApp} />
         </div>
       </div>

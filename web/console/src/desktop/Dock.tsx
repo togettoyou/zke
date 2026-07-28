@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
+import { appFaceClass, appHoverClass } from "@/apps/accent";
 import { findAppManifest } from "@/apps/registry";
 import { HintTooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
@@ -46,7 +47,11 @@ export function Dock({
   }
 
   return (
-    <div className="group pointer-events-none absolute inset-x-0 bottom-0 z-500 flex flex-col items-center gap-1.5 pb-3">
+    // `group/dock` rather than a bare `group`: each icon button below carries a
+    // plain `group` of its own so it can share the launcher's hover rules, and
+    // two unnamed groups would make pointing anywhere near the Dock light every
+    // icon in it at once.
+    <div className="group/dock pointer-events-none absolute inset-x-0 bottom-0 z-500 flex flex-col items-center gap-1.5 pb-3">
       {/*
        * The handle recedes while the Dock is up and the pointer is elsewhere —
        * a control for a thing already on screen does not need to be on screen
@@ -61,7 +66,9 @@ export function Dock({
         aria-label={visible ? "隐藏任务栏" : "显示任务栏"}
         className={cn(
           "zke-focus zke-dock border-border/60 text-subtle-foreground hover:text-foreground pointer-events-auto flex h-6 w-16 items-center justify-center rounded-full border transition-[color,opacity] duration-200",
-          visible ? "opacity-0 group-hover:opacity-100 focus-visible:opacity-100" : "opacity-100",
+          visible
+            ? "opacity-0 group-hover/dock:opacity-100 focus-visible:opacity-100"
+            : "opacity-100",
         )}
       >
         {visible ? (
@@ -93,15 +100,17 @@ export function Dock({
                   type="button"
                   aria-label={instance.title}
                   aria-current={focused ? "true" : undefined}
-                  className={cn(
-                    "zke-focus relative grid size-11 place-items-center rounded-[14px] transition-[transform,background-color,color] duration-150",
-                    "hover:bg-surface/50 hover:-translate-y-0.5 active:translate-y-0",
-                    // Which window is focused is the indicator's job, below.
-                    // Giving the icon a filled chip as well says it twice, and
-                    // the chip is the louder of the two — it punches a solid
-                    // shape through glass that the rest of the Dock keeps clear.
-                    focused ? "text-primary" : "text-muted-foreground hover:text-foreground",
-                  )}
+                  /*
+                   * The button is the hover target and never moves; only the
+                   * face inside it responds. A transform on the hit-tested
+                   * element itself would leave the pointer, end the hover, snap
+                   * back, and oscillate.
+                   *
+                   * No hover plate behind the tile either: the application's own
+                   * face is the shape now, and a plate under it would be a second
+                   * shape saying the same thing.
+                   */
+                  className="zke-focus group flex size-12 flex-col items-center justify-center gap-1 rounded-[14px]"
                   onClick={() => {
                     if (minimized) {
                       restoreWindow(instance.id);
@@ -112,14 +121,29 @@ export function Dock({
                     }
                   }}
                 >
-                  <Icon className="size-5" strokeWidth={1.75} aria-hidden />
+                  {/* The same face the launcher draws, one size down. An
+                      application whose icon changes between where it is started
+                      and where it is running does not have an icon. */}
+                  <span
+                    className={cn(
+                      "grid size-10 place-items-center rounded-[12px]",
+                      appFaceClass(manifest),
+                      appHoverClass(manifest),
+                      // Put away, not gone: dimmed rather than removed, which is
+                      // the one state the indicator alone reads weakly.
+                      minimized && "opacity-55",
+                    )}
+                  >
+                    <Icon className="size-5" strokeWidth={1.75} aria-hidden />
+                  </span>
+
                   {/* Three states in one mark: put away, open, and the one being
                       worked in. Length and weight carry all three, so it reads
                       the same to anyone who cannot separate the two colours. */}
                   <span
                     aria-hidden
                     className={cn(
-                      "absolute bottom-0.5 h-[3px] rounded-full transition-all duration-200",
+                      "h-[3px] rounded-full transition-all duration-200",
                       minimized
                         ? "bg-subtle-foreground w-[3px]"
                         : focused

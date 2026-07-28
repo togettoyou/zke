@@ -14,9 +14,68 @@
 
   --desktop-from: #f4f6f9;
   --desktop-to: #e3e9f1;
-  --desktop-glow: rgb(59 91 219 / 0.07);
-  --desktop-grid: rgb(24 33 56 / 0.035);
+
+  /*
+   * Desktop blooms — barely there, and that is the correction.
+   *
+   * "A wallpaper is the most saturated layer in the system" is true of a desktop
+   * OS, where the wallpaper is a photograph and the icons sit on top of it. It is
+   * the wrong model for a console that lives in a browser tab: run at the
+   * strength a photographic wallpaper carries, a CSS gradient field does not read
+   * as rich, it reads as a default phone background, and it drags every neutral
+   * surface in the product towards lavender.
+   *
+   * So the field stays near-neutral and the colour moves to where it means
+   * something — the application icons. Between them they carry four saturated
+   * hues; the desktop's job is to let those read, not to compete with them.
+   *
+   * Named by corner rather than by hue, so retuning does not have to rename.
+   */
+  --desktop-bloom-nw: rgb(59 91 219 / 0.06);
+  --desktop-bloom-ne: rgb(124 92 220 / 0.05);
+  --desktop-bloom-sw: rgb(46 160 190 / 0.045);
+  --desktop-bloom-se: rgb(70 84 205 / 0.05);
+  /* One warm note, so the field is not uniformly cool — but a whisper of one. */
+  --desktop-bloom-warm: rgb(232 150 120 / 0.04);
+  --desktop-vignette: rgb(24 33 56 / 0.045);
+  /* The polar field: arcs and spokes struck from one point off canvas — the
+     product's own idea, a signal propagating out from a single origin, at
+     wallpaper scale. Spokes run fainter because an angular stripe widens with
+     distance and the whole screen is far field. */
+  --desktop-ring: rgb(24 33 56 / 0.045);
+  --desktop-ray: rgb(24 33 56 / 0.028);
+
+  /*
+   * Application icon fills. One saturated pair per application, identical in
+   * both themes: a blue application is blue at night too, exactly as it is on
+   * every desktop that has ever shipped. The glyph on top is always white, which
+   * is what separates an icon from a button wearing a tint.
+   */
+  --app-blue-from: #5878f7;
+  --app-blue-to: #3b5bdb;
+  --app-violet-from: #9268f8;
+  --app-violet-to: #7048e8;
+  --app-emerald-from: #2bcf9d;
+  --app-emerald-to: #0ca678;
+  --app-amber-from: #ffb454;
+  --app-amber-to: #f08c00;
+
+  /* What an icon does under the pointer: its own colour blooms beneath it. The
+     hue is the application's, so the response is the application's too — a
+     neutral grey shadow under a saturated face would only look like dirt. */
+  --app-blue-glow: rgb(59 91 219 / 0.45);
+  --app-violet-glow: rgb(112 72 232 / 0.42);
+  --app-emerald-glow: rgb(12 166 120 / 0.4);
+  --app-amber-glow: rgb(240 140 0 / 0.42);
   --tile-highlight: rgb(255 255 255 / 0.9);
+
+  /* Ink for the sign-in dot field. The desktop deliberately does not share it:
+     one view is a cartesian drafting grid, the other a polar field, and wearing
+     the same texture is what made them look like the same screen. */
+  --surface-dot: rgb(24 33 56 / 0.13);
+  /* Grain, however, is shared — it is anti-banding infrastructure rather than a
+     texture anyone is meant to see. */
+  --grain: 0.035;
 
   /*
    * Sign-in.
@@ -30,22 +89,22 @@
    */
   --auth-glow-key: rgb(59 91 219 / 0.1);
   --auth-glow-fill: rgb(255 255 255 / 0.85);
-  --auth-grain: 0.035;
 
   /* Diagram ink, derived from the foreground so the drawing inverts with the
      theme instead of being pinned to one of them. */
   --auth-line: rgb(24 33 56 / 0.16);
   --auth-line-strong: rgb(24 33 56 / 0.3);
   --auth-line-soft: rgb(24 33 56 / 0.07);
-  --auth-dot: rgb(24 33 56 / 0.13);
   /* Node discs are filled with the field colour so a link passes behind a node
      rather than through it. */
   --auth-node: #f7f9fc;
 
-  /* The top bar is a tint over the desktop, not a panel on top of it: it fades
-     out towards its lower edge so there is no seam to notice. */
-  --topbar-from: rgb(255 255 255 / 0.7);
-  --topbar-to: rgb(255 255 255 / 0.26);
+  /* Barely there. The bar is not a surface over the desktop, it is a place on it
+     where text happens to sit — so it lifts the ground just enough to hold that
+     text and no further. At 60% white the top of the screen was the brightest
+     band on it, which is a plank however softly its lower edge is faded. */
+  --topbar-from: rgb(255 255 255 / 0.26);
+  --topbar-to: rgb(255 255 255 / 0.08);
 
   /* The Dock floats above windows, so it stays more opaque than the top bar —
      but far less than a solid surface, and with a gentler inner highlight than
@@ -115,22 +174,35 @@
 
   --desktop-from: #0f141b;
   --desktop-to: #1a2331;
-  --desktop-glow: rgb(124 148 244 / 0.1);
-  --desktop-grid: rgb(255 255 255 / 0.025);
+  /* Dark tolerates far more chroma before it reads as loud, and needs it: the
+     same blooms at light-theme strength would disappear entirely. */
+  /* Dark carries a little more than light before it reads as a tint at all, but
+     the same rule holds: the icons are the colour, the field is the room. */
+  --desktop-bloom-nw: rgb(96 128 255 / 0.1);
+  --desktop-bloom-ne: rgb(142 100 246 / 0.08);
+  --desktop-bloom-sw: rgb(60 180 200 / 0.07);
+  --desktop-bloom-se: rgb(90 110 240 / 0.08);
+  --desktop-bloom-warm: rgb(245 165 130 / 0.05);
+  --desktop-vignette: rgb(0 0 0 / 0.34);
+  --desktop-ring: rgb(226 234 250 / 0.05);
+  --desktop-ray: rgb(226 234 250 / 0.032);
   --tile-highlight: rgb(255 255 255 / 0.07);
+
+  --surface-dot: rgb(226 234 250 / 0.1);
+  --grain: 0.05;
 
   --auth-glow-key: rgb(124 148 244 / 0.14);
   --auth-glow-fill: rgb(124 148 244 / 0.05);
-  --auth-grain: 0.05;
 
   --auth-line: rgb(226 234 250 / 0.16);
   --auth-line-strong: rgb(226 234 250 / 0.32);
   --auth-line-soft: rgb(226 234 250 / 0.07);
-  --auth-dot: rgb(226 234 250 / 0.1);
   --auth-node: #131a24;
 
-  --topbar-from: rgb(20 27 37 / 0.72);
-  --topbar-to: rgb(20 27 37 / 0.22);
+  /* Darkening rather than lightening: on a dark field a white lift reads as a
+     panel immediately, where a shade reads as the wallpaper in shadow. */
+  --topbar-from: rgb(8 12 18 / 0.3);
+  --topbar-to: rgb(8 12 18 / 0.1);
 
   --dock-from: rgb(34 44 58 / 0.66);
   --dock-to: rgb(22 29 39 / 0.52);
@@ -219,6 +291,12 @@
   --color-neutral-surface: var(--neutral-surface);
 
   --color-ring: var(--ring);
+
+  /* Lift and settle. The default curve eases in as well as out, which on a 4px
+     travel reads as a nudge rather than a rise; this leaves at once and arrives
+     slowly, which is what makes a small movement feel weighted instead of
+     mechanical. */
+  --ease-lift: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* One radius scale, so a control never sits inside a container with a tighter
      corner than its own. */
@@ -345,22 +423,62 @@
   }
 
   /*
-   * The desktop surface: two soft light sources plus a faint grid. The grid is
-   * what makes the background read as a surface windows sit on rather than as a
-   * page they are drawn on, and it stays under 4% opacity so it never competes
-   * with content.
+   * The desktop surface: a key light, a fill at the opposite corner in a second
+   * hue, and a vignette drawing the edges in. Windows float on this all day, so
+   * every value here is quieter than the equivalent on sign-in — a backdrop that
+   * is lived in has to survive being looked past.
    */
   .zke-desktop-surface {
     background-image:
-      radial-gradient(60rem 40rem at 12% 6%, var(--desktop-glow), transparent 62%),
-      radial-gradient(46rem 30rem at 88% 92%, var(--desktop-glow), transparent 65%),
-      linear-gradient(to right, var(--desktop-grid) 1px, transparent 1px),
-      linear-gradient(to bottom, var(--desktop-grid) 1px, transparent 1px);
-    background-size:
-      100% 100%,
-      100% 100%,
-      64px 64px,
-      64px 64px;
+      radial-gradient(118% 96% at 50% 44%, transparent 50%, var(--desktop-vignette) 100%),
+      /* The two upper blooms are centred well below the top edge. Peaking at the
+         edge put the most saturated strip of the whole field directly under the
+         frosted top bar, which then read as a different colour at each end. They
+         still reach the top — they are 48rem tall — but the bar now crosses their
+         shoulder rather than their crown. */
+        radial-gradient(64rem 48rem at 12% 24%, var(--desktop-bloom-nw), transparent 62%),
+      radial-gradient(56rem 44rem at 84% 18%, var(--desktop-bloom-ne), transparent 64%),
+      radial-gradient(58rem 46rem at 4% 96%, var(--desktop-bloom-sw), transparent 64%),
+      radial-gradient(62rem 48rem at 96% 92%, var(--desktop-bloom-se), transparent 62%),
+      /* Centre-right, which is where the field was emptiest: the four corners
+         were lit and the middle was bare gradient. */
+        radial-gradient(54rem 42rem at 64% 54%, var(--desktop-bloom-warm), transparent 66%);
+  }
+
+  /*
+   * The desktop's own texture: a polar field — hairline arcs and hairline
+   * spokes, both struck from one point off the bottom-right corner.
+   *
+   * Deliberately not the dot grid sign-in uses. That is a cartesian field, a
+   * drafting table for the drawing laid on it; this is the same construction the
+   * product itself describes — one origin, everything radiating from it — and
+   * the two views should not be wearing the same texture just because they share
+   * a palette. Both patterns are struck from the same centre, so they read as
+   * one construction rather than two patterns laid over each other.
+   *
+   * The mask is centred on that origin too: densest at the corner the field
+   * comes from, gone before the launcher. Spokes are fainter than arcs because
+   * an angular stripe widens with distance, and the whole visible screen sits in
+   * the far field.
+   */
+  .zke-desktop-field {
+    background-image:
+      repeating-conic-gradient(
+        from 8deg at 92% 122%,
+        transparent 0 5.94deg,
+        var(--desktop-ray) 5.94deg 6deg
+      ),
+      repeating-radial-gradient(
+        circle at 92% 122%,
+        transparent 0 115px,
+        var(--desktop-ring) 115px 116px
+      );
+    /* Reaches further than it did. Confined to the corner it comes from, the
+       field left the middle and the whole left of the screen with nothing on it
+       but a smooth ramp — the structure has to cross enough of the screen to be
+       structure. It still thins out well before the launcher. */
+    -webkit-mask-image: radial-gradient(152% 142% at 92% 122%, #000 0%, #000 24%, transparent 92%);
+    mask-image: radial-gradient(152% 142% at 92% 122%, #000 0%, #000 24%, transparent 92%);
   }
 
   /* App icon tiles: a hairline inner highlight reads as a raised, glassy face. */
@@ -375,18 +493,54 @@
    * desktop shows through it, and its lower edge dissolves rather than drawing a
    * line that would split the screen into "bar" and "desktop".
    */
-  .zke-topbar {
-    background-image: linear-gradient(to bottom, var(--topbar-from), var(--topbar-to));
-    backdrop-filter: blur(24px) saturate(160%);
-    -webkit-backdrop-filter: blur(24px) saturate(160%);
-  }
-
   /*
-   * Continues the fade past the bar. `backdrop-filter` stops hard at an
-   * element's edge, so without this the blur boundary itself becomes the seam.
+   * Almost nothing, which is the point.
+   *
+   * `saturate()` is nearly neutral here, and that is a correction rather than a
+   * compromise. Saturating a backdrop is how frosted glass puts back the colour
+   * a heavy blur washes out — but the desktop under this bar is smooth gradient,
+   * and blurring a smooth gradient returns very nearly the same image. Nothing
+   * was lost, so boosting put nothing back: at 155% it simply painted a strip of
+   * higher-chroma wallpaper across the top of the screen, and that strip was the
+   * bar. The blur now only has the polar field's hairlines and the grain to
+   * soften, which is all a modest radius is needed for.
+   *
+   * The tint holds flat across the content row before it falls away. Peaking at
+   * the very first pixel put the brightest line on the screen along its top
+   * edge, which is the one place a bar meant to disappear must not be.
+   *
+   * Prefixed first, standard last. The minifier treats `-webkit-backdrop-filter`
+   * as an alias of `backdrop-filter` and keeps whichever is declared last, so
+   * the other order ships the prefixed property alone and drops the standard one
+   * every current browser actually implements.
    */
-  .zke-topbar-fade {
-    background-image: linear-gradient(to bottom, var(--topbar-to), transparent);
+  .zke-topbar {
+    background-image: linear-gradient(
+      to bottom,
+      var(--topbar-from) 0%,
+      var(--topbar-from) 44%,
+      var(--topbar-to) 66%,
+      transparent 100%
+    );
+    -webkit-backdrop-filter: blur(22px) saturate(112%);
+    backdrop-filter: blur(22px) saturate(112%);
+    /*
+     * This is what removes the seam, and the tint fade above it never could.
+     *
+     * `backdrop-filter` stops dead at the element's edge: above the boundary the
+     * field is averaged out by a 44px blur, below it the dots and the grain are
+     * sharp again. That discontinuity in *texture* is the line — and continuing
+     * only the tint past the bar, as a separate element used to, leaves it
+     * exactly where it was.
+     *
+     * Masking the glass fades the composited result, blurred backdrop included,
+     * so the blur itself falls off instead of ending. The element is taller than
+     * the bar's content precisely so the whole falloff happens below it: the
+     * mask holds solid to 56% of 64px — clear of the 40px content row — and
+     * reaches nothing at the bottom edge.
+     */
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 56%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 56%, transparent 100%);
   }
 
   /*
@@ -397,8 +551,9 @@
    */
   .zke-dock {
     background-image: linear-gradient(to bottom, var(--dock-from), var(--dock-to));
-    backdrop-filter: blur(24px) saturate(170%);
+    /* Prefixed first, standard last — see `.zke-topbar`. */
     -webkit-backdrop-filter: blur(24px) saturate(170%);
+    backdrop-filter: blur(24px) saturate(170%);
     box-shadow:
       inset 0 1px 0 var(--dock-highlight),
       var(--elevation-3);
@@ -434,7 +589,11 @@
    * side stays calm — a form wants quiet behind it.
    */
   .zke-auth-dots {
-    background-image: radial-gradient(circle at center, var(--auth-dot) 0.9px, transparent 1.6px);
+    background-image: radial-gradient(
+      circle at center,
+      var(--surface-dot) 0.9px,
+      transparent 1.6px
+    );
     background-size: 22px 22px;
     -webkit-mask-image: radial-gradient(46rem 42rem at 30% 48%, #000 0%, #000 26%, transparent 74%);
     mask-image: radial-gradient(46rem 42rem at 30% 48%, #000 0%, #000 26%, transparent 74%);
@@ -457,17 +616,18 @@
   }
 
   /*
-   * A film of grain over the whole surface. This is what separates a designed
-   * backdrop from a flat CSS gradient: it breaks the smooth ramps into
-   * something with a texture, and it is the only reliable cure for the banding
-   * that large, low-contrast gradients show on 8-bit displays. `overlay` lets
-   * the noise both lift and darken, which plain opacity cannot do — a dark
-   * noise layer alone would just grey the page down.
+   * A film of grain, over sign-in and over the desktop alike. This is what
+   * separates a designed backdrop from a flat CSS gradient: it breaks the smooth
+   * ramps into something with a texture, and it is the only reliable cure for
+   * the banding that large, low-contrast gradients show on 8-bit displays — and
+   * the desktop is the largest such gradient in the product. `overlay` lets the
+   * noise both lift and darken, which plain opacity cannot do; a dark noise
+   * layer alone would just grey the screen down.
    */
-  .zke-auth-grain {
+  .zke-grain {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
     background-size: 140px 140px;
-    opacity: var(--auth-grain);
+    opacity: var(--grain);
     mix-blend-mode: overlay;
   }
 

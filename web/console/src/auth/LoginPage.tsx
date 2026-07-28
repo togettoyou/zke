@@ -73,7 +73,7 @@ export function LoginPage({ onAuthenticated }: { onAuthenticated: () => void }) 
       {/* Light, then the drafting field, then grain over both. */}
       <div aria-hidden className="zke-auth-surface pointer-events-none absolute inset-0" />
       <div aria-hidden className="zke-auth-dots pointer-events-none absolute inset-0" />
-      <div aria-hidden className="zke-auth-grain pointer-events-none absolute inset-0" />
+      <div aria-hidden className="zke-grain pointer-events-none absolute inset-0" />
 
       {/*
        * Sign-in is one screen, not a document: at any ordinary viewport the

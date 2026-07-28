@@ -16,11 +16,23 @@ export type AppComponentProps = {
   openApp: (appId: string, options?: { title?: string }) => void;
 };
 
+/**
+ * An available application's icon colour. Colour is what makes a launcher read
+ * as a row of applications rather than a row of buttons, so it belongs to the
+ * application's identity — not to the component that happens to draw it.
+ *
+ * Planned applications deliberately have none: on a launcher where every real
+ * application is saturated, an unlit tile says "not yet" before any caption
+ * under it does.
+ */
+export type AppAccent = "blue" | "violet" | "emerald" | "amber";
+
 export type AppManifest = {
   id: string;
   title: string;
   description: string;
   icon: LucideIcon;
+  accent?: AppAccent;
   /** Entry is shown when the user holds any of these permissions anywhere. */
   requiredPermissions: Permission[];
   availability: AppAvailability;
