@@ -14,9 +14,22 @@ import (
 // userFilterSQL matches the Console's case-insensitive substring search over
 // the identifiers an operator can see. position() is used rather than LIKE so
 // that a search term containing % or _ needs no escaping.
+//
+// A lock is expired lazily: the row keeps `status = 'locked'` and its elapsed
+// `lock_expires_at` until the next login attempt rewrites them. Filtering on the
+// stored column would therefore answer "which accounts are locked" with accounts
+// the login path already admits, so the filter compares against the effective
+// status instead — the same condition `auth.Service.Login` evaluates.
 const userFilterSQL = `
 FROM users
-WHERE ($1 = '' OR status = $1)
+WHERE (
+    $1 = ''
+    OR $1 = CASE
+        WHEN status = 'locked' AND (lock_expires_at IS NULL OR lock_expires_at <= $3)
+            THEN 'active'
+        ELSE status
+    END
+  )
   AND (
     $2 = ''
     OR position($2 IN username_normalized) > 0
@@ -40,9 +53,9 @@ SELECT
     password_changed_at, created_at, updated_at
 `+userFilterSQL+`
 ORDER BY username_normalized, id
-LIMIT $3 OFFSET $4
+LIMIT $4 OFFSET $5
 `,
-		[]any{params.Status, params.Search},
+		[]any{params.Status, params.Search, params.Now},
 		params.Page,
 		func(rows pgx.Rows) (ManagedUser, error) {
 			return scanManagedUser(rows)
@@ -373,16 +386,40 @@ RETURNING
 	return item, nil
 }
 
-const roleBindingFilterSQL = `
+// roleBindingColumnsSQL and roleBindingSourceSQL keep every read of a binding
+// carrying the subject it is about. A binding stores a user id, which is the
+// right thing to store and the wrong thing to read on its own: resolving the
+// name is a join the database does once per page, and any caller left to do it
+// for itself has to page the whole user table and still gives up past the page
+// limit.
+const roleBindingColumnsSQL = `
+    role_bindings.id::text, role_bindings.subject_id::text,
+    role_bindings.role, role_bindings.scope_type,
+    COALESCE(role_bindings.tenant_id::text, ''),
+    COALESCE(role_bindings.project_id::text, ''),
+    role_bindings.created_at,
+    COALESCE(subjects.username_normalized, ''),
+    COALESCE(subjects.display_name, '')
+`
+
+// LEFT JOIN, not INNER: a binding whose subject row has gone must still be
+// listed, so that it can be seen and removed.
+const roleBindingSourceSQL = `
 FROM role_bindings
-WHERE ($1 = '' OR role = $1)
-  AND ($2 = '' OR scope_type = $2)
+LEFT JOIN users AS subjects ON subjects.id = role_bindings.subject_id
+`
+
+const roleBindingFilterSQL = roleBindingSourceSQL + `
+WHERE ($1 = '' OR role_bindings.role = $1)
+  AND ($2 = '' OR role_bindings.scope_type = $2)
   AND (
     $3 = ''
-    OR position($3 IN id::text) > 0
-    OR position($3 IN subject_id::text) > 0
-    OR position($3 IN COALESCE(tenant_id::text, '')) > 0
-    OR position($3 IN COALESCE(project_id::text, '')) > 0
+    OR position($3 IN role_bindings.id::text) > 0
+    OR position($3 IN role_bindings.subject_id::text) > 0
+    OR position($3 IN COALESCE(role_bindings.tenant_id::text, '')) > 0
+    OR position($3 IN COALESCE(role_bindings.project_id::text, '')) > 0
+    OR position($3 IN subjects.username_normalized) > 0
+    OR position($3 IN lower(subjects.display_name)) > 0
   )
 `
 
@@ -394,13 +431,8 @@ func (store *AccessManagementStore) ListRoleBindings(
 		ctx,
 		store.pool,
 		"SELECT count(*) "+roleBindingFilterSQL,
-		`
-SELECT
-    id::text, subject_id::text, role, scope_type,
-    COALESCE(tenant_id::text, ''), COALESCE(project_id::text, ''),
-    created_at
-`+roleBindingFilterSQL+`
-ORDER BY created_at, id
+		"SELECT"+roleBindingColumnsSQL+roleBindingFilterSQL+`
+ORDER BY role_bindings.created_at, role_bindings.id
 LIMIT $4 OFFSET $5
 `,
 		[]any{params.Role, params.ScopeType, params.Search},
@@ -416,13 +448,9 @@ func (store *AccessManagementStore) GetRoleBinding(
 	ctx context.Context,
 	bindingID string,
 ) (ManagedRoleBinding, error) {
-	item, err := scanManagedRoleBinding(store.pool.QueryRow(ctx, `
-SELECT
-    id::text, subject_id::text, role, scope_type,
-    COALESCE(tenant_id::text, ''), COALESCE(project_id::text, ''),
-    created_at
-FROM role_bindings
-WHERE id = $1
+	item, err := scanManagedRoleBinding(store.pool.QueryRow(ctx,
+		"SELECT"+roleBindingColumnsSQL+roleBindingSourceSQL+`
+WHERE role_bindings.id = $1
 `, bindingID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ManagedRoleBinding{}, ErrRoleBindingNotFound
@@ -442,21 +470,35 @@ func (store *AccessManagementStore) CreateRoleBinding(
 		return ManagedRoleBinding{}, false, fmt.Errorf("begin role binding creation: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	// Wrapped in a CTE because RETURNING can only see the inserted row, and the
+	// created binding has to come back in the same shape as a listed one. The CTE
+	// is named `created` rather than `role_bindings` so that it cannot be read as
+	// shadowing the table its own INSERT targets.
 	item, err := scanManagedRoleBinding(transaction.QueryRow(ctx, `
-INSERT INTO role_bindings (
-    id, subject_id, role, scope_type, tenant_id, project_id, created_at
+WITH created AS (
+    INSERT INTO role_bindings (
+        id, subject_id, role, scope_type, tenant_id, project_id, created_at
+    )
+    SELECT
+        $1, users.id, $3, $4, NULLIF($5, '')::uuid,
+        NULLIF($6, '')::uuid, $7
+    FROM users
+    WHERE users.id = $2
+    ON CONFLICT (subject_id, role, scope_type, tenant_id, project_id)
+        DO NOTHING
+    RETURNING
+        id, subject_id, role, scope_type, tenant_id, project_id, created_at
 )
 SELECT
-    $1, users.id, $3, $4, NULLIF($5, '')::uuid,
-    NULLIF($6, '')::uuid, $7
-FROM users
-WHERE users.id = $2
-ON CONFLICT (subject_id, role, scope_type, tenant_id, project_id)
-    DO NOTHING
-RETURNING
-    id::text, subject_id::text, role, scope_type,
-    COALESCE(tenant_id::text, ''), COALESCE(project_id::text, ''),
-    created_at
+    created.id::text, created.subject_id::text,
+    created.role, created.scope_type,
+    COALESCE(created.tenant_id::text, ''),
+    COALESCE(created.project_id::text, ''),
+    created.created_at,
+    COALESCE(subjects.username_normalized, ''),
+    COALESCE(subjects.display_name, '')
+FROM created
+LEFT JOIN users AS subjects ON subjects.id = created.subject_id
 `,
 		input.ID,
 		input.SubjectID,
@@ -478,17 +520,13 @@ RETURNING
 		if !exists {
 			return ManagedRoleBinding{}, false, ErrAccessUserNotFound
 		}
-		item, err = scanManagedRoleBinding(transaction.QueryRow(ctx, `
-SELECT
-    id::text, subject_id::text, role, scope_type,
-    COALESCE(tenant_id::text, ''), COALESCE(project_id::text, ''),
-    created_at
-FROM role_bindings
-WHERE subject_id = $1
-  AND role = $2
-  AND scope_type = $3
-  AND tenant_id IS NOT DISTINCT FROM NULLIF($4, '')::uuid
-  AND project_id IS NOT DISTINCT FROM NULLIF($5, '')::uuid
+		item, err = scanManagedRoleBinding(transaction.QueryRow(ctx,
+			"SELECT"+roleBindingColumnsSQL+roleBindingSourceSQL+`
+WHERE role_bindings.subject_id = $1
+  AND role_bindings.role = $2
+  AND role_bindings.scope_type = $3
+  AND role_bindings.tenant_id IS NOT DISTINCT FROM NULLIF($4, '')::uuid
+  AND role_bindings.project_id IS NOT DISTINCT FROM NULLIF($5, '')::uuid
 `, input.SubjectID, input.Role, input.ScopeType, input.TenantID, input.ProjectID))
 		if err != nil {
 			return ManagedRoleBinding{}, false, ErrRoleBindingConflict
@@ -524,14 +562,13 @@ func (store *AccessManagementStore) DeleteRoleBinding(
 		return ManagedRoleBinding{}, fmt.Errorf("begin role binding deletion: %w", err)
 	}
 	defer rollbackTransaction(transaction)
-	item, err := scanManagedRoleBinding(transaction.QueryRow(ctx, `
-SELECT
-    id::text, subject_id::text, role, scope_type,
-    COALESCE(tenant_id::text, ''), COALESCE(project_id::text, ''),
-    created_at
-FROM role_bindings
-WHERE id = $1
-FOR UPDATE
+	// `FOR UPDATE OF role_bindings`, not a bare `FOR UPDATE`: only the binding
+	// row is being changed, and PostgreSQL refuses to lock the nullable side of
+	// an outer join at all.
+	item, err := scanManagedRoleBinding(transaction.QueryRow(ctx,
+		"SELECT"+roleBindingColumnsSQL+roleBindingSourceSQL+`
+WHERE role_bindings.id = $1
+FOR UPDATE OF role_bindings
 `, input.BindingID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ManagedRoleBinding{}, ErrRoleBindingNotFound
@@ -594,6 +631,8 @@ func scanManagedRoleBinding(row rowScannerAccess) (ManagedRoleBinding, error) {
 		&item.TenantID,
 		&item.ProjectID,
 		&item.CreatedAt,
+		&item.SubjectUsername,
+		&item.SubjectDisplayName,
 	)
 	return item, err
 }

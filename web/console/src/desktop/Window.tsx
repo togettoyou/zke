@@ -120,7 +120,7 @@ export function Window({
         data-app-id={instance.appId}
         data-focused={focused}
         className={cn(
-          "bg-surface pointer-events-auto absolute flex flex-col overflow-hidden border",
+          "bg-surface zke-pointer-layer absolute flex flex-col overflow-hidden border",
           fullscreen ? "rounded-none" : "rounded-window",
           focused ? "border-border-strong shadow-window-focused" : "border-border shadow-window",
           !interaction.isInteracting && "transition-[box-shadow,border-color] duration-150",

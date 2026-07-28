@@ -55,6 +55,16 @@ Global `admin`。权限授予、权限移除、用户状态变更、删除、解
 现有 Session 被撤销；锁定期满后的首次正确登录会自动恢复，Global 管理员也可显式解锁。登录错误、账户锁定、
 自动恢复、管理员解锁和密码重置均写入不包含密码的审计事件。
 
+最后一个处于 `active` 状态的 Global `admin` 不会被锁定。账户锁定本身是一种针对已知用户名的拒绝服务手段：
+若唯一管理员被锁定，没有第二个管理员可以调用解锁 API，初始管理员引导只在用户表为空时运行，该部署将失去
+全部管理入口。这与"禁止删除或移除最后一个有效 Global `admin`"是同一条不变量的两面，因此按同样的理由拒绝。
+该判定与写入在同一条 SQL 语句内完成，不会被并发的绑定变更分开。
+
+被豁免的只有锁定本身：失败次数照常累计并可在用户列表中看到，审计事件照常写入，按账户的登录限流
+（`auth.login_rate_limit.max_attempts_per_account`）继续生效，因此该账户仍然受到节流。阈值被跨过而未锁定时
+额外写入一条 `auth.account.lock_withheld` 审计事件，每轮攻击一次。代价是该账户的口令必须足够强——它在限流
+速率下可被持续尝试，因此最小口令长度要求同样适用于它。
+
 RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚合查询。固定资源权限包括
 `tenant.create`、`tenant.read`、`tenant.manage`、`project.create`、`project.read`、`project.manage`、
 `cluster.read`、`cluster.manage`、

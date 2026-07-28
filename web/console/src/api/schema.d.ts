@@ -246,6 +246,8 @@ export interface paths {
         /**
          * @description 发送 `ready`、`cluster.status` 和 `close` 事件以及注释心跳。
          *     断线重连后客户端应重新查询 Cluster 状态；当前不承诺历史事件重放。
+         *     调用者必须至少对一个 Cluster 具有 `cluster.read` 可见范围，否则在建流前返回 403；
+         *     流建立后会周期性重新解析可见范围，权限被收回时结束该流。
          */
         get: operations["streamClusterStatusEvents"];
         put?: never;
@@ -585,6 +587,8 @@ export interface components {
         RoleBinding: {
             id: components["schemas"]["UUID"];
             subject_id: components["schemas"]["UUID"];
+            /** @description 绑定所指向的账号。与绑定在同一次查询中解析，调用方无需再按 subject_id 逐个查询用户。仅当该账号记录已不存在时省略；此时 subject_id 仍然返回， 以便识别并删除孤立绑定。 */
+            subject?: components["schemas"]["RoleBindingSubject"];
             /** @enum {string} */
             role: "admin" | "viewer";
             /** @enum {string} */
@@ -593,6 +597,11 @@ export interface components {
             project_id?: components["schemas"]["UUID"];
             created_at: components["schemas"]["Timestamp"];
             replayed?: boolean;
+        };
+        RoleBindingSubject: {
+            id: components["schemas"]["UUID"];
+            username: string;
+            display_name: string;
         };
         CreateRoleBindingRequest: {
             subject_id: components["schemas"]["UUID"];
@@ -1439,6 +1448,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             503: components["responses"]["Unavailable"];
         };
     };
@@ -2202,6 +2212,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["TooManyRequests"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];
         };

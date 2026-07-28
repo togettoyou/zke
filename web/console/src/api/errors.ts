@@ -69,6 +69,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   idempotency_conflict: "幂等键已用于内容不同的请求，请重新发起",
   last_global_admin: "必须保留最后一个有效的全局管理员",
   self_disable_forbidden: "不能禁用当前登录的账号",
+  self_delete_forbidden: "不能删除当前登录的账号",
   token_rejected: "凭证无效或已被使用",
   credential_rejected: "接入凭证已失效或被撤销",
 

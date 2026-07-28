@@ -22,6 +22,11 @@ var (
 	ErrConflict     = errors.New("access management conflict")
 	ErrLastAdmin    = errors.New("last global administrator")
 	ErrSelfDisable  = errors.New("cannot disable the authenticated user")
+	// Deleting yourself and disabling yourself are both refused, but they are
+	// not the same refusal: sharing one sentinel meant a rejected deletion was
+	// reported to the operator as a rejected disable, describing an operation
+	// they had not asked for.
+	ErrSelfDelete = errors.New("cannot delete the authenticated user")
 )
 
 type Config struct {
@@ -50,7 +55,10 @@ type User struct {
 type ListUsersInput struct {
 	Status string
 	Search string
-	Page   pagination.Request
+	// Reads carry a clock for the same reason writes do: the lock state they
+	// report is relative to a moment, and the caller owns which one.
+	Now  time.Time
+	Page pagination.Request
 }
 
 // UserPage is one page of managed users plus where it sits in the full set.
@@ -131,6 +139,10 @@ type RoleBinding struct {
 	TenantID  string
 	ProjectID string
 	CreatedAt time.Time
+	// The subject's own names, resolved alongside the binding. Empty when the
+	// subject row is gone; the binding is still reported so it can be removed.
+	SubjectUsername    string
+	SubjectDisplayName string
 }
 
 type CreateRoleBindingInput struct {
@@ -182,6 +194,7 @@ func (service *Service) ListUsers(
 	stored, total, err := service.store.ListUsers(ctx, store.ListManagedUsersParams{
 		Status: input.Status,
 		Search: normalizeSearch(input.Search),
+		Now:    input.Now,
 		Page:   input.Page,
 	})
 	if err != nil {
@@ -189,7 +202,7 @@ func (service *Service) ListUsers(
 	}
 	result := make([]User, 0, len(stored))
 	for _, item := range stored {
-		result = append(result, userFromStore(item))
+		result = append(result, userFromStore(item, input.Now))
 	}
 	return UserPage{
 		Users: result,
@@ -200,6 +213,7 @@ func (service *Service) ListUsers(
 func (service *Service) GetUser(
 	ctx context.Context,
 	userID string,
+	now time.Time,
 ) (User, error) {
 	if !validation.IsUUID(userID) {
 		return User{}, ErrInvalidInput
@@ -211,7 +225,7 @@ func (service *Service) GetUser(
 	if err != nil {
 		return User{}, err
 	}
-	return userFromStore(item), nil
+	return userFromStore(item, now), nil
 }
 
 func (service *Service) CreateUser(
@@ -253,7 +267,7 @@ func (service *Service) CreateUser(
 	case err != nil:
 		return User{}, err
 	default:
-		return userFromStore(item), nil
+		return userFromStore(item, input.Now), nil
 	}
 }
 
@@ -270,7 +284,7 @@ func (service *Service) UpdateUser(
 		UserID: input.UserID, DisplayName: input.DisplayName,
 		ActorUserID: input.ActorUserID, RequestID: input.RequestID, Now: input.Now,
 	})
-	return mapUserMutation(item, err)
+	return mapUserMutation(item, input.Now, err)
 }
 
 func (service *Service) DeleteUser(
@@ -282,13 +296,13 @@ func (service *Service) DeleteUser(
 		return User{}, ErrInvalidInput
 	}
 	if input.UserID == input.ActorUserID {
-		return User{}, ErrSelfDisable
+		return User{}, ErrSelfDelete
 	}
 	item, err := service.store.DeleteUser(ctx, store.DeleteManagedUserParams{
 		UserID: input.UserID, ActorUserID: input.ActorUserID,
 		RequestID: input.RequestID, Now: input.Now,
 	})
-	return mapUserMutation(item, err)
+	return mapUserMutation(item, input.Now, err)
 }
 
 func (service *Service) SetUserStatus(
@@ -310,7 +324,7 @@ func (service *Service) SetUserStatus(
 		RequestID:   input.RequestID,
 		Now:         input.Now,
 	})
-	return mapUserMutation(item, err)
+	return mapUserMutation(item, input.Now, err)
 }
 
 func (service *Service) UnlockUser(
@@ -328,7 +342,7 @@ func (service *Service) UnlockUser(
 		RequestID:   input.RequestID,
 		Now:         input.Now,
 	})
-	return mapUserMutation(item, err)
+	return mapUserMutation(item, input.Now, err)
 }
 
 func (service *Service) ResetUserPassword(
@@ -358,7 +372,7 @@ func (service *Service) ResetUserPassword(
 			Now:          input.Now,
 		},
 	)
-	return mapUserMutation(item, err)
+	return mapUserMutation(item, input.Now, err)
 }
 
 // ListRoleBindings returns one page of role bindings.
@@ -562,15 +576,40 @@ func validRoleScope(
 	}
 }
 
-func userFromStore(item store.ManagedUser) User {
+/*
+ * Reports the effective lock state, not the stored one.
+ *
+ * A lock is expired lazily: the row keeps `status = 'locked'` and its elapsed
+ * `lock_expires_at` until the next login attempt rewrites them. Passing that
+ * through tells every reader the account cannot sign in during a window where
+ * `auth.Service.Login` would in fact admit it — the API would be describing a
+ * state the rest of the Server no longer believes in, and a Console rendering it
+ * faithfully ends up printing "锁定至 7 秒前".
+ *
+ * The condition mirrors `lockActive` in the login path exactly, including the
+ * nil case: a `locked` row with no expiry is not holding anyone out, so it is
+ * not reported as holding anyone out.
+ *
+ * The failure counter is deliberately left alone. It is cleared by a successful
+ * login, and until then it is the only visible evidence of what happened.
+ */
+func userFromStore(item store.ManagedUser, now time.Time) User {
+	status := item.Status
+	lockedAt := item.LockedAt
+	lockExpiresAt := item.LockExpiresAt
+	if status == "locked" && (lockExpiresAt == nil || !lockExpiresAt.After(now)) {
+		status = "active"
+		lockedAt = nil
+		lockExpiresAt = nil
+	}
 	return User{
 		ID:                item.ID,
 		Username:          item.Username,
 		DisplayName:       item.DisplayName,
-		Status:            item.Status,
+		Status:            status,
 		FailedLoginCount:  item.FailedLoginCount,
-		LockedAt:          item.LockedAt,
-		LockExpiresAt:     item.LockExpiresAt,
+		LockedAt:          lockedAt,
+		LockExpiresAt:     lockExpiresAt,
 		PasswordChangedAt: item.PasswordChangedAt,
 		CreatedAt:         item.CreatedAt,
 		UpdatedAt:         item.UpdatedAt,
@@ -579,17 +618,19 @@ func userFromStore(item store.ManagedUser) User {
 
 func roleBindingFromStore(item store.ManagedRoleBinding) RoleBinding {
 	return RoleBinding{
-		ID:        item.ID,
-		SubjectID: item.SubjectID,
-		Role:      item.Role,
-		ScopeType: item.ScopeType,
-		TenantID:  item.TenantID,
-		ProjectID: item.ProjectID,
-		CreatedAt: item.CreatedAt,
+		ID:                 item.ID,
+		SubjectID:          item.SubjectID,
+		Role:               item.Role,
+		ScopeType:          item.ScopeType,
+		TenantID:           item.TenantID,
+		ProjectID:          item.ProjectID,
+		CreatedAt:          item.CreatedAt,
+		SubjectUsername:    item.SubjectUsername,
+		SubjectDisplayName: item.SubjectDisplayName,
 	}
 }
 
-func mapUserMutation(item store.ManagedUser, err error) (User, error) {
+func mapUserMutation(item store.ManagedUser, now time.Time, err error) (User, error) {
 	switch {
 	case errors.Is(err, store.ErrAccessUserNotFound):
 		return User{}, ErrNotFound
@@ -600,6 +641,6 @@ func mapUserMutation(item store.ManagedUser, err error) (User, error) {
 	case err != nil:
 		return User{}, err
 	default:
-		return userFromStore(item), nil
+		return userFromStore(item, now), nil
 	}
 }

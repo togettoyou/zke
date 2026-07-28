@@ -383,6 +383,36 @@
 }
 
 @layer utilities {
+  /*
+   * Re-enables pointer events for an element that sits inside a
+   * `pointer-events: none` layer: a window in the desktop's window layer, the
+   * Dock in its own. Both layers are transparent to the pointer so the desktop
+   * underneath stays clickable, and both have children that must not be.
+   *
+   * The second rule is the load-bearing one, and the reason this is a utility
+   * rather than `pointer-events-auto` written inline.
+   *
+   * A Radix modal layer — a menu, a select, a dialog — blocks the rest of the
+   * page by setting `pointer-events: none` on <body> and letting it inherit
+   * downwards. Inheritance is the whole mechanism, so any element that sets
+   * `auto` on itself opts its entire subtree back in and quietly defeats it.
+   * The symptom is not "the overlay is broken", it is that every control inside
+   * a window stays live while a menu is open: clicking a second trigger opens a
+   * second menu instead of dismissing the first, because the click that should
+   * have been an outside-dismiss landed on a live control.
+   *
+   * Matching Radix's own inline style is deliberate — it is the exact signal
+   * that a layer currently holds the page, and it clears the moment that layer
+   * closes.
+   */
+  .zke-pointer-layer {
+    pointer-events: auto;
+  }
+
+  body[style*="pointer-events: none"] .zke-pointer-layer {
+    pointer-events: none;
+  }
+
   /* Applied while a window is dragged or resized: transitions and text
      selection would both fight the pointer interaction. */
   .zke-interacting,

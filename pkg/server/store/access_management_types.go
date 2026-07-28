@@ -27,7 +27,10 @@ type AccessManagementStore struct {
 type ListManagedUsersParams struct {
 	Status string
 	Search string
-	Page   pagination.Request
+	// Resolves the status filter against the effective lock state rather than
+	// the lazily-expired stored one.
+	Now  time.Time
+	Page pagination.Request
 }
 
 // ListManagedRoleBindingsParams filters and pages the role binding list.
@@ -107,6 +110,11 @@ type ManagedRoleBinding struct {
 	TenantID  string
 	ProjectID string
 	CreatedAt time.Time
+	// Resolved from the subject row by the same query that reads the binding.
+	// Empty when the subject no longer exists, which a LEFT JOIN allows so that
+	// an orphaned binding is still listed and can still be removed.
+	SubjectUsername    string
+	SubjectDisplayName string
 }
 
 type CreateManagedRoleBindingParams struct {

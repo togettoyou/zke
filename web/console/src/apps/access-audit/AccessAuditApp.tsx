@@ -1,9 +1,20 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ClipboardList, KeyRound, ShieldCheck, UserPlus, Users } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ClipboardList,
+  KeyRound,
+  MoreHorizontal,
+  Search,
+  ShieldCheck,
+  UserPlus,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { useAuditEvents, type AuditFilters } from "@/api/queries/audit";
+import { useProjects, useTenants } from "@/api/queries/resources";
 import {
   useCreateRoleBinding,
   useCreateUser,
@@ -46,9 +57,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/cn";
 import {
   Select,
   SelectContent,
@@ -64,6 +84,14 @@ const NAV: AppNavItem[] = [
 ];
 
 const GLOBAL = { type: "global" } as const;
+
+/** One spelling of the scope names, so the table, the filter and the
+ *  confirmation dialog cannot drift apart. */
+const SCOPE_LABELS: Record<string, string> = {
+  global: "全局",
+  tenant: "租户",
+  project: "项目",
+};
 
 export function AccessAuditApp(_props: AppComponentProps) {
   const { permissions } = useSessionContext();
@@ -134,18 +162,43 @@ function UserSection() {
       {
         header: "用户",
         cell: ({ row }) => (
-          <div className="flex flex-col">
+          <div className="flex flex-col gap-0.5">
             <span className="text-foreground font-medium">{row.original.display_name}</span>
-            <span className="zke-mono text-muted-foreground text-xs">{row.original.username}</span>
+            {/* The id belongs here for the same reason it is on every other row
+                in this application: it is what an audit event, a role binding
+                and a support request all refer to, and it was the one table that
+                did not offer it. On the username's line, so the row stays two
+                lines deep. */}
+            <span className="flex items-center gap-2">
+              <span className="zke-mono text-muted-foreground text-xs">
+                {row.original.username}
+              </span>
+              <IdentifierLabel value={row.original.id} />
+            </span>
           </div>
         ),
       },
       {
         header: "状态",
-        size: 130,
+        size: 168,
+        /*
+         * The lock expiry lives here rather than in a column of its own.
+         *
+         * `lock_expires_at` is null for every account that is not locked, so as
+         * a standalone column it was 130px of em-dash on every healthy row — a
+         * column whose normal state is empty is asking to be read as broken.
+         * Attached to the status it qualifies, it appears exactly when there is
+         * something to say, and the two facts about a locked account — that it
+         * is locked, and until when — are read together.
+         */
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
             <StatusBadge kind="user" value={row.original.status} />
+            {row.original.lock_expires_at ? (
+              <span className="text-subtle-foreground text-xs">
+                锁定至 <RelativeTime value={row.original.lock_expires_at} className="inline" />
+              </span>
+            ) : null}
             {row.original.failed_login_count > 0 ? (
               <span className="text-subtle-foreground text-xs">
                 连续失败 {row.original.failed_login_count} 次
@@ -155,11 +208,6 @@ function UserSection() {
         ),
       },
       {
-        header: "锁定到期",
-        size: 130,
-        cell: ({ row }) => <RelativeTime value={row.original.lock_expires_at} />,
-      },
-      {
         header: "密码更新",
         size: 130,
         cell: ({ row }) => <RelativeTime value={row.original.password_changed_at} />,
@@ -167,41 +215,53 @@ function UserSection() {
       {
         id: "actions",
         header: "",
-        size: 320,
+        size: 56,
+        /*
+         * One menu, not five buttons.
+         *
+         * Laid out in the row, these actions took a third of the table's width
+         * and repeated on every line — and they flattened the hierarchy that
+         * matters most here: "改显示名" and "删除" were the same control at the
+         * same weight, differing only in the colour of one of them. Behind a
+         * menu the row goes quiet, the destructive item sits below a separator
+         * in its own tone, and the column costs 56px instead of 320.
+         */
         cell: ({ row }) => {
           const user = row.original;
           if (!canManage) {
             return null;
           }
+          const disabling = user.status !== "disabled";
           return (
-            <div className="flex flex-wrap justify-end gap-1">
-              <Button size="sm" variant="ghost" onClick={() => setRenameTarget(user)}>
-                改显示名
-              </Button>
-              {user.status === "locked" ? (
-                <Button size="sm" variant="ghost" onClick={() => setUnlockTarget(user)}>
-                  解锁
-                </Button>
-              ) : null}
-              <Button size="sm" variant="ghost" onClick={() => setResetTarget(user)}>
-                重置密码
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={user.id === currentUserId && user.status === "active"}
-                onClick={() => setStatusTarget(user)}
-              >
-                {user.status === "disabled" ? "启用" : "禁用"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-danger"
-                onClick={() => setDeleteTarget(user)}
-              >
-                删除
-              </Button>
+            <div className="flex justify-end">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" aria-label={`${user.display_name} 的操作`}>
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem onSelect={() => setRenameTarget(user)}>
+                    改显示名
+                  </DropdownMenuItem>
+                  {user.status === "locked" ? (
+                    <DropdownMenuItem onSelect={() => setUnlockTarget(user)}>解锁</DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem onSelect={() => setResetTarget(user)}>
+                    重置密码
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={user.id === currentUserId && disabling}
+                    onSelect={() => setStatusTarget(user)}
+                  >
+                    {disabling ? "禁用" : "启用"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="danger" onSelect={() => setDeleteTarget(user)}>
+                    删除
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           );
         },
@@ -212,60 +272,65 @@ function UserSection() {
 
   return (
     <>
-      <SectionTitle
-        title="用户"
-        description="本地用户使用 Argon2id 摘要存储；禁用、删除与重置密码都会撤销该用户的全部会话"
-        actions={
-          canManage ? (
-            <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
-              <UserPlus />
-              新建用户
-            </Button>
-          ) : null
-        }
-      />
+      {/* A full-height column, so the table below can take the remaining space
+          and scroll inside itself. Left to grow, the whole view scrolls and the
+          table's sticky header sticks to nothing. */}
+      <div className="flex h-full min-h-0 flex-col">
+        <SectionTitle
+          title="用户"
+          description="本地用户使用 Argon2id 摘要存储；禁用、删除与重置密码都会撤销该用户的全部会话"
+          actions={
+            canManage ? (
+              <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
+                <UserPlus />
+                新建用户
+              </Button>
+            ) : null
+          }
+        />
 
-      <DataTable
-        columns={columns}
-        data={query.data?.users}
-        isLoading={query.isLoading}
-        isFetching={query.isFetching}
-        error={query.error}
-        onRetry={() => void query.refetch()}
-        rowKey={(row) => row.id}
-        emptyTitle="没有匹配的用户"
-        toolbar={
-          <>
-            <Input
-              className="max-w-56"
-              placeholder="按用户名或显示名搜索"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setOffset(0);
-              }}
-            />
-            <Select
-              value={status}
-              onValueChange={(value) => {
-                setStatus(value);
-                setOffset(0);
-              }}
-            >
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">全部状态</SelectItem>
-                <SelectItem value="active">正常</SelectItem>
-                <SelectItem value="locked">已锁定</SelectItem>
-                <SelectItem value="disabled">已禁用</SelectItem>
-              </SelectContent>
-            </Select>
-          </>
-        }
-        pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
-      />
+        <DataTable
+          columns={columns}
+          data={query.data?.users}
+          isLoading={query.isLoading}
+          isFetching={query.isFetching}
+          error={query.error}
+          onRetry={() => void query.refetch()}
+          rowKey={(row) => row.id}
+          emptyTitle="没有匹配的用户"
+          toolbar={
+            <>
+              <Input
+                className="max-w-56"
+                placeholder="按用户名或显示名搜索"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setOffset(0);
+                }}
+              />
+              <Select
+                value={status}
+                onValueChange={(value) => {
+                  setStatus(value);
+                  setOffset(0);
+                }}
+              >
+                <SelectTrigger className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部状态</SelectItem>
+                  <SelectItem value="active">正常</SelectItem>
+                  <SelectItem value="locked">已锁定</SelectItem>
+                  <SelectItem value="disabled">已禁用</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
+          }
+          pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+        />
+      </div>
 
       <CreateUserDialog
         open={createOpen}
@@ -646,11 +711,39 @@ function RoleBindingSection() {
   const createRoleBinding = useCreateRoleBinding();
   const deleteRoleBinding = useDeleteRoleBinding();
 
+  const deleteSubject = deleteTarget?.subject;
+
   const columns = useMemo<ColumnDef<RoleBinding, unknown>[]>(
     () => [
       {
-        header: "Subject",
-        cell: ({ row }) => <IdentifierLabel value={row.original.subject_id} />,
+        header: "用户",
+        /*
+         * `subject` is resolved by the Server, in the same query that reads the
+         * binding. Doing it here instead meant paging the user list into a map
+         * and giving up past the page limit — a join the database does once,
+         * reimplemented in the client and still incomplete.
+         *
+         * It is omitted only when the subject row is gone, and the identifier is
+         * always present, so an orphaned binding stays visible and removable.
+         */
+        cell: ({ row }) => {
+          const subject = row.original.subject;
+          // The same two-line shape the users table uses, so the same person
+          // looks the same in both places.
+          return (
+            <div className="flex flex-col gap-0.5">
+              {subject ? (
+                <span className="text-foreground font-medium">{subject.display_name}</span>
+              ) : null}
+              <span className="flex items-center gap-2">
+                {subject ? (
+                  <span className="zke-mono text-muted-foreground text-xs">{subject.username}</span>
+                ) : null}
+                <IdentifierLabel value={row.original.subject_id} />
+              </span>
+            </div>
+          );
+        },
       },
       {
         header: "角色",
@@ -666,11 +759,7 @@ function RoleBindingSection() {
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
             <span className="text-foreground text-[13px]">
-              {row.original.scope_type === "global"
-                ? "全局"
-                : row.original.scope_type === "tenant"
-                  ? "租户"
-                  : "项目"}
+              {SCOPE_LABELS[row.original.scope_type]}
             </span>
             {row.original.tenant_id ? <IdentifierLabel value={row.original.tenant_id} /> : null}
             {row.original.project_id ? <IdentifierLabel value={row.original.project_id} /> : null}
@@ -706,67 +795,69 @@ function RoleBindingSection() {
 
   return (
     <>
-      <SectionTitle
-        title="权限绑定"
-        description="角色绑定决定用户在 Global、租户或项目作用域内的权限"
-        actions={
-          canManage ? (
-            <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
-              <KeyRound />
-              新建绑定
-            </Button>
-          ) : null
-        }
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <SectionTitle
+          title="权限绑定"
+          description="角色绑定决定用户在 Global、租户或项目作用域内的权限"
+          actions={
+            canManage ? (
+              <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
+                <KeyRound />
+                新建绑定
+              </Button>
+            ) : null
+          }
+        />
 
-      <DataTable
-        columns={columns}
-        data={query.data?.role_bindings}
-        isLoading={query.isLoading}
-        isFetching={query.isFetching}
-        error={query.error}
-        onRetry={() => void query.refetch()}
-        rowKey={(row) => row.id}
-        emptyTitle="没有匹配的角色绑定"
-        toolbar={
-          <>
-            <Select
-              value={role}
-              onValueChange={(value) => {
-                setRole(value);
-                setOffset(0);
-              }}
-            >
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">全部角色</SelectItem>
-                <SelectItem value="admin">管理员</SelectItem>
-                <SelectItem value="viewer">只读</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={scopeType}
-              onValueChange={(value) => {
-                setScopeType(value);
-                setOffset(0);
-              }}
-            >
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">全部作用域</SelectItem>
-                <SelectItem value="global">全局</SelectItem>
-                <SelectItem value="tenant">Tenant</SelectItem>
-                <SelectItem value="project">Project</SelectItem>
-              </SelectContent>
-            </Select>
-          </>
-        }
-        pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
-      />
+        <DataTable
+          columns={columns}
+          data={query.data?.role_bindings}
+          isLoading={query.isLoading}
+          isFetching={query.isFetching}
+          error={query.error}
+          onRetry={() => void query.refetch()}
+          rowKey={(row) => row.id}
+          emptyTitle="没有匹配的角色绑定"
+          toolbar={
+            <>
+              <Select
+                value={role}
+                onValueChange={(value) => {
+                  setRole(value);
+                  setOffset(0);
+                }}
+              >
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部角色</SelectItem>
+                  <SelectItem value="admin">管理员</SelectItem>
+                  <SelectItem value="viewer">只读</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={scopeType}
+                onValueChange={(value) => {
+                  setScopeType(value);
+                  setOffset(0);
+                }}
+              >
+                <SelectTrigger className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部作用域</SelectItem>
+                  <SelectItem value="global">全局</SelectItem>
+                  <SelectItem value="tenant">租户</SelectItem>
+                  <SelectItem value="project">项目</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
+          }
+          pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+        />
+      </div>
 
       <CreateRoleBindingDialog
         open={createOpen}
@@ -786,10 +877,19 @@ function RoleBindingSection() {
         title="删除角色绑定"
         destructive
         scopeLines={[
-          { label: "Subject", name: deleteTarget?.subject_id ?? "" },
+          {
+            label: "用户",
+            // Named where the name is known, and always accompanied by the id:
+            // this is the surface where an operator checks they are revoking
+            // the right person's access.
+            name: deleteSubject
+              ? `${deleteSubject.display_name}（${deleteSubject.username}）`
+              : (deleteTarget?.subject_id ?? ""),
+            id: deleteSubject ? deleteTarget?.subject_id : null,
+          },
           {
             label: "角色",
-            name: `${deleteTarget?.role === "admin" ? "管理员" : "只读"} · ${deleteTarget?.scope_type ?? ""}`,
+            name: `${deleteTarget?.role === "admin" ? "管理员" : "只读"} · ${SCOPE_LABELS[deleteTarget?.scope_type ?? "global"]}`,
             id: deleteTarget?.project_id ?? deleteTarget?.tenant_id ?? null,
           },
         ]}
@@ -836,18 +936,42 @@ function CreateRoleBindingDialog({
     projectId?: string;
   }) => Promise<void>;
 }) {
-  const [subjectId, setSubjectId] = useState("");
+  const [subject, setSubject] = useState<PickedRecord | null>(null);
   const [role, setRole] = useState<Role>("viewer");
   const [scopeType, setScopeType] = useState<ScopeType>("project");
-  const [tenantId, setTenantId] = useState("");
-  const [projectId, setProjectId] = useState("");
+  const [tenant, setTenant] = useState<PickedRecord | null>(null);
+  const [project, setProject] = useState<PickedRecord | null>(null);
+  const [userSearch, setUserSearch] = useState("");
+  const [wasOpen, setWasOpen] = useState(open);
+
+  // Reset during render rather than in an effect, so a previous selection can
+  // never be visible for a frame the next time the dialog opens.
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (!open) {
+      setSubject(null);
+      setRole("viewer");
+      setScopeType("project");
+      setTenant(null);
+      setProject(null);
+      setUserSearch("");
+    }
+  }
 
   const needsTenant = scopeType === "tenant" || scopeType === "project";
   const needsProject = scopeType === "project";
-  const valid =
-    subjectId.trim().length > 0 &&
-    (!needsTenant || tenantId.trim().length > 0) &&
-    (!needsProject || projectId.trim().length > 0);
+
+  const users = useUsers(
+    { limit: 50, status: "active", ...(userSearch.trim() ? { q: userSearch.trim() } : {}) },
+    open,
+  );
+  const tenants = useTenants({ limit: 100, status: "active" }, open && needsTenant);
+  const projects = useProjects(open && needsProject ? (tenant?.id ?? null) : null, {
+    limit: 100,
+    status: "active",
+  });
+
+  const valid = Boolean(subject) && (!needsTenant || tenant) && (!needsProject || project);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -857,15 +981,22 @@ function CreateRoleBindingDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="binding-subject">用户 ID</Label>
-            <Input
-              id="binding-subject"
-              className="zke-mono"
-              placeholder="UUID"
-              value={subjectId}
-              onChange={(event) => setSubjectId(event.target.value)}
+            <Label>用户</Label>
+            <RecordPicker
+              placeholder="选择用户"
+              selected={subject}
+              options={(users.data?.users ?? []).map((item) => ({
+                id: item.id,
+                label: item.display_name,
+                hint: item.username,
+              }))}
+              query={users}
+              search={userSearch}
+              onSearchChange={setUserSearch}
+              searchPlaceholder="按用户名或显示名搜索"
+              emptyLabel="没有匹配的用户"
+              onSelect={setSubject}
             />
-            <FieldHint>可在「用户」列表中复制目标用户的 ID。</FieldHint>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -889,8 +1020,8 @@ function CreateRoleBindingDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="global">全局</SelectItem>
-                  <SelectItem value="tenant">Tenant</SelectItem>
-                  <SelectItem value="project">Project</SelectItem>
+                  <SelectItem value="tenant">租户</SelectItem>
+                  <SelectItem value="project">项目</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -898,24 +1029,40 @@ function CreateRoleBindingDialog({
 
           {needsTenant ? (
             <div className="grid gap-1.5">
-              <Label htmlFor="binding-tenant">Tenant ID</Label>
-              <Input
-                id="binding-tenant"
-                className="zke-mono"
-                value={tenantId}
-                onChange={(event) => setTenantId(event.target.value)}
+              <Label>租户</Label>
+              <RecordPicker
+                placeholder="选择租户"
+                selected={tenant}
+                options={(tenants.data?.tenants ?? []).map((item) => ({
+                  id: item.id,
+                  label: item.name,
+                }))}
+                query={tenants}
+                emptyLabel="没有可见的租户"
+                onSelect={(next) => {
+                  setTenant(next);
+                  // The Project list is scoped to the Tenant, so a Project
+                  // chosen under the previous one no longer means anything.
+                  setProject(null);
+                }}
               />
             </div>
           ) : null}
 
           {needsProject ? (
             <div className="grid gap-1.5">
-              <Label htmlFor="binding-project">Project ID</Label>
-              <Input
-                id="binding-project"
-                className="zke-mono"
-                value={projectId}
-                onChange={(event) => setProjectId(event.target.value)}
+              <Label>项目</Label>
+              <RecordPicker
+                placeholder={tenant ? "选择项目" : "请先选择租户"}
+                disabled={!tenant}
+                selected={project}
+                options={(projects.data?.projects ?? []).map((item) => ({
+                  id: item.id,
+                  label: item.name,
+                }))}
+                query={projects}
+                emptyLabel="该租户下没有可见的项目"
+                onSelect={setProject}
               />
             </div>
           ) : null}
@@ -924,7 +1071,7 @@ function CreateRoleBindingDialog({
             <Alert tone="warning">全局管理员可以管理所有租户、项目、用户与权限，请谨慎授予。</Alert>
           ) : null}
 
-          {error ? <Alert tone="danger">创建失败，请检查输入的 ID 与权限。</Alert> : null}
+          {error ? <Alert tone="danger">创建失败，请确认目标与当前账号的权限。</Alert> : null}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>
@@ -932,14 +1079,17 @@ function CreateRoleBindingDialog({
           </Button>
           <Button
             variant="primary"
-            disabled={pending || !valid}
+            disabled={pending || !valid || !subject}
             onClick={() => {
+              if (!subject) {
+                return;
+              }
               void onSubmit({
-                subjectId: subjectId.trim(),
+                subjectId: subject.id,
                 role,
                 scopeType,
-                ...(needsTenant ? { tenantId: tenantId.trim() } : {}),
-                ...(needsProject ? { projectId: projectId.trim() } : {}),
+                ...(needsTenant && tenant ? { tenantId: tenant.id } : {}),
+                ...(needsProject && project ? { projectId: project.id } : {}),
               }).catch(() => undefined);
             }}
           >
@@ -1027,83 +1177,11 @@ function AuditSection() {
   );
 
   return (
-    <>
+    <div className="flex h-full min-h-0 flex-col">
       <SectionTitle
         title="审计事件"
         description="仅返回当前账号 audit.read 权限可见范围内的事件；按时间倒序分页"
       />
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Select
-          value={filters.actor_type ?? "all"}
-          onValueChange={(value) =>
-            updateFilters((current) => ({
-              ...current,
-              actor_type: value === "all" ? undefined : (value as AuditFilters["actor_type"]),
-            }))
-          }
-        >
-          <SelectTrigger className="w-32">
-            <SelectValue placeholder="发起者" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">全部发起者</SelectItem>
-            <SelectItem value="user">用户</SelectItem>
-            <SelectItem value="agent">Agent</SelectItem>
-            <SelectItem value="system">系统</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={filters.result ?? "all"}
-          onValueChange={(value) =>
-            updateFilters((current) => ({
-              ...current,
-              result: value === "all" ? undefined : (value as AuditFilters["result"]),
-            }))
-          }
-        >
-          <SelectTrigger className="w-32">
-            <SelectValue placeholder="结果" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">全部结果</SelectItem>
-            <SelectItem value="succeeded">成功</SelectItem>
-            <SelectItem value="failed">失败</SelectItem>
-            <SelectItem value="denied">拒绝</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Input
-          className="max-w-44"
-          placeholder="按 action 精确筛选"
-          value={filters.action ?? ""}
-          onChange={(event) =>
-            updateFilters((current) => ({ ...current, action: event.target.value || undefined }))
-          }
-        />
-        <Input
-          className="max-w-52"
-          placeholder="按请求 ID 追溯"
-          value={filters.request_id ?? ""}
-          onChange={(event) =>
-            updateFilters((current) => ({
-              ...current,
-              request_id: event.target.value || undefined,
-            }))
-          }
-        />
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setFilters({});
-            setOffset(0);
-          }}
-        >
-          清除筛选
-        </Button>
-      </div>
 
       <DataTable
         columns={columns}
@@ -1116,7 +1194,230 @@ function AuditSection() {
         emptyTitle="没有匹配的审计事件"
         emptyDescription="调整筛选条件，或确认当前账号的 audit.read 可见范围。"
         pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+        // In the table's own toolbar, as the other two sections do it. Loose
+        // above the table these controls read as page furniture rather than as
+        // the thing narrowing the rows underneath them.
+        toolbar={
+          <>
+            <Select
+              value={filters.actor_type ?? "all"}
+              onValueChange={(value) =>
+                updateFilters((current) => ({
+                  ...current,
+                  actor_type: value === "all" ? undefined : (value as AuditFilters["actor_type"]),
+                }))
+              }
+            >
+              <SelectTrigger className="w-32">
+                <SelectValue placeholder="发起者" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部发起者</SelectItem>
+                <SelectItem value="user">用户</SelectItem>
+                <SelectItem value="agent">Agent</SelectItem>
+                <SelectItem value="system">系统</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={filters.result ?? "all"}
+              onValueChange={(value) =>
+                updateFilters((current) => ({
+                  ...current,
+                  result: value === "all" ? undefined : (value as AuditFilters["result"]),
+                }))
+              }
+            >
+              <SelectTrigger className="w-32">
+                <SelectValue placeholder="结果" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部结果</SelectItem>
+                <SelectItem value="succeeded">成功</SelectItem>
+                <SelectItem value="failed">失败</SelectItem>
+                <SelectItem value="denied">拒绝</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Input
+              className="max-w-44"
+              placeholder="按 action 精确筛选"
+              value={filters.action ?? ""}
+              onChange={(event) =>
+                updateFilters((current) => ({
+                  ...current,
+                  action: event.target.value || undefined,
+                }))
+              }
+            />
+            <Input
+              className="max-w-52"
+              placeholder="按请求 ID 追溯"
+              value={filters.request_id ?? ""}
+              onChange={(event) =>
+                updateFilters((current) => ({
+                  ...current,
+                  request_id: event.target.value || undefined,
+                }))
+              }
+            />
+            {/* Only when something is set: a permanently live "clear" is a
+                control that spends most of its life doing nothing. */}
+            {Object.values(filters).some(Boolean) ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setFilters({});
+                  setOffset(0);
+                }}
+              >
+                清除筛选
+              </Button>
+            ) : null}
+          </>
+        }
       />
-    </>
+    </div>
+  );
+}
+
+export type PickedRecord = { id: string; label: string; hint?: string };
+
+/**
+ * Picks a record by name instead of by identifier.
+ *
+ * Creating a role binding used to mean typing three UUIDs — the subject, the
+ * Tenant and the Project — which the operator had to go and find in three other
+ * views first. An identifier is how the system refers to a record; it is not how
+ * a person does, and asking for one turns an internal detail into the cost of
+ * the task. The ids are still exactly what gets submitted, they are just no
+ * longer what has to be produced.
+ *
+ * Options come from the scoped list APIs, so an operator only ever sees records
+ * their bindings already allow; picking one can never widen what they may bind.
+ */
+function RecordPicker({
+  placeholder,
+  searchPlaceholder,
+  selected,
+  options,
+  query,
+  search,
+  onSearchChange,
+  emptyLabel,
+  disabled = false,
+  onSelect,
+}: {
+  placeholder: string;
+  searchPlaceholder?: string;
+  selected: PickedRecord | null;
+  options: PickedRecord[];
+  query: { isLoading: boolean; error: unknown; refetch: () => unknown };
+  /** Provided only for lists long enough to need narrowing. */
+  search?: string;
+  onSearchChange?: (value: string) => void;
+  emptyLabel: string;
+  disabled?: boolean;
+  onSelect: (record: PickedRecord) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          className={cn(
+            "zke-focus border-border bg-surface rounded-control shadow-e1 flex h-9 w-full items-center gap-2 border px-2.5 text-left text-sm transition-colors",
+            "hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-60",
+          )}
+        >
+          {selected ? (
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="text-foreground truncate">{selected.label}</span>
+              {selected.hint ? (
+                <span className="zke-mono text-subtle-foreground shrink-0 text-xs">
+                  {selected.hint}
+                </span>
+              ) : null}
+            </span>
+          ) : (
+            <span className="text-subtle-foreground truncate">{placeholder}</span>
+          )}
+          <ChevronDown className="text-subtle-foreground ml-auto size-3.5 shrink-0" aria-hidden />
+        </button>
+      </PopoverTrigger>
+
+      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
+        {onSearchChange ? (
+          <div className="p-2">
+            <div className="relative">
+              <Search
+                className="text-subtle-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2"
+                aria-hidden
+              />
+              <Input
+                value={search ?? ""}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder={searchPlaceholder}
+                aria-label={searchPlaceholder}
+                className="bg-surface-muted h-8 pl-8 text-[13px]"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        <ul className="max-h-56 overflow-y-auto p-1.5" role="listbox">
+          {query.isLoading ? (
+            <li className="text-subtle-foreground px-2 py-4 text-center text-[13px]">加载中…</li>
+          ) : query.error ? (
+            <li className="px-2 py-4 text-center">
+              <p className="text-danger text-xs">加载失败</p>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mt-1"
+                onClick={() => void query.refetch()}
+              >
+                重试
+              </Button>
+            </li>
+          ) : options.length === 0 ? (
+            <li className="text-subtle-foreground px-2 py-4 text-center text-[13px]">
+              {emptyLabel}
+            </li>
+          ) : (
+            options.map((option) => (
+              <li key={option.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={option.id === selected?.id}
+                  onClick={() => {
+                    onSelect(option);
+                    setOpen(false);
+                  }}
+                  className="zke-focus hover:bg-surface-muted flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors"
+                >
+                  <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
+                    {option.label}
+                  </span>
+                  {option.hint ? (
+                    <span className="zke-mono text-subtle-foreground shrink-0 text-xs">
+                      {option.hint}
+                    </span>
+                  ) : null}
+                  {option.id === selected?.id ? (
+                    <Check className="text-primary size-3.5 shrink-0" aria-hidden />
+                  ) : null}
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }

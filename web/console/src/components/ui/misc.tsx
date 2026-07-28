@@ -70,10 +70,15 @@ export function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
+/**
+ * No elevation: a card only ever appears inside a window that already carries
+ * its own, and nesting one shadow inside another is what turns an interface into
+ * a pile of cards. The hairline and the fill say where the group is.
+ */
 export function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("border-border bg-surface rounded-panel shadow-e1 border p-4", className)}
+      className={cn("border-border bg-surface rounded-panel border p-4", className)}
       {...props}
     />
   );

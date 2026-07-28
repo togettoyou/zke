@@ -351,3 +351,156 @@ SELECT EXISTS (
 		}
 	}
 }
+
+// The last active global administrator crosses the lockout threshold without
+// being locked, and is still able to log in with the correct password. Locking
+// it out would leave the deployment with no way back: only another global
+// administrator can unlock an account, and the initial-admin bootstrap runs
+// only against an empty users table.
+func TestLastGlobalAdministratorIsNeverLockedOut(t *testing.T) {
+	databaseURL := requireAuthTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool := openIsolatedDatabase(t, ctx, databaseURL)
+	if _, err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	password := []byte("a sufficiently long sole administrator passphrase")
+	passwordHash, err := auth.HashPassword(password, auth.DefaultPasswordParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var adminID string
+	if err := pool.QueryRow(ctx, `
+INSERT INTO users (
+    id, username_normalized, display_name, password_hash, status,
+    password_changed_at
+)
+VALUES (
+    gen_random_uuid(), 'sole-admin', 'Sole Administrator', $1, 'active', now()
+)
+RETURNING id::text
+`, passwordHash).Scan(&adminID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type, created_at)
+VALUES (gen_random_uuid(), $1, 'admin', 'global', now())
+`, adminID); err != nil {
+		t.Fatal(err)
+	}
+
+	service := auth.NewService(store.NewAuthStore(pool), auth.ServiceConfig{
+		SessionIdleTimeout:          30 * time.Minute,
+		SessionAbsoluteTimeout:      8 * time.Hour,
+		MaxConcurrentPasswordChecks: 1,
+		MaxFailedLoginAttempts:      2,
+		AccountLockDuration:         time.Hour,
+	})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	// Well past the threshold: the carve-out must hold for a sustained attack,
+	// not merely for the attempt that would have tripped it.
+	for attempt := range 5 {
+		_, err := service.Login(ctx, auth.LoginInput{
+			Username:  "sole-admin",
+			Password:  []byte("an intentionally incorrect passphrase"),
+			RequestID: fmt.Sprintf("request-sole-admin-%d", attempt),
+			Now:       now.Add(time.Duration(attempt) * time.Second),
+		})
+		if !errors.Is(err, auth.ErrInvalidCredentials) {
+			t.Fatalf("failed login %d error = %v", attempt, err)
+		}
+	}
+
+	var status string
+	var failedLoginCount int
+	var lockedAt, lockExpiresAt *time.Time
+	if err := pool.QueryRow(ctx, `
+SELECT status, failed_login_count, locked_at, lock_expires_at
+FROM users
+WHERE id = $1
+`, adminID).Scan(&status, &failedLoginCount, &lockedAt, &lockExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" || lockedAt != nil || lockExpiresAt != nil {
+		t.Fatalf(
+			"sole administrator = %s/%v/%v, want active and unlocked",
+			status,
+			lockedAt,
+			lockExpiresAt,
+		)
+	}
+	// The failures are still counted, so the attack remains visible.
+	if failedLoginCount != 5 {
+		t.Fatalf("failed login count = %d, want 5", failedLoginCount)
+	}
+
+	// Withholding a control is itself auditable, and exactly once per episode.
+	var withheldAuditCount int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+FROM audit_events
+WHERE target_id = $1
+  AND action = 'auth.account.lock_withheld'
+  AND result = 'succeeded'
+`, adminID).Scan(&withheldAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if withheldAuditCount != 1 {
+		t.Fatalf("withheld lock audit count = %d, want 1", withheldAuditCount)
+	}
+
+	// The account is still reachable with the correct password, which is the
+	// whole point, and a success clears the counter.
+	if _, err := service.Login(ctx, auth.LoginInput{
+		Username:  "sole-admin",
+		Password:  password,
+		RequestID: "request-sole-admin-recovery",
+		Now:       now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("sole administrator login after failed attempts: %v", err)
+	}
+
+	// A second global administrator restores the ordinary policy: the carve-out
+	// is about being the last one, not about being an administrator.
+	var secondID string
+	if err := pool.QueryRow(ctx, `
+INSERT INTO users (
+    id, username_normalized, display_name, password_hash, status,
+    password_changed_at
+)
+VALUES (
+    gen_random_uuid(), 'second-admin', 'Second Administrator', $1, 'active',
+    now()
+)
+RETURNING id::text
+`, passwordHash).Scan(&secondID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type, created_at)
+VALUES (gen_random_uuid(), $1, 'admin', 'global', now())
+`, secondID); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := range 2 {
+		_, err := service.Login(ctx, auth.LoginInput{
+			Username:  "sole-admin",
+			Password:  []byte("an intentionally incorrect passphrase"),
+			RequestID: fmt.Sprintf("request-two-admins-%d", attempt),
+			Now:       now.Add(time.Hour + time.Duration(attempt)*time.Second),
+		})
+		if !errors.Is(err, auth.ErrInvalidCredentials) {
+			t.Fatalf("failed login %d error = %v", attempt, err)
+		}
+	}
+	if err := pool.QueryRow(ctx, `
+SELECT status FROM users WHERE id = $1
+`, adminID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "locked" {
+		t.Fatalf("administrator status with a peer = %q, want locked", status)
+	}
+}

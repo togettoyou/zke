@@ -23,6 +23,7 @@ var accessManagementErrors = []errorMapping{
 	{accessmanagement.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid access management request"},
 	{accessmanagement.ErrNotFound, http.StatusNotFound, "not_found", "access management target not found"},
 	{accessmanagement.ErrSelfDisable, http.StatusConflict, "self_disable_forbidden", "the authenticated user cannot disable itself"},
+	{accessmanagement.ErrSelfDelete, http.StatusConflict, "self_delete_forbidden", "the authenticated user cannot delete itself"},
 	{accessmanagement.ErrLastAdmin, http.StatusConflict, "last_global_admin", "the last active global administrator must be preserved"},
 	{accessmanagement.ErrConflict, http.StatusConflict, "resource_conflict", "access management state conflicts with the request"},
 }
@@ -73,15 +74,27 @@ type createRoleBindingRequest struct {
 	Confirm   bool   `json:"confirm"`
 }
 
+// roleBindingSubject names the account a binding is about. Nested rather than
+// flattened so that "absent" is one missing object rather than two empty
+// strings a caller has to agree on how to interpret.
+type roleBindingSubject struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+}
+
 type roleBindingResponse struct {
-	ID        string    `json:"id"`
-	SubjectID string    `json:"subject_id"`
-	Role      string    `json:"role"`
-	ScopeType string    `json:"scope_type"`
-	TenantID  string    `json:"tenant_id,omitempty"`
-	ProjectID string    `json:"project_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	Replayed  bool      `json:"replayed,omitempty"`
+	ID        string `json:"id"`
+	SubjectID string `json:"subject_id"`
+	// Omitted when the subject row no longer exists; `subject_id` is always
+	// present, so a caller can still identify and remove an orphaned binding.
+	Subject   *roleBindingSubject `json:"subject,omitempty"`
+	Role      string              `json:"role"`
+	ScopeType string              `json:"scope_type"`
+	TenantID  string              `json:"tenant_id,omitempty"`
+	ProjectID string              `json:"project_id,omitempty"`
+	CreatedAt time.Time           `json:"created_at"`
+	Replayed  bool                `json:"replayed,omitempty"`
 }
 
 func newAccessManagementHandler(
@@ -107,6 +120,7 @@ func (handler *accessManagementHandler) listUsers(c *gin.Context) {
 	result, err := handler.service.ListUsers(ctx, accessmanagement.ListUsersInput{
 		Status: query.Status,
 		Search: query.Search,
+		Now:    time.Now().UTC(),
 		Page:   query.Page,
 	})
 	cancel()
@@ -126,7 +140,7 @@ func (handler *accessManagementHandler) listUsers(c *gin.Context) {
 func (handler *accessManagementHandler) getUser(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	ctx, cancel := handler.operationContext(c)
-	result, err := handler.service.GetUser(ctx, c.Param("user_id"))
+	result, err := handler.service.GetUser(ctx, c.Param("user_id"), time.Now().UTC())
 	cancel()
 	if handler.respondErrorAccess(c, "get user", err) {
 		return
@@ -478,9 +492,18 @@ func responseRoleBinding(
 	item accessmanagement.RoleBinding,
 	replayed bool,
 ) roleBindingResponse {
+	var subject *roleBindingSubject
+	if item.SubjectUsername != "" {
+		subject = &roleBindingSubject{
+			ID:          item.SubjectID,
+			Username:    item.SubjectUsername,
+			DisplayName: item.SubjectDisplayName,
+		}
+	}
 	return roleBindingResponse{
 		ID:        item.ID,
 		SubjectID: item.SubjectID,
+		Subject:   subject,
 		Role:      item.Role,
 		ScopeType: item.ScopeType,
 		TenantID:  item.TenantID,

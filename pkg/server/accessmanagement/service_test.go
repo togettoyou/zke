@@ -207,8 +207,11 @@ func TestSelfTargetedRemovalIsRefusedBeforeReachingTheStore(t *testing.T) {
 		ActorUserID: testActorID,
 		RequestID:   testRequestID,
 		Now:         now,
-	}); !errors.Is(err, ErrSelfDisable) {
-		t.Fatalf("DeleteUser(self) error = %v, want ErrSelfDisable", err)
+		// Distinct from ErrSelfDisable on purpose: the operator is told which
+		// operation was refused, not a different one that happens to share the
+		// same guard.
+	}); !errors.Is(err, ErrSelfDelete) {
+		t.Fatalf("DeleteUser(self) error = %v, want ErrSelfDelete", err)
 	}
 	if fake.deleteUserCalled {
 		t.Fatal("a self-targeted deletion must not reach the store")
@@ -373,5 +376,92 @@ func TestStoreErrorsMapToServiceErrors(t *testing.T) {
 				t.Fatalf("SetUserStatus() error = %v, want %v", err, testCase.expected)
 			}
 		})
+	}
+}
+
+// A lock is expired lazily: the row keeps `status = 'locked'` and its elapsed
+// `lock_expires_at` until the next login attempt rewrites them. Reads must
+// report what the login path believes, or the API describes an account as
+// locked out during a window in which it would be admitted.
+func TestListUsersReportsTheEffectiveLockState(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	expired := now.Add(-time.Second)
+	active := now.Add(time.Minute)
+	lockedAt := now.Add(-time.Hour)
+
+	fake := &fakeStore{
+		users: []store.ManagedUser{
+			{
+				ID:               "11111111-1111-4111-8111-111111111111",
+				Username:         "expired-lock",
+				Status:           "locked",
+				FailedLoginCount: 5,
+				LockedAt:         &lockedAt,
+				LockExpiresAt:    &expired,
+			},
+			{
+				ID:               "22222222-2222-4222-8222-222222222222",
+				Username:         "held-lock",
+				Status:           "locked",
+				FailedLoginCount: 5,
+				LockedAt:         &lockedAt,
+				LockExpiresAt:    &active,
+			},
+			{
+				ID:       "33333333-3333-4333-8333-333333333333",
+				Username: "disabled-account",
+				Status:   "disabled",
+			},
+		},
+		usersTotal: 3,
+	}
+	service := newTestService(fake)
+
+	page, err := service.ListUsers(context.Background(), ListUsersInput{
+		Now:  now,
+		Page: pagination.Request{Limit: 20},
+	})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(page.Users) != 3 {
+		t.Fatalf("users = %d, want 3", len(page.Users))
+	}
+
+	// The elapsed lock is reported as what it is: no longer holding anyone out.
+	if got := page.Users[0]; got.Status != "active" ||
+		got.LockedAt != nil ||
+		got.LockExpiresAt != nil {
+		t.Fatalf(
+			"expired lock = %s/%v/%v, want active and cleared",
+			got.Status,
+			got.LockedAt,
+			got.LockExpiresAt,
+		)
+	}
+	// The counter survives: it is the only visible evidence until a successful
+	// login clears it.
+	if page.Users[0].FailedLoginCount != 5 {
+		t.Fatalf("failed login count = %d, want 5", page.Users[0].FailedLoginCount)
+	}
+
+	// A lock that has not elapsed is untouched.
+	if got := page.Users[1]; got.Status != "locked" ||
+		got.LockExpiresAt == nil ||
+		!got.LockExpiresAt.Equal(active) {
+		t.Fatalf("held lock = %s/%v, want locked until %v", got.Status, got.LockExpiresAt, active)
+	}
+
+	// Disabled is not a lock and is never rewritten by this rule.
+	if got := page.Users[2].Status; got != "disabled" {
+		t.Fatalf("disabled account status = %q, want disabled", got)
+	}
+
+	// The clock reaches the store too, so the status filter resolves against the
+	// effective state rather than the stored one.
+	if !fake.listUsersParams.Now.Equal(now) {
+		t.Fatalf("store clock = %v, want %v", fake.listUsersParams.Now, now)
 	}
 }

@@ -163,19 +163,32 @@ export function IdentifierLabel({ value, className }: { value: string; className
       className={cn(
         // `w-fit` and `whitespace-nowrap` for the same reason as the badge: an
         // elided identifier that stretches or wraps is worse than useless.
-        "zke-focus zke-mono group text-muted-foreground hover:text-foreground hover:bg-surface-muted -mx-1 inline-flex w-fit items-center gap-1 rounded border border-transparent px-1 text-xs whitespace-nowrap transition-colors",
+        "zke-focus zke-mono text-muted-foreground hover:text-foreground hover:bg-surface-muted relative -mx-1 inline-flex w-fit cursor-pointer items-center rounded border border-transparent px-1 text-xs whitespace-nowrap transition-colors",
         className,
       )}
     >
       {value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value}
+      {/*
+       * No resting copy icon, and the confirmation hangs to the *left*.
+       *
+       * Carried in flow, a permanently rendered icon padded every identifier's
+       * trailing edge by its own width even at `opacity-0` — invisible in a
+       * table, obvious the moment the value sits in a right-aligned column and
+       * ends short of the plain text above it. Hung outside the box instead, it
+       * overflowed: a right-aligned column has no room on its right by
+       * definition, which is the whole point of aligning right.
+       *
+       * So the affordance is the pointer, the hover fill and the title — which
+       * already spells out that clicking copies — and the only thing drawn is a
+       * check, for a second and a half, in the slack on the left where every
+       * layout using this has room to spare.
+       */}
       {copied ? (
-        <Check className="text-success size-3 shrink-0" aria-hidden />
-      ) : (
-        <Copy
-          className="size-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-60"
+        <Check
           aria-hidden
+          className="text-success absolute top-1/2 right-full mr-1 size-3 -translate-y-1/2"
         />
-      )}
+      ) : null}
     </button>
   );
 }

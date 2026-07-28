@@ -59,7 +59,14 @@ export function DataTable<TData>({
   const canGoNext = Boolean(page?.has_more);
 
   return (
-    <div className="flex min-h-0 flex-col gap-3">
+    /*
+     * `flex-1` so that a section laying itself out as a full-height column can
+     * hand the table the remaining space. Without a bounded height the inner
+     * scroll box just grows, the whole view scrolls instead, and the sticky
+     * header sticks to nothing — the one thing it exists for. In a plain block
+     * parent the declaration is inert.
+     */
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {toolbar ? <div className="flex flex-wrap items-center gap-2">{toolbar}</div> : null}
 
       {/* No shadow: this sits inside a window that already carries elevation,

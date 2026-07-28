@@ -545,6 +545,20 @@ WHERE id = $1
 	}
 	assertErrorCode(t, selfDisable, "self_disable_forbidden")
 
+	// Deleting yourself is refused too, and reports the operation that was
+	// actually refused rather than borrowing the disable code.
+	selfDelete := accessAPIRequest(
+		router,
+		http.MethodDelete,
+		"/api/v1/users/"+admin.ID,
+		`{"confirm":true}`,
+		adminLogin,
+	)
+	if selfDelete.Code != http.StatusConflict {
+		t.Fatalf("self delete status = %d: %s", selfDelete.Code, selfDelete.Body)
+	}
+	assertErrorCode(t, selfDelete, "self_delete_forbidden")
+
 	var adminBindingID string
 	if err := pool.QueryRow(ctx, `
 SELECT id::text

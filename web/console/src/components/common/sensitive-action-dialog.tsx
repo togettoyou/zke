@@ -95,14 +95,23 @@ export function SensitiveActionDialog({
           <h4 className="text-subtle-foreground mb-2 text-xs font-medium">操作目标</h4>
           <dl className="grid gap-1.5">
             {scopeLines.map((line) => (
-              <div key={line.label} className="flex items-baseline gap-2 text-[13px]">
-                <dt className="text-muted-foreground w-20 shrink-0">{line.label}</dt>
+              <div key={line.label} className="flex items-start gap-2 text-[13px]">
+                <dt className="text-muted-foreground w-20 shrink-0 leading-6">{line.label}</dt>
                 <dd className="min-w-0 flex-1">
-                  <span className="text-foreground font-medium">{line.name}</span>
+                  <div className="text-foreground leading-6 font-medium">{line.name}</div>
+                  {/*
+                   * The identifier gets its own line, and is never abbreviated.
+                   * This is the surface where an operator checks that they are
+                   * about to act on the thing they meant to — so the whole value
+                   * has to be here, and trailed after the name it had nowhere to
+                   * go but a mid-token break, which is the one way of wrapping an
+                   * identifier that makes it unreadable. On its own line a UUID
+                   * fits; `break-all` stays only as a floor for longer ones.
+                   */}
                   {line.id ? (
-                    <span className="zke-mono text-subtle-foreground ml-2 text-xs break-all">
+                    <div className="zke-mono text-subtle-foreground text-xs break-all">
                       {line.id}
-                    </span>
+                    </div>
                   ) : null}
                 </dd>
               </div>

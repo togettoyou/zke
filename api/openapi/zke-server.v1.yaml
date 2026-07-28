@@ -1921,6 +1921,13 @@ components:
           $ref: "#/components/schemas/UUID"
         subject_id:
           $ref: "#/components/schemas/UUID"
+        subject:
+          allOf:
+            - $ref: "#/components/schemas/RoleBindingSubject"
+          description: >-
+            绑定所指向的账号。与绑定在同一次查询中解析，调用方无需再按 subject_id
+            逐个查询用户。仅当该账号记录已不存在时省略；此时 subject_id 仍然返回，
+            以便识别并删除孤立绑定。
         role:
           type: string
           enum: [admin, viewer]
@@ -1935,6 +1942,17 @@ components:
           $ref: "#/components/schemas/Timestamp"
         replayed:
           type: boolean
+    RoleBindingSubject:
+      type: object
+      additionalProperties: false
+      required: [id, username, display_name]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        username:
+          type: string
+        display_name:
+          type: string
     CreateRoleBindingRequest:
       type: object
       additionalProperties: false
