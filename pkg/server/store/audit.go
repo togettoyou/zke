@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 const auditFilterSQL = `
@@ -186,10 +188,10 @@ SELECT
     project_scope.tenant_id,
     project_scope.project_id,
     $3,
-    'project',
-    project_scope.project_id,
     $4,
-    $5
+    project_scope.project_id,
+    $5,
+    $6
 FROM project_scope
 UNION ALL
 SELECT
@@ -200,15 +202,16 @@ SELECT
     NULL::uuid,
     NULL::uuid,
     $3,
-    'project',
-    $2::uuid,
     $4,
-    $5
+    $2::uuid,
+    $5,
+    $6
 WHERE NOT EXISTS (SELECT 1 FROM project_scope)
 `,
 		input.ActorUserID,
 		input.ProjectID,
 		input.Action,
+		auditaction.TargetProject,
 		input.Result,
 		input.RequestID,
 	); err != nil {
@@ -302,10 +305,10 @@ SELECT
     agent_scope.project_id,
     agent_scope.cluster_id,
     $3,
-    'agent',
-    agent_scope.agent_id,
     $4,
-    $5
+    agent_scope.agent_id,
+    $5,
+    $6
 FROM agent_scope
 UNION ALL
 SELECT
@@ -317,15 +320,16 @@ SELECT
     NULL::uuid,
     NULL::uuid,
     $3,
-    'agent',
-    $2::uuid,
     $4,
-    $5
+    $2::uuid,
+    $5,
+    $6
 WHERE NOT EXISTS (SELECT 1 FROM agent_scope)
 `,
 		input.ActorUserID,
 		input.AgentID,
 		input.Action,
+		auditaction.TargetAgent,
 		input.Result,
 		input.RequestID,
 	); err != nil {
@@ -358,18 +362,19 @@ INSERT INTO audit_events (
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'cluster',
     cluster_scope.tenant_id, cluster_scope.project_id,
-    cluster_scope.cluster_id, $3, 'cluster', cluster_scope.cluster_id, $4, $5
+    cluster_scope.cluster_id, $3, $4, cluster_scope.cluster_id, $5, $6
 FROM cluster_scope
 UNION ALL
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'global',
     NULL::uuid, NULL::uuid, NULL::uuid,
-    $3, 'cluster', $2::uuid, $4, $5
+    $3, $4, $2::uuid, $5, $6
 WHERE NOT EXISTS (SELECT 1 FROM cluster_scope)
 `,
 		input.ActorUserID,
 		input.ClusterID,
 		input.Action,
+		auditaction.TargetCluster,
 		input.Result,
 		input.RequestID,
 	); err != nil {

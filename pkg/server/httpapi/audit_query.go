@@ -133,7 +133,7 @@ func (handler *auditQueryHandler) recordDenied(c *gin.Context, userID string) {
 		Scope:       auditScopeGlobal,
 		ActorUserID: userID,
 		Action:      string(rbac.PermissionAuditRead),
-		TargetType:  "audit_event",
+		TargetType:  auditaction.TargetAuditEvent,
 		Result:      "denied",
 	})
 }
@@ -149,11 +149,17 @@ func (handler *auditQueryHandler) recordDenied(c *gin.Context, userID string) {
 // operator may do, these say what happened, and they are different vocabularies.
 // The list is also not filtered by what the caller can see — it is the shape of
 // the system, not its contents, and the events themselves remain scoped.
+// The target types ride along for the same reason: `target_type` is a second
+// closed vocabulary behind a second exact-match filter, and publishing one while
+// leaving the other to be guessed only moves the problem.
 func (handler *auditQueryHandler) listActions(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	actions := make([]auditActionResponse, 0, len(auditaction.All()))
 	for _, item := range auditaction.All() {
 		actions = append(actions, auditActionResponse{Name: item.Name, Group: item.Group})
 	}
-	writeSuccess(c, http.StatusOK, gin.H{"audit_actions": actions})
+	writeSuccess(c, http.StatusOK, gin.H{
+		"audit_actions":      actions,
+		"audit_target_types": auditaction.TargetTypes(),
+	})
 }

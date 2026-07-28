@@ -9,7 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/rbac"
+	"github.com/togettoyou/zke/pkg/shared/auditctx"
 )
 
 type AuthorizationConfig struct {
@@ -198,7 +200,10 @@ func (authorization *Authorization) recordDenied(
 	if authorization.auditService == nil {
 		return
 	}
-	auditContext, cancelAudit := context.WithTimeout(
+	// Detached from the request: a denial must be recorded even when the caller
+	// hangs up before the write lands, or the party being audited decides which
+	// refusals get a record.
+	auditContext, cancelAudit := auditctx.Detach(
 		c.Request.Context(),
 		authorization.config.OperationTimeout,
 	)
@@ -275,14 +280,43 @@ func (authorization *Authorization) recordDenied(
 	}
 }
 
+// permissionTargetType names the kind of object a refused permission guards.
+//
+// Declared, not split off the permission name. The first segment is not the
+// target: `rbac.manage` guards RoleBindings and `audit.read` guards audit
+// events, so splitting produced the target types `rbac` and `audit`, which name
+// no object the audit trail holds and appear in no published vocabulary.
 func permissionTargetType(permission rbac.Permission) string {
-	value := string(permission)
-	for index, character := range value {
-		if character == '.' {
-			return value[:index]
-		}
+	switch permission {
+	case rbac.PermissionTenantCreate,
+		rbac.PermissionTenantRead,
+		rbac.PermissionTenantManage:
+		return auditaction.TargetTenant
+	case rbac.PermissionProjectCreate,
+		rbac.PermissionProjectRead,
+		rbac.PermissionProjectManage:
+		return auditaction.TargetProject
+	case rbac.PermissionClusterRead,
+		rbac.PermissionClusterManage,
+		rbac.PermissionClusterConnectionRevoke:
+		return auditaction.TargetCluster
+	case rbac.PermissionClusterEnrollmentCreate,
+		rbac.PermissionClusterEnrollmentRead,
+		rbac.PermissionClusterEnrollmentRevoke:
+		return auditaction.TargetEnrollment
+	case rbac.PermissionUserRead, rbac.PermissionUserManage:
+		return auditaction.TargetUser
+	case rbac.PermissionRBACRead, rbac.PermissionRBACManage:
+		return auditaction.TargetRoleBinding
+	case rbac.PermissionAuditRead:
+		return auditaction.TargetAuditEvent
+	default:
+		// Unreachable while every permission is mapped, which
+		// TestPermissionTargetTypesArePublished asserts. Falling back to the
+		// least specific real target keeps an unmapped permission inside the
+		// published vocabulary instead of inventing a value for it.
+		return auditaction.TargetUser
 	}
-	return "resource"
 }
 
 func (authorization *Authorization) logAttributes(

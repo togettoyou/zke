@@ -466,6 +466,7 @@ POST /api/v1/role-bindings
 GET  /api/v1/role-bindings/{role_binding_id}
 DELETE /api/v1/role-bindings/{role_binding_id}
 GET  /api/v1/audit-events
+GET  /api/v1/audit-events/actions
 GET  /api/v1/events
 GET  /api/v1/tenants
 POST /api/v1/tenants

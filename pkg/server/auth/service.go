@@ -9,9 +9,16 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/auditctx"
 )
 
 const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=4$MDEyMzQ1Njc4OWFiY2RlZg$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+
+// securityWriteTimeout bounds the audit and lockout writes that outlive the
+// request. It is a constant rather than configuration because it is not a
+// tuning knob: these are single-row writes, and the only question is how long
+// to wait for a database that has stopped answering.
+const securityWriteTimeout = 5 * time.Second
 
 var ErrInvalidCredentials = errors.New("invalid username or password")
 
@@ -307,6 +314,8 @@ func (service *Service) rejectPasswordChange(
 	result string,
 	rejection error,
 ) error {
+	ctx, cancel := auditctx.Detach(ctx, securityWriteTimeout)
+	defer cancel()
 	if err := service.store.RecordPasswordChangeAudit(
 		ctx,
 		input.Identity.User.ID,
@@ -324,6 +333,8 @@ func (service *Service) CSRFTokenMatches(identity Identity, token string) bool {
 }
 
 func (service *Service) RecordLoginDenied(ctx context.Context, requestID string) error {
+	ctx, cancel := auditctx.Detach(ctx, securityWriteTimeout)
+	defer cancel()
 	return service.store.RecordLoginAudit(ctx, nil, "denied", requestID)
 }
 
@@ -341,6 +352,12 @@ func (service *Service) rejectLogin(
 	requestID string,
 	now time.Time,
 ) error {
+	// Detached: this write is both the audit record and the persistent lockout
+	// counter. On the request context a client that hangs up after sending a
+	// wrong password would leave neither behind, letting the attempt cost
+	// nothing and keeping the account from ever locking.
+	ctx, cancel := auditctx.Detach(ctx, securityWriteTimeout)
+	defer cancel()
 	if err := service.store.RecordLoginFailure(ctx, store.RecordLoginFailureParams{
 		UserID:       targetUserID,
 		RequestID:    requestID,

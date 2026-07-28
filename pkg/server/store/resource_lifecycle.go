@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 func (store *ResourceManagementStore) UpdateTenant(
@@ -38,7 +40,7 @@ RETURNING id::text, name, status, created_at, updated_at
 	}
 	if err := insertResourceMutationAudit(
 		ctx, transaction, params.ActorUserID, "global", "", "", "",
-		"tenant.update", "tenant", params.TenantID, params.RequestID, params.Now,
+		auditaction.TenantUpdate, auditaction.TargetTenant, params.TenantID, params.RequestID, params.Now,
 	); err != nil {
 		return TenantResource{}, err
 	}
@@ -75,7 +77,7 @@ RETURNING id::text, name, status, created_at, updated_at
 	}
 	if err := insertResourceMutationAudit(
 		ctx, transaction, params.ActorUserID, "global", "", "", "",
-		"tenant.delete", "tenant", params.TenantID, params.RequestID, params.Now,
+		auditaction.TenantDelete, auditaction.TargetTenant, params.TenantID, params.RequestID, params.Now,
 	); err != nil {
 		return TenantResource{}, err
 	}
@@ -134,7 +136,7 @@ WHERE project.id = $1
 	}
 	if err := insertResourceMutationAudit(
 		ctx, transaction, params.ActorUserID, "tenant", item.TenantID, "", "",
-		"project.update", "project", item.ID, params.RequestID, params.Now,
+		auditaction.ProjectUpdate, auditaction.TargetProject, item.ID, params.RequestID, params.Now,
 	); err != nil {
 		return ProjectResource{}, err
 	}
@@ -171,7 +173,7 @@ RETURNING id::text, tenant_id::text, name, status, created_at, updated_at
 	}
 	if err := insertResourceMutationAudit(
 		ctx, transaction, params.ActorUserID, "tenant", item.TenantID, "", "",
-		"project.delete", "project", item.ID, params.RequestID, params.Now,
+		auditaction.ProjectDelete, auditaction.TargetProject, item.ID, params.RequestID, params.Now,
 	); err != nil {
 		return ProjectResource{}, err
 	}
@@ -224,7 +226,7 @@ RETURNING cluster.id::text, cluster.tenant_id::text, cluster.project_id::text,
 	}
 	if err := insertResourceMutationAudit(
 		ctx, transaction, params.ActorUserID, "cluster", item.TenantID,
-		item.ProjectID, item.ID, "cluster.update", "cluster", item.ID,
+		item.ProjectID, item.ID, auditaction.ClusterUpdate, auditaction.TargetCluster, item.ID,
 		params.RequestID, params.Now,
 	); err != nil {
 		return ClusterResource{}, err
@@ -263,7 +265,7 @@ RETURNING id::text, tenant_id::text, project_id::text, name, status,
 	}
 	if err := insertResourceMutationAudit(
 		ctx, transaction, params.ActorUserID, "cluster", item.TenantID,
-		item.ProjectID, item.ID, "cluster.delete", "cluster", item.ID,
+		item.ProjectID, item.ID, auditaction.ClusterDelete, auditaction.TargetCluster, item.ID,
 		params.RequestID, params.Now,
 	); err != nil {
 		return ClusterResource{}, err

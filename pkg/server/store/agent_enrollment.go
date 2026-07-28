@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 type lockedEnrollment struct {
@@ -373,17 +375,19 @@ VALUES (
     $2,
     $3,
     $4,
-    'cluster.enroll',
-    'cluster',
+    $5,
+    $6,
     $4,
     'succeeded',
-    $5
+    $7
 )
 `,
 		result.AgentID,
 		enrollment.TenantID,
 		enrollment.ProjectID,
 		result.ClusterID,
+		auditaction.ClusterEnroll,
+		auditaction.TargetCluster,
 		input.RequestID,
 	); err != nil {
 		return AgentEnrollmentResult{}, fmt.Errorf("audit completed agent enrollment: %w", err)
@@ -605,13 +609,14 @@ VALUES (
     $1,
     $2,
     $3,
-    'cluster.enroll',
-    'enrollment',
     $4,
+    $5,
+    $6,
     'denied',
-    $5
+    $7
 )
-`, scopeType, tenantID, projectID, targetID, requestID); err != nil {
+`, scopeType, tenantID, projectID, auditaction.ClusterEnroll,
+		auditaction.TargetEnrollment, targetID, requestID); err != nil {
 		return fmt.Errorf("audit rejected agent enrollment: %w", err)
 	}
 	return nil
@@ -645,14 +650,15 @@ SELECT
     'project',
     tenant_id,
     project_id,
-    'cluster.enroll',
-    'enrollment',
+    $2,
+    $3,
     id,
     'failed',
-    $2
+    $4
 FROM enrollments
 WHERE id = $1
-`, enrollmentID, requestID)
+`, enrollmentID, auditaction.ClusterEnroll, auditaction.TargetEnrollment,
+		requestID)
 	if err != nil {
 		return fmt.Errorf("record Agent enrollment failure audit: %w", err)
 	}

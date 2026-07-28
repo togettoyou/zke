@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 const transactionCleanupTimeout = 5 * time.Second
@@ -147,10 +149,11 @@ INSERT INTO audit_events (
     result, request_id, created_at
 )
 VALUES (
-    gen_random_uuid(), 'system', 'global', 'auth.account.auto_unlock',
-    'user', $1, 'succeeded', $2, $3
+    gen_random_uuid(), 'system', 'global', $1,
+    $2, $3, 'succeeded', $4, $5
 )
-`, input.UserID, input.RequestID, loginTime); err != nil {
+`, auditaction.AuthAccountAutoUnlock, auditaction.TargetUser, input.UserID,
+			input.RequestID, loginTime); err != nil {
 			return Session{}, fmt.Errorf("audit expired account lock recovery: %w", err)
 		}
 	}
@@ -176,13 +179,14 @@ VALUES (
     'user',
     $1,
     'global',
-    'auth.login',
-    'session',
     $2,
+    $3,
+    $4,
     'succeeded',
-    $3
+    $5
 )
-`, input.UserID, session.ID, input.RequestID); err != nil {
+`, input.UserID, auditaction.AuthLogin, auditaction.TargetSession, session.ID,
+		input.RequestID); err != nil {
 		return Session{}, fmt.Errorf("audit authenticated session creation: %w", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -329,13 +333,14 @@ VALUES (
     'user',
     $1,
     'global',
-    'auth.logout',
-    'session',
     $2,
+    $3,
+    $4,
     'succeeded',
-    $3
+    $5
 )
-`, userID, sessionID, requestID); err != nil {
+`, userID, auditaction.AuthLogout, auditaction.TargetSession, sessionID,
+		requestID); err != nil {
 		return fmt.Errorf("audit authenticated session revocation: %w", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {

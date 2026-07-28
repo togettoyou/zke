@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 var ErrAgentNotFound = errors.New("Agent not found")
@@ -131,17 +133,19 @@ VALUES (
     $2,
     $3,
     $4,
-    'cluster.connection.revoke',
-    'cluster',
+    $5,
+    $6,
     $4,
     'succeeded',
-    $5
+    $7
 )
 `,
 		params.ActorUserID,
 		result.TenantID,
 		result.ProjectID,
 		result.ClusterID,
+		auditaction.ClusterConnectionRevoke,
+		auditaction.TargetCluster,
 		params.RequestID,
 	); err != nil {
 		return RevokeAgentResult{}, fmt.Errorf("audit Cluster connection revocation: %w", err)

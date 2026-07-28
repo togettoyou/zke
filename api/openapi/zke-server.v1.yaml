@@ -690,12 +690,17 @@ paths:
                       data:
                         type: object
                         additionalProperties: false
-                        required: [audit_actions]
+                        required: [audit_actions, audit_target_types]
                         properties:
                           audit_actions:
                             type: array
                             items:
                               $ref: "#/components/schemas/AuditAction"
+                          audit_target_types:
+                            type: array
+                            uniqueItems: true
+                            items:
+                              $ref: "#/components/schemas/AuditTargetType"
         "401":
           $ref: "#/components/responses/Unauthenticated"
   /api/v1/events:
@@ -2290,10 +2295,28 @@ components:
           description: 写入审计事件 `action` 字段的取值，可直接用作过滤条件。
         group:
           type: string
-          enum: [auth, user, role_binding, tenant, project, cluster]
+          enum: [auth, user, role_binding, tenant, project, cluster, denied]
           description: >-
             所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与
             `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。
+            `denied` 组是鉴权拒绝时记录的权限名，其事件的 `result` 恒为 `denied`。
+    AuditTargetType:
+      type: string
+      description: >-
+        写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是
+        服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的
+        `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
+      enum:
+        - user
+        - session
+        - role_binding
+        - tenant
+        - project
+        - cluster
+        - agent
+        - agent_credential
+        - enrollment
+        - audit_event
     AuditEventPage:
       type: object
       additionalProperties: false

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/shared/auditctx"
 )
 
 // baseHandler holds what every HTTP handler needs: a logger, the audit service
@@ -40,6 +41,15 @@ func (handler baseHandler) operationContext(
 	c *gin.Context,
 ) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(c.Request.Context(), handler.operationTimeout)
+}
+
+// auditContext bounds an audit write. Unlike operationContext it survives the
+// client hanging up, because a refused operation has to be recorded whether or
+// not anyone is still listening for the response.
+func (handler baseHandler) auditContext(
+	c *gin.Context,
+) (context.Context, context.CancelFunc) {
+	return auditctx.Detach(c.Request.Context(), handler.operationTimeout)
 }
 
 // errorMapping translates one domain sentinel into an HTTP response.
@@ -144,7 +154,7 @@ func (handler baseHandler) recordFailure(
 	if result == "" {
 		result = "failed"
 	}
-	ctx, cancel := handler.operationContext(c)
+	ctx, cancel := handler.auditContext(c)
 	defer cancel()
 
 	requestID := httpmiddleware.RequestID(c)

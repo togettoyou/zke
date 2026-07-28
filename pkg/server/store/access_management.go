@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 // userFilterSQL matches the Console's case-insensitive substring search over
@@ -111,7 +113,7 @@ RETURNING
 		return ManagedUser{}, fmt.Errorf("update managed user: %w", err)
 	}
 	if err := insertGlobalAccessAudit(
-		ctx, transaction, input.ActorUserID, "user.update", "user",
+		ctx, transaction, input.ActorUserID, auditaction.UserUpdate, auditaction.TargetUser,
 		input.UserID, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedUser{}, err
@@ -155,7 +157,7 @@ RETURNING
 		return ManagedUser{}, err
 	}
 	if err := insertGlobalAccessAudit(
-		ctx, transaction, input.ActorUserID, "user.delete", "user",
+		ctx, transaction, input.ActorUserID, auditaction.UserDelete, auditaction.TargetUser,
 		input.UserID, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedUser{}, err
@@ -207,7 +209,7 @@ RETURNING
 		return ManagedUser{}, fmt.Errorf("insert managed user: %w", err)
 	}
 	if err := insertGlobalAccessAudit(
-		ctx, transaction, input.ActorUserID, "user.create", "user",
+		ctx, transaction, input.ActorUserID, auditaction.UserCreate, auditaction.TargetUser,
 		item.ID, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedUser{}, err
@@ -268,7 +270,7 @@ RETURNING
 		}
 	}
 	if err := insertGlobalAccessAudit(
-		ctx, transaction, input.ActorUserID, "user.status.update", "user",
+		ctx, transaction, input.ActorUserID, auditaction.UserStatusUpdate, auditaction.TargetUser,
 		input.UserID, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedUser{}, err
@@ -319,7 +321,7 @@ RETURNING
 		return ManagedUser{}, fmt.Errorf("unlock managed user: %w", err)
 	}
 	if err := insertGlobalAccessAudit(
-		ctx, transaction, input.ActorUserID, "user.unlock", "user",
+		ctx, transaction, input.ActorUserID, auditaction.UserUnlock, auditaction.TargetUser,
 		input.UserID, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedUser{}, err
@@ -375,7 +377,7 @@ RETURNING
 		return ManagedUser{}, err
 	}
 	if err := insertGlobalAccessAudit(
-		ctx, transaction, input.ActorUserID, "user.password.reset", "user",
+		ctx, transaction, input.ActorUserID, auditaction.UserPasswordReset, auditaction.TargetUser,
 		input.UserID, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedUser{}, err
@@ -542,7 +544,7 @@ WHERE role_bindings.subject_id = $1
 		return ManagedRoleBinding{}, false, fmt.Errorf("insert role binding: %w", err)
 	}
 	if err := insertRoleBindingAudit(
-		ctx, transaction, input.ActorUserID, "role_binding.create",
+		ctx, transaction, input.ActorUserID, auditaction.RoleBindingCreate,
 		item, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedRoleBinding{}, false, err
@@ -589,7 +591,7 @@ FOR UPDATE OF role_bindings
 		return ManagedRoleBinding{}, fmt.Errorf("delete role binding: %w", err)
 	}
 	if err := insertRoleBindingAudit(
-		ctx, transaction, input.ActorUserID, "role_binding.delete",
+		ctx, transaction, input.ActorUserID, auditaction.RoleBindingDelete,
 		item, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedRoleBinding{}, err
@@ -746,7 +748,7 @@ INSERT INTO audit_events (
 )
 VALUES (
     gen_random_uuid(), 'user', $1, $2, NULLIF($3, '')::uuid,
-    NULLIF($4, '')::uuid, $5, 'role_binding', $6, $7, $8, $9
+    NULLIF($4, '')::uuid, $5, $6, $7, $8, $9, $10
 )
 `,
 		actorUserID,
@@ -754,6 +756,7 @@ VALUES (
 		binding.TenantID,
 		binding.ProjectID,
 		action,
+		auditaction.TargetRoleBinding,
 		binding.ID,
 		result,
 		requestID,

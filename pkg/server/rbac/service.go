@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/togettoyou/zke/pkg/server/store"
@@ -226,29 +227,23 @@ func validateSubjectPermission(userID string, permission Permission) error {
 	return nil
 }
 
+// Permissions reports the fixed permission set in a stable order. The slice is
+// copied so that a caller cannot reorder the definition for everyone else.
+//
+// Exported because the permission names also reach the audit trail: an
+// authorization denial is recorded under the permission it refused, so the
+// published audit vocabulary has to be checked against this list.
+func Permissions() []Permission {
+	return slices.Clone(allPermissions)
+}
+
+// valid is derived from allPermissions rather than repeating it. The two used to
+// be separate lists, and a permission added to the constants and to
+// allPermissions but forgotten here would have been granted to nobody — `admin`
+// grants "every valid permission", so the omission would have read as a denial
+// with no error anywhere.
 func (permission Permission) valid() bool {
-	switch permission {
-	case PermissionTenantCreate,
-		PermissionTenantRead,
-		PermissionTenantManage,
-		PermissionProjectCreate,
-		PermissionProjectRead,
-		PermissionProjectManage,
-		PermissionClusterEnrollmentCreate,
-		PermissionClusterEnrollmentRead,
-		PermissionClusterEnrollmentRevoke,
-		PermissionClusterRead,
-		PermissionClusterManage,
-		PermissionClusterConnectionRevoke,
-		PermissionUserRead,
-		PermissionUserManage,
-		PermissionRBACRead,
-		PermissionRBACManage,
-		PermissionAuditRead:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(allPermissions, permission)
 }
 
 func (scope scope) validate() error {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
@@ -75,4 +76,24 @@ func TestAuthorizationRejectsInvalidProjectIDBeforeStoreAccess(t *testing.T) {
 
 func discardAuthorizationLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// A denial names the object the permission guards, and that name reaches the
+// audit trail's `target_type` filter. Every permission must therefore map to a
+// published target type — an unmapped one would record a value the Console
+// cannot offer, which is how the previous name-splitting version produced the
+// non-existent target types `rbac` and `audit`.
+func TestPermissionTargetTypesArePublished(t *testing.T) {
+	t.Parallel()
+
+	for _, permission := range rbac.Permissions() {
+		targetType := permissionTargetType(permission)
+		if !auditaction.KnownTargetType(targetType) {
+			t.Errorf(
+				"permission %q maps to target type %q, which is not published",
+				permission,
+				targetType,
+			)
+		}
+	}
 }

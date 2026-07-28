@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/agentmanagement"
 	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 )
 
@@ -106,6 +107,6 @@ func (handler *agentManagementHandler) recordRevokeFailure(
 	handler.recordFailure(c, failedOperation{
 		Scope:       auditScopeCluster,
 		ActorUserID: userID,
-		Action:      audit.ActionClusterConnectionRevoke,
+		Action:      auditaction.ClusterConnectionRevoke,
 	})
 }

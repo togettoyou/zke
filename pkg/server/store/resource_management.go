@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 // tenantVisibilityFilterSQL applies the caller's RBAC visibility inside the
@@ -461,10 +463,11 @@ INSERT INTO audit_events (
     target_id, result, request_id, created_at
 )
 VALUES (
-    gen_random_uuid(), 'user', $1, 'global', 'tenant.create', 'tenant',
-    $2, 'succeeded', $3, $4
+    gen_random_uuid(), 'user', $1, 'global', $2, $3,
+    $4, 'succeeded', $5, $6
 )
-`, params.ActorUserID, tenantID, params.RequestID, params.Now); err != nil {
+`, params.ActorUserID, auditaction.TenantCreate, auditaction.TargetTenant,
+		tenantID, params.RequestID, params.Now); err != nil {
 		return fmt.Errorf("audit tenant creation: %w", err)
 	}
 	return nil
@@ -482,12 +485,14 @@ INSERT INTO audit_events (
     target_type, target_id, result, request_id, created_at
 )
 VALUES (
-    gen_random_uuid(), 'user', $1, 'tenant', $2, 'project.create',
-    'project', $3, 'succeeded', $4, $5
+    gen_random_uuid(), 'user', $1, 'tenant', $2, $3,
+    $4, $5, 'succeeded', $6, $7
 )
 `,
 		params.ActorUserID,
 		params.TenantID,
+		auditaction.ProjectCreate,
+		auditaction.TargetProject,
 		projectID,
 		params.RequestID,
 		params.Now,

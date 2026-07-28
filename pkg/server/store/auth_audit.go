@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 func (store *AuthStore) RecordLoginAudit(
@@ -42,13 +44,14 @@ VALUES (
     gen_random_uuid(),
     'system',
     'global',
-    'auth.login',
-    'user',
     $1,
     $2,
-    $3
+    $3,
+    $4,
+    $5
 )
-`, targetID, result, requestID); err != nil {
+`, auditaction.AuthLogin, auditaction.TargetUser, targetID, result,
+		requestID); err != nil {
 		return fmt.Errorf("record login audit: %w", err)
 	}
 	return nil
@@ -73,10 +76,11 @@ INSERT INTO audit_events (
     target_id, result, request_id, created_at
 )
 VALUES (
-    gen_random_uuid(), 'user', $1, 'global', 'auth.password.change',
-    'user', $1, $2, $3, $4
+    gen_random_uuid(), 'user', $1, 'global', $2,
+    $3, $1, $4, $5, $6
 )
-`, userID, result, requestID, now); err != nil {
+`, userID, auditaction.AuthPasswordChange, auditaction.TargetUser, result,
+		requestID, now); err != nil {
 		return fmt.Errorf("record password change audit: %w", err)
 	}
 	return nil
@@ -224,10 +228,11 @@ INSERT INTO audit_events (
     result, request_id, created_at
 )
 VALUES (
-    gen_random_uuid(), 'system', 'global', 'auth.account.lock',
-    'user', $1, 'succeeded', $2, $3
+    gen_random_uuid(), 'system', 'global', $1,
+    $2, $3, 'succeeded', $4, $5
 )
-`, *input.UserID, input.RequestID, input.Now); err != nil {
+`, auditaction.AuthAccountLock, auditaction.TargetUser, *input.UserID,
+				input.RequestID, input.Now); err != nil {
 				return fmt.Errorf("audit persistent account lock: %w", err)
 			}
 		}
@@ -249,10 +254,11 @@ INSERT INTO audit_events (
     result, request_id, created_at
 )
 VALUES (
-    gen_random_uuid(), 'system', 'global', 'auth.account.lock_withheld',
-    'user', $1, 'succeeded', $2, $3
+    gen_random_uuid(), 'system', 'global', $1,
+    $2, $3, 'succeeded', $4, $5
 )
-`, *input.UserID, input.RequestID, input.Now); err != nil {
+`, auditaction.AuthAccountLockWithheld, auditaction.TargetUser, *input.UserID,
+				input.RequestID, input.Now); err != nil {
 				return fmt.Errorf("audit withheld account lock: %w", err)
 			}
 		}
@@ -263,10 +269,11 @@ INSERT INTO audit_events (
     result, request_id, created_at
 )
 VALUES (
-    gen_random_uuid(), 'system', 'global', 'auth.login', 'user',
-    $1, 'failed', $2, $3
+    gen_random_uuid(), 'system', 'global', $1, $2,
+    $3, 'failed', $4, $5
 )
-`, targetID, input.RequestID, input.Now); err != nil {
+`, auditaction.AuthLogin, auditaction.TargetUser, targetID, input.RequestID,
+		input.Now); err != nil {
 		return fmt.Errorf("audit login failure: %w", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {

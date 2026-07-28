@@ -397,8 +397,8 @@ func (handler *resourceManagementHandler) recordTenantFailure(
 	handler.recordFailure(c, failedOperation{
 		Scope:       auditScopeGlobal,
 		ActorUserID: userID,
-		Action:      audit.ActionTenantCreate,
-		TargetType:  "tenant",
+		Action:      auditaction.TenantCreate,
+		TargetType:  auditaction.TargetTenant,
 	})
 }
 
@@ -409,8 +409,8 @@ func (handler *resourceManagementHandler) recordProjectFailure(
 	handler.recordFailure(c, failedOperation{
 		Scope:       auditScopeTenant,
 		ActorUserID: userID,
-		Action:      audit.ActionProjectCreate,
-		TargetType:  "project",
+		Action:      auditaction.ProjectCreate,
+		TargetType:  auditaction.TargetProject,
 	})
 }
 

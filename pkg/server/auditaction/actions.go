@@ -8,17 +8,24 @@
 //
 // Two vocabularies are easy to confuse and must not be merged. A *permission*
 // (`pkg/server/rbac`) says what an operator may do; an *action* says what
-// happened. They overlap in three names and diverge everywhere else — one
+// happened. They overlap in five names and diverge everywhere else — one
 // `user.manage` permission produces six distinct user actions, and `auth.login`
 // corresponds to no permission at all.
+//
+// They do meet in one place: a refused request is recorded under the permission
+// it refused, so the permission names are published here too, in their own
+// group. That is a deliberate, bounded overlap, not a merge — see the denied
+// constants below.
 package auditaction
 
 import "slices"
 
-// Actions written by the Server. Keep this list and the literals that produce
-// them in step: several are embedded in the store's SQL rather than passed as
-// Go values, so the compiler cannot check them. `TestPhase1BackendEndToEnd`
-// asserts that every action an exercised flow actually writes is listed here.
+// Actions written by the Server. Every writer names one of these constants:
+// where the action used to be a literal inside the store's SQL it is now a bound
+// parameter, so a rename is a compile error rather than a silently unmatched
+// filter. `TestPhase1BackendEndToEnd` still asserts that every action an
+// exercised flow actually writes is listed here, which is what catches an action
+// that is written but never declared.
 const (
 	AuthLogin               = "auth.login"
 	AuthLogout              = "auth.logout"
@@ -53,6 +60,45 @@ const (
 	ClusterEnrollmentRevoke   = "cluster.enrollment.revoke"
 	ClusterConnectionRevoke   = "cluster.connection.revoke"
 	ClusterConnectionReenroll = "cluster.connection.reenroll"
+
+	// Written by the Agent connection, not by an operator: the Agent asks for a
+	// new client certificate over the control stream and the Server signs it.
+	// It is grouped with the Cluster actions rather than under an Agent group of
+	// its own because the Agent is not a resource an operator manages — a
+	// Cluster is, and this is that Cluster's connection credential being
+	// rolled. The name keeps its `agent.` prefix because that is what is already
+	// in the column; the group is declared, not read off the name.
+	AgentCertificateRenew = "agent.certificate.renew"
+)
+
+// Permission names that reach the action column.
+//
+// An authorization denial has no action of its own to record: nothing happened,
+// which is the point. The middleware records it under the permission it refused,
+// so these names appear in the audit trail as surely as the ones above and have
+// to be published with them — the Console's filter is an exact match over this
+// vocabulary, and a name missing from it is a denial nobody can look up.
+//
+// Only the permissions whose name is not already an action are listed. Five are:
+// `tenant.create`, `project.create`, `cluster.enrollment.create`,
+// `cluster.enrollment.revoke` and `cluster.connection.revoke` are both a thing
+// an operator may do and a thing that happened. A name can only carry one group
+// in an exact-match picker, so those stay declared once, in the family they act
+// on, and a filter on them returns the successful operation and the refused
+// attempt together — told apart by `result`, which is what `result` is for.
+const (
+	DeniedTenantRead            = "tenant.read"
+	DeniedTenantManage          = "tenant.manage"
+	DeniedProjectRead           = "project.read"
+	DeniedProjectManage         = "project.manage"
+	DeniedClusterEnrollmentRead = "cluster.enrollment.read"
+	DeniedClusterRead           = "cluster.read"
+	DeniedClusterManage         = "cluster.manage"
+	DeniedUserRead              = "user.read"
+	DeniedUserManage            = "user.manage"
+	DeniedRBACRead              = "rbac.read"
+	DeniedRBACManage            = "rbac.manage"
+	DeniedAuditRead             = "audit.read"
 )
 
 // Group names the family an action belongs to. It is declared here rather than
@@ -67,7 +113,57 @@ const (
 	GroupTenant      = "tenant"
 	GroupProject     = "project"
 	GroupCluster     = "cluster"
+	// GroupDenied holds the permission names above. They are grouped apart
+	// rather than filed under the resource they name because they answer a
+	// different question: not "what happened to this tenant" but "who was turned
+	// away". Events in this group only ever carry result `denied`.
+	GroupDenied = "denied"
 )
+
+// Target types written to the audit trail. Like the actions, this is a closed
+// vocabulary offered to the Console as an exact-match filter, so it is declared
+// rather than derived: a target type nobody publishes is a filter nobody can
+// use.
+//
+// These name the kind of object an event is about, which is not the same as the
+// scope it belongs to. A `cluster.enroll` event is scoped to a Cluster and
+// targets a Cluster; `cluster.enrollment.create` is scoped to a Project and
+// targets an Enrollment.
+const (
+	TargetUser            = "user"
+	TargetSession         = "session"
+	TargetRoleBinding     = "role_binding"
+	TargetTenant          = "tenant"
+	TargetProject         = "project"
+	TargetCluster         = "cluster"
+	TargetAgent           = "agent"
+	TargetAgentCredential = "agent_credential"
+	TargetEnrollment      = "enrollment"
+	TargetAuditEvent      = "audit_event"
+)
+
+var targetTypes = []string{
+	TargetUser,
+	TargetSession,
+	TargetRoleBinding,
+	TargetTenant,
+	TargetProject,
+	TargetCluster,
+	TargetAgent,
+	TargetAgentCredential,
+	TargetEnrollment,
+	TargetAuditEvent,
+}
+
+// TargetTypes reports the target type vocabulary in presentation order.
+func TargetTypes() []string {
+	return slices.Clone(targetTypes)
+}
+
+// KnownTargetType reports whether name is part of the target type vocabulary.
+func KnownTargetType(name string) bool {
+	return slices.Contains(targetTypes, name)
+}
 
 // Action is one entry of the vocabulary.
 type Action struct {
@@ -112,6 +208,20 @@ var actions = []Action{
 	{ClusterEnrollmentRevoke, GroupCluster},
 	{ClusterConnectionRevoke, GroupCluster},
 	{ClusterConnectionReenroll, GroupCluster},
+	{AgentCertificateRenew, GroupCluster},
+
+	{DeniedTenantRead, GroupDenied},
+	{DeniedTenantManage, GroupDenied},
+	{DeniedProjectRead, GroupDenied},
+	{DeniedProjectManage, GroupDenied},
+	{DeniedClusterRead, GroupDenied},
+	{DeniedClusterManage, GroupDenied},
+	{DeniedClusterEnrollmentRead, GroupDenied},
+	{DeniedUserRead, GroupDenied},
+	{DeniedUserManage, GroupDenied},
+	{DeniedRBACRead, GroupDenied},
+	{DeniedRBACManage, GroupDenied},
+	{DeniedAuditRead, GroupDenied},
 }
 
 // All reports the vocabulary in presentation order. The slice is copied so that

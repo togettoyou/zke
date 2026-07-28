@@ -93,9 +93,14 @@ const GLOBAL = { type: "global" } as const;
  * Group labels for the audit action filter. The names themselves stay in their
  * raw form — the table renders `action` verbatim, so translating it in the
  * picker would mean choosing one string and reading another.
+ *
+ * Labels only. The order and the set of groups come from the Server's response,
+ * because a list held here would be a second definition: a group the Server adds
+ * would be absent from it, and every action in that group would silently vanish
+ * from the picker — the exact failure the endpoint exists to prevent. An
+ * unlabelled group falls back to its raw name, which is worse-looking than a
+ * translation and better than an invisible one.
  */
-const ACTION_GROUP_ORDER = ["auth", "user", "role_binding", "tenant", "project", "cluster"];
-
 const ACTION_GROUP_LABELS: Record<string, string> = {
   auth: "认证",
   user: "用户",
@@ -103,6 +108,7 @@ const ACTION_GROUP_LABELS: Record<string, string> = {
   tenant: "租户",
   project: "项目",
   cluster: "集群",
+  denied: "权限拒绝",
 };
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -1135,6 +1141,22 @@ function AuditSection() {
 
   const events: AuditEvent[] = query.data?.audit_events ?? [];
 
+  // Grouped in the order the Server returned them, which is the order it
+  // declares. Actions arrive already sorted by group, so first appearance is
+  // enough to establish both the group order and its membership.
+  const groupedActions = useMemo(() => {
+    const groups: { group: string; actions: { name: string; group: string }[] }[] = [];
+    for (const action of actions.data?.audit_actions ?? []) {
+      const existing = groups.find((item) => item.group === action.group);
+      if (existing) {
+        existing.actions.push(action);
+        continue;
+      }
+      groups.push({ group: action.group, actions: [action] });
+    }
+    return groups;
+  }, [actions.data]);
+
   const columns = useMemo<ColumnDef<AuditEvent, unknown>[]>(
     () => [
       {
@@ -1282,24 +1304,16 @@ function AuditSection() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">全部操作</SelectItem>
-                {ACTION_GROUP_ORDER.map((group) => {
-                  const inGroup = (actions.data?.audit_actions ?? []).filter(
-                    (action) => action.group === group,
-                  );
-                  if (inGroup.length === 0) {
-                    return null;
-                  }
-                  return (
-                    <SelectGroup key={group}>
-                      <SelectLabel>{ACTION_GROUP_LABELS[group]}</SelectLabel>
-                      {inGroup.map((action) => (
-                        <SelectItem key={action.name} value={action.name} className="zke-mono">
-                          {action.name}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  );
-                })}
+                {groupedActions.map(({ group, actions: inGroup }) => (
+                  <SelectGroup key={group}>
+                    <SelectLabel>{ACTION_GROUP_LABELS[group] ?? group}</SelectLabel>
+                    {inGroup.map((action) => (
+                      <SelectItem key={action.name} value={action.name} className="zke-mono">
+                        {action.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
               </SelectContent>
             </Select>
             <Input

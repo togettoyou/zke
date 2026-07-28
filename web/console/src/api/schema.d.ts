@@ -755,11 +755,16 @@ export interface components {
             /** @description 写入审计事件 `action` 字段的取值，可直接用作过滤条件。 */
             name: string;
             /**
-             * @description 所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与 `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。
+             * @description 所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与 `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。 `denied` 组是鉴权拒绝时记录的权限名，其事件的 `result` 恒为 `denied`。
              * @enum {string}
              */
-            group: "auth" | "user" | "role_binding" | "tenant" | "project" | "cluster";
+            group: "auth" | "user" | "role_binding" | "tenant" | "project" | "cluster" | "denied";
         };
+        /**
+         * @description 写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是 服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的 `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
+         * @enum {string}
+         */
+        AuditTargetType: "user" | "session" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event";
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
             pagination: components["schemas"]["Pagination"];
@@ -1480,6 +1485,7 @@ export interface operations {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: {
                             audit_actions: components["schemas"]["AuditAction"][];
+                            audit_target_types: components["schemas"]["AuditTargetType"][];
                         };
                     };
                 };

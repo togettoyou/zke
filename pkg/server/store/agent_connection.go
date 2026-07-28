@@ -11,6 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 var ErrAgentCredentialRejected = errors.New("Agent credential rejected")
@@ -377,17 +379,19 @@ VALUES (
     $2,
     $3,
     $4,
-    'agent.certificate.renew',
-    'agent_credential',
     $5,
+    $6,
+    $7,
     'succeeded',
-    $6
+    $8
 )
 `,
 		params.Identity.AgentID,
 		params.Identity.TenantID,
 		params.Identity.ProjectID,
 		params.Identity.ClusterID,
+		auditaction.AgentCertificateRenew,
+		auditaction.TargetAgentCredential,
 		credentialID,
 		params.RequestID,
 	); err != nil {

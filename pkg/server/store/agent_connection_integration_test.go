@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
 	"github.com/togettoyou/zke/pkg/shared/pagination"
@@ -219,6 +220,31 @@ WHERE agent.id = $1
 		replayed.PEM != renewed.PEM ||
 		!replayed.ExpiresAt.Equal(renewed.ExpiresAt) {
 		t.Fatalf("renewal replay changed the result: %+v", replayed)
+	}
+
+	// Renewal is written by the Agent connection, so it is reached by no HTTP
+	// flow and by none of the vocabulary checks that walk the API. It is checked
+	// here instead, because an action or target type this path invents and never
+	// publishes is one the Console's exact-match filters can never select.
+	var renewalAction, renewalTargetType string
+	if err := pool.QueryRow(ctx, `
+SELECT action, target_type
+FROM audit_events
+WHERE request_id = 'renew-agent-certificate-0001'
+`).Scan(&renewalAction, &renewalTargetType); err != nil {
+		t.Fatal(err)
+	}
+	if !auditaction.Known(renewalAction) {
+		t.Errorf(
+			"certificate renewal writes action %q, which is not published",
+			renewalAction,
+		)
+	}
+	if !auditaction.KnownTargetType(renewalTargetType) {
+		t.Errorf(
+			"certificate renewal writes target type %q, which is not published",
+			renewalTargetType,
+		)
 	}
 	if err := connectionStore.Activate(
 		ctx,

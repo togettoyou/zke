@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 func (store *EnrollmentStore) GetClusterEnrollmentTarget(
@@ -137,9 +139,10 @@ INSERT INTO audit_events (
 )
 VALUES (
     gen_random_uuid(), 'user', $1, 'project', $2, $3,
-    'cluster.enrollment.revoke', 'enrollment', $4, 'succeeded', $5, $6
+    $4, $5, $6, 'succeeded', $7, $8
 )
-`, params.ActorUserID, item.TenantID, item.ProjectID, item.ID,
+`, params.ActorUserID, item.TenantID, item.ProjectID,
+		auditaction.ClusterEnrollmentRevoke, auditaction.TargetEnrollment, item.ID,
 		params.RequestID, params.Now); err != nil {
 		return Enrollment{}, fmt.Errorf("audit Cluster enrollment revocation: %w", err)
 	}

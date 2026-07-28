@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 	"gopkg.in/yaml.v3"
 )
 
@@ -506,4 +508,172 @@ func openAPIReferenceExists(
 		}
 	}
 	return true
+}
+
+// TestOpenAPIEnumsMatchServerVocabularies keeps the contract's closed value
+// lists tied to the Go definitions they describe.
+//
+// The route check above proves every endpoint is documented; it says nothing
+// about the values those endpoints exchange. Permissions, roles and audit action
+// groups are each defined once in Go and transcribed here by hand, and the
+// Console's types are generated from this file — so a vocabulary extended in Go
+// but not in the contract reaches the Console as a type that silently omits the
+// new value, with nothing failing in between.
+func TestOpenAPIEnumsMatchServerVocabularies(t *testing.T) {
+	t.Parallel()
+
+	document := loadOpenAPIDocument(t)
+	schemas := openAPIObject(t, document, "components", "schemas")
+
+	permissions := make([]string, 0, len(rbac.Permissions()))
+	for _, permission := range rbac.Permissions() {
+		permissions = append(permissions, string(permission))
+	}
+	assertOpenAPIEnum(
+		t,
+		"Capability.permissions",
+		openAPIEnum(t, schemas, "Capability", "properties", "permissions", "items"),
+		permissions,
+	)
+
+	groups := make([]string, 0)
+	seenGroups := make(map[string]struct{})
+	for _, action := range auditaction.All() {
+		if _, exists := seenGroups[action.Group]; exists {
+			continue
+		}
+		seenGroups[action.Group] = struct{}{}
+		groups = append(groups, action.Group)
+	}
+	assertOpenAPIEnum(
+		t,
+		"AuditAction.group",
+		openAPIEnum(t, schemas, "AuditAction", "properties", "group"),
+		groups,
+	)
+
+	assertOpenAPIEnum(
+		t,
+		"AuditTargetType",
+		openAPIEnum(t, schemas, "AuditTargetType"),
+		auditaction.TargetTypes(),
+	)
+
+	// Roles appear in several schemas. Every one of them must list the same set,
+	// so a role added in Go cannot be documented in one place and forgotten in
+	// three others.
+	roleSchemas := 0
+	for name, rawSchema := range schemas {
+		schema, ok := rawSchema.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		properties, ok := schema["properties"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, ok := properties["role"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		values, ok := enumValues(role)
+		if !ok {
+			continue
+		}
+		roleSchemas++
+		assertOpenAPIEnum(t, name+".role", values, rbac.Roles())
+	}
+	if roleSchemas == 0 {
+		t.Error("no schema documents a role enum; the check proves nothing")
+	}
+}
+
+func loadOpenAPIDocument(t *testing.T) map[string]interface{} {
+	t.Helper()
+
+	contents, err := os.ReadFile(
+		filepath.Join("..", "..", "..", "api", "openapi", "zke-server.v1.yaml"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]interface{}
+	if err := yaml.Unmarshal(contents, &document); err != nil {
+		t.Fatalf("parse OpenAPI document: %v", err)
+	}
+	return document
+}
+
+func openAPIObject(
+	t *testing.T,
+	document map[string]interface{},
+	path ...string,
+) map[string]interface{} {
+	t.Helper()
+
+	current := document
+	for _, segment := range path {
+		next, ok := current[segment].(map[string]interface{})
+		if !ok {
+			t.Fatalf("OpenAPI path %s is missing at %q", strings.Join(path, "."), segment)
+		}
+		current = next
+	}
+	return current
+}
+
+func openAPIEnum(
+	t *testing.T,
+	schemas map[string]interface{},
+	path ...string,
+) []string {
+	t.Helper()
+
+	node := openAPIObject(t, schemas, path...)
+	values, ok := enumValues(node)
+	if !ok {
+		t.Fatalf("OpenAPI %s has no enum", strings.Join(path, "."))
+	}
+	return values
+}
+
+func enumValues(node map[string]interface{}) ([]string, bool) {
+	raw, ok := node["enum"].([]interface{})
+	if !ok {
+		return nil, false
+	}
+	values := make([]string, 0, len(raw))
+	for _, item := range raw {
+		value, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
+}
+
+// Compared as sets: the contract is free to order its enum for readability, but
+// it may not hold a value the Server does not, or miss one the Server does.
+func assertOpenAPIEnum(t *testing.T, name string, documented []string, defined []string) {
+	t.Helper()
+
+	documentedSet := make(map[string]struct{}, len(documented))
+	for _, value := range documented {
+		documentedSet[value] = struct{}{}
+	}
+	definedSet := make(map[string]struct{}, len(defined))
+	for _, value := range defined {
+		definedSet[value] = struct{}{}
+	}
+	for value := range definedSet {
+		if _, exists := documentedSet[value]; !exists {
+			t.Errorf("%s: %q is defined in Go but missing from the contract", name, value)
+		}
+	}
+	for value := range documentedSet {
+		if _, exists := definedSet[value]; !exists {
+			t.Errorf("%s: %q is in the contract but not defined in Go", name, value)
+		}
+	}
 }

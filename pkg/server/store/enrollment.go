@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 func (store *EnrollmentStore) FindActiveEnrollmentByTokenDigest(
@@ -217,20 +219,20 @@ VALUES (
     $2,
     $3,
     NULLIF($4, '')::uuid,
-    CASE
-        WHEN $4 = '' THEN 'cluster.enrollment.create'
-        ELSE 'cluster.connection.reenroll'
-    END,
-    'enrollment',
-    $5,
+    CASE WHEN $4 = '' THEN $5 ELSE $6 END,
+    $7,
+    $8,
     'succeeded',
-    $6
+    $9
 )
 `,
 		created.CreatedByUserID,
 		created.TenantID,
 		created.ProjectID,
 		created.ClusterID,
+		auditaction.ClusterEnrollmentCreate,
+		auditaction.ClusterConnectionReenroll,
+		auditaction.TargetEnrollment,
 		created.ID,
 		input.RequestID,
 	); err != nil {

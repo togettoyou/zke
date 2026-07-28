@@ -13,17 +13,6 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
-// Aliases, not a second definition: the vocabulary lives in
-// `pkg/server/auditaction`, which the store can import without a cycle.
-const (
-	ActionClusterEnrollmentCreate   = auditaction.ClusterEnrollmentCreate
-	ActionClusterEnrollmentRevoke   = auditaction.ClusterEnrollmentRevoke
-	ActionClusterConnectionRevoke   = auditaction.ClusterConnectionRevoke
-	ActionClusterConnectionReenroll = auditaction.ClusterConnectionReenroll
-	ActionTenantCreate              = auditaction.TenantCreate
-	ActionProjectCreate             = auditaction.ProjectCreate
-)
-
 type Service struct {
 	store         Store
 	authorization *rbac.Service
@@ -275,7 +264,7 @@ func (service *Service) RecordProjectEvent(
 	return service.store.RecordGlobalEvent(ctx, store.GlobalAuditEvent{
 		ActorUserID: input.ActorUserID,
 		Action:      input.Action,
-		TargetType:  "project",
+		TargetType:  auditaction.TargetProject,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
 	})
@@ -305,7 +294,7 @@ func (service *Service) RecordClusterEvent(
 	return service.RecordGlobalEvent(ctx, GlobalEventInput{
 		ActorUserID: input.ActorUserID,
 		Action:      input.Action,
-		TargetType:  "cluster",
+		TargetType:  auditaction.TargetCluster,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
 	})

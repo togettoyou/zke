@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
 const initialAdminLockID int64 = 0x5a4b4541555448
@@ -116,13 +118,14 @@ VALUES (
     'user',
     $1,
     'global',
-    'auth.initial_admin.create',
-    'user',
+    $2,
+    $3,
     $1,
     'succeeded',
-    $2
+    $4
 )
-`, user.ID, input.RequestID); err != nil {
+`, user.ID, auditaction.AuthInitialAdminCreate, auditaction.TargetUser,
+		input.RequestID); err != nil {
 		return User{}, fmt.Errorf("audit initial administrator creation: %w", err)
 	}
 
@@ -284,10 +287,11 @@ INSERT INTO audit_events (
     target_id, result, request_id, created_at
 )
 VALUES (
-    gen_random_uuid(), 'user', $1, 'global', 'auth.password.change',
-    'user', $1, 'succeeded', $2, $3
+    gen_random_uuid(), 'user', $1, 'global', $2,
+    $3, $1, 'succeeded', $4, $5
 )
-`, input.UserID, input.RequestID, input.Now); err != nil {
+`, input.UserID, auditaction.AuthPasswordChange, auditaction.TargetUser,
+		input.RequestID, input.Now); err != nil {
 		return fmt.Errorf("audit password change: %w", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {

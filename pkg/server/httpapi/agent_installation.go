@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
 	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 )
@@ -123,7 +124,7 @@ func (handler *agentInstallationHandler) recordInstallationFailure(
 	handler.recordFailure(c, failedOperation{
 		Scope:       auditScopeProject,
 		ActorUserID: userID,
-		Action:      audit.ActionClusterEnrollmentCreate,
+		Action:      auditaction.ClusterEnrollmentCreate,
 		Result:      result,
 	})
 }

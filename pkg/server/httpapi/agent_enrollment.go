@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 )
@@ -75,7 +76,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 		maxCreateAgentEnrollmentRequestBytes,
 	); err != nil {
 		handler.recordProjectFailure(
-			c, identity.User.ID, audit.ActionClusterEnrollmentCreate, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "failed",
 		)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid enrollment request")
 		return
@@ -98,14 +99,14 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 	cancelOperation()
 	if errors.Is(err, enrollment.ErrInvalidInput) {
 		handler.recordProjectFailure(
-			c, identity.User.ID, audit.ActionClusterEnrollmentCreate, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "failed",
 		)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid enrollment request")
 		return
 	}
 	if errors.Is(err, enrollment.ErrDenied) {
 		handler.recordProjectFailure(
-			c, identity.User.ID, audit.ActionClusterEnrollmentCreate, "denied",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "denied",
 		)
 		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
 		return
@@ -121,7 +122,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		handler.recordProjectFailure(
-			c, identity.User.ID, audit.ActionClusterEnrollmentCreate, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "failed",
 		)
 		handler.logger.Warn(
 			"create Cluster enrollment timed out",
@@ -134,7 +135,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 	}
 	if err != nil {
 		handler.recordProjectFailure(
-			c, identity.User.ID, audit.ActionClusterEnrollmentCreate, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "failed",
 		)
 		handler.logger.Error(
 			"create Cluster enrollment",
@@ -206,7 +207,7 @@ func (handler *enrollmentHandler) revoke(c *gin.Context) {
 		c, &request, maxCreateAgentEnrollmentRequestBytes,
 	); err != nil || !request.Confirm {
 		handler.recordProjectFailure(
-			c, identity.User.ID, audit.ActionClusterEnrollmentRevoke, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentRevoke, "failed",
 		)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
@@ -220,7 +221,7 @@ func (handler *enrollmentHandler) revoke(c *gin.Context) {
 	cancel()
 	if err != nil {
 		handler.recordProjectFailure(
-			c, identity.User.ID, audit.ActionClusterEnrollmentRevoke, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentRevoke, "failed",
 		)
 	}
 	if handler.respondEnrollmentError(c, "revoke Cluster enrollment", err) {
@@ -237,7 +238,7 @@ func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 		c, &request, maxCreateAgentEnrollmentRequestBytes,
 	); err != nil || !request.Confirm {
 		handler.recordClusterFailure(
-			c, identity.User.ID, audit.ActionClusterConnectionReenroll, "failed",
+			c, identity.User.ID, auditaction.ClusterConnectionReenroll, "failed",
 		)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
@@ -251,7 +252,7 @@ func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 	cancel()
 	if err != nil {
 		handler.recordClusterFailure(
-			c, identity.User.ID, audit.ActionClusterConnectionReenroll, "failed",
+			c, identity.User.ID, auditaction.ClusterConnectionReenroll, "failed",
 		)
 	}
 	if handler.respondEnrollmentError(c, "create Cluster reenrollment", err) {

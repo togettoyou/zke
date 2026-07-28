@@ -459,6 +459,124 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 		)
 	}
 
+	/*
+	 * A non-administrator walks into the routes it cannot pass.
+	 *
+	 * Everything above this point is done by the global administrator and is
+	 * therefore always allowed, so the vocabulary check further down had never
+	 * once seen a denial — which is precisely how permission names came to be
+	 * written into `action` with nothing noticing. One refusal per scope kind
+	 * exercises the middleware's global, Project and Cluster audit paths, plus
+	 * the audit query's own refusal, and puts their actions and target types in
+	 * front of the check that follows.
+	 *
+	 * Run before the RoleBinding and the user are deleted: the viewer needs a
+	 * live session and a binding that makes the Project and Cluster visible, so
+	 * that authorization refuses on the permission rather than on visibility.
+	 */
+	viewerLogin := httptest.NewRecorder()
+	viewerLoginRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/auth/login",
+		strings.NewReader(
+			`{"username":"phase1-user","password":"`+userPassword+`"}`,
+		),
+	)
+	viewerLoginRequest.Header.Set("Content-Type", "application/json")
+	viewerLoginRequest.RemoteAddr = "192.0.2.81:1234"
+	router.ServeHTTP(viewerLogin, viewerLoginRequest)
+	requirePhase1Status(t, viewerLogin, http.StatusOK, "login as project viewer")
+	viewerSession := findCookie(
+		t,
+		viewerLogin.Result().Cookies(),
+		sessionCookieName,
+	)
+	viewerCSRF := findCookie(
+		t,
+		viewerLogin.Result().Cookies(),
+		csrfCookieName,
+	)
+
+	refusals := []struct {
+		operation string
+		method    string
+		path      string
+		body      string
+		csrfToken string
+		action    string
+	}{
+		{
+			operation: "create user as viewer",
+			method:    http.MethodPost,
+			path:      "/api/v1/users",
+			body: `{"username":"phase1-intruder","display_name":"Intruder",` +
+				`"password":"` + userPassword + `"}`,
+			csrfToken: viewerCSRF.Value,
+			action:    string(rbac.PermissionUserManage),
+		},
+		{
+			operation: "update project as viewer",
+			method:    http.MethodPut,
+			path:      "/api/v1/projects/" + project.ID,
+			body:      `{"name":"Refused Project","status":"active","confirm":true}`,
+			csrfToken: viewerCSRF.Value,
+			action:    string(rbac.PermissionProjectManage),
+		},
+		{
+			operation: "update cluster as viewer",
+			method:    http.MethodPut,
+			path:      "/api/v1/clusters/" + firstIdentity.ClusterID,
+			body:      `{"name":"Refused Cluster","confirm":true}`,
+			csrfToken: viewerCSRF.Value,
+			action:    string(rbac.PermissionClusterManage),
+		},
+		{
+			operation: "query audit events as viewer",
+			method:    http.MethodGet,
+			path:      "/api/v1/audit-events",
+			action:    string(rbac.PermissionAuditRead),
+		},
+	}
+	refusedActions := make([]string, 0, len(refusals))
+	for _, refusal := range refusals {
+		refused := phase1APIRequest(
+			router,
+			refusal.method,
+			refusal.path,
+			refusal.body,
+			viewerSession,
+			refusal.csrfToken,
+			"",
+		)
+		requirePhase1Status(
+			t,
+			refused,
+			http.StatusForbidden,
+			refusal.operation,
+		)
+		refusedActions = append(refusedActions, refusal.action)
+	}
+
+	// Refusing the request is only half of it: the refusal has to be on record,
+	// under the permission that produced it.
+	var recordedRefusals int
+	if err := pool.QueryRow(ctx, `
+SELECT count(DISTINCT action)
+FROM audit_events
+WHERE result = 'denied'
+  AND action = ANY($1)
+`, refusedActions).Scan(&recordedRefusals); err != nil {
+		t.Fatal(err)
+	}
+	if recordedRefusals != len(refusedActions) {
+		t.Fatalf(
+			"recorded denial actions = %d, want %d (%v)",
+			recordedRefusals,
+			len(refusedActions),
+			refusedActions,
+		)
+	}
+
 	deletedBinding := phase1APIRequest(
 		router,
 		http.MethodDelete,
@@ -573,6 +691,41 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 		}
 	}
 
+	// `target_type` is the second closed vocabulary behind the second exact-match
+	// filter, and it drifts the same way.
+	var recordedTargetTypes []string
+	targetRows, err := pool.Query(
+		ctx,
+		"SELECT DISTINCT target_type FROM audit_events ORDER BY target_type",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for targetRows.Next() {
+		var targetType string
+		if err := targetRows.Scan(&targetType); err != nil {
+			targetRows.Close()
+			t.Fatal(err)
+		}
+		recordedTargetTypes = append(recordedTargetTypes, targetType)
+	}
+	targetRows.Close()
+	if err := targetRows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(recordedTargetTypes) == 0 {
+		t.Fatal("no audit target types were recorded, so the vocabulary check proves nothing")
+	}
+	for _, targetType := range recordedTargetTypes {
+		if !auditaction.KnownTargetType(targetType) {
+			t.Errorf(
+				"audit target type %q is written but missing from "+
+					"auditaction.TargetTypes()",
+				targetType,
+			)
+		}
+	}
+
 	// The published vocabulary must also be reachable, and describe itself.
 	actionList := phase1APIRequest(
 		router,
@@ -585,7 +738,8 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 	)
 	requirePhase1Status(t, actionList, http.StatusOK, "list audit actions")
 	var actionPage struct {
-		AuditActions []auditActionResponse `json:"audit_actions"`
+		AuditActions    []auditActionResponse `json:"audit_actions"`
+		AuditTargetType []string              `json:"audit_target_types"`
 	}
 	decodePhase1Response(t, actionList, &actionPage)
 	if len(actionPage.AuditActions) != len(auditaction.All()) {
@@ -599,6 +753,13 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 		if action.Name == "" || action.Group == "" {
 			t.Fatalf("published audit action is incomplete: %+v", action)
 		}
+	}
+	if len(actionPage.AuditTargetType) != len(auditaction.TargetTypes()) {
+		t.Fatalf(
+			"published audit target types = %d, want %d",
+			len(actionPage.AuditTargetType),
+			len(auditaction.TargetTypes()),
+		)
 	}
 
 	var clusterStatus, userStatus, tenantStatus, projectStatus string
