@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api, unwrap } from "../client";
 import { queryKeys } from "../query-keys";
-import type { AuditEvent, PageParams, Pagination } from "../types";
+import type { AuditAction, AuditEvent, PageParams, Pagination } from "../types";
 
 export type AuditFilters = {
   actor_type?: "user" | "agent" | "system";
@@ -37,5 +37,26 @@ export function useAuditEvents(params: AuditListParams = {}, enabled = true) {
     queryFn: async () =>
       unwrap(await api.GET("/api/v1/audit-events", { params: { query } })) as AuditEventListResult,
     placeholderData: (previous) => previous,
+  });
+}
+
+/**
+ * The audit action vocabulary, so the Console can offer the exact values the
+ * `action` filter matches on instead of asking an operator to type one.
+ *
+ * The list comes from the Server rather than a constant here: it is the Server
+ * that writes these names, and a copy in the Console would be a second
+ * definition with nothing keeping it in step. It is a closed set that only
+ * changes when the Server does, so it is cached for the session.
+ */
+export function useAuditActions(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.auditActions(),
+    enabled,
+    staleTime: Infinity,
+    queryFn: async () =>
+      unwrap(await api.GET("/api/v1/audit-events/actions", {})) as {
+        audit_actions: AuditAction[];
+      },
   });
 }

@@ -36,6 +36,7 @@ export const queryKeys = {
   roleBindings: (params: RoleBindingListParams = {}) => ["role-bindings", params] as const,
 
   auditEvents: (params: Record<string, unknown> = {}) => ["audit-events", params] as const,
+  auditActions: () => ["audit-actions"] as const,
 } as const;
 
 /** Prefixes used for coarse invalidation after a mutation. */

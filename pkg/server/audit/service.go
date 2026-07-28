@@ -6,19 +6,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/pagination"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
+// Aliases, not a second definition: the vocabulary lives in
+// `pkg/server/auditaction`, which the store can import without a cycle.
 const (
-	ActionClusterEnrollmentCreate   = "cluster.enrollment.create"
-	ActionClusterEnrollmentRevoke   = "cluster.enrollment.revoke"
-	ActionClusterConnectionRevoke   = "cluster.connection.revoke"
-	ActionClusterConnectionReenroll = "cluster.connection.reenroll"
-	ActionTenantCreate              = "tenant.create"
-	ActionProjectCreate             = "project.create"
+	ActionClusterEnrollmentCreate   = auditaction.ClusterEnrollmentCreate
+	ActionClusterEnrollmentRevoke   = auditaction.ClusterEnrollmentRevoke
+	ActionClusterConnectionRevoke   = auditaction.ClusterConnectionRevoke
+	ActionClusterConnectionReenroll = auditaction.ClusterConnectionReenroll
+	ActionTenantCreate              = auditaction.TenantCreate
+	ActionProjectCreate             = auditaction.ProjectCreate
 )
 
 type Service struct {

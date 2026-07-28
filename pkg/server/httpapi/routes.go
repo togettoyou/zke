@@ -139,6 +139,9 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	auditRoutes.GET("", handlers.auditQuery.list)
+	// Static vocabulary rather than a resource, so it sits under the collection
+	// it describes and needs only the same authentication.
+	auditRoutes.GET("/actions", handlers.auditQuery.listActions)
 
 	apiV1.GET(
 		"/events",

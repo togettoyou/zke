@@ -236,6 +236,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit-events/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 审计事件 `action` 字段的完整取值集合。`action` 过滤为精确匹配，
+         *     该词表由 Server 定义，供调用方构造可选项而不必硬编码一份副本。
+         *
+         *     这不是权限列表：权限说明「可以做什么」，action 说明「发生了什么」，
+         *     二者是不同词表。返回内容仅描述系统形态、不含任何租户数据，因此不按
+         *     调用者可见范围过滤；审计事件本身仍按 `audit.read` 定域。
+         */
+        get: operations["listAuditActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -726,6 +750,15 @@ export interface components {
             result: "succeeded" | "failed" | "denied";
             request_id: string;
             created_at: components["schemas"]["Timestamp"];
+        };
+        AuditAction: {
+            /** @description 写入审计事件 `action` 字段的取值，可直接用作过滤条件。 */
+            name: string;
+            /**
+             * @description 所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与 `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。
+             * @enum {string}
+             */
+            group: "auth" | "user" | "role_binding" | "tenant" | "project" | "cluster";
         };
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
@@ -1427,6 +1460,31 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listAuditActions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 审计动作词表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            audit_actions: components["schemas"]["AuditAction"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
         };
     };
     streamClusterStatusEvents: {

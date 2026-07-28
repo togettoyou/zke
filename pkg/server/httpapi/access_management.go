@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/accessmanagement"
 	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 )
 
@@ -155,7 +156,7 @@ func (handler *accessManagementHandler) createUser(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "user.create", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserCreate, "user")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid user request")
 		return
 	}
@@ -173,7 +174,7 @@ func (handler *accessManagementHandler) createUser(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "user.create", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserCreate, "user")
 	}
 	if handler.respondErrorAccess(c, "create user", err) {
 		return
@@ -186,7 +187,7 @@ func (handler *accessManagementHandler) updateUser(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request updateUserRequest
 	if err := decodeJSONRequest(c, &request, maxAccessManagementRequestBytes); err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "user.update", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserUpdate, "user")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid user request")
 		return
 	}
@@ -198,7 +199,7 @@ func (handler *accessManagementHandler) updateUser(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "user.update", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserUpdate, "user")
 	}
 	if handler.respondErrorAccess(c, "update user", err) {
 		return
@@ -212,7 +213,7 @@ func (handler *accessManagementHandler) deleteUser(c *gin.Context) {
 	var request confirmRequest
 	if err := decodeJSONRequest(c, &request, maxAccessManagementRequestBytes); err != nil ||
 		!request.Confirm {
-		handler.recordAccessFailure(c, identity.User.ID, "user.delete", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserDelete, "user")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -224,7 +225,7 @@ func (handler *accessManagementHandler) deleteUser(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "user.delete", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserDelete, "user")
 	}
 	if handler.respondErrorAccess(c, "delete user", err) {
 		return
@@ -239,7 +240,7 @@ func (handler *accessManagementHandler) setUserStatus(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
-		handler.recordAccessFailure(c, identity.User.ID, "user.status.update", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserStatusUpdate, "user")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -256,7 +257,7 @@ func (handler *accessManagementHandler) setUserStatus(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "user.status.update", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserStatusUpdate, "user")
 	}
 	if handler.respondErrorAccess(c, "update user status", err) {
 		return
@@ -271,7 +272,7 @@ func (handler *accessManagementHandler) unlockUser(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
-		handler.recordAccessFailure(c, identity.User.ID, "user.unlock", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserUnlock, "user")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -288,7 +289,7 @@ func (handler *accessManagementHandler) unlockUser(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "user.unlock", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserUnlock, "user")
 	}
 	if handler.respondErrorAccess(c, "unlock user", err) {
 		return
@@ -304,7 +305,7 @@ func (handler *accessManagementHandler) resetPassword(c *gin.Context) {
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
 		request.Password = ""
-		handler.recordAccessFailure(c, identity.User.ID, "user.password.reset", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserPasswordReset, "user")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -325,7 +326,7 @@ func (handler *accessManagementHandler) resetPassword(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "user.password.reset", "user")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.UserPasswordReset, "user")
 	}
 	if handler.respondErrorAccess(c, "reset user password", err) {
 		return
@@ -386,7 +387,7 @@ func (handler *accessManagementHandler) createRoleBinding(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
-		handler.recordAccessFailure(c, identity.User.ID, "role_binding.create", "role_binding")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.RoleBindingCreate, "role_binding")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -406,7 +407,7 @@ func (handler *accessManagementHandler) createRoleBinding(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "role_binding.create", "role_binding")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.RoleBindingCreate, "role_binding")
 	}
 	if handler.respondErrorAccess(c, "create role binding", err) {
 		return
@@ -425,7 +426,7 @@ func (handler *accessManagementHandler) deleteRoleBinding(c *gin.Context) {
 	if err := decodeJSONRequest(
 		c, &request, maxAccessManagementRequestBytes,
 	); err != nil || !request.Confirm {
-		handler.recordAccessFailure(c, identity.User.ID, "role_binding.delete", "role_binding")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.RoleBindingDelete, "role_binding")
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -442,7 +443,7 @@ func (handler *accessManagementHandler) deleteRoleBinding(c *gin.Context) {
 	)
 	cancel()
 	if err != nil {
-		handler.recordAccessFailure(c, identity.User.ID, "role_binding.delete", "role_binding")
+		handler.recordAccessFailure(c, identity.User.ID, auditaction.RoleBindingDelete, "role_binding")
 	}
 	if handler.respondErrorAccess(c, "delete role binding", err) {
 		return

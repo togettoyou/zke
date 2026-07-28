@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
@@ -33,6 +34,15 @@ var auditQueryFilters = []string{
 	"tenant_id",
 	"project_id",
 	"cluster_id",
+}
+
+// auditActionResponse is one entry of the audit action vocabulary. The group is
+// declared by the Server rather than split from the name, because the names are
+// not a reliable tree — `cluster.delete` and `cluster.enrollment.create` sit at
+// different depths in the same family.
+type auditActionResponse struct {
+	Name  string `json:"name"`
+	Group string `json:"group"`
 }
 
 type auditEventResponse struct {
@@ -126,4 +136,24 @@ func (handler *auditQueryHandler) recordDenied(c *gin.Context, userID string) {
 		TargetType:  "audit_event",
 		Result:      "denied",
 	})
+}
+
+// listActions reports the audit action vocabulary.
+//
+// The filter it feeds is an exact match, so a free-text box only ever worked for
+// someone who already knew the spelling. The vocabulary is closed and the Server
+// owns it, so the Server is what should say what the values are — a list copied
+// into the Console would be a second definition that nothing keeps in step.
+//
+// Deliberately not derived from the caller's permissions: those say what an
+// operator may do, these say what happened, and they are different vocabularies.
+// The list is also not filtered by what the caller can see — it is the shape of
+// the system, not its contents, and the events themselves remain scoped.
+func (handler *auditQueryHandler) listActions(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	actions := make([]auditActionResponse, 0, len(auditaction.All()))
+	for _, item := range auditaction.All() {
+		actions = append(actions, auditActionResponse{Name: item.Name, Group: item.Group})
+	}
+	writeSuccess(c, http.StatusOK, gin.H{"audit_actions": actions})
 }

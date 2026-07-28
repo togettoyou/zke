@@ -663,6 +663,41 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/audit-events/actions:
+    get:
+      tags: [Audit]
+      operationId: listAuditActions
+      description: |
+        审计事件 `action` 字段的完整取值集合。`action` 过滤为精确匹配，
+        该词表由 Server 定义，供调用方构造可选项而不必硬编码一份副本。
+
+        这不是权限列表：权限说明「可以做什么」，action 说明「发生了什么」，
+        二者是不同词表。返回内容仅描述系统形态、不含任何租户数据，因此不按
+        调用者可见范围过滤；审计事件本身仍按 `audit.read` 定域。
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 审计动作词表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        additionalProperties: false
+                        required: [audit_actions]
+                        properties:
+                          audit_actions:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/AuditAction"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
   /api/v1/events:
     get:
       tags: [Events]
@@ -2245,6 +2280,20 @@ components:
           type: string
         created_at:
           $ref: "#/components/schemas/Timestamp"
+    AuditAction:
+      type: object
+      additionalProperties: false
+      required: [name, group]
+      properties:
+        name:
+          type: string
+          description: 写入审计事件 `action` 字段的取值，可直接用作过滤条件。
+        group:
+          type: string
+          enum: [auth, user, role_binding, tenant, project, cluster]
+          description: >-
+            所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与
+            `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。
     AuditEventPage:
       type: object
       additionalProperties: false

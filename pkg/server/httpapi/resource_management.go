@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 )
@@ -165,7 +166,7 @@ func (handler *resourceManagementHandler) updateTenant(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request updateResourceRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "tenant.update", "tenant", auditScopeGlobal)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.TenantUpdate, "tenant", auditScopeGlobal)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid tenant request")
 		return
 	}
@@ -177,7 +178,7 @@ func (handler *resourceManagementHandler) updateTenant(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "tenant.update", "tenant", auditScopeGlobal)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.TenantUpdate, "tenant", auditScopeGlobal)
 	}
 	if handler.handleResourceError(c, "update tenant", err) {
 		return
@@ -191,7 +192,7 @@ func (handler *resourceManagementHandler) deleteTenant(c *gin.Context) {
 	var request confirmRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil ||
 		!request.Confirm {
-		handler.recordResourceFailure(c, identity.User.ID, "tenant.delete", "tenant", auditScopeGlobal)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.TenantDelete, "tenant", auditScopeGlobal)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -203,7 +204,7 @@ func (handler *resourceManagementHandler) deleteTenant(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "tenant.delete", "tenant", auditScopeGlobal)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.TenantDelete, "tenant", auditScopeGlobal)
 	}
 	if handler.handleResourceError(c, "delete tenant", err) {
 		return
@@ -292,7 +293,7 @@ func (handler *resourceManagementHandler) updateProject(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request updateResourceRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "project.update", "project", auditScopeProject)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.ProjectUpdate, "project", auditScopeProject)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid project request")
 		return
 	}
@@ -304,7 +305,7 @@ func (handler *resourceManagementHandler) updateProject(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "project.update", "project", auditScopeProject)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.ProjectUpdate, "project", auditScopeProject)
 	}
 	if handler.handleResourceError(c, "update project", err) {
 		return
@@ -318,7 +319,7 @@ func (handler *resourceManagementHandler) deleteProject(c *gin.Context) {
 	var request confirmRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil ||
 		!request.Confirm {
-		handler.recordResourceFailure(c, identity.User.ID, "project.delete", "project", auditScopeProject)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.ProjectDelete, "project", auditScopeProject)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -330,7 +331,7 @@ func (handler *resourceManagementHandler) deleteProject(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "project.delete", "project", auditScopeProject)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.ProjectDelete, "project", auditScopeProject)
 	}
 	if handler.handleResourceError(c, "delete project", err) {
 		return
@@ -343,7 +344,7 @@ func (handler *resourceManagementHandler) updateCluster(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request updateClusterRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "cluster.update", "cluster", auditScopeCluster)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.ClusterUpdate, "cluster", auditScopeCluster)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid cluster request")
 		return
 	}
@@ -355,7 +356,7 @@ func (handler *resourceManagementHandler) updateCluster(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "cluster.update", "cluster", auditScopeCluster)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.ClusterUpdate, "cluster", auditScopeCluster)
 	}
 	if handler.handleResourceError(c, "update cluster", err) {
 		return
@@ -369,7 +370,7 @@ func (handler *resourceManagementHandler) deleteCluster(c *gin.Context) {
 	var request confirmRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil ||
 		!request.Confirm {
-		handler.recordResourceFailure(c, identity.User.ID, "cluster.delete", "cluster", auditScopeCluster)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.ClusterDelete, "cluster", auditScopeCluster)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
 	}
@@ -381,7 +382,7 @@ func (handler *resourceManagementHandler) deleteCluster(c *gin.Context) {
 	})
 	cancel()
 	if err != nil {
-		handler.recordResourceFailure(c, identity.User.ID, "cluster.delete", "cluster", auditScopeCluster)
+		handler.recordResourceFailure(c, identity.User.ID, auditaction.ClusterDelete, "cluster", auditScopeCluster)
 	}
 	if handler.handleResourceError(c, "delete cluster", err) {
 		return

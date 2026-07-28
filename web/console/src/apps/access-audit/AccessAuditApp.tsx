@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useAuditEvents, type AuditFilters } from "@/api/queries/audit";
+import { useAuditActions, useAuditEvents, type AuditFilters } from "@/api/queries/audit";
 import { useProjects, useTenants } from "@/api/queries/resources";
 import {
   useCreateRoleBinding,
@@ -72,7 +72,9 @@ import { cn } from "@/lib/cn";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -87,6 +89,22 @@ const GLOBAL = { type: "global" } as const;
 
 /** One spelling of the scope names, so the table, the filter and the
  *  confirmation dialog cannot drift apart. */
+/*
+ * Group labels for the audit action filter. The names themselves stay in their
+ * raw form — the table renders `action` verbatim, so translating it in the
+ * picker would mean choosing one string and reading another.
+ */
+const ACTION_GROUP_ORDER = ["auth", "user", "role_binding", "tenant", "project", "cluster"];
+
+const ACTION_GROUP_LABELS: Record<string, string> = {
+  auth: "认证",
+  user: "用户",
+  role_binding: "权限绑定",
+  tenant: "租户",
+  project: "项目",
+  cluster: "集群",
+};
+
 const SCOPE_LABELS: Record<string, string> = {
   global: "全局",
   tenant: "租户",
@@ -1106,6 +1124,7 @@ function AuditSection() {
   const [offset, setOffset] = useState(0);
 
   const query = useAuditEvents({ limit: DEFAULT_PAGE_SIZE, offset, ...filters });
+  const actions = useAuditActions();
 
   // Any filter change invalidates the current page position, so paging always
   // restarts at the first page of the new result set.
@@ -1239,17 +1258,50 @@ function AuditSection() {
               </SelectContent>
             </Select>
 
-            <Input
-              className="max-w-44"
-              placeholder="按 action 精确筛选"
-              value={filters.action ?? ""}
-              onChange={(event) =>
+            {/*
+             * A choice, not a free-text box. The Server matches `action`
+             * exactly, so typing was only ever usable by someone who already
+             * knew the spelling — and the vocabulary is closed and owned by the
+             * Server, which is why it is fetched rather than hardcoded here.
+             *
+             * Grouped by the family the Server declares, not by splitting the
+             * name on dots: `cluster.delete` and `cluster.enrollment.create`
+             * are the same family at different depths.
+             */}
+            <Select
+              value={filters.action ?? "all"}
+              onValueChange={(value) =>
                 updateFilters((current) => ({
                   ...current,
-                  action: event.target.value || undefined,
+                  action: value === "all" ? undefined : value,
                 }))
               }
-            />
+            >
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder="操作" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部操作</SelectItem>
+                {ACTION_GROUP_ORDER.map((group) => {
+                  const inGroup = (actions.data?.audit_actions ?? []).filter(
+                    (action) => action.group === group,
+                  );
+                  if (inGroup.length === 0) {
+                    return null;
+                  }
+                  return (
+                    <SelectGroup key={group}>
+                      <SelectLabel>{ACTION_GROUP_LABELS[group]}</SelectLabel>
+                      {inGroup.map((action) => (
+                        <SelectItem key={action.name} value={action.name} className="zke-mono">
+                          {action.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  );
+                })}
+              </SelectContent>
+            </Select>
             <Input
               className="max-w-52"
               placeholder="按请求 ID 追溯"

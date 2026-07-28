@@ -16,6 +16,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/agentmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
 	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/rbac"
@@ -530,6 +531,74 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 	decodePhase1Response(t, auditEvents, &auditPage)
 	if len(auditPage.Events) == 0 {
 		t.Fatal("Cluster-scoped audit query returned no events")
+	}
+
+	/*
+	 * Every action this run actually wrote must be in the published vocabulary.
+	 *
+	 * Several action names are embedded in the store's SQL rather than passed as
+	 * Go values, so nothing at compile time ties them to `auditaction`. The
+	 * Console builds its filter from that vocabulary and the filter is an exact
+	 * match, so an action missing from it is an action nobody can filter by —
+	 * and the omission is invisible until someone goes looking for those events.
+	 * This is the check that makes adding an action without publishing it fail.
+	 */
+	var recordedActions []string
+	rows, err := pool.Query(ctx, "SELECT DISTINCT action FROM audit_events ORDER BY action")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var action string
+		if err := rows.Scan(&action); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		recordedActions = append(recordedActions, action)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(recordedActions) == 0 {
+		t.Fatal("no audit actions were recorded, so the vocabulary check proves nothing")
+	}
+	for _, action := range recordedActions {
+		if !auditaction.Known(action) {
+			t.Errorf(
+				"audit action %q is written but missing from auditaction.All(); "+
+					"the Console cannot offer it as a filter",
+				action,
+			)
+		}
+	}
+
+	// The published vocabulary must also be reachable, and describe itself.
+	actionList := phase1APIRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/audit-events/actions",
+		"",
+		sessionCookie,
+		"",
+		"",
+	)
+	requirePhase1Status(t, actionList, http.StatusOK, "list audit actions")
+	var actionPage struct {
+		AuditActions []auditActionResponse `json:"audit_actions"`
+	}
+	decodePhase1Response(t, actionList, &actionPage)
+	if len(actionPage.AuditActions) != len(auditaction.All()) {
+		t.Fatalf(
+			"published audit actions = %d, want %d",
+			len(actionPage.AuditActions),
+			len(auditaction.All()),
+		)
+	}
+	for _, action := range actionPage.AuditActions {
+		if action.Name == "" || action.Group == "" {
+			t.Fatalf("published audit action is incomplete: %+v", action)
+		}
 	}
 
 	var clusterStatus, userStatus, tenantStatus, projectStatus string

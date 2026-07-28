@@ -26,6 +26,7 @@ export type ClusterConnectionRevocation = Schemas["ClusterConnectionRevocation"]
 
 export type AuditEvent = Schemas["AuditEvent"];
 export type AuditEventPage = Schemas["AuditEventPage"];
+export type AuditAction = Schemas["AuditAction"];
 
 export type ResourceStatus = "active" | "suspended";
 export type ClusterStatus = "pending" | "active" | "revoked";
