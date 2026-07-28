@@ -156,6 +156,18 @@ func (handler *agentRegistrationHandler) enroll(c *gin.Context) {
 		)
 		return
 	}
+	// The name was free when the token was issued and is not any more. Nothing
+	// the Agent can do about it, but saying so beats a generic failure: the
+	// operator has to rename the other Cluster or issue a new enrollment.
+	if errors.Is(err, enrollment.ErrClusterNameConflict) {
+		writeError(
+			c,
+			http.StatusConflict,
+			"cluster_name_conflict",
+			"cluster name is already in use in this project",
+		)
+		return
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		handler.logger.Warn(
 			"enroll Agent timed out",

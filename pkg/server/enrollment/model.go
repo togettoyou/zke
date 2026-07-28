@@ -16,8 +16,13 @@ var (
 	ErrAttemptFailed       = errors.New("enrollment attempt failed")
 	ErrSigningUnavailable  = errors.New("agent certificate signing unavailable")
 	ErrCredentialRejected  = errors.New("agent credential rejected")
+	ErrScopeSuspended      = errors.New("agent scope suspended")
 	ErrNotFound            = errors.New("enrollment not found")
 	ErrStateConflict       = errors.New("enrollment state conflict")
+	// ErrClusterNameConflict is raised both when the enrollment is issued and
+	// when an Agent completes one: the name is free at the first point and can
+	// be taken by the time the Agent arrives.
+	ErrClusterNameConflict = errors.New("cluster name already exists in project")
 )
 
 type CreateInput struct {

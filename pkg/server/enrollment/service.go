@@ -73,6 +73,9 @@ func (service *Service) Create(
 	if errors.Is(err, store.ErrEnrollmentIdempotencyConflict) {
 		return CreateResult{}, ErrIdempotencyConflict
 	}
+	if errors.Is(err, store.ErrClusterNameConflict) {
+		return CreateResult{}, ErrClusterNameConflict
+	}
 	if err != nil {
 		return CreateResult{}, err
 	}

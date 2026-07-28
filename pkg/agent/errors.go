@@ -38,7 +38,8 @@ func (err *GoAwayError) Error() string {
 }
 
 // Permanent reports whether the Agent must stop reconnecting with its current
-// identity, which is the case once its credential or Cluster has been revoked.
+// identity, which is the case once its credential or Agent identity has been
+// revoked. Scope suspension is deliberately retryable.
 func (err *GoAwayError) Permanent() bool {
 	return agentprotocol.GoAwayIsPermanent(err.Reason)
 }

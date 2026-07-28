@@ -67,7 +67,7 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 		maxCreateAgentInstallationRequestBytes,
 	); err != nil {
 		identity, _ := httpmiddleware.Identity(c)
-		handler.recordInstallationFailure(c, identity.User.ID, "failed")
+		handler.recordInstallationFailure(c, identity.User.ID, "", "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster installation request")
 		return
 	}
@@ -86,18 +86,26 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 	case errors.Is(err, agentinstall.ErrDisabled):
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster installation is disabled")
 	case errors.Is(err, enrollment.ErrInvalidInput):
-		handler.recordInstallationFailure(c, identity.User.ID, "failed")
+		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster installation request")
 	case errors.Is(err, enrollment.ErrDenied):
-		handler.recordInstallationFailure(c, identity.User.ID, "denied")
+		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "denied")
 		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
 	case errors.Is(err, enrollment.ErrIdempotencyConflict):
 		writeError(c, http.StatusConflict, "idempotency_conflict", "idempotency key was already used")
+	case errors.Is(err, enrollment.ErrClusterNameConflict):
+		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "failed")
+		writeError(
+			c,
+			http.StatusConflict,
+			"cluster_name_conflict",
+			"cluster name is already in use in this project",
+		)
 	case errors.Is(err, context.DeadlineExceeded):
-		handler.recordInstallationFailure(c, identity.User.ID, "failed")
+		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "failed")
 		writeError(c, http.StatusGatewayTimeout, "timeout", "request timed out")
 	case err != nil:
-		handler.recordInstallationFailure(c, identity.User.ID, "failed")
+		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "failed")
 		handler.logger.Error(
 			"create Cluster installation",
 			slog.String("request_id", httpmiddleware.RequestID(c)),
@@ -119,12 +127,15 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 func (handler *agentInstallationHandler) recordInstallationFailure(
 	c *gin.Context,
 	userID string,
+	targetName string,
 	result string,
 ) {
 	handler.recordFailure(c, failedOperation{
 		Scope:       auditScopeProject,
 		ActorUserID: userID,
 		Action:      auditaction.ClusterEnrollmentCreate,
+		TargetType:  auditaction.TargetEnrollment,
+		TargetName:  targetName,
 		Result:      result,
 	})
 }

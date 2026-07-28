@@ -26,6 +26,9 @@ var resourceManagementErrors = []errorMapping{
 	{resourcemanagement.ErrNotFound, http.StatusNotFound, "not_found", "resource not found"},
 	{resourcemanagement.ErrStateConflict, http.StatusConflict, "resource_state_conflict", "resource state conflicts with the request"},
 	{resourcemanagement.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used"},
+	{resourcemanagement.ErrTenantNameConflict, http.StatusConflict, "tenant_name_conflict", "tenant name is already in use"},
+	{resourcemanagement.ErrProjectNameConflict, http.StatusConflict, "project_name_conflict", "project name is already in use in this tenant"},
+	{resourcemanagement.ErrClusterNameConflict, http.StatusConflict, "cluster_name_conflict", "cluster name is already in use in this project"},
 }
 
 type createResourceRequest struct {
@@ -40,6 +43,10 @@ type updateResourceRequest struct {
 
 type updateClusterRequest struct {
 	Name string `json:"name"`
+	// Suspending is a sensitive change, so it carries the same explicit
+	// confirmation the Tenant and Project updates require.
+	Status  string `json:"status"`
+	Confirm bool   `json:"confirm"`
 }
 
 type tenantResponse struct {
@@ -118,7 +125,7 @@ func (handler *resourceManagementHandler) createTenant(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request createResourceRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil {
-		handler.recordTenantFailure(c, identity.User.ID)
+		handler.recordTenantFailure(c, identity.User.ID, "")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid tenant request")
 		return
 	}
@@ -135,7 +142,7 @@ func (handler *resourceManagementHandler) createTenant(c *gin.Context) {
 	)
 	cancel()
 	if err != nil && !errors.Is(err, resourcemanagement.ErrIdempotencyConflict) {
-		handler.recordTenantFailure(c, identity.User.ID)
+		handler.recordTenantFailure(c, identity.User.ID, request.Name)
 	}
 	if handler.respondError(c, "create tenant", err, resourceManagementErrors...) {
 		return
@@ -247,7 +254,7 @@ func (handler *resourceManagementHandler) createProject(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request createResourceRequest
 	if err := decodeJSONRequest(c, &request, maxCreateResourceRequestBytes); err != nil {
-		handler.recordProjectFailure(c, identity.User.ID)
+		handler.recordProjectFailure(c, identity.User.ID, "")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid project request")
 		return
 	}
@@ -265,7 +272,7 @@ func (handler *resourceManagementHandler) createProject(c *gin.Context) {
 	)
 	cancel()
 	if err != nil && !errors.Is(err, resourcemanagement.ErrIdempotencyConflict) {
-		handler.recordProjectFailure(c, identity.User.ID)
+		handler.recordProjectFailure(c, identity.User.ID, request.Name)
 	}
 	if handler.respondError(c, "create project", err, resourceManagementErrors...) {
 		return
@@ -350,7 +357,8 @@ func (handler *resourceManagementHandler) updateCluster(c *gin.Context) {
 	}
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.UpdateCluster(ctx, resourcemanagement.UpdateClusterInput{
-		ClusterID: c.Param("cluster_id"), Name: request.Name,
+		ClusterID: c.Param("cluster_id"), Name: request.Name, Status: request.Status,
+		Confirm:     request.Confirm,
 		ActorUserID: identity.User.ID, RequestID: httpmiddleware.RequestID(c),
 		Now: time.Now().UTC(),
 	})
@@ -393,24 +401,28 @@ func (handler *resourceManagementHandler) deleteCluster(c *gin.Context) {
 func (handler *resourceManagementHandler) recordTenantFailure(
 	c *gin.Context,
 	userID string,
+	targetName string,
 ) {
 	handler.recordFailure(c, failedOperation{
 		Scope:       auditScopeGlobal,
 		ActorUserID: userID,
 		Action:      auditaction.TenantCreate,
 		TargetType:  auditaction.TargetTenant,
+		TargetName:  targetName,
 	})
 }
 
 func (handler *resourceManagementHandler) recordProjectFailure(
 	c *gin.Context,
 	userID string,
+	targetName string,
 ) {
 	handler.recordFailure(c, failedOperation{
 		Scope:       auditScopeTenant,
 		ActorUserID: userID,
 		Action:      auditaction.ProjectCreate,
 		TargetType:  auditaction.TargetProject,
+		TargetName:  targetName,
 	})
 }
 

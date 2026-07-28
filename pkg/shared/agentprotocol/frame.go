@@ -24,6 +24,7 @@ const (
 	CloseHeartbeatTimeout    quic.ApplicationErrorCode = 3
 	CloseConnectionReplaced  quic.ApplicationErrorCode = 4
 	CloseInternalError       quic.ApplicationErrorCode = 5
+	CloseScopeSuspended      quic.ApplicationErrorCode = 6
 )
 
 // GoAway reasons are part of the Server–Agent contract: the Agent decides
@@ -35,6 +36,7 @@ const (
 	GoAwayCredentialRevoked  = "credential_revoked"
 	GoAwayAgentRevoked       = "agent_revoked"
 	GoAwayClusterRevoked     = "cluster_revoked"
+	GoAwayScopeSuspended     = "scope_suspended"
 )
 
 // GoAwayIsPermanent reports whether a GoAway reason means the Agent must stop

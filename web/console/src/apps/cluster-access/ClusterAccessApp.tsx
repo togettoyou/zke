@@ -244,7 +244,8 @@ function ClusterSection({
   const [renameTarget, setRenameTarget] = useState<ClusterAggregate | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [revokeTarget, setRevokeTarget] = useState<ClusterAggregate | null>(null);
-  const [retireTarget, setRetireTarget] = useState<ClusterAggregate | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ClusterAggregate | null>(null);
+  const [statusTarget, setStatusTarget] = useState<ClusterAggregate | null>(null);
   const [reenrollTarget, setReenrollTarget] = useState<ClusterAggregate | null>(null);
   const reenrollKey = useSubmissionKey(reenrollTarget !== null);
   const [reenrollResult, setReenrollResult] = useState<{ token: string; expiresAt: string } | null>(
@@ -366,9 +367,12 @@ function ClusterSection({
                   ) : null}
                   {canManage ? (
                     <>
+                      <DropdownMenuItem onSelect={() => setStatusTarget(cluster)}>
+                        {cluster.status === "suspended" ? "恢复" : "停用"}
+                      </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem variant="danger" onSelect={() => setRetireTarget(cluster)}>
-                        退役
+                      <DropdownMenuItem variant="danger" onSelect={() => setDeleteTarget(cluster)}>
+                        删除
                       </DropdownMenuItem>
                     </>
                   ) : null}
@@ -447,6 +451,9 @@ function ClusterSection({
                   await updateCluster.mutateAsync({
                     clusterId: renameTarget.id,
                     name: renameValue.trim(),
+                    // A rename must not move the Cluster in or out of
+                    // suspension, so it restates whichever it already is.
+                    status: renameTarget.status === "suspended" ? "suspended" : "active",
                   });
                   toast.success("集群已重命名");
                   setRenameTarget(null);
@@ -497,33 +504,75 @@ function ClusterSection({
       />
 
       <SensitiveActionDialog
-        open={Boolean(retireTarget)}
-        onOpenChange={(open) => !open && setRetireTarget(null)}
-        title="退役集群"
+        open={Boolean(statusTarget)}
+        onOpenChange={(open) => !open && setStatusTarget(null)}
+        title={statusTarget?.status === "suspended" ? "恢复集群" : "停用集群"}
+        destructive={statusTarget?.status !== "suspended"}
+        scopeLines={[
+          { label: "租户", name: scope.tenantName ?? "", id: scope.tenantId },
+          { label: "项目", name: scope.projectName ?? "", id: scope.projectId },
+          { label: "集群", name: statusTarget?.name ?? "", id: statusTarget?.id },
+        ]}
+        impacts={
+          statusTarget?.status === "suspended"
+            ? ["集群恢复为可用状态", "Agent 将以原有身份自动重新连接"]
+            : [
+                "已连接的 Agent 立即断开",
+                "不撤销 Agent 身份或凭证，恢复后可直接重连",
+                "停用期间集群名称仍被占用",
+              ]
+        }
+        confirmationText={statusTarget?.status === "suspended" ? undefined : statusTarget?.name}
+        confirmLabel={statusTarget?.status === "suspended" ? "确认恢复" : "确认停用"}
+        pending={updateCluster.isPending}
+        error={updateCluster.error}
+        onConfirm={async () => {
+          if (!statusTarget) {
+            return;
+          }
+          try {
+            await updateCluster.mutateAsync({
+              clusterId: statusTarget.id,
+              name: statusTarget.name,
+              status: statusTarget.status === "suspended" ? "active" : "suspended",
+            });
+            toast.success(statusTarget.status === "suspended" ? "集群已恢复" : "集群已停用");
+            setStatusTarget(null);
+          } catch {
+            // Error is rendered inside the dialog.
+          }
+        }}
+      />
+
+      <SensitiveActionDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="删除集群"
         destructive
         scopeLines={[
           { label: "租户", name: scope.tenantName ?? "", id: scope.tenantId },
           { label: "项目", name: scope.projectName ?? "", id: scope.projectId },
-          { label: "集群", name: retireTarget?.name ?? "", id: retireTarget?.id },
+          { label: "集群", name: deleteTarget?.name ?? "", id: deleteTarget?.id },
         ]}
         impacts={[
-          "集群标记为已退役，不再接受接入",
-          "内部 Agent 身份与未使用的接入凭证被撤销",
-          "已连接的 Agent 立即断开",
-          "操作写入审计记录，且不可自动回滚",
+          "集群记录及其 Agent 身份、凭证被永久删除",
+          "已连接的 Agent 立即断开，且无法再次接入",
+          "集群名称随之释放，可被重新使用",
+          "审计记录保留，并保存删除时的名称",
+          "若只是临时冻结，请改用「停用」——停用不删除任何内容",
         ]}
-        confirmationText={retireTarget?.name}
-        confirmLabel="确认退役"
+        confirmationText={deleteTarget?.name}
+        confirmLabel="确认删除"
         pending={deleteCluster.isPending}
         error={deleteCluster.error}
         onConfirm={async () => {
-          if (!retireTarget) {
+          if (!deleteTarget) {
             return;
           }
           try {
-            await deleteCluster.mutateAsync({ clusterId: retireTarget.id });
-            toast.success("集群已退役");
-            setRetireTarget(null);
+            await deleteCluster.mutateAsync({ clusterId: deleteTarget.id });
+            toast.success("集群已删除");
+            setDeleteTarget(null);
           } catch {
             // Error is rendered inside the dialog.
           }

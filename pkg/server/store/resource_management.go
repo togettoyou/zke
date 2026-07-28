@@ -167,6 +167,18 @@ func (store *ResourceManagementStore) CreateTenant(
 	}
 	defer rollbackTransaction(transaction)
 
+	/*
+	 * `ON CONFLICT DO NOTHING` rather than letting the unique index raise.
+	 *
+	 * A taken name has to be told apart from a replayed submission, and a replay
+	 * arrives here as a duplicate name: the idempotency record cannot be written
+	 * before the Tenant it references, so the first thing a retry does is insert
+	 * the same name again. Letting that raise would abort the transaction before
+	 * the replay could be recognised, and the operator would be told the name is
+	 * taken by the very Tenant their retry created. Absorbing the conflict keeps
+	 * the transaction usable, and the three reasons this can return no row are
+	 * separated below.
+	 */
 	var created TenantResource
 	err = transaction.QueryRow(ctx, `
 INSERT INTO tenants (id, name, status, created_at, updated_at)
@@ -174,6 +186,7 @@ SELECT $1, $2, 'active', $4, $4
 FROM users
 WHERE id = $3
   AND status = 'active'
+ON CONFLICT (lower(name)) DO NOTHING
 RETURNING id::text, name, status, created_at, updated_at
 `, params.ID, params.Name, params.ActorUserID, params.Now).Scan(
 		&created.ID,
@@ -183,6 +196,30 @@ RETURNING id::text, name, status, created_at, updated_at
 		&created.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
+		replayed, found, replayErr := findTenantCreationReplay(ctx, transaction, params)
+		if replayErr != nil {
+			return CreateTenantResult{}, replayErr
+		}
+		if found {
+			if err := transaction.Commit(ctx); err != nil {
+				return CreateTenantResult{}, fmt.Errorf("commit replayed tenant creation: %w", err)
+			}
+			return replayed, nil
+		}
+		// Not a replay, so either the name belongs to someone else or the actor
+		// is no longer allowed to create anything. Only the name was tested by
+		// the insert; the actor condition is what remains.
+		var nameTaken bool
+		if queryErr := transaction.QueryRow(
+			ctx,
+			"SELECT EXISTS (SELECT 1 FROM tenants WHERE lower(name) = lower($1))",
+			params.Name,
+		).Scan(&nameTaken); queryErr != nil {
+			return CreateTenantResult{}, fmt.Errorf("check tenant name conflict: %w", queryErr)
+		}
+		if nameTaken {
+			return CreateTenantResult{}, ErrTenantNameConflict
+		}
 		return CreateTenantResult{}, ErrResourceCreationNotAllowed
 	}
 	if err != nil {
@@ -205,38 +242,18 @@ RETURNING id::text
 		params.Now,
 	).Scan(&requestID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		var existing CreateTenantResult
-		var requestedName string
-		queryErr := transaction.QueryRow(ctx, `
-SELECT
-    request.requested_name,
-    tenant.id::text,
-    tenant.name,
-    tenant.status,
-    tenant.created_at,
-    tenant.updated_at
-FROM tenant_creation_requests AS request
-JOIN tenants AS tenant ON tenant.id = request.tenant_id
-WHERE request.actor_user_id = $1
-  AND request.idempotency_key = $2
-`,
-			params.ActorUserID,
-			params.IdempotencyKey,
-		).Scan(
-			&requestedName,
-			&existing.Tenant.ID,
-			&existing.Tenant.Name,
-			&existing.Tenant.Status,
-			&existing.Tenant.CreatedAt,
-			&existing.Tenant.UpdatedAt,
-		)
-		if queryErr != nil {
-			return CreateTenantResult{}, fmt.Errorf("load tenant creation replay: %w", queryErr)
+		// The key is already recorded, so the Tenant it names is the answer.
+		// Reached when the name differs from the first submission's, which is a
+		// reused key rather than a retry and is refused inside the helper.
+		existing, found, replayErr := findTenantCreationReplay(ctx, transaction, params)
+		if replayErr != nil {
+			return CreateTenantResult{}, replayErr
 		}
-		if requestedName != params.Name {
-			return CreateTenantResult{}, ErrResourceCreationConflict
+		if !found {
+			return CreateTenantResult{}, errors.New(
+				"tenant creation idempotency key is recorded without a tenant",
+			)
 		}
-		existing.Replayed = true
 		return existing, nil
 	}
 	if err != nil {
@@ -273,6 +290,7 @@ JOIN users ON users.id = $4
 WHERE tenant.id = $2
   AND tenant.status = 'active'
   AND users.status = 'active'
+ON CONFLICT (tenant_id, lower(name)) DO NOTHING
 RETURNING id::text, tenant_id::text, name, status, created_at, updated_at
 `,
 		params.ID,
@@ -289,6 +307,33 @@ RETURNING id::text, tenant_id::text, name, status, created_at, updated_at
 		&created.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// Same three-way split as Tenants, for the same reason: a retry of this
+		// submission arrives as a duplicate name, so a replay has to be ruled
+		// out before the name is called taken.
+		replayed, found, replayErr := findProjectCreationReplay(ctx, transaction, params)
+		if replayErr != nil {
+			return CreateProjectResult{}, replayErr
+		}
+		if found {
+			if err := transaction.Commit(ctx); err != nil {
+				return CreateProjectResult{}, fmt.Errorf("commit replayed project creation: %w", err)
+			}
+			return replayed, nil
+		}
+		var nameTaken bool
+		if queryErr := transaction.QueryRow(
+			ctx,
+			`SELECT EXISTS (
+    SELECT 1 FROM projects WHERE tenant_id = $1 AND lower(name) = lower($2)
+)`,
+			params.TenantID,
+			params.Name,
+		).Scan(&nameTaken); queryErr != nil {
+			return CreateProjectResult{}, fmt.Errorf("check project name conflict: %w", queryErr)
+		}
+		if nameTaken {
+			return CreateProjectResult{}, ErrProjectNameConflict
+		}
 		var tenantStatus string
 		queryErr := transaction.QueryRow(
 			ctx,
@@ -328,44 +373,15 @@ RETURNING id::text
 		params.Now,
 	).Scan(&requestID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		var existing CreateProjectResult
-		var requestedName string
-		queryErr := transaction.QueryRow(ctx, `
-SELECT
-    request.requested_name,
-    project.id::text,
-    project.tenant_id::text,
-    project.name,
-    project.status,
-    project.created_at,
-    project.updated_at
-FROM project_creation_requests AS request
-JOIN projects AS project
-  ON project.tenant_id = request.tenant_id
- AND project.id = request.project_id
-WHERE request.actor_user_id = $1
-  AND request.tenant_id = $2
-  AND request.idempotency_key = $3
-`,
-			params.ActorUserID,
-			params.TenantID,
-			params.IdempotencyKey,
-		).Scan(
-			&requestedName,
-			&existing.Project.ID,
-			&existing.Project.TenantID,
-			&existing.Project.Name,
-			&existing.Project.Status,
-			&existing.Project.CreatedAt,
-			&existing.Project.UpdatedAt,
-		)
-		if queryErr != nil {
-			return CreateProjectResult{}, fmt.Errorf("load project creation replay: %w", queryErr)
+		existing, found, replayErr := findProjectCreationReplay(ctx, transaction, params)
+		if replayErr != nil {
+			return CreateProjectResult{}, replayErr
 		}
-		if requestedName != params.Name {
-			return CreateProjectResult{}, ErrResourceCreationConflict
+		if !found {
+			return CreateProjectResult{}, errors.New(
+				"project creation idempotency key is recorded without a project",
+			)
 		}
-		existing.Replayed = true
 		return existing, nil
 	}
 	if err != nil {
@@ -449,6 +465,106 @@ func invalidCreateProjectParams(params CreateProjectParams) bool {
 		strings.TrimSpace(params.RequestID) == "" ||
 		strings.TrimSpace(params.IdempotencyKey) == "" ||
 		params.Now.IsZero()
+}
+
+// findTenantCreationReplay reports the Tenant a previous submission with this
+// idempotency key created. `found` is false when the key has never been used,
+// which is what tells a retry apart from a name someone else already holds.
+//
+// A key reused for a different name is refused rather than answered: the caller
+// asked for something the recorded result is not.
+func findTenantCreationReplay(
+	ctx context.Context,
+	transaction pgx.Tx,
+	params CreateTenantParams,
+) (CreateTenantResult, bool, error) {
+	var existing CreateTenantResult
+	var requestedName string
+	err := transaction.QueryRow(ctx, `
+SELECT
+    request.requested_name,
+    tenant.id::text,
+    tenant.name,
+    tenant.status,
+    tenant.created_at,
+    tenant.updated_at
+FROM tenant_creation_requests AS request
+JOIN tenants AS tenant ON tenant.id = request.tenant_id
+WHERE request.actor_user_id = $1
+  AND request.idempotency_key = $2
+`,
+		params.ActorUserID,
+		params.IdempotencyKey,
+	).Scan(
+		&requestedName,
+		&existing.Tenant.ID,
+		&existing.Tenant.Name,
+		&existing.Tenant.Status,
+		&existing.Tenant.CreatedAt,
+		&existing.Tenant.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CreateTenantResult{}, false, nil
+	}
+	if err != nil {
+		return CreateTenantResult{}, false, fmt.Errorf("load tenant creation replay: %w", err)
+	}
+	if requestedName != params.Name {
+		return CreateTenantResult{}, false, ErrResourceCreationConflict
+	}
+	existing.Replayed = true
+	return existing, true, nil
+}
+
+// findProjectCreationReplay is findTenantCreationReplay for Projects, whose
+// idempotency key is scoped to the Tenant it creates in.
+func findProjectCreationReplay(
+	ctx context.Context,
+	transaction pgx.Tx,
+	params CreateProjectParams,
+) (CreateProjectResult, bool, error) {
+	var existing CreateProjectResult
+	var requestedName string
+	err := transaction.QueryRow(ctx, `
+SELECT
+    request.requested_name,
+    project.id::text,
+    project.tenant_id::text,
+    project.name,
+    project.status,
+    project.created_at,
+    project.updated_at
+FROM project_creation_requests AS request
+JOIN projects AS project
+  ON project.tenant_id = request.tenant_id
+ AND project.id = request.project_id
+WHERE request.actor_user_id = $1
+  AND request.tenant_id = $2
+  AND request.idempotency_key = $3
+`,
+		params.ActorUserID,
+		params.TenantID,
+		params.IdempotencyKey,
+	).Scan(
+		&requestedName,
+		&existing.Project.ID,
+		&existing.Project.TenantID,
+		&existing.Project.Name,
+		&existing.Project.Status,
+		&existing.Project.CreatedAt,
+		&existing.Project.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CreateProjectResult{}, false, nil
+	}
+	if err != nil {
+		return CreateProjectResult{}, false, fmt.Errorf("load project creation replay: %w", err)
+	}
+	if requestedName != params.Name {
+		return CreateProjectResult{}, false, ErrResourceCreationConflict
+	}
+	existing.Replayed = true
+	return existing, true, nil
 }
 
 func insertTenantCreatedAudit(

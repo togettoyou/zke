@@ -18,7 +18,7 @@ func (store *EnrollmentStore) GetClusterEnrollmentTarget(
 	err := store.pool.QueryRow(ctx, `
 SELECT project_id::text, name
 FROM clusters
-WHERE id = $1 AND status <> 'revoked'
+WHERE id = $1 AND status <> 'suspended'
 `, clusterID).Scan(&result.ProjectID, &result.ClusterName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClusterEnrollmentTarget{}, ErrClusterNotFound

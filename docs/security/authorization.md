@@ -46,7 +46,7 @@ Project 和 Cluster 读取权限。Tenant 绑定只向下覆盖同一 Tenant，P
 当前固定权限还包括 `user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`。Phase 1 的用户与
 RoleBinding 管理入口只允许 Global `admin` 使用，避免在委派规则尚未扩展前出现权限提升；创建的 RoleBinding
 仍可绑定 Global、Tenant 或 Project 作用域。Server 提供用户列表、详情、创建、修改显示名称、启用/禁用、
-逻辑删除、解锁和管理员密码重置 API，以及 RoleBinding 列表、详情、幂等创建和删除 API。RoleBinding 是不可变
+删除、解锁和管理员密码重置 API，以及 RoleBinding 列表、详情、幂等创建和删除 API。RoleBinding 是不可变
 授权关系，修改通过删除后重新创建完成。禁止当前用户禁用或删除自身，也禁止禁用、删除或移除最后一个有效的
 Global `admin`。权限授予、权限移除、用户状态变更、删除、解锁和密码重置均要求显式确认；禁用、删除、锁定和
 密码重置都会撤销目标用户现有 Session。
@@ -76,7 +76,8 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `POST /api/v1/clusters/{cluster_id}/connection/revoke` 按 Cluster ID 解析 Project 作用域，要求
 `cluster.connection.revoke` 和显式确认。重新接入接口
 `POST /api/v1/clusters/{cluster_id}/connection/reenroll` 仅在当前内部身份撤销后创建绑定原 `cluster_id` 的
-一次性凭证。Cluster 逻辑删除使用 `cluster.manage`，同时撤销全部内部身份和 Credential。
+一次性凭证。Cluster 停用与删除都使用 `cluster.manage`：停用断开 Agent 连接但保留身份与 Credential，
+删除移除 Cluster 记录及其全部内部身份与 Credential。
 
 Project 授权拒绝以及凭证创建的输入、状态和内部失败会写入不含 Token 的审计事件；数据库不可用或请求 Deadline
 已耗尽时降级为安全错误日志。Tenant/Project/Cluster 生命周期、Cluster 列表/详情以及

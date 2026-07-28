@@ -375,7 +375,7 @@ VALUES (
 		router,
 		http.MethodPut,
 		"/api/v1/clusters/"+clusterID,
-		`{"name":"Updated Primary Cluster"}`,
+		`{"name":"Updated Primary Cluster","status":"active"}`,
 		adminLogin,
 		true,
 		"",
@@ -615,24 +615,26 @@ FROM audit_events
 	if err := decodeSuccessResponse(deletedCluster, &deletedClusterBody); err != nil {
 		t.Fatal(err)
 	}
-	if deletedClusterBody.Status != "revoked" {
-		t.Fatalf("deleted cluster status = %q, want revoked", deletedClusterBody.Status)
+	// The response carries the Cluster as it was immediately before deletion,
+	// which is the last chance anything has to report it.
+	if deletedClusterBody.Status == "" {
+		t.Fatalf("deleted cluster response = %+v, want the deleted cluster", deletedClusterBody)
 	}
-	var deletedAgentStatus string
-	var credentialRevokedAt *time.Time
+	var clusterRows, agentRows, credentialRows int
 	if err := pool.QueryRow(ctx, `
-SELECT agent.lifecycle_status, credential.revoked_at
-FROM agents AS agent
-JOIN agent_credentials AS credential ON credential.agent_id = agent.id
-WHERE agent.cluster_id = $1
-`, clusterID).Scan(&deletedAgentStatus, &credentialRevokedAt); err != nil {
+SELECT
+    (SELECT count(*) FROM clusters WHERE id = $1),
+    (SELECT count(*) FROM agents WHERE cluster_id = $1),
+    (SELECT count(*) FROM agent_credentials WHERE cluster_id = $1)
+`, clusterID).Scan(&clusterRows, &agentRows, &credentialRows); err != nil {
 		t.Fatal(err)
 	}
-	if deletedAgentStatus != "revoked" || credentialRevokedAt == nil {
+	if clusterRows != 0 || agentRows != 0 || credentialRows != 0 {
 		t.Fatalf(
-			"deleted cluster connection state = %s/%v",
-			deletedAgentStatus,
-			credentialRevokedAt,
+			"after cluster deletion cluster/agent/credential rows = %d/%d/%d, want 0/0/0",
+			clusterRows,
+			agentRows,
+			credentialRows,
 		)
 	}
 
@@ -652,8 +654,8 @@ WHERE agent.cluster_id = $1
 	if err := decodeSuccessResponse(deletedProject, &deletedProjectBody); err != nil {
 		t.Fatal(err)
 	}
-	if deletedProjectBody.Status != "suspended" {
-		t.Fatalf("deleted project status = %q, want suspended", deletedProjectBody.Status)
+	if deletedProjectBody.ID != project.ID {
+		t.Fatalf("delete project returned %+v, want the deleted project", deletedProjectBody)
 	}
 
 	deletedTenant := resourceAPIRequest(
@@ -672,8 +674,26 @@ WHERE agent.cluster_id = $1
 	if err := decodeSuccessResponse(deletedTenant, &deletedTenantBody); err != nil {
 		t.Fatal(err)
 	}
-	if deletedTenantBody.Status != "suspended" {
-		t.Fatalf("deleted tenant status = %q, want suspended", deletedTenantBody.Status)
+	if deletedTenantBody.ID != tenant.ID {
+		t.Fatalf("delete tenant returned %+v, want the deleted tenant", deletedTenantBody)
+	}
+
+	// Nothing is left behind, and the audit trail that records the removal is.
+	var remaining, auditRows int
+	if err := pool.QueryRow(ctx, `
+SELECT
+    (SELECT count(*) FROM tenants WHERE id = $1)
+        + (SELECT count(*) FROM projects WHERE tenant_id = $1)
+        + (SELECT count(*) FROM clusters WHERE tenant_id = $1),
+    (SELECT count(*) FROM audit_events WHERE tenant_id = $1)
+`, tenant.ID).Scan(&remaining, &auditRows); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("rows left under the deleted tenant = %d, want 0", remaining)
+	}
+	if auditRows == 0 {
+		t.Fatal("the deleted tenant's audit events were removed with it")
 	}
 }
 

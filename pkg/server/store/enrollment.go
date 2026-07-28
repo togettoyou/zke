@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
@@ -41,6 +42,17 @@ WHERE enrollment.token_digest = $1
   AND enrollment.expires_at > $2
   AND tenant.status = 'active'
   AND project.status = 'active'
+  AND (
+      enrollment.cluster_id IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM clusters
+          WHERE clusters.id = enrollment.cluster_id
+            AND clusters.tenant_id = enrollment.tenant_id
+            AND clusters.project_id = enrollment.project_id
+            AND clusters.status <> 'suspended'
+      )
+  )
 `, tokenDigest, now).Scan(
 		&enrollment.ID,
 		&enrollment.TenantID,
@@ -88,6 +100,35 @@ func (store *EnrollmentStore) CreateEnrollment(
 			return Enrollment{}, fmt.Errorf("lock Cluster reenrollment creation: %w", err)
 		}
 	}
+	/*
+	 * An outstanding enrollment holds the Cluster name it will create, and the
+	 * unique index that enforces that cannot include expiry: `now()` is not
+	 * immutable, so a lapsed token would keep its claim forever.
+	 *
+	 * Revoking the lapsed holder here is what closes that gap. It runs before
+	 * the insert and inside the same transaction, so the name is either released
+	 * and taken in one step or neither. The advisory lock covers the window
+	 * between the two for concurrent submissions of the same name.
+	 */
+	if _, err := transaction.Exec(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || lower($2), 0))",
+		input.ProjectID,
+		input.ClusterName,
+	); err != nil {
+		return Enrollment{}, fmt.Errorf("lock Cluster enrollment name: %w", err)
+	}
+	if _, err := transaction.Exec(ctx, `
+UPDATE enrollments
+SET revoked_at = $3
+WHERE project_id = $1
+  AND lower(cluster_name) = lower($2)
+  AND consumed_at IS NULL
+  AND revoked_at IS NULL
+  AND expires_at <= $3
+`, input.ProjectID, input.ClusterName, time.Now().UTC()); err != nil {
+		return Enrollment{}, fmt.Errorf("release expired Cluster enrollment name: %w", err)
+	}
 
 	var created Enrollment
 	err = transaction.QueryRow(ctx, `
@@ -124,10 +165,22 @@ WHERE project.id = $1
   AND tenant.status = 'active'
   AND users.status = 'active'
   AND (
+      -- A first enrollment names a Cluster that does not exist yet, so the name
+      -- is checked here rather than at the unique index the Agent would meet
+      -- hours later, holding a token for a name someone else has taken.
+      $3 <> ''
+      OR NOT EXISTS (
+          SELECT 1
+          FROM clusters AS existing
+          WHERE existing.project_id = project.id
+            AND lower(existing.name) = lower($4)
+      )
+  )
+  AND (
       $3 = ''
       OR (
           cluster.id IS NOT NULL
-          AND cluster.status <> 'revoked'
+          AND cluster.status <> 'suspended'
           AND NOT EXISTS (
               SELECT 1 FROM agents
               WHERE agents.cluster_id = cluster.id
@@ -190,7 +243,36 @@ SELECT EXISTS (
 		if conflict {
 			return Enrollment{}, ErrEnrollmentIdempotencyConflict
 		}
+		if input.ClusterID == "" {
+			// A name is taken either by a Cluster that exists or by another
+			// outstanding enrollment that will create one.
+			var nameTaken bool
+			if queryErr := transaction.QueryRow(ctx, `
+SELECT
+    EXISTS (
+        SELECT 1 FROM clusters
+        WHERE project_id = $1 AND lower(name) = lower($2)
+    )
+    OR EXISTS (
+        SELECT 1 FROM enrollments
+        WHERE project_id = $1
+          AND lower(cluster_name) = lower($2)
+          AND consumed_at IS NULL
+          AND revoked_at IS NULL
+    )
+`, input.ProjectID, input.ClusterName).Scan(&nameTaken); queryErr != nil {
+				return Enrollment{}, fmt.Errorf("check enrollment cluster name: %w", queryErr)
+			}
+			if nameTaken {
+				return Enrollment{}, ErrClusterNameConflict
+			}
+		}
 		return Enrollment{}, ErrEnrollmentCreationDenied
+	}
+	// The unique index catches what the pre-checks raced with.
+	var nameConflict *pgconn.PgError
+	if errors.As(err, &nameConflict) && nameConflict.Code == "23505" {
+		return Enrollment{}, ErrClusterNameConflict
 	}
 	if err != nil {
 		return Enrollment{}, fmt.Errorf("insert enrollment: %w", err)

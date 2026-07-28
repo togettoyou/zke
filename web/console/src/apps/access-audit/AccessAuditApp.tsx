@@ -1199,6 +1199,12 @@ function AuditSection() {
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
             <StatusBadge kind="actor" value={row.original.actor_type} />
+            {/* The name recorded when the event was written. The id may point at
+                a user who has since been deleted, which is exactly when the
+                name is the only thing left that reads. */}
+            {row.original.actor_user_name ? (
+              <span className="text-muted-foreground text-xs">{row.original.actor_user_name}</span>
+            ) : null}
             {row.original.actor_user_id ? (
               <IdentifierLabel value={row.original.actor_user_id} />
             ) : null}
@@ -1212,7 +1218,11 @@ function AuditSection() {
             <span className="zke-mono text-foreground text-[13px]">{row.original.action}</span>
             <span className="text-subtle-foreground text-xs">
               {row.original.target_type}
-              {row.original.target_id ? ` · ${row.original.target_id.slice(0, 8)}…` : ""}
+              {row.original.target_name
+                ? ` · ${row.original.target_name}`
+                : row.original.target_id
+                  ? ` · ${row.original.target_id.slice(0, 8)}…`
+                  : ""}
             </span>
           </div>
         ),
@@ -1222,6 +1232,15 @@ function AuditSection() {
         cell: ({ row }) => (
           <div className="text-muted-foreground flex flex-col gap-0.5 text-xs">
             <span>{row.original.scope_type}</span>
+            {/* Innermost recorded name first: it survives the subject being
+                deleted, which the id below it does not. */}
+            {(row.original.cluster_name ??
+            row.original.project_name ??
+            row.original.tenant_name) ? (
+              <span className="text-foreground">
+                {row.original.cluster_name ?? row.original.project_name ?? row.original.tenant_name}
+              </span>
+            ) : null}
             {row.original.cluster_id ? (
               <IdentifierLabel value={row.original.cluster_id} />
             ) : row.original.project_id ? (

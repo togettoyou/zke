@@ -44,7 +44,9 @@ Agent 私钥不会发送给 Server。
 - `GET /api/v1/projects/{project_id}/clusters` 查询 Project 内的 Cluster；
 - `GET /api/v1/clusters/{cluster_id}` 查询 Cluster 及其 `connection`；
 - `PUT /api/v1/clusters/{cluster_id}` 修改显示名称；
-- `DELETE /api/v1/clusters/{cluster_id}` 逻辑删除 Cluster，并撤销内部身份和全部 Credential；
+- `DELETE /api/v1/clusters/{cluster_id}` 删除 Cluster 记录及其内部身份与全部 Credential，不可恢复；
+- `PUT /api/v1/clusters/{cluster_id}` 可将 `status` 置为 `suspended` 临时停用，或置回 `active` 恢复；
+  停用不撤销任何身份或凭证，恢复后 Agent 以原身份自动重连；
 - `POST /api/v1/clusters/{cluster_id}/connection/revoke` 撤销当前连接身份；
 - `POST /api/v1/clusters/{cluster_id}/connection/reenroll` 为同一 Cluster 创建重新接入凭证；
 - `GET /api/v1/events` 发送权限过滤后的 `cluster.status` SSE 事件。
@@ -54,10 +56,12 @@ Agent 私钥不会发送给 Server。
 
 连接撤销要求 `cluster.connection.revoke` 和显式 `{"confirm":true}`；它不会删除 Cluster。重新接入仅允许在
 当前连接身份已撤销后执行，要求 `cluster.enrollment.create`、确认和幂等键，并始终复用原 `cluster_id`。
-Cluster 删除使用 `cluster.manage`，属于不可重新接入的逻辑撤销。
+Cluster 删除使用 `cluster.manage`，会真正移除 Cluster 及其内部 Agent、Credential 和绑定的 Enrollment，
+不可恢复，也不可重新接入。
 
-Tenant、Project、User 和 RoleBinding 的 Phase 1 管理生命周期也已实现；Tenant/Project 删除为逻辑
-`suspended`，并级联撤销未消费 Enrollment、Cluster 连接身份和 Credential。
+Tenant、Project、User 和 RoleBinding 的 Phase 1 管理生命周期也已实现。Tenant 与 Project 停用只更新自身
+`status`，立即断开作用域内的 Agent，但保留 Enrollment、Agent 身份和 Credential，恢复后 Agent 自动重连；
+删除则真正移除其下所有资源，审计事件仍保留删除时的名称快照。
 
 ## 当前限制
 

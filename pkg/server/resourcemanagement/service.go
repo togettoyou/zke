@@ -21,6 +21,14 @@ var (
 	ErrDenied              = errors.New("resource management denied")
 	ErrIdempotencyConflict = errors.New("resource idempotency conflict")
 	ErrStateConflict       = errors.New("resource state conflict")
+	// Name collisions, one per resource, because the scope of the rule and the
+	// advice that follows from it differ: a Tenant name is unique globally, a
+	// Project name is unique inside its Tenant, and a Cluster name is unique
+	// inside its Project. Suspended resources keep their names. All three ignore
+	// case.
+	ErrTenantNameConflict  = errors.New("tenant name already exists")
+	ErrProjectNameConflict = errors.New("project name already exists in tenant")
+	ErrClusterNameConflict = errors.New("cluster name already exists in project")
 )
 
 type Service struct {
@@ -151,6 +159,8 @@ type DeleteProjectInput struct {
 type UpdateClusterInput struct {
 	ClusterID   string
 	Name        string
+	Status      string
+	Confirm     bool
 	ActorUserID string
 	RequestID   string
 	Now         time.Time
@@ -239,6 +249,8 @@ func (service *Service) CreateTenant(
 	switch {
 	case errors.Is(err, store.ErrResourceCreationConflict):
 		return CreateTenantResult{}, ErrIdempotencyConflict
+	case errors.Is(err, store.ErrTenantNameConflict):
+		return CreateTenantResult{}, ErrTenantNameConflict
 	case errors.Is(err, store.ErrResourceCreationNotAllowed):
 		return CreateTenantResult{}, ErrDenied
 	case err != nil:
@@ -389,6 +401,8 @@ func (service *Service) CreateProject(
 		return CreateProjectResult{}, ErrNotFound
 	case errors.Is(err, store.ErrResourceCreationConflict):
 		return CreateProjectResult{}, ErrIdempotencyConflict
+	case errors.Is(err, store.ErrProjectNameConflict):
+		return CreateProjectResult{}, ErrProjectNameConflict
 	case errors.Is(err, store.ErrResourceStateConflict):
 		return CreateProjectResult{}, ErrStateConflict
 	case errors.Is(err, store.ErrResourceCreationNotAllowed):
@@ -462,14 +476,19 @@ func (service *Service) UpdateCluster(
 	ctx context.Context,
 	input UpdateClusterInput,
 ) (Cluster, error) {
+	// Only the two states an operator may ask for. `pending` and `active` are
+	// reported by the Agent connection, never set from here.
 	if !validation.IsUUID(input.ClusterID) ||
 		!validName(input.Name) ||
+		(input.Status != "active" && input.Status != "suspended") ||
+		(input.Status == "suspended" && !input.Confirm) ||
 		!validMutationActor(input.ActorUserID, input.RequestID, input.Now) {
 		return Cluster{}, ErrInvalidInput
 	}
 	item, err := service.store.UpdateCluster(ctx, store.UpdateClusterParams{
 		ClusterID:   input.ClusterID,
 		Name:        input.Name,
+		Status:      input.Status,
 		ActorUserID: input.ActorUserID,
 		RequestID:   input.RequestID,
 		Now:         input.Now,
@@ -537,6 +556,8 @@ func mapTenantMutation(item store.TenantResource, err error) (Tenant, error) {
 	switch {
 	case errors.Is(err, store.ErrTenantNotFound):
 		return Tenant{}, ErrNotFound
+	case errors.Is(err, store.ErrTenantNameConflict):
+		return Tenant{}, ErrTenantNameConflict
 	case errors.Is(err, store.ErrResourceStateConflict),
 		errors.Is(err, store.ErrResourceCreationNotAllowed):
 		return Tenant{}, ErrStateConflict
@@ -551,6 +572,8 @@ func mapProjectMutation(item store.ProjectResource, err error) (Project, error) 
 	switch {
 	case errors.Is(err, store.ErrProjectNotFound):
 		return Project{}, ErrNotFound
+	case errors.Is(err, store.ErrProjectNameConflict):
+		return Project{}, ErrProjectNameConflict
 	case errors.Is(err, store.ErrResourceStateConflict),
 		errors.Is(err, store.ErrResourceCreationNotAllowed):
 		return Project{}, ErrStateConflict
@@ -565,6 +588,8 @@ func mapClusterMutation(item store.ClusterResource, err error) (Cluster, error) 
 	switch {
 	case errors.Is(err, store.ErrClusterNotFound):
 		return Cluster{}, ErrNotFound
+	case errors.Is(err, store.ErrClusterNameConflict):
+		return Cluster{}, ErrClusterNameConflict
 	case errors.Is(err, store.ErrResourceStateConflict),
 		errors.Is(err, store.ErrResourceCreationNotAllowed):
 		return Cluster{}, ErrStateConflict

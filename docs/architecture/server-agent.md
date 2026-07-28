@@ -57,8 +57,9 @@ ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certifica
 原生 HTTPS 或由上游网关终止 TLS。
 注册后的 QUIC/mTLS 主动连接、证书身份与 `ClientHello` 交叉校验、`ServerHello`、心跳确认、有界重连和
 `last_seen_at` 限频持久化已经实现。Agent 会在证书进入配置的续期窗口后，通过已认证的 Control Stream 自动
-续期并使用新证书重连；凭据、Agent 或 Cluster 被撤销时，PostgreSQL 通知会让所有 Server 实例关闭匹配的现有
-连接。HTTP API 使用 `http.address` 的 TCP Listener；QUIC 使用独立
+续期并使用新证书重连；凭据或 Agent 身份被撤销时，PostgreSQL 通知会让所有 Server 实例关闭匹配的现有连接
+并拒绝当前身份重连。Tenant、Project 或 Cluster 停用同样会立即断连，但 Agent 保持重试，恢复后复用原身份。
+HTTP API 使用 `http.address` 的 TCP Listener；QUIC 使用独立
 `agent_listener.address` 的 UDP Listener，两者必须分别配置。管理面把 Cluster 和其中的 Agent 视为一个
 聚合资源：Server 按 Project 查询 Cluster，并在 `connection` 字段中返回内部连接身份的生命周期、健康、版本、
 最后心跳、证书有效期和当前 Server 实例内存中的 `online`/`offline` 状态；管理 API 不暴露内部 Agent ID。

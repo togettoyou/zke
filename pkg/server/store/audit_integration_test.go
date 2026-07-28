@@ -27,29 +27,42 @@ func TestRecordProjectAuditEventPreservesScope(t *testing.T) {
 	if err := auditStore.RecordProjectEvent(ctx, store.ProjectAuditEvent{
 		ActorUserID: userID,
 		ProjectID:   projectID,
+		ProjectName: "Audit Project",
 		Action:      "cluster.enrollment.create",
+		TargetType:  "enrollment",
+		TargetName:  "requested-cluster",
 		Result:      "denied",
 		RequestID:   "request-project-audit",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	var scopeType, storedTenantID, storedProjectID string
+	var scopeType, storedTenantID, storedProjectID, projectName, targetName string
 	if err := pool.QueryRow(ctx, `
-SELECT scope_type, tenant_id::text, project_id::text
+SELECT scope_type, tenant_id::text, project_id::text, project_name, target_name
 FROM audit_events
 WHERE request_id = 'request-project-audit'
-`).Scan(&scopeType, &storedTenantID, &storedProjectID); err != nil {
+`).Scan(
+		&scopeType,
+		&storedTenantID,
+		&storedProjectID,
+		&projectName,
+		&targetName,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if scopeType != "project" ||
 		storedTenantID != tenantID ||
-		storedProjectID != projectID {
+		storedProjectID != projectID ||
+		projectName != "Audit Project" ||
+		targetName != "requested-cluster" {
 		t.Fatalf(
-			"audit scope = %s/%s/%s, want project/%s/%s",
+			"audit scope = %s/%s/%s (%q -> %q), want project/%s/%s (Audit Project -> requested-cluster)",
 			scopeType,
 			storedTenantID,
 			storedProjectID,
+			projectName,
+			targetName,
 			tenantID,
 			projectID,
 		)
@@ -84,6 +97,7 @@ func TestRecordAuditEventSurvivesRequestCancellation(t *testing.T) {
 		ActorUserID: userID,
 		ProjectID:   projectID,
 		Action:      "cluster.read",
+		TargetType:  "cluster",
 		Result:      "denied",
 		RequestID:   "request-cancelled-directly",
 	}); err == nil {
@@ -96,6 +110,7 @@ func TestRecordAuditEventSurvivesRequestCancellation(t *testing.T) {
 		ActorUserID: userID,
 		ProjectID:   projectID,
 		Action:      "cluster.read",
+		TargetType:  "cluster",
 		Result:      "denied",
 		RequestID:   "request-cancelled-detached",
 	}); err != nil {

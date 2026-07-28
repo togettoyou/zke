@@ -291,6 +291,11 @@ export interface paths {
         };
         get: operations["listTenants"];
         put?: never;
+        /**
+         * @description Tenant 名称全局唯一，比较时忽略大小写；名称被占用时返回 409
+         *     `tenant_name_conflict`。唯一性不区分状态：已停用的 Tenant 处于 suspended
+         *     且可被重新启用，因此在被改名之前仍然占用其名称。
+         */
         post: operations["createTenant"];
         delete?: never;
         options?: never;
@@ -308,8 +313,18 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getTenant"];
+        /**
+         * @description Tenant 名称全局唯一，比较时忽略大小写；名称被占用时返回 409
+         *     `tenant_name_conflict`。唯一性不区分状态：已停用的 Tenant 处于 suspended
+         *     且可被重新启用，因此在被改名之前仍然占用其名称。
+         */
         put: operations["updateTenant"];
         post?: never;
+        /**
+         * @description 删除 Tenant 及其下全部 Project、Cluster、Agent 身份与凭证——记录被真正移除，
+         *     不可恢复。若只是临时冻结，使用 `PUT` 将 `status` 置为 `suspended`：停用不撤销
+         *     任何内容，恢复后 Agent 以原身份重新连接。审计记录不随之删除，并保留删除时的名称。
+         */
         delete: operations["deleteTenant"];
         options?: never;
         head?: never;
@@ -327,6 +342,11 @@ export interface paths {
         };
         get: operations["listProjects"];
         put?: never;
+        /**
+         * @description Project 名称在其 Tenant 内唯一，比较时忽略大小写；名称被占用时返回 409
+         *     `project_name_conflict`。唯一性不区分状态：已停用的 Project 处于 suspended
+         *     且可被重新启用，因此在被改名之前仍然占用其名称。
+         */
         post: operations["createProject"];
         delete?: never;
         options?: never;
@@ -344,8 +364,17 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getProject"];
+        /**
+         * @description Project 名称在其 Tenant 内唯一，比较时忽略大小写；名称被占用时返回 409
+         *     `project_name_conflict`。唯一性不区分状态：已停用的 Project 处于 suspended
+         *     且可被重新启用，因此在被改名之前仍然占用其名称。
+         */
         put: operations["updateProject"];
         post?: never;
+        /**
+         * @description 删除 Project 及其下全部 Cluster、Agent 身份与凭证——记录被真正移除，不可恢复。
+         *     临时冻结请改用 `PUT` 将 `status` 置为 `suspended`。
+         */
         delete: operations["deleteProject"];
         options?: never;
         head?: never;
@@ -376,8 +405,21 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getCluster"];
+        /**
+         * @description 重命名 Cluster，并在 `active` 与 `suspended` 之间切换。停用会断开 Agent 连接，
+         *     但不撤销任何身份或凭证，恢复后 Agent 以原身份自动重连；停用需要 `confirm: true`。
+         *     `pending` 与 `active` 由 Agent 连接状态决定，不能由此接口设置；停用中的 Cluster
+         *     恢复后回到 `pending`，直到 Agent 重新连接。
+         *
+         *     Cluster 名称在其 Project 内唯一，比较时忽略大小写；名称被占用时返回 409
+         *     `cluster_name_conflict`。停用不释放名称，删除才释放——删除会移除记录本身。
+         */
         put: operations["updateCluster"];
         post?: never;
+        /**
+         * @description 删除 Cluster 及其 Agent 身份与凭证——记录被真正移除，不可恢复，名称随之释放。
+         *     临时冻结请改用 `PUT` 将 `status` 置为 `suspended`：Agent 被断开但身份保留。
+         */
         delete: operations["deleteCluster"];
         options?: never;
         head?: never;
@@ -393,6 +435,11 @@ export interface paths {
         };
         get: operations["listClusterEnrollments"];
         put?: never;
+        /**
+         * @description 首次接入时 `cluster_name` 在其 Project 内必须唯一（忽略大小写），被占用时返回
+         *     409 `cluster_name_conflict`。名称在签发凭证时校验一次，在 Agent 完成注册、
+         *     实际创建 Cluster 时再次由唯一约束保证——两者之间名称仍可能被占用。
+         */
         post: operations["createClusterEnrollment"];
         delete?: never;
         options?: never;
@@ -601,6 +648,13 @@ export interface components {
         };
         UpdateClusterRequest: {
             name: string;
+            /**
+             * @description 只能设置 `active` 或 `suspended`。`pending` 由 Agent 连接状态决定， 恢复中的 Cluster 会回到 `pending` 直到 Agent 重新连接。
+             * @enum {string}
+             */
+            status: "active" | "suspended";
+            /** @description status=suspended 时必须为 true */
+            confirm?: boolean;
         };
         PasswordResetRequest: {
             /** Format: password */
@@ -737,15 +791,25 @@ export interface components {
             /** @enum {string} */
             actor_type: "user" | "agent" | "system";
             actor_user_id?: components["schemas"]["UUID"];
+            /** @description 事件写入时该用户的用户名。审计记录不对用户、Tenant、Project 或 Cluster 建立外键，因此这些对象被删除后其 ID 不再可解析；随事件一同记录的名称是 该记录此后唯一可读的身份依据。 */
+            actor_user_name?: string;
             actor_agent_id?: components["schemas"]["UUID"];
             /** @enum {string} */
             scope_type: "global" | "tenant" | "project" | "cluster";
             tenant_id?: components["schemas"]["UUID"];
+            /** @description 事件写入时该 Tenant 的名称。 */
+            tenant_name?: string;
             project_id?: components["schemas"]["UUID"];
+            /** @description 事件写入时该 Project 的名称。 */
+            project_name?: string;
             cluster_id?: components["schemas"]["UUID"];
+            /** @description 事件写入时该 Cluster 的名称。 */
+            cluster_name?: string;
             action: string;
             target_type: string;
             target_id?: components["schemas"]["UUID"];
+            /** @description 事件写入时目标对象的名称。Session、RoleBinding、Agent 与凭证没有名称， 此字段为空。 */
+            target_name?: string;
             /** @enum {string} */
             result: "succeeded" | "failed" | "denied";
             request_id: string;
@@ -1663,7 +1727,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Tenant 已停用，下属接入身份已撤销 */
+            /** @description Tenant 已删除，下属资源、接入身份和凭证已移除 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1830,7 +1894,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Project 已停用，下属接入身份已撤销 */
+            /** @description Project 已删除，下属资源、接入身份和凭证已移除 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1851,7 +1915,7 @@ export interface operations {
                 limit?: components["parameters"]["ListLimit"];
                 offset?: components["parameters"]["ListOffset"];
                 q?: components["parameters"]["ListSearch"];
-                status?: "pending" | "active" | "revoked";
+                status?: "pending" | "active" | "suspended";
             };
             header?: never;
             path: {
@@ -1958,7 +2022,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Cluster 已退役，内部接入身份和凭证已撤销 */
+            /** @description Cluster 已删除，内部接入身份和凭证已移除 */
             200: {
                 headers: {
                     [name: string]: unknown;

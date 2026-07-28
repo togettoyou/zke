@@ -339,6 +339,8 @@ func mapStoreError(err error) error {
 		return ErrAttemptConflict
 	case errors.Is(err, store.ErrEnrollmentAttemptFailed):
 		return ErrAttemptFailed
+	case errors.Is(err, store.ErrClusterNameConflict):
+		return ErrClusterNameConflict
 	default:
 		return err
 	}

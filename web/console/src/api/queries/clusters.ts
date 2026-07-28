@@ -7,6 +7,7 @@ import { errorMessage } from "../errors";
 import { queryKeys, queryKeyPrefixes } from "../query-keys";
 import type {
   ClusterAggregate,
+  ClusterLifecycleStatus,
   ClusterStatus,
   ListParams,
   Pagination,
@@ -175,11 +176,21 @@ export function useClusterOverview(enabled = true) {
 export function useUpdateCluster() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { clusterId: string; name: string }) =>
+    mutationFn: async (input: {
+      clusterId: string;
+      name: string;
+      status: ClusterLifecycleStatus;
+    }) =>
       unwrap(
         await api.PUT("/api/v1/clusters/{cluster_id}", {
           params: { path: { cluster_id: input.clusterId }, header: csrfHeaders() },
-          body: { name: input.name },
+          // Suspending is the sensitive direction, so it carries the explicit
+          // confirmation the Server requires; resuming does not.
+          body: {
+            name: input.name,
+            status: input.status,
+            confirm: input.status === "suspended",
+          },
         }),
       ),
     onSuccess: async (_data, variables) => {

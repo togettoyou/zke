@@ -262,7 +262,8 @@ Agent 私钥始终保存在目标集群，Server 只保存客户端证书及其�
 实现。注册完成后，Agent 使用客户端证书主动建立 QUIC/mTLS Connection，完成 `ClientHello`、证书身份交叉校验、
 `ServerHello`、心跳确认和有界重连；Server 会校验数据库中的证书序列号、有效期与撤销状态，并将首次有效连接
 持久化为 active。Agent 会在配置的续期窗口内通过 Control Stream 自动续期；新证书成功连接后旧 Credential
-被撤销。Credential、Agent 或 Cluster 撤销会通过 PostgreSQL 通知各 Server 实例关闭对应现有连接。业务
+被撤销。Credential 或 Agent 身份撤销会通过 PostgreSQL 通知各 Server 实例关闭对应现有连接并停止当前身份
+重试；Tenant、Project 或 Cluster 停用也会通知断连，但属于可恢复原因，恢复后 Agent 自动重连。业务
 Request/Data Stream 仍未实现。
 
 ### 6.3 证书生命周期
@@ -271,7 +272,8 @@ Request/Data Stream 仍未实现。
 - CSR 在网络请求前写入 identity Secret，Server 以 CSR 指纹保证续期幂等；
 - Server 验证当前 Agent 身份后签发新叶子证书，旧 Credential 保留到新证书成功连接；
 - Agent 原子更新身份 Secret 并用新证书重连，Server 激活新 Credential 后撤销旧 Credential；
-- Credential、Agent 或 Cluster 撤销通过 PostgreSQL 通知关闭当前 Connection，并阻止后续连接；
+- Credential 或 Agent 身份撤销通过 PostgreSQL 通知关闭当前 Connection，并阻止当前身份后续连接；
+- Tenant、Project 或 Cluster 停用通过 PostgreSQL 通知关闭当前 Connection，但 Agent 保持重试；
 - 已建立连接会在客户端证书自然到期时关闭；
 - Agent 离线至证书过期后不能再通过 mTLS 续期，当前需要重新 Enrollment；
 - Server 与 Agent 信任根的双信任窗口轮换仍属于后续工作。
@@ -506,7 +508,8 @@ Global、Tenant 和 Project RoleBinding 过滤，不返回不可见资源。Clus
 Cluster 当前连接撤销要求 Session、CSRF、`cluster.connection.revoke` 权限和 `{"confirm":true}` 显式确认。
 Server 在同一事务中更新内部 Agent 生命周期、撤销全部客户端 Credential 并写入 Cluster 作用域成功审计；重复
 撤销返回 `200`、原撤销时间和 `already_revoked: true`。撤销后可使用重新接入接口生成绑定同一 `cluster_id`
-的一次性 Enrollment。Cluster 逻辑删除则将 Cluster 置为 `revoked`，不允许重新接入。
+的一次性 Enrollment。Cluster 停用置为 `suspended`，断开 Agent 但保留身份，恢复后回到 `pending` 等待重连；
+删除则移除 Cluster 记录本身，不可恢复。
 
 创建 Agent 注册凭证时，Server 生成 15 分钟有效的一次性随机 Token。Token 明文只在成功响应中返回一次，
 响应禁止缓存；数据库只保存 SHA-256 摘要。凭证记录和成功审计事件在同一事务内写入。请求必须携带 16 至 128
@@ -607,18 +610,28 @@ TLS 1.3 和 mTLS，不经过 HTTP 网关，也不复用 HTTP TLS 身份。
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
-| Tenant | `id`, `name`, `status` | 顶层权限边界 |
-| Project | `id`, `tenant_id`, `name`, `status` | Cluster 的直接管理范围 |
+| Tenant | `id`, `name`, `status` | 顶层权限边界；名称全局唯一且不区分大小写，已停用的 Tenant 仍占用其名称，删除才释放 |
+| Project | `id`, `tenant_id`, `name`, `status` | Cluster 的直接管理范围；名称在其 Tenant 内唯一且不区分大小写，规则与 Tenant 相同 |
 | User | `id`, `username_normalized`, `display_name`, `password_hash`, `status`, `failed_login_count`, `locked_at`, `lock_expires_at`, `password_changed_at` | 本地用户，规范化用户名唯一；只保存 Argon2id 摘要，锁定状态持久化 |
 | UserSession | `id`, `user_id`, `token_digest`, `idle_expires_at`, `expires_at`, `revoked_at` | Server 端不透明会话，只保存 Token 摘要 |
 | RoleBinding | `subject_id`, `role`, `scope_type`, `tenant_id`, `project_id` | 服务端授权依据；作用域形状由约束校验 |
-| Cluster | `id`, `tenant_id`, `project_id`, `name`, `status`, `last_seen_at` | 全局逻辑资源；操作仍在该集群执行 |
+| Cluster | `id`, `tenant_id`, `project_id`, `name`, `status`, `last_seen_at` | 全局逻辑资源；操作仍在该集群执行；名称在其 Project 内唯一且不区分大小写，未使用的 Enrollment 同样占用名称 |
 | Agent | `id`, `cluster_id`, `version`, `protocol_version`, `lifecycle_status`, `health_status`, `active_credential_serial`, `last_seen_at` | Cluster 的内部连接身份；不作为独立管理资源暴露，可保留多次接入历史 |
 | AgentCredential | `id`, `agent_id`, `serial`, `csr_fingerprint`, `certificate_pem`, `expires_at`, `revoked_at` | 客户端证书及元数据 |
 | Enrollment | `id`, `tenant_id`, `project_id`, `cluster_id`, `cluster_name`, `token_digest`, `expires_at`, `consumed_at`, `revoked_at` | 首次接入绑定名称，重新接入绑定现有 Cluster 的一次性凭证 |
 | EnrollmentAttempt | `id`, `enrollment_id`, `idempotency_key`, `csr_fingerprint`, `status`, `response`, `created_at` | 注册幂等与结果恢复 |
 | ServerPKIState | Client/Listener CA 与 Listener 叶子证书的 `fingerprint`, `expires_at` | Managed PKI 的数据库绑定和 PV 丢失保护 |
-| AuditEvent | `id`, `actor_type`, `actor_user_id`, `actor_agent_id`, `scope_type`, `tenant_id`, `project_id`, `cluster_id`, `action`, `target_type`, `target_id`, `result`, `request_id`, `created_at` | 审计元数据；发起者按类型使用外键约束，不保存敏感操作正文 |
+| AuditEvent | `id`, `actor_type`, `actor_user_id`, `actor_user_name`, `actor_agent_id`, `scope_type`, `tenant_id`, `tenant_name`, `project_id`, `project_name`, `cluster_id`, `cluster_name`, `action`, `target_type`, `target_id`, `target_name`, `result`, `request_id`, `created_at` | 审计元数据；不对用户、Tenant、Project、Cluster、Agent 建立外键，以便记录在对象被删除后继续存在，并随事件保存当时的名称；不保存敏感操作正文 |
+
+Tenant、Project 和 Cluster 都只有两个生命周期动作：**停用**与**删除**。
+
+停用是可逆的，且不销毁任何东西：只写入自身记录的 `status`，不撤销 Enrollment、Agent 身份或 Credential，
+也不改写下级资源的状态（否则恢复时无法区分哪些下级是被单独停用的）。约束由各执行路径按整条祖先链检查完成——
+Agent 激活、心跳与证书续期都要求 Tenant、Project、Cluster 全部处于可用状态；停用某一层还会通过数据库通知
+立即断开其下全部 Agent。Agent 身份保持不变，恢复后自动重连。停用中的资源仍然占用其名称。
+
+删除是真正的删除：在同一事务内按依赖顺序移除记录本身，名称随之释放。删除 Agent 记录会触发通知，
+连接管理器立即断开对应连接。审计事件在删除前写入，因此仍能读到被删除对象的名称。
 
 所有从属资源表都保留足够的作用域字段或可验证外键，防止仅凭资源 ID 造成跨 Tenant、Project 数据串扰。
 管理 API、RBAC 和审计使用稳定 `cluster_id`。内部 Agent ID 只用于连接协议、Credential 归属和历史追踪；

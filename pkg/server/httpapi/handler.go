@@ -136,6 +136,8 @@ type failedOperation struct {
 	ActorUserID string
 	Action      string
 	TargetType  string
+	TargetID    string
+	TargetName  string
 	Result      string
 }
 
@@ -158,6 +160,10 @@ func (handler baseHandler) recordFailure(
 	defer cancel()
 
 	requestID := httpmiddleware.RequestID(c)
+	targetID := operation.TargetID
+	if targetID == "" {
+		targetID = c.Param(operation.TargetType + "_id")
+	}
 	var err error
 	switch operation.Scope {
 	case auditScopeTenant:
@@ -166,6 +172,8 @@ func (handler baseHandler) recordFailure(
 			TenantID:    c.Param("tenant_id"),
 			Action:      operation.Action,
 			TargetType:  operation.TargetType,
+			TargetID:    targetID,
+			TargetName:  operation.TargetName,
 			Result:      result,
 			RequestID:   requestID,
 		})
@@ -174,6 +182,9 @@ func (handler baseHandler) recordFailure(
 			ActorUserID: operation.ActorUserID,
 			ProjectID:   c.Param("project_id"),
 			Action:      operation.Action,
+			TargetType:  operation.TargetType,
+			TargetID:    targetID,
+			TargetName:  operation.TargetName,
 			Result:      result,
 			RequestID:   requestID,
 		})
@@ -182,6 +193,9 @@ func (handler baseHandler) recordFailure(
 			ActorUserID: operation.ActorUserID,
 			ClusterID:   c.Param("cluster_id"),
 			Action:      operation.Action,
+			TargetType:  operation.TargetType,
+			TargetID:    targetID,
+			TargetName:  operation.TargetName,
 			Result:      result,
 			RequestID:   requestID,
 		})
@@ -190,6 +204,8 @@ func (handler baseHandler) recordFailure(
 			ActorUserID: operation.ActorUserID,
 			Action:      operation.Action,
 			TargetType:  operation.TargetType,
+			TargetID:    targetID,
+			TargetName:  operation.TargetName,
 			Result:      result,
 			RequestID:   requestID,
 		})

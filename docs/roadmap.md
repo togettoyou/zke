@@ -15,7 +15,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Agent identity Secret、QUIC/mTLS、Hello、心跳与断线重连
 - [x] Agent 客户端证书自动续期、Cluster 连接撤销/重新接入、通知断连与实时连接/证书状态 API
 - [x] Server Managed Agent PKI 初始化与 Listener 叶子证书自动续期
-- [x] Tenant、Project 与 Cluster 查询、更新和逻辑删除生命周期 API
+- [x] Tenant、Project 与 Cluster 查询、更新、停用/恢复与删除生命周期 API
 - [x] Cluster 聚合外部模型，内部 Agent 身份不独立暴露
 - [x] 用户完整管理生命周期、RoleBinding 查询/创建/删除、账户锁定恢复与管理员密码重置 API
 - [x] Console 权限能力发现、当前用户自助改密与管理列表分页筛选

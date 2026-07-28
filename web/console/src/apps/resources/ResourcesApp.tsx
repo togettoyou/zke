@@ -136,7 +136,7 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
   }
   const [nameDialog, setNameDialog] = useState<NameDialogState>(null);
   const [statusTarget, setStatusTarget] = useState<Tenant | null>(null);
-  const [retireTarget, setRetireTarget] = useState<Tenant | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Tenant | null>(null);
 
   const query = useTenants({
     limit: DEFAULT_PAGE_SIZE,
@@ -239,8 +239,8 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
                         {tenant.status === "active" ? "停用" : "恢复"}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem variant="danger" onSelect={() => setRetireTarget(tenant)}>
-                        退役
+                      <DropdownMenuItem variant="danger" onSelect={() => setDeleteTarget(tenant)}>
+                        删除
                       </DropdownMenuItem>
                     </>
                   ) : null}
@@ -351,8 +351,12 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
         scopeLines={[{ label: "租户", name: statusTarget?.name ?? "", id: statusTarget?.id }]}
         impacts={
           statusTarget?.status === "active"
-            ? ["该租户及其下的项目将被标记为停用", "停用状态下不能创建新的项目与集群接入凭证"]
-            : ["该租户恢复为启用状态"]
+            ? [
+                "租户及其下的项目、集群暂停使用，已连接的 Agent 被断开",
+                "不撤销任何接入身份或凭证，恢复后 Agent 以原身份自动重连",
+                "停用期间租户名称仍被占用",
+              ]
+            : ["租户恢复为启用状态", "其下 Agent 将自动重新连接"]
         }
         confirmationText={statusTarget?.status === "active" ? statusTarget?.name : undefined}
         pending={updateTenant.isPending}
@@ -376,30 +380,31 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
       />
 
       <SensitiveActionDialog
-        open={Boolean(retireTarget)}
-        onOpenChange={(open) => !open && setRetireTarget(null)}
-        title="退役租户"
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="删除租户"
         destructive
-        description="退役会停用租户，并撤销其下全部集群的接入身份与未使用凭证。"
-        scopeLines={[{ label: "租户", name: retireTarget?.name ?? "", id: retireTarget?.id }]}
+        description="删除会连同其下的项目、集群、Agent 身份与凭证一并移除。记录不再存在，无法恢复。"
+        scopeLines={[{ label: "租户", name: deleteTarget?.name ?? "", id: deleteTarget?.id }]}
         impacts={[
-          "租户及其下项目被停用",
-          "其下全部集群的 Agent 接入身份被撤销，已连接的 Agent 将断开",
-          "未使用的接入凭证全部失效",
-          "该操作会写入审计记录，且不可自动回滚",
+          "租户及其下的项目、集群、Agent 身份与凭证被永久删除",
+          "已连接的 Agent 立即断开，且无法再次接入",
+          "租户名称随之释放，可被重新使用",
+          "审计记录保留，并保存删除时的名称",
+          "若只是临时冻结，请改用「停用」——停用不删除任何内容",
         ]}
-        confirmationText={retireTarget?.name}
-        confirmLabel="确认退役"
+        confirmationText={deleteTarget?.name}
+        confirmLabel="确认删除"
         pending={deleteTenant.isPending}
         error={deleteTenant.error}
         onConfirm={async () => {
-          if (!retireTarget) {
+          if (!deleteTarget) {
             return;
           }
           try {
-            await deleteTenant.mutateAsync({ tenantId: retireTarget.id });
-            toast.success("租户已退役");
-            setRetireTarget(null);
+            await deleteTenant.mutateAsync({ tenantId: deleteTarget.id });
+            toast.success("租户已删除");
+            setDeleteTarget(null);
           } catch {
             // Error is rendered inside the dialog.
           }
@@ -441,7 +446,7 @@ function ProjectSection({
   }
   const [nameDialog, setNameDialog] = useState<NameDialogState>(null);
   const [statusTarget, setStatusTarget] = useState<Project | null>(null);
-  const [retireTarget, setRetireTarget] = useState<Project | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
 
   const query = useProjects(tenantId, {
     limit: DEFAULT_PAGE_SIZE,
@@ -533,8 +538,8 @@ function ProjectSection({
                         {project.status === "active" ? "停用" : "恢复"}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem variant="danger" onSelect={() => setRetireTarget(project)}>
-                        退役
+                      <DropdownMenuItem variant="danger" onSelect={() => setDeleteTarget(project)}>
+                        删除
                       </DropdownMenuItem>
                     </>
                   ) : null}
@@ -679,8 +684,12 @@ function ProjectSection({
         ]}
         impacts={
           statusTarget?.status === "active"
-            ? ["停用后不能创建集群接入凭证", "已有集群保持现状，但不可再新增接入"]
-            : ["项目恢复为启用状态"]
+            ? [
+                "项目及其下的集群暂停使用，已连接的 Agent 被断开",
+                "不撤销任何接入身份或凭证，恢复后 Agent 以原身份自动重连",
+                "停用期间项目名称仍被占用",
+              ]
+            : ["项目恢复为启用状态", "其下 Agent 将自动重新连接"]
         }
         confirmationText={statusTarget?.status === "active" ? statusTarget?.name : undefined}
         pending={updateProject.isPending}
@@ -704,33 +713,34 @@ function ProjectSection({
       />
 
       <SensitiveActionDialog
-        open={Boolean(retireTarget)}
-        onOpenChange={(open) => !open && setRetireTarget(null)}
-        title="退役项目"
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="删除项目"
         destructive
-        description="退役会停用项目，并撤销其下集群的接入身份与未使用凭证。"
+        description="删除会连同其下的集群、Agent 身份与凭证一并移除。记录不再存在，无法恢复。"
         scopeLines={[
           { label: "租户", name: tenantName ?? "", id: tenantId },
-          { label: "项目", name: retireTarget?.name ?? "", id: retireTarget?.id },
+          { label: "项目", name: deleteTarget?.name ?? "", id: deleteTarget?.id },
         ]}
         impacts={[
-          "项目被停用",
-          "其下全部集群的 Agent 接入身份被撤销，已连接的 Agent 将断开",
-          "未使用的接入凭证全部失效",
-          "该操作会写入审计记录，且不可自动回滚",
+          "项目及其下的集群、Agent 身份与凭证被永久删除",
+          "已连接的 Agent 立即断开，且无法再次接入",
+          "项目名称在该租户内随之释放",
+          "审计记录保留，并保存删除时的名称",
+          "若只是临时冻结，请改用「停用」——停用不删除任何内容",
         ]}
-        confirmationText={retireTarget?.name}
-        confirmLabel="确认退役"
+        confirmationText={deleteTarget?.name}
+        confirmLabel="确认删除"
         pending={deleteProject.isPending}
         error={deleteProject.error}
         onConfirm={async () => {
-          if (!retireTarget) {
+          if (!deleteTarget) {
             return;
           }
           try {
-            await deleteProject.mutateAsync({ projectId: retireTarget.id });
-            toast.success("项目已退役");
-            setRetireTarget(null);
+            await deleteProject.mutateAsync({ projectId: deleteTarget.id });
+            toast.success("项目已删除");
+            setDeleteTarget(null);
           } catch {
             // Error is rendered inside the dialog.
           }

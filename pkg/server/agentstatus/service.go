@@ -95,7 +95,7 @@ func (service *Service) ListProject(
 	if !validation.IsUUID(input.ProjectID) ||
 		input.Now.IsZero() ||
 		input.Page.Validate() != nil ||
-		!allowedValue(input.Status, "pending", "active", "revoked") {
+		!allowedValue(input.Status, "pending", "active", "suspended") {
 		return AgentPage{}, ErrInvalidInput
 	}
 	stored, total, err := service.store.ListProjectAgentCertificates(

@@ -50,14 +50,19 @@ SELECT
     id::text,
     actor_type,
     COALESCE(actor_user_id::text, ''),
+    COALESCE(actor_user_name, ''),
     COALESCE(actor_agent_id::text, ''),
     scope_type,
     COALESCE(tenant_id::text, ''),
+    COALESCE(tenant_name, ''),
     COALESCE(project_id::text, ''),
+    COALESCE(project_name, ''),
     COALESCE(cluster_id::text, ''),
+    COALESCE(cluster_name, ''),
     action,
     target_type,
     COALESCE(target_id::text, ''),
+    COALESCE(target_name, ''),
     result,
     request_id,
     created_at
@@ -90,14 +95,19 @@ func scanAuditRecord(rows pgx.Rows) (AuditRecord, error) {
 		&item.ID,
 		&item.ActorType,
 		&item.ActorUserID,
+		&item.ActorUserName,
 		&item.ActorAgentID,
 		&item.ScopeType,
 		&item.TenantID,
+		&item.TenantName,
 		&item.ProjectID,
+		&item.ProjectName,
 		&item.ClusterID,
+		&item.ClusterName,
 		&item.Action,
 		&item.TargetType,
 		&item.TargetID,
+		&item.TargetName,
 		&item.Result,
 		&item.RequestID,
 		&item.CreatedAt,
@@ -119,28 +129,34 @@ func (store *AuditStore) RecordTenantEvent(
 	}
 	if _, err := store.pool.Exec(ctx, `
 WITH tenant_scope AS (
-    SELECT id AS tenant_id
+    SELECT id AS tenant_id, name AS tenant_name
     FROM tenants
     WHERE id = $2::uuid
 )
 INSERT INTO audit_events (
-    id, actor_type, actor_user_id, scope_type, tenant_id, action,
-    target_type, target_id, result, request_id
+    id, actor_type, actor_user_id, scope_type, tenant_id, tenant_name,
+    action, target_type, target_id, target_name, result, request_id
 )
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'tenant',
-    tenant_scope.tenant_id, $3, $4, NULL::uuid, $5, $6
+    tenant_scope.tenant_id,
+    COALESCE(NULLIF($3, ''), tenant_scope.tenant_name),
+    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9
 FROM tenant_scope
 UNION ALL
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'global',
-    NULL::uuid, $3, $4, NULL::uuid, $5, $6
+    NULL::uuid, NULLIF($3, ''),
+    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9
 WHERE NOT EXISTS (SELECT 1 FROM tenant_scope)
 `,
 		input.ActorUserID,
 		input.TenantID,
+		input.TenantName,
 		input.Action,
 		input.TargetType,
+		input.TargetID,
+		input.TargetName,
 		input.Result,
 		input.RequestID,
 	); err != nil {
@@ -156,6 +172,7 @@ func (store *AuditStore) RecordProjectEvent(
 	if strings.TrimSpace(input.ActorUserID) == "" ||
 		strings.TrimSpace(input.ProjectID) == "" ||
 		strings.TrimSpace(input.Action) == "" ||
+		strings.TrimSpace(input.TargetType) == "" ||
 		strings.TrimSpace(input.RequestID) == "" ||
 		(input.Result != "failed" && input.Result != "denied") {
 		return errors.New("project audit event fields are invalid")
@@ -163,7 +180,7 @@ func (store *AuditStore) RecordProjectEvent(
 
 	if _, err := store.pool.Exec(ctx, `
 WITH project_scope AS (
-    SELECT tenant_id, id AS project_id
+    SELECT tenant_id, id AS project_id, name AS project_name
     FROM projects
     WHERE id = $2::uuid
 )
@@ -174,9 +191,11 @@ INSERT INTO audit_events (
     scope_type,
     tenant_id,
     project_id,
+    project_name,
     action,
     target_type,
     target_id,
+    target_name,
     result,
     request_id
 )
@@ -187,11 +206,13 @@ SELECT
     'project',
     project_scope.tenant_id,
     project_scope.project_id,
-    $3,
+    COALESCE(NULLIF($3, ''), project_scope.project_name),
     $4,
-    project_scope.project_id,
     $5,
-    $6
+    NULLIF($6, '')::uuid,
+    NULLIF($7, ''),
+    $8,
+    $9
 FROM project_scope
 UNION ALL
 SELECT
@@ -201,17 +222,22 @@ SELECT
     'global',
     NULL::uuid,
     NULL::uuid,
-    $3,
+    NULLIF($3, ''),
     $4,
-    $2::uuid,
     $5,
-    $6
+    NULLIF($6, '')::uuid,
+    NULLIF($7, ''),
+    $8,
+    $9
 WHERE NOT EXISTS (SELECT 1 FROM project_scope)
 `,
 		input.ActorUserID,
 		input.ProjectID,
+		input.ProjectName,
 		input.Action,
-		auditaction.TargetProject,
+		input.TargetType,
+		input.TargetID,
+		input.TargetName,
 		input.Result,
 		input.RequestID,
 	); err != nil {
@@ -240,6 +266,8 @@ INSERT INTO audit_events (
     scope_type,
     action,
     target_type,
+    target_id,
+    target_name,
     result,
     request_id
 )
@@ -250,13 +278,17 @@ VALUES (
     'global',
     $2,
     $3,
-    $4,
-    $5
+    NULLIF($4, '')::uuid,
+    NULLIF($5, ''),
+    $6,
+    $7
 )
 `,
 		input.ActorUserID,
 		input.Action,
 		input.TargetType,
+		input.TargetID,
+		input.TargetName,
 		input.Result,
 		input.RequestID,
 	); err != nil {
@@ -345,36 +377,44 @@ func (store *AuditStore) RecordClusterEvent(
 	if strings.TrimSpace(input.ActorUserID) == "" ||
 		strings.TrimSpace(input.ClusterID) == "" ||
 		strings.TrimSpace(input.Action) == "" ||
+		strings.TrimSpace(input.TargetType) == "" ||
 		strings.TrimSpace(input.RequestID) == "" ||
 		(input.Result != "failed" && input.Result != "denied") {
 		return errors.New("cluster audit event fields are invalid")
 	}
 	if _, err := store.pool.Exec(ctx, `
 WITH cluster_scope AS (
-    SELECT tenant_id, project_id, id AS cluster_id
+    SELECT tenant_id, project_id, id AS cluster_id, name AS cluster_name
     FROM clusters
     WHERE id = $2::uuid
 )
 INSERT INTO audit_events (
     id, actor_type, actor_user_id, scope_type, tenant_id, project_id,
-    cluster_id, action, target_type, target_id, result, request_id
+    cluster_id, cluster_name, action, target_type, target_id, target_name,
+    result, request_id
 )
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'cluster',
     cluster_scope.tenant_id, cluster_scope.project_id,
-    cluster_scope.cluster_id, $3, $4, cluster_scope.cluster_id, $5, $6
+    cluster_scope.cluster_id,
+    COALESCE(NULLIF($3, ''), cluster_scope.cluster_name),
+    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9
 FROM cluster_scope
 UNION ALL
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'global',
     NULL::uuid, NULL::uuid, NULL::uuid,
-    $3, $4, $2::uuid, $5, $6
+    NULLIF($3, ''), $4, $5, NULLIF($6, '')::uuid,
+    NULLIF($7, ''), $8, $9
 WHERE NOT EXISTS (SELECT 1 FROM cluster_scope)
 `,
 		input.ActorUserID,
 		input.ClusterID,
+		input.ClusterName,
 		input.Action,
-		auditaction.TargetCluster,
+		input.TargetType,
+		input.TargetID,
+		input.TargetName,
 		input.Result,
 		input.RequestID,
 	); err != nil {

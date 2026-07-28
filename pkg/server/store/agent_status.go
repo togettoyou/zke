@@ -261,7 +261,7 @@ JOIN clusters AS cluster
 WHERE credential.revoked_at IS NULL
   AND credential.expires_at <= $1
   AND agent.lifecycle_status <> 'revoked'
-  AND cluster.status <> 'revoked'
+  AND cluster.status <> 'suspended'
 ORDER BY credential.expires_at
 `, deadline)
 	if err != nil {

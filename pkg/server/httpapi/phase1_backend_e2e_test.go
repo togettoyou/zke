@@ -384,7 +384,7 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 		router,
 		http.MethodPut,
 		"/api/v1/clusters/"+firstIdentity.ClusterID,
-		`{"name":"Updated Phase 1 Cluster"}`,
+		`{"name":"Updated Phase 1 Cluster","status":"active"}`,
 		sessionCookie,
 		csrfCookie.Value,
 		"",
@@ -526,7 +526,7 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 			operation: "update cluster as viewer",
 			method:    http.MethodPut,
 			path:      "/api/v1/clusters/" + firstIdentity.ClusterID,
-			body:      `{"name":"Refused Cluster","confirm":true}`,
+			body:      `{"name":"Refused Cluster","status":"active"}`,
 			csrfToken: viewerCSRF.Value,
 			action:    string(rbac.PermissionClusterManage),
 		},
@@ -762,55 +762,66 @@ WHERE result = 'denied'
 		)
 	}
 
-	var clusterStatus, userStatus, tenantStatus, projectStatus string
-	var agentCount, activeAgentCount, credentialCount, activeCredentialCount int
+	/*
+	 * Deletion is deletion: the rows are gone, not marked.
+	 *
+	 * The user is only disabled — users have their own lifecycle and this flow
+	 * disables rather than deletes one — so it is the one subject still present.
+	 */
+	var clusterRows, tenantRows, projectRows, agentRows, credentialRows int
+	var userStatus string
 	if err := pool.QueryRow(ctx, `
 SELECT
-    (SELECT status FROM clusters WHERE id = $1),
-    (SELECT status FROM users WHERE id = $2),
-    (SELECT status FROM tenants WHERE id = $3),
-    (SELECT status FROM projects WHERE id = $4),
+    (SELECT count(*) FROM clusters WHERE id = $1),
+    (SELECT count(*) FROM tenants WHERE id = $3),
+    (SELECT count(*) FROM projects WHERE id = $4),
     (SELECT count(*) FROM agents WHERE cluster_id = $1),
-    (
-        SELECT count(*) FROM agents
-        WHERE cluster_id = $1 AND lifecycle_status <> 'revoked'
-    ),
     (SELECT count(*) FROM agent_credentials WHERE cluster_id = $1),
-    (
-        SELECT count(*) FROM agent_credentials
-        WHERE cluster_id = $1 AND revoked_at IS NULL
-    )
+    (SELECT status FROM users WHERE id = $2)
 `, firstIdentity.ClusterID, user.ID, tenant.ID, project.ID).Scan(
-		&clusterStatus,
+		&clusterRows,
+		&tenantRows,
+		&projectRows,
+		&agentRows,
+		&credentialRows,
 		&userStatus,
-		&tenantStatus,
-		&projectStatus,
-		&agentCount,
-		&activeAgentCount,
-		&credentialCount,
-		&activeCredentialCount,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if clusterStatus != "revoked" ||
-		userStatus != "disabled" ||
-		tenantStatus != "suspended" ||
-		projectStatus != "suspended" ||
-		agentCount != 2 ||
-		activeAgentCount != 0 ||
-		credentialCount != 2 ||
-		activeCredentialCount != 0 {
+	if clusterRows != 0 || tenantRows != 0 || projectRows != 0 ||
+		agentRows != 0 || credentialRows != 0 || userStatus != "disabled" {
 		t.Fatalf(
-			"final Phase 1 state cluster/user/tenant/project/agents/active/credentials/active = "+
-				"%s/%s/%s/%s/%d/%d/%d/%d",
-			clusterStatus,
+			"after deletion cluster/tenant/project/agents/credentials rows = %d/%d/%d/%d/%d "+
+				"and user status = %s; want everything deleted and the user disabled",
+			clusterRows,
+			tenantRows,
+			projectRows,
+			agentRows,
+			credentialRows,
 			userStatus,
-			tenantStatus,
-			projectStatus,
-			agentCount,
-			activeAgentCount,
-			credentialCount,
-			activeCredentialCount,
+		)
+	}
+
+	/*
+	 * And the audit trail outlived all of it, carrying the names.
+	 *
+	 * This is the whole reason the audit table holds no foreign keys: the ids
+	 * above now resolve to nothing, so without the names recorded at the time,
+	 * the record of who deleted what would be a row of dangling uuids.
+	 */
+	var deletionName, deletionActor string
+	if err := pool.QueryRow(ctx, `
+SELECT COALESCE(target_name, ''), COALESCE(actor_user_name, '')
+FROM audit_events
+WHERE action = $1 AND target_id = $2
+`, auditaction.TenantDelete, tenant.ID).Scan(&deletionName, &deletionActor); err != nil {
+		t.Fatal(err)
+	}
+	if deletionName != "Updated Phase 1 Tenant" || deletionActor != "phase1-admin" {
+		t.Fatalf(
+			"tenant deletion audit target/actor = %q/%q, want the names held at the time",
+			deletionName,
+			deletionActor,
 		)
 	}
 	if admin.ID == "" {

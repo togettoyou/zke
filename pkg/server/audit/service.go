@@ -18,21 +18,28 @@ type Service struct {
 	authorization *rbac.Service
 }
 
+// Event mirrors the store record, names included: an audit trail that outlives
+// its subjects has to carry what they were called.
 type Event struct {
-	ID           string
-	ActorType    string
-	ActorUserID  string
-	ActorAgentID string
-	ScopeType    string
-	TenantID     string
-	ProjectID    string
-	ClusterID    string
-	Action       string
-	TargetType   string
-	TargetID     string
-	Result       string
-	RequestID    string
-	CreatedAt    time.Time
+	ID            string
+	ActorType     string
+	ActorUserID   string
+	ActorUserName string
+	ActorAgentID  string
+	ScopeType     string
+	TenantID      string
+	TenantName    string
+	ProjectID     string
+	ProjectName   string
+	ClusterID     string
+	ClusterName   string
+	Action        string
+	TargetType    string
+	TargetID      string
+	TargetName    string
+	Result        string
+	RequestID     string
+	CreatedAt     time.Time
 }
 
 type QueryInput struct {
@@ -58,7 +65,11 @@ var ErrInvalidQuery = errors.New("invalid audit query")
 type ProjectEventInput struct {
 	ActorUserID string
 	ProjectID   string
+	ProjectName string
 	Action      string
+	TargetType  string
+	TargetID    string
+	TargetName  string
 	Result      string
 	RequestID   string
 }
@@ -67,6 +78,8 @@ type GlobalEventInput struct {
 	ActorUserID string
 	Action      string
 	TargetType  string
+	TargetID    string
+	TargetName  string
 	Result      string
 	RequestID   string
 }
@@ -74,8 +87,11 @@ type GlobalEventInput struct {
 type TenantEventInput struct {
 	ActorUserID string
 	TenantID    string
+	TenantName  string
 	Action      string
 	TargetType  string
+	TargetID    string
+	TargetName  string
 	Result      string
 	RequestID   string
 }
@@ -91,7 +107,11 @@ type AgentEventInput struct {
 type ClusterEventInput struct {
 	ActorUserID string
 	ClusterID   string
+	ClusterName string
 	Action      string
+	TargetType  string
+	TargetID    string
+	TargetName  string
 	Result      string
 	RequestID   string
 }
@@ -173,20 +193,25 @@ func validAuditEnum(value string, allowed ...string) bool {
 
 func eventFromStore(item store.AuditRecord) Event {
 	return Event{
-		ID:           item.ID,
-		ActorType:    item.ActorType,
-		ActorUserID:  item.ActorUserID,
-		ActorAgentID: item.ActorAgentID,
-		ScopeType:    item.ScopeType,
-		TenantID:     item.TenantID,
-		ProjectID:    item.ProjectID,
-		ClusterID:    item.ClusterID,
-		Action:       item.Action,
-		TargetType:   item.TargetType,
-		TargetID:     item.TargetID,
-		Result:       item.Result,
-		RequestID:    item.RequestID,
-		CreatedAt:    item.CreatedAt,
+		ID:            item.ID,
+		ActorType:     item.ActorType,
+		ActorUserID:   item.ActorUserID,
+		ActorUserName: item.ActorUserName,
+		ActorAgentID:  item.ActorAgentID,
+		ScopeType:     item.ScopeType,
+		TenantID:      item.TenantID,
+		TenantName:    item.TenantName,
+		ProjectID:     item.ProjectID,
+		ProjectName:   item.ProjectName,
+		ClusterID:     item.ClusterID,
+		ClusterName:   item.ClusterName,
+		Action:        item.Action,
+		TargetType:    item.TargetType,
+		TargetID:      item.TargetID,
+		TargetName:    item.TargetName,
+		Result:        item.Result,
+		RequestID:     item.RequestID,
+		CreatedAt:     item.CreatedAt,
 	}
 }
 
@@ -206,6 +231,8 @@ func (service *Service) RecordGlobalEvent(
 		ActorUserID: input.ActorUserID,
 		Action:      input.Action,
 		TargetType:  input.TargetType,
+		TargetID:    validAuditTargetID(input.TargetID),
+		TargetName:  input.TargetName,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
 	})
@@ -227,8 +254,11 @@ func (service *Service) RecordTenantEvent(
 		return service.store.RecordTenantEvent(ctx, store.TenantAuditEvent{
 			ActorUserID: input.ActorUserID,
 			TenantID:    input.TenantID,
+			TenantName:  input.TenantName,
 			Action:      input.Action,
 			TargetType:  input.TargetType,
+			TargetID:    validAuditTargetID(input.TargetID),
+			TargetName:  input.TargetName,
 			Result:      input.Result,
 			RequestID:   input.RequestID,
 		})
@@ -237,6 +267,8 @@ func (service *Service) RecordTenantEvent(
 		ActorUserID: input.ActorUserID,
 		Action:      input.Action,
 		TargetType:  input.TargetType,
+		TargetID:    input.TargetID,
+		TargetName:  input.TargetName,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
 	})
@@ -252,11 +284,24 @@ func (service *Service) RecordProjectEvent(
 		(input.Result != "failed" && input.Result != "denied") {
 		return errors.New("audit event fields are invalid")
 	}
+	targetType := input.TargetType
+	if strings.TrimSpace(targetType) == "" {
+		targetType = auditaction.TargetProject
+	}
+	targetID := input.TargetID
+	if targetID == "" && targetType == auditaction.TargetProject {
+		targetID = input.ProjectID
+	}
+	targetID = validAuditTargetID(targetID)
 	if validation.IsUUID(input.ProjectID) {
 		return service.store.RecordProjectEvent(ctx, store.ProjectAuditEvent{
 			ActorUserID: input.ActorUserID,
 			ProjectID:   input.ProjectID,
+			ProjectName: input.ProjectName,
 			Action:      input.Action,
+			TargetType:  targetType,
+			TargetID:    targetID,
+			TargetName:  input.TargetName,
 			Result:      input.Result,
 			RequestID:   input.RequestID,
 		})
@@ -264,7 +309,9 @@ func (service *Service) RecordProjectEvent(
 	return service.store.RecordGlobalEvent(ctx, store.GlobalAuditEvent{
 		ActorUserID: input.ActorUserID,
 		Action:      input.Action,
-		TargetType:  auditaction.TargetProject,
+		TargetType:  targetType,
+		TargetID:    targetID,
+		TargetName:  input.TargetName,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
 	})
@@ -282,11 +329,24 @@ func (service *Service) RecordClusterEvent(
 	) {
 		return errors.New("audit event fields are invalid")
 	}
+	targetType := input.TargetType
+	if strings.TrimSpace(targetType) == "" {
+		targetType = auditaction.TargetCluster
+	}
+	targetID := input.TargetID
+	if targetID == "" && targetType == auditaction.TargetCluster {
+		targetID = input.ClusterID
+	}
+	targetID = validAuditTargetID(targetID)
 	if validation.IsUUID(input.ClusterID) {
 		return service.store.RecordClusterEvent(ctx, store.ClusterAuditEvent{
 			ActorUserID: input.ActorUserID,
 			ClusterID:   input.ClusterID,
+			ClusterName: input.ClusterName,
 			Action:      input.Action,
+			TargetType:  targetType,
+			TargetID:    targetID,
+			TargetName:  input.TargetName,
 			Result:      input.Result,
 			RequestID:   input.RequestID,
 		})
@@ -294,7 +354,9 @@ func (service *Service) RecordClusterEvent(
 	return service.RecordGlobalEvent(ctx, GlobalEventInput{
 		ActorUserID: input.ActorUserID,
 		Action:      input.Action,
-		TargetType:  auditaction.TargetCluster,
+		TargetType:  targetType,
+		TargetID:    targetID,
+		TargetName:  input.TargetName,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
 	})
@@ -330,4 +392,14 @@ func validBaseEvent(
 		strings.TrimSpace(action) != "" &&
 		strings.TrimSpace(requestID) != "" &&
 		(result == "failed" || result == "denied")
+}
+
+// validAuditTargetID keeps a malformed request path from destroying the audit
+// event that records its failure. Target ids are UUID columns; an invalid path
+// segment is request context, not a resource identity that can be stored there.
+func validAuditTargetID(value string) string {
+	if validation.IsUUID(value) {
+		return value
+	}
+	return ""
 }

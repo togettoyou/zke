@@ -178,6 +178,67 @@ WHERE agent.id = $1
 		)
 	}
 
+	for _, suspension := range []struct {
+		name     string
+		suspend  string
+		resume   string
+		resource string
+	}{
+		{
+			name:     "tenant",
+			suspend:  "UPDATE tenants SET status = 'suspended' WHERE id = $1",
+			resume:   "UPDATE tenants SET status = 'active' WHERE id = $1",
+			resource: tenantID,
+		},
+		{
+			name:     "project",
+			suspend:  "UPDATE projects SET status = 'suspended' WHERE id = $1",
+			resume:   "UPDATE projects SET status = 'active' WHERE id = $1",
+			resource: projectID,
+		},
+		{
+			name:     "cluster",
+			suspend:  "UPDATE clusters SET status = 'suspended' WHERE id = $1",
+			resume:   "UPDATE clusters SET status = 'active' WHERE id = $1",
+			resource: clusterID,
+		},
+	} {
+		t.Run(suspension.name+" suspension is reversible", func(t *testing.T) {
+			if _, err := pool.Exec(ctx, suspension.suspend, suspension.resource); err != nil {
+				t.Fatal(err)
+			}
+			err := connectionStore.RecordHeartbeat(
+				ctx,
+				store.RecordAgentHeartbeatParams{
+					Identity:          identity,
+					CertificateSerial: "42",
+					HealthStatus:      "healthy",
+					Now:               heartbeatAt,
+				},
+			)
+			if !errors.Is(err, store.ErrAgentScopeSuspended) {
+				t.Fatalf(
+					"RecordHeartbeat() error = %v, want ErrAgentScopeSuspended",
+					err,
+				)
+			}
+			if _, err := pool.Exec(ctx, suspension.resume, suspension.resource); err != nil {
+				t.Fatal(err)
+			}
+			if err := connectionStore.RecordHeartbeat(
+				ctx,
+				store.RecordAgentHeartbeatParams{
+					Identity:          identity,
+					CertificateSerial: "42",
+					HealthStatus:      "healthy",
+					Now:               heartbeatAt,
+				},
+			); err != nil {
+				t.Fatalf("RecordHeartbeat() after resume: %v", err)
+			}
+		})
+	}
+
 	renewedExpiresAt := heartbeatAt.Add(24 * time.Hour)
 	renewed, err := connectionStore.RenewCredential(
 		ctx,

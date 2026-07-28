@@ -67,6 +67,14 @@ export const ERROR_MESSAGES: Record<string, string> = {
   resource_conflict: "资源状态与请求冲突",
   resource_state_conflict: "目标资源当前状态不允许该操作",
   idempotency_conflict: "幂等键已用于内容不同的请求，请重新发起",
+  // Each spells out its own scope and says where the holder might be hiding: a
+  // stopped resource still holds its name and is not in the default list.
+  tenant_name_conflict:
+    "租户名称已被占用（不区分大小写；已停用的租户仍然占用其名称，删除才会释放）",
+  project_name_conflict:
+    "同一租户下项目名称已被占用（不区分大小写；已停用的项目仍然占用其名称，删除才会释放）",
+  cluster_name_conflict:
+    "同一项目下集群名称已被占用（不区分大小写；已停用的集群或未使用的接入凭证都会占用名称）",
   last_global_admin: "必须保留最后一个有效的全局管理员",
   self_disable_forbidden: "不能禁用当前登录的账号",
   self_delete_forbidden: "不能删除当前登录的账号",

@@ -108,5 +108,6 @@ func (handler *agentManagementHandler) recordRevokeFailure(
 		Scope:       auditScopeCluster,
 		ActorUserID: userID,
 		Action:      auditaction.ClusterConnectionRevoke,
+		TargetType:  auditaction.TargetCluster,
 	})
 }

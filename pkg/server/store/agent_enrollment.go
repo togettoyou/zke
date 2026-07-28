@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
@@ -23,9 +24,19 @@ type lockedEnrollment struct {
 	ClusterName   string
 	TenantStatus  string
 	ProjectStatus string
+	ClusterStatus string
 	ExpiresAt     time.Time
 	ConsumedAt    *time.Time
 	RevokedAt     *time.Time
+}
+
+type enrollmentLockScope struct {
+	TenantID      string
+	ProjectID     string
+	ClusterID     string
+	TenantStatus  string
+	ProjectStatus string
+	ClusterStatus string
 }
 
 func (store *EnrollmentStore) BeginAgentEnrollment(
@@ -276,6 +287,14 @@ VALUES ($1, $2, $3, $4, 'pending')
 			enrollment.ProjectID,
 			enrollment.ClusterName,
 		)
+		// The name was chosen when the enrollment was issued, which may have been
+		// long before this Agent turned up; another Cluster can have taken it in
+		// between. Reported as its own error so the Agent is told the name is
+		// taken rather than that something went wrong on the Server.
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) && databaseError.Code == "23505" {
+			return AgentEnrollmentResult{}, ErrClusterNameConflict
+		}
 		if err != nil {
 			return AgentEnrollmentResult{}, fmt.Errorf("create enrolled cluster: %w", err)
 		}
@@ -337,9 +356,11 @@ VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
 	}
 	if _, err := transaction.Exec(ctx, `
 UPDATE enrollments
-SET consumed_at = $2
+SET
+    cluster_id = COALESCE(cluster_id, $2),
+    consumed_at = $3
 WHERE id = $1
-`, enrollment.ID, input.Now); err != nil {
+`, enrollment.ID, result.ClusterID, input.Now); err != nil {
 		return AgentEnrollmentResult{}, fmt.Errorf("consume agent enrollment token: %w", err)
 	}
 	if _, err := transaction.Exec(ctx, `
@@ -406,7 +427,18 @@ func lockEnrollmentByTokenDigest(
 	transaction pgx.Tx,
 	tokenDigest []byte,
 ) (lockedEnrollment, error) {
-	return scanLockedEnrollment(transaction.QueryRow(ctx, `
+	scope, err := findEnrollmentLockScope(transaction.QueryRow(ctx, `
+SELECT tenant_id::text, project_id::text, COALESCE(cluster_id::text, '')
+FROM enrollments
+WHERE token_digest = $1
+`, tokenDigest))
+	if err != nil {
+		return lockedEnrollment{}, err
+	}
+	if err := lockEnrollmentScope(ctx, transaction, &scope); err != nil {
+		return lockedEnrollment{}, err
+	}
+	enrollment, err := scanLockedEnrollment(transaction.QueryRow(ctx, `
 SELECT
     enrollment.id::text,
     enrollment.tenant_id::text,
@@ -424,8 +456,17 @@ JOIN projects AS project
   ON project.tenant_id = enrollment.tenant_id
  AND project.id = enrollment.project_id
 WHERE enrollment.token_digest = $1
-FOR UPDATE OF enrollment, tenant, project
-`, tokenDigest))
+  AND enrollment.tenant_id = $2
+  AND enrollment.project_id = $3
+FOR UPDATE OF enrollment
+`, tokenDigest, scope.TenantID, scope.ProjectID))
+	if err != nil {
+		return lockedEnrollment{}, err
+	}
+	enrollment.TenantStatus = scope.TenantStatus
+	enrollment.ProjectStatus = scope.ProjectStatus
+	enrollment.ClusterStatus = scope.ClusterStatus
+	return enrollment, nil
 }
 
 func lockEnrollmentByID(
@@ -433,7 +474,18 @@ func lockEnrollmentByID(
 	transaction pgx.Tx,
 	enrollmentID string,
 ) (lockedEnrollment, error) {
-	return scanLockedEnrollment(transaction.QueryRow(ctx, `
+	scope, err := findEnrollmentLockScope(transaction.QueryRow(ctx, `
+SELECT tenant_id::text, project_id::text, COALESCE(cluster_id::text, '')
+FROM enrollments
+WHERE id = $1
+`, enrollmentID))
+	if err != nil {
+		return lockedEnrollment{}, err
+	}
+	if err := lockEnrollmentScope(ctx, transaction, &scope); err != nil {
+		return lockedEnrollment{}, err
+	}
+	enrollment, err := scanLockedEnrollment(transaction.QueryRow(ctx, `
 SELECT
     enrollment.id::text,
     enrollment.tenant_id::text,
@@ -451,8 +503,83 @@ JOIN projects AS project
   ON project.tenant_id = enrollment.tenant_id
  AND project.id = enrollment.project_id
 WHERE enrollment.id = $1
-FOR UPDATE OF enrollment, tenant, project
-`, enrollmentID))
+  AND enrollment.tenant_id = $2
+  AND enrollment.project_id = $3
+FOR UPDATE OF enrollment
+`, enrollmentID, scope.TenantID, scope.ProjectID))
+	if err != nil {
+		return lockedEnrollment{}, err
+	}
+	enrollment.TenantStatus = scope.TenantStatus
+	enrollment.ProjectStatus = scope.ProjectStatus
+	enrollment.ClusterStatus = scope.ClusterStatus
+	return enrollment, nil
+}
+
+func findEnrollmentLockScope(row pgx.Row) (enrollmentLockScope, error) {
+	var scope enrollmentLockScope
+	if err := row.Scan(&scope.TenantID, &scope.ProjectID, &scope.ClusterID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return enrollmentLockScope{}, err
+		}
+		return enrollmentLockScope{}, fmt.Errorf("find enrollment lock scope: %w", err)
+	}
+	return scope, nil
+}
+
+// lockEnrollmentScope establishes the common hierarchy used by registration
+// and lifecycle operations: Tenant, Project, Cluster, then Enrollment. Reading
+// the identifiers before taking locks is safe because the Enrollment is read
+// again under its own lock afterwards; a concurrent deletion simply turns that
+// second read into ErrNoRows. The second read deliberately checks only Tenant
+// and Project identity: the first successful completion fills cluster_id while
+// a concurrent idempotent completion may be waiting for the Enrollment lock.
+func lockEnrollmentScope(
+	ctx context.Context,
+	transaction pgx.Tx,
+	scope *enrollmentLockScope,
+) error {
+	if err := transaction.QueryRow(ctx, `
+SELECT status
+FROM tenants
+WHERE id = $1
+FOR SHARE
+`, scope.TenantID).Scan(&scope.TenantStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return fmt.Errorf("lock enrollment Tenant: %w", err)
+	}
+	if err := transaction.QueryRow(ctx, `
+SELECT status
+FROM projects
+WHERE id = $1
+  AND tenant_id = $2
+FOR SHARE
+`, scope.ProjectID, scope.TenantID).Scan(&scope.ProjectStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return fmt.Errorf("lock enrollment Project: %w", err)
+	}
+	if scope.ClusterID == "" {
+		return nil
+	}
+	if err := transaction.QueryRow(ctx, `
+SELECT status
+FROM clusters
+WHERE id = $1
+  AND tenant_id = $2
+  AND project_id = $3
+FOR SHARE
+`, scope.ClusterID, scope.TenantID, scope.ProjectID).
+		Scan(&scope.ClusterStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return fmt.Errorf("lock enrollment Cluster: %w", err)
+	}
+	return nil
 }
 
 func scanLockedEnrollment(row pgx.Row) (lockedEnrollment, error) {
@@ -481,6 +608,7 @@ func scanLockedEnrollment(row pgx.Row) (lockedEnrollment, error) {
 func (enrollment lockedEnrollment) isUsable(now time.Time) bool {
 	return enrollment.TenantStatus == "active" &&
 		enrollment.ProjectStatus == "active" &&
+		(enrollment.ClusterID == "" || enrollment.ClusterStatus != "suspended") &&
 		enrollment.ConsumedAt == nil &&
 		enrollment.RevokedAt == nil &&
 		enrollment.ExpiresAt.After(now)

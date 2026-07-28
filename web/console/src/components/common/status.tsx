@@ -17,7 +17,7 @@ const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
   cluster: {
     pending: { label: "待接入", tone: "warning" },
     active: { label: "已接入", tone: "success" },
-    revoked: { label: "已退役", tone: "danger" },
+    suspended: { label: "已停用", tone: "neutral" },
   },
   connection: {
     online: { label: "在线", tone: "success" },

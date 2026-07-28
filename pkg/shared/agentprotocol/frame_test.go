@@ -62,3 +62,11 @@ func TestWriteFrameRejectsMissingMessage(t *testing.T) {
 		t.Fatalf("WriteFrame() error = %v, want ErrEmptyFrame", err)
 	}
 }
+
+func TestScopeSuspensionIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	if GoAwayIsPermanent(GoAwayScopeSuspended) {
+		t.Fatal("scope suspension must not permanently strand the Agent")
+	}
+}

@@ -15,7 +15,10 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
-var ErrAgentCredentialRejected = errors.New("Agent credential rejected")
+var (
+	ErrAgentCredentialRejected = errors.New("Agent credential rejected")
+	ErrAgentScopeSuspended     = errors.New("Agent scope suspended")
+)
 
 type AgentConnectionStore struct {
 	pool *pgxpool.Pool
@@ -63,9 +66,12 @@ type AgentCredentialResult struct {
 }
 
 type AgentConnectionRevocation struct {
+	TenantID          string `json:"tenant_id"`
+	ProjectID         string `json:"project_id"`
 	AgentID           string `json:"agent_id"`
 	ClusterID         string `json:"cluster_id"`
 	CertificateSerial string `json:"certificate_serial"`
+	Reason            string `json:"reason"`
 }
 
 func NewAgentConnectionStore(pool *pgxpool.Pool) *AgentConnectionStore {
@@ -96,7 +102,20 @@ WITH valid_agent AS (
       AND a.cluster_id = $3
       AND a.id = $4
       AND a.lifecycle_status <> 'revoked'
-      AND cluster.status <> 'revoked'
+      -- The whole chain has to be live. Suspension no longer revokes anything,
+      -- so this is what actually holds a frozen Tenant, Project or Cluster
+      -- closed; the Agent keeps its identity and reconnects when it is resumed.
+      AND cluster.status <> 'suspended'
+      AND EXISTS (
+          SELECT 1 FROM projects AS p
+          WHERE p.tenant_id = a.tenant_id
+            AND p.id = a.project_id
+            AND p.status = 'active'
+      )
+      AND EXISTS (
+          SELECT 1 FROM tenants AS tn
+          WHERE tn.id = a.tenant_id AND tn.status = 'active'
+      )
       AND credential.serial = $5
       AND credential.revoked_at IS NULL
       AND credential.expires_at > $9
@@ -131,7 +150,7 @@ SET status = 'active',
 WHERE tenant_id = $1
   AND project_id = $2
   AND id = $3
-  AND status <> 'revoked'
+  AND status <> 'suspended'
   AND EXISTS (SELECT 1 FROM updated_agent)
 `,
 		params.Identity.TenantID,
@@ -148,7 +167,13 @@ WHERE tenant_id = $1
 		return err
 	}
 	if commandTag.RowsAffected() != 1 {
-		return ErrAgentCredentialRejected
+		return store.classifyAgentConnectionRejection(
+			ctx,
+			store.pool,
+			params.Identity,
+			params.CertificateSerial,
+			params.Now,
+		)
 	}
 	return nil
 }
@@ -189,6 +214,18 @@ WITH updated_agent AS (
             AND revoked_at IS NULL
             AND expires_at > $7
       )
+      -- Suspending a Tenant or Project writes nothing to the Agents below it,
+      -- so this is where they find out: the next heartbeat is refused and the
+      -- connection ends, without any credential being revoked.
+      AND EXISTS (
+          SELECT 1 FROM projects
+          WHERE projects.tenant_id = $1 AND projects.id = $2
+            AND projects.status = 'active'
+      )
+      AND EXISTS (
+          SELECT 1 FROM tenants
+          WHERE tenants.id = $1 AND tenants.status = 'active'
+      )
     RETURNING id
 )
 UPDATE clusters
@@ -212,7 +249,13 @@ WHERE tenant_id = $1
 		return err
 	}
 	if commandTag.RowsAffected() != 1 {
-		return ErrAgentCredentialRejected
+		return store.classifyAgentConnectionRejection(
+			ctx,
+			store.pool,
+			params.Identity,
+			params.CertificateSerial,
+			params.Now,
+		)
 	}
 	return nil
 }
@@ -264,6 +307,16 @@ WHERE credential.tenant_id = $1
   AND credential.expires_at > $6
   AND agent.lifecycle_status = 'active'
   AND cluster.status = 'active'
+  AND EXISTS (
+      SELECT 1 FROM projects
+      WHERE projects.tenant_id = credential.tenant_id
+        AND projects.id = credential.project_id
+        AND projects.status = 'active'
+  )
+  AND EXISTS (
+      SELECT 1 FROM tenants
+      WHERE tenants.id = credential.tenant_id AND tenants.status = 'active'
+  )
 FOR UPDATE OF credential
 `,
 		params.Identity.TenantID,
@@ -274,7 +327,13 @@ FOR UPDATE OF credential
 		params.Now,
 	).Scan(&currentCredentialID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return AgentCredentialResult{}, ErrAgentCredentialRejected
+		return AgentCredentialResult{}, store.classifyAgentConnectionRejection(
+			ctx,
+			transaction,
+			params.Identity,
+			params.CurrentCertificateSerial,
+			params.Now,
+		)
 	}
 	if err != nil {
 		return AgentCredentialResult{}, fmt.Errorf(
@@ -412,6 +471,66 @@ VALUES (
 		PEM:          params.CertificatePEM,
 		ExpiresAt:    params.CertificateExpiresAt,
 	}, nil
+}
+
+type agentConnectionQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// classifyAgentConnectionRejection separates a reversible scope suspension
+// from a permanently unusable identity. Callers use the distinction to keep
+// retrying while a Tenant, Project or Cluster is suspended without weakening
+// credential, expiry or Agent revocation checks.
+func (store *AgentConnectionStore) classifyAgentConnectionRejection(
+	ctx context.Context,
+	queryer agentConnectionQueryer,
+	identity AgentConnectionIdentity,
+	certificateSerial string,
+	now time.Time,
+) error {
+	var tenantStatus, projectStatus, clusterStatus string
+	err := queryer.QueryRow(ctx, `
+SELECT tenant.status, project.status, cluster.status
+FROM agents AS agent
+JOIN tenants AS tenant ON tenant.id = agent.tenant_id
+JOIN projects AS project
+  ON project.tenant_id = agent.tenant_id
+ AND project.id = agent.project_id
+JOIN clusters AS cluster
+  ON cluster.tenant_id = agent.tenant_id
+ AND cluster.project_id = agent.project_id
+ AND cluster.id = agent.cluster_id
+JOIN agent_credentials AS credential
+  ON credential.tenant_id = agent.tenant_id
+ AND credential.project_id = agent.project_id
+ AND credential.cluster_id = agent.cluster_id
+ AND credential.agent_id = agent.id
+WHERE agent.tenant_id = $1
+  AND agent.project_id = $2
+  AND agent.cluster_id = $3
+  AND agent.id = $4
+  AND agent.lifecycle_status <> 'revoked'
+  AND credential.serial = $5
+  AND credential.revoked_at IS NULL
+  AND credential.expires_at > $6
+`,
+		identity.TenantID,
+		identity.ProjectID,
+		identity.ClusterID,
+		identity.AgentID,
+		certificateSerial,
+		now,
+	).Scan(&tenantStatus, &projectStatus, &clusterStatus)
+	if err == nil &&
+		(tenantStatus == "suspended" ||
+			projectStatus == "suspended" ||
+			clusterStatus == "suspended") {
+		return ErrAgentScopeSuspended
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("classify Agent connection rejection: %w", err)
+	}
+	return ErrAgentCredentialRejected
 }
 
 // WatchRevocations delivers revocation notifications until ctx is cancelled or

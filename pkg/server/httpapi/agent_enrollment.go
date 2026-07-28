@@ -76,7 +76,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 		maxCreateAgentEnrollmentRequestBytes,
 	); err != nil {
 		handler.recordProjectFailure(
-			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "", "failed",
 		)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid enrollment request")
 		return
@@ -99,14 +99,14 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 	cancelOperation()
 	if errors.Is(err, enrollment.ErrInvalidInput) {
 		handler.recordProjectFailure(
-			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, request.ClusterName, "failed",
 		)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid enrollment request")
 		return
 	}
 	if errors.Is(err, enrollment.ErrDenied) {
 		handler.recordProjectFailure(
-			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "denied",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, request.ClusterName, "denied",
 		)
 		writeError(c, http.StatusForbidden, "forbidden", "permission denied")
 		return
@@ -120,9 +120,21 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 		)
 		return
 	}
+	if errors.Is(err, enrollment.ErrClusterNameConflict) {
+		handler.recordProjectFailure(
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, request.ClusterName, "failed",
+		)
+		writeError(
+			c,
+			http.StatusConflict,
+			"cluster_name_conflict",
+			"cluster name is already in use in this project",
+		)
+		return
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		handler.recordProjectFailure(
-			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, request.ClusterName, "failed",
 		)
 		handler.logger.Warn(
 			"create Cluster enrollment timed out",
@@ -135,7 +147,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 	}
 	if err != nil {
 		handler.recordProjectFailure(
-			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentCreate, request.ClusterName, "failed",
 		)
 		handler.logger.Error(
 			"create Cluster enrollment",
@@ -207,7 +219,7 @@ func (handler *enrollmentHandler) revoke(c *gin.Context) {
 		c, &request, maxCreateAgentEnrollmentRequestBytes,
 	); err != nil || !request.Confirm {
 		handler.recordProjectFailure(
-			c, identity.User.ID, auditaction.ClusterEnrollmentRevoke, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentRevoke, "", "failed",
 		)
 		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
 		return
@@ -221,7 +233,7 @@ func (handler *enrollmentHandler) revoke(c *gin.Context) {
 	cancel()
 	if err != nil {
 		handler.recordProjectFailure(
-			c, identity.User.ID, auditaction.ClusterEnrollmentRevoke, "failed",
+			c, identity.User.ID, auditaction.ClusterEnrollmentRevoke, "", "failed",
 		)
 	}
 	if handler.respondEnrollmentError(c, "revoke Cluster enrollment", err) {
@@ -288,12 +300,15 @@ func (handler *enrollmentHandler) recordProjectFailure(
 	c *gin.Context,
 	userID string,
 	action string,
+	targetName string,
 	result string,
 ) {
 	handler.recordFailure(c, failedOperation{
 		Scope:       auditScopeProject,
 		ActorUserID: userID,
 		Action:      action,
+		TargetType:  auditaction.TargetEnrollment,
+		TargetName:  targetName,
 		Result:      result,
 	})
 }
@@ -308,6 +323,7 @@ func (handler *enrollmentHandler) recordClusterFailure(
 		Scope:       auditScopeCluster,
 		ActorUserID: userID,
 		Action:      action,
+		TargetType:  auditaction.TargetEnrollment,
 		Result:      result,
 	})
 }

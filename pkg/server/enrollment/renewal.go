@@ -92,6 +92,9 @@ func (service *CertificateRenewalService) Renew(
 		},
 	)
 	if err != nil {
+		if errors.Is(err, store.ErrAgentScopeSuspended) {
+			return RenewCertificateResult{}, ErrScopeSuspended
+		}
 		if errors.Is(err, store.ErrAgentCredentialRejected) {
 			return RenewCertificateResult{}, ErrCredentialRejected
 		}

@@ -45,21 +45,30 @@ type auditActionResponse struct {
 	Group string `json:"group"`
 }
 
+// The `*_name` fields are the names the subjects carried when the event was
+// written. They are the only way to read a row whose subject has since been
+// deleted, so they are part of the event rather than something the Console
+// resolves by id afterwards — by then there may be nothing to resolve.
 type auditEventResponse struct {
-	ID           string    `json:"id"`
-	ActorType    string    `json:"actor_type"`
-	ActorUserID  string    `json:"actor_user_id,omitempty"`
-	ActorAgentID string    `json:"actor_agent_id,omitempty"`
-	ScopeType    string    `json:"scope_type"`
-	TenantID     string    `json:"tenant_id,omitempty"`
-	ProjectID    string    `json:"project_id,omitempty"`
-	ClusterID    string    `json:"cluster_id,omitempty"`
-	Action       string    `json:"action"`
-	TargetType   string    `json:"target_type"`
-	TargetID     string    `json:"target_id,omitempty"`
-	Result       string    `json:"result"`
-	RequestID    string    `json:"request_id"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	ActorType     string    `json:"actor_type"`
+	ActorUserID   string    `json:"actor_user_id,omitempty"`
+	ActorUserName string    `json:"actor_user_name,omitempty"`
+	ActorAgentID  string    `json:"actor_agent_id,omitempty"`
+	ScopeType     string    `json:"scope_type"`
+	TenantID      string    `json:"tenant_id,omitempty"`
+	TenantName    string    `json:"tenant_name,omitempty"`
+	ProjectID     string    `json:"project_id,omitempty"`
+	ProjectName   string    `json:"project_name,omitempty"`
+	ClusterID     string    `json:"cluster_id,omitempty"`
+	ClusterName   string    `json:"cluster_name,omitempty"`
+	Action        string    `json:"action"`
+	TargetType    string    `json:"target_type"`
+	TargetID      string    `json:"target_id,omitempty"`
+	TargetName    string    `json:"target_name,omitempty"`
+	Result        string    `json:"result"`
+	RequestID     string    `json:"request_id"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func newAuditQueryHandler(
@@ -106,20 +115,25 @@ func (handler *auditQueryHandler) list(c *gin.Context) {
 	events := make([]auditEventResponse, 0, len(result.Events))
 	for _, item := range result.Events {
 		events = append(events, auditEventResponse{
-			ID:           item.ID,
-			ActorType:    item.ActorType,
-			ActorUserID:  item.ActorUserID,
-			ActorAgentID: item.ActorAgentID,
-			ScopeType:    item.ScopeType,
-			TenantID:     item.TenantID,
-			ProjectID:    item.ProjectID,
-			ClusterID:    item.ClusterID,
-			Action:       item.Action,
-			TargetType:   item.TargetType,
-			TargetID:     item.TargetID,
-			Result:       item.Result,
-			RequestID:    item.RequestID,
-			CreatedAt:    responseTime(item.CreatedAt),
+			ID:            item.ID,
+			ActorType:     item.ActorType,
+			ActorUserID:   item.ActorUserID,
+			ActorUserName: item.ActorUserName,
+			ActorAgentID:  item.ActorAgentID,
+			ScopeType:     item.ScopeType,
+			TenantID:      item.TenantID,
+			TenantName:    item.TenantName,
+			ProjectID:     item.ProjectID,
+			ProjectName:   item.ProjectName,
+			ClusterID:     item.ClusterID,
+			ClusterName:   item.ClusterName,
+			Action:        item.Action,
+			TargetType:    item.TargetType,
+			TargetID:      item.TargetID,
+			TargetName:    item.TargetName,
+			Result:        item.Result,
+			RequestID:     item.RequestID,
+			CreatedAt:     responseTime(item.CreatedAt),
 		})
 	}
 	writeSuccess(c, http.StatusOK, gin.H{

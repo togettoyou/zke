@@ -211,6 +211,21 @@ WHERE action = 'cluster.enroll'
 			succeededAuditCount,
 		)
 	}
+	var consumedEnrollmentClusterID string
+	if err := pool.QueryRow(ctx, `
+SELECT cluster_id::text
+FROM enrollments
+WHERE id = $1
+`, created.ID).Scan(&consumedEnrollmentClusterID); err != nil {
+		t.Fatal(err)
+	}
+	if consumedEnrollmentClusterID != results[0].ClusterID {
+		t.Fatalf(
+			"consumed Enrollment cluster ID = %q, want %q",
+			consumedEnrollmentClusterID,
+			results[0].ClusterID,
+		)
+	}
 
 	if _, err := store.NewAgentManagementStore(pool).Revoke(
 		ctx,
@@ -236,6 +251,35 @@ WHERE action = 'cluster.enroll'
 		t.Fatal(err)
 	}
 	reenrollmentFingerprint := sha256.Sum256([]byte("cluster-reenrollment-csr"))
+	if _, err := pool.Exec(
+		ctx,
+		"UPDATE clusters SET status = 'suspended' WHERE id = $1",
+		results[0].ClusterID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enrollmentStore.BeginAgentEnrollment(
+		ctx,
+		store.BeginAgentEnrollmentParams{
+			TokenDigest:    reenrollmentDigest[:],
+			IdempotencyKey: "consume-cluster-reenrollment-0001",
+			CSRFingerprint: reenrollmentFingerprint[:],
+			RequestID:      "request-begin-suspended-cluster-reenrollment",
+			Now:            now.Add(2 * time.Minute),
+		},
+	); !errors.Is(err, store.ErrEnrollmentTokenRejected) {
+		t.Fatalf(
+			"BeginAgentEnrollment() for suspended Cluster error = %v, want ErrEnrollmentTokenRejected",
+			err,
+		)
+	}
+	if _, err := pool.Exec(
+		ctx,
+		"UPDATE clusters SET status = 'active' WHERE id = $1",
+		results[0].ClusterID,
+	); err != nil {
+		t.Fatal(err)
+	}
 	reenrollmentAttempt, err := enrollmentStore.BeginAgentEnrollment(
 		ctx,
 		store.BeginAgentEnrollmentParams{

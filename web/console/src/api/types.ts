@@ -29,7 +29,9 @@ export type AuditEventPage = Schemas["AuditEventPage"];
 export type AuditAction = Schemas["AuditAction"];
 
 export type ResourceStatus = "active" | "suspended";
-export type ClusterStatus = "pending" | "active" | "revoked";
+export type ClusterStatus = "pending" | "active" | "suspended";
+/** The two states an operator may set; `pending` follows the Agent connection. */
+export type ClusterLifecycleStatus = "active" | "suspended";
 export type EnrollmentStatus = "active" | "consumed" | "expired" | "revoked";
 export type ConnectionStatus = ClusterConnection["status"];
 export type CertificateStatus = ClusterConnection["certificate_status"];

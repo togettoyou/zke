@@ -45,16 +45,22 @@ const (
 	RoleBindingCreate = "role_binding.create"
 	RoleBindingDelete = "role_binding.delete"
 
-	TenantCreate = "tenant.create"
-	TenantUpdate = "tenant.update"
-	TenantDelete = "tenant.delete"
+	TenantCreate  = "tenant.create"
+	TenantUpdate  = "tenant.update"
+	TenantSuspend = "tenant.suspend"
+	TenantResume  = "tenant.resume"
+	TenantDelete  = "tenant.delete"
 
-	ProjectCreate = "project.create"
-	ProjectUpdate = "project.update"
-	ProjectDelete = "project.delete"
+	ProjectCreate  = "project.create"
+	ProjectUpdate  = "project.update"
+	ProjectSuspend = "project.suspend"
+	ProjectResume  = "project.resume"
+	ProjectDelete  = "project.delete"
 
 	ClusterEnroll             = "cluster.enroll"
 	ClusterUpdate             = "cluster.update"
+	ClusterSuspend            = "cluster.suspend"
+	ClusterResume             = "cluster.resume"
 	ClusterDelete             = "cluster.delete"
 	ClusterEnrollmentCreate   = "cluster.enrollment.create"
 	ClusterEnrollmentRevoke   = "cluster.enrollment.revoke"
@@ -195,14 +201,20 @@ var actions = []Action{
 
 	{TenantCreate, GroupTenant},
 	{TenantUpdate, GroupTenant},
+	{TenantSuspend, GroupTenant},
+	{TenantResume, GroupTenant},
 	{TenantDelete, GroupTenant},
 
 	{ProjectCreate, GroupProject},
 	{ProjectUpdate, GroupProject},
+	{ProjectSuspend, GroupProject},
+	{ProjectResume, GroupProject},
 	{ProjectDelete, GroupProject},
 
 	{ClusterEnroll, GroupCluster},
 	{ClusterUpdate, GroupCluster},
+	{ClusterSuspend, GroupCluster},
+	{ClusterResume, GroupCluster},
 	{ClusterDelete, GroupCluster},
 	{ClusterEnrollmentCreate, GroupCluster},
 	{ClusterEnrollmentRevoke, GroupCluster},

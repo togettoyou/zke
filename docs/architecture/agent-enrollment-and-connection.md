@@ -425,10 +425,13 @@ Agent 默认在证书剩余有效期进入 `identity.renew_before` 窗口时续�
 
 ### 6.6 撤销和连接关闭
 
-Credential、Agent 或 Cluster 被撤销时，数据库触发器通过 PostgreSQL `NOTIFY` 广播撤销事件。每个 Server
-实例监听该事件，匹配当前内存中的 Agent 会话，分别发送 `GoAway(credential_revoked)`、
-`GoAway(agent_revoked)` 或 `GoAway(cluster_revoked)`，并用认证错误关闭 QUIC 连接；后续重连仍会经过数据库
-状态校验并被拒绝。
+Credential 或 Agent 身份被撤销时，数据库触发器通过 PostgreSQL `NOTIFY` 广播撤销事件。每个 Server 实例
+监听该事件，匹配当前内存中的 Agent 会话，发送 `GoAway(credential_revoked)` 或
+`GoAway(agent_revoked)`，并用认证错误关闭 QUIC 连接；后续重连仍会经过数据库状态校验并被拒绝。
+
+Tenant、Project 或 Cluster 停用使用同一通知通道匹配并关闭作用域内现有连接，但发送可恢复的
+`GoAway(scope_suspended)`，不撤销 Agent 身份或 Credential。Agent 保持退避重连，作用域恢复后可用原身份
+重新建立连接。
 
 管理端将 Cluster 与 Agent 视为一个聚合资源，不暴露内部 Agent ID。当前连接通过
 `POST /api/v1/clusters/{cluster_id}/connection/revoke` 撤销，请求必须通过 Session、CSRF 和
@@ -438,7 +441,7 @@ Credential、Agent 或 Cluster 被撤销时，数据库触发器通过 PostgreSQ
 
 连接撤销后，管理端可调用 `POST /api/v1/clusters/{cluster_id}/connection/reenroll` 创建重新接入凭证。该凭证
 绑定现有 Cluster；消费时保留原 `cluster_id`、创建新的内部 Agent 身份并保留历史身份。连接尚未撤销或 Cluster
-已逻辑删除时，重新接入返回状态冲突。
+已停用时，重新接入返回状态冲突；已删除时目标不存在。
 
 Server 也会按当前客户端证书的 `NotAfter` 安排连接关闭，避免一条在证书有效期内建立的长连接越过证书到期时间
 后继续存活。PostgreSQL 通知用于多 Server 实例间传播，不依赖撤销请求落到持有连接的同一实例。

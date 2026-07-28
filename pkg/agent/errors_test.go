@@ -65,6 +65,11 @@ func TestPermanentAgentConnectionError(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "GoAway scope suspended is retryable",
+			err:      &GoAwayError{Reason: agentprotocol.GoAwayScopeSuspended},
+			expected: false,
+		},
+		{
 			name:     "unknown GoAway reason is retryable",
 			err:      &GoAwayError{Reason: "reason_from_a_newer_server"},
 			expected: false,
@@ -95,6 +100,14 @@ func TestPermanentAgentConnectionError(t *testing.T) {
 			err: &quic.ApplicationError{
 				Remote:    true,
 				ErrorCode: agentprotocol.CloseHeartbeatTimeout,
+			},
+			expected: false,
+		},
+		{
+			name: "remote scope suspension close is retryable",
+			err: &quic.ApplicationError{
+				Remote:    true,
+				ErrorCode: agentprotocol.CloseScopeSuspended,
 			},
 			expected: false,
 		},

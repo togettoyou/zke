@@ -12,6 +12,9 @@ var (
 	ErrTenantNotFound             = errors.New("tenant not found")
 	ErrClusterNotFound            = errors.New("cluster not found")
 	ErrResourceCreationConflict   = errors.New("resource creation idempotency conflict")
+	ErrTenantNameConflict         = errors.New("tenant name already exists")
+	ErrProjectNameConflict        = errors.New("project name already exists in tenant")
+	ErrClusterNameConflict        = errors.New("cluster name already exists in project")
 	ErrResourceStateConflict      = errors.New("resource state conflict")
 	ErrResourceCreationNotAllowed = errors.New("resource creation not allowed")
 )
@@ -142,6 +145,7 @@ type DeleteProjectParams struct {
 type UpdateClusterParams struct {
 	ClusterID   string
 	Name        string
+	Status      string
 	ActorUserID string
 	RequestID   string
 	Now         time.Time

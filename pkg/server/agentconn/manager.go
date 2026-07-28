@@ -299,6 +299,15 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 	})
 	cancelOperation()
 	if err != nil {
+		if errors.Is(err, store.ErrAgentScopeSuspended) {
+			manager.reject(
+				connection,
+				agentprotocol.CloseScopeSuspended,
+				"Agent scope suspended",
+				err,
+			)
+			return
+		}
 		manager.reject(connection, agentprotocol.CloseAuthenticationError, "Agent credential rejected", err)
 		return
 	}
@@ -448,6 +457,18 @@ func (manager *Manager) serveControl(
 			); err != nil {
 				current.setDisconnectReason("certificate_renewal_rejected")
 				closeCode := agentprotocol.CloseInternalError
+				if errors.Is(err, enrollment.ErrScopeSuspended) {
+					current.setDisconnectReason(agentprotocol.GoAwayScopeSuspended)
+					_ = current.write(&agentv1.ControlFrame{
+						ProtocolVersion: agentprotocol.ProtocolVersion,
+						Message: &agentv1.ControlFrame_GoAway{
+							GoAway: &agentv1.GoAway{
+								Reason: agentprotocol.GoAwayScopeSuspended,
+							},
+						},
+					})
+					closeCode = agentprotocol.CloseScopeSuspended
+				}
 				if errors.Is(err, enrollment.ErrInvalidInput) ||
 					errors.Is(err, enrollment.ErrCredentialRejected) {
 					closeCode = agentprotocol.CloseAuthenticationError
@@ -500,7 +521,22 @@ func (manager *Manager) serveControl(
 			cancelOperation()
 			if err != nil {
 				current.setDisconnectReason("heartbeat_persistence_failed")
-				if errors.Is(err, store.ErrAgentCredentialRejected) {
+				switch {
+				case errors.Is(err, store.ErrAgentScopeSuspended):
+					current.setDisconnectReason(agentprotocol.GoAwayScopeSuspended)
+					_ = current.write(&agentv1.ControlFrame{
+						ProtocolVersion: agentprotocol.ProtocolVersion,
+						Message: &agentv1.ControlFrame_GoAway{
+							GoAway: &agentv1.GoAway{
+								Reason: agentprotocol.GoAwayScopeSuspended,
+							},
+						},
+					})
+					_ = current.conn.CloseWithError(
+						agentprotocol.CloseScopeSuspended,
+						"Agent scope suspended",
+					)
+				case errors.Is(err, store.ErrAgentCredentialRejected):
 					current.setDisconnectReason("credential_rejected")
 					_ = current.conn.CloseWithError(
 						agentprotocol.CloseAuthenticationError,
@@ -842,6 +878,14 @@ func (manager *Manager) handleRevocation(
 	manager.mutex.Lock()
 	connections := make([]*session, 0)
 	for _, current := range manager.connections {
+		if event.TenantID != "" &&
+			current.identity.TenantID != event.TenantID {
+			continue
+		}
+		if event.ProjectID != "" &&
+			current.identity.ProjectID != event.ProjectID {
+			continue
+		}
 		if event.AgentID != "" && current.identity.AgentID != event.AgentID {
 			continue
 		}
@@ -860,6 +904,8 @@ func (manager *Manager) handleRevocation(
 	for _, current := range connections {
 		reason := agentprotocol.GoAwayCredentialRevoked
 		switch {
+		case event.Reason == agentprotocol.GoAwayScopeSuspended:
+			reason = agentprotocol.GoAwayScopeSuspended
 		case event.AgentID != "" && event.CertificateSerial == "":
 			reason = agentprotocol.GoAwayAgentRevoked
 		case event.ClusterID != "":
@@ -872,10 +918,13 @@ func (manager *Manager) handleRevocation(
 				GoAway: &agentv1.GoAway{Reason: reason},
 			},
 		})
-		_ = current.conn.CloseWithError(
-			agentprotocol.CloseAuthenticationError,
-			"Agent access revoked",
-		)
+		closeCode := agentprotocol.CloseAuthenticationError
+		message := "Agent access revoked"
+		if reason == agentprotocol.GoAwayScopeSuspended {
+			closeCode = agentprotocol.CloseScopeSuspended
+			message = "Agent scope suspended"
+		}
+		_ = current.conn.CloseWithError(closeCode, message)
 	}
 }
 
@@ -899,7 +948,7 @@ func disconnectReasonPriority(reason string) int {
 	switch reason {
 	case "agent_revoked", "cluster_revoked":
 		return 4
-	case "credential_revoked", "credential_rejected",
+	case "credential_revoked", "credential_rejected", "scope_suspended",
 		"certificate_expired":
 		return 3
 	case "connection_replaced", "server_shutdown", "client_goodbye":

@@ -90,9 +90,14 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"UNIQUE NULLS NOT DISTINCT",
 		"CONSTRAINT clusters_project_scope_fk",
 		"CONSTRAINT agents_cluster_scope_fk",
-		"actor_user_id uuid REFERENCES users (id)",
-		"actor_agent_id uuid REFERENCES agents (id)",
+		"actor_user_id uuid",
+		"actor_agent_id uuid",
 		"CONSTRAINT audit_events_actor_shape",
+		"actor_user_name text",
+		"tenant_name text",
+		"project_name text",
+		"cluster_name text",
+		"target_name text",
 		"token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) = 32)",
 		"csrf_token_digest bytea NOT NULL CHECK (octet_length(csrf_token_digest) = 32)",
 		"idempotency_key text NOT NULL",
@@ -103,7 +108,10 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"CREATE UNIQUE INDEX agent_credentials_agent_csr_unique",
 		"CREATE TRIGGER agent_credentials_notify_revocation",
 		"CREATE TRIGGER agents_notify_revocation",
-		"CREATE TRIGGER clusters_notify_revocation",
+		"CREATE TRIGGER clusters_notify_suspension",
+		"CREATE TRIGGER projects_notify_suspension",
+		"CREATE TRIGGER tenants_notify_suspension",
+		"CREATE TRIGGER agents_notify_deletion",
 		"CREATE INDEX audit_events_scope_time_idx",
 		"CREATE TABLE tenant_creation_requests",
 		"CREATE TABLE project_creation_requests",
@@ -348,12 +356,20 @@ VALUES (
 `)
 	requirePostgreSQLCode(t, err, "23514")
 
+	// The audit trail deliberately holds no foreign keys: an actor, a Tenant, a
+	// Project or a Cluster can be deleted, and the record of what happened to
+	// them has to remain. An id that no longer resolves must therefore be
+	// accepted, which is why each one is written alongside the name its subject
+	// carried at the time.
 	_, err = pool.Exec(ctx, `
 INSERT INTO audit_events (
     id,
     actor_type,
     actor_user_id,
+    actor_user_name,
     scope_type,
+    tenant_id,
+    tenant_name,
     action,
     target_type,
     result,
@@ -363,14 +379,19 @@ VALUES (
     '60000000-0000-0000-0000-000000000002',
     'user',
     '20000000-0000-0000-0000-000000000099',
-    'global',
-    'review.unknown_actor',
+    'deleted-operator',
+    'tenant',
+    '00000000-0000-0000-0000-000000000099',
+    'deleted-tenant',
+    'review.deleted_subjects',
     'test',
     'denied',
     'request-2'
 )
 `)
-	requirePostgreSQLCode(t, err, "23503")
+	if err != nil {
+		t.Fatalf("audit event referring to deleted subjects was rejected: %v", err)
+	}
 }
 
 func testRequiredIndexes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -405,6 +426,12 @@ WHERE schemaname = current_schema()
 		"enrollments_active_expiry_idx",
 		"audit_events_scope_time_idx",
 		"audit_events_request_id_idx",
+		// The name rules are enforced by indexes, so their absence is a silent
+		// loss of the guarantee rather than a compile or test failure elsewhere.
+		"tenants_name_unique_idx",
+		"projects_tenant_name_unique_idx",
+		"clusters_project_name_unique_idx",
+		"enrollments_project_cluster_name_unique_idx",
 	} {
 		if !found[required] {
 			t.Errorf("required PostgreSQL index %q is missing", required)

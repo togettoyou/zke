@@ -208,6 +208,8 @@ func (authorization *Authorization) recordDenied(
 		authorization.config.OperationTimeout,
 	)
 	var err error
+	targetType := permissionTargetType(permission)
+	targetID := c.Param(targetType + "_id")
 	switch scopeType {
 	case "global":
 		err = authorization.auditService.RecordGlobalEvent(
@@ -215,7 +217,8 @@ func (authorization *Authorization) recordDenied(
 			audit.GlobalEventInput{
 				ActorUserID: userID,
 				Action:      string(permission),
-				TargetType:  permissionTargetType(permission),
+				TargetType:  targetType,
+				TargetID:    targetID,
 				Result:      "denied",
 				RequestID:   RequestID(c),
 			},
@@ -227,7 +230,8 @@ func (authorization *Authorization) recordDenied(
 				ActorUserID: userID,
 				TenantID:    c.Param(scopeParameter),
 				Action:      string(permission),
-				TargetType:  permissionTargetType(permission),
+				TargetType:  targetType,
+				TargetID:    targetID,
 				Result:      "denied",
 				RequestID:   RequestID(c),
 			},
@@ -239,6 +243,8 @@ func (authorization *Authorization) recordDenied(
 				ActorUserID: userID,
 				ProjectID:   c.Param(scopeParameter),
 				Action:      string(permission),
+				TargetType:  targetType,
+				TargetID:    targetID,
 				Result:      "denied",
 				RequestID:   RequestID(c),
 			},
@@ -250,6 +256,8 @@ func (authorization *Authorization) recordDenied(
 				ActorUserID: userID,
 				ClusterID:   c.Param(scopeParameter),
 				Action:      string(permission),
+				TargetType:  targetType,
+				TargetID:    targetID,
 				Result:      "denied",
 				RequestID:   RequestID(c),
 			},
