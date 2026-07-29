@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { appFaceClass, appHoverClass } from "@/apps/accent";
@@ -20,7 +20,7 @@ import { useWindowStore, type WindowInstance } from "./window-store";
  * effect of a window going full screen — so the Dock can neither disappear
  * under the cursor nor pop up over the work area unasked.
  */
-export function Dock({
+export const Dock = memo(function Dock({
   visible,
   onToggleVisible,
 }: {
@@ -33,6 +33,7 @@ export function Dock({
   const focusWindow = useWindowStore((state) => state.focusWindow);
   const minimizeWindow = useWindowStore((state) => state.minimizeWindow);
   const restoreWindow = useWindowStore((state) => state.restoreWindow);
+  const desktopRevealed = useWindowStore((state) => state.desktopRevealed);
 
   const items = useMemo(
     () =>
@@ -114,9 +115,12 @@ export function Dock({
                   onClick={() => {
                     if (minimized) {
                       restoreWindow(instance.id);
-                    } else if (focused) {
+                    } else if (focused && !desktopRevealed) {
                       minimizeWindow(instance.id);
                     } else {
+                      // While the desk is cleared, even the focused window is
+                      // off screen: asking for it means bringing it back, not
+                      // putting away something that is not there.
                       focusWindow(instance.id);
                     }
                   }}
@@ -143,7 +147,11 @@ export function Dock({
                   <span
                     aria-hidden
                     className={cn(
-                      "h-[3px] rounded-full transition-all duration-200",
+                      // Named properties rather than `all`: `transition-all`
+                      // animates whatever happens to change, which on a state
+                      // switch is an invitation to animate something expensive
+                      // by accident. These two are what actually differ.
+                      "h-[3px] rounded-full transition-[width,background-color] duration-200",
                       minimized
                         ? "bg-subtle-foreground w-[3px]"
                         : focused
@@ -159,4 +167,4 @@ export function Dock({
       )}
     </div>
   );
-}
+});

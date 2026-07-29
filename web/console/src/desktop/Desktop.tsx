@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { useClusterEvents } from "@/api/events";
 import { useSessionContext } from "@/auth/session-context";
@@ -34,6 +34,8 @@ export function Desktop() {
 
   const setViewport = useWindowStore((state) => state.setViewport);
   const openWindow = useWindowStore((state) => state.openWindow);
+  const toggleDesktopReveal = useWindowStore((state) => state.toggleDesktopReveal);
+  const desktopRevealed = useWindowStore((state) => state.desktopRevealed);
   const cycleFocus = useWindowStore((state) => state.cycleFocus);
   const hydrate = useWindowStore((state) => state.hydrate);
   const closeAll = useWindowStore((state) => state.closeAll);
@@ -72,18 +74,41 @@ export function Desktop() {
    * keeps its own title bar, which is where restoring happens.
    */
   const focusedWindow = focusedId ? windows[focusedId] : undefined;
-  const immersive = !stacked && focusedWindow?.mode === "maximized";
+  // A revealed desktop is the opposite of immersive: the full-screen window is
+  // off screen, and the bar it was hiding for is the desktop's own chrome again.
+  const immersive = !stacked && !desktopRevealed && focusedWindow?.mode === "maximized";
 
   const toggleDock = useCallback(() => setDockVisible((shown) => !shown), []);
 
+  /*
+   * Viewport changes are coalesced to one per frame.
+   *
+   * `resize` fires as fast as the window manager can report it while an edge is
+   * being dragged, and each one is expensive at the far end: the store rebuilds
+   * every window's rectangle through `clampRect` and re-renders the desktop. A
+   * frame cannot show more than one of those anyway, so the extra ones are work
+   * done to be overwritten.
+   */
   useEffect(() => {
+    let frame: number | null = null;
     const applyViewport = () => {
+      frame = null;
       setViewport({ width: window.innerWidth, height: window.innerHeight });
       setStacked(window.innerWidth < STACKED_BREAKPOINT);
     };
+    const scheduleViewport = () => {
+      if (frame === null) {
+        frame = requestAnimationFrame(applyViewport);
+      }
+    };
     applyViewport();
-    window.addEventListener("resize", applyViewport);
-    return () => window.removeEventListener("resize", applyViewport);
+    window.addEventListener("resize", scheduleViewport);
+    return () => {
+      window.removeEventListener("resize", scheduleViewport);
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+    };
   }, [setViewport]);
 
   // Restore the previous layout for this user, then honour a deep link.
@@ -158,6 +183,33 @@ export function Desktop() {
 
   const handleOpenApp = useCallback((appId: string) => openWindow(appId), [openWindow]);
 
+  /*
+   * Clicking bare desktop sweeps the windows aside; clicking it again brings
+   * them back.
+   *
+   * The launcher sits in the middle of the screen, which is also where windows
+   * open, so reaching a second application meant first getting the first one out
+   * of the way — one window at a time, through the Dock. This does it in one
+   * click, from the surface the windows are covering, and undoes it in one more.
+   * Nothing is minimized and nothing is closed: the windows are held off screen
+   * and come back to the place they left.
+   *
+   * The layer below is the desktop surface itself: windows and the Dock both sit
+   * above it and swallow their own clicks, so anything that arrives here landed
+   * on the desktop. The launcher's buttons are the one thing inside it that
+   * means something else; everything else — the grid, its padding, the wallpaper
+   * showing through — is desktop.
+   */
+  const handleDesktopClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if ((event.target as HTMLElement).closest("button")) {
+        return;
+      }
+      toggleDesktopReveal();
+    },
+    [toggleDesktopReveal],
+  );
+
   const handleResetDesktop = useCallback(() => {
     closeAll();
     resetScope();
@@ -209,7 +261,10 @@ export function Desktop() {
           that ran out; the same ten centred with air above them read as a
           composition — and the launcher is the only thing on the desktop until a
           window opens. */}
-      <div className="absolute inset-x-0 top-10 bottom-0 overflow-y-auto">
+      <div
+        className="absolute inset-x-0 top-10 bottom-0 overflow-y-auto"
+        onClick={handleDesktopClick}
+      >
         <div className="mx-auto max-w-3xl px-4 pt-[9vh] pb-10">
           <IconGrid onOpen={handleOpenApp} />
         </div>
@@ -226,6 +281,7 @@ export function Desktop() {
               focused={instance.id === focusedId}
               stacked={stacked}
               stackIndex={index}
+              revealed={desktopRevealed}
             />
           ) : null,
         )}

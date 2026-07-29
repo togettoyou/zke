@@ -94,6 +94,65 @@ export function cascadeRect(
   );
 }
 
+/** How much of a window is left showing along the edge it retreats to. */
+const REVEAL_SLIVER = 16;
+
+/**
+ * Where a window goes while the desktop is revealed.
+ *
+ * Outward from the centre of the screen, and only as far as it takes to clear
+ * the first edge it reaches. Two things follow from that, and both are what the
+ * effect is for:
+ *
+ * A window leaves in the direction it is already displaced in, rather than
+ * towards a side chosen for it — so windows in the corners leave diagonally,
+ * windows centred on one axis leave straight along the other, and the whole set
+ * parts outwards as one movement instead of scattering.
+ *
+ * And stopping at the first edge leaves {@link REVEAL_SLIVER} of the window
+ * showing along it. The strip is the point: it says the window was set aside
+ * rather than closed, it shows where each one went, and it is what to click to
+ * bring everything back — which works precisely because the strip takes no
+ * pointer, so the click falls through to the desktop that toggles the reveal.
+ */
+export function revealTranslation(rect: WindowRect, viewport: Viewport): { x: number; y: number } {
+  let directionX = rect.x + rect.width / 2 - viewport.width / 2;
+  let directionY = rect.y + rect.height / 2 - viewport.height / 2;
+
+  /*
+   * A window centred on the screen has no outward direction of its own, and a
+   * maximized one is exactly that case. It leaves sideways rather than down:
+   * the Dock sits along the bottom and would cover the strip, and a window that
+   * retreats without leaving anything to see has just disappeared.
+   */
+  if (Math.abs(directionX) < 1 && Math.abs(directionY) < 1) {
+    directionX = 1;
+    directionY = 0;
+  }
+
+  const length = Math.hypot(directionX, directionY);
+  const unitX = directionX / length;
+  const unitY = directionY / length;
+
+  // How far along that heading each edge it is aimed at lies. The nearest one
+  // stops the window; edges behind it are not on the way out.
+  const travels: number[] = [];
+  if (unitX > 0) {
+    travels.push((viewport.width - REVEAL_SLIVER - rect.x) / unitX);
+  } else if (unitX < 0) {
+    travels.push((rect.x + rect.width - REVEAL_SLIVER) / -unitX);
+  }
+  if (unitY > 0) {
+    travels.push((viewport.height - REVEAL_SLIVER - rect.y) / unitY);
+  } else if (unitY < 0) {
+    travels.push((rect.y + rect.height - REVEAL_SLIVER) / -unitY);
+  }
+
+  // Never negative: a window already hanging past its edge has arrived.
+  const travel = Math.max(0, Math.min(...travels));
+  return { x: Math.round(unitX * travel), y: Math.round(unitY * travel) };
+}
+
 export type SnapZone = "maximize" | "left" | "right" | null;
 
 /** Edge snapping: the top edge maximizes, left and right take half the screen. */

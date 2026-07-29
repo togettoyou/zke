@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useMemo } from "react";
+import { memo, Suspense, useCallback, useMemo } from "react";
 import { Maximize2, Minus, Minimize2, X } from "lucide-react";
 
 import { findAppManifest } from "@/apps/registry";
@@ -7,7 +7,7 @@ import { LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 
-import { snapRect, type ResizeEdge } from "./geometry";
+import { revealTranslation, snapRect, type ResizeEdge } from "./geometry";
 import { useWindowInteraction } from "./useWindowInteraction";
 import { useWindowStore, type WindowInstance } from "./window-store";
 
@@ -25,11 +25,22 @@ const RESIZE_HANDLES: Array<{ edge: ResizeEdge; className: string }> = [
 /** Windows stack above the desktop but always below the Dock and top bar. */
 const BASE_WINDOW_Z_INDEX = 10;
 
-export function Window({
+/*
+ * Memoized, because the desktop above it re-renders for reasons that have
+ * nothing to do with any window.
+ *
+ * The Cluster event stream lands on the Desktop component — a Server restart
+ * brings a fleet back one Agent at a time, and each event is a state update up
+ * there. Without this, every one of them reconciles every open window frame.
+ * The store hands back the same `instance` object for a window that did not
+ * change, so the comparison is a reference check and the answer is usually no.
+ */
+export const Window = memo(function Window({
   instance,
   focused,
   stacked,
   stackIndex,
+  revealed,
 }: {
   instance: WindowInstance;
   focused: boolean;
@@ -37,6 +48,8 @@ export function Window({
   stacked: boolean;
   /** Position in the desktop stacking order, lowest first. */
   stackIndex: number;
+  /** Show desktop: held off screen, keeping its place and everything in it. */
+  revealed: boolean;
 }) {
   const bounds = useWindowStore((state) => state.bounds);
   const viewport = useWindowStore((state) => state.viewport);
@@ -78,12 +91,51 @@ export function Window({
     [handleOpenApp, instance.id, manifest],
   );
 
+  /*
+   * The application is held apart from the frame, and this is what keeps a drag
+   * cheap on the React side.
+   *
+   * Dragging updates a preview rectangle on this component once per animation
+   * frame. Written inline, the application below it would be re-rendered sixty
+   * times a second for the whole length of the drag — every row of every table
+   * reconciled to produce the identical output, while the only thing that
+   * actually changed was a transform on the frame. Memoized, the element is the
+   * same reference each time and React skips the subtree entirely.
+   *
+   * Every dependency here is already stable: the manifest is a module constant,
+   * the id does not change for the life of the window, and `openWindow` comes
+   * from the store.
+   */
+  const content = useMemo(
+    () =>
+      manifest && appProps ? (
+        <AppErrorBoundary label={manifest.title}>
+          <Suspense fallback={<LoadingState label="正在加载应用…" />}>
+            <manifest.entry {...appProps} />
+          </Suspense>
+        </AppErrorBoundary>
+      ) : null,
+    [appProps, manifest],
+  );
+
   if (!manifest || !appProps) {
     return null;
   }
 
-  const rect = interaction.previewRect ?? instance.rect;
-  const AppComponent = manifest.entry;
+  /*
+   * A dragged window is moved by transform; everything else is laid out.
+   *
+   * `left`/`top` place the window, and rewriting them on every pointer frame
+   * lays the window out again each time — and the box being laid out holds a
+   * whole application, tables and all. A drag changes nothing about that box
+   * except where it is, which `translate` says without touching layout or paint,
+   * so the moving is handled on the compositor.
+   *
+   * A resize genuinely changes the box, so it keeps the live rectangle and the
+   * relayout that has to come with it.
+   */
+  const dragged = interaction.isDragging ? interaction.previewRect : null;
+  const rect = dragged ? instance.rect : (interaction.previewRect ?? instance.rect);
   const Icon = manifest.icon;
   const titleId = `window-title-${instance.id}`;
 
@@ -94,6 +146,17 @@ export function Window({
   // Full screen means full screen: a rounded outline against the desktop edge
   // would only advertise a frame that is no longer there.
   const fullscreen = !stacked && instance.mode === "maximized";
+  // Which way the window leaves is read from where it is actually drawn, which
+  // in a stacked layout is the desktop bounds rather than its own rect.
+  const reveal = revealed
+    ? revealTranslation(
+        { x: geometry.left, y: geometry.top, width: geometry.width, height: geometry.height },
+        viewport,
+      )
+    : null;
+  // What the clamped preview has moved from the placed rectangle: the pointer
+  // delta, after the screen edges have had their say.
+  const dragOffset = dragged ? { x: dragged.x - rect.x, y: dragged.y - rect.y } : null;
 
   return (
     <>
@@ -123,10 +186,24 @@ export function Window({
           "bg-surface zke-pointer-layer absolute flex flex-col overflow-hidden border",
           fullscreen ? "rounded-none" : "rounded-window",
           focused ? "border-border-strong shadow-window-focused" : "border-border shadow-window",
-          !interaction.isInteracting && "transition-[box-shadow,border-color] duration-150",
+          !interaction.isInteracting && "zke-window-motion",
           !focused && "saturate-[0.92]",
+          // Parked at the edge, and out of the pointer's way with it. The strip
+          // still showing is meant to be clicked, and taking no pointer is how
+          // it works: the click falls through to the desktop, which is what
+          // brings every window back.
+          revealed && "pointer-events-none",
         )}
-        style={{ ...geometry, zIndex }}
+        style={{
+          ...geometry,
+          zIndex,
+          // Two properties, because only one of them is transitioned — see
+          // `.zke-window-motion`. Both are composited, and they cannot collide:
+          // a revealed window takes no pointer, so nothing can be dragged while
+          // the desk is cleared.
+          translate: reveal ? `${reveal.x}px ${reveal.y}px` : undefined,
+          transform: dragOffset ? `translate(${dragOffset.x}px, ${dragOffset.y}px)` : undefined,
+        }}
         onPointerDownCapture={() => focusWindow(instance.id)}
       >
         {/*
@@ -196,13 +273,7 @@ export function Window({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <AppErrorBoundary label={manifest.title}>
-            <Suspense fallback={<LoadingState label="正在加载应用…" />}>
-              <AppComponent {...appProps} />
-            </Suspense>
-          </AppErrorBoundary>
-        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">{content}</div>
 
         {!stacked && instance.mode !== "maximized"
           ? RESIZE_HANDLES.map((handle) => (
@@ -217,4 +288,4 @@ export function Window({
       </section>
     </>
   );
-}
+});

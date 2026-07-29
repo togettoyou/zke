@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import { appFaceClass, appHoverClass } from "@/apps/accent";
 import { APP_MANIFESTS } from "@/apps/registry";
 import type { AppManifest } from "@/apps/types";
@@ -18,8 +20,11 @@ import { cn } from "@/lib/cn";
  * The difference between "you can use this" and "this is where it will go" has
  * to be legible before the window opens, so a planned tile is drawn without the
  * lit face and the raised edge that make an available one look pressable.
+ *
+ * Memoized for the same reason the windows are: the Cluster event stream lands
+ * on the Desktop above, and the launcher has nothing to do with it.
  */
-export function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
+export const IconGrid = memo(function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
   const { permissions } = useSessionContext();
 
   const visible = APP_MANIFESTS.filter((manifest) => {
@@ -48,7 +53,7 @@ export function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
       ))}
     </ul>
   );
-}
+});
 
 function AppIcon({ manifest, onOpen }: { manifest: AppManifest; onOpen: () => void }) {
   const Icon = manifest.icon;

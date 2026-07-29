@@ -50,6 +50,18 @@ export function useWindowInteraction({
   onSnap,
 }: Options) {
   const [previewRect, setPreviewRect] = useState<WindowRect | null>(null);
+  /*
+   * A drag is reported separately from a resize because the two cost different
+   * things to draw.
+   *
+   * A resize changes the window's size, so it has to be laid out again — there
+   * is no way around that. A drag does not: it is the same box in a different
+   * place, which a transform can express without touching layout at all. The
+   * caller uses this to move a dragged window on the compositor and leave its
+   * `left`/`top` alone, which matters because the box being relaid out sixty
+   * times a second contains an entire application.
+   */
+  const [dragging, setDragging] = useState(false);
   const [snapZone, setSnapZone] = useState<SnapZone>(null);
   const pointerState = useRef<PointerState | null>(null);
   const frame = useRef<number | null>(null);
@@ -68,6 +80,7 @@ export function useWindowInteraction({
     pointerState.current = null;
     document.body.classList.remove("zke-interacting");
     setPreviewRect(null);
+    setDragging(false);
     setSnapZone(null);
   }, []);
 
@@ -114,6 +127,7 @@ export function useWindowInteraction({
       latestSnap.current = null;
       document.body.classList.add("zke-interacting");
       setPreviewRect(rect);
+      setDragging(kind.type === "drag");
     },
     [disabled, onStart, rect],
   );
@@ -194,6 +208,7 @@ export function useWindowInteraction({
 
   return {
     previewRect,
+    isDragging: dragging,
     snapZone,
     snapPreviewRect: snapZone ? snapRect(snapZone, viewport) : null,
     dragHandleProps,

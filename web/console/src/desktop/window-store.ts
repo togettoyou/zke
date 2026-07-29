@@ -38,6 +38,16 @@ type WindowState = {
   bounds: DesktopBounds;
   /** The whole desktop surface, which is what a maximized window covers. */
   viewport: Viewport;
+  /**
+   * Show desktop: every window is held off screen, and nothing else changes.
+   *
+   * Deliberately not part of any window's own state. The windows keep their
+   * geometry, their stacking and their focus while they are away, so coming
+   * back is not a restore — it is the same desk with the same things on it.
+   * Transient too: it is never persisted, because a layout that reopened with
+   * its windows already pushed aside would look like an empty desktop.
+   */
+  desktopRevealed: boolean;
 
   setViewport: (viewport: Viewport) => void;
   openWindow: (appId: string, options?: OpenWindowOptions) => string;
@@ -45,6 +55,7 @@ type WindowState = {
   focusWindow: (windowId: string) => void;
   minimizeWindow: (windowId: string) => void;
   restoreWindow: (windowId: string) => void;
+  toggleDesktopReveal: () => void;
   toggleMaximize: (windowId: string) => void;
   setWindowRect: (windowId: string, rect: WindowRect) => void;
   setWindowTitle: (windowId: string, title: string) => void;
@@ -78,6 +89,7 @@ export const useWindowStore = create<WindowState>((set, get) => ({
   nextZIndex: 1,
   bounds: INITIAL_BOUNDS,
   viewport: INITIAL_VIEWPORT,
+  desktopRevealed: false,
 
   setViewport: (viewport) =>
     set((state) => {
@@ -137,6 +149,9 @@ export const useWindowStore = create<WindowState>((set, get) => ({
       order: [...state.order, id],
       focusedId: id,
       nextZIndex: state.nextZIndex + 1,
+      // Launching something is asking to see it, so the desk comes back with it
+      // rather than leaving the new window off screen with the rest.
+      desktopRevealed: false,
     });
     return id;
   },
@@ -169,7 +184,9 @@ export const useWindowStore = create<WindowState>((set, get) => ({
         return state;
       }
       if (state.focusedId === windowId && instance.mode !== "minimized") {
-        return state;
+        // Already the focused window, so there is nothing to raise — but asking
+        // for it while the desk is cleared is asking to have it back.
+        return state.desktopRevealed ? { desktopRevealed: false } : state;
       }
       return {
         windows: {
@@ -182,6 +199,7 @@ export const useWindowStore = create<WindowState>((set, get) => ({
         },
         focusedId: windowId,
         nextZIndex: state.nextZIndex + 1,
+        desktopRevealed: false,
       };
     }),
 
@@ -221,8 +239,23 @@ export const useWindowStore = create<WindowState>((set, get) => ({
         },
         focusedId: windowId,
         nextZIndex: state.nextZIndex + 1,
+        desktopRevealed: false,
       };
     }),
+
+  /**
+   * Show desktop, and show it back.
+   *
+   * The windows are held off screen by the view rather than moved: their rects
+   * are untouched, so this costs nothing to undo and cannot drift from where
+   * the operator left them.
+   */
+  toggleDesktopReveal: () =>
+    set((state) =>
+      // Nothing open, nothing to clear away — and toggling a flag no one can see
+      // would only leave the next desktop click undoing an invisible state.
+      Object.keys(state.windows).length === 0 ? state : { desktopRevealed: !state.desktopRevealed },
+    ),
 
   toggleMaximize: (windowId) =>
     set((state) => {
@@ -246,6 +279,7 @@ export const useWindowStore = create<WindowState>((set, get) => ({
         },
         focusedId: windowId,
         nextZIndex: state.nextZIndex + 1,
+        desktopRevealed: false,
       };
     }),
 
@@ -291,7 +325,8 @@ export const useWindowStore = create<WindowState>((set, get) => ({
     }
   },
 
-  closeAll: () => set({ windows: {}, order: [], focusedId: null, nextZIndex: 1 }),
+  closeAll: () =>
+    set({ windows: {}, order: [], focusedId: null, nextZIndex: 1, desktopRevealed: false }),
 
   hydrate: (snapshot) =>
     set((state) => {

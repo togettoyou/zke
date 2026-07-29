@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Check, Layers, Search } from "lucide-react";
 
 import { useProject, useProjects, useTenant, useTenants } from "@/api/queries/resources";
@@ -38,8 +38,13 @@ function matches(name: string, filter: string): boolean {
  *
  * Options come from the scoped list APIs, so an operator only ever sees what
  * their bindings already allow; choosing one can never widen access.
+ *
+ * Memoized: it is the heaviest thing in the top bar — four query subscriptions
+ * and a filtered list — and it sits beside a Cluster event indicator that
+ * re-renders the bar on every event arriving from every Agent. Both of its
+ * props come from the scope store and hold their identity.
  */
-export function ScopeSelector({
+export const ScopeSelector = memo(function ScopeSelector({
   scope,
   onChange,
   className,
@@ -238,7 +243,7 @@ export function ScopeSelector({
       </PopoverContent>
     </Popover>
   );
-}
+});
 
 /** Loading, failure and empty are all reported; a short list is never faked. */
 function ListState({

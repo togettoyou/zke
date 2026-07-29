@@ -298,6 +298,18 @@
      mechanical. */
   --ease-lift: cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* Windows leaving for the screen edges and coming back.
+
+     Spelled out rather than reached for: `ease-out` is a keyword whose curve
+     belongs to the CSS specification, and a movement this large is the last one
+     that should look like whatever the platform happens to hand it. This curve
+     leaves almost immediately, covers most of the distance in the first third,
+     and spends the rest arriving — mass being thrown and caught, which is what
+     a window crossing most of a screen has to read as. No overshoot: the window
+     is being parked against an edge, and a bounce there would read as a miss. */
+  --ease-reveal: cubic-bezier(0.32, 0.72, 0, 1);
+  --duration-reveal: 420ms;
+
   /* One radius scale, so a control never sits inside a container with a tighter
      corner than its own. */
   --radius-control: 7px;
@@ -411,6 +423,31 @@
 
   body[style*="pointer-events: none"] .zke-pointer-layer {
     pointer-events: none;
+  }
+
+  /*
+   * Window motion: one declaration, three properties, two timings.
+   *
+   * The frame's own states — focus moving between windows — are a 150ms tint.
+   * The retreat to the screen edge is a long throw across most of the display
+   * and carries the project's own curve. Written out here rather than composed
+   * from utilities because two `transition-*` utilities on one element do not
+   * merge: the later declaration wins and the earlier property list is dropped
+   * entirely, which would silently cost whichever of the two was authored first.
+   *
+   * `translate`, not `transform`, and that distinction is load-bearing. A window
+   * uses both: `translate` for where it has been put — the retreat to an edge,
+   * which is a state and should animate — and `transform` for a drag in
+   * progress, which is the pointer's own position and must never animate behind
+   * it. They are separate CSS properties, so transitioning one leaves the other
+   * alone; on one shared property the drop at the end of a drag would hand the
+   * window back its offset and animate it away over 420ms, sliding the window in
+   * from where it was picked up every time it was let go.
+   */
+  .zke-window-motion {
+    transition-property: translate, box-shadow, border-color;
+    transition-duration: var(--duration-reveal), 150ms, 150ms;
+    transition-timing-function: var(--ease-reveal), linear, linear;
   }
 
   /* Applied while a window is dragged or resized: transitions and text
@@ -637,9 +674,12 @@
    *
    * The element's own `stroke-dashoffset` parks the dash *before* the start of
    * its path, so at rest nothing is drawn. That is what makes the drawing whole
-   * without motion: where a reader has asked for reduced motion the animation
-   * collapses to that resting state and simply is not there, instead of freezing
-   * a bright stub part-way along a link.
+   * without motion: stopped, the animation is simply not there, rather than a
+   * bright stub frozen part-way along a link.
+   *
+   * `linear` and infinite, on `stroke-dashoffset`: a paint-only property on
+   * three hairlines. It is the only thing in the product that animates forever
+   * on a page an operator can sit on, which is why it is kept that small.
    */
   .zke-auth-flow {
     animation: zke-auth-flow 4.5s linear infinite;
@@ -661,9 +701,10 @@
     mix-blend-mode: overlay;
   }
 
-  /* A short settle on first paint. `both` holds the end state, so the global
-     reduced-motion rule collapses it to a plain appearance rather than to a
-     permanently transparent element. */
+  /* A short settle on first paint. Opacity and transform only — both composited,
+     so the settle costs no layout and no repaint. `both` holds the start state
+     before the first frame and the end state after the last, so the element is
+     never left transparent by a dropped or interrupted animation. */
   .zke-rise {
     animation: zke-rise 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
@@ -691,43 +732,32 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-
-  /*
-   * Two deliberate exceptions to the blanket rule above.
-   *
-   * The rule is a safety net cast over every animation at once, and these are
-   * the two it catches that carry no vestibular risk: a 1.5px dash travelling a
-   * hairline, and a 16px spinner. No parallax, no scaling, no large moving area
-   * — the things the preference exists to suppress.
-   *
-   * A spinner is the stronger case of the two. Frozen it does not merely lose
-   * an effect, it states the opposite of what it means: a stopped spinner on a
-   * pending request reads as a hung one, at the exact moment the control has to
-   * say that work is under way.
-   *
-   * Both sit outside `@layer utilities`, so they win over the layered
-   * declarations regardless of specificity; `!important` is what beats the
-   * universal selector above them.
-   */
-  .zke-auth-flow {
-    animation-duration: 4.5s !important;
-    animation-iteration-count: infinite !important;
-  }
-
-  .animate-spin {
-    animation-duration: 1s !important;
-    animation-iteration-count: infinite !important;
-  }
-}
+/*
+ * No `prefers-reduced-motion` rule, and that is a decision rather than an
+ * omission.
+ *
+ * There used to be a blanket one here collapsing every animation and transition
+ * in the product to 0.01ms, with two hand-picked exceptions. It made the
+ * Console's motion a function of a setting outside the Console: with Windows'
+ * 「动画效果」off — which is a common thing to switch off for reasons that have
+ * nothing to do with vestibular sensitivity, on shared machines, in VMs and on
+ * remote desktops — windows teleported between states instead of moving, and the
+ * one animation that carries meaning rather than polish, a window retreating to
+ * an edge and coming back, simply did not happen. The desktop metaphor rests on
+ * things moving to places; taking the movement away leaves the places
+ * unexplained.
+ *
+ * The cost is stated plainly: a reader who sets that preference for vestibular
+ * reasons does not get it honoured here, which is a real accessibility
+ * regression and the reason this comment exists rather than the rule. What
+ * bounds it is that nothing in this product uses the motion the preference
+ * exists to suppress — no parallax, no auto-playing background movement, no
+ * zoom or spin at page scale. The largest movement in the Console is a window
+ * sliding to a screen edge on a click the operator made, and it is the only one
+ * of any size.
+ *
+ * If it comes back, it belongs on the individual animation and not on `*`.
+ */
 
 /*
  * Autofill.
