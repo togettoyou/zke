@@ -192,11 +192,10 @@ export function useClusterEvents(enabled: boolean): ClusterEventsSnapshot {
      * List refetches are coalesced; the event's own payload is not.
      *
      * A Server restart brings a whole fleet back one Agent at a time, so these
-     * events arrive in bursts. The cluster list is one request, but the overview
-     * is a Tenant → Project → Cluster walk, and invalidating it per event asked
-     * for that entire fan-out once for every Agent that reconnected. The events
-     * carry the full aggregate, so the detail entry is still written
-     * immediately and nothing an operator is looking at waits for the window.
+     * events arrive in bursts, and invalidating the list per event asks for one
+     * refetch per reconnected Agent. The events carry the full aggregate, so
+     * the detail entry is still written immediately and nothing an operator is
+     * looking at waits for the window.
      */
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     const refreshLists = () => {
@@ -206,7 +205,6 @@ export function useClusterEvents(enabled: boolean): ClusterEventsSnapshot {
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
         void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusters });
-        void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusterOverview });
       }, LIST_REFRESH_COALESCE_MS);
     };
 

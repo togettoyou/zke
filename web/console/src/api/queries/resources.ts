@@ -66,7 +66,6 @@ export function useUpdateTenant() {
         queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.tenants }),
         queryClient.invalidateQueries({ queryKey: queryKeys.tenant(variables.tenantId) }),
         queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.projects }),
-        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusterOverview }),
       ]);
     },
   });
@@ -87,7 +86,6 @@ export function useDeleteTenant() {
         queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.tenants }),
         queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.projects }),
         queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusters }),
-        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusterOverview }),
       ]);
     },
   });
@@ -155,7 +153,6 @@ export function useUpdateProject() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.projects }),
         queryClient.invalidateQueries({ queryKey: queryKeys.project(variables.projectId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusterOverview }),
       ]);
     },
   });
@@ -175,7 +172,6 @@ export function useDeleteProject() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.projects }),
         queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusters }),
-        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.clusterOverview }),
       ]);
     },
   });

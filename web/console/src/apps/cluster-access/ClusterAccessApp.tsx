@@ -1,17 +1,15 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Globe2, KeyRound, MoreHorizontal, RefreshCw, Server, ServerCog } from "lucide-react";
+import { KeyRound, MoreHorizontal, RefreshCw, Server, ServerCog } from "lucide-react";
 import { toast } from "sonner";
 
 import {
   useCluster,
-  useClusterOverview,
   useClusters,
   useDeleteCluster,
   useReenrollCluster,
   useRevokeClusterConnection,
   useUpdateCluster,
-  type ClusterOverviewEntry,
 } from "@/api/queries/clusters";
 import {
   useClusterEnrollments,
@@ -57,13 +55,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
-import { Alert, Card, CardTitle } from "@/components/ui/misc";
+import { Card, CardTitle } from "@/components/ui/misc";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 import { formatDuration } from "@/lib/time";
 
 const NAV: AppNavItem[] = [
-  { id: "overview", label: "全局概览", icon: Globe2 },
   { id: "clusters", label: "集群", icon: Server },
   { id: "enrollments", label: "接入凭证", icon: KeyRound },
   { id: "detail", label: "集群详情", icon: ServerCog },
@@ -71,8 +68,7 @@ const NAV: AppNavItem[] = [
 
 export function ClusterAccessApp(_props: AppComponentProps) {
   const scope = useScopeStore((state) => state.scope);
-  const setScope = useScopeStore((state) => state.setScope);
-  const [section, setSection] = useState(scope.projectId ? "clusters" : "overview");
+  const [section, setSection] = useState("clusters");
   // Which Cluster the detail view shows is navigation state, not an
   // authorization scope: Clusters live inside a Project and carry no
   // RoleBinding of their own.
@@ -80,21 +76,6 @@ export function ClusterAccessApp(_props: AppComponentProps) {
 
   return (
     <AppShell nav={NAV} activeId={section} onNavigate={setSection}>
-      {section === "overview" ? (
-        <OverviewSection
-          onSelect={(entry) => {
-            setScope({
-              tenantId: entry.tenantId,
-              tenantName: entry.tenantName,
-              projectId: entry.projectId,
-              projectName: entry.projectName,
-            });
-            setClusterId(entry.cluster.id);
-            setSection("detail");
-          }}
-        />
-      ) : null}
-
       {section === "clusters" ? (
         <ClusterSection
           scope={scope}
@@ -111,111 +92,6 @@ export function ClusterAccessApp(_props: AppComponentProps) {
         <ClusterDetailSection clusterId={clusterId} onBack={() => setSection("clusters")} />
       ) : null}
     </AppShell>
-  );
-}
-
-function OverviewSection({ onSelect }: { onSelect: (entry: ClusterOverviewEntry) => void }) {
-  const overview = useClusterOverview();
-
-  const columns = useMemo<ColumnDef<ClusterOverviewEntry, unknown>[]>(
-    () => [
-      {
-        header: "集群",
-        cell: ({ row }) => (
-          <div className="flex flex-col">
-            <span className="text-foreground font-medium">{row.original.cluster.name}</span>
-            <IdentifierLabel value={row.original.cluster.id} />
-          </div>
-        ),
-      },
-      {
-        header: "作用域",
-        cell: ({ row }) => (
-          <span className="text-muted-foreground text-[13px]">
-            {row.original.tenantName} › {row.original.projectName}
-          </span>
-        ),
-      },
-      {
-        header: "接入状态",
-        size: 110,
-        cell: ({ row }) => <StatusBadge kind="cluster" value={row.original.cluster.status} />,
-      },
-      {
-        header: "连接",
-        size: 110,
-        cell: ({ row }) => (
-          <StatusBadge kind="connection" value={row.original.cluster.connection.status} />
-        ),
-      },
-      {
-        header: "证书",
-        size: 140,
-        cell: ({ row }) => (
-          <StatusBadge
-            kind="certificate"
-            value={row.original.cluster.connection.certificate_status}
-          />
-        ),
-      },
-      {
-        header: "最近在线",
-        size: 130,
-        cell: ({ row }) => <RelativeTime value={row.original.cluster.connection.last_seen_at} />,
-      },
-    ],
-    [],
-  );
-
-  return (
-    <>
-      {/* A full-height column: without it the table grows to fit its rows, the
-          whole view scrolls instead, and the sticky header sticks to nothing. */}
-      <div className="flex h-full min-h-0 flex-col">
-        <SectionTitle
-          title="全局集群概览"
-          description="按当前权限范围聚合租户 → 项目 → 集群；Server 暂未提供跨项目的集群列表接口"
-          actions={
-            <Button size="sm" variant="secondary" onClick={() => void overview.refetch()}>
-              <RefreshCw />
-              刷新
-            </Button>
-          }
-        />
-
-        {overview.data?.truncated ? (
-          <Alert tone="warning" className="mb-3">
-            结果已截断：可见资源数量超过单次聚合上限，列表并不完整。请切换到「集群」视图按项目查看完整列表。
-          </Alert>
-        ) : null}
-
-        {overview.data && overview.data.failures.length > 0 ? (
-          <Alert tone="warning" className="mb-3">
-            以下范围聚合失败，结果不完整：
-            <ul className="mt-1 list-disc pl-5">
-              {overview.data.failures.map((failure) => (
-                <li key={failure.scope}>
-                  {failure.scope}：{failure.message}
-                </li>
-              ))}
-            </ul>
-          </Alert>
-        ) : null}
-
-        <DataTable
-          columns={columns}
-          data={overview.data?.entries}
-          isLoading={overview.isLoading}
-          isFetching={overview.isFetching}
-          error={overview.error}
-          onRetry={() => void overview.refetch()}
-          rowKey={(row) => row.cluster.id}
-          onRowClick={onSelect}
-          emptyTitle="没有可见的集群"
-          emptyDescription="当前账号的权限范围内还没有接入任何 Kubernetes 集群。"
-        />
-      </div>
-    </>
   );
 }
 
@@ -960,7 +836,7 @@ function ClusterDetailSection({
     return (
       <EmptyState
         title="请先选择集群"
-        description="在集群列表或全局概览中打开一个集群，即可查看它的连接与证书详情。"
+        description="在集群列表中打开一个集群，即可查看它的连接与证书详情。"
         action={
           <Button size="sm" variant="secondary" onClick={onBack}>
             查看集群列表

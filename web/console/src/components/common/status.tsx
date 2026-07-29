@@ -163,32 +163,31 @@ export function IdentifierLabel({ value, className }: { value: string; className
       className={cn(
         // `w-fit` and `whitespace-nowrap` for the same reason as the badge: an
         // elided identifier that stretches or wraps is worse than useless.
-        "zke-focus zke-mono text-muted-foreground hover:text-foreground hover:bg-surface-muted relative -mx-1 inline-flex w-fit cursor-pointer items-center rounded border border-transparent px-1 text-xs whitespace-nowrap transition-colors",
+        "zke-focus zke-mono text-muted-foreground hover:text-foreground hover:bg-surface-muted -mx-1 inline-flex w-fit cursor-pointer items-center rounded border border-transparent px-1 text-xs whitespace-nowrap transition-colors",
         className,
       )}
     >
       {value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value}
       {/*
-       * No resting copy icon, and the confirmation hangs to the *left*.
+       * No resting copy icon, and the confirmation is carried in flow.
        *
-       * Carried in flow, a permanently rendered icon padded every identifier's
-       * trailing edge by its own width even at `opacity-0` — invisible in a
-       * table, obvious the moment the value sits in a right-aligned column and
-       * ends short of the plain text above it. Hung outside the box instead, it
-       * overflowed: a right-aligned column has no room on its right by
-       * definition, which is the whole point of aligning right.
+       * Reserved permanently — an `opacity-0` icon holding its slot — it padded
+       * every identifier's trailing edge by its own width, which is invisible
+       * in a table and obvious the moment the value sits in a right-aligned
+       * column and ends short of the plain text above it. Hung outside the box
+       * instead, it landed on whatever the layout put there: to the right, on
+       * the edge of a right-aligned column that has no room there by
+       * definition; to the left, on the username the identifier follows in the
+       * users and role-binding tables.
        *
-       * So the affordance is the pointer, the hover fill and the title — which
-       * already spells out that clicking copies — and the only thing drawn is a
-       * check, for a second and a half, in the slack on the left where every
-       * layout using this has room to spare.
+       * Rendered only while copied, it can neither pad the resting state nor
+       * cover a neighbour. The cost is that the button is wider for the second
+       * and a half it is shown, which moves nothing but its own trailing edge.
+       *
+       * The resting affordance is the pointer, the hover fill and the title,
+       * which already spells out that clicking copies.
        */}
-      {copied ? (
-        <Check
-          aria-hidden
-          className="text-success absolute top-1/2 right-full mr-1 size-3 -translate-y-1/2"
-        />
-      ) : null}
+      {copied ? <Check aria-hidden className="text-success ml-1 size-3 shrink-0" /> : null}
     </button>
   );
 }

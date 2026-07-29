@@ -1195,16 +1195,29 @@ function AuditSection() {
       },
       {
         header: "发起者",
-        size: 120,
+        size: 180,
+        /*
+         * Two lines, like every other stacked cell in this application: who it
+         * was on the first, the identifier on the second.
+         *
+         * Stacked three deep in a 120px column, the badge, the name and the id
+         * each took a line of their own and pushed the row to twice the height
+         * of the 操作 column beside it — a column of loose ends rather than one
+         * subject. The badge qualifies the name, so it sits with it.
+         */
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
-            <StatusBadge kind="actor" value={row.original.actor_type} />
-            {/* The name recorded when the event was written. The id may point at
-                a user who has since been deleted, which is exactly when the
-                name is the only thing left that reads. */}
-            {row.original.actor_user_name ? (
-              <span className="text-muted-foreground text-xs">{row.original.actor_user_name}</span>
-            ) : null}
+            <span className="flex min-w-0 items-center gap-1.5">
+              <StatusBadge kind="actor" value={row.original.actor_type} />
+              {/* The name recorded when the event was written. The id may point
+                  at a user who has since been deleted, which is exactly when
+                  the name is the only thing left that reads. */}
+              {row.original.actor_user_name ? (
+                <span className="text-foreground truncate text-[13px]">
+                  {row.original.actor_user_name}
+                </span>
+              ) : null}
+            </span>
             {row.original.actor_user_id ? (
               <IdentifierLabel value={row.original.actor_user_id} />
             ) : null}
