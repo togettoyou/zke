@@ -589,7 +589,9 @@ func (store *AgentConnectionStore) WatchRevocations(
 		if err := json.Unmarshal([]byte(notification.Payload), &event); err != nil {
 			return errors.New("decode Agent connection revocation")
 		}
-		if strings.TrimSpace(event.AgentID) == "" &&
+		if strings.TrimSpace(event.TenantID) == "" &&
+			strings.TrimSpace(event.ProjectID) == "" &&
+			strings.TrimSpace(event.AgentID) == "" &&
 			strings.TrimSpace(event.ClusterID) == "" {
 			return errors.New("Agent connection revocation target is missing")
 		}

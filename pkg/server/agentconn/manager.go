@@ -76,14 +76,26 @@ type Manager struct {
 	nextSubscriberID uint64
 }
 
+type managedConnection interface {
+	Context() context.Context
+	CloseWithError(quic.ApplicationErrorCode, string) error
+}
+
+type controlStream interface {
+	Read([]byte) (int, error)
+	Write([]byte) (int, error)
+	SetReadDeadline(time.Time) error
+	SetWriteDeadline(time.Time) error
+}
+
 type session struct {
 	id                   string
 	identity             store.AgentConnectionIdentity
 	certificateSerial    string
 	certificateExpiresAt time.Time
 	connectedAt          time.Time
-	conn                 *quic.Conn
-	stream               *quic.Stream
+	conn                 managedConnection
+	stream               controlStream
 	writeTimeout         time.Duration
 	writeMu              sync.Mutex
 	statusMu             sync.Mutex
