@@ -29,8 +29,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 ## Phase 2：容器服务
 
 - [x] Server–Agent 业务 Stream 传输内核
+- [x] Node List/Detail dynamic client、类型化 HTTP API 与真实 QUIC 资源闭环
+- [x] Kubernetes Discovery、通用只读 List/Get API 与任意 CRD 资源闭环
 - [ ] 集群选择
-- [ ] 节点管理
+- [ ] 节点变更与 Console 管理页面
 - [ ] Namespace 管理
 - [ ] 工作负载管理
 - [ ] Pod 管理

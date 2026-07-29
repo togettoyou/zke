@@ -4,8 +4,9 @@
 资源请求、取消语义、并发与背压、安全边界以及分阶段交付要求。
 
 > 本文是 Phase 2 的设计基线。当前代码已经实现版本化 Stream/Resource Protobuf、通用有界分帧、双方
-> accept 循环、Resource Stream 往返、能力协商、原生 Stream reset 取消和并发限制；尚未接入 Kubernetes
-> Resource Handler、Server HTTP API、Watch、Pod Logs 和 Pod Exec。
+> accept 循环、Resource Stream 往返、能力协商、原生 Stream reset 取消和并发限制，并已接入 Node
+> List/Detail 以及受控通用 Discovery/List/Get 的 Kubernetes dynamic client、Server HTTP API 和真实 QUIC
+> 闭环；资源变更、Watch、Pod Logs 和 Pod Exec 仍待后续阶段实现。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
 [Agent 注册与连接](agent-enrollment-and-connection.md)。系统级技术约束参见
@@ -31,7 +32,7 @@ Phase 2 不在单条 Stream 上实现请求多路复用。QUIC 已经提供 Stre
 第一阶段不包括：
 
 - 跨集群自动调度；
-- 向浏览器直接开放任意 Kubernetes GVR、Verb 或原始代理接口；
+- 向浏览器直接开放任意 Kubernetes Verb、原始路径或透明代理接口；
 - 将 Control Stream 作为业务请求队列；
 - 在连接级建立统一的请求响应路由表；
 - 默认压缩所有业务流量；
@@ -205,6 +206,7 @@ enum ResourceVerb {
   RESOURCE_VERB_UPDATE = 4;
   RESOURCE_VERB_PATCH = 5;
   RESOURCE_VERB_DELETE = 6;
+  RESOURCE_VERB_DISCOVER = 7;
 }
 
 enum ResourceRepresentation {
@@ -237,6 +239,7 @@ message ListOptions {
 
 约束：
 
+- `DISCOVER` 不携带 GVR、名称、Namespace、Subresource、表示类型或正文；
 - `LIST` 不允许设置 `name`；
 - `GET`、`UPDATE`、`PATCH` 和 `DELETE` 必须设置 `name`；
 - Cluster-scoped Resource 的 `namespace` 必须为空；
@@ -246,9 +249,44 @@ message ListOptions {
 - `PATCH` 必须声明受支持的 `patch_type`；
 - 所有字符串、选择器、分页参数和正文大小均执行本地上限校验。
 
-Phase 2 第一里程碑只允许 `LIST` 和 `GET`。
+Phase 2 第一里程碑只允许 `DISCOVER`、`LIST` 和 `GET`。
 
-### 6.3 响应和错误
+### 6.3 资源发现
+
+Server 通过 `DISCOVER` 获取目标 Cluster 当前 API Discovery 目录。Agent 调用 Kubernetes Discovery API，
+将各 API Group/Version 下的主资源整理为稳定目录：
+
+```json
+{
+  "resources": [
+    {
+      "group": "apps",
+      "version": "v1",
+      "resource": "deployments",
+      "kind": "Deployment",
+      "namespaced": true,
+      "verbs": ["get", "list"],
+      "short_names": ["deploy"],
+      "categories": ["all"]
+    }
+  ],
+  "partial": false
+}
+```
+
+要求：
+
+- 目录使用 GVR 作为后续请求身份，不使用 Kind 反推 Resource；
+- 返回所有 Kubernetes Discovery 可见且至少支持 `get` 或 `list` 的主资源；
+- Subresource 不加入第一阶段目录；
+- Secret 等明确禁止的敏感资源不出现在目录中；
+- Aggregated API 部分不可用时可以返回 `partial=true` 的可用目录；
+- 目录只表示 API Server 暴露的资源，不表示当前 Agent ServiceAccount 一定拥有访问权限；
+- 实际 List/Get 仍由 Agent 策略和 Kubernetes RBAC 双重裁决；
+- 新增 CRD 后无需升级 ZKE；Discovery 目录刷新后即可使用其 GVR；
+- `resource-discovery.v1` 能力独立协商，未声明该能力的旧 Agent 不接收 `DISCOVER`。
+
+### 6.4 响应和错误
 
 ```protobuf
 message ResourceResponse {
@@ -286,7 +324,7 @@ Agent 应解析 Kubernetes `Status`，映射为稳定的 `ResultCode`，并保�
 - 用户取消、请求超时或处理方主动中止：使用对应应用错误码重置当前 Stream；
 - mTLS 身份失败、Connection 身份不一致或根本不兼容的协议版本：关闭 Connection。
 
-### 6.4 大正文传输
+### 6.5 大正文传输
 
 Protobuf 只承载结构化元数据。请求和响应的大正文紧随消息，以原始字节流传输：
 
@@ -537,15 +575,16 @@ Phase 2 第一里程碑不默认启用应用层压缩。压缩只有在真实负
 
 ## 9. Server API 与安全边界
 
-通用 Resource Stream 是 Server 与 Agent 之间的内部协议，不是面向浏览器的通用 Kubernetes 代理。
+Resource Stream 是 Server 与 Agent 之间的内部协议。Server 可以提供受控的通用只读资源 API，但该 API
+不是透明 Kubernetes 代理：浏览器不能指定任意 Verb、Subresource 或原始 Kubernetes URL。
 
 调用链必须是：
 
 ```text
-类型化 Server HTTP API
+类型化 Server HTTP API 或受控通用只读 API
   → Session / CSRF（适用时）
   → Tenant / Project / Cluster RBAC
-  → Server 选择固定 GVR、Verb 和响应表示
+  → Server 固定 Verb，并校验 GVR、Scope、敏感资源策略和响应表示
   → 目标 Cluster 的已认证 Agent Connection
   → Agent allowlist
   → Kubernetes ServiceAccount RBAC
@@ -553,11 +592,16 @@ Phase 2 第一里程碑不默认启用应用层压缩。压缩只有在真实负
 
 要求：
 
-- Server HTTP 路由根据业务接口选择 GVR 和 Verb，不接受浏览器覆盖；
+- 类型化 HTTP 路由由 Server 固定选择 GVR 和 Verb；
+- 通用只读 HTTP 路由由 Server 固定为 `LIST` 或 `GET`，校验 GVR 语法并拒绝敏感资源；调用方应从最新
+  Discovery 目录选择 GVR，目录刷新与实际请求之间的变化最终由 Kubernetes API 返回；
+- 通用路由不接受 Subresource、任意 Kubernetes URL 或写操作；
 - Cluster 通过 URL 路径和 Server 数据库归属解析，不从正文信任 Cluster 身份；
 - Cluster 继承所属 Project 的授权，Namespace 不是独立授权层级；
 - Agent 对 GVR、Verb、Subresource、正文和选择器执行独立 allowlist；
 - Agent 使用最小权限 Kubernetes ServiceAccount；
+- 默认安装只授予 Node 的 `get/list`；需要读取更多内置资源或 CR 时，由安装方显式扩展 Agent
+  ServiceAccount RBAC；
 - Secret 内容不纳入第一里程碑；
 - 资源变更必须在后续阶段补齐显式目标、影响展示、用户确认、幂等性和审计；
 - Pod Logs 和 Web Terminal 使用独立权限，其中 Web Terminal 属于敏感操作。
@@ -578,7 +622,7 @@ Server 必须把面向用户的错误区分为认证失败、无权限、目标�
 - Protobuf 生成工具固定版本；
 - CI 需要执行格式、lint、生成结果一致性和 breaking-change 检查。
 
-当前仓库尚未完成上述业务协议和完整 CI 检查，这些要求随 Phase 2 传输内核一同落地。
+当前仓库已固定 Protobuf 生成工具，并在 CI 中执行 lint、生成结果一致性和 breaking-change 检查。
 
 ## 11. 分阶段实施
 
@@ -591,23 +635,25 @@ Server 必须把面向用户的错误区分为认证失败、无权限、目标�
 - 增加能力协商、结构化错误和分类型并发限制；
 - 使用真实 QUIC 连接完成集成测试，暂不访问 Kubernetes API。
 
-上述传输内核已经实现。生产 Agent 在 Kubernetes Resource Handler 接入前不声明 `resource.v1`，因此当前
-Server 不会向已部署 Agent 发起 Resource 请求。真实 QUIC 测试已覆盖慢流与小请求并发、Control 心跳隔离、
-取消、QUIC incoming 上限、Resource 类型额度、异常首帧、正文限制、单 Stream 故障隔离和断连资源回收。
+上述传输内核已经实现。生产 Agent 已接入 dynamic client，并声明 `resource.v1`；旧 Agent 未声明该能力时，
+Server 仍不会向其发起 Resource 请求。真实 QUIC 测试已覆盖慢流与小请求并发、Control 心跳隔离、取消、
+QUIC incoming 上限、Resource 类型额度、异常首帧、正文限制、单 Stream 故障隔离、断连资源回收，以及
+Node dynamic client 的 List/Detail 往返。
 
 ### 11.2 只读资源闭环
 
-- Node、Namespace、Pod 和 Kubernetes Event；
-- Server 类型化 HTTP API 和权限；
+- Node List/Detail 与受控通用 Discovery/List/Get 已实现；
+- Server 类型化 HTTP API、通用 Discovery/List/Get API 和权限；
 - Agent 动态客户端；
-- 列表 Table 表示、分页和详情；
+- 真实 QUIC 已覆盖 CRD 资源发现、List 和 Get；
+- Node 列表当前使用完整对象表示、Kubernetes continuation token 分页和类型化精简响应；Table 表示尚未实现；
 - Console 集群选择和只读页面。
 
 ### 11.3 更多只读资源
 
-- Deployment、StatefulSet、DaemonSet、Job 和 CronJob；
-- Service、Ingress 和配置资源；
-- PersistentVolume、PersistentVolumeClaim 和 StorageClass。
+- 通用资源浏览器通过 Discovery 目录读取已授权的内置资源和 CR，无需逐资源增加后端接口；
+- Deployment、StatefulSet、DaemonSet、Job 和 CronJob 的类型化产品投影；
+- Service、Ingress、配置和存储资源的类型化产品投影。
 
 ### 11.4 资源变更
 

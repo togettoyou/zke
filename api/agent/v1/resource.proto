@@ -20,6 +20,7 @@ enum ResourceVerb {
   RESOURCE_VERB_UPDATE = 4;
   RESOURCE_VERB_PATCH = 5;
   RESOURCE_VERB_DELETE = 6;
+  RESOURCE_VERB_DISCOVER = 7;
 }
 
 enum ResourceRepresentation {

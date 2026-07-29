@@ -201,6 +201,22 @@ func validateResourceRequest(
 	request *agentv1.ResourceRequest,
 	maxBodySize uint64,
 ) error {
+	if request != nil &&
+		request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER {
+		if request.GetResource() != nil ||
+			request.GetNamespace() != "" ||
+			request.GetName() != "" ||
+			request.GetSubresource() != "" ||
+			request.GetRepresentation() !=
+				agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_UNSPECIFIED ||
+			request.GetListOptions() != nil ||
+			request.GetPatchType() != agentv1.PatchType_PATCH_TYPE_UNSPECIFIED ||
+			request.GetBodySize() != 0 ||
+			header.GetIdempotencyKey() != "" {
+			return ErrStreamProtocol
+		}
+		return nil
+	}
 	if request == nil ||
 		request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_UNSPECIFIED ||
 		request.GetResource() == nil ||

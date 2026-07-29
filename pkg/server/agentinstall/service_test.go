@@ -43,6 +43,8 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 		"kind: ServiceAccount",
 		"kind: Role",
 		"kind: RoleBinding",
+		"kind: ClusterRole",
+		"kind: ClusterRoleBinding",
 		"kind: Deployment",
 		"server_url: https://zke.example.com",
 		"server_address: zke.example.com:8443",
@@ -50,6 +52,9 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 		"registration-ca.crt",
 		"- zke-agent-enrollment",
 		"- zke-agent-trust",
+		"- nodes",
+		"- get",
+		"- list",
 	} {
 		if !strings.Contains(output, required) {
 			t.Errorf("manifest is missing %q", required)

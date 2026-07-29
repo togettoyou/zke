@@ -292,6 +292,46 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.agentStatus.getCluster,
 	)
+	clusterRoutes.GET(
+		"/:cluster_id/nodes",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesNode.list,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/nodes/:node_name",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesNode.get,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/kubernetes/resource-types",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesResource.discover,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/kubernetes/resources",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesResource.list,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/kubernetes/resources/:resource_name",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesResource.get,
+	)
 	clusterRoutes.PUT(
 		"/:cluster_id",
 		handlers.authMiddleware.RequireCSRF,

@@ -171,6 +171,7 @@ func runConnection(
 		capabilities = append(
 			capabilities,
 			agentprotocol.CapabilityResourceV1,
+			agentprotocol.CapabilityResourceDiscoveryV1,
 		)
 	}
 	if err := agentprotocol.WriteFrame(controlStream, &agentv1.ControlFrame{

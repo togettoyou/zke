@@ -203,7 +203,8 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 - 使用 Go 1.26。
 - 以 Kubernetes Deployment 运行，每个接入集群部署一个逻辑 Agent。
 - 使用专用 ServiceAccount，并按当前启用能力授予最小 Kubernetes RBAC 权限。
-- Phase 1 集群业务权限仅包含读取必要基础信息。
+- 默认集群业务权限仅包含 Node 的 `get`、`list`。Agent 通用只读策略允许非 Secret 主资源的 List/Get，
+  但实际读取更多内置资源或 CR 时必须由安装方显式扩展 ServiceAccount RBAC，无需修改 Agent 代码。
 - Agent 首次启动时创建固定名称身份 Secret，之后读取和更新它。ServiceAccount 至少需要所在 Namespace 内
   Secret 的 `create` 权限，以及使用 `resourceNames` 限定到该身份 Secret 的 `get`、`update` 权限；Kubernetes
   的 `create` 授权不能按尚不存在的资源名限定。
@@ -357,8 +358,9 @@ Stream 上再自建一层多路复用——那样会把 QUIC 已经消除的队�
 
 **当前实现现状**：Control Stream 与 Phase 2 业务传输内核已经实现。双方在 Hello 完成后运行独立 accept
 循环；Resource Stream 已具备版本化 Header、能力协商、流式正文、结构化响应、原生 reset 取消、分类型并发
-限制和真实 QUIC 集成测试。Kubernetes Resource Handler 和 Server HTTP API 尚未接入，生产 Agent 当前不声明
-`resource.v1`；Watch、Logs 和 Exec Stream 仍待后续阶段实现。
+限制和真实 QUIC 集成测试。生产 Agent 已通过 dynamic client 定域执行 Node 以及已获 Kubernetes RBAC 授权的
+非 Secret 主资源 List/Get，并声明 `resource.v1` 与 `resource-discovery.v1`；Server 提供 Cluster 定域的
+Node List/Detail 和受控通用 Discovery/List/Get HTTP API。Event、Watch、Logs、Exec 和资源变更仍待后续阶段实现。
 
 Protobuf package 使用显式版本，例如 `zke.agent.v1`。协议版本与 Server、Agent 产品版本分离。已发布字段编号保留；
 删除的字段保留编号和名称；未识别字段按 Protobuf 兼容规则处理。代码生成工具固定版本，并在 CI 中执行 lint 和
@@ -489,6 +491,8 @@ PUT  /api/v1/projects/{project_id}
 DELETE /api/v1/projects/{project_id}
 GET  /api/v1/projects/{project_id}/clusters
 GET  /api/v1/clusters/{cluster_id}
+GET  /api/v1/clusters/{cluster_id}/nodes
+GET  /api/v1/clusters/{cluster_id}/nodes/{node_name}
 PUT  /api/v1/clusters/{cluster_id}
 DELETE /api/v1/clusters/{cluster_id}
 POST /api/v1/clusters/{cluster_id}/connection/revoke
@@ -511,6 +515,14 @@ Tenant 和 Project 创建要求 Session、CSRF、对应创建权限以及 `Idemp
 `409 idempotency_conflict`；资源、幂等记录和成功审计在同一事务中提交。Tenant/Project 列表根据当前用户的
 Global、Tenant 和 Project RoleBinding 过滤，不返回不可见资源。Cluster 列表和详情返回稳定 Cluster 字段及
 嵌套的 `connection` 状态，不暴露内部 Agent ID。
+
+Node List/Detail 要求目标 Cluster 的 `cluster.read` 权限。Server 固定选择 `core/v1/nodes` 与 List/Get，
+不接受客户端覆盖 GVR 或 Verb；列表使用 Kubernetes continuation token 而不是数据库 offset 分页。
+
+通用 Kubernetes 只读接口同样要求 `cluster.read`，由 Server 固定 Verb 为 Discovery、List 或 Get，并校验
+GVR、Namespace、名称、Selector、分页和正文上限；浏览器不能提交任意 Verb、Subresource 或 Kubernetes 原始
+路径。Server 与 Agent 双重拒绝 Secret，Agent ServiceAccount RBAC 约束最终可访问的资源集合。默认安装仍只允许
+Node；扩展内置资源或 CRD 资源读取必须由安装方显式增加最小 RBAC。
 
 Cluster 当前连接撤销要求 Session、CSRF、`cluster.connection.revoke` 权限和 `{"confirm":true}` 显式确认。
 Server 在同一事务中更新内部 Agent 生命周期、撤销全部客户端 Credential 并写入 Cluster 作用域成功审计；重复

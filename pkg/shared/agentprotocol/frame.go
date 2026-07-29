@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	ProtocolVersion              uint32 = 1
-	ProtocolVersionLabel                = "v1"
-	ALPN                                = "zke-agent/1"
-	MaxFrameSize                        = 64 * 1024
-	CapabilityCertificateRenewal        = "certificate-renewal-v1"
-	CapabilityResourceV1                = "resource.v1"
+	ProtocolVersion               uint32 = 1
+	ProtocolVersionLabel                 = "v1"
+	ALPN                                 = "zke-agent/1"
+	MaxFrameSize                         = 64 * 1024
+	CapabilityCertificateRenewal         = "certificate-renewal-v1"
+	CapabilityResourceV1                 = "resource.v1"
+	CapabilityResourceDiscoveryV1        = "resource-discovery.v1"
 
 	CloseNormal              quic.ApplicationErrorCode = 0
 	CloseProtocolError       quic.ApplicationErrorCode = 1

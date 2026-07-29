@@ -51,7 +51,7 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 
 当前仓库还没有提供 Helm Chart，但 Server 已能生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC
 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
-`get` 权限，并且只能更新 identity Secret。
+`get` 权限，并且只能更新 identity Secret；独立 ClusterRole 只授予 Node 的 `get`、`list` 权限。
 ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
 `http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
 原生 HTTPS 或由上游网关终止 TLS。
@@ -67,7 +67,9 @@ Server 也已提供以 Cluster ID 为目标且需要显式确认的连接撤销�
 Server 实例，重启后不保留离线历史；多实例全局连接视图和跨实例任务路由仍未实现。
 
 Phase 2 已实现单 Server 实例内的业务 Stream 传输内核，包括双方 accept 循环、Resource Stream、能力协商、
-单 Stream 取消和并发限制。Kubernetes Resource Handler、跨 Server 实例任务路由及容器服务 HTTP API 尚未实现。
+单 Stream 取消和并发限制。Agent dynamic client 与 Server 类型化 API 已完成 Node List/Detail；Discovery 和
+受控通用 List/Get API 已完成任意已授权内置资源及 CRD 资源的真实 QUIC 闭环。默认 Agent RBAC 仍只授予 Node
+读取权限；跨 Server 实例任务路由、资源变更和流式能力仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
 `cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含

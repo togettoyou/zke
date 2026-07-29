@@ -246,6 +246,41 @@ func renderManifest(
 			Name:     ServiceAccountName,
 		},
 	}
+	clusterRole := &rbacv1.ClusterRole{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "rbac.authorization.k8s.io/v1",
+			Kind:       "ClusterRole",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   ServiceAccountName,
+			Labels: labels,
+		},
+		Rules: []rbacv1.PolicyRule{{
+			APIGroups: []string{""},
+			Resources: []string{"nodes"},
+			Verbs:     []string{"get", "list"},
+		}},
+	}
+	clusterRoleBinding := &rbacv1.ClusterRoleBinding{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "rbac.authorization.k8s.io/v1",
+			Kind:       "ClusterRoleBinding",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   ServiceAccountName,
+			Labels: labels,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      "ServiceAccount",
+			Name:      ServiceAccountName,
+			Namespace: config.Namespace,
+		}},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     ServiceAccountName,
+		},
+	}
 	replicas := int32(1)
 	terminationGracePeriod := int64(30)
 	deployment := &appsv1.Deployment{
@@ -307,6 +342,8 @@ func renderManifest(
 		serviceAccount,
 		role,
 		roleBinding,
+		clusterRole,
+		clusterRoleBinding,
 		deployment,
 	}
 	serializer := json.NewSerializerWithOptions(

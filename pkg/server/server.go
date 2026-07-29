@@ -24,6 +24,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
+	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/pki"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
@@ -206,6 +207,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		agentConnectionManager,
 		cfg.CertificateMonitor.WarningBefore,
 	)
+	kubernetesResourceService := kubernetesresource.NewService(
+		agentConnectionManager,
+	)
 	resourceManagementService := resourcemanagement.NewService(
 		store.NewResourceManagementStore(database),
 		rbacService,
@@ -227,6 +231,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			AgentInstallationService:  agentInstallationService,
 			AgentManagementService:    agentManagementService,
 			AgentStatusService:        agentStatusService,
+			KubernetesResourceService: kubernetesResourceService,
 			ResourceManagementService: resourceManagementService,
 			AccessManagementService:   accessManagementService,
 		},

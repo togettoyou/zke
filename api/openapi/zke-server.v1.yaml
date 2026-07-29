@@ -1240,6 +1240,262 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/clusters/{cluster_id}/nodes:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesNodes
+      description: |
+        通过目标 Cluster 的在线 Agent 查询 Kubernetes Node。分页使用 Kubernetes
+        原生 continuation token，不支持 offset；每个 HTTP 请求对应一个独立 QUIC
+        Resource Stream。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: continue
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: label_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: field_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+      responses:
+        "200":
+          description: Node 列表和 Kubernetes 分页状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesNodePage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/nodes/{node_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesNode
+      description: 通过目标 Cluster 的在线 Agent 查询一个 Kubernetes Node 详情。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NodeName"
+      responses:
+        "200":
+          description: Node 详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesNodeDetail"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/kubernetes/resource-types:
+    get:
+      tags: [Resources]
+      operationId: discoverKubernetesResourceTypes
+      description: |
+        通过目标 Cluster 的在线 Agent 获取 Kubernetes API Discovery 目录。
+        目录包含 Discovery 可见且支持 get 或 list 的主资源，不包含 Secret 和
+        Subresource。目录项不代表 Agent ServiceAccount 一定具有读取权限。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: Kubernetes 主资源目录
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesResourceCatalog"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/kubernetes/resources:
+    get:
+      tags: [Resources]
+      operationId: listGenericKubernetesResources
+      description: |
+        按明确 GVR 在目标 Cluster 中读取一页 Kubernetes 主资源。Server 固定执行
+        LIST，不接受任意 Verb、Subresource 或 Kubernetes 原始路径。空 namespace
+        对 Namespaced 资源表示跨 Namespace 列表。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: continue
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: label_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: field_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: resource_version
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+      responses:
+        "200":
+          description: 通用 Kubernetes 资源列表和原生分页状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesGenericResourcePage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}:
+    get:
+      tags: [Resources]
+      operationId: getGenericKubernetesResource
+      description: |
+        按明确 GVR、Namespace 和名称读取一个 Kubernetes 主资源。响应移除
+        metadata.managedFields；Secret 和所有 Subresource 均不在该接口范围内。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesResourceName"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+      responses:
+        "200":
+          description: 通用 Kubernetes 资源详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesUnstructuredResource"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/projects/{project_id}/cluster-enrollments:
     get:
       tags: [Clusters]
@@ -1634,6 +1890,52 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/UUID"
+    NodeName:
+      name: node_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
+    KubernetesResourceName:
+      name: resource_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
+    KubernetesGroup:
+      name: group
+      in: query
+      description: Core API Group 使用空字符串或省略该参数。
+      schema:
+        type: string
+        maxLength: 253
+    KubernetesVersion:
+      name: version
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
+    KubernetesResource:
+      name: resource
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
+    KubernetesNamespace:
+      name: namespace
+      in: query
+      description: Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。
+      schema:
+        type: string
+        maxLength: 63
     EnrollmentID:
       name: enrollment_id
       in: path
@@ -1740,6 +2042,12 @@ components:
             $ref: "#/components/schemas/Error"
     Timeout:
       description: 请求处理超时
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadGateway:
+      description: Agent 或目标 Kubernetes API 返回无效或失败的响应
       content:
         application/json:
           schema:
@@ -2173,6 +2481,273 @@ components:
           properties:
             connection:
               $ref: "#/components/schemas/ClusterConnection"
+    KubernetesResourceType:
+      type: object
+      additionalProperties: false
+      required:
+        - group
+        - version
+        - resource
+        - kind
+        - namespaced
+        - verbs
+      properties:
+        group:
+          type: string
+        version:
+          type: string
+        resource:
+          type: string
+        kind:
+          type: string
+        namespaced:
+          type: boolean
+        verbs:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [get, list]
+        short_names:
+          type: array
+          items:
+            type: string
+        categories:
+          type: array
+          items:
+            type: string
+    KubernetesResourceCatalog:
+      type: object
+      additionalProperties: false
+      required: [resources, partial]
+      properties:
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesResourceType"
+        partial:
+          type: boolean
+          description: true 表示一个或多个 Aggregated API Group 发现失败，目录只包含成功部分。
+    KubernetesUnstructuredResource:
+      type: object
+      description: Kubernetes Unstructured JSON 对象；metadata.managedFields 已移除。
+      additionalProperties: true
+    KubernetesGenericResourcePage:
+      type: object
+      additionalProperties: false
+      required:
+        - api_version
+        - kind
+        - items
+        - continue_token
+        - resource_version
+        - remaining_item_count
+      properties:
+        api_version:
+          type: string
+        kind:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesUnstructuredResource"
+        continue_token:
+          type: string
+          description: Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。
+        resource_version:
+          type: string
+        remaining_item_count:
+          type: [integer, "null"]
+          minimum: 0
+    KubernetesNodeSummary:
+      type: object
+      required:
+        - name
+        - uid
+        - creation_timestamp
+        - status
+        - unschedulable
+        - roles
+        - internal_ip
+        - kubernetes_version
+        - operating_system
+        - os_image
+        - kernel_version
+        - container_runtime
+        - cpu_capacity
+        - memory_capacity
+        - pods_capacity
+        - cpu_allocatable
+        - memory_allocatable
+        - pods_allocatable
+      properties:
+        name:
+          type: string
+          maxLength: 253
+        uid:
+          type: string
+        creation_timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        status:
+          type: string
+          enum: [ready, not_ready, unknown]
+        unschedulable:
+          type: boolean
+        roles:
+          type: array
+          items:
+            type: string
+        internal_ip:
+          type: string
+        kubernetes_version:
+          type: string
+        operating_system:
+          type: string
+        os_image:
+          type: string
+        kernel_version:
+          type: string
+        container_runtime:
+          type: string
+        cpu_capacity:
+          type: string
+          description: Kubernetes Quantity
+        memory_capacity:
+          type: string
+          description: Kubernetes Quantity
+        pods_capacity:
+          type: string
+          description: Kubernetes Quantity
+        cpu_allocatable:
+          type: string
+          description: Kubernetes Quantity
+        memory_allocatable:
+          type: string
+          description: Kubernetes Quantity
+        pods_allocatable:
+          type: string
+          description: Kubernetes Quantity
+    KubernetesNodePage:
+      type: object
+      additionalProperties: false
+      required:
+        - nodes
+        - continue_token
+        - resource_version
+        - remaining_item_count
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesNodeSummary"
+        continue_token:
+          type: string
+          description: Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。
+        resource_version:
+          type: string
+        remaining_item_count:
+          type: [integer, "null"]
+          minimum: 0
+    KubernetesNodeAddress:
+      type: object
+      additionalProperties: false
+      required: [type, address]
+      properties:
+        type:
+          type: string
+        address:
+          type: string
+    KubernetesNodeTaint:
+      type: object
+      additionalProperties: false
+      required: [key, value, effect]
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+        effect:
+          type: string
+        time_added:
+          $ref: "#/components/schemas/Timestamp"
+    KubernetesNodeCondition:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - status
+        - reason
+        - message
+        - last_heartbeat_time
+        - last_transition_time
+      properties:
+        type:
+          type: string
+        status:
+          type: string
+        reason:
+          type: string
+        message:
+          type: string
+        last_heartbeat_time:
+          $ref: "#/components/schemas/Timestamp"
+        last_transition_time:
+          $ref: "#/components/schemas/Timestamp"
+    KubernetesNodeDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesNodeSummary"
+        - type: object
+          required:
+            - labels
+            - annotations
+            - provider_id
+            - pod_cidr
+            - pod_cidrs
+            - addresses
+            - taints
+            - conditions
+            - architecture
+            - boot_id
+            - machine_id
+            - system_uuid
+          properties:
+            labels:
+              type: object
+              additionalProperties:
+                type: string
+            annotations:
+              type: object
+              additionalProperties:
+                type: string
+            provider_id:
+              type: string
+            pod_cidr:
+              type: string
+            pod_cidrs:
+              type: array
+              items:
+                type: string
+            addresses:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesNodeAddress"
+            taints:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesNodeTaint"
+            conditions:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesNodeCondition"
+            architecture:
+              type: string
+            boot_id:
+              type: string
+            machine_id:
+              type: string
+            system_uuid:
+              type: string
     ClusterEnrollment:
       type: object
       additionalProperties: false

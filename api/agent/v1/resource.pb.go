@@ -31,6 +31,7 @@ const (
 	ResourceVerb_RESOURCE_VERB_UPDATE      ResourceVerb = 4
 	ResourceVerb_RESOURCE_VERB_PATCH       ResourceVerb = 5
 	ResourceVerb_RESOURCE_VERB_DELETE      ResourceVerb = 6
+	ResourceVerb_RESOURCE_VERB_DISCOVER    ResourceVerb = 7
 )
 
 // Enum value maps for ResourceVerb.
@@ -43,6 +44,7 @@ var (
 		4: "RESOURCE_VERB_UPDATE",
 		5: "RESOURCE_VERB_PATCH",
 		6: "RESOURCE_VERB_DELETE",
+		7: "RESOURCE_VERB_DISCOVER",
 	}
 	ResourceVerb_value = map[string]int32{
 		"RESOURCE_VERB_UNSPECIFIED": 0,
@@ -52,6 +54,7 @@ var (
 		"RESOURCE_VERB_UPDATE":      4,
 		"RESOURCE_VERB_PATCH":       5,
 		"RESOURCE_VERB_DELETE":      6,
+		"RESOURCE_VERB_DISCOVER":    7,
 	}
 )
 
@@ -549,7 +552,7 @@ const file_api_agent_v1_resource_proto_rawDesc = "" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x12!\n" +
 	"\fcontent_type\x18\x05 \x01(\tR\vcontentType\x12\x1b\n" +
-	"\tbody_size\x18\x06 \x01(\x04R\bbodySize*\xc3\x01\n" +
+	"\tbody_size\x18\x06 \x01(\x04R\bbodySize*\xdf\x01\n" +
 	"\fResourceVerb\x12\x1d\n" +
 	"\x19RESOURCE_VERB_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12RESOURCE_VERB_LIST\x10\x01\x12\x15\n" +
@@ -557,7 +560,8 @@ const file_api_agent_v1_resource_proto_rawDesc = "" +
 	"\x14RESOURCE_VERB_CREATE\x10\x03\x12\x18\n" +
 	"\x14RESOURCE_VERB_UPDATE\x10\x04\x12\x17\n" +
 	"\x13RESOURCE_VERB_PATCH\x10\x05\x12\x18\n" +
-	"\x14RESOURCE_VERB_DELETE\x10\x06*\xb3\x01\n" +
+	"\x14RESOURCE_VERB_DELETE\x10\x06\x12\x1a\n" +
+	"\x16RESOURCE_VERB_DISCOVER\x10\a*\xb3\x01\n" +
 	"\x16ResourceRepresentation\x12'\n" +
 	"#RESOURCE_REPRESENTATION_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dRESOURCE_REPRESENTATION_TABLE\x10\x01\x12$\n" +

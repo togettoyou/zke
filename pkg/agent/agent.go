@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/rand/v2"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/togettoyou/zke/pkg/shared/identifier"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -26,9 +29,17 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return err
 	}
 	kubernetesConfig.UserAgent = "zke-agent/" + agentVersion()
+	if kubernetesConfig.Timeout == 0 ||
+		kubernetesConfig.Timeout > cfg.Connection.MaxResourceRequestTimeout {
+		kubernetesConfig.Timeout = cfg.Connection.MaxResourceRequestTimeout
+	}
 	kubernetesClient, err := kubernetes.NewForConfig(kubernetesConfig)
 	if err != nil {
-		return errors.New("create Kubernetes client")
+		return errors.New("create Kubernetes typed client")
+	}
+	dynamicClient, err := dynamic.NewForConfig(kubernetesConfig)
+	if err != nil {
+		return errors.New("create Kubernetes dynamic client")
 	}
 
 	store := NewIdentityStore(
@@ -86,13 +97,25 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		slog.String("agent_id", identity.AgentID),
 		slog.Time("certificate_expires_at", identity.CertificateExpiresAt),
 	)
-	err = runConnectionLoop(
+	startupID, err := identifier.NewUUID()
+	if err != nil {
+		return fmt.Errorf("generate Agent startup identifier: %w", err)
+	}
+	err = runConnectionLoopWithServices(
 		ctx,
 		cfg,
 		store,
 		identity,
 		version,
+		startupID,
 		logger,
+		connectionServices{
+			resourceHandler: newKubernetesResourceHandler(
+				dynamicClient,
+				kubernetesClient.Discovery(),
+				cfg.Connection.MaxResourceBodyBytes,
+			),
+		},
 	)
 	logger.Info("agent stopped")
 	return err

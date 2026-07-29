@@ -431,6 +431,17 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			agentprotocol.CapabilityResourceV1,
 		)
 		current.capabilities[agentprotocol.CapabilityResourceV1] = struct{}{}
+		if hasCapability(
+			hello.GetCapabilities(),
+			agentprotocol.CapabilityResourceDiscoveryV1,
+		) {
+			serverCapabilities = append(
+				serverCapabilities,
+				agentprotocol.CapabilityResourceDiscoveryV1,
+			)
+			current.capabilities[agentprotocol.CapabilityResourceDiscoveryV1] =
+				struct{}{}
+		}
 	}
 	previous := manager.register(current)
 	if previous != nil {
@@ -923,7 +934,8 @@ func (manager *Manager) RequestResource(
 	}
 	if request == nil ||
 		(request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_LIST &&
-			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_GET) {
+			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_GET &&
+			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER) {
 		return nil, ErrResourceVerbUnsupported
 	}
 	manager.mutex.Lock()
@@ -938,6 +950,11 @@ func (manager *Manager) RequestResource(
 	defer current.endResource()
 	if _, supported := current.capabilities[agentprotocol.CapabilityResourceV1]; !supported {
 		return nil, ErrResourceCapabilityMissing
+	}
+	if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER {
+		if _, supported := current.capabilities[agentprotocol.CapabilityResourceDiscoveryV1]; !supported {
+			return nil, ErrResourceCapabilityMissing
+		}
 	}
 	if !tryAcquire(manager.resourceAdmissions) {
 		return nil, ErrResourceRequestExhausted
