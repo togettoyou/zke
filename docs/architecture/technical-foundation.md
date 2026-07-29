@@ -190,6 +190,8 @@ Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.man
 
 持久化账户锁定与到期自动恢复、管理员解锁和密码重置已经实现；锁定、禁用和密码重置均撤销现有 Session。
 用户与 RoleBinding 管理 API 仅允许 Global 管理员调用，保留最后一个有效 Global 管理员并记录事务内成功审计。
+删除用户会在同一事务中永久移除用户记录、全部 Session 和 RoleBinding；Enrollment 与资源创建幂等记录保留
+历史用户 ID，删除审计保留用户 ID 和用户名快照。
 RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Cluster 注册凭证管理、安装 Manifest、连接撤销和
 审计查询；Phase 1 认证与 RBAC 后端闭环不再依赖直接写数据库。
 登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。

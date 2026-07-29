@@ -484,7 +484,7 @@ function UserSection() {
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         title="删除用户"
         destructive
-        description="删除为逻辑删除：账号不可再登录，历史审计记录保留。"
+        description="用户记录将被永久删除且无法恢复，历史审计记录仍会保留。"
         scopeLines={[
           {
             label: "用户",
@@ -493,8 +493,9 @@ function UserSection() {
           },
         ]}
         impacts={[
-          "该用户无法再登录",
-          "全部现有会话立即被撤销",
+          "用户记录和全部现有会话被永久删除",
+          "该用户的全部角色绑定被永久删除",
+          "用户名随之释放，可由新用户重新使用",
           "服务端会保留最后一个有效的全局管理员，必要时会拒绝该操作",
         ]}
         confirmationText={deleteTarget?.username}

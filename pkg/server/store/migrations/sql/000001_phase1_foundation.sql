@@ -365,7 +365,8 @@ CREATE TABLE enrollments (
     cluster_id uuid,
     cluster_name text NOT NULL,
     token_digest bytea NOT NULL UNIQUE CHECK (octet_length(token_digest) > 0),
-    created_by_user_id uuid NOT NULL REFERENCES users (id),
+    -- Historical creator identity survives physical user deletion.
+    created_by_user_id uuid NOT NULL,
     idempotency_key text NOT NULL,
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz,
@@ -553,7 +554,8 @@ EXECUTE FUNCTION fill_audit_event_names();
 
 CREATE TABLE tenant_creation_requests (
     id uuid PRIMARY KEY,
-    actor_user_id uuid NOT NULL REFERENCES users (id),
+    -- Idempotency history keeps the actor UUID after physical user deletion.
+    actor_user_id uuid NOT NULL,
     idempotency_key text NOT NULL,
     requested_name text NOT NULL,
     tenant_id uuid NOT NULL UNIQUE REFERENCES tenants (id),
@@ -567,7 +569,8 @@ CREATE TABLE tenant_creation_requests (
 
 CREATE TABLE project_creation_requests (
     id uuid PRIMARY KEY,
-    actor_user_id uuid NOT NULL REFERENCES users (id),
+    -- Idempotency history keeps the actor UUID after physical user deletion.
+    actor_user_id uuid NOT NULL,
     tenant_id uuid NOT NULL REFERENCES tenants (id),
     idempotency_key text NOT NULL,
     requested_name text NOT NULL,

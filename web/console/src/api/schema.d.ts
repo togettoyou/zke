@@ -128,6 +128,10 @@ export interface paths {
         get: operations["getUser"];
         put: operations["updateUser"];
         post?: never;
+        /**
+         * @description 永久删除用户记录、该用户的全部 Session 和 RoleBinding，不可恢复，用户名随之释放。
+         *     Enrollment、资源创建幂等记录和审计事件保留原用户 ID；审计事件同时保留删除时的用户名。
+         */
         delete: operations["deleteUser"];
         options?: never;
         head?: never;
@@ -1237,7 +1241,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 用户已逻辑删除并撤销全部 Session */
+            /** @description 用户、Session 和 RoleBinding 已永久删除 */
             200: {
                 headers: {
                     [name: string]: unknown;

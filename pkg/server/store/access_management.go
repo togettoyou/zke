@@ -133,34 +133,70 @@ func (store *AccessManagementStore) DeleteUser(
 		return ManagedUser{}, fmt.Errorf("begin managed user deletion: %w", err)
 	}
 	defer rollbackTransaction(transaction)
-	if err := ensureNotLastGlobalAdmin(ctx, transaction, input.UserID); err != nil {
-		return ManagedUser{}, err
-	}
 	item, err := scanManagedUser(transaction.QueryRow(ctx, `
-UPDATE users
-SET status = 'disabled', locked_at = NULL, lock_expires_at = NULL,
-    updated_at = GREATEST(updated_at, $3)
-WHERE id = $1
-  AND EXISTS (SELECT 1 FROM users WHERE id = $2 AND status = 'active')
-RETURNING
+SELECT
     id::text, username_normalized, display_name, status,
     failed_login_count, locked_at, lock_expires_at,
     password_changed_at, created_at, updated_at
-`, input.UserID, input.ActorUserID, input.Now))
+FROM users
+WHERE id = $1
+  AND EXISTS (SELECT 1 FROM users WHERE id = $2 AND status = 'active')
+FOR UPDATE
+`, input.UserID, input.ActorUserID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ManagedUser{}, ErrAccessUserNotFound
 	}
 	if err != nil {
-		return ManagedUser{}, fmt.Errorf("disable deleted user: %w", err)
+		return ManagedUser{}, fmt.Errorf("lock managed user deletion: %w", err)
 	}
-	if err := revokeUserSessions(ctx, transaction, input.UserID, input.Now); err != nil {
+	// DeleteRoleBinding locks a binding row before checking the last-admin
+	// invariant. Lock this user's bindings in the same order so concurrent
+	// user and binding deletion cannot deadlock.
+	rows, err := transaction.Query(ctx, `
+SELECT id
+FROM role_bindings
+WHERE subject_id = $1
+ORDER BY id
+FOR UPDATE
+`, input.UserID)
+	if err != nil {
+		return ManagedUser{}, fmt.Errorf("lock managed user role bindings: %w", err)
+	}
+	for rows.Next() {
+		var bindingID string
+		if err := rows.Scan(&bindingID); err != nil {
+			rows.Close()
+			return ManagedUser{}, fmt.Errorf("scan managed user role binding lock: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return ManagedUser{}, fmt.Errorf("iterate managed user role binding locks: %w", err)
+	}
+	rows.Close()
+	if err := ensureNotLastGlobalAdmin(ctx, transaction, input.UserID); err != nil {
 		return ManagedUser{}, err
 	}
+	// Audit before removing the target so fill_audit_event_names can snapshot
+	// the username. Audit rows have no user foreign key and intentionally
+	// outlive both the target and the actor they describe.
 	if err := insertGlobalAccessAudit(
 		ctx, transaction, input.ActorUserID, auditaction.UserDelete, auditaction.TargetUser,
 		input.UserID, "succeeded", input.RequestID, input.Now,
 	); err != nil {
 		return ManagedUser{}, err
+	}
+	for _, statement := range []struct {
+		sql         string
+		description string
+	}{
+		{"DELETE FROM user_sessions WHERE user_id = $1", "managed user sessions"},
+		{"DELETE FROM role_bindings WHERE subject_id = $1", "managed user role bindings"},
+		{"DELETE FROM users WHERE id = $1", "managed user"},
+	} {
+		if _, err := transaction.Exec(ctx, statement.sql, input.UserID); err != nil {
+			return ManagedUser{}, fmt.Errorf("delete %s: %w", statement.description, err)
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ManagedUser{}, fmt.Errorf("commit managed user deletion: %w", err)

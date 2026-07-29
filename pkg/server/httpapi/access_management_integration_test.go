@@ -524,14 +524,51 @@ WHERE id = $1
 	if err := decodeSuccessResponse(deletedUser, &deletedManagedUser); err != nil {
 		t.Fatal(err)
 	}
-	if deletedManagedUser.Status != "disabled" {
-		t.Fatalf("deleted user status = %q, want disabled", deletedManagedUser.Status)
+	if deletedManagedUser.ID != managed.ID ||
+		deletedManagedUser.Username != managed.Username ||
+		deletedManagedUser.Status != "active" {
+		t.Fatalf("deleted user snapshot = %+v", deletedManagedUser)
+	}
+	var deletedUserRows, deletedSessionRows, deletedBindingRows int
+	if err := pool.QueryRow(ctx, `
+SELECT
+    (SELECT count(*) FROM users WHERE id = $1),
+    (SELECT count(*) FROM user_sessions WHERE user_id = $1),
+    (SELECT count(*) FROM role_bindings WHERE subject_id = $1)
+`, managed.ID).Scan(
+		&deletedUserRows,
+		&deletedSessionRows,
+		&deletedBindingRows,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if deletedUserRows != 0 || deletedSessionRows != 0 || deletedBindingRows != 0 {
+		t.Fatalf(
+			"deleted user/access rows = %d/%d/%d, want 0/0/0",
+			deletedUserRows,
+			deletedSessionRows,
+			deletedBindingRows,
+		)
 	}
 	if _, err := authService.Login(ctx, auth.LoginInput{
 		Username: managed.Username, Password: []byte(newPassword),
 		RequestID: "request-managed-after-delete", Now: time.Now().UTC(),
 	}); !errors.Is(err, auth.ErrInvalidCredentials) {
 		t.Fatalf("deleted user login error = %v, want invalid credentials", err)
+	}
+	deletedUserDetail := accessAPIRequest(
+		router,
+		http.MethodGet,
+		"/api/v1/users/"+managed.ID,
+		"",
+		adminLogin,
+	)
+	if deletedUserDetail.Code != http.StatusNotFound {
+		t.Fatalf(
+			"get physically deleted user status = %d: %s",
+			deletedUserDetail.Code,
+			deletedUserDetail.Body,
+		)
 	}
 	selfDisable := accessAPIRequest(
 		router,

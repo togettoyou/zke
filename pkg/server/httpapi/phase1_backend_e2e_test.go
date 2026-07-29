@@ -515,6 +515,14 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 			action:    string(rbac.PermissionUserManage),
 		},
 		{
+			operation: "delete user as viewer",
+			method:    http.MethodDelete,
+			path:      "/api/v1/users/" + admin.ID,
+			body:      `{"confirm":true}`,
+			csrfToken: viewerCSRF.Value,
+			action:    string(rbac.PermissionUserManage),
+		},
+		{
 			operation: "update project as viewer",
 			method:    http.MethodPut,
 			path:      "/api/v1/projects/" + project.ID,
@@ -568,11 +576,15 @@ WHERE result = 'denied'
 `, refusedActions).Scan(&recordedRefusals); err != nil {
 		t.Fatal(err)
 	}
-	if recordedRefusals != len(refusedActions) {
+	expectedRefusedActions := make(map[string]struct{}, len(refusedActions))
+	for _, action := range refusedActions {
+		expectedRefusedActions[action] = struct{}{}
+	}
+	if recordedRefusals != len(expectedRefusedActions) {
 		t.Fatalf(
 			"recorded denial actions = %d, want %d (%v)",
 			recordedRefusals,
-			len(refusedActions),
+			len(expectedRefusedActions),
 			refusedActions,
 		)
 	}
@@ -762,14 +774,8 @@ WHERE result = 'denied'
 		)
 	}
 
-	/*
-	 * Deletion is deletion: the rows are gone, not marked.
-	 *
-	 * The user is only disabled — users have their own lifecycle and this flow
-	 * disables rather than deletes one — so it is the one subject still present.
-	 */
-	var clusterRows, tenantRows, projectRows, agentRows, credentialRows int
-	var userStatus string
+	// Deletion is deletion: every target row is gone, not marked.
+	var clusterRows, tenantRows, projectRows, agentRows, credentialRows, userRows int
 	if err := pool.QueryRow(ctx, `
 SELECT
     (SELECT count(*) FROM clusters WHERE id = $1),
@@ -777,28 +783,27 @@ SELECT
     (SELECT count(*) FROM projects WHERE id = $4),
     (SELECT count(*) FROM agents WHERE cluster_id = $1),
     (SELECT count(*) FROM agent_credentials WHERE cluster_id = $1),
-    (SELECT status FROM users WHERE id = $2)
+    (SELECT count(*) FROM users WHERE id = $2)
 `, firstIdentity.ClusterID, user.ID, tenant.ID, project.ID).Scan(
 		&clusterRows,
 		&tenantRows,
 		&projectRows,
 		&agentRows,
 		&credentialRows,
-		&userStatus,
+		&userRows,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if clusterRows != 0 || tenantRows != 0 || projectRows != 0 ||
-		agentRows != 0 || credentialRows != 0 || userStatus != "disabled" {
+		agentRows != 0 || credentialRows != 0 || userRows != 0 {
 		t.Fatalf(
-			"after deletion cluster/tenant/project/agents/credentials rows = %d/%d/%d/%d/%d "+
-				"and user status = %s; want everything deleted and the user disabled",
+			"after deletion cluster/tenant/project/agents/credentials/user rows = %d/%d/%d/%d/%d/%d",
 			clusterRows,
 			tenantRows,
 			projectRows,
 			agentRows,
 			credentialRows,
-			userStatus,
+			userRows,
 		)
 	}
 
