@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 
 	"github.com/quic-go/quic-go"
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
@@ -17,6 +18,7 @@ const (
 	ALPN                                = "zke-agent/1"
 	MaxFrameSize                        = 64 * 1024
 	CapabilityCertificateRenewal        = "certificate-renewal-v1"
+	CapabilityResourceV1                = "resource.v1"
 
 	CloseNormal              quic.ApplicationErrorCode = 0
 	CloseProtocolError       quic.ApplicationErrorCode = 1
@@ -56,13 +58,17 @@ var (
 	ErrEmptyFrame    = errors.New("Agent protocol frame is empty")
 )
 
-func WriteFrame(writer io.Writer, frame *agentv1.ControlFrame) error {
-	if frame == nil || frame.Message == nil {
+func WriteMessage(writer io.Writer, message proto.Message) error {
+	if message == nil {
 		return ErrEmptyFrame
 	}
-	payload, err := proto.Marshal(frame)
+	value := reflect.ValueOf(message)
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return ErrEmptyFrame
+	}
+	payload, err := proto.Marshal(message)
 	if err != nil {
-		return fmt.Errorf("marshal Agent protocol frame: %w", err)
+		return fmt.Errorf("marshal Agent protocol message: %w", err)
 	}
 	if len(payload) == 0 {
 		return ErrEmptyFrame
@@ -74,34 +80,55 @@ func WriteFrame(writer io.Writer, frame *agentv1.ControlFrame) error {
 	var prefix [4]byte
 	binary.BigEndian.PutUint32(prefix[:], uint32(len(payload)))
 	if err := writeAll(writer, prefix[:]); err != nil {
-		return fmt.Errorf("write Agent protocol frame length: %w", err)
+		return fmt.Errorf("write Agent protocol message length: %w", err)
 	}
 	if err := writeAll(writer, payload); err != nil {
-		return fmt.Errorf("write Agent protocol frame: %w", err)
+		return fmt.Errorf("write Agent protocol message: %w", err)
 	}
 	return nil
 }
 
-func ReadFrame(reader io.Reader) (*agentv1.ControlFrame, error) {
+func ReadMessage(reader io.Reader, message proto.Message) error {
+	if message == nil {
+		return ErrEmptyFrame
+	}
+	value := reflect.ValueOf(message)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return ErrEmptyFrame
+	}
 	var prefix [4]byte
 	if _, err := io.ReadFull(reader, prefix[:]); err != nil {
-		return nil, fmt.Errorf("read Agent protocol frame length: %w", err)
+		return fmt.Errorf("read Agent protocol message length: %w", err)
 	}
 	size := binary.BigEndian.Uint32(prefix[:])
 	if size == 0 {
-		return nil, ErrEmptyFrame
+		return ErrEmptyFrame
 	}
 	if size > MaxFrameSize {
-		return nil, ErrFrameTooLarge
+		return ErrFrameTooLarge
 	}
 
 	payload := make([]byte, size)
 	if _, err := io.ReadFull(reader, payload); err != nil {
-		return nil, fmt.Errorf("read Agent protocol frame: %w", err)
+		return fmt.Errorf("read Agent protocol message: %w", err)
 	}
+	if err := proto.Unmarshal(payload, message); err != nil {
+		return fmt.Errorf("unmarshal Agent protocol message: %w", err)
+	}
+	return nil
+}
+
+func WriteFrame(writer io.Writer, frame *agentv1.ControlFrame) error {
+	if frame == nil || frame.Message == nil {
+		return ErrEmptyFrame
+	}
+	return WriteMessage(writer, frame)
+}
+
+func ReadFrame(reader io.Reader) (*agentv1.ControlFrame, error) {
 	frame := &agentv1.ControlFrame{}
-	if err := proto.Unmarshal(payload, frame); err != nil {
-		return nil, fmt.Errorf("unmarshal Agent protocol frame: %w", err)
+	if err := ReadMessage(reader, frame); err != nil {
+		return nil, err
 	}
 	if frame.Message == nil {
 		return nil, ErrEmptyFrame

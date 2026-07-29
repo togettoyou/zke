@@ -42,8 +42,12 @@ connection:
   # healthy.
   idle_timeout: 15m
   keep_alive_interval: 10s
-  # Streams a Server may open towards this Agent. Phase 1 uses only the control
-  # stream.
-  max_incoming_streams: 16
+  # Total bidirectional Streams a Server may open towards this Agent. The
+  # Agent-created Control Stream is counted by the Server, not here.
+  max_incoming_streams: 128
+  stream_header_timeout: 5s
+  max_resource_request_timeout: 2m
+  max_concurrent_resource_streams: 64
+  max_resource_body_bytes: 33554432
 
 log_level: info

@@ -68,6 +68,11 @@ agent_listener:
   heartbeat_timeout: 36s
   last_seen_write_interval: 2m
   operation_timeout: 7s
+  resource_request_timeout: 90s
+  connection_drain_timeout: 12s
+  max_resource_body_bytes: 16777216
+  max_resource_streams_per_agent: 32
+  max_concurrent_resource_requests: 2048
 shutdown_timeout: 8s
 log_level: warn
 `)
@@ -152,7 +157,12 @@ log_level: warn
 		cfg.AgentListener.HeartbeatInterval != 12*time.Second ||
 		cfg.AgentListener.HeartbeatTimeout != 36*time.Second ||
 		cfg.AgentListener.LastSeenWriteInterval != 2*time.Minute ||
-		cfg.AgentListener.OperationTimeout != 7*time.Second {
+		cfg.AgentListener.OperationTimeout != 7*time.Second ||
+		cfg.AgentListener.ResourceRequestTimeout != 90*time.Second ||
+		cfg.AgentListener.ConnectionDrainTimeout != 12*time.Second ||
+		cfg.AgentListener.MaxResourceBodyBytes != 16*1024*1024 ||
+		cfg.AgentListener.MaxResourceStreams != 32 ||
+		cfg.AgentListener.MaxResourceRequests != 2048 {
 		t.Fatalf("unexpected Agent Listener config: %+v", cfg.AgentListener)
 	}
 	invalidHeartbeatConfig := cfg

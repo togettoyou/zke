@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+message StreamHeader {
+  uint32 protocol_version = 1;
+  StreamKind kind = 2;
+  string request_id = 3;
+  uint64 timeout_millis = 4;
+  string idempotency_key = 5;
+}
+
+enum StreamKind {
+  STREAM_KIND_UNSPECIFIED = 0;
+  STREAM_KIND_RESOURCE = 10;
+  STREAM_KIND_RESOURCE_WATCH = 11;
+  STREAM_KIND_POD_LOGS = 20;
+  STREAM_KIND_POD_EXEC = 21;
+}
+
+enum ResultCode {
+  RESULT_CODE_UNSPECIFIED = 0;
+  RESULT_CODE_OK = 1;
+  RESULT_CODE_INVALID_ARGUMENT = 2;
+  RESULT_CODE_UNAUTHENTICATED = 3;
+  RESULT_CODE_FORBIDDEN = 4;
+  RESULT_CODE_NOT_FOUND = 5;
+  RESULT_CODE_CONFLICT = 6;
+  RESULT_CODE_RESOURCE_EXHAUSTED = 7;
+  RESULT_CODE_UNAVAILABLE = 8;
+  RESULT_CODE_TIMEOUT = 9;
+  RESULT_CODE_CANCELED = 10;
+  RESULT_CODE_INTERNAL = 11;
+}

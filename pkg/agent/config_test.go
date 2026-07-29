@@ -32,6 +32,11 @@ connection:
   connect_timeout: 9s
   retry_initial_interval: 3s
   retry_max_interval: 25s
+  max_incoming_streams: 96
+  stream_header_timeout: 4s
+  max_resource_request_timeout: 90s
+  max_concurrent_resource_streams: 48
+  max_resource_body_bytes: 16777216
 log_level: debug
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
@@ -65,7 +70,12 @@ log_level: debug
 		cfg.Connection.CACertificateFile != "/var/run/secrets/zke-agent-listener/ca.crt" ||
 		cfg.Connection.ConnectTimeout != 9*time.Second ||
 		cfg.Connection.RetryInitialInterval != 3*time.Second ||
-		cfg.Connection.RetryMaxInterval != 25*time.Second {
+		cfg.Connection.RetryMaxInterval != 25*time.Second ||
+		cfg.Connection.MaxIncomingStreams != 96 ||
+		cfg.Connection.StreamHeaderTimeout != 4*time.Second ||
+		cfg.Connection.MaxResourceRequestTimeout != 90*time.Second ||
+		cfg.Connection.MaxConcurrentResourceStreams != 48 ||
+		cfg.Connection.MaxResourceBodyBytes != 16*1024*1024 {
 		t.Fatalf("unexpected Agent connection config: %+v", cfg.Connection)
 	}
 }
@@ -122,6 +132,28 @@ func TestConfigRequiresDedicatedConnectionAddress(t *testing.T) {
 	cfg.Connection.ServerAddress = "https://agent.example.invalid:8443"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() accepted a URL as the QUIC connection address")
+	}
+}
+
+func TestConfigRejectsResourceConcurrencyAboveQUICLimit(t *testing.T) {
+	t.Parallel()
+
+	cfg := validAgentConfig()
+	cfg.Connection.MaxIncomingStreams = 16
+	cfg.Connection.MaxConcurrentResourceStreams = 17
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted Resource concurrency above incoming Streams")
+	}
+}
+
+func TestConfigRejectsResourceHeaderTimeoutAboveRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	cfg := validAgentConfig()
+	cfg.Connection.StreamHeaderTimeout = 10 * time.Second
+	cfg.Connection.MaxResourceRequestTimeout = 5 * time.Second
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted a header timeout above the Resource timeout")
 	}
 }
 
@@ -214,14 +246,18 @@ func validAgentConfig() Config {
 			RetryMaxInterval:     15 * time.Second,
 		},
 		Connection: ConnectionConfig{
-			ServerAddress:        "agent.example.invalid:9443",
-			CACertificateFile:    "/server-ca.crt",
-			ConnectTimeout:       10 * time.Second,
-			RetryInitialInterval: time.Second,
-			RetryMaxInterval:     30 * time.Second,
-			IdleTimeout:          15 * time.Minute,
-			KeepAliveInterval:    10 * time.Second,
-			MaxIncomingStreams:   16,
+			ServerAddress:                "agent.example.invalid:9443",
+			CACertificateFile:            "/server-ca.crt",
+			ConnectTimeout:               10 * time.Second,
+			RetryInitialInterval:         time.Second,
+			RetryMaxInterval:             30 * time.Second,
+			IdleTimeout:                  15 * time.Minute,
+			KeepAliveInterval:            10 * time.Second,
+			MaxIncomingStreams:           128,
+			StreamHeaderTimeout:          5 * time.Second,
+			MaxResourceRequestTimeout:    2 * time.Minute,
+			MaxConcurrentResourceStreams: 64,
+			MaxResourceBodyBytes:         32 * 1024 * 1024,
 		},
 		LogLevel: "info",
 	}

@@ -163,6 +163,11 @@ type AgentListenerConfig struct {
 	MaxConcurrentAgents      int           `yaml:"max_concurrent_agents"`
 	MaxIncomingStreams       int64         `yaml:"max_incoming_streams"`
 	MaxRememberedDisconnects int           `yaml:"max_remembered_disconnects"`
+	ResourceRequestTimeout   time.Duration `yaml:"resource_request_timeout"`
+	ConnectionDrainTimeout   time.Duration `yaml:"connection_drain_timeout"`
+	MaxResourceBodyBytes     uint64        `yaml:"max_resource_body_bytes"`
+	MaxResourceStreams       int           `yaml:"max_resource_streams_per_agent"`
+	MaxResourceRequests      int           `yaml:"max_concurrent_resource_requests"`
 
 	// TLS is derived from agent_pki, not configured under agent_listener.
 	TLS TLSIdentityConfig `yaml:"-"`
@@ -225,6 +230,11 @@ func DefaultConfig() Config {
 			MaxConcurrentAgents:      1024,
 			MaxIncomingStreams:       16,
 			MaxRememberedDisconnects: 4096,
+			ResourceRequestTimeout:   2 * time.Minute,
+			ConnectionDrainTimeout:   10 * time.Second,
+			MaxResourceBodyBytes:     32 * 1024 * 1024,
+			MaxResourceStreams:       64,
+			MaxResourceRequests:      4096,
 		},
 		CertificateMonitor: CertificateMonitorConfig{
 			WarningBefore: 30 * 24 * time.Hour,

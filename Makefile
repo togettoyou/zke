@@ -63,3 +63,16 @@ build:
 .PHONY: generate-agent-protocol
 generate-agent-protocol:
 	./hack/generate-agent-protocol.sh
+
+.PHONY: lint-agent-protocol
+lint-agent-protocol:
+	./hack/run-buf.sh lint
+
+.PHONY: check-agent-protocol
+check-agent-protocol: lint-agent-protocol
+	./hack/check-agent-protocol.sh
+
+.PHONY: breaking-agent-protocol
+breaking-agent-protocol:
+	@test -n "$(AGAINST)" || { echo "set AGAINST to a Git reference"; exit 1; }
+	./hack/run-buf.sh breaking --against ".git#branch=$(AGAINST)"

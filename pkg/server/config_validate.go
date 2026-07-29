@@ -33,6 +33,9 @@ const (
 	maxDatabaseConnections        = 512
 	maxConcurrentAgents           = 100_000
 	maxRememberedDisconnects      = 1_000_000
+	maxResourceBodyBytes          = 1024 * 1024 * 1024
+	maxResourceStreams            = 4096
+	maxResourceRequests           = 1_000_000
 )
 
 // boundedDuration describes a duration that must be positive and capped.
@@ -406,6 +409,8 @@ func (cfg Config) validateAgentListener() error {
 		},
 		{cfg.AgentListener.OperationTimeout, maxAuthOperation, "Agent connection operation timeout"},
 		{cfg.AgentListener.WriteTimeout, maxAgentHandshakeTimeout, "Agent control write timeout"},
+		{cfg.AgentListener.ResourceRequestTimeout, maxHTTPTimeout, "Agent Resource request timeout"},
+		{cfg.AgentListener.ConnectionDrainTimeout, maxShutdownTimeout, "Agent Connection drain timeout"},
 	}); err != nil {
 		return err
 	}
@@ -430,6 +435,28 @@ func (cfg Config) validateAgentListener() error {
 		return fmt.Errorf(
 			"Agent Listener remembered disconnect limit must be between 1 and %d",
 			maxRememberedDisconnects,
+		)
+	}
+	if cfg.AgentListener.MaxResourceBodyBytes == 0 ||
+		cfg.AgentListener.MaxResourceBodyBytes > maxResourceBodyBytes {
+		return fmt.Errorf(
+			"Agent Resource body limit must be between 1 and %d",
+			maxResourceBodyBytes,
+		)
+	}
+	if cfg.AgentListener.MaxResourceStreams <= 0 ||
+		cfg.AgentListener.MaxResourceStreams > maxResourceStreams {
+		return fmt.Errorf(
+			"Agent per-connection Resource Stream limit must be between 1 and %d",
+			maxResourceStreams,
+		)
+	}
+	if cfg.AgentListener.MaxResourceRequests <
+		cfg.AgentListener.MaxResourceStreams ||
+		cfg.AgentListener.MaxResourceRequests > maxResourceRequests {
+		return fmt.Errorf(
+			"Server Resource request limit must be between the per-connection limit and %d",
+			maxResourceRequests,
 		)
 	}
 	return nil

@@ -1,7 +1,8 @@
 # Agent 注册与连接
 
 本文说明当前 ZKE Agent 从首次注册到建立 QUIC/mTLS 长连接的完整流程、相关凭据和证书的职责，以及各步骤的必要性。
-内容以仓库现有实现为准；业务 Stream、Web 界面和 Helm Chart 尚未实现。
+内容以仓库现有实现为准；Phase 2 业务 Stream 传输内核已经实现，Kubernetes Resource Handler、容器服务
+Web 界面和 Helm Chart 尚未实现。
 
 ## 1. 总体模型
 

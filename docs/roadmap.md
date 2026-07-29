@@ -28,6 +28,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 
 ## Phase 2：容器服务
 
+- [x] Server–Agent 业务 Stream 传输内核
 - [ ] 集群选择
 - [ ] 节点管理
 - [ ] Namespace 管理

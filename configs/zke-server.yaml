@@ -125,7 +125,14 @@ agent_listener:
   # Connections beyond this limit are refused before any Server state is
   # allocated for them; the rejected Agent reconnects under its own backoff.
   max_concurrent_agents: 1024
+  # Agent-created Streams received by the Server: one Control Stream plus
+  # future Agent-initiated business Streams.
   max_incoming_streams: 16
+  resource_request_timeout: 2m
+  connection_drain_timeout: 10s
+  max_resource_body_bytes: 33554432
+  max_resource_streams_per_agent: 64
+  max_concurrent_resource_requests: 4096
   # How many disconnected Agents keep a last-known status in memory, so that
   # Cluster churn cannot grow the Server heap without bound.
   max_remembered_disconnects: 4096

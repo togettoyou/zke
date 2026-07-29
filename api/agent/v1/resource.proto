@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+import "api/agent/v1/stream.proto";
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+message GroupVersionResource {
+  string group = 1;
+  string version = 2;
+  string resource = 3;
+}
+
+enum ResourceVerb {
+  RESOURCE_VERB_UNSPECIFIED = 0;
+  RESOURCE_VERB_LIST = 1;
+  RESOURCE_VERB_GET = 2;
+  RESOURCE_VERB_CREATE = 3;
+  RESOURCE_VERB_UPDATE = 4;
+  RESOURCE_VERB_PATCH = 5;
+  RESOURCE_VERB_DELETE = 6;
+}
+
+enum ResourceRepresentation {
+  RESOURCE_REPRESENTATION_UNSPECIFIED = 0;
+  RESOURCE_REPRESENTATION_TABLE = 1;
+  RESOURCE_REPRESENTATION_METADATA = 2;
+  RESOURCE_REPRESENTATION_FULL_OBJECT = 3;
+}
+
+enum PatchType {
+  PATCH_TYPE_UNSPECIFIED = 0;
+  PATCH_TYPE_JSON = 1;
+  PATCH_TYPE_MERGE = 2;
+  PATCH_TYPE_STRATEGIC_MERGE = 3;
+  PATCH_TYPE_APPLY = 4;
+}
+
+message ListOptions {
+  string label_selector = 1;
+  string field_selector = 2;
+  uint64 limit = 3;
+  string continue_token = 4;
+  string resource_version = 5;
+}
+
+message ResourceRequest {
+  ResourceVerb verb = 1;
+  GroupVersionResource resource = 2;
+  string namespace = 3;
+  string name = 4;
+  string subresource = 5;
+  ResourceRepresentation representation = 6;
+  ListOptions list_options = 7;
+  PatchType patch_type = 8;
+  uint64 body_size = 9;
+}
+
+message ResourceResponse {
+  ResultCode result = 1;
+  int32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  string content_type = 5;
+  uint64 body_size = 6;
+}

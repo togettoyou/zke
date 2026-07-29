@@ -19,6 +19,8 @@ const (
 	defaultIdentityNamespace  = "zke-system"
 	defaultIdentitySecretName = "zke-agent-identity"
 	defaultLogLevel           = "info"
+	maxAgentIncomingStreams   = 4096
+	maxResourceBodyBytes      = 1024 * 1024 * 1024
 )
 
 type Config struct {
@@ -56,8 +58,12 @@ type ConnectionConfig struct {
 	IdleTimeout       time.Duration
 	KeepAliveInterval time.Duration
 	// MaxIncomingStreams bounds the streams a Server may open towards this
-	// Agent. Phase 1 only uses the control stream.
-	MaxIncomingStreams int64
+	// Agent. The Agent-created Control Stream is not counted in this direction.
+	MaxIncomingStreams           int64
+	StreamHeaderTimeout          time.Duration
+	MaxResourceRequestTimeout    time.Duration
+	MaxConcurrentResourceStreams int
+	MaxResourceBodyBytes         uint64
 }
 
 type fileConfig struct {
@@ -75,14 +81,18 @@ type fileConfig struct {
 		RetryMaxInterval     string `yaml:"retry_max_interval"`
 	} `yaml:"registration"`
 	Connection struct {
-		ServerAddress        string `yaml:"server_address"`
-		CACertificateFile    string `yaml:"ca_certificate_file"`
-		ConnectTimeout       string `yaml:"connect_timeout"`
-		RetryInitialInterval string `yaml:"retry_initial_interval"`
-		RetryMaxInterval     string `yaml:"retry_max_interval"`
-		IdleTimeout          string `yaml:"idle_timeout"`
-		KeepAliveInterval    string `yaml:"keep_alive_interval"`
-		MaxIncomingStreams   *int64 `yaml:"max_incoming_streams"`
+		ServerAddress                string  `yaml:"server_address"`
+		CACertificateFile            string  `yaml:"ca_certificate_file"`
+		ConnectTimeout               string  `yaml:"connect_timeout"`
+		RetryInitialInterval         string  `yaml:"retry_initial_interval"`
+		RetryMaxInterval             string  `yaml:"retry_max_interval"`
+		IdleTimeout                  string  `yaml:"idle_timeout"`
+		KeepAliveInterval            string  `yaml:"keep_alive_interval"`
+		MaxIncomingStreams           *int64  `yaml:"max_incoming_streams"`
+		StreamHeaderTimeout          string  `yaml:"stream_header_timeout"`
+		MaxResourceRequestTimeout    string  `yaml:"max_resource_request_timeout"`
+		MaxConcurrentResourceStreams *int    `yaml:"max_concurrent_resource_streams"`
+		MaxResourceBodyBytes         *uint64 `yaml:"max_resource_body_bytes"`
 	} `yaml:"connection"`
 	LogLevel string `yaml:"log_level"`
 }
@@ -106,12 +116,16 @@ func LoadConfig(args []string) (Config, error) {
 			RetryMaxInterval:     15 * time.Second,
 		},
 		Connection: ConnectionConfig{
-			ConnectTimeout:       10 * time.Second,
-			RetryInitialInterval: time.Second,
-			RetryMaxInterval:     30 * time.Second,
-			IdleTimeout:          15 * time.Minute,
-			KeepAliveInterval:    10 * time.Second,
-			MaxIncomingStreams:   16,
+			ConnectTimeout:               10 * time.Second,
+			RetryInitialInterval:         time.Second,
+			RetryMaxInterval:             30 * time.Second,
+			IdleTimeout:                  15 * time.Minute,
+			KeepAliveInterval:            10 * time.Second,
+			MaxIncomingStreams:           128,
+			StreamHeaderTimeout:          5 * time.Second,
+			MaxResourceRequestTimeout:    2 * time.Minute,
+			MaxConcurrentResourceStreams: 64,
+			MaxResourceBodyBytes:         32 * 1024 * 1024,
 		},
 		LogLevel: defaultLogLevel,
 	}
@@ -235,6 +249,28 @@ func applyFile(cfg *Config, path string) error {
 	if raw.Connection.MaxIncomingStreams != nil {
 		cfg.Connection.MaxIncomingStreams = *raw.Connection.MaxIncomingStreams
 	}
+	if err := applyAgentDuration(
+		&cfg.Connection.StreamHeaderTimeout,
+		raw.Connection.StreamHeaderTimeout,
+		"connection.stream_header_timeout",
+	); err != nil {
+		return err
+	}
+	if err := applyAgentDuration(
+		&cfg.Connection.MaxResourceRequestTimeout,
+		raw.Connection.MaxResourceRequestTimeout,
+		"connection.max_resource_request_timeout",
+	); err != nil {
+		return err
+	}
+	if raw.Connection.MaxConcurrentResourceStreams != nil {
+		cfg.Connection.MaxConcurrentResourceStreams =
+			*raw.Connection.MaxConcurrentResourceStreams
+	}
+	if raw.Connection.MaxResourceBodyBytes != nil {
+		cfg.Connection.MaxResourceBodyBytes =
+			*raw.Connection.MaxResourceBodyBytes
+	}
 	if raw.LogLevel != "" {
 		cfg.LogLevel = raw.LogLevel
 	}
@@ -355,6 +391,8 @@ func (cfg Config) Validate() error {
 		{cfg.Connection.RetryMaxInterval, 5 * time.Minute, "connection maximum retry interval"},
 		{cfg.Connection.IdleTimeout, time.Hour, "connection idle timeout"},
 		{cfg.Connection.KeepAliveInterval, 5 * time.Minute, "connection keep-alive interval"},
+		{cfg.Connection.StreamHeaderTimeout, time.Minute, "business Stream header timeout"},
+		{cfg.Connection.MaxResourceRequestTimeout, time.Hour, "Resource Stream request timeout"},
 	} {
 		if item.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", item.name)
@@ -375,9 +413,29 @@ func (cfg Config) Validate() error {
 			"connection keep-alive interval must be shorter than the idle timeout",
 		)
 	}
-	if cfg.Connection.MaxIncomingStreams < 1 {
+	if cfg.Connection.MaxIncomingStreams < 1 ||
+		cfg.Connection.MaxIncomingStreams > maxAgentIncomingStreams {
 		return errors.New(
-			"connection maximum incoming streams must be greater than zero",
+			"connection maximum incoming streams must be between 1 and 4096",
+		)
+	}
+	if cfg.Connection.StreamHeaderTimeout >
+		cfg.Connection.MaxResourceRequestTimeout {
+		return errors.New(
+			"business Stream header timeout must not exceed Resource Stream request timeout",
+		)
+	}
+	if cfg.Connection.MaxConcurrentResourceStreams < 1 ||
+		int64(cfg.Connection.MaxConcurrentResourceStreams) >
+			cfg.Connection.MaxIncomingStreams {
+		return errors.New(
+			"maximum concurrent Resource Streams must be between 1 and maximum incoming streams",
+		)
+	}
+	if cfg.Connection.MaxResourceBodyBytes < 1 ||
+		cfg.Connection.MaxResourceBodyBytes > maxResourceBodyBytes {
+		return errors.New(
+			"maximum Resource body bytes must be between 1 and 1073741824",
 		)
 	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {

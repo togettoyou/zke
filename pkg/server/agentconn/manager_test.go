@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,51 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 )
+
+func TestSessionDrainWaitsForInFlightResources(t *testing.T) {
+	t.Parallel()
+
+	current := &session{}
+	first := current.beginResource()
+	second := current.beginResource()
+	if !first || !second {
+		t.Fatal("session rejected a Resource request before draining")
+	}
+	var finished atomic.Uint64
+	current.startDrain(time.Second, func() {
+		finished.Add(1)
+	})
+	if current.beginResource() {
+		t.Fatal("draining session accepted a new Resource request")
+	}
+	current.endResource()
+	if finished.Load() != 0 {
+		t.Fatal("session drained before all Resource requests ended")
+	}
+	current.endResource()
+	if finished.Load() != 1 {
+		t.Fatalf("drain completion calls = %d, want 1", finished.Load())
+	}
+}
+
+func TestSessionDrainHasBoundedDeadline(t *testing.T) {
+	t.Parallel()
+
+	current := &session{}
+	if !current.beginResource() {
+		t.Fatal("session rejected a Resource request before draining")
+	}
+	finished := make(chan struct{})
+	current.startDrain(20*time.Millisecond, func() {
+		close(finished)
+	})
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("session drain did not honor its deadline")
+	}
+	current.endResource()
+}
 
 const (
 	testTenantID  = "00000000-0000-4000-8000-000000000001"

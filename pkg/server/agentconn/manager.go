@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -48,6 +49,11 @@ type Config struct {
 	MaxConcurrentAgents     int
 	MaxIncomingStreams      int64
 	WriteTimeout            time.Duration
+	ResourceRequestTimeout  time.Duration
+	ConnectionDrainTimeout  time.Duration
+	MaxResourceBodyBytes    uint64
+	MaxResourceStreams      int
+	MaxResourceRequests     int
 	// MaxRememberedDisconnects bounds how many disconnected Agents keep a
 	// last-known status in memory, so Cluster churn cannot grow the Server
 	// heap without limit.
@@ -60,6 +66,7 @@ type Manager struct {
 	store   ConnectionStore
 	renewal *enrollment.CertificateRenewalService
 	tls     *tls.Config
+	streams *agentprotocol.StreamServer
 
 	// handlers tracks in-flight connection goroutines so that Run only
 	// reports completion once none of them can still touch the database.
@@ -67,13 +74,17 @@ type Manager struct {
 	// admissions bounds concurrent connection handling so that a burst of
 	// dials cannot exhaust Server memory before authentication completes.
 	admissions chan struct{}
+	// resourceAdmissions is an instance-wide bound. Per-Agent bounds live on
+	// each session, so one busy Cluster cannot consume the whole allowance.
+	resourceAdmissions chan struct{}
 
-	mutex            sync.Mutex
-	connections      map[string]*session
-	lastDisconnected map[string]ConnectionStatus
-	disconnectOrder  []string
-	subscribers      map[uint64]chan ConnectionEvent
-	nextSubscriberID uint64
+	mutex                sync.Mutex
+	connections          map[string]*session
+	connectionsByCluster map[string]*session
+	lastDisconnected     map[string]ConnectionStatus
+	disconnectOrder      []string
+	subscribers          map[uint64]chan ConnectionEvent
+	nextSubscriberID     uint64
 }
 
 type managedConnection interface {
@@ -95,12 +106,21 @@ type session struct {
 	certificateExpiresAt time.Time
 	connectedAt          time.Time
 	conn                 managedConnection
+	business             *quic.Conn
 	stream               controlStream
 	writeTimeout         time.Duration
 	writeMu              sync.Mutex
 	statusMu             sync.Mutex
 	lastHeartbeatAt      time.Time
 	disconnectReason     string
+	capabilities         map[string]struct{}
+	resourceAdmissions   chan struct{}
+	resourceMu           sync.Mutex
+	resourceInFlight     int
+	draining             bool
+	drainOnce            sync.Once
+	drainTimer           *time.Timer
+	drainFinish          func()
 }
 
 type ConnectionStatus struct {
@@ -128,6 +148,11 @@ const (
 
 	defaultMaxRememberedDisconnects = 4096
 	defaultSessionWriteTimeout      = 5 * time.Second
+	defaultResourceRequestTimeout   = 2 * time.Minute
+	defaultConnectionDrainTimeout   = 10 * time.Second
+	defaultMaxResourceBodyBytes     = 32 * 1024 * 1024
+	defaultMaxResourceStreams       = 64
+	defaultMaxResourceRequests      = 4096
 
 	// Bounds for re-establishing the revocation watch after the listening
 	// PostgreSQL connection drops. The ceiling is kept well under the
@@ -143,6 +168,13 @@ type certificateIdentity struct {
 	CertificateExpiresAt time.Time
 }
 
+var (
+	ErrAgentNotConnected         = errors.New("target Cluster Agent is not connected")
+	ErrResourceCapabilityMissing = errors.New("target Cluster Agent does not support Resource Streams")
+	ErrResourceRequestExhausted  = errors.New("Resource Stream request capacity is exhausted")
+	ErrResourceVerbUnsupported   = errors.New("Resource Stream verb is not implemented")
+)
+
 func New(
 	config Config,
 	logger *slog.Logger,
@@ -153,16 +185,57 @@ func New(
 	if err != nil {
 		return nil, err
 	}
+	if config.ResourceRequestTimeout <= 0 {
+		config.ResourceRequestTimeout = defaultResourceRequestTimeout
+	}
+	if config.ConnectionDrainTimeout <= 0 {
+		config.ConnectionDrainTimeout = defaultConnectionDrainTimeout
+	}
+	if config.MaxResourceBodyBytes == 0 {
+		config.MaxResourceBodyBytes = defaultMaxResourceBodyBytes
+	}
+	if config.MaxResourceStreams <= 0 {
+		config.MaxResourceStreams = defaultMaxResourceStreams
+	}
+	if config.MaxResourceRequests <= 0 {
+		config.MaxResourceRequests = defaultMaxResourceRequests
+	}
+	streamServer, err := agentprotocol.NewStreamServer(
+		agentprotocol.StreamServerConfig{
+			HeaderTimeout: config.HandshakeTimeout,
+			MaxTimeout:    config.ResourceRequestTimeout,
+			OnError: func(header *agentv1.StreamHeader, err error) {
+				attributes := []any{slog.String("error", err.Error())}
+				if header != nil {
+					attributes = append(
+						attributes,
+						slog.String("request_id", header.GetRequestId()),
+						slog.String("stream_kind", header.GetKind().String()),
+					)
+				}
+				logger.Debug("Server business Stream stopped", attributes...)
+			},
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
 	return &Manager{
-		config:           config,
-		logger:           logger,
-		store:            connectionStore,
-		renewal:          renewalService,
-		tls:              tlsConfig,
-		admissions:       make(chan struct{}, max(1, config.MaxConcurrentAgents)),
-		connections:      make(map[string]*session),
-		lastDisconnected: make(map[string]ConnectionStatus),
-		subscribers:      make(map[uint64]chan ConnectionEvent),
+		config:     config,
+		logger:     logger,
+		store:      connectionStore,
+		renewal:    renewalService,
+		tls:        tlsConfig,
+		streams:    streamServer,
+		admissions: make(chan struct{}, max(1, config.MaxConcurrentAgents)),
+		resourceAdmissions: make(
+			chan struct{},
+			config.MaxResourceRequests,
+		),
+		connections:          make(map[string]*session),
+		connectionsByCluster: make(map[string]*session),
+		lastDisconnected:     make(map[string]ConnectionStatus),
+		subscribers:          make(map[uint64]chan ConnectionEvent),
 	}, nil
 }
 
@@ -336,24 +409,50 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 		certificateExpiresAt: identity.CertificateExpiresAt,
 		connectedAt:          now,
 		conn:                 connection,
+		business:             connection,
 		stream:               controlStream,
 		writeTimeout:         manager.config.WriteTimeout,
 		disconnectReason:     "connection_closed",
+		capabilities:         make(map[string]struct{}),
+		resourceAdmissions: make(
+			chan struct{},
+			manager.config.MaxResourceStreams,
+		),
+	}
+	serverCapabilities := []string{
+		agentprotocol.CapabilityCertificateRenewal,
+	}
+	if hasCapability(
+		hello.GetCapabilities(),
+		agentprotocol.CapabilityResourceV1,
+	) {
+		serverCapabilities = append(
+			serverCapabilities,
+			agentprotocol.CapabilityResourceV1,
+		)
+		current.capabilities[agentprotocol.CapabilityResourceV1] = struct{}{}
 	}
 	previous := manager.register(current)
 	if previous != nil {
-		previous.setDisconnectReason(agentprotocol.GoAwayConnectionReplaced)
-		_ = previous.write(&agentv1.ControlFrame{
-			ProtocolVersion: agentprotocol.ProtocolVersion,
-			Message: &agentv1.ControlFrame_GoAway{
-				GoAway: &agentv1.GoAway{
-					Reason: agentprotocol.GoAwayConnectionReplaced,
-				},
+		previous.startDrain(
+			manager.config.ConnectionDrainTimeout,
+			func() {
+				previous.setDisconnectReason(
+					agentprotocol.GoAwayConnectionReplaced,
+				)
+				_ = previous.write(&agentv1.ControlFrame{
+					ProtocolVersion: agentprotocol.ProtocolVersion,
+					Message: &agentv1.ControlFrame_GoAway{
+						GoAway: &agentv1.GoAway{
+							Reason: agentprotocol.GoAwayConnectionReplaced,
+						},
+					},
+				})
+				_ = previous.conn.CloseWithError(
+					agentprotocol.CloseConnectionReplaced,
+					"connection replaced",
+				)
 			},
-		})
-		_ = previous.conn.CloseWithError(
-			agentprotocol.CloseConnectionReplaced,
-			"connection replaced",
 		)
 	}
 	defer manager.unregister(current)
@@ -366,9 +465,7 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 				ServerTimeUnixMilli:     now.UnixMilli(),
 				HeartbeatIntervalMillis: uint64(manager.config.HeartbeatInterval.Milliseconds()),
 				HeartbeatTimeoutMillis:  uint64(manager.config.HeartbeatTimeout.Milliseconds()),
-				Capabilities: []string{
-					agentprotocol.CapabilityCertificateRenewal,
-				},
+				Capabilities:            serverCapabilities,
 			},
 		},
 	}); err != nil {
@@ -379,6 +476,20 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 		manager.reject(connection, agentprotocol.CloseProtocolError, "clear control stream deadline", err)
 		return
 	}
+	businessContext, cancelBusiness := context.WithCancel(parent)
+	businessErrors := make(chan error, 1)
+	businessDone := make(chan struct{})
+	go func() {
+		defer close(businessDone)
+		err := manager.streams.Serve(businessContext, connection)
+		businessErrors <- err
+		if err != nil && businessContext.Err() == nil {
+			_ = connection.CloseWithError(
+				agentprotocol.CloseInternalError,
+				"business Stream accept loop stopped",
+			)
+		}
+	}()
 
 	logger.Info(
 		"Agent connection established",
@@ -394,7 +505,20 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			slog.String("error", err.Error()),
 		)
 	}
+	cancelBusiness()
 	_ = connection.CloseWithError(agentprotocol.CloseNormal, "connection closed")
+	<-businessDone
+	select {
+	case businessErr := <-businessErrors:
+		if businessErr != nil && parent.Err() == nil {
+			logger.Warn(
+				"Server business Stream accept loop stopped",
+				slog.String("connection_id", connectionID),
+				slog.String("error", businessErr.Error()),
+			)
+		}
+	default:
+	}
 	logger.Info(
 		"Agent connection closed",
 		slog.String("connection_id", connectionID),
@@ -619,8 +743,15 @@ func (manager *Manager) renewCertificate(
 func (manager *Manager) register(current *session) *session {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
+	if manager.connections == nil {
+		manager.connections = make(map[string]*session)
+	}
+	if manager.connectionsByCluster == nil {
+		manager.connectionsByCluster = make(map[string]*session)
+	}
 	previous := manager.connections[current.identity.AgentID]
 	manager.connections[current.identity.AgentID] = current
+	manager.connectionsByCluster[current.identity.ClusterID] = current
 	manager.publishLocked(current, ConnectionStateOnline, current.connectedAt)
 	return previous
 }
@@ -633,6 +764,9 @@ func (manager *Manager) unregister(current *session) {
 	}
 	agentID := current.identity.AgentID
 	delete(manager.connections, agentID)
+	if manager.connectionsByCluster[current.identity.ClusterID] == current {
+		delete(manager.connectionsByCluster, current.identity.ClusterID)
+	}
 	manager.rememberDisconnectLocked(
 		agentID,
 		current.disconnectedStatus(time.Now().UTC()),
@@ -772,6 +906,90 @@ func (manager *Manager) publishIdentityLocked(
 			)
 		}
 	}
+}
+
+func (manager *Manager) RequestResource(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.ResourceRequest,
+	requestBody io.Reader,
+	responseBody io.Writer,
+) (*agentv1.ResourceResponse, error) {
+	if ctx == nil {
+		return nil, errors.New("Resource request Context is required")
+	}
+	if !validation.IsUUID(clusterID) {
+		return nil, errors.New("target Cluster ID is invalid")
+	}
+	if request == nil ||
+		(request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_LIST &&
+			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_GET) {
+		return nil, ErrResourceVerbUnsupported
+	}
+	manager.mutex.Lock()
+	current := manager.connectionsByCluster[clusterID]
+	manager.mutex.Unlock()
+	if current == nil || current.business == nil {
+		return nil, ErrAgentNotConnected
+	}
+	if !current.beginResource() {
+		return nil, ErrAgentNotConnected
+	}
+	defer current.endResource()
+	if _, supported := current.capabilities[agentprotocol.CapabilityResourceV1]; !supported {
+		return nil, ErrResourceCapabilityMissing
+	}
+	if !tryAcquire(manager.resourceAdmissions) {
+		return nil, ErrResourceRequestExhausted
+	}
+	defer release(manager.resourceAdmissions)
+	if !tryAcquire(current.resourceAdmissions) {
+		return nil, ErrResourceRequestExhausted
+	}
+	defer release(current.resourceAdmissions)
+
+	timeout := manager.config.ResourceRequestTimeout
+	if timeout <= 0 {
+		timeout = defaultResourceRequestTimeout
+	}
+	requestContext, cancelRequest := context.WithTimeout(ctx, timeout)
+	defer cancelRequest()
+	deadline, _ := requestContext.Deadline()
+	timeoutMillis := max(int64(1), time.Until(deadline).Milliseconds())
+	requestID, err := identifier.NewUUID()
+	if err != nil {
+		return nil, fmt.Errorf("generate Resource request identifier: %w", err)
+	}
+	return agentprotocol.DoResource(
+		requestContext,
+		current.business,
+		&agentv1.StreamHeader{
+			ProtocolVersion: agentprotocol.ProtocolVersion,
+			Kind:            agentv1.StreamKind_STREAM_KIND_RESOURCE,
+			RequestId:       requestID,
+			TimeoutMillis:   uint64(timeoutMillis),
+		},
+		request,
+		requestBody,
+		responseBody,
+		manager.config.MaxResourceBodyBytes,
+	)
+}
+
+func tryAcquire(admissions chan struct{}) bool {
+	if admissions == nil {
+		return false
+	}
+	select {
+	case admissions <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func release(admissions chan struct{}) {
+	<-admissions
 }
 
 func (manager *Manager) Snapshot(
@@ -938,6 +1156,61 @@ func (manager *Manager) handleRevocation(
 		}
 		_ = current.conn.CloseWithError(closeCode, message)
 	}
+}
+
+func (current *session) beginResource() bool {
+	current.resourceMu.Lock()
+	defer current.resourceMu.Unlock()
+	if current.draining {
+		return false
+	}
+	current.resourceInFlight++
+	return true
+}
+
+func (current *session) endResource() {
+	current.resourceMu.Lock()
+	if current.resourceInFlight > 0 {
+		current.resourceInFlight--
+	}
+	drained := current.draining && current.resourceInFlight == 0
+	current.resourceMu.Unlock()
+	if drained {
+		current.finishDrain()
+	}
+}
+
+func (current *session) startDrain(timeout time.Duration, finish func()) {
+	current.resourceMu.Lock()
+	if current.draining {
+		current.resourceMu.Unlock()
+		return
+	}
+	current.draining = true
+	current.drainFinish = finish
+	drained := current.resourceInFlight == 0
+	if !drained {
+		current.drainTimer = time.AfterFunc(timeout, current.finishDrain)
+	}
+	current.resourceMu.Unlock()
+	if drained {
+		current.finishDrain()
+	}
+}
+
+func (current *session) finishDrain() {
+	current.drainOnce.Do(func() {
+		current.resourceMu.Lock()
+		if current.drainTimer != nil {
+			current.drainTimer.Stop()
+			current.drainTimer = nil
+		}
+		finish := current.drainFinish
+		current.resourceMu.Unlock()
+		if finish != nil {
+			finish()
+		}
+	})
 }
 
 func (current *session) recordHeartbeat(at time.Time) {
@@ -1149,6 +1422,15 @@ func validateClientHello(
 		}
 	}
 	return nil
+}
+
+func hasCapability(capabilities []string, expected string) bool {
+	for _, capability := range capabilities {
+		if capability == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func healthStatusValue(value agentv1.HealthStatus) (string, error) {

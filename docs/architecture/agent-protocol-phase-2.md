@@ -3,8 +3,9 @@
 本文定义 ZKE Phase 2 容器服务使用的 Server–Agent 业务协议，包括 QUIC Stream 模型、通用 Kubernetes
 资源请求、取消语义、并发与背压、安全边界以及分阶段交付要求。
 
-> 本文是 Phase 2 的设计基线，不表示相关能力已经实现。当前代码只实现了 QUIC/mTLS Connection 和 Control
-> Stream；本文所述业务 Stream、双向 accept 循环及资源代理仍属于待实现能力。
+> 本文是 Phase 2 的设计基线。当前代码已经实现版本化 Stream/Resource Protobuf、通用有界分帧、双方
+> accept 循环、Resource Stream 往返、能力协商、原生 Stream reset 取消和并发限制；尚未接入 Kubernetes
+> Resource Handler、Server HTTP API、Watch、Pod Logs 和 Pod Exec。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
 [Agent 注册与连接](agent-enrollment-and-connection.md)。系统级技术约束参见
@@ -589,6 +590,10 @@ Server 必须把面向用户的错误区分为认证失败、无权限、目标�
 - 实现业务 Stream 打开、分发、正常关闭和原生 reset 取消；
 - 增加能力协商、结构化错误和分类型并发限制；
 - 使用真实 QUIC 连接完成集成测试，暂不访问 Kubernetes API。
+
+上述传输内核已经实现。生产 Agent 在 Kubernetes Resource Handler 接入前不声明 `resource.v1`，因此当前
+Server 不会向已部署 Agent 发起 Resource 请求。真实 QUIC 测试已覆盖慢流与小请求并发、Control 心跳隔离、
+取消、QUIC incoming 上限、Resource 类型额度、异常首帧、正文限制、单 Stream 故障隔离和断连资源回收。
 
 ### 11.2 只读资源闭环
 

@@ -355,9 +355,10 @@ idempotency_key    # 仅后续变更请求使用
 Stream，互不排队，慢的数据流不会阻塞其他请求，取消一个请求只重置它自己的 Stream。因此不需要在单条
 Stream 上再自建一层多路复用——那样会把 QUIC 已经消除的队头阻塞重新引入。
 
-**Phase 1 实现现状**：只实现了 Control Stream。业务 Stream、`StreamHeader` 以及 7.3 第 6 步要求的双向
-accept 循环都尚未实现；Agent 侧当前不调用 `AcceptStream`，因此 Server 主动创建的 Stream 无人接收。
-Phase 2 按独立的 Resource、Watch、Logs 和 Exec Stream 逐步接入。
+**当前实现现状**：Control Stream 与 Phase 2 业务传输内核已经实现。双方在 Hello 完成后运行独立 accept
+循环；Resource Stream 已具备版本化 Header、能力协商、流式正文、结构化响应、原生 reset 取消、分类型并发
+限制和真实 QUIC 集成测试。Kubernetes Resource Handler 和 Server HTTP API 尚未接入，生产 Agent 当前不声明
+`resource.v1`；Watch、Logs 和 Exec Stream 仍待后续阶段实现。
 
 Protobuf package 使用显式版本，例如 `zke.agent.v1`。协议版本与 Server、Agent 产品版本分离。已发布字段编号保留；
 删除的字段保留编号和名称；未识别字段按 Protobuf 兼容规则处理。代码生成工具固定版本，并在 CI 中执行 lint 和

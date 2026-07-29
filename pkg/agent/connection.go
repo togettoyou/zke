@@ -29,7 +29,28 @@ func runConnectionLoop(
 	if err != nil {
 		return fmt.Errorf("generate Agent startup identifier: %w", err)
 	}
+	return runConnectionLoopWithServices(
+		ctx,
+		cfg,
+		store,
+		identity,
+		version,
+		startupID,
+		logger,
+		connectionServices{},
+	)
+}
 
+func runConnectionLoopWithServices(
+	ctx context.Context,
+	cfg Config,
+	store *IdentityStore,
+	identity LocalIdentity,
+	version string,
+	startupID string,
+	logger *slog.Logger,
+	services connectionServices,
+) error {
 	interval := cfg.Connection.RetryInitialInterval
 	for {
 		tlsConfig, err := connectionTLSConfig(cfg, identity)
@@ -45,6 +66,7 @@ func runConnectionLoop(
 			version,
 			startupID,
 			logger,
+			services,
 		)
 		if ctx.Err() != nil {
 			return nil
@@ -102,6 +124,7 @@ func runConnection(
 	version string,
 	startupID string,
 	logger *slog.Logger,
+	services connectionServices,
 ) error {
 	connectContext, cancelConnect := context.WithTimeout(
 		ctx,
@@ -141,6 +164,15 @@ func runConnection(
 	); err != nil {
 		return fmt.Errorf("set Agent control handshake deadline: %w", err)
 	}
+	capabilities := []string{
+		agentprotocol.CapabilityCertificateRenewal,
+	}
+	if services.resourceHandler != nil {
+		capabilities = append(
+			capabilities,
+			agentprotocol.CapabilityResourceV1,
+		)
+	}
 	if err := agentprotocol.WriteFrame(controlStream, &agentv1.ControlFrame{
 		ProtocolVersion: agentprotocol.ProtocolVersion,
 		Message: &agentv1.ControlFrame_ClientHello{
@@ -149,9 +181,7 @@ func runConnection(
 				ClusterId:    identity.ClusterID,
 				AgentVersion: version,
 				StartupId:    startupID,
-				Capabilities: []string{
-					agentprotocol.CapabilityCertificateRenewal,
-				},
+				Capabilities: capabilities,
 			},
 		},
 	}); err != nil {
@@ -172,6 +202,39 @@ func runConnection(
 	if err := controlStream.SetDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("clear Agent control handshake deadline: %w", err)
 	}
+	resourceSupported := services.resourceHandler != nil &&
+		serverSupportsCapability(
+			serverHello,
+			agentprotocol.CapabilityResourceV1,
+		)
+	businessServer, err := newBusinessStreamServer(
+		cfg,
+		services,
+		resourceSupported,
+		logger,
+	)
+	if err != nil {
+		return err
+	}
+	businessContext, cancelBusiness := context.WithCancel(ctx)
+	businessErrors := make(chan error, 1)
+	businessDone := make(chan struct{})
+	go func() {
+		defer close(businessDone)
+		businessErrors <- runBusinessStreamServer(
+			businessContext,
+			businessServer,
+			connection,
+		)
+	}()
+	defer func() {
+		cancelBusiness()
+		_ = connection.CloseWithError(
+			agentprotocol.CloseNormal,
+			"Agent connection closed",
+		)
+		<-businessDone
+	}()
 
 	logger.Info(
 		"Agent connection established",
@@ -247,6 +310,11 @@ func runConnection(
 				return cause
 			}
 			return connection.Context().Err()
+		case err := <-businessErrors:
+			if err != nil {
+				return err
+			}
+			return errors.New("Agent business Stream accept loop stopped")
 		case err := <-reader.failures:
 			return err
 		case goAway := <-reader.goAways:

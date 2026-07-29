@@ -3,20 +3,27 @@
 set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly expected_protoc_version="libprotoc 35.0"
+output_directory="${AGENT_PROTOCOL_OUTPUT_DIRECTORY:-.}"
 
 if ! command -v protoc >/dev/null 2>&1; then
   echo "protoc is required" >&2
   exit 1
 fi
 
-temporary_directory="$(mktemp -d)"
-trap 'rm -rf "${temporary_directory}"' EXIT
+actual_protoc_version="$(protoc --version)"
+if [[ "${actual_protoc_version}" != "${expected_protoc_version}" ]]; then
+  echo "protoc ${expected_protoc_version#libprotoc } is required; found ${actual_protoc_version}" >&2
+  exit 1
+fi
 
 cd "${repository_root}"
-GOBIN="${temporary_directory}" go install google.golang.org/protobuf/cmd/protoc-gen-go
-PATH="${temporary_directory}:${PATH}" protoc \
-  --go_out=. \
+protoc_gen_go="$(go tool -n protoc-gen-go)"
+mkdir -p "${output_directory}"
+protoc \
+  --plugin="protoc-gen-go=${protoc_gen_go}" \
+  --go_out="${output_directory}" \
   --go_opt=module=github.com/togettoyou/zke \
-  api/agent/v1/control.proto
+  api/agent/v1/*.proto
 
 echo "generated Agent protocol Go sources"

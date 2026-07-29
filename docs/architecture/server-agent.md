@@ -64,7 +64,10 @@ HTTP API 使用 `http.address` 的 TCP Listener；QUIC 使用独立
 聚合资源：Server 按 Project 查询 Cluster，并在 `connection` 字段中返回内部连接身份的生命周期、健康、版本、
 最后心跳、证书有效期和当前 Server 实例内存中的 `online`/`offline` 状态；管理 API 不暴露内部 Agent ID。
 Server 也已提供以 Cluster ID 为目标且需要显式确认的连接撤销和重新接入 API。当前连接快照只代表处理请求的
-Server 实例，重启后不保留离线历史；多实例全局连接视图、任务路由和业务 Stream 仍未实现。
+Server 实例，重启后不保留离线历史；多实例全局连接视图和跨实例任务路由仍未实现。
+
+Phase 2 已实现单 Server 实例内的业务 Stream 传输内核，包括双方 accept 循环、Resource Stream、能力协商、
+单 Stream 取消和并发限制。Kubernetes Resource Handler、跨 Server 实例任务路由及容器服务 HTTP API 尚未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
 `cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含

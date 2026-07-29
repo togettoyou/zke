@@ -1,0 +1,58 @@
+name: Agent protocol
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/agent-protocol.yml"
+      - "api/agent/**"
+      - "buf.yaml"
+      - "go.mod"
+      - "go.sum"
+      - "hack/generate-agent-protocol.sh"
+      - "hack/check-agent-protocol.sh"
+      - "hack/run-buf.sh"
+      - "Makefile"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/agent-protocol.yml"
+      - "api/agent/**"
+      - "buf.yaml"
+      - "go.mod"
+      - "go.sum"
+      - "hack/generate-agent-protocol.sh"
+      - "hack/check-agent-protocol.sh"
+      - "hack/run-buf.sh"
+      - "Makefile"
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "35.0"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: make check-agent-protocol
+
+  breaking:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make breaking-agent-protocol AGAINST="origin/${{ github.base_ref }}"
