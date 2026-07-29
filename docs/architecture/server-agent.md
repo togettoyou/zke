@@ -67,7 +67,7 @@ Server 也已提供以 Cluster ID 为目标且需要显式确认的连接撤销�
 Server 实例，重启后不保留离线历史；多实例全局连接视图、任务路由和业务 Stream 仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
-`cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Request/Data Stream，也不包含
+`cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含
 Kubernetes 资源查询。
 
 Agent 为固定的 Enrollment、Trust 和 identity Secret 名称以及注册重试参数和日志级别提供默认值。Agent 默认

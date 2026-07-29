@@ -266,7 +266,7 @@ Agent 私钥始终保存在目标集群，Server 只保存客户端证书及其�
 持久化为 active。Agent 会在配置的续期窗口内通过 Control Stream 自动续期；新证书成功连接后旧 Credential
 被撤销。Credential 或 Agent 身份撤销会通过 PostgreSQL 通知各 Server 实例关闭对应现有连接并停止当前身份
 重试；Tenant、Project 或 Cluster 停用也会通知断连，但属于可恢复原因，恢复后 Agent 自动重连。业务
-Request/Data Stream 仍未实现。
+Stream 仍未实现。
 
 ### 6.3 证书生命周期
 
@@ -298,8 +298,10 @@ UDP
 └── QUIC / TLS 1.3 / mTLS
     └── Connection
         ├── Control Stream
-        ├── Request Stream
-        └── Data Stream
+        ├── Resource Stream
+        ├── Resource Watch Stream
+        ├── Pod Logs Stream
+        └── Pod Exec Stream
 ```
 
 - QUIC 内建 TLS 1.3；Agent 验证 Server 证书，Server 验证 Agent 客户端证书。
@@ -323,36 +325,39 @@ UDP
 
 ### 7.4 Stream 类型与生命周期
 
-每个非 Control Stream 的首帧必须是版本化的 `StreamHeader`，至少包含：
+Phase 2 业务协议的详细设计参见
+[Phase 2 Server–Agent 协议设计](agent-protocol-phase-2.md)。
+
+每个非 Control Stream 的首帧必须是版本化的 `StreamHeader`，包含：
 
 ```text
 protocol_version
-stream_type
+stream_kind
 request_id
-timeout_ms
-idempotency_key    # 仅变更请求使用
+timeout_millis
+idempotency_key    # 仅后续变更请求使用
 ```
 
-- `stream_type` 使用允许列表；未知类型返回协议错误并关闭当前 Stream。
+- `stream_kind` 使用允许列表；未知类型返回协议错误并重置当前 Stream。
 - Server 创建请求 Stream；Agent 可以为事件或数据上报创建独立 Stream。
-- `request_id` 使用随机 128 位标识并在 Connection 内保持唯一。
-- `timeout_ms` 是相对时长，接收方按本地上限截断。
+- `request_id` 使用随机 128 位标识，用于日志、指标和审计关联，不参与响应路由。
+- `timeout_millis` 是相对时长，接收方按本地上限截断。
 - Namespace 和资源身份只在类型化请求中表达；Agent 根据 Connection 绑定的 `cluster_id` 校验目标。
-- 每个请求对应一个 Stream。
-- 请求使用 Request、Response、Data、Error 和 End 帧。
-- 所有帧使用长度前缀；读取长度前缀后先校验最大帧大小。
+- 每个逻辑请求或流式会话对应一条 QUIC 双向 Stream。
+- Stream Header 后直接使用该 Stream 类型的消息；不使用覆盖所有业务的通用 Frame，也不在单条 Stream
+  复用多个请求。
+- Protobuf 消息使用有界长度前缀；大正文按已校验的长度紧随消息并流式传输。
 - 每个 Stream 设置创建、首帧、读写、空闲和总时长限制；超时或用户取消只终止当前 Stream。
-- 取消由 Control Stream 上的 `CancelRequest(request_id, reason)` 和业务 Stream 关闭共同表达；接收方将
-  `request_id` 映射到对应 `context.CancelFunc`，只终止对应 Stream。
+- 正常完成使用 Stream FIN；取消和超时使用 QUIC `CancelRead` 与 `CancelWrite` 重置当前 Stream，并取消对应
+  处理 Context。
 
 并发由 QUIC 的 Stream 多路复用提供，这也是选择 QUIC 的主要原因之一：并发查询、日志和终端各自占用独立
 Stream，互不排队，慢的数据流不会阻塞其他请求，取消一个请求只重置它自己的 Stream。因此不需要在单条
 Stream 上再自建一层多路复用——那样会把 QUIC 已经消除的队头阻塞重新引入。
 
-**Phase 1 实现现状**：只实现了 Control Stream。Request 与 Data Stream、`StreamHeader`、`CancelRequest`
-以及 7.3 第 6 步要求的双向 accept 循环都尚未实现；Agent 侧当前不调用 `AcceptStream`，因此 Server 主动
-创建的 Stream 无人接收。双方 `max_incoming_streams` 额度已经放开，Phase 2 接入资源查询、日志和指标时
-按本节设计实现即可，不需要改变协议分层。
+**Phase 1 实现现状**：只实现了 Control Stream。业务 Stream、`StreamHeader` 以及 7.3 第 6 步要求的双向
+accept 循环都尚未实现；Agent 侧当前不调用 `AcceptStream`，因此 Server 主动创建的 Stream 无人接收。
+Phase 2 按独立的 Resource、Watch、Logs 和 Exec Stream 逐步接入。
 
 Protobuf package 使用显式版本，例如 `zke.agent.v1`。协议版本与 Server、Agent 产品版本分离。已发布字段编号保留；
 删除的字段保留编号和名称；未识别字段按 Protobuf 兼容规则处理。代码生成工具固定版本，并在 CI 中执行 lint 和
@@ -372,7 +377,6 @@ Server 到 Agent：
 
 - `ServerHello`：连接会话 ID、Server 时间、心跳间隔和兼容性结果；
 - `HeartbeatAck`：确认最后处理的心跳；
-- `CancelRequest`：取消指定 `request_id` 对应的任务或流式会话；
 - `GoAway`：凭证撤销、版本不兼容、连接被替换或 Server 排空。
 
 Control Stream 每个方向使用一个串行 Writer，只承载控制消息。请求和数据使用独立 Stream。传输层 KeepAlive
@@ -396,7 +400,7 @@ Server 和 Agent 必须配置并验证：
 - 按 Stream 类型划分的并发数；
 - 最大帧、流控窗口、连接总缓冲和最大消息；
 - Stream Open、Read、Write、Idle 和总任务 Deadline；
-- 单个 Data Stream 的吞吐与缓冲上限；
+- 单个长生命周期业务 Stream 的吞吐与缓冲上限；
 - Server 排空、Connection 关闭、单 Stream 取消和异常路径；
 - 指标：当前 Stream、排队数、开流延迟、取消、超时、吞吐和连接级阻塞时间。
 
@@ -405,7 +409,7 @@ Server 和 Agent 必须配置并验证：
 ### 7.7 验证要求
 
 - 验证批量连接、重连风暴、证书握手和 Server 排空；
-- 同时运行心跳、小型请求、持续 Data Stream 和慢消费者，检查延迟与公平性；
+- 同时运行心跳、小型请求、持续日志或 Watch Stream 和慢消费者，检查延迟与公平性；
 - 覆盖延迟、抖动、丢包、带宽受限和连接中断；
 - 验证 Stream 上限、超时、取消、异常帧和资源回收。
 
@@ -859,7 +863,7 @@ Token、证书、Secret 或完整敏感请求正文。
 - 跨 Tenant、Project 查询必须失败或按不可见资源处理；
 - Server 重启后 Agent 能够安全重连，不重复创建 Cluster；
 - 注册响应丢失后，相同幂等键和 CSR 能够恢复原结果；
-- 一个持续 Data Stream 不得在应用层阻塞其他请求、心跳或状态上报；
+- 一个持续日志、Watch 或 Exec Stream 不得在应用层阻塞其他请求、心跳或状态上报；
 - 取消、超时或异常业务 Stream 不得关闭同一 Agent 的整个 Connection；
 - 撤销 Agent 时关闭现有 Connection，后续握手必须失败；
 - SSE 按会话作用域过滤，并在会话撤销或权限变化时关闭；
