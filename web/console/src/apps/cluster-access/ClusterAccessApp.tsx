@@ -204,7 +204,24 @@ function ClusterSection({
          */
         cell: ({ row }) => {
           const cluster = row.original;
-          const revocable = canRevoke && cluster.connection.certificate_status !== "revoked";
+          /*
+           * 撤销连接 and 重新接入 are the two ends of one lifecycle, not two
+           * choices to weigh against each other.
+           *
+           * `agents.lifecycle_status` is the column the Server reads for both:
+           * a re-enrollment is refused with `resource_state_conflict` while any
+           * Agent of the Cluster is still unrevoked, and a revocation of an
+           * already-revoked Agent is a no-op that reports `already_revoked`. So
+           * exactly one of the two can do anything at any moment, and the menu
+           * offers that one.
+           *
+           * A suspended Cluster is excluded from re-enrollment by the same
+           * query. 恢复 sits directly below in this menu, which is the step that
+           * makes it available again.
+           */
+          const revoked = cluster.connection.lifecycle_status === "revoked";
+          const revocable = canRevoke && !revoked;
+          const reenrollable = canEnroll && revoked && cluster.status !== "suspended";
           return (
             <div
               className="flex justify-end"
@@ -230,13 +247,13 @@ function ClusterSection({
                       重命名
                     </DropdownMenuItem>
                   ) : null}
-                  {revocable || canEnroll ? <DropdownMenuSeparator /> : null}
+                  {revocable || reenrollable ? <DropdownMenuSeparator /> : null}
                   {revocable ? (
                     <DropdownMenuItem onSelect={() => setRevokeTarget(cluster)}>
                       撤销连接
                     </DropdownMenuItem>
                   ) : null}
-                  {canEnroll ? (
+                  {reenrollable ? (
                     <DropdownMenuItem onSelect={() => setReenrollTarget(cluster)}>
                       重新接入
                     </DropdownMenuItem>
@@ -526,6 +543,9 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   const [installOpen, setInstallOpen] = useState(false);
   const enrollmentKey = useSubmissionKey(createOpen);
   const installationKey = useSubmissionKey(installOpen);
+  // Named for the wire field it becomes — the enrollment's `cluster_name` —
+  // which both dialogs present as the credential's own name, because that is
+  // what it stays after the Cluster it creates is renamed.
   const [clusterName, setClusterName] = useState("");
   const [tokenResult, setTokenResult] = useState<{ token: string; expiresAt: string } | null>(null);
   const [installResult, setInstallResult] = useState<{
@@ -551,7 +571,21 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   const columns = useMemo<ColumnDef<ClusterEnrollmentRecord, unknown>[]>(
     () => [
       {
-        header: "集群名称",
+        /*
+         * The credential's name, not the Cluster's.
+         *
+         * `cluster_name` is written onto the enrollment when it is issued and
+         * never touched again: a first enrollment carries the name its Cluster
+         * will be created under, a re-enrollment carries a snapshot of the name
+         * the Cluster had at the time. Renaming the Cluster afterwards changes
+         * neither, so a column headed 集群名称 was reporting a name that may no
+         * longer belong to anything — most visibly for a re-enrollment issued
+         * before a rename.
+         *
+         * What the value actually identifies is this credential, which is also
+         * how the revocation dialog already labels it.
+         */
+        header: "凭证名称",
         cell: ({ row }) => (
           <div className="flex flex-col">
             <span className="text-foreground font-medium">{row.original.cluster_name}</span>
@@ -605,7 +639,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
       <div className="flex h-full min-h-0 flex-col">
         <SectionTitle
           title="接入凭证"
-          description="一次性凭证由集群内的 ZKE Agent 使用，Agent 主动连接 Server 完成注册"
+          description="一次性凭证由集群内的 ZKE Agent 使用，Agent 主动连接 Server 完成注册；名称在签发时固定，集群之后可以单独重命名"
           actions={
             canCreate ? (
               <>
@@ -655,15 +689,18 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
             <DialogTitle>创建一次性接入凭证</DialogTitle>
           </DialogHeader>
           <div className="grid gap-1.5">
-            <Label htmlFor="enrollment-cluster-name">集群名称</Label>
+            <Label htmlFor="enrollment-name">凭证名称</Label>
             <Input
-              id="enrollment-cluster-name"
+              id="enrollment-name"
               value={clusterName}
               maxLength={253}
               autoFocus
               onChange={(event) => setClusterName(event.target.value)}
             />
-            <FieldHint>名称会绑定到凭证；Agent 注册成功后即以该名称创建集群。</FieldHint>
+            <FieldHint>
+              名称在签发时绑定到本凭证，之后不再变化；Agent
+              注册成功时以该名称创建集群，集群可以随时重命名。凭证未使用前会占用同名集群名称。
+            </FieldHint>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>
@@ -698,16 +735,17 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
             <DialogTitle>生成一键安装命令</DialogTitle>
           </DialogHeader>
           <div className="grid gap-1.5">
-            <Label htmlFor="installation-cluster-name">集群名称</Label>
+            <Label htmlFor="installation-name">凭证名称</Label>
             <Input
-              id="installation-cluster-name"
+              id="installation-name"
               value={clusterName}
               maxLength={253}
               autoFocus
               onChange={(event) => setClusterName(event.target.value)}
             />
             <FieldHint>
-              安装命令中包含一次性安装凭证，等同于接入凭证，必须按机密信息处理。
+              名称在签发时绑定到本凭证；Agent
+              注册成功时以该名称创建集群，集群可以随时重命名。安装命令中包含一次性安装凭证，等同于接入凭证，必须按机密信息处理。
             </FieldHint>
           </div>
           <DialogFooter>
