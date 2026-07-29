@@ -133,7 +133,7 @@ agent_listener:
 certificate_monitor:
   # Drives the Agent status API's expiring state and periodic structured
   # warnings. Agent renewal normally happens earlier (seven days by default).
-  warning_before: 720h
+  warning_before: 168h
   check_interval: 1h
 
 shutdown_timeout: 10s
