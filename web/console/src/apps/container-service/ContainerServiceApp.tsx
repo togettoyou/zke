@@ -16,6 +16,7 @@ import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { ErrorState, LoadingState } from "@/components/common/state";
+import { StatusBadge } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,7 +37,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { newIdempotencyKey } from "@/api/client";
 import { errorMessage } from "@/api/errors";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
@@ -53,11 +53,17 @@ export function ContainerServiceApp() {
     status: "active",
   });
   const [selectedClusterId, setSelectedClusterId] = useState("");
-  const availableClusters =
-    clusters.data?.clusters.filter((cluster) => cluster.connection.status === "online") ?? [];
-  const clusterId = availableClusters.some((cluster) => cluster.id === selectedClusterId)
+  const projectClusters = clusters.data?.clusters ?? [];
+  // Only an online Agent can execute anything here, so only an online cluster
+  // can be the current target. Offline clusters still appear in the picker —
+  // disabled — because an operator looking for one needs to see that it is
+  // known and offline rather than find it silently missing.
+  const onlineClusters = projectClusters.filter(
+    (cluster) => cluster.connection.status === "online",
+  );
+  const clusterId = onlineClusters.some((cluster) => cluster.id === selectedClusterId)
     ? selectedClusterId
-    : (availableClusters[0]?.id ?? "");
+    : (onlineClusters[0]?.id ?? "");
 
   if (!scope.projectId) {
     return <ScopeRequired />;
@@ -80,11 +86,19 @@ export function ContainerServiceApp() {
               <SelectValue placeholder={clusters.isLoading ? "加载集群…" : "选择集群"} />
             </SelectTrigger>
             <SelectContent>
-              {(clusters.data?.clusters ?? []).map((cluster) => (
-                <SelectItem key={cluster.id} value={cluster.id}>
-                  {cluster.name}
-                </SelectItem>
-              ))}
+              {projectClusters.map((cluster) => {
+                const online = cluster.connection.status === "online";
+                return (
+                  <SelectItem key={cluster.id} value={cluster.id} disabled={!online}>
+                    <span className="flex items-center gap-2">
+                      {cluster.name}
+                      {online ? null : (
+                        <StatusBadge kind="connection" value={cluster.connection.status} />
+                      )}
+                    </span>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
           {clusterId ? (
@@ -93,33 +107,45 @@ export function ContainerServiceApp() {
         </>
       }
       statusBar={
-        clusterId ? "所有查询与变更均由所选集群的在线 Agent 定域执行" : "请选择一个在线集群"
+        clusterId ? "所有查询与变更均由所选集群的在线 Agent 定域执行" : "没有可执行请求的在线集群"
       }
     >
       {clusters.error ? (
         <ErrorState error={clusters.error} onRetry={() => void clusters.refetch()} />
       ) : clusters.isLoading ? (
         <LoadingState />
-      ) : (clusters.data?.clusters.length ?? 0) === 0 ? (
-        <div className="flex h-full items-center justify-center text-center">
-          <div>
-            <p className="text-foreground text-sm font-medium">该项目没有在线集群</p>
-            <p className="text-muted-foreground mt-1 text-[13px]">
-              请先在「集群接入管理」中接入并启用集群。
-            </p>
-          </div>
-        </div>
+      ) : projectClusters.length === 0 ? (
+        <NoTargetCluster
+          title="该项目没有已接入的集群"
+          description="请先在「集群接入管理」中接入并启用集群。"
+        />
+      ) : clusterId === "" ? (
+        <NoTargetCluster
+          title="该项目没有在线集群"
+          description="容器服务的每个查询和变更都由目标集群的 Agent 定域执行，需要至少一个 Agent 处于在线状态。"
+        />
       ) : (
         <NamespaceSection
           clusterId={clusterId}
           clusterName={
-            clusters.data?.clusters.find((cluster) => cluster.id === clusterId)?.name ?? clusterId
+            projectClusters.find((cluster) => cluster.id === clusterId)?.name ?? clusterId
           }
           tenantId={scope.tenantId}
           projectId={scope.projectId}
         />
       )}
     </AppShell>
+  );
+}
+
+function NoTargetCluster({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="flex h-full items-center justify-center text-center">
+      <div className="max-w-sm">
+        <p className="text-foreground text-sm font-medium">{title}</p>
+        <p className="text-muted-foreground mt-1 text-[13px]">{description}</p>
+      </div>
+    </div>
   );
 }
 
@@ -158,6 +184,7 @@ function NamespaceSection({
   const createApplyKey = useSubmissionKey(createPreview !== null);
   const [deleteTarget, setDeleteTarget] = useState<KubernetesNamespaceSummary | null>(null);
   const [deletePreviewed, setDeletePreviewed] = useState(false);
+  const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
   const deleteApplyKey = useSubmissionKey(deleteTarget !== null);
   const remove = useDeleteNamespace();
 
@@ -433,7 +460,7 @@ function NamespaceSection({
         ]}
         impacts={[
           "实际删除会终止并清理该 Namespace 中的 namespaced 资源。",
-          "请求携带当前 UID 与 resourceVersion 前置条件，避免误删重建后的同名对象。",
+          "请求携带该 Namespace 当前的 UID 前置条件，避免误删同名重建的对象。",
         ]}
         confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
         confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
@@ -448,9 +475,8 @@ function NamespaceSection({
               clusterId,
               name: deleteTarget.name,
               uid: deleteTarget.uid,
-              resourceVersion: deleteTarget.resource_version,
               dryRun,
-              idempotencyKey: dryRun ? newIdempotencyKey() : deleteApplyKey,
+              idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
             })
             .then(() => {
               if (dryRun) {

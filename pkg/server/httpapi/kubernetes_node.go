@@ -187,7 +187,8 @@ func (handler *kubernetesNodeHandler) respondNodeError(
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, kubernetesresource.ErrRequestCapacity) {
+	if errors.Is(err, kubernetesresource.ErrRequestCapacity) ||
+		errors.Is(err, kubernetesresource.ErrResponseBudget) {
 		c.Header("Retry-After", "1")
 	}
 	return handler.respondError(
@@ -199,6 +200,7 @@ func (handler *kubernetesNodeHandler) respondNodeError(
 		errorMapping{kubernetesresource.ErrAgentNotConnected, http.StatusServiceUnavailable, "agent_not_connected", "Cluster Agent is not connected"},
 		errorMapping{kubernetesresource.ErrAgentUnsupported, http.StatusServiceUnavailable, "agent_capability_unavailable", "Cluster Agent does not support resource queries"},
 		errorMapping{kubernetesresource.ErrRequestCapacity, http.StatusTooManyRequests, "resource_capacity_exhausted", "resource query capacity is exhausted"},
+		errorMapping{kubernetesresource.ErrResponseBudget, http.StatusTooManyRequests, "response_budget_exhausted", "Server response buffer budget is exhausted"},
 		errorMapping{kubernetesresource.ErrClusterUnavailable, http.StatusServiceUnavailable, "cluster_api_unavailable", "Kubernetes API is unavailable"},
 		errorMapping{kubernetesresource.ErrClusterTimeout, http.StatusGatewayTimeout, "cluster_api_timeout", "Kubernetes API request timed out"},
 		errorMapping{kubernetesresource.ErrClusterUnauthenticated, http.StatusBadGateway, "cluster_api_unauthenticated", "Agent Kubernetes credentials were rejected"},

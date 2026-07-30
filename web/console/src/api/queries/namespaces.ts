@@ -89,6 +89,16 @@ export function useCreateNamespace() {
   });
 }
 
+/**
+ * Deletes by name pinned to a UID.
+ *
+ * The endpoint also accepts a `resource_version` precondition, which this hook
+ * deliberately does not send. What a caller has on hand is the version from a
+ * list snapshot, and any unrelated change to the Namespace between reading that
+ * list and confirming the deletion would turn it into a conflict. UID is what
+ * pins the identity, so it is what rules out deleting a same-named object that
+ * was recreated in the meantime.
+ */
 export function useDeleteNamespace() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -96,7 +106,6 @@ export function useDeleteNamespace() {
       clusterId: string;
       name: string;
       uid?: string;
-      resourceVersion?: string;
       dryRun: boolean;
       idempotencyKey: string;
     }) =>
@@ -113,7 +122,6 @@ export function useDeleteNamespace() {
             dry_run: input.dryRun,
             confirm: !input.dryRun,
             uid: input.uid,
-            resource_version: input.resourceVersion,
           },
         }),
       ),

@@ -546,7 +546,8 @@ resourceVersion、Patch 类型、DryRun、Apply field manager、删除传播策�
 dynamic client 执行。每个操作独占一条 QUIC Resource Stream，幂等重放不记录 Secret 或请求正文到日志与审计。
 DryRun 使用独立审计动作。Server 通过
 `agent_listener.max_buffered_resource_response_bytes` 限制同一实例同时缓冲的 Resource 响应总字节数；
-该值不得小于单响应正文上限，也不得超过 8 GiB。
+该值不得小于单响应正文上限，也不得超过 8 GiB。该预算在读取正文前按 Agent 声明的响应大小一次性预留，
+额度不足时立即返回 `429 response_budget_exhausted` 并重置当前 Stream，不排队等待其他请求释放额度。
 
 Cluster 当前连接撤销要求 Session、CSRF、`cluster.connection.revoke` 权限和 `{"confirm":true}` 显式确认。
 Server 在同一事务中更新内部 Agent 生命周期、撤销全部客户端 Credential 并写入 Cluster 作用域成功审计；重复

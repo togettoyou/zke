@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -42,6 +43,7 @@ var (
 	ErrClusterUnavailable     = errors.New("Kubernetes API is unavailable")
 	ErrClusterTimeout         = errors.New("Kubernetes API request timed out")
 	ErrResponseTooLarge       = errors.New("Kubernetes API response is too large")
+	ErrResponseBudget         = errors.New("Server response buffer budget is exhausted")
 	ErrIdempotencyConflict    = errors.New("Kubernetes resource idempotency conflict")
 	ErrUpstreamConflict       = errors.New("Kubernetes API resource conflict")
 	ErrUpstreamFailure        = errors.New("Kubernetes API request failed")
@@ -83,11 +85,14 @@ type Config struct {
 	MaxBufferedResponseBytes int64
 }
 
+// responseBuffer holds one Agent response while it is decoded, drawing its
+// space from an instance-wide budget so that concurrent large responses cannot
+// add up to unbounded Server memory.
 type responseBuffer struct {
 	bytes.Buffer
-	ctx      context.Context
 	budget   *semaphore.Weighted
 	reserved int64
+	written  int64
 }
 
 type ListNodesInput struct {
@@ -177,23 +182,47 @@ func NewService(requester ResourceRequester, configs ...Config) *Service {
 	}
 }
 
-func (service *Service) newResponseBuffer(ctx context.Context) *responseBuffer {
-	return &responseBuffer{ctx: ctx, budget: service.responseBudget}
+func (service *Service) newResponseBuffer() *responseBuffer {
+	return &responseBuffer{budget: service.responseBudget}
 }
 
+// ReserveResourceBody claims the whole declared response body before any of it
+// is read, so an exhausted budget refuses this request outright instead of
+// parking it — and every other request holding part of the budget — until the
+// deadline expires. See agentprotocol.ResourceBodyReserver.
+func (buffer *responseBuffer) ReserveResourceBody(size uint64) error {
+	if size == 0 {
+		return nil
+	}
+	if size > math.MaxInt64 ||
+		!buffer.budget.TryAcquire(int64(size)) {
+		return ErrResponseBudget
+	}
+	buffer.reserved += int64(size)
+	// Reserving without pre-sizing would let the buffer's own doubling
+	// transiently hold roughly twice what the budget was told about.
+	if size <= math.MaxInt32 {
+		buffer.Buffer.Grow(int(size))
+	}
+	return nil
+}
+
+// Write charges anything beyond the reservation to the budget as it arrives.
+// A declared body never reaches that path; a writer used without a declared
+// size still cannot escape the budget.
 func (buffer *responseBuffer) Write(value []byte) (int, error) {
 	if len(value) == 0 {
 		return 0, nil
 	}
-	size := int64(len(value))
-	if err := buffer.budget.Acquire(buffer.ctx, size); err != nil {
-		return 0, err
+	unreserved := buffer.written + int64(len(value)) - buffer.reserved
+	if unreserved > 0 {
+		if !buffer.budget.TryAcquire(unreserved) {
+			return 0, ErrResponseBudget
+		}
+		buffer.reserved += unreserved
 	}
 	written, err := buffer.Buffer.Write(value)
-	buffer.reserved += int64(written)
-	if unwritten := size - int64(written); unwritten > 0 {
-		buffer.budget.Release(unwritten)
-	}
+	buffer.written += int64(written)
 	return written, err
 }
 
@@ -212,7 +241,7 @@ func (service *Service) ListNodes(
 	if err := validateListNodesInput(input); err != nil {
 		return NodePage{}, err
 	}
-	body := service.newResponseBuffer(ctx)
+	body := service.newResponseBuffer()
 	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
@@ -269,7 +298,7 @@ func (service *Service) GetNode(
 		len(k8svalidation.IsDNS1123Subdomain(name)) != 0 {
 		return NodeDetail{}, ErrInvalidInput
 	}
-	body := service.newResponseBuffer(ctx)
+	body := service.newResponseBuffer()
 	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
@@ -329,6 +358,10 @@ func requestError(err error) error {
 		return ErrAgentUnsupported
 	case errors.Is(err, agentconn.ErrResourceRequestExhausted):
 		return ErrRequestCapacity
+	case errors.Is(err, ErrResponseBudget):
+		// Raised by the response buffer itself while the transport reads the
+		// declared body, so it travels back out through the requester.
+		return ErrResponseBudget
 	case errors.Is(err, context.DeadlineExceeded):
 		return ErrClusterTimeout
 	case errors.Is(err, context.Canceled):

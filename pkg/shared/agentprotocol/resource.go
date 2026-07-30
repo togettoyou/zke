@@ -26,6 +26,19 @@ type ResourceHandler func(
 	io.Reader,
 ) (*agentv1.ResourceResponse, io.Reader, error)
 
+// ResourceBodyReserver is an optional capability of the response body writer
+// passed to DoResource. A writer that draws on a shared allocation implements
+// it to be told the exact body size once, before any of it is copied, so it can
+// accept or refuse the whole body in a single decision.
+//
+// Growing into a shared budget chunk by chunk is what this avoids: several
+// large responses each hold part of the budget and then all wait for the rest,
+// so a budget that is merely exhausted stalls every request in flight until its
+// deadline instead of refusing one of them immediately.
+type ResourceBodyReserver interface {
+	ReserveResourceBody(size uint64) error
+}
+
 type resourceContextKey struct{}
 
 // ResourceIdempotencyKey returns the validated StreamHeader key for the
@@ -202,6 +215,13 @@ func DoResource(
 		return nil, err
 	}
 	if response.GetBodySize() > 0 {
+		if reserver, ok := responseBody.(ResourceBodyReserver); ok {
+			if err := reserver.ReserveResourceBody(
+				response.GetBodySize(),
+			); err != nil {
+				return nil, err
+			}
+		}
 		if _, err := io.CopyN(
 			responseBody,
 			stream,

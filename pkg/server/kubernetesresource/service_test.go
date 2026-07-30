@@ -295,29 +295,62 @@ func TestResponseBufferEnforcesInstanceBudget(t *testing.T) {
 	t.Parallel()
 
 	service := NewService(nil, Config{MaxBufferedResponseBytes: 4})
-	first := service.newResponseBuffer(context.Background())
+	first := service.newResponseBuffer()
 	defer first.Release()
+	if err := first.ReserveResourceBody(4); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := first.Write([]byte("1234")); err != nil {
 		t.Fatal(err)
 	}
 
-	blockedContext, cancelBlocked := context.WithTimeout(
-		context.Background(),
-		20*time.Millisecond,
-	)
-	defer cancelBlocked()
-	blocked := service.newResponseBuffer(blockedContext)
-	if _, err := blocked.Write([]byte("x")); !errors.Is(
-		err,
-		context.DeadlineExceeded,
-	) {
-		t.Fatalf("blocked Write error = %v", err)
+	// An exhausted budget refuses the next response outright. Waiting for room
+	// would hold this request, and the budget it had already taken, until the
+	// deadline expired.
+	refused := service.newResponseBuffer()
+	defer refused.Release()
+	if err := refused.ReserveResourceBody(1); !errors.Is(err, ErrResponseBudget) {
+		t.Fatalf("reservation error = %v", err)
+	}
+	if _, err := refused.Write([]byte("x")); !errors.Is(err, ErrResponseBudget) {
+		t.Fatalf("undeclared Write error = %v", err)
 	}
 
 	first.Release()
-	available := service.newResponseBuffer(context.Background())
+	available := service.newResponseBuffer()
 	defer available.Release()
+	if err := available.ReserveResourceBody(2); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := available.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResponseBufferChargesReservedBodyOnce(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(nil, Config{MaxBufferedResponseBytes: 4})
+	buffer := service.newResponseBuffer()
+	if err := buffer.ReserveResourceBody(4); err != nil {
+		t.Fatal(err)
+	}
+	for _, chunk := range []string{"12", "34"} {
+		if _, err := buffer.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if buffer.String() != "1234" {
+		t.Fatalf("buffered body = %q", buffer.String())
+	}
+	buffer.Release()
+
+	// Reserving the full budget again only works if the writes were covered by
+	// the reservation. Charging them a second time would also make Release
+	// return more than was ever held.
+	reused := service.newResponseBuffer()
+	defer reused.Release()
+	if err := reused.ReserveResourceBody(4); err != nil {
 		t.Fatal(err)
 	}
 }

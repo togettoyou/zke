@@ -308,6 +308,114 @@ func TestRealQUICConnectionCloseCancelsResourceHandler(t *testing.T) {
 	}
 }
 
+// refusingBodyReserver refuses whatever body size it is offered and records it,
+// standing in for a Server whose instance-wide response budget is exhausted.
+type refusingBodyReserver struct {
+	bytes.Buffer
+	offered uint64
+	err     error
+}
+
+func (reserver *refusingBodyReserver) ReserveResourceBody(size uint64) error {
+	reserver.offered = size
+	return reserver.err
+}
+
+func TestRealQUICResourceBodyReservationRefusalIsolatesOneStream(t *testing.T) {
+	client, server, stop := openStreamTestConnection(t)
+	defer stop()
+	body := []byte("zke-resource-response-body")
+	streamServer, err := NewStreamServer(StreamServerConfig{
+		HeaderTimeout: 200 * time.Millisecond,
+		MaxTimeout:    2 * time.Second,
+		Handlers: map[agentv1.StreamKind]StreamHandlerConfig{
+			agentv1.StreamKind_STREAM_KIND_RESOURCE: {
+				MaxConcurrent: 2,
+				Handle: ResourceStreamHandler(
+					1024,
+					func(
+						_ context.Context,
+						_ *agentv1.ResourceRequest,
+						_ io.Reader,
+					) (*agentv1.ResourceResponse, io.Reader, error) {
+						return &agentv1.ResourceResponse{
+							Result:      agentv1.ResultCode_RESULT_CODE_OK,
+							ContentType: "application/json",
+							BodySize:    uint64(len(body)),
+						}, bytes.NewReader(body), nil
+					},
+				),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveContext, cancelServe := context.WithCancel(context.Background())
+	defer cancelServe()
+	go func() {
+		_ = streamServer.Serve(serveContext, server)
+	}()
+
+	request := func(requestID string, responseBody io.Writer) error {
+		_, err := DoResource(
+			context.Background(),
+			client,
+			&agentv1.StreamHeader{
+				ProtocolVersion: ProtocolVersion,
+				Kind:            agentv1.StreamKind_STREAM_KIND_RESOURCE,
+				RequestId:       requestID,
+				TimeoutMillis:   1000,
+			},
+			&agentv1.ResourceRequest{
+				Verb: agentv1.ResourceVerb_RESOURCE_VERB_GET,
+				Resource: &agentv1.GroupVersionResource{
+					Version:  "v1",
+					Resource: "pods",
+				},
+				Namespace:      "default",
+				Name:           "reservation",
+				Representation: agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			},
+			nil,
+			responseBody,
+			1024,
+		)
+		return err
+	}
+
+	budgetExhausted := errors.New("response budget is exhausted")
+	refused := &refusingBodyReserver{err: budgetExhausted}
+	if err := request(
+		"00000000-0000-4000-8000-000000000031",
+		refused,
+	); !errors.Is(err, budgetExhausted) {
+		t.Fatalf("refused reservation error = %v", err)
+	}
+	if refused.offered != uint64(len(body)) {
+		t.Fatalf(
+			"reservation offered %d bytes, response declared %d",
+			refused.offered,
+			len(body),
+		)
+	}
+	// Refusing has to happen before the body is read, otherwise the budget
+	// would already be holding what it just declined to hold.
+	if refused.Len() != 0 {
+		t.Fatalf("refused writer received %d bytes", refused.Len())
+	}
+
+	// The refusal resets its own Stream and nothing else: the Connection stays
+	// usable, which is the whole point of failing fast instead of waiting.
+	accepted := &refusingBodyReserver{}
+	if err := request("00000000-0000-4000-8000-000000000032", accepted); err != nil {
+		t.Fatalf("request after a refused reservation: %v", err)
+	}
+	if !bytes.Equal(accepted.Bytes(), body) {
+		t.Fatalf("response body = %q", accepted.Bytes())
+	}
+}
+
 func openStreamTestConnection(
 	t *testing.T,
 ) (*quic.Conn, *quic.Conn, func()) {

@@ -124,7 +124,7 @@ func (service *Service) DiscoverResources(
 	if !validation.IsUUID(clusterID) {
 		return kubernetescatalog.Catalog{}, ErrInvalidInput
 	}
-	body := service.newResponseBuffer(ctx)
+	body := service.newResponseBuffer()
 	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
@@ -177,7 +177,7 @@ func (service *Service) ListResources(
 	if err := validateListResourcesInput(input); err != nil {
 		return ResourcePage{}, err
 	}
-	body := service.newResponseBuffer(ctx)
+	body := service.newResponseBuffer()
 	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
@@ -250,7 +250,7 @@ func (service *Service) GetResource(
 	if err := validateGetResourceInput(input); err != nil {
 		return nil, err
 	}
-	body := service.newResponseBuffer(ctx)
+	body := service.newResponseBuffer()
 	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
@@ -679,7 +679,7 @@ func (service *Service) sendObjectMutation(
 	if !ok {
 		return nil, ErrAgentUnsupported
 	}
-	responseBody := service.newResponseBuffer(ctx)
+	responseBody := service.newResponseBuffer()
 	defer responseBody.Release()
 	response, err := requester.RequestResourceMutation(
 		ctx,
