@@ -12,6 +12,22 @@ permissions:
 jobs:
   go:
     runs-on: ubuntu-latest
+    env:
+      ZKE_TEST_DATABASE_URL: postgres://zke_test:zke_test@localhost:5432/zke_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: zke_test
+          POSTGRES_USER: zke_test
+          POSTGRES_PASSWORD: zke_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zke_test -d zke_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -24,6 +40,22 @@ jobs:
 
   race:
     runs-on: ubuntu-latest
+    env:
+      ZKE_TEST_DATABASE_URL: postgres://zke_test:zke_test@localhost:5432/zke_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: zke_test
+          POSTGRES_USER: zke_test
+          POSTGRES_PASSWORD: zke_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zke_test -d zke_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

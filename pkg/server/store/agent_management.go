@@ -87,13 +87,14 @@ FOR UPDATE
 
 	result.AlreadyRevoked = lifecycleStatus == "revoked"
 	if !result.AlreadyRevoked {
-		if _, err := transaction.Exec(ctx, `
+		if err := transaction.QueryRow(ctx, `
 UPDATE agents
 SET lifecycle_status = 'revoked',
     health_status = 'unknown',
     updated_at = $2
 WHERE id = $1
-`, result.AgentID, params.Now); err != nil {
+RETURNING updated_at
+`, result.AgentID, params.Now).Scan(&result.RevokedAt); err != nil {
 			return RevokeAgentResult{}, fmt.Errorf("revoke Agent: %w", err)
 		}
 		if _, err := transaction.Exec(ctx, `
@@ -107,7 +108,6 @@ WHERE agent_id = $1
 				err,
 			)
 		}
-		result.RevokedAt = params.Now
 	}
 
 	if _, err := transaction.Exec(ctx, `
