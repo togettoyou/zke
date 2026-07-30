@@ -58,6 +58,7 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 		"- list",
 		"- create",
 		"- delete",
+		"- patch",
 	} {
 		if !strings.Contains(output, required) {
 			t.Errorf("manifest is missing %q", required)

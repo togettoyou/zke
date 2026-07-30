@@ -51,8 +51,8 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 
 当前仓库还没有提供 Helm Chart，但 Server 已能生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC
 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
-`get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list` 以及 Namespace
-的 `get`、`list`、`create`、`delete` 权限。
+`get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`patch` 以及
+Namespace 的 `get`、`list`、`create`、`delete` 权限。
 ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
 `http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
 原生 HTTPS 或由上游网关终止 TLS。

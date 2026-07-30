@@ -89,7 +89,7 @@ export const APP_MANIFESTS: AppManifest[] = [
   {
     id: "container-service",
     title: "容器服务",
-    description: "节点、命名空间、工作负载与 Pod 管理",
+    description: "在所选集群中管理节点与命名空间",
     icon: Boxes,
     requiredPermissions: ["cluster.read"],
     availability: { state: "available" },

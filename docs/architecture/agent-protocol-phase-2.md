@@ -657,7 +657,7 @@ Resource Stream 是 Server 与 Agent 之间的内部协议。Server 提供受控
 - Cluster 继承所属 Project 的授权，Namespace 不是独立授权层级；
 - Agent 对 GVR、Verb、Subresource、正文和选择器执行独立 allowlist；
 - Agent 使用最小权限 Kubernetes ServiceAccount；
-- 默认安装授予 Node 的 `get/list` 与 Namespace 的 `get/list/create/delete`；需要管理其他内置资源、
+- 默认安装授予 Node 的 `get/list/patch` 与 Namespace 的 `get/list/create/delete`；需要管理其他内置资源、
   CRD 或 CR 时，由安装方显式扩展 Agent ServiceAccount RBAC；
 - Secret 内容和任意 Subresource 不纳入当前通用 CRUD；
 - 资源变更要求显式目标、DryRun 影响预览、用户确认、幂等键和 Cluster 定域审计；

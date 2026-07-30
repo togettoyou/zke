@@ -33,7 +33,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Kubernetes Discovery、通用只读 List/Get API 与任意 CRD 资源闭环
 - [x] 通用主资源 Create/Update/Patch/Delete、安全写权限、审计与真实集群 E2E
 - [x] Console 容器服务集群选择
-- [ ] 节点变更与 Console 管理页面
+- [x] 节点列表/详情 Console 页面与调度开关（驱逐尚未支持）
 - [x] Namespace List/Detail/Create/Delete、DryRun、确认、权限、审计与 Console 闭环
 - [ ] 工作负载管理
 - [ ] Pod 管理

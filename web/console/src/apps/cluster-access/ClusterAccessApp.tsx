@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { KeyRound, MoreHorizontal, RefreshCw, Server, ServerCog } from "lucide-react";
 import { toast } from "sonner";
@@ -28,6 +28,7 @@ import type { AppComponentProps } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
 import { useScopeStore } from "@/scope/scope-store";
 import { DataTable } from "@/components/common/data-table";
+import { DetailCard, DetailRow } from "@/components/common/detail";
 import { SecretReveal } from "@/components/common/secret-reveal";
 import { notifyFailure } from "@/components/common/notify";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
@@ -55,7 +56,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
-import { Card, CardTitle } from "@/components/ui/misc";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 import { formatDuration } from "@/lib/time";
@@ -986,32 +986,6 @@ function ClusterDetailSection({
       <p className="text-subtle-foreground text-xs">
         集群与其中的 Agent 对外是同一个管理共同体，界面不单独暴露内部 Agent 身份。
       </p>
-    </div>
-  );
-}
-
-function DetailCard({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <Card>
-      <CardTitle>{title}</CardTitle>
-      <dl className="mt-2">{children}</dl>
-    </Card>
-  );
-}
-
-/**
- * One fact in a detail card.
- *
- * A fixed label column with left-aligned values, not `justify-between`: pushing
- * every value to the right edge means a badge, a mono string and a timestamp all
- * start at a different place, and the card loses its vertical rhythm. Hairline
- * separators make it read as a spec sheet.
- */
-function DetailRow({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="border-border/50 grid grid-cols-[6.5rem_1fr] items-baseline gap-3 border-b py-2 text-[13px] last:border-b-0 last:pb-0">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="text-foreground min-w-0">{value}</dd>
     </div>
   );
 }

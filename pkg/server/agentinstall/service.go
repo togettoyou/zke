@@ -259,7 +259,10 @@ func renderManifest(
 			{
 				APIGroups: []string{""},
 				Resources: []string{"nodes"},
-				Verbs:     []string{"get", "list"},
+				// `patch` covers marking a Node schedulable or unschedulable.
+				// Draining is not included: it needs the pods/eviction
+				// subresource, which the Resource protocol still rejects.
+				Verbs: []string{"get", "list", "patch"},
 			},
 			{
 				APIGroups: []string{""},

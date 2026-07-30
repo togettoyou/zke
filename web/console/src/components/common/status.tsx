@@ -23,6 +23,19 @@ const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     online: { label: "在线", tone: "success" },
     offline: { label: "离线", tone: "neutral" },
   },
+  // Node readiness, from the Ready condition the Server already reduced to one
+  // of three values.
+  node: {
+    ready: { label: "就绪", tone: "success" },
+    not_ready: { label: "未就绪", tone: "danger" },
+    unknown: { label: "未知", tone: "neutral" },
+  },
+  // `spec.unschedulable`. Named for what it does to the scheduler rather than
+  // for kubectl's cordon, which means nothing to an operator reading a table.
+  scheduling: {
+    schedulable: { label: "可调度", tone: "success" },
+    unschedulable: { label: "已停止调度", tone: "warning" },
+  },
   // Agent lifecycle and health, per the `agents` table's CHECK constraints.
   // These reached the UI as raw enum values before.
   lifecycle: {

@@ -25,6 +25,9 @@ export const queryKeys = {
   clusters: (projectId: string, params: ClusterListParams = {}) =>
     ["clusters", projectId, params] as const,
   cluster: (clusterId: string) => ["cluster", clusterId] as const,
+  nodes: (clusterId: string, params: Record<string, unknown> = {}) =>
+    ["nodes", clusterId, params] as const,
+  node: (clusterId: string, name: string) => ["node", clusterId, name] as const,
   namespaces: (clusterId: string, params: Record<string, unknown> = {}) =>
     ["namespaces", clusterId, params] as const,
   namespace: (clusterId: string, name: string) => ["namespace", clusterId, name] as const,
@@ -46,6 +49,7 @@ export const queryKeyPrefixes = {
   tenants: ["tenants"] as const,
   projects: ["projects"] as const,
   clusters: ["clusters"] as const,
+  nodes: ["nodes"] as const,
   namespaces: ["namespaces"] as const,
   enrollments: ["enrollments"] as const,
   users: ["users"] as const,
