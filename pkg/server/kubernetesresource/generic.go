@@ -124,7 +124,8 @@ func (service *Service) DiscoverResources(
 	if !validation.IsUUID(clusterID) {
 		return kubernetescatalog.Catalog{}, ErrInvalidInput
 	}
-	var body bytes.Buffer
+	body := service.newResponseBuffer(ctx)
+	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
 		clusterID,
@@ -132,7 +133,7 @@ func (service *Service) DiscoverResources(
 			Verb: agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER,
 		},
 		nil,
-		&body,
+		body,
 	)
 	if err != nil {
 		return kubernetescatalog.Catalog{}, requestError(err)
@@ -176,7 +177,8 @@ func (service *Service) ListResources(
 	if err := validateListResourcesInput(input); err != nil {
 		return ResourcePage{}, err
 	}
-	var body bytes.Buffer
+	body := service.newResponseBuffer(ctx)
+	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
 		input.ClusterID,
@@ -194,7 +196,7 @@ func (service *Service) ListResources(
 			},
 		},
 		nil,
-		&body,
+		body,
 	)
 	if err != nil {
 		return ResourcePage{}, requestError(err)
@@ -248,7 +250,8 @@ func (service *Service) GetResource(
 	if err := validateGetResourceInput(input); err != nil {
 		return nil, err
 	}
-	var body bytes.Buffer
+	body := service.newResponseBuffer(ctx)
+	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
 		input.ClusterID,
@@ -260,7 +263,7 @@ func (service *Service) GetResource(
 			Representation: agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
 		},
 		nil,
-		&body,
+		body,
 	)
 	if err != nil {
 		return nil, requestError(err)
@@ -676,13 +679,14 @@ func (service *Service) sendObjectMutation(
 	if !ok {
 		return nil, ErrAgentUnsupported
 	}
-	var responseBody bytes.Buffer
+	responseBody := service.newResponseBuffer(ctx)
+	defer responseBody.Release()
 	response, err := requester.RequestResourceMutation(
 		ctx,
 		clusterID,
 		request,
 		bytes.NewReader(body),
-		&responseBody,
+		responseBody,
 		idempotencyKey,
 	)
 	if err != nil {

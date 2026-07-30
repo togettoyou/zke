@@ -34,6 +34,7 @@ const (
 	maxConcurrentAgents           = 100_000
 	maxRememberedDisconnects      = 1_000_000
 	maxResourceBodyBytes          = 1024 * 1024 * 1024
+	maxBufferedResourceBytes      = 8 * 1024 * 1024 * 1024
 	maxResourceStreams            = 4096
 	maxResourceRequests           = 1_000_000
 )
@@ -442,6 +443,15 @@ func (cfg Config) validateAgentListener() error {
 		return fmt.Errorf(
 			"Agent Resource body limit must be between 1 and %d",
 			maxResourceBodyBytes,
+		)
+	}
+	if cfg.AgentListener.MaxBufferedResourceBytes <
+		cfg.AgentListener.MaxResourceBodyBytes ||
+		cfg.AgentListener.MaxBufferedResourceBytes >
+			maxBufferedResourceBytes {
+		return fmt.Errorf(
+			"Server buffered Resource response limit must be between the single body limit and %d",
+			uint64(maxBufferedResourceBytes),
 		)
 	}
 	if cfg.AgentListener.MaxResourceStreams <= 0 ||

@@ -209,6 +209,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	)
 	kubernetesResourceService := kubernetesresource.NewService(
 		agentConnectionManager,
+		kubernetesresource.Config{
+			MaxBufferedResponseBytes: int64(
+				cfg.AgentListener.MaxBufferedResourceBytes,
+			),
+		},
 	)
 	resourceManagementService := resourcemanagement.NewService(
 		store.NewResourceManagementStore(database),

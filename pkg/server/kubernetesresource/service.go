@@ -14,6 +14,7 @@ import (
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/shared/validation"
+	"golang.org/x/sync/semaphore"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -21,11 +22,12 @@ import (
 )
 
 const (
-	DefaultNodeListLimit      int64 = 100
-	MaxNodeListLimit          int64 = 500
-	maxSelectorBytes                = 4096
-	maxContinueTokenBytes           = 4096
-	kubernetesJSONContentType       = "application/json"
+	DefaultNodeListLimit            int64 = 100
+	MaxNodeListLimit                int64 = 500
+	maxSelectorBytes                      = 4096
+	maxContinueTokenBytes                 = 4096
+	kubernetesJSONContentType             = "application/json"
+	defaultMaxBufferedResponseBytes int64 = 256 * 1024 * 1024
 )
 
 var (
@@ -73,7 +75,19 @@ type MutationResourceRequester interface {
 }
 
 type Service struct {
-	requester ResourceRequester
+	requester      ResourceRequester
+	responseBudget *semaphore.Weighted
+}
+
+type Config struct {
+	MaxBufferedResponseBytes int64
+}
+
+type responseBuffer struct {
+	bytes.Buffer
+	ctx      context.Context
+	budget   *semaphore.Weighted
+	reserved int64
 }
 
 type ListNodesInput struct {
@@ -149,8 +163,46 @@ type NodeDetail struct {
 	SystemUUID   string
 }
 
-func NewService(requester ResourceRequester) *Service {
-	return &Service{requester: requester}
+func NewService(requester ResourceRequester, configs ...Config) *Service {
+	config := Config{}
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+	if config.MaxBufferedResponseBytes <= 0 {
+		config.MaxBufferedResponseBytes = defaultMaxBufferedResponseBytes
+	}
+	return &Service{
+		requester:      requester,
+		responseBudget: semaphore.NewWeighted(config.MaxBufferedResponseBytes),
+	}
+}
+
+func (service *Service) newResponseBuffer(ctx context.Context) *responseBuffer {
+	return &responseBuffer{ctx: ctx, budget: service.responseBudget}
+}
+
+func (buffer *responseBuffer) Write(value []byte) (int, error) {
+	if len(value) == 0 {
+		return 0, nil
+	}
+	size := int64(len(value))
+	if err := buffer.budget.Acquire(buffer.ctx, size); err != nil {
+		return 0, err
+	}
+	written, err := buffer.Buffer.Write(value)
+	buffer.reserved += int64(written)
+	if unwritten := size - int64(written); unwritten > 0 {
+		buffer.budget.Release(unwritten)
+	}
+	return written, err
+}
+
+func (buffer *responseBuffer) Release() {
+	if buffer == nil || buffer.reserved == 0 {
+		return
+	}
+	buffer.budget.Release(buffer.reserved)
+	buffer.reserved = 0
 }
 
 func (service *Service) ListNodes(
@@ -160,7 +212,8 @@ func (service *Service) ListNodes(
 	if err := validateListNodesInput(input); err != nil {
 		return NodePage{}, err
 	}
-	var body bytes.Buffer
+	body := service.newResponseBuffer(ctx)
+	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
 		input.ClusterID,
@@ -176,7 +229,7 @@ func (service *Service) ListNodes(
 			},
 		},
 		nil,
-		&body,
+		body,
 	)
 	if err != nil {
 		return NodePage{}, requestError(err)
@@ -216,7 +269,8 @@ func (service *Service) GetNode(
 		len(k8svalidation.IsDNS1123Subdomain(name)) != 0 {
 		return NodeDetail{}, ErrInvalidInput
 	}
-	var body bytes.Buffer
+	body := service.newResponseBuffer(ctx)
+	defer body.Release()
 	response, err := service.requester.RequestResource(
 		ctx,
 		clusterID,
@@ -227,7 +281,7 @@ func (service *Service) GetNode(
 			Representation: agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
 		},
 		nil,
-		&body,
+		body,
 	)
 	if err != nil {
 		return NodeDetail{}, requestError(err)

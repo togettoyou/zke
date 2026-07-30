@@ -2,8 +2,6 @@ package middleware
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apiresponse "github.com/togettoyou/zke/pkg/server/httpapi/response"
+	"github.com/togettoyou/zke/pkg/shared/identifier"
+	"github.com/togettoyou/zke/pkg/shared/requestctx"
 )
 
 const requestIDKey = "request_id"
@@ -44,6 +44,9 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 		id := newRequestID()
 		c.Set(requestIDKey, id)
 		c.Header("X-Request-ID", id)
+		c.Request = c.Request.WithContext(
+			requestctx.WithID(c.Request.Context(), id),
+		)
 
 		c.Next()
 
@@ -116,9 +119,9 @@ func Recovery(logger *slog.Logger) gin.HandlerFunc {
 }
 
 func newRequestID() string {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
+	value, err := identifier.NewUUID()
+	if err != nil {
 		return "unavailable"
 	}
-	return hex.EncodeToString(value[:])
+	return value
 }

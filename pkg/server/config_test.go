@@ -71,6 +71,7 @@ agent_listener:
   resource_request_timeout: 90s
   connection_drain_timeout: 12s
   max_resource_body_bytes: 16777216
+  max_buffered_resource_response_bytes: 134217728
   max_resource_streams_per_agent: 32
   max_concurrent_resource_requests: 2048
 shutdown_timeout: 8s
@@ -161,6 +162,7 @@ log_level: warn
 		cfg.AgentListener.ResourceRequestTimeout != 90*time.Second ||
 		cfg.AgentListener.ConnectionDrainTimeout != 12*time.Second ||
 		cfg.AgentListener.MaxResourceBodyBytes != 16*1024*1024 ||
+		cfg.AgentListener.MaxBufferedResourceBytes != 128*1024*1024 ||
 		cfg.AgentListener.MaxResourceStreams != 32 ||
 		cfg.AgentListener.MaxResourceRequests != 2048 {
 		t.Fatalf("unexpected Agent Listener config: %+v", cfg.AgentListener)
@@ -170,6 +172,18 @@ log_level: warn
 		invalidHeartbeatConfig.AgentListener.HeartbeatInterval
 	if err := invalidHeartbeatConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted an Agent heartbeat interval at the timeout")
+	}
+	undersizedBufferConfig := cfg
+	undersizedBufferConfig.AgentListener.MaxBufferedResourceBytes =
+		undersizedBufferConfig.AgentListener.MaxResourceBodyBytes - 1
+	if err := undersizedBufferConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted a response buffer below one Resource body")
+	}
+	oversizedBufferConfig := cfg
+	oversizedBufferConfig.AgentListener.MaxBufferedResourceBytes =
+		8*1024*1024*1024 + 1
+	if err := oversizedBufferConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted a response buffer above 8 GiB")
 	}
 	partialCAConfig := cfg
 	partialCAConfig.AgentIdentity.CAPrivateKeyFile = ""

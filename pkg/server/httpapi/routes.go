@@ -309,6 +309,40 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesNode.get,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/namespaces",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesNamespace.list,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesNamespace.get,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceCreate,
+			"cluster_id",
+		),
+		handlers.kubernetesNamespace.create,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceDelete,
+			"cluster_id",
+		),
+		handlers.kubernetesNamespace.delete,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/kubernetes/resource-types",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,

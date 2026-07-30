@@ -137,3 +137,65 @@ func TestValidateResourceMutationRequests(t *testing.T) {
 		t.Fatalf("force on merge patch error = %v", err)
 	}
 }
+
+func TestValidateResourceRequestRejectsUnsafeIdentitySegments(t *testing.T) {
+	t.Parallel()
+
+	header := &agentv1.StreamHeader{
+		ProtocolVersion: ProtocolVersion,
+		Kind:            agentv1.StreamKind_STREAM_KIND_RESOURCE,
+		RequestId:       "00000000-0000-4000-8000-000000000001",
+		TimeoutMillis:   1000,
+	}
+	testCases := []struct {
+		name    string
+		request *agentv1.ResourceRequest
+	}{
+		{
+			name: "path separator",
+			request: &agentv1.ResourceRequest{
+				Verb: agentv1.ResourceVerb_RESOURCE_VERB_GET,
+				Resource: &agentv1.GroupVersionResource{
+					Version: "v1", Resource: "pods/log",
+				},
+				Name:           "example",
+				Representation: agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			},
+		},
+		{
+			name: "query delimiter",
+			request: &agentv1.ResourceRequest{
+				Verb: agentv1.ResourceVerb_RESOURCE_VERB_GET,
+				Resource: &agentv1.GroupVersionResource{
+					Version: "v1", Resource: "pods",
+				},
+				Name:           "example?watch=1",
+				Representation: agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			},
+		},
+		{
+			name: "surrounding whitespace",
+			request: &agentv1.ResourceRequest{
+				Verb: agentv1.ResourceVerb_RESOURCE_VERB_LIST,
+				Resource: &agentv1.GroupVersionResource{
+					Version: "v1", Resource: "pods",
+				},
+				Namespace:      " tenant-a",
+				Representation: agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			},
+		},
+	}
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if err := validateResourceRequest(
+				header,
+				testCase.request,
+				DefaultMaxResourceBodySize,
+			); !errors.Is(err, ErrStreamProtocol) {
+				t.Fatalf("validateResourceRequest() error = %v, want protocol error", err)
+			}
+		})
+	}
+}

@@ -110,6 +110,7 @@ const ACTION_GROUP_LABELS: Record<string, string> = {
   tenant: "租户",
   project: "项目",
   cluster: "集群",
+  kubernetes_resource: "Kubernetes 资源",
   denied: "权限拒绝",
 };
 

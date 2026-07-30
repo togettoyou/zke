@@ -166,6 +166,7 @@ type AgentListenerConfig struct {
 	ResourceRequestTimeout   time.Duration `yaml:"resource_request_timeout"`
 	ConnectionDrainTimeout   time.Duration `yaml:"connection_drain_timeout"`
 	MaxResourceBodyBytes     uint64        `yaml:"max_resource_body_bytes"`
+	MaxBufferedResourceBytes uint64        `yaml:"max_buffered_resource_response_bytes"`
 	MaxResourceStreams       int           `yaml:"max_resource_streams_per_agent"`
 	MaxResourceRequests      int           `yaml:"max_concurrent_resource_requests"`
 
@@ -233,6 +234,7 @@ func DefaultConfig() Config {
 			ResourceRequestTimeout:   2 * time.Minute,
 			ConnectionDrainTimeout:   10 * time.Second,
 			MaxResourceBodyBytes:     32 * 1024 * 1024,
+			MaxBufferedResourceBytes: 256 * 1024 * 1024,
 			MaxResourceStreams:       64,
 			MaxResourceRequests:      4096,
 		},

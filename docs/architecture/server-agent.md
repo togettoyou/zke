@@ -51,7 +51,8 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 
 当前仓库还没有提供 Helm Chart，但 Server 已能生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC
 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
-`get` 权限，并且只能更新 identity Secret；独立 ClusterRole 只授予 Node 的 `get`、`list` 权限。
+`get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list` 以及 Namespace
+的 `get`、`list`、`create`、`delete` 权限。
 ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
 `http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
 原生 HTTPS 或由上游网关终止 TLS。
@@ -69,8 +70,9 @@ Server 实例，重启后不保留离线历史；多实例全局连接视图和�
 Phase 2 已实现单 Server 实例内的业务 Stream 传输内核，包括双方 accept 循环、Resource Stream、能力协商、
 单 Stream 取消和并发限制。Agent dynamic client 与 Server 类型化 API 已完成 Node List/Detail；Discovery 和
 受控通用 CRUD API 已完成任意已授权内置主资源及 CRD 资源的真实 QUIC 闭环，包含 DryRun、四类 Patch、
-删除前置条件、写能力协商和有界幂等重放。默认 Agent RBAC 仍只授予 Node 读取权限；安装方必须按实际管理范围
-显式扩展最小 RBAC。跨 Server 实例任务路由以及 Watch、Logs、Exec 等流式能力仍未实现。
+删除前置条件、写能力协商和有界幂等重放。类型化 Namespace List/Detail/Create/Delete 与 Console
+集群选择、DryRun/确认闭环已经实现；默认 Agent RBAC 仅额外授予这组 Namespace 权限，其他资源仍由安装方
+按实际管理范围显式扩展最小 RBAC。跨 Server 实例任务路由以及 Watch、Logs、Exec 等流式能力仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
 `cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含

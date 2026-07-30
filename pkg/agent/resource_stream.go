@@ -17,6 +17,7 @@ func newBusinessStreamServer(
 	cfg Config,
 	services connectionServices,
 	resourceSupported bool,
+	clusterID string,
 	logger *slog.Logger,
 ) (*agentprotocol.StreamServer, error) {
 	handlers := make(
@@ -44,6 +45,12 @@ func newBusinessStreamServer(
 					attributes,
 					slog.String("request_id", header.GetRequestId()),
 					slog.String("stream_kind", header.GetKind().String()),
+				)
+			}
+			if clusterID != "" {
+				attributes = append(
+					attributes,
+					slog.String("cluster_id", clusterID),
 				)
 			}
 			logger.Debug("Agent business Stream stopped", attributes...)

@@ -1340,6 +1340,212 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesNamespaces
+      description: 通过目标 Cluster 的在线 Agent 查询 Kubernetes Namespace。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: continue
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: label_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: field_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+      responses:
+        "200":
+          description: Namespace 列表和 Kubernetes 分页状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesNamespacePage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    post:
+      tags: [Resources]
+      operationId: createKubernetesNamespace
+      description: |
+        在目标 Cluster 创建 Namespace。dry_run=true 时执行 Kubernetes 服务端
+        DryRun；实际创建必须显式 confirm=true。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesCreateNamespaceRequest"
+      responses:
+        "200":
+          description: Namespace DryRun 结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesNamespaceMutationResult"
+        "201":
+          description: Namespace 创建结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesNamespaceMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesNamespace
+      description: 通过目标 Cluster 的在线 Agent 查询一个 Kubernetes Namespace 详情。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+      responses:
+        "200":
+          description: Namespace 详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesNamespaceDetail"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesNamespace
+      description: |
+        删除目标 Cluster 中的 Namespace。dry_run=true 时执行 Kubernetes 服务端
+        DryRun；实际删除必须显式 confirm=true。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesDeleteNamespaceRequest"
+      responses:
+        "200":
+          description: Namespace 删除或 DryRun 结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDeleteResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/kubernetes/resource-types:
     get:
       tags: [Resources]
@@ -2126,6 +2332,14 @@ components:
         type: string
         minLength: 1
         maxLength: 253
+    NamespaceName:
+      name: namespace_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
     KubernetesResourceName:
       name: resource_name
       in: path
@@ -2981,6 +3195,113 @@ components:
         remaining_item_count:
           type: [integer, "null"]
           minimum: 0
+    KubernetesNamespaceSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - uid
+        - resource_version
+        - creation_timestamp
+        - phase
+        - labels
+      properties:
+        name:
+          type: string
+          maxLength: 63
+        uid:
+          type: string
+        resource_version:
+          type: string
+        creation_timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        phase:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    KubernetesNamespaceDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesNamespaceSummary"
+        - type: object
+          required: [annotations, finalizers]
+          properties:
+            annotations:
+              type: object
+              additionalProperties:
+                type: string
+            finalizers:
+              type: array
+              items:
+                type: string
+    KubernetesNamespacePage:
+      type: object
+      additionalProperties: false
+      required:
+        - namespaces
+        - continue_token
+        - resource_version
+        - remaining_item_count
+      properties:
+        namespaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesNamespaceSummary"
+        continue_token:
+          type: string
+          description: Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。
+        resource_version:
+          type: string
+        remaining_item_count:
+          type: [integer, "null"]
+          minimum: 0
+    KubernetesCreateNamespaceRequest:
+      type: object
+      additionalProperties: false
+      required: [name, confirm]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 63
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          default: false
+    KubernetesDeleteNamespaceRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          default: false
+        uid:
+          type: string
+          maxLength: 128
+        resource_version:
+          type: string
+          maxLength: 256
+    KubernetesNamespaceMutationResult:
+      type: object
+      additionalProperties: false
+      required: [namespace, dry_run]
+      properties:
+        namespace:
+          $ref: "#/components/schemas/KubernetesNamespaceDetail"
+        dry_run:
+          type: boolean
     KubernetesNodeAddress:
       type: object
       additionalProperties: false

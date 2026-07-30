@@ -291,6 +291,37 @@ func writeKubernetesObject(
 	}
 }
 
+func TestResponseBufferEnforcesInstanceBudget(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(nil, Config{MaxBufferedResponseBytes: 4})
+	first := service.newResponseBuffer(context.Background())
+	defer first.Release()
+	if _, err := first.Write([]byte("1234")); err != nil {
+		t.Fatal(err)
+	}
+
+	blockedContext, cancelBlocked := context.WithTimeout(
+		context.Background(),
+		20*time.Millisecond,
+	)
+	defer cancelBlocked()
+	blocked := service.newResponseBuffer(blockedContext)
+	if _, err := blocked.Write([]byte("x")); !errors.Is(
+		err,
+		context.DeadlineExceeded,
+	) {
+		t.Fatalf("blocked Write error = %v", err)
+	}
+
+	first.Release()
+	available := service.newResponseBuffer(context.Background())
+	defer available.Release()
+	if _, err := available.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testNode(name string, now time.Time) corev1.Node {
 	return corev1.Node{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Node"},

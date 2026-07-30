@@ -2,12 +2,17 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node 类型化接口和通用主资源 CRUD 底座：
+当前已完成 Node 类型化接口、Namespace 管理闭环和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/nodes`：支持 `limit`、Kubernetes continuation token、Label Selector 和
   Field Selector；
 - `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}`：返回 Node 状态、容量、地址、标签、污点、条件和
   Node System Info；
+- `GET /api/v1/clusters/{cluster_id}/namespaces` 和
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}`：返回 Namespace 列表与详情；
+- `POST /api/v1/clusters/{cluster_id}/namespaces` 和
+  `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}`：执行带 DryRun、确认、幂等键与
+  UID/resourceVersion 删除前置条件的 Namespace 创建和删除；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resource-types`：返回目标 Cluster 当前 Discovery 可见的
   内置资源和 CRD 资源目录；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resources`：按 GVR、Namespace、Selector 和 Kubernetes
@@ -21,14 +26,18 @@
   交给该 Cluster 的 Agent；
 - 写接口另外要求 CSRF、`cluster.resource.create`、`cluster.resource.update` 或
   `cluster.resource.delete`、16 至 128 字符幂等键，以及实际变更的显式确认；
-- Agent 使用 Kubernetes dynamic client，只接受主资源的 CRUD；Secret 和 Subresource 明确拒绝；
+- Agent 使用 Kubernetes dynamic client，只接受 Discovery 声明且作用域、Verb 匹配的主资源 CRUD；
+  Discovery 策略缓存有 TTL 和条目上限，Secret 和 Subresource 明确拒绝；
 - 支持 DryRun、JSON Patch、JSON Merge Patch、Strategic Merge Patch、Server-Side Apply、
   删除传播策略和 UID/resourceVersion 前置条件；Apply 默认 `force=false`；
 - Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；
-- 安装 Manifest 只为 Agent ServiceAccount 增加 Node 的 `get`、`list` 权限。
+- 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list` 和 Namespace 的
+  `get`、`list`、`create`、`delete` 权限；其他资源仍需安装方显式增加最小 RBAC。
 
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
-表示和 Console 页面尚未实现。通用接口返回 Unstructured JSON，并移除 `metadata.managedFields`。Discovery
+表示和 Node Console 页面尚未实现。Console 容器服务已经提供项目内在线集群选择、Namespace
+List/Detail/Create/Delete、权限门控、DryRun 预检、影响展示与二次确认。通用接口返回 Unstructured JSON，
+并移除 `metadata.managedFields`。Discovery
 目录表示 API Server 暴露的资源，不代表 Agent ServiceAccount 已获授权；管理更多内置资源或任意 CR 时，安装方
 需要显式扩展该 ServiceAccount 的最小 RBAC，ZKE 无需增加新的资源协议或 HTTP Handler。
 
@@ -36,9 +45,9 @@ Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 
 真实 QUIC Stream 验证 Namespace、ConfigMap、Deployment、CRD 和自定义资源的 CRUD、四类 Patch、DryRun、
 冲突与幂等重放，并使用随机名称和精确清理避免污染日常集群。
 
-规划能力包括：
+后续规划能力包括：
 
-- 集群概览、节点与 Namespace 管理；
+- 集群概览和节点管理；
 - Deployment、StatefulSet、DaemonSet、Job 和 CronJob；
 - Pod 管理、Pod 日志与 Web Terminal；
 - Service 与 Ingress；
@@ -46,7 +55,6 @@ Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 
 - PersistentVolume、PersistentVolumeClaim 与 StorageClass；
 - Kubernetes Event；
 - YAML 查看与编辑；
-- 面向具体资源的表单化创建、更新和删除体验；
-- RBAC 权限控制。
+- 面向具体资源的表单化创建、更新和删除体验。
 
 产品体验将参考成熟 Kubernetes 管理平台的通用实践，但不会以与任何现有平台完全相同为目标。

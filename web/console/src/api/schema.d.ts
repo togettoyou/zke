@@ -430,6 +430,165 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的在线 Agent 查询 Kubernetes Node。分页使用 Kubernetes
+         *     原生 continuation token，不支持 offset；每个 HTTP 请求对应一个独立 QUIC
+         *     Resource Stream。
+         */
+        get: operations["listKubernetesNodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/nodes/{node_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 通过目标 Cluster 的在线 Agent 查询一个 Kubernetes Node 详情。 */
+        get: operations["getKubernetesNode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 通过目标 Cluster 的在线 Agent 查询 Kubernetes Namespace。 */
+        get: operations["listKubernetesNamespaces"];
+        put?: never;
+        /**
+         * @description 在目标 Cluster 创建 Namespace。dry_run=true 时执行 Kubernetes 服务端
+         *     DryRun；实际创建必须显式 confirm=true。
+         */
+        post: operations["createKubernetesNamespace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 通过目标 Cluster 的在线 Agent 查询一个 Kubernetes Namespace 详情。 */
+        get: operations["getKubernetesNamespace"];
+        put?: never;
+        post?: never;
+        /**
+         * @description 删除目标 Cluster 中的 Namespace。dry_run=true 时执行 Kubernetes 服务端
+         *     DryRun；实际删除必须显式 confirm=true。
+         */
+        delete: operations["deleteKubernetesNamespace"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/kubernetes/resource-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的在线 Agent 获取 Kubernetes API Discovery 目录。
+         *     目录包含 Discovery 可见且支持至少一个已知 CRUD Verb 的主资源，不包含
+         *     Secret 和 Subresource。目录项不代表 Agent ServiceAccount 一定具有权限。
+         */
+        get: operations["discoverKubernetesResourceTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/kubernetes/resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 按明确 GVR 在目标 Cluster 中读取一页 Kubernetes 主资源。Server 固定执行
+         *     LIST，不接受任意 Verb、Subresource 或 Kubernetes 原始路径。空 namespace
+         *     对 Namespaced 资源表示跨 Namespace 列表。
+         */
+        get: operations["listGenericKubernetesResources"];
+        put?: never;
+        /**
+         * @description 在明确的 Cluster、GVR 和 Namespace 中创建具名 Kubernetes 主资源。
+         *     不接受 generateName、Secret 或 Subresource。实际写入要求显式确认；
+         *     dry-run 可用于预览 API Server 默认值和校验结果。
+         */
+        post: operations["createGenericKubernetesResource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 按明确 GVR、Namespace 和名称读取一个 Kubernetes 主资源。响应移除
+         *     metadata.managedFields；Secret 和所有 Subresource 均不在该接口范围内。
+         */
+        get: operations["getGenericKubernetesResource"];
+        /**
+         * @description 以完整对象更新具名 Kubernetes 主资源。URL、GVR、Namespace 和正文身份必须一致，
+         *     正文必须携带 metadata.resourceVersion。实际写入要求显式确认。
+         */
+        put: operations["updateGenericKubernetesResource"];
+        post?: never;
+        /**
+         * @description 删除具名 Kubernetes 主资源。支持 Grace Period、Propagation Policy、
+         *     UID/resourceVersion 前置条件和 dry-run；实际删除要求显式确认。
+         */
+        delete: operations["deleteGenericKubernetesResource"];
+        options?: never;
+        head?: never;
+        /**
+         * @description 使用显式 patch_type 修改具名 Kubernetes 主资源。支持 json、merge、
+         *     strategic-merge 和 apply；apply 必须提供 field_manager，force 默认 false。
+         */
+        patch: operations["patchGenericKubernetesResource"];
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/cluster-enrollments": {
         parameters: {
             query?: never;
@@ -599,7 +758,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -741,6 +900,203 @@ export interface components {
         ClusterAggregate: components["schemas"]["Cluster"] & {
             connection: components["schemas"]["ClusterConnection"];
         };
+        KubernetesResourceType: {
+            group: string;
+            version: string;
+            resource: string;
+            kind: string;
+            namespaced: boolean;
+            verbs: ("get" | "list" | "create" | "update" | "patch" | "delete")[];
+            short_names?: string[];
+            categories?: string[];
+        };
+        KubernetesResourceCatalog: {
+            resources: components["schemas"]["KubernetesResourceType"][];
+            /** @description true 表示一个或多个 Aggregated API Group 发现失败，目录只包含成功部分。 */
+            partial: boolean;
+        };
+        /** @description Kubernetes Unstructured JSON 对象；metadata.managedFields 已移除。 */
+        KubernetesUnstructuredResource: {
+            [key: string]: unknown;
+        };
+        KubernetesGenericResourcePage: {
+            api_version: string;
+            kind: string;
+            items: components["schemas"]["KubernetesUnstructuredResource"][];
+            /** @description Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。 */
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesMutationOptions: {
+            /** @default false */
+            dry_run: boolean;
+            field_manager?: string;
+            /**
+             * @description 仅 Server-Side Apply 可设置；默认 false。
+             * @default false
+             */
+            force: boolean;
+        };
+        KubernetesCreateResourceRequest: {
+            object: components["schemas"]["KubernetesUnstructuredResource"];
+            options?: components["schemas"]["KubernetesMutationOptions"];
+            /** @description 实际写入必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
+        KubernetesUpdateResourceRequest: {
+            object: components["schemas"]["KubernetesUnstructuredResource"];
+            options?: components["schemas"]["KubernetesMutationOptions"];
+            /** @description 实际写入必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
+        KubernetesPatchResourceRequest: {
+            /** @enum {string} */
+            patch_type: "json" | "merge" | "strategic-merge" | "apply";
+            /** @description 与 patch_type 对应的 JSON Patch 数组或 JSON 对象。 */
+            patch: unknown;
+            options?: components["schemas"]["KubernetesMutationOptions"];
+            /** @description 实际写入必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
+        KubernetesDeletePreconditions: {
+            uid?: string;
+            resource_version?: string;
+        };
+        KubernetesDeleteResourceRequest: {
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际删除必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+            grace_period_seconds?: number | null;
+            /** @enum {string} */
+            propagation_policy?: "" | "orphan" | "background" | "foreground";
+            preconditions?: components["schemas"]["KubernetesDeletePreconditions"];
+        };
+        KubernetesMutationResult: {
+            resource: components["schemas"]["KubernetesUnstructuredResource"];
+            dry_run: boolean;
+        };
+        KubernetesDeleteResult: {
+            deleted: boolean;
+            dry_run: boolean;
+            target: string;
+        };
+        KubernetesNodeSummary: {
+            name: string;
+            uid: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            /** @enum {string} */
+            status: "ready" | "not_ready" | "unknown";
+            unschedulable: boolean;
+            roles: string[];
+            internal_ip: string;
+            kubernetes_version: string;
+            operating_system: string;
+            os_image: string;
+            kernel_version: string;
+            container_runtime: string;
+            /** @description Kubernetes Quantity */
+            cpu_capacity: string;
+            /** @description Kubernetes Quantity */
+            memory_capacity: string;
+            /** @description Kubernetes Quantity */
+            pods_capacity: string;
+            /** @description Kubernetes Quantity */
+            cpu_allocatable: string;
+            /** @description Kubernetes Quantity */
+            memory_allocatable: string;
+            /** @description Kubernetes Quantity */
+            pods_allocatable: string;
+        };
+        KubernetesNodePage: {
+            nodes: components["schemas"]["KubernetesNodeSummary"][];
+            /** @description Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。 */
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesNamespaceSummary: {
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            phase: string;
+            labels: {
+                [key: string]: string;
+            };
+        };
+        KubernetesNamespaceDetail: components["schemas"]["KubernetesNamespaceSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            finalizers: string[];
+        };
+        KubernetesNamespacePage: {
+            namespaces: components["schemas"]["KubernetesNamespaceSummary"][];
+            /** @description Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。 */
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesCreateNamespaceRequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            /** @default false */
+            dry_run: boolean;
+            /** @default false */
+            confirm: boolean;
+        };
+        KubernetesDeleteNamespaceRequest: {
+            /** @default false */
+            dry_run: boolean;
+            /** @default false */
+            confirm: boolean;
+            uid?: string;
+            resource_version?: string;
+        };
+        KubernetesNamespaceMutationResult: {
+            namespace: components["schemas"]["KubernetesNamespaceDetail"];
+            dry_run: boolean;
+        };
+        KubernetesNodeAddress: {
+            type: string;
+            address: string;
+        };
+        KubernetesNodeTaint: {
+            key: string;
+            value: string;
+            effect: string;
+            time_added?: components["schemas"]["Timestamp"];
+        };
+        KubernetesNodeCondition: {
+            type: string;
+            status: string;
+            reason: string;
+            message: string;
+            last_heartbeat_time: components["schemas"]["Timestamp"];
+            last_transition_time: components["schemas"]["Timestamp"];
+        };
+        KubernetesNodeDetail: components["schemas"]["KubernetesNodeSummary"] & {
+            labels: {
+                [key: string]: string;
+            };
+            annotations: {
+                [key: string]: string;
+            };
+            provider_id: string;
+            pod_cidr: string;
+            pod_cidrs: string[];
+            addresses: components["schemas"]["KubernetesNodeAddress"][];
+            taints: components["schemas"]["KubernetesNodeTaint"][];
+            conditions: components["schemas"]["KubernetesNodeCondition"][];
+            architecture: string;
+            boot_id: string;
+            machine_id: string;
+            system_uuid: string;
+        };
         ClusterEnrollment: {
             id: components["schemas"]["UUID"];
             cluster_id?: components["schemas"]["UUID"];
@@ -826,13 +1182,13 @@ export interface components {
              * @description 所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与 `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。 `denied` 组是鉴权拒绝时记录的权限名，其事件的 `result` 恒为 `denied`。
              * @enum {string}
              */
-            group: "auth" | "user" | "role_binding" | "tenant" | "project" | "cluster" | "denied";
+            group: "auth" | "user" | "role_binding" | "tenant" | "project" | "cluster" | "kubernetes_resource" | "denied";
         };
         /**
          * @description 写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是 服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的 `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
          * @enum {string}
          */
-        AuditTargetType: "user" | "session" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event";
+        AuditTargetType: "user" | "session" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource";
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
             pagination: components["schemas"]["Pagination"];
@@ -912,6 +1268,15 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description Agent 或目标 Kubernetes API 返回无效或失败的响应 */
+        BadGateway: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         CSRFToken: string;
@@ -921,6 +1286,15 @@ export interface components {
         TenantID: components["schemas"]["UUID"];
         ProjectID: components["schemas"]["UUID"];
         ClusterID: components["schemas"]["UUID"];
+        NodeName: string;
+        NamespaceName: string;
+        KubernetesResourceName: string;
+        /** @description Core API Group 使用空字符串或省略该参数。 */
+        KubernetesGroup: string;
+        KubernetesVersion: string;
+        KubernetesResource: string;
+        /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+        KubernetesNamespace: string;
         EnrollmentID: components["schemas"]["UUID"];
         OptionalTenantID: components["schemas"]["UUID"];
         OptionalProjectID: components["schemas"]["UUID"];
@@ -2039,6 +2413,552 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listKubernetesNodes: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Node 列表和 Kubernetes 分页状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNodePage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesNode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                node_name: components["parameters"]["NodeName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Node 详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNodeDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesNamespaces: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Namespace 列表和 Kubernetes 分页状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNamespacePage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesNamespace: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateNamespaceRequest"];
+            };
+        };
+        responses: {
+            /** @description Namespace DryRun 结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNamespaceMutationResult"];
+                    };
+                };
+            };
+            /** @description Namespace 创建结果 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNamespaceMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesNamespace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Namespace 详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNamespaceDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesNamespace: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteNamespaceRequest"];
+            };
+        };
+        responses: {
+            /** @description Namespace 删除或 DryRun 结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDeleteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    discoverKubernetesResourceTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Kubernetes 主资源目录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesResourceCatalog"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listGenericKubernetesResources: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+                resource_version?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 通用 Kubernetes 资源列表和原生分页状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesGenericResourcePage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createGenericKubernetesResource: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateResourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Kubernetes dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesMutationResult"];
+                    };
+                };
+            };
+            /** @description Kubernetes 资源已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getGenericKubernetesResource: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                resource_name: components["parameters"]["KubernetesResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 通用 Kubernetes 资源详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesUnstructuredResource"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateGenericKubernetesResource: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                resource_name: components["parameters"]["KubernetesResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateResourceRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新后的资源或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteGenericKubernetesResource: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                resource_name: components["parameters"]["KubernetesResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteResourceRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除结果或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDeleteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    patchGenericKubernetesResource: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                resource_name: components["parameters"]["KubernetesResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesPatchResourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Patch 后的资源或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
         };
     };
     listClusterEnrollments: {

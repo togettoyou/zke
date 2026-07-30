@@ -379,7 +379,7 @@ func (store *AuditStore) RecordClusterEvent(
 		strings.TrimSpace(input.Action) == "" ||
 		strings.TrimSpace(input.TargetType) == "" ||
 		strings.TrimSpace(input.RequestID) == "" ||
-		(input.Result != "failed" && input.Result != "denied") {
+		!validClusterAuditResult(input.Result) {
 		return errors.New("cluster audit event fields are invalid")
 	}
 	if _, err := store.pool.Exec(ctx, `
@@ -421,4 +421,8 @@ WHERE NOT EXISTS (SELECT 1 FROM cluster_scope)
 		return fmt.Errorf("record cluster audit event: %w", err)
 	}
 	return nil
+}
+
+func validClusterAuditResult(result string) bool {
+	return result == "succeeded" || result == "failed" || result == "denied"
 }

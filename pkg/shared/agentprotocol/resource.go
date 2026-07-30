@@ -243,14 +243,15 @@ func validateResourceRequest(
 	if request == nil ||
 		request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_UNSPECIFIED ||
 		request.GetResource() == nil ||
+		(request.GetResource().GetGroup() != "" &&
+			!validResourceSegment(request.GetResource().GetGroup())) ||
 		!validResourceSegment(request.GetResource().GetVersion()) ||
 		!validResourceSegment(request.GetResource().GetResource()) ||
-		len(request.GetResource().GetGroup()) > 253 ||
-		strings.TrimSpace(request.GetResource().GetGroup()) !=
-			request.GetResource().GetGroup() ||
-		len(request.GetNamespace()) > 253 ||
-		len(request.GetName()) > 253 ||
-		len(request.GetSubresource()) > 253 ||
+		(request.GetNamespace() != "" &&
+			!validResourceSegment(request.GetNamespace())) ||
+		(request.GetName() != "" && !validResourceSegment(request.GetName())) ||
+		(request.GetSubresource() != "" &&
+			!validResourceSegment(request.GetSubresource())) ||
 		request.GetBodySize() > maxBodySize {
 		if request != nil && request.GetBodySize() > maxBodySize {
 			return ErrStreamBodyTooLarge

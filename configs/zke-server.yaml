@@ -131,6 +131,9 @@ agent_listener:
   resource_request_timeout: 2m
   connection_drain_timeout: 10s
   max_resource_body_bytes: 33554432
+  # Instance-wide raw response bytes buffered while decoding Kubernetes
+  # resources. This must be at least max_resource_body_bytes.
+  max_buffered_resource_response_bytes: 268435456
   max_resource_streams_per_agent: 64
   max_concurrent_resource_requests: 4096
   # How many disconnected Agents keep a last-known status in memory, so that

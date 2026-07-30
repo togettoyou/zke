@@ -15,8 +15,8 @@
 
 ## 资源层次
 
-ZKE 使用以下资源层次组织资源归属；当前已实现 Global、Tenant、Project 和 Cluster，Cluster Group
-与 Namespace 业务管理仍在规划中：
+ZKE 使用以下资源层次组织资源归属；当前已实现 Global、Tenant、Project、Cluster 和单集群 Namespace
+管理，Cluster Group 仍在规划中：
 
 ```text
 Global

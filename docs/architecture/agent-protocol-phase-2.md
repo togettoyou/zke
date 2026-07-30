@@ -6,7 +6,8 @@
 > 本文是 Phase 2 的设计基线。当前代码已经实现版本化 Stream/Resource Protobuf、通用有界分帧、双方
 > accept 循环、Resource Stream 往返、能力协商、原生 Stream reset 取消和并发限制，并已接入 Node
 > List/Detail 以及受控通用 Discovery/List/Get 的 Kubernetes dynamic client、Server HTTP API 和真实 QUIC
-> 闭环；通用主资源 Create/Update/Patch/Delete、DryRun、写能力协商、幂等重放和真实集群 E2E 已实现。
+> 闭环；通用主资源 Create/Update/Patch/Delete、DryRun、写能力协商、幂等重放、响应内存预算和真实集群 E2E
+> 已实现。类型化 Namespace CRUD 及 Console 集群选择、预检和确认闭环也已完成。
 > Watch、Pod Logs、Pod Exec 和 Subresource 仍待后续阶段实现。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
@@ -654,8 +655,8 @@ Resource Stream 是 Server 与 Agent 之间的内部协议。Server 提供受控
 - Cluster 继承所属 Project 的授权，Namespace 不是独立授权层级；
 - Agent 对 GVR、Verb、Subresource、正文和选择器执行独立 allowlist；
 - Agent 使用最小权限 Kubernetes ServiceAccount；
-- 默认安装只授予 Node 的 `get/list`；需要管理更多内置资源、CRD 或 CR 时，由安装方显式扩展 Agent
-  ServiceAccount RBAC；
+- 默认安装授予 Node 的 `get/list` 与 Namespace 的 `get/list/create/delete`；需要管理其他内置资源、
+  CRD 或 CR 时，由安装方显式扩展 Agent ServiceAccount RBAC；
 - Secret 内容和任意 Subresource 不纳入当前通用 CRUD；
 - 资源变更要求显式目标、DryRun 影响预览、用户确认、幂等键和 Cluster 定域审计；
 - Pod Logs 和 Web Terminal 使用独立权限，其中 Web Terminal 属于敏感操作。
@@ -702,7 +703,7 @@ Node dynamic client 的 List/Detail 往返。
 - Agent 动态客户端；
 - 真实 QUIC 已覆盖 CRD 资源发现、List 和 Get；
 - Node 列表当前使用完整对象表示、Kubernetes continuation token 分页和类型化精简响应；Table 表示尚未实现；
-- Console 集群选择和只读页面。
+- Console 已实现项目内在线集群选择以及 Namespace List/Detail 页面。
 
 ### 11.3 更多只读资源
 
@@ -715,7 +716,8 @@ Node dynamic client 的 List/Detail 往返。
 - Create、Update、四类 Patch、Delete 和 DryRun 已实现；
 - 细粒度 RBAC、显式确认、审计、有界幂等重放和能力协商已实现；
 - 冲突检测、Update `resourceVersion` 以及 Delete UID/resourceVersion 前置条件已实现；
-- YAML 编辑器、类型化变更表单和 Console 影响展示页面仍待实现。
+- Namespace 类型化 Create/Delete 表单、DryRun 预检、影响展示和二次确认已经实现；其他资源的 YAML
+  编辑器、类型化变更表单和 Console 影响展示页面仍待实现。
 
 ### 11.5 流式能力
 

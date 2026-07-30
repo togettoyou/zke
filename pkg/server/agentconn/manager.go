@@ -20,6 +20,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
+	"github.com/togettoyou/zke/pkg/shared/requestctx"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
@@ -1035,9 +1036,9 @@ func (manager *Manager) requestResource(
 	defer cancelRequest()
 	deadline, _ := requestContext.Deadline()
 	timeoutMillis := max(int64(1), time.Until(deadline).Milliseconds())
-	requestID, err := identifier.NewUUID()
+	requestID, err := resourceRequestID(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("generate Resource request identifier: %w", err)
+		return nil, err
 	}
 	return agentprotocol.DoResource(
 		requestContext,
@@ -1054,6 +1055,18 @@ func (manager *Manager) requestResource(
 		responseBody,
 		manager.config.MaxResourceBodyBytes,
 	)
+}
+
+func resourceRequestID(ctx context.Context) (string, error) {
+	requestID := requestctx.ID(ctx)
+	if validation.IsUUID(requestID) {
+		return requestID, nil
+	}
+	requestID, err := identifier.NewUUID()
+	if err != nil {
+		return "", fmt.Errorf("generate Resource request identifier: %w", err)
+	}
+	return requestID, nil
 }
 
 func tryAcquire(admissions chan struct{}) bool {

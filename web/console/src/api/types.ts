@@ -23,6 +23,11 @@ export type ClusterEnrollment = Schemas["ClusterEnrollment"];
 export type ClusterEnrollmentRecord = Schemas["ClusterEnrollmentRecord"];
 export type ClusterInstallation = Schemas["ClusterInstallation"];
 export type ClusterConnectionRevocation = Schemas["ClusterConnectionRevocation"];
+export type KubernetesNamespaceSummary = Schemas["KubernetesNamespaceSummary"];
+export type KubernetesNamespaceDetail = Schemas["KubernetesNamespaceDetail"];
+export type KubernetesNamespacePage = Schemas["KubernetesNamespacePage"];
+export type KubernetesNamespaceMutationResult = Schemas["KubernetesNamespaceMutationResult"];
+export type KubernetesDeleteResult = Schemas["KubernetesDeleteResult"];
 
 export type AuditEvent = Schemas["AuditEvent"];
 export type AuditEventPage = Schemas["AuditEventPage"];

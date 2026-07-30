@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
+	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/kubernetescatalog"
@@ -135,6 +137,130 @@ func TestKubernetesResourceHandlerMutatesGenericResources(t *testing.T) {
 	)
 	if !apierrors.IsNotFound(getErr) {
 		t.Fatalf("deleted resource lookup error = %v, want not found", getErr)
+	}
+}
+
+func TestKubernetesResourceDiscoveryPolicyEnforcesVerbAndScope(t *testing.T) {
+	t.Parallel()
+
+	fakeDiscovery := &discoveryfake.FakeDiscovery{
+		Fake: &k8stesting.Fake{
+			Resources: []*metav1.APIResourceList{{
+				GroupVersion: "v1",
+				APIResources: []metav1.APIResource{
+					{
+						Name:       "pods",
+						Namespaced: true,
+						Verbs:      metav1.Verbs{"get", "list", "create"},
+					},
+					{
+						Name:       "nodes",
+						Namespaced: false,
+						Verbs:      metav1.Verbs{"get", "list"},
+					},
+				},
+			}},
+		},
+	}
+	policy := &kubernetesResourceDiscoveryPolicy{
+		client:  fakeDiscovery,
+		entries: make(map[schema.GroupVersionResource]discoveredKubernetesResource),
+	}
+	resource := func(name string) *agentv1.GroupVersionResource {
+		return &agentv1.GroupVersionResource{Version: "v1", Resource: name}
+	}
+	testCases := []struct {
+		name         string
+		request      *agentv1.ResourceRequest
+		wantAllowed  bool
+		wantBadScope bool
+	}{
+		{
+			name: "all Namespace list is allowed",
+			request: &agentv1.ResourceRequest{
+				Verb: agentv1.ResourceVerb_RESOURCE_VERB_LIST, Resource: resource("pods"),
+			},
+			wantAllowed: true,
+		},
+		{
+			name: "namespaced get requires Namespace",
+			request: &agentv1.ResourceRequest{
+				Verb: agentv1.ResourceVerb_RESOURCE_VERB_GET, Resource: resource("pods"),
+			},
+			wantBadScope: true,
+		},
+		{
+			name: "cluster scoped resource rejects Namespace",
+			request: &agentv1.ResourceRequest{
+				Verb:      agentv1.ResourceVerb_RESOURCE_VERB_GET,
+				Resource:  resource("nodes"),
+				Namespace: "tenant-a",
+			},
+			wantBadScope: true,
+		},
+		{
+			name: "unsupported verb is denied",
+			request: &agentv1.ResourceRequest{
+				Verb: agentv1.ResourceVerb_RESOURCE_VERB_DELETE, Resource: resource("nodes"),
+			},
+		},
+		{
+			name: "undiscovered resource is denied",
+			request: &agentv1.ResourceRequest{
+				Verb: agentv1.ResourceVerb_RESOURCE_VERB_LIST, Resource: resource("widgets"),
+			},
+		},
+	}
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			allowed, invalidScope, err := policy.allowed(
+				context.Background(),
+				testCase.request,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if allowed != testCase.wantAllowed ||
+				invalidScope != testCase.wantBadScope {
+				t.Fatalf(
+					"allowed=%t invalidScope=%t, want allowed=%t invalidScope=%t",
+					allowed,
+					invalidScope,
+					testCase.wantAllowed,
+					testCase.wantBadScope,
+				)
+			}
+		})
+	}
+}
+
+func TestKubernetesResourceDiscoveryPolicyBoundsCache(t *testing.T) {
+	t.Parallel()
+
+	policy := &kubernetesResourceDiscoveryPolicy{
+		entries: make(map[schema.GroupVersionResource]discoveredKubernetesResource),
+	}
+	for index := 0; index <= maxKubernetesResourceDiscoveryEntries; index++ {
+		policy.remember(
+			schema.GroupVersionResource{
+				Group:    "example.io",
+				Version:  "v1",
+				Resource: "resource-" + strconv.Itoa(index),
+			},
+			discoveredKubernetesResource{
+				found:     true,
+				expiresAt: time.Now().Add(time.Duration(index) * time.Second),
+			},
+		)
+	}
+	if len(policy.entries) != maxKubernetesResourceDiscoveryEntries {
+		t.Fatalf(
+			"Discovery cache entries = %d, want %d",
+			len(policy.entries),
+			maxKubernetesResourceDiscoveryEntries,
+		)
 	}
 }
 

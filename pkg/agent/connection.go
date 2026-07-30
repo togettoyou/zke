@@ -213,6 +213,7 @@ func runConnection(
 		cfg,
 		services,
 		resourceSupported,
+		identity.ClusterID,
 		logger,
 	)
 	if err != nil {

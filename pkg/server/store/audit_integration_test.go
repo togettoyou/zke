@@ -69,6 +69,76 @@ WHERE request_id = 'request-project-audit'
 	}
 }
 
+func TestRecordSuccessfulClusterAuditEvent(t *testing.T) {
+	databaseURL := requireAuthTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool := openIsolatedDatabase(t, ctx, databaseURL)
+	if _, err := migrations.Apply(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+
+	tenantID := insertRBACTenant(t, ctx, pool, "Kubernetes Audit Tenant")
+	projectID := insertRBACProject(
+		t,
+		ctx,
+		pool,
+		tenantID,
+		"Kubernetes Audit Project",
+	)
+	clusterID := insertRBACCluster(
+		t,
+		ctx,
+		pool,
+		tenantID,
+		projectID,
+		"Kubernetes Audit Cluster",
+	)
+	userID := insertRBACUser(t, ctx, pool, "kubernetes-audit-user")
+	auditStore := store.NewAuditStore(pool)
+	if err := auditStore.RecordClusterEvent(ctx, store.ClusterAuditEvent{
+		ActorUserID: userID,
+		ClusterID:   clusterID,
+		Action:      "kubernetes_resource.create",
+		TargetType:  "kubernetes_resource",
+		TargetName:  "core/v1/namespaces/model-serving",
+		Result:      "succeeded",
+		RequestID:   "request-kubernetes-audit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var scopeType, storedClusterID, action, targetName, result string
+	if err := pool.QueryRow(ctx, `
+SELECT scope_type, cluster_id::text, action, target_name, result
+FROM audit_events
+WHERE request_id = 'request-kubernetes-audit'
+`).Scan(
+		&scopeType,
+		&storedClusterID,
+		&action,
+		&targetName,
+		&result,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if scopeType != "cluster" ||
+		storedClusterID != clusterID ||
+		action != "kubernetes_resource.create" ||
+		targetName != "core/v1/namespaces/model-serving" ||
+		result != "succeeded" {
+		t.Fatalf(
+			"successful Cluster audit = %s/%s %s %s %s",
+			scopeType,
+			storedClusterID,
+			action,
+			targetName,
+			result,
+		)
+	}
+}
+
 // A denial is recorded after the decision has already been made, so the record
 // must not depend on the caller still being connected. This exercises the
 // composition the authorization middleware uses: a request context that is

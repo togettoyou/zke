@@ -53,8 +53,11 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 		"- zke-agent-enrollment",
 		"- zke-agent-trust",
 		"- nodes",
+		"- namespaces",
 		"- get",
 		"- list",
+		"- create",
+		"- delete",
 	} {
 		if !strings.Contains(output, required) {
 			t.Errorf("manifest is missing %q", required)

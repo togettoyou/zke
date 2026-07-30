@@ -57,19 +57,23 @@ const (
 	ProjectResume  = "project.resume"
 	ProjectDelete  = "project.delete"
 
-	ClusterEnroll             = "cluster.enroll"
-	ClusterUpdate             = "cluster.update"
-	ClusterSuspend            = "cluster.suspend"
-	ClusterResume             = "cluster.resume"
-	ClusterDelete             = "cluster.delete"
-	ClusterEnrollmentCreate   = "cluster.enrollment.create"
-	ClusterEnrollmentRevoke   = "cluster.enrollment.revoke"
-	ClusterConnectionRevoke   = "cluster.connection.revoke"
-	ClusterConnectionReenroll = "cluster.connection.reenroll"
-	KubernetesResourceCreate  = "kubernetes_resource.create"
-	KubernetesResourceUpdate  = "kubernetes_resource.update"
-	KubernetesResourcePatch   = "kubernetes_resource.patch"
-	KubernetesResourceDelete  = "kubernetes_resource.delete"
+	ClusterEnroll                  = "cluster.enroll"
+	ClusterUpdate                  = "cluster.update"
+	ClusterSuspend                 = "cluster.suspend"
+	ClusterResume                  = "cluster.resume"
+	ClusterDelete                  = "cluster.delete"
+	ClusterEnrollmentCreate        = "cluster.enrollment.create"
+	ClusterEnrollmentRevoke        = "cluster.enrollment.revoke"
+	ClusterConnectionRevoke        = "cluster.connection.revoke"
+	ClusterConnectionReenroll      = "cluster.connection.reenroll"
+	KubernetesResourceCreate       = "kubernetes_resource.create"
+	KubernetesResourceUpdate       = "kubernetes_resource.update"
+	KubernetesResourcePatch        = "kubernetes_resource.patch"
+	KubernetesResourceDelete       = "kubernetes_resource.delete"
+	KubernetesResourceCreateDryRun = "kubernetes_resource.create.dry_run"
+	KubernetesResourceUpdateDryRun = "kubernetes_resource.update.dry_run"
+	KubernetesResourcePatchDryRun  = "kubernetes_resource.patch.dry_run"
+	KubernetesResourceDeleteDryRun = "kubernetes_resource.delete.dry_run"
 
 	// Written by the Agent connection, not by an operator: the Agent asks for a
 	// new client certificate over the control stream and the Server signs it.
@@ -236,6 +240,10 @@ var actions = []Action{
 	{KubernetesResourceUpdate, GroupKubernetes},
 	{KubernetesResourcePatch, GroupKubernetes},
 	{KubernetesResourceDelete, GroupKubernetes},
+	{KubernetesResourceCreateDryRun, GroupKubernetes},
+	{KubernetesResourceUpdateDryRun, GroupKubernetes},
+	{KubernetesResourcePatchDryRun, GroupKubernetes},
+	{KubernetesResourceDeleteDryRun, GroupKubernetes},
 
 	{DeniedTenantRead, GroupDenied},
 	{DeniedTenantManage, GroupDenied},

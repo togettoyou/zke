@@ -241,11 +241,15 @@ func (handler *kubernetesResourceHandler) create(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Kubernetes resource create request")
 		return
 	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourceCreate,
+		request.Options.DryRun,
+	)
 	if !request.Options.DryRun && !request.Confirm {
 		handler.recordKubernetesMutation(
 			c,
 			identity.User.ID,
-			auditaction.KubernetesResourceCreate,
+			action,
 			resourceTargetName(resource, namespace, objectName(request.Object)),
 			"failed",
 		)
@@ -253,6 +257,13 @@ func (handler *kubernetesResourceHandler) create(c *gin.Context) {
 		return
 	}
 	if handler.service == nil {
+		handler.recordKubernetesMutation(
+			c,
+			identity.User.ID,
+			action,
+			resourceTargetName(resource, namespace, objectName(request.Object)),
+			"failed",
+		)
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Kubernetes resource mutation is unavailable")
 		return
 	}
@@ -274,7 +285,7 @@ func (handler *kubernetesResourceHandler) create(c *gin.Context) {
 		handler.recordKubernetesMutation(
 			c,
 			identity.User.ID,
-			auditaction.KubernetesResourceCreate,
+			action,
 			resourceTargetName(resource, namespace, objectName(request.Object)),
 			"failed",
 		)
@@ -285,7 +296,7 @@ func (handler *kubernetesResourceHandler) create(c *gin.Context) {
 	handler.recordKubernetesMutation(
 		c,
 		identity.User.ID,
-		auditaction.KubernetesResourceCreate,
+		action,
 		resourceTargetName(resource, namespace, objectName(result)),
 		"succeeded",
 	)
@@ -322,11 +333,15 @@ func (handler *kubernetesResourceHandler) update(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Kubernetes resource update request")
 		return
 	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourceUpdate,
+		request.Options.DryRun,
+	)
 	if !request.Options.DryRun && !request.Confirm {
 		handler.recordKubernetesMutation(
 			c,
 			identity.User.ID,
-			auditaction.KubernetesResourceUpdate,
+			action,
 			resourceTargetName(resource, namespace, c.Param("resource_name")),
 			"failed",
 		)
@@ -334,6 +349,13 @@ func (handler *kubernetesResourceHandler) update(c *gin.Context) {
 		return
 	}
 	if handler.service == nil {
+		handler.recordKubernetesMutation(
+			c,
+			identity.User.ID,
+			action,
+			resourceTargetName(resource, namespace, c.Param("resource_name")),
+			"failed",
+		)
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Kubernetes resource mutation is unavailable")
 		return
 	}
@@ -355,7 +377,7 @@ func (handler *kubernetesResourceHandler) update(c *gin.Context) {
 	handler.finishObjectMutation(
 		c,
 		identity.User.ID,
-		auditaction.KubernetesResourceUpdate,
+		action,
 		resourceTargetName(resource, namespace, c.Param("resource_name")),
 		request.Options.DryRun,
 		result,
@@ -387,11 +409,15 @@ func (handler *kubernetesResourceHandler) patch(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Kubernetes resource patch request")
 		return
 	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourcePatch,
+		request.Options.DryRun,
+	)
 	if !request.Options.DryRun && !request.Confirm {
 		handler.recordKubernetesMutation(
 			c,
 			identity.User.ID,
-			auditaction.KubernetesResourcePatch,
+			action,
 			resourceTargetName(resource, namespace, c.Param("resource_name")),
 			"failed",
 		)
@@ -399,11 +425,25 @@ func (handler *kubernetesResourceHandler) patch(c *gin.Context) {
 		return
 	}
 	if handler.service == nil {
+		handler.recordKubernetesMutation(
+			c,
+			identity.User.ID,
+			action,
+			resourceTargetName(resource, namespace, c.Param("resource_name")),
+			"failed",
+		)
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Kubernetes resource mutation is unavailable")
 		return
 	}
 	patchType, ok := protocolPatchType(request.PatchType)
 	if !ok {
+		handler.recordKubernetesMutation(
+			c,
+			identity.User.ID,
+			action,
+			resourceTargetName(resource, namespace, c.Param("resource_name")),
+			"failed",
+		)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Kubernetes patch type")
 		return
 	}
@@ -426,7 +466,7 @@ func (handler *kubernetesResourceHandler) patch(c *gin.Context) {
 	handler.finishObjectMutation(
 		c,
 		identity.User.ID,
-		auditaction.KubernetesResourcePatch,
+		action,
 		resourceTargetName(resource, namespace, c.Param("resource_name")),
 		request.Options.DryRun,
 		result,
@@ -458,11 +498,15 @@ func (handler *kubernetesResourceHandler) delete(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Kubernetes resource delete request")
 		return
 	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourceDelete,
+		request.DryRun,
+	)
 	if !request.DryRun && !request.Confirm {
 		handler.recordKubernetesMutation(
 			c,
 			identity.User.ID,
-			auditaction.KubernetesResourceDelete,
+			action,
 			resourceTargetName(resource, namespace, c.Param("resource_name")),
 			"failed",
 		)
@@ -470,11 +514,25 @@ func (handler *kubernetesResourceHandler) delete(c *gin.Context) {
 		return
 	}
 	if handler.service == nil {
+		handler.recordKubernetesMutation(
+			c,
+			identity.User.ID,
+			action,
+			resourceTargetName(resource, namespace, c.Param("resource_name")),
+			"failed",
+		)
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Kubernetes resource mutation is unavailable")
 		return
 	}
 	propagation, ok := protocolDeletePropagation(request.PropagationPolicy)
 	if !ok {
+		handler.recordKubernetesMutation(
+			c,
+			identity.User.ID,
+			action,
+			resourceTargetName(resource, namespace, c.Param("resource_name")),
+			"failed",
+		)
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Kubernetes deletion propagation policy")
 		return
 	}
@@ -507,7 +565,7 @@ func (handler *kubernetesResourceHandler) delete(c *gin.Context) {
 		handler.recordKubernetesMutation(
 			c,
 			identity.User.ID,
-			auditaction.KubernetesResourceDelete,
+			action,
 			targetName,
 			"failed",
 		)
@@ -518,7 +576,7 @@ func (handler *kubernetesResourceHandler) delete(c *gin.Context) {
 	handler.recordKubernetesMutation(
 		c,
 		identity.User.ID,
-		auditaction.KubernetesResourceDelete,
+		action,
 		targetName,
 		"succeeded",
 	)
@@ -752,4 +810,22 @@ func (handler *kubernetesResourceHandler) recordKubernetesMutation(
 		TargetName:  targetName,
 		Result:      result,
 	})
+}
+
+func kubernetesMutationAuditAction(action string, dryRun bool) string {
+	if !dryRun {
+		return action
+	}
+	switch action {
+	case auditaction.KubernetesResourceCreate:
+		return auditaction.KubernetesResourceCreateDryRun
+	case auditaction.KubernetesResourceUpdate:
+		return auditaction.KubernetesResourceUpdateDryRun
+	case auditaction.KubernetesResourcePatch:
+		return auditaction.KubernetesResourcePatchDryRun
+	case auditaction.KubernetesResourceDelete:
+		return auditaction.KubernetesResourceDeleteDryRun
+	default:
+		return action
+	}
 }

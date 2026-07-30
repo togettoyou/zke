@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
@@ -23,6 +25,24 @@ import (
 )
 
 const kubernetesJSONContentType = "application/json"
+
+const (
+	kubernetesResourceDiscoveryTTL        = 30 * time.Second
+	maxKubernetesResourceDiscoveryEntries = 1024
+)
+
+type discoveredKubernetesResource struct {
+	namespaced bool
+	verbs      map[string]struct{}
+	found      bool
+	expiresAt  time.Time
+}
+
+type kubernetesResourceDiscoveryPolicy struct {
+	client  discovery.DiscoveryInterface
+	mutex   sync.Mutex
+	entries map[schema.GroupVersionResource]discoveredKubernetesResource
+}
 
 // newKubernetesResourceHandler adapts the generic Resource Stream contract to
 // client-go's dynamic client. The handler intentionally returns Kubernetes
@@ -42,6 +62,10 @@ func newKubernetesResourceHandler(
 		maxBodyBytes = agentprotocol.DefaultMaxResourceBodySize
 	}
 	mutationCache := newResourceMutationCache()
+	discoveryPolicy := &kubernetesResourceDiscoveryPolicy{
+		client:  discoveryClient,
+		entries: make(map[schema.GroupVersionResource]discoveredKubernetesResource),
+	}
 	return func(
 		ctx context.Context,
 		request *agentv1.ResourceRequest,
@@ -79,6 +103,33 @@ func newKubernetesResourceHandler(
 				"ResourceNotAllowed",
 				"requested Kubernetes resource is not enabled for this Agent",
 			), nil, nil
+		}
+		if discoveryClient != nil {
+			allowed, invalidScope, err := discoveryPolicy.allowed(ctx, request)
+			if err != nil {
+				return resourceErrorResponse(
+					agentv1.ResultCode_RESULT_CODE_UNAVAILABLE,
+					http.StatusServiceUnavailable,
+					"DiscoveryFailed",
+					"Kubernetes API discovery failed",
+				), nil, nil
+			}
+			if invalidScope {
+				return resourceErrorResponse(
+					agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT,
+					http.StatusBadRequest,
+					"InvalidResourceScope",
+					"Kubernetes resource Namespace does not match its scope",
+				), nil, nil
+			}
+			if !allowed {
+				return resourceErrorResponse(
+					agentv1.ResultCode_RESULT_CODE_FORBIDDEN,
+					http.StatusForbidden,
+					"ResourceNotAllowed",
+					"requested Kubernetes resource is not enabled for this Agent",
+				), nil, nil
+			}
 		}
 
 		resource := request.GetResource()
@@ -202,10 +253,126 @@ func newKubernetesResourceHandler(
 	}
 }
 
-// allowedKubernetesResourceRequest is deliberately narrower than the generic
-// Resource protocol. Phase 2 only permits List/Get on primary, non-Secret
-// resources; the Agent ServiceAccount RBAC remains the final resource-specific
-// authorization boundary.
+func (policy *kubernetesResourceDiscoveryPolicy) allowed(
+	ctx context.Context,
+	request *agentv1.ResourceRequest,
+) (bool, bool, error) {
+	resource := request.GetResource()
+	gvr := schema.GroupVersionResource{
+		Group: resource.GetGroup(), Version: resource.GetVersion(),
+		Resource: resource.GetResource(),
+	}
+	discovered, err := policy.resource(ctx, gvr)
+	if err != nil {
+		return false, false, err
+	}
+	if !discovered.found {
+		return false, false, nil
+	}
+	if _, supported := discovered.verbs[resourceVerbName(request.GetVerb())]; !supported {
+		return false, false, nil
+	}
+	namespace := request.GetNamespace()
+	if discovered.namespaced {
+		if namespace == "" &&
+			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_LIST {
+			return false, true, nil
+		}
+	} else if namespace != "" {
+		return false, true, nil
+	}
+	return true, false, nil
+}
+
+func (policy *kubernetesResourceDiscoveryPolicy) resource(
+	ctx context.Context,
+	gvr schema.GroupVersionResource,
+) (discoveredKubernetesResource, error) {
+	now := time.Now()
+	policy.mutex.Lock()
+	if cached, exists := policy.entries[gvr]; exists &&
+		cached.expiresAt.After(now) {
+		policy.mutex.Unlock()
+		return cached, nil
+	}
+	policy.mutex.Unlock()
+
+	groupVersion := gvr.Version
+	if gvr.Group != "" {
+		groupVersion = gvr.Group + "/" + gvr.Version
+	}
+	list, err := policy.client.ServerResourcesForGroupVersion(groupVersion)
+	if err != nil {
+		return discoveredKubernetesResource{}, err
+	}
+	if list == nil {
+		return discoveredKubernetesResource{}, errors.New(
+			"Kubernetes API discovery returned an empty resource list",
+		)
+	}
+	result := discoveredKubernetesResource{
+		verbs:     make(map[string]struct{}),
+		expiresAt: now.Add(kubernetesResourceDiscoveryTTL),
+	}
+	for _, candidate := range list.APIResources {
+		if candidate.Name != gvr.Resource {
+			continue
+		}
+		result.found = true
+		result.namespaced = candidate.Namespaced
+		for _, verb := range supportedKubernetesVerbs(candidate.Verbs) {
+			result.verbs[verb] = struct{}{}
+		}
+		break
+	}
+	policy.remember(gvr, result)
+	return result, nil
+}
+
+func (policy *kubernetesResourceDiscoveryPolicy) remember(
+	gvr schema.GroupVersionResource,
+	resource discoveredKubernetesResource,
+) {
+	policy.mutex.Lock()
+	defer policy.mutex.Unlock()
+	if _, exists := policy.entries[gvr]; !exists &&
+		len(policy.entries) >= maxKubernetesResourceDiscoveryEntries {
+		var oldestGVR schema.GroupVersionResource
+		var oldestExpiry time.Time
+		for candidate, cached := range policy.entries {
+			if oldestExpiry.IsZero() || cached.expiresAt.Before(oldestExpiry) {
+				oldestGVR = candidate
+				oldestExpiry = cached.expiresAt
+			}
+		}
+		delete(policy.entries, oldestGVR)
+	}
+	policy.entries[gvr] = resource
+}
+
+func resourceVerbName(verb agentv1.ResourceVerb) string {
+	switch verb {
+	case agentv1.ResourceVerb_RESOURCE_VERB_LIST:
+		return "list"
+	case agentv1.ResourceVerb_RESOURCE_VERB_GET:
+		return "get"
+	case agentv1.ResourceVerb_RESOURCE_VERB_CREATE:
+		return "create"
+	case agentv1.ResourceVerb_RESOURCE_VERB_UPDATE:
+		return "update"
+	case agentv1.ResourceVerb_RESOURCE_VERB_PATCH:
+		return "patch"
+	case agentv1.ResourceVerb_RESOURCE_VERB_DELETE:
+		return "delete"
+	default:
+		return ""
+	}
+}
+
+// allowedKubernetesResourceRequest is deliberately narrower than arbitrary
+// Kubernetes API access. Phase 2 permits CRUD only on primary, non-Secret
+// resources; Discovery and the Agent ServiceAccount RBAC remain the
+// resource-specific authorization boundaries.
 func allowedKubernetesResourceRequest(request *agentv1.ResourceRequest) bool {
 	resource := request.GetResource()
 	return resource != nil &&

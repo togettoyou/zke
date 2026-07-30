@@ -26,6 +26,9 @@ const AccessAuditApp = lazy(async () => ({
 const SettingsApp = lazy(async () => ({
   default: (await import("./settings/SettingsApp")).SettingsApp,
 }));
+const ContainerServiceApp = lazy(async () => ({
+  default: (await import("./container-service/ContainerServiceApp")).ContainerServiceApp,
+}));
 const PlannedApp = lazy(async () => ({
   default: (await import("./planned/PlannedApp")).PlannedApp,
 }));
@@ -88,19 +91,10 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "容器服务",
     description: "节点、命名空间、工作负载与 Pod 管理",
     icon: Boxes,
-    requiredPermissions: [],
-    availability: {
-      state: "planned",
-      phase: 2,
-      plannedCapabilities: [
-        "集群选择与节点管理",
-        "命名空间与工作负载管理",
-        "Pod 列表、日志与 Web Terminal",
-        "YAML 管理与 Kubernetes Event",
-      ],
-    },
-    defaultSize: { width: 880, height: 560 },
-    entry: PlannedApp,
+    requiredPermissions: ["cluster.read"],
+    availability: { state: "available" },
+    defaultSize: { width: 1_060, height: 680 },
+    entry: ContainerServiceApp,
   },
   {
     id: "observability",

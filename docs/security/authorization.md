@@ -80,6 +80,9 @@ Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。P
 实际变更要求显式确认，DryRun 可在确认前预览 API Server 校验和默认值。Create 禁止 `generateName`，
 Update 要求 `resourceVersion`，Apply 默认不抢占字段所有权，Delete 支持 UID/resourceVersion 前置条件。
 审计记录发起用户、Cluster、GVR/Namespace/名称、动作和结果，不记录资源正文。
+DryRun 使用独立的 `.dry_run` 审计动作，不会与实际写入混记。类型化 Namespace 创建与删除沿用相同安全
+边界：实际操作必须确认，删除可携带 UID/resourceVersion 前置条件，Console 在确认前先执行服务端 DryRun
+并展示目标 Cluster 与影响。
 
 管理端不暴露独立 Agent 资源。连接身份属于 Cluster 聚合内部状态，连接撤销接口
 `POST /api/v1/clusters/{cluster_id}/connection/revoke` 按 Cluster ID 解析 Project 作用域，要求

@@ -15,6 +15,7 @@ import (
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
+	"github.com/togettoyou/zke/pkg/shared/requestctx"
 )
 
 func TestSessionDrainWaitsForInFlightResources(t *testing.T) {
@@ -40,6 +41,29 @@ func TestSessionDrainWaitsForInFlightResources(t *testing.T) {
 	current.endResource()
 	if finished.Load() != 1 {
 		t.Fatalf("drain completion calls = %d, want 1", finished.Load())
+	}
+}
+
+func TestResourceRequestIDReusesHTTPCorrelationID(t *testing.T) {
+	t.Parallel()
+
+	const requestID = "00000000-0000-4000-8000-000000000099"
+	got, err := resourceRequestID(requestctx.WithID(context.Background(), requestID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != requestID {
+		t.Fatalf("resourceRequestID() = %q, want %q", got, requestID)
+	}
+
+	fallback, err := resourceRequestID(
+		requestctx.WithID(context.Background(), "not-a-uuid"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallback == requestID || len(fallback) != 36 {
+		t.Fatalf("fallback Resource request ID = %q", fallback)
 	}
 }
 

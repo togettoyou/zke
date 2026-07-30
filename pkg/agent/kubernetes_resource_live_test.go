@@ -104,23 +104,13 @@ func TestLiveKubernetesResourceCRUDOverRealQUIC(t *testing.T) {
 	)
 	service := kubernetesresource.NewService(environment.manager)
 
-	namespaceIdentity := kubernetesresource.ResourceIdentity{
-		Version: "v1", Resource: "namespaces",
-	}
-	_, err = service.CreateResource(
+	createdNamespace, err := service.CreateNamespace(
 		ctx,
-		kubernetesresource.CreateResourceInput{
+		kubernetesresource.CreateNamespaceInput{
 			ClusterID: testClusterID,
-			Resource:  namespaceIdentity,
-			Object: map[string]any{
-				"apiVersion": "v1",
-				"kind":       "Namespace",
-				"metadata": map[string]any{
-					"name": namespace,
-					"labels": map[string]any{
-						"app.kubernetes.io/managed-by": "zke-e2e",
-					},
-				},
+			Name:      namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "zke-e2e",
 			},
 			Confirm:        true,
 			IdempotencyKey: liveKey("namespace-create", suffix),
@@ -128,6 +118,25 @@ func TestLiveKubernetesResourceCRUDOverRealQUIC(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	namespaceDetail, err := service.GetNamespace(ctx, testClusterID, namespace)
+	if err != nil ||
+		namespaceDetail.UID != createdNamespace.UID ||
+		namespaceDetail.Labels["app.kubernetes.io/managed-by"] != "zke-e2e" {
+		t.Fatalf("Namespace detail=%+v err=%v", namespaceDetail, err)
+	}
+	namespacePage, err := service.ListNamespaces(
+		ctx,
+		kubernetesresource.ListNamespacesInput{
+			ClusterID:     testClusterID,
+			Limit:         10,
+			FieldSelector: "metadata.name=" + namespace,
+		},
+	)
+	if err != nil ||
+		len(namespacePage.Namespaces) != 1 ||
+		namespacePage.Namespaces[0].Name != namespace {
+		t.Fatalf("Namespace page=%+v err=%v", namespacePage, err)
 	}
 
 	configMapIdentity := kubernetesresource.ResourceIdentity{
@@ -512,6 +521,24 @@ func TestLiveKubernetesResourceCRUDOverRealQUIC(t *testing.T) {
 				),
 			},
 			IdempotencyKey: liveKey("configmap-delete", suffix),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentNamespace, err := service.GetNamespace(ctx, testClusterID, namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = service.DeleteNamespace(
+		ctx,
+		kubernetesresource.DeleteNamespaceInput{
+			ClusterID:       testClusterID,
+			Name:            namespace,
+			UID:             currentNamespace.UID,
+			ResourceVersion: currentNamespace.ResourceVersion,
+			Confirm:         true,
+			IdempotencyKey:  liveKey("namespace-delete", suffix),
 		},
 	)
 	if err != nil {

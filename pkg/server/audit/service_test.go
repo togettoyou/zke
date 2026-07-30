@@ -11,6 +11,7 @@ import (
 type recordingAuditStore struct {
 	Store
 	projectEvent store.ProjectAuditEvent
+	clusterEvent store.ClusterAuditEvent
 	globalEvent  store.GlobalAuditEvent
 }
 
@@ -27,6 +28,14 @@ func (recording *recordingAuditStore) RecordGlobalEvent(
 	event store.GlobalAuditEvent,
 ) error {
 	recording.globalEvent = event
+	return nil
+}
+
+func (recording *recordingAuditStore) RecordClusterEvent(
+	_ context.Context,
+	event store.ClusterAuditEvent,
+) error {
+	recording.clusterEvent = event
 	return nil
 }
 
@@ -93,5 +102,30 @@ func TestRecordGlobalEventOmitsMalformedTargetID(t *testing.T) {
 			"malformed audit target ID reached the store: %q",
 			recording.globalEvent.TargetID,
 		)
+	}
+}
+
+func TestRecordClusterEventPreservesSuccessfulKubernetesMutation(t *testing.T) {
+	t.Parallel()
+
+	recording := &recordingAuditStore{}
+	service := NewService(recording, nil)
+	err := service.RecordClusterEvent(context.Background(), ClusterEventInput{
+		ActorUserID: "00000000-0000-4000-8000-000000000001",
+		ClusterID:   "00000000-0000-4000-8000-000000000002",
+		Action:      auditaction.KubernetesResourceCreate,
+		TargetType:  auditaction.TargetKubernetesResource,
+		TargetName:  "core/v1/namespaces/model-serving",
+		Result:      "succeeded",
+		RequestID:   "00000000-0000-4000-8000-000000000003",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recording.clusterEvent.Result != "succeeded" ||
+		recording.clusterEvent.Action != auditaction.KubernetesResourceCreate ||
+		recording.clusterEvent.TargetName !=
+			"core/v1/namespaces/model-serving" {
+		t.Fatalf("unexpected Cluster audit event: %+v", recording.clusterEvent)
 	}
 }
