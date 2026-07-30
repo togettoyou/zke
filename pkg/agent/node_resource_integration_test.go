@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -189,5 +190,123 @@ func TestCustomResourceDiscoveryListAndGetOverRealQUIC(t *testing.T) {
 	metadata, _ := detail["metadata"].(map[string]any)
 	if metadata["name"] != "widget-a" {
 		t.Fatalf("unexpected custom resource detail over QUIC: %+v", detail)
+	}
+}
+
+func TestCustomResourceCRUDOverRealQUIC(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("real QUIC listener timing is not stable on Windows")
+	}
+
+	widgetGVR := schema.GroupVersionResource{
+		Group:    "example.io",
+		Version:  "v1alpha1",
+		Resource: "widgets",
+	}
+	client := dynamicfake.NewSimpleDynamicClient(
+		k8sruntime.NewScheme(),
+	)
+	limits := defaultResourceTestLimits()
+	environment := startResourceStreamEnvironment(
+		t,
+		newKubernetesResourceHandler(client, nil, limits.maxBodyBytes),
+		limits,
+	)
+	service := kubernetesresource.NewService(environment.manager)
+	ctx, cancel := context.WithTimeout(environment.ctx, 5*time.Second)
+	defer cancel()
+	identity := kubernetesresource.ResourceIdentity{
+		Group:    widgetGVR.Group,
+		Version:  widgetGVR.Version,
+		Resource: widgetGVR.Resource,
+	}
+	object := map[string]any{
+		"apiVersion": "example.io/v1alpha1",
+		"kind":       "Widget",
+		"metadata": map[string]any{
+			"name":      "widget-a",
+			"namespace": "tenant-a",
+		},
+		"spec": map[string]any{"size": "small"},
+	}
+	created, err := service.CreateResource(
+		ctx,
+		kubernetesresource.CreateResourceInput{
+			ClusterID:      testClusterID,
+			Resource:       identity,
+			Namespace:      "tenant-a",
+			Object:         object,
+			Confirm:        true,
+			IdempotencyKey: "create-widget-0001",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := created["metadata"].(map[string]any)
+	metadata["resourceVersion"] = "1"
+	created["spec"] = map[string]any{"size": "medium"}
+	updated, err := service.UpdateResource(
+		ctx,
+		kubernetesresource.UpdateResourceInput{
+			ClusterID:      testClusterID,
+			Resource:       identity,
+			Namespace:      "tenant-a",
+			Name:           "widget-a",
+			Object:         created,
+			Confirm:        true,
+			IdempotencyKey: "update-widget-0001",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated["spec"].(map[string]any)["size"] != "medium" {
+		t.Fatalf("unexpected updated object: %+v", updated)
+	}
+	patched, err := service.PatchResource(
+		ctx,
+		kubernetesresource.PatchResourceInput{
+			ClusterID:      testClusterID,
+			Resource:       identity,
+			Namespace:      "tenant-a",
+			Name:           "widget-a",
+			PatchType:      agentv1.PatchType_PATCH_TYPE_MERGE,
+			Patch:          []byte(`{"spec":{"size":"large"}}`),
+			Confirm:        true,
+			IdempotencyKey: "patch-widget-00001",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched["spec"].(map[string]any)["size"] != "large" {
+		t.Fatalf("unexpected patched object: %+v", patched)
+	}
+	err = service.DeleteResource(
+		ctx,
+		kubernetesresource.DeleteResourceInput{
+			ClusterID:      testClusterID,
+			Resource:       identity,
+			Namespace:      "tenant-a",
+			Name:           "widget-a",
+			Confirm:        true,
+			IdempotencyKey: "delete-widget-0001",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.GetResource(
+		ctx,
+		kubernetesresource.GetResourceInput{
+			ClusterID: testClusterID,
+			Resource:  identity,
+			Namespace: "tenant-a",
+			Name:      "widget-a",
+		},
+	)
+	if !errors.Is(err, kubernetesresource.ErrResourceNotFound) {
+		t.Fatalf("deleted resource error = %v, want not found", err)
 	}
 }

@@ -1346,8 +1346,8 @@ paths:
       operationId: discoverKubernetesResourceTypes
       description: |
         通过目标 Cluster 的在线 Agent 获取 Kubernetes API Discovery 目录。
-        目录包含 Discovery 可见且支持 get 或 list 的主资源，不包含 Secret 和
-        Subresource。目录项不代表 Agent ServiceAccount 一定具有读取权限。
+        目录包含 Discovery 可见且支持至少一个已知 CRUD Verb 的主资源，不包含
+        Secret 和 Subresource。目录项不代表 Agent ServiceAccount 一定具有权限。
       security:
         - sessionCookie: []
       parameters:
@@ -1451,6 +1451,72 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+    post:
+      tags: [Resources]
+      operationId: createGenericKubernetesResource
+      description: |
+        在明确的 Cluster、GVR 和 Namespace 中创建具名 Kubernetes 主资源。
+        不接受 generateName、Secret 或 Subresource。实际写入要求显式确认；
+        dry-run 可用于预览 API Server 默认值和校验结果。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesCreateResourceRequest"
+      responses:
+        "201":
+          description: Kubernetes 资源已创建
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesMutationResult"
+        "200":
+          description: Kubernetes dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}:
     get:
       tags: [Resources]
@@ -1488,6 +1554,168 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    put:
+      tags: [Resources]
+      operationId: updateGenericKubernetesResource
+      description: |
+        以完整对象更新具名 Kubernetes 主资源。URL、GVR、Namespace 和正文身份必须一致，
+        正文必须携带 metadata.resourceVersion。实际写入要求显式确认。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesResourceName"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesUpdateResourceRequest"
+      responses:
+        "200":
+          description: 更新后的资源或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    patch:
+      tags: [Resources]
+      operationId: patchGenericKubernetesResource
+      description: |
+        使用显式 patch_type 修改具名 Kubernetes 主资源。支持 json、merge、
+        strategic-merge 和 apply；apply 必须提供 field_manager，force 默认 false。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesResourceName"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesPatchResourceRequest"
+      responses:
+        "200":
+          description: Patch 后的资源或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    delete:
+      tags: [Resources]
+      operationId: deleteGenericKubernetesResource
+      description: |
+        删除具名 Kubernetes 主资源。支持 Grace Period、Propagation Policy、
+        UID/resourceVersion 前置条件和 dry-run；实际删除要求显式确认。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesResourceName"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesDeleteResourceRequest"
+      responses:
+        "200":
+          description: 删除结果或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDeleteResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "502":
@@ -2163,6 +2391,9 @@ components:
               - cluster.enrollment.revoke
               - cluster.read
               - cluster.manage
+              - cluster.resource.create
+              - cluster.resource.update
+              - cluster.resource.delete
               - cluster.connection.revoke
               - user.read
               - user.manage
@@ -2507,7 +2738,7 @@ components:
           uniqueItems: true
           items:
             type: string
-            enum: [get, list]
+            enum: [get, list, create, update, patch, delete]
         short_names:
           type: array
           items:
@@ -2559,6 +2790,108 @@ components:
         remaining_item_count:
           type: [integer, "null"]
           minimum: 0
+    KubernetesMutationOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+        field_manager:
+          type: string
+          maxLength: 128
+        force:
+          type: boolean
+          default: false
+          description: 仅 Server-Side Apply 可设置；默认 false。
+    KubernetesCreateResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [object, confirm]
+      properties:
+        object:
+          $ref: "#/components/schemas/KubernetesUnstructuredResource"
+        options:
+          $ref: "#/components/schemas/KubernetesMutationOptions"
+        confirm:
+          type: boolean
+          description: 实际写入必须为 true；dry-run 可以为 false。
+    KubernetesUpdateResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [object, confirm]
+      properties:
+        object:
+          $ref: "#/components/schemas/KubernetesUnstructuredResource"
+        options:
+          $ref: "#/components/schemas/KubernetesMutationOptions"
+        confirm:
+          type: boolean
+          description: 实际写入必须为 true；dry-run 可以为 false。
+    KubernetesPatchResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [patch_type, patch, confirm]
+      properties:
+        patch_type:
+          type: string
+          enum: [json, merge, strategic-merge, apply]
+        patch:
+          description: 与 patch_type 对应的 JSON Patch 数组或 JSON 对象。
+        options:
+          $ref: "#/components/schemas/KubernetesMutationOptions"
+        confirm:
+          type: boolean
+          description: 实际写入必须为 true；dry-run 可以为 false。
+    KubernetesDeletePreconditions:
+      type: object
+      additionalProperties: false
+      properties:
+        uid:
+          type: string
+          maxLength: 128
+        resource_version:
+          type: string
+          maxLength: 256
+    KubernetesDeleteResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际删除必须为 true；dry-run 可以为 false。
+        grace_period_seconds:
+          type: [integer, "null"]
+          minimum: 0
+        propagation_policy:
+          type: string
+          enum: ["", orphan, background, foreground]
+        preconditions:
+          $ref: "#/components/schemas/KubernetesDeletePreconditions"
+    KubernetesMutationResult:
+      type: object
+      additionalProperties: false
+      required: [resource, dry_run]
+      properties:
+        resource:
+          $ref: "#/components/schemas/KubernetesUnstructuredResource"
+        dry_run:
+          type: boolean
+    KubernetesDeleteResult:
+      type: object
+      additionalProperties: false
+      required: [deleted, dry_run, target]
+      properties:
+        deleted:
+          type: boolean
+        dry_run:
+          type: boolean
+        target:
+          type: string
     KubernetesNodeSummary:
       type: object
       required:
@@ -2940,7 +3273,7 @@ components:
           description: 写入审计事件 `action` 字段的取值，可直接用作过滤条件。
         group:
           type: string
-          enum: [auth, user, role_binding, tenant, project, cluster, denied]
+          enum: [auth, user, role_binding, tenant, project, cluster, kubernetes_resource, denied]
           description: >-
             所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与
             `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。
@@ -2962,6 +3295,7 @@ components:
         - agent_credential
         - enrollment
         - audit_event
+        - kubernetes_resource
     AuditEventPage:
       type: object
       additionalProperties: false

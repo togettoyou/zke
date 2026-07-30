@@ -20,6 +20,7 @@ const (
 	CapabilityCertificateRenewal         = "certificate-renewal-v1"
 	CapabilityResourceV1                 = "resource.v1"
 	CapabilityResourceDiscoveryV1        = "resource-discovery.v1"
+	CapabilityResourceWriteV1            = "resource-write.v1"
 
 	CloseNormal              quic.ApplicationErrorCode = 0
 	CloseProtocolError       quic.ApplicationErrorCode = 1

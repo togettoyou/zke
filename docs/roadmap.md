@@ -31,6 +31,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Server–Agent 业务 Stream 传输内核
 - [x] Node List/Detail dynamic client、类型化 HTTP API 与真实 QUIC 资源闭环
 - [x] Kubernetes Discovery、通用只读 List/Get API 与任意 CRD 资源闭环
+- [x] 通用主资源 Create/Update/Patch/Delete、安全写权限、审计与真实集群 E2E
 - [ ] 集群选择
 - [ ] 节点变更与 Console 管理页面
 - [ ] Namespace 管理

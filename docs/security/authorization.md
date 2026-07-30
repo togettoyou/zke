@@ -70,8 +70,16 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `tenant.create`、`tenant.read`、`tenant.manage`、`project.create`、`project.read`、`project.manage`、
 `cluster.read`、`cluster.manage`、
 `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` 和
-`cluster.connection.revoke`。所有变更要求有效 Session 和 CSRF Token；创建 Enrollment 和重新接入还要求
-`Idempotency-Key`。Project、Cluster 的归属由 Server 查询，不接受调用方覆盖。
+`cluster.connection.revoke`，以及通用 Kubernetes 写操作使用的 `cluster.resource.create`、
+`cluster.resource.update` 和 `cluster.resource.delete`。所有变更要求有效 Session 和 CSRF Token；创建
+Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
+不接受调用方覆盖。
+
+通用 Kubernetes 写操作只允许明确 Cluster、GVR、Namespace 和名称的非 Secret 主资源；Agent 与 Server
+双重拒绝 Secret 和任意 Subresource，最终资源权限继续由 Agent ServiceAccount 的 Kubernetes RBAC 裁决。
+实际变更要求显式确认，DryRun 可在确认前预览 API Server 校验和默认值。Create 禁止 `generateName`，
+Update 要求 `resourceVersion`，Apply 默认不抢占字段所有权，Delete 支持 UID/resourceVersion 前置条件。
+审计记录发起用户、Cluster、GVR/Namespace/名称、动作和结果，不记录资源正文。
 
 管理端不暴露独立 Agent 资源。连接身份属于 Cluster 聚合内部状态，连接撤销接口
 `POST /api/v1/clusters/{cluster_id}/connection/revoke` 按 Cluster ID 解析 Project 作用域，要求

@@ -138,6 +138,7 @@ func New(
 		kubernetesResource: newKubernetesResourceHandler(
 			logger,
 			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),
 		resourceManagement: newResourceManagementHandler(

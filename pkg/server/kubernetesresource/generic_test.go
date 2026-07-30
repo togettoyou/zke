@@ -2,6 +2,7 @@ package kubernetesresource
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -10,7 +11,245 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/kubernetescatalog"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 )
+
+func TestServiceMutatesGenericCustomResources(t *testing.T) {
+	t.Parallel()
+
+	const idempotencyKey = "0123456789abcdef"
+	calls := 0
+	requester := &fakeResourceRequester{
+		handle: func(
+			context.Context,
+			string,
+			*agentv1.ResourceRequest,
+			io.Writer,
+		) (*agentv1.ResourceResponse, error) {
+			t.Fatal("mutation used read-only transport")
+			return nil, nil
+		},
+		mutate: func(
+			_ context.Context,
+			clusterID string,
+			request *agentv1.ResourceRequest,
+			requestBody io.Reader,
+			responseBody io.Writer,
+			key string,
+		) (*agentv1.ResourceResponse, error) {
+			calls++
+			if clusterID != testClusterID || key != idempotencyKey {
+				t.Fatalf("unexpected mutation scope: cluster=%q key=%q", clusterID, key)
+			}
+			var body []byte
+			if requestBody != nil {
+				var err error
+				body, err = io.ReadAll(requestBody)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if uint64(len(body)) != request.GetBodySize() {
+				t.Fatalf("mutation body length = %d request=%+v", len(body), request)
+			}
+			if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DELETE {
+				if len(body) != 0 ||
+					request.GetDeleteOptions().GetPropagation() !=
+						agentv1.DeletePropagation_DELETE_PROPAGATION_BACKGROUND {
+					t.Fatalf("unexpected delete request: %+v body=%q", request, body)
+				}
+				return &agentv1.ResourceResponse{
+					Result:               agentv1.ResultCode_RESULT_CODE_OK,
+					KubernetesStatusCode: 200,
+				}, nil
+			}
+			var object unstructured.Unstructured
+			switch request.GetVerb() {
+			case agentv1.ResourceVerb_RESOURCE_VERB_CREATE,
+				agentv1.ResourceVerb_RESOURCE_VERB_UPDATE:
+				if err := object.UnmarshalJSON(body); err != nil {
+					t.Fatal(err)
+				}
+			case agentv1.ResourceVerb_RESOURCE_VERB_PATCH:
+				object = unstructured.Unstructured{Object: map[string]any{
+					"apiVersion": "example.io/v1alpha1",
+					"kind":       "Widget",
+					"metadata": map[string]any{
+						"name":      "widget-a",
+						"namespace": "tenant-a",
+					},
+					"spec": map[string]any{"size": "large"},
+				}}
+			default:
+				t.Fatalf("unexpected mutation verb: %s", request.GetVerb())
+			}
+			return writeKubernetesObject(t, responseBody, &object), nil
+		},
+	}
+	service := NewService(requester)
+	baseObject := map[string]any{
+		"apiVersion": "example.io/v1alpha1",
+		"kind":       "Widget",
+		"metadata": map[string]any{
+			"name":      "widget-a",
+			"namespace": "tenant-a",
+		},
+		"spec": map[string]any{"size": "small"},
+	}
+	created, err := service.CreateResource(
+		context.Background(),
+		CreateResourceInput{
+			ClusterID:      testClusterID,
+			Resource:       widgetIdentity,
+			Namespace:      "tenant-a",
+			Object:         baseObject,
+			Confirm:        true,
+			IdempotencyKey: idempotencyKey,
+		},
+	)
+	if err != nil || objectNameFromMap(created) != "widget-a" {
+		t.Fatalf("CreateResource() object=%+v err=%v", created, err)
+	}
+
+	updatedObject := runtime.DeepCopyJSONValue(baseObject).(map[string]any)
+	metadata := updatedObject["metadata"].(map[string]any)
+	metadata["resourceVersion"] = "42"
+	updated, err := service.UpdateResource(
+		context.Background(),
+		UpdateResourceInput{
+			ClusterID:      testClusterID,
+			Resource:       widgetIdentity,
+			Namespace:      "tenant-a",
+			Name:           "widget-a",
+			Object:         updatedObject,
+			Confirm:        true,
+			IdempotencyKey: idempotencyKey,
+		},
+	)
+	if err != nil || objectNameFromMap(updated) != "widget-a" {
+		t.Fatalf("UpdateResource() object=%+v err=%v", updated, err)
+	}
+
+	patched, err := service.PatchResource(
+		context.Background(),
+		PatchResourceInput{
+			ClusterID:      testClusterID,
+			Resource:       widgetIdentity,
+			Namespace:      "tenant-a",
+			Name:           "widget-a",
+			PatchType:      agentv1.PatchType_PATCH_TYPE_MERGE,
+			Patch:          json.RawMessage(`{"spec":{"size":"large"}}`),
+			Confirm:        true,
+			IdempotencyKey: idempotencyKey,
+		},
+	)
+	if err != nil || objectNameFromMap(patched) != "widget-a" {
+		t.Fatalf("PatchResource() object=%+v err=%v", patched, err)
+	}
+
+	grace := int64(0)
+	err = service.DeleteResource(
+		context.Background(),
+		DeleteResourceInput{
+			ClusterID:          testClusterID,
+			Resource:           widgetIdentity,
+			Namespace:          "tenant-a",
+			Name:               "widget-a",
+			Confirm:            true,
+			GracePeriodSeconds: &grace,
+			Propagation:        agentv1.DeletePropagation_DELETE_PROPAGATION_BACKGROUND,
+			IdempotencyKey:     idempotencyKey,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 4 {
+		t.Fatalf("mutation calls = %d, want 4", calls)
+	}
+}
+
+func TestServiceRejectsUnsafeGenericMutations(t *testing.T) {
+	t.Parallel()
+
+	var called bool
+	requester := &fakeResourceRequester{
+		handle: func(
+			context.Context,
+			string,
+			*agentv1.ResourceRequest,
+			io.Writer,
+		) (*agentv1.ResourceResponse, error) {
+			return nil, errors.New("unused")
+		},
+		mutate: func(
+			context.Context,
+			string,
+			*agentv1.ResourceRequest,
+			io.Reader,
+			io.Writer,
+			string,
+		) (*agentv1.ResourceResponse, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	service := NewService(requester)
+	_, err := service.CreateResource(
+		context.Background(),
+		CreateResourceInput{
+			ClusterID: testClusterID,
+			Resource: ResourceIdentity{
+				Version:  "v1",
+				Resource: "secrets",
+			},
+			Object: map[string]any{},
+		},
+	)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Secret create error = %v", err)
+	}
+	_, err = service.PatchResource(
+		context.Background(),
+		PatchResourceInput{
+			ClusterID: testClusterID,
+			Resource:  widgetIdentity,
+			Namespace: "tenant-a",
+			Name:      "widget-a",
+			PatchType: agentv1.PatchType_PATCH_TYPE_JSON,
+			Patch: json.RawMessage(
+				`[{"op":"replace","path":"/metadata/name","value":"other"}]`,
+			),
+			Confirm:        true,
+			IdempotencyKey: "0123456789abcdef",
+		},
+	)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("identity patch error = %v", err)
+	}
+	if called {
+		t.Fatal("unsafe mutation reached transport")
+	}
+}
+
+func TestMutationResponseDistinguishesIdempotencyConflict(t *testing.T) {
+	t.Parallel()
+
+	err := mutationResponseError(&agentv1.ResourceResponse{
+		Result:               agentv1.ResultCode_RESULT_CODE_CONFLICT,
+		KubernetesStatusCode: 409,
+		Reason:               "IdempotencyConflict",
+	}, false)
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("mutation response error = %v, want idempotency conflict", err)
+	}
+}
+
+func objectNameFromMap(object map[string]any) string {
+	metadata, _ := object["metadata"].(map[string]any)
+	name, _ := metadata["name"].(string)
+	return name
+}
 
 var widgetIdentity = ResourceIdentity{
 	Group:    "example.io",
@@ -66,9 +305,10 @@ func TestServiceDiscoversGenericResources(t *testing.T) {
 	}
 	if len(result.Resources) != 1 ||
 		result.Resources[0].Resource != "widgets" ||
-		len(result.Resources[0].Verbs) != 2 ||
+		len(result.Resources[0].Verbs) != 3 ||
 		result.Resources[0].Verbs[0] != "get" ||
-		result.Resources[0].Verbs[1] != "list" {
+		result.Resources[0].Verbs[1] != "list" ||
+		result.Resources[0].Verbs[2] != "delete" {
 		t.Fatalf("unexpected filtered discovery catalog: %+v", result)
 	}
 }

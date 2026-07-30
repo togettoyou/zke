@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -9,9 +10,187 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/shared/kubernetescatalog"
 )
+
+func TestGenericKubernetesResourceMutationHandlers(t *testing.T) {
+	t.Parallel()
+
+	const idempotencyKey = "0123456789abcdef"
+	object := map[string]any{
+		"apiVersion": "example.io/v1alpha1",
+		"kind":       "Widget",
+		"metadata": map[string]any{
+			"name":      "widget-a",
+			"namespace": "tenant-a",
+		},
+	}
+	service := &fakeGenericKubernetesResourceService{
+		create: func(
+			_ context.Context,
+			input kubernetesresource.CreateResourceInput,
+		) (map[string]any, error) {
+			if input.Resource != (kubernetesresource.ResourceIdentity{
+				Group: "example.io", Version: "v1alpha1", Resource: "widgets",
+			}) ||
+				input.Namespace != "tenant-a" ||
+				!input.Confirm ||
+				input.IdempotencyKey != idempotencyKey {
+				t.Fatalf("unexpected create input: %+v", input)
+			}
+			return object, nil
+		},
+		update: func(
+			_ context.Context,
+			input kubernetesresource.UpdateResourceInput,
+		) (map[string]any, error) {
+			if input.Name != "widget-a" ||
+				input.Options.FieldManager != "zke-server" ||
+				!input.Confirm ||
+				input.IdempotencyKey != idempotencyKey {
+				t.Fatalf("unexpected update input: %+v", input)
+			}
+			return object, nil
+		},
+		patch: func(
+			_ context.Context,
+			input kubernetesresource.PatchResourceInput,
+		) (map[string]any, error) {
+			if input.Name != "widget-a" ||
+				input.PatchType != agentv1.PatchType_PATCH_TYPE_MERGE ||
+				string(input.Patch) != `{"spec":{"size":"large"}}` ||
+				!input.Confirm {
+				t.Fatalf("unexpected patch input: %+v", input)
+			}
+			return object, nil
+		},
+		delete: func(
+			_ context.Context,
+			input kubernetesresource.DeleteResourceInput,
+		) error {
+			if input.Name != "widget-a" ||
+				input.Propagation !=
+					agentv1.DeletePropagation_DELETE_PROPAGATION_BACKGROUND ||
+				!input.Confirm {
+				t.Fatalf("unexpected delete input: %+v", input)
+			}
+			return nil
+		},
+	}
+	router := genericResourceHandlerTestRouter(service)
+	baseURL := "/api/v1/clusters/" + testHTTPClusterID +
+		"/kubernetes/resources"
+	query := "?group=example.io&version=v1alpha1&resource=widgets&namespace=tenant-a"
+	testCases := []struct {
+		method string
+		url    string
+		body   string
+		status int
+	}{
+		{
+			method: http.MethodPost,
+			url:    baseURL + query,
+			body: `{
+				"object":{
+					"apiVersion":"example.io/v1alpha1",
+					"kind":"Widget",
+					"metadata":{"name":"widget-a","namespace":"tenant-a"}
+				},
+				"options":{},
+				"confirm":true
+			}`,
+			status: http.StatusCreated,
+		},
+		{
+			method: http.MethodPut,
+			url:    baseURL + "/widget-a" + query,
+			body: `{
+				"object":{
+					"apiVersion":"example.io/v1alpha1",
+					"kind":"Widget",
+					"metadata":{
+						"name":"widget-a",
+						"namespace":"tenant-a",
+						"resourceVersion":"42"
+					}
+				},
+				"options":{"field_manager":"zke-server"},
+				"confirm":true
+			}`,
+			status: http.StatusOK,
+		},
+		{
+			method: http.MethodPatch,
+			url:    baseURL + "/widget-a" + query,
+			body: `{
+				"patch_type":"merge",
+				"patch":{"spec":{"size":"large"}},
+				"options":{},
+				"confirm":true
+			}`,
+			status: http.StatusOK,
+		},
+		{
+			method: http.MethodDelete,
+			url:    baseURL + "/widget-a" + query,
+			body: `{
+				"confirm":true,
+				"dry_run":false,
+				"propagation_policy":"background",
+				"preconditions":{}
+			}`,
+			status: http.StatusOK,
+		},
+	}
+	for _, testCase := range testCases {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			testCase.method,
+			testCase.url,
+			bytes.NewBufferString(testCase.body),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(idempotencyKeyHeaderName, idempotencyKey)
+		router.ServeHTTP(response, request)
+		if response.Code != testCase.status {
+			t.Errorf(
+				"%s status = %d, want %d: %s",
+				testCase.method,
+				response.Code,
+				testCase.status,
+				response.Body,
+			)
+		}
+	}
+
+	missingConfirmation := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		baseURL+query,
+		bytes.NewBufferString(`{
+			"object":{
+				"apiVersion":"example.io/v1alpha1",
+				"kind":"Widget",
+				"metadata":{"name":"widget-b","namespace":"tenant-a"}
+			},
+			"options":{},
+			"confirm":false
+		}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyKeyHeaderName, idempotencyKey)
+	router.ServeHTTP(missingConfirmation, request)
+	if missingConfirmation.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"missing confirmation status = %d: %s",
+			missingConfirmation.Code,
+			missingConfirmation.Body,
+		)
+	}
+	assertErrorCode(t, missingConfirmation, "confirmation_required")
+}
 
 type fakeGenericKubernetesResourceService struct {
 	discover func(context.Context, string) (kubernetescatalog.Catalog, error)
@@ -23,6 +202,22 @@ type fakeGenericKubernetesResourceService struct {
 		context.Context,
 		kubernetesresource.GetResourceInput,
 	) (map[string]any, error)
+	create func(
+		context.Context,
+		kubernetesresource.CreateResourceInput,
+	) (map[string]any, error)
+	update func(
+		context.Context,
+		kubernetesresource.UpdateResourceInput,
+	) (map[string]any, error)
+	patch func(
+		context.Context,
+		kubernetesresource.PatchResourceInput,
+	) (map[string]any, error)
+	delete func(
+		context.Context,
+		kubernetesresource.DeleteResourceInput,
+	) error
 }
 
 func (service *fakeGenericKubernetesResourceService) DiscoverResources(
@@ -44,6 +239,34 @@ func (service *fakeGenericKubernetesResourceService) GetResource(
 	input kubernetesresource.GetResourceInput,
 ) (map[string]any, error) {
 	return service.get(ctx, input)
+}
+
+func (service *fakeGenericKubernetesResourceService) CreateResource(
+	ctx context.Context,
+	input kubernetesresource.CreateResourceInput,
+) (map[string]any, error) {
+	return service.create(ctx, input)
+}
+
+func (service *fakeGenericKubernetesResourceService) UpdateResource(
+	ctx context.Context,
+	input kubernetesresource.UpdateResourceInput,
+) (map[string]any, error) {
+	return service.update(ctx, input)
+}
+
+func (service *fakeGenericKubernetesResourceService) PatchResource(
+	ctx context.Context,
+	input kubernetesresource.PatchResourceInput,
+) (map[string]any, error) {
+	return service.patch(ctx, input)
+}
+
+func (service *fakeGenericKubernetesResourceService) DeleteResource(
+	ctx context.Context,
+	input kubernetesresource.DeleteResourceInput,
+) error {
+	return service.delete(ctx, input)
 }
 
 func TestGenericKubernetesResourceHandlers(t *testing.T) {
@@ -271,6 +494,7 @@ func genericResourceHandlerTestRouter(
 	handler := newKubernetesResourceHandler(
 		discardLogger(),
 		service,
+		nil,
 		5*time.Second,
 	)
 	router.GET(
@@ -284,6 +508,22 @@ func genericResourceHandlerTestRouter(
 	router.GET(
 		"/api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name",
 		handler.get,
+	)
+	router.POST(
+		"/api/v1/clusters/:cluster_id/kubernetes/resources",
+		handler.create,
+	)
+	router.PUT(
+		"/api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name",
+		handler.update,
+	)
+	router.PATCH(
+		"/api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name",
+		handler.patch,
+	)
+	router.DELETE(
+		"/api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name",
+		handler.delete,
 	)
 	return router
 }

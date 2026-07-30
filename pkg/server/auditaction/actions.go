@@ -66,6 +66,10 @@ const (
 	ClusterEnrollmentRevoke   = "cluster.enrollment.revoke"
 	ClusterConnectionRevoke   = "cluster.connection.revoke"
 	ClusterConnectionReenroll = "cluster.connection.reenroll"
+	KubernetesResourceCreate  = "kubernetes_resource.create"
+	KubernetesResourceUpdate  = "kubernetes_resource.update"
+	KubernetesResourcePatch   = "kubernetes_resource.patch"
+	KubernetesResourceDelete  = "kubernetes_resource.delete"
 
 	// Written by the Agent connection, not by an operator: the Agent asks for a
 	// new client certificate over the control stream and the Server signs it.
@@ -100,6 +104,9 @@ const (
 	DeniedClusterEnrollmentRead = "cluster.enrollment.read"
 	DeniedClusterRead           = "cluster.read"
 	DeniedClusterManage         = "cluster.manage"
+	DeniedClusterResourceCreate = "cluster.resource.create"
+	DeniedClusterResourceUpdate = "cluster.resource.update"
+	DeniedClusterResourceDelete = "cluster.resource.delete"
 	DeniedUserRead              = "user.read"
 	DeniedUserManage            = "user.manage"
 	DeniedRBACRead              = "rbac.read"
@@ -119,6 +126,7 @@ const (
 	GroupTenant      = "tenant"
 	GroupProject     = "project"
 	GroupCluster     = "cluster"
+	GroupKubernetes  = "kubernetes_resource"
 	// GroupDenied holds the permission names above. They are grouped apart
 	// rather than filed under the resource they name because they answer a
 	// different question: not "what happened to this tenant" but "who was turned
@@ -136,16 +144,17 @@ const (
 // targets a Cluster; `cluster.enrollment.create` is scoped to a Project and
 // targets an Enrollment.
 const (
-	TargetUser            = "user"
-	TargetSession         = "session"
-	TargetRoleBinding     = "role_binding"
-	TargetTenant          = "tenant"
-	TargetProject         = "project"
-	TargetCluster         = "cluster"
-	TargetAgent           = "agent"
-	TargetAgentCredential = "agent_credential"
-	TargetEnrollment      = "enrollment"
-	TargetAuditEvent      = "audit_event"
+	TargetUser               = "user"
+	TargetSession            = "session"
+	TargetRoleBinding        = "role_binding"
+	TargetTenant             = "tenant"
+	TargetProject            = "project"
+	TargetCluster            = "cluster"
+	TargetAgent              = "agent"
+	TargetAgentCredential    = "agent_credential"
+	TargetEnrollment         = "enrollment"
+	TargetAuditEvent         = "audit_event"
+	TargetKubernetesResource = "kubernetes_resource"
 )
 
 var targetTypes = []string{
@@ -159,6 +168,7 @@ var targetTypes = []string{
 	TargetAgentCredential,
 	TargetEnrollment,
 	TargetAuditEvent,
+	TargetKubernetesResource,
 }
 
 // TargetTypes reports the target type vocabulary in presentation order.
@@ -222,12 +232,20 @@ var actions = []Action{
 	{ClusterConnectionReenroll, GroupCluster},
 	{AgentCertificateRenew, GroupCluster},
 
+	{KubernetesResourceCreate, GroupKubernetes},
+	{KubernetesResourceUpdate, GroupKubernetes},
+	{KubernetesResourcePatch, GroupKubernetes},
+	{KubernetesResourceDelete, GroupKubernetes},
+
 	{DeniedTenantRead, GroupDenied},
 	{DeniedTenantManage, GroupDenied},
 	{DeniedProjectRead, GroupDenied},
 	{DeniedProjectManage, GroupDenied},
 	{DeniedClusterRead, GroupDenied},
 	{DeniedClusterManage, GroupDenied},
+	{DeniedClusterResourceCreate, GroupDenied},
+	{DeniedClusterResourceUpdate, GroupDenied},
+	{DeniedClusterResourceDelete, GroupDenied},
 	{DeniedClusterEnrollmentRead, GroupDenied},
 	{DeniedUserRead, GroupDenied},
 	{DeniedUserManage, GroupDenied},

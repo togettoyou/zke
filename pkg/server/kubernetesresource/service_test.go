@@ -26,6 +26,32 @@ type fakeResourceRequester struct {
 		*agentv1.ResourceRequest,
 		io.Writer,
 	) (*agentv1.ResourceResponse, error)
+	mutate func(
+		context.Context,
+		string,
+		*agentv1.ResourceRequest,
+		io.Reader,
+		io.Writer,
+		string,
+	) (*agentv1.ResourceResponse, error)
+}
+
+func (requester *fakeResourceRequester) RequestResourceMutation(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.ResourceRequest,
+	requestBody io.Reader,
+	responseBody io.Writer,
+	idempotencyKey string,
+) (*agentv1.ResourceResponse, error) {
+	return requester.mutate(
+		ctx,
+		clusterID,
+		request,
+		requestBody,
+		responseBody,
+		idempotencyKey,
+	)
 }
 
 func (requester *fakeResourceRequester) RequestResource(

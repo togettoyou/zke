@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -18,6 +19,124 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
+
+func TestKubernetesResourceHandlerMutatesGenericResources(t *testing.T) {
+	t.Parallel()
+
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	handler := newKubernetesResourceHandler(client, nil, 1024*1024)
+	resource := &agentv1.GroupVersionResource{
+		Group:    "example.io",
+		Version:  "v1alpha1",
+		Resource: "widgets",
+	}
+	createBody := []byte(`{
+		"apiVersion":"example.io/v1alpha1",
+		"kind":"Widget",
+		"metadata":{"name":"widget-a","namespace":"tenant-a"},
+		"spec":{"size":"small"}
+	}`)
+	response, responseBody, err := handler(
+		context.Background(),
+		&agentv1.ResourceRequest{
+			Verb:            agentv1.ResourceVerb_RESOURCE_VERB_CREATE,
+			Resource:        resource,
+			Namespace:       "tenant-a",
+			Representation:  agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			BodySize:        uint64(len(createBody)),
+			MutationOptions: &agentv1.MutationOptions{},
+		},
+		bytes.NewReader(createBody),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK ||
+		response.GetKubernetesStatusCode() != http.StatusCreated ||
+		responseBody == nil {
+		t.Fatalf("unexpected create response: %+v", response)
+	}
+
+	updateBody := []byte(`{
+		"apiVersion":"example.io/v1alpha1",
+		"kind":"Widget",
+		"metadata":{
+			"name":"widget-a",
+			"namespace":"tenant-a",
+			"resourceVersion":"1"
+		},
+		"spec":{"size":"medium"}
+	}`)
+	response, _, err = handler(
+		context.Background(),
+		&agentv1.ResourceRequest{
+			Verb:            agentv1.ResourceVerb_RESOURCE_VERB_UPDATE,
+			Resource:        resource,
+			Namespace:       "tenant-a",
+			Name:            "widget-a",
+			Representation:  agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			BodySize:        uint64(len(updateBody)),
+			MutationOptions: &agentv1.MutationOptions{},
+		},
+		bytes.NewReader(updateBody),
+	)
+	if err != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+		t.Fatalf("unexpected update response: response=%+v err=%v", response, err)
+	}
+
+	patchBody := []byte(`{"spec":{"size":"large"}}`)
+	response, _, err = handler(
+		context.Background(),
+		&agentv1.ResourceRequest{
+			Verb:            agentv1.ResourceVerb_RESOURCE_VERB_PATCH,
+			Resource:        resource,
+			Namespace:       "tenant-a",
+			Name:            "widget-a",
+			Representation:  agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			PatchType:       agentv1.PatchType_PATCH_TYPE_MERGE,
+			BodySize:        uint64(len(patchBody)),
+			MutationOptions: &agentv1.MutationOptions{},
+		},
+		bytes.NewReader(patchBody),
+	)
+	if err != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+		t.Fatalf("unexpected patch response: response=%+v err=%v", response, err)
+	}
+
+	response, _, err = handler(
+		context.Background(),
+		&agentv1.ResourceRequest{
+			Verb:      agentv1.ResourceVerb_RESOURCE_VERB_DELETE,
+			Resource:  resource,
+			Namespace: "tenant-a",
+			Name:      "widget-a",
+			DeleteOptions: &agentv1.DeleteOptions{
+				Propagation: agentv1.DeletePropagation_DELETE_PROPAGATION_BACKGROUND,
+			},
+		},
+		nil,
+	)
+	if err != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK ||
+		response.GetBodySize() != 0 {
+		t.Fatalf("unexpected delete response: response=%+v err=%v", response, err)
+	}
+
+	_, getErr := client.Resource(schema.GroupVersionResource{
+		Group:    "example.io",
+		Version:  "v1alpha1",
+		Resource: "widgets",
+	}).Namespace("tenant-a").Get(
+		context.Background(),
+		"widget-a",
+		metav1.GetOptions{},
+	)
+	if !apierrors.IsNotFound(getErr) {
+		t.Fatalf("deleted resource lookup error = %v, want not found", getErr)
+	}
+}
 
 func TestKubernetesResourceHandlerDiscoversBuiltInAndCustomResources(
 	t *testing.T,
@@ -95,7 +214,8 @@ func TestKubernetesResourceHandlerDiscoversBuiltInAndCustomResources(
 	if catalog.Resources[0].Resource != "nodes" ||
 		catalog.Resources[1].Group != "example.io" ||
 		catalog.Resources[1].Resource != "widgets" ||
-		len(catalog.Resources[1].Verbs) != 2 {
+		len(catalog.Resources[1].Verbs) != 3 ||
+		catalog.Resources[1].Verbs[2] != "delete" {
 		t.Fatalf("unexpected discovered resources: %+v", catalog.Resources)
 	}
 }

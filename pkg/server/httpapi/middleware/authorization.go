@@ -308,6 +308,10 @@ func permissionTargetType(permission rbac.Permission) string {
 		rbac.PermissionClusterManage,
 		rbac.PermissionClusterConnectionRevoke:
 		return auditaction.TargetCluster
+	case rbac.PermissionClusterResourceCreate,
+		rbac.PermissionClusterResourceUpdate,
+		rbac.PermissionClusterResourceDelete:
+		return auditaction.TargetKubernetesResource
 	case rbac.PermissionClusterEnrollmentCreate,
 		rbac.PermissionClusterEnrollmentRead,
 		rbac.PermissionClusterEnrollmentRevoke:

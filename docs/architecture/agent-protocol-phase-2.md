@@ -6,7 +6,8 @@
 > 本文是 Phase 2 的设计基线。当前代码已经实现版本化 Stream/Resource Protobuf、通用有界分帧、双方
 > accept 循环、Resource Stream 往返、能力协商、原生 Stream reset 取消和并发限制，并已接入 Node
 > List/Detail 以及受控通用 Discovery/List/Get 的 Kubernetes dynamic client、Server HTTP API 和真实 QUIC
-> 闭环；资源变更、Watch、Pod Logs 和 Pod Exec 仍待后续阶段实现。
+> 闭环；通用主资源 Create/Update/Patch/Delete、DryRun、写能力协商、幂等重放和真实集群 E2E 已实现。
+> Watch、Pod Logs、Pod Exec 和 Subresource 仍待后续阶段实现。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
 [Agent 注册与连接](agent-enrollment-and-connection.md)。系统级技术约束参见
@@ -118,7 +119,7 @@ Stream 类型解析后续消息。
 
 ### 5.1 StreamHeader
 
-拟采用以下结构：
+当前采用以下结构：
 
 ```protobuf
 message StreamHeader {
@@ -158,6 +159,8 @@ enum StreamKind {
 
 ```text
 resource.v1
+resource-discovery.v1
+resource-write.v1
 resource-watch.v1
 pod-logs.v1
 pod-exec.v1
@@ -226,6 +229,8 @@ message ResourceRequest {
   ListOptions list_options = 7;
   PatchType patch_type = 8;
   uint64 body_size = 9;
+  MutationOptions mutation_options = 10;
+  DeleteOptions delete_options = 11;
 }
 
 message ListOptions {
@@ -249,9 +254,56 @@ message ListOptions {
 - `PATCH` 必须声明受支持的 `patch_type`；
 - 所有字符串、选择器、分页参数和正文大小均执行本地上限校验。
 
-Phase 2 第一里程碑只允许 `DISCOVER`、`LIST` 和 `GET`。
+Phase 2 第一里程碑只允许 `DISCOVER`、`LIST` 和 `GET`。第二里程碑在独立
+`resource-write.v1` 能力协商后开放主资源 `CREATE`、`UPDATE`、`PATCH` 和 `DELETE`。
 
-### 6.3 资源发现
+### 6.3 写选项与安全边界
+
+```protobuf
+message MutationOptions {
+  bool dry_run = 1;
+  string field_manager = 2;
+  bool force = 3;
+}
+
+enum DeletePropagation {
+  DELETE_PROPAGATION_UNSPECIFIED = 0;
+  DELETE_PROPAGATION_ORPHAN = 1;
+  DELETE_PROPAGATION_BACKGROUND = 2;
+  DELETE_PROPAGATION_FOREGROUND = 3;
+}
+
+message ResourcePreconditions {
+  string uid = 1;
+  string resource_version = 2;
+}
+
+message DeleteOptions {
+  bool dry_run = 1;
+  optional int64 grace_period_seconds = 2;
+  DeletePropagation propagation = 3;
+  ResourcePreconditions preconditions = 4;
+}
+```
+
+写操作遵守以下约束：
+
+- 只开放 Kubernetes Discovery 可见、Agent 策略允许且 ServiceAccount RBAC 授权的主资源；
+- Secret 和任意 Subresource 默认拒绝，`status`、`scale`、`eviction` 后续按独立 allowlist 设计；
+- `CREATE` 必须使用 `metadata.name`，不接受 `generateName`，确保重试不会创建多个不同对象；
+- `UPDATE` 的 URL 名称、正文 `metadata.name`、Namespace 和 GVK 必须一致，并要求正文携带
+  `metadata.resourceVersion`；
+- `PATCH` 明确区分 JSON Patch、JSON Merge Patch、Strategic Merge Patch 和 Server-Side Apply；
+- Server-Side Apply 必须提供 `field_manager`，`force` 默认且通常保持 `false`，只有 Apply 可以设置；
+- `DELETE` 支持 Grace Period、Propagation Policy 以及 UID/resourceVersion 前置条件；
+- `dry_run=true` 映射为 Kubernetes `DryRunAll`，用于变更预检，不产生实际资源变更；
+- 每个实际写请求必须携带 16 至 128 字符的 `idempotency_key`；Agent 在有界窗口内对相同键和相同请求返回
+  首次结果，对同键不同请求返回冲突；
+- Server 不自动重试已经发送的写请求。连接中断后结果未知时，调用方应先读取目标对象并按幂等键语义重放；
+- 浏览器 API 的实际写入还必须经过 Session、CSRF、细粒度 RBAC、影响展示、显式确认和审计，协议能力本身
+  不代表用户有权修改资源。
+
+### 6.4 资源发现
 
 Server 通过 `DISCOVER` 获取目标 Cluster 当前 API Discovery 目录。Agent 调用 Kubernetes Discovery API，
 将各 API Group/Version 下的主资源整理为稳定目录：
@@ -277,16 +329,17 @@ Server 通过 `DISCOVER` 获取目标 Cluster 当前 API Discovery 目录。Agen
 要求：
 
 - 目录使用 GVR 作为后续请求身份，不使用 Kind 反推 Resource；
-- 返回所有 Kubernetes Discovery 可见且至少支持 `get` 或 `list` 的主资源；
+- 返回所有 Kubernetes Discovery 可见且至少支持一个已知 CRUD Verb 的主资源；
 - Subresource 不加入第一阶段目录；
 - Secret 等明确禁止的敏感资源不出现在目录中；
 - Aggregated API 部分不可用时可以返回 `partial=true` 的可用目录；
 - 目录只表示 API Server 暴露的资源，不表示当前 Agent ServiceAccount 一定拥有访问权限；
-- 实际 List/Get 仍由 Agent 策略和 Kubernetes RBAC 双重裁决；
+- 实际 CRUD 仍由 Agent 策略和 Kubernetes RBAC 双重裁决；
 - 新增 CRD 后无需升级 ZKE；Discovery 目录刷新后即可使用其 GVR；
-- `resource-discovery.v1` 能力独立协商，未声明该能力的旧 Agent 不接收 `DISCOVER`。
+- `resource-discovery.v1` 能力独立协商，未声明该能力的旧 Agent 不接收 `DISCOVER`；
+- `resource-write.v1` 能力独立协商，未声明该能力的任一端都只能使用 Discovery/List/Get。
 
-### 6.4 响应和错误
+### 6.5 响应和错误
 
 ```protobuf
 message ResourceResponse {
@@ -575,14 +628,14 @@ Phase 2 第一里程碑不默认启用应用层压缩。压缩只有在真实负
 
 ## 9. Server API 与安全边界
 
-Resource Stream 是 Server 与 Agent 之间的内部协议。Server 可以提供受控的通用只读资源 API，但该 API
-不是透明 Kubernetes 代理：浏览器不能指定任意 Verb、Subresource 或原始 Kubernetes URL。
+Resource Stream 是 Server 与 Agent 之间的内部协议。Server 提供受控的通用主资源 CRUD API，但该 API
+不是透明 Kubernetes 代理：浏览器不能指定任意 Subresource、原始 Kubernetes URL 或协议未声明的操作。
 
 调用链必须是：
 
 ```text
-类型化 Server HTTP API 或受控通用只读 API
-  → Session / CSRF（适用时）
+类型化 Server HTTP API 或受控通用 CRUD API
+  → Session / CSRF（写操作）
   → Tenant / Project / Cluster RBAC
   → Server 固定 Verb，并校验 GVR、Scope、敏感资源策略和响应表示
   → 目标 Cluster 的已认证 Agent Connection
@@ -593,17 +646,18 @@ Resource Stream 是 Server 与 Agent 之间的内部协议。Server 可以提供
 要求：
 
 - 类型化 HTTP 路由由 Server 固定选择 GVR 和 Verb；
-- 通用只读 HTTP 路由由 Server 固定为 `LIST` 或 `GET`，校验 GVR 语法并拒绝敏感资源；调用方应从最新
+- 通用 HTTP 路由只映射到明确的 Discovery/List/Get/Create/Update/Patch/Delete Handler，校验 GVR 语法并
+  拒绝敏感资源；调用方应从最新
   Discovery 目录选择 GVR，目录刷新与实际请求之间的变化最终由 Kubernetes API 返回；
-- 通用路由不接受 Subresource、任意 Kubernetes URL 或写操作；
+- 通用路由不接受 Subresource 或任意 Kubernetes URL；
 - Cluster 通过 URL 路径和 Server 数据库归属解析，不从正文信任 Cluster 身份；
 - Cluster 继承所属 Project 的授权，Namespace 不是独立授权层级；
 - Agent 对 GVR、Verb、Subresource、正文和选择器执行独立 allowlist；
 - Agent 使用最小权限 Kubernetes ServiceAccount；
-- 默认安装只授予 Node 的 `get/list`；需要读取更多内置资源或 CR 时，由安装方显式扩展 Agent
+- 默认安装只授予 Node 的 `get/list`；需要管理更多内置资源、CRD 或 CR 时，由安装方显式扩展 Agent
   ServiceAccount RBAC；
-- Secret 内容不纳入第一里程碑；
-- 资源变更必须在后续阶段补齐显式目标、影响展示、用户确认、幂等性和审计；
+- Secret 内容和任意 Subresource 不纳入当前通用 CRUD；
+- 资源变更要求显式目标、DryRun 影响预览、用户确认、幂等键和 Cluster 定域审计；
 - Pod Logs 和 Web Terminal 使用独立权限，其中 Web Terminal 属于敏感操作。
 
 Server 必须把面向用户的错误区分为认证失败、无权限、目标不存在、Agent 未连接、Agent 不支持能力、
@@ -635,8 +689,9 @@ Server 必须把面向用户的错误区分为认证失败、无权限、目标�
 - 增加能力协商、结构化错误和分类型并发限制；
 - 使用真实 QUIC 连接完成集成测试，暂不访问 Kubernetes API。
 
-上述传输内核已经实现。生产 Agent 已接入 dynamic client，并声明 `resource.v1`；旧 Agent 未声明该能力时，
-Server 仍不会向其发起 Resource 请求。真实 QUIC 测试已覆盖慢流与小请求并发、Control 心跳隔离、取消、
+上述传输内核已经实现。生产 Agent 已接入 dynamic client，并声明 `resource.v1`、
+`resource-discovery.v1` 与 `resource-write.v1`；旧 Agent 未声明相应能力时，Server 不会向其发起对应请求。
+真实 QUIC 测试已覆盖慢流与小请求并发、Control 心跳隔离、取消、
 QUIC incoming 上限、Resource 类型额度、异常首帧、正文限制、单 Stream 故障隔离、断连资源回收，以及
 Node dynamic client 的 List/Detail 往返。
 
@@ -657,10 +712,10 @@ Node dynamic client 的 List/Detail 往返。
 
 ### 11.4 资源变更
 
-- Create、Update、Patch 和 Delete；
-- YAML 查看与编辑；
-- RBAC、影响展示、显式确认、审计和幂等性；
-- 冲突检测和 Kubernetes `resourceVersion` 语义。
+- Create、Update、四类 Patch、Delete 和 DryRun 已实现；
+- 细粒度 RBAC、显式确认、审计、有界幂等重放和能力协商已实现；
+- 冲突检测、Update `resourceVersion` 以及 Delete UID/resourceVersion 前置条件已实现；
+- YAML 编辑器、类型化变更表单和 Console 影响展示页面仍待实现。
 
 ### 11.5 流式能力
 

@@ -13,8 +13,11 @@ import (
 )
 
 const (
-	DefaultMaxResourceBodySize uint64 = 32 * 1024 * 1024
-	maxResourceStringLength           = 4096
+	DefaultMaxResourceBodySize      uint64 = 32 * 1024 * 1024
+	maxResourceStringLength                = 4096
+	minResourceIdempotencyKeyLength        = 16
+	maxResourceIdempotencyKeyLength        = 128
+	maxFieldManagerLength                  = 128
 )
 
 type ResourceHandler func(
@@ -22,6 +25,15 @@ type ResourceHandler func(
 	*agentv1.ResourceRequest,
 	io.Reader,
 ) (*agentv1.ResourceResponse, io.Reader, error)
+
+type resourceContextKey struct{}
+
+// ResourceIdempotencyKey returns the validated StreamHeader key for the
+// Resource handler currently executing. Read-only requests return an empty key.
+func ResourceIdempotencyKey(ctx context.Context) string {
+	value, _ := ctx.Value(resourceContextKey{}).(string)
+	return value
+}
 
 func ResourceStreamHandler(
 	maxBodySize uint64,
@@ -56,7 +68,16 @@ func ResourceStreamHandler(
 			R: stream,
 			N: int64(request.GetBodySize()),
 		}
-		response, responseBody, err := handler(ctx, request, requestBody)
+		handlerContext := context.WithValue(
+			ctx,
+			resourceContextKey{},
+			header.GetIdempotencyKey(),
+		)
+		response, responseBody, err := handler(
+			handlerContext,
+			request,
+			requestBody,
+		)
 		if err != nil {
 			return err
 		}
@@ -212,6 +233,8 @@ func validateResourceRequest(
 			request.GetListOptions() != nil ||
 			request.GetPatchType() != agentv1.PatchType_PATCH_TYPE_UNSPECIFIED ||
 			request.GetBodySize() != 0 ||
+			request.GetMutationOptions() != nil ||
+			request.GetDeleteOptions() != nil ||
 			header.GetIdempotencyKey() != "" {
 			return ErrStreamProtocol
 		}
@@ -243,42 +266,134 @@ func validateResourceRequest(
 			return ErrStreamProtocol
 		}
 	}
+	if err := validateMutationOptions(request); err != nil {
+		return err
+	}
+	if err := validateDeleteOptions(request); err != nil {
+		return err
+	}
 	switch request.GetVerb() {
 	case agentv1.ResourceVerb_RESOURCE_VERB_LIST:
 		if request.GetName() != "" ||
 			request.GetBodySize() != 0 ||
+			request.GetPatchType() != agentv1.PatchType_PATCH_TYPE_UNSPECIFIED ||
+			request.GetMutationOptions() != nil ||
+			request.GetDeleteOptions() != nil ||
 			header.GetIdempotencyKey() != "" {
 			return ErrStreamProtocol
 		}
 	case agentv1.ResourceVerb_RESOURCE_VERB_GET:
 		if request.GetName() == "" ||
 			request.GetBodySize() != 0 ||
+			request.GetListOptions() != nil ||
+			request.GetPatchType() != agentv1.PatchType_PATCH_TYPE_UNSPECIFIED ||
+			request.GetMutationOptions() != nil ||
+			request.GetDeleteOptions() != nil ||
 			header.GetIdempotencyKey() != "" {
 			return ErrStreamProtocol
 		}
 	case agentv1.ResourceVerb_RESOURCE_VERB_CREATE:
 		if request.GetName() != "" ||
 			request.GetBodySize() == 0 ||
-			header.GetIdempotencyKey() == "" {
+			request.GetListOptions() != nil ||
+			request.GetPatchType() != agentv1.PatchType_PATCH_TYPE_UNSPECIFIED ||
+			request.GetDeleteOptions() != nil ||
+			!validResourceIdempotencyKey(header.GetIdempotencyKey()) {
 			return ErrStreamProtocol
 		}
 	case agentv1.ResourceVerb_RESOURCE_VERB_UPDATE,
 		agentv1.ResourceVerb_RESOURCE_VERB_PATCH:
 		if request.GetName() == "" ||
 			request.GetBodySize() == 0 ||
-			header.GetIdempotencyKey() == "" {
+			request.GetListOptions() != nil ||
+			request.GetDeleteOptions() != nil ||
+			!validResourceIdempotencyKey(header.GetIdempotencyKey()) {
+			return ErrStreamProtocol
+		}
+		if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_UPDATE &&
+			request.GetPatchType() != agentv1.PatchType_PATCH_TYPE_UNSPECIFIED {
+			return ErrStreamProtocol
+		}
+		if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_PATCH &&
+			(request.GetPatchType() == agentv1.PatchType_PATCH_TYPE_UNSPECIFIED ||
+				request.GetPatchType() > agentv1.PatchType_PATCH_TYPE_APPLY) {
+			return ErrStreamProtocol
+		}
+		if request.GetPatchType() == agentv1.PatchType_PATCH_TYPE_APPLY &&
+			(request.GetMutationOptions() == nil ||
+				request.GetMutationOptions().GetFieldManager() == "") {
 			return ErrStreamProtocol
 		}
 	case agentv1.ResourceVerb_RESOURCE_VERB_DELETE:
 		if request.GetName() == "" ||
 			request.GetBodySize() != 0 ||
-			header.GetIdempotencyKey() == "" {
+			request.GetRepresentation() !=
+				agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_UNSPECIFIED ||
+			request.GetListOptions() != nil ||
+			request.GetPatchType() != agentv1.PatchType_PATCH_TYPE_UNSPECIFIED ||
+			request.GetMutationOptions() != nil ||
+			!validResourceIdempotencyKey(header.GetIdempotencyKey()) {
 			return ErrStreamProtocol
 		}
 	default:
 		return ErrStreamProtocol
 	}
 	return nil
+}
+
+func validateMutationOptions(request *agentv1.ResourceRequest) error {
+	options := request.GetMutationOptions()
+	if options == nil {
+		return nil
+	}
+	if request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_CREATE &&
+		request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_UPDATE &&
+		request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_PATCH {
+		return ErrStreamProtocol
+	}
+	if len(options.GetFieldManager()) > maxFieldManagerLength ||
+		strings.TrimSpace(options.GetFieldManager()) != options.GetFieldManager() {
+		return ErrStreamProtocol
+	}
+	if request.GetPatchType() == agentv1.PatchType_PATCH_TYPE_APPLY {
+		if options.GetFieldManager() == "" {
+			return ErrStreamProtocol
+		}
+	} else if options.GetForce() {
+		return ErrStreamProtocol
+	}
+	return nil
+}
+
+func validateDeleteOptions(request *agentv1.ResourceRequest) error {
+	options := request.GetDeleteOptions()
+	if options == nil {
+		return nil
+	}
+	if request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_DELETE ||
+		options.GetPropagation() > agentv1.DeletePropagation_DELETE_PROPAGATION_FOREGROUND {
+		return ErrStreamProtocol
+	}
+	if options.GracePeriodSeconds != nil &&
+		options.GetGracePeriodSeconds() < 0 {
+		return ErrStreamProtocol
+	}
+	if preconditions := options.GetPreconditions(); preconditions != nil {
+		if len(preconditions.GetUid()) > 128 ||
+			strings.TrimSpace(preconditions.GetUid()) != preconditions.GetUid() ||
+			len(preconditions.GetResourceVersion()) > 256 ||
+			strings.TrimSpace(preconditions.GetResourceVersion()) !=
+				preconditions.GetResourceVersion() {
+			return ErrStreamProtocol
+		}
+	}
+	return nil
+}
+
+func validResourceIdempotencyKey(value string) bool {
+	return len(value) >= minResourceIdempotencyKeyLength &&
+		len(value) <= maxResourceIdempotencyKeyLength &&
+		strings.TrimSpace(value) == value
 }
 
 func validateResourceResponse(

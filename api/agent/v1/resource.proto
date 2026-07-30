@@ -46,6 +46,31 @@ message ListOptions {
   string resource_version = 5;
 }
 
+message MutationOptions {
+  bool dry_run = 1;
+  string field_manager = 2;
+  bool force = 3;
+}
+
+enum DeletePropagation {
+  DELETE_PROPAGATION_UNSPECIFIED = 0;
+  DELETE_PROPAGATION_ORPHAN = 1;
+  DELETE_PROPAGATION_BACKGROUND = 2;
+  DELETE_PROPAGATION_FOREGROUND = 3;
+}
+
+message ResourcePreconditions {
+  string uid = 1;
+  string resource_version = 2;
+}
+
+message DeleteOptions {
+  bool dry_run = 1;
+  optional int64 grace_period_seconds = 2;
+  DeletePropagation propagation = 3;
+  ResourcePreconditions preconditions = 4;
+}
+
 message ResourceRequest {
   ResourceVerb verb = 1;
   GroupVersionResource resource = 2;
@@ -56,6 +81,8 @@ message ResourceRequest {
   ListOptions list_options = 7;
   PatchType patch_type = 8;
   uint64 body_size = 9;
+  MutationOptions mutation_options = 10;
+  DeleteOptions delete_options = 11;
 }
 
 message ResourceResponse {

@@ -40,6 +40,7 @@ var (
 	ErrClusterUnavailable     = errors.New("Kubernetes API is unavailable")
 	ErrClusterTimeout         = errors.New("Kubernetes API request timed out")
 	ErrResponseTooLarge       = errors.New("Kubernetes API response is too large")
+	ErrIdempotencyConflict    = errors.New("Kubernetes resource idempotency conflict")
 	ErrUpstreamConflict       = errors.New("Kubernetes API resource conflict")
 	ErrUpstreamFailure        = errors.New("Kubernetes API request failed")
 	ErrInvalidResponse        = errors.New("invalid Agent resource response")
@@ -57,6 +58,17 @@ type ResourceRequester interface {
 		request *agentv1.ResourceRequest,
 		requestBody io.Reader,
 		responseBody io.Writer,
+	) (*agentv1.ResourceResponse, error)
+}
+
+type MutationResourceRequester interface {
+	RequestResourceMutation(
+		ctx context.Context,
+		clusterID string,
+		request *agentv1.ResourceRequest,
+		requestBody io.Reader,
+		responseBody io.Writer,
+		idempotencyKey string,
 	) (*agentv1.ResourceResponse, error)
 }
 

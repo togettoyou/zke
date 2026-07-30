@@ -391,7 +391,7 @@ func validBaseEvent(
 	return validation.IsUUID(actorUserID) &&
 		strings.TrimSpace(action) != "" &&
 		strings.TrimSpace(requestID) != "" &&
-		(result == "failed" || result == "denied")
+		(result == "succeeded" || result == "failed" || result == "denied")
 }
 
 // validAuditTargetID keeps a malformed request path from destroying the audit

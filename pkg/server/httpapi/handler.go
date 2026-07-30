@@ -129,9 +129,10 @@ const (
 	auditScopeCluster auditScope = "cluster"
 )
 
-// failedOperation describes an operation that was refused or failed and must
-// be written to the audit trail.
-type failedOperation struct {
+// auditedOperation describes an operation result that must be written to the
+// audit trail. Kubernetes mutations use it for success as well as failure;
+// database-backed mutations normally record success in their own transaction.
+type auditedOperation struct {
 	Scope       auditScope
 	ActorUserID string
 	Action      string
@@ -141,13 +142,24 @@ type failedOperation struct {
 	Result      string
 }
 
-// recordFailure writes a failed or denied operation to the audit trail. Audit
-// writes never block the response: a failure to record is logged, because
-// losing the response is worse than losing one audit row, but it must not pass
-// silently either.
+type failedOperation = auditedOperation
+
+// recordFailure preserves the failure-oriented call sites used by the
+// database-backed handlers.
 func (handler baseHandler) recordFailure(
 	c *gin.Context,
 	operation failedOperation,
+) {
+	handler.recordOperation(c, operation)
+}
+
+// recordOperation writes an operation result to the audit trail. Audit
+// writes never block the response: a failure to record is logged, because
+// losing the response is worse than losing one audit row, but it must not pass
+// silently either.
+func (handler baseHandler) recordOperation(
+	c *gin.Context,
+	operation auditedOperation,
 ) {
 	if handler.auditService == nil {
 		return
@@ -219,7 +231,7 @@ func (handler baseHandler) recordFailure(
 		slog.String("error", err.Error()),
 	}
 	handler.logger.Error(
-		"record failed operation audit",
+		"record operation audit",
 		append(attributes, httpmiddleware.ScopeAttributes(c)...)...,
 	)
 }

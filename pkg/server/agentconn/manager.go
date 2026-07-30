@@ -442,6 +442,17 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			current.capabilities[agentprotocol.CapabilityResourceDiscoveryV1] =
 				struct{}{}
 		}
+		if hasCapability(
+			hello.GetCapabilities(),
+			agentprotocol.CapabilityResourceWriteV1,
+		) {
+			serverCapabilities = append(
+				serverCapabilities,
+				agentprotocol.CapabilityResourceWriteV1,
+			)
+			current.capabilities[agentprotocol.CapabilityResourceWriteV1] =
+				struct{}{}
+		}
 	}
 	previous := manager.register(current)
 	if previous != nil {
@@ -926,17 +937,60 @@ func (manager *Manager) RequestResource(
 	requestBody io.Reader,
 	responseBody io.Writer,
 ) (*agentv1.ResourceResponse, error) {
-	if ctx == nil {
-		return nil, errors.New("Resource request Context is required")
-	}
-	if !validation.IsUUID(clusterID) {
-		return nil, errors.New("target Cluster ID is invalid")
-	}
 	if request == nil ||
 		(request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_LIST &&
 			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_GET &&
 			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER) {
 		return nil, ErrResourceVerbUnsupported
+	}
+	return manager.requestResource(
+		ctx,
+		clusterID,
+		request,
+		requestBody,
+		responseBody,
+		"",
+	)
+}
+
+func (manager *Manager) RequestResourceMutation(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.ResourceRequest,
+	requestBody io.Reader,
+	responseBody io.Writer,
+	idempotencyKey string,
+) (*agentv1.ResourceResponse, error) {
+	if request == nil ||
+		(request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_CREATE &&
+			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_UPDATE &&
+			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_PATCH &&
+			request.GetVerb() != agentv1.ResourceVerb_RESOURCE_VERB_DELETE) {
+		return nil, ErrResourceVerbUnsupported
+	}
+	return manager.requestResource(
+		ctx,
+		clusterID,
+		request,
+		requestBody,
+		responseBody,
+		idempotencyKey,
+	)
+}
+
+func (manager *Manager) requestResource(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.ResourceRequest,
+	requestBody io.Reader,
+	responseBody io.Writer,
+	idempotencyKey string,
+) (*agentv1.ResourceResponse, error) {
+	if ctx == nil {
+		return nil, errors.New("Resource request Context is required")
+	}
+	if !validation.IsUUID(clusterID) {
+		return nil, errors.New("target Cluster ID is invalid")
 	}
 	manager.mutex.Lock()
 	current := manager.connectionsByCluster[clusterID]
@@ -953,6 +1007,14 @@ func (manager *Manager) RequestResource(
 	}
 	if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER {
 		if _, supported := current.capabilities[agentprotocol.CapabilityResourceDiscoveryV1]; !supported {
+			return nil, ErrResourceCapabilityMissing
+		}
+	}
+	if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_CREATE ||
+		request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_UPDATE ||
+		request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_PATCH ||
+		request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DELETE {
+		if _, supported := current.capabilities[agentprotocol.CapabilityResourceWriteV1]; !supported {
 			return nil, ErrResourceCapabilityMissing
 		}
 	}
@@ -985,6 +1047,7 @@ func (manager *Manager) RequestResource(
 			Kind:            agentv1.StreamKind_STREAM_KIND_RESOURCE,
 			RequestId:       requestID,
 			TimeoutMillis:   uint64(timeoutMillis),
+			IdempotencyKey:  idempotencyKey,
 		},
 		request,
 		requestBody,

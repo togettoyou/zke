@@ -198,9 +198,9 @@ Deployment。不会创建 Kubernetes Service，
 或 `apply` 该 identity Secret，避免覆盖 Agent 已签发的身份。Enrollment Secret 默认保留；Agent 通过
 Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Secret。
 
-该默认 ClusterRole 只满足 Node 类型化接口。Agent 的通用 Discovery/List/Get 能力不会自动扩大 Kubernetes
-权限；需要浏览更多内置资源或 CR 时，安装方必须为同一 ServiceAccount 增加明确的最小 RBAC。不得为了使用通用
-接口直接绑定 `cluster-admin`。
+该默认 ClusterRole 只满足 Node 类型化接口。Agent 的通用 Discovery/CRUD 能力不会自动扩大 Kubernetes
+权限；需要读取或变更更多内置资源、CRD 或 CR 时，安装方必须为同一 ServiceAccount 增加明确的最小 RBAC。
+不得为了使用通用接口直接绑定 `cluster-admin`。
 
 ## 4. Agent 首次注册
 

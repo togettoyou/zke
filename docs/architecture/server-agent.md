@@ -68,8 +68,9 @@ Server 实例，重启后不保留离线历史；多实例全局连接视图和�
 
 Phase 2 已实现单 Server 实例内的业务 Stream 传输内核，包括双方 accept 循环、Resource Stream、能力协商、
 单 Stream 取消和并发限制。Agent dynamic client 与 Server 类型化 API 已完成 Node List/Detail；Discovery 和
-受控通用 List/Get API 已完成任意已授权内置资源及 CRD 资源的真实 QUIC 闭环。默认 Agent RBAC 仍只授予 Node
-读取权限；跨 Server 实例任务路由、资源变更和流式能力仍未实现。
+受控通用 CRUD API 已完成任意已授权内置主资源及 CRD 资源的真实 QUIC 闭环，包含 DryRun、四类 Patch、
+删除前置条件、写能力协商和有界幂等重放。默认 Agent RBAC 仍只授予 Node 读取权限；安装方必须按实际管理范围
+显式扩展最小 RBAC。跨 Server 实例任务路由以及 Watch、Logs、Exec 等流式能力仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
 `cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含

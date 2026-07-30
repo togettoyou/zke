@@ -332,6 +332,42 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesResource.get,
 	)
+	clusterRoutes.POST(
+		"/:cluster_id/kubernetes/resources",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceCreate,
+			"cluster_id",
+		),
+		handlers.kubernetesResource.create,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/kubernetes/resources/:resource_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesResource.update,
+	)
+	clusterRoutes.PATCH(
+		"/:cluster_id/kubernetes/resources/:resource_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesResource.patch,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/kubernetes/resources/:resource_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceDelete,
+			"cluster_id",
+		),
+		handlers.kubernetesResource.delete,
+	)
 	clusterRoutes.PUT(
 		"/:cluster_id",
 		handlers.authMiddleware.RequireCSRF,
