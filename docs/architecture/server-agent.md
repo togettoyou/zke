@@ -74,9 +74,10 @@ Phase 2 已实现单 Server 实例内的业务 Stream 传输内核，包括双�
 集群选择、DryRun/确认闭环已经实现；Deployment、StatefulSet、DaemonSet、Job 和 CronJob 已提供显式
 Cluster/Namespace 定域的类型化 List/Detail API。默认 Agent RBAC 已覆盖 Namespace
 和这五类工作负载；类型化后端还提供 Deployment/StatefulSet 伸缩、
-Deployment/StatefulSet/DaemonSet 滚动重启、CronJob 暂停/恢复以及五类工作负载删除，并复用通用变更链路。
-其他资源仍由安装方按实际管理范围显式扩展最小 RBAC。工作负载 Console 已实现列表、详情和上述类型化变更的
-DryRun、影响展示与确认闭环；类型化创建、跨 Server 实例任务路由以及 Watch、Logs、Exec 等流式能力仍未实现。
+五类工作负载创建、Deployment/StatefulSet/DaemonSet 滚动重启、CronJob 暂停/恢复以及五类工作负载删除，
+并复用通用变更链路。
+其他资源仍由安装方按实际管理范围显式扩展最小 RBAC。工作负载 Console 已实现列表、详情、类型化创建和上述
+类型化变更的 DryRun、影响展示与确认闭环；跨 Server 实例任务路由以及 Watch、Logs、Exec 等流式能力仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
 `cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含

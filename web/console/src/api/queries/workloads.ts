@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, idempotentHeaders, unwrap } from "../client";
 import { queryKeys, queryKeyPrefixes } from "../query-keys";
-import type { KubernetesWorkloadResource } from "../types";
+import type { KubernetesCreateWorkloadRequest, KubernetesWorkloadResource } from "../types";
 
 export type WorkloadListParams = {
   limit?: number;
@@ -129,6 +129,63 @@ function useWorkloadInvalidation() {
     }
     await Promise.all(invalidations);
   };
+}
+
+/** The body of a create request minus the two flags this hook owns. */
+export type WorkloadCreateSpec = Omit<KubernetesCreateWorkloadRequest, "dry_run" | "confirm">;
+
+/**
+ * Creates one workload from the typed template.
+ *
+ * The caller sends only the fields its type accepts — the Server rejects a
+ * `replicas` on a DaemonSet or a `schedule` on a Deployment rather than ignoring
+ * it, so an unused field has to be absent, not empty. The Pod selector is not in
+ * the body at all: the Server derives it for long-running controllers and lets
+ * Kubernetes derive it from the controller UID for Jobs. The reserved
+ * `zke.io/workload-id` label cannot be supplied by the client.
+ */
+export function useCreateWorkload() {
+  const invalidate = useWorkloadInvalidation();
+  return useMutation({
+    mutationFn: async (input: {
+      clusterId: string;
+      namespace: string;
+      resource: KubernetesWorkloadResource;
+      spec: WorkloadCreateSpec;
+      dryRun: boolean;
+      idempotencyKey: string;
+    }) =>
+      unwrap(
+        await api.POST(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}",
+          {
+            params: {
+              path: {
+                cluster_id: input.clusterId,
+                namespace_name: input.namespace,
+                workload_resource: input.resource,
+              },
+              header: idempotentHeaders(input.idempotencyKey),
+            },
+            body: { ...input.spec, dry_run: input.dryRun, confirm: !input.dryRun },
+          },
+        ),
+      ),
+    onSuccess: (_data, variables) =>
+      invalidate(
+        {
+          clusterId: variables.clusterId,
+          namespace: variables.namespace,
+          resource: variables.resource,
+          name: variables.spec.name,
+          dryRun: variables.dryRun,
+          idempotencyKey: variables.idempotencyKey,
+        },
+        // Nothing has ever read the new object's detail, so there is no cached
+        // entry to invalidate — only the list it now belongs to.
+        false,
+      ),
+  });
 }
 
 /** Sets `spec.replicas` on a Deployment or StatefulSet. */

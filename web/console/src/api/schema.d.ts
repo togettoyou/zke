@@ -520,11 +520,18 @@ export interface paths {
         /**
          * @description 在明确的目标 Cluster 和 Namespace 中查询一种工作负载。workload_resource
          *     支持 deployments、statefulsets、daemonsets、jobs 和 cronjobs。分页使用
-         *     Kubernetes 原生 continuation token；常用变更通过相同作用域下的类型化动作接口执行。
+         *     Kubernetes 原生 continuation token；创建和常用变更通过相同作用域下的类型化接口执行。
          */
         get: operations["listKubernetesWorkloads"];
         put?: never;
-        post?: never;
+        /**
+         * @description 在目标 Cluster 和 Namespace 中创建路径指定类型的工作负载。五类资源共享稳定的容器模板字段，
+         *     其余字段按类型使用：Deployment/StatefulSet 使用 replicas，StatefulSet 还必须提供
+         *     service_name；Job 使用执行参数；CronJob 使用 Job 执行参数和调度参数。Server 为 Deployment、
+         *     StatefulSet 和 DaemonSet 生成不可由客户端覆盖的 Pod Selector；Job 的 Selector 由 Kubernetes
+         *     按控制器 UID 生成。dry_run=true 时执行 Kubernetes 服务端预览，实际创建要求显式 confirm=true。
+         */
+        post: operations["createKubernetesWorkload"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1104,6 +1111,82 @@ export interface components {
         };
         /** @enum {string} */
         KubernetesWorkloadResource: "deployments" | "statefulsets" | "daemonsets" | "jobs" | "cronjobs";
+        KubernetesWorkloadContainerTemplate: {
+            /** @description Pod 内唯一的 DNS label 容器名；主容器与初始化容器之间也不得重复。 */
+            name: string;
+            image: string;
+            /**
+             * @description 空字符串表示交由 Kubernetes 默认处理。
+             * @enum {string}
+             */
+            image_pull_policy?: "" | "Always" | "IfNotPresent" | "Never";
+        };
+        KubernetesCreateWorkloadRequest: {
+            name: string;
+            /** @description zke.io/workload-id 为 Server 保留键，不接受客户端设置。 */
+            labels?: {
+                [key: string]: string;
+            };
+            containers: components["schemas"]["KubernetesWorkloadContainerTemplate"][];
+            init_containers?: components["schemas"]["KubernetesWorkloadContainerTemplate"][];
+            /**
+             * Format: int32
+             * @description 仅 Deployment 和 StatefulSet 可用；省略时交由 Kubernetes 默认处理。
+             */
+            replicas?: number | null;
+            /** @description StatefulSet 必填，且必须引用同一 Namespace 中预先存在的 Service。 */
+            service_name?: string;
+            /**
+             * Format: int32
+             * @description 仅 Job 和 CronJob 的 Job Template 可用。
+             */
+            parallelism?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 Job 和 CronJob 的 Job Template 可用。
+             */
+            completions?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 Job 和 CronJob 的 Job Template 可用。
+             */
+            backoff_limit?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 Job 和 CronJob 的 Job Template 可用。
+             */
+            ttl_seconds_after_finished?: number | null;
+            /** @description CronJob 必填的 Kubernetes Cron 表达式。 */
+            schedule?: string;
+            /** @description 仅 CronJob 可用；空字符串表示使用 kube-controller-manager 的本地时区。 */
+            time_zone?: string;
+            /** @description 仅 CronJob 可用；省略时交由 Kubernetes 默认处理。 */
+            suspend?: boolean | null;
+            /**
+             * @description 仅 CronJob 可用；空字符串表示交由 Kubernetes 默认处理。
+             * @enum {string}
+             */
+            concurrency_policy?: "" | "Allow" | "Forbid" | "Replace";
+            /**
+             * Format: int64
+             * @description 仅 CronJob 可用。
+             */
+            starting_deadline_seconds?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 CronJob 可用。
+             */
+            successful_jobs_history_limit?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 CronJob 可用。
+             */
+            failed_jobs_history_limit?: number | null;
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际创建必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
         KubernetesWorkloadMutationRequest: {
             /** @default false */
             dry_run: boolean;
@@ -2926,6 +3009,58 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateWorkloadRequest"];
+            };
+        };
+        responses: {
+            /** @description 工作负载 DryRun 结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            /** @description 已创建的工作负载 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

@@ -707,8 +707,8 @@ Node dynamic client 的 List/Detail 往返。
 - Node 列表当前使用完整对象表示、Kubernetes continuation token 分页和类型化精简响应；Table 表示尚未实现；
 - Console 已实现项目内在线集群选择以及 Namespace List/Detail 页面；
 - Deployment、StatefulSet、DaemonSet、Job 和 CronJob 已实现按 Cluster、Namespace 和资源类型定域的
-  类型化 List/Detail 投影；类型化后端支持伸缩、滚动重启、CronJob 暂停/恢复和删除，底层复用通用
-  Patch/Delete；Console 已实现这些操作的 DryRun、影响展示与确认闭环，类型化创建尚未实现。
+  类型化 List/Detail 投影；类型化后端支持创建、伸缩、滚动重启、CronJob 暂停/恢复和删除，底层复用通用
+  Create/Patch/Delete；Console 已实现类型化创建和其他变更操作的 DryRun、影响展示与确认闭环。
 
 ### 11.3 更多只读资源
 
@@ -720,8 +720,8 @@ Node dynamic client 的 List/Detail 往返。
 - Create、Update、四类 Patch、Delete 和 DryRun 已实现；
 - 细粒度 RBAC、显式确认、审计、有界幂等重放和能力协商已实现；
 - 冲突检测、Update `resourceVersion` 以及 Delete UID/resourceVersion 前置条件已实现；
-- Namespace 类型化 Create/Delete，以及工作负载伸缩、滚动重启、CronJob 暂停/恢复和删除的表单、DryRun
-  预检、影响展示与二次确认已经实现；其他资源的 YAML 编辑器和类型化创建/编辑表单仍待实现。
+- Namespace 类型化 Create/Delete，以及工作负载创建、伸缩、滚动重启、CronJob 暂停/恢复和删除的表单、
+  DryRun 预检、影响展示与二次确认已经实现；其他资源的 YAML 编辑器和类型化创建/编辑表单仍待实现。
 
 ### 11.5 流式能力
 

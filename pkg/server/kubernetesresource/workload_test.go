@@ -220,6 +220,13 @@ func TestWorkloadDetailCoversSupportedKinds(t *testing.T) {
 				detail.Annotations["owner"] != "zke" {
 				t.Fatalf("unexpected workload detail: %+v", detail)
 			}
+			// The contract declares an array. A nil slice marshals to `null`,
+			// which every client that trusts the schema then reads as absent
+			// rather than empty — a CronJob, which reports no conditions at
+			// all, is exactly the case that would ship one.
+			if detail.Conditions == nil {
+				t.Fatal("conditions must be an empty slice rather than nil")
+			}
 			testCase.check(t, detail)
 		})
 	}

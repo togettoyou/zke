@@ -2,7 +2,7 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node 类型化接口、Namespace 管理闭环、五类工作负载类型化后端查询和通用主资源 CRUD 底座：
+当前已完成 Node 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/nodes`：支持 `limit`、Kubernetes continuation token、Label Selector 和
   Field Selector；
@@ -17,6 +17,8 @@
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
   按明确 Cluster、Namespace 和工作负载类型查询 Deployment、StatefulSet、DaemonSet、Job 或 CronJob 的稳定
   摘要与详情；列表支持 Kubernetes continuation token、Label Selector 和 Field Selector；
+- `POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}`：使用稳定的
+  容器模板和类型专属字段创建上述五类工作负载，支持 DryRun、显式确认、幂等和审计；
 - 工作负载详情作用域下的 `scale`、`restart`、`suspend` 和 `resume` 动作：分别支持
   Deployment/StatefulSet 伸缩，Deployment/StatefulSet/DaemonSet 滚动重启，以及 CronJob 暂停和恢复；
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
@@ -65,7 +67,13 @@ List/Detail 以及停止调度和恢复调度。所有变更都经过权限门�
 Selector、容器、条件、更新策略等稳定字段。常用变更已提供类型化接口，底层继续复用通用 Patch/Delete
 执行链路与 `cluster.resource.*` 权限、CSRF、DryRun、显式确认、幂等和审计边界。滚动重启将
 `Idempotency-Key` 的 SHA-256 摘要写入 Pod Template 的 `zke.io/restart-request` 注解，使相同请求重试产生
-完全相同的补丁；删除必须携带当前对象 UID，避免误删同名重建对象。创建和其他更新仍可使用通用资源接口。
+完全相同的补丁；删除必须携带当前对象 UID，避免误删同名重建对象。
+
+类型化创建支持名称、标签、主容器和初始化容器，并按类型支持副本数、StatefulSet Service、Job 执行参数与
+CronJob 调度参数。Server 使用资源类型和名称生成客户端不能覆盖的 `zke.io/workload-id` 标签；Deployment、
+StatefulSet 和 DaemonSet 使用该标签作为 Pod Selector，Job 的 Selector 则由 Kubernetes 按控制器 UID 生成，
+避免不同控制器意外选中同一批 Pod。StatefulSet 的 `service_name` 必须引用同一 Namespace 中预先存在的
+Service；高级 Pod 配置和其他更新仍可使用通用资源接口。
 
 Console 工作负载页面在目标 Cluster 和 Namespace 内按类型切换 Deployment、StatefulSet、DaemonSet、Job 和
 CronJob，列表展示状态、副本或 Job/CronJob 进度、镜像和创建时间，可下钻到包含副本或 Job/CronJob 状态、
@@ -77,7 +85,15 @@ DaemonSet 滚动重启，CronJob 暂停和恢复，以及五类工作负载删�
 菜单项，实际判定仍由 Server 执行。每个操作都先提交一次服务端 DryRun，通过后再在确认弹窗中展示目标集群、
 命名空间、对象 UID 和具体影响，删除还要求输入对象名称。伸缩确认提交的是 DryRun 校验过的副本数，而不是
 确认时输入框中的值。每个步骤各自携带一个在弹窗生命周期内稳定的幂等键，因此重试同一次提交不会重复执行，
-滚动重启也不会产生第二轮滚动。创建工作负载的表单尚未实现。
+滚动重启也不会产生第二轮滚动。
+
+创建表单需要 `cluster.resource.create`，并直接创建当前标签页所选的类型，不再提供第二个类型选择器。表单
+按类型只渲染该类型接受的字段：Deployment 和 StatefulSet 有副本数，StatefulSet 另有 Service 名称，Job 和
+CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，CronJob 另有 Cron 表达式、时区、并发策略、启动
+截止秒数、历史保留数量和「创建后暂停」。留空的可选字段不会出现在请求里——Server 会拒绝而不是忽略不适用的
+字段，因此空值必须是缺席而不是空串。名称、容器名、镜像、Service 名称和标签在提交前先做一次与 Server 同形的
+校验，`zke.io/workload-id` 作为保留键在表单中被拒绝；最终判定仍由 Server 执行。创建同样走 DryRun 预检和
+确认弹窗。
 
 通用接口返回 Unstructured JSON，并移除 `metadata.managedFields`。Discovery
 目录表示 API Server 暴露的资源，不代表 Agent ServiceAccount 已获授权；管理更多内置资源或任意 CR 时，安装方
@@ -91,7 +107,7 @@ DaemonSet 滚动重启，CronJob 暂停和恢复，以及五类工作负载删�
 
 - 集群概览；
 - 节点驱逐，以及它依赖的 Subresource allowlist 设计；
-- Deployment、StatefulSet、DaemonSet、Job 和 CronJob 的类型化创建；
+- 工作负载的高级 Pod 配置（环境变量、资源限制、存储卷、探针）与类型化更新表单；
 - Pod 管理、Pod 日志与 Web Terminal；
 - Service 与 Ingress；
 - ConfigMap 与 Secret；

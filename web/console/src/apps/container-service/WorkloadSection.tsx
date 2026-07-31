@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 
 import { useWorkload, useWorkloads } from "@/api/queries/workloads";
 import type {
@@ -23,6 +23,7 @@ import { ContinuePager } from "./ContinuePager";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { WorkloadActions } from "./WorkloadActions";
+import { WorkloadCreateDialog } from "./WorkloadCreateDialog";
 import { kindLabel, WORKLOAD_TYPES } from "./workload-catalog";
 
 const PAGE_SIZE = 50;
@@ -63,11 +64,14 @@ export function WorkloadSection({
   // back lands where the operator left rather than on Deployments page one.
   const [detailName, setDetailName] = useState<string | null>(null);
 
+  const [creating, setCreating] = useState(false);
+
   const projectScope = { type: "project" as const, tenantId, projectId };
   // Scaling, restarting and suspending are all patches of the object, so they
   // are updates rather than workload-specific permissions.
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const canCreate = permissions.can("cluster.resource.create", projectScope);
 
   const columns = useMemo<ColumnDef<KubernetesWorkloadSummary, unknown>[]>(
     () => [
@@ -147,7 +151,18 @@ export function WorkloadSection({
     <div className="flex h-full min-h-0 flex-col">
       <SectionTitle
         title={`工作负载 · ${clusterName} / ${namespace}`}
-        description="伸缩、滚动重启、CronJob 暂停/恢复和删除都先执行 Kubernetes 服务端 DryRun，再由操作者确认。创建工作负载的表单尚未实现。"
+        description="创建、伸缩、滚动重启、CronJob 暂停/恢复和删除都先执行 Kubernetes 服务端 DryRun，再由操作者确认。"
+        actions={
+          canCreate ? (
+            // Creation targets whatever type the tabs are showing: an operator
+            // looking at DaemonSets who asks to create means a DaemonSet, and a
+            // second type picker inside the form would only contradict the tab.
+            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+              <Plus />
+              创建 {kindLabel(resource)}
+            </Button>
+          ) : null
+        }
       />
       <Tabs
         value={resource}
@@ -187,6 +202,16 @@ export function WorkloadSection({
           />
         </TabsContent>
       </Tabs>
+
+      {creating ? (
+        <WorkloadCreateDialog
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+          resource={resource}
+          onClose={() => setCreating(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -282,7 +307,12 @@ function ImageCell({ images }: { images: string[] }) {
   return (
     // Wrapped rather than truncated: the table lays itself out automatically, so
     // an ellipsis would just widen this column until the image fits anyway.
-    <div className="flex items-start gap-1.5">
+    //
+    // Baseline, not top: the badge carries its own padding, so aligning the two
+    // boxes leaves its text sitting lower than the image it counts. Aligning the
+    // text instead puts them on one line, and on the first line when the image
+    // wraps.
+    <div className="flex items-baseline gap-1.5">
       <span className="zke-mono text-muted-foreground text-xs break-all" title={images.join("\n")}>
         {images[0]}
       </span>

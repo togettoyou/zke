@@ -488,6 +488,13 @@ func workloadDetailFromPodTemplate(
 	minReadySeconds int32,
 	revisionHistoryLimit *int32,
 ) WorkloadDetail {
+	// The contract declares `conditions` as an array, and a nil slice marshals to
+	// `null`, not `[]`. A CronJob has no conditions to report and passes nil, so
+	// without this the one response that carries no conditions is the one that
+	// breaks its own schema.
+	if conditions == nil {
+		conditions = []WorkloadCondition{}
+	}
 	return WorkloadDetail{
 		WorkloadSummary:      summary,
 		Annotations:          cloneMap(metadata.Annotations),

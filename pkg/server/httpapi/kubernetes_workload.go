@@ -17,7 +17,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 )
 
-const maxKubernetesWorkloadMutationRequestBytes = 64 * 1024
+const maxKubernetesWorkloadMutationRequestBytes = 512 * 1024
 
 type kubernetesWorkloadService interface {
 	ListWorkloads(
@@ -30,6 +30,10 @@ type kubernetesWorkloadService interface {
 		string,
 		kubernetesresource.WorkloadResource,
 		string,
+	) (kubernetesresource.WorkloadDetail, error)
+	CreateWorkload(
+		context.Context,
+		kubernetesresource.CreateWorkloadInput,
 	) (kubernetesresource.WorkloadDetail, error)
 	ScaleWorkload(
 		context.Context,
@@ -55,6 +59,38 @@ type kubernetesWorkloadHandler struct {
 }
 
 type workloadMutationRequest struct {
+	DryRun  bool `json:"dry_run"`
+	Confirm bool `json:"confirm"`
+}
+
+type workloadContainerTemplateRequest struct {
+	Name            string `json:"name"`
+	Image           string `json:"image"`
+	ImagePullPolicy string `json:"image_pull_policy"`
+}
+
+type createWorkloadRequest struct {
+	Name           string                             `json:"name"`
+	Labels         map[string]string                  `json:"labels"`
+	Containers     []workloadContainerTemplateRequest `json:"containers"`
+	InitContainers []workloadContainerTemplateRequest `json:"init_containers"`
+
+	Replicas    *int32 `json:"replicas"`
+	ServiceName string `json:"service_name"`
+
+	Parallelism             *int32 `json:"parallelism"`
+	Completions             *int32 `json:"completions"`
+	BackoffLimit            *int32 `json:"backoff_limit"`
+	TTLSecondsAfterFinished *int32 `json:"ttl_seconds_after_finished"`
+
+	Schedule                   string `json:"schedule"`
+	TimeZone                   string `json:"time_zone"`
+	Suspend                    *bool  `json:"suspend"`
+	ConcurrencyPolicy          string `json:"concurrency_policy"`
+	StartingDeadlineSeconds    *int64 `json:"starting_deadline_seconds"`
+	SuccessfulJobsHistoryLimit *int32 `json:"successful_jobs_history_limit"`
+	FailedJobsHistoryLimit     *int32 `json:"failed_jobs_history_limit"`
+
 	DryRun  bool `json:"dry_run"`
 	Confirm bool `json:"confirm"`
 }
@@ -145,6 +181,110 @@ func (handler *kubernetesWorkloadHandler) get(c *gin.Context) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, result)
+}
+
+func (handler *kubernetesWorkloadHandler) create(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	actor, _ := httpmiddleware.Identity(c)
+	resource, ok := kubernetesresource.ParseWorkloadResource(
+		c.Param("workload_resource"),
+	)
+	if !ok {
+		handler.recordMutation(
+			c,
+			actor.User.ID,
+			auditaction.KubernetesResourceCreate,
+			c.Param("workload_resource")+" "+c.Param("namespace_name"),
+			"failed",
+		)
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload resource")
+		return
+	}
+	resourceIdentity, _ := kubernetesresource.WorkloadResourceIdentity(resource)
+	target := resourceTargetName(resourceIdentity, c.Param("namespace_name"), "")
+	if len(c.Request.URL.Query()) != 0 {
+		handler.recordMutation(
+			c,
+			actor.User.ID,
+			auditaction.KubernetesResourceCreate,
+			target,
+			"failed",
+		)
+		writeError(c, http.StatusBadRequest, "invalid_request", "workload creation does not accept query parameters")
+		return
+	}
+	var request createWorkloadRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(
+			c,
+			actor.User.ID,
+			auditaction.KubernetesResourceCreate,
+			target,
+			"failed",
+		)
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload create request")
+		return
+	}
+	target = resourceTargetName(resourceIdentity, c.Param("namespace_name"), request.Name)
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourceCreate,
+		request.DryRun,
+	)
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, actor.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, actor.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.CreateWorkload(
+		ctx,
+		kubernetesresource.CreateWorkloadInput{
+			ClusterID:                  c.Param("cluster_id"),
+			Namespace:                  c.Param("namespace_name"),
+			Resource:                   resource,
+			Name:                       request.Name,
+			Labels:                     request.Labels,
+			Containers:                 workloadContainerTemplates(request.Containers),
+			InitContainers:             workloadContainerTemplates(request.InitContainers),
+			Replicas:                   request.Replicas,
+			ServiceName:                request.ServiceName,
+			Parallelism:                request.Parallelism,
+			Completions:                request.Completions,
+			BackoffLimit:               request.BackoffLimit,
+			TTLSecondsAfterFinished:    request.TTLSecondsAfterFinished,
+			Schedule:                   request.Schedule,
+			TimeZone:                   request.TimeZone,
+			Suspend:                    request.Suspend,
+			ConcurrencyPolicy:          request.ConcurrencyPolicy,
+			StartingDeadlineSeconds:    request.StartingDeadlineSeconds,
+			SuccessfulJobsHistoryLimit: request.SuccessfulJobsHistoryLimit,
+			FailedJobsHistoryLimit:     request.FailedJobsHistoryLimit,
+			DryRun:                     request.DryRun,
+			Confirm:                    request.Confirm,
+			IdempotencyKey:             c.GetHeader(idempotencyKeyHeaderName),
+		},
+	)
+	cancel()
+	if err != nil {
+		handler.recordMutation(c, actor.User.ID, action, target, "failed")
+	}
+	if handler.respondWorkloadError(c, "create Kubernetes workload", err) {
+		return
+	}
+	handler.recordMutation(c, actor.User.ID, action, target, "succeeded")
+	status := http.StatusCreated
+	if request.DryRun {
+		status = http.StatusOK
+	}
+	writeSuccess(c, status, gin.H{
+		"workload": result,
+		"dry_run":  request.DryRun,
+	})
 }
 
 func (handler *kubernetesWorkloadHandler) scale(c *gin.Context) {
@@ -414,6 +554,20 @@ func (handler *kubernetesWorkloadHandler) mutationInput(
 		Confirm:        request.Confirm,
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
 	}
+}
+
+func workloadContainerTemplates(
+	input []workloadContainerTemplateRequest,
+) []kubernetesresource.WorkloadContainerTemplate {
+	result := make([]kubernetesresource.WorkloadContainerTemplate, 0, len(input))
+	for _, container := range input {
+		result = append(result, kubernetesresource.WorkloadContainerTemplate{
+			Name:            container.Name,
+			Image:           container.Image,
+			ImagePullPolicy: container.ImagePullPolicy,
+		})
+	}
+	return result
 }
 
 func (handler *kubernetesWorkloadHandler) finishMutation(
