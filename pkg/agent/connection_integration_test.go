@@ -360,7 +360,19 @@ WHERE agent_id = $1
 	case <-runContext.Done():
 		t.Fatal("revoked Agent connection did not close")
 	}
+	// Receiving GoAway lets the Agent return before the Server-side business
+	// Stream loop has finished and the deferred unregister has published the
+	// offline snapshot. Wait for that independent cleanup boundary instead of
+	// treating the client goroutine's completion as Server synchronization.
 	offlineStatus := manager.Snapshot([]string{agentID})[agentID]
+	for offlineStatus.State != agentconn.ConnectionStateOffline {
+		select {
+		case <-runContext.Done():
+			t.Fatal("timed out waiting for revoked Agent offline snapshot")
+		case <-pollTicker.C:
+		}
+		offlineStatus = manager.Snapshot([]string{agentID})[agentID]
+	}
 	if offlineStatus.State != "offline" ||
 		offlineStatus.LastDisconnectedAt.IsZero() ||
 		offlineStatus.LastDisconnectReason != "agent_revoked" {
