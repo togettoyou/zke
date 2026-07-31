@@ -35,8 +35,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Console 容器服务集群选择
 - [x] 节点列表/详情 Console 页面与调度开关（驱逐尚未支持）
 - [x] Namespace List/Detail/Create/Delete、DryRun、确认、权限、审计与 Console 闭环
-- [ ] 工作负载管理（后端类型化 List/Detail、通用 CRUD、默认 Agent RBAC 与 Console 只读列表/详情已完成，
-  Namespace 作用域选择器已加入；类型化变更表单待实现）
+- [ ] 工作负载管理（类型化 List/Detail、伸缩、滚动重启、CronJob 暂停/恢复、删除、通用 CRUD、默认
+  Agent RBAC，以及 Console 列表/详情、Namespace 作用域选择器和上述变更操作的 DryRun 与确认闭环已完成；
+  类型化创建待实现）
 - [ ] Pod 管理
 - [ ] Pod 日志
 - [ ] Web Terminal

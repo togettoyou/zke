@@ -35,6 +35,7 @@ export type KubernetesWorkloadResource = Schemas["KubernetesWorkloadResource"];
 export type KubernetesWorkloadSummary = Schemas["KubernetesWorkloadSummary"];
 export type KubernetesWorkloadDetail = Schemas["KubernetesWorkloadDetail"];
 export type KubernetesWorkloadPage = Schemas["KubernetesWorkloadPage"];
+export type KubernetesWorkloadMutationResult = Schemas["KubernetesWorkloadMutationResult"];
 export type KubernetesWorkloadStatus = KubernetesWorkloadSummary["status"];
 export type KubernetesDeleteResult = Schemas["KubernetesDeleteResult"];
 

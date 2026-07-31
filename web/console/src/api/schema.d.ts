@@ -520,7 +520,7 @@ export interface paths {
         /**
          * @description 在明确的目标 Cluster 和 Namespace 中查询一种工作负载。workload_resource
          *     支持 deployments、statefulsets、daemonsets、jobs 和 cronjobs。分页使用
-         *     Kubernetes 原生 continuation token；写操作复用受控通用资源 CRUD API。
+         *     Kubernetes 原生 continuation token；常用变更通过相同作用域下的类型化动作接口执行。
          */
         get: operations["listKubernetesWorkloads"];
         put?: never;
@@ -545,6 +545,85 @@ export interface paths {
         get: operations["getKubernetesWorkload"];
         put?: never;
         post?: never;
+        /**
+         * @description 删除目标 Cluster 和 Namespace 中的 Deployment、StatefulSet、DaemonSet、
+         *     Job 或 CronJob。必须提供 UID 前置条件；dry_run=true 时执行服务端预览，
+         *     实际删除要求显式 confirm=true。
+         */
+        delete: operations["deleteKubernetesWorkload"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/scale": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 调整目标 Deployment 或 StatefulSet 的副本数。dry_run=true 时执行
+         *     Kubernetes 服务端预览；实际写入要求显式 confirm=true。
+         */
+        post: operations["scaleKubernetesWorkload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 通过更新 Pod Template 注解滚动重启目标 Deployment、StatefulSet 或
+         *     DaemonSet。重启标记由 Idempotency-Key 稳定派生，保证相同请求安全重试。
+         */
+        post: operations["restartKubernetesWorkload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/suspend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 暂停目标 CronJob；支持 dry-run，实际写入要求显式确认。 */
+        post: operations["suspendKubernetesCronJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 恢复目标 CronJob；支持 dry-run，实际写入要求显式确认。 */
+        post: operations["resumeKubernetesCronJob"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1025,6 +1104,36 @@ export interface components {
         };
         /** @enum {string} */
         KubernetesWorkloadResource: "deployments" | "statefulsets" | "daemonsets" | "jobs" | "cronjobs";
+        KubernetesWorkloadMutationRequest: {
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际写入必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
+        KubernetesScaleWorkloadRequest: {
+            /** Format: int32 */
+            replicas: number;
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际写入必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
+        KubernetesDeleteWorkloadRequest: {
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际删除必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+            /** @description 必填的 Kubernetes UID 删除前置条件，防止误删同名重建对象。 */
+            uid: string;
+            resource_version?: string;
+            grace_period_seconds?: number | null;
+            /** @enum {string} */
+            propagation_policy?: "" | "orphan" | "background" | "foreground";
+        };
+        KubernetesWorkloadMutationResult: {
+            workload: components["schemas"]["KubernetesWorkloadDetail"];
+            dry_run: boolean;
+        };
         KubernetesWorkloadReplicaStatus: {
             desired: number;
             current: number;
@@ -2852,6 +2961,221 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteWorkloadRequest"];
+            };
+        };
+        responses: {
+            /** @description 工作负载删除或 dry-run 结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDeleteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    scaleKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesScaleWorkloadRequest"];
+            };
+        };
+        responses: {
+            /** @description 伸缩后的工作负载或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    restartKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesWorkloadMutationRequest"];
+            };
+        };
+        responses: {
+            /** @description 重启补丁后的工作负载或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    suspendKubernetesCronJob: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesWorkloadMutationRequest"];
+            };
+        };
+        responses: {
+            /** @description 暂停后的 CronJob 或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    resumeKubernetesCronJob: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesWorkloadMutationRequest"];
+            };
+        };
+        responses: {
+            /** @description 恢复后的 CronJob 或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

@@ -17,6 +17,10 @@
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
   按明确 Cluster、Namespace 和工作负载类型查询 Deployment、StatefulSet、DaemonSet、Job 或 CronJob 的稳定
   摘要与详情；列表支持 Kubernetes continuation token、Label Selector 和 Field Selector；
+- 工作负载详情作用域下的 `scale`、`restart`、`suspend` 和 `resume` 动作：分别支持
+  Deployment/StatefulSet 伸缩，Deployment/StatefulSet/DaemonSet 滚动重启，以及 CronJob 暂停和恢复；
+- `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
+  删除上述五类工作负载，并强制要求 UID 删除前置条件；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resource-types`：返回目标 Cluster 当前 Discovery 可见的
   内置资源和 CRD 资源目录；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resources`：按 GVR、Namespace、Selector 和 Kubernetes
@@ -58,13 +62,22 @@ List/Detail 以及停止调度和恢复调度。所有变更都经过权限门�
 （上限 500 个），超出时在状态栏说明列表已截断，完整分页仍在「命名空间」页面。
 
 工作负载后端返回统一元数据、镜像、状态和控制器副本信息，并按具体类型返回 Job 或 CronJob 状态；详情还包含
-Selector、容器、条件、更新策略等稳定字段。创建、更新、Patch 和删除继续使用通用资源接口，从而复用现有
-`cluster.resource.*` 权限、CSRF、DryRun、显式确认、幂等和审计边界。
+Selector、容器、条件、更新策略等稳定字段。常用变更已提供类型化接口，底层继续复用通用 Patch/Delete
+执行链路与 `cluster.resource.*` 权限、CSRF、DryRun、显式确认、幂等和审计边界。滚动重启将
+`Idempotency-Key` 的 SHA-256 摘要写入 Pod Template 的 `zke.io/restart-request` 注解，使相同请求重试产生
+完全相同的补丁；删除必须携带当前对象 UID，避免误删同名重建对象。创建和其他更新仍可使用通用资源接口。
 
 Console 工作负载页面在目标 Cluster 和 Namespace 内按类型切换 Deployment、StatefulSet、DaemonSet、Job 和
 CronJob，列表展示状态、副本或 Job/CronJob 进度、镜像和创建时间，可下钻到包含副本或 Job/CronJob 状态、
-配置、容器、Selector、条件、标签和注解的详情页。该页面当前只读：面向工作负载的创建、伸缩、重启和删除表单
-尚未实现。
+配置、容器、Selector、条件、标签和注解的详情页。
+
+列表行和详情页提供与后端一致的变更操作：Deployment 和 StatefulSet 伸缩，Deployment、StatefulSet 和
+DaemonSet 滚动重启，CronJob 暂停和恢复，以及五类工作负载删除。伸缩、重启和暂停/恢复需要
+`cluster.resource.update`，删除需要 `cluster.resource.delete`；Console 只在权限和资源类型都允许时展示对应
+菜单项，实际判定仍由 Server 执行。每个操作都先提交一次服务端 DryRun，通过后再在确认弹窗中展示目标集群、
+命名空间、对象 UID 和具体影响，删除还要求输入对象名称。伸缩确认提交的是 DryRun 校验过的副本数，而不是
+确认时输入框中的值。每个步骤各自携带一个在弹窗生命周期内稳定的幂等键，因此重试同一次提交不会重复执行，
+滚动重启也不会产生第二轮滚动。创建工作负载的表单尚未实现。
 
 通用接口返回 Unstructured JSON，并移除 `metadata.managedFields`。Discovery
 目录表示 API Server 暴露的资源，不代表 Agent ServiceAccount 已获授权；管理更多内置资源或任意 CR 时，安装方
@@ -78,7 +91,7 @@ CronJob，列表展示状态、副本或 Job/CronJob 进度、镜像和创建时
 
 - 集群概览；
 - 节点驱逐，以及它依赖的 Subresource allowlist 设计；
-- Deployment、StatefulSet、DaemonSet、Job 和 CronJob 的类型化变更表单，包括伸缩、重启与删除；
+- Deployment、StatefulSet、DaemonSet、Job 和 CronJob 的类型化创建；
 - Pod 管理、Pod 日志与 Web Terminal；
 - Service 与 Ingress；
 - ConfigMap 与 Secret；

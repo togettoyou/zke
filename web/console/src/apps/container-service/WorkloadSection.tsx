@@ -9,6 +9,7 @@ import type {
   KubernetesWorkloadSummary,
 } from "@/api/types";
 import { SectionTitle } from "@/apps/AppShell";
+import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -20,6 +21,9 @@ import { formatAbsolute } from "@/lib/time";
 
 import { ContinuePager } from "./ContinuePager";
 import { useContinuePagination } from "./use-continue-pagination";
+import type { ClusterSectionProps } from "./types";
+import { WorkloadActions } from "./WorkloadActions";
+import { kindLabel, WORKLOAD_TYPES } from "./workload-catalog";
 
 const PAGE_SIZE = 50;
 
@@ -27,33 +31,26 @@ type ReplicaStatus = NonNullable<KubernetesWorkloadSummary["replicas"]>;
 type JobStatus = NonNullable<KubernetesWorkloadSummary["job"]>;
 type CronJobStatus = NonNullable<KubernetesWorkloadSummary["cron_job"]>;
 
-/**
- * The five workload types the Server exposes a typed read for. Labelled with the
- * Kubernetes kind rather than a translation: it is what the operator sees in
- * kubectl, in YAML and in every other console, and inventing a Chinese name for
- * it would only make the two harder to line up.
- */
-const WORKLOAD_TYPES: { resource: KubernetesWorkloadResource; label: string }[] = [
-  { resource: "deployments", label: "Deployment" },
-  { resource: "statefulsets", label: "StatefulSet" },
-  { resource: "daemonsets", label: "DaemonSet" },
-  { resource: "jobs", label: "Job" },
-  { resource: "cronjobs", label: "CronJob" },
-];
-
-type WorkloadSectionProps = {
-  clusterId: string;
-  clusterName: string;
+type WorkloadSectionProps = ClusterSectionProps & {
+  /** The Namespace every query and mutation in this section is scoped to. */
   namespace: string;
 };
 
 /**
  * Workloads are namespaced, so every query here is scoped by the target Cluster,
  * the Namespace picked in the toolbar and one workload type — the three path
- * segments of the endpoint. This section reads only: creating, scaling and
- * deleting a workload are not implemented in the Console yet.
+ * segments of the endpoint. Scaling, restarting, suspending and deleting act on
+ * the same three, and each goes through DryRun, an impact list and an explicit
+ * confirmation before it is written.
  */
-export function WorkloadSection({ clusterId, clusterName, namespace }: WorkloadSectionProps) {
+export function WorkloadSection({
+  clusterId,
+  clusterName,
+  namespace,
+  tenantId,
+  projectId,
+}: WorkloadSectionProps) {
+  const { permissions } = useSessionContext();
   const [resource, setResource] = useState<KubernetesWorkloadResource>("deployments");
   // Switching Cluster, Namespace or type produces a different list, and a
   // continuation token is only meaningful to the list that issued it.
@@ -65,6 +62,12 @@ export function WorkloadSection({ clusterId, clusterName, namespace }: WorkloadS
   // Drilling into a workload keeps the list's type and paging alive, so coming
   // back lands where the operator left rather than on Deployments page one.
   const [detailName, setDetailName] = useState<string | null>(null);
+
+  const projectScope = { type: "project" as const, tenantId, projectId };
+  // Scaling, restarting and suspending are all patches of the object, so they
+  // are updates rather than workload-specific permissions.
+  const canUpdate = permissions.can("cluster.resource.update", projectScope);
+  const canDelete = permissions.can("cluster.resource.delete", projectScope);
 
   const columns = useMemo<ColumnDef<KubernetesWorkloadSummary, unknown>[]>(
     () => [
@@ -98,8 +101,29 @@ export function WorkloadSection({ clusterId, clusterName, namespace }: WorkloadS
           </span>
         ),
       },
+      {
+        id: "actions",
+        header: "",
+        size: 48,
+        cell: ({ row }) => (
+          // The row opens the workload; the menu must not, or every action would
+          // navigate away from the object it just changed.
+          <div className="flex justify-end" onClick={(event) => event.stopPropagation()}>
+            <WorkloadActions
+              target={{
+                clusterId,
+                clusterName,
+                namespace,
+                workload: row.original,
+              }}
+              canUpdate={canUpdate}
+              canDelete={canDelete}
+            />
+          </div>
+        ),
+      },
     ],
-    [resource],
+    [resource, clusterId, clusterName, namespace, canUpdate, canDelete],
   );
 
   if (detailName) {
@@ -110,6 +134,8 @@ export function WorkloadSection({ clusterId, clusterName, namespace }: WorkloadS
         namespace={namespace}
         resource={resource}
         name={detailName}
+        canUpdate={canUpdate}
+        canDelete={canDelete}
         onBack={() => setDetailName(null)}
       />
     );
@@ -121,7 +147,7 @@ export function WorkloadSection({ clusterId, clusterName, namespace }: WorkloadS
     <div className="flex h-full min-h-0 flex-col">
       <SectionTitle
         title={`工作负载 · ${clusterName} / ${namespace}`}
-        description="只读视图，展示 Kubernetes 返回的当前状态。创建、伸缩和删除工作负载的 Console 表单尚未实现。"
+        description="伸缩、滚动重启、CronJob 暂停/恢复和删除都先执行 Kubernetes 服务端 DryRun，再由操作者确认。创建工作负载的表单尚未实现。"
       />
       <Tabs
         value={resource}
@@ -163,10 +189,6 @@ export function WorkloadSection({ clusterId, clusterName, namespace }: WorkloadS
       </Tabs>
     </div>
   );
-}
-
-function kindLabel(resource: KubernetesWorkloadResource): string {
-  return WORKLOAD_TYPES.find((type) => type.resource === resource)?.label ?? resource;
 }
 
 /**
@@ -275,6 +297,8 @@ function WorkloadDetailView({
   namespace,
   resource,
   name,
+  canUpdate,
+  canDelete,
   onBack,
 }: {
   clusterId: string;
@@ -282,6 +306,8 @@ function WorkloadDetailView({
   namespace: string;
   resource: KubernetesWorkloadResource;
   name: string;
+  canUpdate: boolean;
+  canDelete: boolean;
   onBack: () => void;
 }) {
   const detail = useWorkload(clusterId, namespace, resource, name);
@@ -292,10 +318,24 @@ function WorkloadDetailView({
         title={name}
         description={`读取自集群 ${clusterName} 的 ${namespace}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
-          <Button size="sm" variant="secondary" onClick={onBack}>
-            <ArrowLeft />
-            返回列表
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* The actions need the object they act on, so they appear once the
+                detail has actually loaded — a deletion pinned to a UID cannot be
+                offered before the UID is known. */}
+            {detail.data ? (
+              <WorkloadActions
+                target={{ clusterId, clusterName, namespace, workload: detail.data }}
+                canUpdate={canUpdate}
+                canDelete={canDelete}
+                variant="buttons"
+                onDeleted={onBack}
+              />
+            ) : null}
+            <Button size="sm" variant="secondary" onClick={onBack}>
+              <ArrowLeft />
+              返回列表
+            </Button>
+          </div>
         }
       />
       {detail.error ? (

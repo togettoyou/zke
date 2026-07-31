@@ -219,6 +219,8 @@ export function ContainerServiceApp() {
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
+          tenantId={scope.tenantId}
+          projectId={scope.projectId}
         />
       )}
     </AppShell>

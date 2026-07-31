@@ -358,6 +358,51 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesWorkload.get,
 	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/scale",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.scale,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/restart",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.restart,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/suspend",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.suspend,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/resume",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.resume,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceDelete,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.delete,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/kubernetes/resource-types",
 		handlers.authorizationMiddleware.RequireCluster(

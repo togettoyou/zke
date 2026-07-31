@@ -146,6 +146,7 @@ func New(
 		kubernetesWorkload: newKubernetesWorkloadHandler(
 			logger,
 			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesResource: newKubernetesResourceHandler(

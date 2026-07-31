@@ -1553,7 +1553,7 @@ paths:
       description: |
         在明确的目标 Cluster 和 Namespace 中查询一种工作负载。workload_resource
         支持 deployments、statefulsets、daemonsets、jobs 和 cronjobs。分页使用
-        Kubernetes 原生 continuation token；写操作复用受控通用资源 CRUD API。
+        Kubernetes 原生 continuation token；常用变更通过相同作用域下的类型化动作接口执行。
       security:
         - sessionCookie: []
       parameters:
@@ -1644,6 +1644,267 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesWorkload
+      description: |
+        删除目标 Cluster 和 Namespace 中的 Deployment、StatefulSet、DaemonSet、
+        Job 或 CronJob。必须提供 UID 前置条件；dry_run=true 时执行服务端预览，
+        实际删除要求显式 confirm=true。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesDeleteWorkloadRequest"
+      responses:
+        "200":
+          description: 工作负载删除或 dry-run 结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDeleteResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/scale:
+    post:
+      tags: [Resources]
+      operationId: scaleKubernetesWorkload
+      description: |
+        调整目标 Deployment 或 StatefulSet 的副本数。dry_run=true 时执行
+        Kubernetes 服务端预览；实际写入要求显式 confirm=true。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesScaleWorkloadRequest"
+      responses:
+        "200":
+          description: 伸缩后的工作负载或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/restart:
+    post:
+      tags: [Resources]
+      operationId: restartKubernetesWorkload
+      description: |
+        通过更新 Pod Template 注解滚动重启目标 Deployment、StatefulSet 或
+        DaemonSet。重启标记由 Idempotency-Key 稳定派生，保证相同请求安全重试。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesWorkloadMutationRequest"
+      responses:
+        "200":
+          description: 重启补丁后的工作负载或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/suspend:
+    post:
+      tags: [Resources]
+      operationId: suspendKubernetesCronJob
+      description: 暂停目标 CronJob；支持 dry-run，实际写入要求显式确认。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesWorkloadMutationRequest"
+      responses:
+        "200":
+          description: 暂停后的 CronJob 或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/resume:
+    post:
+      tags: [Resources]
+      operationId: resumeKubernetesCronJob
+      description: 恢复目标 CronJob；支持 dry-run，实际写入要求显式确认。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesWorkloadMutationRequest"
+      responses:
+        "200":
+          description: 恢复后的 CronJob 或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "502":
@@ -3229,6 +3490,67 @@ components:
     KubernetesWorkloadResource:
       type: string
       enum: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+    KubernetesWorkloadMutationRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际写入必须为 true；dry-run 可以为 false。
+    KubernetesScaleWorkloadRequest:
+      type: object
+      additionalProperties: false
+      required: [replicas, confirm]
+      properties:
+        replicas:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际写入必须为 true；dry-run 可以为 false。
+    KubernetesDeleteWorkloadRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, confirm]
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际删除必须为 true；dry-run 可以为 false。
+        uid:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 必填的 Kubernetes UID 删除前置条件，防止误删同名重建对象。
+        resource_version:
+          type: string
+          maxLength: 256
+        grace_period_seconds:
+          type: [integer, "null"]
+          minimum: 0
+        propagation_policy:
+          type: string
+          enum: ["", orphan, background, foreground]
+    KubernetesWorkloadMutationResult:
+      type: object
+      additionalProperties: false
+      required: [workload, dry_run]
+      properties:
+        workload:
+          $ref: "#/components/schemas/KubernetesWorkloadDetail"
+        dry_run:
+          type: boolean
     KubernetesWorkloadReplicaStatus:
       type: object
       additionalProperties: false

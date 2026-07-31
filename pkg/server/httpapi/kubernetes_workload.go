@@ -7,11 +7,17 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
+	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 )
+
+const maxKubernetesWorkloadMutationRequestBytes = 64 * 1024
 
 type kubernetesWorkloadService interface {
 	ListWorkloads(
@@ -25,6 +31,22 @@ type kubernetesWorkloadService interface {
 		kubernetesresource.WorkloadResource,
 		string,
 	) (kubernetesresource.WorkloadDetail, error)
+	ScaleWorkload(
+		context.Context,
+		kubernetesresource.ScaleWorkloadInput,
+	) (kubernetesresource.WorkloadDetail, error)
+	RestartWorkload(
+		context.Context,
+		kubernetesresource.WorkloadMutationInput,
+	) (kubernetesresource.WorkloadDetail, error)
+	SetWorkloadSuspension(
+		context.Context,
+		kubernetesresource.SetWorkloadSuspensionInput,
+	) (kubernetesresource.WorkloadDetail, error)
+	DeleteWorkload(
+		context.Context,
+		kubernetesresource.DeleteWorkloadInput,
+	) error
 }
 
 type kubernetesWorkloadHandler struct {
@@ -32,13 +54,33 @@ type kubernetesWorkloadHandler struct {
 	service kubernetesWorkloadService
 }
 
+type workloadMutationRequest struct {
+	DryRun  bool `json:"dry_run"`
+	Confirm bool `json:"confirm"`
+}
+
+type scaleWorkloadRequest struct {
+	Replicas int32 `json:"replicas"`
+	workloadMutationRequest
+}
+
+type deleteWorkloadRequest struct {
+	DryRun             bool   `json:"dry_run"`
+	Confirm            bool   `json:"confirm"`
+	UID                string `json:"uid"`
+	ResourceVersion    string `json:"resource_version"`
+	GracePeriodSeconds *int64 `json:"grace_period_seconds"`
+	PropagationPolicy  string `json:"propagation_policy"`
+}
+
 func newKubernetesWorkloadHandler(
 	logger *slog.Logger,
 	service kubernetesWorkloadService,
+	auditService *audit.Service,
 	operationTimeout time.Duration,
 ) *kubernetesWorkloadHandler {
 	return &kubernetesWorkloadHandler{
-		baseHandler: newBaseHandler(logger, nil, operationTimeout),
+		baseHandler: newBaseHandler(logger, auditService, operationTimeout),
 		service:     service,
 	}
 }
@@ -103,6 +145,309 @@ func (handler *kubernetesWorkloadHandler) get(c *gin.Context) {
 		return
 	}
 	writeSuccess(c, http.StatusOK, result)
+}
+
+func (handler *kubernetesWorkloadHandler) scale(c *gin.Context) {
+	resource, target, ok := handler.parseMutationTarget(
+		c,
+		auditaction.KubernetesResourcePatch,
+	)
+	if !ok {
+		return
+	}
+	identity, _ := httpmiddleware.Identity(c)
+	var request scaleWorkloadRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(c, identity.User.ID, auditaction.KubernetesResourcePatch, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload scale request")
+		return
+	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourcePatch,
+		request.DryRun,
+	)
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.ScaleWorkload(ctx, kubernetesresource.ScaleWorkloadInput{
+		WorkloadMutationInput: handler.mutationInput(c, resource, request.workloadMutationRequest),
+		Replicas:              request.Replicas,
+	})
+	cancel()
+	handler.finishMutation(
+		c,
+		identity.User.ID,
+		action,
+		target,
+		request.DryRun,
+		result,
+		err,
+		"scale Kubernetes workload",
+	)
+}
+
+func (handler *kubernetesWorkloadHandler) restart(c *gin.Context) {
+	resource, target, ok := handler.parseMutationTarget(
+		c,
+		auditaction.KubernetesResourcePatch,
+	)
+	if !ok {
+		return
+	}
+	identity, _ := httpmiddleware.Identity(c)
+	var request workloadMutationRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(c, identity.User.ID, auditaction.KubernetesResourcePatch, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload restart request")
+		return
+	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourcePatch,
+		request.DryRun,
+	)
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.RestartWorkload(
+		ctx,
+		handler.mutationInput(c, resource, request),
+	)
+	cancel()
+	handler.finishMutation(
+		c,
+		identity.User.ID,
+		action,
+		target,
+		request.DryRun,
+		result,
+		err,
+		"restart Kubernetes workload",
+	)
+}
+
+func (handler *kubernetesWorkloadHandler) suspend(c *gin.Context) {
+	handler.setSuspension(c, true)
+}
+
+func (handler *kubernetesWorkloadHandler) resume(c *gin.Context) {
+	handler.setSuspension(c, false)
+}
+
+func (handler *kubernetesWorkloadHandler) setSuspension(c *gin.Context, suspended bool) {
+	resource, target, ok := handler.parseMutationTarget(
+		c,
+		auditaction.KubernetesResourcePatch,
+	)
+	if !ok {
+		return
+	}
+	identity, _ := httpmiddleware.Identity(c)
+	var request workloadMutationRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(c, identity.User.ID, auditaction.KubernetesResourcePatch, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid CronJob suspension request")
+		return
+	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourcePatch,
+		request.DryRun,
+	)
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.SetWorkloadSuspension(
+		ctx,
+		kubernetesresource.SetWorkloadSuspensionInput{
+			WorkloadMutationInput: handler.mutationInput(c, resource, request),
+			Suspended:             suspended,
+		},
+	)
+	cancel()
+	handler.finishMutation(
+		c,
+		identity.User.ID,
+		action,
+		target,
+		request.DryRun,
+		result,
+		err,
+		"change Kubernetes CronJob suspension",
+	)
+}
+
+func (handler *kubernetesWorkloadHandler) delete(c *gin.Context) {
+	resource, target, ok := handler.parseMutationTarget(
+		c,
+		auditaction.KubernetesResourceDelete,
+	)
+	if !ok {
+		return
+	}
+	identity, _ := httpmiddleware.Identity(c)
+	var request deleteWorkloadRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(c, identity.User.ID, auditaction.KubernetesResourceDelete, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload delete request")
+		return
+	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourceDelete,
+		request.DryRun,
+	)
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	if strings.TrimSpace(request.UID) == "" {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "workload UID precondition is required")
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	propagation, ok := protocolDeletePropagation(request.PropagationPolicy)
+	if !ok {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload deletion propagation policy")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	err := handler.service.DeleteWorkload(ctx, kubernetesresource.DeleteWorkloadInput{
+		WorkloadMutationInput: handler.mutationInput(c, resource, workloadMutationRequest{
+			DryRun:  request.DryRun,
+			Confirm: request.Confirm,
+		}),
+		GracePeriodSeconds: request.GracePeriodSeconds,
+		Propagation:        propagation,
+		UID:                request.UID,
+		ResourceVersion:    request.ResourceVersion,
+	})
+	cancel()
+	if err != nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+	}
+	if handler.respondWorkloadError(c, "delete Kubernetes workload", err) {
+		return
+	}
+	handler.recordMutation(c, identity.User.ID, action, target, "succeeded")
+	writeSuccess(c, http.StatusOK, gin.H{
+		"deleted": !request.DryRun,
+		"dry_run": request.DryRun,
+		"target":  target,
+	})
+}
+
+func (handler *kubernetesWorkloadHandler) parseMutationTarget(
+	c *gin.Context,
+	action string,
+) (kubernetesresource.WorkloadResource, string, bool) {
+	c.Header("Cache-Control", "no-store")
+	actor, _ := httpmiddleware.Identity(c)
+	resource, ok := kubernetesresource.ParseWorkloadResource(
+		c.Param("workload_resource"),
+	)
+	if !ok {
+		handler.recordMutation(
+			c,
+			actor.User.ID,
+			action,
+			c.Param("workload_resource")+" "+
+				c.Param("namespace_name")+"/"+c.Param("workload_name"),
+			"failed",
+		)
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload resource")
+		return "", "", false
+	}
+	identity, _ := kubernetesresource.WorkloadResourceIdentity(resource)
+	target := resourceTargetName(
+		identity,
+		c.Param("namespace_name"),
+		c.Param("workload_name"),
+	)
+	if len(c.Request.URL.Query()) != 0 {
+		handler.recordMutation(c, actor.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "workload mutation does not accept query parameters")
+		return "", "", false
+	}
+	return resource, target, true
+}
+
+func (handler *kubernetesWorkloadHandler) mutationInput(
+	c *gin.Context,
+	resource kubernetesresource.WorkloadResource,
+	request workloadMutationRequest,
+) kubernetesresource.WorkloadMutationInput {
+	return kubernetesresource.WorkloadMutationInput{
+		ClusterID:      c.Param("cluster_id"),
+		Namespace:      c.Param("namespace_name"),
+		Resource:       resource,
+		Name:           c.Param("workload_name"),
+		DryRun:         request.DryRun,
+		Confirm:        request.Confirm,
+		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
+	}
+}
+
+func (handler *kubernetesWorkloadHandler) finishMutation(
+	c *gin.Context,
+	actorUserID string,
+	action string,
+	target string,
+	dryRun bool,
+	result kubernetesresource.WorkloadDetail,
+	err error,
+	operation string,
+) {
+	if err != nil {
+		handler.recordMutation(c, actorUserID, action, target, "failed")
+	}
+	if handler.respondWorkloadError(c, operation, err) {
+		return
+	}
+	handler.recordMutation(c, actorUserID, action, target, "succeeded")
+	writeSuccess(c, http.StatusOK, gin.H{
+		"workload": result,
+		"dry_run":  dryRun,
+	})
+}
+
+func (handler *kubernetesWorkloadHandler) recordMutation(
+	c *gin.Context,
+	actorUserID string,
+	action string,
+	target string,
+	result string,
+) {
+	resourceHandler := kubernetesResourceHandler{baseHandler: handler.baseHandler}
+	resourceHandler.recordKubernetesMutation(c, actorUserID, action, target, result)
 }
 
 func parseWorkloadListQuery(query url.Values) (kubernetesresource.ListWorkloadsInput, error) {

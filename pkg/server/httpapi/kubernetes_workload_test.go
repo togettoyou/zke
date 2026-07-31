@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 )
 
@@ -20,6 +21,11 @@ type fakeKubernetesWorkloadService struct {
 	getNamespace string
 	getResource  kubernetesresource.WorkloadResource
 	getName      string
+	scaleInput   kubernetesresource.ScaleWorkloadInput
+	restartInput kubernetesresource.WorkloadMutationInput
+	suspendInput kubernetesresource.SetWorkloadSuspensionInput
+	suspendCalls []kubernetesresource.SetWorkloadSuspensionInput
+	deleteInput  kubernetesresource.DeleteWorkloadInput
 }
 
 func (service *fakeKubernetesWorkloadService) ListWorkloads(
@@ -70,6 +76,57 @@ func (service *fakeKubernetesWorkloadService) GetWorkload(
 	}, nil
 }
 
+func (service *fakeKubernetesWorkloadService) ScaleWorkload(
+	_ context.Context,
+	input kubernetesresource.ScaleWorkloadInput,
+) (kubernetesresource.WorkloadDetail, error) {
+	service.scaleInput = input
+	return fakeWorkloadMutationResult(input.WorkloadMutationInput), nil
+}
+
+func (service *fakeKubernetesWorkloadService) RestartWorkload(
+	_ context.Context,
+	input kubernetesresource.WorkloadMutationInput,
+) (kubernetesresource.WorkloadDetail, error) {
+	service.restartInput = input
+	return fakeWorkloadMutationResult(input), nil
+}
+
+func (service *fakeKubernetesWorkloadService) SetWorkloadSuspension(
+	_ context.Context,
+	input kubernetesresource.SetWorkloadSuspensionInput,
+) (kubernetesresource.WorkloadDetail, error) {
+	service.suspendInput = input
+	service.suspendCalls = append(service.suspendCalls, input)
+	return fakeWorkloadMutationResult(input.WorkloadMutationInput), nil
+}
+
+func (service *fakeKubernetesWorkloadService) DeleteWorkload(
+	_ context.Context,
+	input kubernetesresource.DeleteWorkloadInput,
+) error {
+	service.deleteInput = input
+	return nil
+}
+
+func fakeWorkloadMutationResult(
+	input kubernetesresource.WorkloadMutationInput,
+) kubernetesresource.WorkloadDetail {
+	return kubernetesresource.WorkloadDetail{
+		WorkloadSummary: kubernetesresource.WorkloadSummary{
+			Resource:  input.Resource,
+			Namespace: input.Namespace,
+			Name:      input.Name,
+			Labels:    map[string]string{},
+			Images:    []string{},
+		},
+		Annotations:    map[string]string{},
+		Containers:     []kubernetesresource.WorkloadContainer{},
+		InitContainers: []kubernetesresource.WorkloadContainer{},
+		Conditions:     []kubernetesresource.WorkloadCondition{},
+	}
+}
+
 func TestKubernetesWorkloadHandlersPreserveClusterNamespaceAndResource(t *testing.T) {
 	t.Parallel()
 
@@ -78,6 +135,7 @@ func TestKubernetesWorkloadHandlersPreserveClusterNamespaceAndResource(t *testin
 	handler := newKubernetesWorkloadHandler(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		service,
+		nil,
 		time.Second,
 	)
 	router := gin.New()
@@ -152,6 +210,7 @@ func TestKubernetesWorkloadHandlersRejectUnknownResourceAndDetailQuery(t *testin
 	handler := newKubernetesWorkloadHandler(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		service,
+		nil,
 		time.Second,
 	)
 	router := gin.New()
@@ -179,5 +238,203 @@ func TestKubernetesWorkloadHandlersRejectUnknownResourceAndDetailQuery(t *testin
 	}
 	if service.listInput.ClusterID != "" || service.getClusterID != "" {
 		t.Fatal("invalid workload request reached service")
+	}
+}
+
+func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) {
+	t.Parallel()
+
+	const (
+		clusterID      = "00000000-0000-4000-8000-000000000003"
+		idempotencyKey = "0123456789abcdef"
+	)
+	service := &fakeKubernetesWorkloadService{}
+	handler := newKubernetesWorkloadHandler(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		service,
+		nil,
+		time.Second,
+	)
+	router := gin.New()
+	baseRoute := "/clusters/:cluster_id/namespaces/:namespace_name/workloads/" +
+		":workload_resource/:workload_name"
+	router.POST(baseRoute+"/scale", handler.scale)
+	router.POST(baseRoute+"/restart", handler.restart)
+	router.POST(baseRoute+"/suspend", handler.suspend)
+	router.POST(baseRoute+"/resume", handler.resume)
+	router.DELETE(baseRoute, handler.delete)
+	baseURL := "/clusters/" + clusterID + "/namespaces/model-serving/workloads"
+
+	testCases := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{
+			method: http.MethodPost,
+			path:   baseURL + "/deployments/inference/scale",
+			body:   `{"replicas":4,"dry_run":false,"confirm":true}`,
+		},
+		{
+			method: http.MethodPost,
+			path:   baseURL + "/daemonsets/device-plugin/restart",
+			body:   `{"dry_run":true,"confirm":false}`,
+		},
+		{
+			method: http.MethodPost,
+			path:   baseURL + "/cronjobs/cleanup/suspend",
+			body:   `{"dry_run":false,"confirm":true}`,
+		},
+		{
+			method: http.MethodPost,
+			path:   baseURL + "/cronjobs/cleanup/resume",
+			body:   `{"dry_run":false,"confirm":true}`,
+		},
+		{
+			method: http.MethodDelete,
+			path:   baseURL + "/jobs/finetune",
+			body: `{
+				"dry_run":false,
+				"confirm":true,
+				"uid":"job-uid",
+				"resource_version":"42",
+				"grace_period_seconds":30,
+				"propagation_policy":"foreground"
+			}`,
+		},
+	}
+	for _, testCase := range testCases {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			testCase.method,
+			testCase.path,
+			bytes.NewBufferString(testCase.body),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(idempotencyKeyHeaderName, idempotencyKey)
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf(
+				"%s %s status=%d body=%s",
+				testCase.method,
+				testCase.path,
+				response.Code,
+				response.Body,
+			)
+		}
+	}
+
+	if service.scaleInput.ClusterID != clusterID ||
+		service.scaleInput.Namespace != "model-serving" ||
+		service.scaleInput.Resource != kubernetesresource.WorkloadDeployments ||
+		service.scaleInput.Name != "inference" ||
+		service.scaleInput.Replicas != 4 ||
+		!service.scaleInput.Confirm ||
+		service.scaleInput.IdempotencyKey != idempotencyKey {
+		t.Fatalf("unexpected scale input: %+v", service.scaleInput)
+	}
+	if service.restartInput.Resource != kubernetesresource.WorkloadDaemonSets ||
+		service.restartInput.Name != "device-plugin" ||
+		!service.restartInput.DryRun ||
+		service.restartInput.Confirm ||
+		service.restartInput.IdempotencyKey != idempotencyKey {
+		t.Fatalf("unexpected restart input: %+v", service.restartInput)
+	}
+	if len(service.suspendCalls) != 2 ||
+		!service.suspendCalls[0].Suspended ||
+		service.suspendCalls[1].Suspended ||
+		service.suspendInput.Resource != kubernetesresource.WorkloadCronJobs ||
+		service.suspendInput.Name != "cleanup" {
+		t.Fatalf("unexpected suspension inputs: %+v", service.suspendCalls)
+	}
+	if service.deleteInput.Resource != kubernetesresource.WorkloadJobs ||
+		service.deleteInput.UID != "job-uid" ||
+		service.deleteInput.ResourceVersion != "42" ||
+		service.deleteInput.GracePeriodSeconds == nil ||
+		*service.deleteInput.GracePeriodSeconds != 30 ||
+		service.deleteInput.Propagation !=
+			agentv1.DeletePropagation_DELETE_PROPAGATION_FOREGROUND ||
+		service.deleteInput.IdempotencyKey != idempotencyKey {
+		t.Fatalf("unexpected delete input: %+v", service.deleteInput)
+	}
+}
+
+func TestKubernetesWorkloadMutationHandlersRejectUnsafeRequests(t *testing.T) {
+	t.Parallel()
+
+	const clusterID = "00000000-0000-4000-8000-000000000003"
+	service := &fakeKubernetesWorkloadService{}
+	handler := newKubernetesWorkloadHandler(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		service,
+		nil,
+		time.Second,
+	)
+	router := gin.New()
+	baseRoute := "/clusters/:cluster_id/namespaces/:namespace_name/workloads/" +
+		":workload_resource/:workload_name"
+	router.POST(baseRoute+"/scale", handler.scale)
+	router.DELETE(baseRoute, handler.delete)
+	baseURL := "/clusters/" + clusterID +
+		"/namespaces/model-serving/workloads/deployments/inference"
+
+	testCases := []struct {
+		name     string
+		method   string
+		path     string
+		body     string
+		wantCode string
+	}{
+		{
+			name:     "confirmation required",
+			method:   http.MethodPost,
+			path:     baseURL + "/scale",
+			body:     `{"replicas":4,"dry_run":false,"confirm":false}`,
+			wantCode: "confirmation_required",
+		},
+		{
+			name:     "delete UID required",
+			method:   http.MethodDelete,
+			path:     baseURL,
+			body:     `{"dry_run":false,"confirm":true,"uid":""}`,
+			wantCode: "invalid_request",
+		},
+		{
+			name:     "query rejected",
+			method:   http.MethodPost,
+			path:     baseURL + "/scale?force=true",
+			body:     `{"replicas":4,"dry_run":true,"confirm":false}`,
+			wantCode: "invalid_request",
+		},
+		{
+			name:     "unknown field rejected",
+			method:   http.MethodPost,
+			path:     baseURL + "/scale",
+			body:     `{"replicas":4,"dry_run":true,"confirm":false,"force":true}`,
+			wantCode: "invalid_request",
+		},
+	}
+	for _, testCase := range testCases {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			testCase.method,
+			testCase.path,
+			bytes.NewBufferString(testCase.body),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(idempotencyKeyHeaderName, "0123456789abcdef")
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf(
+				"%s status=%d body=%s",
+				testCase.name,
+				response.Code,
+				response.Body,
+			)
+		}
+		assertErrorCode(t, response, testCase.wantCode)
+	}
+	if service.scaleInput.ClusterID != "" || service.deleteInput.ClusterID != "" {
+		t.Fatal("unsafe workload mutation reached service")
 	}
 }

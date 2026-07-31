@@ -133,6 +133,11 @@ func ParseWorkloadResource(value string) (WorkloadResource, bool) {
 	return resource, exists
 }
 
+func WorkloadResourceIdentity(resource WorkloadResource) (ResourceIdentity, bool) {
+	identity, exists := workloadIdentities[resource]
+	return identity, exists
+}
+
 var workloadIdentities = map[WorkloadResource]ResourceIdentity{
 	WorkloadDeployments: {
 		Group: "apps", Version: "v1", Resource: string(WorkloadDeployments),
