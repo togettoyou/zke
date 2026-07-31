@@ -2,8 +2,9 @@
 
 > 状态：目标架构。当前已完成 Phase 1 Server 与 Agent 后端闭环，包括本地认证与 RBAC、Agent 注册与安装
 > Manifest、QUIC/mTLS 连接、心跳、证书续期、撤销、实时状态、用户权限和审计 API。
-> Phase 2 已完成 Resource Stream、Node 类型化读取、受控通用 Kubernetes CRUD 基座以及 Namespace
-> 管理闭环；其余集群资源管理和平台组件仍处于规划阶段。
+> Phase 2 已完成 Resource Stream、Node 类型化读取、受控通用 Kubernetes CRUD 基座、Namespace
+> 管理闭环、五类工作负载的类型化后端查询及只读 Console；工作负载类型化变更表单、其余集群资源管理和平台组件
+> 仍处于规划阶段。
 
 ZKE 的目标架构采用 Server + Agent 模型。ZKE Server 负责统一控制与编排；每个 Kubernetes 集群中的 ZKE
 Agent 负责资源查询和定域执行。

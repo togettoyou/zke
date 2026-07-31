@@ -51,6 +51,7 @@ type handlers struct {
 	agentStatus             *agentStatusHandler
 	kubernetesNode          *kubernetesNodeHandler
 	kubernetesNamespace     *kubernetesNamespaceHandler
+	kubernetesWorkload      *kubernetesWorkloadHandler
 	kubernetesResource      *kubernetesResourceHandler
 	resourceManagement      *resourceManagementHandler
 	accessManagement        *accessManagementHandler
@@ -140,6 +141,11 @@ func New(
 			logger,
 			dependencies.KubernetesResourceService,
 			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesWorkload: newKubernetesWorkloadHandler(
+			logger,
+			dependencies.KubernetesResourceService,
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesResource: newKubernetesResourceHandler(

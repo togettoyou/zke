@@ -1,11 +1,19 @@
 package agentinstall
 
 import (
+	"bytes"
+	"errors"
+	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 )
@@ -54,9 +62,17 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 		"- zke-agent-trust",
 		"- nodes",
 		"- namespaces",
+		"- deployments",
+		"- statefulsets",
+		"- daemonsets",
+		"- jobs",
+		"- cronjobs",
+		"- apps",
+		"- batch",
 		"- get",
 		"- list",
 		"- create",
+		"- update",
 		"- delete",
 		"- patch",
 	} {
@@ -88,4 +104,93 @@ func TestShellQuoteProtectsInstallCommandValues(t *testing.T) {
 	if quoted := shellQuote("a'b"); quoted != `'a'"'"'b'` {
 		t.Fatalf("shellQuote() = %q", quoted)
 	}
+}
+
+func TestRenderManifestGrantsOnlyEnabledWorkloadResources(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := renderManifest(
+		Config{
+			PublicHTTPURL:            "https://zke.example.com",
+			PublicQUICAddress:        "zke.example.com:8443",
+			Image:                    "registry.example.com/zke-agent:test",
+			Namespace:                "zke-system",
+			ImagePullPolicy:          corev1.PullIfNotPresent,
+			ListenerCACertificatePEM: []byte("listener-ca"),
+		},
+		enrollment.ManifestEnrollment{
+			ID:          "00000000-0000-0000-0000-000000000001",
+			ProjectID:   "10000000-0000-0000-0000-000000000001",
+			ClusterName: "test-cluster",
+			ExpiresAt:   time.Now().Add(time.Minute),
+		},
+		"temporary-token",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decoder := k8syaml.NewYAMLOrJSONDecoder(bytes.NewReader(manifest), 4096)
+	var clusterRole *rbacv1.ClusterRole
+	for {
+		var object unstructured.Unstructured
+		if err := decoder.Decode(&object); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if object.GetKind() != "ClusterRole" ||
+			object.GetName() != ServiceAccountName {
+			continue
+		}
+		clusterRole = &rbacv1.ClusterRole{}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(
+			object.Object,
+			clusterRole,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if clusterRole == nil {
+		t.Fatal("manifest has no ZKE Agent ClusterRole")
+	}
+
+	workloadVerbs := []string{"get", "list", "create", "update", "patch", "delete"}
+	assertPolicyRule(t, clusterRole.Rules, "apps", []string{
+		"deployments", "statefulsets", "daemonsets",
+	}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "batch", []string{
+		"jobs", "cronjobs",
+	}, workloadVerbs)
+	for _, rule := range clusterRole.Rules {
+		for _, resource := range rule.Resources {
+			if resource == "*" || strings.Contains(resource, "/") {
+				t.Fatalf("ClusterRole grants wildcard or Subresource access: %+v", rule)
+			}
+		}
+	}
+}
+
+func assertPolicyRule(
+	t *testing.T,
+	rules []rbacv1.PolicyRule,
+	apiGroup string,
+	resources []string,
+	verbs []string,
+) {
+	t.Helper()
+	for _, rule := range rules {
+		if slices.Equal(rule.APIGroups, []string{apiGroup}) &&
+			slices.Equal(rule.Resources, resources) &&
+			slices.Equal(rule.Verbs, verbs) {
+			return
+		}
+	}
+	t.Fatalf(
+		"ClusterRole has no exact rule group=%q resources=%v verbs=%v: %+v",
+		apiGroup,
+		resources,
+		verbs,
+		rules,
+	)
 }

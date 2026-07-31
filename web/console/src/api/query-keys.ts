@@ -31,6 +31,17 @@ export const queryKeys = {
   namespaces: (clusterId: string, params: Record<string, unknown> = {}) =>
     ["namespaces", clusterId, params] as const,
   namespace: (clusterId: string, name: string) => ["namespace", clusterId, name] as const,
+  // Workloads are addressed by Cluster, Namespace and workload type, because
+  // those three are what the endpoint is scoped by: a Deployment named `api` in
+  // one Namespace has nothing to do with a Job of the same name in another.
+  workloads: (
+    clusterId: string,
+    namespace: string,
+    resource: string,
+    params: Record<string, unknown> = {},
+  ) => ["workloads", clusterId, namespace, resource, params] as const,
+  workload: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["workload", clusterId, namespace, resource, name] as const,
 
   enrollments: (projectId: string, params: EnrollmentListParams = {}) =>
     ["enrollments", projectId, params] as const,
@@ -51,6 +62,7 @@ export const queryKeyPrefixes = {
   clusters: ["clusters"] as const,
   nodes: ["nodes"] as const,
   namespaces: ["namespaces"] as const,
+  workloads: ["workloads"] as const,
   enrollments: ["enrollments"] as const,
   users: ["users"] as const,
   roleBindings: ["role-bindings"] as const,

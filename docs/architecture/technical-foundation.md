@@ -204,10 +204,11 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 - 使用 Go 1.26。
 - 以 Kubernetes Deployment 运行，每个接入集群部署一个逻辑 Agent。
 - 使用专用 ServiceAccount，并按当前启用能力授予最小 Kubernetes RBAC 权限。
-- 默认集群业务权限包含 Node 的 `get`、`list`、`patch` 和 Namespace 的 `get`、`list`、`create`、
-  `delete`。Node 的 `patch` 用于停止或恢复调度；驱逐需要 `pods/eviction` Subresource，尚未开放。
-  Agent 通用策略允许非 Secret 主资源的 CRUD，但实际读取或变更其他内置资源、CRD 或 CR 时必须由安装方
-  显式扩展 ServiceAccount RBAC，无需修改 Agent 代码。
+- 默认集群业务权限包含 Node 的 `get`、`list`、`patch`，Namespace 的 `get`、`list`、`create`、`delete`，
+  以及 Deployment、StatefulSet、DaemonSet、Job 和 CronJob 主资源的完整 CRUD。Node 的 `patch` 用于停止或
+  恢复调度；驱逐需要 `pods/eviction` Subresource，尚未开放。Agent 通用策略允许非 Secret 主资源的 CRUD，
+  但实际读取或变更默认集合以外的内置资源、CRD 或 CR 时必须由安装方显式扩展 ServiceAccount RBAC，无需修改
+  Agent 代码。
 - Agent 首次启动时创建固定名称身份 Secret，之后读取和更新它。ServiceAccount 至少需要所在 Namespace 内
   Secret 的 `create` 权限，以及使用 `resourceNames` 限定到该身份 Secret 的 `get`、`update` 权限；Kubernetes
   的 `create` 授权不能按尚不存在的资源名限定。
@@ -269,8 +270,8 @@ Agent 私钥始终保存在目标集群，Server 只保存客户端证书及其�
 `ServerHello`、心跳确认和有界重连；Server 会校验数据库中的证书序列号、有效期与撤销状态，并将首次有效连接
 持久化为 active。Agent 会在配置的续期窗口内通过 Control Stream 自动续期；新证书成功连接后旧 Credential
 被撤销。Credential 或 Agent 身份撤销会通过 PostgreSQL 通知各 Server 实例关闭对应现有连接并停止当前身份
-重试；Tenant、Project 或 Cluster 停用也会通知断连，但属于可恢复原因，恢复后 Agent 自动重连。业务
-Stream 仍未实现。
+重试；Tenant、Project 或 Cluster 停用也会通知断连，但属于可恢复原因，恢复后 Agent 自动重连。Phase 2
+Resource Stream 与 Kubernetes 资源闭环已经实现。
 
 ### 6.3 证书生命周期
 
@@ -539,7 +540,8 @@ Node List/Detail 要求目标 Cluster 的 `cluster.read` 权限。Server 固定�
 通用 Kubernetes 只读接口同样要求 `cluster.read`，由 Server 固定 Verb 为 Discovery、List 或 Get，并校验
 GVR、Namespace、名称、Selector、分页和正文上限；浏览器不能提交任意 Verb、Subresource 或 Kubernetes 原始
 路径。Server 与 Agent 双重拒绝 Secret，Agent ServiceAccount RBAC 约束最终可访问的资源集合。默认安装允许
-Node 读取与调度开关、以及 Namespace 管理；扩展其他内置资源或 CRD 资源必须由安装方显式增加最小 RBAC。
+Node 读取与调度开关、Namespace 管理，以及 Deployment、StatefulSet、DaemonSet、Job 和 CronJob 管理；
+扩展其他内置资源或 CRD 资源必须由安装方显式增加最小 RBAC。
 
 通用写接口分别要求 `cluster.resource.create`、`cluster.resource.update` 或 `cluster.resource.delete`，
 并要求 Session、CSRF、16 至 128 字符 `Idempotency-Key` 及实际写入的显式确认。Server 校验对象身份、

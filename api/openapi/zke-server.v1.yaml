@@ -1546,6 +1546,112 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesWorkloads
+      description: |
+        在明确的目标 Cluster 和 Namespace 中查询一种工作负载。workload_resource
+        支持 deployments、statefulsets、daemonsets、jobs 和 cronjobs。分页使用
+        Kubernetes 原生 continuation token；写操作复用受控通用资源 CRUD API。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: continue
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: label_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: field_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+      responses:
+        "200":
+          description: 指定类型的工作负载列表和 Kubernetes 分页状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadPage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesWorkload
+      description: |
+        通过目标 Cluster 的在线 Agent 查询一个 Namespace 内的 Deployment、
+        StatefulSet、DaemonSet、Job 或 CronJob 详情。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+      responses:
+        "200":
+          description: 工作负载详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadDetail"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/kubernetes/resource-types:
     get:
       tags: [Resources]
@@ -2340,6 +2446,20 @@ components:
         type: string
         minLength: 1
         maxLength: 63
+    WorkloadResource:
+      name: workload_resource
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/KubernetesWorkloadResource"
+    WorkloadName:
+      name: workload_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
     KubernetesResourceName:
       name: resource_name
       in: path
@@ -3106,6 +3226,267 @@ components:
           type: boolean
         target:
           type: string
+    KubernetesWorkloadResource:
+      type: string
+      enum: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+    KubernetesWorkloadReplicaStatus:
+      type: object
+      additionalProperties: false
+      required: [desired, current, updated, ready, available, unavailable]
+      properties:
+        desired:
+          type: integer
+          minimum: 0
+        current:
+          type: integer
+          minimum: 0
+        updated:
+          type: integer
+          minimum: 0
+        ready:
+          type: integer
+          minimum: 0
+        available:
+          type: integer
+          minimum: 0
+        unavailable:
+          type: integer
+          minimum: 0
+    KubernetesWorkloadJobStatus:
+      type: object
+      additionalProperties: false
+      required: [active, succeeded, failed]
+      properties:
+        parallelism:
+          type: integer
+          minimum: 0
+        completions:
+          type: integer
+          minimum: 0
+        active:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        start_time:
+          $ref: "#/components/schemas/Timestamp"
+        completion_time:
+          $ref: "#/components/schemas/Timestamp"
+    KubernetesWorkloadCronJobStatus:
+      type: object
+      additionalProperties: false
+      required: [schedule, suspend, active]
+      properties:
+        schedule:
+          type: string
+        suspend:
+          type: boolean
+        active:
+          type: integer
+          minimum: 0
+        last_schedule_time:
+          $ref: "#/components/schemas/Timestamp"
+        last_successful_time:
+          $ref: "#/components/schemas/Timestamp"
+    KubernetesWorkloadSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - resource
+        - api_version
+        - kind
+        - namespace
+        - name
+        - uid
+        - resource_version
+        - creation_timestamp
+        - generation
+        - observed_generation
+        - labels
+        - status
+        - images
+      properties:
+        resource:
+          $ref: "#/components/schemas/KubernetesWorkloadResource"
+        api_version:
+          type: string
+          enum: [apps/v1, batch/v1]
+        kind:
+          type: string
+          enum: [Deployment, StatefulSet, DaemonSet, Job, CronJob]
+        namespace:
+          type: string
+          minLength: 1
+          maxLength: 63
+        name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        uid:
+          type: string
+        resource_version:
+          type: string
+        creation_timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        generation:
+          type: integer
+          minimum: 0
+        observed_generation:
+          type: integer
+          minimum: 0
+          description: Job 与 CronJob 当前返回 0，因为其 v1 Status 不提供该字段。
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        status:
+          type: string
+          enum:
+            - available
+            - progressing
+            - degraded
+            - suspended
+            - running
+            - completed
+            - failed
+            - scheduled
+            - pending
+        images:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        replicas:
+          $ref: "#/components/schemas/KubernetesWorkloadReplicaStatus"
+        job:
+          $ref: "#/components/schemas/KubernetesWorkloadJobStatus"
+        cron_job:
+          $ref: "#/components/schemas/KubernetesWorkloadCronJobStatus"
+    KubernetesWorkloadPage:
+      type: object
+      additionalProperties: false
+      required:
+        - workloads
+        - continue_token
+        - resource_version
+        - remaining_item_count
+      properties:
+        workloads:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadSummary"
+        continue_token:
+          type: string
+          description: Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。
+        resource_version:
+          type: string
+        remaining_item_count:
+          type: [integer, "null"]
+          minimum: 0
+    KubernetesWorkloadSelectorRequirement:
+      type: object
+      additionalProperties: false
+      required: [key, operator, values]
+      properties:
+        key:
+          type: string
+        operator:
+          type: string
+          enum: [In, NotIn, Exists, DoesNotExist]
+        values:
+          type: array
+          items:
+            type: string
+    KubernetesWorkloadSelector:
+      type: object
+      additionalProperties: false
+      required: [match_labels, match_expressions]
+      properties:
+        match_labels:
+          type: object
+          additionalProperties:
+            type: string
+        match_expressions:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadSelectorRequirement"
+    KubernetesWorkloadContainer:
+      type: object
+      additionalProperties: false
+      required: [name, image, image_pull_policy]
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+        image_pull_policy:
+          type: string
+          enum: [Always, IfNotPresent, Never, ""]
+    KubernetesWorkloadCondition:
+      type: object
+      additionalProperties: false
+      required: [type, status, reason, message, last_transition_time]
+      properties:
+        type:
+          type: string
+        status:
+          type: string
+          enum: ["True", "False", Unknown]
+        reason:
+          type: string
+        message:
+          type: string
+        last_transition_time:
+          $ref: "#/components/schemas/Timestamp"
+    KubernetesWorkloadDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesWorkloadSummary"
+        - type: object
+          required:
+            - annotations
+            - containers
+            - init_containers
+            - conditions
+            - strategy
+            - min_ready_seconds
+          properties:
+            annotations:
+              type: object
+              additionalProperties:
+                type: string
+            selector:
+              $ref: "#/components/schemas/KubernetesWorkloadSelector"
+            containers:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesWorkloadContainer"
+            init_containers:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesWorkloadContainer"
+            conditions:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesWorkloadCondition"
+            strategy:
+              type: string
+            min_ready_seconds:
+              type: integer
+              minimum: 0
+            revision_history_limit:
+              type: integer
+              minimum: 0
+            service_name:
+              type: string
+            completion_mode:
+              type: string
+            concurrency_policy:
+              type: string
     KubernetesNodeSummary:
       type: object
       required:

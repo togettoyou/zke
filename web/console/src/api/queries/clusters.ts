@@ -25,7 +25,11 @@ export function useClusters(projectId: string | null, params: ClusterListParams 
         }),
       ),
     enabled: Boolean(projectId),
-    placeholderData: (previous) => previous,
+    // Keep a page visible while paging or filtering inside one Project, but
+    // never render a previous Project's Clusters under the newly selected
+    // scope while its request is in flight.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === projectId ? previous : undefined,
   });
 }
 

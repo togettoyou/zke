@@ -24,7 +24,10 @@ export function useNodes(clusterId: string | null, params: NodeListParams = {}) 
         }),
       ),
     enabled: Boolean(clusterId),
-    placeholderData: (previous) => previous,
+    // A continuation page may keep the previous page in place while loading;
+    // a different Cluster may not inherit it.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === clusterId ? previous : undefined,
   });
 }
 

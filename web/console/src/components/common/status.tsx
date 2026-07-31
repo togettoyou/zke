@@ -36,6 +36,21 @@ const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     schedulable: { label: "可调度", tone: "success" },
     unschedulable: { label: "已停止调度", tone: "warning" },
   },
+  // Workload health, from the single value the Server reduces each controller,
+  // Job and CronJob to. `scheduled` and `pending` are resting states — a CronJob
+  // waiting for its next trigger and a Job whose Pods have not started are both
+  // working as configured — so they carry no alarm colour.
+  workload: {
+    available: { label: "可用", tone: "success" },
+    progressing: { label: "更新中", tone: "info" },
+    degraded: { label: "降级", tone: "danger" },
+    suspended: { label: "已暂停", tone: "warning" },
+    running: { label: "运行中", tone: "info" },
+    completed: { label: "已完成", tone: "success" },
+    failed: { label: "失败", tone: "danger" },
+    scheduled: { label: "等待触发", tone: "neutral" },
+    pending: { label: "等待中", tone: "neutral" },
+  },
   // Agent lifecycle and health, per the `agents` table's CHECK constraints.
   // These reached the UI as raw enum values before.
   lifecycle: {

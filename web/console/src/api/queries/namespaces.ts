@@ -24,7 +24,10 @@ export function useNamespaces(clusterId: string | null, params: NamespaceListPar
         }),
       ),
     enabled: Boolean(clusterId),
-    placeholderData: (previous) => previous,
+    // Namespace names only have meaning inside their Cluster. Preserve the
+    // previous page for paging within one Cluster, never across Clusters.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === clusterId ? previous : undefined,
   });
 }
 

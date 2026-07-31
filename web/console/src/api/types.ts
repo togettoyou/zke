@@ -31,6 +31,11 @@ export type KubernetesNamespaceSummary = Schemas["KubernetesNamespaceSummary"];
 export type KubernetesNamespaceDetail = Schemas["KubernetesNamespaceDetail"];
 export type KubernetesNamespacePage = Schemas["KubernetesNamespacePage"];
 export type KubernetesNamespaceMutationResult = Schemas["KubernetesNamespaceMutationResult"];
+export type KubernetesWorkloadResource = Schemas["KubernetesWorkloadResource"];
+export type KubernetesWorkloadSummary = Schemas["KubernetesWorkloadSummary"];
+export type KubernetesWorkloadDetail = Schemas["KubernetesWorkloadDetail"];
+export type KubernetesWorkloadPage = Schemas["KubernetesWorkloadPage"];
+export type KubernetesWorkloadStatus = KubernetesWorkloadSummary["status"];
 export type KubernetesDeleteResult = Schemas["KubernetesDeleteResult"];
 
 export type AuditEvent = Schemas["AuditEvent"];

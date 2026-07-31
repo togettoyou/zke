@@ -510,6 +510,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 在明确的目标 Cluster 和 Namespace 中查询一种工作负载。workload_resource
+         *     支持 deployments、statefulsets、daemonsets、jobs 和 cronjobs。分页使用
+         *     Kubernetes 原生 continuation token；写操作复用受控通用资源 CRUD API。
+         */
+        get: operations["listKubernetesWorkloads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的在线 Agent 查询一个 Namespace 内的 Deployment、
+         *     StatefulSet、DaemonSet、Job 或 CronJob 详情。
+         */
+        get: operations["getKubernetesWorkload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/kubernetes/resource-types": {
         parameters: {
             query?: never;
@@ -982,6 +1023,104 @@ export interface components {
             dry_run: boolean;
             target: string;
         };
+        /** @enum {string} */
+        KubernetesWorkloadResource: "deployments" | "statefulsets" | "daemonsets" | "jobs" | "cronjobs";
+        KubernetesWorkloadReplicaStatus: {
+            desired: number;
+            current: number;
+            updated: number;
+            ready: number;
+            available: number;
+            unavailable: number;
+        };
+        KubernetesWorkloadJobStatus: {
+            parallelism?: number;
+            completions?: number;
+            active: number;
+            succeeded: number;
+            failed: number;
+            start_time?: components["schemas"]["Timestamp"];
+            completion_time?: components["schemas"]["Timestamp"];
+        };
+        KubernetesWorkloadCronJobStatus: {
+            schedule: string;
+            suspend: boolean;
+            active: number;
+            last_schedule_time?: components["schemas"]["Timestamp"];
+            last_successful_time?: components["schemas"]["Timestamp"];
+        };
+        KubernetesWorkloadSummary: {
+            resource: components["schemas"]["KubernetesWorkloadResource"];
+            /** @enum {string} */
+            api_version: "apps/v1" | "batch/v1";
+            /** @enum {string} */
+            kind: "Deployment" | "StatefulSet" | "DaemonSet" | "Job" | "CronJob";
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            generation: number;
+            /** @description Job 与 CronJob 当前返回 0，因为其 v1 Status 不提供该字段。 */
+            observed_generation: number;
+            labels: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            status: "available" | "progressing" | "degraded" | "suspended" | "running" | "completed" | "failed" | "scheduled" | "pending";
+            images: string[];
+            replicas?: components["schemas"]["KubernetesWorkloadReplicaStatus"];
+            job?: components["schemas"]["KubernetesWorkloadJobStatus"];
+            cron_job?: components["schemas"]["KubernetesWorkloadCronJobStatus"];
+        };
+        KubernetesWorkloadPage: {
+            workloads: components["schemas"]["KubernetesWorkloadSummary"][];
+            /** @description Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。 */
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesWorkloadSelectorRequirement: {
+            key: string;
+            /** @enum {string} */
+            operator: "In" | "NotIn" | "Exists" | "DoesNotExist";
+            values: string[];
+        };
+        KubernetesWorkloadSelector: {
+            match_labels: {
+                [key: string]: string;
+            };
+            match_expressions: components["schemas"]["KubernetesWorkloadSelectorRequirement"][];
+        };
+        KubernetesWorkloadContainer: {
+            name: string;
+            image: string;
+            /** @enum {string} */
+            image_pull_policy: "Always" | "IfNotPresent" | "Never" | "";
+        };
+        KubernetesWorkloadCondition: {
+            type: string;
+            /** @enum {string} */
+            status: "True" | "False" | "Unknown";
+            reason: string;
+            message: string;
+            last_transition_time: components["schemas"]["Timestamp"];
+        };
+        KubernetesWorkloadDetail: components["schemas"]["KubernetesWorkloadSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            selector?: components["schemas"]["KubernetesWorkloadSelector"];
+            containers: components["schemas"]["KubernetesWorkloadContainer"][];
+            init_containers: components["schemas"]["KubernetesWorkloadContainer"][];
+            conditions: components["schemas"]["KubernetesWorkloadCondition"][];
+            strategy: string;
+            min_ready_seconds: number;
+            revision_history_limit?: number;
+            service_name?: string;
+            completion_mode?: string;
+            concurrency_policy?: string;
+        };
         KubernetesNodeSummary: {
             name: string;
             uid: string;
@@ -1288,6 +1427,8 @@ export interface components {
         ClusterID: components["schemas"]["UUID"];
         NodeName: string;
         NamespaceName: string;
+        WorkloadResource: components["schemas"]["KubernetesWorkloadResource"];
+        WorkloadName: string;
         KubernetesResourceName: string;
         /** @description Core API Group 使用空字符串或省略该参数。 */
         KubernetesGroup: string;
@@ -2638,6 +2779,79 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesWorkloads: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 指定类型的工作负载列表和 Kubernetes 分页状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 工作负载详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

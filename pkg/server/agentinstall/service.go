@@ -269,6 +269,20 @@ func renderManifest(
 				Resources: []string{"namespaces"},
 				Verbs:     []string{"get", "list", "create", "delete"},
 			},
+			{
+				APIGroups: []string{"apps"},
+				Resources: []string{
+					"deployments",
+					"statefulsets",
+					"daemonsets",
+				},
+				Verbs: []string{"get", "list", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"batch"},
+				Resources: []string{"jobs", "cronjobs"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+			},
 		},
 	}
 	clusterRoleBinding := &rbacv1.ClusterRoleBinding{

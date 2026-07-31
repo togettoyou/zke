@@ -705,12 +705,13 @@ Node dynamic client 的 List/Detail 往返。
 - Agent 动态客户端；
 - 真实 QUIC 已覆盖 CRD 资源发现、List 和 Get；
 - Node 列表当前使用完整对象表示、Kubernetes continuation token 分页和类型化精简响应；Table 表示尚未实现；
-- Console 已实现项目内在线集群选择以及 Namespace List/Detail 页面。
+- Console 已实现项目内在线集群选择以及 Namespace List/Detail 页面；
+- Deployment、StatefulSet、DaemonSet、Job 和 CronJob 已实现按 Cluster、Namespace 和资源类型定域的
+  类型化 List/Detail 投影，变更复用通用 CRUD；只读 Console 已实现，类型化变更表单尚未实现。
 
 ### 11.3 更多只读资源
 
 - 通用资源浏览器通过 Discovery 目录读取已授权的内置资源和 CR，无需逐资源增加后端接口；
-- Deployment、StatefulSet、DaemonSet、Job 和 CronJob 的类型化产品投影；
 - Service、Ingress、配置和存储资源的类型化产品投影。
 
 ### 11.4 资源变更
