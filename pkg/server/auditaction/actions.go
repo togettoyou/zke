@@ -75,6 +75,8 @@ const (
 	KubernetesResourcePatchDryRun  = "kubernetes_resource.patch.dry_run"
 	KubernetesResourceDeleteDryRun = "kubernetes_resource.delete.dry_run"
 	KubernetesPodLogsRead          = "kubernetes_pod.logs.read"
+	KubernetesPodExecSessionCreate = "kubernetes_pod.exec_session.create"
+	KubernetesPodExec              = "kubernetes_pod.exec"
 	KubernetesEventRead            = "kubernetes_event.read"
 
 	// Written by the Agent connection, not by an operator: the Agent asks for a
@@ -110,6 +112,7 @@ const (
 	DeniedClusterEnrollmentRead = "cluster.enrollment.read"
 	DeniedClusterRead           = "cluster.read"
 	DeniedClusterPodLogsRead    = "cluster.pod.logs.read"
+	DeniedClusterPodExec        = "cluster.pod.exec"
 	DeniedClusterEventRead      = "cluster.event.read"
 	DeniedClusterManage         = "cluster.manage"
 	DeniedClusterResourceCreate = "cluster.resource.create"
@@ -249,6 +252,8 @@ var actions = []Action{
 	{KubernetesResourcePatchDryRun, GroupKubernetes},
 	{KubernetesResourceDeleteDryRun, GroupKubernetes},
 	{KubernetesPodLogsRead, GroupKubernetes},
+	{KubernetesPodExecSessionCreate, GroupKubernetes},
+	{KubernetesPodExec, GroupKubernetes},
 	{KubernetesEventRead, GroupKubernetes},
 
 	{DeniedTenantRead, GroupDenied},
@@ -257,6 +262,7 @@ var actions = []Action{
 	{DeniedProjectManage, GroupDenied},
 	{DeniedClusterRead, GroupDenied},
 	{DeniedClusterPodLogsRead, GroupDenied},
+	{DeniedClusterPodExec, GroupDenied},
 	{DeniedClusterEventRead, GroupDenied},
 	{DeniedClusterManage, GroupDenied},
 	{DeniedClusterResourceCreate, GroupDenied},

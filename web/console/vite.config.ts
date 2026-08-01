@@ -28,8 +28,9 @@ export default defineConfig({
         {
           target: serverTarget,
           changeOrigin: false,
-          // Server-Sent Events must not be buffered by the dev proxy.
-          ws: false,
+          // Keep SSE unbuffered and forward WebSocket Upgrade for Pod terminal
+          // sessions through the same-origin development endpoint.
+          ws: true,
         },
       ]),
     ),

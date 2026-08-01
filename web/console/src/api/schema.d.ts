@@ -575,6 +575,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 为明确 Cluster、Namespace、Pod UID 和 Container 创建一次性 Web Terminal 票据。
+         *     请求必须显式确认并携带 Idempotency-Key；票据与当前用户和登录 Session 绑定，短时
+         *     有效且只能消费一次。实际 Shell 由 Agent 固定选择：优先 bash，不存在时回退
+         *     /bin/sh，不接受客户端指定任意启动命令。
+         */
+        post: operations["createKubernetesPodTerminalSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 使用一次性票据升级为 WebSocket。客户端必须发送 Origin 和
+         *     Sec-WebSocket-Protocol: zke.pod-exec.v1；服务端校验同源、用户、登录 Session、
+         *     Cluster 和 Pod 路径绑定后消费票据。WebSocket 客户端消息使用
+         *     KubernetesPodExecClientMessage，服务端消息使用 KubernetesPodExecServerMessage；
+         *     data 是 JSON 中的 Base64 字符串。会话有最大时长、空闲超时、输入/输出字节上限，
+         *     并周期性重新验证登录 Session 和 cluster.pod.exec 权限。终端输入输出不进入日志或审计。
+         */
+        get: operations["connectKubernetesPodTerminal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/events": {
         parameters: {
             query?: never;
@@ -1004,7 +1050,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.event.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.event.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -1616,6 +1662,64 @@ export interface components {
             continue_token: string;
             resource_version: string;
             remaining_item_count: number | null;
+        };
+        KubernetesPodExecSessionRequest: {
+            /** @description 当前 Pod UID；Agent 在打开 Exec 前再次校验。 */
+            uid: string;
+            container: string;
+            /** Format: uint32 */
+            columns: number;
+            /** Format: uint32 */
+            rows: number;
+            /** @constant */
+            confirm: true;
+        };
+        KubernetesPodExecSession: {
+            session_id: components["schemas"]["UUID"];
+            expires_at: components["schemas"]["Timestamp"];
+            websocket_path: string;
+            /** @constant */
+            subprotocol: "zke.pod-exec.v1";
+        };
+        /**
+         * @description WebSocket 客户端消息。type=stdin 时 data 为必填 Base64；type=resize 时
+         *     columns 和 rows 必填；type=close_stdin 不携带其他字段。
+         */
+        KubernetesPodExecClientMessage: {
+            /** @constant */
+            type: "stdin";
+            /** Format: byte */
+            data: string;
+        } | {
+            /** @constant */
+            type: "resize";
+            columns: number;
+            rows: number;
+        } | {
+            /** @constant */
+            type: "close_stdin";
+        };
+        /**
+         * @description WebSocket 服务端消息。stdout/stderr 的 data 是 Base64；exit 是唯一终止帧，
+         *     携带退出码、结果、输出字节数和是否命中输出上限。
+         */
+        KubernetesPodExecServerMessage: {
+            /** @enum {string} */
+            type: "stdout" | "stderr";
+            /** Format: byte */
+            data: string;
+        } | {
+            /** @constant */
+            type: "exit";
+            /** @enum {string} */
+            result: "ok" | "invalid_argument" | "unauthenticated" | "forbidden" | "not_found" | "conflict" | "resource_exhausted" | "unavailable" | "timeout" | "canceled" | "internal";
+            /** Format: int32 */
+            exit_code?: number;
+            reason?: string;
+            message?: string;
+            /** Format: uint64 */
+            output_bytes?: number;
+            output_limit_reached?: boolean;
         };
         KubernetesDeletePodRequest: {
             /** @default false */
@@ -3394,6 +3498,83 @@ export interface operations {
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesPodTerminalSession: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesPodExecSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description 一次性 Pod Terminal Session 票据 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodExecSession"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    connectKubernetesPodTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+                session_id: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebSocket 已升级；协商子协议为 zke.pod-exec.v1。 */
+            101: {
+                headers: {
+                    "Sec-WebSocket-Protocol"?: "zke.pod-exec.v1";
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 一次性 Session 已过期 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Unavailable"];
         };
     };
     streamKubernetesEvents: {

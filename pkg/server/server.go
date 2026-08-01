@@ -26,6 +26,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/pki"
+	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
@@ -191,6 +192,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxPodLogBytes:              cfg.AgentListener.MaxPodLogBytes,
 			MaxPodLogsStreams:           cfg.AgentListener.MaxPodLogsStreams,
 			MaxPodLogsRequests:          cfg.AgentListener.MaxPodLogsRequests,
+			PodExecRequestTimeout:       cfg.AgentListener.PodExecRequestTimeout,
+			MaxPodExecInputBytes:        cfg.AgentListener.MaxPodExecInputBytes,
+			MaxPodExecOutputBytes:       cfg.AgentListener.MaxPodExecOutputBytes,
+			MaxPodExecStreams:           cfg.AgentListener.MaxPodExecStreams,
+			MaxPodExecRequests:          cfg.AgentListener.MaxPodExecRequests,
 			ResourceWatchRequestTimeout: cfg.AgentListener.ResourceWatchRequestTimeout,
 			MaxResourceWatchStreams:     cfg.AgentListener.MaxResourceWatchStreams,
 			MaxResourceWatchRequests:    cfg.AgentListener.MaxResourceWatchRequests,
@@ -228,6 +234,15 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		agentConnectionManager,
 		podlogs.Config{MaxBytes: cfg.AgentListener.MaxPodLogBytes},
 	)
+	podExecService := podexec.NewService(
+		agentConnectionManager,
+		podexec.Config{
+			SessionTTL:     cfg.AgentListener.PodExecSessionTTL,
+			MaxPending:     cfg.AgentListener.MaxPendingPodExecSessions,
+			MaxInputBytes:  cfg.AgentListener.MaxPodExecInputBytes,
+			MaxOutputBytes: cfg.AgentListener.MaxPodExecOutputBytes,
+		},
+	)
 	resourceWatchService := resourcewatch.NewService(agentConnectionManager)
 	resourceManagementService := resourcemanagement.NewService(
 		store.NewResourceManagementStore(database),
@@ -252,6 +267,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			AgentStatusService:        agentStatusService,
 			KubernetesResourceService: kubernetesResourceService,
 			PodLogsService:            podLogsService,
+			PodExecService:            podExecService,
 			ResourceWatchService:      resourceWatchService,
 			ResourceManagementService: resourceManagementService,
 			AccessManagementService:   accessManagementService,
@@ -273,6 +289,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				SnapshotTimeout:       cfg.Auth.OperationTimeout,
 				MaximumFollowDuration: cfg.AgentListener.PodLogsRequestTimeout,
 				WriteTimeout:          cfg.AgentListener.WriteTimeout,
+			},
+			PodExec: httpapi.PodExecHTTPConfig{
+				MaximumDuration: cfg.AgentListener.PodExecRequestTimeout,
+				WriteTimeout:    cfg.AgentListener.WriteTimeout,
 			},
 			KubernetesEvents: httpapi.KubernetesEventsHTTPConfig{
 				SnapshotTimeout:       cfg.Auth.OperationTimeout,

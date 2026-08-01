@@ -23,6 +23,7 @@ var allPermissions = []Permission{
 	PermissionClusterEnrollmentRevoke,
 	PermissionClusterRead,
 	PermissionClusterPodLogsRead,
+	PermissionClusterPodExec,
 	PermissionClusterEventRead,
 	PermissionClusterManage,
 	PermissionClusterResourceCreate,

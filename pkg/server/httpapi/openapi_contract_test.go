@@ -158,7 +158,8 @@ func validateOperationResponses(
 	hasSuccess := false
 	hasClientError := false
 	for status := range responses {
-		hasSuccess = hasSuccess || strings.HasPrefix(status, "2")
+		isSuccess := strings.HasPrefix(status, "2") || status == "101"
+		hasSuccess = hasSuccess || isSuccess
 		hasClientError = hasClientError || strings.HasPrefix(status, "4")
 		if strings.HasPrefix(status, "2") {
 			validateSuccessResponseEnvelope(t, method, path, status, responses[status])

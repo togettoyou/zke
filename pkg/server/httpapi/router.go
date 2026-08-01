@@ -17,6 +17,7 @@ import (
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
+	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
@@ -36,6 +37,7 @@ type Dependencies struct {
 	AgentStatusService        *agentstatus.Service
 	KubernetesResourceService *kubernetesresource.Service
 	PodLogsService            *podlogs.Service
+	PodExecService            *podexec.Service
 	ResourceWatchService      *resourcewatch.Service
 	ResourceManagementService *resourcemanagement.Service
 	AccessManagementService   *accessmanagement.Service
@@ -45,6 +47,7 @@ type Config struct {
 	Authentication   AuthenticationConfig
 	AgentEnrollment  AgentEnrollmentHTTPConfig
 	PodLogs          PodLogsHTTPConfig
+	PodExec          PodExecHTTPConfig
 	KubernetesEvents KubernetesEventsHTTPConfig
 }
 
@@ -60,6 +63,7 @@ type handlers struct {
 	kubernetesNamespace     *kubernetesNamespaceHandler
 	kubernetesPod           *kubernetesPodHandler
 	kubernetesPodLogs       *kubernetesPodLogsHandler
+	kubernetesPodExec       *kubernetesPodExecHandler
 	kubernetesEvents        *kubernetesEventsHandler
 	kubernetesWorkload      *kubernetesWorkloadHandler
 	kubernetesResource      *kubernetesResourceHandler
@@ -174,6 +178,15 @@ func New(
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 			config.PodLogs,
+		),
+		kubernetesPodExec: newKubernetesPodExecHandler(
+			logger,
+			dependencies.PodExecService,
+			dependencies.AuthService,
+			dependencies.RBACService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+			config.PodExec,
 		),
 		kubernetesEvents: newKubernetesEventsHandler(
 			logger,

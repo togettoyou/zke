@@ -141,6 +141,16 @@ agent_listener:
   max_pod_log_bytes: 16777216
   max_pod_logs_streams_per_agent: 8
   max_concurrent_pod_logs_requests: 256
+
+  # Web Terminal sessions are one-time, short-lived tickets bound to the
+  # authenticated user, login session, Cluster, Pod UID, and container.
+  pod_exec_request_timeout: 15m
+  max_pod_exec_input_bytes: 16777216
+  max_pod_exec_output_bytes: 33554432
+  max_pod_exec_streams_per_agent: 4
+  max_concurrent_pod_exec_requests: 128
+  pod_exec_session_ttl: 30s
+  max_pending_pod_exec_sessions: 1024
   # Kubernetes Event Resource Watch 使用独立的全局和每 Agent 容量预算。
   resource_watch_request_timeout: 30m
   max_resource_watch_streams_per_agent: 16

@@ -116,6 +116,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				cfg.Connection.MaxResourceBodyBytes,
 			),
 			podLogsHandler:       newKubernetesPodLogsHandler(kubernetesClient),
+			podExecHandler:       newKubernetesPodExecHandler(kubernetesClient, kubernetesConfig),
 			resourceWatchHandler: newKubernetesResourceWatchHandler(kubernetesClient),
 		},
 	)

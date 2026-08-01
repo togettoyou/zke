@@ -67,6 +67,10 @@ type ConnectionConfig struct {
 	MaxPodLogsStreamTimeout           time.Duration
 	MaxConcurrentPodLogsStreams       int
 	MaxPodLogBytes                    uint64
+	MaxPodExecStreamTimeout           time.Duration
+	MaxConcurrentPodExecStreams       int
+	MaxPodExecInputBytes              uint64
+	MaxPodExecOutputBytes             uint64
 	MaxResourceWatchStreamTimeout     time.Duration
 	MaxConcurrentResourceWatchStreams int
 }
@@ -101,6 +105,10 @@ type fileConfig struct {
 		MaxPodLogsStreamTimeout           string  `yaml:"max_pod_logs_stream_timeout"`
 		MaxConcurrentPodLogsStreams       *int    `yaml:"max_concurrent_pod_logs_streams"`
 		MaxPodLogBytes                    *uint64 `yaml:"max_pod_log_bytes"`
+		MaxPodExecStreamTimeout           string  `yaml:"max_pod_exec_stream_timeout"`
+		MaxConcurrentPodExecStreams       *int    `yaml:"max_concurrent_pod_exec_streams"`
+		MaxPodExecInputBytes              *uint64 `yaml:"max_pod_exec_input_bytes"`
+		MaxPodExecOutputBytes             *uint64 `yaml:"max_pod_exec_output_bytes"`
 		MaxResourceWatchStreamTimeout     string  `yaml:"max_resource_watch_stream_timeout"`
 		MaxConcurrentResourceWatchStreams *int    `yaml:"max_concurrent_resource_watch_streams"`
 	} `yaml:"connection"`
@@ -139,6 +147,10 @@ func LoadConfig(args []string) (Config, error) {
 			MaxPodLogsStreamTimeout:           30 * time.Minute,
 			MaxConcurrentPodLogsStreams:       8,
 			MaxPodLogBytes:                    16 * 1024 * 1024,
+			MaxPodExecStreamTimeout:           15 * time.Minute,
+			MaxConcurrentPodExecStreams:       4,
+			MaxPodExecInputBytes:              16 * 1024 * 1024,
+			MaxPodExecOutputBytes:             32 * 1024 * 1024,
 			MaxResourceWatchStreamTimeout:     30 * time.Minute,
 			MaxConcurrentResourceWatchStreams: 16,
 		},
@@ -301,6 +313,22 @@ func applyFile(cfg *Config, path string) error {
 		cfg.Connection.MaxPodLogBytes = *raw.Connection.MaxPodLogBytes
 	}
 	if err := applyAgentDuration(
+		&cfg.Connection.MaxPodExecStreamTimeout,
+		raw.Connection.MaxPodExecStreamTimeout,
+		"connection.max_pod_exec_stream_timeout",
+	); err != nil {
+		return err
+	}
+	if raw.Connection.MaxConcurrentPodExecStreams != nil {
+		cfg.Connection.MaxConcurrentPodExecStreams = *raw.Connection.MaxConcurrentPodExecStreams
+	}
+	if raw.Connection.MaxPodExecInputBytes != nil {
+		cfg.Connection.MaxPodExecInputBytes = *raw.Connection.MaxPodExecInputBytes
+	}
+	if raw.Connection.MaxPodExecOutputBytes != nil {
+		cfg.Connection.MaxPodExecOutputBytes = *raw.Connection.MaxPodExecOutputBytes
+	}
+	if err := applyAgentDuration(
 		&cfg.Connection.MaxResourceWatchStreamTimeout,
 		raw.Connection.MaxResourceWatchStreamTimeout,
 		"connection.max_resource_watch_stream_timeout",
@@ -434,6 +462,7 @@ func (cfg Config) Validate() error {
 		{cfg.Connection.StreamHeaderTimeout, time.Minute, "business Stream header timeout"},
 		{cfg.Connection.MaxResourceRequestTimeout, time.Hour, "Resource Stream request timeout"},
 		{cfg.Connection.MaxPodLogsStreamTimeout, time.Hour, "Pod Logs Stream timeout"},
+		{cfg.Connection.MaxPodExecStreamTimeout, time.Hour, "Pod Exec Stream timeout"},
 		{cfg.Connection.MaxResourceWatchStreamTimeout, time.Hour, "Resource Watch Stream timeout"},
 	} {
 		if item.value <= 0 {
@@ -473,6 +502,11 @@ func (cfg Config) Validate() error {
 			"business Stream header timeout must not exceed Resource Watch Stream timeout",
 		)
 	}
+	if cfg.Connection.StreamHeaderTimeout > cfg.Connection.MaxPodExecStreamTimeout {
+		return errors.New(
+			"business Stream header timeout must not exceed Pod Exec Stream timeout",
+		)
+	}
 	if cfg.Connection.MaxConcurrentResourceStreams < 1 ||
 		int64(cfg.Connection.MaxConcurrentResourceStreams) >
 			cfg.Connection.MaxIncomingStreams {
@@ -503,10 +537,26 @@ func (cfg Config) Validate() error {
 	if cfg.Connection.MaxConcurrentResourceWatchStreams < 1 ||
 		int64(cfg.Connection.MaxConcurrentResourceStreams)+
 			int64(cfg.Connection.MaxConcurrentPodLogsStreams)+
+			int64(cfg.Connection.MaxConcurrentPodExecStreams)+
 			int64(cfg.Connection.MaxConcurrentResourceWatchStreams) >
 			cfg.Connection.MaxIncomingStreams {
 		return errors.New(
 			"maximum concurrent Resource Watch Streams must be positive and fit within maximum incoming streams together with other business Streams",
+		)
+	}
+	if cfg.Connection.MaxConcurrentPodExecStreams < 1 {
+		return errors.New("maximum concurrent Pod Exec Streams must be positive")
+	}
+	if cfg.Connection.MaxPodExecInputBytes < 1 ||
+		cfg.Connection.MaxPodExecInputBytes > maxResourceBodyBytes {
+		return errors.New(
+			"maximum Pod Exec input bytes must be between 1 and 1073741824",
+		)
+	}
+	if cfg.Connection.MaxPodExecOutputBytes < 1 ||
+		cfg.Connection.MaxPodExecOutputBytes > maxResourceBodyBytes {
+		return errors.New(
+			"maximum Pod Exec output bytes must be between 1 and 1073741824",
 		)
 	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {

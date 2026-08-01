@@ -78,6 +78,13 @@ agent_listener:
   max_pod_log_bytes: 8388608
   max_pod_logs_streams_per_agent: 12
   max_concurrent_pod_logs_requests: 512
+  pod_exec_request_timeout: 12m
+  max_pod_exec_input_bytes: 4194304
+  max_pod_exec_output_bytes: 12582912
+  max_pod_exec_streams_per_agent: 6
+  max_concurrent_pod_exec_requests: 256
+  pod_exec_session_ttl: 25s
+  max_pending_pod_exec_sessions: 768
   resource_watch_request_timeout: 25m
   max_resource_watch_streams_per_agent: 10
   max_concurrent_resource_watch_requests: 600
@@ -183,6 +190,15 @@ log_level: warn
 		cfg.AgentListener.MaxResourceWatchRequests != 600 {
 		t.Fatalf("unexpected Agent Resource Watch config: %+v", cfg.AgentListener)
 	}
+	if cfg.AgentListener.PodExecRequestTimeout != 12*time.Minute ||
+		cfg.AgentListener.MaxPodExecInputBytes != 4*1024*1024 ||
+		cfg.AgentListener.MaxPodExecOutputBytes != 12*1024*1024 ||
+		cfg.AgentListener.MaxPodExecStreams != 6 ||
+		cfg.AgentListener.MaxPodExecRequests != 256 ||
+		cfg.AgentListener.PodExecSessionTTL != 25*time.Second ||
+		cfg.AgentListener.MaxPendingPodExecSessions != 768 {
+		t.Fatalf("unexpected Agent Pod Exec config: %+v", cfg.AgentListener)
+	}
 	invalidHeartbeatConfig := cfg
 	invalidHeartbeatConfig.AgentListener.HeartbeatTimeout =
 		invalidHeartbeatConfig.AgentListener.HeartbeatInterval
@@ -200,6 +216,12 @@ log_level: warn
 		8*1024*1024*1024 + 1
 	if err := oversizedBufferConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted a response buffer above 8 GiB")
+	}
+	invalidPodExecConfig := cfg
+	invalidPodExecConfig.AgentListener.MaxPodExecRequests =
+		invalidPodExecConfig.AgentListener.MaxPodExecStreams - 1
+	if err := invalidPodExecConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted global Pod Exec concurrency below the per-Agent limit")
 	}
 	partialCAConfig := cfg
 	partialCAConfig.AgentIdentity.CAPrivateKeyFile = ""

@@ -342,6 +342,15 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesNamespace.delete,
 	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/terminal-sessions",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterPodExec,
+			"cluster_id",
+		),
+		handlers.kubernetesPodExec.create,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/pods",
 		handlers.authorizationMiddleware.RequireCluster(
@@ -381,6 +390,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesPodLogs.stream,
+	)
+	// Pod terminal WebSockets have their own group so the short request timeout
+	// does not terminate an active, bounded and periodically revalidated shell.
+	podExecRoutes := apiV1.Group("/clusters")
+	podExecRoutes.Use(handlers.authMiddleware.RequireAuthentication)
+	podExecRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/terminal-sessions/:session_id",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterPodExec,
+			"cluster_id",
+		),
+		handlers.kubernetesPodExec.connect,
 	)
 	// Kubernetes Events use an independent, bounded SSE route so that the
 	// short HTTP operation timeout does not terminate a quiet follow stream.

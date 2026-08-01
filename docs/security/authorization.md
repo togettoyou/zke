@@ -72,7 +72,8 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` 和
 `cluster.connection.revoke`，以及通用 Kubernetes 写操作使用的 `cluster.resource.create`、
 `cluster.resource.update` 和 `cluster.resource.delete`，以及读取 Pod 日志使用的专用
-`cluster.pod.logs.read`，以及读取 Kubernetes Event 使用的 `cluster.event.read`。所有变更要求有效 Session 和 CSRF Token；创建
+`cluster.pod.logs.read`、Web Terminal 使用的 `cluster.pod.exec`，以及读取 Kubernetes Event 使用的
+`cluster.event.read`。所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。
 
@@ -94,6 +95,12 @@ Pod 日志读取不复用宽泛的 `cluster.read` 或通用资源写权限。请
 和容器，Server 与 Agent 通过独立日志协议执行，最终还受 Agent ServiceAccount 的 `pods/log` 最小权限约束。
 实时 Follow 会周期重新验证 Session 和 `cluster.pod.logs.read`，权限收回后立即取消。成功与失败审计记录目标
 作用域和结果，但不记录或摘要日志正文；鉴权拒绝使用同名权限动作进入 `denied` 词表。
+
+Web Terminal 使用独立的 `cluster.pod.exec`，不复用 `cluster.read` 或 Kubernetes 通用写权限。创建一次性票据
+必须通过 CSRF、幂等键和显式确认；WebSocket 必须同源并使用固定子协议，票据绑定用户、登录 Session、Cluster、
+Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证 Session 与权限，设置空闲/总时长、输入/输出
+字节和并发上限。Agent 只使用固定 Shell 选择逻辑（优先 bash，回退 `/bin/sh`），默认 ServiceAccount 仅增加
+`pods/exec` 的 `create`。审计记录票据创建、会话目标与结果，不记录终端输入输出。
 
 Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Resource 接口会拒绝并从 Discovery 中
 隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。请求必须明确 Cluster 和 Namespace，可使用受限

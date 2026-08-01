@@ -173,11 +173,12 @@ func TestRenderManifestGrantsOnlyEnabledWorkloadResources(t *testing.T) {
 		"get", "list", "update", "delete",
 	})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/log"}, []string{"get"})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/exec"}, []string{"create"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"events"}, []string{"get", "list", "watch"})
 	for _, rule := range clusterRole.Rules {
 		for _, resource := range rule.Resources {
 			if resource == "*" ||
-				(strings.Contains(resource, "/") && resource != "pods/log") {
+				(strings.Contains(resource, "/") && resource != "pods/log" && resource != "pods/exec") {
 				t.Fatalf("ClusterRole grants wildcard or Subresource access: %+v", rule)
 			}
 		}

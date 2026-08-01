@@ -40,6 +40,7 @@ const (
 	maxPodLogsTimeout             = time.Hour
 	maxPodLogsStreams             = 4096
 	maxPodLogsRequests            = 100_000
+	maxPendingPodExecSessions     = 100_000
 	maxResourceWatchStreams       = 4096
 	maxResourceWatchRequests      = 100_000
 )
@@ -417,6 +418,8 @@ func (cfg Config) validateAgentListener() error {
 		{cfg.AgentListener.WriteTimeout, maxAgentHandshakeTimeout, "Agent control write timeout"},
 		{cfg.AgentListener.ResourceRequestTimeout, maxHTTPTimeout, "Agent Resource request timeout"},
 		{cfg.AgentListener.PodLogsRequestTimeout, maxPodLogsTimeout, "Agent Pod Logs request timeout"},
+		{cfg.AgentListener.PodExecRequestTimeout, maxPodLogsTimeout, "Agent Pod Exec request timeout"},
+		{cfg.AgentListener.PodExecSessionTTL, time.Minute, "Pod Exec pending session TTL"},
 		{cfg.AgentListener.ResourceWatchRequestTimeout, maxPodLogsTimeout, "Agent Resource Watch request timeout"},
 		{cfg.AgentListener.ConnectionDrainTimeout, maxShutdownTimeout, "Agent Connection drain timeout"},
 	}); err != nil {
@@ -496,6 +499,41 @@ func (cfg Config) validateAgentListener() error {
 		return fmt.Errorf(
 			"Server Pod Logs request limit must be between the per-connection limit and %d",
 			maxPodLogsRequests,
+		)
+	}
+	if cfg.AgentListener.MaxPodExecInputBytes == 0 ||
+		cfg.AgentListener.MaxPodExecInputBytes > maxResourceBodyBytes {
+		return fmt.Errorf(
+			"Agent Pod Exec input byte limit must be between 1 and %d",
+			maxResourceBodyBytes,
+		)
+	}
+	if cfg.AgentListener.MaxPodExecOutputBytes == 0 ||
+		cfg.AgentListener.MaxPodExecOutputBytes > maxResourceBodyBytes {
+		return fmt.Errorf(
+			"Agent Pod Exec output byte limit must be between 1 and %d",
+			maxResourceBodyBytes,
+		)
+	}
+	if cfg.AgentListener.MaxPodExecStreams <= 0 ||
+		cfg.AgentListener.MaxPodExecStreams > maxPodLogsStreams {
+		return fmt.Errorf(
+			"Agent per-connection Pod Exec Stream limit must be between 1 and %d",
+			maxPodLogsStreams,
+		)
+	}
+	if cfg.AgentListener.MaxPodExecRequests < cfg.AgentListener.MaxPodExecStreams ||
+		cfg.AgentListener.MaxPodExecRequests > maxPodLogsRequests {
+		return fmt.Errorf(
+			"Server Pod Exec request limit must be between the per-connection limit and %d",
+			maxPodLogsRequests,
+		)
+	}
+	if cfg.AgentListener.MaxPendingPodExecSessions <= 0 ||
+		cfg.AgentListener.MaxPendingPodExecSessions > maxPendingPodExecSessions {
+		return fmt.Errorf(
+			"Server pending Pod Exec session limit must be between 1 and %d",
+			maxPendingPodExecSessions,
 		)
 	}
 	if cfg.AgentListener.MaxResourceWatchStreams <= 0 ||

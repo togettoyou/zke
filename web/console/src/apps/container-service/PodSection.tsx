@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, FileCode, ScrollText, Trash2 } from "lucide-react";
+import { ArrowLeft, FileCode, ScrollText, SquareTerminal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDeletePod, usePod, usePods } from "@/api/queries/pods";
@@ -27,6 +27,17 @@ import { PodLogsView } from "./PodLogsView";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
+
+/**
+ * The terminal is loaded on demand.
+ *
+ * It carries a full terminal emulator — around 300 kB — for a capability only
+ * admins hold and few sessions use. Bundling it into the application would make
+ * every operator who never opens a shell pay for it.
+ */
+const PodTerminalView = lazy(async () => ({
+  default: (await import("./PodTerminalView")).PodTerminalView,
+}));
 
 const PAGE_SIZE = 50;
 
@@ -64,6 +75,9 @@ export function PodSection({
   // The YAML editor takes over the section the same way, and for the same
   // reason: it is a document, not a field.
   const [yamlName, setYamlName] = useState<string | null>(null);
+  // So does the terminal, which additionally must not be a dialog the operator
+  // can dismiss by accident while a shell is attached.
+  const [terminalTarget, setTerminalTarget] = useState<PodLogTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<KubernetesPodSummary | null>(null);
   const [deletePreviewed, setDeletePreviewed] = useState(false);
   const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
@@ -76,9 +90,16 @@ export function PodSection({
   // log bodies carry whatever the application decided to print.
   const canReadLogs = permissions.can("cluster.pod.logs.read", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
+  // Opening a shell is its own permission, granted to admin only by default.
+  const canExec = permissions.can("cluster.pod.exec", projectScope);
 
   const onOpenLogs = useCallback(
     (pod: PodLogTarget) => setLogsTarget({ name: pod.name, uid: pod.uid }),
+    [],
+  );
+
+  const onOpenTerminal = useCallback(
+    (pod: PodLogTarget) => setTerminalTarget({ name: pod.name, uid: pod.uid }),
     [],
   );
 
@@ -148,7 +169,7 @@ export function PodSection({
       {
         id: "actions",
         header: "",
-        size: 88,
+        size: 120,
         cell: ({ row }) => (
           <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
             {/* Both actions are pinned to the Pod's UID, so a row that somehow
@@ -161,6 +182,16 @@ export function PodSection({
                 onClick={() => onOpenLogs(row.original)}
               >
                 <ScrollText />
+              </Button>
+            ) : null}
+            {canExec && row.original.uid ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`打开 ${row.original.name} 的终端`}
+                onClick={() => onOpenTerminal(row.original)}
+              >
+                <SquareTerminal />
               </Button>
             ) : null}
             {canDelete && row.original.uid ? (
@@ -177,14 +208,25 @@ export function PodSection({
         ),
       },
     ],
-    [canDelete, canReadLogs, onOpenLogs, openDelete],
+    [canDelete, canReadLogs, canExec, onOpenLogs, onOpenTerminal, openDelete],
   );
 
   const nextToken = pods.data?.continue_token ?? "";
 
   return (
     <>
-      {yamlName ? (
+      {terminalTarget ? (
+        <Suspense fallback={<LoadingState />}>
+          <PodTerminalView
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            podName={terminalTarget.name}
+            podUid={terminalTarget.uid}
+            onBack={() => setTerminalTarget(null)}
+          />
+        </Suspense>
+      ) : yamlName ? (
         <YamlEditorView
           identity={{ clusterId, version: "v1", resource: "pods", namespace, name: yamlName }}
           clusterName={clusterName}
@@ -209,8 +251,10 @@ export function PodSection({
           name={detailName}
           canDelete={canDelete}
           canReadLogs={canReadLogs}
+          canExec={canExec}
           onDelete={openDelete}
           onOpenLogs={onOpenLogs}
+          onOpenTerminal={onOpenTerminal}
           onOpenYaml={() => setYamlName(detailName)}
           onBack={() => setDetailName(null)}
         />
@@ -342,8 +386,10 @@ function PodDetailView({
   name,
   canDelete,
   canReadLogs,
+  canExec,
   onDelete,
   onOpenLogs,
+  onOpenTerminal,
   onOpenYaml,
   onBack,
 }: {
@@ -353,8 +399,10 @@ function PodDetailView({
   name: string;
   canDelete: boolean;
   canReadLogs: boolean;
+  canExec: boolean;
   onDelete: (pod: KubernetesPodSummary) => void;
   onOpenLogs: (pod: PodLogTarget) => void;
+  onOpenTerminal: (pod: PodLogTarget) => void;
   onOpenYaml: () => void;
   onBack: () => void;
 }) {
@@ -374,6 +422,12 @@ function PodDetailView({
               <Button size="sm" variant="secondary" onClick={() => onOpenLogs(pod)}>
                 <ScrollText />
                 日志
+              </Button>
+            ) : null}
+            {canExec && pod?.uid ? (
+              <Button size="sm" variant="secondary" onClick={() => onOpenTerminal(pod)}>
+                <SquareTerminal />
+                终端
               </Button>
             ) : null}
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>

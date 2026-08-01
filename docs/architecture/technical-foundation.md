@@ -206,7 +206,7 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 - 以 Kubernetes Deployment 运行，每个接入集群部署一个逻辑 Agent。
 - 使用专用 ServiceAccount，并按当前启用能力授予最小 Kubernetes RBAC 权限。
 - 默认集群业务权限包含 Node 的 `get`、`list`、`update`、`patch`，Namespace 的 `get`、`list`、`create`、`update`、`delete`，
-  Pod 的 `get`、`list`、`update`、`delete`、`pods/log` 的 `get`，以及 Deployment、StatefulSet、DaemonSet、Job 和
+  Pod 的 `get`、`list`、`update`、`delete`、`pods/log` 的 `get`、`pods/exec` 的 `create`，以及 Deployment、StatefulSet、DaemonSet、Job 和
   CronJob 主资源的完整 CRUD。Node 的 `patch` 用于停止或恢复调度；驱逐需要 `pods/eviction` Subresource，
   尚未开放。Agent 通用策略允许非 Secret 主资源的 CRUD，
   但实际读取或变更默认集合以外的内置资源、CRD 或 CR 时必须由安装方显式扩展 ServiceAccount RBAC，无需修改
@@ -371,7 +371,8 @@ Stream 上再自建一层多路复用——那样会把 QUIC 已经消除的队�
 非 Secret 主资源 CRUD，并声明 `resource.v1`、`resource-discovery.v1` 与 `resource-write.v1`；Server 提供
 Cluster 定域的 Node List/Detail、Namespace List/Detail/Create/Delete 和受控通用 Discovery/CRUD HTTP API。
 Agent 根据 Kubernetes Discovery 独立校验 GVR 的 Verb 与 Namespaced/Cluster scope，并使用有 TTL 和条目
-上限的缓存避免每次查询 Discovery，同时保持内存有界。Event、Watch、Exec 和通用 Subresource 仍待后续阶段实现。
+上限的缓存避免每次查询 Discovery，同时保持内存有界。Event Watch 与 Pod Exec 已通过独立协议实现，通用
+Subresource 仍被拒绝。
 
 Protobuf package 使用显式版本，例如 `zke.agent.v1`。协议版本与 Server、Agent 产品版本分离。已发布字段编号保留；
 删除的字段保留编号和名称；未识别字段按 Protobuf 兼容规则处理。代码生成工具固定版本，并在 CI 中执行 lint 和
@@ -876,8 +877,8 @@ Server 配置结构体与 YAML 文件一一对应：加载时先构造带默认�
 - Agent 一次性注册 Token 只通过独立 Secret 读取。Agent 自行创建身份 Secret；ServiceAccount 需要 Namespace
   内 Secret 的 `create` 权限，对固定的 Enrollment、Trust 和 identity Secret 具有 `get` 权限，并只能更新
   identity Secret。
-- Agent 默认 ClusterRole 仅为 Pod 日志增加 `pods/log` 的 `get`，并为专用 Event Watch 增加 `events` 的
-  `get/list/watch`；不授予 `pods/exec` 或 `pods/eviction`。日志和 Watch 协议都不放宽通用 Resource/Subresource
+- Agent 默认 ClusterRole 仅为 Pod 日志增加 `pods/log` 的 `get`、为 Web Terminal 增加 `pods/exec` 的
+  `create`，并为专用 Event Watch 增加 `events` 的 `get/list/watch`；不授予 `pods/eviction`。日志、Exec 和 Watch 协议都不放宽通用 Resource/Subresource
   拒绝策略。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - HTTP 注册 URL、QUIC Connection 地址、超时、心跳和重试参数需要上下限校验。
@@ -965,7 +966,7 @@ Token、证书、Secret 或完整敏感请求正文。
 - 列表搜索的索引方案：当前按名称和 ID 的子串匹配无法利用索引，规模增长后需要评估 pg_trgm 等方案；
 - 细粒度 RBAC 策略实现库和策略存储格式；
 - Kubernetes 资源任务协议；
-- Web Terminal 和日志流协议；
+- Web Terminal 会话录制与回放；
 - Volcano 与 Kueue 选型；
 - VictoriaMetrics、VictoriaLogs 和 Grafana 的具体集成方式；
 - 跨集群自动调度与多集群模型部署；

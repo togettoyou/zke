@@ -173,6 +173,13 @@ type AgentListenerConfig struct {
 	MaxPodLogBytes              uint64        `yaml:"max_pod_log_bytes"`
 	MaxPodLogsStreams           int           `yaml:"max_pod_logs_streams_per_agent"`
 	MaxPodLogsRequests          int           `yaml:"max_concurrent_pod_logs_requests"`
+	PodExecRequestTimeout       time.Duration `yaml:"pod_exec_request_timeout"`
+	MaxPodExecInputBytes        uint64        `yaml:"max_pod_exec_input_bytes"`
+	MaxPodExecOutputBytes       uint64        `yaml:"max_pod_exec_output_bytes"`
+	MaxPodExecStreams           int           `yaml:"max_pod_exec_streams_per_agent"`
+	MaxPodExecRequests          int           `yaml:"max_concurrent_pod_exec_requests"`
+	PodExecSessionTTL           time.Duration `yaml:"pod_exec_session_ttl"`
+	MaxPendingPodExecSessions   int           `yaml:"max_pending_pod_exec_sessions"`
 	ResourceWatchRequestTimeout time.Duration `yaml:"resource_watch_request_timeout"`
 	MaxResourceWatchStreams     int           `yaml:"max_resource_watch_streams_per_agent"`
 	MaxResourceWatchRequests    int           `yaml:"max_concurrent_resource_watch_requests"`
@@ -248,6 +255,13 @@ func DefaultConfig() Config {
 			MaxPodLogBytes:              16 * 1024 * 1024,
 			MaxPodLogsStreams:           8,
 			MaxPodLogsRequests:          256,
+			PodExecRequestTimeout:       15 * time.Minute,
+			MaxPodExecInputBytes:        16 * 1024 * 1024,
+			MaxPodExecOutputBytes:       32 * 1024 * 1024,
+			MaxPodExecStreams:           4,
+			MaxPodExecRequests:          128,
+			PodExecSessionTTL:           30 * time.Second,
+			MaxPendingPodExecSessions:   1024,
 			ResourceWatchRequestTimeout: 30 * time.Minute,
 			MaxResourceWatchStreams:     16,
 			MaxResourceWatchRequests:    512,

@@ -278,10 +278,17 @@ func renderManifest(
 			{
 				APIGroups: []string{""},
 				// Logs are isolated in a dedicated protocol and receive only the
-				// exact read-only Kubernetes Subresource permission. Exec and
-				// eviction remain excluded.
+				// exact read-only Kubernetes Subresource permission.
 				Resources: []string{"pods/log"},
 				Verbs:     []string{"get"},
+			},
+			{
+				APIGroups: []string{""},
+				// Interactive terminals are isolated in Pod Exec, which fixes the
+				// shell selection (bash, then /bin/sh) and validates Pod UID and
+				// container identity.
+				Resources: []string{"pods/exec"},
+				Verbs:     []string{"create"},
 			},
 			{
 				APIGroups: []string{""},

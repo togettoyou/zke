@@ -8,8 +8,7 @@
 > List/Detail 以及受控通用 Discovery/List/Get 的 Kubernetes dynamic client、Server HTTP API 和真实 QUIC
 > 闭环；通用主资源 Create/Update/Patch/Delete、DryRun、写能力协商、幂等重放、响应内存预算和真实集群 E2E
 > 已实现。类型化 Namespace CRUD 及 Console 集群选择、预检和确认闭环也已完成。
-> Pod Logs 已通过独立的 `POD_LOGS` Stream 实现有界快照和实时 Follow；Watch、Pod Exec 和通用
-> Subresource 仍待后续阶段实现。
+> Pod Logs、Resource Watch 和 Pod Exec 已通过各自独立的 Stream 实现；通用 Subresource 仍被拒绝。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
 [Agent 注册与连接](agent-enrollment-and-connection.md)。系统级技术约束参见
@@ -768,7 +767,7 @@ Node dynamic client 的 List/Detail 往返。
   Create/Patch/Delete；Console 已实现类型化创建和其他变更操作的 DryRun、影响展示与确认闭环。
 - Pod 已实现显式 Cluster/Namespace 定域的类型化 List/Detail 投影和带 UID 前置条件的删除后端；Console
   已完成列表、详情和删除确认闭环；Pod Logs 已实现有界快照、实时 Follow，以及固定 Pod UID、容器选择、
-  取消、下载和有界浏览器缓冲的 Console 闭环，Exec 和 Eviction 尚未实现。
+  取消、下载和有界浏览器缓冲的 Console 闭环；Pod Exec 与 xterm.js Console 闭环已实现，Eviction 尚未实现。
 
 ### 11.3 更多只读资源
 
@@ -788,11 +787,16 @@ Node dynamic client 的 List/Detail 往返。
 
 ### 11.5 流式能力
 
-- Resource Watch；
+- [已实现] Resource Watch；
 - [已实现] Pod Logs 有界快照与实时 Follow；
-- Pod Exec 和 Web Terminal。
+- [已实现] Pod Exec 与 Web Terminal 后端及 xterm.js Console 入口。
 
-Pod Exec 最后接入，因为它需要单独处理终端通道、尺寸变更、空闲超时、敏感权限、确认和审计。
+Pod Exec 使用独立 `pod-exec.v1` 能力和 `POD_EXEC` Stream 处理 stdin、stdout/stderr、resize 与 exit；Server
+HTTP 侧先创建一次性票据，再升级同源 WebSocket。Agent 校验 Pod UID/容器后优先通过 Kubernetes WebSocket
+streaming protocol 执行；仅在旧 API Server 或 HTTPS 代理无法完成 WebSocket Upgrade 时按 client-go/kubectl
+语义回退 SPDY。
+固定 Shell 选择逻辑优先 bash 并回退 `/bin/sh`。会话有输入/输出、空闲、总时长和并发上限，周期重验权限，
+审计不记录终端输入输出。
 
 ## 12. 验证与验收
 

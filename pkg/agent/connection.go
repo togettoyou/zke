@@ -178,6 +178,9 @@ func runConnection(
 	if services.podLogsHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityPodLogsV1)
 	}
+	if services.podExecHandler != nil {
+		capabilities = append(capabilities, agentprotocol.CapabilityPodExecV1)
+	}
 	if services.resourceWatchHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityResourceWatchV1)
 	}
@@ -222,6 +225,14 @@ func runConnection(
 		)
 	if !podLogsSupported {
 		services.podLogsHandler = nil
+	}
+	podExecSupported := services.podExecHandler != nil &&
+		serverSupportsCapability(
+			serverHello,
+			agentprotocol.CapabilityPodExecV1,
+		)
+	if !podExecSupported {
+		services.podExecHandler = nil
 	}
 	resourceWatchSupported := services.resourceWatchHandler != nil &&
 		serverSupportsCapability(serverHello, agentprotocol.CapabilityResourceWatchV1)

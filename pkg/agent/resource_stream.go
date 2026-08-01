@@ -12,6 +12,7 @@ import (
 type connectionServices struct {
 	resourceHandler      agentprotocol.ResourceHandler
 	podLogsHandler       agentprotocol.PodLogsHandler
+	podExecHandler       agentprotocol.PodExecHandler
 	resourceWatchHandler agentprotocol.ResourceWatchHandler
 }
 
@@ -48,6 +49,18 @@ func newBusinessStreamServer(
 				),
 			}
 	}
+	if services.podExecHandler != nil {
+		handlers[agentv1.StreamKind_STREAM_KIND_POD_EXEC] =
+			agentprotocol.StreamHandlerConfig{
+				MaxConcurrent: cfg.Connection.MaxConcurrentPodExecStreams,
+				MaxTimeout:    cfg.Connection.MaxPodExecStreamTimeout,
+				Handle: agentprotocol.PodExecStreamHandler(
+					cfg.Connection.MaxPodExecInputBytes,
+					cfg.Connection.MaxPodExecOutputBytes,
+					services.podExecHandler,
+				),
+			}
+	}
 	if services.resourceWatchHandler != nil {
 		handlers[agentv1.StreamKind_STREAM_KIND_RESOURCE_WATCH] =
 			agentprotocol.StreamHandlerConfig{
@@ -61,6 +74,7 @@ func newBusinessStreamServer(
 		MaxTimeout: max(
 			cfg.Connection.MaxResourceRequestTimeout,
 			cfg.Connection.MaxPodLogsStreamTimeout,
+			cfg.Connection.MaxPodExecStreamTimeout,
 			cfg.Connection.MaxResourceWatchStreamTimeout,
 		),
 		Handlers: handlers,

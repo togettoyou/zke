@@ -59,6 +59,11 @@ type Config struct {
 	MaxPodLogBytes              uint64
 	MaxPodLogsStreams           int
 	MaxPodLogsRequests          int
+	PodExecRequestTimeout       time.Duration
+	MaxPodExecInputBytes        uint64
+	MaxPodExecOutputBytes       uint64
+	MaxPodExecStreams           int
+	MaxPodExecRequests          int
 	ResourceWatchRequestTimeout time.Duration
 	MaxResourceWatchStreams     int
 	MaxResourceWatchRequests    int
@@ -86,6 +91,7 @@ type Manager struct {
 	// each session, so one busy Cluster cannot consume the whole allowance.
 	resourceAdmissions      chan struct{}
 	podLogsAdmissions       chan struct{}
+	podExecAdmissions       chan struct{}
 	resourceWatchAdmissions chan struct{}
 
 	mutex                sync.Mutex
@@ -126,6 +132,7 @@ type session struct {
 	capabilities            map[string]struct{}
 	resourceAdmissions      chan struct{}
 	podLogsAdmissions       chan struct{}
+	podExecAdmissions       chan struct{}
 	resourceWatchAdmissions chan struct{}
 	businessMu              sync.Mutex
 	businessInFlight        int
@@ -169,6 +176,11 @@ const (
 	defaultMaxPodLogBytes              = 16 * 1024 * 1024
 	defaultMaxPodLogsStreams           = 8
 	defaultMaxPodLogsRequests          = 256
+	defaultPodExecRequestTimeout       = 15 * time.Minute
+	defaultMaxPodExecInputBytes        = 16 * 1024 * 1024
+	defaultMaxPodExecOutputBytes       = 32 * 1024 * 1024
+	defaultMaxPodExecStreams           = 4
+	defaultMaxPodExecRequests          = 128
 	defaultResourceWatchRequestTimeout = 30 * time.Minute
 	defaultMaxResourceWatchStreams     = 16
 	defaultMaxResourceWatchRequests    = 512
@@ -194,6 +206,8 @@ var (
 	ErrResourceVerbUnsupported        = errors.New("Resource Stream verb is not implemented")
 	ErrPodLogsCapabilityMissing       = errors.New("target Cluster Agent does not support Pod Logs Streams")
 	ErrPodLogsRequestExhausted        = errors.New("Pod Logs Stream request capacity is exhausted")
+	ErrPodExecCapabilityMissing       = errors.New("target Cluster Agent does not support Pod Exec Streams")
+	ErrPodExecRequestExhausted        = errors.New("Pod Exec Stream request capacity is exhausted")
 	ErrResourceWatchCapabilityMissing = errors.New("target Cluster Agent does not support Resource Watch Streams")
 	ErrResourceWatchRequestExhausted  = errors.New("Resource Watch Stream request capacity is exhausted")
 )
@@ -235,6 +249,21 @@ func New(
 	if config.MaxPodLogsRequests <= 0 {
 		config.MaxPodLogsRequests = defaultMaxPodLogsRequests
 	}
+	if config.PodExecRequestTimeout <= 0 {
+		config.PodExecRequestTimeout = defaultPodExecRequestTimeout
+	}
+	if config.MaxPodExecInputBytes == 0 {
+		config.MaxPodExecInputBytes = defaultMaxPodExecInputBytes
+	}
+	if config.MaxPodExecOutputBytes == 0 {
+		config.MaxPodExecOutputBytes = defaultMaxPodExecOutputBytes
+	}
+	if config.MaxPodExecStreams <= 0 {
+		config.MaxPodExecStreams = defaultMaxPodExecStreams
+	}
+	if config.MaxPodExecRequests <= 0 {
+		config.MaxPodExecRequests = defaultMaxPodExecRequests
+	}
 	if config.ResourceWatchRequestTimeout <= 0 {
 		config.ResourceWatchRequestTimeout = defaultResourceWatchRequestTimeout
 	}
@@ -247,7 +276,10 @@ func New(
 	streamServer, err := agentprotocol.NewStreamServer(
 		agentprotocol.StreamServerConfig{
 			HeaderTimeout: config.HandshakeTimeout,
-			MaxTimeout:    config.ResourceRequestTimeout,
+			MaxTimeout: max(
+				config.ResourceRequestTimeout,
+				config.PodExecRequestTimeout,
+			),
 			OnError: func(header *agentv1.StreamHeader, err error) {
 				attributes := []any{slog.String("error", err.Error())}
 				if header != nil {
@@ -277,6 +309,7 @@ func New(
 			config.MaxResourceRequests,
 		),
 		podLogsAdmissions:       make(chan struct{}, config.MaxPodLogsRequests),
+		podExecAdmissions:       make(chan struct{}, config.MaxPodExecRequests),
 		resourceWatchAdmissions: make(chan struct{}, config.MaxResourceWatchRequests),
 		connections:             make(map[string]*session),
 		connectionsByCluster:    make(map[string]*session),
@@ -468,6 +501,10 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			chan struct{},
 			manager.config.MaxPodLogsStreams,
 		),
+		podExecAdmissions: make(
+			chan struct{},
+			manager.config.MaxPodExecStreams,
+		),
 		resourceWatchAdmissions: make(
 			chan struct{},
 			manager.config.MaxResourceWatchStreams,
@@ -514,6 +551,13 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			agentprotocol.CapabilityPodLogsV1,
 		)
 		current.capabilities[agentprotocol.CapabilityPodLogsV1] = struct{}{}
+	}
+	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityPodExecV1) {
+		serverCapabilities = append(
+			serverCapabilities,
+			agentprotocol.CapabilityPodExecV1,
+		)
+		current.capabilities[agentprotocol.CapabilityPodExecV1] = struct{}{}
 	}
 	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityResourceWatchV1) {
 		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityResourceWatchV1)
@@ -1179,6 +1223,58 @@ func (manager *Manager) RequestPodLogs(
 		request,
 		destination,
 		manager.config.MaxPodLogBytes,
+	)
+}
+
+func (manager *Manager) RequestPodExec(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.PodExecRequest,
+	peer agentprotocol.PodExecPeer,
+) (*agentv1.PodExecResponse, *agentv1.PodExecExit, error) {
+	if ctx == nil || !validation.IsUUID(clusterID) {
+		return nil, nil, errors.New("Pod Exec request Context or target Cluster ID is invalid")
+	}
+	manager.mutex.Lock()
+	current := manager.connectionsByCluster[clusterID]
+	manager.mutex.Unlock()
+	if current == nil || current.business == nil || !current.beginBusiness() {
+		return nil, nil, ErrAgentNotConnected
+	}
+	defer current.endBusiness()
+	if _, supported := current.capabilities[agentprotocol.CapabilityPodExecV1]; !supported {
+		return nil, nil, ErrPodExecCapabilityMissing
+	}
+	if !tryAcquire(manager.podExecAdmissions) {
+		return nil, nil, ErrPodExecRequestExhausted
+	}
+	defer release(manager.podExecAdmissions)
+	if !tryAcquire(current.podExecAdmissions) {
+		return nil, nil, ErrPodExecRequestExhausted
+	}
+	defer release(current.podExecAdmissions)
+
+	requestContext, cancelRequest := context.WithTimeout(ctx, manager.config.PodExecRequestTimeout)
+	defer cancelRequest()
+	deadline, _ := requestContext.Deadline()
+	timeoutMillis := max(int64(1), time.Until(deadline).Milliseconds())
+	requestID, err := streamRequestID(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return agentprotocol.DoPodExec(
+		requestContext,
+		current.business,
+		&agentv1.StreamHeader{
+			ProtocolVersion: agentprotocol.ProtocolVersion,
+			Kind:            agentv1.StreamKind_STREAM_KIND_POD_EXEC,
+			RequestId:       requestID,
+			TimeoutMillis:   uint64(timeoutMillis),
+		},
+		request,
+		peer,
+		manager.config.MaxPodExecInputBytes,
+		manager.config.MaxPodExecOutputBytes,
 	)
 }
 

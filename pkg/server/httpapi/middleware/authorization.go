@@ -306,6 +306,7 @@ func permissionTargetType(permission rbac.Permission) string {
 		return auditaction.TargetProject
 	case rbac.PermissionClusterRead,
 		rbac.PermissionClusterPodLogsRead,
+		rbac.PermissionClusterPodExec,
 		rbac.PermissionClusterEventRead,
 		rbac.PermissionClusterManage,
 		rbac.PermissionClusterConnectionRevoke:

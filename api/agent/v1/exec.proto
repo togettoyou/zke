@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+import "api/agent/v1/stream.proto";
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+message PodExecRequest {
+  string namespace = 1;
+  string pod_name = 2;
+  string pod_uid = 3;
+  string container = 4;
+  bool tty = 5;
+  uint32 columns = 6;
+  uint32 rows = 7;
+  uint64 max_output_bytes = 8;
+  uint64 max_input_bytes = 9;
+}
+
+message PodExecResponse {
+  ResultCode result = 1;
+  int32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  string pod_uid = 5;
+  string container = 6;
+}
+
+message PodExecInput {
+  bytes data = 1;
+}
+
+message PodExecResize {
+  uint32 columns = 1;
+  uint32 rows = 2;
+}
+
+message PodExecCloseInput {}
+
+enum PodExecOutputStream {
+  POD_EXEC_OUTPUT_STREAM_UNSPECIFIED = 0;
+  POD_EXEC_OUTPUT_STREAM_STDOUT = 1;
+  POD_EXEC_OUTPUT_STREAM_STDERR = 2;
+}
+
+message PodExecOutput {
+  PodExecOutputStream stream = 1;
+  bytes data = 2;
+}
+
+message PodExecExit {
+  ResultCode result = 1;
+  int32 exit_code = 2;
+  string reason = 3;
+  string message = 4;
+  uint64 output_bytes = 5;
+  bool output_limit_reached = 6;
+}
+
+message PodExecFrame {
+  oneof message {
+    PodExecInput input = 1;
+    PodExecResize resize = 2;
+    PodExecCloseInput close_input = 3;
+    PodExecOutput output = 4;
+    PodExecExit exit = 5;
+  }
+}

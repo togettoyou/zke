@@ -54,7 +54,7 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
 `get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`update`、`patch` 以及
 Namespace 的 `get`、`list`、`create`、`update`、`delete`、Pod 的 `get`、`list`、`update`、`delete` 以及 `pods/log` 的
-`get` 权限；Exec 与 Eviction Subresource 不在默认授权中。
+`get`、`pods/exec` 的 `create` 权限；Eviction Subresource 不在默认授权中。
 ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
 `http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
 原生 HTTPS 或由上游网关终止 TLS。
@@ -81,8 +81,11 @@ Cluster/Namespace 定域的类型化 List/Detail API。默认 Agent RBAC 已覆�
 并复用通用变更链路。
 其他资源仍由安装方按实际管理范围显式扩展最小 RBAC。工作负载 Console 已实现列表、详情、类型化创建和上述
 类型化变更的 DryRun、影响展示与确认闭环；Pod Console 已实现列表、详情和删除的 DryRun、影响展示与确认闭环；
-Pod Logs 后端已通过专用权限和独立 QUIC Stream 实现有界快照与实时 Follow；跨 Server 实例任务路由以及
-Watch、Exec 等流式能力仍未实现。
+Pod Logs 后端已通过专用权限和独立 QUIC Stream 实现有界快照与实时 Follow；Kubernetes Event Watch 和 Pod
+Exec 也已分别通过独立协议实现。Pod Exec 使用一次性同源 WebSocket 票据、权限重验和有界 QUIC 会话；Agent 到
+Kubernetes API Server 优先使用 WebSocket streaming protocol，仅为旧 API Server 或不兼容 HTTPS 代理保留
+SPDY 回退。Shell 固定优先
+bash 并回退 `/bin/sh`；Console 入口和跨 Server 实例任务路由仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
 `cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含

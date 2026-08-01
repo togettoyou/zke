@@ -40,6 +40,10 @@ connection:
   max_pod_logs_stream_timeout: 20m
   max_concurrent_pod_logs_streams: 12
   max_pod_log_bytes: 8388608
+  max_pod_exec_stream_timeout: 12m
+  max_concurrent_pod_exec_streams: 6
+  max_pod_exec_input_bytes: 4194304
+  max_pod_exec_output_bytes: 12582912
   max_resource_watch_stream_timeout: 25m
   max_concurrent_resource_watch_streams: 10
 log_level: debug
@@ -83,7 +87,11 @@ log_level: debug
 		cfg.Connection.MaxResourceBodyBytes != 16*1024*1024 ||
 		cfg.Connection.MaxPodLogsStreamTimeout != 20*time.Minute ||
 		cfg.Connection.MaxConcurrentPodLogsStreams != 12 ||
-		cfg.Connection.MaxPodLogBytes != 8*1024*1024 {
+		cfg.Connection.MaxPodLogBytes != 8*1024*1024 ||
+		cfg.Connection.MaxPodExecStreamTimeout != 12*time.Minute ||
+		cfg.Connection.MaxConcurrentPodExecStreams != 6 ||
+		cfg.Connection.MaxPodExecInputBytes != 4*1024*1024 ||
+		cfg.Connection.MaxPodExecOutputBytes != 12*1024*1024 {
 		t.Fatalf("unexpected Agent connection config: %+v", cfg.Connection)
 	}
 	if cfg.Connection.MaxResourceWatchStreamTimeout != 25*time.Minute ||
@@ -273,6 +281,10 @@ func validAgentConfig() Config {
 			MaxPodLogsStreamTimeout:           30 * time.Minute,
 			MaxConcurrentPodLogsStreams:       8,
 			MaxPodLogBytes:                    16 * 1024 * 1024,
+			MaxPodExecStreamTimeout:           15 * time.Minute,
+			MaxConcurrentPodExecStreams:       4,
+			MaxPodExecInputBytes:              16 * 1024 * 1024,
+			MaxPodExecOutputBytes:             32 * 1024 * 1024,
 			MaxResourceWatchStreamTimeout:     30 * time.Minute,
 			MaxConcurrentResourceWatchStreams: 16,
 		},
