@@ -44,6 +44,7 @@ type IncomingStreamHandler func(
 
 type StreamHandlerConfig struct {
 	MaxConcurrent int
+	MaxTimeout    time.Duration
 	Handle        IncomingStreamHandler
 }
 
@@ -64,6 +65,7 @@ type StreamServer struct {
 type streamHandler struct {
 	handle     IncomingStreamHandler
 	admissions chan struct{}
+	maxTimeout time.Duration
 }
 
 type streamAcceptor interface {
@@ -96,9 +98,26 @@ func NewStreamServer(config StreamServerConfig) (*StreamServer, error) {
 				kind,
 			)
 		}
+		handlerMaxTimeout := configured.MaxTimeout
+		if handlerMaxTimeout <= 0 {
+			handlerMaxTimeout = maxTimeout
+		}
+		if handlerMaxTimeout > maxTimeout {
+			return nil, fmt.Errorf(
+				"Agent business Stream %s timeout exceeds the Server maximum",
+				kind,
+			)
+		}
+		if headerTimeout > handlerMaxTimeout {
+			return nil, fmt.Errorf(
+				"Agent business Stream %s header timeout exceeds its maximum timeout",
+				kind,
+			)
+		}
 		handlers[kind] = streamHandler{
 			handle:     configured.Handle,
 			admissions: make(chan struct{}, configured.MaxConcurrent),
+			maxTimeout: handlerMaxTimeout,
 		}
 	}
 	return &StreamServer{
@@ -170,7 +189,7 @@ func (server *StreamServer) serveStream(parent context.Context, stream *quic.Str
 	}
 
 	timeout := time.Duration(header.GetTimeoutMillis()) * time.Millisecond
-	timeout = min(timeout, server.maxTimeout)
+	timeout = min(timeout, configured.maxTimeout)
 	handlerContext, cancelHandler := context.WithTimeout(parent, timeout)
 	stopStreamCancellation := context.AfterFunc(stream.Context(), cancelHandler)
 	defer func() {

@@ -21,6 +21,7 @@ const (
 	CapabilityResourceV1                 = "resource.v1"
 	CapabilityResourceDiscoveryV1        = "resource-discovery.v1"
 	CapabilityResourceWriteV1            = "resource-write.v1"
+	CapabilityPodLogsV1                  = "pod-logs.v1"
 
 	CloseNormal              quic.ApplicationErrorCode = 0
 	CloseProtocolError       quic.ApplicationErrorCode = 1

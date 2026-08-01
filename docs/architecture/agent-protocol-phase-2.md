@@ -8,7 +8,8 @@
 > List/Detail 以及受控通用 Discovery/List/Get 的 Kubernetes dynamic client、Server HTTP API 和真实 QUIC
 > 闭环；通用主资源 Create/Update/Patch/Delete、DryRun、写能力协商、幂等重放、响应内存预算和真实集群 E2E
 > 已实现。类型化 Namespace CRUD 及 Console 集群选择、预检和确认闭环也已完成。
-> Watch、Pod Logs、Pod Exec 和 Subresource 仍待后续阶段实现。
+> Pod Logs 已通过独立的 `POD_LOGS` Stream 实现有界快照和实时 Follow；Watch、Pod Exec 和通用
+> Subresource 仍待后续阶段实现。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
 [Agent 注册与连接](agent-enrollment-and-connection.md)。系统级技术约束参见
@@ -378,7 +379,7 @@ Agent 应解析 Kubernetes `Status`，映射为稳定的 `ResultCode`，并保�
 - 用户取消、请求超时或处理方主动中止：使用对应应用错误码重置当前 Stream；
 - mTLS 身份失败、Connection 身份不一致或根本不兼容的协议版本：关闭 Connection。
 
-### 6.5 大正文传输
+### 6.6 大正文传输
 
 Protobuf 只承载结构化元数据。请求和响应的大正文紧随消息，以原始字节流传输：
 
@@ -402,6 +403,35 @@ FIN
 
 列表请求优先使用 Kubernetes Table 表示，减少大型列表的字段和网络开销。详情页或 YAML 查看再请求完整
 对象。完整对象按产品需求移除不需要的 `managedFields`，但不能改变资源身份、版本或权限语义。
+
+### 6.7 Pod 日志独立协议
+
+Pod 日志不通过通用 Resource/Subresource 路由。双方只有在能力协商包含 `pod-logs.v1` 时，Server 才能为一次
+日志请求打开独立的 `POD_LOGS` 双向 Stream：
+
+```text
+StreamHeader(kind=POD_LOGS, idempotency_key="")
+PodLogsRequest(namespace, pod_name, pod_uid, container, options, max_bytes)
+FIN
+PodLogsResponse(result, pod_uid, container, follow, content_type)
+PodLogsFrame(chunk) * N
+PodLogsFrame(trailer: result, bytes_sent, limit_reached)
+FIN
+```
+
+- 请求必须显式携带 Namespace、Pod 名称、当前 Pod UID 和容器名称；不接受 Connection 绑定之外的 Cluster
+  身份，也不接受幂等键。
+- Agent 在打开日志流前读取 Pod 并验证 UID 与容器存在；日志流打开后再次读取 Pod 并复核 UID，避免同名 Pod
+  在两次 Kubernetes 请求之间被重建后泄露新 Pod 的日志。
+- `tail_lines` 最大 5000，`since_seconds` 最大 7 天；日志总字节数由双方本地上限截断，默认 16 MiB。
+- 数据使用最大 32 KiB 的有界 Protobuf Chunk 转发，不在 Agent 或 Server 完整缓冲；慢 HTTP 客户端通过
+  HTTP、QUIC 和 Kubernetes 流的背压逐级限制生产者。
+- 正常 EOF、达到字节上限、取消、超时和上游错误由终止 Trailer 区分；一旦已向 HTTP 客户端发送正文，终止
+  状态通过 HTTP Trailer 传递，不能再改写为 JSON 错误响应。
+- Follow 默认最长 30 分钟。HTTP 客户端取消、权限或 Session 撤销、超时以及 Connection 排空都会取消对应
+  Context 并重置这一条 Stream，不影响其他业务 Stream。
+- 日志正文不得写入 Server 日志、审计事件或错误消息；审计只记录 Cluster、Namespace、Pod UID、Pod 名称、
+  容器和结果。
 
 ## 7. Stream 生命周期
 
@@ -657,8 +687,9 @@ Resource Stream 是 Server 与 Agent 之间的内部协议。Server 提供受控
 - Cluster 继承所属 Project 的授权，Namespace 不是独立授权层级；
 - Agent 对 GVR、Verb、Subresource、正文和选择器执行独立 allowlist；
 - Agent 使用最小权限 Kubernetes ServiceAccount；
-- 默认安装授予 Node 的 `get/list/patch` 与 Namespace 的 `get/list/create/delete`；需要管理其他内置资源、
-  CRD 或 CR 时，由安装方显式扩展 Agent ServiceAccount RBAC；
+- 默认安装授予 Node 的 `get/list/patch`、Namespace 的 `get/list/create/delete`、Pod 的
+  `get/list/delete` 和 `pods/log` 的 `get`；需要管理其他内置资源、CRD 或 CR 时，由安装方显式扩展 Agent
+  ServiceAccount RBAC；
 - Secret 内容和任意 Subresource 不纳入当前通用 CRUD；
 - 资源变更要求显式目标、DryRun 影响预览、用户确认、幂等键和 Cluster 定域审计；
 - Pod Logs 和 Web Terminal 使用独立权限，其中 Web Terminal 属于敏感操作。
@@ -710,7 +741,8 @@ Node dynamic client 的 List/Detail 往返。
   类型化 List/Detail 投影；类型化后端支持创建、伸缩、滚动重启、CronJob 暂停/恢复和删除，底层复用通用
   Create/Patch/Delete；Console 已实现类型化创建和其他变更操作的 DryRun、影响展示与确认闭环。
 - Pod 已实现显式 Cluster/Namespace 定域的类型化 List/Detail 投影和带 UID 前置条件的删除后端；Console
-  已完成列表、详情和删除确认闭环，Logs、Exec 和 Eviction 尚未实现。
+  已完成列表、详情和删除确认闭环；Pod Logs 已实现有界快照、实时 Follow，以及固定 Pod UID、容器选择、
+  取消、下载和有界浏览器缓冲的 Console 闭环，Exec 和 Eviction 尚未实现。
 
 ### 11.3 更多只读资源
 
@@ -729,7 +761,7 @@ Node dynamic client 的 List/Detail 往返。
 ### 11.5 流式能力
 
 - Resource Watch；
-- Pod Logs；
+- [已实现] Pod Logs 有界快照与实时 Follow；
 - Pod Exec 和 Web Terminal。
 
 Pod Exec 最后接入，因为它需要单独处理终端通道、尺寸变更、空闲超时、敏感权限、确认和审计。

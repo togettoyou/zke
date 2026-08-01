@@ -218,6 +218,39 @@ func TestRealQUICStreamFailuresAreIsolated(t *testing.T) {
 	}
 }
 
+func TestStreamServerKeepsPerKindTimeoutsIndependent(t *testing.T) {
+	t.Parallel()
+
+	noop := func(context.Context, *quic.Stream, *agentv1.StreamHeader) error {
+		return nil
+	}
+	server, err := NewStreamServer(StreamServerConfig{
+		HeaderTimeout: 100 * time.Millisecond,
+		MaxTimeout:    30 * time.Minute,
+		Handlers: map[agentv1.StreamKind]StreamHandlerConfig{
+			agentv1.StreamKind_STREAM_KIND_RESOURCE: {
+				MaxConcurrent: 1,
+				MaxTimeout:    2 * time.Minute,
+				Handle:        noop,
+			},
+			agentv1.StreamKind_STREAM_KIND_POD_LOGS: {
+				MaxConcurrent: 1,
+				MaxTimeout:    30 * time.Minute,
+				Handle:        noop,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := server.handlers[agentv1.StreamKind_STREAM_KIND_RESOURCE].maxTimeout; got != 2*time.Minute {
+		t.Fatalf("Resource timeout = %s, want 2m", got)
+	}
+	if got := server.handlers[agentv1.StreamKind_STREAM_KIND_POD_LOGS].maxTimeout; got != 30*time.Minute {
+		t.Fatalf("Pod Logs timeout = %s, want 30m", got)
+	}
+}
+
 func TestRealQUICConnectionCloseCancelsResourceHandler(t *testing.T) {
 	client, server, stop := openStreamTestConnection(t)
 	defer stop()

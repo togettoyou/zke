@@ -71,7 +71,8 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `cluster.read`、`cluster.manage`、
 `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` 和
 `cluster.connection.revoke`，以及通用 Kubernetes 写操作使用的 `cluster.resource.create`、
-`cluster.resource.update` 和 `cluster.resource.delete`。所有变更要求有效 Session 和 CSRF Token；创建
+`cluster.resource.update` 和 `cluster.resource.delete`，以及读取 Pod 日志使用的专用
+`cluster.pod.logs.read`。所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。
 
@@ -83,6 +84,11 @@ Update 要求 `resourceVersion`，Apply 默认不抢占字段所有权，Delete 
 DryRun 使用独立的 `.dry_run` 审计动作，不会与实际写入混记。类型化 Namespace 创建与删除沿用相同安全
 边界：实际操作必须确认，删除可携带 UID/resourceVersion 前置条件，Console 在确认前先执行服务端 DryRun
 并展示目标 Cluster 与影响。
+
+Pod 日志读取不复用宽泛的 `cluster.read` 或通用资源写权限。请求必须明确 Cluster、Namespace、Pod 当前 UID
+和容器，Server 与 Agent 通过独立日志协议执行，最终还受 Agent ServiceAccount 的 `pods/log` 最小权限约束。
+实时 Follow 会周期重新验证 Session 和 `cluster.pod.logs.read`，权限收回后立即取消。成功与失败审计记录目标
+作用域和结果，但不记录或摘要日志正文；鉴权拒绝使用同名权限动作进入 `denied` 词表。
 
 管理端不暴露独立 Agent 资源。连接身份属于 Cluster 聚合内部状态，连接撤销接口
 `POST /api/v1/clusters/{cluster_id}/connection/revoke` 按 Cluster ID 解析 Project 作用域，要求

@@ -39,9 +39,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   列表/详情、Namespace 作用域选择器与全部变更的 DryRun、确认、幂等和审计闭环（高级 Pod 配置和
   类型化更新表单尚未支持）
 - [x] Pod 管理（显式 Cluster/Namespace 定域的类型化 List/Detail/Delete、Agent 最小 RBAC、DryRun、
-  UID 前置条件、确认、幂等、审计与 Console 列表/详情/删除闭环；Logs、Exec 和 Eviction 属于
-  Subresource，仍未支持）
-- [ ] Pod 日志
+  UID 前置条件、确认、幂等、审计与 Console 列表/详情/删除闭环；Exec 和 Eviction 仍未支持）
+- [x] Pod 日志（专用权限与 Agent 最小 RBAC、有界快照、实时 Follow、UID 防重建校验、取消、限流、超时、
+  审计、HTTP/QUIC 流式测试，以及 Console 的容器选择、跟随、下载与取消闭环；浏览器不暴露 HTTP Trailer，
+  Console 暂无法区分日志流的终止原因）
 - [ ] Web Terminal
 - [ ] YAML 管理
 - [ ] Kubernetes Event

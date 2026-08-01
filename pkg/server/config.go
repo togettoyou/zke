@@ -169,6 +169,10 @@ type AgentListenerConfig struct {
 	MaxBufferedResourceBytes uint64        `yaml:"max_buffered_resource_response_bytes"`
 	MaxResourceStreams       int           `yaml:"max_resource_streams_per_agent"`
 	MaxResourceRequests      int           `yaml:"max_concurrent_resource_requests"`
+	PodLogsRequestTimeout    time.Duration `yaml:"pod_logs_request_timeout"`
+	MaxPodLogBytes           uint64        `yaml:"max_pod_log_bytes"`
+	MaxPodLogsStreams        int           `yaml:"max_pod_logs_streams_per_agent"`
+	MaxPodLogsRequests       int           `yaml:"max_concurrent_pod_logs_requests"`
 
 	// TLS is derived from agent_pki, not configured under agent_listener.
 	TLS TLSIdentityConfig `yaml:"-"`
@@ -237,6 +241,10 @@ func DefaultConfig() Config {
 			MaxBufferedResourceBytes: 256 * 1024 * 1024,
 			MaxResourceStreams:       64,
 			MaxResourceRequests:      4096,
+			PodLogsRequestTimeout:    30 * time.Minute,
+			MaxPodLogBytes:           16 * 1024 * 1024,
+			MaxPodLogsStreams:        8,
+			MaxPodLogsRequests:       256,
 		},
 		CertificateMonitor: CertificateMonitorConfig{
 			WarningBefore: 30 * 24 * time.Hour,

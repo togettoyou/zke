@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+import "api/agent/v1/stream.proto";
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+message PodLogsRequest {
+  string namespace = 1;
+  string pod_name = 2;
+  string pod_uid = 3;
+  string container = 4;
+  bool follow = 5;
+  bool previous = 6;
+  optional int64 tail_lines = 7;
+  optional int64 since_seconds = 8;
+  bool timestamps = 9;
+  uint64 max_bytes = 10;
+}
+
+message PodLogsResponse {
+  ResultCode result = 1;
+  int32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  string pod_uid = 5;
+  string container = 6;
+  bool follow = 7;
+  string content_type = 8;
+}
+
+message PodLogsChunk {
+  bytes data = 1;
+}
+
+message PodLogsTrailer {
+  ResultCode result = 1;
+  string reason = 2;
+  string message = 3;
+  uint64 bytes_sent = 4;
+  bool limit_reached = 5;
+}
+
+message PodLogsFrame {
+  oneof message {
+    PodLogsChunk chunk = 1;
+    PodLogsTrailer trailer = 2;
+  }
+}

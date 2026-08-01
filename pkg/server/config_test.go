@@ -74,6 +74,10 @@ agent_listener:
   max_buffered_resource_response_bytes: 134217728
   max_resource_streams_per_agent: 32
   max_concurrent_resource_requests: 2048
+  pod_logs_request_timeout: 20m
+  max_pod_log_bytes: 8388608
+  max_pod_logs_streams_per_agent: 12
+  max_concurrent_pod_logs_requests: 512
 shutdown_timeout: 8s
 log_level: warn
 `)
@@ -164,7 +168,11 @@ log_level: warn
 		cfg.AgentListener.MaxResourceBodyBytes != 16*1024*1024 ||
 		cfg.AgentListener.MaxBufferedResourceBytes != 128*1024*1024 ||
 		cfg.AgentListener.MaxResourceStreams != 32 ||
-		cfg.AgentListener.MaxResourceRequests != 2048 {
+		cfg.AgentListener.MaxResourceRequests != 2048 ||
+		cfg.AgentListener.PodLogsRequestTimeout != 20*time.Minute ||
+		cfg.AgentListener.MaxPodLogBytes != 8*1024*1024 ||
+		cfg.AgentListener.MaxPodLogsStreams != 12 ||
+		cfg.AgentListener.MaxPodLogsRequests != 512 {
 		t.Fatalf("unexpected Agent Listener config: %+v", cfg.AgentListener)
 	}
 	invalidHeartbeatConfig := cfg

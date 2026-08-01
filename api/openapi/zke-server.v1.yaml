@@ -4,7 +4,7 @@ info:
   version: v1
   description: |
     ZKE 用户管理、资源管理、Cluster 接入管理和内部 Agent 注册使用的 HTTP API 契约。
-    除 SSE 事件流与 YAML Manifest 外，所有 JSON 响应统一使用
+    除 SSE 事件流、Pod 原始日志流与 YAML Manifest 外，所有 JSON 响应统一使用
     `code`、`message`、`data` 三字段信封。`code` 与 HTTP 状态码一致；
     成功响应的 `message` 固定为 `Success`；失败响应的 `data` 包含稳定
     `error_code` 和请求关联 `request_id`。
@@ -1699,6 +1699,108 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs:
+    get:
+      tags: [Resources]
+      operationId: streamKubernetesPodLogs
+      description: |
+        通过目标 Cluster 的 Agent 读取指定 Pod UID 和 Container 的日志。默认返回最近
+        200 行的有界快照；follow=true 时实时转发新日志，直到客户端取消、权限或 Session
+        被撤销、达到最大时长或字节上限。响应正文是未包装的 UTF-8 文本，不进入 JSON
+        信封；终止原因、是否达到字节上限和已发送字节数通过 HTTP Trailer 返回。日志正文
+        不写入 Server 日志或审计事件。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+        - name: uid
+          in: query
+          required: true
+          description: 当前 Pod UID；Agent 在打开日志前校验，避免读取同名重建 Pod。
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: container
+          in: query
+          required: true
+          description: Pod 中明确的主容器、初始化容器或临时容器名称。
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 63
+        - name: follow
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: previous
+          in: query
+          description: 读取该容器上一个终止实例的日志。
+          schema:
+            type: boolean
+            default: false
+        - name: tail_lines
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+            maximum: 5000
+            default: 200
+        - name: since_seconds
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            maximum: 604800
+        - name: timestamps
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Pod 日志快照或实时文本流
+          headers:
+            X-ZKE-Log-Result:
+              description: succeeded、timeout、canceled、access_revoked 或 failed。
+              schema:
+                type: string
+            X-ZKE-Log-Limit-Reached:
+              description: 是否因服务端字节上限结束。
+              schema:
+                type: boolean
+            X-ZKE-Log-Bytes:
+              description: 已发送到 HTTP 客户端的日志字节数。
+              schema:
+                type: integer
+                format: uint64
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}:
     get:
       tags: [Resources]
@@ -3210,6 +3312,7 @@ components:
               - cluster.enrollment.read
               - cluster.enrollment.revoke
               - cluster.read
+              - cluster.pod.logs.read
               - cluster.manage
               - cluster.resource.create
               - cluster.resource.update

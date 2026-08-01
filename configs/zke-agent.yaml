@@ -49,5 +49,10 @@ connection:
   max_resource_request_timeout: 2m
   max_concurrent_resource_streams: 64
   max_resource_body_bytes: 33554432
+  # Pod logs use a dedicated Stream type and do not weaken the generic
+  # Resource protocol's Subresource deny rule.
+  max_pod_logs_stream_timeout: 30m
+  max_concurrent_pod_logs_streams: 8
+  max_pod_log_bytes: 16777216
 
 log_level: info

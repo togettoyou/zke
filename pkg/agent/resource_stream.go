@@ -11,6 +11,7 @@ import (
 
 type connectionServices struct {
 	resourceHandler agentprotocol.ResourceHandler
+	podLogsHandler  agentprotocol.PodLogsHandler
 }
 
 func newBusinessStreamServer(
@@ -22,22 +23,37 @@ func newBusinessStreamServer(
 ) (*agentprotocol.StreamServer, error) {
 	handlers := make(
 		map[agentv1.StreamKind]agentprotocol.StreamHandlerConfig,
-		1,
+		2,
 	)
 	if resourceSupported && services.resourceHandler != nil {
 		handlers[agentv1.StreamKind_STREAM_KIND_RESOURCE] =
 			agentprotocol.StreamHandlerConfig{
 				MaxConcurrent: cfg.Connection.MaxConcurrentResourceStreams,
+				MaxTimeout:    cfg.Connection.MaxResourceRequestTimeout,
 				Handle: agentprotocol.ResourceStreamHandler(
 					cfg.Connection.MaxResourceBodyBytes,
 					services.resourceHandler,
 				),
 			}
 	}
+	if services.podLogsHandler != nil {
+		handlers[agentv1.StreamKind_STREAM_KIND_POD_LOGS] =
+			agentprotocol.StreamHandlerConfig{
+				MaxConcurrent: cfg.Connection.MaxConcurrentPodLogsStreams,
+				MaxTimeout:    cfg.Connection.MaxPodLogsStreamTimeout,
+				Handle: agentprotocol.PodLogsStreamHandler(
+					cfg.Connection.MaxPodLogBytes,
+					services.podLogsHandler,
+				),
+			}
+	}
 	return agentprotocol.NewStreamServer(agentprotocol.StreamServerConfig{
 		HeaderTimeout: cfg.Connection.StreamHeaderTimeout,
-		MaxTimeout:    cfg.Connection.MaxResourceRequestTimeout,
-		Handlers:      handlers,
+		MaxTimeout: max(
+			cfg.Connection.MaxResourceRequestTimeout,
+			cfg.Connection.MaxPodLogsStreamTimeout,
+		),
+		Handlers: handlers,
 		OnError: func(header *agentv1.StreamHeader, err error) {
 			attributes := []any{slog.String("error", err.Error())}
 			if header != nil {

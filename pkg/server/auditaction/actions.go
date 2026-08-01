@@ -74,6 +74,7 @@ const (
 	KubernetesResourceUpdateDryRun = "kubernetes_resource.update.dry_run"
 	KubernetesResourcePatchDryRun  = "kubernetes_resource.patch.dry_run"
 	KubernetesResourceDeleteDryRun = "kubernetes_resource.delete.dry_run"
+	KubernetesPodLogsRead          = "kubernetes_pod.logs.read"
 
 	// Written by the Agent connection, not by an operator: the Agent asks for a
 	// new client certificate over the control stream and the Server signs it.
@@ -107,6 +108,7 @@ const (
 	DeniedProjectManage         = "project.manage"
 	DeniedClusterEnrollmentRead = "cluster.enrollment.read"
 	DeniedClusterRead           = "cluster.read"
+	DeniedClusterPodLogsRead    = "cluster.pod.logs.read"
 	DeniedClusterManage         = "cluster.manage"
 	DeniedClusterResourceCreate = "cluster.resource.create"
 	DeniedClusterResourceUpdate = "cluster.resource.update"
@@ -244,12 +246,14 @@ var actions = []Action{
 	{KubernetesResourceUpdateDryRun, GroupKubernetes},
 	{KubernetesResourcePatchDryRun, GroupKubernetes},
 	{KubernetesResourceDeleteDryRun, GroupKubernetes},
+	{KubernetesPodLogsRead, GroupKubernetes},
 
 	{DeniedTenantRead, GroupDenied},
 	{DeniedTenantManage, GroupDenied},
 	{DeniedProjectRead, GroupDenied},
 	{DeniedProjectManage, GroupDenied},
 	{DeniedClusterRead, GroupDenied},
+	{DeniedClusterPodLogsRead, GroupDenied},
 	{DeniedClusterManage, GroupDenied},
 	{DeniedClusterResourceCreate, GroupDenied},
 	{DeniedClusterResourceUpdate, GroupDenied},

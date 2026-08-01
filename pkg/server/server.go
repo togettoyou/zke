@@ -26,6 +26,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/pki"
+	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 	"github.com/togettoyou/zke/pkg/server/store"
@@ -185,6 +186,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxResourceBodyBytes:     cfg.AgentListener.MaxResourceBodyBytes,
 			MaxResourceStreams:       cfg.AgentListener.MaxResourceStreams,
 			MaxResourceRequests:      cfg.AgentListener.MaxResourceRequests,
+			PodLogsRequestTimeout:    cfg.AgentListener.PodLogsRequestTimeout,
+			MaxPodLogBytes:           cfg.AgentListener.MaxPodLogBytes,
+			MaxPodLogsStreams:        cfg.AgentListener.MaxPodLogsStreams,
+			MaxPodLogsRequests:       cfg.AgentListener.MaxPodLogsRequests,
 		},
 		logger,
 		agentConnectionStore,
@@ -215,6 +220,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			),
 		},
 	)
+	podLogsService := podlogs.NewService(
+		agentConnectionManager,
+		podlogs.Config{MaxBytes: cfg.AgentListener.MaxPodLogBytes},
+	)
 	resourceManagementService := resourcemanagement.NewService(
 		store.NewResourceManagementStore(database),
 		rbacService,
@@ -237,6 +246,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			AgentManagementService:    agentManagementService,
 			AgentStatusService:        agentStatusService,
 			KubernetesResourceService: kubernetesResourceService,
+			PodLogsService:            podLogsService,
 			ResourceManagementService: resourceManagementService,
 			AccessManagementService:   accessManagementService,
 		},
@@ -252,6 +262,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				OperationTimeout:     cfg.AgentEnrollment.OperationTimeout,
 				RateLimitWindow:      cfg.AgentEnrollment.RateLimit.Window,
 				MaxAttemptsPerSource: cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource,
+			},
+			PodLogs: httpapi.PodLogsHTTPConfig{
+				SnapshotTimeout:       cfg.Auth.OperationTimeout,
+				MaximumFollowDuration: cfg.AgentListener.PodLogsRequestTimeout,
+				WriteTimeout:          cfg.AgentListener.WriteTimeout,
 			},
 		},
 	)

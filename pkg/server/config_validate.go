@@ -37,6 +37,9 @@ const (
 	maxBufferedResourceBytes      = 8 * 1024 * 1024 * 1024
 	maxResourceStreams            = 4096
 	maxResourceRequests           = 1_000_000
+	maxPodLogsTimeout             = time.Hour
+	maxPodLogsStreams             = 4096
+	maxPodLogsRequests            = 100_000
 )
 
 // boundedDuration describes a duration that must be positive and capped.
@@ -411,6 +414,7 @@ func (cfg Config) validateAgentListener() error {
 		{cfg.AgentListener.OperationTimeout, maxAuthOperation, "Agent connection operation timeout"},
 		{cfg.AgentListener.WriteTimeout, maxAgentHandshakeTimeout, "Agent control write timeout"},
 		{cfg.AgentListener.ResourceRequestTimeout, maxHTTPTimeout, "Agent Resource request timeout"},
+		{cfg.AgentListener.PodLogsRequestTimeout, maxPodLogsTimeout, "Agent Pod Logs request timeout"},
 		{cfg.AgentListener.ConnectionDrainTimeout, maxShutdownTimeout, "Agent Connection drain timeout"},
 	}); err != nil {
 		return err
@@ -467,6 +471,28 @@ func (cfg Config) validateAgentListener() error {
 		return fmt.Errorf(
 			"Server Resource request limit must be between the per-connection limit and %d",
 			maxResourceRequests,
+		)
+	}
+	if cfg.AgentListener.MaxPodLogBytes == 0 ||
+		cfg.AgentListener.MaxPodLogBytes > maxResourceBodyBytes {
+		return fmt.Errorf(
+			"Agent Pod log byte limit must be between 1 and %d",
+			maxResourceBodyBytes,
+		)
+	}
+	if cfg.AgentListener.MaxPodLogsStreams <= 0 ||
+		cfg.AgentListener.MaxPodLogsStreams > maxPodLogsStreams {
+		return fmt.Errorf(
+			"Agent per-connection Pod Logs Stream limit must be between 1 and %d",
+			maxPodLogsStreams,
+		)
+	}
+	if cfg.AgentListener.MaxPodLogsRequests <
+		cfg.AgentListener.MaxPodLogsStreams ||
+		cfg.AgentListener.MaxPodLogsRequests > maxPodLogsRequests {
+		return fmt.Errorf(
+			"Server Pod Logs request limit must be between the per-connection limit and %d",
+			maxPodLogsRequests,
 		)
 	}
 	return nil

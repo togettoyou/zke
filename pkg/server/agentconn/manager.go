@@ -55,6 +55,10 @@ type Config struct {
 	MaxResourceBodyBytes    uint64
 	MaxResourceStreams      int
 	MaxResourceRequests     int
+	PodLogsRequestTimeout   time.Duration
+	MaxPodLogBytes          uint64
+	MaxPodLogsStreams       int
+	MaxPodLogsRequests      int
 	// MaxRememberedDisconnects bounds how many disconnected Agents keep a
 	// last-known status in memory, so Cluster churn cannot grow the Server
 	// heap without limit.
@@ -78,6 +82,7 @@ type Manager struct {
 	// resourceAdmissions is an instance-wide bound. Per-Agent bounds live on
 	// each session, so one busy Cluster cannot consume the whole allowance.
 	resourceAdmissions chan struct{}
+	podLogsAdmissions  chan struct{}
 
 	mutex                sync.Mutex
 	connections          map[string]*session
@@ -116,8 +121,9 @@ type session struct {
 	disconnectReason     string
 	capabilities         map[string]struct{}
 	resourceAdmissions   chan struct{}
-	resourceMu           sync.Mutex
-	resourceInFlight     int
+	podLogsAdmissions    chan struct{}
+	businessMu           sync.Mutex
+	businessInFlight     int
 	draining             bool
 	drainOnce            sync.Once
 	drainTimer           *time.Timer
@@ -154,6 +160,10 @@ const (
 	defaultMaxResourceBodyBytes     = 32 * 1024 * 1024
 	defaultMaxResourceStreams       = 64
 	defaultMaxResourceRequests      = 4096
+	defaultPodLogsRequestTimeout    = 30 * time.Minute
+	defaultMaxPodLogBytes           = 16 * 1024 * 1024
+	defaultMaxPodLogsStreams        = 8
+	defaultMaxPodLogsRequests       = 256
 
 	// Bounds for re-establishing the revocation watch after the listening
 	// PostgreSQL connection drops. The ceiling is kept well under the
@@ -174,6 +184,8 @@ var (
 	ErrResourceCapabilityMissing = errors.New("target Cluster Agent does not support Resource Streams")
 	ErrResourceRequestExhausted  = errors.New("Resource Stream request capacity is exhausted")
 	ErrResourceVerbUnsupported   = errors.New("Resource Stream verb is not implemented")
+	ErrPodLogsCapabilityMissing  = errors.New("target Cluster Agent does not support Pod Logs Streams")
+	ErrPodLogsRequestExhausted   = errors.New("Pod Logs Stream request capacity is exhausted")
 )
 
 func New(
@@ -200,6 +212,18 @@ func New(
 	}
 	if config.MaxResourceRequests <= 0 {
 		config.MaxResourceRequests = defaultMaxResourceRequests
+	}
+	if config.PodLogsRequestTimeout <= 0 {
+		config.PodLogsRequestTimeout = defaultPodLogsRequestTimeout
+	}
+	if config.MaxPodLogBytes == 0 {
+		config.MaxPodLogBytes = defaultMaxPodLogBytes
+	}
+	if config.MaxPodLogsStreams <= 0 {
+		config.MaxPodLogsStreams = defaultMaxPodLogsStreams
+	}
+	if config.MaxPodLogsRequests <= 0 {
+		config.MaxPodLogsRequests = defaultMaxPodLogsRequests
 	}
 	streamServer, err := agentprotocol.NewStreamServer(
 		agentprotocol.StreamServerConfig{
@@ -233,6 +257,7 @@ func New(
 			chan struct{},
 			config.MaxResourceRequests,
 		),
+		podLogsAdmissions:    make(chan struct{}, config.MaxPodLogsRequests),
 		connections:          make(map[string]*session),
 		connectionsByCluster: make(map[string]*session),
 		lastDisconnected:     make(map[string]ConnectionStatus),
@@ -419,6 +444,10 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			chan struct{},
 			manager.config.MaxResourceStreams,
 		),
+		podLogsAdmissions: make(
+			chan struct{},
+			manager.config.MaxPodLogsStreams,
+		),
 	}
 	serverCapabilities := []string{
 		agentprotocol.CapabilityCertificateRenewal,
@@ -454,6 +483,13 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			current.capabilities[agentprotocol.CapabilityResourceWriteV1] =
 				struct{}{}
 		}
+	}
+	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityPodLogsV1) {
+		serverCapabilities = append(
+			serverCapabilities,
+			agentprotocol.CapabilityPodLogsV1,
+		)
+		current.capabilities[agentprotocol.CapabilityPodLogsV1] = struct{}{}
 	}
 	previous := manager.register(current)
 	if previous != nil {
@@ -999,10 +1035,10 @@ func (manager *Manager) requestResource(
 	if current == nil || current.business == nil {
 		return nil, ErrAgentNotConnected
 	}
-	if !current.beginResource() {
+	if !current.beginBusiness() {
 		return nil, ErrAgentNotConnected
 	}
-	defer current.endResource()
+	defer current.endBusiness()
 	if _, supported := current.capabilities[agentprotocol.CapabilityResourceV1]; !supported {
 		return nil, ErrResourceCapabilityMissing
 	}
@@ -1036,7 +1072,7 @@ func (manager *Manager) requestResource(
 	defer cancelRequest()
 	deadline, _ := requestContext.Deadline()
 	timeoutMillis := max(int64(1), time.Until(deadline).Milliseconds())
-	requestID, err := resourceRequestID(ctx)
+	requestID, err := streamRequestID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1057,14 +1093,75 @@ func (manager *Manager) requestResource(
 	)
 }
 
-func resourceRequestID(ctx context.Context) (string, error) {
+func (manager *Manager) RequestPodLogs(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.PodLogsRequest,
+	destination io.Writer,
+) (*agentv1.PodLogsResponse, *agentv1.PodLogsTrailer, error) {
+	if ctx == nil {
+		return nil, nil, errors.New("Pod logs request Context is required")
+	}
+	if !validation.IsUUID(clusterID) {
+		return nil, nil, errors.New("target Cluster ID is invalid")
+	}
+	manager.mutex.Lock()
+	current := manager.connectionsByCluster[clusterID]
+	manager.mutex.Unlock()
+	if current == nil || current.business == nil {
+		return nil, nil, ErrAgentNotConnected
+	}
+	if !current.beginBusiness() {
+		return nil, nil, ErrAgentNotConnected
+	}
+	defer current.endBusiness()
+	if _, supported := current.capabilities[agentprotocol.CapabilityPodLogsV1]; !supported {
+		return nil, nil, ErrPodLogsCapabilityMissing
+	}
+	if !tryAcquire(manager.podLogsAdmissions) {
+		return nil, nil, ErrPodLogsRequestExhausted
+	}
+	defer release(manager.podLogsAdmissions)
+	if !tryAcquire(current.podLogsAdmissions) {
+		return nil, nil, ErrPodLogsRequestExhausted
+	}
+	defer release(current.podLogsAdmissions)
+
+	timeout := manager.config.PodLogsRequestTimeout
+	if timeout <= 0 {
+		timeout = defaultPodLogsRequestTimeout
+	}
+	requestContext, cancelRequest := context.WithTimeout(ctx, timeout)
+	defer cancelRequest()
+	deadline, _ := requestContext.Deadline()
+	timeoutMillis := max(int64(1), time.Until(deadline).Milliseconds())
+	requestID, err := streamRequestID(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return agentprotocol.DoPodLogs(
+		requestContext,
+		current.business,
+		&agentv1.StreamHeader{
+			ProtocolVersion: agentprotocol.ProtocolVersion,
+			Kind:            agentv1.StreamKind_STREAM_KIND_POD_LOGS,
+			RequestId:       requestID,
+			TimeoutMillis:   uint64(timeoutMillis),
+		},
+		request,
+		destination,
+		manager.config.MaxPodLogBytes,
+	)
+}
+
+func streamRequestID(ctx context.Context) (string, error) {
 	requestID := requestctx.ID(ctx)
 	if validation.IsUUID(requestID) {
 		return requestID, nil
 	}
 	requestID, err := identifier.NewUUID()
 	if err != nil {
-		return "", fmt.Errorf("generate Resource request identifier: %w", err)
+		return "", fmt.Errorf("generate business Stream request identifier: %w", err)
 	}
 	return requestID, nil
 }
@@ -1251,41 +1348,41 @@ func (manager *Manager) handleRevocation(
 	}
 }
 
-func (current *session) beginResource() bool {
-	current.resourceMu.Lock()
-	defer current.resourceMu.Unlock()
+func (current *session) beginBusiness() bool {
+	current.businessMu.Lock()
+	defer current.businessMu.Unlock()
 	if current.draining {
 		return false
 	}
-	current.resourceInFlight++
+	current.businessInFlight++
 	return true
 }
 
-func (current *session) endResource() {
-	current.resourceMu.Lock()
-	if current.resourceInFlight > 0 {
-		current.resourceInFlight--
+func (current *session) endBusiness() {
+	current.businessMu.Lock()
+	if current.businessInFlight > 0 {
+		current.businessInFlight--
 	}
-	drained := current.draining && current.resourceInFlight == 0
-	current.resourceMu.Unlock()
+	drained := current.draining && current.businessInFlight == 0
+	current.businessMu.Unlock()
 	if drained {
 		current.finishDrain()
 	}
 }
 
 func (current *session) startDrain(timeout time.Duration, finish func()) {
-	current.resourceMu.Lock()
+	current.businessMu.Lock()
 	if current.draining {
-		current.resourceMu.Unlock()
+		current.businessMu.Unlock()
 		return
 	}
 	current.draining = true
 	current.drainFinish = finish
-	drained := current.resourceInFlight == 0
+	drained := current.businessInFlight == 0
 	if !drained {
 		current.drainTimer = time.AfterFunc(timeout, current.finishDrain)
 	}
-	current.resourceMu.Unlock()
+	current.businessMu.Unlock()
 	if drained {
 		current.finishDrain()
 	}
@@ -1293,13 +1390,13 @@ func (current *session) startDrain(timeout time.Duration, finish func()) {
 
 func (current *session) finishDrain() {
 	current.drainOnce.Do(func() {
-		current.resourceMu.Lock()
+		current.businessMu.Lock()
 		if current.drainTimer != nil {
 			current.drainTimer.Stop()
 			current.drainTimer = nil
 		}
 		finish := current.drainFinish
-		current.resourceMu.Unlock()
+		current.businessMu.Unlock()
 		if finish != nil {
 			finish()
 		}

@@ -107,6 +107,12 @@ func TestRoleAndScopeRules(t *testing.T) {
 	if roleGrants("viewer", PermissionClusterEnrollmentCreate) {
 		t.Fatal("viewer role granted cluster.enrollment.create")
 	}
+	if !roleGrants("admin", PermissionClusterPodLogsRead) {
+		t.Fatal("admin role did not grant cluster.pod.logs.read")
+	}
+	if roleGrants("viewer", PermissionClusterPodLogsRead) {
+		t.Fatal("viewer role granted cluster.pod.logs.read")
+	}
 	if !roleGrants("admin", PermissionTenantCreate) ||
 		!roleGrants("admin", PermissionProjectCreate) {
 		t.Fatal("admin role did not grant resource creation permissions")

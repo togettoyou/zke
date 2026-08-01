@@ -29,6 +29,8 @@
   Field Selector；
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：删除明确作用域内的
   Pod，强制要求 UID 前置条件，并支持 DryRun、显式确认、幂等、删除传播策略和审计；
+- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs`：要求当前 Pod UID、
+  明确容器和专用 `cluster.pod.logs.read` 权限，支持默认最近 200 行的有界快照以及 `follow=true` 实时流；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resource-types`：返回目标 Cluster 当前 Discovery 可见的
   内置资源和 CRD 资源目录；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resources`：按 GVR、Namespace、Selector 和 Kubernetes
@@ -49,7 +51,8 @@
 - Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`patch`，Namespace 的
   `get`、`list`、`create`、`delete`，Pod 的 `get`、`list`、`delete`，以及 Deployment、StatefulSet、
-  DaemonSet、Job 和 CronJob 的完整主资源 CRUD 权限；Pod Logs、Exec、Eviction Subresource 仍未授权，
+  DaemonSet、Job 和 CronJob 的完整主资源 CRUD 权限，并单独授予 `pods/log` 的 `get`；Exec、Eviction
+  Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
 
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
@@ -86,14 +89,33 @@ Pod 类型化后端返回统一元数据、Phase、Ready、Node、Pod IP、控�
 Annotations、完整 Owner References、调度与网络信息、主容器、初始化容器和 Ephemeral Container 的当前/上次
 状态、资源 requests/limits、重启次数以及 Pod Conditions。删除 Pod 时必须携带当前 UID，避免误删同名重建对象；
 由 Deployment、StatefulSet、DaemonSet、Job 等控制器管理的 Pod 删除后通常会被控制器重新创建。Pod 删除不是
-Eviction，不执行 PodDisruptionBudget 语义；Logs、Exec 和 Eviction 仍因 Subresource 边界留待后续设计。
+Eviction，不执行 PodDisruptionBudget 语义；Logs 通过独立协议和最小 `pods/log` 权限实现，不会放宽通用
+Subresource 边界，Exec 和 Eviction 仍留待后续设计。
+
+Pod 日志后端在读取前和打开 Kubernetes 日志流后分别核对 Pod UID，避免同名 Pod 重建竞态；支持主容器、
+初始化容器和临时容器，`tail_lines` 最大 5000、`since_seconds` 最大 7 天。快照和 Follow 都使用独立 QUIC
+Stream 逐块转发，默认每条最多 16 MiB，Follow 最长 30 分钟。Follow 会周期重新验证 Session 和权限；客户端
+断开、权限撤销、超时或 Agent 连接排空都会取消目标 Kubernetes 请求。HTTP 正文为未包装的 `text/plain`，
+终止状态和字节统计通过 Trailer 返回，日志正文不会进入 Server 日志或审计事件。
 
 Console Pod 页面列出所选命名空间的 Pod，展示 Phase、就绪与终止状态、控制器 Owner、节点、Pod IP、累计重启
 次数和创建时间，可下钻到包含调度与网络信息、主容器/初始化容器/临时容器的当前与上次状态、资源
 requests/limits、Owner References、Conditions、标签和注解的详情页。Phase 与就绪分开展示，因为 `Running`
 并不等于健康；带 `deletionTimestamp` 的 Pod 单独标记为「删除中」。删除需要 `cluster.resource.delete`，同样
 先执行 DryRun 再确认，确认弹窗要求输入 Pod 名称，并在该 Pod 有控制器时明确说明删除后通常会被重新创建。
-页面不提供任何需要 Subresource 的入口。
+页面不提供 Exec 或 Eviction 入口。
+
+Console 日志入口在 Pod 列表行和详情页，需要 `cluster.pod.logs.read`。日志读取占据整个应用视图而不是弹窗，
+可以按容器（含初始化容器与临时容器）、尾部行数、时间范围、时间戳和「上一个实例」读取，并支持实时跟随。
+请求固定携带打开日志入口时的 Pod UID；详情刷新发现同名 Pod 已重建时停止读取并要求返回列表重新打开。跟随流
+在切换任一选项、点击停止或离开视图时被 abort，Server 据此取消目标
+Kubernetes 请求。浏览器端缓冲上限约 2 000 000 字符，超出后丢弃较早的行并在状态栏说明；自动滚动只在视图已
+位于底部时生效，操作者向上翻阅时不会被拉回。
+
+Server 通过 HTTP Trailer 返回终止状态（`succeeded`、`timeout`、`canceled`、`access_revoked`、`failed`）和
+字节统计，但主流浏览器的 `fetch` 均不暴露 Trailer，因此 Console 目前无法区分「正常结束」与「服务端因字节
+上限、时长上限或权限撤销提前结束」，两者都显示为「已结束」。如果需要在界面上区分，需要另行设计在正文内或
+响应头中传达该状态的方式。
 
 Console 工作负载页面在目标 Cluster 和 Namespace 内按类型切换 Deployment、StatefulSet、DaemonSet、Job 和
 CronJob，列表展示状态、副本或 Job/CronJob 进度、镜像和创建时间，可下钻到包含副本或 Job/CronJob 状态、
@@ -128,7 +150,8 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 - 集群概览；
 - 节点驱逐，以及它依赖的 Subresource allowlist 设计；
 - 工作负载的高级 Pod 配置（环境变量、资源限制、存储卷、探针）与类型化更新表单；
-- Pod 日志与 Web Terminal；
+- Web Terminal；
+- 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
 - Service 与 Ingress；
 - ConfigMap 与 Secret；
 - PersistentVolume、PersistentVolumeClaim 与 StorageClass；

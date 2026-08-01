@@ -552,6 +552,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的 Agent 读取指定 Pod UID 和 Container 的日志。默认返回最近
+         *     200 行的有界快照；follow=true 时实时转发新日志，直到客户端取消、权限或 Session
+         *     被撤销、达到最大时长或字节上限。响应正文是未包装的 UTF-8 文本，不进入 JSON
+         *     信封；终止原因、是否达到字节上限和已发送字节数通过 HTTP Trailer 返回。日志正文
+         *     不写入 Server 日志或审计事件。
+         */
+        get: operations["streamKubernetesPodLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}": {
         parameters: {
             query?: never;
@@ -927,7 +950,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -3238,6 +3261,56 @@ export interface operations {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["KubernetesDeleteResult"];
                     };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    streamKubernetesPodLogs: {
+        parameters: {
+            query: {
+                /** @description 当前 Pod UID；Agent 在打开日志前校验，避免读取同名重建 Pod。 */
+                uid: string;
+                /** @description Pod 中明确的主容器、初始化容器或临时容器名称。 */
+                container: string;
+                follow?: boolean;
+                /** @description 读取该容器上一个终止实例的日志。 */
+                previous?: boolean;
+                tail_lines?: number;
+                since_seconds?: number;
+                timestamps?: boolean;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pod 日志快照或实时文本流 */
+            200: {
+                headers: {
+                    /** @description succeeded、timeout、canceled、access_revoked 或 failed。 */
+                    "X-ZKE-Log-Result"?: string;
+                    /** @description 是否因服务端字节上限结束。 */
+                    "X-ZKE-Log-Limit-Reached"?: boolean;
+                    /** @description 已发送到 HTTP 客户端的日志字节数。 */
+                    "X-ZKE-Log-Bytes"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
                 };
             };
             400: components["responses"]["InvalidRequest"];

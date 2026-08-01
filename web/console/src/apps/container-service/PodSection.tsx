@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, ScrollText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDeletePod, usePod, usePods } from "@/api/queries/pods";
@@ -23,6 +23,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { ContinuePager } from "./ContinuePager";
+import { PodLogsView } from "./PodLogsView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 
@@ -33,12 +34,15 @@ type PodSectionProps = ClusterSectionProps & {
   namespace: string;
 };
 
+type PodLogTarget = Pick<KubernetesPodSummary, "name" | "uid">;
+
 /**
  * Pods of one Namespace of one Cluster.
  *
- * Reading and deleting is the whole of it. Logs, exec and eviction are
- * Kubernetes subresources, which the Resource protocol rejects outright, so this
- * section deliberately offers no control that would need one.
+ * Reading, reading logs and deleting is the whole of it. Logs travel over their
+ * own protocol with their own permission rather than through the Resource
+ * stream, which rejects subresources outright; exec and eviction have no such
+ * path yet, so this section offers no control that would need one.
  */
 export function PodSection({
   clusterId,
@@ -54,6 +58,8 @@ export function PodSection({
     ...(pager.token ? { continue: pager.token } : {}),
   });
   const [detailName, setDetailName] = useState<string | null>(null);
+  // The log reader takes over the whole section: a log is read, not glanced at.
+  const [logsTarget, setLogsTarget] = useState<PodLogTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<KubernetesPodSummary | null>(null);
   const [deletePreviewed, setDeletePreviewed] = useState(false);
   const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
@@ -62,6 +68,14 @@ export function PodSection({
 
   const projectScope = { type: "project" as const, tenantId, projectId };
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  // Reading logs is its own permission rather than part of reading the Cluster:
+  // log bodies carry whatever the application decided to print.
+  const canReadLogs = permissions.can("cluster.pod.logs.read", projectScope);
+
+  const onOpenLogs = useCallback(
+    (pod: PodLogTarget) => setLogsTarget({ name: pod.name, uid: pod.uid }),
+    [],
+  );
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -129,12 +143,22 @@ export function PodSection({
       {
         id: "actions",
         header: "",
-        size: 48,
-        cell: ({ row }) =>
-          // The endpoint requires a UID precondition, so a Pod that arrived
-          // without one has no deletion this Console can safely submit.
-          canDelete && row.original.uid ? (
-            <div className="flex justify-end" onClick={(event) => event.stopPropagation()}>
+        size: 88,
+        cell: ({ row }) => (
+          <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+            {/* Both actions are pinned to the Pod's UID, so a row that somehow
+                arrived without one gets neither. */}
+            {canReadLogs && row.original.uid ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`查看 ${row.original.name} 的日志`}
+                onClick={() => onOpenLogs(row.original)}
+              >
+                <ScrollText />
+              </Button>
+            ) : null}
+            {canDelete && row.original.uid ? (
               <Button
                 size="icon-sm"
                 variant="ghost"
@@ -143,32 +167,44 @@ export function PodSection({
               >
                 <Trash2 />
               </Button>
-            </div>
-          ) : null,
+            ) : null}
+          </div>
+        ),
       },
     ],
-    [canDelete, openDelete],
+    [canDelete, canReadLogs, onOpenLogs, openDelete],
   );
 
   const nextToken = pods.data?.continue_token ?? "";
 
   return (
     <>
-      {detailName ? (
+      {logsTarget ? (
+        <PodLogsView
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+          podName={logsTarget.name}
+          podUid={logsTarget.uid}
+          onBack={() => setLogsTarget(null)}
+        />
+      ) : detailName ? (
         <PodDetailView
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
           name={detailName}
           canDelete={canDelete}
+          canReadLogs={canReadLogs}
           onDelete={openDelete}
+          onOpenLogs={onOpenLogs}
           onBack={() => setDetailName(null)}
         />
       ) : (
         <div className="flex h-full min-h-0 flex-col">
           <SectionTitle
             title={`Pod · ${clusterName} / ${namespace}`}
-            description="删除先执行 Kubernetes 服务端 DryRun 再由操作者确认。删除不是驱逐，不执行 PodDisruptionBudget 语义；日志和终端尚未支持。"
+            description="日志按容器读取，支持快照与实时跟随。删除先执行 Kubernetes 服务端 DryRun 再由操作者确认；删除不是驱逐，不执行 PodDisruptionBudget 语义。终端尚未支持。"
           />
           <DataTable
             columns={columns}
@@ -291,7 +327,9 @@ function PodDetailView({
   namespace,
   name,
   canDelete,
+  canReadLogs,
   onDelete,
+  onOpenLogs,
   onBack,
 }: {
   clusterId: string;
@@ -299,7 +337,9 @@ function PodDetailView({
   namespace: string;
   name: string;
   canDelete: boolean;
+  canReadLogs: boolean;
   onDelete: (pod: KubernetesPodSummary) => void;
+  onOpenLogs: (pod: PodLogTarget) => void;
   onBack: () => void;
 }) {
   const detail = usePod(clusterId, namespace, name);
@@ -314,6 +354,12 @@ function PodDetailView({
         description={`读取自集群 ${clusterName} 的 ${namespace}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
+            {canReadLogs && pod?.uid ? (
+              <Button size="sm" variant="secondary" onClick={() => onOpenLogs(pod)}>
+                <ScrollText />
+                日志
+              </Button>
+            ) : null}
             {canDelete && pod?.uid ? (
               <Button
                 size="sm"

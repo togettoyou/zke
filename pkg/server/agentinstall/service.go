@@ -272,8 +272,15 @@ func renderManifest(
 			{
 				APIGroups: []string{""},
 				Resources: []string{"pods"},
-				// Pod logs, Exec and eviction are Subresources and remain excluded.
-				Verbs: []string{"get", "list", "delete"},
+				Verbs:     []string{"get", "list", "delete"},
+			},
+			{
+				APIGroups: []string{""},
+				// Logs are isolated in a dedicated protocol and receive only the
+				// exact read-only Kubernetes Subresource permission. Exec and
+				// eviction remain excluded.
+				Resources: []string{"pods/log"},
+				Verbs:     []string{"get"},
 			},
 			{
 				APIGroups: []string{"apps"},

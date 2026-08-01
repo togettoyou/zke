@@ -22,8 +22,8 @@ func TestSessionDrainWaitsForInFlightResources(t *testing.T) {
 	t.Parallel()
 
 	current := &session{}
-	first := current.beginResource()
-	second := current.beginResource()
+	first := current.beginBusiness()
+	second := current.beginBusiness()
 	if !first || !second {
 		t.Fatal("session rejected a Resource request before draining")
 	}
@@ -31,14 +31,14 @@ func TestSessionDrainWaitsForInFlightResources(t *testing.T) {
 	current.startDrain(time.Second, func() {
 		finished.Add(1)
 	})
-	if current.beginResource() {
+	if current.beginBusiness() {
 		t.Fatal("draining session accepted a new Resource request")
 	}
-	current.endResource()
+	current.endBusiness()
 	if finished.Load() != 0 {
 		t.Fatal("session drained before all Resource requests ended")
 	}
-	current.endResource()
+	current.endBusiness()
 	if finished.Load() != 1 {
 		t.Fatalf("drain completion calls = %d, want 1", finished.Load())
 	}
@@ -48,7 +48,7 @@ func TestResourceRequestIDReusesHTTPCorrelationID(t *testing.T) {
 	t.Parallel()
 
 	const requestID = "00000000-0000-4000-8000-000000000099"
-	got, err := resourceRequestID(requestctx.WithID(context.Background(), requestID))
+	got, err := streamRequestID(requestctx.WithID(context.Background(), requestID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestResourceRequestIDReusesHTTPCorrelationID(t *testing.T) {
 		t.Fatalf("resourceRequestID() = %q, want %q", got, requestID)
 	}
 
-	fallback, err := resourceRequestID(
+	fallback, err := streamRequestID(
 		requestctx.WithID(context.Background(), "not-a-uuid"),
 	)
 	if err != nil {
@@ -71,7 +71,7 @@ func TestSessionDrainHasBoundedDeadline(t *testing.T) {
 	t.Parallel()
 
 	current := &session{}
-	if !current.beginResource() {
+	if !current.beginBusiness() {
 		t.Fatal("session rejected a Resource request before draining")
 	}
 	finished := make(chan struct{})
@@ -83,7 +83,7 @@ func TestSessionDrainHasBoundedDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("session drain did not honor its deadline")
 	}
-	current.endResource()
+	current.endBusiness()
 }
 
 const (

@@ -175,6 +175,9 @@ func runConnection(
 			agentprotocol.CapabilityResourceWriteV1,
 		)
 	}
+	if services.podLogsHandler != nil {
+		capabilities = append(capabilities, agentprotocol.CapabilityPodLogsV1)
+	}
 	if err := agentprotocol.WriteFrame(controlStream, &agentv1.ControlFrame{
 		ProtocolVersion: agentprotocol.ProtocolVersion,
 		Message: &agentv1.ControlFrame_ClientHello{
@@ -209,6 +212,14 @@ func runConnection(
 			serverHello,
 			agentprotocol.CapabilityResourceV1,
 		)
+	podLogsSupported := services.podLogsHandler != nil &&
+		serverSupportsCapability(
+			serverHello,
+			agentprotocol.CapabilityPodLogsV1,
+		)
+	if !podLogsSupported {
+		services.podLogsHandler = nil
+	}
 	businessServer, err := newBusinessStreamServer(
 		cfg,
 		services,

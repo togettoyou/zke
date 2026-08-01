@@ -64,6 +64,36 @@ func TestBindingLookupsAreNotSharedWithoutACache(t *testing.T) {
 	}
 }
 
+func TestWithoutBindingCacheShadowsInheritedRequestCache(t *testing.T) {
+	t.Parallel()
+
+	counting := &countingStore{fakeStore: fakeStore{
+		bindings: []store.RoleBinding{{Role: RoleAdmin, ScopeType: "global"}},
+	}}
+	service := NewService(counting)
+	requestContext := WithBindingCache(context.Background())
+	if err := service.AuthorizeGlobal(
+		requestContext,
+		testUserID,
+		PermissionUserRead,
+	); err != nil {
+		t.Fatal(err)
+	}
+	streamContext := WithoutBindingCache(requestContext)
+	for range 2 {
+		if err := service.AuthorizeGlobal(
+			streamContext,
+			testUserID,
+			PermissionUserRead,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if counting.calls != 3 {
+		t.Fatalf("role binding lookups = %d, want 3", counting.calls)
+	}
+}
+
 // Two requests must not see each other's bindings.
 func TestBindingCacheIsScopedToOneContext(t *testing.T) {
 	t.Parallel()

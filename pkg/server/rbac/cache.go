@@ -31,6 +31,13 @@ func WithBindingCache(ctx context.Context) context.Context {
 	})
 }
 
+// WithoutBindingCache prevents a cache inherited from an HTTP request from
+// being reused by a later authorization check. Long-lived streams use it when
+// periodically revalidating access so a withdrawn RoleBinding takes effect.
+func WithoutBindingCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bindingCacheKey{}, (*bindingCache)(nil))
+}
+
 // listRoleBindings resolves a subject's bindings, reusing the request-scoped
 // memo when one is installed.
 func (service *Service) listRoleBindings(

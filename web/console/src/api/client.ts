@@ -118,6 +118,30 @@ export function unwrap<T>(result: ApiResult<T>, options: UnwrapOptions = {}): T 
 }
 
 /**
+ * Turns a failed raw response into the same {@link ApiError} the envelope path
+ * raises, including the global session reset on 401.
+ *
+ * Streaming endpoints answer with `text/plain` rather than the JSON envelope, so
+ * they cannot go through {@link unwrap} — but a failure before the stream starts
+ * is still an ordinary error envelope, and must reach the operator worded and
+ * handled exactly like every other one.
+ */
+export async function raiseResponseError(response: Response): Promise<never> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    // A failure that is not an envelope: the status line is all there is.
+    body = undefined;
+  }
+  const error = toApiError(response, body);
+  if (error.status === 401) {
+    notifyUnauthenticated();
+  }
+  throw error;
+}
+
+/**
  * Same as {@link unwrap} for endpoints whose payload carries no information.
  * These answer 200 with `data: null` rather than 204, so the envelope is still
  * parsed and a failure still raises.

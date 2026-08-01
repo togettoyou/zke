@@ -64,6 +64,9 @@ type ConnectionConfig struct {
 	MaxResourceRequestTimeout    time.Duration
 	MaxConcurrentResourceStreams int
 	MaxResourceBodyBytes         uint64
+	MaxPodLogsStreamTimeout      time.Duration
+	MaxConcurrentPodLogsStreams  int
+	MaxPodLogBytes               uint64
 }
 
 type fileConfig struct {
@@ -93,6 +96,9 @@ type fileConfig struct {
 		MaxResourceRequestTimeout    string  `yaml:"max_resource_request_timeout"`
 		MaxConcurrentResourceStreams *int    `yaml:"max_concurrent_resource_streams"`
 		MaxResourceBodyBytes         *uint64 `yaml:"max_resource_body_bytes"`
+		MaxPodLogsStreamTimeout      string  `yaml:"max_pod_logs_stream_timeout"`
+		MaxConcurrentPodLogsStreams  *int    `yaml:"max_concurrent_pod_logs_streams"`
+		MaxPodLogBytes               *uint64 `yaml:"max_pod_log_bytes"`
 	} `yaml:"connection"`
 	LogLevel string `yaml:"log_level"`
 }
@@ -126,6 +132,9 @@ func LoadConfig(args []string) (Config, error) {
 			MaxResourceRequestTimeout:    2 * time.Minute,
 			MaxConcurrentResourceStreams: 64,
 			MaxResourceBodyBytes:         32 * 1024 * 1024,
+			MaxPodLogsStreamTimeout:      30 * time.Minute,
+			MaxConcurrentPodLogsStreams:  8,
+			MaxPodLogBytes:               16 * 1024 * 1024,
 		},
 		LogLevel: defaultLogLevel,
 	}
@@ -271,6 +280,20 @@ func applyFile(cfg *Config, path string) error {
 		cfg.Connection.MaxResourceBodyBytes =
 			*raw.Connection.MaxResourceBodyBytes
 	}
+	if err := applyAgentDuration(
+		&cfg.Connection.MaxPodLogsStreamTimeout,
+		raw.Connection.MaxPodLogsStreamTimeout,
+		"connection.max_pod_logs_stream_timeout",
+	); err != nil {
+		return err
+	}
+	if raw.Connection.MaxConcurrentPodLogsStreams != nil {
+		cfg.Connection.MaxConcurrentPodLogsStreams =
+			*raw.Connection.MaxConcurrentPodLogsStreams
+	}
+	if raw.Connection.MaxPodLogBytes != nil {
+		cfg.Connection.MaxPodLogBytes = *raw.Connection.MaxPodLogBytes
+	}
 	if raw.LogLevel != "" {
 		cfg.LogLevel = raw.LogLevel
 	}
@@ -393,6 +416,7 @@ func (cfg Config) Validate() error {
 		{cfg.Connection.KeepAliveInterval, 5 * time.Minute, "connection keep-alive interval"},
 		{cfg.Connection.StreamHeaderTimeout, time.Minute, "business Stream header timeout"},
 		{cfg.Connection.MaxResourceRequestTimeout, time.Hour, "Resource Stream request timeout"},
+		{cfg.Connection.MaxPodLogsStreamTimeout, time.Hour, "Pod Logs Stream timeout"},
 	} {
 		if item.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", item.name)
@@ -436,6 +460,20 @@ func (cfg Config) Validate() error {
 		cfg.Connection.MaxResourceBodyBytes > maxResourceBodyBytes {
 		return errors.New(
 			"maximum Resource body bytes must be between 1 and 1073741824",
+		)
+	}
+	if cfg.Connection.MaxConcurrentPodLogsStreams < 1 ||
+		int64(cfg.Connection.MaxConcurrentResourceStreams)+
+			int64(cfg.Connection.MaxConcurrentPodLogsStreams) >
+			cfg.Connection.MaxIncomingStreams {
+		return errors.New(
+			"maximum concurrent Pod Logs Streams must be positive and fit within maximum incoming streams together with Resource Streams",
+		)
+	}
+	if cfg.Connection.MaxPodLogBytes < 1 ||
+		cfg.Connection.MaxPodLogBytes > maxResourceBodyBytes {
+		return errors.New(
+			"maximum Pod log bytes must be between 1 and 1073741824",
 		)
 	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {

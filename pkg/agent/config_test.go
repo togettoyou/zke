@@ -37,6 +37,9 @@ connection:
   max_resource_request_timeout: 90s
   max_concurrent_resource_streams: 48
   max_resource_body_bytes: 16777216
+  max_pod_logs_stream_timeout: 20m
+  max_concurrent_pod_logs_streams: 12
+  max_pod_log_bytes: 8388608
 log_level: debug
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
@@ -75,7 +78,10 @@ log_level: debug
 		cfg.Connection.StreamHeaderTimeout != 4*time.Second ||
 		cfg.Connection.MaxResourceRequestTimeout != 90*time.Second ||
 		cfg.Connection.MaxConcurrentResourceStreams != 48 ||
-		cfg.Connection.MaxResourceBodyBytes != 16*1024*1024 {
+		cfg.Connection.MaxResourceBodyBytes != 16*1024*1024 ||
+		cfg.Connection.MaxPodLogsStreamTimeout != 20*time.Minute ||
+		cfg.Connection.MaxConcurrentPodLogsStreams != 12 ||
+		cfg.Connection.MaxPodLogBytes != 8*1024*1024 {
 		t.Fatalf("unexpected Agent connection config: %+v", cfg.Connection)
 	}
 }
@@ -258,6 +264,9 @@ func validAgentConfig() Config {
 			MaxResourceRequestTimeout:    2 * time.Minute,
 			MaxConcurrentResourceStreams: 64,
 			MaxResourceBodyBytes:         32 * 1024 * 1024,
+			MaxPodLogsStreamTimeout:      30 * time.Minute,
+			MaxConcurrentPodLogsStreams:  8,
+			MaxPodLogBytes:               16 * 1024 * 1024,
 		},
 		LogLevel: "info",
 	}

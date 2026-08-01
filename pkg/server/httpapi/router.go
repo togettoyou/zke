@@ -16,6 +16,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
+	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 )
@@ -32,6 +33,7 @@ type Dependencies struct {
 	AgentManagementService    *agentmanagement.Service
 	AgentStatusService        *agentstatus.Service
 	KubernetesResourceService *kubernetesresource.Service
+	PodLogsService            *podlogs.Service
 	ResourceManagementService *resourcemanagement.Service
 	AccessManagementService   *accessmanagement.Service
 }
@@ -39,6 +41,7 @@ type Dependencies struct {
 type Config struct {
 	Authentication  AuthenticationConfig
 	AgentEnrollment AgentEnrollmentHTTPConfig
+	PodLogs         PodLogsHTTPConfig
 }
 
 type handlers struct {
@@ -52,6 +55,7 @@ type handlers struct {
 	kubernetesNode          *kubernetesNodeHandler
 	kubernetesNamespace     *kubernetesNamespaceHandler
 	kubernetesPod           *kubernetesPodHandler
+	kubernetesPodLogs       *kubernetesPodLogsHandler
 	kubernetesWorkload      *kubernetesWorkloadHandler
 	kubernetesResource      *kubernetesResourceHandler
 	resourceManagement      *resourceManagementHandler
@@ -149,6 +153,15 @@ func New(
 			dependencies.KubernetesResourceService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
+		),
+		kubernetesPodLogs: newKubernetesPodLogsHandler(
+			logger,
+			dependencies.PodLogsService,
+			dependencies.AuthService,
+			dependencies.RBACService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+			config.PodLogs,
 		),
 		kubernetesWorkload: newKubernetesWorkloadHandler(
 			logger,

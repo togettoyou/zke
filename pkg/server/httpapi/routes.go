@@ -367,6 +367,21 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesPod.delete,
 	)
+	// Pod logs intentionally use a separate group: clusterRoutes installs the
+	// short request timeout, while follow=true is a bounded, revalidated stream
+	// whose cancellation must propagate to the target Agent.
+	podLogRoutes := apiV1.Group("/clusters")
+	podLogRoutes.Use(
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	podLogRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/logs",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterPodLogsRead,
+			"cluster_id",
+		),
+		handlers.kubernetesPodLogs.stream,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource",
 		handlers.authorizationMiddleware.RequireCluster(
