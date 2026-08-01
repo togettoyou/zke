@@ -59,7 +59,8 @@ Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 
 表示尚未实现。
 
 Console 容器服务按资源类别组织：进入应用后先选择一个目标集群，左侧导航当前包含「节点」「命名空间」
-「工作负载」和「Pod」四个资源类别，列表行可下钻到详情页再返回，分页使用 Kubernetes continuation token。目标集群按项目
+「工作负载」「Pod」和「事件」五个资源类别，列表行可下钻到详情页再返回，分页使用 Kubernetes
+continuation token。目标集群按项目
 持久化在浏览器本地，只保存集群标识，且每次都会重新对照该项目当前在线的集群解析——已下线的集群不会被选中。
 离线集群仍出现在选择器中但不可选，避免操作者以为集群不存在。命名空间提供 List/Detail/Create/Delete；节点提供
 List/Detail 以及停止调度和恢复调度。所有变更都经过权限门控、DryRun 预检、影响展示与二次确认。
@@ -97,6 +98,27 @@ Pod 日志后端在读取前和打开 Kubernetes 日志流后分别核对 Pod UI
 Stream 逐块转发，默认每条最多 16 MiB，Follow 最长 30 分钟。Follow 会周期重新验证 Session 和权限；客户端
 断开、权限撤销、超时或 Agent 连接排空都会取消目标 Kubernetes 请求。HTTP 正文为未包装的 `text/plain`，
 终止状态和字节统计通过 Trailer 返回，日志正文不会进入 Server 日志或审计事件。
+
+Kubernetes Event 后端固定读取所选 Cluster 与 Namespace 的 `core/v1/events`，不接受调用方覆盖 GVR。默认
+通过 SSE 返回有界初始快照；实时 Follow 使用独立 `resource-watch.v1` QUIC Stream，支持按关联资源 UID、Kind、
+Name、Event type 和 reason 过滤，并通过 resourceVersion/`Last-Event-ID` 恢复。Session 或
+`cluster.event.read` 被撤销时立即取消，`410 Expired` 以 `resource_version_expired` 的正文内 close 原因提示
+客户端重新拉取快照。Event 正文不写入日志或审计。
+
+Console 事件页面按所选 Cluster 和 Namespace 展示 Event，可按 Event type、关联资源 Kind/名称和 reason 筛选，
+筛选条件由服务端执行，输入框做防抖以免每次击键都开一条新 Watch。默认开启实时跟随。事件按 UID 归并：
+Kubernetes 用递增 `count` 的 MODIFIED 表示同一事件重复发生，因此新帧替换原行而不是堆叠；DELETED 移除该行。
+列表按最近发生时间倒序，客户端最多保留 1000 条。
+
+Console 不使用 `EventSource`，而是用 `fetch` 自行解析 SSE 帧。`EventSource` 不暴露失败连接的 HTTP 状态，
+而这里的 409 `resource_version_expired`、403 和 429 需要区分处理，其中第一种还要求客户端执行特定恢复。
+按后端约定，正文内 `close.reason` 为 `watch_closed` 时从 `last_resource_version` 续读，为
+`resource_version_expired` 时丢弃当前列表并重新拉取快照；网络或代理在正文内 `close` 到达前断开时，从已解析
+SSE `id` 保存的最后 resourceVersion 续读。其余原因结束读取并在状态栏说明；恢复之间固定等待 1 秒，避免立即
+关闭的 Watch 造成重连风暴。
+
+事件页面需要 `cluster.event.read`。当前身份在所选项目没有该权限时，左侧导航不显示「事件」类别；服务端仍然
+独立判定。
 
 Console Pod 页面列出所选命名空间的 Pod，展示 Phase、就绪与终止状态、控制器 Owner、节点、Pod IP、累计重启
 次数和创建时间，可下钻到包含调度与网络信息、主容器/初始化容器/临时容器的当前与上次状态、资源
@@ -155,7 +177,7 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 - Service 与 Ingress；
 - ConfigMap 与 Secret；
 - PersistentVolume、PersistentVolumeClaim 与 StorageClass；
-- Kubernetes Event；
+- 从 Pod、工作负载等具体对象直接跳转到按 UID 过滤的关联事件；
 - YAML 查看与编辑；
 - 面向具体资源的表单化创建、更新和删除体验。
 

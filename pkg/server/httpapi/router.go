@@ -19,6 +19,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
+	"github.com/togettoyou/zke/pkg/server/resourcewatch"
 )
 
 type ReadinessCheck func(context.Context) error
@@ -34,14 +35,16 @@ type Dependencies struct {
 	AgentStatusService        *agentstatus.Service
 	KubernetesResourceService *kubernetesresource.Service
 	PodLogsService            *podlogs.Service
+	ResourceWatchService      *resourcewatch.Service
 	ResourceManagementService *resourcemanagement.Service
 	AccessManagementService   *accessmanagement.Service
 }
 
 type Config struct {
-	Authentication  AuthenticationConfig
-	AgentEnrollment AgentEnrollmentHTTPConfig
-	PodLogs         PodLogsHTTPConfig
+	Authentication   AuthenticationConfig
+	AgentEnrollment  AgentEnrollmentHTTPConfig
+	PodLogs          PodLogsHTTPConfig
+	KubernetesEvents KubernetesEventsHTTPConfig
 }
 
 type handlers struct {
@@ -56,6 +59,7 @@ type handlers struct {
 	kubernetesNamespace     *kubernetesNamespaceHandler
 	kubernetesPod           *kubernetesPodHandler
 	kubernetesPodLogs       *kubernetesPodLogsHandler
+	kubernetesEvents        *kubernetesEventsHandler
 	kubernetesWorkload      *kubernetesWorkloadHandler
 	kubernetesResource      *kubernetesResourceHandler
 	resourceManagement      *resourceManagementHandler
@@ -162,6 +166,15 @@ func New(
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 			config.PodLogs,
+		),
+		kubernetesEvents: newKubernetesEventsHandler(
+			logger,
+			dependencies.ResourceWatchService,
+			dependencies.AuthService,
+			dependencies.RBACService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+			config.KubernetesEvents,
 		),
 		kubernetesWorkload: newKubernetesWorkloadHandler(
 			logger,

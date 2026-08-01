@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+import "api/agent/v1/resource.proto";
+import "api/agent/v1/stream.proto";
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+message ResourceWatchRequest {
+  GroupVersionResource resource = 1;
+  string namespace = 2;
+  string field_selector = 3;
+  string resource_version = 4;
+  bool include_initial_events = 5;
+  bool follow = 6;
+  uint32 initial_event_limit = 7;
+  bool allow_watch_bookmarks = 8;
+  uint64 max_event_bytes = 9;
+  uint64 max_total_bytes = 10;
+  uint64 max_events = 11;
+}
+
+message ResourceWatchResponse {
+  ResultCode result = 1;
+  int32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  string content_type = 5;
+  string resource_version = 6;
+  bool initial_events_truncated = 7;
+}
+
+enum ResourceWatchEventType {
+  RESOURCE_WATCH_EVENT_TYPE_UNSPECIFIED = 0;
+  RESOURCE_WATCH_EVENT_TYPE_ADDED = 1;
+  RESOURCE_WATCH_EVENT_TYPE_MODIFIED = 2;
+  RESOURCE_WATCH_EVENT_TYPE_DELETED = 3;
+  RESOURCE_WATCH_EVENT_TYPE_BOOKMARK = 4;
+}
+
+message ResourceWatchEvent {
+  ResourceWatchEventType type = 1;
+  bytes object = 2;
+  string resource_version = 3;
+}
+
+message ResourceWatchTrailer {
+  ResultCode result = 1;
+  int32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  uint64 events_sent = 5;
+  uint64 bytes_sent = 6;
+  string last_resource_version = 7;
+  bool limit_reached = 8;
+}
+
+message ResourceWatchFrame {
+  oneof message {
+    ResourceWatchEvent event = 1;
+    ResourceWatchTrailer trailer = 2;
+  }
+}

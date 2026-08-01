@@ -78,6 +78,9 @@ agent_listener:
   max_pod_log_bytes: 8388608
   max_pod_logs_streams_per_agent: 12
   max_concurrent_pod_logs_requests: 512
+  resource_watch_request_timeout: 25m
+  max_resource_watch_streams_per_agent: 10
+  max_concurrent_resource_watch_requests: 600
 shutdown_timeout: 8s
 log_level: warn
 `)
@@ -174,6 +177,11 @@ log_level: warn
 		cfg.AgentListener.MaxPodLogsStreams != 12 ||
 		cfg.AgentListener.MaxPodLogsRequests != 512 {
 		t.Fatalf("unexpected Agent Listener config: %+v", cfg.AgentListener)
+	}
+	if cfg.AgentListener.ResourceWatchRequestTimeout != 25*time.Minute ||
+		cfg.AgentListener.MaxResourceWatchStreams != 10 ||
+		cfg.AgentListener.MaxResourceWatchRequests != 600 {
+		t.Fatalf("unexpected Agent Resource Watch config: %+v", cfg.AgentListener)
 	}
 	invalidHeartbeatConfig := cfg
 	invalidHeartbeatConfig.AgentListener.HeartbeatTimeout =

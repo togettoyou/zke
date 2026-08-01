@@ -283,6 +283,13 @@ func renderManifest(
 				Verbs:     []string{"get"},
 			},
 			{
+				APIGroups: []string{""},
+				// Events are isolated in Resource Watch and deliberately omitted
+				// from the generic Resource discovery/read path.
+				Resources: []string{"events"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
 				APIGroups: []string{"apps"},
 				Resources: []string{
 					"deployments",

@@ -14,6 +14,7 @@ const (
 	PermissionClusterEnrollmentRevoke Permission = "cluster.enrollment.revoke"
 	PermissionClusterRead             Permission = "cluster.read"
 	PermissionClusterPodLogsRead      Permission = "cluster.pod.logs.read"
+	PermissionClusterEventRead        Permission = "cluster.event.read"
 	PermissionClusterManage           Permission = "cluster.manage"
 	PermissionClusterResourceCreate   Permission = "cluster.resource.create"
 	PermissionClusterResourceUpdate   Permission = "cluster.resource.update"

@@ -54,5 +54,8 @@ connection:
   max_pod_logs_stream_timeout: 30m
   max_concurrent_pod_logs_streams: 8
   max_pod_log_bytes: 16777216
+  # Resource Watch 当前只允许 core/v1/events；并发与时长独立于 Pod 日志。
+  max_resource_watch_stream_timeout: 30m
+  max_concurrent_resource_watch_streams: 16
 
 log_level: info

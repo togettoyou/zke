@@ -575,6 +575,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的 Agent 读取明确 Namespace 中的 Kubernetes Event。默认以 SSE
+         *     返回最多 100 个当前事件后结束；follow=true 时继续发送实时事件和心跳，直到客户端
+         *     取消、权限或 Session 被撤销、达到最大时长或服务端容量上限。`ready` 事件携带当前
+         *     resourceVersion，`kubernetes.event` 携带稳定的 Event 字段，`bookmark` 用于推进恢复点，
+         *     `close` 在响应正文内说明终止原因。调用方可通过 resource_version 或 Last-Event-ID 恢复；
+         *     收到 resource_version_expired 后必须重新请求初始快照。读取要求独立的
+         *     `cluster.event.read` 权限；上游正常关闭 Watch 时 `close.reason` 为 `watch_closed`，客户端可从
+         *     `last_resource_version` 重连。Event 正文不会写入 Server 日志或审计记录。
+         */
+        get: operations["streamKubernetesEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}": {
         parameters: {
             query?: never;
@@ -950,7 +976,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.event.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -3317,6 +3343,50 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    streamKubernetesEvents: {
+        parameters: {
+            query?: {
+                follow?: boolean;
+                include_initial?: boolean;
+                limit?: number;
+                resource_version?: string;
+                resource_uid?: string;
+                resource_kind?: string;
+                resource_name?: string;
+                type?: "Normal" | "Warning";
+                reason?: string;
+            };
+            header?: {
+                /** @description resource_version 未提供时使用的 Kubernetes resourceVersion 恢复点。 */
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Kubernetes Event 快照或实时 SSE 流 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];

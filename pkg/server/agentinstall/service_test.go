@@ -167,6 +167,7 @@ func TestRenderManifestGrantsOnlyEnabledWorkloadResources(t *testing.T) {
 		"get", "list", "delete",
 	})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/log"}, []string{"get"})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"events"}, []string{"get", "list", "watch"})
 	for _, rule := range clusterRole.Rules {
 		for _, resource := range rule.Resources {
 			if resource == "*" ||

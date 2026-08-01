@@ -40,6 +40,8 @@ const (
 	maxPodLogsTimeout             = time.Hour
 	maxPodLogsStreams             = 4096
 	maxPodLogsRequests            = 100_000
+	maxResourceWatchStreams       = 4096
+	maxResourceWatchRequests      = 100_000
 )
 
 // boundedDuration describes a duration that must be positive and capped.
@@ -415,6 +417,7 @@ func (cfg Config) validateAgentListener() error {
 		{cfg.AgentListener.WriteTimeout, maxAgentHandshakeTimeout, "Agent control write timeout"},
 		{cfg.AgentListener.ResourceRequestTimeout, maxHTTPTimeout, "Agent Resource request timeout"},
 		{cfg.AgentListener.PodLogsRequestTimeout, maxPodLogsTimeout, "Agent Pod Logs request timeout"},
+		{cfg.AgentListener.ResourceWatchRequestTimeout, maxPodLogsTimeout, "Agent Resource Watch request timeout"},
 		{cfg.AgentListener.ConnectionDrainTimeout, maxShutdownTimeout, "Agent Connection drain timeout"},
 	}); err != nil {
 		return err
@@ -493,6 +496,21 @@ func (cfg Config) validateAgentListener() error {
 		return fmt.Errorf(
 			"Server Pod Logs request limit must be between the per-connection limit and %d",
 			maxPodLogsRequests,
+		)
+	}
+	if cfg.AgentListener.MaxResourceWatchStreams <= 0 ||
+		cfg.AgentListener.MaxResourceWatchStreams > maxResourceWatchStreams {
+		return fmt.Errorf(
+			"Agent per-connection Resource Watch Stream limit must be between 1 and %d",
+			maxResourceWatchStreams,
+		)
+	}
+	if cfg.AgentListener.MaxResourceWatchRequests <
+		cfg.AgentListener.MaxResourceWatchStreams ||
+		cfg.AgentListener.MaxResourceWatchRequests > maxResourceWatchRequests {
+		return fmt.Errorf(
+			"Server Resource Watch request limit must be between the per-connection limit and %d",
+			maxResourceWatchRequests,
 		)
 	}
 	return nil

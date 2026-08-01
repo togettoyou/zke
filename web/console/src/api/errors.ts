@@ -111,6 +111,14 @@ export function errorMessage(error: unknown): string {
   return ERROR_MESSAGES.network_error as string;
 }
 
+/**
+ * The Server's stable machine-readable code, for the few callers that recover
+ * from a specific failure rather than just reporting it.
+ */
+export function errorCode(error: unknown): string | null {
+  return isApiError(error) && error.code ? error.code : null;
+}
+
 /** Request id, when the failure actually reached the Server. */
 export function errorRequestId(error: unknown): string | null {
   return isApiError(error) && error.requestId ? error.requestId : null;

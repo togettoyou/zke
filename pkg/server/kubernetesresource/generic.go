@@ -806,7 +806,7 @@ func validPathSegment(value string) bool {
 }
 
 func sensitiveResource(group string, resource string) bool {
-	return group == "" && resource == "secrets"
+	return group == "" && (resource == "secrets" || resource == "events")
 }
 
 func supportedVerbs(verbs []string) []string {

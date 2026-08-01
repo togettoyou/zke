@@ -10,8 +10,9 @@ import (
 )
 
 type connectionServices struct {
-	resourceHandler agentprotocol.ResourceHandler
-	podLogsHandler  agentprotocol.PodLogsHandler
+	resourceHandler      agentprotocol.ResourceHandler
+	podLogsHandler       agentprotocol.PodLogsHandler
+	resourceWatchHandler agentprotocol.ResourceWatchHandler
 }
 
 func newBusinessStreamServer(
@@ -23,7 +24,7 @@ func newBusinessStreamServer(
 ) (*agentprotocol.StreamServer, error) {
 	handlers := make(
 		map[agentv1.StreamKind]agentprotocol.StreamHandlerConfig,
-		2,
+		3,
 	)
 	if resourceSupported && services.resourceHandler != nil {
 		handlers[agentv1.StreamKind_STREAM_KIND_RESOURCE] =
@@ -47,11 +48,20 @@ func newBusinessStreamServer(
 				),
 			}
 	}
+	if services.resourceWatchHandler != nil {
+		handlers[agentv1.StreamKind_STREAM_KIND_RESOURCE_WATCH] =
+			agentprotocol.StreamHandlerConfig{
+				MaxConcurrent: cfg.Connection.MaxConcurrentResourceWatchStreams,
+				MaxTimeout:    cfg.Connection.MaxResourceWatchStreamTimeout,
+				Handle:        agentprotocol.ResourceWatchStreamHandler(services.resourceWatchHandler),
+			}
+	}
 	return agentprotocol.NewStreamServer(agentprotocol.StreamServerConfig{
 		HeaderTimeout: cfg.Connection.StreamHeaderTimeout,
 		MaxTimeout: max(
 			cfg.Connection.MaxResourceRequestTimeout,
 			cfg.Connection.MaxPodLogsStreamTimeout,
+			cfg.Connection.MaxResourceWatchStreamTimeout,
 		),
 		Handlers: handlers,
 		OnError: func(header *agentv1.StreamHeader, err error) {

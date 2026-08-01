@@ -382,6 +382,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesPodLogs.stream,
 	)
+	// Kubernetes Events use an independent, bounded SSE route so that the
+	// short HTTP operation timeout does not terminate a quiet follow stream.
+	eventRoutes := apiV1.Group("/clusters")
+	eventRoutes.Use(handlers.authMiddleware.RequireAuthentication)
+	eventRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/events",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesEvents.stream,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource",
 		handlers.authorizationMiddleware.RequireCluster(

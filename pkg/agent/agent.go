@@ -115,7 +115,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				kubernetesClient.Discovery(),
 				cfg.Connection.MaxResourceBodyBytes,
 			),
-			podLogsHandler: newKubernetesPodLogsHandler(kubernetesClient),
+			podLogsHandler:       newKubernetesPodLogsHandler(kubernetesClient),
+			resourceWatchHandler: newKubernetesResourceWatchHandler(kubernetesClient),
 		},
 	)
 	logger.Info("agent stopped")

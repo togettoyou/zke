@@ -399,7 +399,7 @@ func supportedKubernetesResourceVerb(verb agentv1.ResourceVerb) bool {
 }
 
 func sensitiveKubernetesResource(group string, resource string) bool {
-	return group == "" && resource == "secrets"
+	return group == "" && (resource == "secrets" || resource == "events")
 }
 
 func discoverKubernetesResources(

@@ -72,7 +72,7 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` 和
 `cluster.connection.revoke`，以及通用 Kubernetes 写操作使用的 `cluster.resource.create`、
 `cluster.resource.update` 和 `cluster.resource.delete`，以及读取 Pod 日志使用的专用
-`cluster.pod.logs.read`。所有变更要求有效 Session 和 CSRF Token；创建
+`cluster.pod.logs.read`，以及读取 Kubernetes Event 使用的 `cluster.event.read`。所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。
 
@@ -89,6 +89,11 @@ Pod 日志读取不复用宽泛的 `cluster.read` 或通用资源写权限。请
 和容器，Server 与 Agent 通过独立日志协议执行，最终还受 Agent ServiceAccount 的 `pods/log` 最小权限约束。
 实时 Follow 会周期重新验证 Session 和 `cluster.pod.logs.read`，权限收回后立即取消。成功与失败审计记录目标
 作用域和结果，但不记录或摘要日志正文；鉴权拒绝使用同名权限动作进入 `denied` 词表。
+
+Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Resource 接口会拒绝并从 Discovery 中
+隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。请求必须明确 Cluster 和 Namespace，可使用受限
+字段过滤器定域到具体资源；实时 Follow 周期重新验证 Session 与 `cluster.event.read`。Agent ServiceAccount 仅
+增加 `events` 的 `get/list/watch`，Event 的 message 正文不写入日志或审计，审计只记录作用域、过滤目标和结果。
 
 管理端不暴露独立 Agent 资源。连接身份属于 Cluster 聚合内部状态，连接撤销接口
 `POST /api/v1/clusters/{cluster_id}/connection/revoke` 按 Cluster ID 解析 Project 作用域，要求

@@ -466,6 +466,7 @@ Phase 1 API 权限映射：
 | 更新或 Patch Kubernetes 主资源 | `cluster.resource.update` |
 | 删除 Kubernetes 主资源 | `cluster.resource.delete` |
 | 读取 Pod 日志快照或实时流 | `cluster.pod.logs.read` |
+| 读取 Kubernetes Event 快照或实时流 | `cluster.event.read` |
 | 撤销 Cluster 当前连接 | `cluster.connection.revoke` |
 | 查看和管理用户 | `user.read`、`user.manage`（Global） |
 | 查看和管理 RoleBinding | `rbac.read`、`rbac.manage`（Global） |
@@ -544,7 +545,7 @@ Node List/Detail 要求目标 Cluster 的 `cluster.read` 权限。Server 固定�
 
 通用 Kubernetes 只读接口同样要求 `cluster.read`，由 Server 固定 Verb 为 Discovery、List 或 Get，并校验
 GVR、Namespace、名称、Selector、分页和正文上限；浏览器不能提交任意 Verb、Subresource 或 Kubernetes 原始
-路径。Server 与 Agent 双重拒绝 Secret，Agent ServiceAccount RBAC 约束最终可访问的资源集合。默认安装允许
+路径。Server 与 Agent 双重拒绝 Secret 和 Event（Event 只能通过专用 Watch 接口读取），Agent ServiceAccount RBAC 约束最终可访问的资源集合。默认安装允许
 Node 读取与调度开关、Namespace 管理，以及 Deployment、StatefulSet、DaemonSet、Job 和 CronJob 管理；
 扩展其他内置资源或 CRD 资源必须由安装方显式增加最小 RBAC。
 
@@ -562,6 +563,14 @@ Pod 日志接口要求专用 `cluster.pod.logs.read` 权限，并显式携带 Na
 JSON，也不记录日志正文，只转发 `text/plain`；结束结果、是否达到字节上限和实际发送字节数通过 HTTP Trailer
 返回。Follow 使用独立 QUIC Stream，默认限制为每 Agent 8 条、Server 实例 256 条、每条 16 MiB 和最长 30
 分钟；每 15 秒重新验证 Session 与权限，客户端取消或访问权撤销时立即取消 Agent/Kubernetes 日志流。
+
+Kubernetes Event 接口要求专用 `cluster.event.read` 权限，固定访问 `core/v1/events`，并显式携带 Cluster 与
+Namespace。默认用 SSE 返回最多 100 个初始事件；`follow=true` 时使用独立 Resource Watch QUIC Stream 实时
+转发，并支持按 involvedObject UID/Kind/Name、Event type 和 reason 过滤。SSE 包含 `ready`、
+`kubernetes.event`、`bookmark` 和 `close`，终止原因位于正文内；客户端可使用 `resource_version` 或
+`Last-Event-ID` 恢复，收到 `resource_version_expired` 后重新拉取快照。默认每 Agent 16 条、Server 512 条、
+每事件 48 KiB、每流 32 MiB 或 10000 个事件、最长 30 分钟；Follow 每 15 秒重新验证 Session 与权限。
+上游 Watch 通道正常关闭时返回 `watch_closed`，客户端从正文中的 `last_resource_version` 重连。
 
 Cluster 当前连接撤销要求 Session、CSRF、`cluster.connection.revoke` 权限和 `{"confirm":true}` 显式确认。
 Server 在同一事务中更新内部 Agent 生命周期、撤销全部客户端 Credential 并写入 Cluster 作用域成功审计；重复
@@ -860,8 +869,9 @@ Server 配置结构体与 YAML 文件一一对应：加载时先构造带默认�
 - Agent 一次性注册 Token 只通过独立 Secret 读取。Agent 自行创建身份 Secret；ServiceAccount 需要 Namespace
   内 Secret 的 `create` 权限，对固定的 Enrollment、Trust 和 identity Secret 具有 `get` 权限，并只能更新
   identity Secret。
-- Agent 默认 ClusterRole 仅为 Pod 日志增加 `pods/log` 的 `get`，不授予 `pods/exec` 或
-  `pods/eviction`；日志协议也不放宽通用 Subresource 拒绝策略。
+- Agent 默认 ClusterRole 仅为 Pod 日志增加 `pods/log` 的 `get`，并为专用 Event Watch 增加 `events` 的
+  `get/list/watch`；不授予 `pods/exec` 或 `pods/eviction`。日志和 Watch 协议都不放宽通用 Resource/Subresource
+  拒绝策略。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - HTTP 注册 URL、QUIC Connection 地址、超时、心跳和重试参数需要上下限校验。
 - 认证配置包含操作超时、会话空闲与绝对超时、Argon2id 最大并发校验数、Cookie `Secure` 开关、账户和来源

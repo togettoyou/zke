@@ -141,6 +141,10 @@ agent_listener:
   max_pod_log_bytes: 16777216
   max_pod_logs_streams_per_agent: 8
   max_concurrent_pod_logs_requests: 256
+  # Kubernetes Event Resource Watch 使用独立的全局和每 Agent 容量预算。
+  resource_watch_request_timeout: 30m
+  max_resource_watch_streams_per_agent: 16
+  max_concurrent_resource_watch_requests: 512
   # How many disconnected Agents keep a last-known status in memory, so that
   # Cluster churn cannot grow the Server heap without bound.
   max_remembered_disconnects: 4096

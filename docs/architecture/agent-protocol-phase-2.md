@@ -74,7 +74,7 @@ Stream。
 
 ## 4. Stream 类型
 
-Phase 2 规划以下业务 Stream：
+Phase 2 使用或规划以下业务 Stream：
 
 | Stream 类型 | 发起方 | 生命周期 | 用途 |
 | --- | --- | --- | --- |
@@ -168,7 +168,8 @@ pod-logs.v1
 pod-exec.v1
 ```
 
-未声明 `resource.v1` 的旧 Agent 仍可维持 Phase 1 Control Stream，Server 不得向其打开 Resource Stream。
+未声明 `resource.v1` 的旧 Agent 仍可维持 Phase 1 Control Stream，Server 不得向其打开 Resource Stream；
+`resource-watch.v1` 和其他独立能力也按相同规则逐项协商。
 能力协商用于增量上线功能，不能替代 `protocol_version` 的兼容性检查。
 
 ## 6. 通用 Kubernetes 资源协议
@@ -432,6 +433,31 @@ FIN
   Context 并重置这一条 Stream，不影响其他业务 Stream。
 - 日志正文不得写入 Server 日志、审计事件或错误消息；审计只记录 Cluster、Namespace、Pod UID、Pod 名称、
   容器和结果。
+
+### 6.8 Resource Watch 独立协议
+
+Resource Watch 不复用短请求 `RESOURCE` Stream。当前双方协商 `resource-watch.v1` 后，Server 可打开
+`RESOURCE_WATCH` 双向 Stream；Agent 当前只允许 `core/v1/events`，其他 GVR 失败关闭：
+
+```text
+StreamHeader(kind=RESOURCE_WATCH, idempotency_key="")
+ResourceWatchRequest(GVR, namespace, selectors, resource_version, initial/follow, limits)
+FIN
+ResourceWatchResponse(result, resource_version, initial_events_truncated, content_type)
+ResourceWatchFrame(event) * N
+ResourceWatchFrame(trailer: result, kubernetes status, counts, last_resource_version, limit_reached)
+FIN
+```
+
+- 初始快照最多 500 条；需要 Follow 时 Agent 先基于 List 返回的 resourceVersion 建立 Watch，再开始发送初始
+  Event，避免 List 与 Watch 之间的事件缺口。分页未完整发送时在响应中标记 `initial_events_truncated`。
+- 单事件默认最大 48 KiB，每流默认最大 32 MiB 或 10000 个事件，防止高频或异常 Event 无界占用连接与内存。
+- Kubernetes Watch 的正常 EOF、取消、超时、上游错误和 `410 Expired` 使用 Trailer 区分；最后成功处理的
+  resourceVersion 逐帧传递，HTTP 客户端可据此恢复。
+- Server 对 HTTP 使用 SSE，终止原因放在 `close` 事件正文，不依赖浏览器通常不可见的 HTTP Trailer；安静的
+  Follow 通过心跳维持连接并周期重新验证 Session 和专用权限。
+- 通用 Resource 路径在 Server 与 Agent 双重拒绝 Event，Discovery 也隐藏 Event，避免通过 `cluster.read`
+  绕过 `cluster.event.read`。Event message 不进入 Server 日志或审计正文。
 
 ## 7. Stream 生命周期
 

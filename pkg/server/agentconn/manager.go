@@ -38,27 +38,30 @@ type ConnectionStore interface {
 }
 
 type Config struct {
-	Address                 string
-	TLSCertificateFile      string
-	TLSPrivateKeyFile       string
-	ClientCACertificateFile string
-	HandshakeTimeout        time.Duration
-	HeartbeatInterval       time.Duration
-	HeartbeatTimeout        time.Duration
-	LastSeenWriteInterval   time.Duration
-	OperationTimeout        time.Duration
-	MaxConcurrentAgents     int
-	MaxIncomingStreams      int64
-	WriteTimeout            time.Duration
-	ResourceRequestTimeout  time.Duration
-	ConnectionDrainTimeout  time.Duration
-	MaxResourceBodyBytes    uint64
-	MaxResourceStreams      int
-	MaxResourceRequests     int
-	PodLogsRequestTimeout   time.Duration
-	MaxPodLogBytes          uint64
-	MaxPodLogsStreams       int
-	MaxPodLogsRequests      int
+	Address                     string
+	TLSCertificateFile          string
+	TLSPrivateKeyFile           string
+	ClientCACertificateFile     string
+	HandshakeTimeout            time.Duration
+	HeartbeatInterval           time.Duration
+	HeartbeatTimeout            time.Duration
+	LastSeenWriteInterval       time.Duration
+	OperationTimeout            time.Duration
+	MaxConcurrentAgents         int
+	MaxIncomingStreams          int64
+	WriteTimeout                time.Duration
+	ResourceRequestTimeout      time.Duration
+	ConnectionDrainTimeout      time.Duration
+	MaxResourceBodyBytes        uint64
+	MaxResourceStreams          int
+	MaxResourceRequests         int
+	PodLogsRequestTimeout       time.Duration
+	MaxPodLogBytes              uint64
+	MaxPodLogsStreams           int
+	MaxPodLogsRequests          int
+	ResourceWatchRequestTimeout time.Duration
+	MaxResourceWatchStreams     int
+	MaxResourceWatchRequests    int
 	// MaxRememberedDisconnects bounds how many disconnected Agents keep a
 	// last-known status in memory, so Cluster churn cannot grow the Server
 	// heap without limit.
@@ -81,8 +84,9 @@ type Manager struct {
 	admissions chan struct{}
 	// resourceAdmissions is an instance-wide bound. Per-Agent bounds live on
 	// each session, so one busy Cluster cannot consume the whole allowance.
-	resourceAdmissions chan struct{}
-	podLogsAdmissions  chan struct{}
+	resourceAdmissions      chan struct{}
+	podLogsAdmissions       chan struct{}
+	resourceWatchAdmissions chan struct{}
 
 	mutex                sync.Mutex
 	connections          map[string]*session
@@ -106,28 +110,29 @@ type controlStream interface {
 }
 
 type session struct {
-	id                   string
-	identity             store.AgentConnectionIdentity
-	certificateSerial    string
-	certificateExpiresAt time.Time
-	connectedAt          time.Time
-	conn                 managedConnection
-	business             *quic.Conn
-	stream               controlStream
-	writeTimeout         time.Duration
-	writeMu              sync.Mutex
-	statusMu             sync.Mutex
-	lastHeartbeatAt      time.Time
-	disconnectReason     string
-	capabilities         map[string]struct{}
-	resourceAdmissions   chan struct{}
-	podLogsAdmissions    chan struct{}
-	businessMu           sync.Mutex
-	businessInFlight     int
-	draining             bool
-	drainOnce            sync.Once
-	drainTimer           *time.Timer
-	drainFinish          func()
+	id                      string
+	identity                store.AgentConnectionIdentity
+	certificateSerial       string
+	certificateExpiresAt    time.Time
+	connectedAt             time.Time
+	conn                    managedConnection
+	business                *quic.Conn
+	stream                  controlStream
+	writeTimeout            time.Duration
+	writeMu                 sync.Mutex
+	statusMu                sync.Mutex
+	lastHeartbeatAt         time.Time
+	disconnectReason        string
+	capabilities            map[string]struct{}
+	resourceAdmissions      chan struct{}
+	podLogsAdmissions       chan struct{}
+	resourceWatchAdmissions chan struct{}
+	businessMu              sync.Mutex
+	businessInFlight        int
+	draining                bool
+	drainOnce               sync.Once
+	drainTimer              *time.Timer
+	drainFinish             func()
 }
 
 type ConnectionStatus struct {
@@ -153,17 +158,20 @@ const (
 	ConnectionStateOnline  = "online"
 	ConnectionStateOffline = "offline"
 
-	defaultMaxRememberedDisconnects = 4096
-	defaultSessionWriteTimeout      = 5 * time.Second
-	defaultResourceRequestTimeout   = 2 * time.Minute
-	defaultConnectionDrainTimeout   = 10 * time.Second
-	defaultMaxResourceBodyBytes     = 32 * 1024 * 1024
-	defaultMaxResourceStreams       = 64
-	defaultMaxResourceRequests      = 4096
-	defaultPodLogsRequestTimeout    = 30 * time.Minute
-	defaultMaxPodLogBytes           = 16 * 1024 * 1024
-	defaultMaxPodLogsStreams        = 8
-	defaultMaxPodLogsRequests       = 256
+	defaultMaxRememberedDisconnects    = 4096
+	defaultSessionWriteTimeout         = 5 * time.Second
+	defaultResourceRequestTimeout      = 2 * time.Minute
+	defaultConnectionDrainTimeout      = 10 * time.Second
+	defaultMaxResourceBodyBytes        = 32 * 1024 * 1024
+	defaultMaxResourceStreams          = 64
+	defaultMaxResourceRequests         = 4096
+	defaultPodLogsRequestTimeout       = 30 * time.Minute
+	defaultMaxPodLogBytes              = 16 * 1024 * 1024
+	defaultMaxPodLogsStreams           = 8
+	defaultMaxPodLogsRequests          = 256
+	defaultResourceWatchRequestTimeout = 30 * time.Minute
+	defaultMaxResourceWatchStreams     = 16
+	defaultMaxResourceWatchRequests    = 512
 
 	// Bounds for re-establishing the revocation watch after the listening
 	// PostgreSQL connection drops. The ceiling is kept well under the
@@ -180,12 +188,14 @@ type certificateIdentity struct {
 }
 
 var (
-	ErrAgentNotConnected         = errors.New("target Cluster Agent is not connected")
-	ErrResourceCapabilityMissing = errors.New("target Cluster Agent does not support Resource Streams")
-	ErrResourceRequestExhausted  = errors.New("Resource Stream request capacity is exhausted")
-	ErrResourceVerbUnsupported   = errors.New("Resource Stream verb is not implemented")
-	ErrPodLogsCapabilityMissing  = errors.New("target Cluster Agent does not support Pod Logs Streams")
-	ErrPodLogsRequestExhausted   = errors.New("Pod Logs Stream request capacity is exhausted")
+	ErrAgentNotConnected              = errors.New("target Cluster Agent is not connected")
+	ErrResourceCapabilityMissing      = errors.New("target Cluster Agent does not support Resource Streams")
+	ErrResourceRequestExhausted       = errors.New("Resource Stream request capacity is exhausted")
+	ErrResourceVerbUnsupported        = errors.New("Resource Stream verb is not implemented")
+	ErrPodLogsCapabilityMissing       = errors.New("target Cluster Agent does not support Pod Logs Streams")
+	ErrPodLogsRequestExhausted        = errors.New("Pod Logs Stream request capacity is exhausted")
+	ErrResourceWatchCapabilityMissing = errors.New("target Cluster Agent does not support Resource Watch Streams")
+	ErrResourceWatchRequestExhausted  = errors.New("Resource Watch Stream request capacity is exhausted")
 )
 
 func New(
@@ -225,6 +235,15 @@ func New(
 	if config.MaxPodLogsRequests <= 0 {
 		config.MaxPodLogsRequests = defaultMaxPodLogsRequests
 	}
+	if config.ResourceWatchRequestTimeout <= 0 {
+		config.ResourceWatchRequestTimeout = defaultResourceWatchRequestTimeout
+	}
+	if config.MaxResourceWatchStreams <= 0 {
+		config.MaxResourceWatchStreams = defaultMaxResourceWatchStreams
+	}
+	if config.MaxResourceWatchRequests <= 0 {
+		config.MaxResourceWatchRequests = defaultMaxResourceWatchRequests
+	}
 	streamServer, err := agentprotocol.NewStreamServer(
 		agentprotocol.StreamServerConfig{
 			HeaderTimeout: config.HandshakeTimeout,
@@ -257,11 +276,12 @@ func New(
 			chan struct{},
 			config.MaxResourceRequests,
 		),
-		podLogsAdmissions:    make(chan struct{}, config.MaxPodLogsRequests),
-		connections:          make(map[string]*session),
-		connectionsByCluster: make(map[string]*session),
-		lastDisconnected:     make(map[string]ConnectionStatus),
-		subscribers:          make(map[uint64]chan ConnectionEvent),
+		podLogsAdmissions:       make(chan struct{}, config.MaxPodLogsRequests),
+		resourceWatchAdmissions: make(chan struct{}, config.MaxResourceWatchRequests),
+		connections:             make(map[string]*session),
+		connectionsByCluster:    make(map[string]*session),
+		lastDisconnected:        make(map[string]ConnectionStatus),
+		subscribers:             make(map[uint64]chan ConnectionEvent),
 	}, nil
 }
 
@@ -448,6 +468,10 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			chan struct{},
 			manager.config.MaxPodLogsStreams,
 		),
+		resourceWatchAdmissions: make(
+			chan struct{},
+			manager.config.MaxResourceWatchStreams,
+		),
 	}
 	serverCapabilities := []string{
 		agentprotocol.CapabilityCertificateRenewal,
@@ -490,6 +514,10 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			agentprotocol.CapabilityPodLogsV1,
 		)
 		current.capabilities[agentprotocol.CapabilityPodLogsV1] = struct{}{}
+	}
+	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityResourceWatchV1) {
+		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityResourceWatchV1)
+		current.capabilities[agentprotocol.CapabilityResourceWatchV1] = struct{}{}
 	}
 	previous := manager.register(current)
 	if previous != nil {
@@ -1151,6 +1179,55 @@ func (manager *Manager) RequestPodLogs(
 		request,
 		destination,
 		manager.config.MaxPodLogBytes,
+	)
+}
+
+func (manager *Manager) RequestResourceWatch(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.ResourceWatchRequest,
+	sink agentprotocol.ResourceWatchSink,
+) (*agentv1.ResourceWatchResponse, *agentv1.ResourceWatchTrailer, error) {
+	if ctx == nil || !validation.IsUUID(clusterID) {
+		return nil, nil, errors.New("Resource Watch request Context or target Cluster ID is invalid")
+	}
+	manager.mutex.Lock()
+	current := manager.connectionsByCluster[clusterID]
+	manager.mutex.Unlock()
+	if current == nil || current.business == nil || !current.beginBusiness() {
+		return nil, nil, ErrAgentNotConnected
+	}
+	defer current.endBusiness()
+	if _, supported := current.capabilities[agentprotocol.CapabilityResourceWatchV1]; !supported {
+		return nil, nil, ErrResourceWatchCapabilityMissing
+	}
+	if !tryAcquire(manager.resourceWatchAdmissions) {
+		return nil, nil, ErrResourceWatchRequestExhausted
+	}
+	defer release(manager.resourceWatchAdmissions)
+	if !tryAcquire(current.resourceWatchAdmissions) {
+		return nil, nil, ErrResourceWatchRequestExhausted
+	}
+	defer release(current.resourceWatchAdmissions)
+	requestContext, cancelRequest := context.WithTimeout(ctx, manager.config.ResourceWatchRequestTimeout)
+	defer cancelRequest()
+	deadline, _ := requestContext.Deadline()
+	timeoutMillis := max(int64(1), time.Until(deadline).Milliseconds())
+	requestID, err := streamRequestID(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return agentprotocol.DoResourceWatch(
+		requestContext,
+		current.business,
+		&agentv1.StreamHeader{
+			ProtocolVersion: agentprotocol.ProtocolVersion,
+			Kind:            agentv1.StreamKind_STREAM_KIND_RESOURCE_WATCH,
+			RequestId:       requestID,
+			TimeoutMillis:   uint64(timeoutMillis),
+		},
+		request,
+		sink,
 	)
 }
 

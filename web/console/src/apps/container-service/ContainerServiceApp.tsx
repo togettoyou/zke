@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { Box, FolderTree, Layers, Server } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Bell, Box, FolderTree, Layers, Server } from "lucide-react";
 
 import { useClusters } from "@/api/queries/clusters";
 import { useNamespaces } from "@/api/queries/namespaces";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
+import { useSessionContext } from "@/auth/session-context";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { StatusBadge } from "@/components/common/status";
 import {
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { useScopeStore } from "@/scope/scope-store";
 
+import { EventSection } from "./EventSection";
 import { NamespaceSection } from "./NamespaceSection";
 import { NodeSection } from "./NodeSection";
 import { PodSection } from "./PodSection";
@@ -30,10 +32,11 @@ const NAV: AppNavItem[] = [
   { id: "namespaces", label: "命名空间", icon: FolderTree },
   { id: "workloads", label: "工作负载", icon: Layers },
   { id: "pods", label: "Pod", icon: Box },
+  { id: "events", label: "事件", icon: Bell },
 ];
 
 /** Sections whose queries are scoped by a Namespace as well as by a Cluster. */
-const NAMESPACED_SECTIONS = new Set(["workloads", "pods"]);
+const NAMESPACED_SECTIONS = new Set(["workloads", "pods", "events"]);
 
 /**
  * The Namespace picker reads one page of Namespaces at the endpoint's maximum.
@@ -51,6 +54,7 @@ const NAMESPACE_PICKER_LIMIT = 500;
  */
 export function ContainerServiceApp() {
   const scope = useScopeStore((state) => state.scope);
+  const { permissions } = useSessionContext();
   const [section, setSection] = useState("nodes");
   const clusters = useClusters(scope.projectId, {
     limit: 100,
@@ -77,10 +81,24 @@ export function ContainerServiceApp() {
   const clusterName =
     projectClusters.find((cluster) => cluster.id === clusterId)?.name ?? clusterId;
 
+  // Reading Events is its own permission rather than part of reading the
+  // Cluster, so the rail hides the category a caller cannot open at all. The
+  // Server enforces it regardless.
+  const canReadEvents = permissions.can("cluster.event.read", {
+    type: "project",
+    tenantId: scope.tenantId,
+    projectId: scope.projectId,
+  });
+  const nav = useMemo(
+    () => NAV.map((item) => (item.id === "events" ? { ...item, hidden: !canReadEvents } : item)),
+    [canReadEvents],
+  );
+  const activeSection = section === "events" && !canReadEvents ? "nodes" : section;
+
   // Only the namespaced sections need the picker, and only they pay for the
   // query behind it. A control that scopes nothing would be a control that does
   // nothing, so the cluster-scoped sections do not show one.
-  const namespaced = NAMESPACED_SECTIONS.has(section);
+  const namespaced = NAMESPACED_SECTIONS.has(activeSection);
   const namespaces = useNamespaces(namespaced && clusterId ? clusterId : null, {
     limit: NAMESPACE_PICKER_LIMIT,
   });
@@ -104,8 +122,8 @@ export function ContainerServiceApp() {
 
   return (
     <AppShell
-      nav={NAV}
-      activeId={section}
+      nav={nav}
+      activeId={activeSection}
       onNavigate={setSection}
       toolbar={
         <>
@@ -190,7 +208,7 @@ export function ContainerServiceApp() {
           title="该项目没有在线集群"
           description="容器服务的每个查询和变更都由目标集群的 Agent 定域执行，需要至少一个 Agent 处于在线状态。"
         />
-      ) : section === "nodes" ? (
+      ) : activeSection === "nodes" ? (
         <NodeSection
           key={clusterId}
           clusterId={clusterId}
@@ -198,7 +216,7 @@ export function ContainerServiceApp() {
           tenantId={scope.tenantId}
           projectId={scope.projectId}
         />
-      ) : section === "namespaces" ? (
+      ) : activeSection === "namespaces" ? (
         <NamespaceSection
           key={clusterId}
           clusterId={clusterId}
@@ -213,9 +231,16 @@ export function ContainerServiceApp() {
       ) : namespace === "" ? (
         <EmptyNotice
           title="该集群没有可见的命名空间"
-          description="工作负载和 Pod 按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
+          description="工作负载、Pod 和事件按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
         />
-      ) : section === "pods" ? (
+      ) : activeSection === "events" ? (
+        <EventSection
+          key={`${clusterId}/${namespace}`}
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+        />
+      ) : activeSection === "pods" ? (
         <PodSection
           key={`${clusterId}/${namespace}`}
           clusterId={clusterId}

@@ -59,14 +59,16 @@ type ConnectionConfig struct {
 	KeepAliveInterval time.Duration
 	// MaxIncomingStreams bounds the streams a Server may open towards this
 	// Agent. The Agent-created Control Stream is not counted in this direction.
-	MaxIncomingStreams           int64
-	StreamHeaderTimeout          time.Duration
-	MaxResourceRequestTimeout    time.Duration
-	MaxConcurrentResourceStreams int
-	MaxResourceBodyBytes         uint64
-	MaxPodLogsStreamTimeout      time.Duration
-	MaxConcurrentPodLogsStreams  int
-	MaxPodLogBytes               uint64
+	MaxIncomingStreams                int64
+	StreamHeaderTimeout               time.Duration
+	MaxResourceRequestTimeout         time.Duration
+	MaxConcurrentResourceStreams      int
+	MaxResourceBodyBytes              uint64
+	MaxPodLogsStreamTimeout           time.Duration
+	MaxConcurrentPodLogsStreams       int
+	MaxPodLogBytes                    uint64
+	MaxResourceWatchStreamTimeout     time.Duration
+	MaxConcurrentResourceWatchStreams int
 }
 
 type fileConfig struct {
@@ -84,21 +86,23 @@ type fileConfig struct {
 		RetryMaxInterval     string `yaml:"retry_max_interval"`
 	} `yaml:"registration"`
 	Connection struct {
-		ServerAddress                string  `yaml:"server_address"`
-		CACertificateFile            string  `yaml:"ca_certificate_file"`
-		ConnectTimeout               string  `yaml:"connect_timeout"`
-		RetryInitialInterval         string  `yaml:"retry_initial_interval"`
-		RetryMaxInterval             string  `yaml:"retry_max_interval"`
-		IdleTimeout                  string  `yaml:"idle_timeout"`
-		KeepAliveInterval            string  `yaml:"keep_alive_interval"`
-		MaxIncomingStreams           *int64  `yaml:"max_incoming_streams"`
-		StreamHeaderTimeout          string  `yaml:"stream_header_timeout"`
-		MaxResourceRequestTimeout    string  `yaml:"max_resource_request_timeout"`
-		MaxConcurrentResourceStreams *int    `yaml:"max_concurrent_resource_streams"`
-		MaxResourceBodyBytes         *uint64 `yaml:"max_resource_body_bytes"`
-		MaxPodLogsStreamTimeout      string  `yaml:"max_pod_logs_stream_timeout"`
-		MaxConcurrentPodLogsStreams  *int    `yaml:"max_concurrent_pod_logs_streams"`
-		MaxPodLogBytes               *uint64 `yaml:"max_pod_log_bytes"`
+		ServerAddress                     string  `yaml:"server_address"`
+		CACertificateFile                 string  `yaml:"ca_certificate_file"`
+		ConnectTimeout                    string  `yaml:"connect_timeout"`
+		RetryInitialInterval              string  `yaml:"retry_initial_interval"`
+		RetryMaxInterval                  string  `yaml:"retry_max_interval"`
+		IdleTimeout                       string  `yaml:"idle_timeout"`
+		KeepAliveInterval                 string  `yaml:"keep_alive_interval"`
+		MaxIncomingStreams                *int64  `yaml:"max_incoming_streams"`
+		StreamHeaderTimeout               string  `yaml:"stream_header_timeout"`
+		MaxResourceRequestTimeout         string  `yaml:"max_resource_request_timeout"`
+		MaxConcurrentResourceStreams      *int    `yaml:"max_concurrent_resource_streams"`
+		MaxResourceBodyBytes              *uint64 `yaml:"max_resource_body_bytes"`
+		MaxPodLogsStreamTimeout           string  `yaml:"max_pod_logs_stream_timeout"`
+		MaxConcurrentPodLogsStreams       *int    `yaml:"max_concurrent_pod_logs_streams"`
+		MaxPodLogBytes                    *uint64 `yaml:"max_pod_log_bytes"`
+		MaxResourceWatchStreamTimeout     string  `yaml:"max_resource_watch_stream_timeout"`
+		MaxConcurrentResourceWatchStreams *int    `yaml:"max_concurrent_resource_watch_streams"`
 	} `yaml:"connection"`
 	LogLevel string `yaml:"log_level"`
 }
@@ -122,19 +126,21 @@ func LoadConfig(args []string) (Config, error) {
 			RetryMaxInterval:     15 * time.Second,
 		},
 		Connection: ConnectionConfig{
-			ConnectTimeout:               10 * time.Second,
-			RetryInitialInterval:         time.Second,
-			RetryMaxInterval:             30 * time.Second,
-			IdleTimeout:                  15 * time.Minute,
-			KeepAliveInterval:            10 * time.Second,
-			MaxIncomingStreams:           128,
-			StreamHeaderTimeout:          5 * time.Second,
-			MaxResourceRequestTimeout:    2 * time.Minute,
-			MaxConcurrentResourceStreams: 64,
-			MaxResourceBodyBytes:         32 * 1024 * 1024,
-			MaxPodLogsStreamTimeout:      30 * time.Minute,
-			MaxConcurrentPodLogsStreams:  8,
-			MaxPodLogBytes:               16 * 1024 * 1024,
+			ConnectTimeout:                    10 * time.Second,
+			RetryInitialInterval:              time.Second,
+			RetryMaxInterval:                  30 * time.Second,
+			IdleTimeout:                       15 * time.Minute,
+			KeepAliveInterval:                 10 * time.Second,
+			MaxIncomingStreams:                128,
+			StreamHeaderTimeout:               5 * time.Second,
+			MaxResourceRequestTimeout:         2 * time.Minute,
+			MaxConcurrentResourceStreams:      64,
+			MaxResourceBodyBytes:              32 * 1024 * 1024,
+			MaxPodLogsStreamTimeout:           30 * time.Minute,
+			MaxConcurrentPodLogsStreams:       8,
+			MaxPodLogBytes:                    16 * 1024 * 1024,
+			MaxResourceWatchStreamTimeout:     30 * time.Minute,
+			MaxConcurrentResourceWatchStreams: 16,
 		},
 		LogLevel: defaultLogLevel,
 	}
@@ -294,6 +300,17 @@ func applyFile(cfg *Config, path string) error {
 	if raw.Connection.MaxPodLogBytes != nil {
 		cfg.Connection.MaxPodLogBytes = *raw.Connection.MaxPodLogBytes
 	}
+	if err := applyAgentDuration(
+		&cfg.Connection.MaxResourceWatchStreamTimeout,
+		raw.Connection.MaxResourceWatchStreamTimeout,
+		"connection.max_resource_watch_stream_timeout",
+	); err != nil {
+		return err
+	}
+	if raw.Connection.MaxConcurrentResourceWatchStreams != nil {
+		cfg.Connection.MaxConcurrentResourceWatchStreams =
+			*raw.Connection.MaxConcurrentResourceWatchStreams
+	}
 	if raw.LogLevel != "" {
 		cfg.LogLevel = raw.LogLevel
 	}
@@ -417,6 +434,7 @@ func (cfg Config) Validate() error {
 		{cfg.Connection.StreamHeaderTimeout, time.Minute, "business Stream header timeout"},
 		{cfg.Connection.MaxResourceRequestTimeout, time.Hour, "Resource Stream request timeout"},
 		{cfg.Connection.MaxPodLogsStreamTimeout, time.Hour, "Pod Logs Stream timeout"},
+		{cfg.Connection.MaxResourceWatchStreamTimeout, time.Hour, "Resource Watch Stream timeout"},
 	} {
 		if item.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", item.name)
@@ -449,6 +467,12 @@ func (cfg Config) Validate() error {
 			"business Stream header timeout must not exceed Resource Stream request timeout",
 		)
 	}
+	if cfg.Connection.StreamHeaderTimeout >
+		cfg.Connection.MaxResourceWatchStreamTimeout {
+		return errors.New(
+			"business Stream header timeout must not exceed Resource Watch Stream timeout",
+		)
+	}
 	if cfg.Connection.MaxConcurrentResourceStreams < 1 ||
 		int64(cfg.Connection.MaxConcurrentResourceStreams) >
 			cfg.Connection.MaxIncomingStreams {
@@ -474,6 +498,15 @@ func (cfg Config) Validate() error {
 		cfg.Connection.MaxPodLogBytes > maxResourceBodyBytes {
 		return errors.New(
 			"maximum Pod log bytes must be between 1 and 1073741824",
+		)
+	}
+	if cfg.Connection.MaxConcurrentResourceWatchStreams < 1 ||
+		int64(cfg.Connection.MaxConcurrentResourceStreams)+
+			int64(cfg.Connection.MaxConcurrentPodLogsStreams)+
+			int64(cfg.Connection.MaxConcurrentResourceWatchStreams) >
+			cfg.Connection.MaxIncomingStreams {
+		return errors.New(
+			"maximum concurrent Resource Watch Streams must be positive and fit within maximum incoming streams together with other business Streams",
 		)
 	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {

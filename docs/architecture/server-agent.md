@@ -28,6 +28,7 @@ ZKE Server 是平台统一控制端，规划负责：
 - 查询 Kubernetes 资源；
 - 执行经过授权的集群操作；
 - 获取 Pod 日志；
+- 按明确 Cluster/Namespace 获取 Kubernetes Event 快照与实时 Watch；
 - 建立 Web Terminal 会话；
 - 执行作业和模型服务相关操作；
 - 收集或转发指标、日志和事件；

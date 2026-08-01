@@ -61,6 +61,12 @@ const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     Failed: { label: "失败", tone: "danger" },
     Unknown: { label: "未知", tone: "neutral" },
   },
+  // Kubernetes Event `type`. Only two values exist, and `Normal` is the great
+  // majority of them, so it stays quiet.
+  eventType: {
+    Normal: { label: "普通", tone: "neutral" },
+    Warning: { label: "警告", tone: "warning" },
+  },
   // The state of one container inside a Pod.
   containerState: {
     waiting: { label: "等待中", tone: "warning" },
