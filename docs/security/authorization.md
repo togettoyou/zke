@@ -85,6 +85,11 @@ DryRun 使用独立的 `.dry_run` 审计动作，不会与实际写入混记。�
 边界：实际操作必须确认，删除可携带 UID/resourceVersion 前置条件，Console 在确认前先执行服务端 DryRun
 并展示目标 Cluster 与影响。
 
+YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限。
+更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
+`resourceVersion` 和当前实时对象逐项核对；同名对象已重建或版本已变化时返回冲突。实际更新还要求 CSRF、
+幂等键与显式确认，DryRun 使用同一 API Server 校验链路。日志与审计均不记录 YAML 正文或字段值。
+
 Pod 日志读取不复用宽泛的 `cluster.read` 或通用资源写权限。请求必须明确 Cluster、Namespace、Pod 当前 UID
 和容器，Server 与 Agent 通过独立日志协议执行，最终还受 Agent ServiceAccount 的 `pods/log` 最小权限约束。
 实时 Follow 会周期重新验证 Session 和 `cluster.pod.logs.read`，权限收回后立即取消。成功与失败审计记录目标

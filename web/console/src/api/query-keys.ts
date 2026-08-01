@@ -42,6 +42,10 @@ export const queryKeys = {
   ) => ["workloads", clusterId, namespace, resource, params] as const,
   workload: (clusterId: string, namespace: string, resource: string, name: string) =>
     ["workload", clusterId, namespace, resource, name] as const,
+  // Keyed by everything that identifies the object, because the YAML endpoint
+  // serves every kind through one route.
+  resourceYaml: (clusterId: string, namespace: string, gvr: string, name: string) =>
+    ["resource-yaml", clusterId, namespace, gvr, name] as const,
   pods: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
     ["pods", clusterId, namespace, params] as const,
   pod: (clusterId: string, namespace: string, name: string) =>
@@ -65,9 +69,13 @@ export const queryKeyPrefixes = {
   projects: ["projects"] as const,
   clusters: ["clusters"] as const,
   nodes: ["nodes"] as const,
+  node: ["node"] as const,
   namespaces: ["namespaces"] as const,
+  namespace: ["namespace"] as const,
   workloads: ["workloads"] as const,
+  workload: ["workload"] as const,
   pods: ["pods"] as const,
+  pod: ["pod"] as const,
   enrollments: ["enrollments"] as const,
   users: ["users"] as const,
   roleBindings: ["role-bindings"] as const,

@@ -807,6 +807,34 @@ export interface paths {
         patch: operations["patchGenericKubernetesResource"];
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/yaml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 按明确 Cluster、GVR、Namespace 和名称读取单个 Kubernetes 主资源的完整
+         *     YAML。响应保留 metadata.uid 与 metadata.resourceVersion，用于后续防误改校验；
+         *     metadata.managedFields 被移除。Secret 和 Subresource 不在该接口范围内。
+         */
+        get: operations["getKubernetesResourceYAML"];
+        /**
+         * @description 使用严格的单文档 YAML 更新具名 Kubernetes 主资源，正文最大 4 MiB。
+         *     Server 在更新前核对 URL/GVR/Namespace 与正文身份，并要求正文中的
+         *     metadata.uid 和 metadata.resourceVersion 与实时对象一致。dry_run=true
+         *     调用 Kubernetes API Server DryRun 校验且无需 confirm；实际写入必须提供
+         *     confirm=true。请求正文及其字段不会写入 ZKE 审计记录。
+         */
+        put: operations["updateKubernetesResourceYAML"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/cluster-enrollments": {
         parameters: {
             query?: never;
@@ -1773,6 +1801,24 @@ export interface components {
         };
         /** @description 幂等、生命周期或安全不变量冲突 */
         Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 请求正文超过允许大小 */
+        PayloadTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 请求正文媒体类型不受支持 */
+        UnsupportedMediaType: {
             headers: {
                 [name: string]: unknown;
             };
@@ -4045,6 +4091,103 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesResourceYAML: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                resource_name: components["parameters"]["KubernetesResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Kubernetes 单资源 YAML */
+            200: {
+                headers: {
+                    "X-ZKE-Dry-Run"?: "false";
+                    "X-ZKE-Resource-UID"?: string;
+                    "X-ZKE-Resource-Version"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesResourceYAML: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+                /** @description 仅调用 Kubernetes API Server DryRun，不持久化变更。 */
+                dry_run?: boolean;
+                /** @description 实际写入必须为 true；dry-run 可省略。 */
+                confirm?: boolean;
+                field_manager?: string;
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                resource_name: components["parameters"]["KubernetesResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/yaml": string;
+            };
+        };
+        responses: {
+            /** @description 更新后的 Kubernetes YAML 或 dry-run 预览 */
+            200: {
+                headers: {
+                    "X-ZKE-Dry-Run"?: "true" | "false";
+                    "X-ZKE-Resource-UID"?: string;
+                    "X-ZKE-Resource-Version"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

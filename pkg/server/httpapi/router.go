@@ -16,6 +16,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
+	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
@@ -62,6 +63,7 @@ type handlers struct {
 	kubernetesEvents        *kubernetesEventsHandler
 	kubernetesWorkload      *kubernetesWorkloadHandler
 	kubernetesResource      *kubernetesResourceHandler
+	kubernetesYAML          *kubernetesYAMLHandler
 	resourceManagement      *resourceManagementHandler
 	accessManagement        *accessManagementHandler
 	auditQuery              *auditQueryHandler
@@ -102,6 +104,12 @@ func New(
 		)
 	})
 
+	var yamlService kubernetesYAMLService
+	if dependencies.KubernetesResourceService != nil {
+		yamlService = kubernetesyaml.NewService(
+			dependencies.KubernetesResourceService,
+		)
+	}
 	routeHandlers := handlers{
 		health: newHealthHandler(logger, dependencies.ReadinessCheck),
 		auth: newAuthHandler(
@@ -185,6 +193,12 @@ func New(
 		kubernetesResource: newKubernetesResourceHandler(
 			logger,
 			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesYAML: newKubernetesYAMLHandler(
+			logger,
+			yamlService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

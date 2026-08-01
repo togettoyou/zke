@@ -18,6 +18,11 @@ export function kindLabel(resource: KubernetesWorkloadResource): string {
   return WORKLOAD_TYPES.find((type) => type.resource === resource)?.label ?? resource;
 }
 
+/** The API group each workload type lives in, for the routes that take a GVR. */
+export function workloadGroup(resource: KubernetesWorkloadResource): string {
+  return resource === "jobs" || resource === "cronjobs" ? "batch" : "apps";
+}
+
 /*
  * Which action applies to which type, mirroring what the Server accepts. The
  * Console offers an action only where the endpoint would carry it out, so an

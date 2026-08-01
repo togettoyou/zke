@@ -488,6 +488,14 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesResource.get,
 	)
+	clusterRoutes.GET(
+		"/:cluster_id/kubernetes/resources/:resource_name/yaml",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesYAML.get,
+	)
 	clusterRoutes.POST(
 		"/:cluster_id/kubernetes/resources",
 		handlers.authMiddleware.RequireCSRF,
@@ -505,6 +513,15 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesResource.update,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/kubernetes/resources/:resource_name/yaml",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesYAML.update,
 	)
 	clusterRoutes.PATCH(
 		"/:cluster_id/kubernetes/resources/:resource_name",

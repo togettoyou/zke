@@ -205,8 +205,8 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 - 使用 Go 1.26。
 - 以 Kubernetes Deployment 运行，每个接入集群部署一个逻辑 Agent。
 - 使用专用 ServiceAccount，并按当前启用能力授予最小 Kubernetes RBAC 权限。
-- 默认集群业务权限包含 Node 的 `get`、`list`、`patch`，Namespace 的 `get`、`list`、`create`、`delete`，
-  Pod 的 `get`、`list`、`delete`、`pods/log` 的 `get`，以及 Deployment、StatefulSet、DaemonSet、Job 和
+- 默认集群业务权限包含 Node 的 `get`、`list`、`update`、`patch`，Namespace 的 `get`、`list`、`create`、`update`、`delete`，
+  Pod 的 `get`、`list`、`update`、`delete`、`pods/log` 的 `get`，以及 Deployment、StatefulSet、DaemonSet、Job 和
   CronJob 主资源的完整 CRUD。Node 的 `patch` 用于停止或恢复调度；驱逐需要 `pods/eviction` Subresource，
   尚未开放。Agent 通用策略允许非 Secret 主资源的 CRUD，
   但实际读取或变更默认集合以外的内置资源、CRD 或 CR 时必须由安装方显式扩展 ServiceAccount RBAC，无需修改
@@ -557,6 +557,13 @@ DryRun 使用独立审计动作。Server 通过
 `agent_listener.max_buffered_resource_response_bytes` 限制同一实例同时缓冲的 Resource 响应总字节数；
 该值不得小于单响应正文上限，也不得超过 8 GiB。该预算在读取正文前按 Agent 声明的响应大小一次性预留，
 额度不足时立即返回 `429 response_budget_exhausted` 并重置当前 Stream，不排队等待其他请求释放额度。
+
+YAML 管理后端复用通用 Get/Update Resource Stream，不新增 Agent 协议或权限。GET 将移除
+`metadata.managedFields` 的完整对象编码为 `application/yaml`；PUT 只接受最大 4 MiB 的严格单文档 YAML，
+拒绝 Alias、Anchor、重复字段和 YAML-only 类型。Server 先读取实时对象，核对 URL/GVR/Namespace 与正文的
+`apiVersion`、`kind`、名称、UID、`resourceVersion`，再执行 DryRun 或实际 Update；同名重建与并发版本变化
+分别返回稳定的 `409` 错误。成功响应保持 YAML 媒体类型，失败响应使用统一 JSON 错误信封，审计只记录目标、
+动作和结果，不记录 Manifest 正文。
 
 Pod 日志接口要求专用 `cluster.pod.logs.read` 权限，并显式携带 Namespace、Pod 名称、当前 UID 和容器名称。
 默认返回最近 200 行；可选 `previous`、`since_seconds`、`timestamps` 和 `follow`。Server 不把日志正文包装进

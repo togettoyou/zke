@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, FileCode, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -34,6 +34,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { ContinuePager } from "./ContinuePager";
+import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 
@@ -54,6 +55,8 @@ export function NamespaceSection({
   // Drilling into a Namespace keeps the list's paging and dialogs alive, so
   // coming back lands on the page the operator left rather than on page one.
   const [detailName, setDetailName] = useState<string | null>(null);
+  // The YAML editor takes over the section: it is a document, not a field.
+  const [yamlName, setYamlName] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createPreview, setCreatePreview] = useState<KubernetesNamespaceDetail | null>(null);
@@ -68,6 +71,7 @@ export function NamespaceSection({
 
   const projectScope = { type: "project" as const, tenantId, projectId };
   const canCreate = permissions.can("cluster.resource.create", projectScope);
+  const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
 
   const columns = useMemo<ColumnDef<KubernetesNamespaceSummary, unknown>[]>(
@@ -149,11 +153,20 @@ export function NamespaceSection({
 
   return (
     <>
-      {detailName ? (
+      {yamlName ? (
+        <YamlEditorView
+          identity={{ clusterId, version: "v1", resource: "namespaces", name: yamlName }}
+          clusterName={clusterName}
+          kindLabel="Namespace"
+          canUpdate={canUpdate}
+          onBack={() => setYamlName(null)}
+        />
+      ) : detailName ? (
         <NamespaceDetailView
           clusterId={clusterId}
           clusterName={clusterName}
           name={detailName}
+          onOpenYaml={() => setYamlName(detailName)}
           onBack={() => setDetailName(null)}
         />
       ) : (
@@ -349,11 +362,13 @@ function NamespaceDetailView({
   clusterId,
   clusterName,
   name,
+  onOpenYaml,
   onBack,
 }: {
   clusterId: string;
   clusterName: string;
   name: string;
+  onOpenYaml: () => void;
   onBack: () => void;
 }) {
   const detail = useNamespace(clusterId, name);
@@ -364,10 +379,16 @@ function NamespaceDetailView({
         title={name}
         description={`读取自集群 ${clusterName}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
-          <Button size="sm" variant="secondary" onClick={onBack}>
-            <ArrowLeft />
-            返回列表
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
+            <Button size="sm" variant="secondary" onClick={onBack}>
+              <ArrowLeft />
+              返回列表
+            </Button>
+          </div>
         }
       />
       {detail.error ? (

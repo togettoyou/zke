@@ -713,8 +713,8 @@ Resource Stream 是 Server 与 Agent 之间的内部协议。Server 提供受控
 - Cluster 继承所属 Project 的授权，Namespace 不是独立授权层级；
 - Agent 对 GVR、Verb、Subresource、正文和选择器执行独立 allowlist；
 - Agent 使用最小权限 Kubernetes ServiceAccount；
-- 默认安装授予 Node 的 `get/list/patch`、Namespace 的 `get/list/create/delete`、Pod 的
-  `get/list/delete` 和 `pods/log` 的 `get`；需要管理其他内置资源、CRD 或 CR 时，由安装方显式扩展 Agent
+- 默认安装授予 Node 的 `get/list/update/patch`、Namespace 的 `get/list/create/update/delete`、Pod 的
+  `get/list/update/delete` 和 `pods/log` 的 `get`；需要管理其他内置资源、CRD 或 CR 时，由安装方显式扩展 Agent
   ServiceAccount RBAC；
 - Secret 内容和任意 Subresource 不纳入当前通用 CRUD；
 - 资源变更要求显式目标、DryRun 影响预览、用户确认、幂等键和 Cluster 定域审计；
@@ -780,9 +780,11 @@ Node dynamic client 的 List/Detail 往返。
 - Create、Update、四类 Patch、Delete 和 DryRun 已实现；
 - 细粒度 RBAC、显式确认、审计、有界幂等重放和能力协商已实现；
 - 冲突检测、Update `resourceVersion` 以及 Delete UID/resourceVersion 前置条件已实现；
+- 完整 YAML 读取与更新后端已复用通用 Get/Update Stream 实现，包含严格单文档解析、DryRun、
+  URL/对象身份核对和 UID/resourceVersion 防误改；
 - Namespace 类型化 Create/Delete，以及工作负载创建、伸缩、滚动重启、CronJob 暂停/恢复和删除的表单、
   DryRun 预检、影响展示与二次确认已经实现；Pod 类型化删除与 Console DryRun、影响展示和二次确认也已复用
-  相同安全链路；其他资源的 YAML 编辑器和类型化创建/编辑表单仍待实现。
+  相同安全链路；YAML Console 编辑器和其他资源的类型化创建/编辑表单仍待实现。
 
 ### 11.5 流式能力
 

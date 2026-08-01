@@ -163,8 +163,14 @@ func TestRenderManifestGrantsOnlyEnabledWorkloadResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "batch", []string{
 		"jobs", "cronjobs",
 	}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"nodes"}, []string{
+		"get", "list", "update", "patch",
+	})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"namespaces"}, []string{
+		"get", "list", "create", "update", "delete",
+	})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods"}, []string{
-		"get", "list", "delete",
+		"get", "list", "update", "delete",
 	})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/log"}, []string{"get"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"events"}, []string{"get", "list", "watch"})

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, Ban, PlayCircle } from "lucide-react";
+import { ArrowLeft, Ban, FileCode, PlayCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { useNode, useNodes, useSetNodeSchedulable } from "@/api/queries/nodes";
@@ -18,6 +18,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { ContinuePager } from "./ContinuePager";
+import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 
@@ -39,6 +40,8 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
   // Drilling into a Node keeps the list's paging alive, so coming back lands on
   // the page the operator left rather than on page one.
   const [detailName, setDetailName] = useState<string | null>(null);
+  // The YAML editor takes over the section: it is a document, not a field.
+  const [yamlName, setYamlName] = useState<string | null>(null);
   const [schedulingTarget, setSchedulingTarget] = useState<SchedulingTarget | null>(null);
   const [schedulingPreviewed, setSchedulingPreviewed] = useState(false);
   const schedulingPreviewKey = useSubmissionKey(schedulingTarget !== null);
@@ -147,7 +150,15 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
 
   return (
     <>
-      {detailName ? (
+      {yamlName ? (
+        <YamlEditorView
+          identity={{ clusterId, version: "v1", resource: "nodes", name: yamlName }}
+          clusterName={clusterName}
+          kindLabel="Node"
+          canUpdate={canUpdate}
+          onBack={() => setYamlName(null)}
+        />
+      ) : detailName ? (
         <NodeDetailView
           clusterId={clusterId}
           clusterName={clusterName}
@@ -155,6 +166,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           canUpdate={canUpdate}
           onBack={() => setDetailName(null)}
           onToggleScheduling={openScheduling}
+          onOpenYaml={() => setYamlName(detailName)}
         />
       ) : (
         <div className="flex h-full min-h-0 flex-col">
@@ -249,6 +261,7 @@ function NodeDetailView({
   canUpdate,
   onBack,
   onToggleScheduling,
+  onOpenYaml,
 }: {
   clusterId: string;
   clusterName: string;
@@ -256,6 +269,7 @@ function NodeDetailView({
   canUpdate: boolean;
   onBack: () => void;
   onToggleScheduling: (node: SchedulingTarget) => void;
+  onOpenYaml: () => void;
 }) {
   const detail = useNode(clusterId, name);
 
@@ -281,6 +295,10 @@ function NodeDetailView({
                 {detail.data.unschedulable ? "恢复调度" : "停止调度"}
               </Button>
             ) : null}
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             <Button size="sm" variant="secondary" onClick={onBack}>
               <ArrowLeft />
               返回列表

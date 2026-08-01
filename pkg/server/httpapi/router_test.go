@@ -227,6 +227,8 @@ func TestRoutesAreRegisteredCentrally(t *testing.T) {
 		"GET /api/v1/clusters/:cluster_id/kubernetes/resource-types",
 		"GET /api/v1/clusters/:cluster_id/kubernetes/resources",
 		"GET /api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name",
+		"GET /api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name/yaml",
+		"PUT /api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name/yaml",
 		"PUT /api/v1/clusters/:cluster_id",
 		"DELETE /api/v1/clusters/:cluster_id",
 		"POST /api/v1/projects/:project_id/cluster-enrollments",

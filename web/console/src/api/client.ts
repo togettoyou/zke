@@ -105,16 +105,40 @@ function toApiError(response: Response, body: unknown): ApiError {
   });
 }
 
+function raiseResultError(
+  result: { error?: unknown; response: Response },
+  options: UnwrapOptions,
+): never {
+  const error = toApiError(result.response, result.error);
+  if (error.status === 401 && !options.ignoreUnauthenticated) {
+    notifyUnauthenticated();
+  }
+  throw error;
+}
+
 /** Throws {@link ApiError} on failure, returns the unwrapped payload on success. */
 export function unwrap<T>(result: ApiResult<T>, options: UnwrapOptions = {}): T {
   if (result.error !== undefined || !result.response.ok) {
-    const error = toApiError(result.response, result.error);
-    if (error.status === 401 && !options.ignoreUnauthenticated) {
-      notifyUnauthenticated();
-    }
-    throw error;
+    raiseResultError(result, options);
   }
   return result.data?.data as T;
+}
+
+/**
+ * {@link unwrap} for the endpoints whose success payload is not the envelope.
+ *
+ * YAML is returned as `application/yaml` and read with `parseAs: "text"`, so the
+ * body is the payload rather than one level down inside `data`. Failures are
+ * still ordinary error envelopes and are raised identically.
+ */
+export function unwrapRaw<T>(
+  result: { data?: T; error?: unknown; response: Response },
+  options: UnwrapOptions = {},
+): T {
+  if (result.error !== undefined || !result.response.ok) {
+    raiseResultError(result, options);
+  }
+  return result.data as T;
 }
 
 /**

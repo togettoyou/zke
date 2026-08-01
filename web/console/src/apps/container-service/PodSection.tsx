@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, ScrollText, Trash2 } from "lucide-react";
+import { ArrowLeft, FileCode, ScrollText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDeletePod, usePod, usePods } from "@/api/queries/pods";
@@ -24,6 +24,7 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { ContinuePager } from "./ContinuePager";
 import { PodLogsView } from "./PodLogsView";
+import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 
@@ -60,6 +61,9 @@ export function PodSection({
   const [detailName, setDetailName] = useState<string | null>(null);
   // The log reader takes over the whole section: a log is read, not glanced at.
   const [logsTarget, setLogsTarget] = useState<PodLogTarget | null>(null);
+  // The YAML editor takes over the section the same way, and for the same
+  // reason: it is a document, not a field.
+  const [yamlName, setYamlName] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<KubernetesPodSummary | null>(null);
   const [deletePreviewed, setDeletePreviewed] = useState(false);
   const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
@@ -71,6 +75,7 @@ export function PodSection({
   // Reading logs is its own permission rather than part of reading the Cluster:
   // log bodies carry whatever the application decided to print.
   const canReadLogs = permissions.can("cluster.pod.logs.read", projectScope);
+  const canUpdate = permissions.can("cluster.resource.update", projectScope);
 
   const onOpenLogs = useCallback(
     (pod: PodLogTarget) => setLogsTarget({ name: pod.name, uid: pod.uid }),
@@ -179,7 +184,15 @@ export function PodSection({
 
   return (
     <>
-      {logsTarget ? (
+      {yamlName ? (
+        <YamlEditorView
+          identity={{ clusterId, version: "v1", resource: "pods", namespace, name: yamlName }}
+          clusterName={clusterName}
+          kindLabel="Pod"
+          canUpdate={canUpdate}
+          onBack={() => setYamlName(null)}
+        />
+      ) : logsTarget ? (
         <PodLogsView
           clusterId={clusterId}
           clusterName={clusterName}
@@ -198,6 +211,7 @@ export function PodSection({
           canReadLogs={canReadLogs}
           onDelete={openDelete}
           onOpenLogs={onOpenLogs}
+          onOpenYaml={() => setYamlName(detailName)}
           onBack={() => setDetailName(null)}
         />
       ) : (
@@ -330,6 +344,7 @@ function PodDetailView({
   canReadLogs,
   onDelete,
   onOpenLogs,
+  onOpenYaml,
   onBack,
 }: {
   clusterId: string;
@@ -340,6 +355,7 @@ function PodDetailView({
   canReadLogs: boolean;
   onDelete: (pod: KubernetesPodSummary) => void;
   onOpenLogs: (pod: PodLogTarget) => void;
+  onOpenYaml: () => void;
   onBack: () => void;
 }) {
   const detail = usePod(clusterId, namespace, name);
@@ -360,6 +376,10 @@ function PodDetailView({
                 日志
               </Button>
             ) : null}
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             {canDelete && pod?.uid ? (
               <Button
                 size="sm"

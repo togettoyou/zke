@@ -61,12 +61,17 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // Request validation
   invalid_request: "请求内容无效，请检查输入",
   confirmation_required: "该操作需要显式确认",
+  invalid_yaml: "YAML 无效，请检查文档结构和资源身份",
+  manifest_too_large: "YAML 超过 4 MiB，请缩减内容后重试",
+  unsupported_media_type: "请求正文必须使用 application/yaml",
 
   // Lifecycle and idempotency
   not_found: "目标不存在，或不在当前权限范围内",
   resource_conflict: "资源状态与请求冲突",
   resource_state_conflict: "目标资源当前状态不允许该操作",
   idempotency_conflict: "幂等键已用于内容不同的请求，请重新发起",
+  resource_uid_changed: "资源已被删除并以同名重新创建，请重新读取 YAML",
+  resource_version_changed: "资源已发生变化，请重新读取 YAML 后合并修改",
   // Each spells out its own scope and says where the holder might be hiding: a
   // stopped resource still holds its name and is not in the default list.
   tenant_name_conflict:
@@ -94,6 +99,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   "403": "当前账号没有执行该操作的权限",
   "404": "目标不存在，或不在当前权限范围内",
   "409": "资源状态与请求冲突",
+  "413": "请求正文过大",
+  "415": "请求正文格式不受支持",
   "429": "请求过于频繁，请稍后再试",
   "500": "服务内部错误",
   "503": "服务暂不可用",

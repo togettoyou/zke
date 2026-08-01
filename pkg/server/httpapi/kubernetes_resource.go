@@ -673,10 +673,11 @@ func (handler *kubernetesResourceHandler) respondResourceError(
 		errors.Is(err, kubernetesresource.ErrResponseBudget) {
 		c.Header("Retry-After", "1")
 	}
-	return handler.respondError(
-		c,
-		operation,
-		err,
+	return handler.respondError(c, operation, err, kubernetesResourceErrorMappings()...)
+}
+
+func kubernetesResourceErrorMappings() []errorMapping {
+	return []errorMapping{
 		errorMapping{kubernetesresource.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Kubernetes resource request"},
 		errorMapping{kubernetesresource.ErrResourceNotFound, http.StatusNotFound, "resource_not_found", "Kubernetes resource not found"},
 		errorMapping{kubernetesresource.ErrAgentNotConnected, http.StatusServiceUnavailable, "agent_not_connected", "Cluster Agent is not connected"},
@@ -692,7 +693,7 @@ func (handler *kubernetesResourceHandler) respondResourceError(
 		errorMapping{kubernetesresource.ErrUpstreamConflict, http.StatusConflict, "cluster_api_conflict", "Kubernetes resource changed during the request"},
 		errorMapping{kubernetesresource.ErrInvalidResponse, http.StatusBadGateway, "invalid_agent_response", "Agent returned an invalid resource response"},
 		errorMapping{kubernetesresource.ErrUpstreamFailure, http.StatusBadGateway, "cluster_api_error", "Kubernetes resource query failed"},
-	)
+	}
 }
 
 func mutationOptions(
@@ -797,7 +798,7 @@ func (handler *kubernetesResourceHandler) finishObjectMutation(
 	})
 }
 
-func (handler *kubernetesResourceHandler) recordKubernetesMutation(
+func (handler baseHandler) recordKubernetesMutation(
 	c *gin.Context,
 	actorUserID string,
 	action string,

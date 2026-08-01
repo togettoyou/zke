@@ -2710,6 +2710,141 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/yaml:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesResourceYAML
+      description: |
+        按明确 Cluster、GVR、Namespace 和名称读取单个 Kubernetes 主资源的完整
+        YAML。响应保留 metadata.uid 与 metadata.resourceVersion，用于后续防误改校验；
+        metadata.managedFields 被移除。Secret 和 Subresource 不在该接口范围内。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesResourceName"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+      responses:
+        "200":
+          description: Kubernetes 单资源 YAML
+          headers:
+            X-ZKE-Dry-Run:
+              schema:
+                type: string
+                const: "false"
+            X-ZKE-Resource-UID:
+              schema:
+                type: string
+            X-ZKE-Resource-Version:
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    put:
+      tags: [Resources]
+      operationId: updateKubernetesResourceYAML
+      description: |
+        使用严格的单文档 YAML 更新具名 Kubernetes 主资源，正文最大 4 MiB。
+        Server 在更新前核对 URL/GVR/Namespace 与正文身份，并要求正文中的
+        metadata.uid 和 metadata.resourceVersion 与实时对象一致。dry_run=true
+        调用 Kubernetes API Server DryRun 校验且无需 confirm；实际写入必须提供
+        confirm=true。请求正文及其字段不会写入 ZKE 审计记录。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesResourceName"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: dry_run
+          in: query
+          description: 仅调用 Kubernetes API Server DryRun，不持久化变更。
+          schema:
+            type: boolean
+            default: false
+        - name: confirm
+          in: query
+          description: 实际写入必须为 true；dry-run 可省略。
+          schema:
+            type: boolean
+            default: false
+        - name: field_manager
+          in: query
+          schema:
+            type: string
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              type: string
+              maxLength: 4194304
+      responses:
+        "200":
+          description: 更新后的 Kubernetes YAML 或 dry-run 预览
+          headers:
+            X-ZKE-Dry-Run:
+              schema:
+                type: string
+                enum: ["true", "false"]
+            X-ZKE-Resource-UID:
+              schema:
+                type: string
+            X-ZKE-Resource-Version:
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/projects/{project_id}/cluster-enrollments:
     get:
       tags: [Clusters]
@@ -3264,6 +3399,18 @@ components:
             $ref: "#/components/schemas/Error"
     Conflict:
       description: 幂等、生命周期或安全不变量冲突
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: 请求正文超过允许大小
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnsupportedMediaType:
+      description: 请求正文媒体类型不受支持
       content:
         application/json:
           schema:

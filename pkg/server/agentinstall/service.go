@@ -259,20 +259,21 @@ func renderManifest(
 			{
 				APIGroups: []string{""},
 				Resources: []string{"nodes"},
-				// `patch` covers marking a Node schedulable or unschedulable.
+				// `patch` covers marking a Node schedulable or unschedulable;
+				// `update` is the full-object YAML management path.
 				// Draining is not included: it needs the pods/eviction
 				// subresource, which the Resource protocol still rejects.
-				Verbs: []string{"get", "list", "patch"},
+				Verbs: []string{"get", "list", "update", "patch"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"namespaces"},
-				Verbs:     []string{"get", "list", "create", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"pods"},
-				Verbs:     []string{"get", "list", "delete"},
+				Verbs:     []string{"get", "list", "update", "delete"},
 			},
 			{
 				APIGroups: []string{""},

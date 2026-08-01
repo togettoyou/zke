@@ -200,11 +200,14 @@ Deployment。不会创建 Kubernetes Service，
 Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Secret。
 
 该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Pod Logs 和 Kubernetes Event 当前后端能力。
-其中 Pod Logs 只增加 `pods/log` 的 `get`，Event 只增加 `events` 的 `get/list/watch`，不授予 Exec 或
-Eviction。Agent 的通用
+其中 Node、Namespace 和 Pod 的 `update` 用于完整 YAML 管理，Pod Logs 只增加 `pods/log` 的 `get`，
+Event 只增加 `events` 的 `get/list/watch`，不授予 Exec 或 Eviction。Agent 的通用
 Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限；需要读取或变更更多内置资源、CRD 或 CR 时，安装方
 必须为同一 ServiceAccount 增加明确的最小 RBAC。
 不得为了使用通用接口直接绑定 `cluster-admin`。
+
+在 YAML 管理上线前使用旧清单接入的集群不会自动获得新增权限；管理员需要把同一 ClusterRole 中 Node、
+Namespace 和 Pod 的规则更新为包含 `update`，无需扩大到通配资源或绑定 `cluster-admin`。
 
 ## 4. Agent 首次注册
 

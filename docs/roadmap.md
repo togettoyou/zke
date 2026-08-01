@@ -44,7 +44,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   审计、HTTP/QUIC 流式测试，以及 Console 的容器选择、跟随、下载与取消闭环；浏览器不暴露 HTTP Trailer，
   Console 暂无法区分日志流的终止原因）
 - [ ] Web Terminal
-- [ ] YAML 管理
+- [x] YAML 管理（完整 YAML 读取、严格单文档更新、DryRun、UID/resourceVersion 防误改、显式确认、幂等
+  和审计，以及节点、命名空间、工作负载和 Pod 详情页的 Console 查看与编辑闭环；编辑器为纯文本，语法高亮
+  与结构校验尚未实现）
 - [x] Kubernetes Event（独立 `resource-watch.v1`、专用权限与 Agent 最小 RBAC、Namespace/资源过滤、
   初始快照与实时 Follow、SSE 心跳与正文内终止原因、resourceVersion 恢复、取消、限流、超时、权限重验、
   审计和真实 QUIC 测试，以及 Console 的筛选、跟随、按 UID 归并与断流恢复闭环；从具体对象跳转到关联事件

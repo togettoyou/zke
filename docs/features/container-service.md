@@ -40,6 +40,8 @@
 - `POST /api/v1/clusters/{cluster_id}/kubernetes/resources`：创建具名主资源；
 - `PUT`、`PATCH`、`DELETE /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}`：
   更新、四类 Patch 或删除具名主资源；
+- `GET`、`PUT /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/yaml`：读取或更新
+  单个主资源的完整 YAML；读取要求 `cluster.read`，更新要求 `cluster.resource.update`、CSRF 和幂等键；
 - 只读接口要求 Session 和目标 Cluster 的 `cluster.read` 权限，每个请求通过独立 QUIC Resource Stream
   交给该 Cluster 的 Agent；
 - 写接口另外要求 CSRF、`cluster.resource.create`、`cluster.resource.update` 或
@@ -48,9 +50,13 @@
   Discovery 策略缓存有 TTL 和条目上限，Secret 和 Subresource 明确拒绝；
 - 支持 DryRun、JSON Patch、JSON Merge Patch、Strategic Merge Patch、Server-Side Apply、
   删除传播策略和 UID/resourceVersion 前置条件；Apply 默认 `force=false`；
+- YAML 更新仅接受不超过 4 MiB 的 `application/yaml` 单文档，不接受 Alias、Anchor、重复字段或
+  YAML-only 类型；Server 在更新前核对 URL/GVR/Namespace 与 `apiVersion`、`kind`、名称、UID 和
+  `resourceVersion`，DryRun 无需确认，实际写入要求 `confirm=true`。成功响应仍为 `application/yaml`，
+  错误使用统一 JSON 信封；审计不记录 YAML 正文；
 - Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；
-- 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`patch`，Namespace 的
-  `get`、`list`、`create`、`delete`，Pod 的 `get`、`list`、`delete`，以及 Deployment、StatefulSet、
+- 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
+  `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
   DaemonSet、Job 和 CronJob 的完整主资源 CRUD 权限，并单独授予 `pods/log` 的 `get`；Exec、Eviction
   Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
@@ -104,6 +110,13 @@ Kubernetes Event 后端固定读取所选 Cluster 与 Namespace 的 `core/v1/eve
 Name、Event type 和 reason 过滤，并通过 resourceVersion/`Last-Event-ID` 恢复。Session 或
 `cluster.event.read` 被撤销时立即取消，`410 Expired` 以 `resource_version_expired` 的正文内 close 原因提示
 客户端重新拉取快照。Event 正文不写入日志或审计。
+
+Console YAML 入口在节点、命名空间、工作负载和 Pod 的详情页，占据整个应用视图。文档按 Kubernetes 原样展示，
+包含 `metadata.uid` 和 `metadata.resourceVersion`——Server 正是拿它们做写入前置条件，把它们「整理掉」等于
+去掉了防止基于陈旧读取覆盖他人改动的保护。编辑器不折行：YAML 靠缩进表达层级，软折行会读成一层并不存在的
+嵌套。保存走两步，先服务端 DryRun，再在确认弹窗中要求输入对象名称，并说明整份文档会替换现有对象、文档中
+未出现的字段会被移除。保存成功后重新读取一次，使编辑器持有新的 resourceVersion 而不是刚刚被用掉的那个。
+没有 `cluster.resource.update` 权限时页面只读并说明原因；文档超过 4 MiB 时在提交前就拒绝，不做无谓往返。
 
 Console 事件页面按所选 Cluster 和 Namespace 展示 Event，可按 Event type、关联资源 Kind/名称和 reason 筛选，
 筛选条件由服务端执行，输入框做防抖以免每次击键都开一条新 Watch。默认开启实时跟随。事件按 UID 归并：
@@ -178,7 +191,7 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 - ConfigMap 与 Secret；
 - PersistentVolume、PersistentVolumeClaim 与 StorageClass；
 - 从 Pod、工作负载等具体对象直接跳转到按 UID 过滤的关联事件；
-- YAML 查看与编辑；
+- YAML 编辑器的语法高亮、结构校验与差异对比；
 - 面向具体资源的表单化创建、更新和删除体验。
 
 产品体验将参考成熟 Kubernetes 管理平台的通用实践，但不会以与任何现有平台完全相同为目标。

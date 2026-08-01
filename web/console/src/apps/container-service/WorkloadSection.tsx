@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, FileCode, Plus } from "lucide-react";
 
 import { useWorkload, useWorkloads } from "@/api/queries/workloads";
 import type {
@@ -24,7 +24,8 @@ import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { WorkloadActions } from "./WorkloadActions";
 import { WorkloadCreateDialog } from "./WorkloadCreateDialog";
-import { kindLabel, WORKLOAD_TYPES } from "./workload-catalog";
+import { YamlEditorView } from "./YamlEditorView";
+import { kindLabel, workloadGroup, WORKLOAD_TYPES } from "./workload-catalog";
 
 const PAGE_SIZE = 50;
 
@@ -63,6 +64,8 @@ export function WorkloadSection({
   // Drilling into a workload keeps the list's type and paging alive, so coming
   // back lands where the operator left rather than on Deployments page one.
   const [detailName, setDetailName] = useState<string | null>(null);
+  // The YAML editor takes over the section: it is a document, not a field.
+  const [yamlName, setYamlName] = useState<string | null>(null);
 
   const [creating, setCreating] = useState(false);
 
@@ -130,6 +133,25 @@ export function WorkloadSection({
     [resource, clusterId, clusterName, namespace, canUpdate, canDelete],
   );
 
+  if (yamlName) {
+    return (
+      <YamlEditorView
+        identity={{
+          clusterId,
+          group: workloadGroup(resource),
+          version: "v1",
+          resource,
+          namespace,
+          name: yamlName,
+        }}
+        clusterName={clusterName}
+        kindLabel={kindLabel(resource)}
+        canUpdate={canUpdate}
+        onBack={() => setYamlName(null)}
+      />
+    );
+  }
+
   if (detailName) {
     return (
       <WorkloadDetailView
@@ -140,6 +162,7 @@ export function WorkloadSection({
         name={detailName}
         canUpdate={canUpdate}
         canDelete={canDelete}
+        onOpenYaml={() => setYamlName(detailName)}
         onBack={() => setDetailName(null)}
       />
     );
@@ -329,6 +352,7 @@ function WorkloadDetailView({
   name,
   canUpdate,
   canDelete,
+  onOpenYaml,
   onBack,
 }: {
   clusterId: string;
@@ -338,6 +362,7 @@ function WorkloadDetailView({
   name: string;
   canUpdate: boolean;
   canDelete: boolean;
+  onOpenYaml: () => void;
   onBack: () => void;
 }) {
   const detail = useWorkload(clusterId, namespace, resource, name);
@@ -361,6 +386,10 @@ function WorkloadDetailView({
                 onDeleted={onBack}
               />
             ) : null}
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             <Button size="sm" variant="secondary" onClick={onBack}>
               <ArrowLeft />
               返回列表
