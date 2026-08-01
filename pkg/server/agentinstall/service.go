@@ -270,6 +270,12 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "create", "delete"},
 			},
 			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				// Pod logs, Exec and eviction are Subresources and remain excluded.
+				Verbs: []string{"get", "list", "delete"},
+			},
+			{
 				APIGroups: []string{"apps"},
 				Resources: []string{
 					"deployments",

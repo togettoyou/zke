@@ -51,6 +51,23 @@ const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     scheduled: { label: "等待触发", tone: "neutral" },
     pending: { label: "等待中", tone: "neutral" },
   },
+  // Pod phase, verbatim from Kubernetes. `Running` is not the same as healthy —
+  // a Pod can run with an unready container — so readiness is shown next to this
+  // badge rather than folded into it.
+  pod: {
+    Pending: { label: "等待中", tone: "warning" },
+    Running: { label: "运行中", tone: "success" },
+    Succeeded: { label: "已完成", tone: "info" },
+    Failed: { label: "失败", tone: "danger" },
+    Unknown: { label: "未知", tone: "neutral" },
+  },
+  // The state of one container inside a Pod.
+  containerState: {
+    waiting: { label: "等待中", tone: "warning" },
+    running: { label: "运行中", tone: "success" },
+    terminated: { label: "已终止", tone: "neutral" },
+    unknown: { label: "未知", tone: "neutral" },
+  },
   // Agent lifecycle and health, per the `agents` table's CHECK constraints.
   // These reached the UI as raw enum values before.
   lifecycle: {

@@ -1546,6 +1546,159 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesPods
+      description: |
+        在明确的目标 Cluster 和 Namespace 中查询 Pod。分页使用 Kubernetes 原生
+        continuation token，并支持 Label Selector 和 Field Selector。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: continue
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: label_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+        - name: field_selector
+          in: query
+          schema:
+            type: string
+            maxLength: 4096
+      responses:
+        "200":
+          description: Pod 列表和 Kubernetes 分页状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesPodPage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesPod
+      description: 在明确的目标 Cluster 和 Namespace 中查询一个 Pod 的稳定详情投影。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+      responses:
+        "200":
+          description: Pod 详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesPodDetail"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesPod
+      description: |
+        删除明确 Cluster 和 Namespace 中的 Pod。请求必须携带当前 Pod UID，避免误删同名重建对象；
+        dry_run=true 时执行 Kubernetes 服务端预览，实际删除要求显式 confirm=true。由控制器管理的
+        Pod 删除后通常会被控制器重新创建，本接口不提供 Eviction 语义。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesDeletePodRequest"
+      responses:
+        "200":
+          description: Pod 删除或 DryRun 结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDeleteResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}:
     get:
       tags: [Resources]
@@ -2771,6 +2924,14 @@ components:
         type: string
         minLength: 1
         maxLength: 63
+    PodName:
+      name: pod_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
     WorkloadResource:
       name: workload_resource
       in: path
@@ -4185,6 +4346,295 @@ components:
           $ref: "#/components/schemas/KubernetesNamespaceDetail"
         dry_run:
           type: boolean
+    KubernetesPodOwnerReference:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, name, uid, controller, block_owner_deletion]
+      properties:
+        api_version:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        uid:
+          type: string
+        controller:
+          type: boolean
+        block_owner_deletion:
+          type: boolean
+    KubernetesPodContainerState:
+      type: object
+      additionalProperties: false
+      required: [type, reason]
+      properties:
+        type:
+          type: string
+          enum: [unknown, waiting, running, terminated]
+        reason:
+          type: string
+        started_at:
+          $ref: "#/components/schemas/Timestamp"
+        finished_at:
+          $ref: "#/components/schemas/Timestamp"
+        exit_code:
+          type: integer
+          format: int32
+        signal:
+          type: integer
+          format: int32
+          minimum: 0
+    KubernetesPodContainer:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - image
+        - image_pull_policy
+        - requests
+        - limits
+        - ready
+        - restart_count
+        - state
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+        image_pull_policy:
+          type: string
+          enum: [Always, IfNotPresent, Never, ""]
+        requests:
+          type: object
+          description: 资源名到 Kubernetes Quantity 字符串的映射。
+          additionalProperties:
+            type: string
+        limits:
+          type: object
+          description: 资源名到 Kubernetes Quantity 字符串的映射。
+          additionalProperties:
+            type: string
+        ready:
+          type: boolean
+        started:
+          type: boolean
+        restart_count:
+          type: integer
+          format: int32
+          minimum: 0
+        state:
+          $ref: "#/components/schemas/KubernetesPodContainerState"
+        last_state:
+          $ref: "#/components/schemas/KubernetesPodContainerState"
+    KubernetesPodCondition:
+      type: object
+      additionalProperties: false
+      required: [type, status, observed_generation, reason, message]
+      properties:
+        type:
+          type: string
+        status:
+          type: string
+          enum: ["True", "False", Unknown]
+        observed_generation:
+          type: integer
+          format: int64
+          minimum: 0
+        reason:
+          type: string
+        message:
+          type: string
+        last_probe_time:
+          $ref: "#/components/schemas/Timestamp"
+        last_transition_time:
+          $ref: "#/components/schemas/Timestamp"
+    KubernetesPodSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - api_version
+        - kind
+        - namespace
+        - name
+        - uid
+        - resource_version
+        - creation_timestamp
+        - labels
+        - phase
+        - reason
+        - ready
+        - node_name
+        - pod_ip
+        - restart_count
+        - images
+      properties:
+        api_version:
+          type: string
+          const: v1
+        kind:
+          type: string
+          const: Pod
+        namespace:
+          type: string
+          maxLength: 63
+        name:
+          type: string
+          maxLength: 253
+        uid:
+          type: string
+        resource_version:
+          type: string
+        creation_timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        deletion_timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        phase:
+          type: string
+          enum: [Pending, Running, Succeeded, Failed, Unknown, ""]
+        reason:
+          type: string
+        ready:
+          type: boolean
+        node_name:
+          type: string
+        pod_ip:
+          type: string
+        restart_count:
+          type: integer
+          format: int64
+          minimum: 0
+        images:
+          type: array
+          items:
+            type: string
+        controller:
+          $ref: "#/components/schemas/KubernetesPodOwnerReference"
+    KubernetesPodDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesPodSummary"
+        - type: object
+          required:
+            - annotations
+            - owner_references
+            - message
+            - nominated_node_name
+            - service_account_name
+            - scheduler_name
+            - priority_class_name
+            - runtime_class_name
+            - restart_policy
+            - dns_policy
+            - host_network
+            - host_ips
+            - pod_ips
+            - qos_class
+            - containers
+            - init_containers
+            - ephemeral_containers
+            - conditions
+          properties:
+            annotations:
+              type: object
+              additionalProperties:
+                type: string
+            owner_references:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesPodOwnerReference"
+            message:
+              type: string
+            nominated_node_name:
+              type: string
+            service_account_name:
+              type: string
+            scheduler_name:
+              type: string
+            priority_class_name:
+              type: string
+            runtime_class_name:
+              type: string
+            restart_policy:
+              type: string
+            dns_policy:
+              type: string
+            host_network:
+              type: boolean
+            host_ips:
+              type: array
+              items:
+                type: string
+            pod_ips:
+              type: array
+              items:
+                type: string
+            start_time:
+              $ref: "#/components/schemas/Timestamp"
+            qos_class:
+              type: string
+            containers:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesPodContainer"
+            init_containers:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesPodContainer"
+            ephemeral_containers:
+              type: array
+              description: 已通过 Kubernetes Ephemeral Containers 能力加入 Pod 的调试容器。
+              items:
+                $ref: "#/components/schemas/KubernetesPodContainer"
+            conditions:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesPodCondition"
+    KubernetesPodPage:
+      type: object
+      additionalProperties: false
+      required: [pods, continue_token, resource_version, remaining_item_count]
+      properties:
+        pods:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesPodSummary"
+        continue_token:
+          type: string
+          description: Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。
+        resource_version:
+          type: string
+        remaining_item_count:
+          type: [integer, "null"]
+          minimum: 0
+    KubernetesDeletePodRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, confirm]
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际删除必须为 true；dry-run 可以为 false。
+        uid:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 当前 Pod UID，防止误删同名重建对象。
+        resource_version:
+          type: string
+          maxLength: 256
+        grace_period_seconds:
+          type: [integer, "null"]
+          minimum: 0
+        propagation_policy:
+          type: string
+          enum: ["", orphan, background, foreground]
     KubernetesNodeAddress:
       type: object
       additionalProperties: false

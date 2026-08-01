@@ -709,6 +709,8 @@ Node dynamic client 的 List/Detail 往返。
 - Deployment、StatefulSet、DaemonSet、Job 和 CronJob 已实现按 Cluster、Namespace 和资源类型定域的
   类型化 List/Detail 投影；类型化后端支持创建、伸缩、滚动重启、CronJob 暂停/恢复和删除，底层复用通用
   Create/Patch/Delete；Console 已实现类型化创建和其他变更操作的 DryRun、影响展示与确认闭环。
+- Pod 已实现显式 Cluster/Namespace 定域的类型化 List/Detail 投影和带 UID 前置条件的删除后端；Console
+  已完成列表、详情和删除确认闭环，Logs、Exec 和 Eviction 尚未实现。
 
 ### 11.3 更多只读资源
 
@@ -721,7 +723,8 @@ Node dynamic client 的 List/Detail 往返。
 - 细粒度 RBAC、显式确认、审计、有界幂等重放和能力协商已实现；
 - 冲突检测、Update `resourceVersion` 以及 Delete UID/resourceVersion 前置条件已实现；
 - Namespace 类型化 Create/Delete，以及工作负载创建、伸缩、滚动重启、CronJob 暂停/恢复和删除的表单、
-  DryRun 预检、影响展示与二次确认已经实现；其他资源的 YAML 编辑器和类型化创建/编辑表单仍待实现。
+  DryRun 预检、影响展示与二次确认已经实现；Pod 类型化删除与 Console DryRun、影响展示和二次确认也已复用
+  相同安全链路；其他资源的 YAML 编辑器和类型化创建/编辑表单仍待实现。
 
 ### 11.5 流式能力
 

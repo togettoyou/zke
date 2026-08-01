@@ -510,6 +510,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 在明确的目标 Cluster 和 Namespace 中查询 Pod。分页使用 Kubernetes 原生
+         *     continuation token，并支持 Label Selector 和 Field Selector。
+         */
+        get: operations["listKubernetesPods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 在明确的目标 Cluster 和 Namespace 中查询一个 Pod 的稳定详情投影。 */
+        get: operations["getKubernetesPod"];
+        put?: never;
+        post?: never;
+        /**
+         * @description 删除明确 Cluster 和 Namespace 中的 Pod。请求必须携带当前 Pod UID，避免误删同名重建对象；
+         *     dry_run=true 时执行 Kubernetes 服务端预览，实际删除要求显式 confirm=true。由控制器管理的
+         *     Pod 删除后通常会被控制器重新创建，本接口不提供 Eviction 语义。
+         */
+        delete: operations["deleteKubernetesPod"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}": {
         parameters: {
             query?: never;
@@ -1392,6 +1434,124 @@ export interface components {
             namespace: components["schemas"]["KubernetesNamespaceDetail"];
             dry_run: boolean;
         };
+        KubernetesPodOwnerReference: {
+            api_version: string;
+            kind: string;
+            name: string;
+            uid: string;
+            controller: boolean;
+            block_owner_deletion: boolean;
+        };
+        KubernetesPodContainerState: {
+            /** @enum {string} */
+            type: "unknown" | "waiting" | "running" | "terminated";
+            reason: string;
+            started_at?: components["schemas"]["Timestamp"];
+            finished_at?: components["schemas"]["Timestamp"];
+            /** Format: int32 */
+            exit_code?: number;
+            /** Format: int32 */
+            signal?: number;
+        };
+        KubernetesPodContainer: {
+            name: string;
+            image: string;
+            /** @enum {string} */
+            image_pull_policy: "Always" | "IfNotPresent" | "Never" | "";
+            /** @description 资源名到 Kubernetes Quantity 字符串的映射。 */
+            requests: {
+                [key: string]: string;
+            };
+            /** @description 资源名到 Kubernetes Quantity 字符串的映射。 */
+            limits: {
+                [key: string]: string;
+            };
+            ready: boolean;
+            started?: boolean;
+            /** Format: int32 */
+            restart_count: number;
+            state: components["schemas"]["KubernetesPodContainerState"];
+            last_state?: components["schemas"]["KubernetesPodContainerState"];
+        };
+        KubernetesPodCondition: {
+            type: string;
+            /** @enum {string} */
+            status: "True" | "False" | "Unknown";
+            /** Format: int64 */
+            observed_generation: number;
+            reason: string;
+            message: string;
+            last_probe_time?: components["schemas"]["Timestamp"];
+            last_transition_time?: components["schemas"]["Timestamp"];
+        };
+        KubernetesPodSummary: {
+            /** @constant */
+            api_version: "v1";
+            /** @constant */
+            kind: "Pod";
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            deletion_timestamp?: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            phase: "Pending" | "Running" | "Succeeded" | "Failed" | "Unknown" | "";
+            reason: string;
+            ready: boolean;
+            node_name: string;
+            pod_ip: string;
+            /** Format: int64 */
+            restart_count: number;
+            images: string[];
+            controller?: components["schemas"]["KubernetesPodOwnerReference"];
+        };
+        KubernetesPodDetail: components["schemas"]["KubernetesPodSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            owner_references: components["schemas"]["KubernetesPodOwnerReference"][];
+            message: string;
+            nominated_node_name: string;
+            service_account_name: string;
+            scheduler_name: string;
+            priority_class_name: string;
+            runtime_class_name: string;
+            restart_policy: string;
+            dns_policy: string;
+            host_network: boolean;
+            host_ips: string[];
+            pod_ips: string[];
+            start_time?: components["schemas"]["Timestamp"];
+            qos_class: string;
+            containers: components["schemas"]["KubernetesPodContainer"][];
+            init_containers: components["schemas"]["KubernetesPodContainer"][];
+            /** @description 已通过 Kubernetes Ephemeral Containers 能力加入 Pod 的调试容器。 */
+            ephemeral_containers: components["schemas"]["KubernetesPodContainer"][];
+            conditions: components["schemas"]["KubernetesPodCondition"][];
+        };
+        KubernetesPodPage: {
+            pods: components["schemas"]["KubernetesPodSummary"][];
+            /** @description Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。 */
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesDeletePodRequest: {
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际删除必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+            /** @description 当前 Pod UID，防止误删同名重建对象。 */
+            uid: string;
+            resource_version?: string;
+            grace_period_seconds?: number | null;
+            /** @enum {string} */
+            propagation_policy?: "" | "orphan" | "background" | "foreground";
+        };
         KubernetesNodeAddress: {
             type: string;
             address: string;
@@ -1619,6 +1779,7 @@ export interface components {
         ClusterID: components["schemas"]["UUID"];
         NodeName: string;
         NamespaceName: string;
+        PodName: string;
         WorkloadResource: components["schemas"]["KubernetesWorkloadResource"];
         WorkloadName: string;
         KubernetesResourceName: string;
@@ -2956,6 +3117,119 @@ export interface operations {
         };
         responses: {
             /** @description Namespace 删除或 DryRun 结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDeleteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesPods: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pod 列表和 Kubernetes 分页状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesPod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pod 详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesPod: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeletePodRequest"];
+            };
+        };
+        responses: {
+            /** @description Pod 删除或 DryRun 结果 */
             200: {
                 headers: {
                     [name: string]: unknown;

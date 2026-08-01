@@ -39,6 +39,12 @@ export type KubernetesWorkloadMutationResult = Schemas["KubernetesWorkloadMutati
 export type KubernetesCreateWorkloadRequest = Schemas["KubernetesCreateWorkloadRequest"];
 export type KubernetesWorkloadContainerTemplate = Schemas["KubernetesWorkloadContainerTemplate"];
 export type KubernetesWorkloadStatus = KubernetesWorkloadSummary["status"];
+export type KubernetesPodSummary = Schemas["KubernetesPodSummary"];
+export type KubernetesPodDetail = Schemas["KubernetesPodDetail"];
+export type KubernetesPodPage = Schemas["KubernetesPodPage"];
+export type KubernetesPodContainer = Schemas["KubernetesPodContainer"];
+export type KubernetesPodOwnerReference = Schemas["KubernetesPodOwnerReference"];
+export type KubernetesPodPhase = KubernetesPodSummary["phase"];
 export type KubernetesDeleteResult = Schemas["KubernetesDeleteResult"];
 
 export type AuditEvent = Schemas["AuditEvent"];

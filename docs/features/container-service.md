@@ -2,7 +2,7 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
+当前已完成 Node、Pod 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/nodes`：支持 `limit`、Kubernetes continuation token、Label Selector 和
   Field Selector；
@@ -23,6 +23,12 @@
   Deployment/StatefulSet 伸缩，Deployment/StatefulSet/DaemonSet 滚动重启，以及 CronJob 暂停和恢复；
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
   删除上述五类工作负载，并强制要求 UID 删除前置条件；
+- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods` 和
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：按明确 Cluster 和
+  Namespace 返回 Pod 稳定摘要与详情，列表支持 Kubernetes continuation token、Label Selector 和
+  Field Selector；
+- `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：删除明确作用域内的
+  Pod，强制要求 UID 前置条件，并支持 DryRun、显式确认、幂等、删除传播策略和审计；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resource-types`：返回目标 Cluster 当前 Discovery 可见的
   内置资源和 CRD 资源目录；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resources`：按 GVR、Namespace、Selector 和 Kubernetes
@@ -42,14 +48,15 @@
   删除传播策略和 UID/resourceVersion 前置条件；Apply 默认 `force=false`；
 - Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`patch`，Namespace 的
-  `get`、`list`、`create`、`delete`，以及 Deployment、StatefulSet、DaemonSet、Job 和 CronJob 的完整主资源
-  CRUD 权限；其他资源仍需安装方显式增加最小 RBAC。
+  `get`、`list`、`create`、`delete`，Pod 的 `get`、`list`、`delete`，以及 Deployment、StatefulSet、
+  DaemonSet、Job 和 CronJob 的完整主资源 CRUD 权限；Pod Logs、Exec、Eviction Subresource 仍未授权，
+  其他资源也需安装方显式增加最小 RBAC。
 
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
 表示尚未实现。
 
-Console 容器服务按资源类别组织：进入应用后先选择一个目标集群，左侧导航当前包含「节点」「命名空间」和
-「工作负载」三个资源类别，列表行可下钻到详情页再返回，分页使用 Kubernetes continuation token。目标集群按项目
+Console 容器服务按资源类别组织：进入应用后先选择一个目标集群，左侧导航当前包含「节点」「命名空间」
+「工作负载」和「Pod」四个资源类别，列表行可下钻到详情页再返回，分页使用 Kubernetes continuation token。目标集群按项目
 持久化在浏览器本地，只保存集群标识，且每次都会重新对照该项目当前在线的集群解析——已下线的集群不会被选中。
 离线集群仍出现在选择器中但不可选，避免操作者以为集群不存在。命名空间提供 List/Detail/Create/Delete；节点提供
 List/Detail 以及停止调度和恢复调度。所有变更都经过权限门控、DryRun 预检、影响展示与二次确认。
@@ -58,8 +65,8 @@ List/Detail 以及停止调度和恢复调度。所有变更都经过权限门�
 `cluster.resource.update` 权限。它只阻止新 Pod 被调度到该节点，不驱逐已运行的 Pod；驱逐（drain）需要
 `pods/eviction` Subresource，当前协议明确拒绝所有 Subresource，因此尚未支持。
 
-节点和命名空间是集群级资源，工作负载是 namespaced 资源，因此工具栏只在进入「工作负载」时显示 Namespace
-作用域选择器。选择器按集群持久化在浏览器本地，同样只保存名称并每次重新对照集群当前返回的 Namespace 解析；
+节点和命名空间是集群级资源，工作负载和 Pod 是 namespaced 资源，因此工具栏只在进入「工作负载」或「Pod」
+时显示 Namespace 作用域选择器。选择器按集群持久化在浏览器本地，同样只保存名称并每次重新对照集群当前返回的 Namespace 解析；
 名称不再存在时回退到 `default`，`default` 也不存在时回退到第一个。选择器一次读取该集群的一页 Namespace
 （上限 500 个），超出时在状态栏说明列表已截断，完整分页仍在「命名空间」页面。
 
@@ -74,6 +81,19 @@ CronJob 调度参数。Server 使用资源类型和名称生成客户端不能�
 StatefulSet 和 DaemonSet 使用该标签作为 Pod Selector，Job 的 Selector 则由 Kubernetes 按控制器 UID 生成，
 避免不同控制器意外选中同一批 Pod。StatefulSet 的 `service_name` 必须引用同一 Namespace 中预先存在的
 Service；高级 Pod 配置和其他更新仍可使用通用资源接口。
+
+Pod 类型化后端返回统一元数据、Phase、Ready、Node、Pod IP、控制器 Owner、镜像和总重启次数；详情补充
+Annotations、完整 Owner References、调度与网络信息、主容器、初始化容器和 Ephemeral Container 的当前/上次
+状态、资源 requests/limits、重启次数以及 Pod Conditions。删除 Pod 时必须携带当前 UID，避免误删同名重建对象；
+由 Deployment、StatefulSet、DaemonSet、Job 等控制器管理的 Pod 删除后通常会被控制器重新创建。Pod 删除不是
+Eviction，不执行 PodDisruptionBudget 语义；Logs、Exec 和 Eviction 仍因 Subresource 边界留待后续设计。
+
+Console Pod 页面列出所选命名空间的 Pod，展示 Phase、就绪与终止状态、控制器 Owner、节点、Pod IP、累计重启
+次数和创建时间，可下钻到包含调度与网络信息、主容器/初始化容器/临时容器的当前与上次状态、资源
+requests/limits、Owner References、Conditions、标签和注解的详情页。Phase 与就绪分开展示，因为 `Running`
+并不等于健康；带 `deletionTimestamp` 的 Pod 单独标记为「删除中」。删除需要 `cluster.resource.delete`，同样
+先执行 DryRun 再确认，确认弹窗要求输入 Pod 名称，并在该 Pod 有控制器时明确说明删除后通常会被重新创建。
+页面不提供任何需要 Subresource 的入口。
 
 Console 工作负载页面在目标 Cluster 和 Namespace 内按类型切换 Deployment、StatefulSet、DaemonSet、Job 和
 CronJob，列表展示状态、副本或 Job/CronJob 进度、镜像和创建时间，可下钻到包含副本或 Job/CronJob 状态、
@@ -108,7 +128,7 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 - 集群概览；
 - 节点驱逐，以及它依赖的 Subresource allowlist 设计；
 - 工作负载的高级 Pod 配置（环境变量、资源限制、存储卷、探针）与类型化更新表单；
-- Pod 管理、Pod 日志与 Web Terminal；
+- Pod 日志与 Web Terminal；
 - Service 与 Ingress；
 - ConfigMap 与 Secret；
 - PersistentVolume、PersistentVolumeClaim 与 StorageClass；

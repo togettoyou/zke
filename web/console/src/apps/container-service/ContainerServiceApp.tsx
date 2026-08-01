@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderTree, Layers, Server } from "lucide-react";
+import { Box, FolderTree, Layers, Server } from "lucide-react";
 
 import { useClusters } from "@/api/queries/clusters";
 import { useNamespaces } from "@/api/queries/namespaces";
@@ -17,6 +17,7 @@ import { useScopeStore } from "@/scope/scope-store";
 
 import { NamespaceSection } from "./NamespaceSection";
 import { NodeSection } from "./NodeSection";
+import { PodSection } from "./PodSection";
 import { useTargetClusterStore, useTargetNamespaceStore } from "./selection-store";
 import { WorkloadSection } from "./WorkloadSection";
 
@@ -28,10 +29,11 @@ const NAV: AppNavItem[] = [
   { id: "nodes", label: "节点", icon: Server },
   { id: "namespaces", label: "命名空间", icon: FolderTree },
   { id: "workloads", label: "工作负载", icon: Layers },
+  { id: "pods", label: "Pod", icon: Box },
 ];
 
 /** Sections whose queries are scoped by a Namespace as well as by a Cluster. */
-const NAMESPACED_SECTIONS = new Set(["workloads"]);
+const NAMESPACED_SECTIONS = new Set(["workloads", "pods"]);
 
 /**
  * The Namespace picker reads one page of Namespaces at the endpoint's maximum.
@@ -211,7 +213,16 @@ export function ContainerServiceApp() {
       ) : namespace === "" ? (
         <EmptyNotice
           title="该集群没有可见的命名空间"
-          description="工作负载按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
+          description="工作负载和 Pod 按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
+        />
+      ) : section === "pods" ? (
+        <PodSection
+          key={`${clusterId}/${namespace}`}
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+          tenantId={scope.tenantId}
+          projectId={scope.projectId}
         />
       ) : (
         <WorkloadSection

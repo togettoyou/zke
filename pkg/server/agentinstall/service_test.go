@@ -62,6 +62,7 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 		"- zke-agent-trust",
 		"- nodes",
 		"- namespaces",
+		"- pods",
 		"- deployments",
 		"- statefulsets",
 		"- daemonsets",
@@ -162,6 +163,9 @@ func TestRenderManifestGrantsOnlyEnabledWorkloadResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "batch", []string{
 		"jobs", "cronjobs",
 	}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods"}, []string{
+		"get", "list", "delete",
+	})
 	for _, rule := range clusterRole.Rules {
 		for _, resource := range rule.Resources {
 			if resource == "*" || strings.Contains(resource, "/") {

@@ -38,7 +38,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] 工作负载类型化创建、List/Detail、伸缩、滚动重启、CronJob 暂停/恢复、删除，以及 Console
   列表/详情、Namespace 作用域选择器与全部变更的 DryRun、确认、幂等和审计闭环（高级 Pod 配置和
   类型化更新表单尚未支持）
-- [ ] Pod 管理
+- [x] Pod 管理（显式 Cluster/Namespace 定域的类型化 List/Detail/Delete、Agent 最小 RBAC、DryRun、
+  UID 前置条件、确认、幂等、审计与 Console 列表/详情/删除闭环；Logs、Exec 和 Eviction 属于
+  Subresource，仍未支持）
 - [ ] Pod 日志
 - [ ] Web Terminal
 - [ ] YAML 管理

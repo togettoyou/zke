@@ -343,6 +343,31 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesNamespace.delete,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/pods",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesPod.list,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesPod.get,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceDelete,
+			"cluster_id",
+		),
+		handlers.kubernetesPod.delete,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,

@@ -52,7 +52,8 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 当前仓库还没有提供 Helm Chart，但 Server 已能生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC
 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
 `get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`patch` 以及
-Namespace 的 `get`、`list`、`create`、`delete` 权限。
+Namespace 的 `get`、`list`、`create`、`delete` 和 Pod 的 `get`、`list`、`delete` 权限；Pod Logs、Exec
+与 Eviction Subresource 不在默认授权中。
 ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
 `http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
 原生 HTTPS 或由上游网关终止 TLS。
@@ -72,12 +73,14 @@ Phase 2 已实现单 Server 实例内的业务 Stream 传输内核，包括双�
 受控通用 CRUD API 已完成任意已授权内置主资源及 CRD 资源的真实 QUIC 闭环，包含 DryRun、四类 Patch、
 删除前置条件、写能力协商和有界幂等重放。类型化 Namespace List/Detail/Create/Delete 与 Console
 集群选择、DryRun/确认闭环已经实现；Deployment、StatefulSet、DaemonSet、Job 和 CronJob 已提供显式
-Cluster/Namespace 定域的类型化 List/Detail API。默认 Agent RBAC 已覆盖 Namespace
-和这五类工作负载；类型化后端还提供 Deployment/StatefulSet 伸缩、
+Cluster/Namespace 定域的类型化 List/Detail API。默认 Agent RBAC 已覆盖 Namespace、Pod 和这五类工作负载；
+类型化 Pod 后端提供显式 Cluster/Namespace 定域的 List/Detail，以及带 UID
+前置条件、DryRun、确认、幂等和审计的删除。类型化工作负载后端还提供 Deployment/StatefulSet 伸缩、
 五类工作负载创建、Deployment/StatefulSet/DaemonSet 滚动重启、CronJob 暂停/恢复以及五类工作负载删除，
 并复用通用变更链路。
 其他资源仍由安装方按实际管理范围显式扩展最小 RBAC。工作负载 Console 已实现列表、详情、类型化创建和上述
-类型化变更的 DryRun、影响展示与确认闭环；跨 Server 实例任务路由以及 Watch、Logs、Exec 等流式能力仍未实现。
+类型化变更的 DryRun、影响展示与确认闭环；Pod Console 已实现列表、详情和删除的 DryRun、影响展示与确认闭环；
+跨 Server 实例任务路由以及 Watch、Logs、Exec 等流式能力仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
 `cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含

@@ -42,6 +42,10 @@ export const queryKeys = {
   ) => ["workloads", clusterId, namespace, resource, params] as const,
   workload: (clusterId: string, namespace: string, resource: string, name: string) =>
     ["workload", clusterId, namespace, resource, name] as const,
+  pods: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
+    ["pods", clusterId, namespace, params] as const,
+  pod: (clusterId: string, namespace: string, name: string) =>
+    ["pod", clusterId, namespace, name] as const,
 
   enrollments: (projectId: string, params: EnrollmentListParams = {}) =>
     ["enrollments", projectId, params] as const,
@@ -63,6 +67,7 @@ export const queryKeyPrefixes = {
   nodes: ["nodes"] as const,
   namespaces: ["namespaces"] as const,
   workloads: ["workloads"] as const,
+  pods: ["pods"] as const,
   enrollments: ["enrollments"] as const,
   users: ["users"] as const,
   roleBindings: ["role-bindings"] as const,
