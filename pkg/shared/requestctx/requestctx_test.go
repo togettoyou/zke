@@ -8,6 +8,7 @@ import (
 func TestRequestIDContext(t *testing.T) {
 	t.Parallel()
 
+	//nolint:staticcheck // ID intentionally promises nil-safe access.
 	if found := ID(nil); found != "" {
 		t.Fatalf("nil Context ID = %q", found)
 	}

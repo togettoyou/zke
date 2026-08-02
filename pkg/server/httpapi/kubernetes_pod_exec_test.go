@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -86,13 +85,16 @@ func TestKubernetesPodExecWebSocketUsesProtocolFrames(t *testing.T) {
 		"/api/v1/clusters/00000000-0000-4000-8000-000000000003/namespaces/workloads/pods/api-0/terminal-sessions/00000000-0000-4000-8000-000000000010"
 	dialer := websocket.Dialer{Subprotocols: []string{podExecWebSocketProtocol}}
 	connection, response, err := dialer.Dial(webSocketURL, http.Header{"Origin": []string{server.URL}})
+	if response != nil {
+		defer response.Body.Close()
+	}
 	if err != nil {
 		if response != nil {
 			t.Fatalf("dial status=%d err=%v", response.StatusCode, err)
 		}
 		t.Fatal(err)
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	if connection.Subprotocol() != podExecWebSocketProtocol {
 		t.Fatalf("subprotocol = %q", connection.Subprotocol())
 	}
@@ -187,15 +189,4 @@ func testHTTPSession() podexec.Session {
 		Columns: 120, Rows: 40,
 		ExpiresAt: time.Now().Add(time.Minute),
 	}
-}
-
-func decodePodExecCreateResponse(t *testing.T, recorder *httptest.ResponseRecorder) podExecCreateResponse {
-	t.Helper()
-	var response struct {
-		Data podExecCreateResponse `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	return response.Data
 }

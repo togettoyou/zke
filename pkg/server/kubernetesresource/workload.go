@@ -161,7 +161,8 @@ func (service *Service) ListWorkloads(
 	input ListWorkloadsInput,
 ) (WorkloadPage, error) {
 	identity, exists := workloadIdentities[input.Resource]
-	if !exists || len(k8svalidation.IsDNS1123Label(input.Namespace)) != 0 {
+	if !exists || (input.Namespace != "" &&
+		len(k8svalidation.IsDNS1123Label(input.Namespace)) != 0) {
 		return WorkloadPage{}, ErrInvalidInput
 	}
 	page, err := service.ListResources(ctx, ListResourcesInput{
@@ -224,7 +225,9 @@ func workloadDetail(
 	name string,
 ) (WorkloadDetail, error) {
 	unstructuredResource := &unstructured.Unstructured{Object: object}
-	if unstructuredResource.GetNamespace() != namespace ||
+	resourceNamespace := unstructuredResource.GetNamespace()
+	if len(k8svalidation.IsDNS1123Label(resourceNamespace)) != 0 ||
+		(namespace != "" && resourceNamespace != namespace) ||
 		unstructuredResource.GetName() == "" ||
 		(name != "" && unstructuredResource.GetName() != name) {
 		return WorkloadDetail{}, ErrInvalidResponse

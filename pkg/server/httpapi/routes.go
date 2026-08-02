@@ -293,6 +293,14 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.agentStatus.getCluster,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/overview",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.clusterOverview.get,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/nodes",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,

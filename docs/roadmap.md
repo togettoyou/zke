@@ -33,6 +33,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] Kubernetes Discovery、通用只读 List/Get API 与任意 CRD 资源闭环
 - [x] 通用主资源 Create/Update/Patch/Delete、安全写权限、审计与真实集群 E2E
 - [x] Console 容器服务集群选择
+- [x] 集群概览（Node、Namespace、Pod、五类工作负载和资源请求/容量聚合，有界并发、分页上限与显式部分
+  结果，以及作为容器服务默认落地页的 Console 计数、量条与部分失败提示；Warning Event 保持独立权限和
+  API，概览不跨命名空间聚合事件）
 - [x] 节点列表/详情 Console 页面与调度开关（驱逐尚未支持）
 - [x] Namespace List/Detail/Create/Delete、DryRun、确认、权限、审计与 Console 闭环
 - [x] 工作负载类型化创建、List/Detail、伸缩、滚动重启、CronJob 暂停/恢复、删除，以及 Console

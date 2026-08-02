@@ -4,6 +4,8 @@
 
 当前已完成 Node、Pod 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
+- `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod 和五类工作负载的状态计数，
+  以及 Node 容量/可分配量与非终态 Pod 请求量；
 - `GET /api/v1/clusters/{cluster_id}/nodes`：支持 `limit`、Kubernetes continuation token、Label Selector 和
   Field Selector；
 - `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}`：返回 Node 状态、容量、地址、标签、污点、条件和
@@ -68,9 +70,26 @@
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
 表示尚未实现。
 
-Console 容器服务按资源类别组织：进入应用后先选择一个目标集群，左侧导航当前包含「节点」「命名空间」
-「工作负载」「Pod」和「事件」五个资源类别，列表行可下钻到详情页再返回，分页使用 Kubernetes
-continuation token。目标集群按项目
+集群概览后端复用现有 Resource Stream，并发但有上限地读取 Node、Namespace、Pod 以及 Deployment、
+StatefulSet、DaemonSet、Job、CronJob；Server 不直接访问 Kubernetes API。各部分分别分页，每部分最多读取
+10000 个对象，因此概览是最终一致的聚合快照，不是同一个 Kubernetes `resourceVersion` 下的原子视图。
+部分查询失败或达到上限时，接口仍返回成功响应，并通过 `partial` 和不含敏感正文的 `issues` 标明受影响部分；
+只有所有部分都失败时才返回整体错误。CPU 以 millicores、内存以 bytes 返回，Pod requests 按 Kubernetes
+调度语义统计非终态 Pod，包含 init container、restartable init container、Pod-level resources 和 overhead，
+不表示实时利用率。接口使用 `cluster.read`；Warning Event 仍通过现有 Event API 和独立的
+`cluster.event.read` 权限读取，避免概览扩大 Event 权限。
+
+Console 概览是容器服务的默认落地页，也是左侧导航第一项：操作者进入应用时通常还不知道该打开哪个资源类别。
+页面展示节点、命名空间、Pod 和工作负载的计数与状态分布、五类工作负载的分类计数，以及 CPU、内存和 Pod 三项
+的请求量对可分配量。这些都是计数和容量，没有趋势也没有多序列比较，因此用数字和量条呈现而不是图表；量条只在
+请求量接近或超过可分配量时改用警告和危险色，且数值始终以文字同时给出，不靠颜色单独表意。页面顶部显示
+`generated_at` 并提供刷新按钮，说明这是聚合快照。`partial` 为 true 时在顶部列出受影响的部分及原因，避免把
+偏低的计数当成真实值。概览不展示 Warning Event：Event 接口按 Namespace 定域，且需要独立的
+`cluster.event.read`，跨命名空间聚合不在本接口范围内。
+
+Console 容器服务按资源类别组织：进入应用后先选择一个目标集群，左侧导航当前包含「概览」「节点」
+「命名空间」「工作负载」「Pod」和「事件」六项，默认落在「概览」；列表行可下钻到详情页再返回，分页使用
+Kubernetes continuation token。目标集群按项目
 持久化在浏览器本地，只保存集群标识，且每次都会重新对照该项目当前在线的集群解析——已下线的集群不会被选中。
 离线集群仍出现在选择器中但不可选，避免操作者以为集群不存在。命名空间提供 List/Detail/Create/Delete；节点提供
 List/Detail 以及停止调度和恢复调度。所有变更都经过权限门控、DryRun 预检、影响展示与二次确认。
@@ -207,7 +226,6 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 
 后续规划能力包括：
 
-- 集群概览；
 - 节点驱逐，以及它依赖的 Subresource allowlist 设计；
 - 工作负载的高级 Pod 配置（环境变量、资源限制、存储卷、探针）与类型化更新表单；
 - 终端会话的录制与回放；

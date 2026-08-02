@@ -205,7 +205,7 @@ func (handler *kubernetesPodExecHandler) connect(c *gin.Context) {
 		handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodExec, target, "failed")
 		return
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	connection.SetReadLimit(maxPodExecMessageBytes)
 	peer := &podExecWebSocketPeer{
 		connection:   connection,

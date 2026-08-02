@@ -1240,6 +1240,54 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/clusters/{cluster_id}/overview:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesClusterOverview
+      description: |
+        通过目标 Cluster 的在线 Agent 聚合 Node、Namespace、Pod 以及 Deployment、
+        StatefulSet、DaemonSet、Job、CronJob 的实时摘要。调用需要 `cluster.read`；
+        Warning Event 使用独立的 `cluster.event.read` 权限和 Event API，不包含在本响应中。
+
+        各部分通过多个有并发上限的 Kubernetes 查询组成，因此结果是最终一致快照，
+        不是同一个 Kubernetes `resourceVersion` 下的原子视图。每一部分最多读取 10000
+        个对象；部分查询失败或达到上限时仍返回 200，并通过 `partial: true` 和 `issues`
+        标明不完整部分。只有所有部分都失败时，接口才返回错误响应。
+
+        CPU 使用 millicores，内存使用 bytes。请求量依据 Kubernetes 调度语义计算非终态
+        Pod 的 requests，包含 init container、restartable init container、Pod-level
+        resources 和 overhead；不代表实时利用率。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: Cluster 实时概览；可能是显式标记的部分结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesClusterOverview"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/nodes:
     get:
       tags: [Resources]
@@ -4590,6 +4638,202 @@ components:
               type: string
             concurrency_policy:
               type: string
+    KubernetesOverviewStatusCounts:
+      type: object
+      additionalProperties:
+        type: integer
+        format: int64
+        minimum: 0
+    KubernetesClusterOverviewIssue:
+      type: object
+      additionalProperties: false
+      required: [section, code]
+      properties:
+        section:
+          type: string
+          enum:
+            - nodes
+            - namespaces
+            - pods
+            - workloads.deployments
+            - workloads.statefulsets
+            - workloads.daemonsets
+            - workloads.jobs
+            - workloads.cronjobs
+        code:
+          type: string
+          enum:
+            - item_limit_reached
+            - agent_not_connected
+            - agent_capability_unavailable
+            - resource_capacity_exhausted
+            - response_budget_exhausted
+            - cluster_api_unauthenticated
+            - cluster_api_forbidden
+            - cluster_api_unavailable
+            - cluster_api_timeout
+            - agent_response_too_large
+            - invalid_agent_response
+            - canceled
+            - cluster_api_error
+    KubernetesClusterNodeOverview:
+      type: object
+      additionalProperties: false
+      required: [total, unschedulable, status_counts]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        unschedulable:
+          type: integer
+          format: int64
+          minimum: 0
+        status_counts:
+          $ref: "#/components/schemas/KubernetesOverviewStatusCounts"
+    KubernetesClusterNamespaceOverview:
+      type: object
+      additionalProperties: false
+      required: [total, status_counts]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        status_counts:
+          $ref: "#/components/schemas/KubernetesOverviewStatusCounts"
+    KubernetesClusterPodOverview:
+      type: object
+      additionalProperties: false
+      required: [total, ready, not_ready, terminating, status_counts]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        ready:
+          type: integer
+          format: int64
+          minimum: 0
+        not_ready:
+          type: integer
+          format: int64
+          minimum: 0
+        terminating:
+          type: integer
+          format: int64
+          minimum: 0
+        status_counts:
+          $ref: "#/components/schemas/KubernetesOverviewStatusCounts"
+    KubernetesClusterWorkloadResourceOverview:
+      type: object
+      additionalProperties: false
+      required: [resource, total, status_counts]
+      properties:
+        resource:
+          $ref: "#/components/schemas/KubernetesWorkloadResource"
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        status_counts:
+          $ref: "#/components/schemas/KubernetesOverviewStatusCounts"
+    KubernetesClusterWorkloadOverview:
+      type: object
+      additionalProperties: false
+      required: [total, status_counts, by_resource]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        status_counts:
+          $ref: "#/components/schemas/KubernetesOverviewStatusCounts"
+        by_resource:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesClusterWorkloadResourceOverview"
+    KubernetesClusterResourceTotals:
+      type: object
+      additionalProperties: false
+      required:
+        - cpu_capacity_millis
+        - cpu_allocatable_millis
+        - cpu_requested_millis
+        - memory_capacity_bytes
+        - memory_allocatable_bytes
+        - memory_requested_bytes
+        - pod_capacity
+        - pod_allocatable
+        - non_terminal_pods
+      properties:
+        cpu_capacity_millis:
+          type: integer
+          format: int64
+          minimum: 0
+        cpu_allocatable_millis:
+          type: integer
+          format: int64
+          minimum: 0
+        cpu_requested_millis:
+          type: integer
+          format: int64
+          minimum: 0
+        memory_capacity_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        memory_allocatable_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        memory_requested_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        pod_capacity:
+          type: integer
+          format: int64
+          minimum: 0
+        pod_allocatable:
+          type: integer
+          format: int64
+          minimum: 0
+        non_terminal_pods:
+          type: integer
+          format: int64
+          minimum: 0
+    KubernetesClusterOverview:
+      type: object
+      additionalProperties: false
+      required:
+        - generated_at
+        - partial
+        - issues
+        - nodes
+        - namespaces
+        - pods
+        - workloads
+        - resources
+      properties:
+        generated_at:
+          $ref: "#/components/schemas/Timestamp"
+        partial:
+          type: boolean
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesClusterOverviewIssue"
+        nodes:
+          $ref: "#/components/schemas/KubernetesClusterNodeOverview"
+        namespaces:
+          $ref: "#/components/schemas/KubernetesClusterNamespaceOverview"
+        pods:
+          $ref: "#/components/schemas/KubernetesClusterPodOverview"
+        workloads:
+          $ref: "#/components/schemas/KubernetesClusterWorkloadOverview"
+        resources:
+          $ref: "#/components/schemas/KubernetesClusterResourceTotals"
     KubernetesNodeSummary:
       type: object
       required:

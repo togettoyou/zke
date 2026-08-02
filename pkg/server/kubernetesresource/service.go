@@ -202,7 +202,7 @@ func (buffer *responseBuffer) ReserveResourceBody(size uint64) error {
 	// Reserving without pre-sizing would let the buffer's own doubling
 	// transiently hold roughly twice what the budget was told about.
 	if size <= math.MaxInt32 {
-		buffer.Buffer.Grow(int(size))
+		buffer.Grow(int(size))
 	}
 	return nil
 }

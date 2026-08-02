@@ -430,6 +430,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的在线 Agent 聚合 Node、Namespace、Pod 以及 Deployment、
+         *     StatefulSet、DaemonSet、Job、CronJob 的实时摘要。调用需要 `cluster.read`；
+         *     Warning Event 使用独立的 `cluster.event.read` 权限和 Event API，不包含在本响应中。
+         *
+         *     各部分通过多个有并发上限的 Kubernetes 查询组成，因此结果是最终一致快照，
+         *     不是同一个 Kubernetes `resourceVersion` 下的原子视图。每一部分最多读取 10000
+         *     个对象；部分查询失败或达到上限时仍返回 200，并通过 `partial: true` 和 `issues`
+         *     标明不完整部分。只有所有部分都失败时，接口才返回错误响应。
+         *
+         *     CPU 使用 millicores，内存使用 bytes。请求量依据 Kubernetes 调度语义计算非终态
+         *     Pod 的 requests，包含 init container、restartable init container、Pod-level
+         *     resources 和 overhead；不代表实时利用率。
+         */
+        get: operations["getKubernetesClusterOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/nodes": {
         parameters: {
             query?: never;
@@ -1477,6 +1507,80 @@ export interface components {
             service_name?: string;
             completion_mode?: string;
             concurrency_policy?: string;
+        };
+        KubernetesOverviewStatusCounts: {
+            [key: string]: number;
+        };
+        KubernetesClusterOverviewIssue: {
+            /** @enum {string} */
+            section: "nodes" | "namespaces" | "pods" | "workloads.deployments" | "workloads.statefulsets" | "workloads.daemonsets" | "workloads.jobs" | "workloads.cronjobs";
+            /** @enum {string} */
+            code: "item_limit_reached" | "agent_not_connected" | "agent_capability_unavailable" | "resource_capacity_exhausted" | "response_budget_exhausted" | "cluster_api_unauthenticated" | "cluster_api_forbidden" | "cluster_api_unavailable" | "cluster_api_timeout" | "agent_response_too_large" | "invalid_agent_response" | "canceled" | "cluster_api_error";
+        };
+        KubernetesClusterNodeOverview: {
+            /** Format: int64 */
+            total: number;
+            /** Format: int64 */
+            unschedulable: number;
+            status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
+        };
+        KubernetesClusterNamespaceOverview: {
+            /** Format: int64 */
+            total: number;
+            status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
+        };
+        KubernetesClusterPodOverview: {
+            /** Format: int64 */
+            total: number;
+            /** Format: int64 */
+            ready: number;
+            /** Format: int64 */
+            not_ready: number;
+            /** Format: int64 */
+            terminating: number;
+            status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
+        };
+        KubernetesClusterWorkloadResourceOverview: {
+            resource: components["schemas"]["KubernetesWorkloadResource"];
+            /** Format: int64 */
+            total: number;
+            status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
+        };
+        KubernetesClusterWorkloadOverview: {
+            /** Format: int64 */
+            total: number;
+            status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
+            by_resource: components["schemas"]["KubernetesClusterWorkloadResourceOverview"][];
+        };
+        KubernetesClusterResourceTotals: {
+            /** Format: int64 */
+            cpu_capacity_millis: number;
+            /** Format: int64 */
+            cpu_allocatable_millis: number;
+            /** Format: int64 */
+            cpu_requested_millis: number;
+            /** Format: int64 */
+            memory_capacity_bytes: number;
+            /** Format: int64 */
+            memory_allocatable_bytes: number;
+            /** Format: int64 */
+            memory_requested_bytes: number;
+            /** Format: int64 */
+            pod_capacity: number;
+            /** Format: int64 */
+            pod_allocatable: number;
+            /** Format: int64 */
+            non_terminal_pods: number;
+        };
+        KubernetesClusterOverview: {
+            generated_at: components["schemas"]["Timestamp"];
+            partial: boolean;
+            issues: components["schemas"]["KubernetesClusterOverviewIssue"][];
+            nodes: components["schemas"]["KubernetesClusterNodeOverview"];
+            namespaces: components["schemas"]["KubernetesClusterNamespaceOverview"];
+            pods: components["schemas"]["KubernetesClusterPodOverview"];
+            workloads: components["schemas"]["KubernetesClusterWorkloadOverview"];
+            resources: components["schemas"]["KubernetesClusterResourceTotals"];
         };
         KubernetesNodeSummary: {
             name: string;
@@ -3106,6 +3210,37 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getKubernetesClusterOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cluster 实时概览；可能是显式标记的部分结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesClusterOverview"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
         };
     };
     listKubernetesNodes: {

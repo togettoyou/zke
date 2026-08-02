@@ -383,6 +383,46 @@ func TestServiceRejectsInvalidWorkloadScopeAndIdentity(t *testing.T) {
 	}
 }
 
+func TestServiceListsWorkloadsAcrossNamespaces(t *testing.T) {
+	t.Parallel()
+
+	list := &appsv1.DeploymentList{
+		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DeploymentList"},
+		Items: []appsv1.Deployment{
+			{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "team-a"}},
+			{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "team-b"}},
+		},
+	}
+	requester := &fakeResourceRequester{handle: func(
+		_ context.Context,
+		clusterID string,
+		request *agentv1.ResourceRequest,
+		responseBody io.Writer,
+	) (*agentv1.ResourceResponse, error) {
+		if clusterID != testClusterID || request.GetNamespace() != "" ||
+			request.GetResource().GetResource() != "deployments" {
+			t.Fatalf("unexpected all-Namespace workload request: %+v", request)
+		}
+		return writeKubernetesObject(t, responseBody, list), nil
+	}}
+	page, err := NewService(requester).ListWorkloads(
+		context.Background(),
+		ListWorkloadsInput{
+			ClusterID: testClusterID,
+			Resource:  WorkloadDeployments,
+			Limit:     25,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Workloads) != 2 ||
+		page.Workloads[0].Namespace != "team-a" ||
+		page.Workloads[1].Namespace != "team-b" {
+		t.Fatalf("unexpected all-Namespace workload page: %+v", page)
+	}
+}
+
 func TestWorkloadNotFoundUsesGenericResourceError(t *testing.T) {
 	t.Parallel()
 

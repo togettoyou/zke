@@ -508,6 +508,7 @@ PUT  /api/v1/projects/{project_id}
 DELETE /api/v1/projects/{project_id}
 GET  /api/v1/projects/{project_id}/clusters
 GET  /api/v1/clusters/{cluster_id}
+GET  /api/v1/clusters/{cluster_id}/overview
 GET  /api/v1/clusters/{cluster_id}/nodes
 GET  /api/v1/clusters/{cluster_id}/nodes/{node_name}
 GET  /api/v1/clusters/{cluster_id}/kubernetes/resource-types

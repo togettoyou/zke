@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bell, Box, FolderTree, Layers, Server } from "lucide-react";
+import { Bell, Box, FolderTree, LayoutDashboard, Layers, Server } from "lucide-react";
 
 import { useClusters } from "@/api/queries/clusters";
 import { useNamespaces } from "@/api/queries/namespaces";
@@ -19,6 +19,7 @@ import { useScopeStore } from "@/scope/scope-store";
 import { EventSection } from "./EventSection";
 import { NamespaceSection } from "./NamespaceSection";
 import { NodeSection } from "./NodeSection";
+import { OverviewSection } from "./OverviewSection";
 import { PodSection } from "./PodSection";
 import { useTargetClusterStore, useTargetNamespaceStore } from "./selection-store";
 import { WorkloadSection } from "./WorkloadSection";
@@ -28,6 +29,7 @@ import { WorkloadSection } from "./WorkloadSection";
  * organised.
  */
 const NAV: AppNavItem[] = [
+  { id: "overview", label: "概览", icon: LayoutDashboard },
   { id: "nodes", label: "节点", icon: Server },
   { id: "namespaces", label: "命名空间", icon: FolderTree },
   { id: "workloads", label: "工作负载", icon: Layers },
@@ -55,7 +57,9 @@ const NAMESPACE_PICKER_LIMIT = 500;
 export function ContainerServiceApp() {
   const scope = useScopeStore((state) => state.scope);
   const { permissions } = useSessionContext();
-  const [section, setSection] = useState("nodes");
+  // The overview is where an operator lands: it is the one view that answers
+  // "what is in this cluster" before they know which category to open.
+  const [section, setSection] = useState("overview");
   const clusters = useClusters(scope.projectId, {
     limit: 100,
     offset: 0,
@@ -93,7 +97,7 @@ export function ContainerServiceApp() {
     () => NAV.map((item) => (item.id === "events" ? { ...item, hidden: !canReadEvents } : item)),
     [canReadEvents],
   );
-  const activeSection = section === "events" && !canReadEvents ? "nodes" : section;
+  const activeSection = section === "events" && !canReadEvents ? "overview" : section;
 
   // Only the namespaced sections need the picker, and only they pay for the
   // query behind it. A control that scopes nothing would be a control that does
@@ -208,6 +212,8 @@ export function ContainerServiceApp() {
           title="该项目没有在线集群"
           description="容器服务的每个查询和变更都由目标集群的 Agent 定域执行，需要至少一个 Agent 处于在线状态。"
         />
+      ) : activeSection === "overview" ? (
+        <OverviewSection key={clusterId} clusterId={clusterId} clusterName={clusterName} />
       ) : activeSection === "nodes" ? (
         <NodeSection
           key={clusterId}

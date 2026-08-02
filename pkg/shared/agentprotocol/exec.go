@@ -77,8 +77,8 @@ func PodExecStreamHandler(
 		execContext, cancelExec := context.WithCancel(ctx)
 		defer cancelExec()
 		stdinReader, stdinWriter := io.Pipe()
-		defer stdinReader.Close()
-		defer stdinWriter.Close()
+		defer func() { _ = stdinReader.Close() }()
+		defer func() { _ = stdinWriter.Close() }()
 		sizes := newPodExecSizeQueue(execContext, request.GetColumns(), request.GetRows())
 		writer := &podExecFrameWriter{
 			stream:  stream,

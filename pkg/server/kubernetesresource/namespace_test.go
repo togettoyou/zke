@@ -3,6 +3,7 @@ package kubernetesresource
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -215,7 +216,7 @@ func TestServiceRejectsInvalidNamespaceNameBeforeTransport(t *testing.T) {
 		context.Background(),
 		CreateNamespaceInput{ClusterID: testClusterID, Name: "Invalid_Name"},
 	)
-	if err != ErrInvalidInput {
+	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("CreateNamespace() error = %v, want %v", err, ErrInvalidInput)
 	}
 	_, err = NewService(requester).CreateNamespace(
@@ -226,7 +227,7 @@ func TestServiceRejectsInvalidNamespaceNameBeforeTransport(t *testing.T) {
 			Labels:    map[string]string{"invalid key": "value"},
 		},
 	)
-	if err != ErrInvalidInput {
+	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("CreateNamespace() label error = %v, want %v", err, ErrInvalidInput)
 	}
 }

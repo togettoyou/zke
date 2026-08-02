@@ -22,6 +22,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
@@ -230,6 +231,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			),
 		},
 	)
+	clusterOverviewService := clusteroverview.NewService(
+		kubernetesResourceService,
+	)
 	podLogsService := podlogs.NewService(
 		agentConnectionManager,
 		podlogs.Config{MaxBytes: cfg.AgentListener.MaxPodLogBytes},
@@ -265,6 +269,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			AgentInstallationService:  agentInstallationService,
 			AgentManagementService:    agentManagementService,
 			AgentStatusService:        agentStatusService,
+			ClusterOverviewService:    clusterOverviewService,
 			KubernetesResourceService: kubernetesResourceService,
 			PodLogsService:            podLogsService,
 			PodExecService:            podExecService,

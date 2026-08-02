@@ -13,6 +13,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
@@ -35,6 +36,7 @@ type Dependencies struct {
 	AgentInstallationService  *agentinstall.Service
 	AgentManagementService    *agentmanagement.Service
 	AgentStatusService        *agentstatus.Service
+	ClusterOverviewService    *clusteroverview.Service
 	KubernetesResourceService *kubernetesresource.Service
 	PodLogsService            *podlogs.Service
 	PodExecService            *podexec.Service
@@ -59,6 +61,7 @@ type handlers struct {
 	agentInstallation       *agentInstallationHandler
 	agentManagement         *agentManagementHandler
 	agentStatus             *agentStatusHandler
+	clusterOverview         *clusterOverviewHandler
 	kubernetesNode          *kubernetesNodeHandler
 	kubernetesNamespace     *kubernetesNamespaceHandler
 	kubernetesPod           *kubernetesPodHandler
@@ -151,6 +154,11 @@ func New(
 			dependencies.AgentStatusService,
 			dependencies.AuthService,
 			dependencies.RBACService,
+			config.Authentication.OperationTimeout,
+		),
+		clusterOverview: newClusterOverviewHandler(
+			logger,
+			dependencies.ClusterOverviewService,
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesNode: newKubernetesNodeHandler(
