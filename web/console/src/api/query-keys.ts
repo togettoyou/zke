@@ -47,6 +47,14 @@ export const queryKeys = {
   // serves every kind through one route.
   resourceYaml: (clusterId: string, namespace: string, gvr: string, name: string) =>
     ["resource-yaml", clusterId, namespace, gvr, name] as const,
+  storageResources: (
+    clusterId: string,
+    namespace: string,
+    resource: string,
+    params: Record<string, unknown> = {},
+  ) => ["storage-resources", clusterId, namespace, resource, params] as const,
+  storageResource: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["storage-resource", clusterId, namespace, resource, name] as const,
   configMaps: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
     ["config-maps", clusterId, namespace, params] as const,
   configMap: (clusterId: string, namespace: string, name: string) =>
@@ -96,5 +104,7 @@ export const queryKeyPrefixes = {
   enrollments: ["enrollments"] as const,
   users: ["users"] as const,
   roleBindings: ["role-bindings"] as const,
+  storageResources: ["storage-resources"] as const,
+  storageResource: ["storage-resource"] as const,
   auditEvents: ["audit-events"] as const,
 } as const;

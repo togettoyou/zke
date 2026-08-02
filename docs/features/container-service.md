@@ -2,7 +2,8 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
+当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass
+类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod 和五类工作负载的状态计数，
   以及 Node 容量/可分配量与非终态 Pod 请求量；
@@ -35,6 +36,11 @@
   固定管理 `core/v1 ConfigMap`；列表仅返回键名和大小统计，详情返回完整 `data` 与标准 Base64
   `binary_data`，写操作包含 1 MiB 内容校验、immutable 保护、DryRun、确认、幂等、UID/resourceVersion
   并发保护与审计；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/storage/{storage_resource}` 和对应单对象
+  `GET`、`PUT`、`DELETE`：固定管理集群级 `persistentvolumes` 或 `storageclasses`；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/persistentvolumeclaims` 和对应
+  单对象 `GET`、`PUT`、`DELETE`：固定在明确 Namespace 管理 PVC；三类存储资源列表均支持 Kubernetes
+  continuation token 和 Selector，写操作沿用 DryRun、确认、幂等、UID/resourceVersion 与审计；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods` 和
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：按明确 Cluster 和
   Namespace 返回 Pod 稳定摘要与详情，列表支持 Kubernetes continuation token、Label Selector 和
@@ -73,8 +79,8 @@
 - Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
   `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
-  DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap 的
-  `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
+  DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
+  StorageClass 的 `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
   `create`；Eviction Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
 
@@ -171,6 +177,32 @@ Console 配置管理页面列出所选命名空间的 ConfigMap，展示键名�
 已标记为不可变的对象在列表和详情中都不提供编辑入口，并说明只能删除重建。
 
 页面顶部说明 Secret 不在此处管理以及原因（Agent 未被授予 Secret 权限），避免读成「Secret 视图只是还没做」。
+
+存储类型化后端把作用域写进路由和领域校验：PV、StorageClass 只能走集群级路径，PVC 只能走明确 Namespace
+路径，调用方不能覆盖 GVR。PV 创建首轮支持 CSI、NFS 和 Local source；CSI Secret 只传引用名称，不读取 Secret
+正文，Local PV 必须提供 Node Affinity。已有其他历史 Volume Source 仍可列表和查看 source 类型，复杂字段可走
+通用 YAML 管理。StorageClass 创建支持 provisioner、parameters、回收策略、绑定模式、卷扩展开关、挂载参数和
+拓扑约束。
+
+类型化更新刻意限制在 Kubernetes 明确且常用的可变字段：PV 只修改 ReclaimPolicy，PVC 只允许提高 requested
+storage，StorageClass 只修改 allowVolumeExpansion；PVC 最终能否扩容还取决于对应 StorageClass 和 CSI Driver。
+缩容在发往 Agent 前即被拒绝。三类删除都使用 UID/resourceVersion 前置条件，避免同名重建或并发变化后误删。
+删除 PVC 可能影响工作负载，删除 PV 的后果还取决于当前 Phase 与 ReclaimPolicy。
+
+Console 存储页面按 PersistentVolume、PersistentVolumeClaim、StorageClass 三个标签页组织。三者作用域不同：
+PV 和 StorageClass 是集群级对象，PVC 是命名空间级，Server 也据此分成两组路由。页面不掩盖这一点——工具栏的
+命名空间选择器只在 PVC 标签页出现，其余两个标签页不显示一个什么都不限定的控件。
+
+创建表单按类型渲染：PV 需要容量、访问模式和来源（CSI/NFS/Local 三选一，字段随之切换），并明确说明 ZKE 不会
+创建底层存储、填写的卷必须已经存在；PVC 需要申请容量和访问模式，并把「使用集群默认 StorageClass」与「显式
+指定（留空表示不使用任何 StorageClass）」区分开，因为这两者在 Kubernetes 中语义不同；StorageClass 需要
+provisioner 和参数。访问模式用复选框而不是下拉，因为它本来就是集合而不是单选。
+
+编辑不是通用表单，而是每种类型各自唯一可变字段的小弹窗：PV 只改回收策略，PVC 只改申请容量（且必须增大），
+StorageClass 只改扩容开关，并在旁注说明其余字段在 Kubernetes 中不可变、要改只能删除重建。确认弹窗按具体
+选择给出后果，例如把 PV 回收策略改为 Delete 会在删除时销毁数据，PVC 扩容需要 CSI 驱动配合且部分驱动要求
+Pod 重启后文件系统才扩展。删除的影响文案同样按类型区分，包括 PV 回收策略决定数据存亡、仍被占用的对象会
+停在 Terminating。
 
 Pod 类型化后端返回统一元数据、Phase、Ready、Node、Pod IP、控制器 Owner、镜像和总重启次数；详情补充
 Annotations、完整 Owner References、调度与网络信息、主容器、初始化容器和 Ephemeral Container 的当前/上次
@@ -289,7 +321,6 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
 - Gateway API 的 HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 类型化管理；
 - Secret 的专用敏感管理链路；
-- PersistentVolume、PersistentVolumeClaim 与 StorageClass；
 - 从 Pod、工作负载等具体对象直接跳转到按 UID 过滤的关联事件；
 - YAML 编辑器的语法高亮、结构校验与差异对比；
 - 面向具体资源的表单化创建、更新和删除体验。

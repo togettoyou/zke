@@ -324,6 +324,16 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "create", "update", "delete"},
 			},
 			{
+				APIGroups: []string{""},
+				Resources: []string{"persistentvolumes", "persistentvolumeclaims"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{"storage.k8s.io"},
+				Resources: []string{"storageclasses"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
 				APIGroups: []string{"networking.k8s.io"},
 				Resources: []string{"ingresses"},
 				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},

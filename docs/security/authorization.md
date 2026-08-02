@@ -96,6 +96,11 @@ ConfigMap 类型化接口同样固定 Cluster、Namespace 和 `core/v1/configmap
 ConfigMap 数据不按 Secret 处理，但仍不写入日志或审计正文。Secret 继续被通用 Resource/YAML 路径双重拒绝，
 Agent 默认 ClusterRole 也不授予 Secret 主资源权限；未来开放时必须使用独立的敏感权限和脱敏响应。
 
+PV、PVC 与 StorageClass 类型化接口沿用相同的 `cluster.read` 和 `cluster.resource.create/update/delete`，并在
+HTTP 与领域层同时校验资源作用域：PV、StorageClass 必须是集群级，PVC 必须指定 Namespace。所有更新先读取
+当前对象并核对 UID/resourceVersion，删除把二者作为 Kubernetes 前置条件；实际写入仍要求 CSRF、幂等键和
+显式确认。CSI Secret Reference 只包含 Namespace 与名称，Server、Agent 和审计均不读取或记录 Secret 正文。
+
 YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限。
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
 `resourceVersion` 和当前实时对象逐项核对；同名对象已重建或版本已变化时返回冲突。实际更新还要求 CSRF、

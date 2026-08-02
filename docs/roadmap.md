@@ -64,6 +64,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   `data`/Base64 `binaryData` 与 1 MiB 校验、immutable 保护、DryRun、确认、幂等、并发身份保护、审计和
   Agent 最小 RBAC，以及 Console 的列表/详情、类型化创建与编辑表单和删除闭环；Secret 专用敏感链路
   尚未实现）
+- [x] 存储（PersistentVolume、PersistentVolumeClaim 与 StorageClass 的类型化 List/Detail/Create/Update/Delete，
+  集群级与命名空间级作用域隔离，PV CSI/NFS/Local 创建、PVC 只增不减扩容、PV 回收策略与 StorageClass
+  扩展开关更新、DryRun、确认、幂等、并发身份保护、审计和 Agent 最小 RBAC，以及 Console 的三类列表/详情、
+  按类型创建表单、单字段编辑弹窗和删除闭环）
 
 ## Phase 3：可观测性
 

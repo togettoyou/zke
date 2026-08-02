@@ -853,6 +853,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/storage/{storage_resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 分页查询集群级 PersistentVolume 或 StorageClass；PVC 必须使用命名空间级路径。 */
+        get: operations["listKubernetesClusterStorageResources"];
+        put?: never;
+        /** @description 创建 PersistentVolume 或 StorageClass；实际写入要求显式确认，dry-run 使用 Kubernetes 服务端校验。 */
+        post: operations["createKubernetesClusterStorageResource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/storage/{storage_resource}/{storage_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询一个 PersistentVolume 或 StorageClass 的类型化详情与状态。 */
+        get: operations["getKubernetesClusterStorageResource"];
+        /** @description 更新 PV 回收策略或 StorageClass 卷扩展开关；要求 UID、resourceVersion、显式确认并支持 dry-run。 */
+        put: operations["updateKubernetesClusterStorageResource"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除 PV 或 StorageClass；实际删除要求显式确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesClusterStorageResource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 在明确的 Cluster 和 Namespace 中分页查询 PersistentVolumeClaim。 */
+        get: operations["listKubernetesPersistentVolumeClaims"];
+        put?: never;
+        /** @description 创建 PVC；实际写入要求显式确认，dry-run 使用 Kubernetes 服务端校验。 */
+        post: operations["createKubernetesPersistentVolumeClaim"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询一个 PVC 的类型化详情与状态。 */
+        get: operations["getKubernetesPersistentVolumeClaim"];
+        /** @description 只提高 PVC requested storage；禁止缩容，并要求 UID、resourceVersion、显式确认且支持 dry-run。 */
+        put: operations["expandKubernetesPersistentVolumeClaim"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除 PVC；实际删除要求显式确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesPersistentVolumeClaim"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps": {
         parameters: {
             query?: never;
@@ -1903,6 +1977,273 @@ export interface components {
             dry_run: boolean;
             target: string;
         };
+        /** @enum {string} */
+        KubernetesStorageResource: "persistentvolumes" | "persistentvolumeclaims" | "storageclasses";
+        KubernetesStorageObjectReference: {
+            namespace: string;
+            name: string;
+            uid: string;
+        };
+        KubernetesStorageSecretReference: {
+            namespace: string;
+            name: string;
+        };
+        KubernetesStorageNodeSelectorRequirement: {
+            key: string;
+            /** @enum {string} */
+            operator: "In" | "NotIn" | "Exists" | "DoesNotExist" | "Gt" | "Lt";
+            values: string[];
+        };
+        KubernetesStorageNodeSelectorTerm: {
+            match_expressions?: components["schemas"]["KubernetesStorageNodeSelectorRequirement"][];
+            match_fields?: components["schemas"]["KubernetesStorageNodeSelectorRequirement"][];
+        };
+        KubernetesStorageNodeSelector: {
+            terms: components["schemas"]["KubernetesStorageNodeSelectorTerm"][];
+        };
+        KubernetesStorageTopologyRequirement: {
+            key: string;
+            values: string[];
+        };
+        KubernetesStorageTopologyTerm: {
+            match_label_expressions: components["schemas"]["KubernetesStorageTopologyRequirement"][];
+        };
+        KubernetesCSIPersistentVolumeSource: {
+            driver: string;
+            volume_handle: string;
+            read_only: boolean;
+            fs_type: string;
+            volume_attributes: {
+                [key: string]: string;
+            };
+            controller_publish_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+            node_stage_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+            node_publish_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+            controller_expand_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+            node_expand_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+        };
+        KubernetesNFSPersistentVolumeSource: {
+            server: string;
+            path: string;
+            read_only: boolean;
+        };
+        KubernetesLocalPersistentVolumeSource: {
+            path: string;
+            fs_type: string;
+        };
+        KubernetesPersistentVolumeSource: {
+            type: string;
+            csi?: components["schemas"]["KubernetesCSIPersistentVolumeSource"];
+            nfs?: components["schemas"]["KubernetesNFSPersistentVolumeSource"];
+            local?: components["schemas"]["KubernetesLocalPersistentVolumeSource"];
+        };
+        KubernetesCSIPersistentVolumeSourceInput: {
+            driver: string;
+            volume_handle: string;
+            /** @default false */
+            read_only: boolean;
+            fs_type?: string;
+            volume_attributes?: {
+                [key: string]: string;
+            };
+            controller_publish_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+            node_stage_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+            node_publish_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+            controller_expand_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+            node_expand_secret_ref?: components["schemas"]["KubernetesStorageSecretReference"];
+        };
+        KubernetesNFSPersistentVolumeSourceInput: {
+            server: string;
+            path: string;
+            /** @default false */
+            read_only: boolean;
+        };
+        KubernetesLocalPersistentVolumeSourceInput: {
+            path: string;
+            fs_type?: string;
+        };
+        KubernetesPersistentVolumeSourceInput: {
+            /** @enum {string} */
+            type: "csi" | "nfs" | "local";
+            csi?: components["schemas"]["KubernetesCSIPersistentVolumeSourceInput"];
+            nfs?: components["schemas"]["KubernetesNFSPersistentVolumeSourceInput"];
+            local?: components["schemas"]["KubernetesLocalPersistentVolumeSourceInput"];
+        } & (unknown | unknown | unknown);
+        KubernetesPersistentVolumeSummary: {
+            phase: string;
+            capacity: string;
+            access_modes: string[];
+            reclaim_policy: string;
+            storage_class_name: string;
+            volume_mode: string;
+            source_type: string;
+            claim_ref?: components["schemas"]["KubernetesStorageObjectReference"];
+            last_transition_time: components["schemas"]["Timestamp"] | null;
+        };
+        KubernetesPersistentVolumeClaimSummary: {
+            phase: string;
+            requested_capacity: string;
+            capacity: string;
+            access_modes: string[];
+            storage_class_name: string | null;
+            volume_name: string;
+            volume_mode: string;
+        };
+        KubernetesStorageClassSummary: {
+            provisioner: string;
+            reclaim_policy: string;
+            volume_binding_mode: string;
+            allow_volume_expansion: boolean;
+            default: boolean;
+        };
+        KubernetesStorageResourceSummary: {
+            resource: components["schemas"]["KubernetesStorageResource"];
+            api_version: string;
+            /** @enum {string} */
+            kind: "PersistentVolume" | "PersistentVolumeClaim" | "StorageClass";
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            persistent_volume?: components["schemas"]["KubernetesPersistentVolumeSummary"];
+            persistent_volume_claim?: components["schemas"]["KubernetesPersistentVolumeClaimSummary"];
+            storage_class?: components["schemas"]["KubernetesStorageClassSummary"];
+        } & (unknown | unknown | unknown);
+        KubernetesPersistentVolumeDetail: {
+            mount_options: string[];
+            node_affinity?: components["schemas"]["KubernetesStorageNodeSelector"];
+            source: components["schemas"]["KubernetesPersistentVolumeSource"];
+            reason: string;
+            message: string;
+        };
+        KubernetesPersistentVolumeClaimCondition: {
+            type: string;
+            status: string;
+            reason: string;
+            message: string;
+            last_probe_time: components["schemas"]["Timestamp"];
+            last_transition_time: components["schemas"]["Timestamp"];
+        };
+        KubernetesPersistentVolumeClaimDetail: {
+            selector?: components["schemas"]["KubernetesWorkloadSelector"];
+            conditions: components["schemas"]["KubernetesPersistentVolumeClaimCondition"][];
+        };
+        KubernetesStorageClassDetail: {
+            parameters: {
+                [key: string]: string;
+            };
+            mount_options: string[];
+            allowed_topologies: components["schemas"]["KubernetesStorageTopologyTerm"][];
+        };
+        KubernetesStorageResourceDetail: components["schemas"]["KubernetesStorageResourceSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            persistent_volume_detail?: components["schemas"]["KubernetesPersistentVolumeDetail"];
+            persistent_volume_claim_detail?: components["schemas"]["KubernetesPersistentVolumeClaimDetail"];
+            storage_class_detail?: components["schemas"]["KubernetesStorageClassDetail"];
+        };
+        KubernetesStorageResourcePage: {
+            resources: components["schemas"]["KubernetesStorageResourceSummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesPersistentVolumeCreateInput: {
+            capacity: string;
+            access_modes: ("ReadWriteOnce" | "ReadOnlyMany" | "ReadWriteMany" | "ReadWriteOncePod")[];
+            /** @enum {string} */
+            reclaim_policy?: "Retain" | "Delete";
+            storage_class_name?: string;
+            /** @enum {string} */
+            volume_mode?: "Filesystem" | "Block";
+            mount_options?: string[];
+            claim_ref?: components["schemas"]["KubernetesStorageClaimReferenceInput"];
+            node_affinity?: components["schemas"]["KubernetesStorageNodeSelector"];
+            source: components["schemas"]["KubernetesPersistentVolumeSourceInput"];
+        };
+        KubernetesStorageClaimReferenceInput: {
+            namespace: string;
+            name: string;
+        };
+        KubernetesPersistentVolumeClaimCreateInput: {
+            requested_capacity: string;
+            access_modes: ("ReadWriteOnce" | "ReadOnlyMany" | "ReadWriteMany" | "ReadWriteOncePod")[];
+            storage_class_name?: string | null;
+            volume_name?: string;
+            /** @enum {string} */
+            volume_mode?: "Filesystem" | "Block";
+            selector?: components["schemas"]["KubernetesWorkloadSelector"];
+        };
+        KubernetesStorageClassCreateInput: {
+            provisioner: string;
+            parameters?: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            reclaim_policy?: "Retain" | "Delete";
+            /** @enum {string} */
+            volume_binding_mode?: "Immediate" | "WaitForFirstConsumer";
+            /** @default false */
+            allow_volume_expansion: boolean;
+            mount_options?: string[];
+            allowed_topologies?: components["schemas"]["KubernetesStorageTopologyTerm"][];
+        };
+        KubernetesCreateStorageResourceRequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            persistent_volume?: components["schemas"]["KubernetesPersistentVolumeCreateInput"];
+            persistent_volume_claim?: components["schemas"]["KubernetesPersistentVolumeClaimCreateInput"];
+            storage_class?: components["schemas"]["KubernetesStorageClassCreateInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        } & (unknown | unknown | unknown);
+        KubernetesPersistentVolumeUpdateInput: {
+            /** @enum {string} */
+            reclaim_policy: "Retain" | "Delete";
+        };
+        KubernetesPersistentVolumeClaimUpdateInput: {
+            requested_capacity: string;
+        };
+        KubernetesStorageClassUpdateInput: {
+            allow_volume_expansion: boolean;
+        };
+        KubernetesUpdateStorageResourceRequest: {
+            uid: string;
+            resource_version: string;
+            persistent_volume?: components["schemas"]["KubernetesPersistentVolumeUpdateInput"];
+            persistent_volume_claim?: components["schemas"]["KubernetesPersistentVolumeClaimUpdateInput"];
+            storage_class?: components["schemas"]["KubernetesStorageClassUpdateInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        } & (unknown | unknown | unknown);
+        KubernetesDeleteStorageResourceRequest: {
+            uid: string;
+            resource_version: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesStorageMutationResult: {
+            resource: components["schemas"]["KubernetesStorageResourceDetail"];
+            dry_run: boolean;
+        };
+        KubernetesStorageDeleteResult: {
+            deleted: boolean;
+            dry_run: boolean;
+            target: string;
+        };
         KubernetesConfigMapSummary: {
             namespace: string;
             name: string;
@@ -2454,6 +2795,50 @@ export interface components {
         };
     };
     responses: {
+        /** @description 存储资源分页结果 */
+        KubernetesStoragePageSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesStorageResourcePage"];
+                };
+            };
+        };
+        /** @description 存储资源详情 */
+        KubernetesStorageDetailSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesStorageResourceDetail"];
+                };
+            };
+        };
+        /** @description 存储资源写入结果或 DryRun 预览 */
+        KubernetesStorageMutationSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesStorageMutationResult"];
+                };
+            };
+        };
+        /** @description 存储资源删除结果或 DryRun 预览 */
+        KubernetesStorageDeleteSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesStorageDeleteResult"];
+                };
+            };
+        };
         /** @description 输入无效 */
         InvalidRequest: {
             headers: {
@@ -2570,6 +2955,9 @@ export interface components {
         WorkloadName: string;
         NetworkResource: components["schemas"]["KubernetesNetworkingResource"];
         NetworkResourceName: string;
+        ClusterStorageResource: "persistentvolumes" | "storageclasses";
+        NamespacedStorageResource: "persistentvolumeclaims";
+        StorageResourceName: string;
         ConfigMapName: string;
         KubernetesResourceName: string;
         /** @description Core API Group 使用空字符串或省略该参数。 */
@@ -4784,6 +5172,303 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesClusterStorageResources: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                storage_resource: components["parameters"]["ClusterStorageResource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesStoragePageSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesClusterStorageResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                storage_resource: components["parameters"]["ClusterStorageResource"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateStorageResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesStorageMutationSuccess"];
+            201: components["responses"]["KubernetesStorageMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesClusterStorageResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                storage_resource: components["parameters"]["ClusterStorageResource"];
+                storage_name: components["parameters"]["StorageResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesStorageDetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesClusterStorageResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                storage_resource: components["parameters"]["ClusterStorageResource"];
+                storage_name: components["parameters"]["StorageResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateStorageResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesStorageMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesClusterStorageResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                storage_resource: components["parameters"]["ClusterStorageResource"];
+                storage_name: components["parameters"]["StorageResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteStorageResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesStorageDeleteSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesPersistentVolumeClaims: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                storage_resource: components["parameters"]["NamespacedStorageResource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesStoragePageSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesPersistentVolumeClaim: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                storage_resource: components["parameters"]["NamespacedStorageResource"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateStorageResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesStorageMutationSuccess"];
+            201: components["responses"]["KubernetesStorageMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesPersistentVolumeClaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                storage_resource: components["parameters"]["NamespacedStorageResource"];
+                storage_name: components["parameters"]["StorageResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesStorageDetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    expandKubernetesPersistentVolumeClaim: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                storage_resource: components["parameters"]["NamespacedStorageResource"];
+                storage_name: components["parameters"]["StorageResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateStorageResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesStorageMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesPersistentVolumeClaim: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                storage_resource: components["parameters"]["NamespacedStorageResource"];
+                storage_name: components["parameters"]["StorageResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteStorageResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesStorageDeleteSuccess"];
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];

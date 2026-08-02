@@ -61,6 +61,17 @@ const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     Failed: { label: "失败", tone: "danger" },
     Unknown: { label: "未知", tone: "neutral" },
   },
+  // PersistentVolume and PersistentVolumeClaim phases. `Bound` and `Available`
+  // are both healthy — one is in use, the other is waiting to be — so only the
+  // states that need attention carry an alarm colour.
+  volume: {
+    Available: { label: "可用", tone: "info" },
+    Bound: { label: "已绑定", tone: "success" },
+    Pending: { label: "等待中", tone: "warning" },
+    Released: { label: "已释放", tone: "warning" },
+    Failed: { label: "失败", tone: "danger" },
+    Lost: { label: "已丢失", tone: "danger" },
+  },
   // Kubernetes Event `type`. Only two values exist, and `Normal` is the great
   // majority of them, so it stays quiet.
   eventType: {

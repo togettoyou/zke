@@ -2681,6 +2681,255 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/storage/{storage_resource}:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesClusterStorageResources
+      description: 分页查询集群级 PersistentVolume 或 StorageClass；PVC 必须使用命名空间级路径。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterStorageResource"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: continue, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: label_selector, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: field_selector, in: query, schema: { type: string, maxLength: 4096 } }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStoragePageSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createKubernetesClusterStorageResource
+      description: 创建 PersistentVolume 或 StorageClass；实际写入要求显式确认，dry-run 使用 Kubernetes 服务端校验。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterStorageResource"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesCreateStorageResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStorageMutationSuccess" }
+        "201": { $ref: "#/components/responses/KubernetesStorageMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/storage/{storage_resource}/{storage_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesClusterStorageResource
+      description: 查询一个 PersistentVolume 或 StorageClass 的类型化详情与状态。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterStorageResource"
+        - $ref: "#/components/parameters/StorageResourceName"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStorageDetailSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: updateKubernetesClusterStorageResource
+      description: 更新 PV 回收策略或 StorageClass 卷扩展开关；要求 UID、resourceVersion、显式确认并支持 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterStorageResource"
+        - $ref: "#/components/parameters/StorageResourceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateStorageResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStorageMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesClusterStorageResource
+      description: 使用 UID/resourceVersion 前置条件删除 PV 或 StorageClass；实际删除要求显式确认并支持 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterStorageResource"
+        - $ref: "#/components/parameters/StorageResourceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteStorageResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStorageDeleteSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesPersistentVolumeClaims
+      description: 在明确的 Cluster 和 Namespace 中分页查询 PersistentVolumeClaim。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedStorageResource"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: continue, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: label_selector, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: field_selector, in: query, schema: { type: string, maxLength: 4096 } }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStoragePageSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createKubernetesPersistentVolumeClaim
+      description: 创建 PVC；实际写入要求显式确认，dry-run 使用 Kubernetes 服务端校验。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedStorageResource"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesCreateStorageResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStorageMutationSuccess" }
+        "201": { $ref: "#/components/responses/KubernetesStorageMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesPersistentVolumeClaim
+      description: 查询一个 PVC 的类型化详情与状态。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedStorageResource"
+        - $ref: "#/components/parameters/StorageResourceName"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStorageDetailSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: expandKubernetesPersistentVolumeClaim
+      description: 只提高 PVC requested storage；禁止缩容，并要求 UID、resourceVersion、显式确认且支持 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedStorageResource"
+        - $ref: "#/components/parameters/StorageResourceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateStorageResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStorageMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesPersistentVolumeClaim
+      description: 使用 UID/resourceVersion 前置条件删除 PVC；实际删除要求显式确认并支持 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedStorageResource"
+        - $ref: "#/components/parameters/StorageResourceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteStorageResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesStorageDeleteSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps:
     get:
       tags: [Resources]
@@ -3849,6 +4098,28 @@ components:
         type: string
         minLength: 1
         maxLength: 253
+    ClusterStorageResource:
+      name: storage_resource
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [persistentvolumes, storageclasses]
+    NamespacedStorageResource:
+      name: storage_resource
+      in: path
+      required: true
+      schema:
+        type: string
+        const: persistentvolumeclaims
+    StorageResourceName:
+      name: storage_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
     ConfigMapName:
       name: config_map_name
       in: path
@@ -3953,6 +4224,50 @@ components:
                 minLength: 1
                 maxLength: 253
   responses:
+    KubernetesStoragePageSuccess:
+      description: 存储资源分页结果
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesStorageResourcePage" }
+    KubernetesStorageDetailSuccess:
+      description: 存储资源详情
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesStorageResourceDetail" }
+    KubernetesStorageMutationSuccess:
+      description: 存储资源写入结果或 DryRun 预览
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesStorageMutationResult" }
+    KubernetesStorageDeleteSuccess:
+      description: 存储资源删除结果或 DryRun 预览
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesStorageDeleteResult" }
     InvalidRequest:
       description: 输入无效
       content:
@@ -5573,6 +5888,437 @@ components:
         resource: { $ref: "#/components/schemas/KubernetesNetworkingResourceDetail" }
         dry_run: { type: boolean }
     KubernetesNetworkingDeleteResult:
+      type: object
+      additionalProperties: false
+      required: [deleted, dry_run, target]
+      properties:
+        deleted: { type: boolean }
+        dry_run: { type: boolean }
+        target: { type: string }
+    KubernetesStorageResource:
+      type: string
+      enum: [persistentvolumes, persistentvolumeclaims, storageclasses]
+    KubernetesStorageObjectReference:
+      type: object
+      additionalProperties: false
+      required: [namespace, name, uid]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        uid: { type: string }
+    KubernetesStorageSecretReference:
+      type: object
+      additionalProperties: false
+      required: [namespace, name]
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesStorageNodeSelectorRequirement:
+      type: object
+      additionalProperties: false
+      required: [key, operator, values]
+      properties:
+        key: { type: string, minLength: 1 }
+        operator: { type: string, enum: [In, NotIn, Exists, DoesNotExist, Gt, Lt] }
+        values:
+          type: array
+          items: { type: string }
+    KubernetesStorageNodeSelectorTerm:
+      type: object
+      additionalProperties: false
+      properties:
+        match_expressions:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesStorageNodeSelectorRequirement" }
+        match_fields:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesStorageNodeSelectorRequirement" }
+    KubernetesStorageNodeSelector:
+      type: object
+      additionalProperties: false
+      required: [terms]
+      properties:
+        terms:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/KubernetesStorageNodeSelectorTerm" }
+    KubernetesStorageTopologyRequirement:
+      type: object
+      additionalProperties: false
+      required: [key, values]
+      properties:
+        key: { type: string, minLength: 1 }
+        values:
+          type: array
+          minItems: 1
+          items: { type: string }
+    KubernetesStorageTopologyTerm:
+      type: object
+      additionalProperties: false
+      required: [match_label_expressions]
+      properties:
+        match_label_expressions:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/KubernetesStorageTopologyRequirement" }
+    KubernetesCSIPersistentVolumeSource:
+      type: object
+      additionalProperties: false
+      required: [driver, volume_handle, read_only, fs_type, volume_attributes]
+      properties:
+        driver: { type: string, minLength: 1 }
+        volume_handle: { type: string, minLength: 1 }
+        read_only: { type: boolean }
+        fs_type: { type: string }
+        volume_attributes:
+          type: object
+          additionalProperties: { type: string }
+        controller_publish_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+        node_stage_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+        node_publish_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+        controller_expand_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+        node_expand_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+    KubernetesNFSPersistentVolumeSource:
+      type: object
+      additionalProperties: false
+      required: [server, path, read_only]
+      properties:
+        server: { type: string, minLength: 1, maxLength: 253 }
+        path: { type: string, minLength: 1 }
+        read_only: { type: boolean }
+    KubernetesLocalPersistentVolumeSource:
+      type: object
+      additionalProperties: false
+      required: [path, fs_type]
+      properties:
+        path: { type: string, minLength: 1 }
+        fs_type: { type: string }
+    KubernetesPersistentVolumeSource:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: { type: string }
+        csi: { $ref: "#/components/schemas/KubernetesCSIPersistentVolumeSource" }
+        nfs: { $ref: "#/components/schemas/KubernetesNFSPersistentVolumeSource" }
+        local: { $ref: "#/components/schemas/KubernetesLocalPersistentVolumeSource" }
+    KubernetesCSIPersistentVolumeSourceInput:
+      type: object
+      additionalProperties: false
+      required: [driver, volume_handle]
+      properties:
+        driver: { type: string, minLength: 1 }
+        volume_handle: { type: string, minLength: 1 }
+        read_only: { type: boolean, default: false }
+        fs_type: { type: string }
+        volume_attributes:
+          type: object
+          maxProperties: 512
+          additionalProperties: { type: string }
+        controller_publish_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+        node_stage_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+        node_publish_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+        controller_expand_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+        node_expand_secret_ref: { $ref: "#/components/schemas/KubernetesStorageSecretReference" }
+    KubernetesNFSPersistentVolumeSourceInput:
+      type: object
+      additionalProperties: false
+      required: [server, path]
+      properties:
+        server: { type: string, minLength: 1, maxLength: 253 }
+        path: { type: string, minLength: 1 }
+        read_only: { type: boolean, default: false }
+    KubernetesLocalPersistentVolumeSourceInput:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: { type: string, minLength: 1 }
+        fs_type: { type: string }
+    KubernetesPersistentVolumeSourceInput:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: { type: string, enum: [csi, nfs, local] }
+        csi: { $ref: "#/components/schemas/KubernetesCSIPersistentVolumeSourceInput" }
+        nfs: { $ref: "#/components/schemas/KubernetesNFSPersistentVolumeSourceInput" }
+        local: { $ref: "#/components/schemas/KubernetesLocalPersistentVolumeSourceInput" }
+      oneOf:
+        - required: [csi]
+        - required: [nfs]
+        - required: [local]
+    KubernetesPersistentVolumeSummary:
+      type: object
+      additionalProperties: false
+      required: [phase, capacity, access_modes, reclaim_policy, storage_class_name, volume_mode, source_type, last_transition_time]
+      properties:
+        phase: { type: string }
+        capacity: { type: string }
+        access_modes:
+          type: array
+          items: { type: string }
+        reclaim_policy: { type: string }
+        storage_class_name: { type: string }
+        volume_mode: { type: string }
+        source_type: { type: string }
+        claim_ref: { $ref: "#/components/schemas/KubernetesStorageObjectReference" }
+        last_transition_time:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    KubernetesPersistentVolumeClaimSummary:
+      type: object
+      additionalProperties: false
+      required: [phase, requested_capacity, capacity, access_modes, storage_class_name, volume_name, volume_mode]
+      properties:
+        phase: { type: string }
+        requested_capacity: { type: string }
+        capacity: { type: string }
+        access_modes:
+          type: array
+          items: { type: string }
+        storage_class_name: { type: [string, "null"] }
+        volume_name: { type: string }
+        volume_mode: { type: string }
+    KubernetesStorageClassSummary:
+      type: object
+      additionalProperties: false
+      required: [provisioner, reclaim_policy, volume_binding_mode, allow_volume_expansion, default]
+      properties:
+        provisioner: { type: string }
+        reclaim_policy: { type: string }
+        volume_binding_mode: { type: string }
+        allow_volume_expansion: { type: boolean }
+        default: { type: boolean }
+    KubernetesStorageResourceSummary:
+      type: object
+      additionalProperties: false
+      required: [resource, api_version, kind, namespace, name, uid, resource_version, creation_timestamp, labels]
+      properties:
+        resource: { $ref: "#/components/schemas/KubernetesStorageResource" }
+        api_version: { type: string }
+        kind: { type: string, enum: [PersistentVolume, PersistentVolumeClaim, StorageClass] }
+        namespace: { type: string }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        uid: { type: string }
+        resource_version: { type: string }
+        creation_timestamp: { $ref: "#/components/schemas/Timestamp" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        persistent_volume: { $ref: "#/components/schemas/KubernetesPersistentVolumeSummary" }
+        persistent_volume_claim: { $ref: "#/components/schemas/KubernetesPersistentVolumeClaimSummary" }
+        storage_class: { $ref: "#/components/schemas/KubernetesStorageClassSummary" }
+      oneOf:
+        - required: [persistent_volume]
+        - required: [persistent_volume_claim]
+        - required: [storage_class]
+    KubernetesPersistentVolumeDetail:
+      type: object
+      additionalProperties: false
+      required: [mount_options, source, reason, message]
+      properties:
+        mount_options:
+          type: array
+          items: { type: string }
+        node_affinity: { $ref: "#/components/schemas/KubernetesStorageNodeSelector" }
+        source: { $ref: "#/components/schemas/KubernetesPersistentVolumeSource" }
+        reason: { type: string }
+        message: { type: string }
+    KubernetesPersistentVolumeClaimCondition:
+      type: object
+      additionalProperties: false
+      required: [type, status, reason, message, last_probe_time, last_transition_time]
+      properties:
+        type: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        message: { type: string }
+        last_probe_time: { $ref: "#/components/schemas/Timestamp" }
+        last_transition_time: { $ref: "#/components/schemas/Timestamp" }
+    KubernetesPersistentVolumeClaimDetail:
+      type: object
+      additionalProperties: false
+      required: [conditions]
+      properties:
+        selector: { $ref: "#/components/schemas/KubernetesWorkloadSelector" }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesPersistentVolumeClaimCondition" }
+    KubernetesStorageClassDetail:
+      type: object
+      additionalProperties: false
+      required: [parameters, mount_options, allowed_topologies]
+      properties:
+        parameters:
+          type: object
+          additionalProperties: { type: string }
+        mount_options:
+          type: array
+          items: { type: string }
+        allowed_topologies:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesStorageTopologyTerm" }
+    KubernetesStorageResourceDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesStorageResourceSummary"
+        - type: object
+          required: [annotations]
+          properties:
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            persistent_volume_detail: { $ref: "#/components/schemas/KubernetesPersistentVolumeDetail" }
+            persistent_volume_claim_detail: { $ref: "#/components/schemas/KubernetesPersistentVolumeClaimDetail" }
+            storage_class_detail: { $ref: "#/components/schemas/KubernetesStorageClassDetail" }
+    KubernetesStorageResourcePage:
+      type: object
+      additionalProperties: false
+      required: [resources, continue_token, resource_version, remaining_item_count]
+      properties:
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesStorageResourceSummary" }
+        continue_token: { type: string }
+        resource_version: { type: string }
+        remaining_item_count: { type: [integer, "null"], minimum: 0 }
+    KubernetesPersistentVolumeCreateInput:
+      type: object
+      additionalProperties: false
+      required: [capacity, access_modes, source]
+      properties:
+        capacity: { type: string, minLength: 1 }
+        access_modes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [ReadWriteOnce, ReadOnlyMany, ReadWriteMany, ReadWriteOncePod] }
+        reclaim_policy: { type: string, enum: [Retain, Delete] }
+        storage_class_name: { type: string, maxLength: 253 }
+        volume_mode: { type: string, enum: [Filesystem, Block] }
+        mount_options:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+        claim_ref: { $ref: "#/components/schemas/KubernetesStorageClaimReferenceInput" }
+        node_affinity: { $ref: "#/components/schemas/KubernetesStorageNodeSelector" }
+        source: { $ref: "#/components/schemas/KubernetesPersistentVolumeSourceInput" }
+    KubernetesStorageClaimReferenceInput:
+      type: object
+      additionalProperties: false
+      required: [namespace, name]
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesPersistentVolumeClaimCreateInput:
+      type: object
+      additionalProperties: false
+      required: [requested_capacity, access_modes]
+      properties:
+        requested_capacity: { type: string, minLength: 1 }
+        access_modes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [ReadWriteOnce, ReadOnlyMany, ReadWriteMany, ReadWriteOncePod] }
+        storage_class_name: { type: [string, "null"], maxLength: 253 }
+        volume_name: { type: string, maxLength: 253 }
+        volume_mode: { type: string, enum: [Filesystem, Block] }
+        selector: { $ref: "#/components/schemas/KubernetesWorkloadSelector" }
+    KubernetesStorageClassCreateInput:
+      type: object
+      additionalProperties: false
+      required: [provisioner]
+      properties:
+        provisioner: { type: string, minLength: 1 }
+        parameters:
+          type: object
+          maxProperties: 512
+          additionalProperties: { type: string }
+        reclaim_policy: { type: string, enum: [Retain, Delete] }
+        volume_binding_mode: { type: string, enum: [Immediate, WaitForFirstConsumer] }
+        allow_volume_expansion: { type: boolean, default: false }
+        mount_options:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+        allowed_topologies:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesStorageTopologyTerm" }
+    KubernetesCreateStorageResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [name, confirm]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 253 }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        persistent_volume: { $ref: "#/components/schemas/KubernetesPersistentVolumeCreateInput" }
+        persistent_volume_claim: { $ref: "#/components/schemas/KubernetesPersistentVolumeClaimCreateInput" }
+        storage_class: { $ref: "#/components/schemas/KubernetesStorageClassCreateInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+      oneOf:
+        - required: [persistent_volume]
+        - required: [persistent_volume_claim]
+        - required: [storage_class]
+    KubernetesPersistentVolumeUpdateInput:
+      type: object
+      additionalProperties: false
+      required: [reclaim_policy]
+      properties:
+        reclaim_policy: { type: string, enum: [Retain, Delete] }
+    KubernetesPersistentVolumeClaimUpdateInput:
+      type: object
+      additionalProperties: false
+      required: [requested_capacity]
+      properties:
+        requested_capacity: { type: string, minLength: 1 }
+    KubernetesStorageClassUpdateInput:
+      type: object
+      additionalProperties: false
+      required: [allow_volume_expansion]
+      properties:
+        allow_volume_expansion: { type: boolean }
+    KubernetesUpdateStorageResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        persistent_volume: { $ref: "#/components/schemas/KubernetesPersistentVolumeUpdateInput" }
+        persistent_volume_claim: { $ref: "#/components/schemas/KubernetesPersistentVolumeClaimUpdateInput" }
+        storage_class: { $ref: "#/components/schemas/KubernetesStorageClassUpdateInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+      oneOf:
+        - required: [persistent_volume]
+        - required: [persistent_volume_claim]
+        - required: [storage_class]
+    KubernetesDeleteStorageResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesStorageMutationResult:
+      type: object
+      additionalProperties: false
+      required: [resource, dry_run]
+      properties:
+        resource: { $ref: "#/components/schemas/KubernetesStorageResourceDetail" }
+        dry_run: { type: boolean }
+    KubernetesStorageDeleteResult:
       type: object
       additionalProperties: false
       required: [deleted, dry_run, target]

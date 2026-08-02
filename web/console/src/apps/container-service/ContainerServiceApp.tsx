@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   Bell,
   Box,
+  Database,
   FileCog,
   FolderTree,
   LayoutDashboard,
@@ -26,6 +27,7 @@ import {
 import { useScopeStore } from "@/scope/scope-store";
 
 import { ConfigMapSection } from "./ConfigMapSection";
+import { StorageSection } from "./StorageSection";
 import { EventSection } from "./EventSection";
 import { NamespaceSection } from "./NamespaceSection";
 import { NetworkingSection } from "./NetworkingSection";
@@ -47,6 +49,7 @@ const NAV: AppNavItem[] = [
   { id: "pods", label: "Pod", icon: Box },
   { id: "networking", label: "服务与路由", icon: Network },
   { id: "configmaps", label: "配置管理", icon: FileCog },
+  { id: "storage", label: "存储", icon: Database },
   { id: "events", label: "事件", icon: Bell },
 ];
 
@@ -115,7 +118,20 @@ export function ContainerServiceApp() {
   // Only the namespaced sections need the picker, and only they pay for the
   // query behind it. A control that scopes nothing would be a control that does
   // nothing, so the cluster-scoped sections do not show one.
-  const namespaced = NAMESPACED_SECTIONS.has(activeSection);
+  // Storage spans both scoping models: PersistentVolume and StorageClass are
+  // cluster objects, PersistentVolumeClaim is namespaced. The section reports
+  // which one its current tab is showing, so the picker appears exactly while it
+  // scopes something.
+  const [storageNamespaced, setStorageNamespaced] = useState(false);
+  const namespaced =
+    NAMESPACED_SECTIONS.has(activeSection) || (activeSection === "storage" && storageNamespaced);
+  /*
+   * Storage waits for its own Namespace rather than being held behind the shared
+   * gate below. Its tabs change scope, so unmounting the section to wait would
+   * also discard which tab is open — clicking the PersistentVolumeClaim tab
+   * would bounce straight back to the cluster-scoped one it was just left on.
+   */
+  const awaitsNamespace = namespaced && activeSection !== "storage";
   const namespaces = useNamespaces(namespaced && clusterId ? clusterId : null, {
     limit: NAMESPACE_PICKER_LIMIT,
   });
@@ -243,14 +259,14 @@ export function ContainerServiceApp() {
           tenantId={scope.tenantId}
           projectId={scope.projectId}
         />
-      ) : namespaces.error ? (
+      ) : awaitsNamespace && namespaces.error ? (
         <ErrorState error={namespaces.error} onRetry={() => void namespaces.refetch()} />
-      ) : namespaces.isLoading ? (
+      ) : awaitsNamespace && namespaces.isLoading ? (
         <LoadingState />
-      ) : namespace === "" ? (
+      ) : awaitsNamespace && namespace === "" ? (
         <EmptyNotice
           title="该集群没有可见的命名空间"
-          description="工作负载、Pod、服务与路由、配置管理和事件按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
+          description="工作负载、Pod、服务与路由、配置管理、事件和 PersistentVolumeClaim 按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
         />
       ) : activeSection === "events" ? (
         <EventSection
@@ -258,6 +274,16 @@ export function ContainerServiceApp() {
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
+        />
+      ) : activeSection === "storage" ? (
+        <StorageSection
+          key={clusterId}
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+          tenantId={scope.tenantId}
+          projectId={scope.projectId}
+          onNamespaceScopeChange={setStorageNamespaced}
         />
       ) : activeSection === "configmaps" ? (
         <ConfigMapSection

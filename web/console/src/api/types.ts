@@ -42,6 +42,14 @@ export type KubernetesWorkloadMutationResult = Schemas["KubernetesWorkloadMutati
 export type KubernetesCreateWorkloadRequest = Schemas["KubernetesCreateWorkloadRequest"];
 export type KubernetesWorkloadContainerTemplate = Schemas["KubernetesWorkloadContainerTemplate"];
 export type KubernetesWorkloadStatus = KubernetesWorkloadSummary["status"];
+export type KubernetesStorageResource = Schemas["KubernetesStorageResource"];
+export type KubernetesStorageResourceSummary = Schemas["KubernetesStorageResourceSummary"];
+export type KubernetesStorageResourceDetail = Schemas["KubernetesStorageResourceDetail"];
+export type KubernetesPersistentVolumeCreateInput =
+  Schemas["KubernetesPersistentVolumeCreateInput"];
+export type KubernetesPersistentVolumeClaimCreateInput =
+  Schemas["KubernetesPersistentVolumeClaimCreateInput"];
+export type KubernetesStorageClassCreateInput = Schemas["KubernetesStorageClassCreateInput"];
 export type KubernetesConfigMapSummary = Schemas["KubernetesConfigMapSummary"];
 export type KubernetesConfigMapDetail = Schemas["KubernetesConfigMapDetail"];
 export type KubernetesNetworkingResource = Schemas["KubernetesNetworkingResource"];
