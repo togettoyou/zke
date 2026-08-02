@@ -47,6 +47,14 @@ export const queryKeys = {
   // serves every kind through one route.
   resourceYaml: (clusterId: string, namespace: string, gvr: string, name: string) =>
     ["resource-yaml", clusterId, namespace, gvr, name] as const,
+  networkingResources: (
+    clusterId: string,
+    namespace: string,
+    resource: string,
+    params: Record<string, unknown> = {},
+  ) => ["networking-resources", clusterId, namespace, resource, params] as const,
+  networkingResource: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["networking-resource", clusterId, namespace, resource, name] as const,
   pods: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
     ["pods", clusterId, namespace, params] as const,
   pod: (clusterId: string, namespace: string, name: string) =>
@@ -75,6 +83,8 @@ export const queryKeyPrefixes = {
   namespace: ["namespace"] as const,
   workloads: ["workloads"] as const,
   workload: ["workload"] as const,
+  networkingResources: ["networking-resources"] as const,
+  networkingResource: ["networking-resource"] as const,
   pods: ["pods"] as const,
   pod: ["pod"] as const,
   enrollments: ["enrollments"] as const,

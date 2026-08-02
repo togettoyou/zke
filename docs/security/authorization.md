@@ -86,6 +86,11 @@ DryRun 使用独立的 `.dry_run` 审计动作，不会与实际写入混记。�
 边界：实际操作必须确认，删除可携带 UID/resourceVersion 前置条件，Console 在确认前先执行服务端 DryRun
 并展示目标 Cluster 与影响。
 
+Service、Ingress 与 Gateway 类型化接口沿用 `cluster.read` 和 `cluster.resource.create/update/delete`，
+并固定 GVR 与 Namespace，客户端不能改写资源类型。更新要求当前 UID/resourceVersion，删除同时把两者作为
+Kubernetes 前置条件；Gateway API 未安装与 ServiceAccount 无权访问分别返回能力缺失和禁止访问。Ingress 与
+Gateway 只暴露 TLS Secret 引用名称，不读取或审计 Secret 正文。
+
 YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限。
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
 `resourceVersion` 和当前实时对象逐项核对；同名对象已重建或版本已变化时返回冲突。实际更新还要求 CSRF、

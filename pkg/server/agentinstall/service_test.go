@@ -107,7 +107,7 @@ func TestShellQuoteProtectsInstallCommandValues(t *testing.T) {
 	}
 }
 
-func TestRenderManifestGrantsOnlyEnabledWorkloadResources(t *testing.T) {
+func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	t.Parallel()
 
 	manifest, err := renderManifest(
@@ -163,6 +163,9 @@ func TestRenderManifestGrantsOnlyEnabledWorkloadResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "batch", []string{
 		"jobs", "cronjobs",
 	}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"services"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "networking.k8s.io", []string{"ingresses"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "gateway.networking.k8s.io", []string{"gateways"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"nodes"}, []string{
 		"get", "list", "update", "patch",
 	})

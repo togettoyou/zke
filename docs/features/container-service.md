@@ -2,7 +2,7 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node、Pod 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
+当前已完成 Node、Pod、Service、Ingress、Gateway 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod 和五类工作负载的状态计数，
   以及 Node 容量/可分配量与非终态 Pod 请求量；
@@ -25,6 +25,11 @@
   Deployment/StatefulSet 伸缩，Deployment/StatefulSet/DaemonSet 滚动重启，以及 CronJob 暂停和恢复；
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
   删除上述五类工作负载，并强制要求 UID 删除前置条件；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}` 和
+  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}`：
+  按明确 Cluster、Namespace 和 `services`、`ingresses` 或 `gateways` 类型管理 Service、Ingress 与 Gateway；
+  列表支持 Kubernetes continuation token、Label Selector 和 Field Selector，写操作沿用 DryRun、确认、幂等、
+  UID/resourceVersion 前置条件与审计链路；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods` 和
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：按明确 Cluster 和
   Namespace 返回 Pod 稳定摘要与详情，列表支持 Kubernetes continuation token、Label Selector 和
@@ -63,7 +68,7 @@
 - Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
   `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
-  DaemonSet、Job 和 CronJob 的完整主资源 CRUD 权限，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
+  DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
   `create`；Eviction Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
 
@@ -114,6 +119,32 @@ CronJob 调度参数。Server 使用资源类型和名称生成客户端不能�
 StatefulSet 和 DaemonSet 使用该标签作为 Pod Selector，Job 的 Selector 则由 Kubernetes 按控制器 UID 生成，
 避免不同控制器意外选中同一批 Pod。StatefulSet 的 `service_name` 必须引用同一 Namespace 中预先存在的
 Service；高级 Pod 配置和其他更新仍可使用通用资源接口。
+
+服务与路由后端固定使用 `core/v1 Service`、`networking.k8s.io/v1 Ingress` 和
+`gateway.networking.k8s.io/v1 Gateway`，不会接受调用方覆盖 GVR。Service 支持 ClusterIP、NodePort、
+LoadBalancer、ExternalName 与 headless 语义，更新时保留 Kubernetes 分配的 ClusterIP、IP family 和适用的
+health check NodePort，并拒绝通过类型化接口切换不可变的 headless 身份。Ingress 支持 class、默认后端、
+Host/Path、Service backend 和 TLS Secret 名称；接口只返回 Secret 引用名称，不读取 Secret 正文。
+
+Gateway API 是目标集群的可选 CRD 能力。每次 Gateway 操作先通过 Discovery 确认
+`gateway.networking.k8s.io/v1 Gateway` 存在；未安装时返回稳定的 `409 gateway_api_unavailable`，与已安装但
+Agent ServiceAccount 无权访问时的 `403` 区分。ZKE 不负责安装 Gateway API CRD、GatewayClass 或具体
+Controller，也不把 Gateway 的 `Programmed=True` 等同于外部流量已经可达。本轮只提供 Gateway 本身，
+HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 等 Route 类型暂未纳入类型化接口，仍可在安装方授予
+最小 RBAC 后通过通用资源接口管理。Gateway 的 TLS 同样只传递证书引用，不读取证书 Secret。
+
+Console 服务与路由页面按 Service、Ingress、Gateway 三个标签页组织。三者形状不同，因此列表列和详情卡片
+各自独立，而不是压成一张只显示共有字段的表：Service 展示类型、ClusterIP 与端口映射，Ingress 展示
+IngressClass、主机与已分配地址，Gateway 展示 GatewayClass、监听器与地址。详情页在类型化视图之外还提供
+YAML 入口，用于查看和修改本表单未建模的字段。
+
+创建、更新和删除都先执行服务端 DryRun 再确认。更新和删除携带对象当前的 UID 与 resourceVersion，因此陈旧
+编辑会被拒绝而不是覆盖；确认弹窗说明本表单建模的配置会整体替换现有配置，而 Kubernetes 分配的字段和未建模
+的扩展字段由服务端保留。Service 的类型切换会连带显示对应字段（ExternalName 只要目标域名，NodePort 与
+LoadBalancer 才有外部流量策略和 NodePort 输入）。
+
+目标集群没有安装 Gateway API 时，列表返回 `409 gateway_api_unavailable`，Console 据此展示说明而不是错误，
+并隐藏创建入口；这与已安装但 Agent 无权访问的 `403` 是两回事，后者仍按权限错误呈现。
 
 Pod 类型化后端返回统一元数据、Phase、Ready、Node、Pod IP、控制器 Owner、镜像和总重启次数；详情补充
 Annotations、完整 Owner References、调度与网络信息、主容器、初始化容器和 Ephemeral Container 的当前/上次
@@ -230,7 +261,7 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 - 工作负载的高级 Pod 配置（环境变量、资源限制、存储卷、探针）与类型化更新表单；
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
-- Service 与 Ingress；
+- Gateway API 的 HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 类型化管理；
 - ConfigMap 与 Secret；
 - PersistentVolume、PersistentVolumeClaim 与 StorageClass；
 - 从 Pod、工作负载等具体对象直接跳转到按 UID 过滤的关联事件；

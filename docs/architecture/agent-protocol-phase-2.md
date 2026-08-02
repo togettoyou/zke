@@ -713,7 +713,8 @@ Resource Stream 是 Server 与 Agent 之间的内部协议。Server 提供受控
 - Agent 对 GVR、Verb、Subresource、正文和选择器执行独立 allowlist；
 - Agent 使用最小权限 Kubernetes ServiceAccount；
 - 默认安装授予 Node 的 `get/list/update/patch`、Namespace 的 `get/list/create/update/delete`、Pod 的
-  `get/list/update/delete` 和 `pods/log` 的 `get`；需要管理其他内置资源、CRD 或 CR 时，由安装方显式扩展 Agent
+  `get/list/update/delete` 和 `pods/log` 的 `get`，以及五类工作负载、Service、Ingress 和 Gateway 的完整 CRUD；
+  需要管理其他内置资源、CRD 或 CR 时，由安装方显式扩展 Agent
   ServiceAccount RBAC；
 - Secret 内容和任意 Subresource 不纳入当前通用 CRUD；
 - 资源变更要求显式目标、DryRun 影响预览、用户确认、幂等键和 Cluster 定域审计；
@@ -768,11 +769,14 @@ Node dynamic client 的 List/Detail 往返。
 - Pod 已实现显式 Cluster/Namespace 定域的类型化 List/Detail 投影和带 UID 前置条件的删除后端；Console
   已完成列表、详情和删除确认闭环；Pod Logs 已实现有界快照、实时 Follow，以及固定 Pod UID、容器选择、
   取消、下载和有界浏览器缓冲的 Console 闭环；Pod Exec 与 xterm.js Console 闭环已实现，Eviction 尚未实现。
+- Service、Ingress 和 Gateway 已实现固定 GVR、显式 Cluster/Namespace 定域的类型化
+  List/Detail/Create/Update/Delete 后端；Gateway 操作会先确认目标集群已安装 Gateway API v1，Console 和
+  HTTPRoute 等 Route 类型尚未实现。
 
 ### 11.3 更多只读资源
 
 - 通用资源浏览器通过 Discovery 目录读取已授权的内置资源和 CR，无需逐资源增加后端接口；
-- Service、Ingress、配置和存储资源的类型化产品投影。
+- 配置和存储资源的类型化产品投影，以及服务与路由 Console、Gateway API Route 类型化管理。
 
 ### 11.4 资源变更
 

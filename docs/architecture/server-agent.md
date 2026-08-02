@@ -54,7 +54,8 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
 `get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`update`、`patch` 以及
 Namespace 的 `get`、`list`、`create`、`update`、`delete`、Pod 的 `get`、`list`、`update`、`delete` 以及 `pods/log` 的
-`get`、`pods/exec` 的 `create` 权限；Eviction Subresource 不在默认授权中。
+`get`、`pods/exec` 的 `create` 权限，并授予五类工作负载、Service、Ingress 与 Gateway 主资源的完整 CRUD；
+Eviction Subresource 不在默认授权中。
 ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
 `http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
 原生 HTTPS 或由上游网关终止 TLS。
@@ -79,6 +80,9 @@ Cluster/Namespace 定域的类型化 List/Detail API。默认 Agent RBAC 已覆�
 前置条件、DryRun、确认、幂等和审计的删除。类型化工作负载后端还提供 Deployment/StatefulSet 伸缩、
 五类工作负载创建、Deployment/StatefulSet/DaemonSet 滚动重启、CronJob 暂停/恢复以及五类工作负载删除，
 并复用通用变更链路。
+Service、Ingress 和 Gateway 已提供固定 GVR、显式 Cluster/Namespace 定域的类型化
+List/Detail/Create/Update/Delete 后端，并复用通用 Resource Stream、DryRun、确认、幂等、审计和并发身份保护。
+Gateway API v1 未安装时会返回可区分的能力缺失错误；ZKE 不安装 CRD、GatewayClass 或 Controller。
 其他资源仍由安装方按实际管理范围显式扩展最小 RBAC。工作负载 Console 已实现列表、详情、类型化创建和上述
 类型化变更的 DryRun、影响展示与确认闭环；Pod Console 已实现列表、详情和删除的 DryRun、影响展示与确认闭环；
 Pod Logs 后端已通过专用权限和独立 QUIC Stream 实现有界快照与实时 Follow；Kubernetes Event Watch 和 Pod

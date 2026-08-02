@@ -804,6 +804,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 在明确的 Cluster 和 Namespace 中查询 Service、Ingress 或 Gateway。Gateway
+         *     固定使用 Gateway API `gateway.networking.k8s.io/v1`；目标集群未安装该 CRD
+         *     时返回 409 `gateway_api_unavailable`。分页使用 Kubernetes continuation token。
+         */
+        get: operations["listKubernetesNetworkingResources"];
+        put?: never;
+        /**
+         * @description 创建路径指定的 Service、Ingress 或 Gateway。请求必须只携带与路径类型对应的
+         *     `service`、`ingress` 或 `gateway` 配置。实际创建要求显式确认；dry-run 使用
+         *     Kubernetes 服务端校验，不会持久化对象。Gateway API 不由 ZKE 自动安装。
+         */
+        post: operations["createKubernetesNetworkingResource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询一个 Service、Ingress 或 Gateway 的类型化详情和状态。 */
+        get: operations["getKubernetesNetworkingResource"];
+        /**
+         * @description 更新类型化配置。必须携带当前 UID 和 resourceVersion；Server 在写入前重新读取对象，
+         *     拒绝同名重建或陈旧版本。Service 的 ClusterIP、IP family 和 healthCheckNodePort 等
+         *     Kubernetes 分配字段由 Server 保留。实际写入要求显式确认并支持 dry-run。
+         */
+        put: operations["updateKubernetesNetworkingResource"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除目标资源；实际删除要求显式确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesNetworkingResource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/kubernetes/resource-types": {
         parameters: {
             query?: never;
@@ -1508,6 +1557,304 @@ export interface components {
             completion_mode?: string;
             concurrency_policy?: string;
         };
+        /** @enum {string} */
+        KubernetesNetworkingResource: "services" | "ingresses" | "gateways";
+        KubernetesServicePort: {
+            name: string;
+            /** @enum {string} */
+            protocol: "" | "TCP" | "UDP" | "SCTP";
+            app_protocol: string;
+            port: number;
+            /** @description 数字端口的十进制文本或 Pod 端口名称；空字符串表示与 port 相同。 */
+            target_port: string;
+            node_port: number;
+        };
+        KubernetesServiceSpec: {
+            /** @enum {string} */
+            type: "" | "ClusterIP" | "NodePort" | "LoadBalancer" | "ExternalName";
+            headless: boolean;
+            selector: {
+                [key: string]: string;
+            };
+            /** @description ExternalName 可为空；其他 Service 类型至少需要一个端口，最终由 Server 校验。 */
+            ports: components["schemas"]["KubernetesServicePort"][];
+            external_name: string;
+            /** @enum {string} */
+            session_affinity: "" | "None" | "ClientIP";
+            /** @enum {string} */
+            external_traffic_policy: "" | "Cluster" | "Local";
+            /** @enum {string} */
+            internal_traffic_policy: "" | "Cluster" | "Local";
+            publish_not_ready_addresses: boolean;
+            allocate_load_balancer_node_ports?: boolean;
+        };
+        KubernetesLoadBalancerAddress: {
+            ip: string;
+            hostname: string;
+        };
+        KubernetesServiceView: {
+            spec: components["schemas"]["KubernetesServiceSpec"];
+            cluster_ips: string[];
+            ip_families: ("IPv4" | "IPv6")[];
+            ip_family_policy: string;
+            load_balancer_ingress: components["schemas"]["KubernetesLoadBalancerAddress"][];
+        };
+        KubernetesServicePortInput: {
+            name?: string;
+            /** @enum {string} */
+            protocol?: "" | "TCP" | "UDP" | "SCTP";
+            app_protocol?: string;
+            port: number;
+            target_port?: string;
+            node_port?: number;
+        };
+        KubernetesServiceSpecInput: {
+            /** @enum {string} */
+            type?: "" | "ClusterIP" | "NodePort" | "LoadBalancer" | "ExternalName";
+            headless?: boolean;
+            selector?: {
+                [key: string]: string;
+            };
+            /** @description ExternalName 可为空；其他 Service 类型至少需要一个端口，最终由 Server 校验。 */
+            ports?: components["schemas"]["KubernetesServicePortInput"][];
+            external_name?: string;
+            /** @enum {string} */
+            session_affinity?: "" | "None" | "ClientIP";
+            /** @enum {string} */
+            external_traffic_policy?: "" | "Cluster" | "Local";
+            /** @enum {string} */
+            internal_traffic_policy?: "" | "Cluster" | "Local";
+            publish_not_ready_addresses?: boolean;
+            allocate_load_balancer_node_ports?: boolean;
+        };
+        KubernetesIngressServiceBackend: {
+            name: string;
+            port_name: string;
+            port_number: number;
+        };
+        KubernetesIngressPath: {
+            path: string;
+            /** @enum {string} */
+            path_type: "Exact" | "Prefix" | "ImplementationSpecific";
+            backend: components["schemas"]["KubernetesIngressServiceBackend"];
+        };
+        KubernetesIngressRule: {
+            host: string;
+            paths: components["schemas"]["KubernetesIngressPath"][];
+        };
+        KubernetesIngressTLS: {
+            hosts: string[];
+            secret_name: string;
+        };
+        KubernetesIngressSpec: {
+            ingress_class_name: string;
+            default_backend?: components["schemas"]["KubernetesIngressServiceBackend"];
+            rules: components["schemas"]["KubernetesIngressRule"][];
+            tls: components["schemas"]["KubernetesIngressTLS"][];
+        };
+        KubernetesIngressView: {
+            spec: components["schemas"]["KubernetesIngressSpec"];
+            load_balancer_ingress: components["schemas"]["KubernetesLoadBalancerAddress"][];
+        };
+        KubernetesIngressServiceBackendInput: {
+            name: string;
+            port_name?: string;
+            port_number?: number;
+        } & (unknown | unknown);
+        KubernetesIngressPathInput: {
+            path?: string;
+            /** @enum {string} */
+            path_type: "Exact" | "Prefix" | "ImplementationSpecific";
+            backend: components["schemas"]["KubernetesIngressServiceBackendInput"];
+        };
+        KubernetesIngressRuleInput: {
+            host?: string;
+            paths: components["schemas"]["KubernetesIngressPathInput"][];
+        };
+        KubernetesIngressTLSInput: {
+            hosts?: string[];
+            secret_name?: string;
+        };
+        KubernetesIngressSpecInput: {
+            ingress_class_name?: string;
+            default_backend?: components["schemas"]["KubernetesIngressServiceBackendInput"];
+            rules?: components["schemas"]["KubernetesIngressRuleInput"][];
+            tls?: components["schemas"]["KubernetesIngressTLSInput"][];
+        };
+        KubernetesGatewayAddress: {
+            type: string;
+            value: string;
+        };
+        KubernetesGatewayObjectReference: {
+            group: string;
+            kind: string;
+            name: string;
+            namespace: string;
+        };
+        KubernetesGatewayRouteKind: {
+            group: string;
+            kind: string;
+        };
+        KubernetesGatewayAllowedRoutes: {
+            /** @enum {string} */
+            namespaces_from: "" | "Same" | "All" | "Selector";
+            selector?: components["schemas"]["KubernetesWorkloadSelector"];
+            kinds: components["schemas"]["KubernetesGatewayRouteKind"][];
+        };
+        KubernetesGatewayTLS: {
+            /** @enum {string} */
+            mode: "Terminate" | "Passthrough";
+            certificate_refs: components["schemas"]["KubernetesGatewayObjectReference"][];
+        };
+        KubernetesGatewayListener: {
+            name: string;
+            hostname: string;
+            port: number;
+            /** @enum {string} */
+            protocol: "HTTP" | "HTTPS" | "TLS" | "TCP" | "UDP";
+            tls?: components["schemas"]["KubernetesGatewayTLS"];
+            allowed_routes: components["schemas"]["KubernetesGatewayAllowedRoutes"];
+        };
+        KubernetesGatewaySpec: {
+            gateway_class_name: string;
+            addresses: components["schemas"]["KubernetesGatewayAddress"][];
+            listeners: components["schemas"]["KubernetesGatewayListener"][];
+        };
+        KubernetesResourceCondition: {
+            type: string;
+            /** @enum {string} */
+            status: "True" | "False" | "Unknown";
+            reason: string;
+            message: string;
+            /** Format: int64 */
+            observed_generation: number;
+            last_transition_time: components["schemas"]["Timestamp"];
+        };
+        KubernetesGatewayListenerStatus: {
+            name: string;
+            attached_routes: number;
+            conditions: components["schemas"]["KubernetesResourceCondition"][];
+        };
+        KubernetesGatewayView: {
+            spec: components["schemas"]["KubernetesGatewaySpec"];
+            addresses: components["schemas"]["KubernetesGatewayAddress"][];
+            conditions: components["schemas"]["KubernetesResourceCondition"][];
+            listeners: components["schemas"]["KubernetesGatewayListenerStatus"][];
+        };
+        KubernetesGatewayAddressInput: {
+            type?: string;
+            value: string;
+        };
+        KubernetesGatewayObjectReferenceInput: {
+            group?: string;
+            kind?: string;
+            name: string;
+            namespace?: string;
+        };
+        KubernetesGatewayRouteKindInput: {
+            group?: string;
+            kind: string;
+        };
+        KubernetesLabelSelectorInput: {
+            match_labels?: {
+                [key: string]: string;
+            };
+            match_expressions?: components["schemas"]["KubernetesWorkloadSelectorRequirement"][];
+        };
+        KubernetesGatewayAllowedRoutesInput: {
+            /** @enum {string} */
+            namespaces_from?: "" | "Same" | "All" | "Selector";
+            selector?: components["schemas"]["KubernetesLabelSelectorInput"];
+            kinds?: components["schemas"]["KubernetesGatewayRouteKindInput"][];
+        };
+        KubernetesGatewayTLSInput: {
+            /** @enum {string} */
+            mode: "Terminate" | "Passthrough";
+            certificate_refs?: components["schemas"]["KubernetesGatewayObjectReferenceInput"][];
+        };
+        KubernetesGatewayListenerInput: {
+            name: string;
+            hostname?: string;
+            port: number;
+            /** @enum {string} */
+            protocol: "HTTP" | "HTTPS" | "TLS" | "TCP" | "UDP";
+            tls?: components["schemas"]["KubernetesGatewayTLSInput"];
+            allowed_routes?: components["schemas"]["KubernetesGatewayAllowedRoutesInput"];
+        };
+        KubernetesGatewaySpecInput: {
+            gateway_class_name: string;
+            addresses?: components["schemas"]["KubernetesGatewayAddressInput"][];
+            listeners: components["schemas"]["KubernetesGatewayListenerInput"][];
+        };
+        KubernetesNetworkingResourceSummary: {
+            resource: components["schemas"]["KubernetesNetworkingResource"];
+            api_version: string;
+            /** @enum {string} */
+            kind: "Service" | "Ingress" | "Gateway";
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            service?: components["schemas"]["KubernetesServiceView"];
+            ingress?: components["schemas"]["KubernetesIngressView"];
+            gateway?: components["schemas"]["KubernetesGatewayView"];
+        };
+        KubernetesNetworkingResourceDetail: components["schemas"]["KubernetesNetworkingResourceSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+        };
+        KubernetesNetworkingResourcePage: {
+            resources: components["schemas"]["KubernetesNetworkingResourceSummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesCreateNetworkingResourceRequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            service?: components["schemas"]["KubernetesServiceSpecInput"];
+            ingress?: components["schemas"]["KubernetesIngressSpecInput"];
+            gateway?: components["schemas"]["KubernetesGatewaySpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        } & (unknown | unknown | unknown);
+        KubernetesUpdateNetworkingResourceRequest: {
+            uid: string;
+            resource_version: string;
+            service?: components["schemas"]["KubernetesServiceSpecInput"];
+            ingress?: components["schemas"]["KubernetesIngressSpecInput"];
+            gateway?: components["schemas"]["KubernetesGatewaySpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        } & (unknown | unknown | unknown);
+        KubernetesDeleteNetworkingResourceRequest: {
+            uid: string;
+            resource_version: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesNetworkingMutationResult: {
+            resource: components["schemas"]["KubernetesNetworkingResourceDetail"];
+            dry_run: boolean;
+        };
+        KubernetesNetworkingDeleteResult: {
+            deleted: boolean;
+            dry_run: boolean;
+            target: string;
+        };
         KubernetesOverviewStatusCounts: {
             [key: string]: number;
         };
@@ -2085,6 +2432,8 @@ export interface components {
         PodName: string;
         WorkloadResource: components["schemas"]["KubernetesWorkloadResource"];
         WorkloadName: string;
+        NetworkResource: components["schemas"]["KubernetesNetworkingResource"];
+        NetworkResourceName: string;
         KubernetesResourceName: string;
         /** @description Core API Group 使用空字符串或省略该参数。 */
         KubernetesGroup: string;
@@ -4082,6 +4431,219 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesNetworkingResources: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                network_resource: components["parameters"]["NetworkResource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 指定类型的服务或路由资源列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNetworkingResourcePage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesNetworkingResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                network_resource: components["parameters"]["NetworkResource"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateNetworkingResourceRequest"];
+            };
+        };
+        responses: {
+            /** @description DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNetworkingMutationResult"];
+                    };
+                };
+            };
+            /** @description 已创建的服务或路由资源 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNetworkingMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesNetworkingResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                network_resource: components["parameters"]["NetworkResource"];
+                network_name: components["parameters"]["NetworkResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 服务或路由资源详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNetworkingResourceDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesNetworkingResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                network_resource: components["parameters"]["NetworkResource"];
+                network_name: components["parameters"]["NetworkResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateNetworkingResourceRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新结果或 DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNetworkingMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesNetworkingResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                network_resource: components["parameters"]["NetworkResource"];
+                network_name: components["parameters"]["NetworkResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteNetworkingResourceRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除结果或 DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNetworkingDeleteResult"];
                     };
                 };
             };

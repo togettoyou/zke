@@ -134,6 +134,8 @@ export function useUpdateResourceYaml() {
           queryKeyPrefixes.namespace,
           queryKeyPrefixes.workloads,
           queryKeyPrefixes.workload,
+          queryKeyPrefixes.networkingResources,
+          queryKeyPrefixes.networkingResource,
           queryKeyPrefixes.pods,
           queryKeyPrefixes.pod,
         ].map((prefix) => queryClient.invalidateQueries({ queryKey: prefix })),

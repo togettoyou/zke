@@ -207,7 +207,7 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 - 使用专用 ServiceAccount，并按当前启用能力授予最小 Kubernetes RBAC 权限。
 - 默认集群业务权限包含 Node 的 `get`、`list`、`update`、`patch`，Namespace 的 `get`、`list`、`create`、`update`、`delete`，
   Pod 的 `get`、`list`、`update`、`delete`、`pods/log` 的 `get`、`pods/exec` 的 `create`，以及 Deployment、StatefulSet、DaemonSet、Job 和
-  CronJob 主资源的完整 CRUD。Node 的 `patch` 用于停止或恢复调度；驱逐需要 `pods/eviction` Subresource，
+  CronJob、Service、Ingress 和 Gateway 主资源的完整 CRUD。Node 的 `patch` 用于停止或恢复调度；驱逐需要 `pods/eviction` Subresource，
   尚未开放。Agent 通用策略允许非 Secret 主资源的 CRUD，
   但实际读取或变更默认集合以外的内置资源、CRD 或 CR 时必须由安装方显式扩展 ServiceAccount RBAC，无需修改
   Agent 代码。
@@ -519,6 +519,11 @@ PUT  /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}
 PATCH /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}
 DELETE /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}
 GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs
+GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}
+POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}
+GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}
+PUT  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}
+DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}
 PUT  /api/v1/clusters/{cluster_id}
 DELETE /api/v1/clusters/{cluster_id}
 POST /api/v1/clusters/{cluster_id}/connection/revoke
@@ -548,7 +553,8 @@ Node List/Detail 要求目标 Cluster 的 `cluster.read` 权限。Server 固定�
 通用 Kubernetes 只读接口同样要求 `cluster.read`，由 Server 固定 Verb 为 Discovery、List 或 Get，并校验
 GVR、Namespace、名称、Selector、分页和正文上限；浏览器不能提交任意 Verb、Subresource 或 Kubernetes 原始
 路径。Server 与 Agent 双重拒绝 Secret 和 Event（Event 只能通过专用 Watch 接口读取），Agent ServiceAccount RBAC 约束最终可访问的资源集合。默认安装允许
-Node 读取与调度开关、Namespace 管理，以及 Deployment、StatefulSet、DaemonSet、Job 和 CronJob 管理；
+Node 读取与调度开关、Namespace 管理，以及 Deployment、StatefulSet、DaemonSet、Job、CronJob、Service、
+Ingress 和 Gateway 管理；Gateway API 未安装时，Server 会通过 Discovery 返回可区分的能力缺失错误；
 扩展其他内置资源或 CRD 资源必须由安装方显式增加最小 RBAC。
 
 通用写接口分别要求 `cluster.resource.create`、`cluster.resource.update` 或 `cluster.resource.delete`，
@@ -878,7 +884,7 @@ Server 配置结构体与 YAML 文件一一对应：加载时先构造带默认�
 - Agent 一次性注册 Token 只通过独立 Secret 读取。Agent 自行创建身份 Secret；ServiceAccount 需要 Namespace
   内 Secret 的 `create` 权限，对固定的 Enrollment、Trust 和 identity Secret 具有 `get` 权限，并只能更新
   identity Secret。
-- Agent 默认 ClusterRole 仅为 Pod 日志增加 `pods/log` 的 `get`、为 Web Terminal 增加 `pods/exec` 的
+- Agent 默认 ClusterRole 为 Service、Ingress 与 Gateway 主资源增加完整 CRUD，为 Pod 日志增加 `pods/log` 的 `get`、为 Web Terminal 增加 `pods/exec` 的
   `create`，并为专用 Event Watch 增加 `events` 的 `get/list/watch`；不授予 `pods/eviction`。日志、Exec 和 Watch 协议都不放宽通用 Resource/Subresource
   拒绝策略。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。

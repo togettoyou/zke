@@ -494,6 +494,49 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesWorkload.delete,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/networking/:network_resource",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesNetworking.list,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/networking/:network_resource",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceCreate,
+			"cluster_id",
+		),
+		handlers.kubernetesNetworking.create,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesNetworking.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesNetworking.update,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceDelete,
+			"cluster_id",
+		),
+		handlers.kubernetesNetworking.delete,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/kubernetes/resource-types",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,

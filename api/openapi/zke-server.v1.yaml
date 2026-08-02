@@ -2468,6 +2468,219 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesNetworkingResources
+      description: |
+        在明确的 Cluster 和 Namespace 中查询 Service、Ingress 或 Gateway。Gateway
+        固定使用 Gateway API `gateway.networking.k8s.io/v1`；目标集群未安装该 CRD
+        时返回 409 `gateway_api_unavailable`。分页使用 Kubernetes continuation token。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NetworkResource"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: continue
+          in: query
+          schema: { type: string, maxLength: 4096 }
+        - name: label_selector
+          in: query
+          schema: { type: string, maxLength: 4096 }
+        - name: field_selector
+          in: query
+          schema: { type: string, maxLength: 4096 }
+      responses:
+        "200":
+          description: 指定类型的服务或路由资源列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesNetworkingResourcePage"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createKubernetesNetworkingResource
+      description: |
+        创建路径指定的 Service、Ingress 或 Gateway。请求必须只携带与路径类型对应的
+        `service`、`ingress` 或 `gateway` 配置。实际创建要求显式确认；dry-run 使用
+        Kubernetes 服务端校验，不会持久化对象。Gateway API 不由 ZKE 自动安装。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NetworkResource"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesCreateNetworkingResourceRequest"
+      responses:
+        "200":
+          description: DryRun 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesNetworkingMutationResult" }
+        "201":
+          description: 已创建的服务或路由资源
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesNetworkingMutationResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesNetworkingResource
+      description: 查询一个 Service、Ingress 或 Gateway 的类型化详情和状态。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NetworkResource"
+        - $ref: "#/components/parameters/NetworkResourceName"
+      responses:
+        "200":
+          description: 服务或路由资源详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesNetworkingResourceDetail" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: updateKubernetesNetworkingResource
+      description: |
+        更新类型化配置。必须携带当前 UID 和 resourceVersion；Server 在写入前重新读取对象，
+        拒绝同名重建或陈旧版本。Service 的 ClusterIP、IP family 和 healthCheckNodePort 等
+        Kubernetes 分配字段由 Server 保留。实际写入要求显式确认并支持 dry-run。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NetworkResource"
+        - $ref: "#/components/parameters/NetworkResourceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateNetworkingResourceRequest" }
+      responses:
+        "200":
+          description: 更新结果或 DryRun 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesNetworkingMutationResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesNetworkingResource
+      description: 使用 UID/resourceVersion 前置条件删除目标资源；实际删除要求显式确认并支持 dry-run。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NetworkResource"
+        - $ref: "#/components/parameters/NetworkResourceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteNetworkingResourceRequest" }
+      responses:
+        "200":
+          description: 删除结果或 DryRun 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesNetworkingDeleteResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/kubernetes/resource-types:
     get:
       tags: [Resources]
@@ -3413,6 +3626,20 @@ components:
         $ref: "#/components/schemas/KubernetesWorkloadResource"
     WorkloadName:
       name: workload_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
+    NetworkResource:
+      name: network_resource
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/KubernetesNetworkingResource"
+    NetworkResourceName:
+      name: network_name
       in: path
       required: true
       schema:
@@ -4638,6 +4865,510 @@ components:
               type: string
             concurrency_policy:
               type: string
+    KubernetesNetworkingResource:
+      type: string
+      enum: [services, ingresses, gateways]
+    KubernetesServicePort:
+      type: object
+      additionalProperties: false
+      required: [name, protocol, app_protocol, port, target_port, node_port]
+      properties:
+        name: { type: string, maxLength: 15 }
+        protocol: { type: string, enum: ["", TCP, UDP, SCTP] }
+        app_protocol: { type: string, maxLength: 253 }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        target_port:
+          type: string
+          description: 数字端口的十进制文本或 Pod 端口名称；空字符串表示与 port 相同。
+        node_port: { type: integer, minimum: 0, maximum: 65535 }
+    KubernetesServiceSpec:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - headless
+        - selector
+        - ports
+        - external_name
+        - session_affinity
+        - external_traffic_policy
+        - internal_traffic_policy
+        - publish_not_ready_addresses
+      properties:
+        type: { type: string, enum: ["", ClusterIP, NodePort, LoadBalancer, ExternalName] }
+        headless: { type: boolean }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+        ports:
+          type: array
+          maxItems: 100
+          description: ExternalName 可为空；其他 Service 类型至少需要一个端口，最终由 Server 校验。
+          items: { $ref: "#/components/schemas/KubernetesServicePort" }
+        external_name: { type: string, maxLength: 253 }
+        session_affinity: { type: string, enum: ["", None, ClientIP] }
+        external_traffic_policy: { type: string, enum: ["", Cluster, Local] }
+        internal_traffic_policy: { type: string, enum: ["", Cluster, Local] }
+        publish_not_ready_addresses: { type: boolean }
+        allocate_load_balancer_node_ports: { type: boolean }
+    KubernetesLoadBalancerAddress:
+      type: object
+      additionalProperties: false
+      required: [ip, hostname]
+      properties:
+        ip: { type: string }
+        hostname: { type: string }
+    KubernetesServiceView:
+      type: object
+      additionalProperties: false
+      required: [spec, cluster_ips, ip_families, ip_family_policy, load_balancer_ingress]
+      properties:
+        spec: { $ref: "#/components/schemas/KubernetesServiceSpec" }
+        cluster_ips:
+          type: array
+          items: { type: string }
+        ip_families:
+          type: array
+          items: { type: string, enum: [IPv4, IPv6] }
+        ip_family_policy: { type: string }
+        load_balancer_ingress:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesLoadBalancerAddress" }
+    KubernetesServicePortInput:
+      type: object
+      additionalProperties: false
+      required: [port]
+      properties:
+        name: { type: string, maxLength: 15 }
+        protocol: { type: string, enum: ["", TCP, UDP, SCTP] }
+        app_protocol: { type: string, maxLength: 253 }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        target_port: { type: string }
+        node_port: { type: integer, minimum: 0, maximum: 65535 }
+    KubernetesServiceSpecInput:
+      type: object
+      additionalProperties: false
+      properties:
+        type: { type: string, enum: ["", ClusterIP, NodePort, LoadBalancer, ExternalName] }
+        headless: { type: boolean }
+        selector:
+          type: object
+          additionalProperties: { type: string }
+        ports:
+          type: array
+          maxItems: 100
+          description: ExternalName 可为空；其他 Service 类型至少需要一个端口，最终由 Server 校验。
+          items: { $ref: "#/components/schemas/KubernetesServicePortInput" }
+        external_name: { type: string, maxLength: 253 }
+        session_affinity: { type: string, enum: ["", None, ClientIP] }
+        external_traffic_policy: { type: string, enum: ["", Cluster, Local] }
+        internal_traffic_policy: { type: string, enum: ["", Cluster, Local] }
+        publish_not_ready_addresses: { type: boolean }
+        allocate_load_balancer_node_ports: { type: boolean }
+    KubernetesIngressServiceBackend:
+      type: object
+      additionalProperties: false
+      required: [name, port_name, port_number]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63 }
+        port_name: { type: string, maxLength: 15 }
+        port_number: { type: integer, minimum: 0, maximum: 65535 }
+    KubernetesIngressPath:
+      type: object
+      additionalProperties: false
+      required: [path, path_type, backend]
+      properties:
+        path: { type: string, maxLength: 4096 }
+        path_type: { type: string, enum: [Exact, Prefix, ImplementationSpecific] }
+        backend: { $ref: "#/components/schemas/KubernetesIngressServiceBackend" }
+    KubernetesIngressRule:
+      type: object
+      additionalProperties: false
+      required: [host, paths]
+      properties:
+        host: { type: string, maxLength: 253 }
+        paths:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items: { $ref: "#/components/schemas/KubernetesIngressPath" }
+    KubernetesIngressTLS:
+      type: object
+      additionalProperties: false
+      required: [hosts, secret_name]
+      properties:
+        hosts:
+          type: array
+          items: { type: string, maxLength: 253 }
+        secret_name: { type: string, maxLength: 253 }
+    KubernetesIngressSpec:
+      type: object
+      additionalProperties: false
+      required: [ingress_class_name, rules, tls]
+      properties:
+        ingress_class_name: { type: string, maxLength: 253 }
+        default_backend: { $ref: "#/components/schemas/KubernetesIngressServiceBackend" }
+        rules:
+          type: array
+          maxItems: 256
+          items: { $ref: "#/components/schemas/KubernetesIngressRule" }
+        tls:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesIngressTLS" }
+    KubernetesIngressView:
+      type: object
+      additionalProperties: false
+      required: [spec, load_balancer_ingress]
+      properties:
+        spec: { $ref: "#/components/schemas/KubernetesIngressSpec" }
+        load_balancer_ingress:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesLoadBalancerAddress" }
+    KubernetesIngressServiceBackendInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63 }
+        port_name: { type: string, minLength: 1, maxLength: 15 }
+        port_number: { type: integer, minimum: 1, maximum: 65535 }
+      oneOf:
+        - required: [port_name]
+        - required: [port_number]
+    KubernetesIngressPathInput:
+      type: object
+      additionalProperties: false
+      required: [path_type, backend]
+      properties:
+        path: { type: string, maxLength: 4096 }
+        path_type: { type: string, enum: [Exact, Prefix, ImplementationSpecific] }
+        backend: { $ref: "#/components/schemas/KubernetesIngressServiceBackendInput" }
+    KubernetesIngressRuleInput:
+      type: object
+      additionalProperties: false
+      required: [paths]
+      properties:
+        host: { type: string, maxLength: 253 }
+        paths:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items: { $ref: "#/components/schemas/KubernetesIngressPathInput" }
+    KubernetesIngressTLSInput:
+      type: object
+      additionalProperties: false
+      properties:
+        hosts:
+          type: array
+          items: { type: string, maxLength: 253 }
+        secret_name: { type: string, maxLength: 253 }
+    KubernetesIngressSpecInput:
+      type: object
+      additionalProperties: false
+      properties:
+        ingress_class_name: { type: string, maxLength: 253 }
+        default_backend: { $ref: "#/components/schemas/KubernetesIngressServiceBackendInput" }
+        rules:
+          type: array
+          maxItems: 256
+          items: { $ref: "#/components/schemas/KubernetesIngressRuleInput" }
+        tls:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesIngressTLSInput" }
+    KubernetesGatewayAddress:
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type: { type: string, maxLength: 253 }
+        value: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesGatewayObjectReference:
+      type: object
+      additionalProperties: false
+      required: [group, kind, name, namespace]
+      properties:
+        group: { type: string, maxLength: 253 }
+        kind: { type: string, maxLength: 253 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        namespace: { type: string, maxLength: 63 }
+    KubernetesGatewayRouteKind:
+      type: object
+      additionalProperties: false
+      required: [group, kind]
+      properties:
+        group: { type: string, maxLength: 253 }
+        kind: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesGatewayAllowedRoutes:
+      type: object
+      additionalProperties: false
+      required: [namespaces_from, kinds]
+      properties:
+        namespaces_from: { type: string, enum: ["", Same, All, Selector] }
+        selector: { $ref: "#/components/schemas/KubernetesWorkloadSelector" }
+        kinds:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/KubernetesGatewayRouteKind" }
+    KubernetesGatewayTLS:
+      type: object
+      additionalProperties: false
+      required: [mode, certificate_refs]
+      properties:
+        mode: { type: string, enum: [Terminate, Passthrough] }
+        certificate_refs:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/KubernetesGatewayObjectReference" }
+    KubernetesGatewayListener:
+      type: object
+      additionalProperties: false
+      required: [name, hostname, port, protocol, allowed_routes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63 }
+        hostname: { type: string, maxLength: 253 }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        protocol: { type: string, enum: [HTTP, HTTPS, TLS, TCP, UDP] }
+        tls: { $ref: "#/components/schemas/KubernetesGatewayTLS" }
+        allowed_routes: { $ref: "#/components/schemas/KubernetesGatewayAllowedRoutes" }
+    KubernetesGatewaySpec:
+      type: object
+      additionalProperties: false
+      required: [gateway_class_name, addresses, listeners]
+      properties:
+        gateway_class_name: { type: string, minLength: 1, maxLength: 253 }
+        addresses:
+          type: array
+          maxItems: 16
+          items: { $ref: "#/components/schemas/KubernetesGatewayAddress" }
+        listeners:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { $ref: "#/components/schemas/KubernetesGatewayListener" }
+    KubernetesResourceCondition:
+      type: object
+      additionalProperties: false
+      required: [type, status, reason, message, observed_generation, last_transition_time]
+      properties:
+        type: { type: string }
+        status: { type: string, enum: ["True", "False", Unknown] }
+        reason: { type: string }
+        message: { type: string }
+        observed_generation: { type: integer, format: int64, minimum: 0 }
+        last_transition_time: { $ref: "#/components/schemas/Timestamp" }
+    KubernetesGatewayListenerStatus:
+      type: object
+      additionalProperties: false
+      required: [name, attached_routes, conditions]
+      properties:
+        name: { type: string }
+        attached_routes: { type: integer, minimum: 0 }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesResourceCondition" }
+    KubernetesGatewayView:
+      type: object
+      additionalProperties: false
+      required: [spec, addresses, conditions, listeners]
+      properties:
+        spec: { $ref: "#/components/schemas/KubernetesGatewaySpec" }
+        addresses:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesGatewayAddress" }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesResourceCondition" }
+        listeners:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesGatewayListenerStatus" }
+    KubernetesGatewayAddressInput:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        type: { type: string, maxLength: 253 }
+        value: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesGatewayObjectReferenceInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        group: { type: string, maxLength: 253 }
+        kind: { type: string, maxLength: 253 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        namespace: { type: string, maxLength: 63 }
+    KubernetesGatewayRouteKindInput:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        group: { type: string, maxLength: 253 }
+        kind: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesLabelSelectorInput:
+      type: object
+      additionalProperties: false
+      properties:
+        match_labels:
+          type: object
+          additionalProperties: { type: string }
+        match_expressions:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesWorkloadSelectorRequirement" }
+    KubernetesGatewayAllowedRoutesInput:
+      type: object
+      additionalProperties: false
+      properties:
+        namespaces_from: { type: string, enum: ["", Same, All, Selector] }
+        selector: { $ref: "#/components/schemas/KubernetesLabelSelectorInput" }
+        kinds:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/KubernetesGatewayRouteKindInput" }
+    KubernetesGatewayTLSInput:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [Terminate, Passthrough] }
+        certificate_refs:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/KubernetesGatewayObjectReferenceInput" }
+    KubernetesGatewayListenerInput:
+      type: object
+      additionalProperties: false
+      required: [name, port, protocol]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63 }
+        hostname: { type: string, maxLength: 253 }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        protocol: { type: string, enum: [HTTP, HTTPS, TLS, TCP, UDP] }
+        tls: { $ref: "#/components/schemas/KubernetesGatewayTLSInput" }
+        allowed_routes: { $ref: "#/components/schemas/KubernetesGatewayAllowedRoutesInput" }
+    KubernetesGatewaySpecInput:
+      type: object
+      additionalProperties: false
+      required: [gateway_class_name, listeners]
+      properties:
+        gateway_class_name: { type: string, minLength: 1, maxLength: 253 }
+        addresses:
+          type: array
+          maxItems: 16
+          items: { $ref: "#/components/schemas/KubernetesGatewayAddressInput" }
+        listeners:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { $ref: "#/components/schemas/KubernetesGatewayListenerInput" }
+    KubernetesNetworkingResourceSummary:
+      type: object
+      required:
+        - resource
+        - api_version
+        - kind
+        - namespace
+        - name
+        - uid
+        - resource_version
+        - creation_timestamp
+        - labels
+      properties:
+        resource: { $ref: "#/components/schemas/KubernetesNetworkingResource" }
+        api_version: { type: string }
+        kind: { type: string, enum: [Service, Ingress, Gateway] }
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        uid: { type: string }
+        resource_version: { type: string }
+        creation_timestamp: { $ref: "#/components/schemas/Timestamp" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        service: { $ref: "#/components/schemas/KubernetesServiceView" }
+        ingress: { $ref: "#/components/schemas/KubernetesIngressView" }
+        gateway: { $ref: "#/components/schemas/KubernetesGatewayView" }
+    KubernetesNetworkingResourceDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesNetworkingResourceSummary"
+        - type: object
+          required: [annotations]
+          properties:
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+    KubernetesNetworkingResourcePage:
+      type: object
+      additionalProperties: false
+      required: [resources, continue_token, resource_version, remaining_item_count]
+      properties:
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesNetworkingResourceSummary" }
+        continue_token: { type: string }
+        resource_version: { type: string }
+        remaining_item_count: { type: [integer, "null"], minimum: 0 }
+    KubernetesCreateNetworkingResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [name, confirm]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 253 }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        service: { $ref: "#/components/schemas/KubernetesServiceSpecInput" }
+        ingress: { $ref: "#/components/schemas/KubernetesIngressSpecInput" }
+        gateway: { $ref: "#/components/schemas/KubernetesGatewaySpecInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+      oneOf:
+        - required: [service]
+        - required: [ingress]
+        - required: [gateway]
+    KubernetesUpdateNetworkingResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        service: { $ref: "#/components/schemas/KubernetesServiceSpecInput" }
+        ingress: { $ref: "#/components/schemas/KubernetesIngressSpecInput" }
+        gateway: { $ref: "#/components/schemas/KubernetesGatewaySpecInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+      oneOf:
+        - required: [service]
+        - required: [ingress]
+        - required: [gateway]
+    KubernetesDeleteNetworkingResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesNetworkingMutationResult:
+      type: object
+      additionalProperties: false
+      required: [resource, dry_run]
+      properties:
+        resource: { $ref: "#/components/schemas/KubernetesNetworkingResourceDetail" }
+        dry_run: { type: boolean }
+    KubernetesNetworkingDeleteResult:
+      type: object
+      additionalProperties: false
+      required: [deleted, dry_run, target]
+      properties:
+        deleted: { type: boolean }
+        dry_run: { type: boolean }
+        target: { type: string }
     KubernetesOverviewStatusCounts:
       type: object
       additionalProperties:

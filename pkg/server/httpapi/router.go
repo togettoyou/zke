@@ -69,6 +69,7 @@ type handlers struct {
 	kubernetesPodExec       *kubernetesPodExecHandler
 	kubernetesEvents        *kubernetesEventsHandler
 	kubernetesWorkload      *kubernetesWorkloadHandler
+	kubernetesNetworking    *kubernetesNetworkingHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
 	resourceManagement      *resourceManagementHandler
@@ -206,6 +207,12 @@ func New(
 			config.KubernetesEvents,
 		),
 		kubernetesWorkload: newKubernetesWorkloadHandler(
+			logger,
+			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesNetworking: newKubernetesNetworkingHandler(
 			logger,
 			dependencies.KubernetesResourceService,
 			dependencies.AuditService,

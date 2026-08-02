@@ -56,6 +56,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   初始快照与实时 Follow、SSE 心跳与正文内终止原因、resourceVersion 恢复、取消、限流、超时、权限重验、
   审计和真实 QUIC 测试，以及 Console 的筛选、跟随、按 UID 归并与断流恢复闭环；从具体对象跳转到关联事件
   尚未实现）
+- [x] 服务与路由（Service、Ingress 与可选 Gateway API v1 Gateway 的类型化 List/Detail/Create/Update/Delete，
+  明确 Cluster/Namespace 作用域、Gateway API 能力探测、DryRun、确认、幂等、并发身份保护、审计和 Agent
+  最小 RBAC，以及 Console 的三类列表/详情、类型化创建与编辑表单、删除和 Gateway API 缺失提示；
+  HTTPRoute 等 Gateway Route 类型尚未纳入）
 
 ## Phase 3：可观测性
 
