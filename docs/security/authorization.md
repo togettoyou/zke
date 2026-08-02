@@ -101,6 +101,11 @@ HTTP 与领域层同时校验资源作用域：PV、StorageClass 必须是集群
 当前对象并核对 UID/resourceVersion，删除把二者作为 Kubernetes 前置条件；实际写入仍要求 CSRF、幂等键和
 显式确认。CSI Secret Reference 只包含 Namespace 与名称，Server、Agent 和审计均不读取或记录 Secret 正文。
 
+HorizontalPodAutoscaler 类型化接口固定 `autoscaling/v2` 和明确 Namespace，沿用 `cluster.read` 与
+`cluster.resource.create/update/delete`。Server 只接受同 Namespace 的 Deployment/StatefulSet 目标；实际写入
+要求 CSRF、幂等键和显式确认，更新前重新读取并核对 HPA UID/resourceVersion，删除把二者作为 Kubernetes
+前置条件。审计记录 HPA 资源身份和操作结果，不记录指标 Selector 或完整 spec 正文。
+
 YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限。
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
 `resourceVersion` 和当前实时对象逐项核对；同名对象已重建或版本已变化时返回冲突。实际更新还要求 CSRF、

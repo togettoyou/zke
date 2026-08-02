@@ -2,7 +2,7 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass
+当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass、HorizontalPodAutoscaler
 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod 和五类工作负载的状态计数，
@@ -41,6 +41,9 @@
 - `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/persistentvolumeclaims` 和对应
   单对象 `GET`、`PUT`、`DELETE`：固定在明确 Namespace 管理 PVC；三类存储资源列表均支持 Kubernetes
   continuation token 和 Selector，写操作沿用 DryRun、确认、幂等、UID/resourceVersion 与审计；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers` 和
+  对应单对象 `GET`、`PUT`、`DELETE`：固定管理 `autoscaling/v2 HorizontalPodAutoscaler`；类型化创建和更新
+  只接受同一 Namespace 中的 Deployment/StatefulSet，以及 Resource/ContainerResource 指标和伸缩行为；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods` 和
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：按明确 Cluster 和
   Namespace 返回 Pod 稳定摘要与详情，列表支持 Kubernetes continuation token、Label Selector 和
@@ -80,7 +83,7 @@
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
   `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
   DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
-  StorageClass 的 `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
+  StorageClass、HorizontalPodAutoscaler 的 `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
   `create`；Eviction Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
 
@@ -199,10 +202,41 @@ PV 和 StorageClass 是集群级对象，PVC 是命名空间级，Server 也据�
 provisioner 和参数。访问模式用复选框而不是下拉，因为它本来就是集合而不是单选。
 
 编辑不是通用表单，而是每种类型各自唯一可变字段的小弹窗：PV 只改回收策略，PVC 只改申请容量（且必须增大），
-StorageClass 只改扩容开关，并在旁注说明其余字段在 Kubernetes 中不可变、要改只能删除重建。确认弹窗按具体
+StorageClass 只改扩容开关，并说明类型化接口之外的高级字段需通过 YAML 管理并接受 API Server 校验。确认弹窗按具体
 选择给出后果，例如把 PV 回收策略改为 Delete 会在删除时销毁数据，PVC 扩容需要 CSI 驱动配合且部分驱动要求
 Pod 重启后文件系统才扩展。删除的影响文案同样按类型区分，包括 PV 回收策略决定数据存亡、仍被占用的对象会
 停在 Terminating。
+
+自动伸缩类型化后端固定使用 `autoscaling/v2 HorizontalPodAutoscaler`，并强制 Cluster 与 Namespace 定域。
+创建和更新时 `scaleTargetRef` 只接受同一 Namespace 中的 `apps/v1 Deployment` 或 `apps/v1 StatefulSet`；HPA
+原生引用不携带 UID，因此同名目标重建后会被同一个 HPA 继续识别为目标，这一点不能用 HPA 自身的 UID 前置条件
+规避。HPA 对象本身的更新和删除仍使用当前 UID/resourceVersion 防止覆盖或删除同名重建的 HPA。
+
+类型化写入首轮支持 Resource 和 ContainerResource 指标，Target 支持平均利用率或平均值；Behavior 支持
+ScaleUp/ScaleDown 稳定窗口、Max/Min/Disabled 选择策略，以及 Pods/Percent 策略。列表与详情仍能读取并标记
+已有 HPA 的 Object、Pods、External 等指标，但若要创建或完整编辑这些高级指标，应使用 YAML。资源利用率通常
+依赖 Metrics Server，其他指标依赖对应 Metrics API Adapter；ZKE 不安装也不伪造这些组件，指标不可用时 HPA
+可创建但会通过 `ScalingActive=False` 等 Condition 报告原因。
+
+HPA 与手动伸缩会同时写目标工作负载的 replicas；启用 HPA 后，手动副本数可能在下一次控制循环被覆盖。删除 HPA
+只停止后续自动调节，不删除目标工作负载，也不会自动把副本数恢复到启用前的值。实际写入继续要求 CSRF、DryRun、
+显式确认、幂等和审计。VPA 与 KEDA 依赖额外组件或 CRD，本轮未作为内置能力实现。
+
+Console 自动伸缩页面列出所选命名空间的 HPA，展示目标工作负载、当前副本与期望副本、副本区间、指标数量、
+状态和最近一次伸缩时间。状态只显示需要注意的情况——无法伸缩、指标不可用、已触达上下限、尚未同步——健康的
+HPA 只显示一个「正常」，否则每行三个绿标会把真正异常的那一个淹掉。
+
+创建和编辑表单覆盖后端首轮支持的范围：目标（Deployment 或 StatefulSet）、副本区间、Resource 与
+ContainerResource 指标（Utilization 百分比或 AverageValue），以及可选的扩容/缩容行为（稳定窗口、
+Max/Min/Disabled 选择策略、Pods/Percent 策略）。更新替换整份 spec，确认弹窗明说未提交的指标或行为策略会被
+移除；创建的确认弹窗则点明副本数将由控制器接管、手动伸缩会在下一个控制周期被覆盖，以及指标不可用时 HPA
+不会伸缩而是在 Condition 中报告原因。已有 HPA 若使用了 Object、Pods、External 等本表单未建模的指标，列表和
+详情仍可读取，编辑请走 YAML。
+
+`KubernetesHPASummary` 在 OpenAPI 中声明了 `additionalProperties: false`，但既未列出 `generation` 也未列出
+`observed_generation`，而 Server 实际会返回这两个字段——它们正是判断「控制器是否已经处理当前 spec」的依据。
+Console 目前在 `api/queries/autoscaling.ts` 中以本地类型补齐并据此显示「尚未同步」，契约补上这两个字段后可以
+移除该补丁。
 
 Pod 类型化后端返回统一元数据、Phase、Ready、Node、Pod IP、控制器 Owner、镜像和总重启次数；详情补充
 Annotations、完整 Owner References、调度与网络信息、主容器、初始化容器和 Ephemeral Container 的当前/上次

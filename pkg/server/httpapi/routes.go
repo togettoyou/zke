@@ -593,6 +593,34 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesStorage.delete,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesHPA.list,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceCreate, "cluster_id"),
+		handlers.kubernetesHPA.create,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers/:hpa_name",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesHPA.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers/:hpa_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceUpdate, "cluster_id"),
+		handlers.kubernetesHPA.update,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers/:hpa_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceDelete, "cluster_id"),
+		handlers.kubernetesHPA.delete,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/configmaps",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,

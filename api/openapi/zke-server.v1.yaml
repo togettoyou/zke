@@ -2930,6 +2930,128 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesHorizontalPodAutoscalers
+      description: 在明确的 Cluster 和 Namespace 中分页查询 autoscaling/v2 HorizontalPodAutoscaler。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: continue, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: label_selector, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: field_selector, in: query, schema: { type: string, maxLength: 4096 } }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesHPAPageSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createKubernetesHorizontalPodAutoscaler
+      description: 创建面向同一 Namespace 中 Deployment 或 StatefulSet 的 HPA；实际写入要求确认并支持服务端 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesCreateHPARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesHPAMutationSuccess" }
+        "201": { $ref: "#/components/responses/KubernetesHPAMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesHorizontalPodAutoscaler
+      description: 查询一个 HPA 的目标、副本状态、指标、伸缩行为和 Conditions。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HPAName"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesHPADetailSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: updateKubernetesHorizontalPodAutoscaler
+      description: 整体替换类型化 HPA spec；要求当前 UID/resourceVersion、显式确认并支持服务端 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HPAName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateHPARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesHPAMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesHorizontalPodAutoscaler
+      description: 使用 UID/resourceVersion 前置条件删除 HPA；目标工作负载不会被删除，实际删除要求确认并支持 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HPAName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteHPARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesHPADeleteSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps:
     get:
       tags: [Resources]
@@ -4084,6 +4206,14 @@ components:
         type: string
         minLength: 1
         maxLength: 253
+    HPAName:
+      name: hpa_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
     NetworkResource:
       name: network_resource
       in: path
@@ -4268,6 +4398,50 @@ components:
                 required: [data]
                 properties:
                   data: { $ref: "#/components/schemas/KubernetesStorageDeleteResult" }
+    KubernetesHPAPageSuccess:
+      description: HorizontalPodAutoscaler 分页结果
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesHPAPage" }
+    KubernetesHPADetailSuccess:
+      description: HorizontalPodAutoscaler 详情
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesHPADetail" }
+    KubernetesHPAMutationSuccess:
+      description: HorizontalPodAutoscaler 写入结果或 DryRun 预览
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesHPAMutationResult" }
+    KubernetesHPADeleteSuccess:
+      description: HorizontalPodAutoscaler 删除结果或 DryRun 预览
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesHPADeleteResult" }
     InvalidRequest:
       description: 输入无效
       content:
@@ -5888,6 +6062,267 @@ components:
         resource: { $ref: "#/components/schemas/KubernetesNetworkingResourceDetail" }
         dry_run: { type: boolean }
     KubernetesNetworkingDeleteResult:
+      type: object
+      additionalProperties: false
+      required: [deleted, dry_run, target]
+      properties:
+        deleted: { type: boolean }
+        dry_run: { type: boolean }
+        target: { type: string }
+    KubernetesHPAObjectReference:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, name]
+      properties:
+        api_version: { type: string }
+        kind: { type: string }
+        name: { type: string }
+    KubernetesHPAScaleTargetInput:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, name]
+      properties:
+        api_version: { type: string, const: apps/v1 }
+        kind: { type: string, enum: [Deployment, StatefulSet] }
+        name: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesHPAMetricTargetView:
+      type: object
+      additionalProperties: false
+      required: [type, average_value, value]
+      properties:
+        type: { type: string }
+        average_utilization: { type: integer, format: int32, minimum: 1 }
+        average_value: { type: string }
+        value: { type: string }
+    KubernetesHPAMetricTargetInput:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: { type: string, enum: [Utilization, AverageValue] }
+        average_utilization: { type: integer, format: int32, minimum: 1 }
+        average_value: { type: string, minLength: 1 }
+      oneOf:
+        - required: [average_utilization]
+        - required: [average_value]
+    KubernetesHPAMetricIdentifier:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string }
+        selector: { $ref: "#/components/schemas/KubernetesWorkloadSelector" }
+    KubernetesHPAMetricView:
+      type: object
+      additionalProperties: false
+      required: [type, name, container, target, current]
+      properties:
+        type: { type: string }
+        name: { type: string }
+        container: { type: string }
+        target: { $ref: "#/components/schemas/KubernetesHPAMetricTargetView" }
+        current: { $ref: "#/components/schemas/KubernetesHPAMetricTargetView" }
+        described_object: { $ref: "#/components/schemas/KubernetesHPAObjectReference" }
+        metric: { $ref: "#/components/schemas/KubernetesHPAMetricIdentifier" }
+    KubernetesHPAResourceMetricInput:
+      type: object
+      additionalProperties: false
+      required: [name, target]
+      properties:
+        name: { type: string, minLength: 1 }
+        target: { $ref: "#/components/schemas/KubernetesHPAMetricTargetInput" }
+    KubernetesHPAContainerResourceMetricInput:
+      type: object
+      additionalProperties: false
+      required: [name, container, target]
+      properties:
+        name: { type: string, minLength: 1 }
+        container: { type: string, minLength: 1, maxLength: 63 }
+        target: { $ref: "#/components/schemas/KubernetesHPAMetricTargetInput" }
+    KubernetesHPAMetricInput:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: { type: string, enum: [Resource, ContainerResource] }
+        resource: { $ref: "#/components/schemas/KubernetesHPAResourceMetricInput" }
+        container_resource: { $ref: "#/components/schemas/KubernetesHPAContainerResourceMetricInput" }
+      oneOf:
+        - required: [resource]
+        - required: [container_resource]
+    KubernetesHPAScalingPolicy:
+      type: object
+      additionalProperties: false
+      required: [type, value, period_seconds]
+      properties:
+        type: { type: string, enum: [Pods, Percent] }
+        value: { type: integer, format: int32, minimum: 1 }
+        period_seconds: { type: integer, format: int32, minimum: 1, maximum: 1800 }
+    KubernetesHPAScalingRules:
+      type: object
+      additionalProperties: false
+      required: [policies]
+      properties:
+        stabilization_window_seconds: { type: integer, format: int32, minimum: 0, maximum: 3600 }
+        select_policy: { type: string, enum: [Max, Min, Disabled] }
+        policies:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: "#/components/schemas/KubernetesHPAScalingPolicy" }
+    KubernetesHPABehavior:
+      type: object
+      additionalProperties: false
+      properties:
+        scale_up: { $ref: "#/components/schemas/KubernetesHPAScalingRules" }
+        scale_down: { $ref: "#/components/schemas/KubernetesHPAScalingRules" }
+    KubernetesHPASpecInput:
+      type: object
+      additionalProperties: false
+      required: [target, max_replicas]
+      properties:
+        target: { $ref: "#/components/schemas/KubernetesHPAScaleTargetInput" }
+        min_replicas: { type: integer, format: int32, minimum: 1, maximum: 1000000 }
+        max_replicas: { type: integer, format: int32, minimum: 1, maximum: 1000000 }
+        metrics:
+          type: array
+          maxItems: 16
+          items: { $ref: "#/components/schemas/KubernetesHPAMetricInput" }
+        behavior: { $ref: "#/components/schemas/KubernetesHPABehavior" }
+    KubernetesHPACondition:
+      type: object
+      additionalProperties: false
+      required: [type, status, reason, message, last_transition_time]
+      properties:
+        type: { type: string }
+        status: { type: string, enum: ["True", "False", Unknown] }
+        reason: { type: string }
+        message: { type: string }
+        last_transition_time: { $ref: "#/components/schemas/Timestamp" }
+    KubernetesHPASummary:
+      type: object
+      additionalProperties: false
+      required:
+        - namespace
+        - name
+        - uid
+        - resource_version
+        - generation
+        - observed_generation
+        - creation_timestamp
+        - labels
+        - target
+        - min_replicas
+        - max_replicas
+        - current_replicas
+        - desired_replicas
+        - metric_count
+        - able_to_scale
+        - scaling_active
+        - scaling_limited
+        - last_scale_time
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        uid: { type: string }
+        resource_version: { type: string }
+        generation: { type: integer, format: int64, minimum: 0 }
+        observed_generation:
+          oneOf:
+            - type: integer
+              format: int64
+              minimum: 0
+            - type: "null"
+        creation_timestamp: { $ref: "#/components/schemas/Timestamp" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        target: { $ref: "#/components/schemas/KubernetesHPAObjectReference" }
+        min_replicas: { type: integer, format: int32, minimum: 0 }
+        max_replicas: { type: integer, format: int32, minimum: 0 }
+        current_replicas: { type: integer, format: int32, minimum: 0 }
+        desired_replicas: { type: integer, format: int32, minimum: 0 }
+        metric_count: { type: integer, minimum: 0 }
+        able_to_scale: { type: boolean }
+        scaling_active: { type: boolean }
+        scaling_limited: { type: boolean }
+        last_scale_time:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    KubernetesHPADetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesHPASummary"
+        - type: object
+          required: [annotations, metrics, current_metrics, conditions]
+          properties:
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            metrics:
+              type: array
+              items: { $ref: "#/components/schemas/KubernetesHPAMetricView" }
+            current_metrics:
+              type: array
+              items: { $ref: "#/components/schemas/KubernetesHPAMetricView" }
+            behavior: { $ref: "#/components/schemas/KubernetesHPABehavior" }
+            conditions:
+              type: array
+              items: { $ref: "#/components/schemas/KubernetesHPACondition" }
+    KubernetesHPAPage:
+      type: object
+      additionalProperties: false
+      required: [autoscalers, continue_token, resource_version, remaining_item_count]
+      properties:
+        autoscalers:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesHPASummary" }
+        continue_token: { type: string }
+        resource_version: { type: string }
+        remaining_item_count: { type: [integer, "null"], minimum: 0 }
+    KubernetesCreateHPARequest:
+      type: object
+      additionalProperties: false
+      required: [name, spec, confirm]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 253 }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        spec: { $ref: "#/components/schemas/KubernetesHPASpecInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesUpdateHPARequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, spec, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        spec: { $ref: "#/components/schemas/KubernetesHPASpecInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesDeleteHPARequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesHPAMutationResult:
+      type: object
+      additionalProperties: false
+      required: [autoscaler, dry_run]
+      properties:
+        autoscaler: { $ref: "#/components/schemas/KubernetesHPADetail" }
+        dry_run: { type: boolean }
+    KubernetesHPADeleteResult:
       type: object
       additionalProperties: false
       required: [deleted, dry_run, target]

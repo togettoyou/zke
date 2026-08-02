@@ -71,6 +71,7 @@ type handlers struct {
 	kubernetesWorkload      *kubernetesWorkloadHandler
 	kubernetesNetworking    *kubernetesNetworkingHandler
 	kubernetesStorage       *kubernetesStorageHandler
+	kubernetesHPA           *kubernetesHorizontalPodAutoscalerHandler
 	kubernetesConfigMap     *kubernetesConfigMapHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
@@ -221,6 +222,12 @@ func New(
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesStorage: newKubernetesStorageHandler(
+			logger,
+			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesHPA: newKubernetesHorizontalPodAutoscalerHandler(
 			logger,
 			dependencies.KubernetesResourceService,
 			dependencies.AuditService,

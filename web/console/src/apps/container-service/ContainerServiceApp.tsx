@@ -3,6 +3,7 @@ import {
   Bell,
   Box,
   Database,
+  Gauge,
   FileCog,
   FolderTree,
   LayoutDashboard,
@@ -26,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { useScopeStore } from "@/scope/scope-store";
 
+import { AutoscalerSection } from "./AutoscalerSection";
 import { ConfigMapSection } from "./ConfigMapSection";
 import { StorageSection } from "./StorageSection";
 import { EventSection } from "./EventSection";
@@ -50,11 +52,19 @@ const NAV: AppNavItem[] = [
   { id: "networking", label: "服务与路由", icon: Network },
   { id: "configmaps", label: "配置管理", icon: FileCog },
   { id: "storage", label: "存储", icon: Database },
+  { id: "autoscaling", label: "自动伸缩", icon: Gauge },
   { id: "events", label: "事件", icon: Bell },
 ];
 
 /** Sections whose queries are scoped by a Namespace as well as by a Cluster. */
-const NAMESPACED_SECTIONS = new Set(["workloads", "pods", "networking", "configmaps", "events"]);
+const NAMESPACED_SECTIONS = new Set([
+  "workloads",
+  "pods",
+  "networking",
+  "configmaps",
+  "autoscaling",
+  "events",
+]);
 
 /**
  * The Namespace picker reads one page of Namespaces at the endpoint's maximum.
@@ -266,7 +276,7 @@ export function ContainerServiceApp() {
       ) : awaitsNamespace && namespace === "" ? (
         <EmptyNotice
           title="该集群没有可见的命名空间"
-          description="工作负载、Pod、服务与路由、配置管理、事件和 PersistentVolumeClaim 按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
+          description="工作负载、Pod、服务与路由、配置管理、自动伸缩、事件和 PersistentVolumeClaim 按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
         />
       ) : activeSection === "events" ? (
         <EventSection
@@ -274,6 +284,15 @@ export function ContainerServiceApp() {
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
+        />
+      ) : activeSection === "autoscaling" ? (
+        <AutoscalerSection
+          key={`${clusterId}/${namespace}`}
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+          tenantId={scope.tenantId}
+          projectId={scope.projectId}
         />
       ) : activeSection === "storage" ? (
         <StorageSection

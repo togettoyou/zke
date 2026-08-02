@@ -927,6 +927,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 在明确的 Cluster 和 Namespace 中分页查询 autoscaling/v2 HorizontalPodAutoscaler。 */
+        get: operations["listKubernetesHorizontalPodAutoscalers"];
+        put?: never;
+        /** @description 创建面向同一 Namespace 中 Deployment 或 StatefulSet 的 HPA；实际写入要求确认并支持服务端 dry-run。 */
+        post: operations["createKubernetesHorizontalPodAutoscaler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询一个 HPA 的目标、副本状态、指标、伸缩行为和 Conditions。 */
+        get: operations["getKubernetesHorizontalPodAutoscaler"];
+        /** @description 整体替换类型化 HPA spec；要求当前 UID/resourceVersion、显式确认并支持服务端 dry-run。 */
+        put: operations["updateKubernetesHorizontalPodAutoscaler"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除 HPA；目标工作负载不会被删除，实际删除要求确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesHorizontalPodAutoscaler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps": {
         parameters: {
             query?: never;
@@ -1977,6 +2014,175 @@ export interface components {
             dry_run: boolean;
             target: string;
         };
+        KubernetesHPAObjectReference: {
+            api_version: string;
+            kind: string;
+            name: string;
+        };
+        KubernetesHPAScaleTargetInput: {
+            /** @constant */
+            api_version: "apps/v1";
+            /** @enum {string} */
+            kind: "Deployment" | "StatefulSet";
+            name: string;
+        };
+        KubernetesHPAMetricTargetView: {
+            type: string;
+            /** Format: int32 */
+            average_utilization?: number;
+            average_value: string;
+            value: string;
+        };
+        KubernetesHPAMetricTargetInput: {
+            /** @enum {string} */
+            type: "Utilization" | "AverageValue";
+            /** Format: int32 */
+            average_utilization?: number;
+            average_value?: string;
+        } & (unknown | unknown);
+        KubernetesHPAMetricIdentifier: {
+            name: string;
+            selector?: components["schemas"]["KubernetesWorkloadSelector"];
+        };
+        KubernetesHPAMetricView: {
+            type: string;
+            name: string;
+            container: string;
+            target: components["schemas"]["KubernetesHPAMetricTargetView"];
+            current: components["schemas"]["KubernetesHPAMetricTargetView"];
+            described_object?: components["schemas"]["KubernetesHPAObjectReference"];
+            metric?: components["schemas"]["KubernetesHPAMetricIdentifier"];
+        };
+        KubernetesHPAResourceMetricInput: {
+            name: string;
+            target: components["schemas"]["KubernetesHPAMetricTargetInput"];
+        };
+        KubernetesHPAContainerResourceMetricInput: {
+            name: string;
+            container: string;
+            target: components["schemas"]["KubernetesHPAMetricTargetInput"];
+        };
+        KubernetesHPAMetricInput: {
+            /** @enum {string} */
+            type: "Resource" | "ContainerResource";
+            resource?: components["schemas"]["KubernetesHPAResourceMetricInput"];
+            container_resource?: components["schemas"]["KubernetesHPAContainerResourceMetricInput"];
+        } & (unknown | unknown);
+        KubernetesHPAScalingPolicy: {
+            /** @enum {string} */
+            type: "Pods" | "Percent";
+            /** Format: int32 */
+            value: number;
+            /** Format: int32 */
+            period_seconds: number;
+        };
+        KubernetesHPAScalingRules: {
+            /** Format: int32 */
+            stabilization_window_seconds?: number;
+            /** @enum {string} */
+            select_policy?: "Max" | "Min" | "Disabled";
+            policies: components["schemas"]["KubernetesHPAScalingPolicy"][];
+        };
+        KubernetesHPABehavior: {
+            scale_up?: components["schemas"]["KubernetesHPAScalingRules"];
+            scale_down?: components["schemas"]["KubernetesHPAScalingRules"];
+        };
+        KubernetesHPASpecInput: {
+            target: components["schemas"]["KubernetesHPAScaleTargetInput"];
+            /** Format: int32 */
+            min_replicas?: number;
+            /** Format: int32 */
+            max_replicas: number;
+            metrics?: components["schemas"]["KubernetesHPAMetricInput"][];
+            behavior?: components["schemas"]["KubernetesHPABehavior"];
+        };
+        KubernetesHPACondition: {
+            type: string;
+            /** @enum {string} */
+            status: "True" | "False" | "Unknown";
+            reason: string;
+            message: string;
+            last_transition_time: components["schemas"]["Timestamp"];
+        };
+        KubernetesHPASummary: {
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            /** Format: int64 */
+            generation: number;
+            observed_generation: number | null;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            target: components["schemas"]["KubernetesHPAObjectReference"];
+            /** Format: int32 */
+            min_replicas: number;
+            /** Format: int32 */
+            max_replicas: number;
+            /** Format: int32 */
+            current_replicas: number;
+            /** Format: int32 */
+            desired_replicas: number;
+            metric_count: number;
+            able_to_scale: boolean;
+            scaling_active: boolean;
+            scaling_limited: boolean;
+            last_scale_time: components["schemas"]["Timestamp"] | null;
+        };
+        KubernetesHPADetail: components["schemas"]["KubernetesHPASummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            metrics: components["schemas"]["KubernetesHPAMetricView"][];
+            current_metrics: components["schemas"]["KubernetesHPAMetricView"][];
+            behavior?: components["schemas"]["KubernetesHPABehavior"];
+            conditions: components["schemas"]["KubernetesHPACondition"][];
+        };
+        KubernetesHPAPage: {
+            autoscalers: components["schemas"]["KubernetesHPASummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesCreateHPARequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            spec: components["schemas"]["KubernetesHPASpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesUpdateHPARequest: {
+            uid: string;
+            resource_version: string;
+            spec: components["schemas"]["KubernetesHPASpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesDeleteHPARequest: {
+            uid: string;
+            resource_version: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesHPAMutationResult: {
+            autoscaler: components["schemas"]["KubernetesHPADetail"];
+            dry_run: boolean;
+        };
+        KubernetesHPADeleteResult: {
+            deleted: boolean;
+            dry_run: boolean;
+            target: string;
+        };
         /** @enum {string} */
         KubernetesStorageResource: "persistentvolumes" | "persistentvolumeclaims" | "storageclasses";
         KubernetesStorageObjectReference: {
@@ -2839,6 +3045,50 @@ export interface components {
                 };
             };
         };
+        /** @description HorizontalPodAutoscaler 分页结果 */
+        KubernetesHPAPageSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesHPAPage"];
+                };
+            };
+        };
+        /** @description HorizontalPodAutoscaler 详情 */
+        KubernetesHPADetailSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesHPADetail"];
+                };
+            };
+        };
+        /** @description HorizontalPodAutoscaler 写入结果或 DryRun 预览 */
+        KubernetesHPAMutationSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesHPAMutationResult"];
+                };
+            };
+        };
+        /** @description HorizontalPodAutoscaler 删除结果或 DryRun 预览 */
+        KubernetesHPADeleteSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesHPADeleteResult"];
+                };
+            };
+        };
         /** @description 输入无效 */
         InvalidRequest: {
             headers: {
@@ -2953,6 +3203,7 @@ export interface components {
         PodName: string;
         WorkloadResource: components["schemas"]["KubernetesWorkloadResource"];
         WorkloadName: string;
+        HPAName: string;
         NetworkResource: components["schemas"]["KubernetesNetworkingResource"];
         NetworkResourceName: string;
         ClusterStorageResource: "persistentvolumes" | "storageclasses";
@@ -5469,6 +5720,152 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["KubernetesStorageDeleteSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesHorizontalPodAutoscalers: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesHPAPageSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesHorizontalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateHPARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesHPAMutationSuccess"];
+            201: components["responses"]["KubernetesHPAMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesHorizontalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                hpa_name: components["parameters"]["HPAName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesHPADetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesHorizontalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                hpa_name: components["parameters"]["HPAName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateHPARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesHPAMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesHorizontalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                hpa_name: components["parameters"]["HPAName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteHPARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesHPADeleteSuccess"];
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];

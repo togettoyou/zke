@@ -47,6 +47,10 @@ export const queryKeys = {
   // serves every kind through one route.
   resourceYaml: (clusterId: string, namespace: string, gvr: string, name: string) =>
     ["resource-yaml", clusterId, namespace, gvr, name] as const,
+  autoscalers: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
+    ["autoscalers", clusterId, namespace, params] as const,
+  autoscaler: (clusterId: string, namespace: string, name: string) =>
+    ["autoscaler", clusterId, namespace, name] as const,
   storageResources: (
     clusterId: string,
     namespace: string,

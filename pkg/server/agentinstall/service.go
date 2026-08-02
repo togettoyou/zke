@@ -334,6 +334,11 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "create", "update", "delete"},
 			},
 			{
+				APIGroups: []string{"autoscaling"},
+				Resources: []string{"horizontalpodautoscalers"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
 				APIGroups: []string{"networking.k8s.io"},
 				Resources: []string{"ingresses"},
 				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
