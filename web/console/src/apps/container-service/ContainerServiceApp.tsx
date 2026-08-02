@@ -1,5 +1,14 @@
 import { useMemo, useState } from "react";
-import { Bell, Box, FolderTree, LayoutDashboard, Layers, Network, Server } from "lucide-react";
+import {
+  Bell,
+  Box,
+  FileCog,
+  FolderTree,
+  LayoutDashboard,
+  Layers,
+  Network,
+  Server,
+} from "lucide-react";
 
 import { useClusters } from "@/api/queries/clusters";
 import { useNamespaces } from "@/api/queries/namespaces";
@@ -16,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { useScopeStore } from "@/scope/scope-store";
 
+import { ConfigMapSection } from "./ConfigMapSection";
 import { EventSection } from "./EventSection";
 import { NamespaceSection } from "./NamespaceSection";
 import { NetworkingSection } from "./NetworkingSection";
@@ -36,11 +46,12 @@ const NAV: AppNavItem[] = [
   { id: "workloads", label: "工作负载", icon: Layers },
   { id: "pods", label: "Pod", icon: Box },
   { id: "networking", label: "服务与路由", icon: Network },
+  { id: "configmaps", label: "配置管理", icon: FileCog },
   { id: "events", label: "事件", icon: Bell },
 ];
 
 /** Sections whose queries are scoped by a Namespace as well as by a Cluster. */
-const NAMESPACED_SECTIONS = new Set(["workloads", "pods", "networking", "events"]);
+const NAMESPACED_SECTIONS = new Set(["workloads", "pods", "networking", "configmaps", "events"]);
 
 /**
  * The Namespace picker reads one page of Namespaces at the endpoint's maximum.
@@ -239,7 +250,7 @@ export function ContainerServiceApp() {
       ) : namespace === "" ? (
         <EmptyNotice
           title="该集群没有可见的命名空间"
-          description="工作负载、Pod、服务与路由和事件按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
+          description="工作负载、Pod、服务与路由、配置管理和事件按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
         />
       ) : activeSection === "events" ? (
         <EventSection
@@ -247,6 +258,15 @@ export function ContainerServiceApp() {
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
+        />
+      ) : activeSection === "configmaps" ? (
+        <ConfigMapSection
+          key={`${clusterId}/${namespace}`}
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+          tenantId={scope.tenantId}
+          projectId={scope.projectId}
         />
       ) : activeSection === "networking" ? (
         <NetworkingSection

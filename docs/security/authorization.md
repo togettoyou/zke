@@ -91,6 +91,11 @@ Service、Ingress 与 Gateway 类型化接口沿用 `cluster.read` 和 `cluster.
 Kubernetes 前置条件；Gateway API 未安装与 ServiceAccount 无权访问分别返回能力缺失和禁止访问。Ingress 与
 Gateway 只暴露 TLS Secret 引用名称，不读取或审计 Secret 正文。
 
+ConfigMap 类型化接口同样固定 Cluster、Namespace 和 `core/v1/configmaps`，沿用上述读写权限。列表不返回正文，
+更新和删除要求当前 UID/resourceVersion，实际写入要求 CSRF、幂等键与显式确认，审计只记录资源身份和结果。
+ConfigMap 数据不按 Secret 处理，但仍不写入日志或审计正文。Secret 继续被通用 Resource/YAML 路径双重拒绝，
+Agent 默认 ClusterRole 也不授予 Secret 主资源权限；未来开放时必须使用独立的敏感权限和脱敏响应。
+
 YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限。
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
 `resourceVersion` 和当前实时对象逐项核对；同名对象已重建或版本已变化时返回冲突。实际更新还要求 CSRF、

@@ -46,6 +46,7 @@ var (
 	ErrResponseBudget         = errors.New("Server response buffer budget is exhausted")
 	ErrIdempotencyConflict    = errors.New("Kubernetes resource idempotency conflict")
 	ErrUpstreamConflict       = errors.New("Kubernetes API resource conflict")
+	ErrConfigMapImmutable     = errors.New("Kubernetes ConfigMap is immutable")
 	ErrUpstreamFailure        = errors.New("Kubernetes API request failed")
 	ErrInvalidResponse        = errors.New("invalid Agent resource response")
 )

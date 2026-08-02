@@ -2,7 +2,7 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node、Pod、Service、Ingress、Gateway 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
+当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod 和五类工作负载的状态计数，
   以及 Node 容量/可分配量与非终态 Pod 请求量；
@@ -30,6 +30,11 @@
   按明确 Cluster、Namespace 和 `services`、`ingresses` 或 `gateways` 类型管理 Service、Ingress 与 Gateway；
   列表支持 Kubernetes continuation token、Label Selector 和 Field Selector，写操作沿用 DryRun、确认、幂等、
   UID/resourceVersion 前置条件与审计链路；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps` 和
+  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps/{config_map_name}`：
+  固定管理 `core/v1 ConfigMap`；列表仅返回键名和大小统计，详情返回完整 `data` 与标准 Base64
+  `binary_data`，写操作包含 1 MiB 内容校验、immutable 保护、DryRun、确认、幂等、UID/resourceVersion
+  并发保护与审计；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods` 和
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：按明确 Cluster 和
   Namespace 返回 Pod 稳定摘要与详情，列表支持 Kubernetes continuation token、Label Selector 和
@@ -68,7 +73,8 @@
 - Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
   `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
-  DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
+  DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap 的
+  `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
   `create`；Eviction Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
 
@@ -145,6 +151,26 @@ LoadBalancer 才有外部流量策略和 NodePort 输入）。
 
 目标集群没有安装 Gateway API 时，列表返回 `409 gateway_api_unavailable`，Console 据此展示说明而不是错误，
 并隐藏创建入口；这与已安装但 Agent 无权访问的 `403` 是两回事，后者仍按权限错误呈现。
+
+ConfigMap 类型化后端固定使用 `core/v1 ConfigMap`，不会接受调用方覆盖 GVR。列表不返回配置值，避免列表和
+搜索场景批量搬运正文；详情才返回 `data` 和以标准带填充 Base64 表示的 `binary_data`。创建和更新校验键名、
+两类键不重叠及解码后总大小不超过 1 MiB。更新是两张数据表的完整替换，要求显式提交空表，并使用当前 UID 与
+resourceVersion 防止覆盖同名重建或并发修改；一旦设置 immutable，内容变更或恢复为 false 会被拒绝。
+该接口复用通用 Resource Stream、集群权限、CSRF、DryRun、确认、幂等与审计链路，但审计不记录配置正文。
+Secret 仍被通用 Server 与 Agent 双重拒绝，也没有借用 ConfigMap 路由或 Agent ClusterRole；它需要独立权限、
+响应脱敏和更严格的审计设计后才能开放。
+
+Console 配置管理页面列出所选命名空间的 ConfigMap，展示键名、总大小和 immutable 标记——列表接口不返回配置
+正文，页面也不去逐个补齐，否则等于把整个命名空间的配置搬进浏览器。内容只在详情页按对象读取：文本值按原样以
+等宽预格式展示且不折行（配置文件的缩进和换行本身就是内容），二进制值只显示大小并说明是 Base64，不做任何
+渲染——那些字节没有可靠的文本解释，需要原文时走 YAML 视图。
+
+创建和更新都先执行服务端 DryRun 再确认。更新是整体替换，确认弹窗明说「本次未提交的键将从对象中移除」，
+并提示 Volume 挂载与环境变量注入的生效时机不同。UID 与 resourceVersion 在打开编辑器时固定，不随后台重新
+拉取而更新：取一个更新的版本号会把本该被服务端拒绝的冲突变成静默覆盖。immutable 只在创建时可设，
+已标记为不可变的对象在列表和详情中都不提供编辑入口，并说明只能删除重建。
+
+页面顶部说明 Secret 不在此处管理以及原因（Agent 未被授予 Secret 权限），避免读成「Secret 视图只是还没做」。
 
 Pod 类型化后端返回统一元数据、Phase、Ready、Node、Pod IP、控制器 Owner、镜像和总重启次数；详情补充
 Annotations、完整 Owner References、调度与网络信息、主容器、初始化容器和 Ephemeral Container 的当前/上次
@@ -262,7 +288,7 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
 - Gateway API 的 HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 类型化管理；
-- ConfigMap 与 Secret；
+- Secret 的专用敏感管理链路；
 - PersistentVolume、PersistentVolumeClaim 与 StorageClass；
 - 从 Pod、工作负载等具体对象直接跳转到按 UID 过滤的关联事件；
 - YAML 编辑器的语法高亮、结构校验与差异对比；

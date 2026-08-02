@@ -134,6 +134,8 @@ export function useUpdateResourceYaml() {
           queryKeyPrefixes.namespace,
           queryKeyPrefixes.workloads,
           queryKeyPrefixes.workload,
+          queryKeyPrefixes.configMaps,
+          queryKeyPrefixes.configMap,
           queryKeyPrefixes.networkingResources,
           queryKeyPrefixes.networkingResource,
           queryKeyPrefixes.pods,

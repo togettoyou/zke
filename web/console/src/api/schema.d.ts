@@ -853,6 +853,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 在明确的 Cluster 和 Namespace 中分页查询 ConfigMap。列表只返回键名、内容大小和
+         *     元数据，不返回配置正文；配置正文仅由单对象详情接口返回。
+         */
+        get: operations["listKubernetesConfigMaps"];
+        put?: never;
+        /**
+         * @description 创建 ConfigMap。`binary_data` 的值必须使用标准带填充 Base64；`data` 与
+         *     `binary_data` 的键不能重复，两者解码后的总大小不超过 Kubernetes 的 1 MiB
+         *     限制。实际写入要求显式确认并支持 Kubernetes 服务端 dry-run。
+         */
+        post: operations["createKubernetesConfigMap"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps/{config_map_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询一个 ConfigMap 的元数据以及完整 `data` 和 Base64 `binary_data`。 */
+        get: operations["getKubernetesConfigMap"];
+        /**
+         * @description 完整替换 `data` 与 `binary_data`，因此两张表都必须显式提交。必须携带当前 UID 和
+         *     resourceVersion；Server 在写入前重新读取对象，拒绝同名重建和陈旧版本。已标记为
+         *     immutable 的 ConfigMap 不允许改变内容或取消 immutable。实际写入要求显式确认并支持 dry-run。
+         */
+        put: operations["updateKubernetesConfigMap"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除 ConfigMap；实际删除要求显式确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesConfigMap"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/kubernetes/resource-types": {
         parameters: {
             query?: never;
@@ -1855,6 +1903,94 @@ export interface components {
             dry_run: boolean;
             target: string;
         };
+        KubernetesConfigMapSummary: {
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            data_keys: string[];
+            binary_data_keys: string[];
+            /** Format: int64 */
+            data_bytes: number;
+            /** Format: int64 */
+            binary_data_bytes: number;
+            immutable: boolean;
+        };
+        KubernetesConfigMapDetail: components["schemas"]["KubernetesConfigMapSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            data: {
+                [key: string]: string;
+            };
+            /** @description 值使用标准带填充 Base64。 */
+            binary_data: {
+                [key: string]: string;
+            };
+        };
+        KubernetesConfigMapPage: {
+            config_maps: components["schemas"]["KubernetesConfigMapSummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesCreateConfigMapRequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            data?: {
+                [key: string]: string;
+            };
+            /** @description 值使用标准带填充 Base64。 */
+            binary_data?: {
+                [key: string]: string;
+            };
+            /** @default false */
+            immutable: boolean;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesUpdateConfigMapRequest: {
+            uid: string;
+            resource_version: string;
+            data: {
+                [key: string]: string;
+            };
+            /** @description 值使用标准带填充 Base64。 */
+            binary_data: {
+                [key: string]: string;
+            };
+            /** @description 省略时保留当前值；设为 true 后 Kubernetes 不允许恢复为 false。 */
+            immutable?: boolean;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesDeleteConfigMapRequest: {
+            uid: string;
+            resource_version: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesConfigMapMutationResult: {
+            resource: components["schemas"]["KubernetesConfigMapDetail"];
+            dry_run: boolean;
+        };
+        KubernetesConfigMapDeleteResult: {
+            deleted: boolean;
+            dry_run: boolean;
+            target: string;
+        };
         KubernetesOverviewStatusCounts: {
             [key: string]: number;
         };
@@ -2434,6 +2570,7 @@ export interface components {
         WorkloadName: string;
         NetworkResource: components["schemas"]["KubernetesNetworkingResource"];
         NetworkResourceName: string;
+        ConfigMapName: string;
         KubernetesResourceName: string;
         /** @description Core API Group 使用空字符串或省略该参数。 */
         KubernetesGroup: string;
@@ -4644,6 +4781,212 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["KubernetesNetworkingDeleteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesConfigMaps: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ConfigMap 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesConfigMapPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesConfigMap: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateConfigMapRequest"];
+            };
+        };
+        responses: {
+            /** @description DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesConfigMapMutationResult"];
+                    };
+                };
+            };
+            /** @description 已创建的 ConfigMap */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesConfigMapMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesConfigMap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                config_map_name: components["parameters"]["ConfigMapName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ConfigMap 详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesConfigMapDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesConfigMap: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                config_map_name: components["parameters"]["ConfigMapName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateConfigMapRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新结果或 DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesConfigMapMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesConfigMap: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                config_map_name: components["parameters"]["ConfigMapName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteConfigMapRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除结果或 DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesConfigMapDeleteResult"];
                     };
                 };
             };

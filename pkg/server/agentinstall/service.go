@@ -317,6 +317,13 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
+				APIGroups: []string{""},
+				// ConfigMaps are managed through their typed endpoint. Secrets stay
+				// excluded and will use a separate least-privilege sensitive path.
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
 				APIGroups: []string{"networking.k8s.io"},
 				Resources: []string{"ingresses"},
 				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},

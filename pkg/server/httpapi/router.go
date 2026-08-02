@@ -70,6 +70,7 @@ type handlers struct {
 	kubernetesEvents        *kubernetesEventsHandler
 	kubernetesWorkload      *kubernetesWorkloadHandler
 	kubernetesNetworking    *kubernetesNetworkingHandler
+	kubernetesConfigMap     *kubernetesConfigMapHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
 	resourceManagement      *resourceManagementHandler
@@ -213,6 +214,12 @@ func New(
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesNetworking: newKubernetesNetworkingHandler(
+			logger,
+			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesConfigMap: newKubernetesConfigMapHandler(
 			logger,
 			dependencies.KubernetesResourceService,
 			dependencies.AuditService,

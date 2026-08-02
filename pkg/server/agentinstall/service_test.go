@@ -164,6 +164,9 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 		"jobs", "cronjobs",
 	}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"services"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"configmaps"}, []string{
+		"get", "list", "create", "update", "delete",
+	})
 	assertPolicyRule(t, clusterRole.Rules, "networking.k8s.io", []string{"ingresses"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "gateway.networking.k8s.io", []string{"gateways"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"nodes"}, []string{
@@ -180,6 +183,9 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"events"}, []string{"get", "list", "watch"})
 	for _, rule := range clusterRole.Rules {
 		for _, resource := range rule.Resources {
+			if resource == "secrets" {
+				t.Fatalf("ClusterRole unexpectedly grants Secret access: %+v", rule)
+			}
 			if resource == "*" ||
 				(strings.Contains(resource, "/") && resource != "pods/log" && resource != "pods/exec") {
 				t.Fatalf("ClusterRole grants wildcard or Subresource access: %+v", rule)

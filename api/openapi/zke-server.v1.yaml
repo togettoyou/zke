@@ -2681,6 +2681,209 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesConfigMaps
+      description: |
+        在明确的 Cluster 和 Namespace 中分页查询 ConfigMap。列表只返回键名、内容大小和
+        元数据，不返回配置正文；配置正文仅由单对象详情接口返回。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: continue
+          in: query
+          schema: { type: string, maxLength: 4096 }
+        - name: label_selector
+          in: query
+          schema: { type: string, maxLength: 4096 }
+        - name: field_selector
+          in: query
+          schema: { type: string, maxLength: 4096 }
+      responses:
+        "200":
+          description: ConfigMap 列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesConfigMapPage" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createKubernetesConfigMap
+      description: |
+        创建 ConfigMap。`binary_data` 的值必须使用标准带填充 Base64；`data` 与
+        `binary_data` 的键不能重复，两者解码后的总大小不超过 Kubernetes 的 1 MiB
+        限制。实际写入要求显式确认并支持 Kubernetes 服务端 dry-run。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesCreateConfigMapRequest" }
+      responses:
+        "200":
+          description: DryRun 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesConfigMapMutationResult" }
+        "201":
+          description: 已创建的 ConfigMap
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesConfigMapMutationResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps/{config_map_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesConfigMap
+      description: 查询一个 ConfigMap 的元数据以及完整 `data` 和 Base64 `binary_data`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/ConfigMapName"
+      responses:
+        "200":
+          description: ConfigMap 详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesConfigMapDetail" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: updateKubernetesConfigMap
+      description: |
+        完整替换 `data` 与 `binary_data`，因此两张表都必须显式提交。必须携带当前 UID 和
+        resourceVersion；Server 在写入前重新读取对象，拒绝同名重建和陈旧版本。已标记为
+        immutable 的 ConfigMap 不允许改变内容或取消 immutable。实际写入要求显式确认并支持 dry-run。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/ConfigMapName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateConfigMapRequest" }
+      responses:
+        "200":
+          description: 更新结果或 DryRun 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesConfigMapMutationResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesConfigMap
+      description: 使用 UID/resourceVersion 前置条件删除 ConfigMap；实际删除要求显式确认并支持 dry-run。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/ConfigMapName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteConfigMapRequest" }
+      responses:
+        "200":
+          description: 删除结果或 DryRun 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/KubernetesConfigMapDeleteResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/kubernetes/resource-types:
     get:
       tags: [Resources]
@@ -3640,6 +3843,14 @@ components:
         $ref: "#/components/schemas/KubernetesNetworkingResource"
     NetworkResourceName:
       name: network_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
+    ConfigMapName:
+      name: config_map_name
       in: path
       required: true
       schema:
@@ -5362,6 +5573,132 @@ components:
         resource: { $ref: "#/components/schemas/KubernetesNetworkingResourceDetail" }
         dry_run: { type: boolean }
     KubernetesNetworkingDeleteResult:
+      type: object
+      additionalProperties: false
+      required: [deleted, dry_run, target]
+      properties:
+        deleted: { type: boolean }
+        dry_run: { type: boolean }
+        target: { type: string }
+    KubernetesConfigMapSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - namespace
+        - name
+        - uid
+        - resource_version
+        - creation_timestamp
+        - labels
+        - data_keys
+        - binary_data_keys
+        - data_bytes
+        - binary_data_bytes
+        - immutable
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        uid: { type: string }
+        resource_version: { type: string }
+        creation_timestamp: { $ref: "#/components/schemas/Timestamp" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        data_keys:
+          type: array
+          items: { type: string }
+        binary_data_keys:
+          type: array
+          items: { type: string }
+        data_bytes: { type: integer, format: int64, minimum: 0 }
+        binary_data_bytes: { type: integer, format: int64, minimum: 0 }
+        immutable: { type: boolean }
+    KubernetesConfigMapDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesConfigMapSummary"
+        - type: object
+          required: [annotations, data, binary_data]
+          properties:
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            data:
+              type: object
+              additionalProperties: { type: string }
+            binary_data:
+              type: object
+              description: 值使用标准带填充 Base64。
+              additionalProperties: { type: string, format: byte }
+    KubernetesConfigMapPage:
+      type: object
+      additionalProperties: false
+      required: [config_maps, continue_token, resource_version, remaining_item_count]
+      properties:
+        config_maps:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesConfigMapSummary" }
+        continue_token: { type: string }
+        resource_version: { type: string }
+        remaining_item_count: { type: [integer, "null"], minimum: 0 }
+    KubernetesCreateConfigMapRequest:
+      type: object
+      additionalProperties: false
+      required: [name, confirm]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 253 }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        data:
+          type: object
+          additionalProperties: { type: string }
+        binary_data:
+          type: object
+          description: 值使用标准带填充 Base64。
+          additionalProperties: { type: string, format: byte }
+        immutable: { type: boolean, default: false }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesUpdateConfigMapRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, data, binary_data, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        data:
+          type: object
+          additionalProperties: { type: string }
+        binary_data:
+          type: object
+          description: 值使用标准带填充 Base64。
+          additionalProperties: { type: string, format: byte }
+        immutable:
+          type: boolean
+          description: 省略时保留当前值；设为 true 后 Kubernetes 不允许恢复为 false。
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesDeleteConfigMapRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesConfigMapMutationResult:
+      type: object
+      additionalProperties: false
+      required: [resource, dry_run]
+      properties:
+        resource: { $ref: "#/components/schemas/KubernetesConfigMapDetail" }
+        dry_run: { type: boolean }
+    KubernetesConfigMapDeleteResult:
       type: object
       additionalProperties: false
       required: [deleted, dry_run, target]

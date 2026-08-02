@@ -60,6 +60,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   明确 Cluster/Namespace 作用域、Gateway API 能力探测、DryRun、确认、幂等、并发身份保护、审计和 Agent
   最小 RBAC，以及 Console 的三类列表/详情、类型化创建与编辑表单、删除和 Gateway API 缺失提示；
   HTTPRoute 等 Gateway Route 类型尚未纳入）
+- [x] ConfigMap（固定 `core/v1` GVR 的类型化 List/Detail/Create/Update/Delete，列表正文隔离、
+  `data`/Base64 `binaryData` 与 1 MiB 校验、immutable 保护、DryRun、确认、幂等、并发身份保护、审计和
+  Agent 最小 RBAC，以及 Console 的列表/详情、类型化创建与编辑表单和删除闭环；Secret 专用敏感链路
+  尚未实现）
 
 ## Phase 3：可观测性
 
