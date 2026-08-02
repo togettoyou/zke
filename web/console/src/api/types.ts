@@ -42,6 +42,14 @@ export type KubernetesWorkloadMutationResult = Schemas["KubernetesWorkloadMutati
 export type KubernetesCreateWorkloadRequest = Schemas["KubernetesCreateWorkloadRequest"];
 export type KubernetesWorkloadContainerTemplate = Schemas["KubernetesWorkloadContainerTemplate"];
 export type KubernetesWorkloadStatus = KubernetesWorkloadSummary["status"];
+export type KubernetesAuthorizationResource = Schemas["KubernetesAuthorizationResource"];
+export type KubernetesAuthorizationResourceSummary =
+  Schemas["KubernetesAuthorizationResourceSummary"];
+export type KubernetesAuthorizationResourceDetail =
+  Schemas["KubernetesAuthorizationResourceDetail"];
+export type KubernetesAuthorizationPolicyRule = Schemas["KubernetesAuthorizationPolicyRule"];
+export type KubernetesAuthorizationSubject = Schemas["KubernetesAuthorizationSubject"];
+export type KubernetesAuthorizationRoleRef = Schemas["KubernetesAuthorizationRoleRef"];
 export type KubernetesHPASummary = Schemas["KubernetesHPASummary"];
 export type KubernetesHPADetail = Schemas["KubernetesHPADetail"];
 export type KubernetesHPASpecInput = Schemas["KubernetesHPASpecInput"];

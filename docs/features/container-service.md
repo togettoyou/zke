@@ -2,7 +2,7 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass、HorizontalPodAutoscaler
+当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass、HorizontalPodAutoscaler 与 Kubernetes RBAC
 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod 和五类工作负载的状态计数，
@@ -44,6 +44,10 @@
 - `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers` 和
   对应单对象 `GET`、`PUT`、`DELETE`：固定管理 `autoscaling/v2 HorizontalPodAutoscaler`；类型化创建和更新
   只接受同一 Namespace 中的 Deployment/StatefulSet，以及 Resource/ContainerResource 指标和伸缩行为；
+- 集群级 `/authorization/{authorization_resource}` 与命名空间级
+  `/namespaces/{namespace_name}/authorization/{authorization_resource}` 提供 ServiceAccount、Role、ClusterRole、
+  RoleBinding、ClusterRoleBinding 的类型化 List/Detail/Create/Update/Delete；读取和写入分别要求独立的
+  `cluster.rbac.read` 与 `cluster.rbac.manage`；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods` 和
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：按明确 Cluster 和
   Namespace 返回 Pod 稳定摘要与详情，列表支持 Kubernetes continuation token、Label Selector 和
@@ -72,7 +76,8 @@
 - 写接口另外要求 CSRF、`cluster.resource.create`、`cluster.resource.update` 或
   `cluster.resource.delete`、16 至 128 字符幂等键，以及实际变更的显式确认；
 - Agent 使用 Kubernetes dynamic client，只接受 Discovery 声明且作用域、Verb 匹配的主资源 CRUD；
-  Discovery 策略缓存有 TTL 和条目上限，Secret 和 Subresource 明确拒绝；
+  Discovery 策略缓存有 TTL 和条目上限，Secret 和 Subresource 明确拒绝；Kubernetes 授权资源只能使用专用
+  `/authorization` API，不能借通用 Resource/YAML API 绕过专用权限；
 - 支持 DryRun、JSON Patch、JSON Merge Patch、Strategic Merge Patch、Server-Side Apply、
   删除传播策略和 UID/resourceVersion 前置条件；Apply 默认 `force=false`；
 - YAML 更新仅接受不超过 4 MiB 的 `application/yaml` 单文档，不接受 Alias、Anchor、重复字段或
@@ -83,7 +88,8 @@
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
   `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
   DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
-  StorageClass、HorizontalPodAutoscaler 的 `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
+  StorageClass、HorizontalPodAutoscaler、ServiceAccount 及四类 Kubernetes RBAC 资源的
+  `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
   `create`；Eviction Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
 
@@ -233,10 +239,36 @@ Max/Min/Disabled 选择策略、Pods/Percent 策略）。更新替换整份 spec
 不会伸缩而是在 Condition 中报告原因。已有 HPA 若使用了 Object、Pods、External 等本表单未建模的指标，列表和
 详情仍可读取，编辑请走 YAML。
 
-`KubernetesHPASummary` 在 OpenAPI 中声明了 `additionalProperties: false`，但既未列出 `generation` 也未列出
-`observed_generation`，而 Server 实际会返回这两个字段——它们正是判断「控制器是否已经处理当前 spec」的依据。
-Console 目前在 `api/queries/autoscaling.ts` 中以本地类型补齐并据此显示「尚未同步」，契约补上这两个字段后可以
-移除该补丁。
+HPA 摘要同时返回 `generation` 与 `observed_generation`，Console 据此区分控制器尚未处理最新 spec 的状态。
+
+Kubernetes 授权管理后端把命名空间级 ServiceAccount、Role、RoleBinding 与集群级 ClusterRole、
+ClusterRoleBinding 分开定域。Role/ClusterRole 类型化写入完整规则，RoleBinding/ClusterRoleBinding 更新只替换
+Subjects 并保留不可变的 RoleRef；聚合 ClusterRole 只读展示，避免类型化更新清除 AggregationRule。
+ServiceAccount 只返回关联 Secret 数量，不返回 Secret 名称、Token 或正文。
+
+该能力使用独立的 `cluster.rbac.read/manage`，并从通用 Resource/YAML 入口排除上述五类资源。ZKE 安装清单不会
+给 Agent `escalate`、`bind` 或 `impersonate`；类型化规则也拒绝这些 Verb、Secret 和 ServiceAccount Token，
+绑定不能直接引用内置 `zke-agent` 角色，API Server 还会拒绝其他超出 Agent 当前权限上限的规则或绑定。
+带 `app.kubernetes.io/managed-by=zke-server` 的 Agent ServiceAccount、Role、ClusterRole 和绑定禁止通过
+该 API 更新或删除，避免平台自行切断连接与执行权限。
+
+Console 授权管理页面按 ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding 五个标签页组织，
+作用域与后端一致：前三类中的 ServiceAccount 和 Role 以及 RoleBinding 按命名空间定域，ClusterRole 与
+ClusterRoleBinding 是集群级对象，工具栏的命名空间选择器只在前者出现。导航项按 `cluster.rbac.read` 隐藏，
+写操作按 `cluster.rbac.manage` 门控；两者都与 `cluster.resource.*` 相互独立。
+
+不可操作的对象不给假入口：ZKE 管理的 Agent 授权对象在列表和详情中都不提供编辑与删除，并用 tooltip 和提示条
+说明原因；聚合 ClusterRole 不提供类型化编辑，因为它的规则由控制器合成。绑定的编辑表单只替换 Subjects，
+RoleRef 显示为只读并说明「要指向其他角色需要删除后重建」——Kubernetes 本就不允许改，而静默地重新指向一个
+已有授权是最不容易被察觉的变更。
+
+ServiceAccount 只显示关联 Secret 的数量，并在列表和详情中都写明「不展示名称」，与后端不返回 Secret 名称、
+Token 或正文一致。规则编辑器的字段用逗号分隔，API 组留空即 core 组——空字符串在 Kubernetes 里是有意义的取值，
+提交时会保留而不是当成空项丢弃。表单旁注说明 Agent 不持有 `escalate`/`bind`，超出其权限范围的规则会被
+Kubernetes 拒绝。
+
+本页不提供 YAML 入口：这五类资源被通用 Resource 与 YAML 接口整体排除——读取也一样被拒绝，而不是只拒绝
+写入——所以一个 YAML 按钮在这里永远打不开。它们只能通过本页的类型化表单管理。
 
 Pod 类型化后端返回统一元数据、Phase、Ready、Node、Pod IP、控制器 Owner、镜像和总重启次数；详情补充
 Annotations、完整 Owner References、调度与网络信息、主容器、初始化容器和 Ephemeral Container 的当前/上次

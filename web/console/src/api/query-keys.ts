@@ -47,6 +47,14 @@ export const queryKeys = {
   // serves every kind through one route.
   resourceYaml: (clusterId: string, namespace: string, gvr: string, name: string) =>
     ["resource-yaml", clusterId, namespace, gvr, name] as const,
+  authorizationResources: (
+    clusterId: string,
+    namespace: string,
+    resource: string,
+    params: Record<string, unknown> = {},
+  ) => ["authorization-resources", clusterId, namespace, resource, params] as const,
+  authorizationResource: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["authorization-resource", clusterId, namespace, resource, name] as const,
   autoscalers: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
     ["autoscalers", clusterId, namespace, params] as const,
   autoscaler: (clusterId: string, namespace: string, name: string) =>
@@ -108,6 +116,8 @@ export const queryKeyPrefixes = {
   enrollments: ["enrollments"] as const,
   users: ["users"] as const,
   roleBindings: ["role-bindings"] as const,
+  authorizationResources: ["authorization-resources"] as const,
+  authorizationResource: ["authorization-resource"] as const,
   storageResources: ["storage-resources"] as const,
   storageResource: ["storage-resource"] as const,
   auditEvents: ["audit-events"] as const,

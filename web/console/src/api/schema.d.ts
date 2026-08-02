@@ -964,6 +964,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/authorization/{authorization_resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 列出目标集群中的 ClusterRole 或 ClusterRoleBinding；要求独立的 cluster.rbac.read 权限。 */
+        get: operations["listClusterAuthorizationResources"];
+        put?: never;
+        /** @description 创建 ClusterRole 或 ClusterRoleBinding；不授予 escalate、bind 或 impersonate，实际写入需要确认。 */
+        post: operations["createClusterAuthorizationResource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/authorization/{authorization_resource}/{authorization_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getClusterAuthorizationResource"];
+        /** @description 更新规则或绑定主体；RoleRef 不可变，聚合 ClusterRole 不支持类型化更新。 */
+        put: operations["updateClusterAuthorizationResource"];
+        post?: never;
+        /** @description 删除授权资源；ZKE 管理的 Agent 授权对象受保护，实际删除要求确认。 */
+        delete: operations["deleteClusterAuthorizationResource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/authorization/{authorization_resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 列出 Namespace 中的 ServiceAccount、Role 或 RoleBinding；不返回 Secret 正文或名称。 */
+        get: operations["listNamespacedAuthorizationResources"];
+        put?: never;
+        post: operations["createNamespacedAuthorizationResource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/authorization/{authorization_resource}/{authorization_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNamespacedAuthorizationResource"];
+        put: operations["updateNamespacedAuthorizationResource"];
+        post?: never;
+        delete: operations["deleteNamespacedAuthorizationResource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps": {
         parameters: {
             query?: never;
@@ -1288,7 +1357,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.event.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.event.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -2179,6 +2248,107 @@ export interface components {
             dry_run: boolean;
         };
         KubernetesHPADeleteResult: {
+            deleted: boolean;
+            dry_run: boolean;
+            target: string;
+        };
+        /** @enum {string} */
+        KubernetesAuthorizationResource: "serviceaccounts" | "roles" | "clusterroles" | "rolebindings" | "clusterrolebindings";
+        KubernetesAuthorizationRoleRef: {
+            /** @constant */
+            api_group: "rbac.authorization.k8s.io";
+            /** @enum {string} */
+            kind: "Role" | "ClusterRole";
+            name: string;
+        };
+        KubernetesAuthorizationSubject: {
+            /** @enum {string} */
+            api_group: "" | "rbac.authorization.k8s.io";
+            /** @enum {string} */
+            kind: "ServiceAccount" | "User" | "Group";
+            name: string;
+            namespace: string;
+        };
+        KubernetesAuthorizationPolicyRule: {
+            verbs: string[];
+            api_groups: string[];
+            resources: string[];
+            resource_names: string[];
+            non_resource_urls: string[];
+        };
+        KubernetesAuthorizationResourceSummary: {
+            resource: components["schemas"]["KubernetesAuthorizationResource"];
+            api_version: string;
+            /** @enum {string} */
+            kind: "ServiceAccount" | "Role" | "ClusterRole" | "RoleBinding" | "ClusterRoleBinding";
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            rule_count: number;
+            subject_count: number;
+            /** @description ServiceAccount 关联 Secret 与 imagePullSecret 的总数；不会返回 Secret 名称或正文。 */
+            secret_reference_count: number;
+            role_ref?: components["schemas"]["KubernetesAuthorizationRoleRef"];
+            automount_service_account_token?: boolean;
+            aggregated: boolean;
+            managed_by_zke: boolean;
+        };
+        KubernetesAuthorizationResourceDetail: components["schemas"]["KubernetesAuthorizationResourceSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            rules: components["schemas"]["KubernetesAuthorizationPolicyRule"][];
+            subjects: components["schemas"]["KubernetesAuthorizationSubject"][];
+        };
+        KubernetesAuthorizationResourcePage: {
+            resources: components["schemas"]["KubernetesAuthorizationResourceSummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesCreateAuthorizationResourceRequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            automount_service_account_token?: boolean;
+            rules?: components["schemas"]["KubernetesAuthorizationPolicyRule"][];
+            subjects?: components["schemas"]["KubernetesAuthorizationSubject"][];
+            role_ref?: components["schemas"]["KubernetesAuthorizationRoleRef"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesUpdateAuthorizationResourceRequest: {
+            uid: string;
+            resource_version: string;
+            automount_service_account_token?: boolean;
+            rules?: components["schemas"]["KubernetesAuthorizationPolicyRule"][];
+            subjects?: components["schemas"]["KubernetesAuthorizationSubject"][];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesDeleteAuthorizationResourceRequest: {
+            uid: string;
+            resource_version: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesAuthorizationMutationResult: {
+            resource: components["schemas"]["KubernetesAuthorizationResourceDetail"];
+            dry_run: boolean;
+        };
+        KubernetesAuthorizationDeleteResult: {
             deleted: boolean;
             dry_run: boolean;
             target: string;
@@ -3089,6 +3259,50 @@ export interface components {
                 };
             };
         };
+        /** @description Kubernetes 授权资源分页结果 */
+        KubernetesAuthorizationListSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesAuthorizationResourcePage"];
+                };
+            };
+        };
+        /** @description Kubernetes 授权资源详情 */
+        KubernetesAuthorizationDetailSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesAuthorizationResourceDetail"];
+                };
+            };
+        };
+        /** @description Kubernetes 授权资源写入结果或 DryRun 预览 */
+        KubernetesAuthorizationMutationSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesAuthorizationMutationResult"];
+                };
+            };
+        };
+        /** @description Kubernetes 授权资源删除结果或 DryRun 预览 */
+        KubernetesAuthorizationDeleteSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesAuthorizationDeleteResult"];
+                };
+            };
+        };
         /** @description 输入无效 */
         InvalidRequest: {
             headers: {
@@ -3204,6 +3418,13 @@ export interface components {
         WorkloadResource: components["schemas"]["KubernetesWorkloadResource"];
         WorkloadName: string;
         HPAName: string;
+        ClusterAuthorizationResource: "clusterroles" | "clusterrolebindings";
+        NamespacedAuthorizationResource: "serviceaccounts" | "roles" | "rolebindings";
+        AuthorizationName: string;
+        ResourceListLimit: number;
+        ResourceContinue: string;
+        ResourceLabelSelector: string;
+        ResourceFieldSelector: string;
         NetworkResource: components["schemas"]["KubernetesNetworkingResource"];
         NetworkResourceName: string;
         ClusterStorageResource: "persistentvolumes" | "storageclasses";
@@ -5872,6 +6093,293 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listClusterAuthorizationResources: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["ResourceListLimit"];
+                continue?: components["parameters"]["ResourceContinue"];
+                label_selector?: components["parameters"]["ResourceLabelSelector"];
+                field_selector?: components["parameters"]["ResourceFieldSelector"];
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                authorization_resource: components["parameters"]["ClusterAuthorizationResource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationListSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createClusterAuthorizationResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                authorization_resource: components["parameters"]["ClusterAuthorizationResource"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateAuthorizationResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationMutationSuccess"];
+            201: components["responses"]["KubernetesAuthorizationMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getClusterAuthorizationResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                authorization_resource: components["parameters"]["ClusterAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationDetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateClusterAuthorizationResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                authorization_resource: components["parameters"]["ClusterAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateAuthorizationResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteClusterAuthorizationResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                authorization_resource: components["parameters"]["ClusterAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteAuthorizationResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationDeleteSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listNamespacedAuthorizationResources: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["ResourceListLimit"];
+                continue?: components["parameters"]["ResourceContinue"];
+                label_selector?: components["parameters"]["ResourceLabelSelector"];
+                field_selector?: components["parameters"]["ResourceFieldSelector"];
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                authorization_resource: components["parameters"]["NamespacedAuthorizationResource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationListSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createNamespacedAuthorizationResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                authorization_resource: components["parameters"]["NamespacedAuthorizationResource"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateAuthorizationResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationMutationSuccess"];
+            201: components["responses"]["KubernetesAuthorizationMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getNamespacedAuthorizationResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                authorization_resource: components["parameters"]["NamespacedAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationDetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateNamespacedAuthorizationResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                authorization_resource: components["parameters"]["NamespacedAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateAuthorizationResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteNamespacedAuthorizationResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                authorization_resource: components["parameters"]["NamespacedAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteAuthorizationResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesAuthorizationDeleteSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];

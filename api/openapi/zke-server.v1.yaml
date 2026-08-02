@@ -3052,6 +3052,240 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/authorization/{authorization_resource}:
+    get:
+      tags: [Resources]
+      operationId: listClusterAuthorizationResources
+      description: 列出目标集群中的 ClusterRole 或 ClusterRoleBinding；要求独立的 cluster.rbac.read 权限。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterAuthorizationResource"
+        - $ref: "#/components/parameters/ResourceListLimit"
+        - $ref: "#/components/parameters/ResourceContinue"
+        - $ref: "#/components/parameters/ResourceLabelSelector"
+        - $ref: "#/components/parameters/ResourceFieldSelector"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationListSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createClusterAuthorizationResource
+      description: 创建 ClusterRole 或 ClusterRoleBinding；不授予 escalate、bind 或 impersonate，实际写入需要确认。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterAuthorizationResource"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesCreateAuthorizationResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationMutationSuccess" }
+        "201": { $ref: "#/components/responses/KubernetesAuthorizationMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/authorization/{authorization_resource}/{authorization_name}:
+    get:
+      tags: [Resources]
+      operationId: getClusterAuthorizationResource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterAuthorizationResource"
+        - $ref: "#/components/parameters/AuthorizationName"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationDetailSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: updateClusterAuthorizationResource
+      description: 更新规则或绑定主体；RoleRef 不可变，聚合 ClusterRole 不支持类型化更新。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterAuthorizationResource"
+        - $ref: "#/components/parameters/AuthorizationName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateAuthorizationResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteClusterAuthorizationResource
+      description: 删除授权资源；ZKE 管理的 Agent 授权对象受保护，实际删除要求确认。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/ClusterAuthorizationResource"
+        - $ref: "#/components/parameters/AuthorizationName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteAuthorizationResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationDeleteSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/authorization/{authorization_resource}:
+    get:
+      tags: [Resources]
+      operationId: listNamespacedAuthorizationResources
+      description: 列出 Namespace 中的 ServiceAccount、Role 或 RoleBinding；不返回 Secret 正文或名称。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedAuthorizationResource"
+        - $ref: "#/components/parameters/ResourceListLimit"
+        - $ref: "#/components/parameters/ResourceContinue"
+        - $ref: "#/components/parameters/ResourceLabelSelector"
+        - $ref: "#/components/parameters/ResourceFieldSelector"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationListSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createNamespacedAuthorizationResource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedAuthorizationResource"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesCreateAuthorizationResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationMutationSuccess" }
+        "201": { $ref: "#/components/responses/KubernetesAuthorizationMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/authorization/{authorization_resource}/{authorization_name}:
+    get:
+      tags: [Resources]
+      operationId: getNamespacedAuthorizationResource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedAuthorizationResource"
+        - $ref: "#/components/parameters/AuthorizationName"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationDetailSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: updateNamespacedAuthorizationResource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedAuthorizationResource"
+        - $ref: "#/components/parameters/AuthorizationName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateAuthorizationResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteNamespacedAuthorizationResource
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedAuthorizationResource"
+        - $ref: "#/components/parameters/AuthorizationName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteAuthorizationResourceRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesAuthorizationDeleteSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps:
     get:
       tags: [Resources]
@@ -4214,6 +4448,44 @@ components:
         type: string
         minLength: 1
         maxLength: 253
+    ClusterAuthorizationResource:
+      name: authorization_resource
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [clusterroles, clusterrolebindings]
+    NamespacedAuthorizationResource:
+      name: authorization_resource
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [serviceaccounts, roles, rolebindings]
+    AuthorizationName:
+      name: authorization_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
+    ResourceListLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+    ResourceContinue:
+      name: continue
+      in: query
+      schema: { type: string, maxLength: 4096 }
+    ResourceLabelSelector:
+      name: label_selector
+      in: query
+      schema: { type: string, maxLength: 4096 }
+    ResourceFieldSelector:
+      name: field_selector
+      in: query
+      schema: { type: string, maxLength: 4096 }
     NetworkResource:
       name: network_resource
       in: path
@@ -4442,6 +4714,50 @@ components:
                 required: [data]
                 properties:
                   data: { $ref: "#/components/schemas/KubernetesHPADeleteResult" }
+    KubernetesAuthorizationListSuccess:
+      description: Kubernetes 授权资源分页结果
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesAuthorizationResourcePage" }
+    KubernetesAuthorizationDetailSuccess:
+      description: Kubernetes 授权资源详情
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesAuthorizationResourceDetail" }
+    KubernetesAuthorizationMutationSuccess:
+      description: Kubernetes 授权资源写入结果或 DryRun 预览
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesAuthorizationMutationResult" }
+    KubernetesAuthorizationDeleteSuccess:
+      description: Kubernetes 授权资源删除结果或 DryRun 预览
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesAuthorizationDeleteResult" }
     InvalidRequest:
       description: 输入无效
       content:
@@ -4629,6 +4945,8 @@ components:
               - cluster.resource.create
               - cluster.resource.update
               - cluster.resource.delete
+              - cluster.rbac.read
+              - cluster.rbac.manage
               - cluster.connection.revoke
               - user.read
               - user.manage
@@ -6323,6 +6641,187 @@ components:
         autoscaler: { $ref: "#/components/schemas/KubernetesHPADetail" }
         dry_run: { type: boolean }
     KubernetesHPADeleteResult:
+      type: object
+      additionalProperties: false
+      required: [deleted, dry_run, target]
+      properties:
+        deleted: { type: boolean }
+        dry_run: { type: boolean }
+        target: { type: string }
+    KubernetesAuthorizationResource:
+      type: string
+      enum: [serviceaccounts, roles, clusterroles, rolebindings, clusterrolebindings]
+    KubernetesAuthorizationRoleRef:
+      type: object
+      additionalProperties: false
+      required: [api_group, kind, name]
+      properties:
+        api_group: { type: string, const: rbac.authorization.k8s.io }
+        kind: { type: string, enum: [Role, ClusterRole] }
+        name: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesAuthorizationSubject:
+      type: object
+      additionalProperties: false
+      required: [api_group, kind, name, namespace]
+      properties:
+        api_group: { type: string, enum: ["", rbac.authorization.k8s.io] }
+        kind: { type: string, enum: [ServiceAccount, User, Group] }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        namespace: { type: string, maxLength: 63 }
+    KubernetesAuthorizationPolicyRule:
+      type: object
+      additionalProperties: false
+      required: [verbs, api_groups, resources, resource_names, non_resource_urls]
+      properties:
+        verbs:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 1024 }
+        api_groups:
+          type: array
+          maxItems: 64
+          items: { type: string, maxLength: 1024 }
+        resources:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 1024 }
+        resource_names:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 1024 }
+        non_resource_urls:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 1024 }
+    KubernetesAuthorizationResourceSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - resource
+        - api_version
+        - kind
+        - namespace
+        - name
+        - uid
+        - resource_version
+        - creation_timestamp
+        - labels
+        - rule_count
+        - subject_count
+        - secret_reference_count
+        - aggregated
+        - managed_by_zke
+      properties:
+        resource: { $ref: "#/components/schemas/KubernetesAuthorizationResource" }
+        api_version: { type: string }
+        kind: { type: string, enum: [ServiceAccount, Role, ClusterRole, RoleBinding, ClusterRoleBinding] }
+        namespace: { type: string, maxLength: 63 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        uid: { type: string }
+        resource_version: { type: string }
+        creation_timestamp: { $ref: "#/components/schemas/Timestamp" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        rule_count: { type: integer, minimum: 0 }
+        subject_count: { type: integer, minimum: 0 }
+        secret_reference_count:
+          type: integer
+          minimum: 0
+          description: ServiceAccount 关联 Secret 与 imagePullSecret 的总数；不会返回 Secret 名称或正文。
+        role_ref: { $ref: "#/components/schemas/KubernetesAuthorizationRoleRef" }
+        automount_service_account_token: { type: boolean }
+        aggregated: { type: boolean }
+        managed_by_zke: { type: boolean }
+    KubernetesAuthorizationResourceDetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesAuthorizationResourceSummary"
+        - type: object
+          required: [annotations, rules, subjects]
+          properties:
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            rules:
+              type: array
+              maxItems: 128
+              items: { $ref: "#/components/schemas/KubernetesAuthorizationPolicyRule" }
+            subjects:
+              type: array
+              maxItems: 256
+              items: { $ref: "#/components/schemas/KubernetesAuthorizationSubject" }
+    KubernetesAuthorizationResourcePage:
+      type: object
+      additionalProperties: false
+      required: [resources, continue_token, resource_version, remaining_item_count]
+      properties:
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesAuthorizationResourceSummary" }
+        continue_token: { type: string }
+        resource_version: { type: string }
+        remaining_item_count: { type: [integer, "null"], minimum: 0 }
+    KubernetesCreateAuthorizationResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [name, confirm]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 253 }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        automount_service_account_token: { type: boolean }
+        rules:
+          type: array
+          maxItems: 128
+          items: { $ref: "#/components/schemas/KubernetesAuthorizationPolicyRule" }
+        subjects:
+          type: array
+          maxItems: 256
+          items: { $ref: "#/components/schemas/KubernetesAuthorizationSubject" }
+        role_ref: { $ref: "#/components/schemas/KubernetesAuthorizationRoleRef" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesUpdateAuthorizationResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        automount_service_account_token: { type: boolean }
+        rules:
+          type: array
+          maxItems: 128
+          items: { $ref: "#/components/schemas/KubernetesAuthorizationPolicyRule" }
+        subjects:
+          type: array
+          maxItems: 256
+          items: { $ref: "#/components/schemas/KubernetesAuthorizationSubject" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesDeleteAuthorizationResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 128 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesAuthorizationMutationResult:
+      type: object
+      additionalProperties: false
+      required: [resource, dry_run]
+      properties:
+        resource: { $ref: "#/components/schemas/KubernetesAuthorizationResourceDetail" }
+        dry_run: { type: boolean }
+    KubernetesAuthorizationDeleteResult:
       type: object
       additionalProperties: false
       required: [deleted, dry_run, target]

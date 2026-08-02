@@ -73,12 +73,13 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `cluster.connection.revoke`，以及通用 Kubernetes 写操作使用的 `cluster.resource.create`、
 `cluster.resource.update` 和 `cluster.resource.delete`，以及读取 Pod 日志使用的专用
 `cluster.pod.logs.read`、Web Terminal 使用的 `cluster.pod.exec`，以及读取 Kubernetes Event 使用的
-`cluster.event.read`。所有变更要求有效 Session 和 CSRF Token；创建
+`cluster.event.read`，以及目标集群 Kubernetes RBAC 使用的 `cluster.rbac.read`、`cluster.rbac.manage`。
+所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。
 
-通用 Kubernetes 写操作只允许明确 Cluster、GVR、Namespace 和名称的非 Secret 主资源；Agent 与 Server
-双重拒绝 Secret 和任意 Subresource，最终资源权限继续由 Agent ServiceAccount 的 Kubernetes RBAC 裁决。
+通用 Kubernetes 写操作只允许明确 Cluster、GVR、Namespace 和名称的非 Secret、非授权主资源；Agent 与 Server
+双重拒绝 Secret 和任意 Subresource，Kubernetes 授权资源由 Server 拒绝并要求使用专用接口，最终资源权限继续由 Agent ServiceAccount 的 Kubernetes RBAC 裁决。
 实际变更要求显式确认，DryRun 可在确认前预览 API Server 校验和默认值。Create 禁止 `generateName`，
 Update 要求 `resourceVersion`，Apply 默认不抢占字段所有权，Delete 支持 UID/resourceVersion 前置条件。
 审计记录发起用户、Cluster、GVR/Namespace/名称、动作和结果，不记录资源正文。
@@ -106,7 +107,16 @@ HorizontalPodAutoscaler 类型化接口固定 `autoscaling/v2` 和明确 Namespa
 要求 CSRF、幂等键和显式确认，更新前重新读取并核对 HPA UID/resourceVersion，删除把二者作为 Kubernetes
 前置条件。审计记录 HPA 资源身份和操作结果，不记录指标 Selector 或完整 spec 正文。
 
-YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限。
+目标集群内的 Kubernetes RBAC 使用独立的 `cluster.rbac.read` 与 `cluster.rbac.manage`，不复用普通
+`cluster.read` 或 `cluster.resource.*`。ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding
+从通用 Resource/YAML API 排除，只能通过固定资源类型和作用域的专用接口访问。写入需要 CSRF、DryRun、确认、
+幂等、UID/resourceVersion 与审计；ServiceAccount 响应不返回 Secret 名称或正文。Agent ClusterRole 不包含
+`escalate`、`bind`、`impersonate`；类型化规则同时拒绝这些 Verb、Secret 和 ServiceAccount Token，绑定不能
+直接引用内置 `zke-agent` 角色，最终提权检查仍由 Kubernetes API Server 执行。ZKE 管理的 Agent 授权对象禁止
+经该接口更新或删除。
+
+YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限；
+Kubernetes 授权资源从该入口排除，避免绕过 `cluster.rbac.*`。
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
 `resourceVersion` 和当前实时对象逐项核对；同名对象已重建或版本已变化时返回冲突。实际更新还要求 CSRF、
 幂等键与显式确认，DryRun 使用同一 API Server 校验链路。日志与审计均不记录 YAML 正文或字段值。

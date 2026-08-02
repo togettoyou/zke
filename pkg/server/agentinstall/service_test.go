@@ -176,6 +176,12 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "autoscaling", []string{"horizontalpodautoscalers"}, []string{
 		"get", "list", "create", "update", "delete",
 	})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"serviceaccounts"}, []string{
+		"get", "list", "create", "update", "delete",
+	})
+	assertPolicyRule(t, clusterRole.Rules, "rbac.authorization.k8s.io", []string{
+		"roles", "clusterroles", "rolebindings", "clusterrolebindings",
+	}, []string{"get", "list", "create", "update", "delete"})
 	assertPolicyRule(t, clusterRole.Rules, "networking.k8s.io", []string{"ingresses"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "gateway.networking.k8s.io", []string{"gateways"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"nodes"}, []string{

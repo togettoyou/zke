@@ -72,6 +72,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   Deployment/StatefulSet 目标约束，Resource/ContainerResource 指标、ScaleUp/ScaleDown Behavior、DryRun、
   确认、幂等、并发身份保护、审计和 Agent 最小 RBAC，以及 Console 的列表/详情、类型化创建与编辑表单和
   删除闭环；Metrics Server/Adapter 由集群自行安装，VPA 与 KEDA 尚未实现）
+- [x] Kubernetes 授权管理（ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding 的类型化
+  List/Detail/Create/Update/Delete，独立 `cluster.rbac.read/manage`、DryRun、确认、幂等、并发身份保护、审计、
+  Agent 自身授权对象保护与不包含 `escalate/bind/impersonate` 的 RBAC，以及 Console 的五类列表/详情、
+  规则与主体编辑表单、删除闭环和受保护对象的只读呈现）
 
 ## Phase 3：可观测性
 

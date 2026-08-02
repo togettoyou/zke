@@ -192,21 +192,23 @@ Manifest 下载端点是 `GET /agent-install/v1/manifest`。Token 放在 Authori
 常见的 URL、访问日志和代理查询参数记录；端点只接受仍未消费、未撤销、未过期且作用域有效的 Enrollment。
 
 生成资源包括 Namespace、Enrollment Secret、包含 Listener CA（以及可选 Registration CA）的 Trust Secret、
-Agent ConfigMap、ServiceAccount、最小 Role/RoleBinding、Node、Namespace、Pod、Pod Logs、Kubernetes Event、工作负载、服务路由、ConfigMap、存储与自动伸缩管理
+Agent ConfigMap、ServiceAccount、最小 Role/RoleBinding、Node、Namespace、Pod、Pod Logs、Kubernetes Event、工作负载、服务路由、ConfigMap、存储、自动伸缩与 Kubernetes 授权管理
 ClusterRole/ClusterRoleBinding 和单副本
 Deployment。不会创建 Kubernetes Service，
 因为 Agent 只主动出站连接；不会创建 PVC，因为长期身份由 `zke-agent-identity` Secret 持久化；也不会预创建
 或 `apply` 该 identity Secret，避免覆盖 Agent 已签发的身份。Enrollment Secret 默认保留；Agent 通过
 Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Secret。
 
-该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、Pod Logs 和 Kubernetes Event 当前后端能力。
+该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、ServiceAccount、四类 RBAC 资源、Pod Logs 和 Kubernetes Event 当前后端能力。
 其中 Node、Namespace 和 Pod 的 `update` 用于完整 YAML 管理，Pod Logs 只增加 `pods/log` 的 `get`，Pod Exec
 只增加 `pods/exec` 的 `create`，Event 只增加 `events` 的 `get/list/watch`，不授予 Eviction。Agent 的通用
 Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限；需要读取或变更更多内置资源、CRD 或 CR 时，安装方
 必须为同一 ServiceAccount 增加明确的最小 RBAC。
 不得为了使用通用接口直接绑定 `cluster-admin`。
 
-在自动伸缩后端上线前使用旧清单接入的集群不会自动获得新增权限；管理员需要为同一 ClusterRole 增加
+在 Kubernetes 授权管理后端上线前使用旧清单接入的集群不会自动获得新增权限；管理员需要增加
+`core/v1 serviceaccounts` 与 `rbac.authorization.k8s.io/v1 roles,clusterroles,rolebindings,clusterrolebindings`
+的 `get`、`list`、`create`、`update`、`delete`，且不应增加 `escalate`、`bind` 或 `impersonate`。在自动伸缩后端上线前使用旧清单接入的集群需要为同一 ClusterRole 增加
 `autoscaling/v2 horizontalpodautoscalers` 的 `get`、`list`、`create`、`update`、`delete`。在存储后端上线前
 接入的集群还需增加
 `core/v1 persistentvolumes,persistentvolumeclaims` 与 `storage.k8s.io/v1 storageclasses` 的

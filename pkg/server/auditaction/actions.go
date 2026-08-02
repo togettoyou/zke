@@ -118,6 +118,8 @@ const (
 	DeniedClusterResourceCreate = "cluster.resource.create"
 	DeniedClusterResourceUpdate = "cluster.resource.update"
 	DeniedClusterResourceDelete = "cluster.resource.delete"
+	DeniedClusterRBACRead       = "cluster.rbac.read"
+	DeniedClusterRBACManage     = "cluster.rbac.manage"
 	DeniedUserRead              = "user.read"
 	DeniedUserManage            = "user.manage"
 	DeniedRBACRead              = "rbac.read"
@@ -268,6 +270,8 @@ var actions = []Action{
 	{DeniedClusterResourceCreate, GroupDenied},
 	{DeniedClusterResourceUpdate, GroupDenied},
 	{DeniedClusterResourceDelete, GroupDenied},
+	{DeniedClusterRBACRead, GroupDenied},
+	{DeniedClusterRBACManage, GroupDenied},
 	{DeniedClusterEnrollmentRead, GroupDenied},
 	{DeniedUserRead, GroupDenied},
 	{DeniedUserManage, GroupDenied},

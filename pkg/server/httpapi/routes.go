@@ -621,6 +621,62 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesHPA.delete,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/authorization/:authorization_resource",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACRead, "cluster_id"),
+		handlers.kubernetesAuthorization.list,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/authorization/:authorization_resource",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.kubernetesAuthorization.create,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/authorization/:authorization_resource/:authorization_name",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACRead, "cluster_id"),
+		handlers.kubernetesAuthorization.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/authorization/:authorization_resource/:authorization_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.kubernetesAuthorization.update,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/authorization/:authorization_resource/:authorization_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.kubernetesAuthorization.delete,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACRead, "cluster_id"),
+		handlers.kubernetesAuthorization.list,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.kubernetesAuthorization.create,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource/:authorization_name",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACRead, "cluster_id"),
+		handlers.kubernetesAuthorization.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource/:authorization_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.kubernetesAuthorization.update,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource/:authorization_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.kubernetesAuthorization.delete,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/configmaps",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,

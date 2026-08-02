@@ -339,6 +339,19 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "create", "update", "delete"},
 			},
 			{
+				APIGroups: []string{""},
+				Resources: []string{"serviceaccounts"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
+				// Deliberately omit escalate, bind and impersonate. Kubernetes
+				// admission keeps delegated authorization within the Agent's
+				// existing permission ceiling.
+				APIGroups: []string{"rbac.authorization.k8s.io"},
+				Resources: []string{"roles", "clusterroles", "rolebindings", "clusterrolebindings"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
 				APIGroups: []string{"networking.k8s.io"},
 				Resources: []string{"ingresses"},
 				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},

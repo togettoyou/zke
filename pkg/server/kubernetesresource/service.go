@@ -47,6 +47,7 @@ var (
 	ErrIdempotencyConflict    = errors.New("Kubernetes resource idempotency conflict")
 	ErrUpstreamConflict       = errors.New("Kubernetes API resource conflict")
 	ErrConfigMapImmutable     = errors.New("Kubernetes ConfigMap is immutable")
+	ErrManagedResource        = errors.New("Kubernetes resource is managed by ZKE")
 	ErrUpstreamFailure        = errors.New("Kubernetes API request failed")
 	ErrInvalidResponse        = errors.New("invalid Agent resource response")
 )

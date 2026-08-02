@@ -55,7 +55,8 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 `get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`update`、`patch` 以及
 Namespace 的 `get`、`list`、`create`、`update`、`delete`、Pod 的 `get`、`list`、`update`、`delete` 以及 `pods/log` 的
 `get`、`pods/exec` 的 `create` 权限，并授予五类工作负载、Service、Ingress 与 Gateway 主资源的完整 CRUD，
-以及 ConfigMap 的 `get`、`list`、`create`、`update`、`delete`；Secret 主资源不在该 ClusterRole 中；
+以及 ConfigMap、存储、HorizontalPodAutoscaler、ServiceAccount 和四类 Kubernetes RBAC 主资源的
+`get`、`list`、`create`、`update`、`delete`；RBAC 不包含 `escalate`、`bind` 或 `impersonate`，Secret 主资源不在该 ClusterRole 中；
 Eviction Subresource 不在默认授权中。
 ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
 `http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用

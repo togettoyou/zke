@@ -131,6 +131,8 @@ func TestRoleAndScopeRules(t *testing.T) {
 		PermissionRBACRead,
 		PermissionRBACManage,
 		PermissionAuditRead,
+		PermissionClusterRBACRead,
+		PermissionClusterRBACManage,
 	} {
 		if !roleGrants("admin", permission) {
 			t.Errorf("admin role did not grant %s", permission)

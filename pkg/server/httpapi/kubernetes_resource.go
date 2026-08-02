@@ -137,6 +137,15 @@ func (handler *kubernetesResourceHandler) discover(c *gin.Context) {
 	if handler.respondResourceError(c, "discover Kubernetes resources", err) {
 		return
 	}
+	filtered := result.Resources[:0]
+	for _, resource := range result.Resources {
+		if !kubernetesresource.IsAuthorizationResourceIdentity(kubernetesresource.ResourceIdentity{
+			Group: resource.Group, Version: resource.Version, Resource: resource.Resource,
+		}) {
+			filtered = append(filtered, resource)
+		}
+	}
+	result.Resources = filtered
 	writeSuccess(c, http.StatusOK, result)
 }
 
@@ -646,6 +655,11 @@ func genericResourceIdentity(
 			"version and resource are required",
 		)
 	}
+	if kubernetesresource.IsAuthorizationResourceIdentity(resource) {
+		return kubernetesresource.ResourceIdentity{}, "", errors.New(
+			"Kubernetes authorization resources require the dedicated API",
+		)
+	}
 	return resource, query.Get("namespace"), nil
 }
 
@@ -691,6 +705,7 @@ func kubernetesResourceErrorMappings() []errorMapping {
 		{kubernetesresource.ErrResponseTooLarge, http.StatusBadGateway, "agent_response_too_large", "Agent response exceeded the configured limit"},
 		{kubernetesresource.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used for another Kubernetes resource request"},
 		{kubernetesresource.ErrUpstreamConflict, http.StatusConflict, "cluster_api_conflict", "Kubernetes resource changed during the request"},
+		{kubernetesresource.ErrManagedResource, http.StatusConflict, "managed_resource", "ZKE-managed authorization resources cannot be changed through this API"},
 		{kubernetesresource.ErrInvalidResponse, http.StatusBadGateway, "invalid_agent_response", "Agent returned an invalid resource response"},
 		{kubernetesresource.ErrUpstreamFailure, http.StatusBadGateway, "cluster_api_error", "Kubernetes resource query failed"},
 	}

@@ -1,0 +1,629 @@
+import { useEffect, useMemo, useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { ArrowLeft, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+
+import {
+  isNamespacedAuthorization,
+  useAuthorizationResource,
+  useAuthorizationResources,
+  useDeleteAuthorizationResource,
+} from "@/api/queries/authorization";
+import type {
+  KubernetesAuthorizationResource,
+  KubernetesAuthorizationResourceDetail,
+  KubernetesAuthorizationResourceSummary,
+} from "@/api/types";
+import { SectionTitle } from "@/apps/AppShell";
+import { useSessionContext } from "@/auth/session-context";
+import { DataTable } from "@/components/common/data-table";
+import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
+import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { ErrorState, LoadingState } from "@/components/common/state";
+import { Badge, StatusDot } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/misc";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { HintTooltip } from "@/components/ui/tooltip";
+import { formatAbsolute } from "@/lib/time";
+import { useSubmissionKey } from "@/lib/use-submission-key";
+
+import { AuthorizationForm } from "./AuthorizationForm";
+import { ContinuePager } from "./ContinuePager";
+import { useContinuePagination } from "./use-continue-pagination";
+import type { ClusterSectionProps } from "./types";
+import {
+  AUTHORIZATION_TYPES,
+  authorizationKindLabel,
+  hasRules,
+  isBinding,
+} from "./authorization-catalog";
+
+const PAGE_SIZE = 50;
+
+type AuthorizationSectionProps = ClusterSectionProps & {
+  /** Only the ServiceAccount, Role and RoleBinding tabs are scoped by it. */
+  namespace: string;
+  onNamespaceScopeChange: (namespaced: boolean) => void;
+};
+
+/**
+ * The RBAC objects of one Cluster: identities, permission sets and the grants
+ * between them.
+ *
+ * Reading and writing these is its own permission — `cluster.rbac.read` and
+ * `cluster.rbac.manage` — rather than part of reading or writing Cluster
+ * resources, because a grant is the thing that decides what every other
+ * permission is worth.
+ */
+export function AuthorizationSection({
+  clusterId,
+  clusterName,
+  namespace,
+  tenantId,
+  projectId,
+  onNamespaceScopeChange,
+}: AuthorizationSectionProps) {
+  const { permissions } = useSessionContext();
+  const [resource, setResource] = useState<KubernetesAuthorizationResource>("serviceaccounts");
+  const namespaced = isNamespacedAuthorization(resource);
+  const pager = useContinuePagination(`${clusterId}/${namespaced ? namespace : ""}/${resource}`);
+  const list = useAuthorizationResources(clusterId, namespace, resource, {
+    limit: PAGE_SIZE,
+    ...(pager.token ? { continue: pager.token } : {}),
+  });
+  const [detailName, setDetailName] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<KubernetesAuthorizationResourceSummary | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<KubernetesAuthorizationResourceSummary | null>(
+    null,
+  );
+  const [deletePreviewed, setDeletePreviewed] = useState(false);
+  const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
+  const deleteApplyKey = useSubmissionKey(deleteTarget !== null);
+  const remove = useDeleteAuthorizationResource();
+
+  useEffect(() => onNamespaceScopeChange(namespaced), [namespaced, onNamespaceScopeChange]);
+
+  const canManage = permissions.can("cluster.rbac.manage", {
+    type: "project",
+    tenantId,
+    projectId,
+  });
+
+  const columns = useMemo<ColumnDef<KubernetesAuthorizationResourceSummary, unknown>[]>(
+    () => [
+      {
+        header: "名称",
+        cell: ({ row }) => (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-foreground font-medium break-all">{row.original.name}</span>
+            <span className="zke-mono text-subtle-foreground text-xs">
+              {row.original.uid || "UID 尚未分配"}
+            </span>
+          </div>
+        ),
+      },
+      ...typeColumns(resource),
+      {
+        header: "标记",
+        size: 130,
+        cell: ({ row }) => <Markers item={row.original} />,
+      },
+      {
+        header: "创建时间",
+        size: 170,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-xs">
+            {formatAbsolute(row.original.creation_timestamp)}
+          </span>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        size: 88,
+        cell: ({ row }) => {
+          const locked = lockReason(row.original);
+          return (
+            <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+              {canManage ? (
+                <HintTooltip label={locked ?? "编辑"}>
+                  <span>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={`编辑 ${row.original.name}`}
+                      disabled={locked !== null}
+                      onClick={() => setEditing(row.original)}
+                    >
+                      {locked ? <Lock /> : <Pencil />}
+                    </Button>
+                  </span>
+                </HintTooltip>
+              ) : null}
+              {canManage && row.original.uid ? (
+                <HintTooltip label={row.original.managed_by_zke ? PROTECTED_HINT : "删除"}>
+                  <span>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label={`删除 ${row.original.name}`}
+                      disabled={row.original.managed_by_zke}
+                      onClick={() => {
+                        setDeleteTarget(row.original);
+                        setDeletePreviewed(false);
+                        remove.reset();
+                      }}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </span>
+                </HintTooltip>
+              ) : null}
+            </div>
+          );
+        },
+      },
+    ],
+    [resource, canManage, remove],
+  );
+
+  if (detailName) {
+    return (
+      <AuthorizationDetailView
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        resource={resource}
+        name={detailName}
+        canManage={canManage}
+        onEdit={setEditing}
+        onBack={() => setDetailName(null)}
+      />
+    );
+  }
+
+  const nextToken = list.data?.continue_token ?? "";
+  const waitingForNamespace = namespaced && namespace === "";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <SectionTitle
+        title={`授权管理 · ${clusterName}${namespaced ? ` / ${namespace}` : ""}`}
+        description="集群内的 Kubernetes RBAC 对象，使用独立的 cluster.rbac.read 与 cluster.rbac.manage 权限。创建、更新和删除都先执行服务端 DryRun 再由操作者确认；ZKE 自身 Agent 的授权对象受保护，不能在此修改或删除。这五类资源被通用资源与 YAML 接口排除，因此本页不提供 YAML 入口。"
+        actions={
+          canManage && !waitingForNamespace ? (
+            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+              <Plus />
+              创建 {authorizationKindLabel(resource)}
+            </Button>
+          ) : null
+        }
+      />
+      <Tabs
+        value={resource}
+        onValueChange={(value) => {
+          setResource(value as KubernetesAuthorizationResource);
+          setDetailName(null);
+        }}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <TabsList className="w-fit">
+          {AUTHORIZATION_TYPES.map((type) => (
+            <TabsTrigger key={type.resource} value={type.resource}>
+              {type.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={resource} className="flex min-h-0 flex-1 flex-col">
+          {waitingForNamespace ? (
+            <Alert tone="info">
+              {authorizationKindLabel(resource)}{" "}
+              按命名空间定域，正在等待工具栏的命名空间选择器解析出一个可用的命名空间。
+            </Alert>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={list.data?.resources}
+              isLoading={list.isLoading}
+              isFetching={list.isFetching}
+              error={list.error}
+              onRetry={() => void list.refetch()}
+              onRowClick={(item) => setDetailName(item.name)}
+              rowKey={(item) => item.uid || item.name}
+              emptyTitle={`没有 ${authorizationKindLabel(resource)}`}
+              emptyDescription={
+                namespaced
+                  ? `${namespace} 中没有可见的 ${authorizationKindLabel(resource)}。`
+                  : `该集群中没有可见的 ${authorizationKindLabel(resource)}。`
+              }
+              toolbar={
+                <ContinuePager
+                  pageIndex={pager.pageIndex}
+                  nextToken={nextToken}
+                  onPrevious={pager.goPrevious}
+                  onNext={pager.goNext}
+                />
+              }
+            />
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {creating || editing ? (
+        <AuthorizationForm
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+          resource={resource}
+          editingName={editing?.name ?? null}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
+        />
+      ) : null}
+
+      <SensitiveActionDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={`删除 ${authorizationKindLabel(resource)}`}
+        description={
+          deletePreviewed
+            ? "DryRun 已通过。再次确认将提交实际删除。"
+            : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
+        }
+        scopeLines={[
+          { label: "集群", name: clusterName, id: clusterId },
+          ...(namespaced ? [{ label: "命名空间", name: namespace }] : []),
+          {
+            label: authorizationKindLabel(resource),
+            name: deleteTarget?.name ?? "",
+            id: deleteTarget?.uid,
+          },
+        ]}
+        impacts={deleteImpacts(resource)}
+        confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
+        confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
+        destructive
+        pending={remove.isPending}
+        error={remove.error}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          const dryRun = !deletePreviewed;
+          void remove
+            .mutateAsync({
+              clusterId,
+              namespace,
+              resource,
+              name: deleteTarget.name,
+              uid: deleteTarget.uid,
+              resourceVersion: deleteTarget.resource_version,
+              dryRun,
+              idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
+            })
+            .then(() => {
+              if (dryRun) {
+                setDeletePreviewed(true);
+                toast.success("删除 DryRun 已通过");
+                return;
+              }
+              toast.success(`${authorizationKindLabel(resource)} ${deleteTarget.name} 已提交删除`);
+              if (detailName === deleteTarget.name) {
+                setDetailName(null);
+              }
+              setDeleteTarget(null);
+            })
+            .catch(() => undefined);
+        }}
+      />
+    </div>
+  );
+}
+
+const PROTECTED_HINT = "ZKE Agent 自身的授权对象受保护，不能在此修改或删除";
+
+/** Why an object cannot be edited through the typed form, if it cannot. */
+function lockReason(item: KubernetesAuthorizationResourceSummary): string | null {
+  if (item.managed_by_zke) {
+    return PROTECTED_HINT;
+  }
+  if (item.aggregated) {
+    return "聚合 ClusterRole 的规则由控制器合成，不支持类型化更新";
+  }
+  return null;
+}
+
+function Markers({ item }: { item: KubernetesAuthorizationResourceSummary }) {
+  const markers = [
+    item.managed_by_zke ? { label: "ZKE 管理", tone: "primary" as const } : null,
+    item.aggregated ? { label: "聚合", tone: "info" as const } : null,
+  ].filter((entry) => entry !== null);
+  if (markers.length === 0) {
+    return <span className="text-subtle-foreground text-xs">—</span>;
+  }
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      {markers.map((marker) => (
+        <Badge key={marker.label} tone={marker.tone}>
+          <StatusDot tone={marker.tone} />
+          {marker.label}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+function deleteImpacts(resource: KubernetesAuthorizationResource): string[] {
+  const precondition =
+    "请求携带该对象当前的 UID 与 resourceVersion 前置条件，期间对象若已变化或被重建，删除会被拒绝。";
+  if (resource === "serviceaccounts") {
+    return [
+      "使用该 ServiceAccount 的 Pod 将失去其身份：已运行的 Pod 中的 Token 会失效，新 Pod 无法启动。",
+      "引用它的 RoleBinding 和 ClusterRoleBinding 不会被清理，会指向一个不存在的主体。",
+      precondition,
+    ];
+  }
+  if (hasRules(resource)) {
+    return [
+      "引用该角色的所有绑定会立即失去授权，对应主体将被拒绝访问。",
+      "绑定本身不会被删除，会指向一个不存在的角色。",
+      precondition,
+    ];
+  }
+  return [
+    "该绑定授予的权限会立即撤销，其中的主体将失去对应访问能力。",
+    "角色和主体本身不受影响。",
+    precondition,
+  ];
+}
+
+function typeColumns(
+  resource: KubernetesAuthorizationResource,
+): ColumnDef<KubernetesAuthorizationResourceSummary, unknown>[] {
+  if (resource === "serviceaccounts") {
+    return [
+      {
+        header: "自动挂载 Token",
+        size: 150,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-xs">
+            {row.original.automount_service_account_token === undefined
+              ? "默认"
+              : row.original.automount_service_account_token
+                ? "是"
+                : "否"}
+          </span>
+        ),
+      },
+      {
+        header: "Secret 引用",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-xs">
+            {/* Counts only. The endpoint never returns Secret names or bodies,
+                and this page must not imply that it could. */}
+            {row.original.secret_reference_count} 个（不展示名称）
+          </span>
+        ),
+      },
+    ];
+  }
+  if (hasRules(resource)) {
+    return [
+      {
+        header: "规则数",
+        size: 100,
+        cell: ({ row }) => <span className="zke-tnum">{row.original.rule_count}</span>,
+      },
+    ];
+  }
+  return [
+    {
+      header: "角色",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground text-xs break-all">
+          {row.original.role_ref
+            ? `${row.original.role_ref.kind}/${row.original.role_ref.name}`
+            : "—"}
+        </span>
+      ),
+    },
+    {
+      header: "主体数",
+      size: 100,
+      cell: ({ row }) => <span className="zke-tnum">{row.original.subject_count}</span>,
+    },
+  ];
+}
+
+function AuthorizationDetailView({
+  clusterId,
+  clusterName,
+  namespace,
+  resource,
+  name,
+  canManage,
+  onEdit,
+  onBack,
+}: {
+  clusterId: string;
+  clusterName: string;
+  namespace: string;
+  resource: KubernetesAuthorizationResource;
+  name: string;
+  canManage: boolean;
+  onEdit: (item: KubernetesAuthorizationResourceSummary) => void;
+  onBack: () => void;
+}) {
+  const detail = useAuthorizationResource(clusterId, namespace, resource, name);
+  const item = detail.data;
+  const locked = item ? lockReason(item) : null;
+
+  return (
+    <div className="grid gap-3">
+      <SectionTitle
+        title={name}
+        description={`读取自集群 ${clusterName}${isNamespacedAuthorization(resource) ? ` 的 ${namespace}` : ""}，仅展示 Kubernetes 返回的当前状态。`}
+        actions={
+          <div className="flex items-center gap-2">
+            {canManage && item && locked === null ? (
+              <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
+                <Pencil />
+                编辑
+              </Button>
+            ) : null}
+            <Button size="sm" variant="secondary" onClick={onBack}>
+              <ArrowLeft />
+              返回列表
+            </Button>
+          </div>
+        }
+      />
+      {detail.error ? (
+        <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
+      ) : detail.isLoading || !item ? (
+        <LoadingState />
+      ) : (
+        <AuthorizationDetailCards item={item} locked={locked} />
+      )}
+    </div>
+  );
+}
+
+function AuthorizationDetailCards({
+  item,
+  locked,
+}: {
+  item: KubernetesAuthorizationResourceDetail;
+  locked: string | null;
+}) {
+  return (
+    <div className="grid gap-3">
+      {locked ? <Alert tone="warning">{locked}。</Alert> : null}
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <DetailCard title="概览">
+          <DetailRow label="名称" value={item.name} />
+          <DetailRow
+            label="类型"
+            value={
+              <span className="zke-mono text-xs">
+                {item.api_version} · {item.kind}
+              </span>
+            }
+          />
+          {item.namespace ? <DetailRow label="命名空间" value={item.namespace} /> : null}
+          <DetailRow
+            label="UID"
+            value={<span className="zke-mono text-xs break-all">{item.uid || "—"}</span>}
+          />
+          <DetailRow
+            label="版本"
+            value={<span className="zke-mono text-xs">{item.resource_version || "—"}</span>}
+          />
+          {item.role_ref ? (
+            <DetailRow
+              label="引用角色"
+              value={
+                <span className="break-all">
+                  {item.role_ref.kind}/{item.role_ref.name}
+                  <span className="text-subtle-foreground ml-2 text-xs">创建后不可更改</span>
+                </span>
+              }
+            />
+          ) : null}
+          {item.resource === "serviceaccounts" ? (
+            <>
+              <DetailRow
+                label="自动挂载 Token"
+                value={
+                  item.automount_service_account_token === undefined
+                    ? "默认"
+                    : item.automount_service_account_token
+                      ? "是"
+                      : "否"
+                }
+              />
+              <DetailRow
+                label="Secret 引用"
+                value={
+                  <span>
+                    {item.secret_reference_count} 个
+                    <span className="text-subtle-foreground ml-2 text-xs">
+                      接口不返回 Secret 名称或正文
+                    </span>
+                  </span>
+                }
+              />
+            </>
+          ) : null}
+          <DetailRow label="创建时间" value={formatAbsolute(item.creation_timestamp)} />
+        </DetailCard>
+
+        <DetailCard title="标签">
+          <DetailKeyValues entries={item.labels} />
+        </DetailCard>
+        <DetailCard title="注解">
+          <DetailKeyValues entries={item.annotations} />
+        </DetailCard>
+      </div>
+
+      {hasRules(item.resource) ? (
+        <DetailCard title="规则">
+          {item.rules.length === 0 ? (
+            <DetailRow label="规则" value="—" />
+          ) : (
+            <div className="grid gap-2 py-1">
+              {item.rules.map((rule, index) => (
+                <div
+                  key={index}
+                  className="border-border/50 grid gap-0.5 border-b pb-2 text-[13px] last:border-b-0 last:pb-0"
+                >
+                  <span className="zke-mono text-foreground text-xs break-all">
+                    {rule.verbs.join(", ") || "—"}
+                  </span>
+                  <span className="text-muted-foreground text-xs break-all">
+                    {ruleTargets(rule)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </DetailCard>
+      ) : null}
+
+      {isBinding(item.resource) ? (
+        <DetailCard title="主体">
+          {item.subjects.length === 0 ? (
+            <DetailRow label="主体" value="—" />
+          ) : (
+            item.subjects.map((subject, index) => (
+              <DetailRow
+                key={`${subject.kind}/${subject.namespace}/${subject.name}/${index}`}
+                label={subject.kind}
+                value={
+                  <span className="break-all">
+                    {subject.namespace ? `${subject.namespace}/` : ""}
+                    {subject.name}
+                  </span>
+                }
+              />
+            ))
+          )}
+        </DetailCard>
+      ) : null}
+    </div>
+  );
+}
+
+/** What one policy rule applies to, in the order Kubernetes reads it. */
+function ruleTargets(rule: KubernetesAuthorizationResourceDetail["rules"][number]): string {
+  if (rule.non_resource_urls.length > 0) {
+    return `非资源路径 ${rule.non_resource_urls.join(", ")}`;
+  }
+  const groups = rule.api_groups.map((group) => group || "core").join(", ") || "—";
+  const names =
+    rule.resource_names.length > 0 ? `（限定名称 ${rule.resource_names.join(", ")}）` : "";
+  return `${groups} / ${rule.resources.join(", ") || "—"}${names}`;
+}
