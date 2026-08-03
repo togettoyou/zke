@@ -637,3 +637,121 @@ func testUnstructuredNode(
 		},
 	}}
 }
+
+// The discovery catalog has to say which resources come from a CRD, because
+// Kubernetes discovery does not: a CRD-backed resource looks exactly like a
+// built-in one, and the browser's "custom resources only" filter is built on
+// this bit.
+func TestKubernetesResourceDiscoveryMarksCustomResourceDefinitions(t *testing.T) {
+	t.Parallel()
+
+	definition := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata":   map[string]any{"name": "widgets.example.io"},
+		"spec": map[string]any{
+			"group": "example.io",
+			"names": map[string]any{"plural": "widgets", "kind": "Widget"},
+		},
+	}}
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{
+			Group:   "apiextensions.k8s.io",
+			Version: "v1",
+			Kind:    "CustomResourceDefinitionList",
+		},
+		&unstructured.UnstructuredList{},
+	)
+	client := dynamicfake.NewSimpleDynamicClient(scheme, definition)
+	fakeDiscovery := &discoveryfake.FakeDiscovery{
+		Fake: &k8stesting.Fake{
+			Resources: []*metav1.APIResourceList{
+				{
+					GroupVersion: "v1",
+					APIResources: []metav1.APIResource{{
+						Name:       "nodes",
+						Kind:       "Node",
+						Namespaced: false,
+						Verbs:      metav1.Verbs{"get", "list"},
+					}},
+				},
+				{
+					GroupVersion: "example.io/v1alpha1",
+					APIResources: []metav1.APIResource{{
+						Name:       "widgets",
+						Kind:       "Widget",
+						Namespaced: true,
+						Verbs:      metav1.Verbs{"get", "list"},
+					}},
+				},
+			},
+		},
+	}
+	handler := newKubernetesResourceHandler(client, fakeDiscovery, 1024*1024)
+	response, body, err := handler(
+		context.Background(),
+		&agentv1.ResourceRequest{Verb: agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog kubernetescatalog.Catalog
+	if err := json.Unmarshal(payload, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK ||
+		!catalog.CustomResourcesKnown ||
+		len(catalog.Resources) != 2 {
+		t.Fatalf("unexpected catalog: %+v", catalog)
+	}
+	if catalog.Resources[0].Resource != "nodes" || catalog.Resources[0].CustomResource ||
+		catalog.Resources[1].Resource != "widgets" || !catalog.Resources[1].CustomResource {
+		t.Fatalf("unexpected custom resource marking: %+v", catalog.Resources)
+	}
+}
+
+// Without the CRD read the answer is unknown rather than false, so a filter
+// built on it can say so instead of showing an empty cluster.
+func TestKubernetesResourceDiscoveryWithoutCustomResourceAccess(t *testing.T) {
+	t.Parallel()
+
+	fakeDiscovery := &discoveryfake.FakeDiscovery{
+		Fake: &k8stesting.Fake{
+			Resources: []*metav1.APIResourceList{{
+				GroupVersion: "v1",
+				APIResources: []metav1.APIResource{{
+					Name:       "nodes",
+					Kind:       "Node",
+					Namespaced: false,
+					Verbs:      metav1.Verbs{"get", "list"},
+				}},
+			}},
+		},
+	}
+	handler := newKubernetesResourceHandler(nil, fakeDiscovery, 1024*1024)
+	_, body, err := handler(
+		context.Background(),
+		&agentv1.ResourceRequest{Verb: agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog kubernetescatalog.Catalog
+	if err := json.Unmarshal(payload, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if catalog.CustomResourcesKnown || len(catalog.Resources) != 1 || catalog.Resources[0].CustomResource {
+		t.Fatalf("unexpected catalog without CRD access: %+v", catalog)
+	}
+}

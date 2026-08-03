@@ -122,6 +122,12 @@ UID/resourceVersion；ResourceQuota 的 scopes、PriorityClass 的 value 和 Pod
 直接引用内置 `zke-agent` 角色，最终提权检查仍由 Kubernetes API Server 执行。ZKE 管理的 Agent 授权对象禁止
 经该接口更新或删除。
 
+资源对象浏览器不引入新的权限面：资源目录与对象列表使用 `cluster.read`，YAML 编辑使用
+`cluster.resource.update`，删除使用 `cluster.resource.delete` 并要求 UID/resourceVersion 前置条件、CSRF、
+幂等键与显式确认。它能看到的范围就是通用 Resource 接口的范围——Secret 与 Event 被 Agent 拒绝，五类 Kubernetes
+授权资源被 Server 从该入口排除——因此浏览器不会成为绕过 `cluster.rbac.*` 或敏感资源限制的旁路。CRD 判定所需的
+`customresourcedefinitions` 只读权限属于 Agent ServiceAccount，不改变调用者在 ZKE 中的权限。
+
 YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限；
 Kubernetes 授权资源从该入口排除，避免绕过 `cluster.rbac.*`。
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与

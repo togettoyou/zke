@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Layers,
   Network,
+  Search,
   Server,
   ShieldCheck,
 } from "lucide-react";
@@ -40,6 +41,7 @@ import { NodeSection } from "./NodeSection";
 import { OverviewSection } from "./OverviewSection";
 import { PodSection } from "./PodSection";
 import { PolicySection } from "./PolicySection";
+import { ResourceBrowserSection } from "./ResourceBrowserSection";
 import { useTargetClusterStore, useTargetNamespaceStore } from "./selection-store";
 import { WorkloadSection } from "./WorkloadSection";
 
@@ -58,6 +60,7 @@ const NAV: AppNavItem[] = [
   { id: "storage", label: "存储", icon: Database },
   { id: "autoscaling", label: "自动伸缩", icon: Gauge },
   { id: "policies", label: "策略管理", icon: ShieldCheck },
+  { id: "browser", label: "资源对象浏览器", icon: Search },
   { id: "authorization", label: "授权管理", icon: KeyRound },
   { id: "events", label: "事件", icon: Bell },
 ];
@@ -332,6 +335,14 @@ export function ContainerServiceApp() {
           tenantId={scope.tenantId}
           projectId={scope.projectId}
           onNamespaceScopeChange={setAuthorizationNamespaced}
+        />
+      ) : activeSection === "browser" ? (
+        <ResourceBrowserSection
+          key={clusterId}
+          clusterId={clusterId}
+          clusterName={clusterName}
+          tenantId={scope.tenantId}
+          projectId={scope.projectId}
         />
       ) : activeSection === "policies" ? (
         <PolicySection

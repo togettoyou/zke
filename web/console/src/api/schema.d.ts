@@ -1579,6 +1579,8 @@ export interface components {
             resource: string;
             kind: string;
             namespaced: boolean;
+            /** @description true 表示该资源由集群中的 CustomResourceDefinition 提供；仅在 custom_resources_known 为 true 时有意义。 */
+            custom_resource: boolean;
             verbs: ("get" | "list" | "create" | "update" | "patch" | "delete")[];
             short_names?: string[];
             categories?: string[];
@@ -1587,6 +1589,8 @@ export interface components {
             resources: components["schemas"]["KubernetesResourceType"][];
             /** @description true 表示一个或多个 Aggregated API Group 发现失败，目录只包含成功部分。 */
             partial: boolean;
+            /** @description true 表示 Agent 成功读取了集群的 CustomResourceDefinition 列表，custom_resource 才有意义； false 表示无法判定，此时所有 custom_resource 均为 false 只代表未知。 */
+            custom_resources_known: boolean;
         };
         /** @description Kubernetes Unstructured JSON 对象；metadata.managedFields 已移除。 */
         KubernetesUnstructuredResource: {

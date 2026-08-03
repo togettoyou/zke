@@ -7,6 +7,12 @@ package kubernetescatalog
 type Catalog struct {
 	Resources []Resource `json:"resources"`
 	Partial   bool       `json:"partial"`
+	// CustomResourcesKnown reports whether the Agent could read the cluster's
+	// CustomResourceDefinitions. Kubernetes discovery does not say which
+	// resources come from a CRD, so the answer requires a second read that may
+	// be unavailable — and when it is, every Resource.CustomResource below is
+	// false because it is unknown, not because it is false.
+	CustomResourcesKnown bool `json:"custom_resources_known"`
 }
 
 // Resource describes one primary Kubernetes API resource. Subresources are
@@ -20,4 +26,8 @@ type Resource struct {
 	Verbs      []string `json:"verbs"`
 	ShortNames []string `json:"short_names,omitempty"`
 	Categories []string `json:"categories,omitempty"`
+	// CustomResource is true when a CustomResourceDefinition in this cluster
+	// serves this group and plural name. Only meaningful while the catalog
+	// reports CustomResourcesKnown.
+	CustomResource bool `json:"custom_resource"`
 }

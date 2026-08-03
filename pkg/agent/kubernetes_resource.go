@@ -74,6 +74,7 @@ func newKubernetesResourceHandler(
 		if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER {
 			return discoverKubernetesResources(
 				ctx,
+				client,
 				discoveryClient,
 				maxBodyBytes,
 			)
@@ -402,8 +403,68 @@ func sensitiveKubernetesResource(group string, resource string) bool {
 	return group == "" && (resource == "secrets" || resource == "events")
 }
 
+var customResourceDefinitionResource = schema.GroupVersionResource{
+	Group:    "apiextensions.k8s.io",
+	Version:  "v1",
+	Resource: "customresourcedefinitions",
+}
+
+const (
+	customResourceDefinitionPageSize = 256
+	maxCustomResourceDefinitionPages = 16
+)
+
+func customResourceKey(group string, resource string) string {
+	return group + "/" + resource
+}
+
+// customResourceDefinitionNames answers which discovered resources are served
+// by a CustomResourceDefinition.
+//
+// Kubernetes API discovery does not carry that fact — a CRD-backed resource
+// looks exactly like a built-in one — so it has to be read from the CRD objects
+// themselves. The second return value is whether the answer is known at all:
+// the read needs its own RBAC and may be refused, and a browser that filtered
+// on "custom" using a silently empty set would show an empty list and call it a
+// cluster without CRDs.
+func customResourceDefinitionNames(
+	ctx context.Context,
+	client dynamic.Interface,
+) (map[string]struct{}, bool) {
+	if client == nil {
+		return nil, false
+	}
+	names := make(map[string]struct{})
+	continueToken := ""
+	for page := 0; page < maxCustomResourceDefinitionPages; page++ {
+		list, err := client.Resource(customResourceDefinitionResource).List(ctx, metav1.ListOptions{
+			Limit:    customResourceDefinitionPageSize,
+			Continue: continueToken,
+		})
+		if err != nil {
+			return nil, false
+		}
+		for index := range list.Items {
+			group, _, _ := unstructured.NestedString(list.Items[index].Object, "spec", "group")
+			plural, _, _ := unstructured.NestedString(list.Items[index].Object, "spec", "names", "plural")
+			if group == "" || plural == "" {
+				continue
+			}
+			names[customResourceKey(group, plural)] = struct{}{}
+		}
+		continueToken = list.GetContinue()
+		if continueToken == "" {
+			return names, true
+		}
+	}
+	// More CRDs than this will read. Reporting what was collected would mark the
+	// unread remainder as built-in, so the whole answer is withheld instead.
+	return nil, false
+}
+
 func discoverKubernetesResources(
 	ctx context.Context,
+	dynamicClient dynamic.Interface,
 	client discovery.DiscoveryInterface,
 	maxBodyBytes uint64,
 ) (*agentv1.ResourceResponse, io.Reader, error) {
@@ -431,9 +492,11 @@ func discoverKubernetesResources(
 		), nil, nil
 	}
 
+	customResources, customResourcesKnown := customResourceDefinitionNames(ctx, dynamicClient)
 	catalog := kubernetescatalog.Catalog{
-		Resources: make([]kubernetescatalog.Resource, 0),
-		Partial:   discoveryErr != nil,
+		Resources:            make([]kubernetescatalog.Resource, 0),
+		Partial:              discoveryErr != nil,
+		CustomResourcesKnown: customResourcesKnown,
 	}
 	seen := make(map[string]struct{})
 	for _, list := range lists {
@@ -471,17 +534,19 @@ func discoverKubernetesResources(
 				continue
 			}
 			seen[key] = struct{}{}
+			_, customResource := customResources[customResourceKey(group, apiResource.Name)]
 			catalog.Resources = append(
 				catalog.Resources,
 				kubernetescatalog.Resource{
-					Group:      group,
-					Version:    version,
-					Resource:   apiResource.Name,
-					Kind:       apiResource.Kind,
-					Namespaced: apiResource.Namespaced,
-					Verbs:      verbs,
-					ShortNames: append([]string(nil), apiResource.ShortNames...),
-					Categories: append([]string(nil), apiResource.Categories...),
+					Group:          group,
+					Version:        version,
+					Resource:       apiResource.Name,
+					Kind:           apiResource.Kind,
+					Namespaced:     apiResource.Namespaced,
+					Verbs:          verbs,
+					ShortNames:     append([]string(nil), apiResource.ShortNames...),
+					Categories:     append([]string(nil), apiResource.Categories...),
+					CustomResource: customResource,
 				},
 			)
 		}

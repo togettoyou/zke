@@ -68,7 +68,9 @@
   `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}`：
   集群级 PriorityClass 的类型化 CRUD，命名空间级与集群级互相拒绝对方的作用域；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resource-types`：返回目标 Cluster 当前 Discovery 可见的
-  内置资源和 CRD 资源目录；
+  内置资源和 CRD 资源目录，并逐条标记该资源是否由 CustomResourceDefinition 提供；Kubernetes Discovery
+  本身不携带这一事实，Agent 需要另外读取 CRD 列表，读不到时目录用 `custom_resources_known=false`
+  说明该判定不可用，而不是把所有资源当成内置资源；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resources`：按 GVR、Namespace、Selector 和 Kubernetes
   continuation token 查询任意已授权主资源；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}`：按 GVR、Namespace 和名称读取
@@ -97,8 +99,9 @@
   DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
   StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、
   PriorityClass、ServiceAccount 及四类 Kubernetes RBAC 资源的
-  `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
-  `create`；Eviction Subresource 仍未授权，
+  `get`、`list`、`create`、`update`、`delete`，`apiextensions.k8s.io/v1 customresourcedefinitions` 的只读
+  `get`、`list`（仅用于判定哪些资源来自 CRD，不含定义或修改 CRD 的能力），并单独授予 `pods/log` 的 `get`
+  和 `pods/exec` 的 `create`；Eviction Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
 
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
@@ -273,6 +276,19 @@ matchExpressions——按当前值原样回传并在界面上说明，需要修�
 
 策略是否真正生效取决于集群自身：NetworkPolicy 需要支持它的 CNI，配额与限制范围由 API Server 准入控制执行。
 ZKE 不安装网络插件，也不为不支持的插件伪造效果。
+
+资源对象浏览器不是又一个类型化模块，而是通用 Discovery 与通用 Resource 接口的一个视图：左侧资源树直接来自
+目标集群 Agent 的 API Discovery，按 API Group、Version 和资源名分层，右侧按 Kubernetes 原样列出该类型的对象。
+「仅显示 CRD」筛选依赖目录中的 `custom_resource` 标记；该标记来自 Agent 对 CustomResourceDefinition 列表的
+只读查询，读不到时界面明说无法判定并提示需要补充的最小 RBAC，而不是给出一个看起来「没有 CRD」的空列表。
+
+浏览器只提供读取、YAML 编辑和删除三件事，且都复用既有链路：读取要求 `cluster.read`，YAML 编辑走
+`cluster.resource.update`，删除走 `cluster.resource.delete` 并携带该对象当前的 UID 与 resourceVersion 前置
+条件、Background 传播策略、DryRun 与显式确认。它不为未知类型编造类型化表单——对一个 ZKE 不认识其语义的 CR，
+YAML 是唯一诚实的编辑方式。命名空间选择器提供「所有命名空间」，对应通用接口省略 Namespace 参数的跨命名空间
+查询；名称筛选只作用于已加载的当前页并在界面上说明，因为 Kubernetes Field Selector 只能精确匹配名称，把它
+当成模糊搜索会静默变成另一种语义。Secret、Event 和五类 Kubernetes 授权资源不出现在这里：它们分别被通用接口
+拒绝或只允许走专用链路。
 
 Kubernetes 授权管理后端把命名空间级 ServiceAccount、Role、RoleBinding 与集群级 ClusterRole、
 ClusterRoleBinding 分开定域。Role/ClusterRole 类型化写入完整规则，RoleBinding/ClusterRoleBinding 更新只替换

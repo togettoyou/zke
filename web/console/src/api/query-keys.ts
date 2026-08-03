@@ -67,6 +67,14 @@ export const queryKeys = {
   ) => ["storage-resources", clusterId, namespace, resource, params] as const,
   storageResource: (clusterId: string, namespace: string, resource: string, name: string) =>
     ["storage-resource", clusterId, namespace, resource, name] as const,
+  resourceTypes: (clusterId: string) => ["resource-types", clusterId] as const,
+  genericResources: (
+    clusterId: string,
+    /** `group/version/resource`, because the browser addresses every kind alike. */
+    gvr: string,
+    namespace: string,
+    params: Record<string, unknown> = {},
+  ) => ["generic-resources", clusterId, gvr, namespace, params] as const,
   policyResources: (
     clusterId: string,
     namespace: string,
@@ -128,6 +136,7 @@ export const queryKeyPrefixes = {
   authorizationResource: ["authorization-resource"] as const,
   storageResources: ["storage-resources"] as const,
   storageResource: ["storage-resource"] as const,
+  genericResources: ["generic-resources"] as const,
   policyResources: ["policy-resources"] as const,
   policyResource: ["policy-resource"] as const,
   auditEvents: ["audit-events"] as const,

@@ -72,6 +72,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   Deployment/StatefulSet 目标约束，Resource/ContainerResource 指标、ScaleUp/ScaleDown Behavior、DryRun、
   确认、幂等、并发身份保护、审计和 Agent 最小 RBAC，以及 Console 的列表/详情、类型化创建与编辑表单和
   删除闭环；Metrics Server/Adapter 由集群自行安装，VPA 与 KEDA 尚未实现）
+- [x] 资源对象浏览器（基于通用 Discovery 与通用 Resource 接口的资源树与对象列表，目录逐条标记 CRD 来源并在
+  无法判定时明确报告，支持「仅显示 CRD」筛选、跨命名空间查询、YAML 查看与编辑，以及带 UID/resourceVersion
+  前置条件、DryRun 与确认的删除；Secret、Event 与 Kubernetes 授权资源仍被排除在该入口之外）
 - [x] 策略管理（命名空间级 ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget 与集群级
   PriorityClass 的类型化 List/Detail/Create/Update/Delete，两种作用域分路由隔离，整份托管 spec 替换式更新、
   Kubernetes 不可变字段保护（ResourceQuota scopes、PriorityClass value、PDB selector）、DryRun、确认、幂等、

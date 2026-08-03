@@ -356,6 +356,15 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "create", "update", "delete"},
 			},
 			{
+				// Read-only, and only to answer which discovered resources come
+				// from a CRD — Kubernetes discovery does not carry that fact and
+				// the resource browser's custom-resource filter is built on it.
+				// Defining or changing CRDs is not a capability the Agent has.
+				APIGroups: []string{"apiextensions.k8s.io"},
+				Resources: []string{"customresourcedefinitions"},
+				Verbs:     []string{"get", "list"},
+			},
+			{
 				APIGroups: []string{""},
 				Resources: []string{"serviceaccounts"},
 				Verbs:     []string{"get", "list", "create", "update", "delete"},
