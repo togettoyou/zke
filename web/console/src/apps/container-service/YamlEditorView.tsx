@@ -9,8 +9,8 @@ import { SectionTitle } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { CopyButton } from "@/components/common/status";
 import { ErrorState, LoadingState } from "@/components/common/state";
+import { YamlEditor } from "@/components/common/yaml-editor";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/input";
 import { Alert } from "@/components/ui/misc";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
@@ -153,10 +153,10 @@ export function YamlEditorView({
             </Alert>
           ) : null}
 
-          <Textarea
+          <YamlEditor
             value={text}
-            onChange={(event) => {
-              setDraft(event.target.value);
+            onChange={(next) => {
+              setDraft(next);
               if (update.error) {
                 update.reset();
               }
@@ -165,13 +165,8 @@ export function YamlEditorView({
             // known; otherwise edits made in flight could leave the confirmation
             // dialog previewing an older document than the one on screen.
             readOnly={!canUpdate || update.isPending || source.isFetching}
-            spellCheck={false}
-            autoComplete="off"
-            aria-label={`${identity.name} 的 YAML`}
-            // `whitespace-pre` and no wrapping: YAML is indentation, and a
-            // soft-wrapped line reads as a nesting level that is not there.
-            className="zke-mono min-h-0 flex-1 resize-none overflow-auto text-xs leading-relaxed whitespace-pre"
-            wrap="off"
+            label={`${identity.name} 的 YAML`}
+            className="min-h-0 flex-1"
           />
 
           <div className="text-subtle-foreground mt-3 flex flex-wrap items-center gap-3 text-xs">

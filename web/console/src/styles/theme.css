@@ -146,6 +146,30 @@
      heavy blue bar around itself. */
   --ring-soft: rgb(59 91 219 / 0.16);
 
+  /*
+   * Syntax ink for the YAML editor.
+   *
+   * Six colours, not a full theme's worth, and the restraint is the point: an
+   * operator reads these documents to answer "what is this object, and what am
+   * I about to change". Structure — the keys, and the punctuation that carries
+   * nesting — is what has to stand out; values are read one at a time and are
+   * better left in the body colour than dyed uniformly.
+   *
+   * So numbers, booleans and null share one colour rather than each getting
+   * their own, plain scalars get none at all, and the accent is spent on the
+   * three things that change meaning: the key, a quoted string, and a comment
+   * that is not part of the object.
+   *
+   * Kept separate from the semantic palette on purpose. `--danger` red on a
+   * token would read as an error in a document that has none.
+   */
+  --code-key: #2a55c4;
+  --code-string: #12694a;
+  --code-literal: #7b3fbf;
+  --code-comment: #78828f;
+  --code-punctuation: #8b94a1;
+  --code-meta: #9a5b06;
+
   /* Selection gets its own value rather than reusing `--primary-surface`: that
      token is tuned to sit quietly behind a badge, which is the wrong weight for
      a highlight the user is meant to catch at a glance. Kept translucent so it
@@ -239,6 +263,15 @@
   --ring: #7f97f5;
   --ring-soft: rgb(127 151 245 / 0.26);
 
+  /* Lifted and desaturated for a dark surface: the light theme's values are
+     tuned for contrast against white and go muddy here. */
+  --code-key: #8fb2ff;
+  --code-string: #6ed49b;
+  --code-literal: #c9a2ff;
+  --code-comment: #7f8b9c;
+  --code-punctuation: #7f8b9c;
+  --code-meta: #f0c274;
+
   /* Dark surfaces swallow a tint, so the highlight carries more of it. */
   --selection: rgb(127 151 245 / 0.34);
 
@@ -291,6 +324,13 @@
   --color-neutral-surface: var(--neutral-surface);
 
   --color-ring: var(--ring);
+
+  --color-code-key: var(--code-key);
+  --color-code-string: var(--code-string);
+  --color-code-literal: var(--code-literal);
+  --color-code-comment: var(--code-comment);
+  --color-code-punctuation: var(--code-punctuation);
+  --color-code-meta: var(--code-meta);
 
   /* Lift and settle. The default curve eases in as well as out, which on a 4px
      travel reads as a nudge rather than a rise; this leaves at once and arrives
@@ -482,6 +522,20 @@
   .zke-focus-within:focus-within {
     border-color: var(--ring);
     box-shadow: 0 0 0 3px var(--ring-soft);
+  }
+
+  /*
+   * The transparent text layer of the YAML editor.
+   *
+   * Its characters are invisible so the highlighted layer behind shows through
+   * — but the base `::selection` rule forces `--foreground` on selected text,
+   * which would make exactly the selected run pop back into body colour on top
+   * of its own coloured copy. Only the colour is overridden here; the selection
+   * background still comes from that rule, and it is the whole reason a
+   * selection is visible at all through a transparent control.
+   */
+  .zke-code-input::selection {
+    color: transparent;
   }
 
   /* Numeric and identifier columns line up only with tabular figures. */
