@@ -199,7 +199,7 @@ Deployment。不会创建 Kubernetes Service，
 或 `apply` 该 identity Secret，避免覆盖 Agent 已签发的身份。Enrollment Secret 默认保留；Agent 通过
 Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Secret。
 
-该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、ServiceAccount、四类 RBAC 资源、Pod Logs 和 Kubernetes Event 当前后端能力。
+该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass、ServiceAccount、四类 RBAC 资源、Pod Logs 和 Kubernetes Event 当前后端能力。
 其中 Node、Namespace 和 Pod 的 `update` 用于完整 YAML 管理，Pod Logs 只增加 `pods/log` 的 `get`，Pod Exec
 只增加 `pods/exec` 的 `create`，Event 只增加 `events` 的 `get/list/watch`，不授予 Eviction。Agent 的通用
 Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限；需要读取或变更更多内置资源、CRD 或 CR 时，安装方
@@ -213,7 +213,10 @@ Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限；需要读取�
 接入的集群还需增加
 `core/v1 persistentvolumes,persistentvolumeclaims` 与 `storage.k8s.io/v1 storageclasses` 的
 `get`、`list`、`create`、`update`、`delete`。在 ConfigMap 后端上线前接入的集群还需增加
-`core/v1 configmaps` 的相同权限。更早的清单还需把 Node、Namespace 和
+`core/v1 configmaps` 的相同权限。在策略管理后端上线前接入的集群需要增加
+`core/v1 resourcequotas,limitranges`、`policy/v1 poddisruptionbudgets`、
+`scheduling.k8s.io/v1 priorityclasses` 的 `get`、`list`、`create`、`update`、`delete`，并把
+`networking.k8s.io` 规则从 `ingresses` 扩展为 `ingresses,networkpolicies`。更早的清单还需把 Node、Namespace 和
 Pod 的规则更新为包含 `update`；两种情况都无需扩大到通配资源或绑定 `cluster-admin`。
 
 ## 4. Agent 首次注册

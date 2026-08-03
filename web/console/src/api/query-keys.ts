@@ -67,6 +67,14 @@ export const queryKeys = {
   ) => ["storage-resources", clusterId, namespace, resource, params] as const,
   storageResource: (clusterId: string, namespace: string, resource: string, name: string) =>
     ["storage-resource", clusterId, namespace, resource, name] as const,
+  policyResources: (
+    clusterId: string,
+    namespace: string,
+    resource: string,
+    params: Record<string, unknown> = {},
+  ) => ["policy-resources", clusterId, namespace, resource, params] as const,
+  policyResource: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["policy-resource", clusterId, namespace, resource, name] as const,
   configMaps: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
     ["config-maps", clusterId, namespace, params] as const,
   configMap: (clusterId: string, namespace: string, name: string) =>
@@ -120,5 +128,7 @@ export const queryKeyPrefixes = {
   authorizationResource: ["authorization-resource"] as const,
   storageResources: ["storage-resources"] as const,
   storageResource: ["storage-resource"] as const,
+  policyResources: ["policy-resources"] as const,
+  policyResource: ["policy-resource"] as const,
   auditEvents: ["audit-events"] as const,
 } as const;

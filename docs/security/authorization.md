@@ -107,6 +107,13 @@ HorizontalPodAutoscaler 类型化接口固定 `autoscaling/v2` 和明确 Namespa
 要求 CSRF、幂等键和显式确认，更新前重新读取并核对 HPA UID/resourceVersion，删除把二者作为 Kubernetes
 前置条件。审计记录 HPA 资源身份和操作结果，不记录指标 Selector 或完整 spec 正文。
 
+ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget 与 PriorityClass 同样沿用 `cluster.read` 和
+`cluster.resource.create/update/delete`：这五类对象约束工作负载可以做什么，但不能提升调用者自身在 ZKE 或
+Kubernetes 中的权限，因此不引入独立权限位，也不从通用 Resource/YAML 入口排除。HTTP 与领域层同时校验作用域，
+前四类必须指定 Namespace，PriorityClass 必须是集群级。更新替换整份托管 spec，并在写入前重新读取对象核对
+UID/resourceVersion；ResourceQuota 的 scopes、PriorityClass 的 value 和 PodDisruptionBudget 的 selector 不接受
+类型化修改。实际写入要求 CSRF、幂等键和显式确认；审计记录资源身份与结果，不记录 spec 正文。
+
 目标集群内的 Kubernetes RBAC 使用独立的 `cluster.rbac.read` 与 `cluster.rbac.manage`，不复用普通
 `cluster.read` 或 `cluster.resource.*`。ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding
 从通用 Resource/YAML API 排除，只能通过固定资源类型和作用域的专用接口访问。写入需要 CSRF、DryRun、确认、

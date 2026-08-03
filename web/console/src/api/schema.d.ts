@@ -964,6 +964,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/policies/{policy_resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 分页查询集群级 PriorityClass；配额、限制范围、网络策略和中断预算必须使用命名空间级路径。 */
+        get: operations["listKubernetesClusterPolicies"];
+        put?: never;
+        /** @description 创建 PriorityClass；实际写入要求显式确认，dry-run 使用 Kubernetes 服务端校验。 */
+        post: operations["createKubernetesClusterPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询一个 PriorityClass 的类型化详情。 */
+        get: operations["getKubernetesClusterPolicy"];
+        /** @description 更新 PriorityClass 的描述与集群默认开关；value 在 Kubernetes 中不可变，不在类型化更新范围内。要求 UID、resourceVersion、显式确认并支持 dry-run。 */
+        put: operations["updateKubernetesClusterPolicy"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除 PriorityClass；实际删除要求显式确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesClusterPolicy"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 在明确的 Cluster 和 Namespace 中分页查询 ResourceQuota、LimitRange、NetworkPolicy 或 PodDisruptionBudget。 */
+        get: operations["listKubernetesNamespacedPolicies"];
+        put?: never;
+        /** @description 在明确的 Namespace 中创建一个策略对象；实际写入要求显式确认，dry-run 使用 Kubernetes 服务端校验。 */
+        post: operations["createKubernetesNamespacedPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询一个命名空间级策略对象的类型化详情与状态。 */
+        get: operations["getKubernetesNamespacedPolicy"];
+        /** @description 替换一个命名空间级策略对象的托管 spec；PodDisruptionBudget 的 selector 不在更新范围内。要求 UID、resourceVersion、显式确认并支持 dry-run。 */
+        put: operations["updateKubernetesNamespacedPolicy"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除一个命名空间级策略对象；实际删除要求显式确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesNamespacedPolicy"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/authorization/{authorization_resource}": {
         parameters: {
             query?: never;
@@ -2620,6 +2694,211 @@ export interface components {
             dry_run: boolean;
             target: string;
         };
+        /** @enum {string} */
+        KubernetesPolicyResource: "resourcequotas" | "limitranges" | "networkpolicies" | "poddisruptionbudgets" | "priorityclasses";
+        KubernetesPolicyQuantityMap: {
+            [key: string]: string;
+        };
+        KubernetesPolicyScopeSelectorRequirement: {
+            /** @enum {string} */
+            scope_name: "Terminating" | "NotTerminating" | "BestEffort" | "NotBestEffort" | "PriorityClass" | "CrossNamespacePodAffinity";
+            /** @enum {string} */
+            operator: "In" | "NotIn" | "Exists" | "DoesNotExist";
+            values: string[];
+        };
+        KubernetesResourceQuotaSummary: {
+            hard: components["schemas"]["KubernetesPolicyQuantityMap"];
+            used: components["schemas"]["KubernetesPolicyQuantityMap"];
+            scopes: string[];
+        };
+        KubernetesResourceQuotaDetail: {
+            scope_selector: components["schemas"]["KubernetesPolicyScopeSelectorRequirement"][];
+        };
+        KubernetesLimitRangeSummary: {
+            types: string[];
+            item_count: number;
+        };
+        KubernetesLimitRangeItem: {
+            /** @enum {string} */
+            type: "Container" | "Pod" | "PersistentVolumeClaim";
+            max?: components["schemas"]["KubernetesPolicyQuantityMap"];
+            min?: components["schemas"]["KubernetesPolicyQuantityMap"];
+            default?: components["schemas"]["KubernetesPolicyQuantityMap"];
+            default_request?: components["schemas"]["KubernetesPolicyQuantityMap"];
+            max_limit_request_ratio?: components["schemas"]["KubernetesPolicyQuantityMap"];
+        };
+        KubernetesLimitRangeDetail: {
+            items: components["schemas"]["KubernetesLimitRangeItem"][];
+        };
+        KubernetesNetworkPolicySummary: {
+            pod_selector?: components["schemas"]["KubernetesWorkloadSelector"];
+            policy_types: ("Ingress" | "Egress")[];
+            ingress_rules: number;
+            egress_rules: number;
+        };
+        KubernetesNetworkPolicyIPBlock: {
+            cidr: string;
+            except?: string[];
+        };
+        KubernetesNetworkPolicyPeer: {
+            pod_selector?: components["schemas"]["KubernetesWorkloadSelector"];
+            namespace_selector?: components["schemas"]["KubernetesWorkloadSelector"];
+            ip_block?: components["schemas"]["KubernetesNetworkPolicyIPBlock"];
+        };
+        KubernetesNetworkPolicyPort: {
+            /** @enum {string} */
+            protocol?: "TCP" | "UDP" | "SCTP";
+            port?: string;
+            end_port?: number;
+        };
+        KubernetesNetworkPolicyRule: {
+            peers?: components["schemas"]["KubernetesNetworkPolicyPeer"][];
+            ports?: components["schemas"]["KubernetesNetworkPolicyPort"][];
+        };
+        KubernetesNetworkPolicyDetail: {
+            ingress: components["schemas"]["KubernetesNetworkPolicyRule"][];
+            egress: components["schemas"]["KubernetesNetworkPolicyRule"][];
+        };
+        KubernetesDisruptionBudgetSummary: {
+            selector?: components["schemas"]["KubernetesWorkloadSelector"];
+            min_available: string;
+            max_unavailable: string;
+            current_healthy: number;
+            desired_healthy: number;
+            disruptions_allowed: number;
+            expected_pods: number;
+        };
+        KubernetesPolicyCondition: {
+            type: string;
+            status: string;
+            reason: string;
+            message: string;
+            last_transition_time: components["schemas"]["Timestamp"];
+        };
+        KubernetesDisruptionBudgetDetail: {
+            unhealthy_pod_eviction_policy: string;
+            conditions: components["schemas"]["KubernetesPolicyCondition"][];
+        };
+        KubernetesPriorityClassSummary: {
+            value: number;
+            global_default: boolean;
+            preemption_policy: string;
+            description: string;
+        };
+        KubernetesPolicyResourceSummary: {
+            resource: components["schemas"]["KubernetesPolicyResource"];
+            api_version: string;
+            /** @enum {string} */
+            kind: "ResourceQuota" | "LimitRange" | "NetworkPolicy" | "PodDisruptionBudget" | "PriorityClass";
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            resource_quota?: components["schemas"]["KubernetesResourceQuotaSummary"];
+            limit_range?: components["schemas"]["KubernetesLimitRangeSummary"];
+            network_policy?: components["schemas"]["KubernetesNetworkPolicySummary"];
+            disruption_budget?: components["schemas"]["KubernetesDisruptionBudgetSummary"];
+            priority_class?: components["schemas"]["KubernetesPriorityClassSummary"];
+        } & (unknown | unknown | unknown | unknown | unknown);
+        KubernetesPolicyResourceDetail: components["schemas"]["KubernetesPolicyResourceSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            resource_quota_detail?: components["schemas"]["KubernetesResourceQuotaDetail"];
+            limit_range_detail?: components["schemas"]["KubernetesLimitRangeDetail"];
+            network_policy_detail?: components["schemas"]["KubernetesNetworkPolicyDetail"];
+            disruption_budget_detail?: components["schemas"]["KubernetesDisruptionBudgetDetail"];
+        };
+        KubernetesPolicyResourcePage: {
+            resources: components["schemas"]["KubernetesPolicyResourceSummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesResourceQuotaSpecInput: {
+            hard: {
+                [key: string]: string;
+            };
+            scopes?: ("Terminating" | "NotTerminating" | "BestEffort" | "NotBestEffort" | "PriorityClass" | "CrossNamespacePodAffinity")[];
+            scope_selector?: components["schemas"]["KubernetesPolicyScopeSelectorRequirement"][];
+        };
+        KubernetesLimitRangeSpecInput: {
+            items: components["schemas"]["KubernetesLimitRangeItem"][];
+        };
+        KubernetesNetworkPolicySpecInput: {
+            pod_selector?: components["schemas"]["KubernetesWorkloadSelector"];
+            policy_types: ("Ingress" | "Egress")[];
+            ingress?: components["schemas"]["KubernetesNetworkPolicyRule"][];
+            egress?: components["schemas"]["KubernetesNetworkPolicyRule"][];
+        };
+        KubernetesDisruptionBudgetSpecInput: {
+            selector: components["schemas"]["KubernetesWorkloadSelector"];
+            min_available?: string;
+            max_unavailable?: string;
+            /** @enum {string} */
+            unhealthy_pod_eviction_policy?: "IfHealthyBudget" | "AlwaysAllow";
+        };
+        KubernetesPriorityClassSpecInput: {
+            value: number;
+            /** @default false */
+            global_default: boolean;
+            /** @enum {string} */
+            preemption_policy?: "PreemptLowerPriority" | "Never";
+            description?: string;
+        };
+        KubernetesPriorityClassUpdateInput: {
+            description?: string;
+            global_default: boolean;
+        };
+        KubernetesCreatePolicyResourceRequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            resource_quota?: components["schemas"]["KubernetesResourceQuotaSpecInput"];
+            limit_range?: components["schemas"]["KubernetesLimitRangeSpecInput"];
+            network_policy?: components["schemas"]["KubernetesNetworkPolicySpecInput"];
+            disruption_budget?: components["schemas"]["KubernetesDisruptionBudgetSpecInput"];
+            priority_class?: components["schemas"]["KubernetesPriorityClassSpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        } & (unknown | unknown | unknown | unknown | unknown);
+        KubernetesUpdatePolicyResourceRequest: {
+            uid: string;
+            resource_version: string;
+            resource_quota?: components["schemas"]["KubernetesResourceQuotaSpecInput"];
+            limit_range?: components["schemas"]["KubernetesLimitRangeSpecInput"];
+            network_policy?: components["schemas"]["KubernetesNetworkPolicySpecInput"];
+            disruption_budget?: components["schemas"]["KubernetesDisruptionBudgetSpecInput"];
+            priority_class?: components["schemas"]["KubernetesPriorityClassUpdateInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        } & (unknown | unknown | unknown | unknown | unknown);
+        KubernetesDeletePolicyResourceRequest: {
+            uid: string;
+            resource_version: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesPolicyMutationResult: {
+            resource: components["schemas"]["KubernetesPolicyResourceDetail"];
+            dry_run: boolean;
+        };
+        KubernetesPolicyDeleteResult: {
+            deleted: boolean;
+            dry_run: boolean;
+            target: string;
+        };
         KubernetesConfigMapSummary: {
             namespace: string;
             name: string;
@@ -3215,6 +3494,50 @@ export interface components {
                 };
             };
         };
+        /** @description 策略资源分页结果 */
+        KubernetesPolicyPageSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesPolicyResourcePage"];
+                };
+            };
+        };
+        /** @description 策略资源详情 */
+        KubernetesPolicyDetailSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesPolicyResourceDetail"];
+                };
+            };
+        };
+        /** @description 策略资源写入结果或 DryRun 预览 */
+        KubernetesPolicyMutationSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesPolicyMutationResult"];
+                };
+            };
+        };
+        /** @description 策略资源删除结果或 DryRun 预览 */
+        KubernetesPolicyDeleteSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesPolicyDeleteResult"];
+                };
+            };
+        };
         /** @description HorizontalPodAutoscaler 分页结果 */
         KubernetesHPAPageSuccess: {
             headers: {
@@ -3430,6 +3753,9 @@ export interface components {
         ClusterStorageResource: "persistentvolumes" | "storageclasses";
         NamespacedStorageResource: "persistentvolumeclaims";
         StorageResourceName: string;
+        ClusterPolicyResource: "priorityclasses";
+        NamespacedPolicyResource: "resourcequotas" | "limitranges" | "networkpolicies" | "poddisruptionbudgets";
+        PolicyResourceName: string;
         ConfigMapName: string;
         KubernetesResourceName: string;
         /** @description Core API Group 使用空字符串或省略该参数。 */
@@ -6087,6 +6413,303 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["KubernetesHPADeleteSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesClusterPolicies: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                policy_resource: components["parameters"]["ClusterPolicyResource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesPolicyPageSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesClusterPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                policy_resource: components["parameters"]["ClusterPolicyResource"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreatePolicyResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesPolicyMutationSuccess"];
+            201: components["responses"]["KubernetesPolicyMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesClusterPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                policy_resource: components["parameters"]["ClusterPolicyResource"];
+                policy_name: components["parameters"]["PolicyResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesPolicyDetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesClusterPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                policy_resource: components["parameters"]["ClusterPolicyResource"];
+                policy_name: components["parameters"]["PolicyResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdatePolicyResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesPolicyMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesClusterPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                policy_resource: components["parameters"]["ClusterPolicyResource"];
+                policy_name: components["parameters"]["PolicyResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeletePolicyResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesPolicyDeleteSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesNamespacedPolicies: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                policy_resource: components["parameters"]["NamespacedPolicyResource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesPolicyPageSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesNamespacedPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                policy_resource: components["parameters"]["NamespacedPolicyResource"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreatePolicyResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesPolicyMutationSuccess"];
+            201: components["responses"]["KubernetesPolicyMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesNamespacedPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                policy_resource: components["parameters"]["NamespacedPolicyResource"];
+                policy_name: components["parameters"]["PolicyResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesPolicyDetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesNamespacedPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                policy_resource: components["parameters"]["NamespacedPolicyResource"];
+                policy_name: components["parameters"]["PolicyResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdatePolicyResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesPolicyMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesNamespacedPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                policy_resource: components["parameters"]["NamespacedPolicyResource"];
+                policy_name: components["parameters"]["PolicyResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeletePolicyResourceRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesPolicyDeleteSuccess"];
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];

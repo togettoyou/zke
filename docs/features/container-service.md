@@ -2,7 +2,8 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass、HorizontalPodAutoscaler 与 Kubernetes RBAC
+当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass、HorizontalPodAutoscaler、
+五类策略对象与 Kubernetes RBAC
 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
 - `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod 和五类工作负载的状态计数，
@@ -60,6 +61,12 @@
   Pod UID、明确容器、`cluster.pod.exec`、CSRF、幂等键和显式确认，创建与用户及登录 Session 绑定的一次性票据；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions/{session_id}`：
   通过同源 `zke.pod-exec.v1` WebSocket 传输 stdin、stdout、stderr、resize 和 exit 帧；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}` 与
+  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}`：
+  ResourceQuota、LimitRange、NetworkPolicy 和 PodDisruptionBudget 的类型化 CRUD；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/policies/{policy_resource}` 与
+  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}`：
+  集群级 PriorityClass 的类型化 CRUD，命名空间级与集群级互相拒绝对方的作用域；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resource-types`：返回目标 Cluster 当前 Discovery 可见的
   内置资源和 CRD 资源目录；
 - `GET /api/v1/clusters/{cluster_id}/kubernetes/resources`：按 GVR、Namespace、Selector 和 Kubernetes
@@ -88,7 +95,8 @@
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
   `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
   DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
-  StorageClass、HorizontalPodAutoscaler、ServiceAccount 及四类 Kubernetes RBAC 资源的
+  StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、
+  PriorityClass、ServiceAccount 及四类 Kubernetes RBAC 资源的
   `get`、`list`、`create`、`update`、`delete`，并单独授予 `pods/log` 的 `get` 和 `pods/exec` 的
   `create`；Eviction Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
@@ -240,6 +248,31 @@ Max/Min/Disabled 选择策略、Pods/Percent 策略）。更新替换整份 spec
 详情仍可读取，编辑请走 YAML。
 
 HPA 摘要同时返回 `generation` 与 `observed_generation`，Console 据此区分控制器尚未处理最新 spec 的状态。
+
+策略管理后端把五类约束放在一组接口下：命名空间级的 `core/v1 ResourceQuota`、`core/v1 LimitRange`、
+`networking.k8s.io/v1 NetworkPolicy`、`policy/v1 PodDisruptionBudget`，以及集群级的
+`scheduling.k8s.io/v1 PriorityClass`。两种作用域是两组路由，互相拒绝对方的资源，因此一个没有 Namespace 的
+对象不会被当成命名空间对象执行。权限沿用通用资源权限：读要求 `cluster.read`，写要求
+`cluster.resource.create/update/delete`、CSRF、幂等键和显式确认——这些对象约束工作负载，但不像 RBAC 那样能
+提升调用者自身的权限，因此不需要独立权限位。
+
+类型化更新替换整份托管 spec 而不是逐字段合并：一份配额或一条网络策略是作为一个整体被读的，逐字段编辑会让
+没人动过的部分看起来是刻意保留的。为此更新前先按 UID 与 resourceVersion 读回对象，任何一项不匹配就返回冲突。
+Kubernetes 自身的不可变约束也被如实反映：ResourceQuota 的 `scopes` 与 PriorityClass 的 `value` 创建后不可
+修改，接口不接受它们的新值；PodDisruptionBudget 的 `selector` 不在更新范围内，因为把预算指向另一组 Pod 会
+悄悄解除原来那组的保护，这与调整预算是两件事。ResourceQuota 的读取优先返回 `status.hard`，那才是集群正在
+执行的额度。NetworkPolicy 写入时校验 CIDR 与 `except` 的包含关系、端口范围和命名端口的组合，并拒绝声明在
+`policyTypes` 之外的方向上写规则——那样的规则会被 Kubernetes 静默忽略，看起来生效而实际没有。
+
+Console 策略管理页面按五种类型分页展示：配额显示 `used/hard` 与作用范围，限制范围显示类型和限制项数量，
+网络策略显示作用对象、方向与规则数，中断预算显示预算、健康副本数与当前允许中断数，优先级显示 value、抢占
+策略和集群默认标记。创建与编辑共用一个表单，因为对四类对象来说它们提交的是同一份 spec；PriorityClass 的编辑
+表单只开放描述与集群默认开关，并说明 value 不可变。表单未建模的高级字段——scopeSelector、selector 的
+matchExpressions——按当前值原样回传并在界面上说明，需要修改时走 YAML。删除确认逐类型说明失去的是哪一重
+约束，例如删除 NetworkPolicy 后未被其他策略选中的 Pod 会回到默认放行。
+
+策略是否真正生效取决于集群自身：NetworkPolicy 需要支持它的 CNI，配额与限制范围由 API Server 准入控制执行。
+ZKE 不安装网络插件，也不为不支持的插件伪造效果。
 
 Kubernetes 授权管理后端把命名空间级 ServiceAccount、Role、RoleBinding 与集群级 ClusterRole、
 ClusterRoleBinding 分开定域。Role/ClusterRole 类型化写入完整规则，RoleBinding/ClusterRoleBinding 更新只替换

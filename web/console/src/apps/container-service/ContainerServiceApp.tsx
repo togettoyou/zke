@@ -11,6 +11,7 @@ import {
   Layers,
   Network,
   Server,
+  ShieldCheck,
 } from "lucide-react";
 
 import { useClusters } from "@/api/queries/clusters";
@@ -38,6 +39,7 @@ import { NetworkingSection } from "./NetworkingSection";
 import { NodeSection } from "./NodeSection";
 import { OverviewSection } from "./OverviewSection";
 import { PodSection } from "./PodSection";
+import { PolicySection } from "./PolicySection";
 import { useTargetClusterStore, useTargetNamespaceStore } from "./selection-store";
 import { WorkloadSection } from "./WorkloadSection";
 
@@ -55,6 +57,7 @@ const NAV: AppNavItem[] = [
   { id: "configmaps", label: "配置管理", icon: FileCog },
   { id: "storage", label: "存储", icon: Database },
   { id: "autoscaling", label: "自动伸缩", icon: Gauge },
+  { id: "policies", label: "策略管理", icon: ShieldCheck },
   { id: "authorization", label: "授权管理", icon: KeyRound },
   { id: "events", label: "事件", icon: Bell },
 ];
@@ -158,10 +161,14 @@ export function ContainerServiceApp() {
   // ClusterRole and ClusterRoleBinding are cluster objects, the other three are
   // namespaced.
   const [authorizationNamespaced, setAuthorizationNamespaced] = useState(true);
+  // Policies too: PriorityClass ranks Pods across the Cluster, the other four
+  // constrain one Namespace.
+  const [policiesNamespaced, setPoliciesNamespaced] = useState(true);
   const namespaced =
     NAMESPACED_SECTIONS.has(activeSection) ||
     (activeSection === "storage" && storageNamespaced) ||
-    (activeSection === "authorization" && authorizationNamespaced);
+    (activeSection === "authorization" && authorizationNamespaced) ||
+    (activeSection === "policies" && policiesNamespaced);
   /*
    * Storage waits for its own Namespace rather than being held behind the shared
    * gate below. Its tabs change scope, so unmounting the section to wait would
@@ -169,7 +176,10 @@ export function ContainerServiceApp() {
    * would bounce straight back to the cluster-scoped one it was just left on.
    */
   const awaitsNamespace =
-    namespaced && activeSection !== "storage" && activeSection !== "authorization";
+    namespaced &&
+    activeSection !== "storage" &&
+    activeSection !== "authorization" &&
+    activeSection !== "policies";
   const namespaces = useNamespaces(namespaced && clusterId ? clusterId : null, {
     limit: NAMESPACE_PICKER_LIMIT,
   });
@@ -322,6 +332,16 @@ export function ContainerServiceApp() {
           tenantId={scope.tenantId}
           projectId={scope.projectId}
           onNamespaceScopeChange={setAuthorizationNamespaced}
+        />
+      ) : activeSection === "policies" ? (
+        <PolicySection
+          key={clusterId}
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={namespace}
+          tenantId={scope.tenantId}
+          projectId={scope.projectId}
+          onNamespaceScopeChange={setPoliciesNamespaced}
         />
       ) : activeSection === "autoscaling" ? (
         <AutoscalerSection

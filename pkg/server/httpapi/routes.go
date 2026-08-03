@@ -621,6 +621,62 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesHPA.delete,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/policies/:policy_resource",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesPolicy.list,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/policies/:policy_resource",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceCreate, "cluster_id"),
+		handlers.kubernetesPolicy.create,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/policies/:policy_resource/:policy_name",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesPolicy.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/policies/:policy_resource/:policy_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceUpdate, "cluster_id"),
+		handlers.kubernetesPolicy.update,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/policies/:policy_resource/:policy_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceDelete, "cluster_id"),
+		handlers.kubernetesPolicy.delete,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/policies/:policy_resource",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesPolicy.list,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/policies/:policy_resource",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceCreate, "cluster_id"),
+		handlers.kubernetesPolicy.create,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/policies/:policy_resource/:policy_name",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesPolicy.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/policies/:policy_resource/:policy_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceUpdate, "cluster_id"),
+		handlers.kubernetesPolicy.update,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/policies/:policy_resource/:policy_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceDelete, "cluster_id"),
+		handlers.kubernetesPolicy.delete,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/authorization/:authorization_resource",
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACRead, "cluster_id"),
 		handlers.kubernetesAuthorization.list,

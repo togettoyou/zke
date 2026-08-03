@@ -541,6 +541,16 @@ POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horiz
 GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}
 PUT  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}
 DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}
+GET  /api/v1/clusters/{cluster_id}/policies/{policy_resource}
+POST /api/v1/clusters/{cluster_id}/policies/{policy_resource}
+GET  /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}
+PUT  /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}
+DELETE /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}
+GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}
+POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}
+GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}
+PUT  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}
+DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}
 GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps
 POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps
 GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps/{config_map_name}

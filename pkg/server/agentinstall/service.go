@@ -340,6 +340,23 @@ func renderManifest(
 			},
 			{
 				APIGroups: []string{""},
+				// The two Namespace-level constraints: how much may be consumed,
+				// and what a container's limits default to.
+				Resources: []string{"resourcequotas", "limitranges"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{"policy"},
+				Resources: []string{"poddisruptionbudgets"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{"scheduling.k8s.io"},
+				Resources: []string{"priorityclasses"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{""},
 				Resources: []string{"serviceaccounts"},
 				Verbs:     []string{"get", "list", "create", "update", "delete"},
 			},
@@ -353,7 +370,7 @@ func renderManifest(
 			},
 			{
 				APIGroups: []string{"networking.k8s.io"},
-				Resources: []string{"ingresses"},
+				Resources: []string{"ingresses", "networkpolicies"},
 				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
