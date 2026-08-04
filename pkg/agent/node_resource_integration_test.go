@@ -103,12 +103,32 @@ func TestCustomResourceDiscoveryListAndGetOverRealQUIC(t *testing.T) {
 		Version:  "v1alpha1",
 		Resource: "widgets",
 	}
+	// Discovery also lists CustomResourceDefinitions, because Kubernetes
+	// discovery does not say which resources come from a CRD. The fake dynamic
+	// client panics on a list kind it was not given — where a real cluster would
+	// return an error the Agent handles — so the CRD list kind has to be
+	// registered here even though only its objects are of interest.
+	definitionGVR := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
 	listKinds := map[schema.GroupVersionResource]string{
-		widgetGVR: "WidgetList",
+		widgetGVR:     "WidgetList",
+		definitionGVR: "CustomResourceDefinitionList",
 	}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
 		k8sruntime.NewScheme(),
 		listKinds,
+		&unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "apiextensions.k8s.io/v1",
+			"kind":       "CustomResourceDefinition",
+			"metadata":   map[string]any{"name": "widgets.example.io"},
+			"spec": map[string]any{
+				"group": "example.io",
+				"names": map[string]any{"plural": "widgets", "kind": "Widget"},
+			},
+		}},
 		&unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "example.io/v1alpha1",
 			"kind":       "Widget",
@@ -150,8 +170,13 @@ func TestCustomResourceDiscoveryListAndGetOverRealQUIC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The CRD read is what makes the marking meaningful, so it is asserted here
+	// rather than only in the unit test: over the real stream the catalog has to
+	// arrive with both the resource and the fact that a CRD provides it.
 	if len(catalog.Resources) != 1 ||
-		catalog.Resources[0].Resource != "widgets" {
+		catalog.Resources[0].Resource != "widgets" ||
+		!catalog.CustomResourcesKnown ||
+		!catalog.Resources[0].CustomResource {
 		t.Fatalf("unexpected discovery catalog over QUIC: %+v", catalog)
 	}
 
