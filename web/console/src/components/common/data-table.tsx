@@ -23,6 +23,17 @@ export type DataTableProps<TData> = {
     value: Pagination | undefined;
     onOffsetChange: (offset: number) => void;
   };
+  /**
+   * Paging for the Kubernetes endpoints, which hand back a continuation token
+   * instead of a total: forward while there is a token, backward through the
+   * tokens already visited.
+   */
+  continuePagination?: {
+    pageIndex: number;
+    nextToken: string;
+    onPrevious: () => void;
+    onNext: (nextToken: string) => void;
+  };
   onRowClick?: (row: TData) => void;
   rowKey?: (row: TData) => string;
 };
@@ -44,6 +55,7 @@ export function DataTable<TData>({
   emptyAction,
   toolbar,
   pagination,
+  continuePagination,
   onRowClick,
   rowKey,
 }: DataTableProps<TData>) {
@@ -138,38 +150,85 @@ export function DataTable<TData>({
         )}
       </div>
 
+      {/*
+       * Both paging models end up here, below the rows, in the same skeleton:
+       * where the reader is on the left, the controls on the right. The
+       * continuation-token lists used to put their controls in the toolbar
+       * above the table, so the same action sat in two different places
+       * depending only on which kind of endpoint the view happened to read.
+       */}
       {page ? (
-        <div className="text-muted-foreground flex items-center justify-between gap-3 px-0.5 text-xs">
-          <span className="zke-tnum">
-            共 {page.total} 条
-            {isFetching ? <span className="text-subtle-foreground ml-2">刷新中…</span> : null}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <span className="zke-mono text-subtle-foreground">
-              {page.total === 0 ? 0 : page.offset + 1}–
-              {Math.min(page.offset + page.limit, page.total)}
-            </span>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="上一页"
-              disabled={!canGoPrevious}
-              onClick={() => pagination?.onOffsetChange(Math.max(0, page.offset - page.limit))}
-            >
-              <ChevronLeft />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="下一页"
-              disabled={!canGoNext}
-              onClick={() => pagination?.onOffsetChange(page.offset + page.limit)}
-            >
-              <ChevronRight />
-            </Button>
-          </div>
-        </div>
+        <TableFooter
+          state={`共 ${page.total} 条`}
+          isFetching={isFetching}
+          position={`${page.total === 0 ? 0 : page.offset + 1}–${Math.min(page.offset + page.limit, page.total)}`}
+          canGoPrevious={canGoPrevious}
+          canGoNext={canGoNext}
+          onPrevious={() => pagination?.onOffsetChange(Math.max(0, page.offset - page.limit))}
+          onNext={() => pagination?.onOffsetChange(page.offset + page.limit)}
+        />
+      ) : continuePagination ? (
+        // A continuation token says there is more, never how much more, so this
+        // side carries the page number and no total — a count assembled from the
+        // pages walked so far would read as the size of the collection.
+        <TableFooter
+          state={`第 ${continuePagination.pageIndex + 1} 页`}
+          isFetching={isFetching}
+          canGoPrevious={continuePagination.pageIndex > 0}
+          canGoNext={Boolean(continuePagination.nextToken)}
+          onPrevious={continuePagination.onPrevious}
+          onNext={() => continuePagination.onNext(continuePagination.nextToken)}
+        />
       ) : null}
+    </div>
+  );
+}
+
+/** The one row under the table that carries paging, for either paging model. */
+function TableFooter({
+  state,
+  isFetching,
+  position,
+  canGoPrevious,
+  canGoNext,
+  onPrevious,
+  onNext,
+}: {
+  state: string;
+  isFetching?: boolean;
+  position?: string;
+  canGoPrevious: boolean;
+  canGoNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="text-muted-foreground flex items-center justify-between gap-3 px-0.5 text-xs">
+      <span className="zke-tnum">
+        {state}
+        {isFetching ? <span className="text-subtle-foreground ml-2">刷新中…</span> : null}
+      </span>
+      <div className="flex items-center gap-1.5">
+        {position ? <span className="zke-mono text-subtle-foreground">{position}</span> : null}
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="上一页"
+          disabled={!canGoPrevious}
+          onClick={onPrevious}
+        >
+          <ChevronLeft />
+        </Button>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="下一页"
+          disabled={!canGoNext}
+          onClick={onNext}
+        >
+          <ChevronRight />
+        </Button>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -9,6 +10,22 @@ export type AppNavItem = {
   icon: LucideIcon;
   hidden?: boolean;
 };
+
+/**
+ * The end of the toolbar row, where the active section puts its own actions.
+ *
+ * The shell owns the row because the scope pickers live there, but the button
+ * that creates a Namespace belongs to the section that knows what creating one
+ * means. Passing the element down and letting the section portal into it keeps
+ * that ownership without the shell having to know about any section's dialogs.
+ */
+const ToolbarActionSlot = createContext<HTMLElement | null>(null);
+
+/** Renders its children at the right end of the enclosing {@link AppShell} toolbar. */
+export function SectionToolbarActions({ children }: { children: ReactNode }) {
+  const slot = useContext(ToolbarActionSlot);
+  return slot ? createPortal(children, slot) : null;
+}
 
 /**
  * Each application owns its navigation inside its window: a narrow rail on the
@@ -30,6 +47,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const visible = nav.filter((item) => !item.hidden);
+  const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
 
   return (
     <div className="flex h-full min-h-0">
@@ -83,9 +101,14 @@ export function AppShell({
         {toolbar ? (
           <div className="border-border bg-surface-muted/30 flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
             {toolbar}
+            {/* `ml-auto` on an empty div costs nothing and keeps section actions
+                pinned to the far end whether or not any are portaled in. */}
+            <div ref={setActionSlot} className="ml-auto flex items-center gap-2" />
           </div>
         ) : null}
-        <div className="min-h-0 flex-1 overflow-auto p-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          <ToolbarActionSlot.Provider value={actionSlot}>{children}</ToolbarActionSlot.Provider>
+        </div>
         {statusBar ? (
           <div className="border-border text-subtle-foreground shrink-0 border-t px-3 py-1.5 text-xs">
             {statusBar}
@@ -96,19 +119,30 @@ export function AppShell({
   );
 }
 
+/**
+ * Heading row of a section: an optional title and description on the left, the
+ * section's actions on the right.
+ *
+ * The title is optional because a list whose category is already named by the
+ * navigation rail and whose target is already named by the toolbar has nothing
+ * left to say in a heading — but it may still own a button, and the button
+ * belongs on this row rather than floating above the table on its own.
+ */
 export function SectionTitle({
   title,
   description,
   actions,
 }: {
-  title: string;
+  title?: string;
   description?: ReactNode;
   actions?: ReactNode;
 }) {
   return (
     <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
-        <h3 className="text-foreground text-sm font-semibold tracking-tight">{title}</h3>
+        {title ? (
+          <h3 className="text-foreground text-sm font-semibold tracking-tight">{title}</h3>
+        ) : null}
         {description ? (
           <p className="text-muted-foreground mt-1 text-xs leading-relaxed">{description}</p>
         ) : null}

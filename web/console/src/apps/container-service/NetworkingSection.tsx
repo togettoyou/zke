@@ -11,11 +11,12 @@ import {
   type NetworkingSummary,
 } from "@/api/queries/networking";
 import type { KubernetesNetworkingResource } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +25,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { ContinuePager } from "./ContinuePager";
 import { NetworkingForm } from "./NetworkingForm";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
@@ -155,7 +155,6 @@ export function NetworkingSection({
     return (
       <NetworkingDetailView
         clusterId={clusterId}
-        clusterName={clusterName}
         namespace={namespace}
         resource={resource}
         name={detailName}
@@ -176,18 +175,15 @@ export function NetworkingSection({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`服务与路由 · ${clusterName} / ${namespace}`}
-        description="创建、更新和删除都先执行 Kubernetes 服务端 DryRun 再由操作者确认。更新携带 UID 与 resourceVersion 前置条件；Kubernetes 分配的字段和未建模的扩展字段由服务端保留。"
-        actions={
-          canCreate && !gatewayMissing ? (
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              <Plus />
-              创建 {networkingKindLabel(resource)}
-            </Button>
-          ) : null
-        }
-      />
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canCreate && !gatewayMissing ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 {networkingKindLabel(resource)}
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
       <Tabs
         value={resource}
         onValueChange={(value) => {
@@ -227,14 +223,12 @@ export function NetworkingSection({
               rowKey={(item) => item.uid || item.name}
               emptyTitle={`该命名空间没有 ${networkingKindLabel(resource)}`}
               emptyDescription={`${namespace} 中没有可见的 ${networkingKindLabel(resource)}。`}
-              toolbar={
-                <ContinuePager
-                  pageIndex={pager.pageIndex}
-                  nextToken={nextToken}
-                  onPrevious={pager.goPrevious}
-                  onNext={pager.goNext}
-                />
-              }
+              continuePagination={{
+                pageIndex: pager.pageIndex,
+                nextToken,
+                onPrevious: pager.goPrevious,
+                onNext: pager.goNext,
+              }}
             />
           )}
         </TabsContent>
@@ -448,7 +442,6 @@ function addressList(entries: { ip: string; hostname: string }[] | undefined): s
 
 function NetworkingDetailView({
   clusterId,
-  clusterName,
   namespace,
   resource,
   name,
@@ -458,7 +451,6 @@ function NetworkingDetailView({
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   namespace: string;
   resource: KubernetesNetworkingResource;
   name: string;
@@ -474,7 +466,6 @@ function NetworkingDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName} 的 ${namespace}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
             {canUpdate && item ? (

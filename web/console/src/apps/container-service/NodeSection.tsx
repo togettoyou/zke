@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { ContinuePager } from "./ContinuePager";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
@@ -123,9 +122,21 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
         cell: ({ row }) =>
           canUpdate ? (
             <div onClick={(event) => event.stopPropagation()}>
+              {/*
+               * The two directions are one control in the same cell, so they are
+               * told apart by colour as well as by icon — and by the colour the
+               * section already uses for the state each one produces: the
+               * scheduling badge is warning while a Node is stopped and success
+               * while it is schedulable.
+               */}
               <Button
                 size="icon-sm"
                 variant="ghost"
+                className={
+                  row.original.unschedulable
+                    ? "text-success hover:text-success"
+                    : "text-warning hover:text-warning"
+                }
                 aria-label={`${row.original.unschedulable ? "恢复调度" : "停止调度"} ${row.original.name}`}
                 onClick={() =>
                   openScheduling({
@@ -161,7 +172,6 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
       ) : detailName ? (
         <NodeDetailView
           clusterId={clusterId}
-          clusterName={clusterName}
           name={detailName}
           canUpdate={canUpdate}
           onBack={() => setDetailName(null)}
@@ -169,11 +179,10 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           onOpenYaml={() => setYamlName(detailName)}
         />
       ) : (
+        // No heading over the list: the navigation rail already says 节点 and the
+        // toolbar already names the target Cluster, so a title repeating both
+        // only costs the table a row of height.
         <div className="flex h-full min-h-0 flex-col">
-          <SectionTitle
-            title={`节点 · ${clusterName}`}
-            description="Node 是集群级对象。停止调度只阻止新 Pod 被调度到该节点，不会驱逐已运行的 Pod。"
-          />
           <DataTable
             columns={columns}
             data={nodes.data?.nodes}
@@ -185,14 +194,12 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
             rowKey={(node) => node.uid || node.name}
             emptyTitle="该集群没有节点"
             emptyDescription="当前筛选范围内没有可见的 Node。"
-            toolbar={
-              <ContinuePager
-                pageIndex={pager.pageIndex}
-                nextToken={nextToken}
-                onPrevious={pager.goPrevious}
-                onNext={pager.goNext}
-              />
-            }
+            continuePagination={{
+              pageIndex: pager.pageIndex,
+              nextToken,
+              onPrevious: pager.goPrevious,
+              onNext: pager.goNext,
+            }}
           />
         </div>
       )}
@@ -256,7 +263,6 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
 
 function NodeDetailView({
   clusterId,
-  clusterName,
   name,
   canUpdate,
   onBack,
@@ -264,7 +270,6 @@ function NodeDetailView({
   onOpenYaml,
 }: {
   clusterId: string;
-  clusterName: string;
   name: string;
   canUpdate: boolean;
   onBack: () => void;
@@ -277,13 +282,15 @@ function NodeDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
             {canUpdate && detail.data ? (
+              // Same colour rule as the list action: warning for the direction
+              // that stops scheduling, success for the one that restores it.
               <Button
                 size="sm"
                 variant="secondary"
+                className={detail.data.unschedulable ? "text-success" : "text-warning"}
                 onClick={() =>
                   onToggleScheduling({
                     name: detail.data.name,

@@ -14,11 +14,12 @@ import type {
   KubernetesAuthorizationResourceDetail,
   KubernetesAuthorizationResourceSummary,
 } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,6 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { AuthorizationForm } from "./AuthorizationForm";
-import { ContinuePager } from "./ContinuePager";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import {
@@ -173,7 +173,6 @@ export function AuthorizationSection({
     return (
       <AuthorizationDetailView
         clusterId={clusterId}
-        clusterName={clusterName}
         namespace={namespace}
         resource={resource}
         name={detailName}
@@ -189,18 +188,15 @@ export function AuthorizationSection({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`授权管理 · ${clusterName}${namespaced ? ` / ${namespace}` : ""}`}
-        description="集群内的 Kubernetes RBAC 对象，使用独立的 cluster.rbac.read 与 cluster.rbac.manage 权限。创建、更新和删除都先执行服务端 DryRun 再由操作者确认；ZKE 自身 Agent 的授权对象受保护，不能在此修改或删除。这五类资源被通用资源与 YAML 接口排除，因此本页不提供 YAML 入口。"
-        actions={
-          canManage && !waitingForNamespace ? (
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              <Plus />
-              创建 {authorizationKindLabel(resource)}
-            </Button>
-          ) : null
-        }
-      />
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canManage && !waitingForNamespace ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 {authorizationKindLabel(resource)}
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
       <Tabs
         value={resource}
         onValueChange={(value) => {
@@ -238,14 +234,12 @@ export function AuthorizationSection({
                   ? `${namespace} 中没有可见的 ${authorizationKindLabel(resource)}。`
                   : `该集群中没有可见的 ${authorizationKindLabel(resource)}。`
               }
-              toolbar={
-                <ContinuePager
-                  pageIndex={pager.pageIndex}
-                  nextToken={nextToken}
-                  onPrevious={pager.goPrevious}
-                  onNext={pager.goNext}
-                />
-              }
+              continuePagination={{
+                pageIndex: pager.pageIndex,
+                nextToken,
+                onPrevious: pager.goPrevious,
+                onNext: pager.goNext,
+              }}
             />
           )}
         </TabsContent>
@@ -439,7 +433,6 @@ function typeColumns(
 
 function AuthorizationDetailView({
   clusterId,
-  clusterName,
   namespace,
   resource,
   name,
@@ -448,7 +441,6 @@ function AuthorizationDetailView({
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   namespace: string;
   resource: KubernetesAuthorizationResource;
   name: string;
@@ -464,7 +456,6 @@ function AuthorizationDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName}${isNamespacedAuthorization(resource) ? ` 的 ${namespace}` : ""}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
             {canManage && item && locked === null ? (

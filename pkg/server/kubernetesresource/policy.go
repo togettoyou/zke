@@ -90,10 +90,13 @@ type PolicyResourceSummary struct {
 	PriorityClass     *PriorityClassSummary    `json:"priority_class,omitempty"`
 }
 
+// PolicyResourceDetail has no ResourceQuota member: everything a quota detail
+// used to add — its scopeSelector — is now part of the summary, because reading
+// `used` against `hard` without knowing what the quota counts is misreading it,
+// and a list does exactly that reading.
 type PolicyResourceDetail struct {
 	PolicyResourceSummary
 	Annotations            map[string]string       `json:"annotations"`
-	ResourceQuotaDetail    *ResourceQuotaDetail    `json:"resource_quota_detail,omitempty"`
 	LimitRangeDetail       *LimitRangeDetail       `json:"limit_range_detail,omitempty"`
 	NetworkPolicyDetail    *NetworkPolicyDetail    `json:"network_policy_detail,omitempty"`
 	DisruptionBudgetDetail *DisruptionBudgetDetail `json:"disruption_budget_detail,omitempty"`
@@ -102,20 +105,21 @@ type PolicyResourceDetail struct {
 // ResourceQuotaSummary carries `hard` next to `used` because a quota is only
 // ever read to answer "how much is left"; the two halves separated would make
 // the list a lookup table rather than an answer.
+//
+// `scopes` and `scope_selector` travel with them for the same reason: both
+// narrow which objects the quota counts, so a caller reading `used` against
+// `hard` without them would read a subset of a Namespace as the whole of it.
 type ResourceQuotaSummary struct {
-	Hard   map[string]string `json:"hard"`
-	Used   map[string]string `json:"used"`
-	Scopes []string          `json:"scopes"`
+	Hard          map[string]string                `json:"hard"`
+	Used          map[string]string                `json:"used"`
+	Scopes        []string                         `json:"scopes"`
+	ScopeSelector []PolicyScopeSelectorRequirement `json:"scope_selector"`
 }
 
 type PolicyScopeSelectorRequirement struct {
 	ScopeName string   `json:"scope_name"`
 	Operator  string   `json:"operator"`
 	Values    []string `json:"values"`
-}
-
-type ResourceQuotaDetail struct {
-	ScopeSelector []PolicyScopeSelectorRequirement `json:"scope_selector"`
 }
 
 type LimitRangeSummary struct {
@@ -1065,9 +1069,6 @@ func resourceQuotaResourceDetail(value *corev1.ResourceQuota) PolicyResourceDeta
 	if len(hard) == 0 {
 		hard = value.Spec.Hard
 	}
-	summary := ResourceQuotaSummary{
-		Hard: policyQuantityMap(hard), Used: policyQuantityMap(value.Status.Used), Scopes: scopes,
-	}
 	requirements := make([]PolicyScopeSelectorRequirement, 0)
 	if value.Spec.ScopeSelector != nil {
 		for _, requirement := range value.Spec.ScopeSelector.MatchExpressions {
@@ -1077,12 +1078,15 @@ func resourceQuotaResourceDetail(value *corev1.ResourceQuota) PolicyResourceDeta
 			})
 		}
 	}
+	summary := ResourceQuotaSummary{
+		Hard: policyQuantityMap(hard), Used: policyQuantityMap(value.Status.Used), Scopes: scopes,
+		ScopeSelector: requirements,
+	}
 	return PolicyResourceDetail{
 		PolicyResourceSummary: policySummary(PolicyResourceQuotas, value.TypeMeta, value.ObjectMeta, func(s *PolicyResourceSummary) {
 			s.ResourceQuota = &summary
 		}),
-		Annotations:         normalizedStringMap(value.Annotations),
-		ResourceQuotaDetail: &ResourceQuotaDetail{ScopeSelector: requirements},
+		Annotations: normalizedStringMap(value.Annotations),
 	}
 }
 

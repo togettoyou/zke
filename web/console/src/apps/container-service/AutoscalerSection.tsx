@@ -12,11 +12,12 @@ import {
   type AutoscalerSummary,
 } from "@/api/queries/autoscaling";
 import type { KubernetesHPABehavior, KubernetesHPAMetricView } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { RelativeTime } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
@@ -25,7 +26,6 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { AutoscalerForm } from "./AutoscalerForm";
-import { ContinuePager } from "./ContinuePager";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -186,7 +186,6 @@ export function AutoscalerSection({
     return (
       <AutoscalerDetailView
         clusterId={clusterId}
-        clusterName={clusterName}
         namespace={namespace}
         name={detailName}
         canUpdate={canUpdate}
@@ -201,18 +200,15 @@ export function AutoscalerSection({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`自动伸缩 · ${clusterName} / ${namespace}`}
-        description="HorizontalPodAutoscaler 按指标调整目标工作负载的副本数。指标由 Metrics Server 或自定义指标适配器提供，ZKE 不负责安装它们。创建、更新和删除都先执行 Kubernetes 服务端 DryRun 再由操作者确认。"
-        actions={
-          canCreate ? (
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              <Plus />
-              创建 HPA
-            </Button>
-          ) : null
-        }
-      />
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canCreate ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 HPA
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
       <DataTable
         columns={columns}
         data={list.data?.autoscalers}
@@ -224,14 +220,12 @@ export function AutoscalerSection({
         rowKey={(item) => item.uid || item.name}
         emptyTitle="该命名空间没有 HorizontalPodAutoscaler"
         emptyDescription={`${namespace} 中没有可见的 HPA。`}
-        toolbar={
-          <ContinuePager
-            pageIndex={pager.pageIndex}
-            nextToken={nextToken}
-            onPrevious={pager.goPrevious}
-            onNext={pager.goNext}
-          />
-        }
+        continuePagination={{
+          pageIndex: pager.pageIndex,
+          nextToken,
+          onPrevious: pager.goPrevious,
+          onNext: pager.goNext,
+        }}
       />
 
       {creating || editing ? (
@@ -348,7 +342,6 @@ function AutoscalerStatus({ item }: { item: AutoscalerSummary }) {
 
 function AutoscalerDetailView({
   clusterId,
-  clusterName,
   namespace,
   name,
   canUpdate,
@@ -357,7 +350,6 @@ function AutoscalerDetailView({
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   namespace: string;
   name: string;
   canUpdate: boolean;
@@ -372,7 +364,6 @@ function AutoscalerDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName} 的 ${namespace}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
             {canUpdate && item ? (

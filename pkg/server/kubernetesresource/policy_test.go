@@ -215,8 +215,9 @@ func TestPolicyResourceDetailsReportEnforcedStateAndEmptyCollections(t *testing.
 		t.Fatal(err)
 	}
 	// The status is what the cluster is enforcing; the spec may have moved on.
+	// The scope selector is part of the summary, so a list carries it too.
 	if detail.ResourceQuota == nil || detail.ResourceQuota.Hard["requests.cpu"] != "10" ||
-		detail.ResourceQuota.Used["requests.cpu"] != "3" || detail.ResourceQuotaDetail == nil {
+		detail.ResourceQuota.Used["requests.cpu"] != "3" || detail.ResourceQuota.ScopeSelector == nil {
 		t.Fatalf("unexpected ResourceQuota detail: %+v", detail)
 	}
 

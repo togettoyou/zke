@@ -270,11 +270,18 @@ export function ContainerServiceApp() {
           ) : null}
         </>
       }
+      /*
+       * The status bar carries exceptions only. A line restating that every
+       * request runs on the selected Cluster's Agent was true on every screen of
+       * this window, which is exactly why nobody read it — and it cost a row of
+       * height on all of them. What remains is what an operator cannot infer
+       * from the toolbar: a truncated Namespace picker, or no target at all.
+       */
       statusBar={
         clusterId
           ? namespacesTruncated
-            ? `所有查询与变更均由所选集群的在线 Agent 定域执行 · 命名空间选择器只列出前 ${NAMESPACE_PICKER_LIMIT} 个`
-            : "所有查询与变更均由所选集群的在线 Agent 定域执行"
+            ? `命名空间选择器只列出前 ${NAMESPACE_PICKER_LIMIT} 个`
+            : undefined
           : "没有可执行请求的在线集群"
       }
     >
@@ -293,7 +300,7 @@ export function ContainerServiceApp() {
           description="容器服务的每个查询和变更都由目标集群的 Agent 定域执行，需要至少一个 Agent 处于在线状态。"
         />
       ) : activeSection === "overview" ? (
-        <OverviewSection key={clusterId} clusterId={clusterId} clusterName={clusterName} />
+        <OverviewSection key={clusterId} clusterId={clusterId} />
       ) : activeSection === "nodes" ? (
         <NodeSection
           key={clusterId}
@@ -323,7 +330,6 @@ export function ContainerServiceApp() {
         <EventSection
           key={`${clusterId}/${namespace}`}
           clusterId={clusterId}
-          clusterName={clusterName}
           namespace={namespace}
         />
       ) : activeSection === "authorization" ? (

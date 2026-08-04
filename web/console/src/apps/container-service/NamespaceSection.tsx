@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, FileCode, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, FileCode, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -10,11 +10,12 @@ import {
   useNamespaces,
 } from "@/api/queries/namespaces";
 import type { KubernetesNamespaceDetail, KubernetesNamespaceSummary } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ import { errorMessage } from "@/api/errors";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { ContinuePager } from "./ContinuePager";
+import { NamespaceQuotaView } from "./NamespaceQuotaView";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
@@ -57,6 +58,9 @@ export function NamespaceSection({
   const [detailName, setDetailName] = useState<string | null>(null);
   // The YAML editor takes over the section: it is a document, not a field.
   const [yamlName, setYamlName] = useState<string | null>(null);
+  // So does quota management: it is sixteen limits over three groups, which is a
+  // page rather than something to read through a dialog laid over the list.
+  const [quotaName, setQuotaName] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createPreview, setCreatePreview] = useState<KubernetesNamespaceDetail | null>(null);
@@ -126,13 +130,25 @@ export function NamespaceSection({
       {
         id: "actions",
         header: "",
-        size: 48,
-        cell: ({ row }) =>
-          canDelete ? (
-            <div onClick={(event) => event.stopPropagation()}>
+        size: 80,
+        cell: ({ row }) => (
+          <div className="flex items-center gap-0.5" onClick={(event) => event.stopPropagation()}>
+            {/* Not gated on write permission: reading what a Namespace is
+                limited to is part of reading the Namespace, and the view itself
+                is read-only without `cluster.resource.*`. */}
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`${row.original.name} 的配额管理`}
+              onClick={() => setQuotaName(row.original.name)}
+            >
+              <SlidersHorizontal />
+            </Button>
+            {canDelete ? (
               <Button
                 size="icon-sm"
                 variant="ghost"
+                className="text-danger hover:text-danger"
                 aria-label={`删除 ${row.original.name}`}
                 onClick={() => {
                   setDeleteTarget(row.original);
@@ -142,8 +158,9 @@ export function NamespaceSection({
               >
                 <Trash2 />
               </Button>
-            </div>
-          ) : null,
+            ) : null}
+          </div>
+        ),
       },
     ],
     [canDelete, remove],
@@ -161,37 +178,50 @@ export function NamespaceSection({
           canUpdate={canUpdate}
           onBack={() => setYamlName(null)}
         />
+      ) : quotaName ? (
+        <NamespaceQuotaView
+          clusterId={clusterId}
+          clusterName={clusterName}
+          namespace={quotaName}
+          canCreate={canCreate}
+          canUpdate={canUpdate}
+          canDelete={canDelete}
+          onBack={() => setQuotaName(null)}
+        />
       ) : detailName ? (
         <NamespaceDetailView
           clusterId={clusterId}
-          clusterName={clusterName}
           name={detailName}
+          onOpenQuota={() => setQuotaName(detailName)}
           onOpenYaml={() => setYamlName(detailName)}
           onBack={() => setDetailName(null)}
         />
       ) : (
         <div className="flex h-full min-h-0 flex-col">
-          <SectionTitle
-            title={`命名空间 · ${clusterName}`}
-            description="Namespace 是集群级对象；创建和删除先执行 Kubernetes 服务端 DryRun，再由操作者确认。"
-            actions={
-              canCreate ? (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setCreateName("");
-                    setCreatePreview(null);
-                    create.reset();
-                    setCreateOpen(true);
-                  }}
-                >
-                  <Plus />
-                  创建命名空间
-                </Button>
-              ) : null
-            }
-          />
+          {/* In the toolbar rather than over the table: with no heading left to
+              share the row with, a lone button was spending a full row of the
+              work area while the toolbar's right half sat empty. */}
+          <SectionToolbarActions>
+            <RefreshAction
+              isFetching={namespaces.isFetching}
+              onRefresh={() => void namespaces.refetch()}
+            />
+            {canCreate ? (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  setCreateName("");
+                  setCreatePreview(null);
+                  create.reset();
+                  setCreateOpen(true);
+                }}
+              >
+                <Plus />
+                创建命名空间
+              </Button>
+            ) : null}
+          </SectionToolbarActions>
           <DataTable
             columns={columns}
             data={namespaces.data?.namespaces}
@@ -203,14 +233,12 @@ export function NamespaceSection({
             rowKey={(namespace) => namespace.uid || namespace.name}
             emptyTitle="该集群没有命名空间"
             emptyDescription="当前筛选范围内没有可见的 Namespace。"
-            toolbar={
-              <ContinuePager
-                pageIndex={pager.pageIndex}
-                nextToken={nextToken}
-                onPrevious={pager.goPrevious}
-                onNext={pager.goNext}
-              />
-            }
+            continuePagination={{
+              pageIndex: pager.pageIndex,
+              nextToken,
+              onPrevious: pager.goPrevious,
+              onNext: pager.goNext,
+            }}
           />
         </div>
       )}
@@ -360,14 +388,14 @@ export function NamespaceSection({
 
 function NamespaceDetailView({
   clusterId,
-  clusterName,
   name,
+  onOpenQuota,
   onOpenYaml,
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   name: string;
+  onOpenQuota: () => void;
   onOpenYaml: () => void;
   onBack: () => void;
 }) {
@@ -377,9 +405,12 @@ function NamespaceDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={onOpenQuota}>
+              <SlidersHorizontal />
+              配额管理
+            </Button>
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML

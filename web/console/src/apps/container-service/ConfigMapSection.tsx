@@ -5,11 +5,12 @@ import { toast } from "sonner";
 
 import { useConfigMap, useConfigMaps, useDeleteConfigMap } from "@/api/queries/configmaps";
 import type { KubernetesConfigMapDetail, KubernetesConfigMapSummary } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,6 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { ConfigMapForm } from "./ConfigMapForm";
-import { ContinuePager } from "./ContinuePager";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -176,7 +176,6 @@ export function ConfigMapSection({
     return (
       <ConfigMapDetailView
         clusterId={clusterId}
-        clusterName={clusterName}
         namespace={namespace}
         name={detailName}
         canUpdate={canUpdate}
@@ -194,18 +193,15 @@ export function ConfigMapSection({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`配置管理 · ${clusterName} / ${namespace}`}
-        description="ConfigMap 的创建、更新和删除都先执行 Kubernetes 服务端 DryRun 再由操作者确认。列表不返回配置正文，内容只在详情中按对象读取。Secret 不在此处管理：Agent 未被授予 Secret 权限。"
-        actions={
-          canCreate ? (
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              <Plus />
-              创建 ConfigMap
-            </Button>
-          ) : null
-        }
-      />
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canCreate ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 ConfigMap
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
       <DataTable
         columns={columns}
         data={list.data?.config_maps}
@@ -217,14 +213,12 @@ export function ConfigMapSection({
         rowKey={(item) => item.uid || item.name}
         emptyTitle="该命名空间没有 ConfigMap"
         emptyDescription={`${namespace} 中没有可见的 ConfigMap。`}
-        toolbar={
-          <ContinuePager
-            pageIndex={pager.pageIndex}
-            nextToken={nextToken}
-            onPrevious={pager.goPrevious}
-            onNext={pager.goNext}
-          />
-        }
+        continuePagination={{
+          pageIndex: pager.pageIndex,
+          nextToken,
+          onPrevious: pager.goPrevious,
+          onNext: pager.goNext,
+        }}
       />
 
       {creating || editingName ? (
@@ -319,7 +313,6 @@ function KeysCell({ item }: { item: KubernetesConfigMapSummary }) {
 
 function ConfigMapDetailView({
   clusterId,
-  clusterName,
   namespace,
   name,
   canUpdate,
@@ -328,7 +321,6 @@ function ConfigMapDetailView({
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   namespace: string;
   name: string;
   canUpdate: boolean;
@@ -343,7 +335,6 @@ function ConfigMapDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName} 的 ${namespace}。`}
         actions={
           <div className="flex items-center gap-2">
             {canUpdate && item && !item.immutable ? (

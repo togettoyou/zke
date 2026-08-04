@@ -7604,21 +7604,20 @@ components:
           type: array
           maxItems: 64
           items: { type: string }
+    # `scopes` and `scope_selector` sit alongside `hard` and `used` because both
+    # narrow which objects the quota counts: reading usage against a limit
+    # without them reads a subset of a Namespace as the whole of it, and a list
+    # response does exactly that reading.
     KubernetesResourceQuotaSummary:
       type: object
       additionalProperties: false
-      required: [hard, used, scopes]
+      required: [hard, used, scopes, scope_selector]
       properties:
         hard: { $ref: "#/components/schemas/KubernetesPolicyQuantityMap" }
         used: { $ref: "#/components/schemas/KubernetesPolicyQuantityMap" }
         scopes:
           type: array
           items: { type: string }
-    KubernetesResourceQuotaDetail:
-      type: object
-      additionalProperties: false
-      required: [scope_selector]
-      properties:
         scope_selector:
           type: array
           items: { $ref: "#/components/schemas/KubernetesPolicyScopeSelectorRequirement" }
@@ -7787,7 +7786,8 @@ components:
             annotations:
               type: object
               additionalProperties: { type: string }
-            resource_quota_detail: { $ref: "#/components/schemas/KubernetesResourceQuotaDetail" }
+            # No `resource_quota_detail`: a quota's only detail field was its
+            # scopeSelector, which now travels with the summary.
             limit_range_detail: { $ref: "#/components/schemas/KubernetesLimitRangeDetail" }
             network_policy_detail: { $ref: "#/components/schemas/KubernetesNetworkPolicyDetail" }
             disruption_budget_detail: { $ref: "#/components/schemas/KubernetesDisruptionBudgetDetail" }

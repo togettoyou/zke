@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { RotateCw } from "lucide-react";
 
 import { useClusterOverview } from "@/api/queries/cluster-overview";
 import type {
@@ -7,12 +6,12 @@ import type {
   KubernetesClusterOverviewIssue,
   KubernetesOverviewStatusCounts,
 } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionToolbarActions } from "@/apps/AppShell";
 import { DetailCard } from "@/components/common/detail";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { StatusBadge } from "@/components/common/status";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Alert, Card } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
 import { formatAbsolute } from "@/lib/time";
@@ -55,39 +54,21 @@ const SECTION_LABELS: Record<string, string> = {
  * series, only "how many" and "how much of what is available". The two capacity
  * rows get a meter because they do have a maximum to be read against.
  */
-export function OverviewSection({
-  clusterId,
-  clusterName,
-}: {
-  clusterId: string;
-  clusterName: string;
-}) {
+export function OverviewSection({ clusterId }: { clusterId: string }) {
   const overview = useClusterOverview(clusterId);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`概览 · ${clusterName}`}
-        description="各部分分别读取并分页，因此这是一份最终一致的聚合快照，而不是同一 resourceVersion 下的原子视图。请求量按调度语义统计非终态 Pod，不表示实时利用率。"
-        actions={
-          <div className="flex items-center gap-3">
-            {overview.data ? (
-              <span className="text-subtle-foreground text-xs">
-                生成于 {formatAbsolute(overview.data.generated_at)}
-              </span>
-            ) : null}
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={overview.isFetching}
-              onClick={() => void overview.refetch()}
-            >
-              <RotateCw />
-              刷新
-            </Button>
-          </div>
-        }
-      />
+      {/* `generated_at` travels with the refresh control because together they
+          are what says this page is a snapshot rather than a live reading. */}
+      <SectionToolbarActions>
+        {overview.data ? (
+          <span className="text-subtle-foreground text-xs">
+            生成于 {formatAbsolute(overview.data.generated_at)}
+          </span>
+        ) : null}
+        <RefreshAction isFetching={overview.isFetching} onRefresh={() => void overview.refetch()} />
+      </SectionToolbarActions>
       {overview.error ? (
         <ErrorState error={overview.error} onRetry={() => void overview.refetch()} />
       ) : overview.isLoading || !overview.data ? (

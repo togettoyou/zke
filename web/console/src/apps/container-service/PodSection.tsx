@@ -10,11 +10,12 @@ import type {
   KubernetesPodOwnerReference,
   KubernetesPodSummary,
 } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { StatusBadge } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
@@ -22,7 +23,6 @@ import { Button } from "@/components/ui/button";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { ContinuePager } from "./ContinuePager";
 import { PodLogsView } from "./PodLogsView";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
@@ -246,7 +246,6 @@ export function PodSection({
       ) : detailName ? (
         <PodDetailView
           clusterId={clusterId}
-          clusterName={clusterName}
           namespace={namespace}
           name={detailName}
           canDelete={canDelete}
@@ -260,10 +259,9 @@ export function PodSection({
         />
       ) : (
         <div className="flex h-full min-h-0 flex-col">
-          <SectionTitle
-            title={`Pod · ${clusterName} / ${namespace}`}
-            description="日志按容器读取，支持快照与实时跟随。删除先执行 Kubernetes 服务端 DryRun 再由操作者确认；删除不是驱逐，不执行 PodDisruptionBudget 语义。终端尚未支持。"
-          />
+          <SectionToolbarActions>
+            <RefreshAction isFetching={pods.isFetching} onRefresh={() => void pods.refetch()} />
+          </SectionToolbarActions>
           <DataTable
             columns={columns}
             data={pods.data?.pods}
@@ -275,14 +273,12 @@ export function PodSection({
             rowKey={(pod) => pod.uid || pod.name}
             emptyTitle="该命名空间没有 Pod"
             emptyDescription={`${namespace} 中没有可见的 Pod。`}
-            toolbar={
-              <ContinuePager
-                pageIndex={pager.pageIndex}
-                nextToken={nextToken}
-                onPrevious={pager.goPrevious}
-                onNext={pager.goNext}
-              />
-            }
+            continuePagination={{
+              pageIndex: pager.pageIndex,
+              nextToken,
+              onPrevious: pager.goPrevious,
+              onNext: pager.goNext,
+            }}
           />
         </div>
       )}
@@ -381,7 +377,6 @@ function PodStatusCell({ pod }: { pod: KubernetesPodSummary }) {
 
 function PodDetailView({
   clusterId,
-  clusterName,
   namespace,
   name,
   canDelete,
@@ -394,7 +389,6 @@ function PodDetailView({
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   namespace: string;
   name: string;
   canDelete: boolean;
@@ -415,7 +409,6 @@ function PodDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName} 的 ${namespace}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
             {canReadLogs && pod?.uid ? (

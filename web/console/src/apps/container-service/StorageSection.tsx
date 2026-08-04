@@ -14,11 +14,12 @@ import type {
   KubernetesStorageResourceDetail,
   KubernetesStorageResourceSummary,
 } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { StatusBadge } from "@/components/common/status";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { ContinuePager } from "./ContinuePager";
 import { StorageCreateForm } from "./StorageCreateForm";
 import { StorageUpdateDialog } from "./StorageUpdateDialog";
 import { useContinuePagination } from "./use-continue-pagination";
@@ -170,7 +170,6 @@ export function StorageSection({
     return (
       <StorageDetailView
         clusterId={clusterId}
-        clusterName={clusterName}
         namespace={namespace}
         resource={resource}
         name={detailName}
@@ -187,18 +186,15 @@ export function StorageSection({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`存储 · ${clusterName}${namespaced ? ` / ${namespace}` : ""}`}
-        description="创建、更新和删除都先执行 Kubernetes 服务端 DryRun 再由操作者确认。类型化接口只开放三类常用更新：PV 回收策略、PVC 扩容和 StorageClass 扩展开关；其他高级字段可通过 YAML 管理。"
-        actions={
-          canCreate && !waitingForNamespace ? (
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              <Plus />
-              创建 {storageKindLabel(resource)}
-            </Button>
-          ) : null
-        }
-      />
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canCreate && !waitingForNamespace ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 {storageKindLabel(resource)}
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
       <Tabs
         value={resource}
         onValueChange={(value) => {
@@ -236,14 +232,12 @@ export function StorageSection({
                   ? `${namespace} 中没有可见的 ${storageKindLabel(resource)}。`
                   : `当前筛选范围内没有可见的 ${storageKindLabel(resource)}。`
               }
-              toolbar={
-                <ContinuePager
-                  pageIndex={pager.pageIndex}
-                  nextToken={nextToken}
-                  onPrevious={pager.goPrevious}
-                  onNext={pager.goNext}
-                />
-              }
+              continuePagination={{
+                pageIndex: pager.pageIndex,
+                nextToken,
+                onPrevious: pager.goPrevious,
+                onNext: pager.goNext,
+              }}
             />
           )}
         </TabsContent>
@@ -491,7 +485,6 @@ function typeColumns(
 
 function StorageDetailView({
   clusterId,
-  clusterName,
   namespace,
   resource,
   name,
@@ -501,7 +494,6 @@ function StorageDetailView({
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   namespace: string;
   resource: KubernetesStorageResource;
   name: string;
@@ -517,7 +509,6 @@ function StorageDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName}${isNamespacedStorage(resource) ? ` 的 ${namespace}` : ""}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
             {canUpdate && item ? (

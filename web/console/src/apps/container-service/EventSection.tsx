@@ -9,7 +9,7 @@ import {
   type KubernetesEventRecord,
   type KubernetesEventReference,
 } from "@/api/queries/kubernetes-events";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionToolbarActions } from "@/apps/AppShell";
 import { DataTable } from "@/components/common/data-table";
 import { RelativeTime, StatusBadge } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
@@ -49,7 +49,6 @@ const CLOSE_REASONS: Record<string, string> = {
 
 type EventSectionProps = {
   clusterId: string;
-  clusterName: string;
   namespace: string;
 };
 
@@ -60,7 +59,7 @@ type EventSectionProps = {
  * than the generic Resource stream, which rejects them outright — reading them
  * is not implied by reading the Cluster.
  */
-export function EventSection({ clusterId, clusterName, namespace }: EventSectionProps) {
+export function EventSection({ clusterId, namespace }: EventSectionProps) {
   const [follow, setFollow] = useState(true);
   const [limit, setLimit] = useState(200);
   const [type, setType] = useState(ANY_TYPE);
@@ -130,31 +129,27 @@ export function EventSection({ clusterId, clusterName, namespace }: EventSection
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`事件 · ${clusterName} / ${namespace}`}
-        description="Kubernetes Event 会被集群按保留期回收，只反映最近一段时间。默认实时跟随；筛选条件由服务端执行。"
-        actions={
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant={follow ? "primary" : "secondary"}
-              onClick={() => {
-                if (follow) {
-                  stream.stop();
-                }
-                setFollow(!follow);
-              }}
-            >
-              {follow ? <Pause /> : <Play />}
-              {follow ? "停止跟随" : "实时跟随"}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={stream.reload}>
-              <RotateCw />
-              重新加载
-            </Button>
-          </div>
-        }
-      />
+      {/* The stream controls go to the toolbar; the filters stay here, because
+          they are fields with labels rather than actions. */}
+      <SectionToolbarActions>
+        <Button
+          size="sm"
+          variant={follow ? "primary" : "secondary"}
+          onClick={() => {
+            if (follow) {
+              stream.stop();
+            }
+            setFollow(!follow);
+          }}
+        >
+          {follow ? <Pause /> : <Play />}
+          {follow ? "停止跟随" : "实时跟随"}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={stream.reload}>
+          <RotateCw />
+          重新加载
+        </Button>
+      </SectionToolbarActions>
 
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div className="grid content-start gap-1.5">

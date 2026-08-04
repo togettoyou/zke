@@ -2714,8 +2714,6 @@ export interface components {
             hard: components["schemas"]["KubernetesPolicyQuantityMap"];
             used: components["schemas"]["KubernetesPolicyQuantityMap"];
             scopes: string[];
-        };
-        KubernetesResourceQuotaDetail: {
             scope_selector: components["schemas"]["KubernetesPolicyScopeSelectorRequirement"][];
         };
         KubernetesLimitRangeSummary: {
@@ -2812,7 +2810,6 @@ export interface components {
             annotations: {
                 [key: string]: string;
             };
-            resource_quota_detail?: components["schemas"]["KubernetesResourceQuotaDetail"];
             limit_range_detail?: components["schemas"]["KubernetesLimitRangeDetail"];
             network_policy_detail?: components["schemas"]["KubernetesNetworkPolicyDetail"];
             disruption_budget_detail?: components["schemas"]["KubernetesDisruptionBudgetDetail"];

@@ -22,10 +22,11 @@ import {
   type UnstructuredObject,
 } from "@/api/queries/kubernetes-resources";
 import type { KubernetesResourceType } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,7 +43,6 @@ import { cn } from "@/lib/cn";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { ContinuePager } from "./ContinuePager";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -110,11 +110,9 @@ export function ResourceBrowserSection({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <SectionTitle
-        title={`资源对象浏览器 · ${clusterName}`}
-        description="按目标集群自身的 API Discovery 列出全部资源类型，可只看 CRD 提供的自定义资源。列表按 Kubernetes 原样展示对象，编辑走 YAML，删除携带 UID 与 resourceVersion 前置条件。Secret、Event 与 Kubernetes 授权资源不在此入口，它们各有专用链路。"
-      />
-
+      <SectionToolbarActions>
+        <RefreshAction isFetching={catalog.isFetching} onRefresh={() => void catalog.refetch()} />
+      </SectionToolbarActions>
       <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[300px_minmax(0,1fr)]">
         <ResourceTypeTree
           tree={tree}
@@ -587,14 +585,12 @@ function ResourceObjectPanel({
                 ? `${namespace} 中没有可见的 ${type.kind}。`
                 : `该集群中没有当前身份可见的 ${type.kind}。`
           }
-          toolbar={
-            <ContinuePager
-              pageIndex={pager.pageIndex}
-              nextToken={nextToken}
-              onPrevious={pager.goPrevious}
-              onNext={pager.goNext}
-            />
-          }
+          continuePagination={{
+            pageIndex: pager.pageIndex,
+            nextToken,
+            onPrevious: pager.goPrevious,
+            onNext: pager.goNext,
+          }}
         />
       ) : null}
 

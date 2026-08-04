@@ -364,7 +364,7 @@ function useQuotaEditor(detail: KubernetesPolicyResourceDetail | null): SpecEdit
   // Scopes are immutable in Kubernetes and the scope selector is not modelled by
   // this form; both are carried back unchanged so a quota edit cannot quietly
   // widen what the quota applies to.
-  const scopeSelector = detail?.resource_quota_detail?.scope_selector ?? [];
+  const scopeSelector = detail?.resource_quota?.scope_selector ?? [];
   const editing = detail !== null;
 
   const entries = pairs.filter((pair) => pair.key.trim() !== "");

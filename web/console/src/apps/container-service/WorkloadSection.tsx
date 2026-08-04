@@ -8,10 +8,11 @@ import type {
   KubernetesWorkloadResource,
   KubernetesWorkloadSummary,
 } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { StatusBadge } from "@/components/common/status";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatAbsolute } from "@/lib/time";
 
-import { ContinuePager } from "./ContinuePager";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { WorkloadActions } from "./WorkloadActions";
@@ -172,21 +172,21 @@ export function WorkloadSection({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`工作负载 · ${clusterName} / ${namespace}`}
-        description="创建、伸缩、滚动重启、CronJob 暂停/恢复和删除都先执行 Kubernetes 服务端 DryRun，再由操作者确认。"
-        actions={
-          canCreate ? (
-            // Creation targets whatever type the tabs are showing: an operator
-            // looking at DaemonSets who asks to create means a DaemonSet, and a
-            // second type picker inside the form would only contradict the tab.
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              <Plus />
-              创建 {kindLabel(resource)}
-            </Button>
-          ) : null
-        }
-      />
+      <SectionToolbarActions>
+        <RefreshAction
+          isFetching={workloads.isFetching}
+          onRefresh={() => void workloads.refetch()}
+        />
+        {canCreate ? (
+          // Creation targets whatever type the tabs are showing: an operator
+          // looking at DaemonSets who asks to create means a DaemonSet, and a
+          // second type picker inside the form would only contradict the tab.
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 {kindLabel(resource)}
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
       <Tabs
         value={resource}
         onValueChange={(value) => {
@@ -214,14 +214,12 @@ export function WorkloadSection({
             rowKey={(workload) => workload.uid || workload.name}
             emptyTitle={`该命名空间没有 ${kindLabel(resource)}`}
             emptyDescription={`${namespace} 中没有可见的 ${kindLabel(resource)}。`}
-            toolbar={
-              <ContinuePager
-                pageIndex={pager.pageIndex}
-                nextToken={nextToken}
-                onPrevious={pager.goPrevious}
-                onNext={pager.goNext}
-              />
-            }
+            continuePagination={{
+              pageIndex: pager.pageIndex,
+              nextToken,
+              onPrevious: pager.goPrevious,
+              onNext: pager.goNext,
+            }}
           />
         </TabsContent>
       </Tabs>
@@ -371,7 +369,6 @@ function WorkloadDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName} 的 ${namespace}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
             {/* The actions need the object they act on, so they appear once the

@@ -15,11 +15,12 @@ import type {
   KubernetesPolicyResourceDetail,
   KubernetesPolicyResourceSummary,
 } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { ContinuePager } from "./ContinuePager";
 import { POLICY_TYPES, policyIdentity, policyKindLabel } from "./policy-catalog";
 import { PolicyForm } from "./PolicyForm";
 import { useContinuePagination } from "./use-continue-pagination";
@@ -172,7 +172,6 @@ export function PolicySection({
     return (
       <PolicyDetailView
         clusterId={clusterId}
-        clusterName={clusterName}
         namespace={namespace}
         resource={resource}
         name={detailName}
@@ -189,18 +188,15 @@ export function PolicySection({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
-        title={`策略管理 · ${clusterName}${namespaced ? ` / ${namespace}` : ""}`}
-        description="配额、限制范围、网络策略、中断预算与优先级。创建、更新和删除都先执行 Kubernetes 服务端 DryRun 再由操作者确认；类型化更新会替换整份托管 spec，未建模的高级字段按当前值提交或通过 YAML 管理。"
-        actions={
-          canCreate && !waitingForNamespace ? (
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              <Plus />
-              创建 {policyKindLabel(resource)}
-            </Button>
-          ) : null
-        }
-      />
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canCreate && !waitingForNamespace ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 {policyKindLabel(resource)}
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
       <Tabs
         value={resource}
         onValueChange={(value) => {
@@ -238,14 +234,12 @@ export function PolicySection({
                   ? `${namespace} 中没有可见的 ${policyKindLabel(resource)}。`
                   : `当前筛选范围内没有可见的 ${policyKindLabel(resource)}。`
               }
-              toolbar={
-                <ContinuePager
-                  pageIndex={pager.pageIndex}
-                  nextToken={nextToken}
-                  onPrevious={pager.goPrevious}
-                  onNext={pager.goNext}
-                />
-              }
+              continuePagination={{
+                pageIndex: pager.pageIndex,
+                nextToken,
+                onPrevious: pager.goPrevious,
+                onNext: pager.goNext,
+              }}
             />
           )}
         </TabsContent>
@@ -552,7 +546,6 @@ function selectorText(labels: Record<string, string> | undefined): string {
 
 function PolicyDetailView({
   clusterId,
-  clusterName,
   namespace,
   resource,
   name,
@@ -562,7 +555,6 @@ function PolicyDetailView({
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   namespace: string;
   resource: KubernetesPolicyResource;
   name: string;
@@ -578,7 +570,6 @@ function PolicyDetailView({
     <div className="grid gap-3">
       <SectionTitle
         title={name}
-        description={`读取自集群 ${clusterName}${isNamespacedPolicy(resource) ? ` 的 ${namespace}` : ""}，仅展示 Kubernetes 返回的当前状态。`}
         actions={
           <div className="flex items-center gap-2">
             {canUpdate && item ? (
@@ -665,9 +656,9 @@ function PolicyDetailCards({ item }: { item: KubernetesPolicyResourceDetail }) {
         </DetailCard>
       ) : null}
 
-      {item.resource_quota_detail && item.resource_quota_detail.scope_selector.length > 0 ? (
+      {quota && quota.scope_selector.length > 0 ? (
         <DetailCard title="scopeSelector">
-          {item.resource_quota_detail.scope_selector.map((requirement, index) => (
+          {quota.scope_selector.map((requirement, index) => (
             <DetailRow
               key={index}
               label={requirement.scope_name}

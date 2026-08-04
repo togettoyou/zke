@@ -96,7 +96,13 @@ export function SensitiveActionDialog({
           <dl className="grid gap-1.5">
             {scopeLines.map((line) => (
               <div key={line.label} className="flex items-start gap-2 text-[13px]">
-                <dt className="text-muted-foreground w-20 shrink-0 leading-6">{line.label}</dt>
+                {/*
+                 * `min-w-20` rather than `w-20`: the labels are resource kinds,
+                 * and a kind longer than the column — ResourceQuota,
+                 * ClusterRoleBinding — overflowed a fixed width and ran straight
+                 * into the value, because a single word has nowhere to wrap.
+                 */}
+                <dt className="text-muted-foreground min-w-20 shrink-0 leading-6">{line.label}</dt>
                 <dd className="min-w-0 flex-1">
                   <div className="text-foreground leading-6 font-medium">{line.name}</div>
                   {/*
