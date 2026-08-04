@@ -87,6 +87,35 @@ func TestWorkloadDetailCoversSupportedKinds(t *testing.T) {
 			},
 		},
 		{
+			// A rollout that ran past its deadline is reported as the Kubernetes
+			// reason for it, not as lost capacity: the old ReplicaSet here is
+			// still available while the new one never starts.
+			name:     "Deployment past its progress deadline",
+			resource: WorkloadDeployments,
+			object: &appsv1.Deployment{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
+				ObjectMeta: metadata("inference"),
+				Spec: appsv1.DeploymentSpec{
+					Replicas: &replicas,
+					Selector: selector,
+					Template: template(),
+				},
+				Status: appsv1.DeploymentStatus{
+					ObservedGeneration: 3,
+					Replicas:           3,
+					UpdatedReplicas:    1,
+					ReadyReplicas:      2,
+					AvailableReplicas:  2,
+					Conditions: []appsv1.DeploymentCondition{{
+						Type:   appsv1.DeploymentProgressing,
+						Status: corev1.ConditionFalse,
+						Reason: "ProgressDeadlineExceeded",
+					}},
+				},
+			},
+			wantStatus: "progress_deadline_exceeded",
+		},
+		{
 			name:     "StatefulSet",
 			resource: WorkloadStatefulSets,
 			object: &appsv1.StatefulSet{
@@ -227,7 +256,10 @@ func TestWorkloadDetailCoversSupportedKinds(t *testing.T) {
 			if detail.Conditions == nil {
 				t.Fatal("conditions must be an empty slice rather than nil")
 			}
-			testCase.check(t, detail)
+			// Only the cases with something of their own to say carry one.
+			if testCase.check != nil {
+				testCase.check(t, detail)
+			}
 		})
 	}
 }

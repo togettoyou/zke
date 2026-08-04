@@ -1958,8 +1958,11 @@ export interface components {
             labels: {
                 [key: string]: string;
             };
-            /** @enum {string} */
-            status: "available" | "progressing" | "degraded" | "suspended" | "running" | "completed" | "failed" | "scheduled" | "pending";
+            /**
+             * @description Server 归约出的单值。progress_deadline_exceeded 对应 Deployment 的 Progressing=False / reason=ProgressDeadlineExceeded，即本次发布超过 progressDeadlineSeconds 仍未完成；旧副本可能仍在正常提供服务。
+             * @enum {string}
+             */
+            status: "available" | "progressing" | "progress_deadline_exceeded" | "suspended" | "running" | "completed" | "failed" | "scheduled" | "pending";
             images: string[];
             replicas?: components["schemas"]["KubernetesWorkloadReplicaStatus"];
             job?: components["schemas"]["KubernetesWorkloadJobStatus"];

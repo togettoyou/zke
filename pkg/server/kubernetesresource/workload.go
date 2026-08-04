@@ -563,10 +563,15 @@ func deploymentStatus(workload *appsv1.Deployment, desired int32) string {
 		return "suspended"
 	}
 	for _, condition := range workload.Status.Conditions {
+		// Named after the Kubernetes reason it reads rather than reduced to a
+		// health word: what has happened is that this rollout did not finish
+		// inside `progressDeadlineSeconds`, which is not the same as the
+		// workload having lost capacity — the previous ReplicaSet may still be
+		// serving every request while the new one fails to start at all.
 		if condition.Type == appsv1.DeploymentProgressing &&
 			condition.Status == corev1.ConditionFalse &&
 			condition.Reason == "ProgressDeadlineExceeded" {
-			return "degraded"
+			return "progress_deadline_exceeded"
 		}
 	}
 	if workload.Status.ObservedGeneration >= workload.Generation &&

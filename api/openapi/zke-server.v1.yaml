@@ -6421,10 +6421,14 @@ components:
             type: string
         status:
           type: string
+          description: >-
+            Server 归约出的单值。progress_deadline_exceeded 对应 Deployment 的
+            Progressing=False / reason=ProgressDeadlineExceeded，即本次发布超过
+            progressDeadlineSeconds 仍未完成；旧副本可能仍在正常提供服务。
           enum:
             - available
             - progressing
-            - degraded
+            - progress_deadline_exceeded
             - suspended
             - running
             - completed

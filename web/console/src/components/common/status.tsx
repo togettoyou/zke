@@ -43,7 +43,10 @@ const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
   workload: {
     available: { label: "可用", tone: "success" },
     progressing: { label: "更新中", tone: "info" },
-    degraded: { label: "降级", tone: "danger" },
+    // Kubernetes' own reason, said in Chinese: the rollout ran past
+    // `progressDeadlineSeconds`. Not "降级" — the previous ReplicaSet may still
+    // be serving everything while the new one fails to start.
+    progress_deadline_exceeded: { label: "发布超时", tone: "danger" },
     suspended: { label: "已暂停", tone: "warning" },
     running: { label: "运行中", tone: "info" },
     completed: { label: "已完成", tone: "success" },
