@@ -11,7 +11,12 @@ import type {
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
-import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
+import {
+  DetailCard,
+  DetailConditions,
+  DetailKeyValues,
+  DetailRow,
+} from "@/components/common/detail";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { StatusBadge } from "@/components/common/status";
@@ -564,29 +569,7 @@ function WorkloadDetailCards({ workload }: { workload: KubernetesWorkloadDetail 
       </DetailCard>
 
       <DetailCard title="条件">
-        {workload.conditions.length === 0 ? (
-          <DetailRow label="条件" value="—" />
-        ) : (
-          workload.conditions.map((condition) => (
-            <DetailRow
-              key={condition.type}
-              label={condition.type}
-              value={
-                <div className="grid gap-0.5">
-                  <span>{condition.status}</span>
-                  {condition.reason || condition.message ? (
-                    <span className="text-muted-foreground text-xs break-words">
-                      {[condition.reason, condition.message].filter(Boolean).join(" · ")}
-                    </span>
-                  ) : null}
-                  <span className="text-subtle-foreground text-xs">
-                    {formatAbsolute(condition.last_transition_time)}
-                  </span>
-                </div>
-              }
-            />
-          ))
-        )}
+        <DetailConditions conditions={workload.conditions} />
       </DetailCard>
 
       <DetailCard title="标签">

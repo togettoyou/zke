@@ -15,7 +15,12 @@ import type { KubernetesHPABehavior, KubernetesHPAMetricView } from "@/api/types
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
-import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
+import {
+  DetailCard,
+  DetailConditions,
+  DetailKeyValues,
+  DetailRow,
+} from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -464,26 +469,7 @@ function AutoscalerDetailCards({ item }: { item: AutoscalerDetail }) {
       {item.behavior ? <BehaviorCard behavior={item.behavior} /> : null}
 
       <DetailCard title="条件">
-        {item.conditions.length === 0 ? (
-          <DetailRow label="条件" value="—" />
-        ) : (
-          item.conditions.map((condition) => (
-            <DetailRow
-              key={condition.type}
-              label={condition.type}
-              value={
-                <div className="grid gap-0.5">
-                  <span>{condition.status}</span>
-                  {condition.reason || condition.message ? (
-                    <span className="text-muted-foreground text-xs break-words">
-                      {[condition.reason, condition.message].filter(Boolean).join(" · ")}
-                    </span>
-                  ) : null}
-                </div>
-              }
-            />
-          ))
-        )}
+        <DetailConditions conditions={item.conditions} />
       </DetailCard>
 
       <DetailCard title="标签">

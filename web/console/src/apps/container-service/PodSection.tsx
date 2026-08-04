@@ -13,7 +13,12 @@ import type {
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
-import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
+import {
+  DetailCard,
+  DetailConditions,
+  DetailKeyValues,
+  DetailRow,
+} from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -541,31 +546,7 @@ function PodDetailCards({ pod }: { pod: KubernetesPodDetail }) {
       </DetailCard>
 
       <DetailCard title="条件">
-        {pod.conditions.length === 0 ? (
-          <DetailRow label="条件" value="—" />
-        ) : (
-          pod.conditions.map((condition) => (
-            <DetailRow
-              key={condition.type}
-              label={condition.type}
-              value={
-                <div className="grid gap-0.5">
-                  <span>{condition.status}</span>
-                  {condition.reason || condition.message ? (
-                    <span className="text-muted-foreground text-xs break-words">
-                      {[condition.reason, condition.message].filter(Boolean).join(" · ")}
-                    </span>
-                  ) : null}
-                  {condition.last_transition_time ? (
-                    <span className="text-subtle-foreground text-xs">
-                      {formatAbsolute(condition.last_transition_time)}
-                    </span>
-                  ) : null}
-                </div>
-              }
-            />
-          ))
-        )}
+        <DetailConditions conditions={pod.conditions} />
       </DetailCard>
 
       <DetailCard title="标签">

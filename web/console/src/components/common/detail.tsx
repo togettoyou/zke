@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { Card, CardTitle } from "@/components/ui/misc";
+import { formatAbsolute } from "@/lib/time";
 
 export function DetailCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -22,8 +23,61 @@ export function DetailCard({ title, children }: { title: string; children: React
 export function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="border-border/50 grid grid-cols-[6.5rem_1fr] items-baseline gap-3 border-b py-2 text-[13px] last:border-b-0 last:pb-0">
-      <dt className="text-muted-foreground">{label}</dt>
+      {/* A label wider than its column wraps inside it. Without this the column
+          is a starting point rather than a width, and a long one is drawn over
+          the value beside it. */}
+      <dt className="text-muted-foreground min-w-0 break-words">{label}</dt>
       <dd className="text-foreground min-w-0">{value}</dd>
+    </div>
+  );
+}
+
+/** The fields every Kubernetes condition carries, whatever object it is on. */
+export type DetailCondition = {
+  type: string;
+  status: string;
+  reason: string;
+  message: string;
+  last_transition_time?: string;
+};
+
+/**
+ * The conditions of one object.
+ *
+ * Not a {@link DetailRow} per condition: a condition type is a Kubernetes
+ * identifier rather than a label — `PodReadyToStartContainers` is twenty-five
+ * characters — and a label column narrow enough for 创建时间 cannot hold one. The
+ * type gets the row's width and the status sits at the end of it, which also
+ * puts the four objects that have conditions on the same layout.
+ */
+export function DetailConditions({ conditions }: { conditions: DetailCondition[] }) {
+  if (conditions.length === 0) {
+    return <div className="text-subtle-foreground py-2 text-[13px]">—</div>;
+  }
+  return (
+    <div className="grid">
+      {conditions.map((condition) => {
+        const explanation = [condition.reason, condition.message].filter(Boolean).join(" · ");
+        return (
+          <div
+            key={condition.type}
+            className="border-border/50 grid gap-0.5 border-b py-2 text-[13px] last:border-b-0 last:pb-0"
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-foreground min-w-0 break-words">{condition.type}</span>
+              <span className="text-muted-foreground shrink-0">{condition.status}</span>
+            </div>
+            {explanation ? (
+              <span className="text-muted-foreground text-xs break-words">{explanation}</span>
+            ) : null}
+            {condition.last_transition_time ? (
+              <span className="text-subtle-foreground text-xs">
+                {formatAbsolute(condition.last_transition_time)}
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
