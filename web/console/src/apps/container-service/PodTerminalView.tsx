@@ -68,11 +68,7 @@ export function PodTerminalView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader
-        title={`${podName} · 终端`}
-        description={`集群 ${clusterName} 的 ${namespace}。会话固定连接打开入口时的 Pod UID 与所选容器；Shell 由服务端决定，优先 bash，不存在时回退 /bin/sh。`}
-        onBack={onBack}
-      />
+      <PageHeader title={`${podName} · 终端`} onBack={onBack} />
       {detail.error ? (
         <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
       ) : detail.isLoading || !pod ? (

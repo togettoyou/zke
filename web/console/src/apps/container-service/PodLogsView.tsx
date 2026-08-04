@@ -42,14 +42,12 @@ const SINCE_OPTIONS: { value: string; label: string; seconds?: number }[] = [
  */
 export function PodLogsView({
   clusterId,
-  clusterName,
   namespace,
   podName,
   podUid,
   onBack,
 }: {
   clusterId: string;
-  clusterName: string;
   namespace: string;
   podName: string;
   podUid: string;
@@ -60,11 +58,7 @@ export function PodLogsView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader
-        title={`${podName} · 日志`}
-        description={`读取自集群 ${clusterName} 的 ${namespace}。日志固定到打开视图时的 Pod UID，同名重建的 Pod 不会被误读。`}
-        onBack={onBack}
-      />
+      <PageHeader title={`${podName} · 日志`} onBack={onBack} />
       {detail.error ? (
         <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
       ) : detail.isLoading || !pod ? (

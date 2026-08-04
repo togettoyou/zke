@@ -64,13 +64,11 @@ const PageHeaderSlot = createContext<{
  */
 export function PageHeader({
   title,
-  description,
   actions,
   onBack,
   backDisabled,
 }: {
   title: string;
-  description?: ReactNode;
   actions?: ReactNode;
   /** Omitted by a view that was not entered from another one. */
   onBack?: () => void;
@@ -102,16 +100,11 @@ export function PageHeader({
             <ArrowLeft />
           </Button>
         ) : null}
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <h3 className="text-foreground truncate text-sm font-semibold tracking-tight">
-              {title}
-            </h3>
-            {scope ? <span className="text-subtle-foreground text-xs">{scope}</span> : null}
-          </div>
-          {description ? (
-            <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">{description}</p>
-          ) : null}
+        {/* The name and the scope, and nothing else. A header that also explains
+            the view spends a permanent row on a sentence read once. */}
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+          <h3 className="text-foreground truncate text-sm font-semibold tracking-tight">{title}</h3>
+          {scope ? <span className="text-subtle-foreground text-xs">{scope}</span> : null}
         </div>
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}

@@ -242,7 +242,6 @@ export function PodSection({
       ) : logsTarget ? (
         <PodLogsView
           clusterId={clusterId}
-          clusterName={clusterName}
           namespace={namespace}
           podName={logsTarget.name}
           podUid={logsTarget.uid}
