@@ -1661,6 +1661,69 @@ export interface components {
         };
         /** @enum {string} */
         KubernetesWorkloadResource: "deployments" | "statefulsets" | "daemonsets" | "jobs" | "cronjobs";
+        KubernetesWorkloadObjectKeyRef: {
+            name: string;
+            key: string;
+            optional?: boolean | null;
+        };
+        KubernetesWorkloadEnvVar: {
+            /** @description C_IDENTIFIER 形式的变量名，同一容器内不得重复。 */
+            name: string;
+            value?: string;
+            config_map_key_ref?: components["schemas"]["KubernetesWorkloadObjectKeyRef"];
+            secret_key_ref?: components["schemas"]["KubernetesWorkloadObjectKeyRef"];
+        };
+        /** @description 同名资源的 requests 不得大于 limits。 */
+        KubernetesWorkloadResourceRequirements: {
+            requests?: components["schemas"]["KubernetesPolicyQuantityMap"];
+            limits?: components["schemas"]["KubernetesPolicyQuantityMap"];
+        };
+        KubernetesWorkloadVolumeMount: {
+            /** @description 必须引用同一请求中声明的数据卷名称。 */
+            name: string;
+            /** @description 必须是绝对路径，且不能包含冒号；同一容器内不得重复。 */
+            mount_path: string;
+            /** @description 相对路径；绝对路径和 .. 会越出所选数据卷，接口拒绝。 */
+            sub_path?: string;
+            read_only?: boolean;
+        };
+        KubernetesWorkloadExecAction: {
+            command: string[];
+        };
+        KubernetesWorkloadHTTPGetAction: {
+            path?: string;
+            /** @description 端口号（1-65535）或已命名容器端口的名称。 */
+            port: string;
+            host?: string;
+            /** @enum {string} */
+            scheme?: "" | "HTTP" | "HTTPS";
+        };
+        KubernetesWorkloadTCPSocketAction: {
+            port: string;
+        };
+        KubernetesWorkloadProbe: {
+            exec?: components["schemas"]["KubernetesWorkloadExecAction"];
+            http_get?: components["schemas"]["KubernetesWorkloadHTTPGetAction"];
+            tcp_socket?: components["schemas"]["KubernetesWorkloadTCPSocketAction"];
+            /** Format: int32 */
+            initial_delay_seconds?: number | null;
+            /** Format: int32 */
+            period_seconds?: number | null;
+            /** Format: int32 */
+            timeout_seconds?: number | null;
+            /** Format: int32 */
+            success_threshold?: number | null;
+            /** Format: int32 */
+            failure_threshold?: number | null;
+        };
+        KubernetesWorkloadLifecycleHandler: {
+            exec?: components["schemas"]["KubernetesWorkloadExecAction"];
+            http_get?: components["schemas"]["KubernetesWorkloadHTTPGetAction"];
+        };
+        KubernetesWorkloadLifecycle: {
+            post_start?: components["schemas"]["KubernetesWorkloadLifecycleHandler"];
+            pre_stop?: components["schemas"]["KubernetesWorkloadLifecycleHandler"];
+        };
         KubernetesWorkloadContainerTemplate: {
             /** @description Pod 内唯一的 DNS label 容器名；主容器与初始化容器之间也不得重复。 */
             name: string;
@@ -1670,15 +1733,102 @@ export interface components {
              * @enum {string}
              */
             image_pull_policy?: "" | "Always" | "IfNotPresent" | "Never";
+            /** @description 覆盖镜像的 ENTRYPOINT。 */
+            command?: string[];
+            /** @description 覆盖镜像的 CMD。 */
+            args?: string[];
+            working_dir?: string;
+            env?: components["schemas"]["KubernetesWorkloadEnvVar"][];
+            resources?: components["schemas"]["KubernetesWorkloadResourceRequirements"];
+            volume_mounts?: components["schemas"]["KubernetesWorkloadVolumeMount"][];
+            liveness_probe?: components["schemas"]["KubernetesWorkloadProbe"];
+            readiness_probe?: components["schemas"]["KubernetesWorkloadProbe"];
+            lifecycle?: components["schemas"]["KubernetesWorkloadLifecycle"];
+            /** @description 仅 true 会被写入 securityContext；false 与省略等价。 */
+            privileged?: boolean | null;
+        };
+        KubernetesWorkloadEmptyDirVolume: {
+            /** @enum {string} */
+            medium?: "" | "Memory";
+            /** @description Kubernetes quantity，例如 512Mi。 */
+            size_limit?: string;
+        };
+        KubernetesWorkloadHostPathVolume: {
+            /** @description 必须是绝对路径。 */
+            path: string;
+            /** @enum {string} */
+            type?: "" | "DirectoryOrCreate" | "Directory" | "FileOrCreate" | "File" | "Socket" | "CharDevice" | "BlockDevice";
+        };
+        KubernetesWorkloadConfigMapVolume: {
+            name: string;
+            /** Format: int32 */
+            default_mode?: number | null;
+            optional?: boolean | null;
+        };
+        KubernetesWorkloadSecretVolume: {
+            secret_name: string;
+            /** Format: int32 */
+            default_mode?: number | null;
+            optional?: boolean | null;
+        };
+        KubernetesWorkloadPersistentVolumeClaimVolume: {
+            claim_name: string;
+            read_only?: boolean;
+        };
+        KubernetesWorkloadNFSVolume: {
+            server: string;
+            path: string;
+            read_only?: boolean;
+        };
+        KubernetesWorkloadVolume: {
+            name: string;
+            empty_dir?: components["schemas"]["KubernetesWorkloadEmptyDirVolume"];
+            host_path?: components["schemas"]["KubernetesWorkloadHostPathVolume"];
+            config_map?: components["schemas"]["KubernetesWorkloadConfigMapVolume"];
+            secret?: components["schemas"]["KubernetesWorkloadSecretVolume"];
+            persistent_volume_claim?: components["schemas"]["KubernetesWorkloadPersistentVolumeClaimVolume"];
+            nfs?: components["schemas"]["KubernetesWorkloadNFSVolume"];
+        };
+        KubernetesWorkloadToleration: {
+            /** @description 留空只在 operator 为 Exists 时有效，表示容忍全部污点。 */
+            key?: string;
+            /** @enum {string} */
+            operator?: "" | "Equal" | "Exists";
+            /** @description operator 为 Exists 时必须留空。 */
+            value?: string;
+            /** @enum {string} */
+            effect?: "" | "NoSchedule" | "PreferNoSchedule" | "NoExecute";
+            /**
+             * Format: int64
+             * @description 只有 NoExecute 会驱逐，因此只有它接受该字段。
+             */
+            toleration_seconds?: number | null;
         };
         KubernetesCreateWorkloadRequest: {
+            /** @description DNS 子域名。Job 最长 63 个字符，因为该名称会成为 Pod 的 job-name 标签值； CronJob 最长 52 个字符，需要为控制器派生的 Job 名称留出余量。 */
             name: string;
             /** @description zke.io/workload-id 为 Server 保留键，不接受客户端设置。 */
             labels?: {
                 [key: string]: string;
             };
+            /** @description zke.io/description 为 description 字段保留，不接受在此设置。 */
+            annotations?: {
+                [key: string]: string;
+            };
+            /** @description 写入工作负载与 Pod 模板的 zke.io/description 注解。 */
+            description?: string;
             containers: components["schemas"]["KubernetesWorkloadContainerTemplate"][];
+            /** @description 在主容器之前运行完毕，因此不接受 liveness_probe、readiness_probe 和 lifecycle； 容器名在主容器与初始化容器之间不得重复。 */
             init_containers?: components["schemas"]["KubernetesWorkloadContainerTemplate"][];
+            /** @description 容器的 volume_mounts 只能引用这里声明的名称。 */
+            volumes?: components["schemas"]["KubernetesWorkloadVolume"][];
+            /** @description 只传递 Secret 名称引用，不读取 Secret 正文。 */
+            image_pull_secrets?: string[];
+            /** @description 按节点标签精确匹配；亲和性等更复杂的调度规则请使用 YAML。 */
+            node_selector?: {
+                [key: string]: string;
+            };
+            tolerations?: components["schemas"]["KubernetesWorkloadToleration"][];
             /**
              * Format: int32
              * @description 仅 Deployment 和 StatefulSet 可用；省略时交由 Kubernetes 默认处理。

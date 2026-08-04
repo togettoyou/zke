@@ -64,16 +64,33 @@ type workloadMutationRequest struct {
 }
 
 type workloadContainerTemplateRequest struct {
-	Name            string `json:"name"`
-	Image           string `json:"image"`
-	ImagePullPolicy string `json:"image_pull_policy"`
+	Name            string                               `json:"name"`
+	Image           string                               `json:"image"`
+	ImagePullPolicy string                               `json:"image_pull_policy"`
+	Command         []string                             `json:"command"`
+	Args            []string                             `json:"args"`
+	WorkingDir      string                               `json:"working_dir"`
+	Env             []workloadEnvVarRequest              `json:"env"`
+	Resources       *workloadResourceRequirementsRequest `json:"resources"`
+	VolumeMounts    []workloadVolumeMountRequest         `json:"volume_mounts"`
+	LivenessProbe   *workloadProbeRequest                `json:"liveness_probe"`
+	ReadinessProbe  *workloadProbeRequest                `json:"readiness_probe"`
+	Lifecycle       *workloadLifecycleRequest            `json:"lifecycle"`
+	Privileged      *bool                                `json:"privileged"`
 }
 
 type createWorkloadRequest struct {
 	Name           string                             `json:"name"`
 	Labels         map[string]string                  `json:"labels"`
+	Annotations    map[string]string                  `json:"annotations"`
+	Description    string                             `json:"description"`
 	Containers     []workloadContainerTemplateRequest `json:"containers"`
 	InitContainers []workloadContainerTemplateRequest `json:"init_containers"`
+
+	Volumes          []workloadVolumeRequest     `json:"volumes"`
+	ImagePullSecrets []string                    `json:"image_pull_secrets"`
+	NodeSelector     map[string]string           `json:"node_selector"`
+	Tolerations      []workloadTolerationRequest `json:"tolerations"`
 
 	Replicas    *int32 `json:"replicas"`
 	ServiceName string `json:"service_name"`
@@ -249,8 +266,14 @@ func (handler *kubernetesWorkloadHandler) create(c *gin.Context) {
 			Resource:                   resource,
 			Name:                       request.Name,
 			Labels:                     request.Labels,
+			Annotations:                request.Annotations,
+			Description:                request.Description,
 			Containers:                 workloadContainerTemplates(request.Containers),
 			InitContainers:             workloadContainerTemplates(request.InitContainers),
+			Volumes:                    workloadVolumes(request.Volumes),
+			ImagePullSecrets:           request.ImagePullSecrets,
+			NodeSelector:               request.NodeSelector,
+			Tolerations:                workloadTolerations(request.Tolerations),
 			Replicas:                   request.Replicas,
 			ServiceName:                request.ServiceName,
 			Parallelism:                request.Parallelism,
@@ -565,6 +588,16 @@ func workloadContainerTemplates(
 			Name:            container.Name,
 			Image:           container.Image,
 			ImagePullPolicy: container.ImagePullPolicy,
+			Command:         container.Command,
+			Args:            container.Args,
+			WorkingDir:      container.WorkingDir,
+			Env:             workloadEnvVars(container.Env),
+			Resources:       workloadResourceRequirements(container.Resources),
+			VolumeMounts:    workloadVolumeMounts(container.VolumeMounts),
+			LivenessProbe:   workloadProbe(container.LivenessProbe),
+			ReadinessProbe:  workloadProbe(container.ReadinessProbe),
+			Lifecycle:       workloadLifecycle(container.Lifecycle),
+			Privileged:      container.Privileged,
 		})
 	}
 	return result

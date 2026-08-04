@@ -176,11 +176,29 @@ Selector、容器、条件、更新策略等稳定字段。常用变更已提供
 `Idempotency-Key` 的 SHA-256 摘要写入 Pod Template 的 `zke.io/restart-request` 注解，使相同请求重试产生
 完全相同的补丁；删除必须携带当前对象 UID，避免误删同名重建对象。
 
-类型化创建支持名称、标签、主容器和初始化容器，并按类型支持副本数、StatefulSet Service、Job 执行参数与
-CronJob 调度参数。Server 使用资源类型和名称生成客户端不能覆盖的 `zke.io/workload-id` 标签；Deployment、
+类型化创建支持名称、描述、标签、注解、完整的 Pod 模板，并按类型支持副本数、StatefulSet Service、Job 执行
+参数与 CronJob 调度参数。Server 使用资源类型和名称生成客户端不能覆盖的 `zke.io/workload-id` 标签；Deployment、
 StatefulSet 和 DaemonSet 使用该标签作为 Pod Selector，Job 的 Selector 则由 Kubernetes 按控制器 UID 生成，
 避免不同控制器意外选中同一批 Pod。StatefulSet 的 `service_name` 必须引用同一 Namespace 中预先存在的
-Service；高级 Pod 配置和其他更新仍可使用通用资源接口。
+Service；更新仍可使用通用资源接口。
+
+Pod 模板部分对五类工作负载共用——一个 Deployment 和一个 CronJob 的差别在于 Pod 怎样被产生，而不在于 Pod 是
+什么。容器层面接受镜像与拉取策略、运行命令与参数、工作目录、环境变量、资源 requests/limits、数据卷挂载、
+存活与就绪探针、生命周期钩子和特权开关；Pod 层面接受数据卷、镜像访问凭证、节点标签选择和容忍调度。描述写入
+工作负载与 Pod 模板的 `zke.io/description` 注解，该键因此不接受在 `annotations` 中另行设置。
+
+几处校验刻意比 Kubernetes 更早拦截：探针的 `exec`、`httpGet`、`tcpSocket` 必须且只能设置一个——没有处理器的
+探针不会执行，两个处理器没有确定语义；数据卷的六种来源同理；容器的挂载必须引用同一请求中声明的数据卷，挂载
+路径必须是绝对路径且不含冒号，同一容器也不能把两个卷挂到同一路径，那样 Kubernetes 会静默让其中一个生效；
+`subPath` 不接受绝对路径和 `..`，因为它本就应当落在所选卷内部；同名资源的 requests 不得大于 limits，否则容器
+永远不会被调度；初始化容器不接受探针和生命周期钩子，它在 Pod 启动前就已运行完毕；容忍在 `Exists` 下不接受
+取值，只有 `NoExecute` 接受容忍时长；`privileged: false` 不会被写入 `securityContext`，否则一个普通容器会看
+起来像是被专门配置过的。名称长度按类型收紧：Job 最长 63 个字符，因为该名称会成为 Pod 的 `job-name` 标签值，
+CronJob 最长 52 个字符，需要为控制器派生的 Job 名称留出余量。资源 requests/limits 保持为 quantity map 而不是
+四个具名字段，因此 `nvidia.com/gpu` 等扩展资源无需新增接口字段即可声明。
+
+亲和性、拓扑分布约束、`securityContext` 的其余字段和容器端口不在类型化范围内：它们没有可在表单中稳定表达的
+有界形状，创建后通过 YAML 管理。
 
 服务与路由后端固定使用 `core/v1 Service`、`networking.k8s.io/v1 Ingress` 和
 `gateway.networking.k8s.io/v1 Gateway`，不会接受调用方覆盖 GVR。Service 支持 ClusterIP、NodePort、
@@ -447,13 +465,27 @@ DaemonSet 滚动重启，CronJob 暂停和恢复，以及五类工作负载删�
 确认时输入框中的值。每个步骤各自携带一个在弹窗生命周期内稳定的幂等键，因此重试同一次提交不会重复执行，
 滚动重启也不会产生第二轮滚动。
 
-创建表单需要 `cluster.resource.create`，并直接创建当前标签页所选的类型，不再提供第二个类型选择器。表单
-按类型只渲染该类型接受的字段：Deployment 和 StatefulSet 有副本数，StatefulSet 另有 Service 名称，Job 和
-CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，CronJob 另有 Cron 表达式、时区、并发策略、启动
-截止秒数、历史保留数量和「创建后暂停」。留空的可选字段不会出现在请求里——Server 会拒绝而不是忽略不适用的
-字段，因此空值必须是缺席而不是空串。名称、容器名、镜像、Service 名称和标签在提交前先做一次与 Server 同形的
-校验，`zke.io/workload-id` 作为保留键在表单中被拒绝；最终判定仍由 Server 执行。创建同样走 DryRun 预检和
-确认弹窗。
+创建表单需要 `cluster.resource.create`，并直接创建当前标签页所选的类型，不再提供第二个类型选择器。它占据
+整个应用视图而不是弹窗：Pod 模板是一个工作负载的绝大部分，把四十个字段塞进一个盖在列表上的盒子里，比离开
+列表更难读。表单按类型只渲染该类型接受的字段：Deployment 和 StatefulSet 有实例数量，StatefulSet 另有 Service
+名称，Job 和 CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，CronJob 另有 Cron 表达式、时区、并发
+策略、启动截止秒数、历史保留数量和「创建后暂停」。留空的可选字段不会出现在请求里——Server 会拒绝而不是忽略
+不适用的字段，因此空值必须是缺席而不是空串。表单在提交前对全部字段做一次与 Server 同形的校验：名称按类型的
+长度上限、标签与注解的键名和取值、数据卷来源、容器名与镜像、环境变量及其引用的对象名与键、CPU/内存/GPU 数值
+与 requests 不大于 limits、挂载路径与子路径、探针和钩子的端口与参数、容忍的取值与时长、集合数量上限，以及
+CronJob 的 Cron 表达式形状和时区，`zke.io/workload-id` 与 `zke.io/description` 作为保留键在表单中被拒绝；最终
+判定仍由 Server 执行。创建同样走 DryRun 预检和确认弹窗，确认弹窗会点出特权容器、主机路径数据卷和容忍调度这三
+类需要注意的配置。
+
+容器以标签条组织，「添加容器」在同一份 Pod 模板中追加一个；初始化容器不是另一个列表，而是容器自身的一个开关，
+与 Kubernetes 的模型一致——init container 与主容器是同一种模板，区别只在于运行时机；打开这个开关会同时收起并
+清空探针与生命周期钩子，因为初始化容器不接受它们。常用字段（名称、镜像、镜像版本、拉取策略、环境变量、
+CPU/内存、GPU）直接展开，其余收在「显示高级设置」之后。CPU 以核、内存以 MiB、emptyDir 容量上限以 MiB 输入，
+提交时转换为 Kubernetes quantity；GPU 卡数写入 `nvidia.com/gpu` 限额，是否可用取决于集群是否安装了对应的设备
+插件，ZKE 不安装也不伪造它。数据卷在 Pod 层声明一次，容器的「数据卷挂载」只能从已声明的卷中选择，因此表单里
+不存在一个指向不存在的卷的挂载。一次只看得到一个容器，因此有问题的容器会在标签条上标出——否则一个看不见的
+错误只会表现为一个没有原因的禁用按钮。同样地，校验消息显示在能够修正它的那个区块里，而不是堆在表单末尾：一条
+关于名称的提示出现在十屏之外没有意义；底部按钮旁只说明是哪个区块拦住了提交。
 
 通用接口返回 Unstructured JSON，并移除 `metadata.managedFields`。Discovery
 目录表示 API Server 暴露的资源，不代表 Agent ServiceAccount 已获授权；管理更多内置资源或任意 CR 时，安装方
@@ -466,7 +498,8 @@ CronJob 有并行度、完成数、失败重试上限与完成后保留秒数，
 后续规划能力包括：
 
 - 节点驱逐，以及它依赖的 Subresource allowlist 设计；
-- 工作负载的高级 Pod 配置（环境变量、资源限制、存储卷、探针）与类型化更新表单；
+- 工作负载的类型化更新表单，以及创建表单尚未覆盖的亲和性、拓扑分布约束与容器端口；
+- 创建工作负载时联动创建 Service 与 HorizontalPodAutoscaler（需要先定义多对象写入的部分成功与回滚语义）；
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
 - Gateway API 的 HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 类型化管理；

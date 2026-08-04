@@ -21,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Input, NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
 import {
@@ -343,20 +343,10 @@ function AutoscalerEditor({
                   />
                 </Field>
                 <Field label="最小副本数" htmlFor="hpa-min">
-                  <Input
-                    id="hpa-min"
-                    value={minReplicas}
-                    inputMode="numeric"
-                    onChange={(event) => setMinReplicas(event.target.value)}
-                  />
+                  <NumericInput id="hpa-min" value={minReplicas} onValueChange={setMinReplicas} />
                 </Field>
                 <Field label="最大副本数" htmlFor="hpa-max">
-                  <Input
-                    id="hpa-max"
-                    value={maxReplicas}
-                    inputMode="numeric"
-                    onChange={(event) => setMaxReplicas(event.target.value)}
-                  />
+                  <NumericInput id="hpa-max" value={maxReplicas} onValueChange={setMaxReplicas} />
                 </Field>
               </div>
             </FormSection>
@@ -620,14 +610,11 @@ function RulesEditor({
         <>
           <div className="grid grid-cols-2 gap-2">
             <Field label="稳定窗口（秒）" htmlFor={`hpa-${idPrefix}-window`}>
-              <Input
-                id={`hpa-${idPrefix}-window`}
+              <NumericInput
+                id={`hpa--window`}
                 value={rules.stabilizationWindow}
-                inputMode="numeric"
                 placeholder="留空使用默认"
-                onChange={(event) =>
-                  onChange({ ...rules, stabilizationWindow: event.target.value })
-                }
+                onValueChange={(stabilizationWindow) => onChange({ ...rules, stabilizationWindow })}
               />
             </Field>
             <Field label="策略选择" htmlFor={`hpa-${idPrefix}-select`}>
@@ -668,30 +655,28 @@ function RulesEditor({
                   <SelectItem value="Percent">Percent</SelectItem>
                 </SelectContent>
               </Select>
-              <Input
+              <NumericInput
                 value={policy.value}
                 aria-label={`${label}策略 ${index + 1} 数值`}
                 placeholder="数值"
-                inputMode="numeric"
-                onChange={(event) =>
+                onValueChange={(value) =>
                   onChange({
                     ...rules,
                     policies: rules.policies.map((entry, position) =>
-                      position === index ? { ...entry, value: event.target.value } : entry,
+                      position === index ? { ...entry, value } : entry,
                     ),
                   })
                 }
               />
-              <Input
+              <NumericInput
                 value={policy.periodSeconds}
                 aria-label={`${label}策略 ${index + 1} 周期秒数`}
                 placeholder="周期（秒）"
-                inputMode="numeric"
-                onChange={(event) =>
+                onValueChange={(periodSeconds) =>
                   onChange({
                     ...rules,
                     policies: rules.policies.map((entry, position) =>
-                      position === index ? { ...entry, periodSeconds: event.target.value } : entry,
+                      position === index ? { ...entry, periodSeconds } : entry,
                     ),
                   })
                 }

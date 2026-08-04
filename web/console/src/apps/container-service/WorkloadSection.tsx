@@ -23,7 +23,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { WorkloadActions } from "./WorkloadActions";
-import { WorkloadCreateDialog } from "./WorkloadCreateDialog";
+import { WorkloadCreateView } from "./WorkloadCreateView";
 import { YamlEditorView } from "./YamlEditorView";
 import { kindLabel, workloadGroup, WORKLOAD_TYPES } from "./workload-catalog";
 
@@ -152,6 +152,21 @@ export function WorkloadSection({
     );
   }
 
+  // The create form takes over the section rather than sitting over the list:
+  // the Pod template is most of a workload, and reading it through a box laid
+  // over the table is worse than leaving the table.
+  if (creating) {
+    return (
+      <WorkloadCreateView
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        resource={resource}
+        onClose={() => setCreating(false)}
+      />
+    );
+  }
+
   if (detailName) {
     return (
       <WorkloadDetailView
@@ -223,16 +238,6 @@ export function WorkloadSection({
           />
         </TabsContent>
       </Tabs>
-
-      {creating ? (
-        <WorkloadCreateDialog
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          resource={resource}
-          onClose={() => setCreating(false)}
-        />
-      ) : null}
     </div>
   );
 }

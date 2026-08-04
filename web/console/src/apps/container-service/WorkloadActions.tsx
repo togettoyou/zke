@@ -27,7 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
+import { NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
 import { useSubmissionKey } from "@/lib/use-submission-key";
@@ -247,14 +247,7 @@ function ScaleDialog({ target, onClose }: { target: WorkloadTarget; onClose: () 
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor="workload-replicas">目标副本数</Label>
-            <Input
-              id="workload-replicas"
-              value={value}
-              inputMode="numeric"
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setValue(event.target.value)}
-            />
+            <NumericInput id="workload-replicas" value={value} onValueChange={setValue} />
             <span className="text-subtle-foreground text-xs">当前期望副本数：{current}</span>
           </div>
           <Alert tone="info" className="mt-3">

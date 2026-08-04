@@ -17,3 +17,50 @@ export function Textarea({ className, ...props }: React.ComponentProps<"textarea
     />
   );
 }
+
+/*
+ * What a partially typed number looks like. `1.` and `.5` are on the way to a
+ * number and must be allowed to exist while the caret is still in the field;
+ * `1.2.3`, a sign or a letter never will be.
+ */
+const INTEGER_DRAFT = /^\d*$/;
+const DECIMAL_DRAFT = /^\d*\.?\d*$/;
+
+/**
+ * An input that only ever holds a number.
+ *
+ * `inputMode` is a hint to the on-screen keyboard and nothing more — a field
+ * carrying it still accepts pasted text, an IME and every letter on a physical
+ * keyboard, which left forms validating at submit time what the field should
+ * never have taken. A rejected keystroke leaves the value untouched rather than
+ * being stripped out of it, so a pasted `abc` is refused whole instead of
+ * landing as an empty field the operator did not ask for.
+ */
+export function NumericInput({
+  value,
+  onValueChange,
+  decimal = false,
+  className,
+  ...props
+}: Omit<React.ComponentProps<"input">, "value" | "onChange" | "inputMode" | "type"> & {
+  value: string;
+  onValueChange: (value: string) => void;
+  /** Set for quantities that may carry a fraction, such as CPU cores. */
+  decimal?: boolean;
+}) {
+  return (
+    <Input
+      {...props}
+      value={value}
+      inputMode={decimal ? "decimal" : "numeric"}
+      autoComplete="off"
+      className={cn("zke-tnum", className)}
+      onChange={(event) => {
+        const next = event.target.value;
+        if ((decimal ? DECIMAL_DRAFT : INTEGER_DRAFT).test(next)) {
+          onValueChange(next);
+        }
+      }}
+    />
+  );
+}

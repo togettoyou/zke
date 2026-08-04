@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"maps"
 	"strings"
+	"unicode/utf8"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -21,12 +22,26 @@ const (
 	maxWorkloadImageBytes   = 2048
 	maxCronJobScheduleBytes = 512
 	maxCronJobTimeZoneBytes = 128
+	// A Job's name is copied onto its Pods as the `job-name` label value, and a
+	// CronJob's has to leave room for the Job names the controller derives.
+	maxJobNameLength     = 63
+	maxCronJobNameLength = 52
 )
 
 type WorkloadContainerTemplate struct {
 	Name            string
 	Image           string
 	ImagePullPolicy string
+	Command         []string
+	Args            []string
+	WorkingDir      string
+	Env             []WorkloadEnvVar
+	Resources       *WorkloadResourceRequirements
+	VolumeMounts    []WorkloadVolumeMount
+	LivenessProbe   *WorkloadProbe
+	ReadinessProbe  *WorkloadProbe
+	Lifecycle       *WorkloadLifecycle
+	Privileged      *bool
 }
 
 type CreateWorkloadInput struct {
@@ -35,8 +50,15 @@ type CreateWorkloadInput struct {
 	Resource       WorkloadResource
 	Name           string
 	Labels         map[string]string
+	Annotations    map[string]string
+	Description    string
 	Containers     []WorkloadContainerTemplate
 	InitContainers []WorkloadContainerTemplate
+
+	Volumes          []WorkloadVolume
+	ImagePullSecrets []string
+	NodeSelector     map[string]string
+	Tolerations      []WorkloadToleration
 
 	Replicas    *int32
 	ServiceName string
@@ -98,7 +120,16 @@ func validateCreateWorkloadInput(input CreateWorkloadInput) error {
 		len(k8svalidation.IsDNS1123Subdomain(input.Name)) != 0 ||
 		!validNamespaceLabels(input.Labels) ||
 		hasReservedSelectorLabel ||
+		!validWorkloadAnnotations(input.Annotations) ||
+		utf8.RuneCountInString(input.Description) > maxWorkloadDescriptionRunes ||
 		!validWorkloadContainers(input.Containers, input.InitContainers) ||
+		!validWorkloadVolumes(
+			input.Volumes,
+			workloadMountedVolumeNames(input.Containers, input.InitContainers),
+		) ||
+		!validWorkloadImagePullSecrets(input.ImagePullSecrets) ||
+		!validWorkloadNodeSelector(input.NodeSelector) ||
+		!validWorkloadTolerations(input.Tolerations) ||
 		!validNonNegativeInt32(input.Replicas) ||
 		!validNonNegativeInt32(input.Parallelism) ||
 		!validNonNegativeInt32(input.Completions) ||
@@ -132,12 +163,14 @@ func validateCreateWorkloadInput(input CreateWorkloadInput) error {
 		}
 	case WorkloadJobs:
 		if input.Replicas != nil ||
+			len(input.Name) > maxJobNameLength ||
 			hasStatefulSetCreateFields(input) ||
 			hasCronJobCreateFields(input) {
 			return ErrInvalidInput
 		}
 	case WorkloadCronJobs:
 		if input.Replicas != nil ||
+			len(input.Name) > maxCronJobNameLength ||
 			hasStatefulSetCreateFields(input) ||
 			!validCronJobCreateFields(input) {
 			return ErrInvalidInput
@@ -164,7 +197,8 @@ func validWorkloadContainers(
 			len(container.Image) > maxWorkloadImageBytes ||
 			strings.TrimSpace(container.Image) != container.Image ||
 			strings.ContainsAny(container.Image, " \t\r\n") ||
-			!validImagePullPolicy(container.ImagePullPolicy) {
+			!validImagePullPolicy(container.ImagePullPolicy) ||
+			!validWorkloadContainerTemplate(container) {
 			return false
 		}
 		if _, exists := names[container.Name]; exists {
@@ -179,7 +213,13 @@ func validWorkloadContainers(
 		}
 	}
 	for _, container := range initContainers {
-		if !addContainer(container) {
+		// An init container runs to completion before the Pod starts: it has
+		// nothing to probe and no lifecycle to hook into, and Kubernetes rejects
+		// both rather than ignoring them.
+		if container.LivenessProbe != nil ||
+			container.ReadinessProbe != nil ||
+			container.Lifecycle != nil ||
+			!addContainer(container) {
 			return false
 		}
 	}
@@ -242,9 +282,10 @@ func validCronJobCreateFields(input CreateWorkloadInput) bool {
 
 func createWorkloadObject(input CreateWorkloadInput) (runtime.Object, error) {
 	metadata := metav1.ObjectMeta{
-		Name:      input.Name,
-		Namespace: input.Namespace,
-		Labels:    maps.Clone(input.Labels),
+		Name:        input.Name,
+		Namespace:   input.Namespace,
+		Labels:      maps.Clone(input.Labels),
+		Annotations: workloadAnnotations(input.Annotations, input.Description),
 	}
 	selectorLabels := map[string]string{
 		workloadSelectorLabel: workloadSelectorValue(input.Resource, input.Name),
@@ -333,11 +374,21 @@ func workloadPodTemplate(
 		labels[key] = value
 	}
 	return corev1.PodTemplateSpec{
-		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: labels,
+			// The Pod carries the workload's annotations too: a description or an
+			// operator's own key is about the thing that runs, and reading it off
+			// a Pod is how it gets found again.
+			Annotations: workloadAnnotations(input.Annotations, input.Description),
+		},
 		Spec: corev1.PodSpec{
-			RestartPolicy:  restartPolicy,
-			Containers:     protocolWorkloadContainers(input.Containers),
-			InitContainers: protocolWorkloadContainers(input.InitContainers),
+			RestartPolicy:    restartPolicy,
+			Containers:       protocolWorkloadContainers(input.Containers),
+			InitContainers:   protocolWorkloadContainers(input.InitContainers),
+			Volumes:          workloadVolumeSpec(input.Volumes),
+			ImagePullSecrets: workloadImagePullSecretSpec(input.ImagePullSecrets),
+			NodeSelector:     maps.Clone(input.NodeSelector),
+			Tolerations:      workloadTolerationSpec(input.Tolerations),
 		},
 	}
 }
@@ -345,11 +396,7 @@ func workloadPodTemplate(
 func protocolWorkloadContainers(input []WorkloadContainerTemplate) []corev1.Container {
 	result := make([]corev1.Container, 0, len(input))
 	for _, container := range input {
-		result = append(result, corev1.Container{
-			Name:            container.Name,
-			Image:           container.Image,
-			ImagePullPolicy: corev1.PullPolicy(container.ImagePullPolicy),
-		})
+		result = append(result, workloadContainerSpec(container))
 	}
 	return result
 }

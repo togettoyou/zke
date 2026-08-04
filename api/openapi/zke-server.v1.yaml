@@ -5772,6 +5772,154 @@ components:
     KubernetesWorkloadResource:
       type: string
       enum: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+    KubernetesWorkloadObjectKeyRef:
+      type: object
+      additionalProperties: false
+      required: [name, key]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        key:
+          type: string
+          minLength: 1
+        optional:
+          type: [boolean, "null"]
+    # 字面值与引用互斥：Kubernetes 不接受 value 与 valueFrom 同时出现。
+    KubernetesWorkloadEnvVar:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: C_IDENTIFIER 形式的变量名，同一容器内不得重复。
+        value:
+          type: string
+          maxLength: 32768
+        config_map_key_ref:
+          $ref: "#/components/schemas/KubernetesWorkloadObjectKeyRef"
+        secret_key_ref:
+          $ref: "#/components/schemas/KubernetesWorkloadObjectKeyRef"
+    # 保持为 quantity map 而不是 CPU/内存四个具名字段：GPU 等扩展资源因此无需新增
+    # 字段即可声明。键为 Kubernetes 资源名，值为 Kubernetes quantity。
+    KubernetesWorkloadResourceRequirements:
+      type: object
+      additionalProperties: false
+      description: 同名资源的 requests 不得大于 limits。
+      properties:
+        requests:
+          $ref: "#/components/schemas/KubernetesPolicyQuantityMap"
+        limits:
+          $ref: "#/components/schemas/KubernetesPolicyQuantityMap"
+    KubernetesWorkloadVolumeMount:
+      type: object
+      additionalProperties: false
+      required: [name, mount_path]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 63
+          description: 必须引用同一请求中声明的数据卷名称。
+        mount_path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: 必须是绝对路径，且不能包含冒号；同一容器内不得重复。
+        sub_path:
+          type: string
+          maxLength: 4096
+          description: 相对路径；绝对路径和 .. 会越出所选数据卷，接口拒绝。
+        read_only:
+          type: boolean
+    KubernetesWorkloadExecAction:
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+    KubernetesWorkloadHTTPGetAction:
+      type: object
+      additionalProperties: false
+      required: [port]
+      properties:
+        path:
+          type: string
+          maxLength: 4096
+        port:
+          type: string
+          minLength: 1
+          description: 端口号（1-65535）或已命名容器端口的名称。
+        host:
+          type: string
+          maxLength: 4096
+        scheme:
+          type: string
+          enum: ["", HTTP, HTTPS]
+    KubernetesWorkloadTCPSocketAction:
+      type: object
+      additionalProperties: false
+      required: [port]
+      properties:
+        port:
+          type: string
+          minLength: 1
+    # exec、http_get、tcp_socket 三者必须且只能设置一个：没有处理器的探针不会执行，
+    # 两个处理器的探针没有确定语义。
+    KubernetesWorkloadProbe:
+      type: object
+      additionalProperties: false
+      properties:
+        exec:
+          $ref: "#/components/schemas/KubernetesWorkloadExecAction"
+        http_get:
+          $ref: "#/components/schemas/KubernetesWorkloadHTTPGetAction"
+        tcp_socket:
+          $ref: "#/components/schemas/KubernetesWorkloadTCPSocketAction"
+        initial_delay_seconds:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+        period_seconds:
+          type: [integer, "null"]
+          format: int32
+          minimum: 1
+        timeout_seconds:
+          type: [integer, "null"]
+          format: int32
+          minimum: 1
+        success_threshold:
+          type: [integer, "null"]
+          format: int32
+          minimum: 1
+        failure_threshold:
+          type: [integer, "null"]
+          format: int32
+          minimum: 1
+    KubernetesWorkloadLifecycleHandler:
+      type: object
+      additionalProperties: false
+      properties:
+        exec:
+          $ref: "#/components/schemas/KubernetesWorkloadExecAction"
+        http_get:
+          $ref: "#/components/schemas/KubernetesWorkloadHTTPGetAction"
+    KubernetesWorkloadLifecycle:
+      type: object
+      additionalProperties: false
+      properties:
+        post_start:
+          $ref: "#/components/schemas/KubernetesWorkloadLifecycleHandler"
+        pre_stop:
+          $ref: "#/components/schemas/KubernetesWorkloadLifecycleHandler"
     KubernetesWorkloadContainerTemplate:
       type: object
       additionalProperties: false
@@ -5790,6 +5938,177 @@ components:
           type: string
           enum: ["", Always, IfNotPresent, Never]
           description: 空字符串表示交由 Kubernetes 默认处理。
+        command:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+          description: 覆盖镜像的 ENTRYPOINT。
+        args:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+          description: 覆盖镜像的 CMD。
+        working_dir:
+          type: string
+          maxLength: 4096
+        env:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadEnvVar"
+        resources:
+          $ref: "#/components/schemas/KubernetesWorkloadResourceRequirements"
+        volume_mounts:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadVolumeMount"
+        liveness_probe:
+          $ref: "#/components/schemas/KubernetesWorkloadProbe"
+        readiness_probe:
+          $ref: "#/components/schemas/KubernetesWorkloadProbe"
+        lifecycle:
+          $ref: "#/components/schemas/KubernetesWorkloadLifecycle"
+        privileged:
+          type: [boolean, "null"]
+          description: 仅 true 会被写入 securityContext；false 与省略等价。
+    KubernetesWorkloadEmptyDirVolume:
+      type: object
+      additionalProperties: false
+      properties:
+        medium:
+          type: string
+          enum: ["", Memory]
+        size_limit:
+          type: string
+          description: Kubernetes quantity，例如 512Mi。
+    KubernetesWorkloadHostPathVolume:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: 必须是绝对路径。
+        type:
+          type: string
+          enum:
+            [
+              "",
+              DirectoryOrCreate,
+              Directory,
+              FileOrCreate,
+              File,
+              Socket,
+              CharDevice,
+              BlockDevice,
+            ]
+    KubernetesWorkloadConfigMapVolume:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        default_mode:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 511
+        optional:
+          type: [boolean, "null"]
+    # 只传递引用：ZKE 不读取也不返回 Secret 正文，这里与 Ingress 引用 TLS Secret 同理。
+    KubernetesWorkloadSecretVolume:
+      type: object
+      additionalProperties: false
+      required: [secret_name]
+      properties:
+        secret_name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        default_mode:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 511
+        optional:
+          type: [boolean, "null"]
+    KubernetesWorkloadPersistentVolumeClaimVolume:
+      type: object
+      additionalProperties: false
+      required: [claim_name]
+      properties:
+        claim_name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        read_only:
+          type: boolean
+    KubernetesWorkloadNFSVolume:
+      type: object
+      additionalProperties: false
+      required: [server, path]
+      properties:
+        server:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        read_only:
+          type: boolean
+    # 六种来源必须且只能设置一个。
+    KubernetesWorkloadVolume:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 63
+        empty_dir:
+          $ref: "#/components/schemas/KubernetesWorkloadEmptyDirVolume"
+        host_path:
+          $ref: "#/components/schemas/KubernetesWorkloadHostPathVolume"
+        config_map:
+          $ref: "#/components/schemas/KubernetesWorkloadConfigMapVolume"
+        secret:
+          $ref: "#/components/schemas/KubernetesWorkloadSecretVolume"
+        persistent_volume_claim:
+          $ref: "#/components/schemas/KubernetesWorkloadPersistentVolumeClaimVolume"
+        nfs:
+          $ref: "#/components/schemas/KubernetesWorkloadNFSVolume"
+    KubernetesWorkloadToleration:
+      type: object
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+          description: 留空只在 operator 为 Exists 时有效，表示容忍全部污点。
+        operator:
+          type: string
+          enum: ["", Equal, Exists]
+        value:
+          type: string
+          description: operator 为 Exists 时必须留空。
+        effect:
+          type: string
+          enum: ["", NoSchedule, PreferNoSchedule, NoExecute]
+        toleration_seconds:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+          description: 只有 NoExecute 会驱逐，因此只有它接受该字段。
     KubernetesCreateWorkloadRequest:
       type: object
       additionalProperties: false
@@ -5799,11 +6118,23 @@ components:
           type: string
           minLength: 1
           maxLength: 253
+          description: >-
+            DNS 子域名。Job 最长 63 个字符，因为该名称会成为 Pod 的 job-name 标签值；
+            CronJob 最长 52 个字符，需要为控制器派生的 Job 名称留出余量。
         labels:
           type: object
           additionalProperties:
             type: string
           description: zke.io/workload-id 为 Server 保留键，不接受客户端设置。
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+          description: zke.io/description 为 description 字段保留，不接受在此设置。
+        description:
+          type: string
+          maxLength: 1000
+          description: 写入工作负载与 Pod 模板的 zke.io/description 注解。
         containers:
           type: array
           minItems: 1
@@ -5815,6 +6146,31 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/KubernetesWorkloadContainerTemplate"
+          description: >-
+            在主容器之前运行完毕，因此不接受 liveness_probe、readiness_probe 和 lifecycle；
+            容器名在主容器与初始化容器之间不得重复。
+        volumes:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadVolume"
+          description: 容器的 volume_mounts 只能引用这里声明的名称。
+        image_pull_secrets:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+          description: 只传递 Secret 名称引用，不读取 Secret 正文。
+        node_selector:
+          type: object
+          additionalProperties:
+            type: string
+          description: 按节点标签精确匹配；亲和性等更复杂的调度规则请使用 YAML。
+        tolerations:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadToleration"
         replicas:
           type: [integer, "null"]
           format: int32

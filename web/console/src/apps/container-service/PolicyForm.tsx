@@ -30,7 +30,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Input, NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
 import {
@@ -787,14 +787,12 @@ function usePriorityClassEditor(
               : "整数，越大越优先，上限 1000000000"
           }
         >
-          <Input
+          <NumericInput
             id="priority-value"
             value={value}
-            autoComplete="off"
-            inputMode="numeric"
             placeholder="100000"
             disabled={editing}
-            onChange={(event) => setValue(event.target.value)}
+            onValueChange={setValue}
           />
         </Field>
         <Field
