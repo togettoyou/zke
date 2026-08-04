@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Play, Square } from "lucide-react";
+import { Play, Square } from "lucide-react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -16,7 +16,7 @@ import {
 } from "@/api/queries/pod-exec";
 import { usePod } from "@/api/queries/pods";
 import type { KubernetesPodDetail } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge, StatusDot } from "@/components/ui/badge";
@@ -68,15 +68,10 @@ export function PodTerminalView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
+      <PageHeader
         title={`${podName} · 终端`}
         description={`集群 ${clusterName} 的 ${namespace}。会话固定连接打开入口时的 Pod UID 与所选容器；Shell 由服务端决定，优先 bash，不存在时回退 /bin/sh。`}
-        actions={
-          <Button size="sm" variant="secondary" onClick={onBack}>
-            <ArrowLeft />
-            返回
-          </Button>
-        }
+        onBack={onBack}
       />
       {detail.error ? (
         <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />

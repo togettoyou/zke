@@ -1,12 +1,12 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Download, Pause, Play, RotateCw } from "lucide-react";
+import { Download, Pause, Play, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
 import { usePodLogStream } from "@/api/queries/pod-logs";
 import { usePod } from "@/api/queries/pods";
 import type { KubernetesPodDetail } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { PageHeader } from "@/apps/AppShell";
 import { CopyButton } from "@/components/common/status";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge, StatusDot } from "@/components/ui/badge";
@@ -60,15 +60,10 @@ export function PodLogsView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
+      <PageHeader
         title={`${podName} · 日志`}
         description={`读取自集群 ${clusterName} 的 ${namespace}。日志固定到打开视图时的 Pod UID，同名重建的 Pod 不会被误读。`}
-        actions={
-          <Button size="sm" variant="secondary" onClick={onBack}>
-            <ArrowLeft />
-            返回
-          </Button>
-        }
+        onBack={onBack}
       />
       {detail.error ? (
         <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />

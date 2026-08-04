@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, FileCode, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
+import { FileCode, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -10,7 +10,7 @@ import {
   useNamespaces,
 } from "@/api/queries/namespaces";
 import type { KubernetesNamespaceDetail, KubernetesNamespaceSummary } from "@/api/types";
-import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
+import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
@@ -403,10 +403,11 @@ function NamespaceDetailView({
 
   return (
     <div className="grid gap-3">
-      <SectionTitle
+      <PageHeader
         title={name}
+        onBack={onBack}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             <Button size="sm" variant="secondary" onClick={onOpenQuota}>
               <SlidersHorizontal />
               配额管理
@@ -415,11 +416,7 @@ function NamespaceDetailView({
               <FileCode />
               YAML
             </Button>
-            <Button size="sm" variant="secondary" onClick={onBack}>
-              <ArrowLeft />
-              返回列表
-            </Button>
-          </div>
+          </>
         }
       />
       {detail.error ? (

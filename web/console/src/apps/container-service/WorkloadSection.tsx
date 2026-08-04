@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, FileCode, Plus } from "lucide-react";
+import { FileCode, Plus } from "lucide-react";
 
 import { useWorkload, useWorkloads } from "@/api/queries/workloads";
 import type {
@@ -8,7 +8,7 @@ import type {
   KubernetesWorkloadResource,
   KubernetesWorkloadSummary,
 } from "@/api/types";
-import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
+import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
@@ -372,10 +372,11 @@ function WorkloadDetailView({
 
   return (
     <div className="grid gap-3">
-      <SectionTitle
+      <PageHeader
         title={name}
+        onBack={onBack}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             {/* The actions need the object they act on, so they appear once the
                 detail has actually loaded — a deletion pinned to a UID cannot be
                 offered before the UID is known. */}
@@ -392,11 +393,7 @@ function WorkloadDetailView({
               <FileCode />
               YAML
             </Button>
-            <Button size="sm" variant="secondary" onClick={onBack}>
-              <ArrowLeft />
-              返回列表
-            </Button>
-          </div>
+          </>
         }
       />
       {detail.error ? (

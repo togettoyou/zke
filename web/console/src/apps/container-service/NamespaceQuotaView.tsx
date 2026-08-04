@@ -1,5 +1,4 @@
 import { useId, useState } from "react";
-import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
@@ -10,7 +9,7 @@ import {
   useUpdatePolicyResource,
 } from "@/api/queries/policies";
 import type { KubernetesPolicyResourceSummary } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -83,16 +82,11 @@ export function NamespaceQuotaView({
 
   return (
     <div className="grid gap-3">
-      <SectionTitle
+      <PageHeader
         title={`配额管理 · ${namespace}`}
+        onBack={onBack}
         actions={
-          <>
-            <RefreshAction isFetching={quotas.isFetching} onRefresh={() => void quotas.refetch()} />
-            <Button size="sm" variant="secondary" onClick={onBack}>
-              <ArrowLeft />
-              返回列表
-            </Button>
-          </>
+          <RefreshAction isFetching={quotas.isFetching} onRefresh={() => void quotas.refetch()} />
         }
       />
 

@@ -1,11 +1,11 @@
 import { useId, useState, type ReactNode } from "react";
-import { AlertTriangle, ArrowLeft, Plus, X } from "lucide-react";
+import { AlertTriangle, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
 import { useCreateWorkload, type WorkloadCreateSpec } from "@/api/queries/workloads";
 import type { KubernetesWorkloadResource } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { Button } from "@/components/ui/button";
 import { Input, NumericInput, Textarea } from "@/components/ui/input";
@@ -163,15 +163,7 @@ export function WorkloadCreateView({
   return (
     <>
       <div className="grid gap-3">
-        <SectionTitle
-          title={`创建 ${kind} · ${namespace}`}
-          actions={
-            <Button size="sm" variant="secondary" onClick={onClose}>
-              <ArrowLeft />
-              返回列表
-            </Button>
-          }
-        />
+        <PageHeader title={`创建 ${kind} · ${namespace}`} onBack={onClose} />
 
         <FormSection title="基本信息" problem={problemIn("basic")}>
           <div className="grid gap-3 sm:grid-cols-2">

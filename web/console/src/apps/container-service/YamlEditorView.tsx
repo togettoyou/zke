@@ -1,11 +1,11 @@
 import { useRef, useState } from "react";
-import { ArrowLeft, RotateCw, Save } from "lucide-react";
+import { RotateCw, Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
 import { newIdempotencyKey } from "@/api/client";
 import { useResourceYaml, useUpdateResourceYaml, type ResourceIdentity } from "@/api/queries/yaml";
-import { SectionTitle } from "@/apps/AppShell";
+import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { CopyButton } from "@/components/common/status";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -97,11 +97,15 @@ export function YamlEditorView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SectionTitle
+      {/* No description: the toolbar already names the Cluster and Namespace,
+          and the DryRun is not a caveat to read but the step the 保存 button
+          actually performs before anything is written. */}
+      <PageHeader
         title={`${identity.name} · YAML`}
-        description={`读取自集群 ${clusterName}${identity.namespace ? ` 的 ${identity.namespace}` : ""}。保存前先执行 Kubernetes 服务端 DryRun。`}
+        onBack={onBack}
+        backDisabled={update.isPending}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             <CopyButton value={text} label="复制" />
             <Button
               size="sm"
@@ -123,11 +127,7 @@ export function YamlEditorView({
                 {update.isPending ? "预检中…" : "保存"}
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onBack} disabled={update.isPending}>
-              <ArrowLeft />
-              返回
-            </Button>
-          </div>
+          </>
         }
       />
 

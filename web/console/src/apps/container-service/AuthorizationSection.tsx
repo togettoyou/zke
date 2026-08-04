@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -14,7 +14,7 @@ import type {
   KubernetesAuthorizationResourceDetail,
   KubernetesAuthorizationResourceSummary,
 } from "@/api/types";
-import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
+import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
@@ -454,21 +454,18 @@ function AuthorizationDetailView({
 
   return (
     <div className="grid gap-3">
-      <SectionTitle
+      <PageHeader
         title={name}
+        onBack={onBack}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             {canManage && item && locked === null ? (
               <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
                 <Pencil />
                 编辑
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onBack}>
-              <ArrowLeft />
-              返回列表
-            </Button>
-          </div>
+          </>
         }
       />
       {detail.error ? (

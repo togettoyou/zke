@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { LucideIcon } from "lucide-react";
+import { ArrowLeft, type LucideIcon } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 
 export type AppNavItem = {
@@ -28,6 +29,98 @@ export function SectionToolbarActions({ children }: { children: ReactNode }) {
 }
 
 /**
+ * The row between the toolbar and the work area, owned by the open view.
+ *
+ * `scope` is what the toolbar's pickers were saying, as text: while a page
+ * header is up the pickers are gone, and a Console that manages many Clusters
+ * must not show one Cluster's object without saying which Cluster it is.
+ */
+const PageHeaderSlot = createContext<{
+  element: HTMLElement | null;
+  scope: ReactNode;
+  onOpen: (open: boolean) => void;
+}>({ element: null, scope: null, onOpen: () => {} });
+
+/**
+ * The header of a view that was entered from another one: what is open, the way
+ * out of it, and what can be done to it.
+ *
+ * Its own row above the work area rather than the first thing inside it. A
+ * detail page is as long as the object it describes, and a header that scrolls
+ * takes the way back and every action with it — the operator who has read to the
+ * bottom is the one most likely to want them. It is not the toolbar either: the
+ * toolbar says which Cluster and Namespace is being looked at, and it is already
+ * as wide as two pickers, so a fifth button there wraps it onto a second line
+ * and puts 返回 further away than it was on the page.
+ *
+ * The way back is an arrow before the name, where reading starts, rather than a
+ * labelled button at the far end: it is the same gesture on every screen and
+ * needs saying once, quietly.
+ *
+ * While one is open the shell hides the toolbar. Its pickers change what the
+ * list below is showing, and there is no list below — switching Namespace under
+ * an open object would leave the page asking a different Cluster for the same
+ * name. The scope they were displaying moves into this row as text.
+ */
+export function PageHeader({
+  title,
+  description,
+  actions,
+  onBack,
+  backDisabled,
+}: {
+  title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+  /** Omitted by a view that was not entered from another one. */
+  onBack?: () => void;
+  backDisabled?: boolean;
+}) {
+  const { element, scope, onOpen } = useContext(PageHeaderSlot);
+
+  useEffect(() => {
+    onOpen(true);
+    return () => onOpen(false);
+  }, [onOpen]);
+
+  if (!element) {
+    return null;
+  }
+  return createPortal(
+    <>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {onBack ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="返回"
+            title="返回"
+            disabled={backDisabled}
+            onClick={onBack}
+            className="-ml-1 shrink-0"
+          >
+            <ArrowLeft />
+          </Button>
+        ) : null}
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <h3 className="text-foreground truncate text-sm font-semibold tracking-tight">
+              {title}
+            </h3>
+            {scope ? <span className="text-subtle-foreground text-xs">{scope}</span> : null}
+          </div>
+          {description ? (
+            <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">{description}</p>
+          ) : null}
+        </div>
+      </div>
+      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+    </>,
+    element,
+  );
+}
+
+/**
  * Each application owns its navigation inside its window: a narrow rail on the
  * left, a toolbar row on top and a scrollable work area.
  */
@@ -36,6 +129,7 @@ export function AppShell({
   activeId,
   onNavigate,
   toolbar,
+  scope,
   statusBar,
   children,
 }: {
@@ -43,11 +137,19 @@ export function AppShell({
   activeId: string;
   onNavigate: (id: string) => void;
   toolbar?: ReactNode;
+  /** What the toolbar's pickers say, in words, for when they are not shown. */
+  scope?: ReactNode;
   statusBar?: ReactNode;
   children: ReactNode;
 }) {
   const visible = nav.filter((item) => !item.hidden);
   const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
+  const [pageHeaderSlot, setPageHeaderSlot] = useState<HTMLElement | null>(null);
+  const [entered, setEntered] = useState(false);
+  const pageHeader = useMemo(
+    () => ({ element: pageHeaderSlot, scope, onOpen: setEntered }),
+    [pageHeaderSlot, scope],
+  );
 
   return (
     <div className="flex h-full min-h-0">
@@ -98,7 +200,12 @@ export function AppShell({
       ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {toolbar ? (
+        {/*
+         * One chrome row at a time. The toolbar belongs to a list — its pickers
+         * choose what the list shows, and its slot carries that list's actions —
+         * so an open object replaces it rather than stacking under it.
+         */}
+        {toolbar && !entered ? (
           <div className="border-border bg-surface-muted/30 flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
             {toolbar}
             {/* `ml-auto` on an empty div costs nothing and keeps section actions
@@ -106,8 +213,19 @@ export function AppShell({
             <div ref={setActionSlot} className="ml-auto flex items-center gap-2" />
           </div>
         ) : null}
+        {/* `empty:hidden` keeps a list view, which has no header of its own, from
+            paying for the row and its border. */}
+        {/* Same padding and the same content height as the toolbar it stands in
+            for, so entering an object does not shift the page under the cursor.
+            `h-9` is the height of a picker, which is what sets the other row. */}
+        <div
+          ref={setPageHeaderSlot}
+          className="border-border bg-surface-muted/30 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-3 py-2 empty:hidden [&>*]:min-h-9"
+        />
         <div className="min-h-0 flex-1 overflow-auto p-4">
-          <ToolbarActionSlot.Provider value={actionSlot}>{children}</ToolbarActionSlot.Provider>
+          <PageHeaderSlot.Provider value={pageHeader}>
+            <ToolbarActionSlot.Provider value={actionSlot}>{children}</ToolbarActionSlot.Provider>
+          </PageHeaderSlot.Provider>
         </div>
         {statusBar ? (
           <div className="border-border text-subtle-foreground shrink-0 border-t px-3 py-1.5 text-xs">

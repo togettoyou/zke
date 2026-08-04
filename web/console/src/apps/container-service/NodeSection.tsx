@@ -1,15 +1,16 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, Ban, FileCode, PlayCircle } from "lucide-react";
+import { Ban, FileCode, PlayCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { useNode, useNodes, useSetNodeSchedulable } from "@/api/queries/nodes";
 import type { KubernetesNodeDetail, KubernetesNodeSummary } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { StatusBadge } from "@/components/common/status";
 import { Badge } from "@/components/ui/badge";
@@ -183,6 +184,9 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
         // toolbar already names the target Cluster, so a title repeating both
         // only costs the table a row of height.
         <div className="flex h-full min-h-0 flex-col">
+          <SectionToolbarActions>
+            <RefreshAction isFetching={nodes.isFetching} onRefresh={() => void nodes.refetch()} />
+          </SectionToolbarActions>
           <DataTable
             columns={columns}
             data={nodes.data?.nodes}
@@ -280,10 +284,11 @@ function NodeDetailView({
 
   return (
     <div className="grid gap-3">
-      <SectionTitle
+      <PageHeader
         title={name}
+        onBack={onBack}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             {canUpdate && detail.data ? (
               // Same colour rule as the list action: warning for the direction
               // that stops scheduling, success for the one that restores it.
@@ -306,11 +311,7 @@ function NodeDetailView({
               <FileCode />
               YAML
             </Button>
-            <Button size="sm" variant="secondary" onClick={onBack}>
-              <ArrowLeft />
-              返回列表
-            </Button>
-          </div>
+          </>
         }
       />
       {detail.error ? (

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, FileCode, ScrollText, SquareTerminal, Trash2 } from "lucide-react";
+import { FileCode, ScrollText, SquareTerminal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDeletePod, usePod, usePods } from "@/api/queries/pods";
@@ -10,7 +10,7 @@ import type {
   KubernetesPodOwnerReference,
   KubernetesPodSummary,
 } from "@/api/types";
-import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
+import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
@@ -407,10 +407,11 @@ function PodDetailView({
 
   return (
     <div className="grid gap-3">
-      <SectionTitle
+      <PageHeader
         title={name}
+        onBack={onBack}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             {canReadLogs && pod?.uid ? (
               <Button size="sm" variant="secondary" onClick={() => onOpenLogs(pod)}>
                 <ScrollText />
@@ -438,11 +439,7 @@ function PodDetailView({
                 删除
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onBack}>
-              <ArrowLeft />
-              返回列表
-            </Button>
-          </div>
+          </>
         }
       />
       {detail.error ? (

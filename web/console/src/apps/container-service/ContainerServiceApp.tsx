@@ -271,6 +271,14 @@ export function ContainerServiceApp() {
         </>
       }
       /*
+       * What the pickers above say, for the views that replace them. An object
+       * of the same name exists in every Cluster, so a page showing one without
+       * naming its Cluster is a page that cannot be read.
+       */
+      scope={
+        clusterId ? `${clusterName}${namespaced && namespace ? ` · ${namespace}` : ""}` : undefined
+      }
+      /*
        * The status bar carries exceptions only. A line restating that every
        * request runs on the selected Cluster's Agent was true on every screen of
        * this window, which is exactly why nobody read it — and it cost a row of

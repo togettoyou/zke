@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowLeft, FileCode, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileCode, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useConfigMap, useConfigMaps, useDeleteConfigMap } from "@/api/queries/configmaps";
 import type { KubernetesConfigMapDetail, KubernetesConfigMapSummary } from "@/api/types";
-import { SectionTitle, SectionToolbarActions } from "@/apps/AppShell";
+import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
@@ -333,10 +333,11 @@ function ConfigMapDetailView({
 
   return (
     <div className="grid gap-3">
-      <SectionTitle
+      <PageHeader
         title={name}
+        onBack={onBack}
         actions={
-          <div className="flex items-center gap-2">
+          <>
             {canUpdate && item && !item.immutable ? (
               <Button size="sm" variant="secondary" onClick={onEdit}>
                 <Pencil />
@@ -347,11 +348,7 @@ function ConfigMapDetailView({
               <FileCode />
               YAML
             </Button>
-            <Button size="sm" variant="secondary" onClick={onBack}>
-              <ArrowLeft />
-              返回列表
-            </Button>
-          </div>
+          </>
         }
       />
       {detail.error ? (
