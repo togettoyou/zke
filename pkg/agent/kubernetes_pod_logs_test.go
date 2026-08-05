@@ -35,6 +35,9 @@ func TestKubernetesPodLogsHandlerChecksIdentityAndStreamsOptions(t *testing.T) {
 					Containers:     []corev1.Container{{Name: "main"}},
 					InitContainers: []corev1.Container{{Name: "init"}},
 				},
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{{Name: "main", RestartCount: 1}},
+				},
 			})
 		case "/api/v1/namespaces/model-serving/pods/inference-abcde/log":
 			logQuery = request.URL.RawQuery
@@ -132,6 +135,87 @@ func TestKubernetesPodLogsHandlerRejectsReplacedPodAndUnknownContainer(t *testin
 	}
 	if logRequests != 0 {
 		t.Fatalf("unsafe Pod log requests = %d", logRequests)
+	}
+}
+
+func TestKubernetesPodLogsHandlerReportsMissingPreviousInstance(t *testing.T) {
+	t.Parallel()
+
+	logRequests := 0
+	restartCount := int32(0)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if strings.HasSuffix(request.URL.Path, "/log") {
+			logRequests++
+			// What Kubernetes answers once the log of a previous instance has
+			// been rotated off the node.
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(writer).Encode(metav1.Status{
+				Status:  metav1.StatusFailure,
+				Code:    http.StatusBadRequest,
+				Reason:  metav1.StatusReasonBadRequest,
+				Message: `previous terminated container "main" in pod "example" not found`,
+			})
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(corev1.Pod{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "example", Namespace: "default", UID: types.UID("pod-uid"),
+			},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main"}}},
+			Status: corev1.PodStatus{
+				ContainerStatuses: []corev1.ContainerStatus{
+					{Name: "main", RestartCount: restartCount},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := newKubernetesPodLogsHandler(client)
+	logsRequest := &agentv1.PodLogsRequest{
+		Namespace: "default", PodName: "example", PodUid: "pod-uid",
+		Container: "main", Previous: true, MaxBytes: 1024,
+	}
+
+	// A container that has never restarted is answered without asking the
+	// cluster for a log that cannot exist.
+	response, stream, err := handler(context.Background(), logsRequest)
+	if err != nil || stream != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_NOT_FOUND ||
+		response.GetReason() != "PreviousLogsNotFound" {
+		t.Fatalf("unexpected response=%+v stream=%v err=%v", response, stream, err)
+	}
+	if logRequests != 0 {
+		t.Fatalf("Pod log requests = %d, want 0", logRequests)
+	}
+
+	// One that has restarted goes to the cluster; a rejected read there is the
+	// same missing log, not invalid input.
+	restartCount = 1
+	response, stream, err = handler(context.Background(), logsRequest)
+	if err != nil || stream != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_NOT_FOUND ||
+		response.GetReason() != "PreviousLogsNotFound" {
+		t.Fatalf("unexpected rotated-log response=%+v stream=%v err=%v", response, stream, err)
+	}
+	if logRequests != 1 {
+		t.Fatalf("Pod log requests = %d, want 1", logRequests)
+	}
+
+	// The same rejection without previous stays invalid input.
+	response, stream, err = handler(context.Background(), &agentv1.PodLogsRequest{
+		Namespace: "default", PodName: "example", PodUid: "pod-uid",
+		Container: "main", MaxBytes: 1024,
+	})
+	if err != nil || stream != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT {
+		t.Fatalf("unexpected current-instance response=%+v stream=%v err=%v", response, stream, err)
 	}
 }
 

@@ -5419,7 +5419,11 @@ export interface operations {
                 /** @description Pod 中明确的主容器、初始化容器或临时容器名称。 */
                 container: string;
                 follow?: boolean;
-                /** @description 读取该容器上一个终止实例的日志。 */
+                /**
+                 * @description 读取该容器上一个终止实例的日志。不能与 follow 同时使用：已终止的实例
+                 *     不会再产生新日志。该容器没有上一个实例，或其日志已被节点清理时，返回
+                 *     404 previous_logs_not_found，而不是按无效输入处理。
+                 */
                 previous?: boolean;
                 tail_lines?: number;
                 since_seconds?: number;

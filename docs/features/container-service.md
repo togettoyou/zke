@@ -389,7 +389,12 @@ Eviction，不执行 PodDisruptionBudget 语义；Logs 通过独立协议和最�
 Subresource 边界；Exec 只通过独立 Pod Exec 协议开放，Eviction 仍留待后续设计。
 
 Pod 日志后端在读取前和打开 Kubernetes 日志流后分别核对 Pod UID，避免同名 Pod 重建竞态；支持主容器、
-初始化容器和临时容器，`tail_lines` 最大 5000、`since_seconds` 最大 7 天。快照和 Follow 都使用独立 QUIC
+初始化容器和临时容器，`tail_lines` 最大 5000、`since_seconds` 最大 7 天。`previous` 不接受与 `follow`
+同时使用——已终止的实例不会再产生新日志——因此一次被拒绝的上一个实例读取只剩一种含义。Agent 在请求
+Kubernetes 之前先按容器状态判断该容器是否运行过：没有重启过就没有上一个实例，直接返回
+`404 previous_logs_not_found`；已经重启过但 Kubernetes 仍拒绝时（上一个实例的日志已被节点清理）同样按该
+错误返回。Kubernetes 对这两种情况都回 400，照直传给操作者就成了「请求内容无效，请检查输入」，而请求本身
+是良构的，缺的是被请求的对象。快照和 Follow 都使用独立 QUIC
 Stream 逐块转发，默认每条最多 16 MiB，Follow 最长 30 分钟。Follow 会周期重新验证 Session 和权限；客户端
 断开、权限撤销、超时或 Agent 连接排空都会取消目标 Kubernetes 请求。HTTP 正文为未包装的 `text/plain`，
 终止状态和字节统计通过 Trailer 返回，日志正文不会进入 Server 日志或审计事件。

@@ -275,6 +275,7 @@ func (handler *kubernetesPodLogsHandler) respondPodLogsError(
 		err,
 		errorMapping{podlogs.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Pod logs request"},
 		errorMapping{podlogs.ErrPodNotFound, http.StatusNotFound, "pod_not_found", "Kubernetes Pod not found"},
+		errorMapping{podlogs.ErrPreviousLogsNotFound, http.StatusNotFound, "previous_logs_not_found", "no logs for the container's previous instance"},
 		errorMapping{podlogs.ErrPodReplaced, http.StatusConflict, "pod_replaced", "Kubernetes Pod was replaced; refresh before reading logs"},
 		errorMapping{podlogs.ErrAgentNotConnected, http.StatusServiceUnavailable, "agent_not_connected", "Cluster Agent is not connected"},
 		errorMapping{podlogs.ErrAgentUnsupported, http.StatusServiceUnavailable, "agent_capability_unavailable", "Cluster Agent does not support Pod logs"},

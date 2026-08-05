@@ -152,6 +152,20 @@ func TestKubernetesPodLogsHandlerKeepsStructuredErrorsBeforeStreamStarts(t *test
 		t.Fatalf("status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
 
+	// A container with no previous instance is a missing object, not a request
+	// the operator should be told to go and check.
+	service.err = podlogs.ErrPreviousLogsNotFound
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/default/pods/example/logs?uid=current&container=main&previous=true",
+		nil,
+	))
+	if response.Code != http.StatusNotFound ||
+		!strings.Contains(response.Body.String(), "previous_logs_not_found") {
+		t.Fatalf("previous logs status=%d body=%s", response.Code, response.Body.String())
+	}
+
 	service.err = errors.New("must not be reached")
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(

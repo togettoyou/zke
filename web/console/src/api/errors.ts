@@ -67,6 +67,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
 
   // Lifecycle and idempotency
   not_found: "目标不存在，或不在当前权限范围内",
+  // Not a malformed request: the container has simply never restarted, or the
+  // node no longer keeps the log of the instance before this one.
+  previous_logs_not_found: "该容器没有上一个实例的日志：它没有重启过，或上一个实例的日志已被清理",
   resource_conflict: "资源状态与请求冲突",
   resource_state_conflict: "目标资源当前状态不允许该操作",
   idempotency_conflict: "幂等键已用于内容不同的请求，请重新发起",

@@ -20,6 +20,7 @@ var (
 	ErrAgentUnsupported       = errors.New("Cluster Agent does not support Pod logs")
 	ErrRequestCapacity        = errors.New("Pod logs request capacity is exhausted")
 	ErrPodNotFound            = errors.New("Kubernetes Pod not found")
+	ErrPreviousLogsNotFound   = errors.New("Kubernetes container has no previous instance logs")
 	ErrPodReplaced            = errors.New("Kubernetes Pod identity changed")
 	ErrClusterUnauthenticated = errors.New("Kubernetes API authentication failed")
 	ErrClusterAccessDenied    = errors.New("Kubernetes API access denied")
@@ -142,6 +143,12 @@ func validateInput(input Input) error {
 		(*input.SinceSeconds < 1 || *input.SinceSeconds > agentprotocol.MaxPodLogSinceSeconds) {
 		return ErrInvalidInput
 	}
+	if input.Previous && input.Follow {
+		// A terminated instance produces nothing more, so there is nothing to
+		// follow. Refused here rather than in the cluster, which also leaves a
+		// rejected previous read with only one meaning for the Agent to report.
+		return ErrInvalidInput
+	}
 	return nil
 }
 
@@ -177,6 +184,9 @@ func responseError(response *agentv1.PodLogsResponse) error {
 	case agentv1.ResultCode_RESULT_CODE_FORBIDDEN:
 		return ErrClusterAccessDenied
 	case agentv1.ResultCode_RESULT_CODE_NOT_FOUND:
+		if response.GetReason() == "PreviousLogsNotFound" {
+			return ErrPreviousLogsNotFound
+		}
 		return ErrPodNotFound
 	case agentv1.ResultCode_RESULT_CODE_CONFLICT:
 		if response.GetReason() == "PodUIDMismatch" {
