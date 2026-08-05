@@ -262,7 +262,11 @@ export function CopyButton({
   label = "复制",
   className,
 }: {
-  value: string;
+  /**
+   * A function is called on click, so a caller whose value is expensive to
+   * materialise — a whole log buffer — does not build it on every render.
+   */
+  value: string | (() => string);
   label?: string;
   className?: string;
 }) {
@@ -284,7 +288,7 @@ export function CopyButton({
       className={className}
       onClick={async () => {
         try {
-          await navigator.clipboard.writeText(value);
+          await navigator.clipboard.writeText(typeof value === "function" ? value() : value);
           setCopied(true);
         } catch {
           setCopied(false);

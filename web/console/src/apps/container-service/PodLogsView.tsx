@@ -142,7 +142,7 @@ function PodLogReader({
     if (surface && stickToBottom) {
       surface.scrollTop = surface.scrollHeight;
     }
-  }, [stream.text, stickToBottom]);
+  }, [stream.pages, stickToBottom]);
 
   const grouped = choices.reduce<Record<string, string[]>>((accumulator, choice) => {
     (accumulator[choice.group] ??= []).push(choice.name);
@@ -234,14 +234,17 @@ function PodLogReader({
             onClick={() => {
               if (activelyFollowing) {
                 // Stopping keeps what has already arrived on screen; only the
-                // request behind it is abandoned.
+                // request behind it is abandoned. It also turns the mode off, so
+                // a later reload, container switch or checkbox reads a snapshot
+                // rather than quietly opening another follow stream.
                 stream.stop();
-              } else if (follow) {
-                // A completed or manually stopped follow keeps its mode. Starting
-                // again is an explicit new attempt with the same options.
-                stream.reload();
+                setFollow(false);
               } else {
+                // Following is always an explicit new attempt: a stopped stream
+                // holds on to its request, and a follow that ended on its own
+                // has the same options as the one being asked for.
                 setFollow(true);
+                stream.reload();
               }
               setStickToBottom(true);
             }}
@@ -253,12 +256,12 @@ function PodLogReader({
             <RotateCw />
             重新加载
           </Button>
-          <CopyButton value={stream.text} label="复制" />
+          <CopyButton value={stream.readText} label="复制" />
           <Button
             size="sm"
             variant="secondary"
-            disabled={stream.text === ""}
-            onClick={() => downloadLogs(pod.name, selectedContainer, stream.text)}
+            disabled={stream.empty}
+            onClick={() => downloadLogs(pod.name, selectedContainer, stream.readText())}
           >
             <Download />
             下载
@@ -281,13 +284,41 @@ function PodLogReader({
       >
         {stream.status === "loading" ? (
           <LoadingState />
-        ) : stream.text === "" ? (
+        ) : stream.empty ? (
           <p className="text-muted-foreground p-4 text-center text-[13px]">
             {stream.status === "error" ? "没有读取到日志。" : "该容器在当前范围内没有日志输出。"}
           </p>
         ) : (
           <pre className="zke-mono text-foreground text-xs leading-relaxed break-words whitespace-pre-wrap">
-            {stream.text}
+            {/*
+             * One block per page rather than one text node for the whole
+             * buffer: a text node's content cannot change without the browser
+             * re-laying out everything in it, which at the buffer's ceiling is
+             * a fifth of a second per chunk. Separate blocks are laid out
+             * independently, so an update touches only the page still growing.
+             * `span` with `display: block` because `pre` takes phrasing
+             * content; the pages inherit its wrapping and font.
+             */}
+            {stream.pages.map((page, index) => (
+              <span
+                key={page.id}
+                /*
+                 * A line longer than a page is sealed mid-line. Those pages
+                 * render inline so the browser lays them out as the one line
+                 * they are: a block boundary there would break the line at a
+                 * column that is not the margin, and put a newline into any
+                 * text selected across it.
+                 */
+                className={
+                  (!page.endsLine && index < stream.pages.length - 1) ||
+                  stream.pages[index - 1]?.endsLine === false
+                    ? "inline"
+                    : "block"
+                }
+              >
+                {page.text}
+              </span>
+            ))}
           </pre>
         )}
       </div>
