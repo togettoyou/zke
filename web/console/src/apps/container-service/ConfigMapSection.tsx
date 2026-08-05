@@ -172,6 +172,23 @@ export function ConfigMapSection({
     );
   }
 
+  // The form takes over the section rather than sitting over the list: the list
+  // is of no use while a configuration is being written.
+  if (creating || editingName) {
+    return (
+      <ConfigMapForm
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        editingName={editingName}
+        onClose={() => {
+          setCreating(false);
+          setEditingName(null);
+        }}
+      />
+    );
+  }
+
   if (detailName) {
     return (
       <ConfigMapDetailView
@@ -179,10 +196,9 @@ export function ConfigMapSection({
         namespace={namespace}
         name={detailName}
         canUpdate={canUpdate}
-        onEdit={() => {
-          setEditingName(detailName);
-          setDetailName(null);
-        }}
+        // The detail stays open underneath, so leaving the form returns to the
+        // object that was being read rather than to the list.
+        onEdit={() => setEditingName(detailName)}
         onOpenYaml={() => setYamlName(detailName)}
         onBack={() => setDetailName(null)}
       />
@@ -220,19 +236,6 @@ export function ConfigMapSection({
           onNext: pager.goNext,
         }}
       />
-
-      {creating || editingName ? (
-        <ConfigMapForm
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          editingName={editingName}
-          onClose={() => {
-            setCreating(false);
-            setEditingName(null);
-          }}
-        />
-      ) : null}
 
       <SensitiveActionDialog
         open={deleteTarget !== null}

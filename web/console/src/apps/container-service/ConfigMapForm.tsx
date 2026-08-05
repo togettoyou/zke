@@ -5,17 +5,10 @@ import { toast } from "sonner";
 import { errorMessage } from "@/api/errors";
 import { useConfigMap, useCreateConfigMap, useUpdateConfigMap } from "@/api/queries/configmaps";
 import type { KubernetesConfigMapDetail } from "@/api/types";
+import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
-import { LoadingState } from "@/components/common/state";
+import { ErrorState, LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
@@ -37,6 +30,11 @@ type EntryDraft = { key: string; value: string };
  * Editing loads the object first: the update is a replacement carrying the UID
  * and resourceVersion it was read at, and the list deliberately does not return
  * values, so there is nothing to edit until the detail has arrived.
+ *
+ * A page rather than a dialog, for the same reason the workload and networking
+ * forms are pages: a configuration file is as long as it is, and reading one
+ * through a box laid over the list is worse than leaving the list — which is of
+ * no use while the form is open anyway.
  */
 export function ConfigMapForm({
   clusterId,
@@ -58,31 +56,18 @@ export function ConfigMapForm({
   // mount-time fetch, then pin exactly the body and identity returned together.
   if (editingName && !existing.isFetchedAfterMount) {
     return (
-      <Dialog open onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>编辑 ConfigMap · {editingName}</DialogTitle>
-          </DialogHeader>
-          <LoadingState />
-        </DialogContent>
-      </Dialog>
+      <>
+        <PageHeader title={`编辑 ConfigMap · ${editingName}`} onBack={onClose} />
+        <LoadingState />
+      </>
     );
   }
   if (editingName && (existing.error || !existing.data)) {
     return (
-      <Dialog open onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>编辑 ConfigMap · {editingName}</DialogTitle>
-          </DialogHeader>
-          <Alert tone="danger">{errorMessage(existing.error)}</Alert>
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose}>
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <>
+        <PageHeader title={`编辑 ConfigMap · ${editingName}`} onBack={onClose} />
+        <ErrorState error={existing.error} onRetry={() => void existing.refetch()} />
+      </>
     );
   }
 
@@ -187,96 +172,82 @@ function ConfigMapEditor({
 
   return (
     <>
-      <Dialog open={!previewed} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined} className="w-[min(760px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>
-              {existing ? `编辑 ConfigMap · ${existing.name}` : "创建 ConfigMap"}
-            </DialogTitle>
-            <DialogDescription>
-              第一步只执行服务端 DryRun，不会在集群中写入任何变更。
-            </DialogDescription>
-          </DialogHeader>
+      <div className="grid gap-3">
+        <PageHeader
+          title={existing ? `编辑 ConfigMap · ${existing.name}` : `创建 ConfigMap · ${namespace}`}
+          onBack={onClose}
+          backDisabled={mutation.isPending}
+        />
 
-          <div className="grid gap-4">
-            {existing ? null : (
-              <FormSection title="基本信息">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="configmap-name">名称</Label>
-                  <Input
-                    id="configmap-name"
-                    value={name}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="例如 gateway-config"
-                    onChange={(event) => setName(event.target.value)}
-                  />
-                </div>
-                <label className="mt-3 flex items-center gap-2 text-[13px]">
-                  <Checkbox
-                    checked={immutable}
-                    onCheckedChange={(checked) => setImmutable(checked === true)}
-                  />
-                  标记为不可变（创建后无法修改内容，也无法改回可变）
-                </label>
-              </FormSection>
-            )}
-
-            <FormSection title="数据" hint="键可包含字母、数字、`-`、`_` 和 `.`">
-              <EntryList
-                rows={data}
-                onChange={setData}
-                addLabel="添加键"
-                multiline
-                valuePlaceholder="值"
+        {existing ? null : (
+          <FormSection title="基本信息">
+            <div className="grid content-start gap-1.5">
+              <Label htmlFor="configmap-name">名称</Label>
+              <Input
+                id="configmap-name"
+                value={name}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="例如 gateway-config"
+                onChange={(event) => setName(event.target.value)}
               />
-            </FormSection>
-
-            <FormSection title="二进制数据" hint="值必须是标准带填充 Base64">
-              <EntryList
-                rows={binary}
-                onChange={setBinary}
-                addLabel="添加二进制键"
-                valuePlaceholder="Base64 值"
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-[13px]">
+              <Checkbox
+                checked={immutable}
+                onCheckedChange={(checked) => setImmutable(checked === true)}
               />
-            </FormSection>
-          </div>
+              标记为不可变（创建后无法修改内容，也无法改回可变）
+            </label>
+          </FormSection>
+        )}
 
-          <div className="text-subtle-foreground mt-3 flex flex-wrap items-center gap-3 text-xs">
-            <span className="zke-tnum">合计 {(totalBytes / 1024).toFixed(1)} KiB / 1024 KiB</span>
-            {existing ? <span>更新会整体替换内容：本表单中不存在的键将从对象中移除。</span> : null}
-          </div>
+        <FormSection title="数据" hint="键可包含字母、数字、`-`、`_` 和 `.`">
+          <EntryList
+            rows={data}
+            onChange={setData}
+            addLabel="添加键"
+            multiline
+            valuePlaceholder="值"
+          />
+        </FormSection>
 
-          {totalBytes > MAX_TOTAL_BYTES ? (
-            <Alert tone="danger" className="mt-3">
-              ConfigMap 超过 1 MiB，Kubernetes 不会接受。
-            </Alert>
-          ) : null}
-          {duplicateKeys ? (
-            <Alert tone="danger" className="mt-3">
-              存在重复的键；同一个 ConfigMap 内文本键与二进制键也不能重名。
-            </Alert>
-          ) : null}
-          {mutation.error ? (
-            <Alert tone="danger" className="mt-3">
-              {errorMessage(mutation.error)}
-            </Alert>
-          ) : null}
+        <FormSection title="二进制数据" hint="值必须是标准带填充 Base64">
+          <EntryList
+            rows={binary}
+            onChange={setBinary}
+            addLabel="添加二进制键"
+            valuePlaceholder="Base64 值"
+          />
+        </FormSection>
 
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              disabled={!valid || mutation.isPending}
-              onClick={() => submit(true)}
-            >
-              {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        {totalBytes > MAX_TOTAL_BYTES ? (
+          <Alert tone="danger">ConfigMap 超过 1 MiB，Kubernetes 不会接受。</Alert>
+        ) : null}
+        {duplicateKeys ? (
+          <Alert tone="danger">存在重复的键；同一个 ConfigMap 内文本键与二进制键也不能重名。</Alert>
+        ) : null}
+        {mutation.error ? <Alert tone="danger">{errorMessage(mutation.error)}</Alert> : null}
+
+        <div className="flex flex-wrap items-center justify-end gap-3 pb-2">
+          <span className="text-subtle-foreground zke-tnum text-xs">
+            合计 {(totalBytes / 1024).toFixed(1)} KiB / 1024 KiB
+          </span>
+          {existing ? (
+            <span className="text-subtle-foreground text-xs">
+              更新会整体替换内容：本表单中不存在的键将从对象中移除。
+            </span>
+          ) : null}
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!valid || mutation.isPending}
+            onClick={() => submit(true)}
+          >
+            {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
+          </Button>
+        </div>
+      </div>
 
       <SensitiveActionDialog
         open={previewed}
@@ -378,7 +349,7 @@ function EntryList({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid gap-1.5">
+          <div className="grid content-start gap-1.5">
             <Input
               value={row.key}
               aria-label={`第 ${index + 1} 个键`}
