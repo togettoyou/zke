@@ -316,12 +316,12 @@ VALUES (
 `, tenant.ID, project.ID, clusterID, agentID, now.Add(30*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	connections.statuses[agentID] = agentconn.ConnectionStatus{
+	connections.setStatus(agentID, agentconn.ConnectionStatus{
 		State:           agentconn.ConnectionStateOnline,
 		ConnectionID:    "resource-connection",
 		ConnectedAt:     now.Add(-time.Minute),
 		LastHeartbeatAt: now,
-	}
+	})
 
 	clusterList := resourceAPIRequest(
 		router,

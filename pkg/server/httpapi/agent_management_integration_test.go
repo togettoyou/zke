@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,13 +23,38 @@ import (
 )
 
 type fakeAgentConnections struct {
+	// Guards `statuses`, as agentconn.Manager guards its own. A test holding an
+	// open event stream has a request goroutine reading this snapshot for as
+	// long as the stream lives, so a test changing a status is writing to a map
+	// that is being read.
+	mutex    sync.RWMutex
 	statuses map[string]agentconn.ConnectionStatus
 	events   chan agentconn.ConnectionEvent
+}
+
+func (connections *fakeAgentConnections) setStatus(
+	agentID string,
+	status agentconn.ConnectionStatus,
+) {
+	connections.mutex.Lock()
+	defer connections.mutex.Unlock()
+	connections.statuses[agentID] = status
+}
+
+func (connections *fakeAgentConnections) status(
+	agentID string,
+) (agentconn.ConnectionStatus, bool) {
+	connections.mutex.RLock()
+	defer connections.mutex.RUnlock()
+	status, exists := connections.statuses[agentID]
+	return status, exists
 }
 
 func (connections *fakeAgentConnections) Snapshot(
 	agentIDs []string,
 ) map[string]agentconn.ConnectionStatus {
+	connections.mutex.RLock()
+	defer connections.mutex.RUnlock()
 	result := make(map[string]agentconn.ConnectionStatus, len(agentIDs))
 	for _, agentID := range agentIDs {
 		if status, exists := connections.statuses[agentID]; exists {
@@ -52,7 +78,7 @@ func (connections *fakeAgentConnections) PublishAgentStatusChange(
 		return
 	}
 	state := agentconn.ConnectionStateOffline
-	if status, exists := connections.statuses[agentID]; exists {
+	if status, exists := connections.status(agentID); exists {
 		state = status.State
 	}
 	connections.events <- agentconn.ConnectionEvent{
@@ -484,12 +510,12 @@ VALUES (
 	assertErrorCode(t, duplicateReenrollment, "resource_state_conflict")
 
 	disconnectedAt := time.Now().UTC()
-	connections.statuses[agentID] = agentconn.ConnectionStatus{
+	connections.setStatus(agentID, agentconn.ConnectionStatus{
 		State:                "offline",
 		LastHeartbeatAt:      heartbeatAt,
 		LastDisconnectedAt:   disconnectedAt,
 		LastDisconnectReason: "agent_revoked",
-	}
+	})
 	offlineResponse := authenticatedRequest(
 		t,
 		router,
