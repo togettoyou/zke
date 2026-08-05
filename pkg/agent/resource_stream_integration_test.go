@@ -363,18 +363,38 @@ func TestResourceStreamApplicationQuotaRejectsOnlyExcessStream(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("first Resource Stream did not finish")
 	}
-	response, err := environment.manager.RequestResource(
-		environment.ctx,
-		testClusterID,
-		resourceGetRequest("after-release"),
-		nil,
-		io.Discard,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
-		t.Fatalf("unexpected response after quota release: %+v", response)
+	// The Agent holds its admission slot until the stream handler returns, which
+	// is after the response this caller has already read. So a request issued
+	// the instant the first one returns can still find the quota occupied, and
+	// what is asserted here is that the slot is released — not that it is
+	// already free. The window is microseconds on an idle machine, which is why
+	// this only ever failed on a loaded CI runner.
+	deadline := time.Now().Add(2 * time.Second)
+	for attempt := 1; ; attempt++ {
+		response, err := environment.manager.RequestResource(
+			environment.ctx,
+			testClusterID,
+			resourceGetRequest("after-release"),
+			nil,
+			io.Discard,
+		)
+		if err == nil {
+			if response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+				t.Fatalf("unexpected response after quota release: %+v", response)
+			}
+			return
+		}
+		// Only an occupied quota is worth waiting out; anything else is a real
+		// failure and must not be retried into a timeout.
+		var streamError *quic.StreamError
+		if !errors.As(err, &streamError) ||
+			streamError.ErrorCode != agentprotocol.StreamErrorResourceExhausted {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Resource quota was still occupied after %d attempts: %v", attempt, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
