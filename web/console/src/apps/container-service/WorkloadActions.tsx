@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreHorizontal, Pause, Pencil, Play, RotateCw, Scaling, Trash2 } from "lucide-react";
+import { MoreHorizontal, Pause, Pencil, Play, RotateCw, Scaling } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
@@ -10,6 +10,7 @@ import {
   useSetCronJobSuspension,
 } from "@/api/queries/workloads";
 import type { KubernetesWorkloadSummary } from "@/api/types";
+import { DetailDeleteAction } from "@/components/common/delete-action";
 import { SensitiveActionDialog, type ScopeLine } from "@/components/common/sensitive-action-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -162,18 +163,7 @@ export function WorkloadActions({
             </Button>
           ) : null}
           {removable ? (
-            // Tinted rather than solid: a filled danger button in a page header
-            // is louder than the header, and the confirmation dialog is where
-            // this operation is actually guarded.
-            <Button
-              size="sm"
-              variant="secondary"
-              className="text-danger"
-              onClick={() => openAction("delete")}
-            >
-              <Trash2 />
-              删除
-            </Button>
+            <DetailDeleteAction name={name} onDelete={() => openAction("delete")} />
           ) : null}
         </>
       )}

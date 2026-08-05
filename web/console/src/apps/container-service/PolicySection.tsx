@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileCode, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -18,6 +18,7 @@ import type {
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailDeleteAction, RowDeleteAction } from "@/components/common/delete-action";
 import {
   DetailCard,
   DetailConditions,
@@ -96,6 +97,17 @@ export function PolicySection({
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
 
+  // Both the row action and the detail view open the same confirmation, so it is
+  // one callback rather than two copies of the reset sequence.
+  const openDelete = useCallback(
+    (item: KubernetesPolicyResourceSummary) => {
+      setDeleteTarget(item);
+      setDeletePreviewed(false);
+      remove.reset();
+    },
+    [remove],
+  );
+
   const columns = useMemo<ColumnDef<KubernetesPolicyResourceSummary, unknown>[]>(
     () => [
       {
@@ -136,120 +148,22 @@ export function PolicySection({
               </Button>
             ) : null}
             {canDelete && row.original.uid ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`删除 ${row.original.name}`}
-                onClick={() => {
-                  setDeleteTarget(row.original);
-                  setDeletePreviewed(false);
-                  remove.reset();
-                }}
-              >
-                <Trash2 />
-              </Button>
+              <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
       },
     ],
-    [resource, canUpdate, canDelete, remove],
+    [resource, canUpdate, canDelete, openDelete],
   );
 
-  if (yamlName) {
-    return (
-      <YamlEditorView
-        identity={{
-          clusterId,
-          ...policyIdentity(resource),
-          ...(namespaced ? { namespace } : {}),
-          name: yamlName,
-        }}
-        clusterName={clusterName}
-        kindLabel={policyKindLabel(resource)}
-        canUpdate={canUpdate}
-        onBack={() => setYamlName(null)}
-      />
-    );
-  }
-
-  if (detailName) {
-    return (
-      <PolicyDetailView
-        clusterId={clusterId}
-        namespace={namespace}
-        resource={resource}
-        name={detailName}
-        canUpdate={canUpdate}
-        onEdit={setEditing}
-        onOpenYaml={() => setYamlName(detailName)}
-        onBack={() => setDetailName(null)}
-      />
-    );
-  }
-
-  const nextToken = list.data?.continue_token ?? "";
-  const waitingForNamespace = namespaced && namespace === "";
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <SectionToolbarActions>
-        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
-        {canCreate && !waitingForNamespace ? (
-          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-            <Plus />
-            创建 {policyKindLabel(resource)}
-          </Button>
-        ) : null}
-      </SectionToolbarActions>
-      <Tabs
-        value={resource}
-        onValueChange={(value) => {
-          setResource(value as KubernetesPolicyResource);
-          setDetailName(null);
-        }}
-        className="flex min-h-0 flex-1 flex-col"
-      >
-        <TabsList className="w-fit">
-          {POLICY_TYPES.map((type) => (
-            <TabsTrigger key={type.resource} value={type.resource}>
-              {type.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        <TabsContent value={resource} className="flex min-h-0 flex-1 flex-col">
-          {waitingForNamespace ? (
-            <Alert tone="info">
-              {policyKindLabel(resource)} 按命名空间定域，正在等待工具栏的命名空间选择器解析出一个
-              可用的命名空间。若该集群没有当前身份可见的命名空间，这里会一直为空。
-            </Alert>
-          ) : (
-            <DataTable
-              columns={columns}
-              data={list.data?.resources}
-              isLoading={list.isLoading}
-              isFetching={list.isFetching}
-              error={list.error}
-              onRetry={() => void list.refetch()}
-              onRowClick={(item) => setDetailName(item.name)}
-              rowKey={(item) => item.uid || item.name}
-              emptyTitle={`该集群没有 ${policyKindLabel(resource)}`}
-              emptyDescription={
-                namespaced
-                  ? `${namespace} 中没有可见的 ${policyKindLabel(resource)}。`
-                  : `当前筛选范围内没有可见的 ${policyKindLabel(resource)}。`
-              }
-              continuePagination={{
-                pageIndex: pager.pageIndex,
-                nextToken,
-                onPrevious: pager.goPrevious,
-                onNext: pager.goNext,
-              }}
-            />
-          )}
-        </TabsContent>
-      </Tabs>
-
+  // The dialogs live outside the branch that picks a view. They are opened from
+  // the list and from the detail page alike, and JSX that exists only in the
+  // list's branch cannot open over the detail — the operator would have to go
+  // back before the dialog appeared, by which point it is confirming an object
+  // they can no longer see.
+  const dialogs = (
+    <>
       {creating || editing ? (
         <PolicyForm
           clusterId={clusterId}
@@ -317,6 +231,109 @@ export function PolicySection({
             .catch(() => undefined);
         }}
       />
+    </>
+  );
+
+  if (yamlName) {
+    return (
+      <YamlEditorView
+        identity={{
+          clusterId,
+          ...policyIdentity(resource),
+          ...(namespaced ? { namespace } : {}),
+          name: yamlName,
+        }}
+        clusterName={clusterName}
+        kindLabel={policyKindLabel(resource)}
+        canUpdate={canUpdate}
+        onBack={() => setYamlName(null)}
+      />
+    );
+  }
+
+  if (detailName) {
+    return (
+      <>
+        <PolicyDetailView
+          clusterId={clusterId}
+          namespace={namespace}
+          resource={resource}
+          name={detailName}
+          canUpdate={canUpdate}
+          canDelete={canDelete}
+          onEdit={setEditing}
+          onOpenYaml={() => setYamlName(detailName)}
+          onDelete={openDelete}
+          onBack={() => setDetailName(null)}
+        />
+        {dialogs}
+      </>
+    );
+  }
+
+  const nextToken = list.data?.continue_token ?? "";
+  const waitingForNamespace = namespaced && namespace === "";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canCreate && !waitingForNamespace ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 {policyKindLabel(resource)}
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
+      <Tabs
+        value={resource}
+        onValueChange={(value) => {
+          setResource(value as KubernetesPolicyResource);
+          setDetailName(null);
+        }}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <TabsList className="w-fit">
+          {POLICY_TYPES.map((type) => (
+            <TabsTrigger key={type.resource} value={type.resource}>
+              {type.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={resource} className="flex min-h-0 flex-1 flex-col">
+          {waitingForNamespace ? (
+            <Alert tone="info">
+              {policyKindLabel(resource)} 按命名空间定域，正在等待工具栏的命名空间选择器解析出一个
+              可用的命名空间。若该集群没有当前身份可见的命名空间，这里会一直为空。
+            </Alert>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={list.data?.resources}
+              isLoading={list.isLoading}
+              isFetching={list.isFetching}
+              error={list.error}
+              onRetry={() => void list.refetch()}
+              onRowClick={(item) => setDetailName(item.name)}
+              rowKey={(item) => item.uid || item.name}
+              emptyTitle={`该集群没有 ${policyKindLabel(resource)}`}
+              emptyDescription={
+                namespaced
+                  ? `${namespace} 中没有可见的 ${policyKindLabel(resource)}。`
+                  : `当前筛选范围内没有可见的 ${policyKindLabel(resource)}。`
+              }
+              continuePagination={{
+                pageIndex: pager.pageIndex,
+                nextToken,
+                onPrevious: pager.goPrevious,
+                onNext: pager.goNext,
+              }}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {dialogs}
     </div>
   );
 }
@@ -555,8 +572,10 @@ function PolicyDetailView({
   resource,
   name,
   canUpdate,
+  canDelete,
   onEdit,
   onOpenYaml,
+  onDelete,
   onBack,
 }: {
   clusterId: string;
@@ -564,8 +583,10 @@ function PolicyDetailView({
   resource: KubernetesPolicyResource;
   name: string;
   canUpdate: boolean;
+  canDelete: boolean;
   onEdit: (item: KubernetesPolicyResourceSummary) => void;
   onOpenYaml: () => void;
+  onDelete: (item: KubernetesPolicyResourceSummary) => void;
   onBack: () => void;
 }) {
   const detail = usePolicyResource(clusterId, namespace, resource, name);
@@ -578,16 +599,21 @@ function PolicyDetailView({
         onBack={onBack}
         actions={
           <>
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             {canUpdate && item ? (
               <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
                 <Pencil />
                 编辑
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
-              <FileCode />
-              YAML
-            </Button>
+            {/* Waits for the object: the deletion carries its UID and
+                resourceVersion as preconditions, and neither exists yet. */}
+            {canDelete && item?.uid ? (
+              <DetailDeleteAction name={name} onDelete={() => onDelete(item)} />
+            ) : null}
           </>
         }
       />

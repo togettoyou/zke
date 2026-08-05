@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, ScrollText, SquareTerminal, Trash2 } from "lucide-react";
+import { FileCode, ScrollText, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDeletePod, usePod, usePods } from "@/api/queries/pods";
@@ -13,6 +13,7 @@ import type {
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailDeleteAction, RowDeleteAction } from "@/components/common/delete-action";
 import {
   DetailCard,
   DetailConditions,
@@ -198,14 +199,7 @@ export function PodSection({
               </Button>
             ) : null}
             {canDelete && row.original.uid ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`删除 ${row.original.name}`}
-                onClick={() => openDelete(row.original)}
-              >
-                <Trash2 />
-              </Button>
+              <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
@@ -414,6 +408,10 @@ function PodDetailView({
         onBack={onBack}
         actions={
           <>
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             {canReadLogs && pod?.uid ? (
               <Button size="sm" variant="secondary" onClick={() => onOpenLogs(pod)}>
                 <ScrollText />
@@ -426,20 +424,8 @@ function PodDetailView({
                 终端
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
-              <FileCode />
-              YAML
-            </Button>
             {canDelete && pod?.uid ? (
-              <Button
-                size="sm"
-                variant="secondary"
-                className="text-danger"
-                onClick={() => onDelete(pod)}
-              >
-                <Trash2 />
-                删除
-              </Button>
+              <DetailDeleteAction name={name} onDelete={() => onDelete(pod)} />
             ) : null}
           </>
         }

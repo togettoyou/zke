@@ -290,8 +290,16 @@ function NodeDetailView({
       <PageHeader
         title={name}
         onBack={onBack}
+        // Every detail header in this app reads the same way: YAML first, then
+        // the actions that change the object, with the one that cannot be taken
+        // back at the far end. A Node has no deletion here, so the scheduling
+        // switch — the action with a blast radius — takes that place.
         actions={
           <>
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             {canUpdate && detail.data ? (
               // Same colour rule as the list action: warning for the direction
               // that stops scheduling, success for the one that restores it.
@@ -310,10 +318,6 @@ function NodeDetailView({
                 {detail.data.unschedulable ? "恢复调度" : "停止调度"}
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
-              <FileCode />
-              YAML
-            </Button>
           </>
         }
       />

@@ -8,7 +8,6 @@ import {
   LayoutGrid,
   RotateCw,
   Search,
-  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,6 +24,7 @@ import type { KubernetesResourceType } from "@/api/types";
 import { SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { RowDeleteAction } from "@/components/common/delete-action";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -462,18 +462,14 @@ function ResourceObjectPanel({
             </Button>
           ) : null}
           {deletable && row.original.metadata?.uid ? (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`删除 ${row.original.metadata?.name ?? ""}`}
-              onClick={() => {
+            <RowDeleteAction
+              name={row.original.metadata?.name ?? ""}
+              onDelete={() => {
                 setDeleteTarget(row.original);
                 setDeletePreviewed(false);
                 remove.reset();
               }}
-            >
-              <Trash2 />
-            </Button>
+            />
           ) : null}
         </div>
       ),

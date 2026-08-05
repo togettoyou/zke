@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { Lock, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -17,6 +17,7 @@ import type {
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailDeleteAction, RowDeleteAction } from "@/components/common/delete-action";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
@@ -91,6 +92,17 @@ export function AuthorizationSection({
     projectId,
   });
 
+  // Both the row action and the detail view open the same confirmation, so it is
+  // one callback rather than two copies of the reset sequence.
+  const openDelete = useCallback(
+    (item: KubernetesAuthorizationResourceSummary) => {
+      setDeleteTarget(item);
+      setDeletePreviewed(false);
+      remove.reset();
+    },
+    [remove],
+  );
+
   const columns = useMemo<ColumnDef<KubernetesAuthorizationResourceSummary, unknown>[]>(
     () => [
       {
@@ -143,108 +155,28 @@ export function AuthorizationSection({
                 </HintTooltip>
               ) : null}
               {canManage && row.original.uid ? (
-                <HintTooltip label={row.original.managed_by_zke ? PROTECTED_HINT : "删除"}>
-                  <span>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`删除 ${row.original.name}`}
-                      disabled={row.original.managed_by_zke}
-                      onClick={() => {
-                        setDeleteTarget(row.original);
-                        setDeletePreviewed(false);
-                        remove.reset();
-                      }}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </span>
-                </HintTooltip>
+                <RowDeleteAction
+                  name={row.original.name}
+                  hint={row.original.managed_by_zke ? PROTECTED_HINT : "删除"}
+                  disabled={row.original.managed_by_zke}
+                  onDelete={() => openDelete(row.original)}
+                />
               ) : null}
             </div>
           );
         },
       },
     ],
-    [resource, canManage, remove],
+    [resource, canManage, openDelete],
   );
 
-  if (detailName) {
-    return (
-      <AuthorizationDetailView
-        clusterId={clusterId}
-        namespace={namespace}
-        resource={resource}
-        name={detailName}
-        canManage={canManage}
-        onEdit={setEditing}
-        onBack={() => setDetailName(null)}
-      />
-    );
-  }
-
-  const nextToken = list.data?.continue_token ?? "";
-  const waitingForNamespace = namespaced && namespace === "";
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <SectionToolbarActions>
-        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
-        {canManage && !waitingForNamespace ? (
-          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-            <Plus />
-            创建 {authorizationKindLabel(resource)}
-          </Button>
-        ) : null}
-      </SectionToolbarActions>
-      <Tabs
-        value={resource}
-        onValueChange={(value) => {
-          setResource(value as KubernetesAuthorizationResource);
-          setDetailName(null);
-        }}
-        className="flex min-h-0 flex-1 flex-col"
-      >
-        <TabsList className="w-fit">
-          {AUTHORIZATION_TYPES.map((type) => (
-            <TabsTrigger key={type.resource} value={type.resource}>
-              {type.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        <TabsContent value={resource} className="flex min-h-0 flex-1 flex-col">
-          {waitingForNamespace ? (
-            <Alert tone="info">
-              {authorizationKindLabel(resource)}{" "}
-              按命名空间定域，正在等待工具栏的命名空间选择器解析出一个可用的命名空间。
-            </Alert>
-          ) : (
-            <DataTable
-              columns={columns}
-              data={list.data?.resources}
-              isLoading={list.isLoading}
-              isFetching={list.isFetching}
-              error={list.error}
-              onRetry={() => void list.refetch()}
-              onRowClick={(item) => setDetailName(item.name)}
-              rowKey={(item) => item.uid || item.name}
-              emptyTitle={`没有 ${authorizationKindLabel(resource)}`}
-              emptyDescription={
-                namespaced
-                  ? `${namespace} 中没有可见的 ${authorizationKindLabel(resource)}。`
-                  : `该集群中没有可见的 ${authorizationKindLabel(resource)}。`
-              }
-              continuePagination={{
-                pageIndex: pager.pageIndex,
-                nextToken,
-                onPrevious: pager.goPrevious,
-                onNext: pager.goNext,
-              }}
-            />
-          )}
-        </TabsContent>
-      </Tabs>
-
+  // The dialogs live outside the branch that picks a view. They are opened from
+  // the list and from the detail page alike, and JSX that exists only in the
+  // list's branch cannot open over the detail — the operator would have to go
+  // back before the dialog appeared, by which point it is confirming an object
+  // they can no longer see.
+  const dialogs = (
+    <>
       {creating || editing ? (
         <AuthorizationForm
           clusterId={clusterId}
@@ -312,6 +244,90 @@ export function AuthorizationSection({
             .catch(() => undefined);
         }}
       />
+    </>
+  );
+
+  if (detailName) {
+    return (
+      <>
+        <AuthorizationDetailView
+          clusterId={clusterId}
+          namespace={namespace}
+          resource={resource}
+          name={detailName}
+          canManage={canManage}
+          onEdit={setEditing}
+          onDelete={openDelete}
+          onBack={() => setDetailName(null)}
+        />
+        {dialogs}
+      </>
+    );
+  }
+
+  const nextToken = list.data?.continue_token ?? "";
+  const waitingForNamespace = namespaced && namespace === "";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canManage && !waitingForNamespace ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 {authorizationKindLabel(resource)}
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
+      <Tabs
+        value={resource}
+        onValueChange={(value) => {
+          setResource(value as KubernetesAuthorizationResource);
+          setDetailName(null);
+        }}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <TabsList className="w-fit">
+          {AUTHORIZATION_TYPES.map((type) => (
+            <TabsTrigger key={type.resource} value={type.resource}>
+              {type.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value={resource} className="flex min-h-0 flex-1 flex-col">
+          {waitingForNamespace ? (
+            <Alert tone="info">
+              {authorizationKindLabel(resource)}{" "}
+              按命名空间定域，正在等待工具栏的命名空间选择器解析出一个可用的命名空间。
+            </Alert>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={list.data?.resources}
+              isLoading={list.isLoading}
+              isFetching={list.isFetching}
+              error={list.error}
+              onRetry={() => void list.refetch()}
+              onRowClick={(item) => setDetailName(item.name)}
+              rowKey={(item) => item.uid || item.name}
+              emptyTitle={`没有 ${authorizationKindLabel(resource)}`}
+              emptyDescription={
+                namespaced
+                  ? `${namespace} 中没有可见的 ${authorizationKindLabel(resource)}。`
+                  : `该集群中没有可见的 ${authorizationKindLabel(resource)}。`
+              }
+              continuePagination={{
+                pageIndex: pager.pageIndex,
+                nextToken,
+                onPrevious: pager.goPrevious,
+                onNext: pager.goNext,
+              }}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {dialogs}
     </div>
   );
 }
@@ -438,6 +454,7 @@ function AuthorizationDetailView({
   name,
   canManage,
   onEdit,
+  onDelete,
   onBack,
 }: {
   clusterId: string;
@@ -446,6 +463,7 @@ function AuthorizationDetailView({
   name: string;
   canManage: boolean;
   onEdit: (item: KubernetesAuthorizationResourceSummary) => void;
+  onDelete: (item: KubernetesAuthorizationResourceSummary) => void;
   onBack: () => void;
 }) {
   const detail = useAuthorizationResource(clusterId, namespace, resource, name);
@@ -459,11 +477,21 @@ function AuthorizationDetailView({
         onBack={onBack}
         actions={
           <>
+            {/* No YAML entry: RBAC objects are written through the form, which
+                is where the rules are checked before they are sent. */}
             {canManage && item && locked === null ? (
               <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
                 <Pencil />
                 编辑
               </Button>
+            ) : null}
+            {canManage && item?.uid ? (
+              <DetailDeleteAction
+                name={name}
+                hint={item.managed_by_zke ? PROTECTED_HINT : undefined}
+                disabled={item.managed_by_zke}
+                onDelete={() => onDelete(item)}
+              />
             ) : null}
           </>
         }

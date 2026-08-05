@@ -445,9 +445,14 @@ function WorkloadDetailView({
         onBack={onBack}
         actions={
           <>
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             {/* The actions need the object they act on, so they appear once the
                 detail has actually loaded — a deletion pinned to a UID cannot be
-                offered before the UID is known. */}
+                offered before the UID is known. They end with the deletion, as
+                every other detail header does. */}
             {detail.data ? (
               <WorkloadActions
                 target={{ clusterId, clusterName, namespace, workload: detail.data }}
@@ -458,10 +463,6 @@ function WorkloadDetailView({
                 onDeleted={onBack}
               />
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
-              <FileCode />
-              YAML
-            </Button>
           </>
         }
       />

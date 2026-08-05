@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, EyeOff, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Lock, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { useSecret, useSecrets, useDeleteSecret } from "@/api/queries/secrets";
@@ -8,6 +8,7 @@ import type { KubernetesSecretDetail, KubernetesSecretSummary } from "@/api/type
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailDeleteAction, RowDeleteAction } from "@/components/common/delete-action";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
@@ -78,6 +79,17 @@ export function SecretSection({
   const canCreate = canManage;
   const canUpdate = canManage;
   const canDelete = canManage;
+
+  // Both the row action and the detail view open the same confirmation, so it is
+  // one callback rather than two copies of the reset sequence.
+  const openDelete = useCallback(
+    (item: KubernetesSecretSummary) => {
+      setDeleteTarget(item);
+      setDeletePreviewed(false);
+      remove.reset();
+    },
+    [remove],
+  );
 
   const columns = useMemo<ColumnDef<KubernetesSecretSummary, unknown>[]>(
     () => [
@@ -161,24 +173,73 @@ export function SecretSection({
               </HintTooltip>
             ) : null}
             {canDelete && row.original.uid ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`删除 ${row.original.name}`}
-                onClick={() => {
-                  setDeleteTarget(row.original);
-                  setDeletePreviewed(false);
-                  remove.reset();
-                }}
-              >
-                <Trash2 />
-              </Button>
+              <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
       },
     ],
-    [canUpdate, canDelete, remove],
+    [canUpdate, canDelete, openDelete],
+  );
+
+  // The confirmation lives outside the branch that picks a view. It is opened
+  // from the list and from the detail page alike, and JSX that exists only in
+  // the list's branch cannot open over the detail — the operator would have to
+  // go back before the dialog appeared, by which point it is confirming an
+  // object they can no longer see.
+  const deleteDialog = (
+    <SensitiveActionDialog
+      open={deleteTarget !== null}
+      onOpenChange={(open) => !open && setDeleteTarget(null)}
+      title="删除 Secret"
+      description={
+        deletePreviewed
+          ? "DryRun 已通过。再次确认将提交实际删除。"
+          : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
+      }
+      scopeLines={[
+        { label: "集群", name: clusterName, id: clusterId },
+        { label: "命名空间", name: namespace },
+        { label: "Secret", name: deleteTarget?.name ?? "", id: deleteTarget?.uid },
+      ]}
+      impacts={[
+        "引用该 Secret 的 Pod 在重启或重新调度前通常不受影响，但之后会因缺少配置而无法启动。",
+        "以 Volume 方式挂载的内容会在 kubelet 下一次同步时消失。",
+        "请求携带该对象当前的 UID 与 resourceVersion 前置条件，期间对象若已变化或被重建，删除会被拒绝。",
+      ]}
+      confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
+      confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
+      destructive
+      pending={remove.isPending}
+      error={remove.error}
+      onConfirm={() => {
+        if (!deleteTarget) return;
+        const dryRun = !deletePreviewed;
+        void remove
+          .mutateAsync({
+            clusterId,
+            namespace,
+            name: deleteTarget.name,
+            uid: deleteTarget.uid,
+            resourceVersion: deleteTarget.resource_version,
+            dryRun,
+            idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
+          })
+          .then(() => {
+            if (dryRun) {
+              setDeletePreviewed(true);
+              toast.success("Secret 删除 DryRun 已通过");
+              return;
+            }
+            toast.success(`Secret ${deleteTarget.name} 已提交删除`);
+            if (detailName === deleteTarget.name) {
+              setDetailName(null);
+            }
+            setDeleteTarget(null);
+          })
+          .catch(() => undefined);
+      }}
+    />
   );
 
   // The form takes over the section rather than sitting over the list: the list
@@ -200,16 +261,21 @@ export function SecretSection({
 
   if (detailName) {
     return (
-      <SecretDetailView
-        clusterId={clusterId}
-        namespace={namespace}
-        name={detailName}
-        canUpdate={canUpdate}
-        // The detail stays open underneath, so leaving the form returns to the
-        // object that was being read rather than to the list.
-        onEdit={() => setEditingName(detailName)}
-        onBack={() => setDetailName(null)}
-      />
+      <>
+        <SecretDetailView
+          clusterId={clusterId}
+          namespace={namespace}
+          name={detailName}
+          canUpdate={canUpdate}
+          canDelete={canDelete}
+          // The detail stays open underneath, so leaving the form returns to the
+          // object that was being read rather than to the list.
+          onEdit={() => setEditingName(detailName)}
+          onDelete={openDelete}
+          onBack={() => setDetailName(null)}
+        />
+        {deleteDialog}
+      </>
     );
   }
 
@@ -246,58 +312,7 @@ export function SecretSection({
         }}
       />
 
-      <SensitiveActionDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="删除 Secret"
-        description={
-          deletePreviewed
-            ? "DryRun 已通过。再次确认将提交实际删除。"
-            : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
-        }
-        scopeLines={[
-          { label: "集群", name: clusterName, id: clusterId },
-          { label: "命名空间", name: namespace },
-          { label: "Secret", name: deleteTarget?.name ?? "", id: deleteTarget?.uid },
-        ]}
-        impacts={[
-          "引用该 Secret 的 Pod 在重启或重新调度前通常不受影响，但之后会因缺少配置而无法启动。",
-          "以 Volume 方式挂载的内容会在 kubelet 下一次同步时消失。",
-          "请求携带该对象当前的 UID 与 resourceVersion 前置条件，期间对象若已变化或被重建，删除会被拒绝。",
-        ]}
-        confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
-        confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
-        destructive
-        pending={remove.isPending}
-        error={remove.error}
-        onConfirm={() => {
-          if (!deleteTarget) return;
-          const dryRun = !deletePreviewed;
-          void remove
-            .mutateAsync({
-              clusterId,
-              namespace,
-              name: deleteTarget.name,
-              uid: deleteTarget.uid,
-              resourceVersion: deleteTarget.resource_version,
-              dryRun,
-              idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
-            })
-            .then(() => {
-              if (dryRun) {
-                setDeletePreviewed(true);
-                toast.success("Secret 删除 DryRun 已通过");
-                return;
-              }
-              toast.success(`Secret ${deleteTarget.name} 已提交删除`);
-              if (detailName === deleteTarget.name) {
-                setDetailName(null);
-              }
-              setDeleteTarget(null);
-            })
-            .catch(() => undefined);
-        }}
-      />
+      {deleteDialog}
     </div>
   );
 }
@@ -323,14 +338,18 @@ function SecretDetailView({
   namespace,
   name,
   canUpdate,
+  canDelete,
   onEdit,
+  onDelete,
   onBack,
 }: {
   clusterId: string;
   namespace: string;
   name: string;
   canUpdate: boolean;
+  canDelete: boolean;
   onEdit: () => void;
+  onDelete: (item: KubernetesSecretSummary) => void;
   onBack: () => void;
 }) {
   const detail = useSecret(clusterId, namespace, name);
@@ -343,11 +362,18 @@ function SecretDetailView({
         onBack={onBack}
         actions={
           <>
+            {/* No YAML entry, here or in the list: the document would carry
+                every value in the Secret in Base64, which is not masking. */}
             {canUpdate && item && !item.immutable ? (
               <Button size="sm" variant="secondary" onClick={onEdit}>
                 <Pencil />
                 编辑
               </Button>
+            ) : null}
+            {/* An immutable Secret cannot be changed but can be removed: that
+                is the only way to replace one. */}
+            {canDelete && item?.uid ? (
+              <DetailDeleteAction name={name} onDelete={() => onDelete(item)} />
             ) : null}
           </>
         }

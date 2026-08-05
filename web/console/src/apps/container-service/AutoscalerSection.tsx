@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileCode, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -15,6 +15,7 @@ import type { KubernetesHPABehavior, KubernetesHPAMetricView } from "@/api/types
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailDeleteAction, RowDeleteAction } from "@/components/common/delete-action";
 import {
   DetailCard,
   DetailConditions,
@@ -76,6 +77,17 @@ export function AutoscalerSection({
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+
+  // Both the row action and the detail view open the same confirmation, so it is
+  // one callback rather than two copies of the reset sequence.
+  const openDelete = useCallback(
+    (item: AutoscalerSummary) => {
+      setDeleteTarget(item);
+      setDeletePreviewed(false);
+      remove.reset();
+    },
+    [remove],
+  );
 
   const columns = useMemo<ColumnDef<AutoscalerSummary, unknown>[]>(
     () => [
@@ -148,91 +160,22 @@ export function AutoscalerSection({
               </Button>
             ) : null}
             {canDelete && row.original.uid ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`删除 ${row.original.name}`}
-                onClick={() => {
-                  setDeleteTarget(row.original);
-                  setDeletePreviewed(false);
-                  remove.reset();
-                }}
-              >
-                <Trash2 />
-              </Button>
+              <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
       },
     ],
-    [canUpdate, canDelete, remove],
+    [canUpdate, canDelete, openDelete],
   );
 
-  if (yamlName) {
-    return (
-      <YamlEditorView
-        identity={{
-          clusterId,
-          group: "autoscaling",
-          version: "v2",
-          resource: "horizontalpodautoscalers",
-          namespace,
-          name: yamlName,
-        }}
-        clusterName={clusterName}
-        kindLabel="HorizontalPodAutoscaler"
-        canUpdate={canUpdate}
-        onBack={() => setYamlName(null)}
-      />
-    );
-  }
-
-  if (detailName) {
-    return (
-      <AutoscalerDetailView
-        clusterId={clusterId}
-        namespace={namespace}
-        name={detailName}
-        canUpdate={canUpdate}
-        onEdit={setEditing}
-        onOpenYaml={() => setYamlName(detailName)}
-        onBack={() => setDetailName(null)}
-      />
-    );
-  }
-
-  const nextToken = list.data?.continue_token ?? "";
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <SectionToolbarActions>
-        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
-        {canCreate ? (
-          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-            <Plus />
-            创建 HPA
-          </Button>
-        ) : null}
-      </SectionToolbarActions>
-      <DataTable
-        columns={columns}
-        data={list.data?.autoscalers}
-        isLoading={list.isLoading}
-        isFetching={list.isFetching}
-        error={list.error}
-        onRetry={() => void list.refetch()}
-        onRowClick={(item) => setDetailName(item.name)}
-        rowKey={(item) => item.uid || item.name}
-        emptyTitle="该命名空间没有 HorizontalPodAutoscaler"
-        emptyDescription={`${namespace} 中没有可见的 HPA。`}
-        continuePagination={{
-          pageIndex: pager.pageIndex,
-          nextToken,
-          onPrevious: pager.goPrevious,
-          onNext: pager.goNext,
-        }}
-      />
-
+  // The dialogs live outside the branch that picks a view. They are opened from
+  // the list and from the detail page alike, and JSX that exists only in the
+  // list's branch cannot open over the detail — the operator would have to go
+  // back before the dialog appeared, by which point it is confirming an object
+  // they can no longer see.
+  const dialogs = (
+    <>
       {creating || editing ? (
         <AutoscalerForm
           clusterId={clusterId}
@@ -298,6 +241,80 @@ export function AutoscalerSection({
             .catch(() => undefined);
         }}
       />
+    </>
+  );
+
+  if (yamlName) {
+    return (
+      <YamlEditorView
+        identity={{
+          clusterId,
+          group: "autoscaling",
+          version: "v2",
+          resource: "horizontalpodautoscalers",
+          namespace,
+          name: yamlName,
+        }}
+        clusterName={clusterName}
+        kindLabel="HorizontalPodAutoscaler"
+        canUpdate={canUpdate}
+        onBack={() => setYamlName(null)}
+      />
+    );
+  }
+
+  if (detailName) {
+    return (
+      <>
+        <AutoscalerDetailView
+          clusterId={clusterId}
+          namespace={namespace}
+          name={detailName}
+          canUpdate={canUpdate}
+          canDelete={canDelete}
+          onEdit={setEditing}
+          onOpenYaml={() => setYamlName(detailName)}
+          onDelete={openDelete}
+          onBack={() => setDetailName(null)}
+        />
+        {dialogs}
+      </>
+    );
+  }
+
+  const nextToken = list.data?.continue_token ?? "";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <SectionToolbarActions>
+        <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {canCreate ? (
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <Plus />
+            创建 HPA
+          </Button>
+        ) : null}
+      </SectionToolbarActions>
+      <DataTable
+        columns={columns}
+        data={list.data?.autoscalers}
+        isLoading={list.isLoading}
+        isFetching={list.isFetching}
+        error={list.error}
+        onRetry={() => void list.refetch()}
+        onRowClick={(item) => setDetailName(item.name)}
+        rowKey={(item) => item.uid || item.name}
+        emptyTitle="该命名空间没有 HorizontalPodAutoscaler"
+        emptyDescription={`${namespace} 中没有可见的 HPA。`}
+        continuePagination={{
+          pageIndex: pager.pageIndex,
+          nextToken,
+          onPrevious: pager.goPrevious,
+          onNext: pager.goNext,
+        }}
+      />
+
+      {dialogs}
     </div>
   );
 }
@@ -350,16 +367,20 @@ function AutoscalerDetailView({
   namespace,
   name,
   canUpdate,
+  canDelete,
   onEdit,
   onOpenYaml,
+  onDelete,
   onBack,
 }: {
   clusterId: string;
   namespace: string;
   name: string;
   canUpdate: boolean;
+  canDelete: boolean;
   onEdit: (item: AutoscalerSummary) => void;
   onOpenYaml: () => void;
+  onDelete: (item: AutoscalerSummary) => void;
   onBack: () => void;
 }) {
   const detail = useAutoscaler(clusterId, namespace, name);
@@ -372,16 +393,21 @@ function AutoscalerDetailView({
         onBack={onBack}
         actions={
           <>
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             {canUpdate && item ? (
               <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
                 <Pencil />
                 编辑
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
-              <FileCode />
-              YAML
-            </Button>
+            {/* Waits for the object: the deletion carries its UID and
+                resourceVersion as preconditions, and neither exists yet. */}
+            {canDelete && item?.uid ? (
+              <DetailDeleteAction name={name} onDelete={() => onDelete(item)} />
+            ) : null}
           </>
         }
       />

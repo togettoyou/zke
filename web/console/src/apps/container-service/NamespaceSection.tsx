@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
+import { FileCode, Plus, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -13,6 +13,7 @@ import type { KubernetesNamespaceDetail, KubernetesNamespaceSummary } from "@/ap
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailDeleteAction, RowDeleteAction } from "@/components/common/delete-action";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
@@ -77,6 +78,17 @@ export function NamespaceSection({
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+
+  // Both the row action and the detail view open the same confirmation, so it is
+  // one callback rather than two copies of the reset sequence.
+  const openDelete = useCallback(
+    (namespace: KubernetesNamespaceSummary) => {
+      setDeleteTarget(namespace);
+      setDeletePreviewed(false);
+      remove.reset();
+    },
+    [remove],
+  );
 
   const columns = useMemo<ColumnDef<KubernetesNamespaceSummary, unknown>[]>(
     () => [
@@ -145,25 +157,13 @@ export function NamespaceSection({
               <SlidersHorizontal />
             </Button>
             {canDelete ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className="text-danger hover:text-danger"
-                aria-label={`删除 ${row.original.name}`}
-                onClick={() => {
-                  setDeleteTarget(row.original);
-                  setDeletePreviewed(false);
-                  remove.reset();
-                }}
-              >
-                <Trash2 />
-              </Button>
+              <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
       },
     ],
-    [canDelete, remove],
+    [canDelete, openDelete],
   );
 
   const nextToken = namespaces.data?.continue_token ?? "";
@@ -192,8 +192,10 @@ export function NamespaceSection({
         <NamespaceDetailView
           clusterId={clusterId}
           name={detailName}
+          canDelete={canDelete}
           onOpenQuota={() => setQuotaName(detailName)}
           onOpenYaml={() => setYamlName(detailName)}
+          onDelete={openDelete}
           onBack={() => setDetailName(null)}
         />
       ) : (
@@ -389,17 +391,22 @@ export function NamespaceSection({
 function NamespaceDetailView({
   clusterId,
   name,
+  canDelete,
   onOpenQuota,
   onOpenYaml,
+  onDelete,
   onBack,
 }: {
   clusterId: string;
   name: string;
+  canDelete: boolean;
   onOpenQuota: () => void;
   onOpenYaml: () => void;
+  onDelete: (namespace: KubernetesNamespaceSummary) => void;
   onBack: () => void;
 }) {
   const detail = useNamespace(clusterId, name);
+  const item = detail.data;
 
   return (
     <div className="grid gap-3">
@@ -408,14 +415,19 @@ function NamespaceDetailView({
         onBack={onBack}
         actions={
           <>
-            <Button size="sm" variant="secondary" onClick={onOpenQuota}>
-              <SlidersHorizontal />
-              配额管理
-            </Button>
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML
             </Button>
+            <Button size="sm" variant="secondary" onClick={onOpenQuota}>
+              <SlidersHorizontal />
+              配额管理
+            </Button>
+            {/* Waits for the object: the deletion carries this Namespace's UID
+                as a precondition, and there is no UID before it has loaded. */}
+            {canDelete && item ? (
+              <DetailDeleteAction name={name} onDelete={() => onDelete(item)} />
+            ) : null}
           </>
         }
       />

@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileCode, Lock, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { useConfigMap, useConfigMaps, useDeleteConfigMap } from "@/api/queries/configmaps";
@@ -8,6 +8,7 @@ import type { KubernetesConfigMapDetail, KubernetesConfigMapSummary } from "@/ap
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailDeleteAction, RowDeleteAction } from "@/components/common/delete-action";
 import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
@@ -74,6 +75,17 @@ export function ConfigMapSection({
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+
+  // Both the row action and the detail view open the same confirmation, so it is
+  // one callback rather than two copies of the reset sequence.
+  const openDelete = useCallback(
+    (item: KubernetesConfigMapSummary) => {
+      setDeleteTarget(item);
+      setDeletePreviewed(false);
+      remove.reset();
+    },
+    [remove],
+  );
 
   const columns = useMemo<ColumnDef<KubernetesConfigMapSummary, unknown>[]>(
     () => [
@@ -150,24 +162,73 @@ export function ConfigMapSection({
               </HintTooltip>
             ) : null}
             {canDelete && row.original.uid ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`删除 ${row.original.name}`}
-                onClick={() => {
-                  setDeleteTarget(row.original);
-                  setDeletePreviewed(false);
-                  remove.reset();
-                }}
-              >
-                <Trash2 />
-              </Button>
+              <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
       },
     ],
-    [canUpdate, canDelete, remove],
+    [canUpdate, canDelete, openDelete],
+  );
+
+  // The confirmation lives outside the branch that picks a view. It is opened
+  // from the list and from the detail page alike, and JSX that exists only in
+  // the list's branch cannot open over the detail — the operator would have to
+  // go back before the dialog appeared, by which point it is confirming an
+  // object they can no longer see.
+  const deleteDialog = (
+    <SensitiveActionDialog
+      open={deleteTarget !== null}
+      onOpenChange={(open) => !open && setDeleteTarget(null)}
+      title="删除 ConfigMap"
+      description={
+        deletePreviewed
+          ? "DryRun 已通过。再次确认将提交实际删除。"
+          : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
+      }
+      scopeLines={[
+        { label: "集群", name: clusterName, id: clusterId },
+        { label: "命名空间", name: namespace },
+        { label: "ConfigMap", name: deleteTarget?.name ?? "", id: deleteTarget?.uid },
+      ]}
+      impacts={[
+        "引用该 ConfigMap 的 Pod 在重启或重新调度前通常不受影响，但之后会因缺少配置而无法启动。",
+        "以 Volume 方式挂载的内容会在 kubelet 下一次同步时消失。",
+        "请求携带该对象当前的 UID 与 resourceVersion 前置条件，期间对象若已变化或被重建，删除会被拒绝。",
+      ]}
+      confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
+      confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
+      destructive
+      pending={remove.isPending}
+      error={remove.error}
+      onConfirm={() => {
+        if (!deleteTarget) return;
+        const dryRun = !deletePreviewed;
+        void remove
+          .mutateAsync({
+            clusterId,
+            namespace,
+            name: deleteTarget.name,
+            uid: deleteTarget.uid,
+            resourceVersion: deleteTarget.resource_version,
+            dryRun,
+            idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
+          })
+          .then(() => {
+            if (dryRun) {
+              setDeletePreviewed(true);
+              toast.success("ConfigMap 删除 DryRun 已通过");
+              return;
+            }
+            toast.success(`ConfigMap ${deleteTarget.name} 已提交删除`);
+            if (detailName === deleteTarget.name) {
+              setDetailName(null);
+            }
+            setDeleteTarget(null);
+          })
+          .catch(() => undefined);
+      }}
+    />
   );
 
   if (yamlName) {
@@ -201,17 +262,22 @@ export function ConfigMapSection({
 
   if (detailName) {
     return (
-      <ConfigMapDetailView
-        clusterId={clusterId}
-        namespace={namespace}
-        name={detailName}
-        canUpdate={canUpdate}
-        // The detail stays open underneath, so leaving the form returns to the
-        // object that was being read rather than to the list.
-        onEdit={() => setEditingName(detailName)}
-        onOpenYaml={() => setYamlName(detailName)}
-        onBack={() => setDetailName(null)}
-      />
+      <>
+        <ConfigMapDetailView
+          clusterId={clusterId}
+          namespace={namespace}
+          name={detailName}
+          canUpdate={canUpdate}
+          canDelete={canDelete}
+          // The detail stays open underneath, so leaving the form returns to the
+          // object that was being read rather than to the list.
+          onEdit={() => setEditingName(detailName)}
+          onOpenYaml={() => setYamlName(detailName)}
+          onDelete={openDelete}
+          onBack={() => setDetailName(null)}
+        />
+        {deleteDialog}
+      </>
     );
   }
 
@@ -248,58 +314,7 @@ export function ConfigMapSection({
         }}
       />
 
-      <SensitiveActionDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="删除 ConfigMap"
-        description={
-          deletePreviewed
-            ? "DryRun 已通过。再次确认将提交实际删除。"
-            : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
-        }
-        scopeLines={[
-          { label: "集群", name: clusterName, id: clusterId },
-          { label: "命名空间", name: namespace },
-          { label: "ConfigMap", name: deleteTarget?.name ?? "", id: deleteTarget?.uid },
-        ]}
-        impacts={[
-          "引用该 ConfigMap 的 Pod 在重启或重新调度前通常不受影响，但之后会因缺少配置而无法启动。",
-          "以 Volume 方式挂载的内容会在 kubelet 下一次同步时消失。",
-          "请求携带该对象当前的 UID 与 resourceVersion 前置条件，期间对象若已变化或被重建，删除会被拒绝。",
-        ]}
-        confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
-        confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
-        destructive
-        pending={remove.isPending}
-        error={remove.error}
-        onConfirm={() => {
-          if (!deleteTarget) return;
-          const dryRun = !deletePreviewed;
-          void remove
-            .mutateAsync({
-              clusterId,
-              namespace,
-              name: deleteTarget.name,
-              uid: deleteTarget.uid,
-              resourceVersion: deleteTarget.resource_version,
-              dryRun,
-              idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
-            })
-            .then(() => {
-              if (dryRun) {
-                setDeletePreviewed(true);
-                toast.success("ConfigMap 删除 DryRun 已通过");
-                return;
-              }
-              toast.success(`ConfigMap ${deleteTarget.name} 已提交删除`);
-              if (detailName === deleteTarget.name) {
-                setDetailName(null);
-              }
-              setDeleteTarget(null);
-            })
-            .catch(() => undefined);
-        }}
-      />
+      {deleteDialog}
     </div>
   );
 }
@@ -330,16 +345,20 @@ function ConfigMapDetailView({
   namespace,
   name,
   canUpdate,
+  canDelete,
   onEdit,
   onOpenYaml,
+  onDelete,
   onBack,
 }: {
   clusterId: string;
   namespace: string;
   name: string;
   canUpdate: boolean;
+  canDelete: boolean;
   onEdit: () => void;
   onOpenYaml: () => void;
+  onDelete: (item: KubernetesConfigMapSummary) => void;
   onBack: () => void;
 }) {
   const detail = useConfigMap(clusterId, namespace, name);
@@ -352,16 +371,21 @@ function ConfigMapDetailView({
         onBack={onBack}
         actions={
           <>
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             {canUpdate && item && !item.immutable ? (
               <Button size="sm" variant="secondary" onClick={onEdit}>
                 <Pencil />
                 编辑
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
-              <FileCode />
-              YAML
-            </Button>
+            {/* An immutable ConfigMap cannot be changed but can be removed:
+                that is the only way to replace one. */}
+            {canDelete && item?.uid ? (
+              <DetailDeleteAction name={name} onDelete={() => onDelete(item)} />
+            ) : null}
           </>
         }
       />

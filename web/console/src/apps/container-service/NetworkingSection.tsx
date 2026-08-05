@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileCode, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorCode } from "@/api/errors";
@@ -14,6 +14,7 @@ import type { KubernetesNetworkingResource } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailDeleteAction, RowDeleteAction } from "@/components/common/delete-action";
 import {
   DetailCard,
   DetailConditions,
@@ -85,6 +86,17 @@ export function NetworkingSection({
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
 
+  // Both the row action and the detail view open the same confirmation, so it is
+  // one callback rather than two copies of the reset sequence.
+  const openDelete = useCallback(
+    (item: NetworkingSummary) => {
+      setDeleteTarget(item);
+      setDeletePreviewed(false);
+      remove.reset();
+    },
+    [remove],
+  );
+
   const columns = useMemo<ColumnDef<NetworkingSummary, unknown>[]>(
     () => [
       {
@@ -125,24 +137,74 @@ export function NetworkingSection({
               </Button>
             ) : null}
             {canDelete && row.original.uid ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`删除 ${row.original.name}`}
-                onClick={() => {
-                  setDeleteTarget(row.original);
-                  setDeletePreviewed(false);
-                  remove.reset();
-                }}
-              >
-                <Trash2 />
-              </Button>
+              <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
       },
     ],
-    [resource, canUpdate, canDelete, remove],
+    [resource, canUpdate, canDelete, openDelete],
+  );
+
+  // The confirmation lives outside the branch that picks a view. It is opened
+  // from the list and from the detail page alike, and JSX that exists only in
+  // the list's branch cannot open over the detail — the operator would have to
+  // go back before the dialog appeared, by which point it is confirming an
+  // object they can no longer see.
+  const deleteDialog = (
+    <SensitiveActionDialog
+      open={deleteTarget !== null}
+      onOpenChange={(open) => !open && setDeleteTarget(null)}
+      title={`删除 ${networkingKindLabel(resource)}`}
+      description={
+        deletePreviewed
+          ? "DryRun 已通过。再次确认将提交实际删除。"
+          : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
+      }
+      scopeLines={[
+        { label: "集群", name: clusterName, id: clusterId },
+        { label: "命名空间", name: namespace },
+        {
+          label: networkingKindLabel(resource),
+          name: deleteTarget?.name ?? "",
+          id: deleteTarget?.uid,
+        },
+      ]}
+      impacts={deleteImpacts(resource)}
+      confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
+      confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
+      destructive
+      pending={remove.isPending}
+      error={remove.error}
+      onConfirm={() => {
+        if (!deleteTarget) return;
+        const dryRun = !deletePreviewed;
+        void remove
+          .mutateAsync({
+            clusterId,
+            namespace,
+            resource,
+            name: deleteTarget.name,
+            uid: deleteTarget.uid,
+            resourceVersion: deleteTarget.resource_version,
+            dryRun,
+            idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
+          })
+          .then(() => {
+            if (dryRun) {
+              setDeletePreviewed(true);
+              toast.success("删除 DryRun 已通过");
+              return;
+            }
+            toast.success(`${networkingKindLabel(resource)} ${deleteTarget.name} 已提交删除`);
+            if (detailName === deleteTarget.name) {
+              setDetailName(null);
+            }
+            setDeleteTarget(null);
+          })
+          .catch(() => undefined);
+      }}
+    />
   );
 
   if (yamlName) {
@@ -179,19 +241,24 @@ export function NetworkingSection({
 
   if (detailName) {
     return (
-      <NetworkingDetailView
-        clusterId={clusterId}
-        namespace={namespace}
-        resource={resource}
-        name={detailName}
-        canUpdate={canUpdate}
-        // The detail stays open underneath, so leaving the form returns to the
-        // object that was being read rather than to the list — the same way the
-        // YAML view below returns here.
-        onEdit={setEditing}
-        onOpenYaml={() => setYamlName(detailName)}
-        onBack={() => setDetailName(null)}
-      />
+      <>
+        <NetworkingDetailView
+          clusterId={clusterId}
+          namespace={namespace}
+          resource={resource}
+          name={detailName}
+          canUpdate={canUpdate}
+          canDelete={canDelete}
+          // The detail stays open underneath, so leaving the form returns to the
+          // object that was being read rather than to the list — the same way the
+          // YAML view below returns here.
+          onEdit={setEditing}
+          onOpenYaml={() => setYamlName(detailName)}
+          onDelete={openDelete}
+          onBack={() => setDetailName(null)}
+        />
+        {deleteDialog}
+      </>
     );
   }
 
@@ -260,59 +327,7 @@ export function NetworkingSection({
         </TabsContent>
       </Tabs>
 
-      <SensitiveActionDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title={`删除 ${networkingKindLabel(resource)}`}
-        description={
-          deletePreviewed
-            ? "DryRun 已通过。再次确认将提交实际删除。"
-            : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
-        }
-        scopeLines={[
-          { label: "集群", name: clusterName, id: clusterId },
-          { label: "命名空间", name: namespace },
-          {
-            label: networkingKindLabel(resource),
-            name: deleteTarget?.name ?? "",
-            id: deleteTarget?.uid,
-          },
-        ]}
-        impacts={deleteImpacts(resource)}
-        confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
-        confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
-        destructive
-        pending={remove.isPending}
-        error={remove.error}
-        onConfirm={() => {
-          if (!deleteTarget) return;
-          const dryRun = !deletePreviewed;
-          void remove
-            .mutateAsync({
-              clusterId,
-              namespace,
-              resource,
-              name: deleteTarget.name,
-              uid: deleteTarget.uid,
-              resourceVersion: deleteTarget.resource_version,
-              dryRun,
-              idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
-            })
-            .then(() => {
-              if (dryRun) {
-                setDeletePreviewed(true);
-                toast.success("删除 DryRun 已通过");
-                return;
-              }
-              toast.success(`${networkingKindLabel(resource)} ${deleteTarget.name} 已提交删除`);
-              if (detailName === deleteTarget.name) {
-                setDetailName(null);
-              }
-              setDeleteTarget(null);
-            })
-            .catch(() => undefined);
-        }}
-      />
+      {deleteDialog}
     </div>
   );
 }
@@ -460,8 +475,10 @@ function NetworkingDetailView({
   resource,
   name,
   canUpdate,
+  canDelete,
   onEdit,
   onOpenYaml,
+  onDelete,
   onBack,
 }: {
   clusterId: string;
@@ -469,8 +486,10 @@ function NetworkingDetailView({
   resource: KubernetesNetworkingResource;
   name: string;
   canUpdate: boolean;
+  canDelete: boolean;
   onEdit: (item: NetworkingSummary) => void;
   onOpenYaml: () => void;
+  onDelete: (item: NetworkingSummary) => void;
   onBack: () => void;
 }) {
   const detail = useNetworkingResource(clusterId, namespace, resource, name);
@@ -483,16 +502,21 @@ function NetworkingDetailView({
         onBack={onBack}
         actions={
           <>
+            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
+              <FileCode />
+              YAML
+            </Button>
             {canUpdate && item ? (
               <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
                 <Pencil />
                 编辑
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
-              <FileCode />
-              YAML
-            </Button>
+            {/* Waits for the object: the deletion carries its UID and
+                resourceVersion as preconditions, and neither exists yet. */}
+            {canDelete && item?.uid ? (
+              <DetailDeleteAction name={name} onDelete={() => onDelete(item)} />
+            ) : null}
           </>
         }
       />
