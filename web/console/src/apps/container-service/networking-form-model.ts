@@ -213,7 +213,11 @@ export function initialDraft(existing: NetworkingSummary | null): NetworkingDraf
     ingress: {
       className: ingress?.spec.ingress_class_name ?? "",
       defaultBackend: {
-        enabled: defaultBackend !== undefined,
+        // An absent backend and a `null` one both mean the Ingress has none.
+        // The contract says the field is simply left out, and the Server now
+        // does leave it out; a Server that still sends `null` must not be read
+        // as "there is a default backend" and tick this box on every open.
+        enabled: defaultBackend != null,
         name: defaultBackend?.name ?? "",
         port: defaultBackend?.port_name || String(defaultBackend?.port_number || ""),
       },

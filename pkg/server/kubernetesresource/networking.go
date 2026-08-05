@@ -92,16 +92,19 @@ type ServicePort struct {
 }
 
 type ServiceSpec struct {
-	Type                      string            `json:"type"`
-	Headless                  bool              `json:"headless"`
-	Selector                  map[string]string `json:"selector"`
-	Ports                     []ServicePort     `json:"ports"`
-	ExternalName              string            `json:"external_name"`
-	SessionAffinity           string            `json:"session_affinity"`
-	ExternalTrafficPolicy     string            `json:"external_traffic_policy"`
-	InternalTrafficPolicy     string            `json:"internal_traffic_policy"`
-	PublishNotReadyAddresses  bool              `json:"publish_not_ready_addresses"`
-	AllocateLoadBalancerPorts *bool             `json:"allocate_load_balancer_node_ports"`
+	Type                     string            `json:"type"`
+	Headless                 bool              `json:"headless"`
+	Selector                 map[string]string `json:"selector"`
+	Ports                    []ServicePort     `json:"ports"`
+	ExternalName             string            `json:"external_name"`
+	SessionAffinity          string            `json:"session_affinity"`
+	ExternalTrafficPolicy    string            `json:"external_traffic_policy"`
+	InternalTrafficPolicy    string            `json:"internal_traffic_policy"`
+	PublishNotReadyAddresses bool              `json:"publish_not_ready_addresses"`
+	// Optional in the contract, so an unset one is absent rather than `null`:
+	// a client typed from that contract reads a present `null` as a value that
+	// was set, which is the opposite of what a nil pointer means here.
+	AllocateLoadBalancerPorts *bool `json:"allocate_load_balancer_node_ports,omitempty"`
 }
 
 type LoadBalancerAddress struct {
@@ -140,10 +143,13 @@ type IngressTLS struct {
 }
 
 type IngressSpec struct {
-	IngressClassName string                 `json:"ingress_class_name"`
-	DefaultBackend   *IngressServiceBackend `json:"default_backend"`
-	Rules            []IngressRule          `json:"rules"`
-	TLS              []IngressTLS           `json:"tls"`
+	IngressClassName string `json:"ingress_class_name"`
+	// Absent rather than `null` when the Ingress has no default backend, for
+	// the same reason as above: the contract declares it optional, and a form
+	// that reads a present `null` as "there is one" will tick its own box.
+	DefaultBackend *IngressServiceBackend `json:"default_backend,omitempty"`
+	Rules          []IngressRule          `json:"rules"`
+	TLS            []IngressTLS           `json:"tls"`
 }
 
 type IngressView struct {

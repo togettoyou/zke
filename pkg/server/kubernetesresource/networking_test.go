@@ -150,10 +150,42 @@ func TestNetworkingResourceDetailUsesEmptyCollectionsInsteadOfNull(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, unexpected := range []string{`"labels":null`, `"annotations":null`, `"selector":null`, `"cluster_ips":null`, `"ip_families":null`, `"load_balancer_ingress":null`} {
+	for _, unexpected := range []string{`"labels":null`, `"annotations":null`, `"selector":null`, `"cluster_ips":null`, `"ip_families":null`, `"load_balancer_ingress":null`, `"allocate_load_balancer_node_ports":null`} {
 		if strings.Contains(string(body), unexpected) {
 			t.Fatalf("networking detail contains %s: %s", unexpected, body)
 		}
+	}
+}
+
+// An optional field the contract declares as absent-or-set must not arrive as
+// `null`: a client typed from that contract reads the key being present as the
+// field having a value, and a form built on that ticks its own "default
+// backend" box on every open.
+func TestIngressWithoutDefaultBackendOmitsTheField(t *testing.T) {
+	t.Parallel()
+
+	ingress := &networkingv1.Ingress{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:       networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{Host: "example.com"}}},
+	}
+	object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(ingress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := networkingResourceDetail(object, NetworkingIngresses, "default", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Ingress == nil || detail.Ingress.Spec.DefaultBackend != nil {
+		t.Fatalf("unexpected Ingress detail: %+v", detail.Ingress)
+	}
+	body, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), `"default_backend"`) {
+		t.Fatalf("Ingress detail carries default_backend without one: %s", body)
 	}
 }
 
