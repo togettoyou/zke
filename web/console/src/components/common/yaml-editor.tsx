@@ -63,23 +63,29 @@ export function YamlEditor({
   className?: string;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const layerRef = useRef<HTMLPreElement>(null);
+  const paintedRef = useRef<HTMLSpanElement>(null);
 
   const lines = useMemo(
     () => (value.length <= MAX_HIGHLIGHT_CHARS ? highlightYaml(value) : null),
     [value],
   );
 
-  // The highlight layer has no scrollbar of its own; it is moved to wherever
-  // the textarea has been scrolled to.
+  // The painted text is offset to wherever the textarea has been scrolled to.
+  //
+  // A transform rather than the layer's own `scrollTop`/`scrollLeft`: only the
+  // textarea reserves layout space for its scrollbars, so its client box is
+  // shorter and narrower than the layer's and it can scroll that much further.
+  // Assigning its offset to a scroll position would be clamped to the layer's
+  // own smaller maximum, leaving the colour a scrollbar's width behind the
+  // characters at — and only at — the very end of the document. A transform has
+  // no maximum to be clamped to.
   const syncScroll = () => {
     const input = inputRef.current;
-    const layer = layerRef.current;
-    if (!input || !layer) {
+    const painted = paintedRef.current;
+    if (!input || !painted) {
       return;
     }
-    layer.scrollTop = input.scrollTop;
-    layer.scrollLeft = input.scrollLeft;
+    painted.style.transform = `translate(${-input.scrollLeft}px, ${-input.scrollTop}px)`;
   };
 
   // Text replaced from outside — a reload, a discarded edit — can move the
@@ -96,20 +102,23 @@ export function YamlEditor({
     >
       {lines ? (
         <pre
-          ref={layerRef}
           aria-hidden="true"
           className={cn(LAYER, "text-foreground pointer-events-none overflow-hidden")}
         >
-          {lines.map((tokens, index) => (
-            <span key={index}>
-              {tokens.map((token, tokenIndex) => (
-                <span key={tokenIndex} className={TOKEN_CLASS[token.kind]}>
-                  {token.text}
-                </span>
-              ))}
-              {"\n"}
-            </span>
-          ))}
+          {/* The moved element sits inside the padded, clipping layer, so the
+              text passes under the padding exactly as the textarea's own does. */}
+          <span ref={paintedRef} className="block">
+            {lines.map((tokens, index) => (
+              <span key={index}>
+                {tokens.map((token, tokenIndex) => (
+                  <span key={tokenIndex} className={TOKEN_CLASS[token.kind]}>
+                    {token.text}
+                  </span>
+                ))}
+                {"\n"}
+              </span>
+            ))}
+          </span>
         </pre>
       ) : null}
 
