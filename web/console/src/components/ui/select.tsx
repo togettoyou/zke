@@ -23,7 +23,14 @@ export function SelectTrigger({
       )}
       {...props}
     >
-      {children}
+      {/*
+       * The value is a flex item, and a flex item's default `min-width: auto`
+       * refuses to shrink below its content. A long option — an audit action
+       * name, a Namespace — would then run out of a trigger whose width the
+       * caller fixed, and push the chevron out with it. Shrinking is allowed
+       * here, and what does not fit ends in an ellipsis.
+       */}
+      <span className="min-w-0 flex-1 truncate text-left">{children}</span>
       <SelectPrimitive.Icon asChild>
         <ChevronDown className="text-muted-foreground size-4 shrink-0" />
       </SelectPrimitive.Icon>

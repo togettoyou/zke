@@ -1362,7 +1362,11 @@ function AuditSection() {
                 }))
               }
             >
-              <SelectTrigger className="w-52">
+              {/* The longest name in the vocabulary is 34 characters, which no
+                  toolbar control should be sized for; a chosen one that does
+                  not fit is cut with an ellipsis, and the title carries it in
+                  full. */}
+              <SelectTrigger className="w-52" title={filters.action}>
                 <SelectValue placeholder="操作" />
               </SelectTrigger>
               <SelectContent>
