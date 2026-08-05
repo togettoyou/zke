@@ -230,10 +230,32 @@ Console 服务与路由页面按 Service、Ingress、Gateway 三个标签页组�
 IngressClass、主机与已分配地址，Gateway 展示 GatewayClass、监听器与地址。详情页在类型化视图之外还提供
 YAML 入口，用于查看和修改本表单未建模的字段。
 
+创建和编辑占据整个应用视图而不是弹窗，与工作负载创建表单一致；从详情页进入编辑时详情仍在其下，因此离开表单
+回到的是刚才在读的那个对象而不是列表，与该页的 YAML 入口一致。一个带三个监听器的 Gateway 或一条带若干路由的
+Ingress 比盖在列表上的盒子高，而填表期间下面那张列表本来也用不上。表单按类型只渲染该类型接受的字段，Service
+的类型切换会连带显示对应字段（ExternalName 只要目标域名，NodePort 与 LoadBalancer 才有外部流量策略和
+NodePort 输入）。
+
+表单在提交前做一次与 Server 同形的校验，校验消息显示在能够修正它的那个区块里，底部按钮旁只说明是哪个区块拦住了
+提交——一条关于端口的提示出现在表单末尾没有意义。端口、NodePort 和监听器端口是只接受数字、最多五位的输入框——端口不会超过 65535，
+第六位数字不是一个待拒绝的取值，而是一个不可能通向合法端口的按键；1–65535 这个范围写在区块说明里，不用先填错
+才看得到，越界仍由校验拦下（99999 是五位数）。目标端口和后端端口仍是普通输入框，因为它们也可以写容器端口的名称，校验按
+Kubernetes 的 `IsValidPortName` 执行（最长 15 个字符、至少含一个字母、不能以 `-` 开头结尾或连续两个 `-`）。
+其余规则逐条对齐 Server：Service 名称按 DNS-1035（必须字母开头）、Ingress 与 Gateway 名称按 DNS 子域名；多个
+端口时每个都必须有名称，端口名称与「协议/端口」都不得重复；NodePort 只在 NodePort 与 LoadBalancer 类型下可填，
+且说明留空由 Kubernetes 分配、通常落在 30000–32767，具体范围由集群配置决定，因此表单不按该范围拦截；Ingress 的
+Exact 与 Prefix 路径必须以 `/` 开头，路径不接受 `//`、`/./`、`/../` 与 `%2f`；Gateway 的 HTTPS 监听器必须
+Terminate 且至少一个证书，Passthrough 不接受证书。有一条刻意比 Kubernetes 更早拦截：同一主机下完全相同的
+路径与匹配方式会被拒绝，Kubernetes 接受这样的重复但只有其中一条生效，且不说明是哪一条。
+
 创建、更新和删除都先执行服务端 DryRun 再确认。更新和删除携带对象当前的 UID 与 resourceVersion，因此陈旧
 编辑会被拒绝而不是覆盖；确认弹窗说明本表单建模的配置会整体替换现有配置，而 Kubernetes 分配的字段和未建模
-的扩展字段由服务端保留。Service 的类型切换会连带显示对应字段（ExternalName 只要目标域名，NodePort 与
-LoadBalancer 才有外部流量策略和 NodePort 输入）。
+的扩展字段由服务端保留。
+
+DryRun 预检通过不等于实际写入一定成功，NodePort 就是一例：Kubernetes 在端口分配器里检查
+`--service-node-port-range`，而 DryRun 请求不走分配这一步，因此超出范围的 NodePort 预检通过、实际创建被拒。
+ZKE 不能替 Kubernetes 补上这个检查——真实范围由该集群 API Server 的启动参数决定，按默认值拦截会挡住配置了
+其他范围的集群——因此表单在填入 30000–32767 之外的 NodePort 时给出警告而不是阻止提交，并说明预检不会发现它。
 
 目标集群没有安装 Gateway API 时，列表返回 `409 gateway_api_unavailable`，Console 据此展示说明而不是错误，
 并隐藏创建入口；这与已安装但 Agent 无权访问的 `403` 是两回事，后者仍按权限错误呈现。

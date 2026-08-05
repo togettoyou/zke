@@ -30,7 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { NetworkingForm } from "./NetworkingForm";
+import { NetworkingFormView } from "./NetworkingFormView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -156,6 +156,26 @@ export function NetworkingSection({
     );
   }
 
+  // The form takes over the section rather than sitting over the list: a
+  // Gateway's listeners or an Ingress's routes are taller than a box laid over
+  // the table can show, and the table is of no use while they are being filled
+  // in.
+  if (creating || editing) {
+    return (
+      <NetworkingFormView
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        resource={resource}
+        existing={editing}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
+      />
+    );
+  }
+
   if (detailName) {
     return (
       <NetworkingDetailView
@@ -164,10 +184,10 @@ export function NetworkingSection({
         resource={resource}
         name={detailName}
         canUpdate={canUpdate}
-        onEdit={(item) => {
-          setEditing(item);
-          setDetailName(null);
-        }}
+        // The detail stays open underneath, so leaving the form returns to the
+        // object that was being read rather than to the list — the same way the
+        // YAML view below returns here.
+        onEdit={setEditing}
         onOpenYaml={() => setYamlName(detailName)}
         onBack={() => setDetailName(null)}
       />
@@ -238,20 +258,6 @@ export function NetworkingSection({
           )}
         </TabsContent>
       </Tabs>
-
-      {creating || editing ? (
-        <NetworkingForm
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          resource={resource}
-          existing={editing}
-          onClose={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-        />
-      ) : null}
 
       <SensitiveActionDialog
         open={deleteTarget !== null}
