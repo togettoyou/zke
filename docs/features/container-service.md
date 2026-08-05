@@ -23,6 +23,9 @@
   摘要与详情；列表支持 Kubernetes continuation token、Label Selector 和 Field Selector；
 - `POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}`：使用稳定的
   容器模板和类型专属字段创建上述五类工作负载，支持 DryRun、显式确认、幂等和审计；
+- `PUT /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
+  用与创建同形的类型化表单更新上述五类工作负载。请求携带的字段替换对象上的对应部分，表单未建模的字段由
+  Server 从当前对象保留；强制要求 UID 与 resourceVersion 前置条件；
 - 工作负载详情作用域下的 `scale`、`restart`、`suspend` 和 `resume` 动作：分别支持
   Deployment/StatefulSet 伸缩，Deployment/StatefulSet/DaemonSet 滚动重启，以及 CronJob 暂停和恢复；
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
@@ -560,6 +563,39 @@ CPU/内存、GPU）直接展开，其余收在「显示高级设置」之后。C
 错误只会表现为一个没有原因的禁用按钮。同样地，校验消息显示在能够修正它的那个区块里，而不是堆在表单末尾：一条
 关于名称的提示出现在十屏之外没有意义；底部按钮旁只说明是哪个区块拦住了提交。
 
+工作负载编辑复用创建表单，而不是另做一张更小的表：一个只在创建时出现的字段，等于操作者可以设一次却永远
+改不回来。差别在于哪些字段被固定，以及写入方式。
+
+更新是合并而不是整体替换，这一点与 Service、策略等较小的类型化资源相反。那些对象是被整体读取的，因此也被
+整体替换；而一个 Pod 模板还带着亲和性、拓扑分布约束、容器端口、ServiceAccount、主机网络和 `securityContext`
+的其余字段——它们都不在本表单范围内，却都是某个人特意设过的。整份替换会让一次「只想改镜像标签」的
+保存把它们一并删掉。因此 Server 先按 UID 与 resourceVersion 读回对象，把表单建模的字段写上去，其余文档原样
+保留：容器按名称合并，保留该容器的端口、终止设置与 `securityContext` 其余字段；`fieldRef` 等本表单无法表达的
+环境变量来源、projected/CSI 等无法表达的数据卷来源、gRPC 等无法表达的探针，都在提交回来时保持原状——它们读取
+时就只返回一个名称，没有可显示的内容，写回时也不会被清空。滚动重启写在 Pod 模板上的 `zke.io/restart-request`
+注解同样保留：删掉它本身就是一次模板变更，会再触发一轮滚动。
+
+Kubernetes 自身的不可变约束如实反映，不是本表单的取舍：名称与 StatefulSet 的 `serviceName` 只读并说明原因；
+Job 的 Pod 模板、选择器、完成数和失败重试上限创建后不可变，因此编辑一个 Job 时表单只显示并行度和完成后保留
+秒数，其余分区不渲染，并说明要改变 Job 运行的内容只能新建一个 Job。Deployment、StatefulSet、DaemonSet 与
+CronJob 的模板可变；Pod 模板的任何变化都会触发滚动更新，确认弹窗按类型说明这一点，CronJob 则说明改动对下一次
+触发的 Job 生效。
+
+回填要求详情接口返回完整的类型化模板，因此工作负载详情现在返回容器的命令、参数、工作目录、环境变量、资源
+requests/limits、挂载、探针、生命周期钩子和特权开关，以及 Pod 层的数据卷、镜像访问凭证、节点标签选择和容忍，
+并把 Job/CronJob 声明的执行参数与调度参数一并返回。响应与请求同形——读到的就是将要写回的，否则读侧缺的每一个
+字段都会变成保存时被清空的字段。CronJob 的并行度、完成数等返回在 `parallelism`、`completions` 等字段上而不是
+`job` 状态里：CronJob 自己没有 Job，一份全是零的状态会被读成「运行过且什么都没做」。
+
+数量保持原样提交。表单以核和 MiB 输入，而 `1Gi` 显示成 1024 再写回 `1024Mi` 是同一个量、不同的对象，会在
+一次什么都没改的保存上触发滚动更新；因此仍显示为原值解析结果的字段按原始字符串提交。表单读不懂的数量（例如
+`1.5Gi` 换算不成整数 MiB）显示为空，并与 `nvidia.com/gpu` 之外的扩展资源、`ephemeral-storage` 等一起原样保留，
+而不是被一次没有提及它们的更新删掉。
+
+编辑入口在列表行菜单和详情页，需要 `cluster.resource.update`。表单在对象读取完成后才挂载，UID 与
+resourceVersion 在挂载时固定，不随后台重新拉取更新：取一个更新的版本号会把本该被服务端拒绝的冲突变成静默覆盖。
+写入同样先 DryRun 预检再确认，并沿用 CSRF、幂等键与审计链路。
+
 通用接口返回 Unstructured JSON，并移除 `metadata.managedFields`。Discovery
 目录表示 API Server 暴露的资源，不代表 Agent ServiceAccount 已获授权；管理更多内置资源或任意 CR 时，安装方
 需要显式扩展该 ServiceAccount 的最小 RBAC，ZKE 无需增加新的资源协议或 HTTP Handler。
@@ -571,7 +607,7 @@ CPU/内存、GPU）直接展开，其余收在「显示高级设置」之后。C
 后续规划能力包括：
 
 - 节点驱逐，以及它依赖的 Subresource allowlist 设计；
-- 工作负载的类型化更新表单，以及创建表单尚未覆盖的亲和性、拓扑分布约束与容器端口；
+- 创建与编辑表单尚未覆盖的亲和性、拓扑分布约束与容器端口；
 - 创建工作负载时联动创建 Service 与 HorizontalPodAutoscaler（需要先定义多对象写入的部分成功与回滚语义）；
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；

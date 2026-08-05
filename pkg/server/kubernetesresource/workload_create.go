@@ -28,27 +28,39 @@ const (
 	maxCronJobNameLength = 52
 )
 
+/*
+ * One container of the typed Pod template.
+ *
+ * The same shape in both directions: a detail response returns the containers
+ * in these fields, and an update submits them back. A form that reads one shape
+ * and writes another has to map between them twice, and every field missing
+ * from the read side silently becomes a field the form deletes on save.
+ */
 type WorkloadContainerTemplate struct {
-	Name            string
-	Image           string
-	ImagePullPolicy string
-	Command         []string
-	Args            []string
-	WorkingDir      string
-	Env             []WorkloadEnvVar
-	Resources       *WorkloadResourceRequirements
-	VolumeMounts    []WorkloadVolumeMount
-	LivenessProbe   *WorkloadProbe
-	ReadinessProbe  *WorkloadProbe
-	Lifecycle       *WorkloadLifecycle
-	Privileged      *bool
+	Name            string                        `json:"name"`
+	Image           string                        `json:"image"`
+	ImagePullPolicy string                        `json:"image_pull_policy,omitempty"`
+	Command         []string                      `json:"command,omitempty"`
+	Args            []string                      `json:"args,omitempty"`
+	WorkingDir      string                        `json:"working_dir,omitempty"`
+	Env             []WorkloadEnvVar              `json:"env,omitempty"`
+	Resources       *WorkloadResourceRequirements `json:"resources,omitempty"`
+	VolumeMounts    []WorkloadVolumeMount         `json:"volume_mounts,omitempty"`
+	LivenessProbe   *WorkloadProbe                `json:"liveness_probe,omitempty"`
+	ReadinessProbe  *WorkloadProbe                `json:"readiness_probe,omitempty"`
+	Lifecycle       *WorkloadLifecycle            `json:"lifecycle,omitempty"`
+	Privileged      *bool                         `json:"privileged,omitempty"`
 }
 
-type CreateWorkloadInput struct {
-	ClusterID      string
-	Namespace      string
-	Resource       WorkloadResource
-	Name           string
+/*
+ * The part of a workload this platform models, submitted the same way whether
+ * the object is being created or edited.
+ *
+ * One definition rather than two because an edit form is the create form on an
+ * existing object: a field that only one of them accepted would be a field an
+ * operator can set once and never correct, or correct but never set.
+ */
+type WorkloadSpecInput struct {
 	Labels         map[string]string
 	Annotations    map[string]string
 	Description    string
@@ -75,6 +87,14 @@ type CreateWorkloadInput struct {
 	StartingDeadlineSeconds    *int64
 	SuccessfulJobsHistoryLimit *int32
 	FailedJobsHistoryLimit     *int32
+}
+
+type CreateWorkloadInput struct {
+	ClusterID string
+	Namespace string
+	Resource  WorkloadResource
+	Name      string
+	WorkloadSpecInput
 
 	DryRun         bool
 	Confirm        bool
@@ -115,70 +135,91 @@ func (service *Service) CreateWorkload(
 }
 
 func validateCreateWorkloadInput(input CreateWorkloadInput) error {
-	_, hasReservedSelectorLabel := input.Labels[workloadSelectorLabel]
-	if len(k8svalidation.IsDNS1123Label(input.Namespace)) != 0 ||
-		len(k8svalidation.IsDNS1123Subdomain(input.Name)) != 0 ||
-		!validNamespaceLabels(input.Labels) ||
-		hasReservedSelectorLabel ||
-		!validWorkloadAnnotations(input.Annotations) ||
-		utf8.RuneCountInString(input.Description) > maxWorkloadDescriptionRunes ||
-		!validWorkloadContainers(input.Containers, input.InitContainers) ||
-		!validWorkloadVolumes(
-			input.Volumes,
-			workloadMountedVolumeNames(input.Containers, input.InitContainers),
-		) ||
-		!validWorkloadImagePullSecrets(input.ImagePullSecrets) ||
-		!validWorkloadNodeSelector(input.NodeSelector) ||
-		!validWorkloadTolerations(input.Tolerations) ||
-		!validNonNegativeInt32(input.Replicas) ||
-		!validNonNegativeInt32(input.Parallelism) ||
-		!validNonNegativeInt32(input.Completions) ||
-		!validNonNegativeInt32(input.BackoffLimit) ||
-		!validNonNegativeInt32(input.TTLSecondsAfterFinished) ||
-		!validNonNegativeInt64(input.StartingDeadlineSeconds) ||
-		!validNonNegativeInt32(input.SuccessfulJobsHistoryLimit) ||
-		!validNonNegativeInt32(input.FailedJobsHistoryLimit) {
+	if !validWorkloadTarget(input.Namespace, input.Name, input.Resource) ||
+		!validWorkloadSpecFields(input.WorkloadSpecInput) {
 		return ErrInvalidInput
 	}
 
+	spec := input.WorkloadSpecInput
 	switch input.Resource {
 	case WorkloadDeployments:
-		if hasStatefulSetCreateFields(input) ||
-			hasJobCreateFields(input) ||
-			hasCronJobCreateFields(input) {
+		if hasStatefulSetFields(spec) ||
+			hasJobFields(spec) ||
+			hasCronJobFields(spec) {
 			return ErrInvalidInput
 		}
 	case WorkloadStatefulSets:
-		if len(k8svalidation.IsDNS1035Label(input.ServiceName)) != 0 ||
-			hasJobCreateFields(input) ||
-			hasCronJobCreateFields(input) {
+		// Required at creation and immutable afterwards, which is why the update
+		// path refuses it rather than sharing this branch.
+		if len(k8svalidation.IsDNS1035Label(spec.ServiceName)) != 0 ||
+			hasJobFields(spec) ||
+			hasCronJobFields(spec) {
 			return ErrInvalidInput
 		}
 	case WorkloadDaemonSets:
-		if input.Replicas != nil ||
-			hasStatefulSetCreateFields(input) ||
-			hasJobCreateFields(input) ||
-			hasCronJobCreateFields(input) {
+		if spec.Replicas != nil ||
+			hasStatefulSetFields(spec) ||
+			hasJobFields(spec) ||
+			hasCronJobFields(spec) {
 			return ErrInvalidInput
 		}
 	case WorkloadJobs:
-		if input.Replicas != nil ||
-			len(input.Name) > maxJobNameLength ||
-			hasStatefulSetCreateFields(input) ||
-			hasCronJobCreateFields(input) {
+		if spec.Replicas != nil ||
+			hasStatefulSetFields(spec) ||
+			hasCronJobFields(spec) {
 			return ErrInvalidInput
 		}
 	case WorkloadCronJobs:
-		if input.Replicas != nil ||
-			len(input.Name) > maxCronJobNameLength ||
-			hasStatefulSetCreateFields(input) ||
-			!validCronJobCreateFields(input) {
+		if spec.Replicas != nil ||
+			hasStatefulSetFields(spec) ||
+			!validCronJobFields(spec) {
 			return ErrInvalidInput
 		}
 	default:
 		return ErrInvalidInput
 	}
 	return nil
+}
+
+/** Namespace, name and the name length the type imposes on it. */
+func validWorkloadTarget(namespace string, name string, resource WorkloadResource) bool {
+	if len(k8svalidation.IsDNS1123Label(namespace)) != 0 ||
+		len(k8svalidation.IsDNS1123Subdomain(name)) != 0 {
+		return false
+	}
+	switch resource {
+	case WorkloadJobs:
+		return len(name) <= maxJobNameLength
+	case WorkloadCronJobs:
+		return len(name) <= maxCronJobNameLength
+	default:
+		return true
+	}
+}
+
+/** Everything a create and an update validate the same way. */
+func validWorkloadSpecFields(spec WorkloadSpecInput) bool {
+	_, hasReservedSelectorLabel := spec.Labels[workloadSelectorLabel]
+	return validNamespaceLabels(spec.Labels) &&
+		!hasReservedSelectorLabel &&
+		validWorkloadAnnotations(spec.Annotations) &&
+		utf8.RuneCountInString(spec.Description) <= maxWorkloadDescriptionRunes &&
+		validWorkloadContainers(spec.Containers, spec.InitContainers) &&
+		validWorkloadVolumes(
+			spec.Volumes,
+			workloadMountedVolumeNames(spec.Containers, spec.InitContainers),
+		) &&
+		validWorkloadImagePullSecrets(spec.ImagePullSecrets) &&
+		validWorkloadNodeSelector(spec.NodeSelector) &&
+		validWorkloadTolerations(spec.Tolerations) &&
+		validNonNegativeInt32(spec.Replicas) &&
+		validNonNegativeInt32(spec.Parallelism) &&
+		validNonNegativeInt32(spec.Completions) &&
+		validNonNegativeInt32(spec.BackoffLimit) &&
+		validNonNegativeInt32(spec.TTLSecondsAfterFinished) &&
+		validNonNegativeInt64(spec.StartingDeadlineSeconds) &&
+		validNonNegativeInt32(spec.SuccessfulJobsHistoryLimit) &&
+		validNonNegativeInt32(spec.FailedJobsHistoryLimit)
 }
 
 func validWorkloadContainers(
@@ -243,36 +284,36 @@ func validNonNegativeInt64(value *int64) bool {
 	return value == nil || *value >= 0
 }
 
-func hasStatefulSetCreateFields(input CreateWorkloadInput) bool {
-	return input.ServiceName != ""
+func hasStatefulSetFields(spec WorkloadSpecInput) bool {
+	return spec.ServiceName != ""
 }
 
-func hasJobCreateFields(input CreateWorkloadInput) bool {
-	return input.Parallelism != nil ||
-		input.Completions != nil ||
-		input.BackoffLimit != nil ||
-		input.TTLSecondsAfterFinished != nil
+func hasJobFields(spec WorkloadSpecInput) bool {
+	return spec.Parallelism != nil ||
+		spec.Completions != nil ||
+		spec.BackoffLimit != nil ||
+		spec.TTLSecondsAfterFinished != nil
 }
 
-func hasCronJobCreateFields(input CreateWorkloadInput) bool {
-	return input.Schedule != "" ||
-		input.TimeZone != "" ||
-		input.Suspend != nil ||
-		input.ConcurrencyPolicy != "" ||
-		input.StartingDeadlineSeconds != nil ||
-		input.SuccessfulJobsHistoryLimit != nil ||
-		input.FailedJobsHistoryLimit != nil
+func hasCronJobFields(spec WorkloadSpecInput) bool {
+	return spec.Schedule != "" ||
+		spec.TimeZone != "" ||
+		spec.Suspend != nil ||
+		spec.ConcurrencyPolicy != "" ||
+		spec.StartingDeadlineSeconds != nil ||
+		spec.SuccessfulJobsHistoryLimit != nil ||
+		spec.FailedJobsHistoryLimit != nil
 }
 
-func validCronJobCreateFields(input CreateWorkloadInput) bool {
-	if input.Schedule == "" ||
-		len(input.Schedule) > maxCronJobScheduleBytes ||
-		strings.TrimSpace(input.Schedule) != input.Schedule ||
-		len(input.TimeZone) > maxCronJobTimeZoneBytes ||
-		strings.TrimSpace(input.TimeZone) != input.TimeZone {
+func validCronJobFields(spec WorkloadSpecInput) bool {
+	if spec.Schedule == "" ||
+		len(spec.Schedule) > maxCronJobScheduleBytes ||
+		strings.TrimSpace(spec.Schedule) != spec.Schedule ||
+		len(spec.TimeZone) > maxCronJobTimeZoneBytes ||
+		strings.TrimSpace(spec.TimeZone) != spec.TimeZone {
 		return false
 	}
-	switch batchv1.ConcurrencyPolicy(input.ConcurrencyPolicy) {
+	switch batchv1.ConcurrencyPolicy(spec.ConcurrencyPolicy) {
 	case "", batchv1.AllowConcurrent, batchv1.ForbidConcurrent, batchv1.ReplaceConcurrent:
 		return true
 	default:

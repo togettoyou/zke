@@ -71,10 +71,12 @@ func TestServiceCreatesTypedWorkloads(t *testing.T) {
 	base := CreateWorkloadInput{
 		ClusterID: testClusterID,
 		Namespace: "model-serving",
-		Labels:    map[string]string{"team": "inference"},
-		Containers: []WorkloadContainerTemplate{{
-			Name: "main", Image: "example/model:v2", ImagePullPolicy: "IfNotPresent",
-		}},
+		WorkloadSpecInput: WorkloadSpecInput{
+			Labels: map[string]string{"team": "inference"},
+			Containers: []WorkloadContainerTemplate{{
+				Name: "main", Image: "example/model:v2", ImagePullPolicy: "IfNotPresent",
+			}},
+		},
 		Confirm:        true,
 		IdempotencyKey: idempotencyKey,
 	}
@@ -232,9 +234,11 @@ func TestServiceRejectsInvalidTypedWorkloadCreates(t *testing.T) {
 		Namespace: "default",
 		Resource:  WorkloadDeployments,
 		Name:      "demo",
-		Containers: []WorkloadContainerTemplate{{
-			Name: "main", Image: "example/app:v1",
-		}},
+		WorkloadSpecInput: WorkloadSpecInput{
+			Containers: []WorkloadContainerTemplate{{
+				Name: "main", Image: "example/app:v1",
+			}},
+		},
 		Confirm:        true,
 		IdempotencyKey: "0123456789abcdef",
 	}

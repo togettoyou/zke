@@ -2210,6 +2210,62 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+    put:
+      tags: [Resources]
+      operationId: updateKubernetesWorkload
+      description: |
+        使用类型化表单更新目标 Cluster 和 Namespace 中的工作负载。请求携带的字段替换对象上的
+        对应部分，本表单未建模的字段——亲和性、拓扑分布约束、容器端口、securityContext 其余字段等
+        ——由 Server 从当前对象保留，不会被清除。必须提供 UID 与 resourceVersion 前置条件，
+        任一不匹配返回 409。Kubernetes 的不可变约束如实反映：StatefulSet 的 service_name 不接受，
+        Job 只接受 parallelism 与 ttl_seconds_after_finished。dry_run=true 时执行服务端预览，
+        实际更新要求显式 confirm=true。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesUpdateWorkloadRequest"
+      responses:
+        "200":
+          description: 工作负载更新或 dry-run 结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
     delete:
       tags: [Resources]
       operationId: deleteKubernetesWorkload
@@ -6247,6 +6303,147 @@ components:
         confirm:
           type: boolean
           description: 实际创建必须为 true；dry-run 可以为 false。
+    # Same modeled fields as a create, because an edit form is the create form on
+    # an existing object. Fields outside them — 亲和性、拓扑分布约束、容器端口、
+    # securityContext 其余字段等 —— 由服务端从当前对象保留，不会被本请求清除。
+    # containers 对 Deployment、StatefulSet、DaemonSet 和 CronJob 必填；Job 的 Pod
+    # 模板不可变，只接受 parallelism 与 ttl_seconds_after_finished。
+    KubernetesUpdateWorkloadRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, confirm]
+      properties:
+        uid:
+          type: string
+          minLength: 1
+          description: 打开编辑时对象的 UID；不匹配则返回 409，而不是覆盖同名重建的对象。
+        resource_version:
+          type: string
+          minLength: 1
+          description: 打开编辑时对象的 resourceVersion；期间对象若已变化，更新被拒绝而不是覆盖。
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: zke.io/workload-id 为 Server 保留键，不接受客户端设置。
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+          description: zke.io/description 为 description 字段保留，不接受在此设置。
+        description:
+          type: string
+          maxLength: 1000
+          description: 写入工作负载与 Pod 模板的 zke.io/description 注解。
+        containers:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadContainerTemplate"
+        init_containers:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadContainerTemplate"
+          description: >-
+            在主容器之前运行完毕，因此不接受 liveness_probe、readiness_probe 和 lifecycle；
+            容器名在主容器与初始化容器之间不得重复。
+        volumes:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadVolume"
+          description: 容器的 volume_mounts 只能引用这里声明的名称。
+        image_pull_secrets:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+          description: 只传递 Secret 名称引用，不读取 Secret 正文。
+        node_selector:
+          type: object
+          additionalProperties:
+            type: string
+          description: 按节点标签精确匹配；亲和性等更复杂的调度规则请使用 YAML。
+        tolerations:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadToleration"
+        replicas:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+          description: 仅 Deployment 和 StatefulSet 可用；省略时交由 Kubernetes 默认处理。
+        service_name:
+          type: string
+          maxLength: 63
+          description: StatefulSet 必填，且必须引用同一 Namespace 中预先存在的 Service。
+        parallelism:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+          description: 仅 Job 和 CronJob 的 Job Template 可用。
+        completions:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+          description: 仅 Job 和 CronJob 的 Job Template 可用。
+        backoff_limit:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+          description: 仅 Job 和 CronJob 的 Job Template 可用。
+        ttl_seconds_after_finished:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+          description: 仅 Job 和 CronJob 的 Job Template 可用。
+        schedule:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: CronJob 必填的 Kubernetes Cron 表达式。
+        time_zone:
+          type: string
+          maxLength: 128
+          description: 仅 CronJob 可用；空字符串表示使用 kube-controller-manager 的本地时区。
+        suspend:
+          type: [boolean, "null"]
+          description: 仅 CronJob 可用；省略时交由 Kubernetes 默认处理。
+        concurrency_policy:
+          type: string
+          enum: ["", Allow, Forbid, Replace]
+          description: 仅 CronJob 可用；空字符串表示交由 Kubernetes 默认处理。
+        starting_deadline_seconds:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+          description: 仅 CronJob 可用。
+        successful_jobs_history_limit:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+          description: 仅 CronJob 可用。
+        failed_jobs_history_limit:
+          type: [integer, "null"]
+          format: int32
+          minimum: 0
+          maximum: 2147483647
+          description: 仅 CronJob 可用。
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际更新必须为 true；dry-run 可以为 false。
     KubernetesWorkloadMutationRequest:
       type: object
       additionalProperties: false
@@ -6497,18 +6694,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KubernetesWorkloadSelectorRequirement"
-    KubernetesWorkloadContainer:
-      type: object
-      additionalProperties: false
-      required: [name, image, image_pull_policy]
-      properties:
-        name:
-          type: string
-        image:
-          type: string
-        image_pull_policy:
-          type: string
-          enum: [Always, IfNotPresent, Never, ""]
     KubernetesWorkloadCondition:
       type: object
       additionalProperties: false
@@ -6534,6 +6719,10 @@ components:
             - annotations
             - containers
             - init_containers
+            - volumes
+            - image_pull_secrets
+            - node_selector
+            - tolerations
             - conditions
             - strategy
             - min_ready_seconds
@@ -6547,11 +6736,33 @@ components:
             containers:
               type: array
               items:
-                $ref: "#/components/schemas/KubernetesWorkloadContainer"
+                $ref: "#/components/schemas/KubernetesWorkloadContainerTemplate"
+              description: >-
+                与创建和更新提交的容器模板同形，因此编辑表单读到的就是它将要写回的。
+                模板未建模的字段不在这里，也不会被更新清除。
             init_containers:
               type: array
               items:
-                $ref: "#/components/schemas/KubernetesWorkloadContainer"
+                $ref: "#/components/schemas/KubernetesWorkloadContainerTemplate"
+            volumes:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesWorkloadVolume"
+              description: >-
+                本模板未建模的卷来源（projected、CSI、downward API 等）只返回名称，
+                没有 source；更新时按名称保留集群中现有的来源。
+            image_pull_secrets:
+              type: array
+              items:
+                type: string
+            node_selector:
+              type: object
+              additionalProperties:
+                type: string
+            tolerations:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesWorkloadToleration"
             conditions:
               type: array
               items:
@@ -6570,6 +6781,32 @@ components:
               type: string
             concurrency_policy:
               type: string
+            parallelism:
+              type: integer
+              minimum: 0
+              description: >-
+                Job 或 CronJob Job Template 声明的并行度，即编辑表单提交的值；
+                Job 运行时的计数在 job 中。
+            completions:
+              type: integer
+              minimum: 0
+            backoff_limit:
+              type: integer
+              minimum: 0
+            ttl_seconds_after_finished:
+              type: integer
+              minimum: 0
+            time_zone:
+              type: string
+            starting_deadline_seconds:
+              type: integer
+              minimum: 0
+            successful_jobs_history_limit:
+              type: integer
+              minimum: 0
+            failed_jobs_history_limit:
+              type: integer
+              minimum: 0
     KubernetesNetworkingResource:
       type: string
       enum: [services, ingresses, gateways]

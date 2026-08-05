@@ -35,6 +35,10 @@ type kubernetesWorkloadService interface {
 		context.Context,
 		kubernetesresource.CreateWorkloadInput,
 	) (kubernetesresource.WorkloadDetail, error)
+	UpdateWorkload(
+		context.Context,
+		kubernetesresource.UpdateWorkloadInput,
+	) (kubernetesresource.WorkloadDetail, error)
 	ScaleWorkload(
 		context.Context,
 		kubernetesresource.ScaleWorkloadInput,
@@ -79,8 +83,10 @@ type workloadContainerTemplateRequest struct {
 	Privileged      *bool                                `json:"privileged"`
 }
 
-type createWorkloadRequest struct {
-	Name           string                             `json:"name"`
+// The modeled fields, submitted the same way by a create and an update. An
+// embedded struct is flattened by encoding/json, so the wire shape is the flat
+// object both endpoints document.
+type workloadSpecRequest struct {
 	Labels         map[string]string                  `json:"labels"`
 	Annotations    map[string]string                  `json:"annotations"`
 	Description    string                             `json:"description"`
@@ -107,9 +113,53 @@ type createWorkloadRequest struct {
 	StartingDeadlineSeconds    *int64 `json:"starting_deadline_seconds"`
 	SuccessfulJobsHistoryLimit *int32 `json:"successful_jobs_history_limit"`
 	FailedJobsHistoryLimit     *int32 `json:"failed_jobs_history_limit"`
+}
+
+type createWorkloadRequest struct {
+	Name string `json:"name"`
+	workloadSpecRequest
 
 	DryRun  bool `json:"dry_run"`
 	Confirm bool `json:"confirm"`
+}
+
+type updateWorkloadRequest struct {
+	// The object the edit started from. A mismatch is a conflict, not an
+	// overwrite: the form was filled in against a version that is no longer
+	// current, and whatever changed in between is not in it.
+	UID             string `json:"uid"`
+	ResourceVersion string `json:"resource_version"`
+	workloadSpecRequest
+
+	DryRun  bool `json:"dry_run"`
+	Confirm bool `json:"confirm"`
+}
+
+func workloadSpecInput(request workloadSpecRequest) kubernetesresource.WorkloadSpecInput {
+	return kubernetesresource.WorkloadSpecInput{
+		Labels:                     request.Labels,
+		Annotations:                request.Annotations,
+		Description:                request.Description,
+		Containers:                 workloadContainerTemplates(request.Containers),
+		InitContainers:             workloadContainerTemplates(request.InitContainers),
+		Volumes:                    workloadVolumes(request.Volumes),
+		ImagePullSecrets:           request.ImagePullSecrets,
+		NodeSelector:               request.NodeSelector,
+		Tolerations:                workloadTolerations(request.Tolerations),
+		Replicas:                   request.Replicas,
+		ServiceName:                request.ServiceName,
+		Parallelism:                request.Parallelism,
+		Completions:                request.Completions,
+		BackoffLimit:               request.BackoffLimit,
+		TTLSecondsAfterFinished:    request.TTLSecondsAfterFinished,
+		Schedule:                   request.Schedule,
+		TimeZone:                   request.TimeZone,
+		Suspend:                    request.Suspend,
+		ConcurrencyPolicy:          request.ConcurrencyPolicy,
+		StartingDeadlineSeconds:    request.StartingDeadlineSeconds,
+		SuccessfulJobsHistoryLimit: request.SuccessfulJobsHistoryLimit,
+		FailedJobsHistoryLimit:     request.FailedJobsHistoryLimit,
+	}
 }
 
 type scaleWorkloadRequest struct {
@@ -261,35 +311,14 @@ func (handler *kubernetesWorkloadHandler) create(c *gin.Context) {
 	result, err := handler.service.CreateWorkload(
 		ctx,
 		kubernetesresource.CreateWorkloadInput{
-			ClusterID:                  c.Param("cluster_id"),
-			Namespace:                  c.Param("namespace_name"),
-			Resource:                   resource,
-			Name:                       request.Name,
-			Labels:                     request.Labels,
-			Annotations:                request.Annotations,
-			Description:                request.Description,
-			Containers:                 workloadContainerTemplates(request.Containers),
-			InitContainers:             workloadContainerTemplates(request.InitContainers),
-			Volumes:                    workloadVolumes(request.Volumes),
-			ImagePullSecrets:           request.ImagePullSecrets,
-			NodeSelector:               request.NodeSelector,
-			Tolerations:                workloadTolerations(request.Tolerations),
-			Replicas:                   request.Replicas,
-			ServiceName:                request.ServiceName,
-			Parallelism:                request.Parallelism,
-			Completions:                request.Completions,
-			BackoffLimit:               request.BackoffLimit,
-			TTLSecondsAfterFinished:    request.TTLSecondsAfterFinished,
-			Schedule:                   request.Schedule,
-			TimeZone:                   request.TimeZone,
-			Suspend:                    request.Suspend,
-			ConcurrencyPolicy:          request.ConcurrencyPolicy,
-			StartingDeadlineSeconds:    request.StartingDeadlineSeconds,
-			SuccessfulJobsHistoryLimit: request.SuccessfulJobsHistoryLimit,
-			FailedJobsHistoryLimit:     request.FailedJobsHistoryLimit,
-			DryRun:                     request.DryRun,
-			Confirm:                    request.Confirm,
-			IdempotencyKey:             c.GetHeader(idempotencyKeyHeaderName),
+			ClusterID:         c.Param("cluster_id"),
+			Namespace:         c.Param("namespace_name"),
+			Resource:          resource,
+			Name:              request.Name,
+			WorkloadSpecInput: workloadSpecInput(request.workloadSpecRequest),
+			DryRun:            request.DryRun,
+			Confirm:           request.Confirm,
+			IdempotencyKey:    c.GetHeader(idempotencyKeyHeaderName),
 		},
 	)
 	cancel()
@@ -460,6 +489,78 @@ func (handler *kubernetesWorkloadHandler) setSuspension(c *gin.Context, suspende
 		err,
 		"change Kubernetes CronJob suspension",
 	)
+}
+
+func (handler *kubernetesWorkloadHandler) update(c *gin.Context) {
+	resource, target, ok := handler.parseMutationTarget(
+		c,
+		auditaction.KubernetesResourceUpdate,
+	)
+	if !ok {
+		return
+	}
+	identity, _ := httpmiddleware.Identity(c)
+	var request updateWorkloadRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(c, identity.User.ID, auditaction.KubernetesResourceUpdate, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload update request")
+		return
+	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourceUpdate,
+		request.DryRun,
+	)
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	// Both preconditions, always: an edit is filled in against one version of an
+	// object, and without them a slow form would overwrite whatever landed while
+	// it was open.
+	if strings.TrimSpace(request.UID) == "" || strings.TrimSpace(request.ResourceVersion) == "" {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(
+			c,
+			http.StatusBadRequest,
+			"invalid_request",
+			"workload UID and resourceVersion preconditions are required",
+		)
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.UpdateWorkload(
+		ctx,
+		kubernetesresource.UpdateWorkloadInput{
+			ClusterID:         c.Param("cluster_id"),
+			Namespace:         c.Param("namespace_name"),
+			Resource:          resource,
+			Name:              c.Param("workload_name"),
+			UID:               request.UID,
+			ResourceVersion:   request.ResourceVersion,
+			WorkloadSpecInput: workloadSpecInput(request.workloadSpecRequest),
+			DryRun:            request.DryRun,
+			Confirm:           request.Confirm,
+			IdempotencyKey:    c.GetHeader(idempotencyKeyHeaderName),
+		},
+	)
+	cancel()
+	if err != nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+	}
+	if handler.respondWorkloadError(c, "update Kubernetes workload", err) {
+		return
+	}
+	handler.recordMutation(c, identity.User.ID, action, target, "succeeded")
+	writeSuccess(c, http.StatusOK, gin.H{
+		"workload": result,
+		"dry_run":  request.DryRun,
+	})
 }
 
 func (handler *kubernetesWorkloadHandler) delete(c *gin.Context) {

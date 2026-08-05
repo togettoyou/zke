@@ -3,8 +3,13 @@ import { AlertTriangle, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
-import { useCreateWorkload, type WorkloadCreateSpec } from "@/api/queries/workloads";
-import type { KubernetesWorkloadResource } from "@/api/types";
+import {
+  useCreateWorkload,
+  useUpdateWorkload,
+  type WorkloadCreateSpec,
+  type WorkloadUpdateSpec,
+} from "@/api/queries/workloads";
+import type { KubernetesWorkloadDetail, KubernetesWorkloadResource } from "@/api/types";
 import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { Button } from "@/components/ui/button";
@@ -24,6 +29,8 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 import { kindLabel } from "./workload-catalog";
 import {
   buildWorkloadSpec,
+  buildWorkloadUpdateSpec,
+  draftFromWorkload,
   containerProblems,
   DEFAULT_OPTION,
   draftProblem,
@@ -57,6 +64,9 @@ const VOLUME_KIND_LABELS: Record<VolumeKind, string> = {
   secret: "密钥（Secret）",
   persistent_volume_claim: "PVC",
   nfs: "文件存储（NFS）",
+  // Only reachable on an existing object; the form shows it read-only and
+  // submits the name alone so the Server keeps the source it cannot express.
+  unmodeled: "本表单未建模的来源",
 };
 
 /** The titles the sections are rendered with, to point at one from elsewhere. */
@@ -84,7 +94,7 @@ const HOST_PATH_TYPES = [
 ];
 
 /**
- * Creates one workload of the type the operator is currently looking at.
+ * Creates one workload, or edits one that exists.
  *
  * A page rather than a dialog: the Pod template is most of a Kubernetes
  * workload, and reading forty fields through a box laid over the list is worse
@@ -92,27 +102,53 @@ const HOST_PATH_TYPES = [
  * accepts — the Server rejects a `replicas` on a DaemonSet rather than ignoring
  * it, so a field that does not apply must be absent from the request, not
  * present and empty.
+ *
+ * One form for both, because an edit is the create form opened on an existing
+ * object: a second, smaller form would be a set of fields an operator can set
+ * once and never correct. What editing changes is which fields are fixed —
+ * the name always, a StatefulSet's governing Service and everything about a
+ * Job but its parallelism and TTL, all of them by Kubernetes rather than by
+ * this form — and that the object is read back under the UID and
+ * resourceVersion it was opened with.
  */
 export function WorkloadCreateView({
   clusterId,
   clusterName,
   namespace,
   resource,
+  existing,
   onClose,
 }: {
   clusterId: string;
   clusterName: string;
   namespace: string;
   resource: KubernetesWorkloadResource;
+  /** Set when editing; absent when creating. */
+  existing?: KubernetesWorkloadDetail | null;
   onClose: () => void;
 }) {
   const create = useCreateWorkload();
+  const update = useUpdateWorkload();
+  const editing = existing != null;
+  const mutation = editing ? update : create;
   const kind = kindLabel(resource);
   const previewKey = useSubmissionKey(true);
   const applyKey = useSubmissionKey(true);
-  const [previewed, setPreviewed] = useState<WorkloadCreateSpec | null>(null);
-  const [draft, setDraft] = useState<WorkloadFormDraft>(emptyDraft);
+  const [previewed, setPreviewed] = useState<WorkloadCreateSpec | WorkloadUpdateSpec | null>(null);
+  // The object is read once, when the editor mounts. Re-reading it while the
+  // form is open would hand the submission a newer resourceVersion and turn a
+  // conflict the Server should refuse into a silent overwrite.
+  const [draft, setDraft] = useState<WorkloadFormDraft>(() =>
+    existing ? draftFromWorkload(existing, resource) : emptyDraft(),
+  );
   const [activeContainer, setActiveContainer] = useState(0);
+  // Fixed at mount, next to the draft that was filled in against it. A refetch
+  // behind an open form must not hand the submission a newer version: that
+  // would turn the conflict the Server is supposed to refuse into a silent
+  // overwrite of whatever landed while the form was being filled in.
+  const [identity] = useState(() =>
+    existing ? { uid: existing.uid, resourceVersion: existing.resource_version } : null,
+  );
 
   const patch = (changes: Partial<WorkloadFormDraft>) =>
     setDraft((current) => ({ ...current, ...changes }));
@@ -128,6 +164,11 @@ export function WorkloadCreateView({
   const statefulSet = resource === "statefulsets";
   const jobLike = resource === "jobs" || resource === "cronjobs";
   const cronJob = resource === "cronjobs";
+  // Kubernetes fixes a Job's template, selector, completions and backoff limit
+  // at creation. Rendering them as editable would be offering an edit that the
+  // API Server is going to refuse, so an edited Job shows the two fields that
+  // can move and nothing else.
+  const jobTemplateFixed = editing && resource === "jobs";
 
   const problem = draftProblem(draft, resource);
   // The problem is shown by the section that can fix it, and the sections are
@@ -140,36 +181,55 @@ export function WorkloadCreateView({
   const container = draft.containers[activeContainer] ?? draft.containers[0];
   const containerIndex = Math.min(activeContainer, draft.containers.length - 1);
 
-  const submit = (dryRun: boolean, spec: WorkloadCreateSpec) =>
-    void create
-      .mutateAsync({
-        clusterId,
-        namespace,
-        resource,
-        spec,
-        dryRun,
-        idempotencyKey: dryRun ? previewKey : applyKey,
-      })
+  const submit = (dryRun: boolean, spec: WorkloadCreateSpec | WorkloadUpdateSpec) => {
+    const shared = {
+      clusterId,
+      namespace,
+      resource,
+      dryRun,
+      idempotencyKey: dryRun ? previewKey : applyKey,
+    };
+    const request =
+      existing && identity
+        ? update.mutateAsync({
+            ...shared,
+            name: existing.name,
+            uid: identity.uid,
+            resourceVersion: identity.resourceVersion,
+            spec: spec as WorkloadUpdateSpec,
+          })
+        : create.mutateAsync({ ...shared, spec: spec as WorkloadCreateSpec });
+    void request
       .then(() => {
         if (dryRun) {
           setPreviewed(spec);
           return;
         }
-        toast.success(`${kind} ${spec.name} 已创建`);
+        toast.success(
+          `${kind} ${existing?.name ?? draft.name.trim()} 已${existing ? "更新" : "创建"}`,
+        );
         onClose();
       })
       .catch(() => undefined);
+  };
 
   return (
     <>
       <div className="grid gap-3">
-        <PageHeader title={`创建 ${kind} · ${namespace}`} onBack={onClose} />
+        <PageHeader
+          title={editing ? `编辑 ${kind} · ${existing.name}` : `创建 ${kind} · ${namespace}`}
+          onBack={onClose}
+        />
 
         <FormSection title="基本信息" problem={problemIn("basic")}>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field
               label="名称"
-              hint={`最长 ${nameLimit(resource)} 个字符，小写字母、数字、- 与 .，以字母或数字开头`}
+              hint={
+                editing
+                  ? "创建后不可修改；需要另一个名称请新建一个工作负载"
+                  : `最长 ${nameLimit(resource)} 个字符，小写字母、数字、- 与 .，以字母或数字开头`
+              }
             >
               {(id) => (
                 <Input
@@ -177,6 +237,8 @@ export function WorkloadCreateView({
                   value={draft.name}
                   autoComplete="off"
                   spellCheck={false}
+                  readOnly={editing}
+                  disabled={editing}
                   placeholder="例如 model-gateway"
                   onChange={(event) => patch({ name: event.target.value })}
                 />
@@ -194,20 +256,29 @@ export function WorkloadCreateView({
               </Field>
             ) : null}
             {statefulSet ? (
-              <Field label="Service 名称" hint="必须是同一命名空间中已存在的 Service">
+              <Field
+                label="Service 名称"
+                hint={
+                  editing
+                    ? "Kubernetes 在创建时固定，之后不可修改"
+                    : "必须是同一命名空间中已存在的 Service"
+                }
+              >
                 {(id) => (
                   <Input
                     id={id}
                     value={draft.serviceName}
                     autoComplete="off"
                     spellCheck={false}
+                    readOnly={editing}
+                    disabled={editing}
                     onChange={(event) => patch({ serviceName: event.target.value })}
                   />
                 )}
               </Field>
             ) : null}
           </div>
-          <div className="mt-3">
+          <div className={cn("mt-3", jobTemplateFixed && "hidden")}>
             <Field
               label="描述"
               hint={`写入 ${RESERVED_ANNOTATION_KEY} 注解，最长 ${MAX_DESCRIPTION_LENGTH} 个字符`}
@@ -225,108 +296,125 @@ export function WorkloadCreateView({
           </div>
         </FormSection>
 
-        <FormSection
-          title="标签"
-          hint={`${RESERVED_LABEL_KEY} 由 Server 写入，不能在此设置`}
-          problem={problemIn("labels")}
-        >
-          <KeyValueRows
-            rows={draft.labels}
-            onChange={(labels) => patch({ labels })}
-            addLabel="新增标签"
-          />
-        </FormSection>
+        {jobTemplateFixed ? (
+          <Alert tone="info">
+            Job 的 Pod
+            模板、选择器、完成数与失败重试上限在创建后不可修改，因此这里只提供并行度和完成后保留秒数。
+            需要改变 Job 运行的内容，只能新建一个 Job。
+          </Alert>
+        ) : null}
 
-        <FormSection
-          title="注解"
-          hint={`${RESERVED_ANNOTATION_KEY} 由上面的描述字段写入`}
-          problem={problemIn("annotations")}
-        >
-          <KeyValueRows
-            rows={draft.annotations}
-            onChange={(annotations) => patch({ annotations })}
-            addLabel="新增注解"
-          />
-        </FormSection>
-
-        <FormSection
-          title="数据卷"
-          hint="为容器提供存储；声明后还需要在容器的「数据卷挂载」中挂载到具体路径"
-          problem={problemIn("volumes")}
-        >
-          <VolumeRows rows={draft.volumes} onChange={(volumes) => patch({ volumes })} />
-        </FormSection>
-
-        <FormSection
-          title="实例内容器"
-          hint="至少一个非初始化容器；容器名在所有容器之间不能重复"
-          problem={problemIn("containers")}
-        >
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            {draft.containers.map((item, index) => (
-              <div
-                key={item.id}
-                className={cn(
-                  "rounded-control flex items-center gap-1 border px-2 py-1 text-[13px]",
-                  problems.has(item.id)
-                    ? "border-danger text-danger bg-surface"
-                    : index === containerIndex
-                      ? "border-primary bg-surface text-foreground"
-                      : "border-border text-muted-foreground",
-                )}
-              >
-                <button
-                  type="button"
-                  className="zke-focus rounded-sm"
-                  title={problems.get(item.id)}
-                  onClick={() => setActiveContainer(index)}
-                >
-                  {item.name.trim() === "" ? `container-${index + 1}` : item.name}
-                  {item.init ? "（init）" : ""}
-                </button>
-                {problems.has(item.id) ? (
-                  <AlertTriangle className="text-danger size-3 shrink-0" aria-hidden />
-                ) : null}
-                {draft.containers.length > 1 ? (
-                  <button
-                    type="button"
-                    aria-label={`移除容器 ${item.name}`}
-                    className="zke-focus text-subtle-foreground hover:text-danger rounded-sm"
-                    onClick={() => {
-                      patch({
-                        containers: draft.containers.filter((_, position) => position !== index),
-                      });
-                      setActiveContainer(0);
-                    }}
-                  >
-                    <X className="size-3" />
-                  </button>
-                ) : null}
-              </div>
-            ))}
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                patch({
-                  containers: [...draft.containers, emptyContainer(draft.containers.length + 1)],
-                });
-                setActiveContainer(draft.containers.length);
-              }}
+        {jobTemplateFixed ? null : (
+          <>
+            <FormSection
+              title="标签"
+              hint={`${RESERVED_LABEL_KEY} 由 Server 写入，不能在此设置`}
+              problem={problemIn("labels")}
             >
-              <Plus />
-              添加容器
-            </Button>
-          </div>
+              <KeyValueRows
+                rows={draft.labels}
+                onChange={(labels) => patch({ labels })}
+                addLabel="新增标签"
+              />
+            </FormSection>
 
-          {container ? (
-            <ContainerPanel
-              container={container}
-              volumes={draft.volumes}
-              onChange={(changes) => patchContainer(containerIndex, changes)}
-            />
-          ) : null}
-        </FormSection>
+            <FormSection
+              title="注解"
+              hint={`${RESERVED_ANNOTATION_KEY} 由上面的描述字段写入`}
+              problem={problemIn("annotations")}
+            >
+              <KeyValueRows
+                rows={draft.annotations}
+                onChange={(annotations) => patch({ annotations })}
+                addLabel="新增注解"
+              />
+            </FormSection>
+
+            <FormSection
+              title="数据卷"
+              hint="为容器提供存储；声明后还需要在容器的「数据卷挂载」中挂载到具体路径"
+              problem={problemIn("volumes")}
+            >
+              <VolumeRows rows={draft.volumes} onChange={(volumes) => patch({ volumes })} />
+            </FormSection>
+
+            <FormSection
+              title="实例内容器"
+              hint="至少一个非初始化容器；容器名在所有容器之间不能重复"
+              problem={problemIn("containers")}
+            >
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                {draft.containers.map((item, index) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      "rounded-control flex items-center gap-1 border px-2 py-1 text-[13px]",
+                      problems.has(item.id)
+                        ? "border-danger text-danger bg-surface"
+                        : index === containerIndex
+                          ? "border-primary bg-surface text-foreground"
+                          : "border-border text-muted-foreground",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      className="zke-focus rounded-sm"
+                      title={problems.get(item.id)}
+                      onClick={() => setActiveContainer(index)}
+                    >
+                      {item.name.trim() === "" ? `container-${index + 1}` : item.name}
+                      {item.init ? "（init）" : ""}
+                    </button>
+                    {problems.has(item.id) ? (
+                      <AlertTriangle className="text-danger size-3 shrink-0" aria-hidden />
+                    ) : null}
+                    {draft.containers.length > 1 ? (
+                      <button
+                        type="button"
+                        aria-label={`移除容器 ${item.name}`}
+                        className="zke-focus text-subtle-foreground hover:text-danger rounded-sm"
+                        onClick={() => {
+                          patch({
+                            containers: draft.containers.filter(
+                              (_, position) => position !== index,
+                            ),
+                          });
+                          setActiveContainer(0);
+                        }}
+                      >
+                        <X className="size-3" />
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    patch({
+                      containers: [
+                        ...draft.containers,
+                        emptyContainer(draft.containers.length + 1),
+                      ],
+                    });
+                    setActiveContainer(draft.containers.length);
+                  }}
+                >
+                  <Plus />
+                  添加容器
+                </Button>
+              </div>
+
+              {container ? (
+                <ContainerPanel
+                  container={container}
+                  volumes={draft.volumes}
+                  onChange={(changes) => patchContainer(containerIndex, changes)}
+                />
+              ) : null}
+            </FormSection>
+          </>
+        )}
 
         {jobLike ? (
           <FormSection
@@ -343,11 +431,13 @@ export function WorkloadCreateView({
               <CountField
                 label="完成数"
                 value={draft.completions}
+                readOnly={jobTemplateFixed}
                 onChange={(completions) => patch({ completions })}
               />
               <CountField
                 label="失败重试上限"
                 value={draft.backoffLimit}
+                readOnly={jobTemplateFixed}
                 onChange={(backoffLimit) => patch({ backoffLimit })}
               />
               <CountField
@@ -430,43 +520,47 @@ export function WorkloadCreateView({
           </FormSection>
         ) : null}
 
-        <FormSection
-          title="镜像访问凭证"
-          hint="只传递 Secret 名称引用，不读取 Secret 正文"
-          problem={problemIn("imagePullSecrets")}
-        >
-          <StringRows
-            rows={draft.imagePullSecrets}
-            onChange={(imagePullSecrets) => patch({ imagePullSecrets })}
-            addLabel="添加镜像访问凭证"
-            placeholder="例如 registry-key"
-          />
-        </FormSection>
+        {jobTemplateFixed ? null : (
+          <>
+            <FormSection
+              title="镜像访问凭证"
+              hint="只传递 Secret 名称引用，不读取 Secret 正文"
+              problem={problemIn("imagePullSecrets")}
+            >
+              <StringRows
+                rows={draft.imagePullSecrets}
+                onChange={(imagePullSecrets) => patch({ imagePullSecrets })}
+                addLabel="添加镜像访问凭证"
+                placeholder="例如 registry-key"
+              />
+            </FormSection>
 
-        <FormSection
-          title="节点调度策略"
-          hint="按节点标签精确匹配；亲和性等更复杂的规则请在创建后通过 YAML 配置"
-          problem={problemIn("nodeSelector")}
-        >
-          <KeyValueRows
-            rows={draft.nodeSelector}
-            onChange={(nodeSelector) => patch({ nodeSelector })}
-            addLabel="新增节点标签"
-            keyPlaceholder="例如 kubernetes.io/os"
-            valuePlaceholder="例如 linux"
-          />
-        </FormSection>
+            <FormSection
+              title="节点调度策略"
+              hint="按节点标签精确匹配；亲和性等更复杂的规则请在创建后通过 YAML 配置"
+              problem={problemIn("nodeSelector")}
+            >
+              <KeyValueRows
+                rows={draft.nodeSelector}
+                onChange={(nodeSelector) => patch({ nodeSelector })}
+                addLabel="新增节点标签"
+                keyPlaceholder="例如 kubernetes.io/os"
+                valuePlaceholder="例如 linux"
+              />
+            </FormSection>
 
-        <FormSection
-          title="容忍调度"
-          hint="容忍节点污点，使 Pod 可以调度到被污染的节点"
-          problem={problemIn("tolerations")}
-        >
-          <TolerationRows
-            rows={draft.tolerations}
-            onChange={(tolerations) => patch({ tolerations })}
-          />
-        </FormSection>
+            <FormSection
+              title="容忍调度"
+              hint="容忍节点污点，使 Pod 可以调度到被污染的节点"
+              problem={problemIn("tolerations")}
+            >
+              <TolerationRows
+                rows={draft.tolerations}
+                onChange={(tolerations) => patch({ tolerations })}
+              />
+            </FormSection>
+          </>
+        )}
 
         {/*
          * The message itself is up in the section that can fix it; down here,
@@ -475,7 +569,7 @@ export function WorkloadCreateView({
         {problem ? (
           <Alert tone="warning">「{SECTION_LABELS[problem.section]}」中还有需要修正的项。</Alert>
         ) : null}
-        {create.error ? <Alert tone="danger">{errorMessage(create.error)}</Alert> : null}
+        {mutation.error ? <Alert tone="danger">{errorMessage(mutation.error)}</Alert> : null}
 
         <div className="flex items-center justify-end gap-3 pb-2">
           <span className="text-subtle-foreground text-xs">
@@ -484,10 +578,17 @@ export function WorkloadCreateView({
           <Button
             variant="primary"
             size="sm"
-            disabled={problem !== null || create.isPending}
-            onClick={() => submit(true, buildWorkloadSpec(draft, resource))}
+            disabled={problem !== null || mutation.isPending}
+            onClick={() =>
+              submit(
+                true,
+                editing
+                  ? buildWorkloadUpdateSpec(draft, resource)
+                  : buildWorkloadSpec(draft, resource),
+              )
+            }
           >
-            {create.isPending ? "预检中…" : "执行 DryRun 预检"}
+            {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
           </Button>
         </div>
       </div>
@@ -495,17 +596,26 @@ export function WorkloadCreateView({
       <SensitiveActionDialog
         open={previewed !== null}
         onOpenChange={(open) => !open && setPreviewed(null)}
-        title={`确认创建 ${kind}`}
-        description="DryRun 已通过。确认后将向同一集群发送实际创建请求。"
+        title={editing ? `确认更新 ${kind}` : `确认创建 ${kind}`}
+        description="DryRun 已通过。确认后将向同一集群发送实际写入请求。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           { label: "命名空间", name: namespace },
-          { label: kind, name: previewed?.name ?? draft.name.trim() },
+          {
+            label: kind,
+            name: existing?.name ?? draft.name.trim(),
+            ...(existing ? { id: existing.uid } : {}),
+          },
         ]}
-        impacts={createImpacts(resource, previewed)}
-        confirmLabel="确认创建"
-        pending={create.isPending}
-        error={create.error}
+        impacts={
+          editing
+            ? updateImpacts(resource, previewed as WorkloadUpdateSpec | null)
+            : createImpacts(resource, previewed as WorkloadCreateSpec | null)
+        }
+        confirmLabel={editing ? "确认更新" : "确认创建"}
+        destructive={editing}
+        pending={mutation.isPending}
+        error={mutation.error}
         onConfirm={() => previewed && submit(false, previewed)}
       />
     </>
@@ -1482,15 +1592,26 @@ function NumberInput({
 function CountField({
   label,
   value,
+  readOnly = false,
   onChange,
 }: {
   label: string;
   value: string;
+  /** Shown but fixed, for a field Kubernetes settles at creation. */
+  readOnly?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
-    <Field label={label}>
-      {(id) => <NumericInput id={id} value={value} onValueChange={onChange} />}
+    <Field label={label} hint={readOnly ? "创建后不可修改" : undefined}>
+      {(id) => (
+        <NumericInput
+          id={id}
+          value={value}
+          readOnly={readOnly}
+          disabled={readOnly}
+          onValueChange={onChange}
+        />
+      )}
     </Field>
   );
 }
@@ -1581,6 +1702,55 @@ function Field({
       {hint ? <span className="text-subtle-foreground text-xs">{hint}</span> : null}
     </div>
   );
+}
+
+/*
+ * What an update does, said before it is confirmed.
+ *
+ * The first line is the one that matters and the one a form like this usually
+ * leaves out: a Pod template change is a rollout, and the operator is about to
+ * replace running Pods. The second says what is *not* being replaced, because
+ * this form shows a subset of the object and saving it does not empty the rest.
+ */
+function updateImpacts(
+  resource: KubernetesWorkloadResource,
+  spec: WorkloadUpdateSpec | null,
+): string[] {
+  if (!spec) {
+    return [];
+  }
+  if (resource === "jobs") {
+    return [
+      "Job 的 Pod 模板创建后不可变，本次只提交并行度与完成后保留秒数。",
+      "并行度会立即改变同时运行的 Pod 数量；已经完成的 Pod 不受影响。",
+    ];
+  }
+  const impacts: string[] = [];
+  if (resource === "deployments" || resource === "statefulsets" || resource === "daemonsets") {
+    impacts.push("Pod 模板的任何变化都会触发滚动更新，按该工作负载的更新策略重建 Pod。");
+  }
+  if (resource === "cronjobs") {
+    impacts.push("修改后的模板对下一次触发的 Job 生效；已经创建的 Job 保持原样。");
+  }
+  impacts.push(
+    "本表单建模的字段会整体替换对象上的对应部分；未建模的字段——亲和性、拓扑分布约束、容器端口、" +
+      "securityContext 其余字段等——由服务端保留。",
+  );
+  impacts.push(
+    "请求携带打开表单时的 UID 与 resourceVersion，期间对象若已变化，更新会被拒绝而不是覆盖。",
+  );
+  if (spec.containers?.some((container) => container.privileged)) {
+    impacts.push("存在特权级容器：它将拥有宿主机的 root 权限。");
+  }
+  if (spec.volumes?.some((volume) => volume.host_path)) {
+    impacts.push("存在主机路径数据卷：容器将直接读写所在节点的文件系统。");
+  }
+  if ((resource === "deployments" || resource === "statefulsets") && spec.replicas !== undefined) {
+    impacts.push(
+      `副本数将设置为 ${spec.replicas}；该工作负载若由 HPA 接管，这个值会在下一个控制周期被覆盖。`,
+    );
+  }
+  return impacts;
 }
 
 function createImpacts(

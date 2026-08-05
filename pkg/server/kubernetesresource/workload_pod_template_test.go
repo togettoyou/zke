@@ -13,9 +13,11 @@ func minimalWorkloadInput() CreateWorkloadInput {
 		Namespace: "model-serving",
 		Resource:  WorkloadDeployments,
 		Name:      "gateway",
-		Containers: []WorkloadContainerTemplate{{
-			Name: "main", Image: "example/gateway:v1",
-		}},
+		WorkloadSpecInput: WorkloadSpecInput{
+			Containers: []WorkloadContainerTemplate{{
+				Name: "main", Image: "example/gateway:v1",
+			}},
+		},
 	}
 }
 

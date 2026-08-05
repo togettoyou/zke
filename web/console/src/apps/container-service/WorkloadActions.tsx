@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreHorizontal, Pause, Play, RotateCw, Scaling, Trash2 } from "lucide-react";
+import { MoreHorizontal, Pause, Pencil, Play, RotateCw, Scaling, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
@@ -69,12 +69,18 @@ export function WorkloadActions({
   canUpdate,
   canDelete,
   variant = "menu",
+  onEdit,
   onDeleted,
 }: {
   target: WorkloadTarget;
   canUpdate: boolean;
   canDelete: boolean;
   variant?: "menu" | "buttons";
+  /**
+   * Opens the typed edit form. Absent where there is nowhere to open it, which
+   * is why the entry is not simply gated on the permission.
+   */
+  onEdit?: () => void;
   /** Called after a real deletion, so a detail view can leave the object it was showing. */
   onDeleted?: () => void;
 }) {
@@ -89,7 +95,9 @@ export function WorkloadActions({
   // without one has no deletion this Console can safely submit.
   const removable = canDelete && Boolean(uid);
 
-  if (!scalable && !restartable && !suspendable && !removable) {
+  const editable = canUpdate && onEdit !== undefined;
+
+  if (!editable && !scalable && !restartable && !suspendable && !removable) {
     return null;
   }
 
@@ -105,6 +113,7 @@ export function WorkloadActions({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
+            {editable ? <DropdownMenuItem onSelect={() => onEdit()}>编辑</DropdownMenuItem> : null}
             {scalable ? (
               <DropdownMenuItem onSelect={() => openAction("scale")}>伸缩</DropdownMenuItem>
             ) : null}
@@ -128,6 +137,12 @@ export function WorkloadActions({
         </DropdownMenu>
       ) : (
         <>
+          {editable ? (
+            <Button size="sm" variant="secondary" onClick={() => onEdit()}>
+              <Pencil />
+              编辑
+            </Button>
+          ) : null}
           {scalable ? (
             <Button size="sm" variant="secondary" onClick={() => openAction("scale")}>
               <Scaling />

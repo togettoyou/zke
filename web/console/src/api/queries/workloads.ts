@@ -2,7 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, idempotentHeaders, unwrap } from "../client";
 import { queryKeys, queryKeyPrefixes } from "../query-keys";
-import type { KubernetesCreateWorkloadRequest, KubernetesWorkloadResource } from "../types";
+import type {
+  KubernetesCreateWorkloadRequest,
+  KubernetesUpdateWorkloadRequest,
+  KubernetesWorkloadResource,
+} from "../types";
 
 export type WorkloadListParams = {
   limit?: number;
@@ -185,6 +189,67 @@ export function useCreateWorkload() {
         // entry to invalidate — only the list it now belongs to.
         false,
       ),
+  });
+}
+
+/** The body of an update minus the flags and preconditions this hook owns. */
+export type WorkloadUpdateSpec = Omit<
+  KubernetesUpdateWorkloadRequest,
+  "dry_run" | "confirm" | "uid" | "resource_version"
+>;
+
+/**
+ * Replaces the modeled part of one workload.
+ *
+ * The same fields a create sends, because the edit form is the create form on an
+ * existing object. What it does not send is not cleared: affinity, topology
+ * spread, container ports and the rest of the security context stay on the
+ * object, and the Server merges onto what it reads back under these
+ * preconditions rather than replacing the spec.
+ *
+ * `uid` and `resource_version` are the version the form was opened on. They are
+ * fixed when the editor mounts and deliberately not refreshed while it is open:
+ * taking a newer version would turn a conflict the Server should refuse into a
+ * silent overwrite of whatever landed in between.
+ */
+export function useUpdateWorkload() {
+  const invalidate = useWorkloadInvalidation();
+  return useMutation({
+    mutationFn: async (input: {
+      clusterId: string;
+      namespace: string;
+      resource: KubernetesWorkloadResource;
+      name: string;
+      uid: string;
+      resourceVersion: string;
+      spec: WorkloadUpdateSpec;
+      dryRun: boolean;
+      idempotencyKey: string;
+    }) =>
+      unwrap(
+        await api.PUT(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}",
+          {
+            params: {
+              path: {
+                cluster_id: input.clusterId,
+                namespace_name: input.namespace,
+                workload_resource: input.resource,
+                workload_name: input.name,
+              },
+              header: idempotentHeaders(input.idempotencyKey),
+            },
+            body: {
+              ...input.spec,
+              uid: input.uid,
+              resource_version: input.resourceVersion,
+              dry_run: input.dryRun,
+              confirm: !input.dryRun,
+            },
+          },
+        ),
+      ),
+    onSuccess: (_data, variables) => invalidate(variables),
   });
 }
 

@@ -44,16 +44,16 @@ const (
  * have to decide which one wins.
  */
 type WorkloadEnvVar struct {
-	Name            string
-	Value           string
-	ConfigMapKeyRef *WorkloadObjectKeyRef
-	SecretKeyRef    *WorkloadObjectKeyRef
+	Name            string                `json:"name"`
+	Value           string                `json:"value,omitempty"`
+	ConfigMapKeyRef *WorkloadObjectKeyRef `json:"config_map_key_ref,omitempty"`
+	SecretKeyRef    *WorkloadObjectKeyRef `json:"secret_key_ref,omitempty"`
 }
 
 type WorkloadObjectKeyRef struct {
-	Name     string
-	Key      string
-	Optional *bool
+	Name     string `json:"name"`
+	Key      string `json:"key"`
+	Optional *bool  `json:"optional,omitempty"`
 }
 
 /**
@@ -65,68 +65,68 @@ type WorkloadObjectKeyRef struct {
  * in the same map.
  */
 type WorkloadResourceRequirements struct {
-	Requests map[string]string
-	Limits   map[string]string
+	Requests map[string]string `json:"requests,omitempty"`
+	Limits   map[string]string `json:"limits,omitempty"`
 }
 
 type WorkloadVolumeMount struct {
-	Name      string
-	MountPath string
-	SubPath   string
-	ReadOnly  bool
+	Name      string `json:"name"`
+	MountPath string `json:"mount_path"`
+	SubPath   string `json:"sub_path,omitempty"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
 }
 
 type WorkloadExecAction struct {
-	Command []string
+	Command []string `json:"command"`
 }
 
 /** A port as Kubernetes accepts it: a number, or the name of a container port. */
 type WorkloadHTTPGetAction struct {
-	Path   string
-	Port   string
-	Host   string
-	Scheme string
+	Path   string `json:"path,omitempty"`
+	Port   string `json:"port"`
+	Host   string `json:"host,omitempty"`
+	Scheme string `json:"scheme,omitempty"`
 }
 
 type WorkloadTCPSocketAction struct {
-	Port string
+	Port string `json:"port"`
 }
 
 type WorkloadProbe struct {
-	Exec                *WorkloadExecAction
-	HTTPGet             *WorkloadHTTPGetAction
-	TCPSocket           *WorkloadTCPSocketAction
-	InitialDelaySeconds *int32
-	PeriodSeconds       *int32
-	TimeoutSeconds      *int32
-	SuccessThreshold    *int32
-	FailureThreshold    *int32
+	Exec                *WorkloadExecAction      `json:"exec,omitempty"`
+	HTTPGet             *WorkloadHTTPGetAction   `json:"http_get,omitempty"`
+	TCPSocket           *WorkloadTCPSocketAction `json:"tcp_socket,omitempty"`
+	InitialDelaySeconds *int32                   `json:"initial_delay_seconds,omitempty"`
+	PeriodSeconds       *int32                   `json:"period_seconds,omitempty"`
+	TimeoutSeconds      *int32                   `json:"timeout_seconds,omitempty"`
+	SuccessThreshold    *int32                   `json:"success_threshold,omitempty"`
+	FailureThreshold    *int32                   `json:"failure_threshold,omitempty"`
 }
 
 type WorkloadLifecycleHandler struct {
-	Exec    *WorkloadExecAction
-	HTTPGet *WorkloadHTTPGetAction
+	Exec    *WorkloadExecAction    `json:"exec,omitempty"`
+	HTTPGet *WorkloadHTTPGetAction `json:"http_get,omitempty"`
 }
 
 type WorkloadLifecycle struct {
-	PostStart *WorkloadLifecycleHandler
-	PreStop   *WorkloadLifecycleHandler
+	PostStart *WorkloadLifecycleHandler `json:"post_start,omitempty"`
+	PreStop   *WorkloadLifecycleHandler `json:"pre_stop,omitempty"`
 }
 
 type WorkloadEmptyDirVolume struct {
-	Medium    string
-	SizeLimit string
+	Medium    string `json:"medium,omitempty"`
+	SizeLimit string `json:"size_limit,omitempty"`
 }
 
 type WorkloadHostPathVolume struct {
-	Path string
-	Type string
+	Path string `json:"path"`
+	Type string `json:"type,omitempty"`
 }
 
 type WorkloadConfigMapVolume struct {
-	Name        string
-	DefaultMode *int32
-	Optional    *bool
+	Name        string `json:"name"`
+	DefaultMode *int32 `json:"default_mode,omitempty"`
+	Optional    *bool  `json:"optional,omitempty"`
 }
 
 /**
@@ -137,39 +137,39 @@ type WorkloadConfigMapVolume struct {
  * TLS.
  */
 type WorkloadSecretVolume struct {
-	SecretName  string
-	DefaultMode *int32
-	Optional    *bool
+	SecretName  string `json:"secret_name"`
+	DefaultMode *int32 `json:"default_mode,omitempty"`
+	Optional    *bool  `json:"optional,omitempty"`
 }
 
 type WorkloadPersistentVolumeClaimVolume struct {
-	ClaimName string
-	ReadOnly  bool
+	ClaimName string `json:"claim_name"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
 }
 
 type WorkloadNFSVolume struct {
-	Server   string
-	Path     string
-	ReadOnly bool
+	Server   string `json:"server"`
+	Path     string `json:"path"`
+	ReadOnly bool   `json:"read_only,omitempty"`
 }
 
 /** Exactly one source is set; the Console picks it and the Server enforces it. */
 type WorkloadVolume struct {
-	Name                  string
-	EmptyDir              *WorkloadEmptyDirVolume
-	HostPath              *WorkloadHostPathVolume
-	ConfigMap             *WorkloadConfigMapVolume
-	Secret                *WorkloadSecretVolume
-	PersistentVolumeClaim *WorkloadPersistentVolumeClaimVolume
-	NFS                   *WorkloadNFSVolume
+	Name                  string                               `json:"name"`
+	EmptyDir              *WorkloadEmptyDirVolume              `json:"empty_dir,omitempty"`
+	HostPath              *WorkloadHostPathVolume              `json:"host_path,omitempty"`
+	ConfigMap             *WorkloadConfigMapVolume             `json:"config_map,omitempty"`
+	Secret                *WorkloadSecretVolume                `json:"secret,omitempty"`
+	PersistentVolumeClaim *WorkloadPersistentVolumeClaimVolume `json:"persistent_volume_claim,omitempty"`
+	NFS                   *WorkloadNFSVolume                   `json:"nfs,omitempty"`
 }
 
 type WorkloadToleration struct {
-	Key               string
-	Operator          string
-	Value             string
-	Effect            string
-	TolerationSeconds *int64
+	Key               string `json:"key,omitempty"`
+	Operator          string `json:"operator,omitempty"`
+	Value             string `json:"value,omitempty"`
+	Effect            string `json:"effect,omitempty"`
+	TolerationSeconds *int64 `json:"toleration_seconds,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

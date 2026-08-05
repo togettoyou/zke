@@ -89,17 +89,36 @@ type WorkloadCronJobStatus struct {
 
 type WorkloadDetail struct {
 	WorkloadSummary
-	Annotations          map[string]string   `json:"annotations"`
-	Selector             *WorkloadSelector   `json:"selector,omitempty"`
-	Containers           []WorkloadContainer `json:"containers"`
-	InitContainers       []WorkloadContainer `json:"init_containers"`
-	Conditions           []WorkloadCondition `json:"conditions"`
-	Strategy             string              `json:"strategy"`
-	MinReadySeconds      int32               `json:"min_ready_seconds"`
-	RevisionHistoryLimit *int32              `json:"revision_history_limit,omitempty"`
-	ServiceName          string              `json:"service_name,omitempty"`
-	CompletionMode       string              `json:"completion_mode,omitempty"`
-	ConcurrencyPolicy    string              `json:"concurrency_policy,omitempty"`
+	Annotations map[string]string `json:"annotations"`
+	Selector    *WorkloadSelector `json:"selector,omitempty"`
+	// The typed Pod template, in the shape an update submits back. Fields the
+	// template does not model stay on the object and out of this response.
+	Containers           []WorkloadContainerTemplate `json:"containers"`
+	InitContainers       []WorkloadContainerTemplate `json:"init_containers"`
+	Volumes              []WorkloadVolume            `json:"volumes"`
+	ImagePullSecrets     []string                    `json:"image_pull_secrets"`
+	NodeSelector         map[string]string           `json:"node_selector"`
+	Tolerations          []WorkloadToleration        `json:"tolerations"`
+	Conditions           []WorkloadCondition         `json:"conditions"`
+	Strategy             string                      `json:"strategy"`
+	MinReadySeconds      int32                       `json:"min_ready_seconds"`
+	RevisionHistoryLimit *int32                      `json:"revision_history_limit,omitempty"`
+	ServiceName          string                      `json:"service_name,omitempty"`
+	CompletionMode       string                      `json:"completion_mode,omitempty"`
+	ConcurrencyPolicy    string                      `json:"concurrency_policy,omitempty"`
+
+	// Job and CronJob execution parameters an update may change. The counts a
+	// Job reports while running are in `job`; these are what was asked for, and
+	// for a CronJob they come from the template it stamps out rather than from
+	// any Job it has already created.
+	Parallelism                *int32 `json:"parallelism,omitempty"`
+	Completions                *int32 `json:"completions,omitempty"`
+	BackoffLimit               *int32 `json:"backoff_limit,omitempty"`
+	TTLSecondsAfterFinished    *int32 `json:"ttl_seconds_after_finished,omitempty"`
+	TimeZone                   string `json:"time_zone,omitempty"`
+	StartingDeadlineSeconds    *int64 `json:"starting_deadline_seconds,omitempty"`
+	SuccessfulJobsHistoryLimit *int32 `json:"successful_jobs_history_limit,omitempty"`
+	FailedJobsHistoryLimit     *int32 `json:"failed_jobs_history_limit,omitempty"`
 }
 
 type WorkloadSelector struct {
@@ -111,12 +130,6 @@ type WorkloadSelectorRequirement struct {
 	Key      string   `json:"key"`
 	Operator string   `json:"operator"`
 	Values   []string `json:"values"`
-}
-
-type WorkloadContainer struct {
-	Name            string `json:"name"`
-	Image           string `json:"image"`
-	ImagePullPolicy string `json:"image_pull_policy"`
 }
 
 type WorkloadCondition struct {
@@ -414,6 +427,10 @@ func jobDetail(workload *batchv1.Job) WorkloadDetail {
 	if workload.Spec.CompletionMode != nil {
 		result.CompletionMode = string(*workload.Spec.CompletionMode)
 	}
+	result.Parallelism = cloneInt32Pointer(workload.Spec.Parallelism)
+	result.Completions = cloneInt32Pointer(workload.Spec.Completions)
+	result.BackoffLimit = cloneInt32Pointer(workload.Spec.BackoffLimit)
+	result.TTLSecondsAfterFinished = cloneInt32Pointer(workload.Spec.TTLSecondsAfterFinished)
 	return result
 }
 
@@ -453,6 +470,23 @@ func cronJobDetail(workload *batchv1.CronJob) WorkloadDetail {
 	if workload.Spec.JobTemplate.Spec.CompletionMode != nil {
 		result.CompletionMode = string(*workload.Spec.JobTemplate.Spec.CompletionMode)
 	}
+	// The Job parameters of a CronJob live on the template it stamps out, which
+	// is what an edit of the CronJob changes; the Jobs already created keep the
+	// values they were created with. They are not reported as a `job` status:
+	// a CronJob has no Job of its own, and a status block of zeroes would read
+	// as one that had run and done nothing.
+	result.Parallelism = cloneInt32Pointer(workload.Spec.JobTemplate.Spec.Parallelism)
+	result.Completions = cloneInt32Pointer(workload.Spec.JobTemplate.Spec.Completions)
+	result.BackoffLimit = cloneInt32Pointer(workload.Spec.JobTemplate.Spec.BackoffLimit)
+	result.TTLSecondsAfterFinished = cloneInt32Pointer(
+		workload.Spec.JobTemplate.Spec.TTLSecondsAfterFinished,
+	)
+	if workload.Spec.TimeZone != nil {
+		result.TimeZone = *workload.Spec.TimeZone
+	}
+	result.StartingDeadlineSeconds = cloneInt64Pointer(workload.Spec.StartingDeadlineSeconds)
+	result.SuccessfulJobsHistoryLimit = cloneInt32Pointer(workload.Spec.SuccessfulJobsHistoryLimit)
+	result.FailedJobsHistoryLimit = cloneInt32Pointer(workload.Spec.FailedJobsHistoryLimit)
 	return result
 }
 
@@ -502,8 +536,12 @@ func workloadDetailFromPodTemplate(
 		WorkloadSummary:      summary,
 		Annotations:          cloneMap(metadata.Annotations),
 		Selector:             workloadSelector(selector),
-		Containers:           workloadContainers(podSpec.Containers),
-		InitContainers:       workloadContainers(podSpec.InitContainers),
+		Containers:           workloadContainerTemplates(podSpec.Containers),
+		InitContainers:       workloadContainerTemplates(podSpec.InitContainers),
+		Volumes:              workloadVolumeView(podSpec.Volumes),
+		ImagePullSecrets:     workloadImagePullSecretView(podSpec.ImagePullSecrets),
+		NodeSelector:         workloadNodeSelectorView(podSpec.NodeSelector),
+		Tolerations:          workloadTolerationView(podSpec.Tolerations),
 		Conditions:           conditions,
 		Strategy:             strategy,
 		MinReadySeconds:      minReadySeconds,
@@ -524,18 +562,6 @@ func workloadSelector(selector *metav1.LabelSelector) *WorkloadSelector {
 			Key:      expression.Key,
 			Operator: string(expression.Operator),
 			Values:   append([]string(nil), expression.Values...),
-		})
-	}
-	return result
-}
-
-func workloadContainers(containers []corev1.Container) []WorkloadContainer {
-	result := make([]WorkloadContainer, 0, len(containers))
-	for _, container := range containers {
-		result = append(result, WorkloadContainer{
-			Name:            container.Name,
-			Image:           container.Image,
-			ImagePullPolicy: string(container.ImagePullPolicy),
 		})
 	}
 	return result

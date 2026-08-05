@@ -22,6 +22,7 @@ type fakeKubernetesWorkloadService struct {
 	getResource  kubernetesresource.WorkloadResource
 	getName      string
 	createInput  kubernetesresource.CreateWorkloadInput
+	updateInput  kubernetesresource.UpdateWorkloadInput
 	scaleInput   kubernetesresource.ScaleWorkloadInput
 	restartInput kubernetesresource.WorkloadMutationInput
 	suspendInput kubernetesresource.SetWorkloadSuspensionInput
@@ -71,8 +72,8 @@ func (service *fakeKubernetesWorkloadService) GetWorkload(
 			Images:     []string{"example/model:v2"},
 		},
 		Annotations:    map[string]string{},
-		Containers:     []kubernetesresource.WorkloadContainer{},
-		InitContainers: []kubernetesresource.WorkloadContainer{},
+		Containers:     []kubernetesresource.WorkloadContainerTemplate{},
+		InitContainers: []kubernetesresource.WorkloadContainerTemplate{},
 		Conditions:     []kubernetesresource.WorkloadCondition{},
 	}, nil
 }
@@ -90,6 +91,19 @@ func (service *fakeKubernetesWorkloadService) CreateWorkload(
 		DryRun:         input.DryRun,
 		Confirm:        input.Confirm,
 		IdempotencyKey: input.IdempotencyKey,
+	}), nil
+}
+
+func (service *fakeKubernetesWorkloadService) UpdateWorkload(
+	_ context.Context,
+	input kubernetesresource.UpdateWorkloadInput,
+) (kubernetesresource.WorkloadDetail, error) {
+	service.updateInput = input
+	return fakeWorkloadMutationResult(kubernetesresource.WorkloadMutationInput{
+		ClusterID: input.ClusterID,
+		Namespace: input.Namespace,
+		Resource:  input.Resource,
+		Name:      input.Name,
 	}), nil
 }
 
@@ -138,8 +152,8 @@ func fakeWorkloadMutationResult(
 			Images:    []string{},
 		},
 		Annotations:    map[string]string{},
-		Containers:     []kubernetesresource.WorkloadContainer{},
-		InitContainers: []kubernetesresource.WorkloadContainer{},
+		Containers:     []kubernetesresource.WorkloadContainerTemplate{},
+		InitContainers: []kubernetesresource.WorkloadContainerTemplate{},
 		Conditions:     []kubernetesresource.WorkloadCondition{},
 	}
 }
@@ -278,6 +292,7 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 	baseRoute := "/clusters/:cluster_id/namespaces/:namespace_name/workloads/" +
 		":workload_resource/:workload_name"
 	router.POST(collectionRoute, handler.create)
+	router.PUT(baseRoute, handler.update)
 	router.POST(baseRoute+"/scale", handler.scale)
 	router.POST(baseRoute+"/restart", handler.restart)
 	router.POST(baseRoute+"/suspend", handler.suspend)
@@ -325,6 +340,22 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 			method: http.MethodPost,
 			path:   baseURL + "/cronjobs/cleanup/resume",
 			body:   `{"dry_run":false,"confirm":true}`,
+		},
+		{
+			method: http.MethodPut,
+			path:   baseURL + "/deployments/api",
+			body: `{
+				"uid":"deployment-uid",
+				"resource_version":"12",
+				"labels":{"app":"api"},
+				"containers":[{
+					"name":"main",
+					"image":"example/api:v2"
+				}],
+				"replicas":5,
+				"dry_run":false,
+				"confirm":true
+			}`,
 		},
 		{
 			method: http.MethodDelete,
@@ -376,6 +407,20 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 		!service.createInput.Confirm ||
 		service.createInput.IdempotencyKey != idempotencyKey {
 		t.Fatalf("unexpected create input: %+v", service.createInput)
+	}
+	if service.updateInput.ClusterID != clusterID ||
+		service.updateInput.Namespace != "model-serving" ||
+		service.updateInput.Resource != kubernetesresource.WorkloadDeployments ||
+		service.updateInput.Name != "api" ||
+		service.updateInput.UID != "deployment-uid" ||
+		service.updateInput.ResourceVersion != "12" ||
+		len(service.updateInput.Containers) != 1 ||
+		service.updateInput.Containers[0].Image != "example/api:v2" ||
+		service.updateInput.Replicas == nil ||
+		*service.updateInput.Replicas != 5 ||
+		!service.updateInput.Confirm ||
+		service.updateInput.IdempotencyKey != idempotencyKey {
+		t.Fatalf("unexpected update input: %+v", service.updateInput)
 	}
 	if service.scaleInput.ClusterID != clusterID ||
 		service.scaleInput.Namespace != "model-serving" ||
@@ -429,6 +474,7 @@ func TestKubernetesWorkloadMutationHandlersRejectUnsafeRequests(t *testing.T) {
 	baseRoute := "/clusters/:cluster_id/namespaces/:namespace_name/workloads/" +
 		":workload_resource/:workload_name"
 	router.POST(collectionRoute, handler.create)
+	router.PUT(baseRoute, handler.update)
 	router.POST(baseRoute+"/scale", handler.scale)
 	router.DELETE(baseRoute, handler.delete)
 	baseURL := "/clusters/" + clusterID +

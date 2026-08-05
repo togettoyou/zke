@@ -1,5 +1,9 @@
-import type { KubernetesCreateWorkloadRequest, KubernetesWorkloadResource } from "@/api/types";
-import type { WorkloadCreateSpec } from "@/api/queries/workloads";
+import type {
+  KubernetesCreateWorkloadRequest,
+  KubernetesWorkloadDetail,
+  KubernetesWorkloadResource,
+} from "@/api/types";
+import type { WorkloadCreateSpec, WorkloadUpdateSpec } from "@/api/queries/workloads";
 
 /*
  * The drafts the create form edits, and the one function that turns them into a
@@ -55,6 +59,9 @@ const MAX_CRON_TIME_ZONE_BYTES = 128;
 export const MAX_DESCRIPTION_LENGTH = 1000;
 /** Kubernetes caps a CronJob's name to leave room for the Job names it derives. */
 const MAX_CRON_JOB_NAME_LENGTH = 52;
+
+/** Written by a rolling restart, and not a key an edit form displays. */
+const RESTART_ANNOTATION = "zke.io/restart-request";
 
 /** Radix Select cannot hold an empty value, so "unset" needs a name of its own. */
 export const DEFAULT_OPTION = "__default__";
@@ -129,10 +136,37 @@ export type ContainerDraft = {
   readiness: ProbeDraft;
   postStart: HookDraft;
   preStop: HookDraft;
+  /**
+   * The quantities as Kubernetes returned them, keyed `requests.cpu` and so on.
+   *
+   * The inputs are in cores and MiB, and rendering `1Gi` as 1024 and submitting
+   * it as `1024Mi` would rewrite the Pod template — the same amount, a
+   * different object, and a rollout nobody asked for. A field still showing
+   * what its source parsed to is submitted as that source instead.
+   */
+  sourceQuantities: Record<string, string>;
+  /**
+   * Requests and limits outside cpu, memory and `nvidia.com/gpu`: other device
+   * plugins, ephemeral storage, anything a quantity map can carry. Kept as they
+   * are rather than dropped by a form that has no field for them.
+   */
+  extraRequests: Record<string, string>;
+  extraLimits: Record<string, string>;
 };
 
 export type VolumeKind =
-  "empty_dir" | "host_path" | "config_map" | "secret" | "persistent_volume_claim" | "nfs";
+  | "empty_dir"
+  | "host_path"
+  | "config_map"
+  | "secret"
+  | "persistent_volume_claim"
+  | "nfs"
+  /**
+   * A source this form does not model — projected, CSI, downward API. Only an
+   * existing object can have one; it is shown read-only and submitted as a bare
+   * name, which is what tells the Server to keep the source the Pod already has.
+   */
+  | "unmodeled";
 
 export type VolumeDraft = {
   id: string;
@@ -236,6 +270,9 @@ export function emptyContainer(index: number): ContainerDraft {
     readiness: emptyProbe(),
     postStart: emptyHook(),
     preStop: emptyHook(),
+    sourceQuantities: {},
+    extraRequests: {},
+    extraLimits: {},
   };
 }
 
@@ -1023,6 +1060,29 @@ export function buildWorkloadSpec(
   return spec;
 }
 
+/**
+ * The body of an update: the same modeled fields, minus what cannot change.
+ *
+ * `name` is in the path rather than the body. `service_name` is refused by the
+ * Server on an update because Kubernetes fixes a StatefulSet's governing
+ * Service at creation, and a Job accepts only the two fields Kubernetes lets
+ * move — sending its template back would be rejected, and sending it back
+ * unchanged would still be rejected.
+ */
+export function buildWorkloadUpdateSpec(
+  draft: WorkloadFormDraft,
+  resource: KubernetesWorkloadResource,
+): WorkloadUpdateSpec {
+  if (resource === "jobs") {
+    const spec: WorkloadUpdateSpec = {};
+    assignCount(spec, "parallelism", draft.parallelism);
+    assignCount(spec, "ttl_seconds_after_finished", draft.ttlSeconds);
+    return spec;
+  }
+  const { name: _name, service_name: _serviceName, ...spec } = buildWorkloadSpec(draft, resource);
+  return spec;
+}
+
 /** The image as Kubernetes wants it: one string, tag included. */
 export function containerImage(container: ContainerDraft): string {
   const image = container.image.trim();
@@ -1076,15 +1136,22 @@ function containerTemplate(container: ContainerDraft): ContainerTemplate {
       }
     });
   }
-  const requests: Record<string, string> = {};
-  const limits: Record<string, string> = {};
-  assignQuantity(requests, "cpu", container.cpuRequest, "");
-  assignQuantity(limits, "cpu", container.cpuLimit, "");
-  assignQuantity(requests, "memory", container.memoryRequest, "Mi");
-  assignQuantity(limits, "memory", container.memoryLimit, "Mi");
+  const requests: Record<string, string> = { ...container.extraRequests };
+  const limits: Record<string, string> = { ...container.extraLimits };
+  assignQuantity(container, requests, "requests.cpu", "cpu", container.cpuRequest, "");
+  assignQuantity(container, limits, "limits.cpu", "cpu", container.cpuLimit, "");
+  assignQuantity(container, requests, "requests.memory", "memory", container.memoryRequest, "Mi");
+  assignQuantity(container, limits, "limits.memory", "memory", container.memoryLimit, "Mi");
   // Extended resources are only ever set as a limit; Kubernetes derives the
   // matching request itself, and the two are not allowed to differ.
-  assignQuantity(limits, "nvidia.com/gpu", container.gpuLimit, "");
+  assignQuantity(
+    container,
+    limits,
+    "limits.nvidia.com/gpu",
+    "nvidia.com/gpu",
+    container.gpuLimit,
+    "",
+  );
   if (Object.keys(requests).length > 0 || Object.keys(limits).length > 0) {
     template.resources = {
       ...(Object.keys(requests).length > 0 ? { requests } : {}),
@@ -1159,6 +1226,10 @@ function hookRequest(hook: HookDraft) {
 function volumeRequest(volume: VolumeDraft): VolumeRequest {
   const name = volume.name.trim();
   switch (volume.kind) {
+    // No source at all, which is how the Server is told to keep the one the Pod
+    // already has under this name.
+    case "unmodeled":
+      return { name };
     case "host_path":
       return {
         name,
@@ -1231,16 +1302,31 @@ function keyValueRecord(rows: KeyValueDraft[]): Record<string, string> | null {
   return Object.fromEntries(entries.map((row) => [row.key.trim(), row.value.trim()]));
 }
 
+/**
+ * Writes one quantity, preferring the string it was read as.
+ *
+ * `1Gi` shows as 1024 MiB and would go back as `1024Mi`: the same amount, a
+ * different Pod template, and a rollout on a save that changed nothing. So a
+ * field still showing what its source parsed to is submitted as that source.
+ */
 function assignQuantity(
+  container: ContainerDraft,
   target: Record<string, string>,
+  source: string,
   key: string,
   value: string,
   suffix: string,
 ): void {
   const trimmed = value.trim();
-  if (trimmed !== "") {
-    target[key] = `${trimmed}${suffix}`;
+  if (trimmed === "") {
+    return;
   }
+  const original = container.sourceQuantities[source];
+  if (original !== undefined && quantityInput(original, suffix) === trimmed) {
+    target[key] = original;
+    return;
+  }
+  target[key] = `${trimmed}${suffix}`;
 }
 
 function assignCount<T, K extends keyof T>(target: T, key: K, value: string): void {
@@ -1248,4 +1334,368 @@ function assignCount<T, K extends keyof T>(target: T, key: K, value: string): vo
   if (trimmed !== "") {
     target[key] = Number(trimmed) as T[K];
   }
+}
+
+// ---------------------------------------------------------------------------
+// Reading an existing workload back into the form
+// ---------------------------------------------------------------------------
+
+/*
+ * The detail response returns the typed template in the shape an update
+ * submits, so this is a mapping between two representations of the same fields
+ * rather than a second model. What it must never do is turn something it cannot
+ * show into something it can: a volume source with no field in the form stays
+ * marked as unmodeled, and a quantity keeps the string it arrived as.
+ */
+
+type WorkloadContainerTemplateView = NonNullable<KubernetesWorkloadDetail["containers"]>[number];
+
+/** Keys the form owns and never shows among free-form labels or annotations. */
+const RESERVED_ANNOTATIONS = new Set([RESERVED_ANNOTATION_KEY, RESTART_ANNOTATION]);
+const RESERVED_LABELS = new Set([RESERVED_LABEL_KEY]);
+
+export function draftFromWorkload(
+  workload: KubernetesWorkloadDetail,
+  resource: KubernetesWorkloadResource,
+): WorkloadFormDraft {
+  const containers = (workload.containers ?? []).map((container) =>
+    containerDraft(container, false),
+  );
+  const initContainers = (workload.init_containers ?? []).map((container) =>
+    containerDraft(container, true),
+  );
+  return {
+    name: workload.name,
+    description: workload.annotations?.[RESERVED_ANNOTATION_KEY] ?? "",
+    labels: keyValueDrafts(workload.labels, RESERVED_LABELS),
+    annotations: keyValueDrafts(workload.annotations, RESERVED_ANNOTATIONS),
+    // Init containers first, the order they run in.
+    containers: [...initContainers, ...containers],
+    volumes: (workload.volumes ?? []).map(volumeDraft),
+    imagePullSecrets: [...(workload.image_pull_secrets ?? [])],
+    nodeSelector: keyValueDrafts(workload.node_selector, new Set()),
+    tolerations: (workload.tolerations ?? []).map((toleration) => ({
+      key: toleration.key ?? "",
+      operator: toleration.operator || "Equal",
+      value: toleration.value ?? "",
+      effect: toleration.effect || DEFAULT_OPTION,
+      tolerationSeconds: numberInput(toleration.toleration_seconds),
+    })),
+    // `replicas` is the desired count on the object, not a live one: the status
+    // counts belong to the controller and are not what an edit submits.
+    replicas:
+      resource === "deployments" || resource === "statefulsets"
+        ? numberInput(workload.replicas?.desired)
+        : "",
+    serviceName: workload.service_name ?? "",
+    // What the object asks for, not what a running Job reports.
+    parallelism: numberInput(workload.parallelism),
+    completions: numberInput(workload.completions),
+    backoffLimit: numberInput(workload.backoff_limit),
+    ttlSeconds: numberInput(workload.ttl_seconds_after_finished),
+    schedule: workload.cron_job?.schedule ?? "",
+    timeZone: workload.time_zone ?? "",
+    concurrencyPolicy: workload.concurrency_policy || DEFAULT_OPTION,
+    startingDeadline: numberInput(workload.starting_deadline_seconds),
+    successfulHistory: numberInput(workload.successful_jobs_history_limit),
+    failedHistory: numberInput(workload.failed_jobs_history_limit),
+    suspend: workload.cron_job?.suspend ?? false,
+  };
+}
+
+function containerDraft(container: WorkloadContainerTemplateView, init: boolean): ContainerDraft {
+  const { image, tag } = splitImage(container.image);
+  const requests = container.resources?.requests ?? {};
+  const limits = container.resources?.limits ?? {};
+  const sourceQuantities: Record<string, string> = {};
+  for (const [scope, list] of [
+    ["requests", requests],
+    ["limits", limits],
+  ] as const) {
+    for (const [name, value] of Object.entries(list)) {
+      sourceQuantities[`${scope}.${name}`] = value;
+    }
+  }
+  return {
+    id: nextId("container"),
+    name: container.name,
+    image,
+    tag,
+    policy: container.image_pull_policy || DEFAULT_OPTION,
+    init,
+    privileged: container.privileged === true,
+    workingDir: container.working_dir ?? "",
+    command: [...(container.command ?? [])],
+    args: [...(container.args ?? [])],
+    env: (container.env ?? []).map(envDraft),
+    cpuRequest: quantityInput(requests.cpu, ""),
+    cpuLimit: quantityInput(limits.cpu, ""),
+    memoryRequest: quantityInput(requests.memory, "Mi"),
+    memoryLimit: quantityInput(limits.memory, "Mi"),
+    gpuLimit: quantityInput(limits["nvidia.com/gpu"], ""),
+    mounts: (container.volume_mounts ?? []).map((mount) => ({
+      name: mount.name,
+      mountPath: mount.mount_path,
+      subPath: mount.sub_path ?? "",
+      readOnly: mount.read_only === true,
+    })),
+    liveness: probeDraft(container.liveness_probe),
+    readiness: probeDraft(container.readiness_probe),
+    postStart: hookDraft(container.lifecycle?.post_start),
+    preStop: hookDraft(container.lifecycle?.pre_stop),
+    sourceQuantities,
+    extraRequests: extraQuantities(requests),
+    extraLimits: extraQuantities(limits),
+  };
+}
+
+/** Everything the three modeled inputs do not cover, kept exactly as it is. */
+function extraQuantities(list: Record<string, string>): Record<string, string> {
+  const modeled = new Set(["cpu", "memory", "nvidia.com/gpu"]);
+  return Object.fromEntries(
+    Object.entries(list).filter(([name, value]) => {
+      // A modeled key the form could not parse is kept here too: shown as blank
+      // and submitted as it stands beats shown as blank and deleted on save.
+      if (!modeled.has(name)) {
+        return true;
+      }
+      return quantityInput(value, name === "memory" ? "Mi" : "") === "";
+    }),
+  );
+}
+
+function envDraft(variable: NonNullable<WorkloadContainerTemplateView["env"]>[number]): EnvDraft {
+  if (variable.config_map_key_ref) {
+    return {
+      name: variable.name,
+      source: "config_map",
+      value: "",
+      refName: variable.config_map_key_ref.name,
+      refKey: variable.config_map_key_ref.key,
+    };
+  }
+  if (variable.secret_key_ref) {
+    return {
+      name: variable.name,
+      source: "secret",
+      value: "",
+      refName: variable.secret_key_ref.name,
+      refKey: variable.secret_key_ref.key,
+    };
+  }
+  // A `fieldRef` or `resourceFieldRef` arrives as a name with no value, because
+  // the form has nowhere to show one. Submitted back empty it is preserved by
+  // the Server, so it reads here as a literal with no value rather than
+  // disappearing from the list.
+  return {
+    name: variable.name,
+    source: "value",
+    value: variable.value ?? "",
+    refName: "",
+    refKey: "",
+  };
+}
+
+function volumeDraft(
+  volume: NonNullable<KubernetesWorkloadDetail["volumes"]>[number],
+): VolumeDraft {
+  const draft = { ...emptyVolume(), name: volume.name };
+  if (volume.empty_dir) {
+    return {
+      ...draft,
+      kind: "empty_dir",
+      medium: volume.empty_dir.medium || DEFAULT_OPTION,
+      sizeLimit: quantityInput(volume.empty_dir.size_limit, "Mi"),
+    };
+  }
+  if (volume.host_path) {
+    return {
+      ...draft,
+      kind: "host_path",
+      hostPath: volume.host_path.path,
+      hostPathType: volume.host_path.type || DEFAULT_OPTION,
+    };
+  }
+  if (volume.config_map) {
+    return {
+      ...draft,
+      kind: "config_map",
+      refName: volume.config_map.name,
+      optional: volume.config_map.optional === true,
+    };
+  }
+  if (volume.secret) {
+    return {
+      ...draft,
+      kind: "secret",
+      refName: volume.secret.secret_name,
+      optional: volume.secret.optional === true,
+    };
+  }
+  if (volume.persistent_volume_claim) {
+    return {
+      ...draft,
+      kind: "persistent_volume_claim",
+      refName: volume.persistent_volume_claim.claim_name,
+      readOnly: volume.persistent_volume_claim.read_only === true,
+    };
+  }
+  if (volume.nfs) {
+    return {
+      ...draft,
+      kind: "nfs",
+      nfsServer: volume.nfs.server,
+      nfsPath: volume.nfs.path,
+      readOnly: volume.nfs.read_only === true,
+    };
+  }
+  return { ...draft, kind: "unmodeled" };
+}
+
+function probeDraft(probe: WorkloadContainerTemplateView["liveness_probe"]): ProbeDraft {
+  const draft = emptyProbe();
+  if (!probe) {
+    return draft;
+  }
+  const timings = {
+    initialDelaySeconds: numberInput(probe.initial_delay_seconds),
+    periodSeconds: numberInput(probe.period_seconds),
+    timeoutSeconds: numberInput(probe.timeout_seconds),
+    successThreshold: numberInput(probe.success_threshold),
+    failureThreshold: numberInput(probe.failure_threshold),
+  };
+  if (probe.http_get) {
+    return {
+      ...draft,
+      ...timings,
+      enabled: true,
+      kind: "http_get",
+      path: probe.http_get.path ?? "",
+      port: probe.http_get.port,
+      scheme: probe.http_get.scheme || DEFAULT_OPTION,
+    };
+  }
+  if (probe.tcp_socket) {
+    return { ...draft, ...timings, enabled: true, kind: "tcp_socket", port: probe.tcp_socket.port };
+  }
+  if (probe.exec) {
+    return {
+      ...draft,
+      ...timings,
+      enabled: true,
+      kind: "exec",
+      command: probe.exec.command.join("\n"),
+    };
+  }
+  // A handler the form cannot express — a gRPC probe. Shown as no probe, and
+  // the Server keeps the real one because nothing replaces it.
+  return draft;
+}
+
+function hookDraft(
+  handler: NonNullable<WorkloadContainerTemplateView["lifecycle"]>["post_start"],
+): HookDraft {
+  const draft = emptyHook();
+  if (!handler) {
+    return draft;
+  }
+  if (handler.http_get) {
+    return {
+      ...draft,
+      enabled: true,
+      kind: "http_get",
+      path: handler.http_get.path ?? "",
+      port: handler.http_get.port,
+      scheme: handler.http_get.scheme || DEFAULT_OPTION,
+    };
+  }
+  if (handler.exec) {
+    return { ...draft, enabled: true, kind: "exec", command: handler.exec.command.join("\n") };
+  }
+  return draft;
+}
+
+function keyValueDrafts(
+  entries: Record<string, string> | undefined,
+  reserved: Set<string>,
+): KeyValueDraft[] {
+  return Object.entries(entries ?? {})
+    .filter(([key]) => !reserved.has(key))
+    .map(([key, value]) => ({ key, value }));
+}
+
+/**
+ * An image split the way the form holds it.
+ *
+ * The tag is what follows the last colon, but only when that colon is in the
+ * final path segment — `registry:5000/app` is a host and a port. A digest has
+ * no tag at all and stays whole.
+ */
+function splitImage(image: string): { image: string; tag: string } {
+  if (image.includes("@")) {
+    return { image, tag: "" };
+  }
+  const separator = image.lastIndexOf(":");
+  if (separator === -1 || image.indexOf("/", separator) !== -1) {
+    return { image, tag: "" };
+  }
+  return { image: image.slice(0, separator), tag: image.slice(separator + 1) };
+}
+
+function numberInput(value: number | undefined | null): string {
+  return value === undefined || value === null ? "" : String(value);
+}
+
+/**
+ * A Kubernetes quantity in the unit the matching input uses.
+ *
+ * Returns an empty string for anything it cannot read rather than a guess: the
+ * value is then carried through untouched instead of being rewritten, because a
+ * form that rounded someone's `1.5Gi` into a different number on open would
+ * write that number back on save.
+ */
+export function quantityInput(value: string | undefined, suffix: string): string {
+  if (value === undefined || value === "") {
+    return "";
+  }
+  const match = /^(\d+(?:\.\d+)?)([a-zA-Z]*)$/.exec(value.trim());
+  if (!match) {
+    return "";
+  }
+  const amount = Number(match[1] ?? "");
+  const unit = match[2] ?? "";
+  const bytes = BINARY_UNITS[unit] ?? DECIMAL_UNITS[unit];
+  if (suffix === "Mi") {
+    if (bytes === undefined) {
+      return "";
+    }
+    const mebibytes = (amount * bytes) / (1024 * 1024);
+    return Number.isInteger(mebibytes) ? String(mebibytes) : "";
+  }
+  // CPU and counts: millicores or a plain number, and nothing else.
+  if (unit === "m") {
+    return trimNumber(amount / 1000);
+  }
+  return unit === "" ? trimNumber(amount) : "";
+}
+
+const BINARY_UNITS: Record<string, number> = {
+  "": 1,
+  Ki: 1024,
+  Mi: 1024 ** 2,
+  Gi: 1024 ** 3,
+  Ti: 1024 ** 4,
+  Pi: 1024 ** 5,
+};
+
+const DECIMAL_UNITS: Record<string, number> = {
+  k: 1000,
+  M: 1000 ** 2,
+  G: 1000 ** 3,
+  T: 1000 ** 4,
+  P: 1000 ** 5,
+};
+
+function trimNumber(value: number): string {
+  return String(Number(value.toFixed(3)));
 }

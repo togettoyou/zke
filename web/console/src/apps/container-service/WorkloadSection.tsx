@@ -73,6 +73,7 @@ export function WorkloadSection({
   const [yamlName, setYamlName] = useState<string | null>(null);
 
   const [creating, setCreating] = useState(false);
+  const [editingName, setEditingName] = useState<string | null>(null);
 
   const projectScope = { type: "project" as const, tenantId, projectId };
   // Scaling, restarting and suspending are all patches of the object, so they
@@ -130,6 +131,7 @@ export function WorkloadSection({
               }}
               canUpdate={canUpdate}
               canDelete={canDelete}
+              onEdit={() => setEditingName(row.original.name)}
             />
           </div>
         ),
@@ -172,6 +174,22 @@ export function WorkloadSection({
     );
   }
 
+  // The same form, opened on an object that exists. It mounts only once the
+  // object has been read, because the draft and the preconditions it will be
+  // submitted with are both taken from that one read.
+  if (editingName) {
+    return (
+      <WorkloadEditView
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        resource={resource}
+        name={editingName}
+        onClose={() => setEditingName(null)}
+      />
+    );
+  }
+
   if (detailName) {
     return (
       <WorkloadDetailView
@@ -182,6 +200,7 @@ export function WorkloadSection({
         name={detailName}
         canUpdate={canUpdate}
         canDelete={canDelete}
+        onEdit={() => setEditingName(detailName)}
         onOpenYaml={() => setYamlName(detailName)}
         onBack={() => setDetailName(null)}
       />
@@ -352,6 +371,48 @@ function ImageCell({ images }: { images: string[] }) {
   );
 }
 
+/**
+ * Reads the object, then hands it to the form.
+ *
+ * The form takes its draft and its write preconditions from one read, so it is
+ * mounted only after that read has arrived rather than being given an object
+ * that fills in underneath it.
+ */
+function WorkloadEditView({
+  clusterId,
+  clusterName,
+  namespace,
+  resource,
+  name,
+  onClose,
+}: {
+  clusterId: string;
+  clusterName: string;
+  namespace: string;
+  resource: KubernetesWorkloadResource;
+  name: string;
+  onClose: () => void;
+}) {
+  const detail = useWorkload(clusterId, namespace, resource, name);
+
+  if (detail.error) {
+    return <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />;
+  }
+  if (!detail.data) {
+    return <LoadingState />;
+  }
+  return (
+    <WorkloadCreateView
+      clusterId={clusterId}
+      clusterName={clusterName}
+      namespace={namespace}
+      resource={resource}
+      existing={detail.data}
+      onClose={onClose}
+    />
+  );
+}
+
 function WorkloadDetailView({
   clusterId,
   clusterName,
@@ -360,6 +421,7 @@ function WorkloadDetailView({
   name,
   canUpdate,
   canDelete,
+  onEdit,
   onOpenYaml,
   onBack,
 }: {
@@ -370,6 +432,7 @@ function WorkloadDetailView({
   name: string;
   canUpdate: boolean;
   canDelete: boolean;
+  onEdit: () => void;
   onOpenYaml: () => void;
   onBack: () => void;
 }) {
@@ -391,6 +454,7 @@ function WorkloadDetailView({
                 canUpdate={canUpdate}
                 canDelete={canDelete}
                 variant="buttons"
+                onEdit={onEdit}
                 onDeleted={onBack}
               />
             ) : null}
@@ -615,7 +679,7 @@ function Count({ value }: { value: number }) {
   return <span className="zke-tnum">{value}</span>;
 }
 
-function ContainerImage({ image, policy }: { image: string; policy: string }) {
+function ContainerImage({ image, policy }: { image: string; policy: string | undefined }) {
   return (
     <div className="grid gap-0.5">
       <span className="zke-mono text-xs break-all">{image || "—"}</span>

@@ -717,7 +717,15 @@ export interface paths {
          *     StatefulSet、DaemonSet、Job 或 CronJob 详情。
          */
         get: operations["getKubernetesWorkload"];
-        put?: never;
+        /**
+         * @description 使用类型化表单更新目标 Cluster 和 Namespace 中的工作负载。请求携带的字段替换对象上的
+         *     对应部分，本表单未建模的字段——亲和性、拓扑分布约束、容器端口、securityContext 其余字段等
+         *     ——由 Server 从当前对象保留，不会被清除。必须提供 UID 与 resourceVersion 前置条件，
+         *     任一不匹配返回 409。Kubernetes 的不可变约束如实反映：StatefulSet 的 service_name 不接受，
+         *     Job 只接受 parallelism 与 ttl_seconds_after_finished。dry_run=true 时执行服务端预览，
+         *     实际更新要求显式 confirm=true。
+         */
+        put: operations["updateKubernetesWorkload"];
         post?: never;
         /**
          * @description 删除目标 Cluster 和 Namespace 中的 Deployment、StatefulSet、DaemonSet、
@@ -1887,6 +1895,91 @@ export interface components {
             /** @description 实际创建必须为 true；dry-run 可以为 false。 */
             confirm: boolean;
         };
+        KubernetesUpdateWorkloadRequest: {
+            /** @description 打开编辑时对象的 UID；不匹配则返回 409，而不是覆盖同名重建的对象。 */
+            uid: string;
+            /** @description 打开编辑时对象的 resourceVersion；期间对象若已变化，更新被拒绝而不是覆盖。 */
+            resource_version: string;
+            /** @description zke.io/workload-id 为 Server 保留键，不接受客户端设置。 */
+            labels?: {
+                [key: string]: string;
+            };
+            /** @description zke.io/description 为 description 字段保留，不接受在此设置。 */
+            annotations?: {
+                [key: string]: string;
+            };
+            /** @description 写入工作负载与 Pod 模板的 zke.io/description 注解。 */
+            description?: string;
+            containers?: components["schemas"]["KubernetesWorkloadContainerTemplate"][];
+            /** @description 在主容器之前运行完毕，因此不接受 liveness_probe、readiness_probe 和 lifecycle； 容器名在主容器与初始化容器之间不得重复。 */
+            init_containers?: components["schemas"]["KubernetesWorkloadContainerTemplate"][];
+            /** @description 容器的 volume_mounts 只能引用这里声明的名称。 */
+            volumes?: components["schemas"]["KubernetesWorkloadVolume"][];
+            /** @description 只传递 Secret 名称引用，不读取 Secret 正文。 */
+            image_pull_secrets?: string[];
+            /** @description 按节点标签精确匹配；亲和性等更复杂的调度规则请使用 YAML。 */
+            node_selector?: {
+                [key: string]: string;
+            };
+            tolerations?: components["schemas"]["KubernetesWorkloadToleration"][];
+            /**
+             * Format: int32
+             * @description 仅 Deployment 和 StatefulSet 可用；省略时交由 Kubernetes 默认处理。
+             */
+            replicas?: number | null;
+            /** @description StatefulSet 必填，且必须引用同一 Namespace 中预先存在的 Service。 */
+            service_name?: string;
+            /**
+             * Format: int32
+             * @description 仅 Job 和 CronJob 的 Job Template 可用。
+             */
+            parallelism?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 Job 和 CronJob 的 Job Template 可用。
+             */
+            completions?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 Job 和 CronJob 的 Job Template 可用。
+             */
+            backoff_limit?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 Job 和 CronJob 的 Job Template 可用。
+             */
+            ttl_seconds_after_finished?: number | null;
+            /** @description CronJob 必填的 Kubernetes Cron 表达式。 */
+            schedule?: string;
+            /** @description 仅 CronJob 可用；空字符串表示使用 kube-controller-manager 的本地时区。 */
+            time_zone?: string;
+            /** @description 仅 CronJob 可用；省略时交由 Kubernetes 默认处理。 */
+            suspend?: boolean | null;
+            /**
+             * @description 仅 CronJob 可用；空字符串表示交由 Kubernetes 默认处理。
+             * @enum {string}
+             */
+            concurrency_policy?: "" | "Allow" | "Forbid" | "Replace";
+            /**
+             * Format: int64
+             * @description 仅 CronJob 可用。
+             */
+            starting_deadline_seconds?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 CronJob 可用。
+             */
+            successful_jobs_history_limit?: number | null;
+            /**
+             * Format: int32
+             * @description 仅 CronJob 可用。
+             */
+            failed_jobs_history_limit?: number | null;
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际更新必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
         KubernetesWorkloadMutationRequest: {
             /** @default false */
             dry_run: boolean;
@@ -1987,12 +2080,6 @@ export interface components {
             };
             match_expressions: components["schemas"]["KubernetesWorkloadSelectorRequirement"][];
         };
-        KubernetesWorkloadContainer: {
-            name: string;
-            image: string;
-            /** @enum {string} */
-            image_pull_policy: "Always" | "IfNotPresent" | "Never" | "";
-        };
         KubernetesWorkloadCondition: {
             type: string;
             /** @enum {string} */
@@ -2006,8 +2093,16 @@ export interface components {
                 [key: string]: string;
             };
             selector?: components["schemas"]["KubernetesWorkloadSelector"];
-            containers: components["schemas"]["KubernetesWorkloadContainer"][];
-            init_containers: components["schemas"]["KubernetesWorkloadContainer"][];
+            /** @description 与创建和更新提交的容器模板同形，因此编辑表单读到的就是它将要写回的。 模板未建模的字段不在这里，也不会被更新清除。 */
+            containers: components["schemas"]["KubernetesWorkloadContainerTemplate"][];
+            init_containers: components["schemas"]["KubernetesWorkloadContainerTemplate"][];
+            /** @description 本模板未建模的卷来源（projected、CSI、downward API 等）只返回名称， 没有 source；更新时按名称保留集群中现有的来源。 */
+            volumes: components["schemas"]["KubernetesWorkloadVolume"][];
+            image_pull_secrets: string[];
+            node_selector: {
+                [key: string]: string;
+            };
+            tolerations: components["schemas"]["KubernetesWorkloadToleration"][];
             conditions: components["schemas"]["KubernetesWorkloadCondition"][];
             strategy: string;
             min_ready_seconds: number;
@@ -2015,6 +2110,15 @@ export interface components {
             service_name?: string;
             completion_mode?: string;
             concurrency_policy?: string;
+            /** @description Job 或 CronJob Job Template 声明的并行度，即编辑表单提交的值； Job 运行时的计数在 job 中。 */
+            parallelism?: number;
+            completions?: number;
+            backoff_limit?: number;
+            ttl_seconds_after_finished?: number;
+            time_zone?: string;
+            starting_deadline_seconds?: number;
+            successful_jobs_history_limit?: number;
+            failed_jobs_history_limit?: number;
         };
         /** @enum {string} */
         KubernetesNetworkingResource: "services" | "ingresses" | "gateways";
@@ -5705,6 +5809,49 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateWorkloadRequest"];
+            };
+        };
+        responses: {
+            /** @description 工作负载更新或 dry-run 结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

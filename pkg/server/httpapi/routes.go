@@ -448,6 +448,15 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesWorkload.get,
 	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.update,
+	)
 	clusterRoutes.POST(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/scale",
 		handlers.authMiddleware.RequireCSRF,
