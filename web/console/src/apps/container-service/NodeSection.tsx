@@ -17,7 +17,7 @@ import {
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
-import { StatusBadge } from "@/components/common/status";
+import { AddressValues, StatusBadge } from "@/components/common/status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatAbsolute } from "@/lib/time";
@@ -98,9 +98,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
         header: "内网 IP",
         size: 140,
         cell: ({ row }) => (
-          <span className="zke-mono text-muted-foreground text-xs">
-            {row.original.internal_ip || "—"}
-          </span>
+          <AddressValues values={[row.original.internal_ip]} className="text-muted-foreground" />
         ),
       },
       {
@@ -408,15 +406,14 @@ function NodeDetailCards({ node }: { node: KubernetesNodeDetail }) {
       </DetailCard>
 
       <DetailCard title="网络">
-        <DetailRow
-          label="内网 IP"
-          value={<span className="zke-mono text-xs">{node.internal_ip || "—"}</span>}
-        />
+        <DetailRow label="内网 IP" value={<AddressValues values={[node.internal_ip]} />} />
+        {/* Hostnames are copied for the same reasons addresses are: they are
+            what the next command is pointed at. */}
         {node.addresses.map((address) => (
           <DetailRow
             key={`${address.type}/${address.address}`}
             label={address.type}
-            value={<span className="zke-mono text-xs break-all">{address.address}</span>}
+            value={<AddressValues values={[address.address]} />}
           />
         ))}
         <DetailRow

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 
 import { Badge, StatusDot, type BadgeProps } from "@/components/ui/badge";
@@ -193,13 +193,30 @@ export function AbsoluteTime({
 }
 
 /**
- * Shortened identifier that copies its full value on click.
+ * A value that copies itself on click.
  *
- * Identifiers are what an operator carries into a log query or a support
- * thread, so the elided form has to give the whole thing back — the title
- * attribute alone cannot be selected out of a table cell.
+ * An address, a port or an identifier is read here and used somewhere else —
+ * a shell, a log query, a support thread — and selecting one out of a table
+ * cell with the pointer is both fiddly and easy to get wrong by a character.
+ *
+ * What lands on the clipboard is named in the title before the click rather
+ * than discovered after it, which is what lets a caller copy something the
+ * screen shows in pieces, such as an address and the port beside it.
  */
-export function IdentifierLabel({ value, className }: { value: string; className?: string }) {
+export function CopyableValue({
+  value,
+  children,
+  label,
+  className,
+}: {
+  /** What lands on the clipboard. */
+  value: string;
+  /** What is shown, when that differs from the value itself. */
+  children?: ReactNode;
+  /** Accessible name, when "复制 <value>" is not specific enough. */
+  label?: string;
+  className?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -214,9 +231,9 @@ export function IdentifierLabel({ value, className }: { value: string; className
     <button
       type="button"
       title={`${value}（点击复制）`}
-      aria-label={`复制标识 ${value}`}
+      aria-label={label ?? `复制 ${value}`}
       onClick={async (event) => {
-        // Identifiers often sit inside clickable rows.
+        // These often sit inside clickable rows.
         event.stopPropagation();
         try {
           await navigator.clipboard.writeText(value);
@@ -226,18 +243,24 @@ export function IdentifierLabel({ value, className }: { value: string; className
         }
       }}
       className={cn(
-        // `w-fit` and `whitespace-nowrap` for the same reason as the badge: an
-        // elided identifier that stretches or wraps is worse than useless.
-        "zke-focus zke-mono text-muted-foreground hover:text-foreground hover:bg-surface-muted -mx-1 inline-flex w-fit cursor-pointer items-center rounded border border-transparent px-1 text-xs whitespace-nowrap transition-colors",
+        // `w-fit` and `whitespace-nowrap` for the same reason as the badge: a
+        // value that stretches or wraps to fit its column is worse than useless.
+        //
+        // The hover state carries a border as well as a fill: `--surface-muted`
+        // against the card it usually sits on is a couple of steps of grey, too
+        // little to be read as "this responds to a click" on a page that is
+        // otherwise full of plain text.
+        "zke-focus group/copy hover:bg-surface-muted hover:border-border -mx-1 inline-flex w-fit cursor-pointer items-center rounded border border-transparent px-1 whitespace-nowrap transition-colors",
         className,
       )}
     >
-      {value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value}
+      {children ?? value}
       {/*
-       * No resting copy icon, and the confirmation is carried in flow.
+       * The copy icon appears on hover and on keyboard focus, and the
+       * confirmation is carried in flow.
        *
        * Reserved permanently — an `opacity-0` icon holding its slot — it padded
-       * every identifier's trailing edge by its own width, which is invisible
+       * every value's trailing edge by its own width, which is invisible
        * in a table and obvious the moment the value sits in a right-aligned
        * column and ends short of the plain text above it. Hung outside the box
        * instead, it landed on whatever the layout put there: to the right, on
@@ -245,15 +268,84 @@ export function IdentifierLabel({ value, className }: { value: string; className
        * definition; to the left, on the username the identifier follows in the
        * users and role-binding tables.
        *
-       * Rendered only while copied, it can neither pad the resting state nor
-       * cover a neighbour. The cost is that the button is wider for the second
-       * and a half it is shown, which moves nothing but its own trailing edge.
-       *
-       * The resting affordance is the pointer, the hover fill and the title,
-       * which already spells out that clicking copies.
+       * Shown only while hovered, focused or copied, it can neither pad the
+       * resting state nor cover a neighbour. The cost is that the button is
+       * wider for as long as it is shown, which moves nothing but its own
+       * trailing edge — and by then the pointer is already on it.
        */}
-      {copied ? <Check aria-hidden className="text-success ml-1 size-3 shrink-0" /> : null}
+      {copied ? (
+        <Check aria-hidden className="text-success ml-1 size-3 shrink-0" />
+      ) : (
+        <Copy
+          aria-hidden
+          className="ml-1 hidden size-3 shrink-0 opacity-70 group-hover/copy:block group-focus-visible/copy:block"
+        />
+      )}
     </button>
+  );
+}
+
+/**
+ * Addresses, each copying itself on click.
+ *
+ * An address is read on one screen and used on another, so every one of them is
+ * copyable wherever it is shown — a Service's ClusterIP, an Ingress's assigned
+ * address, a Pod IP, a Node address.
+ *
+ * `None` is how Kubernetes reports that a headless Service has no address at
+ * all, so it stays plain text: offering to copy it would be offering to copy
+ * the word rather than an address. Wrapping is allowed here — an IPv6 address
+ * is wider than the column it sits in, and a clipped one cannot be read.
+ */
+export function AddressValues({
+  values,
+  empty = "—",
+  className,
+}: {
+  values: string[];
+  /** Shown when there is no address, e.g. "尚未分配". */
+  empty?: string;
+  className?: string;
+}) {
+  const shown = values.filter(Boolean);
+  if (shown.length === 0) {
+    return <span className={cn("zke-mono text-xs", className)}>{empty}</span>;
+  }
+  return (
+    <span className={cn("zke-mono inline-flex flex-wrap items-center gap-x-1 text-xs", className)}>
+      {shown.map((value, index) =>
+        value === "None" ? (
+          <span key={`${value}/${index}`}>None</span>
+        ) : (
+          <CopyableValue
+            key={`${value}/${index}`}
+            value={value}
+            className={cn("zke-mono text-xs break-all whitespace-normal", className)}
+          >
+            {value}
+          </CopyableValue>
+        ),
+      )}
+    </span>
+  );
+}
+
+/**
+ * Shortened identifier that copies its full value on click.
+ *
+ * Identifiers are what an operator carries into a log query or a support
+ * thread, so the elided form has to give the whole thing back — the title
+ * attribute alone cannot be selected out of a table cell.
+ */
+export function IdentifierLabel({ value, className }: { value: string; className?: string }) {
+  return (
+    <CopyableValue
+      value={value}
+      label={`复制标识 ${value}`}
+      className={cn("zke-mono text-muted-foreground hover:text-foreground text-xs", className)}
+    >
+      {value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value}
+    </CopyableValue>
   );
 }
 

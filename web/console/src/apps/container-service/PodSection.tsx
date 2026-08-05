@@ -22,7 +22,7 @@ import {
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
-import { StatusBadge } from "@/components/common/status";
+import { AddressValues, StatusBadge } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatAbsolute } from "@/lib/time";
@@ -152,9 +152,7 @@ export function PodSection({
         header: "Pod IP",
         size: 130,
         cell: ({ row }) => (
-          <span className="zke-mono text-muted-foreground text-xs">
-            {row.original.pod_ip || "—"}
-          </span>
+          <AddressValues values={[row.original.pod_ip]} className="text-muted-foreground" />
         ),
       },
       {
@@ -499,20 +497,12 @@ function PodDetailCards({ pod }: { pod: KubernetesPodDetail }) {
         ) : null}
         <DetailRow
           label="Pod IP"
-          value={
-            <span className="zke-mono text-xs break-all">
-              {pod.pod_ips.length > 0 ? pod.pod_ips.join(", ") : pod.pod_ip || "—"}
-            </span>
-          }
+          // `pod_ips` is the dual-stack list and `pod_ip` its first entry; a
+          // Pod that has one but not the other is a Kubernetes version
+          // difference, not a Pod without an address.
+          value={<AddressValues values={pod.pod_ips.length > 0 ? pod.pod_ips : [pod.pod_ip]} />}
         />
-        <DetailRow
-          label="宿主 IP"
-          value={
-            <span className="zke-mono text-xs break-all">
-              {pod.host_ips.length > 0 ? pod.host_ips.join(", ") : "—"}
-            </span>
-          }
-        />
+        <DetailRow label="宿主 IP" value={<AddressValues values={pod.host_ips} />} />
         <DetailRow label="主机网络" value={pod.host_network ? "是" : "否"} />
         <DetailRow label="ServiceAccount" value={pod.service_account_name || "—"} />
         <DetailRow label="调度器" value={pod.scheduler_name || "—"} />

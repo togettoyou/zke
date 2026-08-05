@@ -23,6 +23,7 @@ import {
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
+import { AddressValues, CopyableValue } from "@/components/common/status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/misc";
@@ -356,9 +357,10 @@ function typeColumns(
         header: "ClusterIP",
         size: 140,
         cell: ({ row }) => (
-          <span className="zke-mono text-muted-foreground text-xs break-all">
-            {row.original.service?.cluster_ips.join(", ") || "—"}
-          </span>
+          <AddressValues
+            values={row.original.service?.cluster_ips ?? []}
+            className="text-muted-foreground"
+          />
         ),
       },
       {
@@ -404,9 +406,11 @@ function typeColumns(
         header: "地址",
         size: 160,
         cell: ({ row }) => (
-          <span className="zke-mono text-muted-foreground text-xs break-all">
-            {addressList(row.original.ingress?.load_balancer_ingress) || "尚未分配"}
-          </span>
+          <AddressValues
+            values={addressValues(row.original.ingress?.load_balancer_ingress)}
+            empty="尚未分配"
+            className="text-muted-foreground"
+          />
         ),
       },
     ];
@@ -435,20 +439,19 @@ function typeColumns(
       header: "地址",
       size: 160,
       cell: ({ row }) => (
-        <span className="zke-mono text-muted-foreground text-xs break-all">
-          {(row.original.gateway?.addresses ?? []).map((address) => address.value).join(", ") ||
-            "尚未分配"}
-        </span>
+        <AddressValues
+          values={(row.original.gateway?.addresses ?? []).map((address) => address.value)}
+          empty="尚未分配"
+          className="text-muted-foreground"
+        />
       ),
     },
   ];
 }
 
-function addressList(entries: { ip: string; hostname: string }[] | undefined): string {
-  return (entries ?? [])
-    .map((entry) => entry.ip || entry.hostname)
-    .filter(Boolean)
-    .join(", ");
+/** A LoadBalancer ingress entry carries either an IP or a hostname. */
+function addressValues(entries: { ip: string; hostname: string }[] | undefined): string[] {
+  return (entries ?? []).map((entry) => entry.ip || entry.hostname).filter(Boolean);
 }
 
 function NetworkingDetailView({
@@ -538,17 +541,19 @@ function NetworkingDetailView({
 }
 
 function ServiceCards({ view }: { view: NonNullable<NetworkingSummary["service"]> }) {
+  // What an operator pastes into a shell is an address and a port together, so
+  // the port copies the pair when the Service has an address to pair it with.
+  // A headless Service has none — `cluster_ips` is `None` — and no cluster
+  // domain is assumed in its place: the DNS name a headless Service is reached
+  // by depends on the cluster's own domain, which this response does not carry.
+  const address = view.cluster_ips.find((value) => value !== "" && value !== "None");
+
   return (
     <>
       <DetailCard title="Service">
         <DetailRow label="类型" value={view.spec.type || "ClusterIP"} />
         <DetailRow label="Headless" value={view.spec.headless ? "是" : "否"} />
-        <DetailRow
-          label="ClusterIP"
-          value={
-            <span className="zke-mono text-xs break-all">{view.cluster_ips.join(", ") || "—"}</span>
-          }
-        />
+        <DetailRow label="ClusterIP" value={<AddressValues values={view.cluster_ips} />} />
         <DetailRow label="IP 协议族" value={view.ip_families.join(", ") || "—"} />
         <DetailRow label="IP 分配策略" value={view.ip_family_policy || "—"} />
         {view.spec.external_name ? (
@@ -559,11 +564,7 @@ function ServiceCards({ view }: { view: NonNullable<NetworkingSummary["service"]
         <DetailRow label="内部流量策略" value={view.spec.internal_traffic_policy || "—"} />
         <DetailRow
           label="LoadBalancer"
-          value={
-            <span className="zke-mono text-xs break-all">
-              {addressList(view.load_balancer_ingress) || "—"}
-            </span>
-          }
+          value={<AddressValues values={addressValues(view.load_balancer_ingress)} />}
         />
       </DetailCard>
 
@@ -577,8 +578,19 @@ function ServiceCards({ view }: { view: NonNullable<NetworkingSummary["service"]
               label={port.name || String(port.port)}
               value={
                 <span className="zke-mono text-xs break-all">
-                  {port.port} → {port.target_port || port.port} / {port.protocol || "TCP"}
-                  {port.node_port ? ` · NodePort ${port.node_port}` : ""}
+                  <CopyableValue
+                    value={address ? `${address}:${port.port}` : String(port.port)}
+                    className="zke-mono text-xs"
+                  >
+                    {port.port}
+                  </CopyableValue>{" "}
+                  → {port.target_port || port.port} / {port.protocol || "TCP"}
+                  {port.node_port ? (
+                    <>
+                      {" · NodePort "}
+                      <CopyableValue value={String(port.node_port)} className="zke-mono text-xs" />
+                    </>
+                  ) : null}
                   {port.app_protocol ? ` · ${port.app_protocol}` : ""}
                 </span>
               }
@@ -606,9 +618,7 @@ function IngressCards({ view }: { view: NonNullable<NetworkingSummary["ingress"]
         <DetailRow
           label="地址"
           value={
-            <span className="zke-mono text-xs break-all">
-              {addressList(view.load_balancer_ingress) || "尚未分配"}
-            </span>
+            <AddressValues values={addressValues(view.load_balancer_ingress)} empty="尚未分配" />
           }
         />
       </DetailCard>
@@ -666,9 +676,10 @@ function GatewayCards({ view }: { view: NonNullable<NetworkingSummary["gateway"]
         <DetailRow
           label="地址"
           value={
-            <span className="zke-mono text-xs break-all">
-              {view.addresses.map((address) => address.value).join(", ") || "尚未分配"}
-            </span>
+            <AddressValues
+              values={view.addresses.map((address) => address.value)}
+              empty="尚未分配"
+            />
           }
         />
       </DetailCard>
