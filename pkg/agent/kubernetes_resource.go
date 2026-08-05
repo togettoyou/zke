@@ -954,8 +954,40 @@ func kubernetesResourceError(err error) *agentv1.ResourceResponse {
 		result,
 		statusCode,
 		reason,
-		"Kubernetes API request failed",
+		kubernetesRejectionMessage(err),
 	)
+}
+
+// The longest Kubernetes explanation worth carrying back to the caller. A
+// rejection listing every invalid field of a large object has said what it needs
+// to say well before this.
+const maxKubernetesRejectionMessage = 1024
+
+// kubernetesRejectionMessage is what the caller is told about a failed request.
+//
+// For `Invalid` — the API Server refusing the very object this caller submitted
+// — it is the API Server's own explanation, because that explanation is about
+// the submitted fields and is often the only place the reason appears at all: a
+// NodePort outside the cluster's configured range is rejected with the range in
+// the message, and nothing else in the request or the object says what that
+// range is. Every other failure keeps a fixed message; those are about the
+// cluster rather than the request, and their text is not the caller's business.
+func kubernetesRejectionMessage(err error) string {
+	if !apierrors.IsInvalid(err) {
+		return "Kubernetes API request failed"
+	}
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return "Kubernetes API request failed"
+	}
+	message := strings.TrimSpace(status.Status().Message)
+	if message == "" {
+		return "Kubernetes API request failed"
+	}
+	if len(message) > maxKubernetesRejectionMessage {
+		return message[:maxKubernetesRejectionMessage]
+	}
+	return message
 }
 
 func resourceErrorResponse(

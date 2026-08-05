@@ -693,6 +693,9 @@ func (handler *kubernetesResourceHandler) respondResourceError(
 func kubernetesResourceErrorMappings() []errorMapping {
 	return []errorMapping{
 		{kubernetesresource.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Kubernetes resource request"},
+		// Carries the API Server's own account of what it refused; the fixed
+		// message is only the fallback for a rejection that arrived without one.
+		{kubernetesresource.ErrUpstreamRejected, http.StatusBadRequest, "cluster_api_rejected", "Kubernetes rejected the submitted resource"},
 		{kubernetesresource.ErrResourceNotFound, http.StatusNotFound, "resource_not_found", "Kubernetes resource not found"},
 		{kubernetesresource.ErrAgentNotConnected, http.StatusServiceUnavailable, "agent_not_connected", "Cluster Agent is not connected"},
 		{kubernetesresource.ErrAgentUnsupported, http.StatusServiceUnavailable, "agent_capability_unavailable", "Cluster Agent does not support generic resource queries"},

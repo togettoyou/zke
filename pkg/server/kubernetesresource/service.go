@@ -46,6 +46,7 @@ var (
 	ErrResponseBudget         = errors.New("Server response buffer budget is exhausted")
 	ErrIdempotencyConflict    = errors.New("Kubernetes resource idempotency conflict")
 	ErrUpstreamConflict       = errors.New("Kubernetes API resource conflict")
+	ErrUpstreamRejected       = errors.New("Kubernetes rejected the submitted resource")
 	ErrConfigMapImmutable     = errors.New("Kubernetes ConfigMap is immutable")
 	ErrManagedResource        = errors.New("Kubernetes resource is managed by ZKE")
 	ErrUpstreamFailure        = errors.New("Kubernetes API request failed")
@@ -377,6 +378,29 @@ func responseError(response *agentv1.ResourceResponse) error {
 	return responseErrorWithNotFound(response, ErrNodeNotFound)
 }
 
+// UpstreamRejection is Kubernetes refusing the object the caller submitted,
+// together with the API Server's own account of why.
+//
+// It unwraps to ErrUpstreamRejected so callers can match it like any other
+// sentinel, while the detail travels with the specific failure.
+type UpstreamRejection struct {
+	Message string
+}
+
+func (rejection *UpstreamRejection) Error() string {
+	return ErrUpstreamRejected.Error() + ": " + rejection.Message
+}
+
+// Detail is the API Server's own account, safe to return to the caller: it
+// describes the object the caller just submitted.
+func (rejection *UpstreamRejection) Detail() string {
+	return rejection.Message
+}
+
+func (rejection *UpstreamRejection) Unwrap() error {
+	return ErrUpstreamRejected
+}
+
 func responseErrorWithNotFound(
 	response *agentv1.ResourceResponse,
 	notFound error,
@@ -395,6 +419,13 @@ func responseErrorWithNotFound(
 	}
 	switch response.GetResult() {
 	case agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT:
+		// `Invalid` is the API Server refusing the submitted object and saying
+		// which field it refused. That explanation is carried through; a request
+		// this Server itself found malformed never reaches an Agent, so nothing
+		// here is a guess about what the caller meant.
+		if response.GetReason() == "Invalid" && response.GetMessage() != "" {
+			return &UpstreamRejection{Message: response.GetMessage()}
+		}
 		return ErrInvalidInput
 	case agentv1.ResultCode_RESULT_CODE_UNAUTHENTICATED:
 		return ErrClusterUnauthenticated

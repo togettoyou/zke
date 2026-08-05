@@ -60,6 +60,17 @@ type errorMapping struct {
 	message string
 }
 
+// detailedError is a failure that already says something the caller can act on,
+// and whose account is returned in place of the mapping's fixed message.
+//
+// Being this interface is the opt-in: only a failure whose detail describes what
+// the caller sent — never the Server's or the cluster's internals — implements
+// it, so no mapping has to remember to allow it.
+type detailedError interface {
+	error
+	Detail() string
+}
+
 // respondError writes the response for err and reports whether it handled one.
 // Transport-level outcomes are mapped identically everywhere; a resource only
 // supplies the mappings for its own sentinels. Anything unmapped becomes a 500
@@ -75,7 +86,12 @@ func (handler baseHandler) respondError(
 	}
 	for _, mapping := range mappings {
 		if errors.Is(err, mapping.target) {
-			writeError(c, mapping.status, mapping.code, mapping.message)
+			message := mapping.message
+			var detailed detailedError
+			if errors.As(err, &detailed) && detailed.Detail() != "" {
+				message = detailed.Detail()
+			}
+			writeError(c, mapping.status, mapping.code, message)
 			return true
 		}
 	}

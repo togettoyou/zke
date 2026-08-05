@@ -29,6 +29,10 @@ export class ApiError extends Error {
   }
 
   get localizedMessage(): string {
+    const prefix = DETAILED_ERROR_PREFIXES[this.code];
+    if (prefix !== undefined && this.message !== "") {
+      return `${prefix}${this.message}`;
+    }
     return ERROR_MESSAGES[this.code] ?? ERROR_MESSAGES[String(this.status)] ?? this.message;
   }
 }
@@ -45,6 +49,19 @@ export function isForbidden(error: unknown): boolean {
   return isApiError(error) && error.status === 403;
 }
 
+/**
+ * Codes whose message is the answer, and must not be replaced by a general one.
+ *
+ * Kubernetes says exactly which field it refused and why — a NodePort outside
+ * the range this cluster was configured with, a value another controller owns —
+ * and that sentence is the only place the reason appears. It is kept verbatim,
+ * in Kubernetes' own wording, behind a line saying where it came from; a
+ * translation would have to guess at text this Console has never seen.
+ */
+const DETAILED_ERROR_PREFIXES: Record<string, string> = {
+  cluster_api_rejected: "Kubernetes 拒绝了该配置：",
+};
+
 export const ERROR_MESSAGES: Record<string, string> = {
   // Authentication and session
   unauthenticated: "登录状态已失效，请重新登录",
@@ -60,6 +77,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
 
   // Request validation
   invalid_request: "请求内容无效，请检查输入",
+  // The fallback for a rejection that arrived without the API Server's account;
+  // when it has one, DETAILED_ERROR_PREFIXES shows it instead.
+  cluster_api_rejected: "Kubernetes 拒绝了该配置，请检查字段取值",
   confirmation_required: "该操作需要显式确认",
   invalid_yaml: "YAML 无效，请检查文档结构和资源身份",
   manifest_too_large: "YAML 超过 4 MiB，请缩减内容后重试",
