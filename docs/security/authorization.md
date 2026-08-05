@@ -73,7 +73,8 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `cluster.connection.revoke`，以及通用 Kubernetes 写操作使用的 `cluster.resource.create`、
 `cluster.resource.update` 和 `cluster.resource.delete`，以及读取 Pod 日志使用的专用
 `cluster.pod.logs.read`、Web Terminal 使用的 `cluster.pod.exec`，以及读取 Kubernetes Event 使用的
-`cluster.event.read`，以及目标集群 Kubernetes RBAC 使用的 `cluster.rbac.read`、`cluster.rbac.manage`。
+`cluster.event.read`，以及目标集群 Kubernetes RBAC 使用的 `cluster.rbac.read`、`cluster.rbac.manage`，
+以及读写 Kubernetes Secret 使用的 `cluster.secret.read`、`cluster.secret.manage`。
 所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。
@@ -113,6 +114,16 @@ Kubernetes 中的权限，因此不引入独立权限位，也不从通用 Resou
 前四类必须指定 Namespace，PriorityClass 必须是集群级。更新替换整份托管 spec，并在写入前重新读取对象核对
 UID/resourceVersion；ResourceQuota 的 scopes、PriorityClass 的 value 和 PodDisruptionBudget 的 selector 不接受
 类型化修改。实际写入要求 CSRF、幂等键和显式确认；审计记录资源身份与结果，不记录 spec 正文。
+
+Kubernetes Secret 使用独立的 `cluster.secret.read` 与 `cluster.secret.manage`，不由 `cluster.read` 或
+`cluster.resource.*` 蕴含：能读工作负载配置和能读凭证是两个问题，一个角色不该因为前者顺带获得后者。通用
+Resource 与 YAML API 对 Secret 的拒绝保持不变，专用 Secret 服务是进程内唯一会在 Resource Stream 请求上设置
+`secret_access` 的地方，而该字段在 Go 中不可导出。Agent 侧再判定一次：只在带该字段时才动 Secret，并拒绝任何
+指向 Agent 自身命名空间的 Secret 请求——那里存放 Agent 身份私钥、注册令牌和它据以信任 Server 的证书。旧版本
+Agent 不认识该字段会继续拒绝，因此 Server 先于 Agent 升级时该能力不可用，而不是被绕过。带
+`app.kubernetes.io/managed-by=zke-server` 的 Secret 不列出、不可读写，返回与权限不足区分开的
+`secret_managed_by_platform`。列表不返回任何取值，详情返回的取值默认在界面上遮蔽；审计记录发起者、目标和
+结果，不记录取值。
 
 目标集群内的 Kubernetes RBAC 使用独立的 `cluster.rbac.read` 与 `cluster.rbac.manage`，不复用普通
 `cluster.read` 或 `cluster.resource.*`。ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding

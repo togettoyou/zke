@@ -75,6 +75,7 @@ type handlers struct {
 	kubernetesPolicy        *kubernetesPolicyHandler
 	kubernetesAuthorization *kubernetesAuthorizationHandler
 	kubernetesConfigMap     *kubernetesConfigMapHandler
+	kubernetesSecret        *kubernetesSecretHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
 	resourceManagement      *resourceManagementHandler
@@ -242,6 +243,12 @@ func New(
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesAuthorization: newKubernetesAuthorizationHandler(
+			logger,
+			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesSecret: newKubernetesSecretHandler(
 			logger,
 			dependencies.KubernetesResourceService,
 			dependencies.AuditService,

@@ -573,8 +573,15 @@ type ResourceRequest struct {
 	BodySize        uint64                 `protobuf:"varint,9,opt,name=body_size,json=bodySize,proto3" json:"body_size,omitempty"`
 	MutationOptions *MutationOptions       `protobuf:"bytes,10,opt,name=mutation_options,json=mutationOptions,proto3" json:"mutation_options,omitempty"`
 	DeleteOptions   *DeleteOptions         `protobuf:"bytes,11,opt,name=delete_options,json=deleteOptions,proto3" json:"delete_options,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Set only by the Server's dedicated Secret API, and honoured only for
+	// core/v1 Secrets. The Agent refuses Secrets on every other path, so the
+	// generic resource and YAML APIs cannot reach them even if the Server were
+	// made to ask. An Agent that predates this field ignores it and keeps
+	// refusing, which is the behaviour a Server upgraded ahead of its Agents
+	// should get.
+	SecretAccess  bool `protobuf:"varint,12,opt,name=secret_access,json=secretAccess,proto3" json:"secret_access,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResourceRequest) Reset() {
@@ -682,6 +689,13 @@ func (x *ResourceRequest) GetDeleteOptions() *DeleteOptions {
 		return x.DeleteOptions
 	}
 	return nil
+}
+
+func (x *ResourceRequest) GetSecretAccess() bool {
+	if x != nil {
+		return x.SecretAccess
+	}
+	return false
 }
 
 type ResourceResponse struct {
@@ -795,7 +809,7 @@ const file_api_agent_v1_resource_proto_rawDesc = "" +
 	"\x14grace_period_seconds\x18\x02 \x01(\x03H\x00R\x12gracePeriodSeconds\x88\x01\x01\x12A\n" +
 	"\vpropagation\x18\x03 \x01(\x0e2\x1f.zke.agent.v1.DeletePropagationR\vpropagation\x12I\n" +
 	"\rpreconditions\x18\x04 \x01(\v2#.zke.agent.v1.ResourcePreconditionsR\rpreconditionsB\x17\n" +
-	"\x15_grace_period_seconds\"\xc4\x04\n" +
+	"\x15_grace_period_seconds\"\xe9\x04\n" +
 	"\x0fResourceRequest\x12.\n" +
 	"\x04verb\x18\x01 \x01(\x0e2\x1a.zke.agent.v1.ResourceVerbR\x04verb\x12>\n" +
 	"\bresource\x18\x02 \x01(\v2\".zke.agent.v1.GroupVersionResourceR\bresource\x12\x1c\n" +
@@ -809,7 +823,8 @@ const file_api_agent_v1_resource_proto_rawDesc = "" +
 	"\tbody_size\x18\t \x01(\x04R\bbodySize\x12H\n" +
 	"\x10mutation_options\x18\n" +
 	" \x01(\v2\x1d.zke.agent.v1.MutationOptionsR\x0fmutationOptions\x12B\n" +
-	"\x0edelete_options\x18\v \x01(\v2\x1b.zke.agent.v1.DeleteOptionsR\rdeleteOptions\"\xec\x01\n" +
+	"\x0edelete_options\x18\v \x01(\v2\x1b.zke.agent.v1.DeleteOptionsR\rdeleteOptions\x12#\n" +
+	"\rsecret_access\x18\f \x01(\bR\fsecretAccess\"\xec\x01\n" +
 	"\x10ResourceResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\x05R\x14kubernetesStatusCode\x12\x16\n" +

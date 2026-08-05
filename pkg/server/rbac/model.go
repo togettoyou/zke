@@ -22,6 +22,8 @@ const (
 	PermissionClusterResourceDelete   Permission = "cluster.resource.delete"
 	PermissionClusterRBACRead         Permission = "cluster.rbac.read"
 	PermissionClusterRBACManage       Permission = "cluster.rbac.manage"
+	PermissionClusterSecretRead       Permission = "cluster.secret.read"
+	PermissionClusterSecretManage     Permission = "cluster.secret.manage"
 	PermissionClusterConnectionRevoke Permission = "cluster.connection.revoke"
 	PermissionUserRead                Permission = "user.read"
 	PermissionUserManage              Permission = "user.manage"

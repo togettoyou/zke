@@ -31,6 +31,8 @@ var allPermissions = []Permission{
 	PermissionClusterResourceDelete,
 	PermissionClusterRBACRead,
 	PermissionClusterRBACManage,
+	PermissionClusterSecretRead,
+	PermissionClusterSecretManage,
 	PermissionClusterConnectionRevoke,
 	PermissionUserRead,
 	PermissionUserManage,

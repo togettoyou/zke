@@ -42,6 +42,11 @@ type ListResourcesInput struct {
 	LabelSelector   string
 	FieldSelector   string
 	ResourceVersion string
+	// Unexported on purpose: only this package can ask the Agent to act on a
+	// Secret, and only the Secret service does. A caller outside it — the
+	// generic resource handler, the YAML handler — has no way to set this, so
+	// there is no request shape those endpoints can send that reaches one.
+	secretAccess bool
 }
 
 type GetResourceInput struct {
@@ -49,6 +54,8 @@ type GetResourceInput struct {
 	Resource  ResourceIdentity
 	Namespace string
 	Name      string
+	/** See ListResourcesInput.secretAccess. */
+	secretAccess bool
 }
 
 type MutationOptions struct {
@@ -65,6 +72,8 @@ type CreateResourceInput struct {
 	Options        MutationOptions
 	Confirm        bool
 	IdempotencyKey string
+	/** See ListResourcesInput.secretAccess. */
+	secretAccess bool
 }
 
 type UpdateResourceInput struct {
@@ -76,6 +85,8 @@ type UpdateResourceInput struct {
 	Options        MutationOptions
 	Confirm        bool
 	IdempotencyKey string
+	/** See ListResourcesInput.secretAccess. */
+	secretAccess bool
 }
 
 type PatchResourceInput struct {
@@ -106,6 +117,8 @@ type DeleteResourceInput struct {
 	Propagation        agentv1.DeletePropagation
 	Preconditions      DeletePreconditions
 	IdempotencyKey     string
+	/** See ListResourcesInput.secretAccess. */
+	secretAccess bool
 }
 
 type ResourcePage struct {
@@ -187,6 +200,7 @@ func (service *Service) ListResources(
 			Resource:       protocolResource(input.Resource),
 			Namespace:      input.Namespace,
 			Representation: agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			SecretAccess:   input.secretAccess,
 			ListOptions: &agentv1.ListOptions{
 				LabelSelector:   input.LabelSelector,
 				FieldSelector:   input.FieldSelector,
@@ -261,6 +275,7 @@ func (service *Service) GetResource(
 			Namespace:      input.Namespace,
 			Name:           input.Name,
 			Representation: agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			SecretAccess:   input.secretAccess,
 		},
 		nil,
 		body,
@@ -301,6 +316,7 @@ func (service *Service) CreateResource(
 		input.Options,
 		input.Confirm,
 		input.IdempotencyKey,
+		input.secretAccess,
 	)
 	if err != nil {
 		return nil, err
@@ -319,6 +335,7 @@ func (service *Service) CreateResource(
 			Representation:  agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
 			BodySize:        uint64(len(body)),
 			MutationOptions: protocolMutationOptions(input.Options),
+			SecretAccess:    input.secretAccess,
 		},
 		body,
 		input.IdempotencyKey,
@@ -342,6 +359,7 @@ func (service *Service) UpdateResource(
 		input.Options,
 		input.Confirm,
 		input.IdempotencyKey,
+		input.secretAccess,
 	)
 	if err != nil || object.GetResourceVersion() == "" {
 		return nil, ErrInvalidInput
@@ -361,6 +379,7 @@ func (service *Service) UpdateResource(
 			Representation:  agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
 			BodySize:        uint64(len(body)),
 			MutationOptions: protocolMutationOptions(input.Options),
+			SecretAccess:    input.secretAccess,
 		},
 		body,
 		input.IdempotencyKey,
@@ -382,6 +401,7 @@ func (service *Service) PatchResource(
 		input.Options,
 		input.Confirm,
 		input.IdempotencyKey,
+		false,
 	); err != nil ||
 		!validPatchType(input.PatchType) ||
 		len(input.Patch) == 0 ||
@@ -408,6 +428,7 @@ func (service *Service) PatchResource(
 			input.Options,
 			input.Confirm,
 			input.IdempotencyKey,
+			false,
 		)
 		if err != nil {
 			return nil, err
@@ -444,7 +465,7 @@ func (service *Service) DeleteResource(
 ) error {
 	if !validation.IsUUID(input.ClusterID) ||
 		!validResourceIdentity(input.Resource) ||
-		sensitiveResource(input.Resource.Group, input.Resource.Resource) ||
+		deniedResource(input.Resource, input.secretAccess) ||
 		!validNamespace(input.Namespace) ||
 		!validPathSegment(input.Name) ||
 		(!input.DryRun && !input.Confirm) ||
@@ -480,6 +501,7 @@ func (service *Service) DeleteResource(
 			Namespace:     input.Namespace,
 			Name:          input.Name,
 			DeleteOptions: options,
+			SecretAccess:  input.secretAccess,
 		},
 		nil,
 		io.Discard,
@@ -501,6 +523,7 @@ func validatedMutationObject(
 	options MutationOptions,
 	confirm bool,
 	idempotencyKey string,
+	secretAccess bool,
 ) (*unstructured.Unstructured, error) {
 	if err := validateMutationBase(
 		clusterID,
@@ -510,6 +533,7 @@ func validatedMutationObject(
 		options,
 		confirm,
 		idempotencyKey,
+		secretAccess,
 	); err != nil || input == nil {
 		return nil, ErrInvalidInput
 	}
@@ -542,10 +566,11 @@ func validateMutationBase(
 	options MutationOptions,
 	confirm bool,
 	idempotencyKey string,
+	secretAccess bool,
 ) error {
 	if !validation.IsUUID(clusterID) ||
 		!validResourceIdentity(resource) ||
-		sensitiveResource(resource.Group, resource.Resource) ||
+		deniedResource(resource, secretAccess) ||
 		!validNamespace(namespace) ||
 		(name != "" && !validPathSegment(name)) ||
 		(!options.DryRun && !confirm) ||
@@ -608,6 +633,7 @@ func validatePatchIdentity(input PatchResourceInput) error {
 			input.Options,
 			input.Confirm,
 			input.IdempotencyKey,
+			false,
 		)
 		return err
 	}
@@ -754,7 +780,7 @@ func protocolResource(resource ResourceIdentity) *agentv1.GroupVersionResource {
 func validateListResourcesInput(input ListResourcesInput) error {
 	if !validation.IsUUID(input.ClusterID) ||
 		!validResourceIdentity(input.Resource) ||
-		sensitiveResource(input.Resource.Group, input.Resource.Resource) ||
+		deniedResource(input.Resource, input.secretAccess) ||
 		!validNamespace(input.Namespace) ||
 		input.Limit < 1 ||
 		input.Limit > MaxResourceListLimit ||
@@ -778,7 +804,7 @@ func validateListResourcesInput(input ListResourcesInput) error {
 func validateGetResourceInput(input GetResourceInput) error {
 	if !validation.IsUUID(input.ClusterID) ||
 		!validResourceIdentity(input.Resource) ||
-		sensitiveResource(input.Resource.Group, input.Resource.Resource) ||
+		deniedResource(input.Resource, input.secretAccess) ||
 		!validNamespace(input.Namespace) ||
 		!validPathSegment(input.Name) {
 		return ErrInvalidInput
@@ -805,8 +831,27 @@ func validPathSegment(value string) bool {
 		!strings.ContainsAny(value, "/?#")
 }
 
+/*
+ * Resources the generic path will not touch.
+ *
+ * Events have their own API and their own stream. Secrets have their own API
+ * too, and it reaches this layer with `secretAccess` set — which is why the
+ * checks below take that flag rather than calling this directly for a Secret.
+ * A caller outside this package cannot set it, so there is no request shape
+ * the generic resource or YAML endpoints can build that gets past here.
+ */
 func sensitiveResource(group string, resource string) bool {
 	return group == "" && (resource == "secrets" || resource == "events")
+}
+
+func deniedResource(resource ResourceIdentity, secretAccess bool) bool {
+	if secretAccess &&
+		resource.Group == "" &&
+		resource.Version == "v1" &&
+		resource.Resource == "secrets" {
+		return false
+	}
+	return sensitiveResource(resource.Group, resource.Resource)
 }
 
 func supportedVerbs(verbs []string) []string {

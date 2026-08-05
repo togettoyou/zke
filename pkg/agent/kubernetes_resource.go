@@ -53,6 +53,7 @@ func newKubernetesResourceHandler(
 	client dynamic.Interface,
 	discoveryClient discovery.DiscoveryInterface,
 	maxBodyBytes uint64,
+	identityNamespace string,
 ) func(
 	context.Context,
 	*agentv1.ResourceRequest,
@@ -97,7 +98,7 @@ func newKubernetesResourceHandler(
 				"requested Kubernetes resource representation is unsupported",
 			), nil, nil
 		}
-		if !allowedKubernetesResourceRequest(request) {
+		if !allowedKubernetesResourceRequest(request, identityNamespace) {
 			return resourceErrorResponse(
 				agentv1.ResultCode_RESULT_CODE_FORBIDDEN,
 				http.StatusForbidden,
@@ -371,17 +372,18 @@ func resourceVerbName(verb agentv1.ResourceVerb) string {
 }
 
 // allowedKubernetesResourceRequest is deliberately narrower than arbitrary
-// Kubernetes API access. Phase 2 permits CRUD only on primary, non-Secret
-// resources; Discovery and the Agent ServiceAccount RBAC remain the
-// resource-specific authorization boundaries.
-func allowedKubernetesResourceRequest(request *agentv1.ResourceRequest) bool {
+// Kubernetes API access. Phase 2 permits CRUD only on primary resources, with
+// Secrets reachable solely through the Server's dedicated Secret API and never
+// in this Agent's own namespace; Discovery and the Agent ServiceAccount RBAC
+// remain the resource-specific authorization boundaries.
+func allowedKubernetesResourceRequest(
+	request *agentv1.ResourceRequest,
+	identityNamespace string,
+) bool {
 	resource := request.GetResource()
 	return resource != nil &&
 		request.GetSubresource() == "" &&
-		!sensitiveKubernetesResource(
-			resource.GetGroup(),
-			resource.GetResource(),
-		) &&
+		allowedKubernetesResource(request, identityNamespace) &&
 		supportedKubernetesResourceVerb(request.GetVerb())
 }
 
@@ -399,8 +401,53 @@ func supportedKubernetesResourceVerb(verb agentv1.ResourceVerb) bool {
 	}
 }
 
-func sensitiveKubernetesResource(group string, resource string) bool {
+/*
+ * Kept out of the Discovery catalog.
+ *
+ * Neither is manageable through the generic resource API, and a catalog entry
+ * for one would be an entry whose every request is refused. Secrets are
+ * managed through their own API, which does not read this catalog.
+ */
+func hiddenFromKubernetesCatalog(group string, resource string) bool {
 	return group == "" && (resource == "secrets" || resource == "events")
+}
+
+/*
+ * Whether this Agent will act on the resource at all.
+ *
+ * Two core resources are refused here as well as by the Server, so a Server
+ * that asked for them — through a bug, or because it had been made to — still
+ * gets nothing. Events have their own stream and never travel this one.
+ *
+ * Secrets are the exception, and only under the flag the Server's dedicated
+ * Secret API sets: it is checked here rather than trusted from the Server
+ * alone, which keeps the generic resource and YAML APIs unable to reach a
+ * Secret no matter what they send.
+ */
+func allowedKubernetesResource(request *agentv1.ResourceRequest, identityNamespace string) bool {
+	resource := request.GetResource()
+	group, name := resource.GetGroup(), resource.GetResource()
+	if group != "" {
+		return true
+	}
+	switch name {
+	case "events":
+		return false
+	case "secrets":
+		// Never this Agent's own namespace, whatever the Server asks and
+		// whatever the ServiceAccount is allowed. That namespace holds the
+		// Agent's identity key, its enrollment token and the certificates it
+		// trusts the Server by; reading them is impersonating this Agent, and
+		// no Console page has any business doing it. A list is refused rather
+		// than filtered, because a Secret list of one namespace is a request
+		// for that namespace.
+		return request.GetSecretAccess() &&
+			resource.GetVersion() == "v1" &&
+			request.GetNamespace() != "" &&
+			request.GetNamespace() != identityNamespace
+	default:
+		return true
+	}
 }
 
 var customResourceDefinitionResource = schema.GroupVersionResource{
@@ -522,7 +569,7 @@ func discoverKubernetesResources(
 			if apiResource.Version != "" {
 				version = apiResource.Version
 			}
-			if sensitiveKubernetesResource(group, apiResource.Name) {
+			if hiddenFromKubernetesCatalog(group, apiResource.Name) {
 				continue
 			}
 			key := group + "\x00" + version + "\x00" + apiResource.Name

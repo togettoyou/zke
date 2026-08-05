@@ -26,7 +26,7 @@ func TestKubernetesResourceHandlerMutatesGenericResources(t *testing.T) {
 	t.Parallel()
 
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	handler := newKubernetesResourceHandler(client, nil, 1024*1024)
+	handler := newKubernetesResourceHandler(client, nil, 1024*1024, "zke-system")
 	resource := &agentv1.GroupVersionResource{
 		Group:    "example.io",
 		Version:  "v1alpha1",
@@ -308,7 +308,7 @@ func TestKubernetesResourceHandlerDiscoversBuiltInAndCustomResources(
 			},
 		},
 	}
-	handler := newKubernetesResourceHandler(nil, fakeDiscovery, 1024*1024)
+	handler := newKubernetesResourceHandler(nil, fakeDiscovery, 1024*1024, "zke-system")
 	response, body, err := handler(
 		context.Background(),
 		&agentv1.ResourceRequest{
@@ -359,7 +359,7 @@ func TestKubernetesResourceHandlerListsAndGetsCustomResources(t *testing.T) {
 		"spec": map[string]any{"size": "large"},
 	}}
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), widget)
-	handler := newKubernetesResourceHandler(client, nil, 1024*1024)
+	handler := newKubernetesResourceHandler(client, nil, 1024*1024, "zke-system")
 	resource := &agentv1.GroupVersionResource{
 		Group:    "example.io",
 		Version:  "v1alpha1",
@@ -435,7 +435,7 @@ func TestKubernetesResourceHandlerListsAndGetsNodes(t *testing.T) {
 		first,
 		second,
 	)
-	handler := newKubernetesResourceHandler(client, nil, 1024*1024)
+	handler := newKubernetesResourceHandler(client, nil, 1024*1024, "zke-system")
 
 	response, body, err := handler(
 		context.Background(),
@@ -515,7 +515,7 @@ func TestKubernetesResourceHandlerMapsKubernetesErrors(t *testing.T) {
 			nil,
 		)
 	})
-	handler := newKubernetesResourceHandler(client, nil, 1024)
+	handler := newKubernetesResourceHandler(client, nil, 1024, "zke-system")
 	response, body, err := handler(
 		context.Background(),
 		&agentv1.ResourceRequest{
@@ -550,7 +550,7 @@ func TestKubernetesResourceHandlerRejectsUnsupportedRepresentationAndLargeBody(
 		"large": "value-that-does-not-fit",
 	})
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), node)
-	handler := newKubernetesResourceHandler(client, nil, 8)
+	handler := newKubernetesResourceHandler(client, nil, 8, "zke-system")
 
 	response, body, err := handler(
 		context.Background(),
@@ -688,7 +688,7 @@ func TestKubernetesResourceDiscoveryMarksCustomResourceDefinitions(t *testing.T)
 			},
 		},
 	}
-	handler := newKubernetesResourceHandler(client, fakeDiscovery, 1024*1024)
+	handler := newKubernetesResourceHandler(client, fakeDiscovery, 1024*1024, "zke-system")
 	response, body, err := handler(
 		context.Background(),
 		&agentv1.ResourceRequest{Verb: agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER},
@@ -734,7 +734,7 @@ func TestKubernetesResourceDiscoveryWithoutCustomResourceAccess(t *testing.T) {
 			}},
 		},
 	}
-	handler := newKubernetesResourceHandler(nil, fakeDiscovery, 1024*1024)
+	handler := newKubernetesResourceHandler(nil, fakeDiscovery, 1024*1024, "zke-system")
 	_, body, err := handler(
 		context.Background(),
 		&agentv1.ResourceRequest{Verb: agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER},
@@ -753,5 +753,51 @@ func TestKubernetesResourceDiscoveryWithoutCustomResourceAccess(t *testing.T) {
 	}
 	if catalog.CustomResourcesKnown || len(catalog.Resources) != 1 || catalog.Resources[0].CustomResource {
 		t.Fatalf("unexpected catalog without CRD access: %+v", catalog)
+	}
+}
+
+/*
+ * The Agent's own refusal, which is not the Server's.
+ *
+ * A Secret is reachable only when the Server's dedicated Secret API asked for
+ * it, and never in the namespace holding this Agent's identity key, enrollment
+ * token and the certificates it trusts the Server by. Both rules are checked
+ * here rather than assumed of the Server, because a Server that had been made
+ * to ask is exactly the case they exist for.
+ */
+func TestSecretRequestsAreRefusedWithoutTheFlagOrInTheAgentNamespace(t *testing.T) {
+	t.Parallel()
+
+	secret := func(namespace string, access bool) *agentv1.ResourceRequest {
+		return &agentv1.ResourceRequest{
+			Verb: agentv1.ResourceVerb_RESOURCE_VERB_GET,
+			Resource: &agentv1.GroupVersionResource{
+				Version: "v1", Resource: "secrets",
+			},
+			Namespace:    namespace,
+			Name:         "registry",
+			SecretAccess: access,
+		}
+	}
+	if allowedKubernetesResourceRequest(secret("default", false), "zke-system") {
+		t.Fatal("a Secret request without the Secret API flag was allowed")
+	}
+	if allowedKubernetesResourceRequest(secret("zke-system", true), "zke-system") {
+		t.Fatal("a Secret request in the Agent's own namespace was allowed")
+	}
+	if !allowedKubernetesResourceRequest(secret("default", true), "zke-system") {
+		t.Fatal("a Secret request from the Secret API was refused")
+	}
+	// The flag says nothing about anything else: it is not a general override.
+	events := &agentv1.ResourceRequest{
+		Verb: agentv1.ResourceVerb_RESOURCE_VERB_LIST,
+		Resource: &agentv1.GroupVersionResource{
+			Version: "v1", Resource: "events",
+		},
+		Namespace:    "default",
+		SecretAccess: true,
+	}
+	if allowedKubernetesResourceRequest(events, "zke-system") {
+		t.Fatal("the Secret flag allowed an Event request")
 	}
 }

@@ -40,6 +40,11 @@
   固定管理 `core/v1 ConfigMap`；列表仅返回键名和大小统计，详情返回完整 `data` 与标准 Base64
   `binary_data`，写操作包含 1 MiB 内容校验、immutable 保护、DryRun、确认、幂等、UID/resourceVersion
   并发保护与审计；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets` 和
+  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets/{secret_name}`：
+  固定管理 `core/v1 Secret`；读取要求 `cluster.secret.read`，写入要求 `cluster.secret.manage`，
+  两者都不由 `cluster.read` 或 `cluster.resource.*` 蕴含；列表只返回键名、大小、类型和元数据，
+  取值仅由单对象详情返回；属于 ZKE 安装本身的 Secret 既不列出也不可读写；
 - `GET`、`POST /api/v1/clusters/{cluster_id}/storage/{storage_resource}` 和对应单对象
   `GET`、`PUT`、`DELETE`：固定管理集群级 `persistentvolumes` 或 `storageclasses`；
 - `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/persistentvolumeclaims` 和对应
@@ -102,7 +107,8 @@
   DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
   StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、
   PriorityClass、ServiceAccount 及四类 Kubernetes RBAC 资源的
-  `get`、`list`、`create`、`update`、`delete`，`apiextensions.k8s.io/v1 customresourcedefinitions` 的只读
+  `get`、`list`、`create`、`update`、`delete`，Secret 的同五个动词（不含 `watch`；Agent 只在专用 Secret 接口的
+  请求上、且目标不是自身命名空间时才会执行），`apiextensions.k8s.io/v1 customresourcedefinitions` 的只读
   `get`、`list`（仅用于判定哪些资源来自 CRD，不含定义或修改 CRD 的能力），并单独授予 `pods/log` 的 `get`
   和 `pods/exec` 的 `create`；Eviction Subresource 仍未授权，
   其他资源也需安装方显式增加最小 RBAC。
@@ -286,8 +292,8 @@ ConfigMap 类型化后端固定使用 `core/v1 ConfigMap`，不会接受调用�
 两类键不重叠及解码后总大小不超过 1 MiB。更新是两张数据表的完整替换，要求显式提交空表，并使用当前 UID 与
 resourceVersion 防止覆盖同名重建或并发修改；一旦设置 immutable，内容变更或恢复为 false 会被拒绝。
 该接口复用通用 Resource Stream、集群权限、CSRF、DryRun、确认、幂等与审计链路，但审计不记录配置正文。
-Secret 仍被通用 Server 与 Agent 双重拒绝，也没有借用 ConfigMap 路由或 Agent ClusterRole；它需要独立权限、
-响应脱敏和更严格的审计设计后才能开放。
+Secret 有独立的类型化接口，不借用 ConfigMap 路由，也不经过通用 Resource 与 YAML 接口——后两者对 Secret 的
+拒绝保持原样。
 
 Console 配置管理页面列出所选命名空间的 ConfigMap，展示键名、总大小和 immutable 标记——列表接口不返回配置
 正文，页面也不去逐个补齐，否则等于把整个命名空间的配置搬进浏览器。内容只在详情页按对象读取：文本值按原样以
@@ -303,7 +309,38 @@ Console 配置管理页面列出所选命名空间的 ConfigMap，展示键名�
 拉取而更新：取一个更新的版本号会把本该被服务端拒绝的冲突变成静默覆盖。immutable 只在创建时可设，
 已标记为不可变的对象在列表和详情中都不提供编辑入口，并说明只能删除重建。
 
-Secret 不在此处管理的原因（Agent 未被授予 Secret 权限）当前只记录在本文档中，页面上没有对应说明。
+Secret 管理与 ConfigMap 放在同一个「配置管理」分区的两个标签页下：它们是同一件事——交给工作负载的配置——
+而形状与代价不同，因此不压成一张表。
+
+四道关卡决定谁能读到一个 Secret 的取值，缺一不可：
+
+- **专用权限**：读要求 `cluster.secret.read`，写要求 `cluster.secret.manage`。两者都不由 `cluster.read` 或
+  `cluster.resource.*` 蕴含，默认只有 admin 角色拥有——能看配置和能看凭证是两个问题，一个角色不该因为前者
+  顺带获得后者。没有读权限时 Secret 标签页不出现，服务端仍独立判定。
+- **服务端专线**：通用 Resource 与 YAML 接口对 `core/v1 Secret` 的拒绝没有放开；类型化 Secret 服务是进程内
+  唯一会在请求上设置 `secret_access` 的地方，而该字段在 Go 中不可导出，包外无法设置。
+- **Agent 二次判定**：Agent 只在请求带 `secret_access` 时才动 Secret，并且拒绝任何指向自己所在命名空间的
+  Secret 请求——那里放着 Agent 的身份私钥、注册令牌和它据以信任 Server 的证书，读到它们等于冒充这个 Agent。
+  这两条在 Agent 侧检查，而不是信任 Server 的说法。旧版本 Agent 不认识该字段，会继续拒绝，因此 Server 先于
+  Agent 升级时该能力表现为不可用，而不是绕过。
+- **平台对象过滤**：带 `app.kubernetes.io/managed-by=zke-server` 的 Secret 不出现在列表中，按名称读取、更新和
+  删除都返回 `403 secret_managed_by_platform`——这与权限不足是两回事，调用者可能持有全部 Secret 权限，那个对象
+  依然不属于它管理的范围。
+
+安装清单为 Agent ServiceAccount 增加了 Secret 的 `get`、`list`、`create`、`update`、`delete`，没有 `watch`，
+也没有 Subresource。这个授权是该能力得以存在的前提，而不是它的授权边界——边界是上面四条。
+
+列表只返回键名、大小、类型和不可变标记；取值只在按名称打开一个对象时返回，且默认遮蔽，逐个键点击才显示：
+这个页面被用来核对名称和大小的次数远多于用来读凭证，而一打开就把命名空间里所有口令铺在屏幕上，泄露的对象
+是站在操作者身后的任何人。取值以标准 Base64 传输（Kubernetes 就是这样存的）；字节不是 UTF-8 文本时不做渲染，
+只显示大小并提供复制 Base64——浏览器从那些字节里猜出来的文本不是内容。
+
+表单把取值分成「数据」和「二进制数据」两组，与 ConfigMap 一致：前者按 UTF-8 编码为 Base64 后提交，后者原样
+提交。类型在创建时选择、创建后只读，Kubernetes 不允许修改；`kubernetes.io/service-account-token` 不接受，
+它由 Kubernetes 为 ServiceAccount 签发，手工创建等于为一个身份铸造令牌。更新是整体替换，携带打开表单时的
+UID 与 resourceVersion。审计记录发起者、目标和结果，不记录任何取值。
+
+Secret 详情不提供 YAML 入口：通用 YAML 接口对 Secret 的拒绝没有放开，一个打不开的按钮不该出现在那里。
 
 存储类型化后端把作用域写进路由和领域校验：PV、StorageClass 只能走集群级路径，PVC 只能走明确 Namespace
 路径，调用方不能覆盖 GVR。PV 创建首轮支持 CSI、NFS 和 Local source；CSI Secret 只传引用名称，不读取 Secret
@@ -616,7 +653,6 @@ resourceVersion 在挂载时固定，不随后台重新拉取更新：取一个�
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
 - Gateway API 的 HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 类型化管理；
-- Secret 的专用敏感管理链路；
 - 从 Pod、工作负载等具体对象直接跳转到按 UID 过滤的关联事件；
 - YAML 编辑器的结构校验与差异对比；
 - 面向具体资源的表单化创建、更新和删除体验。

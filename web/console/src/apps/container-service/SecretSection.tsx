@@ -1,10 +1,10 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useConfigMap, useConfigMaps, useDeleteConfigMap } from "@/api/queries/configmaps";
-import type { KubernetesConfigMapDetail, KubernetesConfigMapSummary } from "@/api/types";
+import { useSecret, useSecrets, useDeleteSecret } from "@/api/queries/secrets";
+import type { KubernetesSecretDetail, KubernetesSecretSummary } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
@@ -12,21 +12,22 @@ import { DetailCard, DetailKeyValues, DetailRow } from "@/components/common/deta
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
+import { CopyButton } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/misc";
 import { HintTooltip } from "@/components/ui/tooltip";
+import { cn } from "@/lib/cn";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { ConfigMapForm } from "./ConfigMapForm";
+import { SecretForm } from "./SecretForm";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
-import { YamlEditorView } from "./YamlEditorView";
 
 const PAGE_SIZE = 50;
 
-type ConfigMapSectionProps = ClusterSectionProps & {
+type SecretSectionProps = ClusterSectionProps & {
   /** The Namespace every query and mutation in this section is scoped to. */
   namespace: string;
   /**
@@ -41,41 +42,44 @@ type ConfigMapSectionProps = ClusterSectionProps & {
 };
 
 /**
- * ConfigMaps of one Namespace of one Cluster.
+ * Secrets of one Namespace of one Cluster.
  *
  * Secrets are deliberately absent: the Agent is not granted access to them, and
  * this section must not read as though a Secret view is merely missing.
  */
-export function ConfigMapSection({
+export function SecretSection({
   clusterId,
   clusterName,
   namespace,
   tenantId,
   projectId,
   tabs,
-}: ConfigMapSectionProps) {
+}: SecretSectionProps) {
   const { permissions } = useSessionContext();
   const pager = useContinuePagination(`${clusterId}/${namespace}`);
-  const list = useConfigMaps(clusterId, namespace, {
+  const list = useSecrets(clusterId, namespace, {
     limit: PAGE_SIZE,
     ...(pager.token ? { continue: pager.token } : {}),
   });
   const [detailName, setDetailName] = useState<string | null>(null);
-  const [yamlName, setYamlName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<KubernetesConfigMapSummary | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<KubernetesSecretSummary | null>(null);
   const [deletePreviewed, setDeletePreviewed] = useState(false);
   const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
   const deleteApplyKey = useSubmissionKey(deleteTarget !== null);
-  const remove = useDeleteConfigMap();
+  const remove = useDeleteSecret();
 
   const projectScope = { type: "project" as const, tenantId, projectId };
-  const canCreate = permissions.can("cluster.resource.create", projectScope);
-  const canUpdate = permissions.can("cluster.resource.update", projectScope);
-  const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  // Managing a credential is one permission, not three: `cluster.secret.manage`
+  // covers create, update and delete, and neither it nor `cluster.secret.read`
+  // is implied by the general `cluster.resource.*` permissions.
+  const canManage = permissions.can("cluster.secret.manage", projectScope);
+  const canCreate = canManage;
+  const canUpdate = canManage;
+  const canDelete = canManage;
 
-  const columns = useMemo<ColumnDef<KubernetesConfigMapSummary, unknown>[]>(
+  const columns = useMemo<ColumnDef<KubernetesSecretSummary, unknown>[]>(
     () => [
       {
         header: "名称",
@@ -93,11 +97,20 @@ export function ConfigMapSection({
         cell: ({ row }) => <KeysCell item={row.original} />,
       },
       {
+        header: "类型",
+        size: 200,
+        cell: ({ row }) => (
+          <span className="zke-mono text-muted-foreground text-xs break-all">
+            {row.original.type || "Opaque"}
+          </span>
+        ),
+      },
+      {
         header: "大小",
         size: 120,
         cell: ({ row }) => (
           <span className="zke-tnum text-muted-foreground text-xs">
-            {formatBytes(row.original.data_bytes + row.original.binary_data_bytes)}
+            {formatBytes(row.original.data_bytes)}
           </span>
         ),
       },
@@ -130,12 +143,10 @@ export function ConfigMapSection({
         cell: ({ row }) => (
           <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
             {canUpdate ? (
-              // An immutable ConfigMap cannot be edited at all — Kubernetes
+              // An immutable Secret cannot be edited at all — Kubernetes
               // rejects the write. Showing a live button that always fails would
               // be worse than showing why it is unavailable.
-              <HintTooltip
-                label={row.original.immutable ? "不可变的 ConfigMap 无法修改内容" : "编辑"}
-              >
+              <HintTooltip label={row.original.immutable ? "不可变的 Secret 无法修改内容" : "编辑"}>
                 <span>
                   <Button
                     size="icon-sm"
@@ -170,23 +181,11 @@ export function ConfigMapSection({
     [canUpdate, canDelete, remove],
   );
 
-  if (yamlName) {
-    return (
-      <YamlEditorView
-        identity={{ clusterId, version: "v1", resource: "configmaps", namespace, name: yamlName }}
-        clusterName={clusterName}
-        kindLabel="ConfigMap"
-        canUpdate={canUpdate}
-        onBack={() => setYamlName(null)}
-      />
-    );
-  }
-
   // The form takes over the section rather than sitting over the list: the list
   // is of no use while a configuration is being written.
   if (creating || editingName) {
     return (
-      <ConfigMapForm
+      <SecretForm
         clusterId={clusterId}
         clusterName={clusterName}
         namespace={namespace}
@@ -201,7 +200,7 @@ export function ConfigMapSection({
 
   if (detailName) {
     return (
-      <ConfigMapDetailView
+      <SecretDetailView
         clusterId={clusterId}
         namespace={namespace}
         name={detailName}
@@ -209,7 +208,6 @@ export function ConfigMapSection({
         // The detail stays open underneath, so leaving the form returns to the
         // object that was being read rather than to the list.
         onEdit={() => setEditingName(detailName)}
-        onOpenYaml={() => setYamlName(detailName)}
         onBack={() => setDetailName(null)}
       />
     );
@@ -225,21 +223,21 @@ export function ConfigMapSection({
         {canCreate ? (
           <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
             <Plus />
-            创建 ConfigMap
+            创建 Secret
           </Button>
         ) : null}
       </SectionToolbarActions>
       <DataTable
         columns={columns}
-        data={list.data?.config_maps}
+        data={list.data?.secrets}
         isLoading={list.isLoading}
         isFetching={list.isFetching}
         error={list.error}
         onRetry={() => void list.refetch()}
         onRowClick={(item) => setDetailName(item.name)}
         rowKey={(item) => item.uid || item.name}
-        emptyTitle="该命名空间没有 ConfigMap"
-        emptyDescription={`${namespace} 中没有可见的 ConfigMap。`}
+        emptyTitle="该命名空间没有 Secret"
+        emptyDescription={`${namespace} 中没有可见的 Secret。属于 ZKE 安装本身的 Secret 不在此列出。`}
         continuePagination={{
           pageIndex: pager.pageIndex,
           nextToken,
@@ -251,7 +249,7 @@ export function ConfigMapSection({
       <SensitiveActionDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="删除 ConfigMap"
+        title="删除 Secret"
         description={
           deletePreviewed
             ? "DryRun 已通过。再次确认将提交实际删除。"
@@ -260,10 +258,10 @@ export function ConfigMapSection({
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           { label: "命名空间", name: namespace },
-          { label: "ConfigMap", name: deleteTarget?.name ?? "", id: deleteTarget?.uid },
+          { label: "Secret", name: deleteTarget?.name ?? "", id: deleteTarget?.uid },
         ]}
         impacts={[
-          "引用该 ConfigMap 的 Pod 在重启或重新调度前通常不受影响，但之后会因缺少配置而无法启动。",
+          "引用该 Secret 的 Pod 在重启或重新调度前通常不受影响，但之后会因缺少配置而无法启动。",
           "以 Volume 方式挂载的内容会在 kubelet 下一次同步时消失。",
           "请求携带该对象当前的 UID 与 resourceVersion 前置条件，期间对象若已变化或被重建，删除会被拒绝。",
         ]}
@@ -288,10 +286,10 @@ export function ConfigMapSection({
             .then(() => {
               if (dryRun) {
                 setDeletePreviewed(true);
-                toast.success("ConfigMap 删除 DryRun 已通过");
+                toast.success("Secret 删除 DryRun 已通过");
                 return;
               }
-              toast.success(`ConfigMap ${deleteTarget.name} 已提交删除`);
+              toast.success(`Secret ${deleteTarget.name} 已提交删除`);
               if (detailName === deleteTarget.name) {
                 setDetailName(null);
               }
@@ -305,8 +303,8 @@ export function ConfigMapSection({
 }
 
 /** Key names, which is all the list carries — the values stay on the server. */
-function KeysCell({ item }: { item: KubernetesConfigMapSummary }) {
-  const keys = [...item.data_keys, ...item.binary_data_keys];
+function KeysCell({ item }: { item: KubernetesSecretSummary }) {
+  const keys = item.data_keys;
   if (keys.length === 0) {
     return <span className="text-subtle-foreground text-xs">无键</span>;
   }
@@ -316,22 +314,16 @@ function KeysCell({ item }: { item: KubernetesConfigMapSummary }) {
         {keys.slice(0, 4).join(" · ")}
         {keys.length > 4 ? ` +${keys.length - 4}` : ""}
       </span>
-      {item.binary_data_keys.length > 0 ? (
-        <span className="text-subtle-foreground text-xs">
-          其中 {item.binary_data_keys.length} 个为二进制
-        </span>
-      ) : null}
     </div>
   );
 }
 
-function ConfigMapDetailView({
+function SecretDetailView({
   clusterId,
   namespace,
   name,
   canUpdate,
   onEdit,
-  onOpenYaml,
   onBack,
 }: {
   clusterId: string;
@@ -339,10 +331,9 @@ function ConfigMapDetailView({
   name: string;
   canUpdate: boolean;
   onEdit: () => void;
-  onOpenYaml: () => void;
   onBack: () => void;
 }) {
-  const detail = useConfigMap(clusterId, namespace, name);
+  const detail = useSecret(clusterId, namespace, name);
   const item = detail.data;
 
   return (
@@ -358,10 +349,6 @@ function ConfigMapDetailView({
                 编辑
               </Button>
             ) : null}
-            <Button size="sm" variant="secondary" onClick={onOpenYaml}>
-              <FileCode />
-              YAML
-            </Button>
           </>
         }
       />
@@ -370,22 +357,21 @@ function ConfigMapDetailView({
       ) : detail.isLoading || !item ? (
         <LoadingState />
       ) : (
-        <ConfigMapCards item={item} />
+        <SecretCards item={item} />
       )}
     </div>
   );
 }
 
-function ConfigMapCards({ item }: { item: KubernetesConfigMapDetail }) {
-  const dataEntries = Object.entries(item.data);
-  const binaryEntries = Object.entries(item.binary_data);
+function SecretCards({ item }: { item: KubernetesSecretDetail }) {
+  const entries = Object.entries(item.data);
 
   return (
     <div className="grid gap-3">
       {item.immutable ? (
         <Alert tone="warning">
-          该 ConfigMap 被标记为不可变：Kubernetes 不允许修改它的内容，也不允许把 immutable 改回
-          false。 需要变更时只能删除后重建。
+          该 Secret 被标记为不可变：Kubernetes 不允许修改它的内容，也不允许把 immutable 改回 false。
+          需要变更时只能删除后重建。
         </Alert>
       ) : null}
 
@@ -393,6 +379,7 @@ function ConfigMapCards({ item }: { item: KubernetesConfigMapDetail }) {
         <DetailCard title="概览">
           <DetailRow label="名称" value={item.name} />
           <DetailRow label="命名空间" value={item.namespace} />
+          <DetailRow label="类型" value={item.type || "Opaque"} />
           <DetailRow
             label="UID"
             value={<span className="zke-mono text-xs break-all">{item.uid || "—"}</span>}
@@ -404,14 +391,7 @@ function ConfigMapCards({ item }: { item: KubernetesConfigMapDetail }) {
           <DetailRow label="不可变" value={item.immutable ? "是" : "否"} />
           <DetailRow
             label="大小"
-            value={
-              <span className="zke-tnum">
-                {formatBytes(item.data_bytes + item.binary_data_bytes)}
-                <span className="text-subtle-foreground ml-2 text-xs">
-                  文本 {formatBytes(item.data_bytes)} · 二进制 {formatBytes(item.binary_data_bytes)}
-                </span>
-              </span>
-            }
+            value={<span className="zke-tnum">{formatBytes(item.data_bytes)}</span>}
           />
           <DetailRow label="创建时间" value={formatAbsolute(item.creation_timestamp)} />
         </DetailCard>
@@ -425,51 +405,99 @@ function ConfigMapCards({ item }: { item: KubernetesConfigMapDetail }) {
       </div>
 
       <DetailCard title="数据">
-        {dataEntries.length === 0 ? (
+        {entries.length === 0 ? (
           <DetailRow label="数据" value="—" />
         ) : (
-          <div className="grid gap-3 py-1">
-            {dataEntries.map(([key, value]) => (
-              <div key={key} className="grid gap-1">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="zke-mono text-foreground text-xs break-all">{key}</span>
-                  <span className="text-subtle-foreground zke-tnum text-xs">
-                    {formatBytes(new Blob([value]).size)}
-                  </span>
-                </div>
-                {/* Values are shown as written: a config file is indentation and
-                    line breaks, and soft-wrapping it would misrepresent both. */}
-                <pre className="border-border bg-surface-muted rounded-panel zke-mono text-muted-foreground max-h-64 overflow-auto border p-2 text-xs leading-relaxed whitespace-pre">
-                  {value}
-                </pre>
-              </div>
+          <div className="grid gap-4 py-1">
+            {entries.map(([key, value]) => (
+              <SecretValue key={key} name={key} value={value} />
             ))}
           </div>
         )}
       </DetailCard>
-
-      {binaryEntries.length > 0 ? (
-        <DetailCard title="二进制数据">
-          <div className="grid gap-1 py-1">
-            {/* Binary values are not rendered: they are bytes, and any text the
-                browser produced from them would be a guess. The size is the
-                useful fact; the bytes themselves are in the YAML view. */}
-            {binaryEntries.map(([key, value]) => (
-              <DetailRow
-                key={key}
-                label={key}
-                value={
-                  <span className="text-muted-foreground text-xs">
-                    {formatBytes(base64Bytes(value))} · Base64 编码，未在此处渲染
-                  </span>
-                }
-              />
-            ))}
-          </div>
-        </DetailCard>
-      ) : null}
     </div>
   );
+}
+
+/*
+ * One value, hidden until asked for.
+ *
+ * Masked by default rather than shown: this page is opened to check a name or a
+ * size far more often than to read a credential, and a screen that renders
+ * every password of a namespace the moment it loads is one that leaks them to
+ * whoever is standing behind the operator. Revealing is per key and resets when
+ * the page is left; nothing is written to storage or the URL.
+ *
+ * Values whose bytes are not UTF-8 text — certificates, key files — are not
+ * rendered at all. Any text the browser produced from those bytes would be a
+ * guess, and the size is the useful fact.
+ */
+function SecretValue({ name, value }: { name: string; value: string }) {
+  const [revealed, setRevealed] = useState(false);
+  const text = useMemo(() => decodeUtf8Base64(value), [value]);
+
+  return (
+    <div className="grid gap-1">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="zke-mono text-foreground text-xs break-all">{name}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-subtle-foreground zke-tnum text-xs">
+            {formatBytes(base64Bytes(value))}
+          </span>
+          {text === null ? null : (
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-pressed={revealed}
+              onClick={() => setRevealed((current) => !current)}
+            >
+              {revealed ? <EyeOff /> : <Eye />}
+              {revealed ? "隐藏" : "显示"}
+            </Button>
+          )}
+          <CopyButton value={text ?? value} label={text === null ? "复制 Base64" : "复制"} />
+        </div>
+      </div>
+      {text === null ? (
+        <span className="text-muted-foreground text-xs">
+          取值不是 UTF-8 文本，未在此处渲染；「复制 Base64」可取回原始内容。
+        </span>
+      ) : (
+        <pre
+          className={cn(
+            "border-border bg-surface-muted rounded-panel zke-mono text-muted-foreground max-h-64 overflow-auto border p-2 text-xs leading-relaxed whitespace-pre",
+            !revealed &&
+              "text-transparent select-none [text-shadow:0_0_8px_var(--muted-foreground)]",
+          )}
+          aria-label={revealed ? name : `${name}（已遮蔽）`}
+        >
+          {text}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** The text a Base64 value holds, or null when its bytes are not UTF-8 text. */
+function decodeUtf8Base64(value: string): string | null {
+  try {
+    const binary = atob(value);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // A control character means the bytes are data that happens to decode, and
+    // a <pre> would neither show it nor give it back unchanged. Checked by code
+    // point rather than by a regular expression, which cannot carry these
+    // characters literally without being unreadable.
+    for (const character of decoded) {
+      const code = character.codePointAt(0) ?? 0;
+      if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+        return null;
+      }
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
 }
 
 /** Decoded length of a standard padded Base64 string, without decoding it. */

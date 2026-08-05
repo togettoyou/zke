@@ -208,11 +208,16 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/log"}, []string{"get"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/exec"}, []string{"create"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"events"}, []string{"get", "list", "watch"})
+	// Secrets are granted, but only the five verbs the typed Secret API uses:
+	// no `watch`, no `deletecollection`, and no Subresource. What keeps the
+	// grant from becoming general Secret access is the Agent itself, which
+	// refuses a Secret request that does not come from that API and any request
+	// touching its own namespace.
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"secrets"}, []string{
+		"get", "list", "create", "update", "delete",
+	})
 	for _, rule := range clusterRole.Rules {
 		for _, resource := range rule.Resources {
-			if resource == "secrets" {
-				t.Fatalf("ClusterRole unexpectedly grants Secret access: %+v", rule)
-			}
 			if resource == "*" ||
 				(strings.Contains(resource, "/") && resource != "pods/log" && resource != "pods/exec") {
 				t.Fatalf("ClusterRole grants wildcard or Subresource access: %+v", rule)

@@ -32,7 +32,7 @@ import { useScopeStore } from "@/scope/scope-store";
 
 import { AuthorizationSection } from "./AuthorizationSection";
 import { AutoscalerSection } from "./AutoscalerSection";
-import { ConfigMapSection } from "./ConfigMapSection";
+import { ConfigurationSection } from "./ConfigurationSection";
 import { StorageSection } from "./StorageSection";
 import { EventSection } from "./EventSection";
 import { NamespaceSection } from "./NamespaceSection";
@@ -388,7 +388,7 @@ export function ContainerServiceApp() {
           onNamespaceScopeChange={setStorageNamespaced}
         />
       ) : activeSection === "configmaps" ? (
-        <ConfigMapSection
+        <ConfigurationSection
           key={`${clusterId}/${namespace}`}
           clusterId={clusterId}
           clusterName={clusterName}

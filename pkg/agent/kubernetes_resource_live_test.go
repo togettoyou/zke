@@ -99,6 +99,8 @@ func TestLiveKubernetesResourceCRUDOverRealQUIC(t *testing.T) {
 			dynamicClient,
 			typedClient.Discovery(),
 			limits.maxBodyBytes,
+
+			"zke-system",
 		),
 		limits,
 	)

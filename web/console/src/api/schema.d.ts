@@ -1115,6 +1115,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 在明确的 Cluster 和 Namespace 中分页查询 Secret。列表只返回键名、内容大小、类型和
+         *     元数据，不返回任何取值；取值仅由单对象详情接口返回。属于 ZKE 安装本身的 Secret
+         *     （带 app.kubernetes.io/managed-by=zke-server 标签）不会出现在列表中，因此一页可能
+         *     少于 limit 条。要求 cluster.secret.read。
+         */
+        get: operations["listKubernetesSecrets"];
+        put?: never;
+        /**
+         * @description 创建 Secret。`binary_data` 的值必须使用标准带填充 Base64；`data` 与
+         *     `binary_data` 的键不能重复，两者解码后的总大小不超过 Kubernetes 的 1 MiB
+         *     限制。实际写入要求显式确认并支持 Kubernetes 服务端 dry-run。
+         */
+        post: operations["createKubernetesSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets/{secret_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询一个 Secret 的元数据以及完整 `data` 和 Base64 `binary_data`。 */
+        get: operations["getKubernetesSecret"];
+        /**
+         * @description 完整替换 `data` 与 `binary_data`，因此两张表都必须显式提交。必须携带当前 UID 和
+         *     resourceVersion；Server 在写入前重新读取对象，拒绝同名重建和陈旧版本。已标记为
+         *     immutable 的 Secret 不允许改变内容或取消 immutable。实际写入要求显式确认并支持 dry-run。
+         */
+        put: operations["updateKubernetesSecret"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除 Secret；实际删除要求显式确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesSecret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps": {
         parameters: {
             query?: never;
@@ -1439,7 +1489,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.event.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.event.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -3157,6 +3207,82 @@ export interface components {
             dry_run: boolean;
             target: string;
         };
+        KubernetesSecretSummary: {
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            /** @description Kubernetes Secret 类型，例如 Opaque 或 kubernetes.io/tls。 */
+            type: string;
+            /** @description 只有键名。取值不在列表响应中。 */
+            data_keys: string[];
+            /** Format: int64 */
+            data_bytes: number;
+            immutable: boolean;
+        };
+        KubernetesSecretDetail: components["schemas"]["KubernetesSecretSummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            /** @description 取值使用标准带填充 Base64，与 Kubernetes 存储它们的方式一致； 是否可解释为文本由调用方判断。 */
+            data: {
+                [key: string]: string;
+            };
+        };
+        KubernetesSecretPage: {
+            secrets: components["schemas"]["KubernetesSecretSummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesCreateSecretRequest: {
+            name: string;
+            /**
+             * @description 创建后不可修改；空字符串按 Opaque 处理。 kubernetes.io/service-account-token 不接受：它由 Kubernetes 为 ServiceAccount 签发。
+             * @enum {string}
+             */
+            type?: "" | "Opaque" | "kubernetes.io/dockerconfigjson" | "kubernetes.io/basic-auth" | "kubernetes.io/ssh-auth" | "kubernetes.io/tls";
+            /** @description app.kubernetes.io/managed-by=zke-server 不接受，该标签标识 ZKE 自身的对象。 */
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            /** @description 取值使用标准带填充 Base64。解码后总大小不超过 1 MiB。 */
+            data?: {
+                [key: string]: string;
+            };
+            /** @default false */
+            immutable: boolean;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesUpdateSecretRequest: {
+            uid: string;
+            resource_version: string;
+            /** @description 整体替换：本次未提交的键会从对象中移除。取值使用标准带填充 Base64。 type 不在请求中，Kubernetes 在创建后不允许修改它。 */
+            data: {
+                [key: string]: string;
+            };
+            /** @description 省略时保留当前值；设为 true 后 Kubernetes 不允许恢复为 false。 */
+            immutable?: boolean;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesDeleteSecretRequest: {
+            uid: string;
+            resource_version: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
         KubernetesConfigMapSummary: {
             namespace: string;
             name: string;
@@ -3235,6 +3361,15 @@ export interface components {
             /** @default false */
             dry_run: boolean;
             confirm: boolean;
+        };
+        KubernetesSecretMutationResult: {
+            resource: components["schemas"]["KubernetesSecretDetail"];
+            dry_run: boolean;
+        };
+        KubernetesSecretDeleteResult: {
+            deleted: boolean;
+            dry_run: boolean;
+            target: string;
         };
         KubernetesConfigMapMutationResult: {
             resource: components["schemas"]["KubernetesConfigMapDetail"];
@@ -4014,6 +4149,7 @@ export interface components {
         ClusterPolicyResource: "priorityclasses";
         NamespacedPolicyResource: "resourcequotas" | "limitranges" | "networkpolicies" | "poddisruptionbudgets";
         PolicyResourceName: string;
+        SecretName: string;
         ConfigMapName: string;
         KubernetesResourceName: string;
         /** @description Core API Group 使用空字符串或省略该参数。 */
@@ -7308,6 +7444,209 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesSecrets: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Secret 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesSecretPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesSecret: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesSecretMutationResult"];
+                    };
+                };
+            };
+            /** @description 已创建的 Secret */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesSecretMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Secret 详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesSecretDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesSecret: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新结果或 DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesSecretMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesSecret: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description 删除结果或 DryRun 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesSecretDeleteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];

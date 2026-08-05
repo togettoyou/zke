@@ -83,6 +83,13 @@ message ResourceRequest {
   uint64 body_size = 9;
   MutationOptions mutation_options = 10;
   DeleteOptions delete_options = 11;
+  // Set only by the Server's dedicated Secret API, and honoured only for
+  // core/v1 Secrets. The Agent refuses Secrets on every other path, so the
+  // generic resource and YAML APIs cannot reach them even if the Server were
+  // made to ask. An Agent that predates this field ignores it and keeps
+  // refusing, which is the behaviour a Server upgraded ahead of its Agents
+  // should get.
+  bool secret_access = 12;
 }
 
 message ResourceResponse {

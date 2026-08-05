@@ -87,6 +87,10 @@ export const queryKeys = {
     ["config-maps", clusterId, namespace, params] as const,
   configMap: (clusterId: string, namespace: string, name: string) =>
     ["config-map", clusterId, namespace, name] as const,
+  secrets: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
+    ["secrets", clusterId, namespace, params] as const,
+  secret: (clusterId: string, namespace: string, name: string) =>
+    ["secret", clusterId, namespace, name] as const,
   networkingResources: (
     clusterId: string,
     namespace: string,
@@ -125,6 +129,8 @@ export const queryKeyPrefixes = {
   workload: ["workload"] as const,
   configMaps: ["config-maps"] as const,
   configMap: ["config-map"] as const,
+  secrets: ["secrets"] as const,
+  secret: ["secret"] as const,
   networkingResources: ["networking-resources"] as const,
   networkingResource: ["networking-resource"] as const,
   pods: ["pods"] as const,

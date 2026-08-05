@@ -741,6 +741,52 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
 		handlers.kubernetesAuthorization.delete,
 	)
+	// Secrets use their own permissions rather than the general cluster ones:
+	// reading configuration and reading credentials are different asks, and a
+	// role that may do the first must not silently be able to do the second.
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/secrets",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretRead,
+			"cluster_id",
+		),
+		handlers.kubernetesSecret.list,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/secrets",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretManage,
+			"cluster_id",
+		),
+		handlers.kubernetesSecret.create,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/secrets/:secret_name",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretRead,
+			"cluster_id",
+		),
+		handlers.kubernetesSecret.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/secrets/:secret_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretManage,
+			"cluster_id",
+		),
+		handlers.kubernetesSecret.update,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/secrets/:secret_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretManage,
+			"cluster_id",
+		),
+		handlers.kubernetesSecret.delete,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/configmaps",
 		handlers.authorizationMiddleware.RequireCluster(

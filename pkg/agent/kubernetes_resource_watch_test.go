@@ -55,7 +55,7 @@ func TestKubernetesResourceWatchOnlyAllowsEventsAndListsInitialSnapshot(t *testi
 func TestGenericResourcePathRejectsKubernetesEvents(t *testing.T) {
 	request := &agentv1.ResourceRequest{Verb: agentv1.ResourceVerb_RESOURCE_VERB_LIST,
 		Resource: &agentv1.GroupVersionResource{Version: "v1", Resource: "events"}}
-	if allowedKubernetesResourceRequest(request) {
+	if allowedKubernetesResourceRequest(request, "zke-system") {
 		t.Fatal("generic Resource path allowed Kubernetes Events")
 	}
 }

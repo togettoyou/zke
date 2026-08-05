@@ -318,9 +318,18 @@ func renderManifest(
 			},
 			{
 				APIGroups: []string{""},
-				// ConfigMaps are managed through their typed endpoint. Secrets stay
-				// excluded and will use a separate least-privilege sensitive path.
 				Resources: []string{"configmaps"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{""},
+				// Secrets are reachable only through the Server's dedicated Secret
+				// API, which sets a flag this Agent checks before it will act on
+				// one at all, and never in the Agent's own namespace — that is
+				// where its identity key, its enrollment token and the
+				// certificates it trusts the Server by live. This grant is what
+				// makes that API possible; it is not what authorizes it.
+				Resources: []string{"secrets"},
 				Verbs:     []string{"get", "list", "create", "update", "delete"},
 			},
 			{
