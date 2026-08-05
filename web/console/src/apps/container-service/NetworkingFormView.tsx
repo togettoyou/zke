@@ -277,12 +277,25 @@ function ServiceFields({
   // Kubernetes settles a Service's headless identity at creation and refuses to
   // change it afterwards, so an existing non-ExternalName Service cannot switch.
   const headlessLocked = view !== undefined && view.spec.type !== "ExternalName";
+  // NodePort and LoadBalancer are both built on a ClusterIP, and a Service
+  // created headless has none — `spec.clusterIPs` is immutable, so Kubernetes
+  // will not allocate one now. The two entries are disabled for that reason,
+  // and the reason is written here: a greyed-out row in a dropdown states the
+  // conclusion and none of the why.
+  const headlessService = view?.spec.headless === true;
 
   return (
     <>
       <FormSection title={SECTION_LABELS.service} problem={problemIn("service")}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="类型">
+          <Field
+            label="类型"
+            hint={
+              headlessService
+                ? "该 Service 创建时即为 headless，没有 ClusterIP，Kubernetes 也不会再为它分配，因此不能改为 NodePort 或 LoadBalancer；需要这两种类型请另建一个 Service。"
+                : undefined
+            }
+          >
             {(id) => (
               <Select value={draft.type} onValueChange={(type) => patch({ type })}>
                 <SelectTrigger id={id}>
@@ -290,10 +303,10 @@ function ServiceFields({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ClusterIP">ClusterIP</SelectItem>
-                  <SelectItem value="NodePort" disabled={view?.spec.headless === true}>
+                  <SelectItem value="NodePort" disabled={headlessService}>
                     NodePort
                   </SelectItem>
-                  <SelectItem value="LoadBalancer" disabled={view?.spec.headless === true}>
+                  <SelectItem value="LoadBalancer" disabled={headlessService}>
                     LoadBalancer
                   </SelectItem>
                   <SelectItem value="ExternalName">ExternalName</SelectItem>

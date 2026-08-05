@@ -234,7 +234,9 @@ YAML 入口，用于查看和修改本表单未建模的字段。
 回到的是刚才在读的那个对象而不是列表，与该页的 YAML 入口一致。一个带三个监听器的 Gateway 或一条带若干路由的
 Ingress 比盖在列表上的盒子高，而填表期间下面那张列表本来也用不上。表单按类型只渲染该类型接受的字段，Service
 的类型切换会连带显示对应字段（ExternalName 只要目标域名，NodePort 与 LoadBalancer 才有外部流量策略和
-NodePort 输入）。
+NodePort 输入）。编辑一个创建时即为 headless 的 Service 时，NodePort 与 LoadBalancer 两项不可选，并在字段下
+写明原因：这两种类型都建立在 ClusterIP 之上，而 `spec.clusterIPs` 创建后不可变，Kubernetes 不会再为它分配
+——一个只被置灰的选项说出了结论却没说出理由。headless 开关同样在创建后不可切换。
 
 表单在提交前做一次与 Server 同形的校验，校验消息显示在能够修正它的那个区块里，底部按钮旁只说明是哪个区块拦住了
 提交——一条关于端口的提示出现在表单末尾没有意义。端口、NodePort 和监听器端口是只接受数字、最多五位的输入框——端口不会超过 65535，
