@@ -370,16 +370,20 @@ Console 存储页面按 PersistentVolume、PersistentVolumeClaim、StorageClass 
 PV 和 StorageClass 是集群级对象，PVC 是命名空间级，Server 也据此分成两组路由。页面不掩盖这一点——工具栏的
 命名空间选择器只在 PVC 标签页出现，其余两个标签页不显示一个什么都不限定的控件。
 
-创建表单按类型渲染：PV 需要容量、访问模式和来源（CSI/NFS/Local 三选一，字段随之切换），并明确说明 ZKE 不会
-创建底层存储、填写的卷必须已经存在；PVC 需要申请容量和访问模式，并把「使用集群默认 StorageClass」与「显式
-指定（留空表示不使用任何 StorageClass）」区分开，因为这两者在 Kubernetes 中语义不同；StorageClass 需要
-provisioner 和参数。访问模式用复选框而不是下拉，因为它本来就是集合而不是单选。
+创建和编辑共用一个整页表单，占据整个应用视图而不是弹窗，与工作负载和服务与路由一致；从详情页进入编辑时详情
+仍在其下，离开表单回到详情而不是列表。表单按类型渲染：PV 需要容量、访问模式和来源（CSI/NFS/Local 三选一，
+字段随之切换），并明确说明 ZKE 不会创建底层存储、填写的卷必须已经存在；PVC 需要申请容量和访问模式，并把
+「使用集群默认 StorageClass」与「显式指定（留空表示不使用任何 StorageClass）」区分开，因为这两者在 Kubernetes
+中语义不同；StorageClass 需要 provisioner 和参数。访问模式用复选框而不是下拉，因为它本来就是集合而不是单选。
 
-编辑不是通用表单，而是每种类型各自唯一可变字段的小弹窗：PV 只改回收策略，PVC 只改申请容量（且必须增大），
-StorageClass 只改扩容开关，并说明类型化接口之外的高级字段需通过 YAML 管理并接受 API Server 校验。确认弹窗按具体
-选择给出后果，例如把 PV 回收策略改为 Delete 会在删除时销毁数据，PVC 扩容需要 CSI 驱动配合且部分驱动要求
-Pod 重启后文件系统才扩展。删除的影响文案同样按类型区分，包括 PV 回收策略决定数据存亡、仍被占用的对象会
-停在 Terminating。
+编辑打开的是同一张表单，字段按当前对象填好，可改的只有类型化接口开放的那一个：PV 的回收策略、PVC 的申请容量
+（且必须增大）、StorageClass 的扩容开关；其余字段禁用，页首用一句话说明哪些字段 Kubernetes 在创建后就不再接受
+修改。不把它们藏起来是有意的——一张只剩一个输入框的表单，操作者看不到自己即将保留下来的是什么。PV 的来源和
+StorageClass 的参数只在详情中返回，因此编辑会先取一次详情再渲染，而不是先给出一屏空白。表单在对象标识变化时
+整体重挂，避免后台刷新改写正在填写的内容。编辑只在该字段确实变化后才可提交：一次什么都没改的写入只会留下一条
+审计记录。确认弹窗按具体选择给出后果，例如把 PV 回收策略改为 Delete 会在删除时销毁数据，PVC 扩容需要 CSI
+驱动配合且部分驱动要求 Pod 重启后文件系统才扩展。删除的影响文案同样按类型区分，包括 PV 回收策略决定数据存亡、
+仍被占用的对象会停在 Terminating。
 
 自动伸缩类型化后端固定使用 `autoscaling/v2 HorizontalPodAutoscaler`，并强制 Cluster 与 Namespace 定域。
 创建和更新时 `scaleTargetRef` 只接受同一 Namespace 中的 `apps/v1 Deployment` 或 `apps/v1 StatefulSet`；HPA

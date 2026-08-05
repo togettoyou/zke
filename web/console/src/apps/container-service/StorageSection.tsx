@@ -35,8 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { StorageCreateForm } from "./StorageCreateForm";
-import { StorageUpdateDialog } from "./StorageUpdateDialog";
+import { StorageFormView } from "./StorageFormView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -155,88 +154,65 @@ export function StorageSection({
     [resource, canUpdate, canDelete, openDelete],
   );
 
-  // The dialogs live outside the branch that picks a view. They are opened from
-  // the list and from the detail page alike, and JSX that exists only in the
-  // list's branch cannot open over the detail — the operator would have to go
-  // back before the dialog appeared, by which point it is confirming an object
-  // they can no longer see.
-  const dialogs = (
-    <>
-      {creating ? (
-        <StorageCreateForm
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          resource={resource}
-          onClose={() => setCreating(false)}
-        />
-      ) : null}
-
-      {editing ? (
-        <StorageUpdateDialog
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          resource={resource}
-          target={editing}
-          onClose={() => setEditing(null)}
-        />
-      ) : null}
-
-      <SensitiveActionDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title={`删除 ${storageKindLabel(resource)}`}
-        description={
-          deletePreviewed
-            ? "DryRun 已通过。再次确认将提交实际删除。"
-            : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
-        }
-        scopeLines={[
-          { label: "集群", name: clusterName, id: clusterId },
-          ...(namespaced ? [{ label: "命名空间", name: namespace }] : []),
-          {
-            label: storageKindLabel(resource),
-            name: deleteTarget?.name ?? "",
-            id: deleteTarget?.uid,
-          },
-        ]}
-        impacts={deleteImpacts(resource)}
-        confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
-        confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
-        destructive
-        pending={remove.isPending}
-        error={remove.error}
-        onConfirm={() => {
-          if (!deleteTarget) return;
-          const dryRun = !deletePreviewed;
-          void remove
-            .mutateAsync({
-              clusterId,
-              namespace,
-              resource,
-              name: deleteTarget.name,
-              uid: deleteTarget.uid,
-              resourceVersion: deleteTarget.resource_version,
-              dryRun,
-              idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
-            })
-            .then(() => {
-              if (dryRun) {
-                setDeletePreviewed(true);
-                toast.success("删除 DryRun 已通过");
-                return;
-              }
-              toast.success(`${storageKindLabel(resource)} ${deleteTarget.name} 已提交删除`);
-              if (detailName === deleteTarget.name) {
-                setDetailName(null);
-              }
-              setDeleteTarget(null);
-            })
-            .catch(() => undefined);
-        }}
-      />
-    </>
+  // The confirmation lives outside the branch that picks a view. It is opened
+  // from the list and from the detail page alike, and JSX that exists only in
+  // the list's branch cannot open over the detail — the operator would have to
+  // go back before the dialog appeared, by which point it is confirming an
+  // object they can no longer see.
+  const deleteDialog = (
+    <SensitiveActionDialog
+      open={deleteTarget !== null}
+      onOpenChange={(open) => !open && setDeleteTarget(null)}
+      title={`删除 ${storageKindLabel(resource)}`}
+      description={
+        deletePreviewed
+          ? "DryRun 已通过。再次确认将提交实际删除。"
+          : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
+      }
+      scopeLines={[
+        { label: "集群", name: clusterName, id: clusterId },
+        ...(namespaced ? [{ label: "命名空间", name: namespace }] : []),
+        {
+          label: storageKindLabel(resource),
+          name: deleteTarget?.name ?? "",
+          id: deleteTarget?.uid,
+        },
+      ]}
+      impacts={deleteImpacts(resource)}
+      confirmationText={deletePreviewed ? deleteTarget?.name : undefined}
+      confirmLabel={deletePreviewed ? "确认删除" : "执行 DryRun 预检"}
+      destructive
+      pending={remove.isPending}
+      error={remove.error}
+      onConfirm={() => {
+        if (!deleteTarget) return;
+        const dryRun = !deletePreviewed;
+        void remove
+          .mutateAsync({
+            clusterId,
+            namespace,
+            resource,
+            name: deleteTarget.name,
+            uid: deleteTarget.uid,
+            resourceVersion: deleteTarget.resource_version,
+            dryRun,
+            idempotencyKey: dryRun ? deletePreviewKey : deleteApplyKey,
+          })
+          .then(() => {
+            if (dryRun) {
+              setDeletePreviewed(true);
+              toast.success("删除 DryRun 已通过");
+              return;
+            }
+            toast.success(`${storageKindLabel(resource)} ${deleteTarget.name} 已提交删除`);
+            if (detailName === deleteTarget.name) {
+              setDetailName(null);
+            }
+            setDeleteTarget(null);
+          })
+          .catch(() => undefined);
+      }}
+    />
   );
 
   if (yamlName) {
@@ -256,6 +232,27 @@ export function StorageSection({
     );
   }
 
+  // The form takes over the section rather than sitting over the list, as the
+  // workload and networking forms do: editing shows the whole object, most of
+  // it read-only, which is more than a box laid over the table can hold. From
+  // the detail page the detail stays open underneath, so leaving the form
+  // returns to the object that was being read.
+  if (creating || editing) {
+    return (
+      <StorageFormView
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        resource={resource}
+        existing={editing}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
+      />
+    );
+  }
+
   if (detailName) {
     return (
       <>
@@ -271,7 +268,7 @@ export function StorageSection({
           onDelete={openDelete}
           onBack={() => setDetailName(null)}
         />
-        {dialogs}
+        {deleteDialog}
       </>
     );
   }
@@ -338,7 +335,7 @@ export function StorageSection({
         </TabsContent>
       </Tabs>
 
-      {dialogs}
+      {deleteDialog}
     </div>
   );
 }

@@ -3,18 +3,22 @@ import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
-import { useCreateStorageResource, type StorageCreateSpec } from "@/api/queries/storage";
-import type { KubernetesStorageResource } from "@/api/types";
-import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
-import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  useCreateStorageResource,
+  useStorageResource,
+  useUpdateStorageResource,
+  type StorageCreateSpec,
+  type StorageUpdateSpec,
+} from "@/api/queries/storage";
+import type {
+  KubernetesStorageResource,
+  KubernetesStorageResourceDetail,
+  KubernetesStorageResourceSummary,
+} from "@/api/types";
+import { PageHeader } from "@/apps/AppShell";
+import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { ErrorState, LoadingState } from "@/components/common/state";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
@@ -37,34 +41,108 @@ const DEFAULT_OPTION = "__default__";
 type PairDraft = { key: string; value: string };
 
 /**
- * Creates one PersistentVolume, PersistentVolumeClaim or StorageClass.
+ * Creates or edits one PersistentVolume, PersistentVolumeClaim or StorageClass.
  *
- * The typed API intentionally keeps later mutations narrow, so creation makes
- * the durable choices explicit and leaves advanced changes to YAML.
+ * A page rather than a dialog, and one form for both jobs, as the workload and
+ * networking sections do it: what an operator needs to see while changing a
+ * volume is what the volume currently is, and a box laid over the list showed
+ * one field with no surroundings.
+ *
+ * Editing shows every field and lets almost none of them be changed — that is
+ * Kubernetes, not a limit of this form. A bound PV's source, a PVC's access
+ * modes and StorageClass, a StorageClass's provisioner and parameters are all
+ * refused after creation, so they are rendered from the live object and
+ * disabled. What stays open is exactly what the typed API accepts: a PV's
+ * reclaim policy, a PVC's requested size (upwards only) and a StorageClass's
+ * expansion switch. Showing the rest read-only is the point — an edit form that
+ * hid them would leave the operator guessing what they are about to keep.
  */
-export function StorageCreateForm({
+export function StorageFormView({
   clusterId,
   clusterName,
   namespace,
   resource,
+  existing,
   onClose,
 }: {
   clusterId: string;
   clusterName: string;
   namespace: string;
   resource: KubernetesStorageResource;
+  /** Set when editing; absent when creating. */
+  existing: KubernetesStorageResourceSummary | null;
+  onClose: () => void;
+}) {
+  const kind = storageKindLabel(resource);
+  // The immutable fields are only in the detail — a PV's source, a
+  // StorageClass's parameters — so an edit waits for it rather than opening a
+  // form full of blanks that would read as "these are now empty".
+  const detail = useStorageResource(
+    clusterId,
+    existing ? namespace : null,
+    resource,
+    existing?.name ?? null,
+  );
+
+  if (existing && (detail.error || detail.isLoading || !detail.data)) {
+    return (
+      <div className="grid gap-3">
+        <PageHeader title={`编辑 ${kind} · ${existing.name}`} onBack={onClose} />
+        {detail.error ? (
+          <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
+        ) : (
+          <LoadingState />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <StorageFormBody
+      // Remounted when the object changes: the drafts below take their initial
+      // values once, and a form already open must not be rewritten underneath
+      // the operator by a refetch.
+      key={`${resource}/${existing?.uid ?? "new"}`}
+      clusterId={clusterId}
+      clusterName={clusterName}
+      namespace={namespace}
+      resource={resource}
+      existing={existing}
+      detail={existing ? (detail.data as KubernetesStorageResourceDetail) : null}
+      onClose={onClose}
+    />
+  );
+}
+
+function StorageFormBody({
+  clusterId,
+  clusterName,
+  namespace,
+  resource,
+  existing,
+  detail,
+  onClose,
+}: {
+  clusterId: string;
+  clusterName: string;
+  namespace: string;
+  resource: KubernetesStorageResource;
+  existing: KubernetesStorageResourceSummary | null;
+  detail: KubernetesStorageResourceDetail | null;
   onClose: () => void;
 }) {
   const create = useCreateStorageResource();
+  const update = useUpdateStorageResource();
+  const mutation = existing ? update : create;
   const kind = storageKindLabel(resource);
-  const [previewed, setPreviewed] = useState<StorageCreateSpec | null>(null);
+  const [previewed, setPreviewed] = useState<StorageCreateSpec | StorageUpdateSpec | null>(null);
   const previewKey = useSubmissionKey(previewed === null);
   const applyKey = useSubmissionKey(previewed !== null);
-  const [name, setName] = useState("");
+  const [name, setName] = useState(existing?.name ?? "");
 
-  const volume = usePersistentVolumeDraft();
-  const claim = useClaimDraft();
-  const storageClass = useStorageClassDraft();
+  const volume = usePersistentVolumeDraft(detail);
+  const claim = useClaimDraft(detail);
+  const storageClass = useStorageClassDraft(detail);
   const editor =
     resource === "persistentvolumes"
       ? volume
@@ -73,102 +151,125 @@ export function StorageCreateForm({
         : storageClass;
 
   const nameValid = DNS_SUBDOMAIN.test(name.trim()) && name.length <= 253;
-  const valid = nameValid && editor.valid;
+  // Editing submits one field, so it is enabled only once that field is both
+  // usable and different: a confirmation dialog for a write that changes
+  // nothing is a dialog that only costs an audit record.
+  const valid = existing ? editor.editable && editor.changed : nameValid && editor.valid;
 
-  const submit = (dryRun: boolean, spec: StorageCreateSpec) =>
-    void create
-      .mutateAsync({
-        clusterId,
-        namespace,
-        resource,
-        name: name.trim(),
-        spec,
-        dryRun,
-        idempotencyKey: dryRun ? previewKey : applyKey,
-      })
+  const submit = (dryRun: boolean, spec: StorageCreateSpec | StorageUpdateSpec) => {
+    const shared = {
+      clusterId,
+      namespace,
+      resource,
+      dryRun,
+      idempotencyKey: dryRun ? previewKey : applyKey,
+    };
+    const request = existing
+      ? update.mutateAsync({
+          ...shared,
+          name: existing.name,
+          uid: existing.uid,
+          resourceVersion: existing.resource_version,
+          spec: spec as StorageUpdateSpec,
+        })
+      : create.mutateAsync({ ...shared, name: name.trim(), spec: spec as StorageCreateSpec });
+    void request
       .then(() => {
         if (dryRun) {
           setPreviewed(spec);
           return;
         }
-        toast.success(`${kind} ${name.trim()} 已创建`);
+        toast.success(`${kind} ${existing?.name ?? name.trim()} 已${existing ? "更新" : "创建"}`);
         onClose();
       })
       .catch(() => undefined);
+  };
 
   return (
     <>
-      <Dialog open={previewed === null} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined} className="w-[min(760px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>创建 {kind}</DialogTitle>
-            <DialogDescription>
-              第一步只执行服务端 DryRun，不会在集群中持久化对象。
-            </DialogDescription>
-          </DialogHeader>
+      <div className="grid gap-3">
+        <PageHeader
+          title={
+            existing
+              ? `编辑 ${kind} · ${existing.name}`
+              : `创建 ${kind}${resource === "persistentvolumeclaims" ? ` · ${namespace}` : ""}`
+          }
+          onBack={onClose}
+        />
 
-          <div className="grid gap-4">
-            <FormSection title="基本信息">
-              <div className="grid gap-1.5">
-                <Label htmlFor="storage-name">名称</Label>
-                <Input
-                  id="storage-name"
-                  value={name}
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="例如 model-cache"
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </div>
-            </FormSection>
-            {editor.fields}
-          </div>
+        {existing ? (
+          <Alert tone="info">{lockNotice(resource)}</Alert>
+        ) : (
+          <FormSection title="基本信息">
+            <div className="grid gap-1.5">
+              <Label htmlFor="storage-name">名称</Label>
+              <Input
+                id="storage-name"
+                value={name}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="例如 model-cache"
+                onChange={(event) => setName(event.target.value)}
+              />
+              <span className="text-subtle-foreground text-xs">
+                合法的 DNS 子域名，最长 253 个字符；创建后不可修改
+              </span>
+            </div>
+          </FormSection>
+        )}
 
-          <Alert tone="info" className="mt-4">
+        {editor.fields}
+
+        {mutation.error ? <Alert tone="danger">{errorMessage(mutation.error)}</Alert> : null}
+
+        <div className="flex items-center justify-end gap-3 pb-2">
+          <span className="text-subtle-foreground text-xs">
             目标：{clusterName}
             {resource === "persistentvolumeclaims" ? ` / ${namespace}` : "（集群级对象）"}
-          </Alert>
-          {create.error ? (
-            <Alert tone="danger" className="mt-3">
-              {errorMessage(create.error)}
-            </Alert>
-          ) : null}
-
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose} disabled={create.isPending}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              disabled={!valid || create.isPending}
-              onClick={() => submit(true, editor.build())}
-            >
-              {create.isPending ? "预检中…" : "执行 DryRun 预检"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </span>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!valid || mutation.isPending}
+            onClick={() => submit(true, existing ? editor.buildUpdate() : editor.build())}
+          >
+            {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
+          </Button>
+        </div>
+      </div>
 
       <SensitiveActionDialog
         open={previewed !== null}
         onOpenChange={(open) => !open && setPreviewed(null)}
-        title={`确认创建 ${kind}`}
-        description="DryRun 已通过。确认后将向同一集群发送实际创建请求。"
+        title={existing ? `确认更新 ${kind}` : `确认创建 ${kind}`}
+        description="DryRun 已通过。确认后将向同一集群提交实际变更。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           ...(resource === "persistentvolumeclaims"
             ? [{ label: "命名空间", name: namespace }]
             : []),
-          { label: kind, name: name.trim() },
+          { label: kind, name: existing?.name ?? name.trim(), id: existing?.uid },
         ]}
-        impacts={createImpacts(resource)}
-        confirmLabel="确认创建"
-        pending={create.isPending}
-        error={create.error}
+        impacts={existing ? editor.updateImpacts : createImpacts(resource)}
+        confirmLabel={existing ? "确认更新" : "确认创建"}
+        destructive={existing !== null && editor.destructiveUpdate}
+        pending={mutation.isPending}
+        error={mutation.error}
         onConfirm={() => previewed && submit(false, previewed)}
       />
     </>
   );
+}
+
+/** Said once at the top of an edit rather than on each disabled field. */
+function lockNotice(resource: KubernetesStorageResource): string {
+  if (resource === "persistentvolumes") {
+    return "Kubernetes 只允许修改已登记 PV 的回收策略。容量、访问模式、卷模式和后端来源在创建后不可变，下面按对象当前状态显示并已锁定。";
+  }
+  if (resource === "persistentvolumeclaims") {
+    return "Kubernetes 只允许扩大 PVC 的申请容量，且需要其 StorageClass 允许扩容。访问模式、StorageClass、卷模式和绑定的卷在创建后不可变，下面按对象当前状态显示并已锁定。";
+  }
+  return "Kubernetes 只允许修改 StorageClass 的「允许卷扩容」。Provisioner、回收策略、绑定模式和参数在创建后不可变，下面按对象当前状态显示并已锁定。";
 }
 
 function createImpacts(resource: KubernetesStorageResource): string[] {
@@ -191,22 +292,53 @@ function createImpacts(resource: KubernetesStorageResource): string[] {
   ];
 }
 
-type SpecEditor = { fields: ReactNode; valid: boolean; build: () => StorageCreateSpec };
+const UPDATE_PRECONDITION =
+  "请求携带该对象当前的 UID 与 resourceVersion，期间对象若已变化，更新会被拒绝而不是覆盖。";
 
-function usePersistentVolumeDraft(): SpecEditor {
-  const [capacity, setCapacity] = useState("");
-  const [modes, setModes] = useState<AccessMode[]>(["ReadWriteOnce"]);
-  const [reclaim, setReclaim] = useState(DEFAULT_OPTION);
-  const [storageClassName, setStorageClassName] = useState("");
-  const [volumeMode, setVolumeMode] = useState(DEFAULT_OPTION);
-  const [sourceType, setSourceType] = useState<"csi" | "nfs" | "local">("csi");
-  const [driver, setDriver] = useState("");
-  const [volumeHandle, setVolumeHandle] = useState("");
-  const [fsType, setFsType] = useState("");
-  const [readOnly, setReadOnly] = useState(false);
-  const [server, setServer] = useState("");
-  const [path, setPath] = useState("");
-  const [localNode, setLocalNode] = useState("");
+type SpecEditor = {
+  fields: ReactNode;
+  /** Whether a creation could be submitted from the current draft. */
+  valid: boolean;
+  /** Whether the one field an update may carry currently holds a usable value. */
+  editable: boolean;
+  /** Whether that field differs from the object on screen. */
+  changed: boolean;
+  build: () => StorageCreateSpec;
+  buildUpdate: () => StorageUpdateSpec;
+  updateImpacts: string[];
+  destructiveUpdate: boolean;
+};
+
+function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | null): SpecEditor {
+  const view = existing?.persistent_volume;
+  const source = existing?.persistent_volume_detail?.source;
+  const locked = existing !== null;
+
+  const [capacity, setCapacity] = useState(view?.capacity ?? "");
+  const [modes, setModes] = useState<AccessMode[]>(
+    (view?.access_modes as AccessMode[] | undefined) ?? ["ReadWriteOnce"],
+  );
+  const [reclaim, setReclaim] = useState(
+    view ? (view.reclaim_policy === "Delete" ? "Delete" : "Retain") : DEFAULT_OPTION,
+  );
+  const [storageClassName, setStorageClassName] = useState(view?.storage_class_name ?? "");
+  const [volumeMode, setVolumeMode] = useState(view?.volume_mode || DEFAULT_OPTION);
+  const [sourceType, setSourceType] = useState<"csi" | "nfs" | "local">(
+    source?.type === "nfs" ? "nfs" : source?.type === "local" ? "local" : "csi",
+  );
+  const [driver, setDriver] = useState(source?.csi?.driver ?? "");
+  const [volumeHandle, setVolumeHandle] = useState(source?.csi?.volume_handle ?? "");
+  const [fsType, setFsType] = useState(source?.csi?.fs_type ?? source?.local?.fs_type ?? "");
+  const [readOnly, setReadOnly] = useState(
+    source?.csi?.read_only ?? source?.nfs?.read_only ?? false,
+  );
+  const [server, setServer] = useState(source?.nfs?.server ?? "");
+  const [path, setPath] = useState(source?.nfs?.path ?? source?.local?.path ?? "");
+  const [localNode, setLocalNode] = useState(
+    existing?.persistent_volume_detail?.node_affinity?.terms?.[0]?.match_expressions?.find(
+      (expression) => expression.key === "kubernetes.io/hostname",
+    )?.values?.[0] ?? "",
+  );
 
   const blockVolume = volumeMode === "Block";
 
@@ -276,6 +408,7 @@ function usePersistentVolumeDraft(): SpecEditor {
               value={capacity}
               autoComplete="off"
               placeholder="10Gi"
+              disabled={locked}
               onChange={(event) => setCapacity(event.target.value)}
             />
           </Field>
@@ -285,23 +418,30 @@ function usePersistentVolumeDraft(): SpecEditor {
               value={storageClassName}
               autoComplete="off"
               spellCheck={false}
+              disabled={locked}
               onChange={(event) => setStorageClassName(event.target.value)}
             />
           </Field>
-          <Field label="回收策略" htmlFor="pv-reclaim">
+          <Field
+            label="回收策略"
+            htmlFor="pv-reclaim"
+            hint={
+              locked ? `当前 ${view?.reclaim_policy || "—"}，这是本页唯一可改的字段` : undefined
+            }
+          >
             <Select value={reclaim} onValueChange={setReclaim}>
               <SelectTrigger id="pv-reclaim">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={DEFAULT_OPTION}>默认</SelectItem>
+                {locked ? null : <SelectItem value={DEFAULT_OPTION}>默认</SelectItem>}
                 <SelectItem value="Retain">Retain（保留数据）</SelectItem>
                 <SelectItem value="Delete">Delete（销毁数据）</SelectItem>
               </SelectContent>
             </Select>
           </Field>
           <Field label="卷模式" htmlFor="pv-volume-mode">
-            <Select value={volumeMode} onValueChange={setVolumeMode}>
+            <Select value={volumeMode} onValueChange={setVolumeMode} disabled={locked}>
               <SelectTrigger id="pv-volume-mode">
                 <SelectValue />
               </SelectTrigger>
@@ -313,7 +453,7 @@ function usePersistentVolumeDraft(): SpecEditor {
             </Select>
           </Field>
         </div>
-        <AccessModePicker modes={modes} onChange={setModes} />
+        <AccessModePicker modes={modes} disabled={locked} onChange={setModes} />
       </FormSection>
 
       <FormSection title="来源" hint="ZKE 不会创建底层存储，它必须已经存在">
@@ -321,6 +461,7 @@ function usePersistentVolumeDraft(): SpecEditor {
           <Field label="类型" htmlFor="pv-source-type">
             <Select
               value={sourceType}
+              disabled={locked}
               onValueChange={(value) => setSourceType(value as "csi" | "nfs" | "local")}
             >
               <SelectTrigger id="pv-source-type" className="w-48">
@@ -342,6 +483,7 @@ function usePersistentVolumeDraft(): SpecEditor {
                   autoComplete="off"
                   spellCheck={false}
                   placeholder="例如 ebs.csi.aws.com"
+                  disabled={locked}
                   onChange={(event) => setDriver(event.target.value)}
                 />
               </Field>
@@ -351,6 +493,7 @@ function usePersistentVolumeDraft(): SpecEditor {
                   value={volumeHandle}
                   autoComplete="off"
                   spellCheck={false}
+                  disabled={locked}
                   onChange={(event) => setVolumeHandle(event.target.value)}
                 />
               </Field>
@@ -360,6 +503,7 @@ function usePersistentVolumeDraft(): SpecEditor {
                   value={fsType}
                   autoComplete="off"
                   placeholder="例如 ext4"
+                  disabled={locked}
                   onChange={(event) => setFsType(event.target.value)}
                 />
               </Field>
@@ -373,6 +517,7 @@ function usePersistentVolumeDraft(): SpecEditor {
                   value={server}
                   autoComplete="off"
                   spellCheck={false}
+                  disabled={locked}
                   onChange={(event) => setServer(event.target.value)}
                 />
               </Field>
@@ -383,6 +528,7 @@ function usePersistentVolumeDraft(): SpecEditor {
                   autoComplete="off"
                   spellCheck={false}
                   placeholder="/exports/data"
+                  disabled={locked}
                   onChange={(event) => setPath(event.target.value)}
                 />
               </Field>
@@ -397,6 +543,7 @@ function usePersistentVolumeDraft(): SpecEditor {
                   autoComplete="off"
                   spellCheck={false}
                   placeholder="/mnt/disks/ssd1"
+                  disabled={locked}
                   onChange={(event) => setPath(event.target.value)}
                 />
               </Field>
@@ -405,6 +552,7 @@ function usePersistentVolumeDraft(): SpecEditor {
                   id="pv-local-fs"
                   value={fsType}
                   autoComplete="off"
+                  disabled={locked}
                   onChange={(event) => setFsType(event.target.value)}
                 />
               </Field>
@@ -419,6 +567,7 @@ function usePersistentVolumeDraft(): SpecEditor {
                   autoComplete="off"
                   spellCheck={false}
                   placeholder="例如 worker-01"
+                  disabled={locked}
                   onChange={(event) => setLocalNode(event.target.value)}
                 />
               </Field>
@@ -428,6 +577,7 @@ function usePersistentVolumeDraft(): SpecEditor {
             <label className="flex items-center gap-2 text-[13px]">
               <Checkbox
                 checked={readOnly}
+                disabled={locked}
                 onCheckedChange={(checked) => setReadOnly(checked === true)}
               />
               只读挂载
@@ -444,16 +594,40 @@ function usePersistentVolumeDraft(): SpecEditor {
     </>
   );
 
-  return { fields, valid, build };
+  return {
+    fields,
+    valid,
+    editable: reclaim === "Retain" || reclaim === "Delete",
+    changed: reclaim !== (view?.reclaim_policy ?? ""),
+    build,
+    buildUpdate: () => ({
+      persistent_volume: { reclaim_policy: reclaim as "Retain" | "Delete" },
+    }),
+    updateImpacts: [
+      reclaim === "Delete"
+        ? "改为 Delete 后，删除该 PV 或其绑定的 PVC 时，底层存储和其中的数据会被一并销毁。"
+        : "改为 Retain 后，PV 被释放时数据会保留，但需要管理员手动清理或重新绑定。",
+      UPDATE_PRECONDITION,
+    ],
+    destructiveUpdate: reclaim === "Delete",
+  };
 }
 
-function useClaimDraft(): SpecEditor {
-  const [capacity, setCapacity] = useState("");
-  const [modes, setModes] = useState<AccessMode[]>(["ReadWriteOnce"]);
-  const [storageClassName, setStorageClassName] = useState("");
-  const [useDefaultClass, setUseDefaultClass] = useState(true);
-  const [volumeName, setVolumeName] = useState("");
-  const [volumeMode, setVolumeMode] = useState(DEFAULT_OPTION);
+function useClaimDraft(existing: KubernetesStorageResourceDetail | null): SpecEditor {
+  const view = existing?.persistent_volume_claim;
+  const locked = existing !== null;
+  const currentCapacity = view?.requested_capacity ?? "";
+
+  const [capacity, setCapacity] = useState(currentCapacity);
+  const [modes, setModes] = useState<AccessMode[]>(
+    (view?.access_modes as AccessMode[] | undefined) ?? ["ReadWriteOnce"],
+  );
+  const [storageClassName, setStorageClassName] = useState(view?.storage_class_name ?? "");
+  const [useDefaultClass, setUseDefaultClass] = useState(
+    view ? view.storage_class_name === null : true,
+  );
+  const [volumeName, setVolumeName] = useState(view?.volume_name ?? "");
+  const [volumeMode, setVolumeMode] = useState(view?.volume_mode || DEFAULT_OPTION);
 
   const valid = QUANTITY.test(capacity.trim()) && modes.length > 0;
 
@@ -475,7 +649,17 @@ function useClaimDraft(): SpecEditor {
   const fields = (
     <FormSection title="申领">
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="申请容量" htmlFor="pvc-capacity" hint="Kubernetes quantity，例如 10Gi">
+        <Field
+          label="申请容量"
+          htmlFor="pvc-capacity"
+          hint={
+            locked
+              ? `当前申请 ${currentCapacity || "—"}${
+                  view?.capacity ? `，已分配 ${view.capacity}` : ""
+                }。只能增大：Kubernetes 不支持缩容，扩容还需要 StorageClass 允许。`
+              : "Kubernetes quantity，例如 10Gi"
+          }
+        >
           <Input
             id="pvc-capacity"
             value={capacity}
@@ -485,7 +669,7 @@ function useClaimDraft(): SpecEditor {
           />
         </Field>
         <Field label="卷模式" htmlFor="pvc-volume-mode">
-          <Select value={volumeMode} onValueChange={setVolumeMode}>
+          <Select value={volumeMode} onValueChange={setVolumeMode} disabled={locked}>
             <SelectTrigger id="pvc-volume-mode">
               <SelectValue />
             </SelectTrigger>
@@ -496,12 +680,17 @@ function useClaimDraft(): SpecEditor {
             </SelectContent>
           </Select>
         </Field>
-        <Field label="绑定到指定卷" htmlFor="pvc-volume-name" hint="留空表示由 Kubernetes 选择">
+        <Field
+          label="绑定到指定卷"
+          htmlFor="pvc-volume-name"
+          hint={locked ? undefined : "留空表示由 Kubernetes 选择"}
+        >
           <Input
             id="pvc-volume-name"
             value={volumeName}
             autoComplete="off"
             spellCheck={false}
+            disabled={locked}
             onChange={(event) => setVolumeName(event.target.value)}
           />
         </Field>
@@ -509,6 +698,7 @@ function useClaimDraft(): SpecEditor {
       <label className="mt-3 flex items-center gap-2 text-[13px]">
         <Checkbox
           checked={useDefaultClass}
+          disabled={locked}
           onCheckedChange={(checked) => setUseDefaultClass(checked === true)}
         />
         使用集群默认 StorageClass
@@ -522,23 +712,48 @@ function useClaimDraft(): SpecEditor {
             autoComplete="off"
             spellCheck={false}
             placeholder="留空表示不使用任何 StorageClass（绑定手工创建的 PV）"
+            disabled={locked}
             onChange={(event) => setStorageClassName(event.target.value)}
           />
         </div>
       )}
-      <AccessModePicker modes={modes} onChange={setModes} />
+      <AccessModePicker modes={modes} disabled={locked} onChange={setModes} />
     </FormSection>
   );
 
-  return { fields, valid, build };
+  return {
+    fields,
+    valid,
+    editable: QUANTITY.test(capacity.trim()),
+    changed: capacity.trim() !== currentCapacity,
+    build,
+    buildUpdate: () => ({
+      persistent_volume_claim: { requested_capacity: capacity.trim() },
+    }),
+    updateImpacts: [
+      `申请容量将调整为 ${capacity.trim()}。扩容由 StorageClass 和 CSI 驱动执行，可能需要一段时间才反映到已分配容量。`,
+      "部分驱动要求 Pod 重启后文件系统才会扩展到新的容量。",
+      UPDATE_PRECONDITION,
+    ],
+    destructiveUpdate: false,
+  };
 }
 
-function useStorageClassDraft(): SpecEditor {
-  const [provisioner, setProvisioner] = useState("");
-  const [reclaim, setReclaim] = useState(DEFAULT_OPTION);
-  const [bindingMode, setBindingMode] = useState(DEFAULT_OPTION);
-  const [allowExpansion, setAllowExpansion] = useState(false);
-  const [parameters, setParameters] = useState<PairDraft[]>([]);
+function useStorageClassDraft(existing: KubernetesStorageResourceDetail | null): SpecEditor {
+  const view = existing?.storage_class;
+  const locked = existing !== null;
+  const currentExpansion = view?.allow_volume_expansion ?? false;
+
+  const [provisioner, setProvisioner] = useState(view?.provisioner ?? "");
+  const [reclaim, setReclaim] = useState(view?.reclaim_policy || DEFAULT_OPTION);
+  const [bindingMode, setBindingMode] = useState(view?.volume_binding_mode || DEFAULT_OPTION);
+  const [allowExpansion, setAllowExpansion] = useState(currentExpansion);
+  const [parameters, setParameters] = useState<PairDraft[]>(() =>
+    Object.entries(existing?.storage_class_detail?.parameters ?? {}).map(([key, value]) => ({
+      key,
+      value,
+    })),
+  );
   const parameterKeys = parameters.map((pair) => pair.key.trim()).filter(Boolean);
   const duplicateParameter = new Set(parameterKeys).size !== parameterKeys.length;
 
@@ -575,11 +790,12 @@ function useStorageClassDraft(): SpecEditor {
               autoComplete="off"
               spellCheck={false}
               placeholder="例如 ebs.csi.aws.com"
+              disabled={locked}
               onChange={(event) => setProvisioner(event.target.value)}
             />
           </Field>
           <Field label="回收策略" htmlFor="sc-reclaim">
-            <Select value={reclaim} onValueChange={setReclaim}>
+            <Select value={reclaim} onValueChange={setReclaim} disabled={locked}>
               <SelectTrigger id="sc-reclaim">
                 <SelectValue />
               </SelectTrigger>
@@ -591,7 +807,7 @@ function useStorageClassDraft(): SpecEditor {
             </Select>
           </Field>
           <Field label="绑定模式" htmlFor="sc-binding">
-            <Select value={bindingMode} onValueChange={setBindingMode}>
+            <Select value={bindingMode} onValueChange={setBindingMode} disabled={locked}>
               <SelectTrigger id="sc-binding">
                 <SelectValue />
               </SelectTrigger>
@@ -610,10 +826,15 @@ function useStorageClassDraft(): SpecEditor {
           />
           允许卷扩容
         </label>
+        {locked ? (
+          <span className="text-subtle-foreground mt-1 block text-xs">
+            这是本页唯一可改的字段；当前 {currentExpansion ? "允许" : "不允许"}。
+          </span>
+        ) : null}
       </FormSection>
 
       <FormSection title="参数" hint="Provisioner 自定义的键值对">
-        <PairList rows={parameters} onChange={setParameters} />
+        <PairList rows={parameters} disabled={locked} onChange={setParameters} />
         {duplicateParameter ? (
           <Alert tone="warning" className="mt-2">
             参数键不能重复；请合并或删除重复项。
@@ -623,7 +844,22 @@ function useStorageClassDraft(): SpecEditor {
     </>
   );
 
-  return { fields, valid, build };
+  return {
+    fields,
+    valid,
+    editable: true,
+    changed: allowExpansion !== currentExpansion,
+    build,
+    buildUpdate: () => ({ storage_class: { allow_volume_expansion: allowExpansion } }),
+    updateImpacts: [
+      allowExpansion
+        ? "之后由该 StorageClass 制备的 PVC 将允许扩容。"
+        : "关闭后，引用该 StorageClass 的 PVC 将不能再扩容。",
+      "已有的 PV 和 PVC 不受影响。",
+      UPDATE_PRECONDITION,
+    ],
+    destructiveUpdate: false,
+  };
 }
 
 /**
@@ -632,9 +868,11 @@ function useStorageClassDraft(): SpecEditor {
  */
 function AccessModePicker({
   modes,
+  disabled,
   onChange,
 }: {
   modes: AccessMode[];
+  disabled?: boolean;
   onChange: (modes: AccessMode[]) => void;
 }) {
   return (
@@ -645,6 +883,7 @@ function AccessModePicker({
           <label key={mode} className="flex items-center gap-2 text-[13px]">
             <Checkbox
               checked={modes.includes(mode)}
+              disabled={disabled}
               onCheckedChange={(checked) =>
                 onChange(
                   checked === true ? [...modes, mode] : modes.filter((entry) => entry !== mode),
@@ -701,9 +940,11 @@ function Field({
 
 function PairList({
   rows,
+  disabled,
   onChange,
 }: {
   rows: PairDraft[];
+  disabled?: boolean;
   onChange: (rows: PairDraft[]) => void;
 }) {
   const update = (index: number, patch: Partial<PairDraft>) =>
@@ -711,6 +952,9 @@ function PairList({
 
   return (
     <div className="grid gap-2">
+      {rows.length === 0 && disabled ? (
+        <span className="text-subtle-foreground text-xs">该 StorageClass 没有参数。</span>
+      ) : null}
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
           <Input
@@ -719,6 +963,7 @@ function PairList({
             placeholder="键"
             autoComplete="off"
             spellCheck={false}
+            disabled={disabled}
             onChange={(event) => update(index, { key: event.target.value })}
           />
           <Input
@@ -727,28 +972,33 @@ function PairList({
             placeholder="值"
             autoComplete="off"
             spellCheck={false}
+            disabled={disabled}
             onChange={(event) => update(index, { value: event.target.value })}
           />
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={`移除参数 ${index + 1}`}
-            onClick={() => onChange(rows.filter((_, position) => position !== index))}
-          >
-            <X />
-          </Button>
+          {disabled ? null : (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`移除参数 ${index + 1}`}
+              onClick={() => onChange(rows.filter((_, position) => position !== index))}
+            >
+              <X />
+            </Button>
+          )}
         </div>
       ))}
-      <div>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => onChange([...rows, { key: "", value: "" }])}
-        >
-          <Plus />
-          添加参数
-        </Button>
-      </div>
+      {disabled ? null : (
+        <div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => onChange([...rows, { key: "", value: "" }])}
+          >
+            <Plus />
+            添加参数
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
