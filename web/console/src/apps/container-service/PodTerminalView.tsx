@@ -357,10 +357,21 @@ function TerminalSession({
 
       {/* The terminal owns its own scrolling and its own dark surface: a shell
           is read against the colours the programs inside it assume. */}
-      <div
-        ref={surfaceRef}
-        className="border-border rounded-panel min-h-0 flex-1 overflow-hidden border bg-[#0b0d12] p-2"
-      />
+      <div className="border-border rounded-panel min-h-0 flex-1 overflow-hidden border bg-[#0b0d12] p-2">
+        {/*
+         * The element the terminal is opened into carries no padding and no
+         * border, and the frame lives on the wrapper instead.
+         *
+         * The fit addon sizes the terminal from `getComputedStyle(parent).height`,
+         * and with `box-sizing: border-box` that is the border box — the parent's
+         * own padding and border included. Measured against this panel directly
+         * it read 18px more than it had, which is more than one 14px row: the
+         * bottom line was laid out past the edge and clipped away, and the same
+         * 18px on the width made `cols` too large, so the shell wrapped its
+         * lines at a width the operator did not have.
+         */}
+        <div ref={surfaceRef} className="h-full w-full" />
+      </div>
 
       <div className="text-subtle-foreground mt-3 flex flex-wrap items-center gap-3 text-xs">
         <ConnectionBadge state={state} />
