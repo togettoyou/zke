@@ -373,15 +373,30 @@ func podExecSameOrigin(request *http.Request) bool {
 	return parsed.Scheme == expectedScheme && strings.EqualFold(parsed.Host, request.Host)
 }
 
+// podExecAuditResult says how a terminal session ended, in the audit's
+// vocabulary — `succeeded`, `failed` or `denied`, the only three results an
+// audit event may carry.
+//
+// It said `timeout` and `canceled` before, and the audit service drops an event
+// whose result is none of the three: a terminal the operator simply closed, or
+// one the Server ended at its maximum duration, left no audit record at all —
+// the sessions that ended normally were the ones missing from the log.
+//
+// Closing a terminal is how a terminal ends, so it is a success; so is the
+// Server's own duration cap. An upstream timeout is not, and revocation is a
+// denial. See kubernetesEventAuditResult for the same rule on Event streams.
 func podExecAuditResult(ctx context.Context, err error, revoked bool) string {
 	if revoked {
 		return "denied"
 	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, podexec.ErrClusterTimeout) {
-		return "timeout"
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "succeeded"
+	}
+	if errors.Is(err, podexec.ErrClusterTimeout) {
+		return "failed"
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
-		return "canceled"
+		return "succeeded"
 	}
 	return "failed"
 }

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/resourcewatch"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	corev1 "k8s.io/api/core/v1"
@@ -119,5 +121,75 @@ func TestKubernetesEventsHandlerKeepsStructuredErrorsBeforeSSEStarts(t *testing.
 	if response.Code != http.StatusConflict || response.Header().Get("Content-Type") != "application/json; charset=utf-8" ||
 		!strings.Contains(response.Body.String(), "resource_version_expired") {
 		t.Fatalf("status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+}
+
+func TestStreamAuditResultsSeparateOrdinaryEndingsFromFailures(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer stop()
+
+	for _, testCase := range []struct {
+		name       string
+		ctx        context.Context
+		reason     string
+		wantResult string
+	}{
+		{"operator closed the page", canceled, "canceled", "succeeded"},
+		{"upstream Watch rotated", canceled, "watch_closed", "succeeded"},
+		{"resourceVersion aged out", canceled, "resource_version_expired", "succeeded"},
+		{"Server's own follow deadline", expired, "maximum_duration", "succeeded"},
+		{"upstream timed out", canceled, "maximum_duration", "failed"},
+		{"permission withdrawn mid-stream", canceled, "access_revoked", "denied"},
+		{"upstream failure", canceled, "failed", "failed"},
+		{"Agent capacity exhausted", canceled, "capacity_exhausted", "failed"},
+	} {
+		if result := kubernetesEventAuditResult(testCase.ctx, testCase.reason); result != testCase.wantResult {
+			t.Errorf("%s: event audit result = %q, want %q", testCase.name, result, testCase.wantResult)
+		}
+	}
+
+	for _, testCase := range []struct {
+		name         string
+		ctx          context.Context
+		streamResult string
+		wantResult   string
+	}{
+		{"operator stopped following", canceled, "canceled", "succeeded"},
+		{"Server's own follow deadline", expired, "timeout", "succeeded"},
+		{"upstream timed out", canceled, "timeout", "failed"},
+		{"permission withdrawn mid-stream", canceled, "access_revoked", "denied"},
+		{"upstream failure", canceled, "failed", "failed"},
+	} {
+		if result := podLogAuditResult(testCase.ctx, testCase.streamResult); result != testCase.wantResult {
+			t.Errorf("%s: Pod log audit result = %q, want %q", testCase.name, result, testCase.wantResult)
+		}
+	}
+
+	// Every one of these has to be a result the audit service will store: it
+	// drops an event whose result is not `succeeded`, `failed` or `denied`, so a
+	// terminal that ended normally used to leave no audit record at all.
+	for _, testCase := range []struct {
+		name       string
+		ctx        context.Context
+		err        error
+		revoked    bool
+		wantResult string
+	}{
+		{"operator closed the terminal", canceled, context.Canceled, false, "succeeded"},
+		{"shell exited", canceled, io.EOF, false, "succeeded"},
+		{"Server's own maximum duration", expired, context.DeadlineExceeded, false, "succeeded"},
+		{"upstream timed out", canceled, podexec.ErrClusterTimeout, false, "failed"},
+		{"permission withdrawn mid-session", canceled, context.Canceled, true, "denied"},
+		{"upstream failure", canceled, errors.New("stream broke"), false, "failed"},
+	} {
+		result := podExecAuditResult(testCase.ctx, testCase.err, testCase.revoked)
+		if result != testCase.wantResult {
+			t.Errorf("%s: Pod exec audit result = %q, want %q", testCase.name, result, testCase.wantResult)
+		}
+		if result != "succeeded" && result != "failed" && result != "denied" {
+			t.Errorf("%s: %q is not a storable audit result", testCase.name, result)
+		}
 	}
 }

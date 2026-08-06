@@ -124,9 +124,11 @@ func (handler *kubernetesPodLogsHandler) stream(c *gin.Context) {
 	cancelStream()
 	<-revalidationDone
 	if streamErr != nil {
-		handler.recordPodLogs(c, identity.User.ID, target, "failed")
+		streamResult := podLogStreamResult(streamContext, streamErr, accessRevoked.Load())
+		handler.recordPodLogs(c, identity.User.ID, target,
+			podLogAuditResult(streamContext, streamResult))
 		if writer.Started() {
-			writer.Finish(podLogStreamResult(streamContext, streamErr, accessRevoked.Load()), result)
+			writer.Finish(streamResult, result)
 			if !errors.Is(streamErr, context.Canceled) {
 				handler.logInternal(c, "stream Kubernetes Pod logs", streamErr)
 			}
@@ -305,6 +307,28 @@ func podLogStreamResult(
 		return "canceled"
 	}
 	return "failed"
+}
+
+// podLogAuditResult maps how a log stream ended onto the audit's vocabulary.
+//
+// Following a Pod's logs ends when the operator stops watching, which is the
+// ordinary case and not a failed read; only the Server's own duration cap shares
+// that reading of `timeout`, so an upstream one stays a failure. See
+// kubernetesEventAuditResult, which answers the same question for Event streams.
+func podLogAuditResult(ctx context.Context, streamResult string) string {
+	switch streamResult {
+	case "access_revoked":
+		return "denied"
+	case "canceled":
+		return "succeeded"
+	case "timeout":
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "succeeded"
+		}
+		return "failed"
+	default:
+		return "failed"
+	}
 }
 
 func (handler *kubernetesPodLogsHandler) recordPodLogs(

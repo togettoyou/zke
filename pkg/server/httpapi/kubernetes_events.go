@@ -114,9 +114,11 @@ func (handler *kubernetesEventsHandler) stream(c *gin.Context) {
 	cancelStream()
 	<-revalidationDone
 	if streamErr != nil {
-		handler.recordEventRead(c, identity.User.ID, target, "failed")
+		closeReason := kubernetesEventCloseReason(streamContext, streamErr, revoked.Load())
+		handler.recordEventRead(c, identity.User.ID, target,
+			kubernetesEventAuditResult(streamContext, closeReason))
 		if sink.Started() {
-			_ = sink.Close(kubernetesEventCloseReason(streamContext, streamErr, revoked.Load()), result)
+			_ = sink.Close(closeReason, result)
 			if !errors.Is(streamErr, context.Canceled) {
 				handler.logInternal(c, "stream Kubernetes Events", streamErr)
 			}
@@ -265,6 +267,38 @@ func kubernetesEventCloseReason(ctx context.Context, err error, revoked bool) st
 		return "capacity_exhausted"
 	}
 	return "failed"
+}
+
+// kubernetesEventAuditResult says how a stream ended in the audit's vocabulary,
+// which is not the same question as why it ended.
+//
+// A followed stream is expected to end. The operator closes the page, the
+// Server reaches its own maximum duration, the upstream Watch rotates, the
+// resourceVersion ages out — the Console resumes from the last three on its own,
+// and none of them means the read failed. Recorded as failures, they buried the
+// events page under one failed audit event per reconnection and per visit,
+// which is exactly the noise that hides a read that really was refused.
+//
+// Revocation keeps a result of its own: that stream was cut because the identity
+// lost the permission it was reading under, which is a denial and belongs with
+// the other denials.
+func kubernetesEventAuditResult(ctx context.Context, closeReason string) string {
+	switch closeReason {
+	case "access_revoked":
+		return "denied"
+	case "canceled", "watch_closed", "resource_version_expired":
+		return "succeeded"
+	case "maximum_duration":
+		// The Server's own follow deadline and an upstream timeout both surface
+		// as ErrClusterTimeout, so the context is what tells them apart: only
+		// the deadline this handler set is an ordinary end.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "succeeded"
+		}
+		return "failed"
+	default:
+		return "failed"
+	}
 }
 
 func (handler *kubernetesEventsHandler) recordEventRead(c *gin.Context, actor, target, result string) {

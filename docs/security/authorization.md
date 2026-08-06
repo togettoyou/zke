@@ -173,6 +173,13 @@ Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Res
 字段过滤器定域到具体资源；实时 Follow 周期重新验证 Session 与 `cluster.event.read`。Agent ServiceAccount 仅
 增加 `events` 的 `get/list/watch`，Event 的 message 正文不写入日志或审计，审计只记录作用域、过滤目标和结果。
 
+长连接读取（Event 流、Pod 日志 Follow、Web Terminal）的审计 `result` 记录的是「服务端是否完成了这次读取」，
+而不是流为什么结束。操作者关闭页面、Server 自身的最长时长到期、上游 Watch 轮换、resourceVersion 过期都属于
+流的正常终止，记为 `succeeded`；实时重新验证发现权限被收回记为 `denied`；Agent 不可达、上游超时、容量耗尽和
+上游错误记为 `failed`。这三类流都会在每次连接结束时各写一条审计事件，因此客户端的每次重连也各有一条记录：
+把正常终止记成失败，只会让真正被拒绝或失败的读取淹没在噪声里。审计 `result` 只有 `succeeded`、`failed` 和
+`denied` 三个取值，写入其他取值的事件会被审计服务丢弃，因此流的关闭原因必须先映射到这三者再落库。
+
 管理端不暴露独立 Agent 资源。连接身份属于 Cluster 聚合内部状态，连接撤销接口
 `POST /api/v1/clusters/{cluster_id}/connection/revoke` 按 Cluster ID 解析 Project 作用域，要求
 `cluster.connection.revoke` 和显式确认。重新接入接口
