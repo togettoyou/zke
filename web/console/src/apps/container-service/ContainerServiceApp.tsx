@@ -307,7 +307,29 @@ export function ContainerServiceApp() {
           title="该项目没有在线集群"
           description="容器服务的每个查询和变更都由目标集群的 Agent 定域执行，需要至少一个 Agent 处于在线状态。"
         />
-      ) : activeSection === "overview" ? (
+      ) : /*
+       * Every section is keyed by the target Cluster, and only the Cluster.
+       *
+       * The key is a reset: changing it throws the section's state away. The
+       * Cluster belongs there — nothing an operator was looking at survives
+       * pointing the window at different infrastructure. The Namespace does not.
+       * A section's state is which tab is open and which page of the list is
+       * showing, and the second one resets itself: a continuation token is only
+       * meaningful to the list that issued it, so every list here already keys its
+       * pager on the Namespace. Keying the section on it as well only discarded
+       * the tab, which is how selecting a Namespace while reading DaemonSets
+       * landed back on Deployments.
+       *
+       * Nothing namespaced is left stale by that. The views that hold one object —
+       * a detail page, a form, the YAML editor — put up a page header, and the
+       * shell hides the toolbar while one is up, so the Namespace picker is not on
+       * screen to be changed; a confirmation dialog is modal, for the same effect.
+       *
+       * 事件 is the exception and stays keyed on the Namespace: its state is an
+       * accumulated stream of that Namespace's events, so a remount is the correct
+       * way to drop them, and it has no tab to lose.
+       */
+      activeSection === "overview" ? (
         <OverviewSection key={clusterId} clusterId={clusterId} />
       ) : activeSection === "nodes" ? (
         <NodeSection
@@ -370,7 +392,7 @@ export function ContainerServiceApp() {
         />
       ) : activeSection === "autoscaling" ? (
         <AutoscalerSection
-          key={`${clusterId}/${namespace}`}
+          key={clusterId}
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
@@ -389,7 +411,7 @@ export function ContainerServiceApp() {
         />
       ) : activeSection === "configmaps" ? (
         <ConfigurationSection
-          key={`${clusterId}/${namespace}`}
+          key={clusterId}
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
@@ -398,7 +420,7 @@ export function ContainerServiceApp() {
         />
       ) : activeSection === "networking" ? (
         <NetworkingSection
-          key={`${clusterId}/${namespace}`}
+          key={clusterId}
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
@@ -407,7 +429,7 @@ export function ContainerServiceApp() {
         />
       ) : activeSection === "pods" ? (
         <PodSection
-          key={`${clusterId}/${namespace}`}
+          key={clusterId}
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
@@ -416,7 +438,7 @@ export function ContainerServiceApp() {
         />
       ) : (
         <WorkloadSection
-          key={`${clusterId}/${namespace}`}
+          key={clusterId}
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
