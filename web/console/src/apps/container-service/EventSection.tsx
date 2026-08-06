@@ -9,9 +9,11 @@ import {
   type KubernetesEventRecord,
   type KubernetesEventReference,
 } from "@/api/queries/kubernetes-events";
+import { useResourceTypes } from "@/api/queries/kubernetes-resources";
 import { SectionToolbarActions } from "@/apps/AppShell";
 import { DataTable } from "@/components/common/data-table";
 import { RelativeTime, StatusBadge } from "@/components/common/status";
+import { statusLabel } from "@/components/common/status-labels";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,10 +26,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 /** Radix Select cannot hold an empty value, so "any" needs a name of its own. */
 const ANY_TYPE = "__any__";
+const ANY_KIND = "__any_kind__";
 const LIMIT_OPTIONS = [100, 200, 500];
 
 /**
@@ -63,16 +65,19 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
   const [follow, setFollow] = useState(true);
   const [limit, setLimit] = useState(200);
   const [type, setType] = useState(ANY_TYPE);
-  const [kind, setKind] = useState("");
+  const [kind, setKind] = useState(ANY_KIND);
   const [name, setName] = useState("");
   const [reason, setReason] = useState("");
 
-  // Filters are applied by the Server, so every keystroke would otherwise open a
-  // new Watch.
-  const debouncedKind = useDebouncedValue(kind.trim());
-  const debouncedName = useDebouncedValue(name.trim());
-  const debouncedReason = useDebouncedValue(reason.trim());
-
+  // Type and Kind are whole values chosen from a list, so they are sent to the
+  // Server and become Field Selector terms on the Watch itself: the snapshot's
+  // limit is then spent on events that already match.
+  //
+  // Name and reason are not. A Field Selector compares exactly, and an operator
+  // typing part of a name means part of a name — `api` should find
+  // `api-server-7d9f`, and as a selector term it found nothing at all. They are
+  // therefore matched here, as substrings of what the stream has delivered, and
+  // the fields say so.
   const stream = useKubernetesEventStream({
     clusterId,
     namespace,
@@ -80,11 +85,57 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
     limit,
     filters: {
       ...(type === ANY_TYPE ? {} : { type: type as "Normal" | "Warning" }),
-      ...(debouncedKind ? { resourceKind: debouncedKind } : {}),
-      ...(debouncedName ? { resourceName: debouncedName } : {}),
-      ...(debouncedReason ? { reason: debouncedReason } : {}),
+      ...(kind === ANY_KIND ? {} : { resourceKind: kind }),
     },
   });
+
+  // The Kind options are every Kind the target Cluster's API Discovery reports — the
+  // same catalog the resource browser's tree is built from, so CRDs an operator
+  // installed are in it — plus any Kind the events on screen name, which keeps
+  // the picker usable when Discovery is unavailable. Not the events alone: a
+  // truncated snapshot is exactly when this filter is wanted, and a list built
+  // from what is already visible cannot narrow to what is not.
+  //
+  // Deduplicated by Kind alone, because that is all the field selector compares:
+  // one `HorizontalPodAutoscaler` covers both of its versions.
+  const catalog = useResourceTypes(clusterId);
+  const kindOptions = useMemo(() => {
+    const kinds = new Set<string>();
+    for (const resourceType of catalog.data?.resources ?? []) {
+      if (resourceType.kind) {
+        kinds.add(resourceType.kind);
+      }
+    }
+    for (const event of stream.events) {
+      if (event.regarding.kind) {
+        kinds.add(event.regarding.kind);
+      }
+    }
+    // A filtered stream returns one Kind, and the selection must survive being
+    // applied or the trigger would show a value its own list no longer offers.
+    if (kind !== ANY_KIND) {
+      kinds.add(kind);
+    }
+    return [...kinds].sort((left, right) => left.localeCompare(right));
+  }, [catalog.data, stream.events, kind]);
+
+  // Matched against what is on the wire — the object's own name and Kubernetes'
+  // reason — so the two inputs narrow exactly the rows the table is showing.
+  const nameNeedle = name.trim().toLowerCase();
+  const reasonNeedle = reason.trim().toLowerCase();
+  const rows = useMemo(() => {
+    if (nameNeedle === "" && reasonNeedle === "") {
+      return stream.events;
+    }
+    return stream.events.filter((event) => {
+      const objectName = (event.regarding.name ?? "").toLowerCase();
+      return (
+        (nameNeedle === "" || objectName.includes(nameNeedle)) &&
+        (reasonNeedle === "" || event.reason.toLowerCase().includes(reasonNeedle))
+      );
+    });
+  }, [stream.events, nameNeedle, reasonNeedle]);
+  const narrowed = rows.length !== stream.events.length;
 
   const columns = useMemo<ColumnDef<KubernetesEventRecord, unknown>[]>(
     () => [
@@ -160,22 +211,28 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={ANY_TYPE}>全部</SelectItem>
-              <SelectItem value="Warning">Warning</SelectItem>
-              <SelectItem value="Normal">Normal</SelectItem>
+              {/* Named exactly as the 类型 column names them: the filter and the
+                  rows it produces have to be the same word. */}
+              <SelectItem value="Warning">{statusLabel("eventType", "Warning")}</SelectItem>
+              <SelectItem value="Normal">{statusLabel("eventType", "Normal")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div className="grid content-start gap-1.5">
           <Label htmlFor="event-kind">关联资源类型</Label>
-          <Input
-            id="event-kind"
-            value={kind}
-            className="w-40"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="例如 Pod"
-            onChange={(event) => setKind(event.target.value)}
-          />
+          <Select value={kind} onValueChange={setKind}>
+            <SelectTrigger id="event-kind" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY_KIND}>全部</SelectItem>
+              {kindOptions.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="grid content-start gap-1.5">
           <Label htmlFor="event-name">关联资源名称</Label>
@@ -185,6 +242,7 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
             className="w-48"
             autoComplete="off"
             spellCheck={false}
+            placeholder="模糊匹配"
             onChange={(event) => setName(event.target.value)}
           />
         </div>
@@ -196,7 +254,7 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
             className="w-40"
             autoComplete="off"
             spellCheck={false}
-            placeholder="例如 Failed"
+            placeholder="模糊匹配，例如 Failed"
             onChange={(event) => setReason(event.target.value)}
           />
         </div>
@@ -225,18 +283,30 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
 
       <DataTable
         columns={columns}
-        data={stream.events}
+        data={rows}
         isLoading={stream.status === "loading"}
         error={stream.status === "error" ? stream.error : undefined}
         onRetry={stream.reload}
         rowKey={(event) => event.uid}
         emptyTitle="没有匹配的事件"
-        emptyDescription="当前筛选条件下，该命名空间没有 Kubernetes Event。集群会按保留期回收事件。"
+        emptyDescription={
+          nameNeedle || reasonNeedle
+            ? "已读取的事件中没有匹配名称或原因的；这两项只在已读取的事件中模糊匹配，更早的事件需要放宽类型筛选或提高快照上限后重新加载。"
+            : "当前筛选条件下，该命名空间没有 Kubernetes Event。集群会按保留期回收事件。"
+        }
       />
 
       <div className="text-subtle-foreground mt-3 flex flex-wrap items-center gap-3 text-xs">
         <StreamStatus status={stream.status} following={follow} />
-        <span className="zke-tnum">共 {stream.events.length} 条</span>
+        <span className="zke-tnum">
+          共 {rows.length} 条{narrowed ? `（已读取 ${stream.events.length} 条）` : ""}
+        </span>
+        {nameNeedle || reasonNeedle ? (
+          // Said where the count is, because the count is what the filter
+          // changed: Kubernetes matches these two fields exactly, so the
+          // substring form only reaches what the stream already delivered.
+          <span>名称与原因在已读取的事件中模糊匹配</span>
+        ) : null}
         {stream.closeReason ? <span>{closeReasonLabel(stream.closeReason)}</span> : null}
         {stream.status === "error" ? <span>{errorMessage(stream.error)}</span> : null}
       </div>

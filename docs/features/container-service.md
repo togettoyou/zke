@@ -651,8 +651,13 @@ Console YAML 入口出现在支持它的各分区详情页（节点、命名空�
 没有对应写权限时页面只读并说明原因；不可变的 Secret 与 ZKE 自身的授权对象同样只读打开，说明的是「为什么不能
 写」而不是「你没有权限」——那是两件不同的事。文档超过 4 MiB 时在提交前就拒绝，不做无谓往返。
 
-Console 事件页面按所选 Cluster 和 Namespace 展示 Event，可按 Event type、关联资源 Kind/名称和 reason 筛选，
-筛选条件由服务端执行，输入框做防抖以免每次击键都开一条新 Watch。默认开启实时跟随。事件按 UID 归并：
+Console 事件页面按所选 Cluster 和 Namespace 展示 Event，可按 Event type、关联资源 Kind/名称和 reason 筛选。
+筛选分两层执行。Event type 与关联资源 Kind 是下拉选择，由服务端转成 Field Selector 下推到 Watch，快照上限因此
+只花在已经匹配的事件上；两者都不做输入，是因为 Field Selector 只能精确匹配，手输的 `pod` 或 `Pods` 只会静默
+返回空列表。type 的选项与列表「类型」列共用同一份文案；Kind 的选项来自目标集群 API Discovery 的资源目录（因此
+包含 CRD），并补上当前事件中出现过的 Kind，使 Discovery 不可用时仍可筛选。关联资源名称与 reason 则是客户端
+子串匹配：Kubernetes 没有模糊 Field Selector，把「名称的一部分」下推会变成另一种语义，因此它们只作用于已读取
+的事件，界面在筛选生效时说明这一点，并同时给出匹配条数与已读取条数。默认开启实时跟随。事件按 UID 归并：
 Kubernetes 用递增 `count` 的 MODIFIED 表示同一事件重复发生，因此新帧替换原行而不是堆叠；DELETED 移除该行。
 列表按最近发生时间倒序，客户端最多保留 1000 条。
 
