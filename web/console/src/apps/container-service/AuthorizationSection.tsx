@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Lock, Pencil, Plus } from "lucide-react";
+import { FileCode, Lock, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -31,6 +31,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { AuthorizationForm } from "./AuthorizationForm";
+import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import {
@@ -76,6 +77,7 @@ export function AuthorizationSection({
   const [detailName, setDetailName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<KubernetesAuthorizationResourceSummary | null>(null);
+  const [yamlTarget, setYamlTarget] = useState<KubernetesAuthorizationResourceSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<KubernetesAuthorizationResourceSummary | null>(
     null,
   );
@@ -233,6 +235,33 @@ export function AuthorizationSection({
     </>
   );
 
+  if (yamlTarget) {
+    return (
+      <YamlEditorView
+        identity={
+          isNamespacedAuthorization(resource)
+            ? { kind: "authorization", clusterId, namespace, resource, name: yamlTarget.name }
+            : { kind: "authorization", clusterId, resource, name: yamlTarget.name }
+        }
+        clusterName={clusterName}
+        kindLabel={authorizationKindLabel(resource)}
+        canUpdate={canManage}
+        // Only ZKE's own objects are read-only here. An aggregated ClusterRole
+        // is not: the typed form refuses it because it cannot express an
+        // `aggregationRule`, and a document can — which is the case for having
+        // this view at all.
+        readOnlyReason={yamlTarget.managed_by_zke ? `${PROTECTED_HINT}。` : undefined}
+        impacts={[
+          "整份文档会替换集群中的现有对象，未在文档中出现的字段将被移除。",
+          "服务端会核对文档内的 UID 与 resourceVersion；期间对象若已变化，本次更新会被拒绝而不是覆盖。",
+          "授权变更立即生效：规则或主体一旦改变，对应身份的访问能力随之改变。",
+          "escalate、bind、impersonate 以及 secrets、serviceaccounts/token 仍会被拒绝，roleRef 不可改写。",
+        ]}
+        onBack={() => setYamlTarget(null)}
+      />
+    );
+  }
+
   // The form takes over the section rather than sitting over the list, like every
   // other typed form here: a role's rules or a binding's subjects are taller than
   // a box laid over the table can show, and the table is of no use while they are
@@ -263,6 +292,7 @@ export function AuthorizationSection({
           name={detailName}
           canManage={canManage}
           onEdit={setEditing}
+          onOpenYaml={setYamlTarget}
           onDelete={openDelete}
           onBack={() => setDetailName(null)}
         />
@@ -346,7 +376,7 @@ function lockReason(item: KubernetesAuthorizationResourceSummary): string | null
     return PROTECTED_HINT;
   }
   if (item.aggregated) {
-    return "聚合 ClusterRole 的规则由控制器合成，不支持类型化更新";
+    return "聚合 ClusterRole 的规则由控制器合成，请用 YAML 编辑";
   }
   return null;
 }
@@ -460,6 +490,7 @@ function AuthorizationDetailView({
   name,
   canManage,
   onEdit,
+  onOpenYaml,
   onDelete,
   onBack,
 }: {
@@ -469,6 +500,7 @@ function AuthorizationDetailView({
   name: string;
   canManage: boolean;
   onEdit: (item: KubernetesAuthorizationResourceSummary) => void;
+  onOpenYaml: (item: KubernetesAuthorizationResourceSummary) => void;
   onDelete: (item: KubernetesAuthorizationResourceSummary) => void;
   onBack: () => void;
 }) {
@@ -483,8 +515,14 @@ function AuthorizationDetailView({
         onBack={onBack}
         actions={
           <>
-            {/* No YAML entry: RBAC objects are written through the form, which
-                is where the rules are checked before they are sent. */}
+            {/* The rules are checked on the way out either way: the YAML route
+                runs the same guard the form does. */}
+            {item ? (
+              <Button size="sm" variant="secondary" onClick={() => onOpenYaml(item)}>
+                <FileCode />
+                YAML
+              </Button>
+            ) : null}
             {canManage && item && locked === null ? (
               <Button size="sm" variant="secondary" onClick={() => onEdit(item)}>
                 <Pencil />

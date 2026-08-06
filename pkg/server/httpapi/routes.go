@@ -713,6 +713,20 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
 		handlers.kubernetesAuthorization.delete,
 	)
+	// YAML for the same five families, under the same two permissions. The
+	// generic Resource and YAML endpoints still refuse them: reaching a Role
+	// through `cluster.resource.update` is exactly what that refusal is for.
+	clusterRoutes.GET(
+		"/:cluster_id/authorization/:authorization_resource/:authorization_name/yaml",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACRead, "cluster_id"),
+		handlers.kubernetesAuthorizationYAML.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/authorization/:authorization_resource/:authorization_name/yaml",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.kubernetesAuthorizationYAML.update,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource",
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACRead, "cluster_id"),
@@ -740,6 +754,17 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
 		handlers.kubernetesAuthorization.delete,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource/:authorization_name/yaml",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACRead, "cluster_id"),
+		handlers.kubernetesAuthorizationYAML.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource/:authorization_name/yaml",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.kubernetesAuthorizationYAML.update,
 	)
 	// Secrets use their own permissions rather than the general cluster ones:
 	// reading configuration and reading credentials are different asks, and a
@@ -786,6 +811,25 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesSecret.delete,
+	)
+	// The Secret's YAML, under the Secret permissions rather than the resource
+	// ones. The generic YAML endpoint's refusal of Secrets is unchanged.
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/secrets/:secret_name/yaml",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretRead,
+			"cluster_id",
+		),
+		handlers.kubernetesSecretYAML.get,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/secrets/:secret_name/yaml",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretManage,
+			"cluster_id",
+		),
+		handlers.kubernetesSecretYAML.update,
 	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/configmaps",

@@ -806,9 +806,7 @@ function ContainerPanel({
            * rejects both rather than ignoring them.
            */}
           {container.init ? (
-            <p className="text-subtle-foreground text-xs">
-              初始化容器在主容器之前运行完毕，因此没有健康检查和生命周期钩子。
-            </p>
+            <p className="text-subtle-foreground text-xs">初始化容器没有健康检查和生命周期钩子</p>
           ) : (
             <>
               <Field label="存活检查" hint="检查容器是否正常，不正常则重启实例">

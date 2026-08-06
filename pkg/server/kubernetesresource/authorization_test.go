@@ -109,3 +109,157 @@ func TestDeleteAuthorizationResourceProtectsZKEManagedObjects(t *testing.T) {
 		t.Fatalf("error = %v, want ErrManagedResource", err)
 	}
 }
+
+/*
+ * The guard that makes the YAML editor an editor rather than a way around the
+ * typed API.
+ *
+ * Every case below is a write the form refuses. A document can express all of
+ * them, so the same answer has to be given here — otherwise `cluster.rbac.manage`
+ * buys the ability to grant `escalate` to anyone, which is the permission that
+ * grants every other one.
+ */
+func TestAuthorizationManifestGuardRefusesWhatTheTypedAPIRefuses(t *testing.T) {
+	t.Parallel()
+
+	object := func(value any) map[string]any {
+		t.Helper()
+		result, err := runtime.DefaultUnstructuredConverter.ToUnstructured(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	clusterRole := func(rules []rbacv1.PolicyRule, labels map[string]string) map[string]any {
+		return object(&rbacv1.ClusterRole{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"},
+			ObjectMeta: metav1.ObjectMeta{Name: "editor", Labels: labels},
+			Rules:      rules,
+		})
+	}
+	readPods := []rbacv1.PolicyRule{{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"pods"}}}
+	binding := func(roleName string) map[string]any {
+		return object(&rbacv1.ClusterRoleBinding{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding"},
+			ObjectMeta: metav1.ObjectMeta{Name: "editors"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: roleName},
+			Subjects:   []rbacv1.Subject{{APIGroup: "rbac.authorization.k8s.io", Kind: "Group", Name: "developers"}},
+		})
+	}
+
+	testCases := []struct {
+		name      string
+		current   map[string]any
+		submitted map[string]any
+		want      error
+	}{
+		{
+			name:      "rules the form would submit",
+			current:   clusterRole(readPods, nil),
+			submitted: clusterRole([]rbacv1.PolicyRule{{Verbs: []string{"get", "list"}, APIGroups: []string{""}, Resources: []string{"pods", "configmaps"}}}, nil),
+		},
+		{
+			name:      "escalate",
+			current:   clusterRole(readPods, nil),
+			submitted: clusterRole([]rbacv1.PolicyRule{{Verbs: []string{"escalate"}, APIGroups: []string{"rbac.authorization.k8s.io"}, Resources: []string{"clusterroles"}}}, nil),
+			want:      ErrInvalidInput,
+		},
+		{
+			name:      "reading Secrets through a role",
+			current:   clusterRole(readPods, nil),
+			submitted: clusterRole([]rbacv1.PolicyRule{{Verbs: []string{"get"}, APIGroups: []string{""}, Resources: []string{"secrets"}}}, nil),
+			want:      ErrInvalidInput,
+		},
+		{
+			name:      "minting a ServiceAccount token",
+			current:   clusterRole(readPods, nil),
+			submitted: clusterRole([]rbacv1.PolicyRule{{Verbs: []string{"create"}, APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"}}}, nil),
+			want:      ErrInvalidInput,
+		},
+		{
+			name:      "one of ZKE's own objects",
+			current:   clusterRole(readPods, map[string]string{"app.kubernetes.io/managed-by": "zke-server"}),
+			submitted: clusterRole(readPods, map[string]string{"app.kubernetes.io/managed-by": "zke-server"}),
+			want:      ErrManagedResource,
+		},
+		{
+			name:      "claiming ZKE's label",
+			current:   clusterRole(readPods, nil),
+			submitted: clusterRole(readPods, map[string]string{"app.kubernetes.io/managed-by": "zke-server"}),
+			want:      ErrPlatformLabelClaimed,
+		},
+		{
+			name:      "repointing a binding at another role",
+			current:   binding("viewer"),
+			submitted: binding("cluster-admin"),
+			want:      ErrRoleRefImmutable,
+		},
+		{
+			name:      "a binding that changes only its subjects",
+			current:   binding("viewer"),
+			submitted: binding("viewer"),
+		},
+	}
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			err := AuthorizationManifestGuard(testCase.current, testCase.submitted)
+			if testCase.want == nil {
+				if err != nil {
+					t.Fatalf("guard refused a permitted change: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("error = %v, want %v", err, testCase.want)
+			}
+		})
+	}
+}
+
+/*
+ * The names a cluster actually holds.
+ *
+ * Kubernetes validates RBAC names as path segments, so the whole `system:`
+ * family and anything kubeadm installs carries a colon. Validating them as DNS
+ * subdomains refused every one of them: the list rendered, and opening any row
+ * answered `400 invalid_request` — the objects an operator is most likely to
+ * open, and the ones nobody can rename.
+ */
+func TestAuthorizationNamesFollowKubernetesRules(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"system:basic-user",
+		"system:aggregate-to-edit",
+		"kubeadm:cluster-admins",
+		"system:controller:deployment-controller",
+		"cluster-admin",
+	} {
+		if !validAuthorizationName(AuthorizationClusterRoles, name) {
+			t.Fatalf("%q was refused as a ClusterRole name", name)
+		}
+		if !validAuthorizationName(AuthorizationClusterRoleBindings, name) {
+			t.Fatalf("%q was refused as a ClusterRoleBinding name", name)
+		}
+		// A binding may point at any of them, so the RoleRef rule is the same
+		// rule; requiring a DNS name there refused binding to a built-in role.
+		if !validAuthorizationRoleRef(AuthorizationClusterRoleBindings, &AuthorizationRoleRef{
+			APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: name,
+		}) {
+			t.Fatalf("%q was refused as a RoleRef", name)
+		}
+	}
+
+	// ServiceAccounts are core/v1 objects and really are DNS subdomains, so the
+	// looser rule must not spread to them.
+	if validAuthorizationName(AuthorizationServiceAccounts, "system:basic-user") {
+		t.Fatal("a colon was accepted in a ServiceAccount name")
+	}
+	for _, name := range []string{"", ".", "..", "a/b", "a%2Fb", " padded", "padded "} {
+		if validAuthorizationName(AuthorizationClusterRoles, name) {
+			t.Fatalf("%q was accepted as a ClusterRole name", name)
+		}
+	}
+}

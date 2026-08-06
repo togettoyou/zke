@@ -31,8 +31,25 @@ type ResourceService interface {
 	) (map[string]any, error)
 }
 
+/*
+ * The rules of a resource family that has an API of its own.
+ *
+ * A YAML document can say anything a typed form can, so a family whose typed
+ * API refuses to write certain things has to refuse them here too — otherwise
+ * the editor is a way around its own guard rails rather than a way to reach the
+ * fields the form does not model. It is given both the object as it exists and
+ * the object as submitted, because some of these rules are about the change
+ * rather than about either state: a Secret may keep the type it has and may not
+ * be given another one.
+ *
+ * Called after the identity check and before anything is sent, so a refusal
+ * costs no write and no round trip to the Cluster.
+ */
+type ManifestGuard func(current map[string]any, submitted map[string]any) error
+
 type Service struct {
 	resources ResourceService
+	guard     ManifestGuard
 }
 
 type GetInput struct {
@@ -57,8 +74,11 @@ type Result struct {
 	ResourceVersion string
 }
 
-func NewService(resources ResourceService) *Service {
-	return &Service{resources: resources}
+// NewService builds the YAML API over one resource accessor. A nil guard leaves
+// the manifest to Kubernetes' own validation, which is what the generic
+// resource families get.
+func NewService(resources ResourceService, guard ManifestGuard) *Service {
+	return &Service{resources: resources, guard: guard}
 }
 
 func (service *Service) Get(
@@ -103,6 +123,11 @@ func (service *Service) Update(
 	}
 	if err := validateIdentity(input.GetInput, object, current); err != nil {
 		return Result{}, err
+	}
+	if service.guard != nil {
+		if err := service.guard(current, object); err != nil {
+			return Result{}, err
+		}
 	}
 
 	updated, err := service.resources.UpdateResource(

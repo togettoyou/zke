@@ -440,7 +440,7 @@ function AutoscalerEditor({
 
         <FormSection
           title={SECTION_LABELS.metrics}
-          hint="至少一个；Utilization 是相对 requests 的百分比，需要目标容器声明 requests"
+          hint="至少一个；Utilization 按 requests 的百分比计算，目标容器需声明 requests"
           problem={problemIn("metrics")}
         >
           <MetricRows rows={metrics} onChange={setMetrics} />

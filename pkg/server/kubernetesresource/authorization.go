@@ -3,6 +3,7 @@ package kubernetesresource
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	k8scontent "k8s.io/apimachinery/pkg/api/validate/content"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
@@ -28,6 +30,16 @@ const (
 	maxAuthorizationRuleValues                             = 64
 	maxAuthorizationAnnotations                            = 256 * 1024
 )
+
+// ErrPlatformLabelClaimed reports a manifest awarding itself the label ZKE puts
+// on its own objects. It is refused rather than accepted-and-ignored: the label
+// is what the platform reads to decide an object is not the operator's, and a
+// write that sets it is a write that removes the object from this API.
+var ErrPlatformLabelClaimed = errors.New("Kubernetes object claims the ZKE managed-by label")
+
+// ErrRoleRefImmutable reports an edit repointing a binding at another role.
+// Kubernetes refuses it too; this is the same refusal, before the write.
+var ErrRoleRefImmutable = errors.New("Kubernetes RoleRef cannot be changed")
 
 var authorizationResourceIdentities = map[AuthorizationResource]ResourceIdentity{
 	AuthorizationServiceAccounts:     {Version: "v1", Resource: "serviceaccounts"},
@@ -149,6 +161,17 @@ func AuthorizationResourceIdentity(resource AuthorizationResource) (ResourceIden
 	return identity, exists
 }
 
+// ScopedAuthorizationResourceIdentity answers with the identity only when the
+// Namespace matches the family's scope: a ClusterRole named inside a Namespace,
+// or a Role named without one, is a request about an object that does not
+// exist, and resolving it either way would invent a target.
+func ScopedAuthorizationResourceIdentity(
+	resource AuthorizationResource,
+	namespace string,
+) (ResourceIdentity, bool) {
+	return authorizationResourceIdentity(resource, namespace)
+}
+
 func IsAuthorizationResourceIdentity(identity ResourceIdentity) bool {
 	for _, candidate := range authorizationResourceIdentities {
 		if candidate == identity {
@@ -188,7 +211,7 @@ func (service *Service) ListAuthorizationResources(ctx context.Context, input Li
 
 func (service *Service) GetAuthorizationResource(ctx context.Context, clusterID, namespace string, resource AuthorizationResource, name string) (AuthorizationResourceDetail, error) {
 	identity, exists := authorizationResourceIdentity(resource, namespace)
-	if !exists || len(k8svalidation.IsDNS1123Subdomain(name)) != 0 {
+	if !exists || !validAuthorizationName(resource, name) {
 		return AuthorizationResourceDetail{}, ErrInvalidInput
 	}
 	object, err := service.GetResource(ctx, GetResourceInput{ClusterID: clusterID, Resource: identity, Namespace: namespace, Name: name})
@@ -219,7 +242,7 @@ func (service *Service) CreateAuthorizationResource(ctx context.Context, input C
 
 func (service *Service) UpdateAuthorizationResource(ctx context.Context, input UpdateAuthorizationResourceInput) (AuthorizationResourceDetail, error) {
 	identity, exists := authorizationResourceIdentity(input.Resource, input.Namespace)
-	if !exists || !validAuthorizationMutationIdentity(input.Name, input.UID, input.ResourceVersion) {
+	if !exists || !validAuthorizationMutationIdentity(input.Resource, input.Name, input.UID, input.ResourceVersion) {
 		return AuthorizationResourceDetail{}, ErrInvalidInput
 	}
 	existing, err := service.GetResource(ctx, GetResourceInput{ClusterID: input.ClusterID, Resource: identity, Namespace: input.Namespace, Name: input.Name})
@@ -249,7 +272,7 @@ func (service *Service) UpdateAuthorizationResource(ctx context.Context, input U
 
 func (service *Service) DeleteAuthorizationResource(ctx context.Context, input DeleteAuthorizationResourceInput) error {
 	identity, exists := authorizationResourceIdentity(input.Resource, input.Namespace)
-	if !exists || !validAuthorizationMutationIdentity(input.Name, input.UID, input.ResourceVersion) {
+	if !exists || !validAuthorizationMutationIdentity(input.Resource, input.Name, input.UID, input.ResourceVersion) {
 		return ErrInvalidInput
 	}
 	existing, err := service.GetResource(ctx, GetResourceInput{ClusterID: input.ClusterID, Resource: identity, Namespace: input.Namespace, Name: input.Name})
@@ -270,6 +293,105 @@ func (service *Service) DeleteAuthorizationResource(ctx context.Context, input D
 	})
 }
 
+/*
+ * The typed API's rules, applied to a submitted manifest.
+ *
+ * A YAML document can say everything a form can and more, so the editor has to
+ * refuse what the form refuses. Without this it would not be an editor for the
+ * fields the form does not model — it would be the way around the checks that
+ * decide what every other permission in the Cluster is worth, reachable by
+ * anyone holding `cluster.rbac.manage`.
+ *
+ * What it does not repeat: the identity, scope and version checks the YAML
+ * service already made, and Kubernetes' own validation, which stays the final
+ * word on whether the object is well-formed.
+ */
+func AuthorizationManifestGuard(current map[string]any, submitted map[string]any) error {
+	live := &unstructured.Unstructured{Object: current}
+	if managedAuthorizationLabels(live.GetLabels()) {
+		return ErrManagedResource
+	}
+	wanted := &unstructured.Unstructured{Object: submitted}
+	// Awarding an object ZKE's own label would make the typed API treat it as
+	// the platform's and refuse to touch it again — a lock anyone could fit to
+	// someone else's Role, and one no ZKE page offers a way to remove.
+	if managedAuthorizationLabels(wanted.GetLabels()) {
+		return ErrPlatformLabelClaimed
+	}
+	resource, exists := authorizationResourceForKind(wanted.GetKind())
+	if !exists {
+		return ErrInvalidInput
+	}
+	body, err := json.Marshal(submitted)
+	if err != nil {
+		return ErrInvalidInput
+	}
+	switch resource {
+	case AuthorizationServiceAccounts:
+		return nil
+	case AuthorizationRoles, AuthorizationClusterRoles:
+		// ClusterRole decodes a Role too: the rules are the same field, and only
+		// the scope differs — which is what the second argument below carries.
+		var value rbacv1.ClusterRole
+		if json.Unmarshal(body, &value) != nil {
+			return ErrInvalidInput
+		}
+		// An aggregated ClusterRole is editable here although the typed form
+		// refuses it: YAML is the only honest view of an `aggregationRule`, and
+		// the rules a controller synthesises are the controller's to overwrite.
+		if !validAuthorizationRules(
+			policyRuleViews(value.Rules),
+			resource == AuthorizationClusterRoles,
+		) {
+			return ErrInvalidInput
+		}
+		return nil
+	case AuthorizationRoleBindings, AuthorizationClusterRoleBindings:
+		var value rbacv1.ClusterRoleBinding
+		if json.Unmarshal(body, &value) != nil {
+			return ErrInvalidInput
+		}
+		roleRef := roleRefView(value.RoleRef)
+		if !validAuthorizationSubjects(subjectViews(value.Subjects)) ||
+			!validAuthorizationRoleRef(resource, &roleRef) {
+			return ErrInvalidInput
+		}
+		// Kubernetes refuses a changed RoleRef as well, with a message about a
+		// field the operator can see. Refusing it here says the same thing
+		// before a write is attempted, and says it about the one edit that
+		// silently repoints an existing grant at another role.
+		var existing rbacv1.ClusterRoleBinding
+		currentBody, err := json.Marshal(current)
+		if err != nil || json.Unmarshal(currentBody, &existing) != nil {
+			return ErrInvalidResponse
+		}
+		if existing.RoleRef != value.RoleRef {
+			return ErrRoleRefImmutable
+		}
+		return nil
+	default:
+		return ErrInvalidInput
+	}
+}
+
+// authorizationResourceForKind answers which family a manifest belongs to. The
+// Kind is authoritative because the YAML service has already checked it against
+// both the object being replaced and the resource named in the request.
+func authorizationResourceForKind(kind string) (AuthorizationResource, bool) {
+	for _, resource := range []AuthorizationResource{
+		AuthorizationServiceAccounts,
+		AuthorizationRoles,
+		AuthorizationClusterRoles,
+		AuthorizationRoleBindings,
+		AuthorizationClusterRoleBindings,
+	} {
+		if _, expected := authorizationTypeIdentity(resource); expected == kind {
+			return resource, true
+		}
+	}
+	return "", false
+}
+
 func authorizationResourceIdentity(resource AuthorizationResource, namespace string) (ResourceIdentity, bool) {
 	identity, exists := AuthorizationResourceIdentity(resource)
 	if !exists {
@@ -283,7 +405,7 @@ func authorizationResourceIdentity(resource AuthorizationResource, namespace str
 }
 
 func createAuthorizationResourceObject(input CreateAuthorizationResourceInput) (map[string]any, error) {
-	if len(k8svalidation.IsDNS1123Subdomain(input.Name)) != 0 || !validNamespaceLabels(input.Labels) || !validAuthorizationAnnotations(input.Annotations) {
+	if !validAuthorizationName(input.Resource, input.Name) || !validNamespaceLabels(input.Labels) || !validAuthorizationAnnotations(input.Annotations) {
 		return nil, ErrInvalidInput
 	}
 	metadata := metav1.ObjectMeta{Name: input.Name, Namespace: input.Namespace, Labels: maps.Clone(input.Labels), Annotations: maps.Clone(input.Annotations)}
@@ -468,8 +590,38 @@ func authorizationTypeIdentity(resource AuthorizationResource) (string, string) 
 	}
 }
 
-func validAuthorizationMutationIdentity(name, uid, resourceVersion string) bool {
-	return len(k8svalidation.IsDNS1123Subdomain(name)) == 0 && strings.TrimSpace(uid) != "" && len(uid) <= 128 && strings.TrimSpace(resourceVersion) != "" && len(resourceVersion) <= 256
+/*
+ * The name rules each family actually has.
+ *
+ * Kubernetes validates RBAC names as path segments rather than as DNS
+ * subdomains, and that is not a technicality: `system:basic-user`,
+ * `system:aggregate-to-edit` and `kubeadm:cluster-admins` all carry a colon,
+ * which no DNS name may hold. Asking for a DNS subdomain here refused every
+ * built-in role and binding in the cluster — the objects an operator opens most
+ * often, and the ones they are least able to rename.
+ *
+ * ServiceAccounts are the exception and really are DNS subdomains: they are
+ * core/v1 objects, and Kubernetes validates them as such.
+ */
+func validAuthorizationName(resource AuthorizationResource, name string) bool {
+	if resource == AuthorizationServiceAccounts {
+		return len(k8svalidation.IsDNS1123Subdomain(name)) == 0
+	}
+	return validRBACName(name)
+}
+
+// validRBACName mirrors Kubernetes' own rule for these objects, plus a length
+// bound this API adds: the upstream validator deliberately has none, and a name
+// with no ceiling ends up in a URL, a log line and an audit record.
+func validRBACName(name string) bool {
+	return name != "" &&
+		len(name) <= 253 &&
+		strings.TrimSpace(name) == name &&
+		len(k8scontent.IsPathSegmentName(name)) == 0
+}
+
+func validAuthorizationMutationIdentity(resource AuthorizationResource, name, uid, resourceVersion string) bool {
+	return validAuthorizationName(resource, name) && strings.TrimSpace(uid) != "" && len(uid) <= 128 && strings.TrimSpace(resourceVersion) != "" && len(resourceVersion) <= 256
 }
 
 func validAuthorizationAnnotations(annotations map[string]string) bool {
@@ -540,7 +692,7 @@ func validAuthorizationSubjects(subjects []AuthorizationSubject) bool {
 }
 
 func validAuthorizationRoleRef(resource AuthorizationResource, roleRef *AuthorizationRoleRef) bool {
-	if roleRef == nil || roleRef.APIGroup != "rbac.authorization.k8s.io" || roleRef.Name == "zke-agent" || len(k8svalidation.IsDNS1123Subdomain(roleRef.Name)) != 0 {
+	if roleRef == nil || roleRef.APIGroup != "rbac.authorization.k8s.io" || roleRef.Name == "zke-agent" || !validRBACName(roleRef.Name) {
 		return false
 	}
 	if resource == AuthorizationRoleBindings {

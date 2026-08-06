@@ -813,8 +813,8 @@ function SecretEditor({
                 disabled
               />
               <span className="text-subtle-foreground text-xs">
-                Kubernetes 在创建时固定类型，之后不可修改；需要另一种类型请新建一个 Secret。
-                {spec.requiredKeys.length > 0 ? ` ${spec.hint}` : ""}
+                创建后不可修改，换类型需新建
+                {spec.requiredKeys.length > 0 ? `。${spec.hint}` : ""}
               </span>
             </div>
           </FormSection>
@@ -862,7 +862,7 @@ function SecretEditor({
         {registryEditorActive ? (
           <FormSection
             title={SECTION_LABELS.registries}
-            hint="表单按 Kubernetes 的要求生成 `.dockerconfigjson` 键，不需要自行填写键名或编码取值"
+            hint="自动生成 `.dockerconfigjson`，不需要自行填写或编码"
             problem={problemIn("registries")}
           >
             <RegistryList rows={registries} onChange={setRegistries} />
@@ -902,7 +902,7 @@ function SecretEditor({
 
         <FormSection
           title={SECTION_LABELS.binary}
-          hint="值必须是标准带填充 Base64；证书、密钥文件等无法按文本显示的取值在这里"
+          hint="值必须是标准带填充 Base64；证书、密钥等非文本取值放这里"
           problem={problemIn("binary")}
         >
           <EntryList

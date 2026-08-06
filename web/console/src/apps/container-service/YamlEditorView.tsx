@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
 import { newIdempotencyKey } from "@/api/client";
-import { useResourceYaml, useUpdateResourceYaml, type ResourceIdentity } from "@/api/queries/yaml";
+import { useResourceYaml, useUpdateResourceYaml, type YamlTarget } from "@/api/queries/yaml";
 import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { CopyButton } from "@/components/common/status";
@@ -30,13 +30,23 @@ export function YamlEditorView({
   clusterName,
   kindLabel,
   canUpdate,
+  readOnlyReason,
+  impacts,
   onBack,
 }: {
-  identity: ResourceIdentity;
+  identity: YamlTarget;
   clusterName: string;
   /** What to call this object in headings and confirmations, e.g. "Deployment". */
   kindLabel: string;
   canUpdate: boolean;
+  /**
+   * Why this document cannot be saved, when that is not about permissions —
+   * an immutable Secret, one of ZKE's own objects. Stated rather than left to
+   * a disabled button, and stated here rather than discovered on submit.
+   */
+  readOnlyReason?: string;
+  /** Replaces the generic account of what a write does, where it differs. */
+  impacts?: string[];
   onBack: () => void;
 }) {
   const source = useResourceYaml(identity);
@@ -49,6 +59,7 @@ export function YamlEditorView({
   const previewAttempt = useRef<{ yaml: string; key: string } | null>(null);
   const applyKey = useSubmissionKey(previewed !== null);
 
+  const writable = canUpdate && readOnlyReason === undefined;
   const loaded = source.data?.yaml ?? "";
   // `null` means untouched, which is what tells a reload from a discarded edit.
   const text = draft ?? loaded;
@@ -73,7 +84,7 @@ export function YamlEditorView({
     }
     void update
       .mutateAsync({
-        identity,
+        target: identity,
         yaml,
         dryRun,
         idempotencyKey,
@@ -116,7 +127,7 @@ export function YamlEditorView({
               <RotateCw />
               {dirty ? "放弃修改并重新读取" : "重新读取"}
             </Button>
-            {canUpdate ? (
+            {writable ? (
               <Button
                 size="sm"
                 variant="primary"
@@ -137,9 +148,13 @@ export function YamlEditorView({
         <LoadingState />
       ) : (
         <>
-          {canUpdate ? null : (
+          {readOnlyReason ? (
+            <Alert tone="warning" className="mb-3">
+              {readOnlyReason}
+            </Alert>
+          ) : canUpdate ? null : (
             <Alert tone="info" className="mb-3">
-              当前身份没有该集群的 `cluster.resource.update` 权限，YAML 只读。
+              当前身份没有该集群的写入权限，YAML 只读。
             </Alert>
           )}
           {oversized ? (
@@ -164,7 +179,7 @@ export function YamlEditorView({
             // Keep the exact document sent to DryRun frozen until its result is
             // known; otherwise edits made in flight could leave the confirmation
             // dialog previewing an older document than the one on screen.
-            readOnly={!canUpdate || update.isPending || source.isFetching}
+            readOnly={!writable || update.isPending || source.isFetching}
             label={`${identity.name} 的 YAML`}
             className="min-h-0 flex-1"
           />
@@ -187,11 +202,13 @@ export function YamlEditorView({
           ...(identity.namespace ? [{ label: "命名空间", name: identity.namespace }] : []),
           { label: kindLabel, name: identity.name, id: source.data?.uid },
         ]}
-        impacts={[
-          "整份文档会替换集群中的现有对象，未在文档中出现的字段将被移除。",
-          "服务端会核对文档内的 UID 与 resourceVersion；期间对象若已变化，本次更新会被拒绝而不是覆盖。",
-          "控制器可能因此重建 Pod 或触发滚动更新。",
-        ]}
+        impacts={
+          impacts ?? [
+            "整份文档会替换集群中的现有对象，未在文档中出现的字段将被移除。",
+            "服务端会核对文档内的 UID 与 resourceVersion；期间对象若已变化，本次更新会被拒绝而不是覆盖。",
+            "控制器可能因此重建 Pod 或触发滚动更新。",
+          ]
+        }
         confirmationText={identity.name}
         confirmLabel="确认更新"
         destructive

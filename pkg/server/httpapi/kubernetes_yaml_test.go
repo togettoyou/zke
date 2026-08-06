@@ -210,3 +210,55 @@ func kubernetesYAMLHandlerTestRouter(service kubernetesYAMLService) http.Handler
 	)
 	return router
 }
+
+/*
+ * The generic endpoint still refuses the two families that have their own.
+ *
+ * Both now have YAML routes of their own, and those routes exist precisely
+ * because this one answers to `cluster.resource.*`. If the exclusion here were
+ * ever relaxed, holding the resource permissions would be enough to read a
+ * Secret and to rewrite a RoleBinding, and neither of the dedicated routes
+ * would be worth anything.
+ */
+func TestKubernetesYAMLHandlerStillRefusesSecretsAndAuthorizationResources(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeKubernetesYAMLService{
+		get: func(context.Context, kubernetesyaml.GetInput) (kubernetesyaml.Result, error) {
+			t.Fatal("an excluded resource reached the generic YAML service")
+			return kubernetesyaml.Result{}, nil
+		},
+		update: func(context.Context, kubernetesyaml.UpdateInput) (kubernetesyaml.Result, error) {
+			t.Fatal("an excluded resource reached the generic YAML service")
+			return kubernetesyaml.Result{}, nil
+		},
+	}
+	router := kubernetesYAMLHandlerTestRouter(service)
+	for _, query := range []string{
+		"version=v1&resource=secrets&namespace=team-a",
+		"group=rbac.authorization.k8s.io&version=v1&resource=roles&namespace=team-a",
+		"group=rbac.authorization.k8s.io&version=v1&resource=clusterrolebindings",
+		"version=v1&resource=serviceaccounts&namespace=team-a",
+	} {
+		url := "/api/v1/clusters/" + testHTTPClusterID +
+			"/kubernetes/resources/target/yaml?" + query
+
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, url, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("GET %s status = %d: %s", query, response.Code, response.Body)
+		}
+
+		updated := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			http.MethodPut,
+			url+"&confirm=true",
+			bytes.NewBufferString("apiVersion: v1\nkind: Secret\n"),
+		)
+		request.Header.Set("Content-Type", "application/yaml")
+		router.ServeHTTP(updated, request)
+		if updated.Code != http.StatusBadRequest {
+			t.Fatalf("PUT %s status = %d: %s", query, updated.Code, updated.Body)
+		}
+	}
+}

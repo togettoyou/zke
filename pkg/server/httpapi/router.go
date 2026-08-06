@@ -78,13 +78,17 @@ type handlers struct {
 	kubernetesSecret        *kubernetesSecretHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
-	resourceManagement      *resourceManagementHandler
-	accessManagement        *accessManagementHandler
-	auditQuery              *auditQueryHandler
-	authMiddleware          *httpmiddleware.Authentication
-	authorizationMiddleware *httpmiddleware.Authorization
-	requestTimeout          gin.HandlerFunc
-	roleBindingCache        gin.HandlerFunc
+	// The families whose YAML is reached through their own permissions, each
+	// over a service carrying that family's rules.
+	kubernetesAuthorizationYAML *kubernetesAuthorizationYAMLHandler
+	kubernetesSecretYAML        *kubernetesSecretYAMLHandler
+	resourceManagement          *resourceManagementHandler
+	accessManagement            *accessManagementHandler
+	auditQuery                  *auditQueryHandler
+	authMiddleware              *httpmiddleware.Authentication
+	authorizationMiddleware     *httpmiddleware.Authorization
+	requestTimeout              gin.HandlerFunc
+	roleBindingCache            gin.HandlerFunc
 }
 
 var configureGinMode sync.Once
@@ -119,9 +123,28 @@ func New(
 	})
 
 	var yamlService kubernetesYAMLService
+	var authorizationYAMLService kubernetesYAMLService
+	var secretYAMLService kubernetesYAMLService
 	if dependencies.KubernetesResourceService != nil {
 		yamlService = kubernetesyaml.NewService(
 			dependencies.KubernetesResourceService,
+			nil,
+		)
+		// Same accessor, different rules: the authorization families are not
+		// refused at the resource layer, so what keeps a YAML edit from writing
+		// what the typed API would not is this guard.
+		authorizationYAMLService = kubernetesyaml.NewService(
+			dependencies.KubernetesResourceService,
+			kubernetesresource.AuthorizationManifestGuard,
+		)
+		// A different accessor, not just different rules: the resource layer
+		// refuses a Secret to everything except the Secret service's own access,
+		// and this is that access rather than a way around it.
+		secretYAMLService = kubernetesyaml.NewService(
+			kubernetesresource.NewSecretYAMLAccess(
+				dependencies.KubernetesResourceService,
+			),
+			kubernetesresource.SecretManifestGuard,
 		)
 	}
 	routeHandlers := handlers{
@@ -269,6 +292,18 @@ func New(
 		kubernetesYAML: newKubernetesYAMLHandler(
 			logger,
 			yamlService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesAuthorizationYAML: newKubernetesAuthorizationYAMLHandler(
+			logger,
+			authorizationYAMLService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesSecretYAML: newKubernetesSecretYAMLHandler(
+			logger,
+			secretYAMLService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

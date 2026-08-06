@@ -936,13 +936,16 @@ func TestSecretRequestsAreRefusedWithoutTheFlagOrInTheAgentNamespace(t *testing.
 			SecretAccess: access,
 		}
 	}
-	if allowedKubernetesResourceRequest(secret("default", false), "zke-system") {
+	if refuseKubernetesResourceRequest(secret("default", false), "zke-system") != refusalNotEnabled {
 		t.Fatal("a Secret request without the Secret API flag was allowed")
 	}
-	if allowedKubernetesResourceRequest(secret("zke-system", true), "zke-system") {
-		t.Fatal("a Secret request in the Agent's own namespace was allowed")
+	// Refused for a reason of its own: this one is a boundary of ZKE's, and an
+	// operator told only that "the Agent is not allowed" would go and widen the
+	// Agent's ClusterRole, which will never make it readable.
+	if refuseKubernetesResourceRequest(secret("zke-system", true), "zke-system") != refusalAgentNamespace {
+		t.Fatal("a Secret request in the Agent's own namespace was not refused as such")
 	}
-	if !allowedKubernetesResourceRequest(secret("default", true), "zke-system") {
+	if refuseKubernetesResourceRequest(secret("default", true), "zke-system") != nil {
 		t.Fatal("a Secret request from the Secret API was refused")
 	}
 	// The flag says nothing about anything else: it is not a general override.
@@ -954,7 +957,7 @@ func TestSecretRequestsAreRefusedWithoutTheFlagOrInTheAgentNamespace(t *testing.
 		Namespace:    "default",
 		SecretAccess: true,
 	}
-	if allowedKubernetesResourceRequest(events, "zke-system") {
+	if refuseKubernetesResourceRequest(events, "zke-system") == nil {
 		t.Fatal("the Secret flag allowed an Event request")
 	}
 }

@@ -74,6 +74,12 @@ export const ERROR_MESSAGES: Record<string, string> = {
 
   // Authorization
   forbidden: "当前账号没有执行该操作的权限",
+  // Boundaries of ZKE itself, not of this account and not of what the Agent's
+  // ServiceAccount was granted — which is why each names the thing it is about
+  // instead of falling back to the general "没有权限".
+  resource_not_enabled: "ZKE 不通过该接口管理这类资源",
+  agent_namespace_forbidden: "ZKE Agent 所在命名空间的 Secret 不开放读写",
+  secret_managed_by_platform: "该 Secret 属于 ZKE 安装本身，不可读写",
 
   // Request validation
   invalid_request: "请求内容无效，请检查输入",
@@ -99,6 +105,10 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // submission releases its key, so correcting a rejected form and submitting
   // again is a new request rather than this error.
   idempotency_conflict: "上一次提交的结果未能确认，可能已经生效；请重新读取该对象后再提交",
+  secret_immutable: "该 Secret 不可变，只能删除后重建",
+  secret_type_immutable: "Secret 的 type 在创建时固定，不能修改",
+  role_ref_immutable: "roleRef 不可修改；要指向其他角色需要删除该绑定后重建",
+  platform_label_forbidden: "对象不能自行添加 ZKE 的 managed-by 标签",
   resource_uid_changed: "资源已被删除并以同名重新创建，请重新读取 YAML",
   resource_version_changed: "资源已发生变化，请重新读取 YAML 后合并修改",
   // Each spells out its own scope and says where the holder might be hiding: a

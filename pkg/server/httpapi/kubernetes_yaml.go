@@ -113,14 +113,7 @@ func (handler *kubernetesYAMLHandler) update(c *gin.Context) {
 	manifest, err := readYAMLManifest(c)
 	if err != nil {
 		handler.recordKubernetesMutation(c, identity.User.ID, action, targetName, "failed")
-		switch {
-		case errors.Is(err, errInvalidYAMLContentType):
-			writeError(c, http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/yaml")
-		case errors.Is(err, errYAMLBodyTooLarge):
-			writeError(c, http.StatusRequestEntityTooLarge, "manifest_too_large", "Kubernetes YAML manifest exceeds 4 MiB")
-		default:
-			writeError(c, http.StatusBadRequest, "invalid_yaml", "invalid Kubernetes YAML manifest")
-		}
+		writeYAMLRequestError(c, err)
 		return
 	}
 	if handler.service == nil {
@@ -248,6 +241,12 @@ func (handler *kubernetesYAMLHandler) respondYAMLError(
 		{kubernetesyaml.ErrInvalidManifest, http.StatusBadRequest, "invalid_yaml", "invalid Kubernetes YAML manifest"},
 		{kubernetesyaml.ErrResourceUIDChanged, http.StatusConflict, "resource_uid_changed", "Kubernetes resource was deleted and recreated"},
 		{kubernetesyaml.ErrResourceVersionChanged, http.StatusConflict, "resource_version_changed", "Kubernetes resource changed after the YAML was loaded"},
+		// Refused by the rules of the family's own API rather than by
+		// Kubernetes, and only reachable from the routes that have one.
+		{kubernetesresource.ErrPlatformLabelClaimed, http.StatusBadRequest, "platform_label_forbidden", "objects cannot claim the ZKE managed-by label"},
+		{kubernetesresource.ErrRoleRefImmutable, http.StatusConflict, "role_ref_immutable", "roleRef cannot be changed; delete the binding and create it again"},
+		{kubernetesresource.ErrSecretImmutable, http.StatusConflict, "secret_immutable", "immutable Secret data cannot be changed"},
+		{kubernetesresource.ErrSecretTypeImmutable, http.StatusConflict, "secret_type_immutable", "Secret type is fixed at creation"},
 	}
 	mappings = append(mappings, kubernetesResourceErrorMappings()...)
 	return handler.respondError(c, operation, err, mappings...)

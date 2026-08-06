@@ -655,9 +655,19 @@ func genericResourceIdentity(
 			"version and resource are required",
 		)
 	}
+	// The two families that answer to permissions of their own. The resource
+	// layer refuses them as well — a Secret cannot travel this path at all
+	// without a flag no caller outside that package can set — but refusing them
+	// where the request is read keeps the exclusion next to the endpoint it is
+	// about, rather than only in a layer three calls away.
 	if kubernetesresource.IsAuthorizationResourceIdentity(resource) {
 		return kubernetesresource.ResourceIdentity{}, "", errors.New(
 			"Kubernetes authorization resources require the dedicated API",
+		)
+	}
+	if resource == kubernetesresource.SecretResourceIdentity() {
+		return kubernetesresource.ResourceIdentity{}, "", errors.New(
+			"Kubernetes Secrets require the dedicated API",
 		)
 	}
 	return resource, query.Get("namespace"), nil
@@ -705,6 +715,15 @@ func kubernetesResourceErrorMappings() []errorMapping {
 		{kubernetesresource.ErrClusterTimeout, http.StatusGatewayTimeout, "cluster_api_timeout", "Kubernetes API request timed out"},
 		{kubernetesresource.ErrClusterUnauthenticated, http.StatusBadGateway, "cluster_api_unauthenticated", "Agent Kubernetes credentials were rejected"},
 		{kubernetesresource.ErrClusterAccessDenied, http.StatusBadGateway, "cluster_api_forbidden", "Agent is not allowed to read the Kubernetes resource"},
+		// ZKE's own boundaries rather than the Kubernetes API Server's, so 403
+		// and not 502: the request was understood, it will never be served, and
+		// repeating it — by a client retry or by granting the Agent more — will
+		// not change that.
+		{kubernetesresource.ErrResourceNotEnabled, http.StatusForbidden, "resource_not_enabled", "requested Kubernetes resource is not enabled for the Cluster Agent"},
+		{kubernetesresource.ErrAgentNamespaceForbidden, http.StatusForbidden, "agent_namespace_forbidden", "Secrets of the Namespace the Cluster Agent runs in are not accessible"},
+		// Produced by the Secret service and reachable from every handler that
+		// reads a Secret, including the YAML one.
+		{kubernetesresource.ErrSecretManagedByPlatform, http.StatusForbidden, "secret_managed_by_platform", "Secret is managed by ZKE and cannot be read or changed here"},
 		{kubernetesresource.ErrResponseTooLarge, http.StatusBadGateway, "agent_response_too_large", "Agent response exceeded the configured limit"},
 		{kubernetesresource.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used for another Kubernetes resource request"},
 		{kubernetesresource.ErrUpstreamConflict, http.StatusConflict, "cluster_api_conflict", "Kubernetes resource changed during the request"},

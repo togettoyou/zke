@@ -51,6 +51,10 @@ var ErrSecretManagedByPlatform = errors.New("secret is managed by ZKE")
 // keep as it is.
 var ErrSecretImmutable = errors.New("secret is immutable")
 
+// ErrSecretTypeImmutable reports an edit changing a Secret's type, which
+// Kubernetes fixes at creation.
+var ErrSecretTypeImmutable = errors.New("secret type cannot be changed")
+
 var secretIdentity = ResourceIdentity{
 	Version:  "v1",
 	Resource: "secrets",
@@ -138,6 +142,98 @@ type DeleteSecretInput struct {
 
 func SecretResourceIdentity() ResourceIdentity {
 	return secretIdentity
+}
+
+/*
+ * The Secret service's own access, narrowed to what a YAML editor needs.
+ *
+ * `secretAccess` stays unexported, and this is not a way to set it: the two
+ * methods below accept nothing but a Secret, and they route through the same
+ * reads the typed API uses, so ZKE's own Secrets are refused here exactly as
+ * they are there. What the YAML API gets is the ability to read and replace one
+ * Secret by name — not a general resource accessor that happens to be pointed
+ * at Secrets.
+ */
+type SecretYAMLAccess struct {
+	service *Service
+}
+
+func NewSecretYAMLAccess(service *Service) SecretYAMLAccess {
+	return SecretYAMLAccess{service: service}
+}
+
+func (access SecretYAMLAccess) GetResource(
+	ctx context.Context,
+	input GetResourceInput,
+) (map[string]any, error) {
+	if access.service == nil || input.Resource != secretIdentity ||
+		!validSecretName(input.Namespace, input.Name) {
+		return nil, ErrInvalidInput
+	}
+	return access.service.getSecretObject(
+		ctx,
+		input.ClusterID,
+		input.Namespace,
+		input.Name,
+	)
+}
+
+func (access SecretYAMLAccess) UpdateResource(
+	ctx context.Context,
+	input UpdateResourceInput,
+) (map[string]any, error) {
+	if access.service == nil || input.Resource != secretIdentity ||
+		!validSecretName(input.Namespace, input.Name) {
+		return nil, ErrInvalidInput
+	}
+	input.secretAccess = true
+	return access.service.UpdateResource(ctx, input)
+}
+
+/*
+ * The Secret rules a manifest has to keep.
+ *
+ * Kubernetes enforces most of what matters about a Secret — its size, the keys
+ * its type requires, the refusal to change an immutable one — and this does not
+ * restate that. It covers the two things Kubernetes has no opinion about
+ * because they are ZKE's: an object may not award itself the label that makes
+ * ZKE treat it as the platform's, and the answer to an immutable Secret is the
+ * same one the form gives rather than a rejection from the API Server about a
+ * field the editor never showed.
+ */
+func SecretManifestGuard(current map[string]any, submitted map[string]any) error {
+	live, err := secretFromObject(current)
+	if err != nil {
+		return ErrInvalidResponse
+	}
+	wanted, err := secretFromObject(submitted)
+	if err != nil {
+		return ErrInvalidInput
+	}
+	if platformManagedLabels(wanted.Labels) {
+		return ErrPlatformLabelClaimed
+	}
+	if live.Immutable != nil && *live.Immutable {
+		return ErrSecretImmutable
+	}
+	// `type` is fixed at creation, and an edit that changes it is one whose
+	// rejection arrives as a message about a field nobody meant to touch.
+	if wanted.Type != live.Type {
+		return ErrSecretTypeImmutable
+	}
+	return nil
+}
+
+func secretFromObject(object map[string]any) (*corev1.Secret, error) {
+	body, err := json.Marshal(object)
+	if err != nil {
+		return nil, err
+	}
+	var secret corev1.Secret
+	if err := json.Unmarshal(body, &secret); err != nil {
+		return nil, err
+	}
+	return &secret, nil
 }
 
 func (service *Service) ListSecrets(ctx context.Context, input ListSecretsInput) (SecretPage, error) {

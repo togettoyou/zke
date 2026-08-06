@@ -96,7 +96,7 @@ Gateway 只暴露 TLS Secret 引用名称，不读取或审计 Secret 正文。
 ConfigMap 类型化接口同样固定 Cluster、Namespace 和 `core/v1/configmaps`，沿用上述读写权限。列表不返回正文，
 更新和删除要求当前 UID/resourceVersion，实际写入要求 CSRF、幂等键与显式确认，审计只记录资源身份和结果。
 ConfigMap 数据不按 Secret 处理，但仍不写入日志或审计正文。Secret 继续被通用 Resource/YAML 路径双重拒绝，
-Agent 默认 ClusterRole 也不授予 Secret 主资源权限；未来开放时必须使用独立的敏感权限和脱敏响应。
+只能走下文的专用接口。
 
 PV、PVC 与 StorageClass 类型化接口沿用相同的 `cluster.read` 和 `cluster.resource.create/update/delete`，并在
 HTTP 与领域层同时校验资源作用域：PV、StorageClass 必须是集群级，PVC 必须指定 Namespace。所有更新先读取
@@ -122,16 +122,27 @@ Resource 与 YAML API 对 Secret 的拒绝保持不变，专用 Secret 服务是
 指向 Agent 自身命名空间的 Secret 请求——那里存放 Agent 身份私钥、注册令牌和它据以信任 Server 的证书。旧版本
 Agent 不认识该字段会继续拒绝，因此 Server 先于 Agent 升级时该能力不可用，而不是被绕过。带
 `app.kubernetes.io/managed-by=zke-server` 的 Secret 不列出、不可读写，返回与权限不足区分开的
-`secret_managed_by_platform`。列表不返回任何取值，详情返回的取值默认在界面上遮蔽；审计记录发起者、目标和
+`403 secret_managed_by_platform`；指向 Agent 自身命名空间的请求返回 `403 agent_namespace_forbidden`。两者都是
+ZKE 的固定边界而不是上游 Kubernetes 的拒绝，因此不使用 5xx：那会被客户端当作可重试的故障，也会被读成给 Agent
+补 Kubernetes 权限就能解决。列表不返回任何取值，详情返回的取值默认在界面上遮蔽；审计记录发起者、目标和
 结果，不记录取值。
+
+Secret 的 YAML 是一对独立路由，读要求 `cluster.secret.read`，写要求 `cluster.secret.manage`，不经过通用 YAML
+入口——后者对 Secret 的拒绝没有放开。该路由使用 Secret 服务自己的资源访问，其只接受 `core/v1 Secret`，因此上述
+平台对象过滤与 Agent 两条判定原样生效。写入前另外拒绝改变 `type`、拒绝写入已 immutable 的对象、拒绝为对象添加
+`app.kubernetes.io/managed-by=zke-server`。一份 YAML 会一次返回该 Secret 的全部取值，与详情接口逐键遮蔽的呈现
+方式不同，但两者要求的是同一个 `cluster.secret.read`；审计仍不记录正文。
 
 目标集群内的 Kubernetes RBAC 使用独立的 `cluster.rbac.read` 与 `cluster.rbac.manage`，不复用普通
 `cluster.read` 或 `cluster.resource.*`。ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding
-从通用 Resource/YAML API 排除，只能通过固定资源类型和作用域的专用接口访问。写入需要 CSRF、DryRun、确认、
-幂等、UID/resourceVersion 与审计；ServiceAccount 响应不返回 Secret 名称或正文。Agent ClusterRole 不包含
-`escalate`、`bind`、`impersonate`；类型化规则同时拒绝这些 Verb、Secret 和 ServiceAccount Token，绑定不能
-直接引用内置 `zke-agent` 角色，最终提权检查仍由 Kubernetes API Server 执行。ZKE 管理的 Agent 授权对象禁止
-经该接口更新或删除。
+从通用 Resource/YAML API 排除，只能通过固定资源类型和作用域的专用接口访问：类型化接口，或同样挂在
+`cluster.rbac.read/manage` 上的专用 YAML 路由（按作用域分为命名空间级与集群级两条，作用域不符即拒绝）。
+写入需要 CSRF、DryRun、确认、幂等、UID/resourceVersion 与审计；ServiceAccount 响应不返回 Secret 名称或正文。
+Agent ClusterRole 不包含 `escalate`、`bind`、`impersonate`；类型化规则与 YAML 守卫同时拒绝这些 Verb、Secret 和
+ServiceAccount Token，绑定不能直接引用内置 `zke-agent` 角色，也不能改写 `roleRef`，最终提权检查仍由 Kubernetes
+API Server 执行。ZKE 管理的 Agent 授权对象禁止经该接口更新或删除，YAML 路由只允许读取；提交的文档也不能给对象
+添加 `app.kubernetes.io/managed-by=zke-server`。YAML 与类型化接口执行同一套规则是这条路由能够存在的前提：
+两者若不一致，宽的那条就是另一条的旁路。
 
 资源对象浏览器不引入新的权限面：资源目录与对象列表使用 `cluster.read`，YAML 编辑使用
 `cluster.resource.update`，删除使用 `cluster.resource.delete` 并要求 UID/resourceVersion 前置条件、CSRF、
@@ -139,8 +150,9 @@ Agent 不认识该字段会继续拒绝，因此 Server 先于 Agent 升级时�
 授权资源被 Server 从该入口排除——因此浏览器不会成为绕过 `cluster.rbac.*` 或敏感资源限制的旁路。CRD 判定所需的
 `customresourcedefinitions` 只读权限属于 Agent ServiceAccount，不改变调用者在 ZKE 中的权限。
 
-YAML 读取沿用 `cluster.read`，YAML 更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限；
-Kubernetes 授权资源从该入口排除，避免绕过 `cluster.rbac.*`。
+通用 YAML 读取沿用 `cluster.read`，更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限；
+Secret 与 Kubernetes 授权资源从该入口排除，避免绕过 `cluster.secret.*` 与 `cluster.rbac.*`，它们的 YAML 由上文
+各自的专用路由提供。
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
 `resourceVersion` 和当前实时对象逐项核对；同名对象已重建或版本已变化时返回冲突。实际更新还要求 CSRF、
 幂等键与显式确认，DryRun 使用同一 API Server 校验链路。日志与审计均不记录 YAML 正文或字段值。

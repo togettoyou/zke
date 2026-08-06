@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, EyeOff, Lock, Pencil, Plus } from "lucide-react";
+import { Eye, EyeOff, FileCode, Lock, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { useSecret, useSecrets, useDeleteSecret } from "@/api/queries/secrets";
@@ -23,6 +23,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { SecretForm } from "./SecretForm";
+import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 
@@ -65,6 +66,7 @@ export function SecretSection({
   const [detailName, setDetailName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
+  const [yamlTarget, setYamlTarget] = useState<KubernetesSecretSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<KubernetesSecretSummary | null>(null);
   const [deletePreviewed, setDeletePreviewed] = useState(false);
   const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
@@ -242,6 +244,24 @@ export function SecretSection({
     />
   );
 
+  if (yamlTarget) {
+    return (
+      <YamlEditorView
+        identity={{ kind: "secret", clusterId, namespace, name: yamlTarget.name }}
+        clusterName={clusterName}
+        kindLabel="Secret"
+        canUpdate={canUpdate}
+        readOnlyReason={yamlTarget.immutable ? "该 Secret 不可变，内容只能删除后重建。" : undefined}
+        impacts={[
+          "整份文档会替换集群中的现有 Secret，未在文档中出现的键将被移除。",
+          "服务端会核对文档内的 UID 与 resourceVersion；期间对象若已变化，本次更新会被拒绝而不是覆盖。",
+          "引用该 Secret 的 Pod 在重启或重新调度前通常不受影响；以 Volume 挂载的内容会在 kubelet 下一次同步时更新。",
+        ]}
+        onBack={() => setYamlTarget(null)}
+      />
+    );
+  }
+
   // The form takes over the section rather than sitting over the list: the list
   // is of no use while a configuration is being written.
   if (creating || editingName) {
@@ -271,6 +291,7 @@ export function SecretSection({
           // The detail stays open underneath, so leaving the form returns to the
           // object that was being read rather than to the list.
           onEdit={() => setEditingName(detailName)}
+          onOpenYaml={setYamlTarget}
           onDelete={openDelete}
           onBack={() => setDetailName(null)}
         />
@@ -340,6 +361,7 @@ function SecretDetailView({
   canUpdate,
   canDelete,
   onEdit,
+  onOpenYaml,
   onDelete,
   onBack,
 }: {
@@ -349,6 +371,7 @@ function SecretDetailView({
   canUpdate: boolean;
   canDelete: boolean;
   onEdit: () => void;
+  onOpenYaml: (item: KubernetesSecretSummary) => void;
   onDelete: (item: KubernetesSecretSummary) => void;
   onBack: () => void;
 }) {
@@ -362,8 +385,12 @@ function SecretDetailView({
         onBack={onBack}
         actions={
           <>
-            {/* No YAML entry, here or in the list: the document would carry
-                every value in the Secret in Base64, which is not masking. */}
+            {item ? (
+              <Button size="sm" variant="secondary" onClick={() => onOpenYaml(item)}>
+                <FileCode />
+                YAML
+              </Button>
+            ) : null}
             {canUpdate && item && !item.immutable ? (
               <Button size="sm" variant="secondary" onClick={onEdit}>
                 <Pencil />

@@ -33,6 +33,31 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 import { authorizationKindLabel, hasRules, isBinding } from "./authorization-catalog";
 
 const DNS_SUBDOMAIN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
+
+/*
+ * The name rule each family actually has.
+ *
+ * Kubernetes validates RBAC names as path segments, not as DNS subdomains —
+ * which is why `system:basic-user` and `kubeadm:cluster-admins` exist. Only
+ * ServiceAccounts are core/v1 objects and really do need a DNS subdomain.
+ */
+function nameProblem(resource: KubernetesAuthorizationResource, name: string): string | null {
+  if (name === "") {
+    return "请填写名称。";
+  }
+  if (name.length > 253) {
+    return "名称最长 253 个字符。";
+  }
+  if (resource === "serviceaccounts") {
+    return DNS_SUBDOMAIN.test(name)
+      ? null
+      : "名称必须是合法的 DNS 子域名：只能包含小写字母、数字、连字符和点，并以字母或数字开头和结尾。";
+  }
+  if (name === "." || name === ".." || name.includes("/") || name.includes("%")) {
+    return "名称不能是 . 或 ..，也不能包含 / 和 %。";
+  }
+  return null;
+}
 const AUTOMOUNT_DEFAULT = "__default__";
 
 type RuleDraft = {
@@ -93,18 +118,9 @@ function authorizationProblem(draft: {
 }): FormProblem | null {
   const { resource, editing, name, rules, subjects, roleName } = draft;
   if (!editing) {
-    const trimmed = name.trim();
-    if (trimmed === "") {
-      return at("basic", "请填写名称。");
-    }
-    if (trimmed.length > 253) {
-      return at("basic", "名称最长 253 个字符。");
-    }
-    if (!DNS_SUBDOMAIN.test(trimmed)) {
-      return at(
-        "basic",
-        "名称必须是合法的 DNS 子域名：只能包含小写字母、数字、连字符和点，并以字母或数字开头和结尾。",
-      );
+    const fault = nameProblem(resource, name.trim());
+    if (fault) {
+      return at("basic", fault);
     }
   }
   if (hasRules(resource)) {
@@ -407,7 +423,9 @@ function AuthorizationEditor({
                 onChange={(event) => setName(event.target.value)}
               />
               <span className="text-subtle-foreground text-xs">
-                合法的 DNS 子域名，最长 253 个字符；创建后不可修改
+                {resource === "serviceaccounts"
+                  ? "合法的 DNS 子域名，最长 253 个字符；创建后不可修改"
+                  : "最长 253 个字符，不能包含 / 和 %；创建后不可修改"}
               </span>
             </div>
           </FormSection>
@@ -428,7 +446,7 @@ function AuthorizationEditor({
                 </SelectContent>
               </Select>
               <span className="text-subtle-foreground text-xs">
-                ZKE 不读取也不返回该 ServiceAccount 的 Token 或关联 Secret 内容。
+                ZKE 不读取该 ServiceAccount 的 Token 与关联 Secret
               </span>
             </div>
           </FormSection>
@@ -437,7 +455,7 @@ function AuthorizationEditor({
         {withRules ? (
           <FormSection
             title={SECTION_LABELS.rules}
-            hint="逗号分隔；API 组留空表示 core 组。Agent 不持有 escalate/bind，超出其自身权限的规则会被 Kubernetes 拒绝"
+            hint="逗号分隔；API 组留空表示 core 组。超出 Agent 权限的规则会被 Kubernetes 拒绝"
             problem={problemIn("rules")}
           >
             <RuleRows rows={rules} onChange={setRules} />

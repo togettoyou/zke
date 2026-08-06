@@ -585,7 +585,9 @@ Node List/Detail 要求目标 Cluster 的 `cluster.read` 权限。Server 固定�
 通用 Kubernetes 只读接口同样要求 `cluster.read`，由 Server 固定 Verb 为 Discovery、List 或 Get，并校验
 GVR、Namespace、名称、Selector、分页和正文上限；浏览器不能提交任意 Verb、Subresource 或 Kubernetes 原始
 路径。Server 与 Agent 双重拒绝 Secret 和 Event（Event 只能通过专用 Watch 接口读取）；Server 还从通用
-Resource/YAML 入口排除 Kubernetes 授权资源。Agent ServiceAccount RBAC 约束最终可访问的资源集合。默认安装允许
+Resource/YAML 入口排除 Kubernetes 授权资源。Secret 与授权资源的 YAML 由各自的专用路由提供，挂在
+`cluster.secret.*` 与 `cluster.rbac.*` 上，并在写入前执行与类型化接口相同的规则校验；通用入口的拒绝不因此放宽。
+Agent 对自身命名空间 Secret 的拒绝使用独立 reason，Server 将其与上游 403 区分开并返回 403 而非 502。Agent ServiceAccount RBAC 约束最终可访问的资源集合。默认安装允许
 Node 读取与调度开关、Namespace、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler 与 Kubernetes RBAC 管理，以及 Deployment、StatefulSet、DaemonSet、Job、CronJob、
 Service、Ingress 和 Gateway 管理；Gateway API 未安装时，Server 会通过 Discovery 返回可区分的能力缺失错误；
 扩展其他内置资源或 CRD 资源必须由安装方显式增加最小 RBAC。

@@ -278,7 +278,7 @@ func (handler *kubernetesSecretHandler) recordMutation(c *gin.Context, actorID, 
 
 func (handler *kubernetesSecretHandler) respondSecretError(c *gin.Context, operation string, err error) bool {
 	if errors.Is(err, kubernetesresource.ErrSecretImmutable) {
-		writeError(c, http.StatusConflict, "config_map_immutable", "immutable Secret data cannot be changed")
+		writeError(c, http.StatusConflict, "secret_immutable", "immutable Secret data cannot be changed")
 		return true
 	}
 	resourceHandler := kubernetesResourceHandler{baseHandler: handler.baseHandler}

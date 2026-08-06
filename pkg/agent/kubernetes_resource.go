@@ -98,12 +98,15 @@ func newKubernetesResourceHandler(
 				"requested Kubernetes resource representation is unsupported",
 			), nil, nil
 		}
-		if !allowedKubernetesResourceRequest(request, identityNamespace) {
+		if refusal := refuseKubernetesResourceRequest(
+			request,
+			identityNamespace,
+		); refusal != nil {
 			return resourceErrorResponse(
 				agentv1.ResultCode_RESULT_CODE_FORBIDDEN,
 				http.StatusForbidden,
-				"ResourceNotAllowed",
-				"requested Kubernetes resource is not enabled for this Agent",
+				refusal.reason,
+				refusal.message,
 			), nil, nil
 		}
 		if discoveryClient != nil {
@@ -128,8 +131,8 @@ func newKubernetesResourceHandler(
 				return resourceErrorResponse(
 					agentv1.ResultCode_RESULT_CODE_FORBIDDEN,
 					http.StatusForbidden,
-					"ResourceNotAllowed",
-					"requested Kubernetes resource is not enabled for this Agent",
+					refusalNotEnabled.reason,
+					refusalNotEnabled.message,
 				), nil, nil
 			}
 		}
@@ -371,20 +374,48 @@ func resourceVerbName(verb agentv1.ResourceVerb) string {
 	}
 }
 
-// allowedKubernetesResourceRequest is deliberately narrower than arbitrary
+/*
+ * Why this Agent will not act on a request, or nil when it will.
+ *
+ * The reason travels to the Server as the response reason, and the Server maps
+ * each one to an error of its own. That distinction matters at the far end: a
+ * 403 the API Server returned is an RBAC gap an operator can close by granting
+ * the Agent more, while these two are ZKE's own boundaries, which no amount of
+ * Kubernetes permission will move. Reporting both as the same failure sends
+ * whoever reads it to edit a ClusterRole that was never the problem.
+ */
+type resourceRefusal struct {
+	reason  string
+	message string
+}
+
+var (
+	refusalNotEnabled = &resourceRefusal{
+		reason:  "ResourceNotAllowed",
+		message: "requested Kubernetes resource is not enabled for this Agent",
+	}
+	refusalAgentNamespace = &resourceRefusal{
+		reason:  "AgentNamespaceForbidden",
+		message: "Secrets of the Agent's own Namespace are never readable through ZKE",
+	}
+)
+
+// refuseKubernetesResourceRequest is deliberately narrower than arbitrary
 // Kubernetes API access. Phase 2 permits CRUD only on primary resources, with
 // Secrets reachable solely through the Server's dedicated Secret API and never
 // in this Agent's own namespace; Discovery and the Agent ServiceAccount RBAC
 // remain the resource-specific authorization boundaries.
-func allowedKubernetesResourceRequest(
+func refuseKubernetesResourceRequest(
 	request *agentv1.ResourceRequest,
 	identityNamespace string,
-) bool {
+) *resourceRefusal {
 	resource := request.GetResource()
-	return resource != nil &&
-		request.GetSubresource() == "" &&
-		allowedKubernetesResource(request, identityNamespace) &&
-		supportedKubernetesResourceVerb(request.GetVerb())
+	if resource == nil ||
+		request.GetSubresource() != "" ||
+		!supportedKubernetesResourceVerb(request.GetVerb()) {
+		return refusalNotEnabled
+	}
+	return refuseKubernetesResource(request, identityNamespace)
 }
 
 func supportedKubernetesResourceVerb(verb agentv1.ResourceVerb) bool {
@@ -413,7 +444,7 @@ func hiddenFromKubernetesCatalog(group string, resource string) bool {
 }
 
 /*
- * Whether this Agent will act on the resource at all.
+ * Whether this Agent will act on the resource at all, and if not, why.
  *
  * Two core resources are refused here as well as by the Server, so a Server
  * that asked for them — through a bug, or because it had been made to — still
@@ -424,16 +455,21 @@ func hiddenFromKubernetesCatalog(group string, resource string) bool {
  * alone, which keeps the generic resource and YAML APIs unable to reach a
  * Secret no matter what they send.
  */
-func allowedKubernetesResource(request *agentv1.ResourceRequest, identityNamespace string) bool {
+func refuseKubernetesResource(request *agentv1.ResourceRequest, identityNamespace string) *resourceRefusal {
 	resource := request.GetResource()
 	group, name := resource.GetGroup(), resource.GetResource()
 	if group != "" {
-		return true
+		return nil
 	}
 	switch name {
 	case "events":
-		return false
+		return refusalNotEnabled
 	case "secrets":
+		if !request.GetSecretAccess() ||
+			resource.GetVersion() != "v1" ||
+			request.GetNamespace() == "" {
+			return refusalNotEnabled
+		}
 		// Never this Agent's own namespace, whatever the Server asks and
 		// whatever the ServiceAccount is allowed. That namespace holds the
 		// Agent's identity key, its enrollment token and the certificates it
@@ -441,12 +477,12 @@ func allowedKubernetesResource(request *agentv1.ResourceRequest, identityNamespa
 		// no Console page has any business doing it. A list is refused rather
 		// than filtered, because a Secret list of one namespace is a request
 		// for that namespace.
-		return request.GetSecretAccess() &&
-			resource.GetVersion() == "v1" &&
-			request.GetNamespace() != "" &&
-			request.GetNamespace() != identityNamespace
+		if request.GetNamespace() == identityNamespace {
+			return refusalAgentNamespace
+		}
+		return nil
 	default:
-		return true
+		return nil
 	}
 }
 

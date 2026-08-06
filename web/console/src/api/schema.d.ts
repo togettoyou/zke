@@ -1082,6 +1082,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/authorization/{authorization_resource}/{authorization_name}/yaml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 读取 ClusterRole 或 ClusterRoleBinding 的完整 YAML。要求
+         *     `cluster.rbac.read`；通用 Resource 与 YAML 接口对这五类资源的排除保持不变。
+         */
+        get: operations["getClusterAuthorizationResourceYAML"];
+        /**
+         * @description 以严格单文档 YAML 更新 ClusterRole 或 ClusterRoleBinding，要求
+         *     `cluster.rbac.manage`。Server 先核对 URL 身份与正文中的 `apiVersion`、
+         *     `kind`、名称、`metadata.uid` 和 `metadata.resourceVersion`，再执行与类型化
+         *     接口相同的规则校验：拒绝 `escalate`、`bind`、`impersonate`，拒绝 `secrets`
+         *     与 `serviceaccounts/token`，拒绝引用内置 `zke-agent` 角色，拒绝改写
+         *     `roleRef`，拒绝为对象添加 ZKE 的 managed-by 标签；ZKE 管理的授权对象只读。
+         *     请求正文不写入审计记录。
+         */
+        put: operations["updateClusterAuthorizationResourceYAML"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/authorization/{authorization_resource}": {
         parameters: {
             query?: never;
@@ -1110,6 +1139,30 @@ export interface paths {
         put: operations["updateNamespacedAuthorizationResource"];
         post?: never;
         delete: operations["deleteNamespacedAuthorizationResource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/authorization/{authorization_resource}/{authorization_name}/yaml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 读取 ServiceAccount、Role 或 RoleBinding 的完整 YAML。要求
+         *     `cluster.rbac.read`；通用 Resource 与 YAML 接口对这五类资源的排除保持不变。
+         */
+        get: operations["getNamespacedAuthorizationResourceYAML"];
+        /**
+         * @description 以严格单文档 YAML 更新 ServiceAccount、Role 或 RoleBinding，要求
+         *     `cluster.rbac.manage`，规则校验与集群级 YAML 接口一致。请求正文不写入审计记录。
+         */
+        put: operations["updateNamespacedAuthorizationResourceYAML"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1160,6 +1213,35 @@ export interface paths {
         post?: never;
         /** @description 使用 UID/resourceVersion 前置条件删除 Secret；实际删除要求显式确认并支持 dry-run。 */
         delete: operations["deleteKubernetesSecret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets/{secret_name}/yaml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 读取一个 Secret 的完整 YAML，要求 `cluster.secret.read`。文档包含该 Secret 的
+         *     全部取值（Kubernetes 存储的 Base64），暴露面大于按键遮蔽的详情接口。属于 ZKE
+         *     安装本身的 Secret 返回 403 `secret_managed_by_platform`；Agent 自身所在
+         *     Namespace 的 Secret 返回 403 `agent_namespace_forbidden`。通用 Resource 与
+         *     YAML 接口对 `core/v1 Secret` 的拒绝保持不变。
+         */
+        get: operations["getKubernetesSecretYAML"];
+        /**
+         * @description 以严格单文档 YAML 替换一个 Secret，要求 `cluster.secret.manage`。除 URL 身份与
+         *     `metadata.uid`、`metadata.resourceVersion` 核对外，还拒绝改变 `type`、拒绝写入
+         *     已 immutable 的 Secret、拒绝为对象添加 ZKE 的 managed-by 标签。请求正文不写入
+         *     审计记录。
+         */
+        put: operations["updateKubernetesSecretYAML"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3843,6 +3925,30 @@ export interface components {
         };
     };
     responses: {
+        /** @description Kubernetes 单资源 YAML */
+        KubernetesYAMLDocument: {
+            headers: {
+                "X-ZKE-Dry-Run"?: "false";
+                "X-ZKE-Resource-UID"?: string;
+                "X-ZKE-Resource-Version"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/yaml": string;
+            };
+        };
+        /** @description 更新后的 Kubernetes YAML 或 dry-run 预览 */
+        KubernetesYAMLMutationSuccess: {
+            headers: {
+                "X-ZKE-Dry-Run"?: "true" | "false";
+                "X-ZKE-Resource-UID"?: string;
+                "X-ZKE-Resource-Version"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/yaml": string;
+            };
+        };
         /** @description 存储资源分页结果 */
         KubernetesStoragePageSuccess: {
             headers: {
@@ -4137,6 +4243,11 @@ export interface components {
         ClusterAuthorizationResource: "clusterroles" | "clusterrolebindings";
         NamespacedAuthorizationResource: "serviceaccounts" | "roles" | "rolebindings";
         AuthorizationName: string;
+        /** @description 仅调用 Kubernetes API Server DryRun，不持久化变更。 */
+        KubernetesYAMLDryRun: boolean;
+        /** @description 实际写入必须为 true；dry-run 可省略。 */
+        KubernetesYAMLConfirm: boolean;
+        KubernetesYAMLFieldManager: string;
         ResourceListLimit: number;
         ResourceContinue: string;
         ResourceLabelSelector: string;
@@ -4167,6 +4278,11 @@ export interface components {
         ListSearch: string;
     };
     requestBodies: {
+        KubernetesYAMLManifest: {
+            content: {
+                "application/yaml": string;
+            };
+        };
         CreateNamedResource: {
             content: {
                 "application/json": {
@@ -7303,6 +7419,66 @@ export interface operations {
             504: components["responses"]["Timeout"];
         };
     };
+    getClusterAuthorizationResourceYAML: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                authorization_resource: components["parameters"]["ClusterAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesYAMLDocument"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateClusterAuthorizationResourceYAML: {
+        parameters: {
+            query?: {
+                /** @description 仅调用 Kubernetes API Server DryRun，不持久化变更。 */
+                dry_run?: components["parameters"]["KubernetesYAMLDryRun"];
+                /** @description 实际写入必须为 true；dry-run 可省略。 */
+                confirm?: components["parameters"]["KubernetesYAMLConfirm"];
+                field_manager?: components["parameters"]["KubernetesYAMLFieldManager"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                authorization_resource: components["parameters"]["ClusterAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["KubernetesYAMLManifest"];
+        responses: {
+            200: components["responses"]["KubernetesYAMLMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
     listNamespacedAuthorizationResources: {
         parameters: {
             query?: {
@@ -7444,6 +7620,68 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getNamespacedAuthorizationResourceYAML: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                authorization_resource: components["parameters"]["NamespacedAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesYAMLDocument"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateNamespacedAuthorizationResourceYAML: {
+        parameters: {
+            query?: {
+                /** @description 仅调用 Kubernetes API Server DryRun，不持久化变更。 */
+                dry_run?: components["parameters"]["KubernetesYAMLDryRun"];
+                /** @description 实际写入必须为 true；dry-run 可省略。 */
+                confirm?: components["parameters"]["KubernetesYAMLConfirm"];
+                field_manager?: components["parameters"]["KubernetesYAMLFieldManager"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                authorization_resource: components["parameters"]["NamespacedAuthorizationResource"];
+                authorization_name: components["parameters"]["AuthorizationName"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["KubernetesYAMLManifest"];
+        responses: {
+            200: components["responses"]["KubernetesYAMLMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];
@@ -7646,6 +7884,64 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesSecretYAML: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesYAMLDocument"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesSecretYAML: {
+        parameters: {
+            query?: {
+                /** @description 仅调用 Kubernetes API Server DryRun，不持久化变更。 */
+                dry_run?: components["parameters"]["KubernetesYAMLDryRun"];
+                /** @description 实际写入必须为 true；dry-run 可省略。 */
+                confirm?: components["parameters"]["KubernetesYAMLConfirm"];
+                field_manager?: components["parameters"]["KubernetesYAMLFieldManager"];
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["KubernetesYAMLManifest"];
+        responses: {
+            200: components["responses"]["KubernetesYAMLMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

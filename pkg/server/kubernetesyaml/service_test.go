@@ -26,7 +26,7 @@ func TestServiceGetReturnsYAML(t *testing.T) {
 			return deploymentObject("uid-1", "42"), nil
 		},
 	}
-	result, err := NewService(resources).Get(context.Background(), GetInput{
+	result, err := NewService(resources, nil).Get(context.Background(), GetInput{
 		ClusterID: testClusterID,
 		Resource:  testResource,
 		Namespace: "team-a",
@@ -57,7 +57,7 @@ func TestServiceUpdateValidatesIdentityAndForwardsOptions(t *testing.T) {
 			return input.Object, nil
 		},
 	}
-	result, err := NewService(resources).Update(context.Background(), UpdateInput{
+	result, err := NewService(resources, nil).Update(context.Background(), UpdateInput{
 		GetInput: GetInput{
 			ClusterID: testClusterID,
 			Resource:  testResource,
@@ -118,7 +118,7 @@ func TestServiceUpdateRejectsStaleIdentity(t *testing.T) {
 			if testCase.version != "" {
 				manifest += "  resourceVersion: \"" + testCase.version + "\"\n"
 			}
-			_, err := NewService(resources).Update(context.Background(), UpdateInput{
+			_, err := NewService(resources, nil).Update(context.Background(), UpdateInput{
 				GetInput: GetInput{
 					ClusterID: testClusterID, Resource: testResource,
 					Namespace: "team-a", Name: "api",
@@ -152,7 +152,7 @@ func TestServiceUpdateRejectsInvalidYAML(t *testing.T) {
 					return deploymentObject("uid-1", "42"), nil
 				},
 			}
-			_, err := NewService(resources).Update(context.Background(), UpdateInput{
+			_, err := NewService(resources, nil).Update(context.Background(), UpdateInput{
 				GetInput: GetInput{
 					ClusterID: testClusterID, Resource: testResource,
 					Namespace: "team-a", Name: "api",

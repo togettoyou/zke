@@ -23,11 +23,16 @@ import (
 )
 
 const (
-	DefaultNodeListLimit            int64 = 100
-	MaxNodeListLimit                int64 = 500
-	maxSelectorBytes                      = 4096
-	maxContinueTokenBytes                 = 4096
-	kubernetesJSONContentType             = "application/json"
+	DefaultNodeListLimit      int64 = 100
+	MaxNodeListLimit          int64 = 500
+	maxSelectorBytes                = 4096
+	maxContinueTokenBytes           = 4096
+	kubernetesJSONContentType       = "application/json"
+	// The reasons an Agent uses for a refusal of its own, mirrored from
+	// pkg/agent. They are part of the Server–Agent contract: an Agent that
+	// predates them reports a plain FORBIDDEN, which still maps to a denial.
+	agentResourceNotAllowedReason         = "ResourceNotAllowed"
+	agentNamespaceForbiddenReason         = "AgentNamespaceForbidden"
 	defaultMaxBufferedResponseBytes int64 = 256 * 1024 * 1024
 )
 
@@ -40,17 +45,23 @@ var (
 	ErrResourceNotFound       = errors.New("Kubernetes resource not found")
 	ErrClusterUnauthenticated = errors.New("Kubernetes API authentication failed")
 	ErrClusterAccessDenied    = errors.New("Kubernetes API access denied")
-	ErrClusterUnavailable     = errors.New("Kubernetes API is unavailable")
-	ErrClusterTimeout         = errors.New("Kubernetes API request timed out")
-	ErrResponseTooLarge       = errors.New("Kubernetes API response is too large")
-	ErrResponseBudget         = errors.New("Server response buffer budget is exhausted")
-	ErrIdempotencyConflict    = errors.New("Kubernetes resource idempotency conflict")
-	ErrUpstreamConflict       = errors.New("Kubernetes API resource conflict")
-	ErrUpstreamRejected       = errors.New("Kubernetes rejected the submitted resource")
-	ErrConfigMapImmutable     = errors.New("Kubernetes ConfigMap is immutable")
-	ErrManagedResource        = errors.New("Kubernetes resource is managed by ZKE")
-	ErrUpstreamFailure        = errors.New("Kubernetes API request failed")
-	ErrInvalidResponse        = errors.New("invalid Agent resource response")
+	// The Agent's own refusals, which are not the Kubernetes API Server's. They
+	// are permanent boundaries of ZKE rather than gaps in what the Agent's
+	// ServiceAccount was granted, so they are neither retried nor answered by
+	// widening a ClusterRole.
+	ErrResourceNotEnabled      = errors.New("Kubernetes resource is not enabled for the Agent")
+	ErrAgentNamespaceForbidden = errors.New("Agent Namespace Secrets are not accessible")
+	ErrClusterUnavailable      = errors.New("Kubernetes API is unavailable")
+	ErrClusterTimeout          = errors.New("Kubernetes API request timed out")
+	ErrResponseTooLarge        = errors.New("Kubernetes API response is too large")
+	ErrResponseBudget          = errors.New("Server response buffer budget is exhausted")
+	ErrIdempotencyConflict     = errors.New("Kubernetes resource idempotency conflict")
+	ErrUpstreamConflict        = errors.New("Kubernetes API resource conflict")
+	ErrUpstreamRejected        = errors.New("Kubernetes rejected the submitted resource")
+	ErrConfigMapImmutable      = errors.New("Kubernetes ConfigMap is immutable")
+	ErrManagedResource         = errors.New("Kubernetes resource is managed by ZKE")
+	ErrUpstreamFailure         = errors.New("Kubernetes API request failed")
+	ErrInvalidResponse         = errors.New("invalid Agent resource response")
 )
 
 var nodeResource = &agentv1.GroupVersionResource{
@@ -430,6 +441,17 @@ func responseErrorWithNotFound(
 	case agentv1.ResultCode_RESULT_CODE_UNAUTHENTICATED:
 		return ErrClusterUnauthenticated
 	case agentv1.ResultCode_RESULT_CODE_FORBIDDEN:
+		// The Agent names its own refusals, and only its own: a 403 relayed from
+		// the Kubernetes API Server carries that API's reasons, none of which
+		// are these. Matching on the name keeps "ZKE will never do this" apart
+		// from "this Agent has not been granted that yet", which are different
+		// answers to whoever is looking at the failure.
+		switch response.GetReason() {
+		case agentResourceNotAllowedReason:
+			return ErrResourceNotEnabled
+		case agentNamespaceForbiddenReason:
+			return ErrAgentNamespaceForbidden
+		}
 		return ErrClusterAccessDenied
 	case agentv1.ResultCode_RESULT_CODE_NOT_FOUND:
 		return notFound

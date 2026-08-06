@@ -284,18 +284,15 @@ function DesktopSection() {
   const { session } = useSessionContext();
 
   return (
-    <Group title="桌面偏好" hint="仅保存在本浏览器，不上传服务端。">
-      <Row label="深色主题" hint="默认跟随系统；此处的选择会记录在本地。">
+    <Group title="桌面偏好" hint="仅保存在本浏览器，不上传服务端">
+      <Row label="深色主题" hint="默认跟随系统，选择记录在本地">
         <Switch
           checked={theme === "dark"}
           onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
           aria-label="深色主题"
         />
       </Row>
-      <Row
-        label="重置桌面布局"
-        hint="关闭全部窗口，清除本地保存的窗口位置与作用域选择。不影响服务端任何数据。"
-      >
+      <Row label="重置桌面布局" hint="关闭全部窗口，清除本地保存的窗口位置与作用域选择">
         <Button
           size="sm"
           variant="secondary"
@@ -326,7 +323,7 @@ function SystemSection() {
 
   return (
     <>
-      <Group title="系统状态" hint="来自 ZKE Server 的就绪检查。">
+      <Group title="系统状态" hint="来自 ZKE Server 的就绪检查">
         <Row label="Server 就绪状态">
           {/* A dot and a word rather than a filled pill: this is one reading on
               an otherwise quiet list, and a badge would be the loudest thing on

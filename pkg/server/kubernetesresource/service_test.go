@@ -205,6 +205,26 @@ func TestServiceMapsTransportAndKubernetesFailures(t *testing.T) {
 			want: ErrClusterAccessDenied,
 		},
 		{
+			// Named by the Agent, and told apart from the case above: this one
+			// is a rule of ZKE's, which no Agent ClusterRole will unlock.
+			name: "Agent refused the resource itself",
+			response: &agentv1.ResourceResponse{
+				Result:               agentv1.ResultCode_RESULT_CODE_FORBIDDEN,
+				KubernetesStatusCode: http.StatusForbidden,
+				Reason:               agentResourceNotAllowedReason,
+			},
+			want: ErrResourceNotEnabled,
+		},
+		{
+			name: "Agent refused its own Namespace",
+			response: &agentv1.ResourceResponse{
+				Result:               agentv1.ResultCode_RESULT_CODE_FORBIDDEN,
+				KubernetesStatusCode: http.StatusForbidden,
+				Reason:               agentNamespaceForbiddenReason,
+			},
+			want: ErrAgentNamespaceForbidden,
+		},
+		{
 			name: "oversized response",
 			response: &agentv1.ResourceResponse{
 				Result:               agentv1.ResultCode_RESULT_CODE_RESOURCE_EXHAUSTED,

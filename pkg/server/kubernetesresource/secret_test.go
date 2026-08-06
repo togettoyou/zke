@@ -241,3 +241,114 @@ func TestCreateSecretRejectsPlatformLabelAndTokenType(t *testing.T) {
 		t.Fatalf("error = %v, want invalid input for a value that is not Base64", err)
 	}
 }
+
+/*
+ * The YAML access is the Secret service's, not a general one pointed at
+ * Secrets.
+ *
+ * It reaches a Secret because it goes through the same read the typed API uses,
+ * which is also what keeps ZKE's own Secrets out of it. Anything that is not a
+ * Secret is refused outright: this access exists to serve one endpoint, and an
+ * accessor that would fetch a Deployment if asked is one that has to be trusted
+ * rather than one that cannot be misused.
+ */
+func TestSecretYAMLAccessStaysOnSecretsAndRefusesTheseOfZKE(t *testing.T) {
+	t.Parallel()
+
+	requester := &fakeResourceRequester{
+		handle: func(_ context.Context, _ string, request *agentv1.ResourceRequest, responseBody io.Writer) (*agentv1.ResourceResponse, error) {
+			if !request.GetSecretAccess() {
+				t.Fatalf("YAML read did not ask for Secret access: %+v", request)
+			}
+			if request.GetName() == "zke-agent-enrollment" {
+				return writeKubernetesObject(t, responseBody, platformSecret()), nil
+			}
+			return writeKubernetesObject(t, responseBody, workloadSecret()), nil
+		},
+	}
+	access := NewSecretYAMLAccess(NewService(requester))
+	ctx := context.Background()
+
+	object, err := access.GetResource(ctx, GetResourceInput{
+		ClusterID: testClusterID, Resource: SecretResourceIdentity(),
+		Namespace: "default", Name: "registry",
+	})
+	if err != nil || object["kind"] != "Secret" {
+		t.Fatalf("object = %v, err = %v", object, err)
+	}
+
+	if _, err := access.GetResource(ctx, GetResourceInput{
+		ClusterID: testClusterID, Resource: SecretResourceIdentity(),
+		Namespace: "zke-system", Name: "zke-agent-enrollment",
+	}); !errors.Is(err, ErrSecretManagedByPlatform) {
+		t.Fatalf("platform Secret error = %v, want managed by platform", err)
+	}
+
+	if _, err := access.GetResource(ctx, GetResourceInput{
+		ClusterID: testClusterID,
+		Resource:  ResourceIdentity{Group: "apps", Version: "v1", Resource: "deployments"},
+		Namespace: "default", Name: "api",
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("non-Secret error = %v, want invalid input", err)
+	}
+	if _, err := access.UpdateResource(ctx, UpdateResourceInput{
+		ClusterID: testClusterID,
+		Resource:  ResourceIdentity{Group: "apps", Version: "v1", Resource: "deployments"},
+		Namespace: "default", Name: "api", Object: map[string]any{},
+		Confirm: true, IdempotencyKey: "secret-yaml-0001",
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("non-Secret update error = %v, want invalid input", err)
+	}
+}
+
+// The two rules a Secret manifest has to keep that Kubernetes has no opinion
+// about, plus the immutable answer the form already gives.
+func TestSecretManifestGuard(t *testing.T) {
+	t.Parallel()
+
+	object := func(secret *corev1.Secret) map[string]any {
+		t.Helper()
+		result, err := secretObject(secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	immutable := workloadSecret()
+	value := true
+	immutable.Immutable = &value
+	retyped := workloadSecret()
+	retyped.Type = corev1.SecretTypeDockerConfigJson
+	claimed := workloadSecret()
+	claimed.Labels = map[string]string{"app.kubernetes.io/managed-by": "zke-server"}
+	edited := workloadSecret()
+	edited.Data = map[string][]byte{"password": []byte("hunter3")}
+
+	testCases := []struct {
+		name      string
+		current   *corev1.Secret
+		submitted *corev1.Secret
+		want      error
+	}{
+		{name: "a changed value", current: workloadSecret(), submitted: edited},
+		{name: "an immutable Secret", current: immutable, submitted: edited, want: ErrSecretImmutable},
+		{name: "a changed type", current: workloadSecret(), submitted: retyped, want: ErrSecretTypeImmutable},
+		{name: "claiming ZKE's label", current: workloadSecret(), submitted: claimed, want: ErrPlatformLabelClaimed},
+	}
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			err := SecretManifestGuard(object(testCase.current), object(testCase.submitted))
+			if testCase.want == nil {
+				if err != nil {
+					t.Fatalf("guard refused a permitted change: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("error = %v, want %v", err, testCase.want)
+			}
+		})
+	}
+}
