@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	discoveryfake "k8s.io/client-go/discovery/fake"
+	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -137,6 +138,162 @@ func TestKubernetesResourceHandlerMutatesGenericResources(t *testing.T) {
 	)
 	if !apierrors.IsNotFound(getErr) {
 		t.Fatalf("deleted resource lookup error = %v, want not found", getErr)
+	}
+}
+
+// Only a mutation that may have reached the cluster reserves its idempotency
+// key. A preflight and a refusal leave the cluster untouched, and the attempt
+// that follows either of them under the same key is normally the corrected
+// request — answering that with IdempotencyConflict would leave the operator
+// nothing to do but abandon the form and fill it in again.
+func TestMutationResultAppliedOnlyWhenClusterStateMayHaveChanged(t *testing.T) {
+	t.Parallel()
+
+	widgets := schema.GroupVersionResource{
+		Group:    "example.io",
+		Version:  "v1alpha1",
+		Resource: "widgets",
+	}
+	resource := &agentv1.GroupVersionResource{
+		Group:    widgets.Group,
+		Version:  widgets.Version,
+		Resource: widgets.Resource,
+	}
+	body := []byte(`{
+		"apiVersion":"example.io/v1alpha1",
+		"kind":"Widget",
+		"metadata":{"name":"widget-a","namespace":"tenant-a"},
+		"spec":{"size":"small"}
+	}`)
+	createRequest := func(dryRun bool) *agentv1.ResourceRequest {
+		return &agentv1.ResourceRequest{
+			Verb:            agentv1.ResourceVerb_RESOURCE_VERB_CREATE,
+			Resource:        resource,
+			Namespace:       "tenant-a",
+			Representation:  agentv1.ResourceRepresentation_RESOURCE_REPRESENTATION_FULL_OBJECT,
+			BodySize:        uint64(len(body)),
+			MutationOptions: &agentv1.MutationOptions{DryRun: dryRun},
+		}
+	}
+	target := func(objects ...runtime.Object) dynamic.ResourceInterface {
+		return dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), objects...).
+			Resource(widgets).
+			Namespace("tenant-a")
+	}
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "example.io/v1alpha1",
+		"kind":       "Widget",
+		"metadata": map[string]any{
+			"name":      "widget-a",
+			"namespace": "tenant-a",
+		},
+	}}
+
+	// The preflight the operator runs before writing anything.
+	preflight, err := executeKubernetesResourceMutation(
+		context.Background(),
+		target(),
+		createRequest(true),
+		body,
+		1024*1024,
+	)
+	if err != nil ||
+		preflight.response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK ||
+		preflight.applied {
+		t.Fatalf("dry run result=%+v applied=%t err=%v", preflight.response, preflight.applied, err)
+	}
+
+	// The preflight that fails because the name is taken — the case the operator
+	// corrects and submits again.
+	refused, err := executeKubernetesResourceMutation(
+		context.Background(),
+		target(existing),
+		createRequest(true),
+		body,
+		1024*1024,
+	)
+	if err != nil ||
+		refused.response.GetKubernetesStatusCode() != http.StatusConflict ||
+		refused.applied {
+		t.Fatalf("refused result=%+v applied=%t err=%v", refused.response, refused.applied, err)
+	}
+
+	// The same refusal on a real write: still nothing written, still no reason to
+	// hold the key.
+	refusedWrite, err := executeKubernetesResourceMutation(
+		context.Background(),
+		target(existing),
+		createRequest(false),
+		body,
+		1024*1024,
+	)
+	if err != nil ||
+		refusedWrite.response.GetKubernetesStatusCode() != http.StatusConflict ||
+		refusedWrite.applied {
+		t.Fatalf(
+			"refused write result=%+v applied=%t err=%v",
+			refusedWrite.response,
+			refusedWrite.applied,
+			err,
+		)
+	}
+
+	// The write that succeeded, which is what the key exists to protect.
+	created, err := executeKubernetesResourceMutation(
+		context.Background(),
+		target(),
+		createRequest(false),
+		body,
+		1024*1024,
+	)
+	if err != nil ||
+		created.response.GetKubernetesStatusCode() != http.StatusCreated ||
+		!created.applied {
+		t.Fatalf("create result=%+v applied=%t err=%v", created.response, created.applied, err)
+	}
+
+	// An identity the Agent refuses before Kubernetes is ever asked.
+	invalid, err := executeKubernetesResourceMutation(
+		context.Background(),
+		target(),
+		createRequest(false),
+		[]byte(`{"apiVersion":"other.io/v1","kind":"Widget","metadata":{"name":"widget-a"}}`),
+		1024*1024,
+	)
+	if err != nil ||
+		invalid.response.GetResult() != agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT ||
+		invalid.applied {
+		t.Fatalf("invalid result=%+v applied=%t err=%v", invalid.response, invalid.applied, err)
+	}
+}
+
+func TestMutationDryRunReadsTheOptionsOfItsVerb(t *testing.T) {
+	t.Parallel()
+
+	if !mutationDryRun(&agentv1.ResourceRequest{
+		Verb:            agentv1.ResourceVerb_RESOURCE_VERB_CREATE,
+		MutationOptions: &agentv1.MutationOptions{DryRun: true},
+	}) {
+		t.Fatal("create dry run not detected")
+	}
+	// Delete carries the flag in its own options message; reading MutationOptions
+	// for it would report every dry-run delete as a real one.
+	if !mutationDryRun(&agentv1.ResourceRequest{
+		Verb:          agentv1.ResourceVerb_RESOURCE_VERB_DELETE,
+		DeleteOptions: &agentv1.DeleteOptions{DryRun: true},
+	}) {
+		t.Fatal("delete dry run not detected")
+	}
+	if mutationDryRun(&agentv1.ResourceRequest{
+		Verb:            agentv1.ResourceVerb_RESOURCE_VERB_UPDATE,
+		MutationOptions: &agentv1.MutationOptions{},
+	}) {
+		t.Fatal("update without dry run reported as dry run")
+	}
+	if mutationDryRun(&agentv1.ResourceRequest{
+		Verb: agentv1.ResourceVerb_RESOURCE_VERB_DELETE,
+	}) {
+		t.Fatal("delete without options reported as dry run")
 	}
 }
 

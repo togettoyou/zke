@@ -670,6 +670,16 @@ func readResourceMutationBody(
 	return body, nil
 }
 
+// mutationDryRun reports whether the request asks Kubernetes to validate the
+// mutation without applying it. Delete carries the flag in its own options
+// message, every other verb in MutationOptions.
+func mutationDryRun(request *agentv1.ResourceRequest) bool {
+	if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DELETE {
+		return request.GetDeleteOptions().GetDryRun()
+	}
+	return request.GetMutationOptions().GetDryRun()
+}
+
 func executeKubernetesResourceMutation(
 	ctx context.Context,
 	target dynamic.ResourceInterface,
@@ -682,6 +692,12 @@ func executeKubernetesResourceMutation(
 		statusCode = http.StatusOK
 		err        error
 	)
+	// A DryRun asks Kubernetes to validate and discard, so no outcome of one is
+	// applied and none reserves its idempotency key. A preflight is normally
+	// repeated with corrected content under the same key, and even an unchanged
+	// repeat deserves a fresh answer: the state it collided with — a name already
+	// taken, a quota already full — is exactly what may have been resolved since.
+	dryRun := mutationDryRun(request)
 	switch request.GetVerb() {
 	case agentv1.ResourceVerb_RESOURCE_VERB_CREATE:
 		object, err = decodeMutationObject(request, body, false)
@@ -755,6 +771,7 @@ func executeKubernetesResourceMutation(
 					Result:               agentv1.ResultCode_RESULT_CODE_OK,
 					KubernetesStatusCode: http.StatusOK,
 				},
+				applied: !dryRun,
 			}, nil
 		}
 	default:
@@ -764,8 +781,11 @@ func executeKubernetesResourceMutation(
 		), nil
 	}
 	if err != nil {
+		response := kubernetesResourceError(err)
 		return resourceMutationResult{
-			response: kubernetesResourceError(err),
+			response: response,
+			applied: !dryRun &&
+				mutationFailureApplied(response.GetKubernetesStatusCode()),
 		}, nil
 	}
 	response, responseBody, marshalErr := marshalResourceObject(
@@ -776,7 +796,27 @@ func executeKubernetesResourceMutation(
 	if marshalErr != nil {
 		return resourceMutationResult{}, marshalErr
 	}
-	return resourceMutationResult{response: response, body: responseBody}, nil
+	// Applied even when marshalResourceObject refused to ship the object back for
+	// being too large: Kubernetes had already accepted the mutation by then, and
+	// the key has to stay reserved so a retry does not perform it twice.
+	return resourceMutationResult{
+		response: response,
+		body:     responseBody,
+		applied:  !dryRun,
+	}, nil
+}
+
+// mutationFailureApplied reports whether a failed mutation may still have
+// changed cluster state, judged by the status Kubernetes answered with.
+//
+// A 4xx is the API Server refusing the request — invalid object, name taken,
+// stale resourceVersion, no permission — and nothing was written. Everything
+// else is an outcome this Agent cannot account for: a 5xx or a timeout may have
+// committed before the connection failed, and a canceled call reports no status
+// at all. Those keep their idempotency key, which is the case the replay cache
+// was built for.
+func mutationFailureApplied(status int32) bool {
+	return status < http.StatusBadRequest || status >= http.StatusInternalServerError
 }
 
 func decodeMutationObject(
@@ -910,6 +950,8 @@ func kubernetesPatchType(patchType agentv1.PatchType) (types.PatchType, bool) {
 	}
 }
 
+// invalidMutationResult refuses a mutation before it reaches Kubernetes, so the
+// result is not applied and does not reserve the idempotency key.
 func invalidMutationResult(
 	reason string,
 	message string,

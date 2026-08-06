@@ -101,7 +101,10 @@
   YAML-only 类型；Server 在更新前核对 URL/GVR/Namespace 与 `apiVersion`、`kind`、名称、UID 和
   `resourceVersion`，DryRun 无需确认，实际写入要求 `confirm=true`。成功响应仍为 `application/yaml`，
   错误使用统一 JSON 信封；审计不记录 YAML 正文；
-- Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；
+- Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；只有可能改变集群
+  状态的结果会占用幂等键：DryRun 与 Kubernetes 以 4xx 拒绝的写入都没有落地，因此不占用，被拒绝后改正内容
+  再次提交是一次新请求而不是冲突；5xx、超时和取消这些 Agent 无法判定结果的失败仍然占用该键，那正是重放缓存
+  存在的场合；
 - 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
   `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
   DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
@@ -296,6 +299,12 @@ ZKE 不能替 Kubernetes 补上这个检查——真实范围由该集群 API Se
 是哪个字段、为什么——「NodePort 38080 不在 30000-32767 范围内」这句话只存在于那条消息里，请求和对象本身都不
 携带这个范围。只有 `Invalid` 被这样透传：它描述的是调用方刚提交的对象；其余失败讲的是集群自身的状况，仍使用
 固定文案。
+
+被 Kubernetes 拒绝的提交可以直接在表单里改正后重新提交，不需要退出重填。表单在打开时为预检和写入各取一个
+幂等键并保持到关闭——那是为了让一次因响应丢失而重试的提交不会执行两次——而被拒绝的提交没有落地，Agent 因此
+不为它占用该键，改正后的内容在同一个键下是一次新请求（详见上文重放缓存）。只有当上一次提交以 5xx、超时或
+连接中断结束、结果无法判定时，改动内容再提交才会返回 `idempotency_conflict`，此时该键可能已经对应一次真实
+写入，正确的做法是重新读取该对象。
 
 目标集群没有安装 Gateway API 时，列表返回 `409 gateway_api_unavailable`，Console 据此展示说明而不是错误，
 并隐藏创建入口；这与已安装但 Agent 无权访问的 `403` 是两回事，后者仍按权限错误呈现。

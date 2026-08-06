@@ -92,7 +92,13 @@ export const ERROR_MESSAGES: Record<string, string> = {
   previous_logs_not_found: "该容器没有上一个实例的日志：它没有重启过，或上一个实例的日志已被清理",
   resource_conflict: "资源状态与请求冲突",
   resource_state_conflict: "目标资源当前状态不允许该操作",
-  idempotency_conflict: "幂等键已用于内容不同的请求，请重新发起",
+  // Only one situation reaches this now: a previous submission under this key
+  // failed in a way the Agent could not account for — a Kubernetes 5xx, a
+  // timeout, a dropped connection — so it may have been applied, and what has
+  // just been submitted under the same key is not that request. A refused
+  // submission releases its key, so correcting a rejected form and submitting
+  // again is a new request rather than this error.
+  idempotency_conflict: "上一次提交的结果未能确认，可能已经生效；请重新读取该对象后再提交",
   resource_uid_changed: "资源已被删除并以同名重新创建，请重新读取 YAML",
   resource_version_changed: "资源已发生变化，请重新读取 YAML 后合并修改",
   // Each spells out its own scope and says where the holder might be hiding: a

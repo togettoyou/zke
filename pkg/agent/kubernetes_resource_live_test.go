@@ -203,6 +203,62 @@ func TestLiveKubernetesResourceCRUDOverRealQUIC(t *testing.T) {
 		t.Fatalf("idempotent create replay object=%+v err=%v", replayedConfigMap, err)
 	}
 
+	// A refused submission does not reserve its key. The form mints one key when
+	// it opens and keeps it until it closes, so the corrected content arrives
+	// under the same key as the content Kubernetes just refused — and has to be
+	// executed rather than reported as an idempotency conflict, or the operator
+	// would have to abandon the form and fill it in again.
+	correctedKey := liveKey("configmap-corrected", suffix)
+	takenName := kubernetesresource.CreateResourceInput{
+		ClusterID: testClusterID,
+		Resource:  configMapIdentity,
+		Namespace: namespace,
+		Object: liveObject(
+			"v1",
+			"ConfigMap",
+			namespace,
+			configMapName,
+			map[string]any{"data": map[string]any{"mode": "collides"}},
+		),
+		Options:        kubernetesresource.MutationOptions{DryRun: true},
+		IdempotencyKey: correctedKey,
+	}
+	if _, err = service.CreateResource(ctx, takenName); !errors.Is(
+		err,
+		kubernetesresource.ErrUpstreamConflict,
+	) {
+		t.Fatalf("preflight on a taken name error = %v, want upstream conflict", err)
+	}
+	corrected := takenName
+	corrected.Object = liveObject(
+		"v1",
+		"ConfigMap",
+		namespace,
+		"corrected",
+		map[string]any{"data": map[string]any{"mode": "corrected"}},
+	)
+	if _, err = service.CreateResource(ctx, corrected); err != nil {
+		t.Fatalf("corrected preflight under the same key: %v", err)
+	}
+	corrected.Options = kubernetesresource.MutationOptions{}
+	corrected.Confirm = true
+	if _, err = service.CreateResource(ctx, corrected); err != nil {
+		t.Fatalf("corrected create under the same key: %v", err)
+	}
+	if err = service.DeleteResource(
+		ctx,
+		kubernetesresource.DeleteResourceInput{
+			ClusterID:      testClusterID,
+			Resource:       configMapIdentity,
+			Namespace:      namespace,
+			Name:           "corrected",
+			Confirm:        true,
+			IdempotencyKey: liveKey("configmap-corrected-delete", suffix),
+		},
+	); err != nil {
+		t.Fatalf("delete corrected ConfigMap: %v", err)
+	}
+
 	createdConfigMap["data"] = map[string]any{"mode": "updated"}
 	updatedConfigMap, err := service.UpdateResource(
 		ctx,
