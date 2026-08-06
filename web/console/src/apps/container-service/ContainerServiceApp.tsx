@@ -60,8 +60,12 @@ const NAV: AppNavItem[] = [
   { id: "storage", label: "存储", icon: Database },
   { id: "autoscaling", label: "自动伸缩", icon: Gauge },
   { id: "policies", label: "策略管理", icon: ShieldCheck },
-  { id: "browser", label: "资源对象浏览器", icon: Search },
   { id: "authorization", label: "授权管理", icon: KeyRound },
+  // After the typed categories and before 事件: it is the escape hatch for the
+  // types the categories above do not model, so it reads as the end of the
+  // resource list rather than an item inside it. 事件 stays last — it is not a
+  // resource category at all but a stream about the ones above.
+  { id: "browser", label: "资源对象浏览器", icon: Search },
   { id: "events", label: "事件", icon: Bell },
 ];
 
