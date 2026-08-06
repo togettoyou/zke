@@ -150,11 +150,15 @@ function StorageFormBody({
         ? claim
         : storageClass;
 
-  const nameValid = DNS_SUBDOMAIN.test(name.trim()) && name.length <= 253;
-  // Editing submits one field, so it is enabled only once that field is both
-  // usable and different: a confirmation dialog for a write that changes
-  // nothing is a dialog that only costs an audit record.
-  const valid = existing ? editor.editable && editor.changed : nameValid && editor.valid;
+  /*
+   * The one thing blocking submission, named where it can be fixed.
+   *
+   * One at a time, in the order the sections appear: a disabled button with no
+   * reason next to it is a form an operator has to re-read field by field, and
+   * the reason is rarely the field they are looking at.
+   */
+  const problem = existing ? editor.updateProblem : (nameProblem(name) ?? editor.problem);
+  const valid = problem === null;
 
   const submit = (dryRun: boolean, spec: StorageCreateSpec | StorageUpdateSpec) => {
     const shared = {
@@ -200,7 +204,10 @@ function StorageFormBody({
         {existing ? (
           <Alert tone="info">{lockNotice(resource)}</Alert>
         ) : (
-          <FormSection title="基本信息">
+          <FormSection
+            title="基本信息"
+            problem={problem?.section === "基本信息" ? problem.message : undefined}
+          >
             <div className="grid gap-1.5">
               <Label htmlFor="storage-name">名称</Label>
               <Input
@@ -220,6 +227,16 @@ function StorageFormBody({
 
         {editor.fields}
 
+        {/*
+         * The message itself is up in the section that can fix it; down here,
+         * next to the button it disables, what is missing is where to look.
+         * Only while creating: an edit has one editable field in one section
+         * already sitting above this button, so pointing at it would repeat what
+         * is on screen.
+         */}
+        {problem && !existing ? (
+          <Alert tone="warning">「{problem.section}」中还有需要修正的项。</Alert>
+        ) : null}
         {mutation.error ? <Alert tone="danger">{errorMessage(mutation.error)}</Alert> : null}
 
         <div className="flex items-center justify-end gap-3 pb-2">
@@ -295,19 +312,126 @@ function createImpacts(resource: KubernetesStorageResource): string[] {
 const UPDATE_PRECONDITION =
   "请求携带该对象当前的 UID 与 resourceVersion，期间对象若已变化，更新会被拒绝而不是覆盖。";
 
+/*
+ * The sections these forms render, named by their own titles.
+ *
+ * A literal union rather than free text: the section that carries a problem is
+ * pointed at from the footer, and a typo there would silently stop the message
+ * from appearing anywhere.
+ */
+type StorageSection = "基本信息" | "卷" | "来源" | "申领" | "StorageClass" | "参数";
+
+/** The one thing currently blocking submission, and where it can be fixed. */
+type StorageProblem = { section: StorageSection; message: string };
+
+function at(section: StorageSection, message: string): StorageProblem {
+  return { section, message };
+}
+
 type SpecEditor = {
   fields: ReactNode;
-  /** Whether a creation could be submitted from the current draft. */
-  valid: boolean;
-  /** Whether the one field an update may carry currently holds a usable value. */
-  editable: boolean;
-  /** Whether that field differs from the object on screen. */
-  changed: boolean;
+  /**
+   * What stops this draft from being created, or null when nothing does. The
+   * editors own their sections, so each one reports which of its own sections
+   * carries the message and renders it there.
+   */
+  problem: StorageProblem | null;
+  /**
+   * What stops an update from being submitted. Not the same question: an update
+   * carries one field, and it is refused both when that field is unusable and
+   * when it matches what is already on screen — a confirmation dialog for a
+   * write that changes nothing costs an audit record and nothing else.
+   */
+  updateProblem: StorageProblem | null;
   build: () => StorageCreateSpec;
   buildUpdate: () => StorageUpdateSpec;
   updateImpacts: string[];
   destructiveUpdate: boolean;
 };
+
+function nameProblem(name: string): StorageProblem | null {
+  const trimmed = name.trim();
+  if (trimmed === "") {
+    return at("基本信息", "请填写名称。");
+  }
+  if (trimmed.length > 253) {
+    return at("基本信息", "名称最长 253 个字符。");
+  }
+  if (!DNS_SUBDOMAIN.test(trimmed)) {
+    return at(
+      "基本信息",
+      "名称必须是合法的 DNS 子域名：只能包含小写字母、数字、连字符和点，并以字母或数字开头和结尾。",
+    );
+  }
+  return null;
+}
+
+/** A Kubernetes quantity field, which every capacity input here is. */
+function quantityProblem(
+  section: StorageSection,
+  value: string,
+  label: string,
+): StorageProblem | null {
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return at(section, `请填写${label}。`);
+  }
+  if (!QUANTITY.test(trimmed)) {
+    return at(section, `${label}必须是 Kubernetes quantity，例如 10Gi 或 500Mi。`);
+  }
+  return null;
+}
+
+/*
+ * What the chosen volume source still needs.
+ *
+ * Two of these are not missing fields but combinations Kubernetes refuses, and
+ * they are reported the same way: the operator has to change something in this
+ * section either way, and which of the two kinds it is does not change that.
+ */
+function persistentVolumeSourceProblem(draft: {
+  sourceType: "csi" | "nfs" | "local";
+  blockVolume: boolean;
+  driver: string;
+  volumeHandle: string;
+  fsType: string;
+  server: string;
+  path: string;
+  localNode: string;
+}): StorageProblem | null {
+  const { sourceType, blockVolume, driver, volumeHandle, fsType, server, path, localNode } = draft;
+  if (sourceType === "csi") {
+    if (driver.trim() === "") {
+      return at("来源", "请填写 CSI 驱动名称。");
+    }
+    if (volumeHandle.trim() === "") {
+      return at("来源", "请填写卷标识（volumeHandle）。");
+    }
+  }
+  if (sourceType === "nfs") {
+    if (blockVolume) {
+      return at("来源", "NFS 只支持 Filesystem 卷模式，不能作为 Block 卷。");
+    }
+    if (server.trim() === "") {
+      return at("来源", "请填写 NFS 服务器地址。");
+    }
+    if (path.trim() === "") {
+      return at("来源", "请填写 NFS 导出路径。");
+    }
+  }
+  if (sourceType === "local") {
+    if (path.trim() === "") {
+      return at("来源", "请填写节点上的路径。");
+    }
+    if (localNode.trim() === "") {
+      return at("来源", "请填写节点名称：Local PV 必须绑定到具体节点。");
+    }
+  }
+  if (blockVolume && sourceType !== "nfs" && fsType.trim() !== "") {
+    return at("来源", "Block 卷不能设置文件系统类型，请清空该字段。");
+  }
+  return null;
+}
 
 function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | null): SpecEditor {
   const view = existing?.persistent_volume;
@@ -342,13 +466,30 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
 
   const blockVolume = volumeMode === "Block";
 
-  const sourceValid =
-    sourceType === "csi"
-      ? driver.trim() !== "" && volumeHandle.trim() !== "" && (!blockVolume || fsType.trim() === "")
-      : sourceType === "nfs"
-        ? !blockVolume && server.trim() !== "" && path.trim() !== ""
-        : path.trim() !== "" && localNode.trim() !== "" && (!blockVolume || fsType.trim() === "");
-  const valid = QUANTITY.test(capacity.trim()) && modes.length > 0 && sourceValid;
+  const problem =
+    quantityProblem("卷", capacity, "容量") ??
+    (modes.length === 0 ? at("卷", "请至少选择一种访问模式。") : null) ??
+    persistentVolumeSourceProblem({
+      sourceType,
+      blockVolume,
+      driver,
+      volumeHandle,
+      fsType,
+      server,
+      path,
+      localNode,
+    });
+  // The reclaim policy is the only field an update carries. "默认" is not one of
+  // its values — it means the field is absent, which an update cannot say.
+  const updateProblem =
+    reclaim !== "Retain" && reclaim !== "Delete"
+      ? at("卷", "请选择回收策略。")
+      : reclaim === (view?.reclaim_policy ?? "")
+        ? at("卷", "回收策略与当前一致，没有需要提交的改动。")
+        : null;
+  // Every field but one is read-only while editing, so the message that belongs
+  // on screen is the one about the write actually being attempted.
+  const shown = locked ? updateProblem : problem;
 
   const build = (): StorageCreateSpec => ({
     persistent_volume: {
@@ -400,7 +541,7 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
 
   const fields = (
     <>
-      <FormSection title="卷">
+      <FormSection title="卷" problem={shown?.section === "卷" ? shown.message : undefined}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="容量" htmlFor="pv-capacity" hint="Kubernetes quantity，例如 10Gi">
             <Input
@@ -456,7 +597,11 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
         <AccessModePicker modes={modes} disabled={locked} onChange={setModes} />
       </FormSection>
 
-      <FormSection title="来源" hint="ZKE 不会创建底层存储，它必须已经存在">
+      <FormSection
+        title="来源"
+        hint="ZKE 不会创建底层存储，它必须已经存在"
+        problem={shown?.section === "来源" ? shown.message : undefined}
+      >
         <div className="grid gap-3">
           <Field label="类型" htmlFor="pv-source-type">
             <Select
@@ -583,12 +728,6 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
               只读挂载
             </label>
           )}
-          {blockVolume && sourceType === "nfs" ? (
-            <Alert tone="warning">NFS 只支持 Filesystem 卷模式，不能作为 Block 卷。</Alert>
-          ) : null}
-          {blockVolume && sourceType !== "nfs" && fsType.trim() ? (
-            <Alert tone="warning">Block 卷不能设置文件系统类型，请清空该字段。</Alert>
-          ) : null}
         </div>
       </FormSection>
     </>
@@ -596,9 +735,8 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
 
   return {
     fields,
-    valid,
-    editable: reclaim === "Retain" || reclaim === "Delete",
-    changed: reclaim !== (view?.reclaim_policy ?? ""),
+    problem,
+    updateProblem,
     build,
     buildUpdate: () => ({
       persistent_volume: { reclaim_policy: reclaim as "Retain" | "Delete" },
@@ -629,7 +767,23 @@ function useClaimDraft(existing: KubernetesStorageResourceDetail | null): SpecEd
   const [volumeName, setVolumeName] = useState(view?.volume_name ?? "");
   const [volumeMode, setVolumeMode] = useState(view?.volume_mode || DEFAULT_OPTION);
 
-  const valid = QUANTITY.test(capacity.trim()) && modes.length > 0;
+  const problem =
+    quantityProblem("申领", capacity, "申请容量") ??
+    (modes.length === 0 ? at("申领", "请至少选择一种访问模式。") : null);
+  /*
+   * The requested capacity is the only field an update carries.
+   *
+   * Whether it is actually an increase is left to the Server, which refuses a
+   * shrink before it reaches the Agent: comparing two Kubernetes quantities
+   * needs a unit parser, and one written here could disagree with the one that
+   * decides.
+   */
+  const updateProblem =
+    quantityProblem("申领", capacity, "申请容量") ??
+    (capacity.trim() === currentCapacity
+      ? at("申领", "申请容量与当前一致，没有需要提交的改动。")
+      : null);
+  const shown = locked ? updateProblem : problem;
 
   const build = (): StorageCreateSpec => ({
     persistent_volume_claim: {
@@ -647,7 +801,7 @@ function useClaimDraft(existing: KubernetesStorageResourceDetail | null): SpecEd
   });
 
   const fields = (
-    <FormSection title="申领">
+    <FormSection title="申领" problem={shown?.section === "申领" ? shown.message : undefined}>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field
           label="申请容量"
@@ -723,9 +877,8 @@ function useClaimDraft(existing: KubernetesStorageResourceDetail | null): SpecEd
 
   return {
     fields,
-    valid,
-    editable: QUANTITY.test(capacity.trim()),
-    changed: capacity.trim() !== currentCapacity,
+    problem,
+    updateProblem,
     build,
     buildUpdate: () => ({
       persistent_volume_claim: { requested_capacity: capacity.trim() },
@@ -757,7 +910,19 @@ function useStorageClassDraft(existing: KubernetesStorageResourceDetail | null):
   const parameterKeys = parameters.map((pair) => pair.key.trim()).filter(Boolean);
   const duplicateParameter = new Set(parameterKeys).size !== parameterKeys.length;
 
-  const valid = provisioner.trim() !== "" && !duplicateParameter;
+  const problem =
+    provisioner.trim() === ""
+      ? at("StorageClass", "请填写 Provisioner。")
+      : duplicateParameter
+        ? at("参数", "参数键不能重复；请合并或删除重复项。")
+        : null;
+  // The expansion switch is the only field an update carries, and a switch that
+  // is already in the requested position has nothing to submit.
+  const updateProblem =
+    allowExpansion === currentExpansion
+      ? at("StorageClass", "「允许卷扩容」与当前一致，没有需要提交的改动。")
+      : null;
+  const shown = locked ? updateProblem : problem;
 
   const build = (): StorageCreateSpec => ({
     storage_class: {
@@ -781,7 +946,10 @@ function useStorageClassDraft(existing: KubernetesStorageResourceDetail | null):
 
   const fields = (
     <>
-      <FormSection title="StorageClass">
+      <FormSection
+        title="StorageClass"
+        problem={shown?.section === "StorageClass" ? shown.message : undefined}
+      >
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Provisioner" htmlFor="sc-provisioner">
             <Input
@@ -833,22 +1001,20 @@ function useStorageClassDraft(existing: KubernetesStorageResourceDetail | null):
         ) : null}
       </FormSection>
 
-      <FormSection title="参数" hint="Provisioner 自定义的键值对">
+      <FormSection
+        title="参数"
+        hint="Provisioner 自定义的键值对"
+        problem={shown?.section === "参数" ? shown.message : undefined}
+      >
         <PairList rows={parameters} disabled={locked} onChange={setParameters} />
-        {duplicateParameter ? (
-          <Alert tone="warning" className="mt-2">
-            参数键不能重复；请合并或删除重复项。
-          </Alert>
-        ) : null}
       </FormSection>
     </>
   );
 
   return {
     fields,
-    valid,
-    editable: true,
-    changed: allowExpansion !== currentExpansion,
+    problem,
+    updateProblem,
     build,
     buildUpdate: () => ({ storage_class: { allow_volume_expansion: allowExpansion } }),
     updateImpacts: [
@@ -901,18 +1067,26 @@ function AccessModePicker({
 function FormSection({
   title,
   hint,
+  problem,
   children,
 }: {
   title: string;
   hint?: string;
+  /** The current blocking problem, when it is this section that carries it. */
+  problem?: string;
   children: ReactNode;
 }) {
   return (
     <section>
-      <div className="mb-2 flex items-baseline gap-2">
+      <div className="mb-2 flex flex-wrap items-baseline gap-2">
         <h4 className="text-foreground text-[13px] font-medium">{title}</h4>
         {hint ? <span className="text-subtle-foreground text-xs">{hint}</span> : null}
       </div>
+      {problem ? (
+        <Alert tone="warning" className="mb-2">
+          {problem}
+        </Alert>
+      ) : null}
       {children}
     </section>
   );

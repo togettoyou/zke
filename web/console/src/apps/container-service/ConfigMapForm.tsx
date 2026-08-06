@@ -24,6 +24,92 @@ const MAX_TOTAL_BYTES = 1024 * 1024;
 
 type EntryDraft = { key: string; value: string };
 
+type SectionKey = "basic" | "data" | "binary";
+
+/** The titles the sections are rendered with, to point at one from elsewhere. */
+const SECTION_LABELS: Record<SectionKey, string> = {
+  basic: "基本信息",
+  data: "数据",
+  binary: "二进制数据",
+};
+
+/** The one thing currently blocking submission, and where it can be fixed. */
+type FormProblem = { section: SectionKey; message: string };
+
+/*
+ * The first problem in the form, read top to bottom.
+ *
+ * One at a time, and named where it can be fixed: a list of every fault at the
+ * bottom of the page is a list an operator has to map back onto fields, and the
+ * page is longer than the screen. Reported in the order the sections appear, so
+ * fixing what is reported moves down the form rather than around it.
+ */
+function configMapProblem(
+  name: string,
+  data: EntryDraft[],
+  binary: EntryDraft[],
+  editing: boolean,
+): FormProblem | null {
+  if (!editing) {
+    const trimmed = name.trim();
+    if (trimmed === "") {
+      return { section: "basic", message: "请填写名称。" };
+    }
+    if (trimmed.length > 253) {
+      return { section: "basic", message: "名称最长 253 个字符。" };
+    }
+    if (!DNS_SUBDOMAIN.test(trimmed)) {
+      return {
+        section: "basic",
+        message:
+          "名称必须是合法的 DNS 子域名：只能包含小写字母、数字、连字符和点，并以字母或数字开头和结尾。",
+      };
+    }
+  }
+  // Shared across both sections: Kubernetes keeps text and binary values in one
+  // namespace, so a key used in either place is taken in both.
+  const seen = new Set<string>();
+  return entryProblem(data, seen, "data", false) ?? entryProblem(binary, seen, "binary", true);
+}
+
+function entryProblem(
+  rows: EntryDraft[],
+  seen: Set<string>,
+  section: SectionKey,
+  base64: boolean,
+): FormProblem | null {
+  for (const [index, row] of rows.entries()) {
+    const key = row.key.trim();
+    const where = `第 ${index + 1} 项`;
+    if (key === "") {
+      return { section, message: `${where}缺少键名。` };
+    }
+    if (key === "." || key === "..") {
+      return { section, message: `${where}的键不能是单个点或两个点。` };
+    }
+    if (key.length > 253) {
+      return { section, message: `${where}的键最长 253 个字符。` };
+    }
+    if (!CONFIG_KEY.test(key)) {
+      return {
+        section,
+        message: `${where}的键「${key}」只能包含字母、数字、连字符、下划线和点。`,
+      };
+    }
+    if (seen.has(key)) {
+      return {
+        section,
+        message: `键「${key}」重复；同一个 ConfigMap 内文本键与二进制键也不能重名。`,
+      };
+    }
+    seen.add(key);
+    if (base64 && strictBase64Bytes(row.value.trim()) === null) {
+      return { section, message: `${where}的值不是合法的标准带填充 Base64。` };
+    }
+  }
+  return null;
+}
+
 /**
  * Creates or replaces one ConfigMap.
  *
@@ -119,22 +205,18 @@ function ConfigMapEditor({
   // back off, and an immutable ConfigMap cannot be edited at all.
   const [immutable, setImmutable] = useState(false);
 
-  const entries = [...data, ...binary];
   const binarySizes = binary.map((entry) => strictBase64Bytes(entry.value.trim()));
   const totalBytes =
     data.reduce((sum, entry) => sum + new Blob([entry.value]).size, 0) +
     binarySizes.reduce<number>((sum, size) => sum + (size ?? 0), 0);
-  const duplicateKeys = new Set(entries.map((entry) => entry.key.trim())).size !== entries.length;
-  const keysValid = entries.every((entry) => {
-    const key = entry.key.trim();
-    return key.length <= 253 && key !== "." && key !== ".." && CONFIG_KEY.test(key);
-  });
-  const binaryValid = binarySizes.every((size) => size !== null);
-  const trimmedName = name.trim();
-  const nameValid =
-    existing !== null || (DNS_SUBDOMAIN.test(trimmedName) && trimmedName.length <= 253);
-  const valid =
-    nameValid && keysValid && binaryValid && !duplicateKeys && totalBytes <= MAX_TOTAL_BYTES;
+  const problem = configMapProblem(name, data, binary, existing !== null);
+  const problemIn = (section: SectionKey) =>
+    problem?.section === section ? problem.message : undefined;
+  // The size is the object's rather than any one section's, and the running
+  // total next to the button already shows it, so it stays out of the problem
+  // above and is reported where it is measured.
+  const oversized = totalBytes > MAX_TOTAL_BYTES;
+  const valid = problem === null && !oversized;
 
   const toDataRecord = (rows: EntryDraft[]) =>
     Object.fromEntries(rows.map((row) => [row.key.trim(), row.value]));
@@ -180,7 +262,7 @@ function ConfigMapEditor({
         />
 
         {existing ? null : (
-          <FormSection title="基本信息">
+          <FormSection title={SECTION_LABELS.basic} problem={problemIn("basic")}>
             <div className="grid content-start gap-1.5">
               <Label htmlFor="configmap-name">名称</Label>
               <Input
@@ -202,7 +284,11 @@ function ConfigMapEditor({
           </FormSection>
         )}
 
-        <FormSection title="数据" hint="键可包含字母、数字、`-`、`_` 和 `.`">
+        <FormSection
+          title={SECTION_LABELS.data}
+          hint="键可包含字母、数字、`-`、`_` 和 `.`"
+          problem={problemIn("data")}
+        >
           <EntryList
             rows={data}
             onChange={setData}
@@ -212,7 +298,11 @@ function ConfigMapEditor({
           />
         </FormSection>
 
-        <FormSection title="二进制数据" hint="值必须是标准带填充 Base64">
+        <FormSection
+          title={SECTION_LABELS.binary}
+          hint="值必须是标准带填充 Base64"
+          problem={problemIn("binary")}
+        >
           <EntryList
             rows={binary}
             onChange={setBinary}
@@ -221,11 +311,15 @@ function ConfigMapEditor({
           />
         </FormSection>
 
-        {totalBytes > MAX_TOTAL_BYTES ? (
+        {oversized ? (
           <Alert tone="danger">ConfigMap 超过 1 MiB，Kubernetes 不会接受。</Alert>
         ) : null}
-        {duplicateKeys ? (
-          <Alert tone="danger">存在重复的键；同一个 ConfigMap 内文本键与二进制键也不能重名。</Alert>
+        {/*
+         * The message itself is up in the section that can fix it; down here,
+         * next to the button it disables, what is missing is where to look.
+         */}
+        {problem ? (
+          <Alert tone="warning">「{SECTION_LABELS[problem.section]}」中还有需要修正的项。</Alert>
         ) : null}
         {mutation.error ? <Alert tone="danger">{errorMessage(mutation.error)}</Alert> : null}
 
@@ -311,18 +405,26 @@ function strictBase64Bytes(value: string): number | null {
 function FormSection({
   title,
   hint,
+  problem,
   children,
 }: {
   title: string;
   hint?: string;
+  /** The current blocking problem, when it is this section that carries it. */
+  problem?: string;
   children: ReactNode;
 }) {
   return (
     <section>
-      <div className="mb-2 flex items-baseline gap-2">
+      <div className="mb-2 flex flex-wrap items-baseline gap-2">
         <h4 className="text-foreground text-[13px] font-medium">{title}</h4>
         {hint ? <span className="text-subtle-foreground text-xs">{hint}</span> : null}
       </div>
+      {problem ? (
+        <Alert tone="warning" className="mb-2">
+          {problem}
+        </Alert>
+      ) : null}
       {children}
     </section>
   );
