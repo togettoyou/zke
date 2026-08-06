@@ -176,19 +176,6 @@ export function AutoscalerSection({
   // they can no longer see.
   const dialogs = (
     <>
-      {creating || editing ? (
-        <AutoscalerForm
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          existingName={editing?.name ?? null}
-          onClose={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-        />
-      ) : null}
-
       <SensitiveActionDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
@@ -259,6 +246,25 @@ export function AutoscalerSection({
         kindLabel="HorizontalPodAutoscaler"
         canUpdate={canUpdate}
         onBack={() => setYamlName(null)}
+      />
+    );
+  }
+
+  // The form takes over the section rather than sitting over the list, like every
+  // other typed form here: a few metrics with both scaling directions customised
+  // is taller than a box laid over the table can show, and the table is of no use
+  // while they are being filled in.
+  if (creating || editing) {
+    return (
+      <AutoscalerForm
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        existingName={editing?.name ?? null}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
       />
     );
   }

@@ -10,17 +10,10 @@ import {
   type AutoscalerDetail,
 } from "@/api/queries/autoscaling";
 import type { KubernetesHPABehavior, KubernetesHPASpecInput } from "@/api/types";
+import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
-import { LoadingState } from "@/components/common/state";
+import { ErrorState, LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input, NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
@@ -35,6 +28,9 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 
 const DNS_SUBDOMAIN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
 const DEFAULT_OPTION = "__default__";
+const MAX_REPLICAS = 1_000_000;
+const MAX_PERIOD_SECONDS = 1_800;
+const MAX_STABILIZATION_SECONDS = 3_600;
 
 type MetricDraft = {
   type: "Resource" | "ContainerResource";
@@ -60,12 +56,143 @@ const EMPTY_RULES: RulesDraft = {
   policies: [],
 };
 
+type SectionKey = "basic" | "metrics" | "behavior";
+
+/** The titles the sections are rendered with, to point at one from elsewhere. */
+const SECTION_LABELS: Record<SectionKey, string> = {
+  basic: "基本信息",
+  metrics: "指标",
+  behavior: "伸缩行为",
+};
+
+/** The one thing currently blocking submission, and where it can be fixed. */
+type FormProblem = { section: SectionKey; message: string };
+
+type AutoscalerDraft = {
+  name: string;
+  editing: boolean;
+  targetName: string;
+  minReplicas: string;
+  maxReplicas: string;
+  metrics: MetricDraft[];
+  scaleUp: RulesDraft;
+  scaleDown: RulesDraft;
+};
+
+/*
+ * The first problem in the form, read top to bottom.
+ *
+ * One at a time, and named where it can be fixed: a list of every fault at the
+ * bottom of the page is a list an operator has to map back onto fields, and the
+ * page is longer than the screen. Reported in the order the sections appear, so
+ * fixing what is reported moves down the form rather than around it.
+ */
+function autoscalerProblem(draft: AutoscalerDraft): FormProblem | null {
+  return basicProblem(draft) ?? metricsProblem(draft.metrics) ?? behaviorProblem(draft);
+}
+
+function basicProblem(draft: AutoscalerDraft): FormProblem | null {
+  const at = (message: string): FormProblem => ({ section: "basic", message });
+  if (!draft.editing) {
+    const name = draft.name.trim();
+    if (name === "") {
+      return at("请填写名称。");
+    }
+    if (name.length > 253) {
+      return at("名称最长 253 个字符。");
+    }
+    if (!DNS_SUBDOMAIN.test(name)) {
+      return at(
+        "名称必须是合法的 DNS 子域名：只能包含小写字母、数字、连字符和点，并以字母或数字开头和结尾。",
+      );
+    }
+  }
+  if (draft.targetName.trim() === "") {
+    return at("请填写目标工作负载的名称。");
+  }
+  const minimum = draft.minReplicas.trim();
+  const maximum = draft.maxReplicas.trim();
+  if (!/^\d+$/.test(minimum) || Number(minimum) < 1) {
+    return at("最小副本数必须是不小于 1 的整数。");
+  }
+  if (!/^\d+$/.test(maximum)) {
+    return at("最大副本数必须是整数。");
+  }
+  if (Number(maximum) < Number(minimum)) {
+    return at("最大副本数不能小于最小副本数。");
+  }
+  if (Number(maximum) > MAX_REPLICAS) {
+    return at(`最大副本数不能超过 ${MAX_REPLICAS}。`);
+  }
+  return null;
+}
+
+function metricsProblem(metrics: MetricDraft[]): FormProblem | null {
+  const at = (message: string): FormProblem => ({ section: "metrics", message });
+  if (metrics.length === 0) {
+    return at("请至少添加一个指标：没有指标的 HPA 不会伸缩。");
+  }
+  for (const [index, metric] of metrics.entries()) {
+    const where = `第 ${index + 1} 个指标`;
+    if (metric.name.trim() === "") {
+      return at(`${where}缺少资源名称，例如 cpu 或 memory。`);
+    }
+    if (metric.type === "ContainerResource" && metric.container.trim() === "") {
+      return at(`${where}是 ContainerResource，需要指定容器名。`);
+    }
+    const value = metric.value.trim();
+    if (value === "") {
+      return at(`${where}缺少目标值。`);
+    }
+    if (metric.targetType === "Utilization" && (!/^\d+$/.test(value) || Number(value) < 1)) {
+      return at(`${where}的 Utilization 目标是百分比，必须是不小于 1 的整数。`);
+    }
+  }
+  return null;
+}
+
+function behaviorProblem(draft: AutoscalerDraft): FormProblem | null {
+  return rulesProblem("扩容", draft.scaleUp) ?? rulesProblem("缩容", draft.scaleDown);
+}
+
+function rulesProblem(label: string, rules: RulesDraft): FormProblem | null {
+  const at = (message: string): FormProblem => ({ section: "behavior", message });
+  if (!rules.enabled) {
+    return null;
+  }
+  const window = rules.stabilizationWindow.trim();
+  if (window !== "" && (!/^\d+$/.test(window) || Number(window) > MAX_STABILIZATION_SECONDS)) {
+    return at(`${label}的稳定窗口必须是 0–${MAX_STABILIZATION_SECONDS} 秒的整数，留空使用默认值。`);
+  }
+  if (rules.policies.length === 0) {
+    return at(`自定义${label}策略后至少需要一条策略，否则该方向没有可执行的规则。`);
+  }
+  for (const [index, policy] of rules.policies.entries()) {
+    const where = `${label}策略 ${index + 1}`;
+    const value = policy.value.trim();
+    if (!/^\d+$/.test(value) || Number(value) < 1) {
+      return at(`${where}的数值必须是不小于 1 的整数。`);
+    }
+    const period = policy.periodSeconds.trim();
+    if (!/^\d+$/.test(period) || Number(period) < 1 || Number(period) > MAX_PERIOD_SECONDS) {
+      return at(`${where}的周期必须是 1–${MAX_PERIOD_SECONDS} 秒的整数。`);
+    }
+  }
+  return null;
+}
+
 /**
  * Creates or replaces one HorizontalPodAutoscaler.
  *
  * Editing loads the object first: the update replaces the whole spec and carries
  * the UID and resourceVersion it was read at, so there is nothing safe to submit
  * until the current spec has arrived.
+ *
+ * A page rather than a dialog, like every other typed form here: an HPA with a
+ * few metrics and both scaling directions customised is taller than a box laid
+ * over the list can show, and the list is of no use while it is being filled in.
+ * Entered from the detail page, the detail stays open underneath, so leaving the
+ * form returns to the object that was being read rather than to the list.
  */
 export function AutoscalerForm({
   clusterId,
@@ -82,34 +209,22 @@ export function AutoscalerForm({
   onClose: () => void;
 }) {
   const existing = useAutoscaler(clusterId, namespace, existingName);
+  const title = `编辑 HPA · ${existingName}`;
 
   if (existingName && existing.isLoading) {
     return (
-      <Dialog open onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>编辑 HPA · {existingName}</DialogTitle>
-          </DialogHeader>
-          <LoadingState />
-        </DialogContent>
-      </Dialog>
+      <>
+        <PageHeader title={title} onBack={onClose} />
+        <LoadingState />
+      </>
     );
   }
   if (existingName && (existing.error || !existing.data)) {
     return (
-      <Dialog open onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>编辑 HPA · {existingName}</DialogTitle>
-          </DialogHeader>
-          <Alert tone="danger">{errorMessage(existing.error)}</Alert>
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose}>
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <>
+        <PageHeader title={title} onBack={onClose} />
+        <ErrorState error={existing.error} onRetry={() => void existing.refetch()} />
+      </>
     );
   }
 
@@ -118,25 +233,14 @@ export function AutoscalerForm({
   );
   if (existingName && unsupportedMetrics && unsupportedMetrics.length > 0) {
     return (
-      <Dialog open onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>无法使用类型化表单编辑 · {existingName}</DialogTitle>
-            <DialogDescription>
-              该 HPA 包含 {unsupportedMetrics.map((metric) => metric.type).join("、")} 高级指标。
-            </DialogDescription>
-          </DialogHeader>
-          <Alert tone="warning">
-            类型化表单仅支持 Resource 和 ContainerResource。为避免丢失现有指标，请关闭此窗口并使用
-            YAML 编辑。
-          </Alert>
-          <DialogFooter>
-            <Button variant="primary" onClick={onClose}>
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <>
+        <PageHeader title={title} onBack={onClose} />
+        <Alert tone="warning">
+          该 HPA 使用了 {unsupportedMetrics.map((metric) => metric.type).join("、")}{" "}
+          指标，类型化表单只建模 Resource 与 ContainerResource。这里的更新会替换整份 spec，
+          用它保存会丢掉这些指标，因此本表单不打开——请改用详情页的 YAML 入口编辑。
+        </Alert>
+      </>
     );
   }
 
@@ -201,40 +305,18 @@ function AutoscalerEditor({
     toRulesDraft(existing?.behavior?.scale_down),
   );
 
-  const nameValid = existing !== null || (DNS_SUBDOMAIN.test(name.trim()) && name.length <= 253);
-  const boundsValid =
-    /^\d+$/.test(minReplicas.trim()) &&
-    /^\d+$/.test(maxReplicas.trim()) &&
-    Number(minReplicas.trim()) >= 1 &&
-    Number(maxReplicas.trim()) >= Number(minReplicas.trim()) &&
-    Number(maxReplicas.trim()) <= 1_000_000;
-  const metricsValid =
-    metrics.length > 0 &&
-    metrics.every(
-      (metric) =>
-        metric.name.trim() !== "" &&
-        metric.value.trim() !== "" &&
-        (metric.type !== "ContainerResource" || metric.container.trim() !== "") &&
-        (metric.targetType !== "Utilization" ||
-          (/^\d+$/.test(metric.value.trim()) && Number(metric.value.trim()) >= 1)),
-    );
-  const rulesValid = [scaleUp, scaleDown].every(
-    (rules) =>
-      !rules.enabled ||
-      (rules.policies.length > 0 &&
-        rules.policies.every(
-          (policy) =>
-            /^\d+$/.test(policy.value.trim()) &&
-            Number(policy.value.trim()) >= 1 &&
-            /^\d+$/.test(policy.periodSeconds.trim()) &&
-            Number(policy.periodSeconds.trim()) >= 1 &&
-            Number(policy.periodSeconds.trim()) <= 1_800,
-        ) &&
-        (rules.stabilizationWindow.trim() === "" ||
-          (/^\d+$/.test(rules.stabilizationWindow.trim()) &&
-            Number(rules.stabilizationWindow.trim()) <= 3_600))),
-  );
-  const valid = nameValid && targetName.trim() !== "" && boundsValid && metricsValid && rulesValid;
+  const problem = autoscalerProblem({
+    name,
+    editing: existing !== null,
+    targetName,
+    minReplicas,
+    maxReplicas,
+    metrics,
+    scaleUp,
+    scaleDown,
+  });
+  const problemIn = (section: SectionKey) =>
+    problem?.section === section ? problem.message : undefined;
 
   const buildSpec = (): KubernetesHPASpecInput => {
     const behavior = {
@@ -298,102 +380,111 @@ function AutoscalerEditor({
 
   return (
     <>
-      <Dialog open={previewed === null} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined} className="w-[min(760px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>{existing ? `编辑 HPA · ${existing.name}` : "创建 HPA"}</DialogTitle>
-            <DialogDescription>
-              第一步只执行服务端 DryRun，不会在集群中写入任何变更。
-            </DialogDescription>
-          </DialogHeader>
+      <div className="grid gap-3">
+        <PageHeader
+          title={existing ? `编辑 HPA · ${existing.name}` : `创建 HPA · ${namespace}`}
+          onBack={onClose}
+          backDisabled={mutation.isPending}
+        />
 
-          <div className="grid gap-4">
-            <FormSection title="基本信息">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {existing ? null : (
-                  <Field label="名称" htmlFor="hpa-name">
-                    <Input
-                      id="hpa-name"
-                      value={name}
-                      autoComplete="off"
-                      spellCheck={false}
-                      placeholder="例如 api-autoscaler"
-                      onChange={(event) => setName(event.target.value)}
-                    />
-                  </Field>
-                )}
-                <Field label="目标类型" htmlFor="hpa-target-kind">
-                  <Select value={targetKind} onValueChange={setTargetKind}>
-                    <SelectTrigger id="hpa-target-kind">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Deployment">Deployment</SelectItem>
-                      <SelectItem value="StatefulSet">StatefulSet</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="目标名称" htmlFor="hpa-target-name">
-                  <Input
-                    id="hpa-target-name"
-                    value={targetName}
-                    autoComplete="off"
-                    spellCheck={false}
-                    onChange={(event) => setTargetName(event.target.value)}
-                  />
-                </Field>
-                <Field label="最小副本数" htmlFor="hpa-min">
-                  <NumericInput id="hpa-min" value={minReplicas} onValueChange={setMinReplicas} />
-                </Field>
-                <Field label="最大副本数" htmlFor="hpa-max">
-                  <NumericInput id="hpa-max" value={maxReplicas} onValueChange={setMaxReplicas} />
-                </Field>
-              </div>
-            </FormSection>
-
-            <FormSection
-              title="指标"
-              hint="至少一个；Utilization 是相对 requests 的百分比，需要目标容器声明 requests"
-            >
-              <MetricRows rows={metrics} onChange={setMetrics} />
-            </FormSection>
-
-            <FormSection title="伸缩行为" hint="可选；不启用时使用 Kubernetes 默认策略">
-              <RulesEditor label="扩容" rules={scaleUp} onChange={setScaleUp} idPrefix="up" />
-              <div className="mt-3">
-                <RulesEditor
-                  label="缩容"
-                  rules={scaleDown}
-                  onChange={setScaleDown}
-                  idPrefix="down"
+        <FormSection title={SECTION_LABELS.basic} problem={problemIn("basic")}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {existing ? null : (
+              <Field
+                label="名称"
+                htmlFor="hpa-name"
+                hint="合法的 DNS 子域名，最长 253 个字符；创建后不可修改"
+              >
+                <Input
+                  id="hpa-name"
+                  value={name}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="例如 api-autoscaler"
+                  onChange={(event) => setName(event.target.value)}
                 />
-              </div>
-            </FormSection>
-          </div>
-
-          <Alert tone="info" className="mt-4">
-            目标：{clusterName} / {namespace}
-          </Alert>
-          {mutation.error ? (
-            <Alert tone="danger" className="mt-3">
-              {errorMessage(mutation.error)}
-            </Alert>
-          ) : null}
-
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              disabled={!valid || mutation.isPending}
-              onClick={() => submit(true, buildSpec())}
+              </Field>
+            )}
+            <Field label="目标类型" htmlFor="hpa-target-kind">
+              <Select value={targetKind} onValueChange={setTargetKind}>
+                <SelectTrigger id="hpa-target-kind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Deployment">Deployment</SelectItem>
+                  <SelectItem value="StatefulSet">StatefulSet</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field
+              label="目标名称"
+              htmlFor="hpa-target-name"
+              hint="必须是同一命名空间中已存在的工作负载"
             >
-              {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <Input
+                id="hpa-target-name"
+                value={targetName}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => setTargetName(event.target.value)}
+              />
+            </Field>
+            <Field label="最小副本数" htmlFor="hpa-min" hint="至少 1">
+              <NumericInput id="hpa-min" value={minReplicas} onValueChange={setMinReplicas} />
+            </Field>
+            <Field label="最大副本数" htmlFor="hpa-max" hint="不小于最小副本数">
+              <NumericInput id="hpa-max" value={maxReplicas} onValueChange={setMaxReplicas} />
+            </Field>
+          </div>
+        </FormSection>
+
+        <FormSection
+          title={SECTION_LABELS.metrics}
+          hint="至少一个；Utilization 是相对 requests 的百分比，需要目标容器声明 requests"
+          problem={problemIn("metrics")}
+        >
+          <MetricRows rows={metrics} onChange={setMetrics} />
+        </FormSection>
+
+        <FormSection
+          title={SECTION_LABELS.behavior}
+          hint="可选；不启用时使用 Kubernetes 默认策略"
+          problem={problemIn("behavior")}
+        >
+          <RulesEditor label="扩容" rules={scaleUp} onChange={setScaleUp} idPrefix="up" />
+          <div className="mt-3">
+            <RulesEditor label="缩容" rules={scaleDown} onChange={setScaleDown} idPrefix="down" />
+          </div>
+        </FormSection>
+
+        {/*
+         * The message itself is up in the section that can fix it; down here,
+         * next to the button it disables, what is missing is where to look.
+         */}
+        {problem ? (
+          <Alert tone="warning">「{SECTION_LABELS[problem.section]}」中还有需要修正的项。</Alert>
+        ) : null}
+        {mutation.error ? <Alert tone="danger">{errorMessage(mutation.error)}</Alert> : null}
+
+        <div className="flex flex-wrap items-center justify-end gap-3 pb-2">
+          <span className="text-subtle-foreground text-xs">
+            目标：{clusterName} / {namespace}
+          </span>
+          {existing ? (
+            <span className="text-subtle-foreground text-xs">
+              更新会替换整份 spec：本次未提交的指标或行为策略将从对象中移除。
+            </span>
+          ) : null}
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={problem !== null || mutation.isPending}
+            onClick={() => submit(true, buildSpec())}
+          >
+            {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
+          </Button>
+        </div>
+      </div>
 
       <SensitiveActionDialog
         open={previewed !== null}
@@ -497,7 +588,7 @@ function MetricRows({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid grid-cols-[9rem_1fr_1fr_9rem_6rem] gap-2">
+          <div className="grid gap-2 sm:grid-cols-[9rem_1fr_1fr_9rem_6rem]">
             <Select
               value={row.type}
               onValueChange={(value) =>
@@ -608,10 +699,10 @@ function RulesEditor({
       </label>
       {rules.enabled ? (
         <>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid gap-2 sm:grid-cols-2">
             <Field label="稳定窗口（秒）" htmlFor={`hpa-${idPrefix}-window`}>
               <NumericInput
-                id={`hpa--window`}
+                id={`hpa-${idPrefix}-window`}
                 value={rules.stabilizationWindow}
                 placeholder="留空使用默认"
                 onValueChange={(stabilizationWindow) => onChange({ ...rules, stabilizationWindow })}
@@ -724,18 +815,26 @@ function RulesEditor({
 function FormSection({
   title,
   hint,
+  problem,
   children,
 }: {
   title: string;
   hint?: string;
+  /** The current blocking problem, when it is this section that carries it. */
+  problem?: string;
   children: ReactNode;
 }) {
   return (
     <section>
-      <div className="mb-2 flex items-baseline gap-2">
+      <div className="mb-2 flex flex-wrap items-baseline gap-2">
         <h4 className="text-foreground text-[13px] font-medium">{title}</h4>
         {hint ? <span className="text-subtle-foreground text-xs">{hint}</span> : null}
       </div>
+      {problem ? (
+        <Alert tone="warning" className="mb-2">
+          {problem}
+        </Alert>
+      ) : null}
       {children}
     </section>
   );
@@ -744,16 +843,19 @@ function FormSection({
 function Field({
   label,
   htmlFor,
+  hint,
   children,
 }: {
   label: string;
   htmlFor: string;
+  hint?: string;
   children: ReactNode;
 }) {
   return (
     <div className="grid content-start gap-1.5">
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
+      {hint ? <span className="text-subtle-foreground text-xs">{hint}</span> : null}
     </div>
   );
 }

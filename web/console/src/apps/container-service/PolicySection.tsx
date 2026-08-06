@@ -164,20 +164,6 @@ export function PolicySection({
   // they can no longer see.
   const dialogs = (
     <>
-      {creating || editing ? (
-        <PolicyForm
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          resource={resource}
-          target={editing}
-          onClose={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-        />
-      ) : null}
-
       <SensitiveActionDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
@@ -247,6 +233,26 @@ export function PolicySection({
         kindLabel={policyKindLabel(resource)}
         canUpdate={canUpdate}
         onBack={() => setYamlName(null)}
+      />
+    );
+  }
+
+  // The form takes over the section rather than sitting over the list, like every
+  // other typed form here: a quota's every line, or a network policy's rules, is
+  // taller than a box laid over the table can show, and the table is of no use
+  // while they are being filled in.
+  if (creating || editing) {
+    return (
+      <PolicyForm
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        resource={resource}
+        target={editing}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
       />
     );
   }

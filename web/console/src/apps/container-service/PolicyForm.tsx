@@ -19,17 +19,10 @@ import type {
   KubernetesPolicyResourceDetail,
   KubernetesPolicyResourceSummary,
 } from "@/api/types";
+import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input, NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
@@ -60,6 +53,92 @@ const BUDGET_VALUE = /^\d+%?$/;
 const DEFAULT_OPTION = "__default__";
 
 type PairDraft = { key: string; value: string };
+
+/**
+ * The one thing currently blocking submission, and where it can be fixed.
+ *
+ * `section` is the title the section is rendered with rather than a key: the five
+ * kinds render different sections, and one of them — LimitRange — renders a
+ * numbered section per item, which no fixed set of keys can name. Every producer
+ * and consumer of a title goes through the constants and helper below, so a title
+ * cannot drift out of step with the section that shows it.
+ */
+type PolicyProblem = { section: string; message: string };
+
+const SECTIONS = {
+  basic: "基本信息",
+  quotaHard: "额度",
+  quotaScopes: "作用范围",
+  networkTarget: "作用对象",
+  networkDirections: "策略方向",
+  networkIngress: "入站规则",
+  networkEgress: "出站规则",
+  budgetSelector: "保护的 Pod",
+  budget: "预算",
+  priority: "优先级",
+} as const;
+
+function limitItemSection(index: number): string {
+  return `限制项 ${index + 1}`;
+}
+
+function policyNameProblem(name: string): PolicyProblem | null {
+  const trimmed = name.trim();
+  if (trimmed === "") {
+    return at(SECTIONS.basic, "请填写名称。");
+  }
+  if (trimmed.length > 253) {
+    return at(SECTIONS.basic, "名称最长 253 个字符。");
+  }
+  if (!DNS_SUBDOMAIN.test(trimmed)) {
+    return at(
+      SECTIONS.basic,
+      "名称必须是合法的 DNS 子域名：只能包含小写字母、数字、连字符和点，并以字母或数字开头和结尾。",
+    );
+  }
+  return null;
+}
+
+/*
+ * A key/value list where a quantity is expected, checked once for every list of
+ * them in this form: quotas, and the five groups of every LimitRange item.
+ *
+ * A row carrying a value under a blank key is reported rather than dropped. The
+ * builders filter those out, so submitting one silently discards what was typed —
+ * the operator sees a limit they entered simply not be there afterwards.
+ */
+function quantityPairsProblem(
+  section: string,
+  rows: PairDraft[],
+  label: string,
+): PolicyProblem | null {
+  const seen = new Set<string>();
+  for (const [index, row] of rows.entries()) {
+    const key = row.key.trim();
+    const value = row.value.trim();
+    if (key === "") {
+      if (value !== "") {
+        return at(section, `${label}的第 ${index + 1} 项填了取值但没有资源名。`);
+      }
+      continue;
+    }
+    if (seen.has(key)) {
+      return at(section, `${label}中的「${key}」重复，同一项只能出现一次。`);
+    }
+    seen.add(key);
+    if (value === "") {
+      return at(section, `${label}中的「${key}」缺少取值。`);
+    }
+    if (!QUANTITY.test(value)) {
+      return at(section, `${label}中「${key}」的取值必须是 Kubernetes quantity，例如 10 或 20Gi。`);
+    }
+  }
+  return null;
+}
+
+function at(section: string, message: string): PolicyProblem {
+  return { section, message };
+}
 
 /**
  * Creates or edits one policy object.
@@ -105,29 +184,22 @@ export function PolicyForm({
     );
   }
 
+  const title = `编辑 ${policyKindLabel(resource)} · ${target.name}`;
   if (detail.error) {
     return (
-      <Dialog open onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined} className="w-[min(760px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>编辑 {policyKindLabel(resource)}</DialogTitle>
-          </DialogHeader>
-          <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
-        </DialogContent>
-      </Dialog>
+      <>
+        <PageHeader title={title} onBack={onClose} />
+        <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
+      </>
     );
   }
 
   if (!detail.data) {
     return (
-      <Dialog open onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined} className="w-[min(760px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>编辑 {policyKindLabel(resource)}</DialogTitle>
-          </DialogHeader>
-          <LoadingState />
-        </DialogContent>
-      </Dialog>
+      <>
+        <PageHeader title={title} onBack={onClose} />
+        <LoadingState />
+      </>
     );
   }
 
@@ -172,11 +244,18 @@ function PolicyFormBody({
   const applyKey = useSubmissionKey(previewed !== null);
   const [name, setName] = useState(target?.name ?? "");
 
-  const quota = useQuotaEditor(detail);
-  const limitRange = useLimitRangeEditor(detail);
-  const networkPolicy = useNetworkPolicyEditor(detail);
-  const budget = useDisruptionBudgetEditor(detail, editing);
-  const priorityClass = usePriorityClassEditor(detail, editing);
+  /*
+   * The name is the first section, so a fault in it outranks anything the kind's
+   * own sections report. Handed to every editor so exactly one message is on
+   * screen: an editor whose section is not the one being reported stays quiet,
+   * the same way it would if its own draft were clean.
+   */
+  const earlier = editing ? null : policyNameProblem(name);
+  const quota = useQuotaEditor(detail, earlier);
+  const limitRange = useLimitRangeEditor(detail, earlier);
+  const networkPolicy = useNetworkPolicyEditor(detail, earlier);
+  const budget = useDisruptionBudgetEditor(detail, editing, earlier);
+  const priorityClass = usePriorityClassEditor(detail, editing, earlier);
   const editor =
     resource === "resourcequotas"
       ? quota
@@ -188,8 +267,15 @@ function PolicyFormBody({
             ? budget
             : priorityClass;
 
-  const nameValid = DNS_SUBDOMAIN.test(name.trim()) && name.trim().length <= 253;
-  const valid = (editing || nameValid) && editor.valid;
+  /*
+   * The first problem in the form, read top to bottom: the name, then whatever
+   * the chosen kind's own sections report. One at a time and named where it can
+   * be fixed, rather than a list at the bottom an operator has to map back onto
+   * fields — the form is longer than the screen for every kind but PriorityClass.
+   */
+  const problem = earlier ?? editor.problem;
+  const problemIn = (section: string) =>
+    problem?.section === section ? problem.message : undefined;
 
   const submit = (dryRun: boolean, spec: PolicyCreateSpec) => {
     const shared = {
@@ -225,56 +311,59 @@ function PolicyFormBody({
 
   return (
     <>
-      <Dialog open={previewed === null} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent aria-describedby={undefined} className="w-[min(760px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>{editing ? `编辑 ${kind} · ${target?.name}` : `创建 ${kind}`}</DialogTitle>
-            <DialogDescription>第一步只执行服务端 DryRun，不会在集群中写入变更。</DialogDescription>
-          </DialogHeader>
+      <div className="grid gap-3">
+        <PageHeader
+          title={
+            editing
+              ? `编辑 ${kind} · ${target?.name}`
+              : `创建 ${kind}${resource === "priorityclasses" ? "" : ` · ${namespace}`}`
+          }
+          onBack={onClose}
+          backDisabled={pending}
+        />
 
-          <div className="grid max-h-[60vh] gap-4 overflow-y-auto pr-1">
-            {editing ? null : (
-              <FormSection title="基本信息">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="policy-name">名称</Label>
-                  <Input
-                    id="policy-name"
-                    value={name}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="例如 team-a-quota"
-                    onChange={(event) => setName(event.target.value)}
-                  />
-                </div>
-              </FormSection>
-            )}
-            {editor.fields}
-          </div>
+        {editing ? null : (
+          <FormSection title={SECTIONS.basic} problem={problemIn(SECTIONS.basic)}>
+            <div className="grid gap-1.5">
+              <Label htmlFor="policy-name">名称</Label>
+              <Input
+                id="policy-name"
+                value={name}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="例如 team-a-quota"
+                onChange={(event) => setName(event.target.value)}
+              />
+              <span className="text-subtle-foreground text-xs">
+                合法的 DNS 子域名，最长 253 个字符；创建后不可修改
+              </span>
+            </div>
+          </FormSection>
+        )}
+        {editor.fields}
 
-          <Alert tone="info" className="mt-4">
+        {/*
+         * The message itself is up in the section that can fix it; down here,
+         * next to the button it disables, what is missing is where to look.
+         */}
+        {problem ? <Alert tone="warning">「{problem.section}」中还有需要修正的项。</Alert> : null}
+        {error ? <Alert tone="danger">{errorMessage(error)}</Alert> : null}
+
+        <div className="flex flex-wrap items-center justify-end gap-3 pb-2">
+          <span className="text-subtle-foreground text-xs">
             目标：{clusterName}
             {resource === "priorityclasses" ? "（集群级对象）" : ` / ${namespace}`}
-          </Alert>
-          {error ? (
-            <Alert tone="danger" className="mt-3">
-              {errorMessage(error)}
-            </Alert>
-          ) : null}
-
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose} disabled={pending}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              disabled={!valid || pending}
-              onClick={() => submit(true, editor.build())}
-            >
-              {pending ? "预检中…" : "执行 DryRun 预检"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </span>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={problem !== null || pending}
+            onClick={() => submit(true, editor.build())}
+          >
+            {pending ? "预检中…" : "执行 DryRun 预检"}
+          </Button>
+        </div>
+      </div>
 
       <SensitiveActionDialog
         open={previewed !== null}
@@ -353,9 +442,17 @@ function impacts(resource: KubernetesPolicyResource, editing: boolean): string[]
   ];
 }
 
-type SpecEditor = { fields: ReactNode; valid: boolean; build: () => PolicyCreateSpec };
+type SpecEditor = {
+  fields: ReactNode;
+  /** What stops this draft from being submitted, and which section says so. */
+  problem: PolicyProblem | null;
+  build: () => PolicyCreateSpec;
+};
 
-function useQuotaEditor(detail: KubernetesPolicyResourceDetail | null): SpecEditor {
+function useQuotaEditor(
+  detail: KubernetesPolicyResourceDetail | null,
+  earlier: PolicyProblem | null,
+): SpecEditor {
   const initial = detail?.resource_quota;
   const [pairs, setPairs] = useState<PairDraft[]>(
     initial ? mapToPairs(initial.hard) : [{ key: "requests.cpu", value: "" }],
@@ -368,10 +465,14 @@ function useQuotaEditor(detail: KubernetesPolicyResourceDetail | null): SpecEdit
   const editing = detail !== null;
 
   const entries = pairs.filter((pair) => pair.key.trim() !== "");
-  const valid =
-    entries.length > 0 &&
-    entries.every((pair) => QUANTITY.test(pair.value.trim())) &&
-    new Set(entries.map((pair) => pair.key.trim())).size === entries.length;
+  const problem =
+    quantityPairsProblem(SECTIONS.quotaHard, pairs, "额度") ??
+    (entries.length === 0
+      ? at(SECTIONS.quotaHard, "请至少填写一项额度：没有 hard 的配额不限制任何东西。")
+      : null);
+  // The winning problem for this form: the name outranks these sections, so each
+  // shows a message only when it is the one being reported — exactly one at a time.
+  const shown = earlier ?? problem;
 
   const build = (): PolicyCreateSpec => ({
     resource_quota: {
@@ -383,7 +484,11 @@ function useQuotaEditor(detail: KubernetesPolicyResourceDetail | null): SpecEdit
 
   const fields = (
     <>
-      <FormSection title="额度" hint="资源名到 Kubernetes quantity，例如 requests.cpu = 10">
+      <FormSection
+        title={SECTIONS.quotaHard}
+        hint="资源名到 Kubernetes quantity，例如 requests.cpu = 10"
+        problem={shown?.section === SECTIONS.quotaHard ? shown.message : undefined}
+      >
         <PairList
           rows={pairs}
           onChange={setPairs}
@@ -394,7 +499,7 @@ function useQuotaEditor(detail: KubernetesPolicyResourceDetail | null): SpecEdit
         />
       </FormSection>
       <FormSection
-        title="作用范围"
+        title={SECTIONS.quotaScopes}
         hint={editing ? "创建后不可变，按当前值提交" : "留空表示对命名空间中所有对象计量"}
       >
         <div className="flex flex-wrap gap-x-4 gap-y-1.5">
@@ -425,23 +530,59 @@ function useQuotaEditor(detail: KubernetesPolicyResourceDetail | null): SpecEdit
     </>
   );
 
-  return { fields, valid, build };
+  return { fields, problem, build };
 }
 
-function useLimitRangeEditor(detail: KubernetesPolicyResourceDetail | null): SpecEditor {
+/** The five quantity groups of a LimitRange item, in the order they are shown. */
+const LIMIT_GROUPS = [
+  { key: "default", label: "默认限制" },
+  { key: "defaultRequest", label: "默认请求" },
+  { key: "max", label: "上限" },
+  { key: "min", label: "下限" },
+  { key: "ratio", label: "比值上限" },
+] as const;
+
+function limitItemsProblem(items: LimitItemDraft[]): PolicyProblem | null {
+  const seen = new Map<LimitRangeType, number>();
+  for (const [index, item] of items.entries()) {
+    const section = limitItemSection(index);
+    const first = seen.get(item.type);
+    if (first !== undefined) {
+      return at(
+        section,
+        `类型「${item.type}」已经在限制项 ${first + 1} 中出现；同一个 LimitRange 内每种类型只能有一项。`,
+      );
+    }
+    seen.set(item.type, index);
+    for (const group of LIMIT_GROUPS) {
+      const fault = quantityPairsProblem(section, item[group.key], group.label);
+      if (fault) {
+        return fault;
+      }
+    }
+    const filled = LIMIT_GROUPS.flatMap((group) => item[group.key]).filter(
+      (pair) => pair.key.trim() !== "",
+    );
+    if (filled.length === 0) {
+      return at(section, "请至少填写一组约束：一个空的限制项不会约束任何东西。");
+    }
+  }
+  return null;
+}
+
+function useLimitRangeEditor(
+  detail: KubernetesPolicyResourceDetail | null,
+  earlier: PolicyProblem | null,
+): SpecEditor {
   const initial = detail?.limit_range_detail?.items;
   const [items, setItems] = useState<LimitItemDraft[]>(
     initial && initial.length > 0 ? initial.map(limitItemDraft) : [emptyLimitItem("Container")],
   );
 
-  const valid =
-    items.length > 0 &&
-    new Set(items.map((item) => item.type)).size === items.length &&
-    items.every((item) => {
-      const groups = [item.max, item.min, item.default, item.defaultRequest, item.ratio];
-      const entries = groups.flat().filter((pair) => pair.key.trim() !== "");
-      return entries.length > 0 && entries.every((pair) => QUANTITY.test(pair.value.trim()));
-    });
+  const problem = limitItemsProblem(items);
+  // The winning problem for this form: the name outranks these sections, so each
+  // shows a message only when it is the one being reported — exactly one at a time.
+  const shown = earlier ?? problem;
 
   const build = (): PolicyCreateSpec => ({
     limit_range: {
@@ -464,8 +605,9 @@ function useLimitRangeEditor(detail: KubernetesPolicyResourceDetail | null): Spe
       {items.map((item, index) => (
         <FormSection
           key={index}
-          title={`限制项 ${index + 1}`}
+          title={limitItemSection(index)}
           hint="至少填写一组约束；同一类型只能出现一次"
+          problem={shown?.section === limitItemSection(index) ? shown.message : undefined}
           action={
             items.length > 1 ? (
               <Button
@@ -538,10 +680,54 @@ function useLimitRangeEditor(detail: KubernetesPolicyResourceDetail | null): Spe
     </>
   );
 
-  return { fields, valid, build };
+  return { fields, problem, build };
 }
 
-function useNetworkPolicyEditor(detail: KubernetesPolicyResourceDetail | null): SpecEditor {
+/*
+ * What a direction's rules still need.
+ *
+ * A peer with neither a CIDR nor a label selects nothing, and a port row with no
+ * port is not a port — Kubernetes would refuse both, and the refusal names the
+ * index rather than the row on screen.
+ */
+function networkRulesProblem(
+  section: string,
+  rules: RuleDraft[],
+  direction: string,
+): PolicyProblem | null {
+  for (const [index, rule] of rules.entries()) {
+    for (const [peerIndex, peer] of rule.peers.entries()) {
+      const where = `规则 ${index + 1} 的${direction} ${peerIndex + 1}`;
+      if (peer.mode === "ip") {
+        const cidr = peer.cidr.trim();
+        if (cidr === "") {
+          return at(section, `${where}缺少 CIDR。`);
+        }
+        if (!cidr.includes("/")) {
+          return at(section, `${where}的 CIDR 需要带前缀长度，例如 10.0.0.0/8。`);
+        }
+        continue;
+      }
+      const hasLabel = [...peer.podLabels, ...peer.namespaceLabels].some(
+        (pair) => pair.key.trim() !== "",
+      );
+      if (!hasLabel) {
+        return at(section, `${where}需要至少一个 Pod 标签或命名空间标签，否则它不选中任何对象。`);
+      }
+    }
+    for (const [portIndex, port] of rule.ports.entries()) {
+      if (port.port.trim() === "") {
+        return at(section, `规则 ${index + 1} 的端口 ${portIndex + 1} 未填写端口号或名称。`);
+      }
+    }
+  }
+  return null;
+}
+
+function useNetworkPolicyEditor(
+  detail: KubernetesPolicyResourceDetail | null,
+  earlier: PolicyProblem | null,
+): SpecEditor {
   const summary = detail?.network_policy;
   const initial = detail?.network_policy_detail;
   const [podLabels, setPodLabels] = useState<PairDraft[]>(
@@ -556,23 +742,35 @@ function useNetworkPolicyEditor(detail: KubernetesPolicyResourceDetail | null): 
   // cannot silently widen a selector that was written in YAML.
   const podExpressions = summary?.pod_selector?.match_expressions ?? [];
 
-  const rulesValid = (rules: RuleDraft[]) =>
-    rules.every(
-      (rule) =>
-        rule.peers.every(
-          (peer) =>
-            (peer.mode === "ip" && peer.cidr.trim() !== "") ||
-            (peer.mode === "selector" &&
-              (peer.podLabels.some((pair) => pair.key.trim() !== "") ||
-                peer.namespaceLabels.some((pair) => pair.key.trim() !== ""))),
-        ) && rule.ports.every((port) => port.port.trim() !== ""),
-    );
-  const valid =
-    types.length > 0 &&
-    (!types.includes("Ingress") ? ingress.length === 0 : true) &&
-    (!types.includes("Egress") ? egress.length === 0 : true) &&
-    rulesValid(ingress) &&
-    rulesValid(egress);
+  /*
+   * Rules written for a direction that is no longer declared are reported in
+   * 策略方向 rather than in their own section: unchecking a direction hides its
+   * rule editor, so a message pointing there would point at nothing. Kubernetes
+   * accepts such an object and then ignores those rules, which is the failure
+   * that looks like success.
+   */
+  const strandedRules =
+    !types.includes("Ingress") && ingress.length > 0
+      ? at(
+          SECTIONS.networkDirections,
+          `已经写了 ${ingress.length} 条入站规则，但没有勾选 Ingress 方向，Kubernetes 会忽略它们。请勾选 Ingress，或勾选后删除这些规则。`,
+        )
+      : !types.includes("Egress") && egress.length > 0
+        ? at(
+            SECTIONS.networkDirections,
+            `已经写了 ${egress.length} 条出站规则，但没有勾选 Egress 方向，Kubernetes 会忽略它们。请勾选 Egress，或勾选后删除这些规则。`,
+          )
+        : null;
+  const problem =
+    (types.length === 0
+      ? at(SECTIONS.networkDirections, "请至少勾选一个方向：没有 policyTypes 的策略不会生效。")
+      : null) ??
+    strandedRules ??
+    networkRulesProblem(SECTIONS.networkIngress, ingress, "来源") ??
+    networkRulesProblem(SECTIONS.networkEgress, egress, "目标");
+  // The winning problem for this form: the name outranks these sections, so each
+  // shows a message only when it is the one being reported — exactly one at a time.
+  const shown = earlier ?? problem;
 
   const build = (): PolicyCreateSpec => ({
     network_policy: {
@@ -590,7 +788,7 @@ function useNetworkPolicyEditor(detail: KubernetesPolicyResourceDetail | null): 
 
   const fields = (
     <>
-      <FormSection title="作用对象" hint="留空表示命名空间中的所有 Pod">
+      <FormSection title={SECTIONS.networkTarget} hint="留空表示命名空间中的所有 Pod">
         <PairList
           rows={podLabels}
           onChange={setPodLabels}
@@ -606,7 +804,11 @@ function useNetworkPolicyEditor(detail: KubernetesPolicyResourceDetail | null): 
         ) : null}
       </FormSection>
 
-      <FormSection title="策略方向" hint="被选中的 Pod 在勾选方向上默认拒绝，只放行下面的规则">
+      <FormSection
+        title={SECTIONS.networkDirections}
+        hint="被选中的 Pod 在勾选方向上默认拒绝，只放行下面的规则"
+        problem={shown?.section === SECTIONS.networkDirections ? shown.message : undefined}
+      >
         <div className="flex flex-wrap gap-x-4 gap-y-1.5">
           {(["Ingress", "Egress"] as const).map((type) => (
             <label key={type} className="flex items-center gap-2 text-[13px]">
@@ -625,20 +827,58 @@ function useNetworkPolicyEditor(detail: KubernetesPolicyResourceDetail | null): 
       </FormSection>
 
       {types.includes("Ingress") ? (
-        <RuleListEditor title="入站规则" rules={ingress} onChange={setIngress} direction="来源" />
+        <RuleListEditor
+          title={SECTIONS.networkIngress}
+          rules={ingress}
+          onChange={setIngress}
+          direction="来源"
+          problem={shown?.section === SECTIONS.networkIngress ? shown.message : undefined}
+        />
       ) : null}
       {types.includes("Egress") ? (
-        <RuleListEditor title="出站规则" rules={egress} onChange={setEgress} direction="目标" />
+        <RuleListEditor
+          title={SECTIONS.networkEgress}
+          rules={egress}
+          onChange={setEgress}
+          direction="目标"
+          problem={shown?.section === SECTIONS.networkEgress ? shown.message : undefined}
+        />
       ) : null}
     </>
   );
 
-  return { fields, valid, build };
+  return { fields, problem, build };
+}
+
+function disruptionBudgetProblem(draft: {
+  editing: boolean;
+  entries: PairDraft[];
+  expressions: number;
+  mode: "min_available" | "max_unavailable";
+  value: string;
+}): PolicyProblem | null {
+  // The selector is not in the update range, so an edit is not asked to justify
+  // one it cannot change.
+  if (!draft.editing && draft.entries.length === 0 && draft.expressions === 0) {
+    return at(SECTIONS.budgetSelector, "请至少填写一个标签：预算需要明确它保护哪些 Pod。");
+  }
+  const value = draft.value.trim();
+  if (value === "") {
+    return at(SECTIONS.budget, "请填写数量。");
+  }
+  if (!BUDGET_VALUE.test(value)) {
+    return at(SECTIONS.budget, "数量必须是 Pod 个数或百分比，例如 2 或 50%。");
+  }
+  if (value.endsWith("%") && Number(value.slice(0, -1)) > 100) {
+    return at(SECTIONS.budget, "百分比不能超过 100%。");
+  }
+  return null;
 }
 
 function useDisruptionBudgetEditor(
   detail: KubernetesPolicyResourceDetail | null,
   editing: boolean,
+  earlier: PolicyProblem | null,
 ): SpecEditor {
   const summary = detail?.disruption_budget;
   const [selectorLabels, setSelectorLabels] = useState<PairDraft[]>(
@@ -656,9 +896,16 @@ function useDisruptionBudgetEditor(
   const selectorExpressions = summary?.selector?.match_expressions ?? [];
 
   const entries = selectorLabels.filter((pair) => pair.key.trim() !== "");
-  const valid =
-    BUDGET_VALUE.test(value.trim()) &&
-    (editing || entries.length > 0 || selectorExpressions.length > 0);
+  const problem = disruptionBudgetProblem({
+    editing,
+    entries,
+    expressions: selectorExpressions.length,
+    mode,
+    value,
+  });
+  // The winning problem for this form: the name outranks these sections, so each
+  // shows a message only when it is the one being reported — exactly one at a time.
+  const shown = earlier ?? problem;
 
   const build = (): PolicyCreateSpec => ({
     disruption_budget: {
@@ -676,8 +923,9 @@ function useDisruptionBudgetEditor(
   const fields = (
     <>
       <FormSection
-        title="保护的 Pod"
+        title={SECTIONS.budgetSelector}
         hint={editing ? "selector 不在更新范围内，按当前值保留" : "预算作用于匹配这些标签的 Pod"}
+        problem={shown?.section === SECTIONS.budgetSelector ? shown.message : undefined}
       >
         <PairList
           rows={selectorLabels}
@@ -688,7 +936,11 @@ function useDisruptionBudgetEditor(
           disabled={editing}
         />
       </FormSection>
-      <FormSection title="预算" hint="可写 Pod 个数或百分比，例如 2 或 50%">
+      <FormSection
+        title={SECTIONS.budget}
+        hint="可写 Pod 个数或百分比，例如 2 或 50%"
+        problem={shown?.section === SECTIONS.budget ? shown.message : undefined}
+      >
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="约束方式" htmlFor="pdb-mode">
             <Select
@@ -734,7 +986,7 @@ function useDisruptionBudgetEditor(
     </>
   );
 
-  return { fields, valid, build };
+  return { fields, problem, build };
 }
 
 type PriorityClassEditor = SpecEditor & {
@@ -744,6 +996,7 @@ type PriorityClassEditor = SpecEditor & {
 function usePriorityClassEditor(
   detail: KubernetesPolicyResourceDetail | null,
   editing: boolean,
+  earlier: PolicyProblem | null,
 ): PriorityClassEditor {
   const summary = detail?.priority_class;
   const [value, setValue] = useState(summary ? String(summary.value) : "");
@@ -752,12 +1005,24 @@ function usePriorityClassEditor(
   const [description, setDescription] = useState(summary?.description ?? "");
 
   const parsed = Number(value.trim());
-  const valid =
-    editing ||
-    (value.trim() !== "" &&
-      Number.isInteger(parsed) &&
-      parsed <= 1_000_000_000 &&
-      parsed >= -2_147_483_648);
+  /*
+   * Only the value is checked, and only while creating: an edit submits the
+   * description and the default switch, and Kubernetes freezes the value at
+   * creation. The input accepts digits only, so a negative priority — which
+   * Kubernetes does allow — cannot be written here at all.
+   */
+  const problem = editing
+    ? null
+    : value.trim() === ""
+      ? at(SECTIONS.priority, "请填写优先级值。")
+      : !Number.isInteger(parsed)
+        ? at(SECTIONS.priority, "优先级值必须是整数。")
+        : parsed > 1_000_000_000
+          ? at(SECTIONS.priority, "优先级值不能超过 1000000000。")
+          : null;
+  // The winning problem for this form: the name outranks these sections, so each
+  // shows a message only when it is the one being reported — exactly one at a time.
+  const shown = earlier ?? problem;
 
   const build = (): PolicyCreateSpec => ({
     priority_class: {
@@ -776,7 +1041,10 @@ function usePriorityClassEditor(
   });
 
   const fields = (
-    <FormSection title="优先级">
+    <FormSection
+      title={SECTIONS.priority}
+      problem={shown?.section === SECTIONS.priority ? shown.message : undefined}
+    >
       <div className="grid gap-3 sm:grid-cols-2">
         <Field
           label="优先级值"
@@ -835,7 +1103,7 @@ function usePriorityClassEditor(
     </FormSection>
   );
 
-  return { fields, valid, build, updateSpec };
+  return { fields, problem, build, updateSpec };
 }
 
 type PeerDraft = {
@@ -864,12 +1132,14 @@ function RuleListEditor({
   rules,
   onChange,
   direction,
+  problem,
 }: {
   title: string;
   rules: RuleDraft[];
   onChange: (rules: RuleDraft[]) => void;
   /** What the peers of this direction are called: 来源 or 目标. */
   direction: string;
+  problem?: string;
 }) {
   const update = (index: number, patch: Partial<RuleDraft>) =>
     onChange(rules.map((rule, position) => (position === index ? { ...rule, ...patch } : rule)));
@@ -878,6 +1148,7 @@ function RuleListEditor({
     <FormSection
       title={title}
       hint={rules.length === 0 ? "没有规则表示该方向全部拒绝" : undefined}
+      problem={problem}
       action={
         <Button
           size="sm"
@@ -1236,22 +1507,30 @@ function FormSection({
   title,
   hint,
   action,
+  problem,
   children,
 }: {
   title: string;
   hint?: string;
   action?: ReactNode;
+  /** The current blocking problem, when it is this section that carries it. */
+  problem?: string;
   children: ReactNode;
 }) {
   return (
     <section>
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <div className="flex items-baseline gap-2">
+        <div className="flex flex-wrap items-baseline gap-2">
           <h4 className="text-foreground text-[13px] font-medium">{title}</h4>
           {hint ? <span className="text-subtle-foreground text-xs">{hint}</span> : null}
         </div>
         {action}
       </div>
+      {problem ? (
+        <Alert tone="warning" className="mb-2">
+          {problem}
+        </Alert>
+      ) : null}
       {children}
     </section>
   );

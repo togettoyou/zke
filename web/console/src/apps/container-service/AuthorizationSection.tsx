@@ -177,20 +177,6 @@ export function AuthorizationSection({
   // they can no longer see.
   const dialogs = (
     <>
-      {creating || editing ? (
-        <AuthorizationForm
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          resource={resource}
-          editingName={editing?.name ?? null}
-          onClose={() => {
-            setCreating(false);
-            setEditing(null);
-          }}
-        />
-      ) : null}
-
       <SensitiveActionDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
@@ -246,6 +232,26 @@ export function AuthorizationSection({
       />
     </>
   );
+
+  // The form takes over the section rather than sitting over the list, like every
+  // other typed form here: a role's rules or a binding's subjects are taller than
+  // a box laid over the table can show, and the table is of no use while they are
+  // being filled in.
+  if (creating || editing) {
+    return (
+      <AuthorizationForm
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        resource={resource}
+        editingName={editing?.name ?? null}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
+      />
+    );
+  }
 
   if (detailName) {
     return (
