@@ -1,14 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  ChevronDown,
-  ChevronRight,
-  FileCode,
-  Folder,
-  LayoutGrid,
-  RotateCw,
-  Search,
-} from "lucide-react";
+import { useIsFetching, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, FileCode, Folder, LayoutGrid, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { useNamespaces } from "@/api/queries/namespaces";
@@ -20,6 +13,7 @@ import {
   type GenericResourceIdentity,
   type UnstructuredObject,
 } from "@/api/queries/kubernetes-resources";
+import { queryKeyPrefixes } from "@/api/query-keys";
 import type { KubernetesResourceType } from "@/api/types";
 import { SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
@@ -72,6 +66,7 @@ export function ResourceBrowserSection({
   projectId,
 }: ClusterSectionProps) {
   const { permissions } = useSessionContext();
+  const queryClient = useQueryClient();
   const catalog = useResourceTypes(clusterId);
   const [customOnly, setCustomOnly] = useState(false);
   const [typeQuery, setTypeQuery] = useState("");
@@ -108,10 +103,25 @@ export function ResourceBrowserSection({
   // the table never shows rows the tree no longer offers.
   const active = selected && filtered.some((type) => sameType(type, selected)) ? selected : null;
 
+  // This section reads two things at once — the type tree and the objects of the
+  // selected kind — and the toolbar button is the only refresh it offers, so it
+  // reloads both. The object list is refetched through the cache rather than a
+  // handler lifted out of the panel: only the mounted query knows its Namespace
+  // and page, and `type: "active"` is what keeps the refresh to the list on
+  // screen instead of every kind visited earlier in the session.
+  const objectsFetching = useIsFetching({ queryKey: queryKeyPrefixes.genericResources }) > 0;
+  const refreshAll = () => {
+    void catalog.refetch();
+    void queryClient.refetchQueries({
+      queryKey: queryKeyPrefixes.genericResources,
+      type: "active",
+    });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <SectionToolbarActions>
-        <RefreshAction isFetching={catalog.isFetching} onRefresh={() => void catalog.refetch()} />
+        <RefreshAction isFetching={catalog.isFetching || objectsFetching} onRefresh={refreshAll} />
       </SectionToolbarActions>
       <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[300px_minmax(0,1fr)]">
         <ResourceTypeTree
@@ -447,18 +457,20 @@ function ResourceObjectPanel({
     base.push({
       id: "actions",
       header: "操作",
-      size: 150,
+      size: 100,
       cell: ({ row }) => (
         <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
           {readable ? (
+            // Icon only, like every other row action in this app: the column is
+            // narrow, the word repeats down the whole page, and the label the
+            // action needs is the one screen readers get.
             <Button
-              size="sm"
+              size="icon-sm"
               variant="ghost"
               onClick={() => setYamlTarget(row.original)}
               aria-label={`查看 ${row.original.metadata?.name ?? ""} 的 YAML`}
             >
               <FileCode />
-              YAML
             </Button>
           ) : null}
           {deletable && row.original.metadata?.uid ? (
@@ -544,15 +556,6 @@ function ResourceObjectPanel({
               className="w-56 pl-8"
             />
           </div>
-          <Button
-            size="icon-sm"
-            variant="secondary"
-            aria-label="刷新"
-            disabled={list.isFetching}
-            onClick={() => void list.refetch()}
-          >
-            <RotateCw />
-          </Button>
         </div>
       </div>
 
