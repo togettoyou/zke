@@ -19,19 +19,17 @@ type builtinRoleStore interface {
 	) error
 }
 
-/*
- * Brings the roles the Server defines into line with the database.
- *
- * Roles are rows, and these two are the rows the Server owns. The schema seeds
- * nothing, so this is what puts them there: `admin` is defined as every
- * permission the Server knows, and writing that into a migration would fix the
- * set at the moment the migration was written. The permission added afterwards
- * would be granted to nobody — indistinguishable, from the outside, from a
- * permission that denies everyone.
- *
- * Runs before the initial administrator is bootstrapped, because that step binds
- * a user to `admin` and the foreign key requires the row.
- */
+// Brings the roles the Server defines into line with the database.
+//
+// Roles are rows, and these two are the rows the Server owns. The schema seeds
+// nothing, so this is what puts them there: `admin` is defined as every
+// permission the Server knows, and writing that into a migration would fix the
+// set at the moment the migration was written. The permission added afterwards
+// would be granted to nobody — indistinguishable, from the outside, from a
+// permission that denies everyone.
+//
+// Runs before the initial administrator is bootstrapped, because that step binds
+// a user to `admin` and the foreign key requires the row.
 func reconcileBuiltinRoles(
 	ctx context.Context,
 	roleStore builtinRoleStore,

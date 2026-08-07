@@ -9,43 +9,39 @@ import (
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
-/*
- * SecretGrant reports the Secret permissions the caller holds on the Cluster a
- * request targets.
- *
- * It exists because a Kubernetes PolicyRule is a way to hand access to somebody
- * else: a Role granting `get` on `secrets` gives every subject bound to it what
- * `cluster.secret.read` gives its holder. Writing such a rule therefore has to
- * require the permission it hands out, or `cluster.rbac.manage` alone would be a
- * way around every Secret permission in the platform.
- *
- * Two booleans rather than the resource layer's own type, so this package keeps
- * depending on nothing but authorization.
- */
+// SecretGrant reports the Secret permissions the caller holds on the Cluster a
+// request targets.
+//
+// It exists because a Kubernetes PolicyRule is a way to hand access to somebody
+// else: a Role granting `get` on `secrets` gives every subject bound to it what
+// `cluster.secret.read` gives its holder. Writing such a rule therefore has to
+// require the permission it hands out, or `cluster.rbac.manage` alone would be a
+// way around every Secret permission in the platform.
+//
+// Two booleans rather than the resource layer's own type, so this package keeps
+// depending on nothing but authorization.
 type SecretGrant struct {
 	Read   bool
 	Manage bool
 }
 
-/*
- * ResolveClusterSecretGrant records what the caller may hand out, without
- * refusing anything.
- *
- * Unlike RequireCluster this never aborts: not holding the permission is a
- * normal outcome that narrows what the request may write, not a reason to reject
- * it. A caller with no Secret permissions can still manage Roles — just not Roles
- * that grant Secret access.
- *
- * Installed after the route's own authorization check, so it runs only for
- * requests that were going to be served, and inside the request-scoped binding
- * cache, so the extra questions cost no extra query.
- *
- * A lookup that fails for any reason other than denial grants nothing. Reporting
- * an error here would turn a Secret-permission lookup into a failure of an
- * operation that may have nothing to do with Secrets; refusing to widen what the
- * request may write is the safe direction, and the write itself still succeeds or
- * fails on its own merits.
- */
+// ResolveClusterSecretGrant records what the caller may hand out, without
+// refusing anything.
+//
+// Unlike RequireCluster this never aborts: not holding the permission is a
+// normal outcome that narrows what the request may write, not a reason to reject
+// it. A caller with no Secret permissions can still manage Roles — just not Roles
+// that grant Secret access.
+//
+// Installed after the route's own authorization check, so it runs only for
+// requests that were going to be served, and inside the request-scoped binding
+// cache, so the extra questions cost no extra query.
+//
+// A lookup that fails for any reason other than denial grants nothing. Reporting
+// an error here would turn a Secret-permission lookup into a failure of an
+// operation that may have nothing to do with Secrets; refusing to widen what the
+// request may write is the safe direction, and the write itself still succeeds or
+// fails on its own merits.
 func (authorization *Authorization) ResolveClusterSecretGrant(
 	clusterParameter string,
 ) gin.HandlerFunc {

@@ -7,20 +7,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-/*
- * Kubernetes Pod template back into the typed template.
- *
- * The inverse of what `workload_pod_template.go` writes, and the reason a typed
- * update can exist at all: an edit form has to open on the object as it stands,
- * and a response carrying only a container's name and image would leave the
- * form with nothing to show for the fields it is about to submit — every one of
- * them would read as empty and be written back as empty.
- *
- * Only the modeled fields come back. Everything else on the Pod — affinity,
- * topology spread, container ports, the rest of the security context — is
- * absent here and preserved by the update rather than round-tripped through
- * the form; see `workload_update.go`.
- */
+// Kubernetes Pod template back into the typed template.
+//
+// The inverse of what `workload_pod_template.go` writes, and the reason a typed
+// update can exist at all: an edit form has to open on the object as it stands,
+// and a response carrying only a container's name and image would leave the
+// form with nothing to show for the fields it is about to submit — every one of
+// them would read as empty and be written back as empty.
+//
+// Only the modeled fields come back. Everything else on the Pod — affinity,
+// topology spread, container ports, the rest of the security context — is
+// absent here and preserved by the update rather than round-tripped through
+// the form; see `workload_update.go`.
 
 func workloadContainerTemplates(containers []corev1.Container) []WorkloadContainerTemplate {
 	result := make([]WorkloadContainerTemplate, 0, len(containers))
@@ -182,14 +180,12 @@ func workloadHTTPGetView(action *corev1.HTTPGetAction) *WorkloadHTTPGetAction {
 	}
 }
 
-/*
- * Volumes whose source the typed form models.
- *
- * A Pod may carry sources this form has never heard of — projected, CSI,
- * downward API — and those come back as a name with no source. The form shows
- * them as unmodeled and the update leaves them exactly as they are; dropping
- * them from the response would make a mount point at nothing.
- */
+// Volumes whose source the typed form models.
+//
+// A Pod may carry sources this form has never heard of — projected, CSI,
+// downward API — and those come back as a name with no source. The form shows
+// them as unmodeled and the update leaves them exactly as they are; dropping
+// them from the response would make a mount point at nothing.
 func workloadVolumeView(volumes []corev1.Volume) []WorkloadVolume {
 	if len(volumes) == 0 {
 		return []WorkloadVolume{}
@@ -272,11 +268,9 @@ func workloadNodeSelectorView(selector map[string]string) map[string]string {
 	return maps.Clone(selector)
 }
 
-/*
- * Kubernetes defaults a probe's timings to non-zero values it did not receive,
- * so a zero means "not set" and returning it as an explicit 0 would submit a
- * probe with, say, `periodSeconds: 0` — which Kubernetes rejects.
- */
+// Kubernetes defaults a probe's timings to non-zero values it did not receive,
+// so a zero means "not set" and returning it as an explicit 0 would submit a
+// probe with, say, `periodSeconds: 0` — which Kubernetes rejects.
 func nonZeroInt32(value int32) *int32 {
 	if value == 0 {
 		return nil

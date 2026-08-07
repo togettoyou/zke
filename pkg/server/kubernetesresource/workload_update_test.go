@@ -16,13 +16,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-/*
- * A Deployment carrying everything the typed form does not model.
- *
- * These are the fields an operator sets once through YAML and expects to stay
- * set. An edit that changes an image tag must not be the thing that removes
- * them, so the merge is tested against a Pod that has one of each.
- */
+// A Deployment carrying everything the typed form does not model.
+//
+// These are the fields an operator sets once through YAML and expects to stay
+// set. An edit that changes an image tag must not be the thing that removes
+// them, so the merge is tested against a Pod that has one of each.
 func unmodeledDeployment() *appsv1.Deployment {
 	replicas := int32(3)
 	privileged := false

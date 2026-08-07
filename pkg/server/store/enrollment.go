@@ -100,16 +100,14 @@ func (store *EnrollmentStore) CreateEnrollment(
 			return Enrollment{}, fmt.Errorf("lock Cluster reenrollment creation: %w", err)
 		}
 	}
-	/*
-	 * An outstanding enrollment holds the Cluster name it will create, and the
-	 * unique index that enforces that cannot include expiry: `now()` is not
-	 * immutable, so a lapsed token would keep its claim forever.
-	 *
-	 * Revoking the lapsed holder here is what closes that gap. It runs before
-	 * the insert and inside the same transaction, so the name is either released
-	 * and taken in one step or neither. The advisory lock covers the window
-	 * between the two for concurrent submissions of the same name.
-	 */
+	// An outstanding enrollment holds the Cluster name it will create, and the
+	// unique index that enforces that cannot include expiry: `now()` is not
+	// immutable, so a lapsed token would keep its claim forever.
+	//
+	// Revoking the lapsed holder here is what closes that gap. It runs before
+	// the insert and inside the same transaction, so the name is either released
+	// and taken in one step or neither. The advisory lock covers the window
+	// between the two for concurrent submissions of the same name.
 	if _, err := transaction.Exec(
 		ctx,
 		"SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || lower($2), 0))",

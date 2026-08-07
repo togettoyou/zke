@@ -428,18 +428,16 @@ func lifecycleAuditAction(
 	}
 }
 
-/*
- * Deletion removes rows; it does not mark them.
- *
- * Order follows the foreign keys inwards, because they are still real between
- * these tables — only the audit trail was cut loose. Deleting the Agent rows is
- * what ends any live connection: the AFTER DELETE trigger on `agents` notifies
- * the connection manager, which drops the session immediately rather than
- * waiting for the credential to be noticed missing at the next heartbeat.
- *
- * Callers write their audit event before calling these, while the names can
- * still be read.
- */
+// Deletion removes rows; it does not mark them.
+//
+// Order follows the foreign keys inwards, because they are still real between
+// these tables — only the audit trail was cut loose. Deleting the Agent rows is
+// what ends any live connection: the AFTER DELETE trigger on `agents` notifies
+// the connection manager, which drops the session immediately rather than
+// waiting for the credential to be noticed missing at the next heartbeat.
+//
+// Callers write their audit event before calling these, while the names can
+// still be read.
 func deleteClusterTree(
 	ctx context.Context,
 	transaction pgx.Tx,

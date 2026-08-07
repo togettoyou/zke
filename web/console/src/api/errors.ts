@@ -57,9 +57,16 @@ export function isForbidden(error: unknown): boolean {
  * and that sentence is the only place the reason appears. It is kept verbatim,
  * in Kubernetes' own wording, behind a line saying where it came from; a
  * translation would have to guess at text this Console has never seen.
+ *
+ * An escalation refusal is the same shape for a different reason: the Server
+ * returns the refused permission names, which are identifiers rather than
+ * prose, so the sentence around them belongs here and the list stays verbatim.
+ * Without it an operator is told the role is too powerful and has to resubmit
+ * one permission at a time to find out which one.
  */
 const DETAILED_ERROR_PREFIXES: Record<string, string> = {
   cluster_api_rejected: "Kubernetes 拒绝了该配置：",
+  permission_escalation: "角色包含调用者未持有的权限：",
 };
 
 export const ERROR_MESSAGES: Record<string, string> = {
@@ -80,6 +87,12 @@ export const ERROR_MESSAGES: Record<string, string> = {
   resource_not_enabled: "ZKE 不通过该接口管理这类资源",
   agent_namespace_forbidden: "ZKE Agent 所在命名空间的 Secret 不开放读写",
   secret_managed_by_platform: "该 Secret 属于 ZKE 安装本身，不可读写",
+  global_admin_required: "只有全局管理员可以授予或移除全局管理员",
+  // Both are about what the caller is handing out rather than what it may do
+  // itself, so neither can fall back to the general "没有权限".
+  secret_rule_forbidden:
+    "规则授予了调用者未持有的 Secret 权限：读取需要 cluster.secret.read，写入需要 cluster.secret.manage",
+  role_ref_forbidden: "该绑定指向 ZKE Agent 自身的 ClusterRole，不能通过 ZKE 创建或追加主体",
 
   // Request validation
   invalid_request: "请求内容无效，请检查输入",
@@ -120,6 +133,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   cluster_name_conflict:
     "同一项目下集群名称已被占用（不区分大小写；已停用的集群或未使用的接入凭证都会占用名称）",
   last_global_admin: "必须保留最后一个有效的全局管理员",
+  builtin_role: "内置角色不可修改或删除",
+  role_in_use: "角色仍被绑定，请先删除相关绑定",
   self_disable_forbidden: "不能禁用当前登录的账号",
   self_delete_forbidden: "不能删除当前登录的账号",
   token_rejected: "凭证无效或已被使用",

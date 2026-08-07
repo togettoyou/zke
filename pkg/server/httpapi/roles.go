@@ -11,20 +11,18 @@ import (
 	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
-/*
- * Roles, on endpoints of their own.
- *
- * They sit under `rbac.read` and `rbac.manage` beside the bindings, because a
- * role and a binding are two halves of one question — what a permission set is,
- * and who holds it. What makes these endpoints different from the bindings is
- * reach: editing a role changes what everybody already bound to it can do,
- * without a single binding being touched. That is why every write here takes an
- * explicit confirmation and writes an audit record naming the role.
- *
- * The permission dictionary is served alongside them. The Console cannot offer
- * a permission picker without knowing the vocabulary, and hard-coding it in the
- * browser is how a permission added to the Server becomes one nobody can grant.
- */
+// Roles, on endpoints of their own.
+//
+// They sit under `rbac.read` and `rbac.manage` beside the bindings, because a
+// role and a binding are two halves of one question — what a permission set is,
+// and who holds it. What makes these endpoints different from the bindings is
+// reach: editing a role changes what everybody already bound to it can do,
+// without a single binding being touched. That is why every write here takes an
+// explicit confirmation and writes an audit record naming the role.
+//
+// The permission dictionary is served alongside them. The Console cannot offer
+// a permission picker without knowing the vocabulary, and hard-coding it in the
+// browser is how a permission added to the Server becomes one nobody can grant.
 
 type roleResponse struct {
 	ID          string   `json:"id"`
@@ -64,8 +62,8 @@ type updateRoleRequest struct {
 // request is well formed and the caller authenticated — what it lacks is the
 // permissions it is trying to hand out.
 var roleErrors = append([]errorMapping{
-	{accessmanagement.ErrRoleBuiltin, http.StatusConflict, "builtin_role", "内置角色不可修改或删除"},
-	{accessmanagement.ErrRoleInUse, http.StatusConflict, "role_in_use", "角色仍被绑定，请先删除相关绑定"},
+	{accessmanagement.ErrRoleBuiltin, http.StatusConflict, "builtin_role", "builtin roles cannot be changed or deleted"},
+	{accessmanagement.ErrRoleInUse, http.StatusConflict, "role_in_use", "role is still bound and cannot be deleted"},
 }, accessManagementErrors...)
 
 func (handler *accessManagementHandler) listRoles(c *gin.Context) {
@@ -202,19 +200,17 @@ func (handler *accessManagementHandler) deleteRole(c *gin.Context) {
 	writeSuccess(c, http.StatusOK, nil)
 }
 
-/*
- * The permission vocabulary.
- *
- * Served rather than published as a constant in the Console because the two
- * would drift, and the drift is silent in the direction that matters: a
- * permission the Server enforces but the Console does not list is one no role
- * can be given, and nothing anywhere reports it.
- *
- * The response carries `held` — whether the caller holds the permission
- * globally — because that is what decides whether they may put it in a role.
- * Without it the Console can only offer every permission and let the Server
- * refuse the save, which teaches an operator the rule one rejection at a time.
- */
+// The permission vocabulary.
+//
+// Served rather than published as a constant in the Console because the two
+// would drift, and the drift is silent in the direction that matters: a
+// permission the Server enforces but the Console does not list is one no role
+// can be given, and nothing anywhere reports it.
+//
+// The response carries `held` — whether the caller holds the permission
+// globally — because that is what decides whether they may put it in a role.
+// Without it the Console can only offer every permission and let the Server
+// refuse the save, which teaches an operator the rule one rejection at a time.
 func (handler *accessManagementHandler) listPermissions(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)

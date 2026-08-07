@@ -165,16 +165,14 @@ func TestUpdateRoleRefusesTheBuiltinRoles(t *testing.T) {
 	}
 }
 
-/*
- * Narrowing a custom role cannot remove the account of last resort.
- *
- * A global administrator holds the builtin `admin` role, which this statement
- * cannot reach: `admin` is builtin, so the update excludes it, and its permission
- * set is reconciled from code at every startup. An earlier version of this guard
- * counted "accounts holding the recovery permissions", which made a custom role
- * able to stand in for `admin` — and that was the same mistake that let a custom
- * role delete the real administrator.
- */
+// Narrowing a custom role cannot remove the account of last resort.
+//
+// A global administrator holds the builtin `admin` role, which this statement
+// cannot reach: `admin` is builtin, so the update excludes it, and its permission
+// set is reconciled from code at every startup. An earlier version of this guard
+// counted "accounts holding the recovery permissions", which made a custom role
+// able to stand in for `admin` — and that was the same mistake that let a custom
+// role delete the real administrator.
 func TestUpdateRoleMayNarrowARoleItsHoldersDependOn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

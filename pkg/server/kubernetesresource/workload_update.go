@@ -13,21 +13,19 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-/*
- * A typed update of one workload.
- *
- * The modeled fields replace what is on the object; everything else is kept.
- * That is the whole design, and it is not the same rule the smaller typed
- * resources use. A Service or a NetworkPolicy is read as one piece and so is
- * replaced as one piece, but a Pod template carries affinity, topology spread
- * constraints, container ports, service accounts, host networking and the rest
- * of the security context — none of which this form models, all of which some
- * operator set deliberately. Replacing the spec wholesale would delete them on
- * a save that only meant to change an image tag.
- *
- * So the update reads the object back under its UID and resourceVersion, writes
- * the modeled fields onto it, and leaves the rest of the document untouched.
- */
+// A typed update of one workload.
+//
+// The modeled fields replace what is on the object; everything else is kept.
+// That is the whole design, and it is not the same rule the smaller typed
+// resources use. A Service or a NetworkPolicy is read as one piece and so is
+// replaced as one piece, but a Pod template carries affinity, topology spread
+// constraints, container ports, service accounts, host networking and the rest
+// of the security context — none of which this form models, all of which some
+// operator set deliberately. Replacing the spec wholesale would delete them on
+// a save that only meant to change an image tag.
+//
+// So the update reads the object back under its UID and resourceVersion, writes
+// the modeled fields onto it, and leaves the rest of the document untouched.
 type UpdateWorkloadInput struct {
 	ClusterID string
 	Namespace string
@@ -87,14 +85,12 @@ func (service *Service) UpdateWorkload(
 	return workloadDetail(result, input.Resource, input.Namespace, input.Name)
 }
 
-/*
- * What may be submitted, per type.
- *
- * The differences from a create are Kubernetes' own immutability rules rather
- * than choices made here: a StatefulSet's governing Service and a Job's whole
- * template are fixed at creation, and an API Server that is going to reject the
- * write is better refused before a cluster round trip than after one.
- */
+// What may be submitted, per type.
+//
+// The differences from a create are Kubernetes' own immutability rules rather
+// than choices made here: a StatefulSet's governing Service and a Job's whole
+// template are fixed at creation, and an API Server that is going to reject the
+// write is better refused before a cluster round trip than after one.
 func validateUpdateWorkloadInput(input UpdateWorkloadInput) error {
 	if !validWorkloadTarget(input.Namespace, input.Name, input.Resource) ||
 		!validWorkloadMutationIdentity(input.UID, input.ResourceVersion) {
@@ -255,14 +251,12 @@ func applyWorkloadMetadata(metadata *metav1.ObjectMeta, spec WorkloadSpecInput) 
 	metadata.Annotations = workloadAnnotations(spec.Annotations, spec.Description)
 }
 
-/*
- * The modeled parts of a Pod template, written onto the template as it stands.
- *
- * The selector is immutable, so whatever it matches on is put back over the
- * submitted labels: a template that stopped matching its own controller would
- * be rejected by the API Server, and on a DaemonSet or a Deployment created
- * outside ZKE the matched labels are not the ones this form knows about.
- */
+// The modeled parts of a Pod template, written onto the template as it stands.
+//
+// The selector is immutable, so whatever it matches on is put back over the
+// submitted labels: a template that stopped matching its own controller would
+// be rejected by the API Server, and on a DaemonSet or a Deployment created
+// outside ZKE the matched labels are not the ones this form knows about.
 func applyWorkloadPodTemplate(
 	template *corev1.PodTemplateSpec,
 	selector *metav1.LabelSelector,
@@ -307,14 +301,12 @@ func applyWorkloadPodTemplate(
 	template.Spec.Tolerations = workloadTolerationSpec(spec.Tolerations)
 }
 
-/*
- * Submitted containers, each carrying forward what the form cannot express.
- *
- * Matching is by name, which is what identifies a container in a Pod. A
- * container the form did not send is gone — removing one is a thing an edit is
- * allowed to do — but one that is still there keeps its ports, its security
- * context, its termination settings and everything else outside the template.
- */
+// Submitted containers, each carrying forward what the form cannot express.
+//
+// Matching is by name, which is what identifies a container in a Pod. A
+// container the form did not send is gone — removing one is a thing an edit is
+// allowed to do — but one that is still there keeps its ports, its security
+// context, its termination settings and everything else outside the template.
 func mergeWorkloadContainers(
 	existing []corev1.Container,
 	input []WorkloadContainerTemplate,
@@ -352,15 +344,13 @@ func mergeWorkloadContainers(
 	return result
 }
 
-/*
- * Environment variables, keeping the sources this form does not model.
- *
- * `fieldRef`, `resourceFieldRef` and whole-object `envFrom` entries come back
- * from a read as a name with no value, because there is nothing in the form to
- * show them in. Writing that back would turn `POD_IP` into an empty string —
- * so a submitted variable with no value and no reference keeps whatever the
- * container already had under that name.
- */
+// Environment variables, keeping the sources this form does not model.
+//
+// `fieldRef`, `resourceFieldRef` and whole-object `envFrom` entries come back
+// from a read as a name with no value, because there is nothing in the form to
+// show them in. Writing that back would turn `POD_IP` into an empty string —
+// so a submitted variable with no value and no reference keeps whatever the
+// container already had under that name.
 func mergeWorkloadEnv(existing []corev1.EnvVar, input []corev1.EnvVar) []corev1.EnvVar {
 	byName := make(map[string]corev1.EnvVar, len(existing))
 	for _, variable := range existing {
@@ -379,13 +369,11 @@ func mergeWorkloadEnv(existing []corev1.EnvVar, input []corev1.EnvVar) []corev1.
 	return result
 }
 
-/*
- * Mounts, keeping the fields outside the form.
- *
- * `mountPropagation`, `subPathExpr` and recursive read-only settings are not
- * modeled; a mount that is still at the same path in the same volume keeps
- * them.
- */
+// Mounts, keeping the fields outside the form.
+//
+// `mountPropagation`, `subPathExpr` and recursive read-only settings are not
+// modeled; a mount that is still at the same path in the same volume keeps
+// them.
 func mergeWorkloadVolumeMounts(
 	existing []corev1.VolumeMount,
 	input []corev1.VolumeMount,
@@ -410,13 +398,11 @@ func mergeWorkloadVolumeMounts(
 	return result
 }
 
-/*
- * A probe the form could not express is left alone.
- *
- * A gRPC probe reads back with no handler at all, and a probe without a handler
- * is rejected by Kubernetes. Submitting one on a container that already has a
- * probe means the form had nothing to show and nothing to change.
- */
+// A probe the form could not express is left alone.
+//
+// A gRPC probe reads back with no handler at all, and a probe without a handler
+// is rejected by Kubernetes. Submitting one on a container that already has a
+// probe means the form had nothing to show and nothing to change.
 func mergeWorkloadProbe(existing *corev1.Probe, input *corev1.Probe) *corev1.Probe {
 	if input == nil {
 		return nil
@@ -427,13 +413,11 @@ func mergeWorkloadProbe(existing *corev1.Probe, input *corev1.Probe) *corev1.Pro
 	return input
 }
 
-/*
- * The security context, of which only `privileged` is modeled.
- *
- * Everything else an operator set — `runAsUser`, capabilities, seccomp — stays,
- * and a context that ends up empty is removed rather than written as an object
- * saying nothing.
- */
+// The security context, of which only `privileged` is modeled.
+//
+// Everything else an operator set — `runAsUser`, capabilities, seccomp — stays,
+// and a context that ends up empty is removed rather than written as an object
+// saying nothing.
 func mergeWorkloadSecurityContext(
 	existing *corev1.SecurityContext,
 	privileged *bool,
@@ -457,15 +441,13 @@ func mergeWorkloadSecurityContext(
 	return result
 }
 
-/*
- * Volumes, keeping sources the form does not model.
- *
- * A projected, CSI or downward-API volume reads back as a name with no source,
- * because there is no field in the form to hold it. Written back as submitted
- * it would become a volume of no kind, and every mount pointing at it would
- * fail — so a submitted volume with no modeled source keeps the source the Pod
- * already had under that name.
- */
+// Volumes, keeping sources the form does not model.
+//
+// A projected, CSI or downward-API volume reads back as a name with no source,
+// because there is no field in the form to hold it. Written back as submitted
+// it would become a volume of no kind, and every mount pointing at it would
+// fail — so a submitted volume with no modeled source keeps the source the Pod
+// already had under that name.
 func mergeWorkloadVolumes(existing []corev1.Volume, input []WorkloadVolume) []corev1.Volume {
 	byName := make(map[string]corev1.Volume, len(existing))
 	for _, volume := range existing {

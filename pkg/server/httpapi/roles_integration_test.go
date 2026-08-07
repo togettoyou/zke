@@ -13,14 +13,12 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store"
 )
 
-/*
- * The role lifecycle over HTTP, and the wall around it.
- *
- * The interesting case is not that an administrator can create a role — it is
- * what happens when the holder of that role tries to use `rbac.manage` to reach
- * past their own permissions. That is the whole reason roles can be data at all,
- * so it is exercised end to end rather than only at the service boundary.
- */
+// The role lifecycle over HTTP, and the wall around it.
+//
+// The interesting case is not that an administrator can create a role — it is
+// what happens when the holder of that role tries to use `rbac.manage` to reach
+// past their own permissions. That is the whole reason roles can be data at all,
+// so it is exercised end to end rather than only at the service boundary.
 func TestRoleHTTPFlowEnforcesThePermissionCeiling(t *testing.T) {
 	databaseURL := requireHTTPTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -196,13 +194,11 @@ func TestRoleHTTPFlowEnforcesThePermissionCeiling(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	/*
-	 * The delegate holds `rbac.manage` and nothing else worth having. Three ways
-	 * to turn that into more, all refused:
-	 *   1. write a role carrying a permission they do not hold;
-	 *   2. bind the builtin `admin`, which already carries everything;
-	 *   3. widen the role they already hold.
-	 */
+	// The delegate holds `rbac.manage` and nothing else worth having. Three ways
+	// to turn that into more, all refused:
+	//   1. write a role carrying a permission they do not hold;
+	//   2. bind the builtin `admin`, which already carries everything;
+	//   3. widen the role they already hold.
 	escalatingRole := accessAPIRequest(
 		router,
 		http.MethodPost,

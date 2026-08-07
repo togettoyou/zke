@@ -16,14 +16,12 @@ const (
 	plainUserID        = "74000000-0000-4000-8000-000000000003"
 )
 
-/*
- * The global administrator is the account of last resort.
- *
- * "Global administrator" means the builtin `admin` role bound at global scope —
- * not "holds an equivalent set of permissions". A custom role can be written by
- * anyone with `rbac.manage`, so letting one stand in for the builtin role would
- * make the account of last resort removable by an account somebody else defined.
- */
+// The global administrator is the account of last resort.
+//
+// "Global administrator" means the builtin `admin` role bound at global scope —
+// not "holds an equivalent set of permissions". A custom role can be written by
+// anyone with `rbac.manage`, so letting one stand in for the builtin role would
+// make the account of last resort removable by an account somebody else defined.
 func globalAdminPool(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	t.Helper()
 
@@ -121,13 +119,11 @@ func TestCustomRoleCannotDisableOrUnbindTheGlobalAdministrator(t *testing.T) {
 	}
 }
 
-/*
- * The bypass that would make the rule theatre.
- *
- * A custom role holding every permission satisfies the escalation ceiling for
- * `admin`, so without this its holder could bind `admin` to themselves, become a
- * global administrator, and then remove the original.
- */
+// The bypass that would make the rule theatre.
+//
+// A custom role holding every permission satisfies the escalation ceiling for
+// `admin`, so without this its holder could bind `admin` to themselves, become a
+// global administrator, and then remove the original.
 func TestOnlyAGlobalAdministratorMayGrantTheAdminRole(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

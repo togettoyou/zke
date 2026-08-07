@@ -683,24 +683,22 @@ func scanManagedRoleBinding(row rowScannerAccess) (ManagedRoleBinding, error) {
 	return item, err
 }
 
-/*
- * Who counts as a global administrator.
- *
- * The builtin `admin` role, bound at global scope, on an active account. Not
- * "holds an equivalent set of permissions": a custom role is written by whoever
- * holds `rbac.manage`, so treating one as equivalent would make the account of
- * last resort removable by an account somebody else defined — and a custom role
- * carrying all 27 permissions is exactly what an attacker who reached
- * `rbac.manage` would build.
- *
- * The role name is a literal because the store sits below the authorization
- * package and cannot import it. `TestGlobalAdminRoleMatchesAuthorization` in the
- * rbac package fails if the two ever disagree.
- *
- * Nothing is lost by keying on the role rather than on permissions: `admin` is
- * builtin, uneditable, and reconciled from code at every startup, so an install
- * that has one has every permission the Server defines in reach.
- */
+// Who counts as a global administrator.
+//
+// The builtin `admin` role, bound at global scope, on an active account. Not
+// "holds an equivalent set of permissions": a custom role is written by whoever
+// holds `rbac.manage`, so treating one as equivalent would make the account of
+// last resort removable by an account somebody else defined — and a custom role
+// carrying all 27 permissions is exactly what an attacker who reached
+// `rbac.manage` would build.
+//
+// The role name is a literal because the store sits below the authorization
+// package and cannot import it. `TestGlobalAdminRoleMatchesAuthorization` in the
+// rbac package fails if the two ever disagree.
+//
+// Nothing is lost by keying on the role rather than on permissions: `admin` is
+// builtin, uneditable, and reconciled from code at every startup, so an install
+// that has one has every permission the Server defines in reach.
 const globalAdminRoleName = "admin"
 
 // GlobalAdminRoleName reports the role this invariant protects, so the
@@ -720,26 +718,24 @@ WHERE users.status = 'active'
   AND role_bindings.role = $1
 `
 
-/*
- * Refuses removing a global administrator, unless another one is asking and
- * another one remains.
- *
- * Two rules, and both are needed:
- *
- *   - one global administrator must always exist, or the install has no way back
- *     in short of the database;
- *   - only a global administrator may remove one, so holding a custom role — even
- *     one carrying every permission there is — is not enough.
- *
- * The second rule is the one that matters against a compromised account. Without
- * it, reaching any account with `user.manage` and `rbac.manage` was enough to
- * delete the real administrator and be the only one left; the count said two, so
- * the removal looked safe. It was safe for the platform and not for its owner.
- *
- * The advisory lock serialises this against a concurrent check, so two
- * transactions each removing a different administrator cannot both observe two
- * and both proceed.
- */
+// Refuses removing a global administrator, unless another one is asking and
+// another one remains.
+//
+// Two rules, and both are needed:
+//
+//   - one global administrator must always exist, or the install has no way back
+//     in short of the database;
+//   - only a global administrator may remove one, so holding a custom role — even
+//     one carrying every permission there is — is not enough.
+//
+// The second rule is the one that matters against a compromised account. Without
+// it, reaching any account with `user.manage` and `rbac.manage` was enough to
+// delete the real administrator and be the only one left; the count said two, so
+// the removal looked safe. It was safe for the platform and not for its owner.
+//
+// The advisory lock serialises this against a concurrent check, so two
+// transactions each removing a different administrator cannot both observe two
+// and both proceed.
 func ensureNotLastGlobalAdmin(
 	ctx context.Context,
 	transaction pgx.Tx,
@@ -776,15 +772,13 @@ SELECT
 	return nil
 }
 
-/*
- * Refuses granting the builtin role to anyone but by a global administrator.
- *
- * Without this the rule above is theatre: a custom role carrying all 27
- * permissions satisfies the escalation ceiling for `admin`, so its holder could
- * bind `admin` to themselves, become a global administrator by their own hand,
- * and then remove the original. Membership of the group that guards the account
- * of last resort has to be granted from inside it.
- */
+// Refuses granting the builtin role to anyone but by a global administrator.
+//
+// Without this the rule above is theatre: a custom role carrying all 27
+// permissions satisfies the escalation ceiling for `admin`, so its holder could
+// bind `admin` to themselves, become a global administrator by their own hand,
+// and then remove the original. Membership of the group that guards the account
+// of last resort has to be granted from inside it.
 func ensureGlobalAdminGrantAllowed(
 	ctx context.Context,
 	transaction pgx.Tx,

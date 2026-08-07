@@ -211,15 +211,13 @@ func kubernetesYAMLHandlerTestRouter(service kubernetesYAMLService) http.Handler
 	return router
 }
 
-/*
- * The generic endpoint still refuses the two families that have their own.
- *
- * Both now have YAML routes of their own, and those routes exist precisely
- * because this one answers to `cluster.resource.*`. If the exclusion here were
- * ever relaxed, holding the resource permissions would be enough to read a
- * Secret and to rewrite a RoleBinding, and neither of the dedicated routes
- * would be worth anything.
- */
+// The generic endpoint still refuses the two families that have their own.
+//
+// Both now have YAML routes of their own, and those routes exist precisely
+// because this one answers to `cluster.resource.*`. If the exclusion here were
+// ever relaxed, holding the resource permissions would be enough to read a
+// Secret and to rewrite a RoleBinding, and neither of the dedicated routes
+// would be worth anything.
 func TestKubernetesYAMLHandlerStillRefusesSecretsAndAuthorizationResources(t *testing.T) {
 	t.Parallel()
 

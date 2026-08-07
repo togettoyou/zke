@@ -16,24 +16,22 @@ import (
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
-/*
- * Secrets, on a path of their own.
- *
- * Everything here exists because a Secret is not a ConfigMap with a different
- * name. It is reachable only through this service, which is the only thing in
- * the process that sets `secretAccess` on a request; the generic resource and
- * YAML APIs refuse Secrets outright, and the Agent refuses them again unless
- * that flag is set and the namespace is not its own.
- *
- * What travels: the list returns key names and sizes and never a value, so
- * browsing a namespace does not move its credentials into a browser. The detail
- * returns values as Kubernetes stores them — standard Base64 — for the one page
- * that asked for one object by name.
- *
- * What does not travel: ZKE's own Secrets. They are the platform's credentials
- * rather than the operator's workload configuration, and an API that returned
- * them would be an API for reading the Agent's enrollment token.
- */
+// Secrets, on a path of their own.
+//
+// Everything here exists because a Secret is not a ConfigMap with a different
+// name. It is reachable only through this service, which is the only thing in
+// the process that sets `secretAccess` on a request; the generic resource and
+// YAML APIs refuse Secrets outright, and the Agent refuses them again unless
+// that flag is set and the namespace is not its own.
+//
+// What travels: the list returns key names and sizes and never a value, so
+// browsing a namespace does not move its credentials into a browser. The detail
+// returns values as Kubernetes stores them — standard Base64 — for the one page
+// that asked for one object by name.
+//
+// What does not travel: ZKE's own Secrets. They are the platform's credentials
+// rather than the operator's workload configuration, and an API that returned
+// them would be an API for reading the Agent's enrollment token.
 
 const (
 	maxSecretSize        = corev1.MaxSecretSize
@@ -144,16 +142,14 @@ func SecretResourceIdentity() ResourceIdentity {
 	return secretIdentity
 }
 
-/*
- * The Secret service's own access, narrowed to what a YAML editor needs.
- *
- * `secretAccess` stays unexported, and this is not a way to set it: the two
- * methods below accept nothing but a Secret, and they route through the same
- * reads the typed API uses, so ZKE's own Secrets are refused here exactly as
- * they are there. What the YAML API gets is the ability to read and replace one
- * Secret by name — not a general resource accessor that happens to be pointed
- * at Secrets.
- */
+// The Secret service's own access, narrowed to what a YAML editor needs.
+//
+// `secretAccess` stays unexported, and this is not a way to set it: the two
+// methods below accept nothing but a Secret, and they route through the same
+// reads the typed API uses, so ZKE's own Secrets are refused here exactly as
+// they are there. What the YAML API gets is the ability to read and replace one
+// Secret by name — not a general resource accessor that happens to be pointed
+// at Secrets.
 type SecretYAMLAccess struct {
 	service *Service
 }
@@ -190,17 +186,15 @@ func (access SecretYAMLAccess) UpdateResource(
 	return access.service.UpdateResource(ctx, input)
 }
 
-/*
- * The Secret rules a manifest has to keep.
- *
- * Kubernetes enforces most of what matters about a Secret — its size, the keys
- * its type requires, the refusal to change an immutable one — and this does not
- * restate that. It covers the two things Kubernetes has no opinion about
- * because they are ZKE's: an object may not award itself the label that makes
- * ZKE treat it as the platform's, and the answer to an immutable Secret is the
- * same one the form gives rather than a rejection from the API Server about a
- * field the editor never showed.
- */
+// The Secret rules a manifest has to keep.
+//
+// Kubernetes enforces most of what matters about a Secret — its size, the keys
+// its type requires, the refusal to change an immutable one — and this does not
+// restate that. It covers the two things Kubernetes has no opinion about
+// because they are ZKE's: an object may not award itself the label that makes
+// ZKE treat it as the platform's, and the answer to an immutable Secret is the
+// same one the form gives rather than a rejection from the API Server about a
+// field the editor never showed.
 // The grant is ignored: this guard is about a Secret object, not about a
 // PolicyRule handing Secret access to somebody else, and the route already
 // required `cluster.secret.manage` to reach it.
@@ -374,14 +368,12 @@ func (service *Service) DeleteSecret(ctx context.Context, input DeleteSecretInpu
 	})
 }
 
-/*
- * Reads one Secret and refuses ZKE's own.
- *
- * Named access is refused rather than filtered: an operator who typed the name
- * of the Agent's enrollment Secret asked a question with only one honest
- * answer, and returning an empty object instead would suggest the name was
- * wrong.
- */
+// Reads one Secret and refuses ZKE's own.
+//
+// Named access is refused rather than filtered: an operator who typed the name
+// of the Agent's enrollment Secret asked a question with only one honest
+// answer, and returning an empty object instead would suggest the name was
+// wrong.
 func (service *Service) getSecretObject(
 	ctx context.Context,
 	clusterID string,
@@ -519,13 +511,11 @@ func secretDetail(object map[string]any, namespace string, name string) (SecretD
 	}, nil
 }
 
-/*
- * Decodes the submitted values and enforces the size Kubernetes enforces.
- *
- * Values arrive Base64-encoded because that is how they are returned, and a
- * form that re-submits what it was shown should not have to know which of the
- * two representations it is holding.
- */
+// Decodes the submitted values and enforces the size Kubernetes enforces.
+//
+// Values arrive Base64-encoded because that is how they are returned, and a
+// form that re-submits what it was shown should not have to know which of the
+// two representations it is holding.
 func decodeSecretData(data map[string]string) (map[string][]byte, error) {
 	if len(data) == 0 {
 		return nil, nil
@@ -549,13 +539,11 @@ func decodeSecretData(data map[string]string) (map[string][]byte, error) {
 	return result, nil
 }
 
-/*
- * The types this API will create.
- *
- * `kubernetes.io/service-account-token` is refused: it is issued by Kubernetes
- * for a ServiceAccount, and creating one by hand is a way to mint a token for
- * an identity rather than a way to store configuration.
- */
+// The types this API will create.
+//
+// `kubernetes.io/service-account-token` is refused: it is issued by Kubernetes
+// for a ServiceAccount, and creating one by hand is a way to mint a token for
+// an identity rather than a way to store configuration.
 func validSecretType(value string) bool {
 	switch corev1.SecretType(value) {
 	case "",

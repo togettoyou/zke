@@ -15,21 +15,19 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
 )
 
-/*
- * YAML for the five Kubernetes authorization families.
- *
- * A route of its own rather than the generic YAML endpoint, because the two
- * differ in the only thing that matters here: this one is gated by
- * `cluster.rbac.read` and `cluster.rbac.manage`. Routing these resources
- * through the generic endpoint would hand every holder of
- * `cluster.resource.update` the ability to rewrite a RoleBinding, which is the
- * reason the generic endpoint refuses them in the first place — and it still
- * does.
- *
- * The target is named by the path rather than by a query, so a caller cannot
- * describe one object in the URL and another in the parameters; the family, its
- * scope and its Namespace are resolved before the request is accepted.
- */
+// YAML for the five Kubernetes authorization families.
+//
+// A route of its own rather than the generic YAML endpoint, because the two
+// differ in the only thing that matters here: this one is gated by
+// `cluster.rbac.read` and `cluster.rbac.manage`. Routing these resources
+// through the generic endpoint would hand every holder of
+// `cluster.resource.update` the ability to rewrite a RoleBinding, which is the
+// reason the generic endpoint refuses them in the first place — and it still
+// does.
+//
+// The target is named by the path rather than by a query, so a caller cannot
+// describe one object in the URL and another in the parameters; the family, its
+// scope and its Namespace are resolved before the request is accepted.
 type kubernetesAuthorizationYAMLHandler struct {
 	kubernetesYAMLHandler
 }

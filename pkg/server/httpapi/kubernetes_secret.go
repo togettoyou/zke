@@ -18,21 +18,19 @@ import (
 
 const maxKubernetesSecretMutationRequestBytes = 2 * 1024 * 1024
 
-/*
- * Secrets, on endpoints of their own.
- *
- * Shaped like the ConfigMap endpoints because an operator manages the two the
- * same way, and separated from them because the platform does not: these
- * require `cluster.secret.read` and `cluster.secret.manage` rather than the
- * general cluster permissions, and every one of them — the reads included —
- * writes an audit record naming the Cluster, the Namespace and the object,
- * without recording any part of what it held.
- *
- * Reads are audited here and not on the ConfigMap endpoints because a Secret
- * read is the exposure itself. A permission can be withdrawn; a credential that
- * has already been returned cannot be called back, so the only thing left to
- * answer afterwards is who took it and when.
- */
+// Secrets, on endpoints of their own.
+//
+// Shaped like the ConfigMap endpoints because an operator manages the two the
+// same way, and separated from them because the platform does not: these
+// require `cluster.secret.read` and `cluster.secret.manage` rather than the
+// general cluster permissions, and every one of them — the reads included —
+// writes an audit record naming the Cluster, the Namespace and the object,
+// without recording any part of what it held.
+//
+// Reads are audited here and not on the ConfigMap endpoints because a Secret
+// read is the exposure itself. A permission can be withdrawn; a credential that
+// has already been returned cannot be called back, so the only thing left to
+// answer afterwards is who took it and when.
 
 type kubernetesSecretService interface {
 	ListSecrets(context.Context, kubernetesresource.ListSecretsInput) (kubernetesresource.SecretPage, error)

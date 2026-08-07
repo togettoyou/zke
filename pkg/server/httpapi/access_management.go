@@ -32,11 +32,11 @@ var accessManagementErrors = []errorMapping{
 	{accessmanagement.ErrLastAdmin, http.StatusConflict, "last_global_admin", "the last active global administrator must be preserved"},
 	// 403 rather than 409: nothing about the platform's state is in the way, the
 	// caller simply is not a global administrator.
-	{accessmanagement.ErrGlobalAdminRequired, http.StatusForbidden, "global_admin_required", "只有全局管理员可以授予或移除全局管理员"},
+	{accessmanagement.ErrGlobalAdminRequired, http.StatusForbidden, "global_admin_required", "only a global administrator can grant or revoke global administrator"},
 	// Shared with the binding endpoints, not only the role ones: granting a role
 	// is subject to the same ceiling as writing one, so both can refuse for this
 	// reason and both have to say so rather than falling through to a 500.
-	{accessmanagement.ErrPermissionEscalation, http.StatusForbidden, "permission_escalation", "角色包含调用者未持有的权限"},
+	{accessmanagement.ErrPermissionEscalation, http.StatusForbidden, "permission_escalation", "role grants permissions the caller does not hold"},
 	{accessmanagement.ErrConflict, http.StatusConflict, "resource_conflict", "access management state conflicts with the request"},
 }
 

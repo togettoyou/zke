@@ -249,24 +249,22 @@ func (service *Service) DeleteRole(
 	return roleFromStore(item), nil
 }
 
-/*
- * The ceiling a role may not exceed.
- *
- * Without this, `rbac.manage` would be the only permission anyone needs: hold
- * it, write a role carrying `cluster.secret.read`, bind it to yourself, and the
- * separation between reading configuration and reading credentials is gone.
- * Every permission the platform defines would collapse into one.
- *
- * The ceiling is what the actor holds *globally*, not what they hold where they
- * happen to be working. A role is a global object — it can be bound anywhere
- * later — so a permission the actor only holds inside one Project would
- * otherwise become one they can exercise everywhere by routing it through a
- * role. Kubernetes solves the same problem the same way, and calls the way
- * around it `escalate`; ZKE has no equivalent, which is deliberate.
- *
- * A missing authority is a refusal, not a bypass: this is the only thing
- * standing between `rbac.manage` and every other permission.
- */
+// The ceiling a role may not exceed.
+//
+// Without this, `rbac.manage` would be the only permission anyone needs: hold
+// it, write a role carrying `cluster.secret.read`, bind it to yourself, and the
+// separation between reading configuration and reading credentials is gone.
+// Every permission the platform defines would collapse into one.
+//
+// The ceiling is what the actor holds *globally*, not what they hold where they
+// happen to be working. A role is a global object — it can be bound anywhere
+// later — so a permission the actor only holds inside one Project would
+// otherwise become one they can exercise everywhere by routing it through a
+// role. Kubernetes solves the same problem the same way, and calls the way
+// around it `escalate`; ZKE has no equivalent, which is deliberate.
+//
+// A missing authority is a refusal, not a bypass: this is the only thing
+// standing between `rbac.manage` and every other permission.
 func (service *Service) ensureWithinActorCeiling(
 	ctx context.Context,
 	actorUserID string,
@@ -307,20 +305,23 @@ func (err *escalationError) Is(target error) bool {
 	return target == ErrPermissionEscalation
 }
 
-// Detail is what the HTTP layer returns in place of the fixed message. It
-// describes what the caller sent and nothing about the Server.
+// Detail is what the HTTP layer returns in place of the fixed message: the
+// refused permission names and nothing else.
+//
+// Only the names, because they are the part the fixed message cannot carry —
+// the Console frames them with its own localized sentence, the same way it
+// frames a Kubernetes rejection. They describe what the caller sent and say
+// nothing about the Server.
 func (err *escalationError) Detail() string {
-	return "角色包含调用者未持有的权限：" + strings.Join(err.permissions, "、")
+	return strings.Join(err.permissions, ", ")
 }
 
-/*
- * Validates the submitted permission names and puts them in a stable order.
- *
- * Unknown names are refused rather than dropped. A role stored with a permission
- * the Server does not define would grant nothing, and silently accepting one is
- * how an operator ends up with a role that reads correctly in the Console and
- * denies everything in practice.
- */
+// Validates the submitted permission names and puts them in a stable order.
+//
+// Unknown names are refused rather than dropped. A role stored with a permission
+// the Server does not define would grant nothing, and silently accepting one is
+// how an operator ends up with a role that reads correctly in the Console and
+// denies everything in practice.
 func normalizedPermissions(permissions []string) ([]string, error) {
 	if len(permissions) == 0 || len(permissions) > len(rbac.Permissions()) {
 		return nil, ErrInvalidInput

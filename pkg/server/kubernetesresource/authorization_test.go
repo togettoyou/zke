@@ -60,15 +60,13 @@ func TestAuthorizationValidationRejectsPrivilegeShapeErrors(t *testing.T) {
 	}
 }
 
-/*
- * A Role granting Secret access answers to what the caller holds.
- *
- * Without this, `cluster.rbac.manage` would be a way around every Secret
- * permission in the platform: write a Role granting `get` on `secrets`, bind it
- * to a ServiceAccount you control, read the credential out of the workload. The
- * separation between reading configuration and reading credentials would survive
- * only until somebody wrote a Role.
- */
+// A Role granting Secret access answers to what the caller holds.
+//
+// Without this, `cluster.rbac.manage` would be a way around every Secret
+// permission in the platform: write a Role granting `get` on `secrets`, bind it
+// to a ServiceAccount you control, read the credential out of the workload. The
+// separation between reading configuration and reading credentials would survive
+// only until somebody wrote a Role.
 func TestSecretRulesRequireTheCallersOwnSecretPermission(t *testing.T) {
 	t.Parallel()
 
@@ -101,13 +99,11 @@ func TestSecretRulesRequireTheCallersOwnSecretPermission(t *testing.T) {
 	}
 }
 
-/*
- * Adding a subject to a binding that already points at the Agent's ClusterRole.
- *
- * Creation refuses that RoleRef; updating used not to look at it, and the two
- * are the same handover. A binding created outside ZKE carries none of ZKE's
- * labels, so nothing else was in the way.
- */
+// Adding a subject to a binding that already points at the Agent's ClusterRole.
+//
+// Creation refuses that RoleRef; updating used not to look at it, and the two
+// are the same handover. A binding created outside ZKE carries none of ZKE's
+// labels, so nothing else was in the way.
 func TestUpdatingABindingChecksTheRoleRefItKeeps(t *testing.T) {
 	t.Parallel()
 
@@ -186,15 +182,13 @@ func TestDeleteAuthorizationResourceProtectsZKEManagedObjects(t *testing.T) {
 	}
 }
 
-/*
- * The guard that makes the YAML editor an editor rather than a way around the
- * typed API.
- *
- * Every case below is a write the form refuses. A document can express all of
- * them, so the same answer has to be given here — otherwise `cluster.rbac.manage`
- * buys the ability to grant `escalate` to anyone, which is the permission that
- * grants every other one.
- */
+// The guard that makes the YAML editor an editor rather than a way around the
+// typed API.
+//
+// Every case below is a write the form refuses. A document can express all of
+// them, so the same answer has to be given here — otherwise `cluster.rbac.manage`
+// buys the ability to grant `escalate` to anyone, which is the permission that
+// grants every other one.
 func TestAuthorizationManifestGuardRefusesWhatTheTypedAPIRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -247,13 +241,11 @@ func TestAuthorizationManifestGuardRefusesWhatTheTypedAPIRefuses(t *testing.T) {
 			submitted: clusterRole([]rbacv1.PolicyRule{{Verbs: []string{"escalate"}, APIGroups: []string{"rbac.authorization.k8s.io"}, Resources: []string{"clusterroles"}}}, nil),
 			want:      ErrInvalidInput,
 		},
-		/*
-		 * A rule about Secrets hands Secret access to whoever is bound to the
-		 * role, so it answers to what the caller holds. These six cases are the
-		 * whole rule: nothing without the permission, reading with the read
-		 * permission, writing only with manage, and a wildcard resource counted
-		 * as naming Secrets.
-		 */
+		// A rule about Secrets hands Secret access to whoever is bound to the
+		// role, so it answers to what the caller holds. These six cases are the
+		// whole rule: nothing without the permission, reading with the read
+		// permission, writing only with manage, and a wildcard resource counted
+		// as naming Secrets.
 		{
 			name:      "reading Secrets without holding the permission",
 			current:   clusterRole(readPods, nil),
@@ -353,15 +345,13 @@ func TestAuthorizationManifestGuardRefusesWhatTheTypedAPIRefuses(t *testing.T) {
 	}
 }
 
-/*
- * The names a cluster actually holds.
- *
- * Kubernetes validates RBAC names as path segments, so the whole `system:`
- * family and anything kubeadm installs carries a colon. Validating them as DNS
- * subdomains refused every one of them: the list rendered, and opening any row
- * answered `400 invalid_request` — the objects an operator is most likely to
- * open, and the ones nobody can rename.
- */
+// The names a cluster actually holds.
+//
+// Kubernetes validates RBAC names as path segments, so the whole `system:`
+// family and anything kubeadm installs carries a colon. Validating them as DNS
+// subdomains refused every one of them: the list rendered, and opening any row
+// answered `400 invalid_request` — the objects an operator is most likely to
+// open, and the ones nobody can rename.
 func TestAuthorizationNamesFollowKubernetesRules(t *testing.T) {
 	t.Parallel()
 

@@ -913,15 +913,13 @@ func TestKubernetesResourceDiscoveryWithoutCustomResourceAccess(t *testing.T) {
 	}
 }
 
-/*
- * The Agent's own refusal, which is not the Server's.
- *
- * A Secret is reachable only when the Server's dedicated Secret API asked for
- * it, and never in the namespace holding this Agent's identity key, enrollment
- * token and the certificates it trusts the Server by. Both rules are checked
- * here rather than assumed of the Server, because a Server that had been made
- * to ask is exactly the case they exist for.
- */
+// The Agent's own refusal, which is not the Server's.
+//
+// A Secret is reachable only when the Server's dedicated Secret API asked for
+// it, and never in the namespace holding this Agent's identity key, enrollment
+// token and the certificates it trusts the Server by. Both rules are checked
+// here rather than assumed of the Server, because a Server that had been made
+// to ask is exactly the case they exist for.
 func TestSecretRequestsAreRefusedWithoutTheFlagOrInTheAgentNamespace(t *testing.T) {
 	t.Parallel()
 

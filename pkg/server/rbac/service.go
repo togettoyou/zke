@@ -231,20 +231,18 @@ func (service *Service) authorizeValidated(
 	return ErrDenied
 }
 
-/*
- * GlobalPermissions reports the permissions a subject holds globally.
- *
- * Role management needs this and nothing else needs it: a role is a global
- * object, so a permission put into one can be exercised anywhere it is later
- * bound. Answering "what does this actor hold everywhere" is therefore the only
- * honest ceiling to check a new role against — a permission the actor holds
- * only inside one Project would otherwise become a permission they can hand
- * themselves at global scope by writing it into a role.
- *
- * Only global bindings count. A Tenant-scoped grant is deliberately not enough:
- * it would let a Tenant administrator mint a role carrying their permissions
- * and have someone else bind it globally.
- */
+// GlobalPermissions reports the permissions a subject holds globally.
+//
+// Role management needs this and nothing else needs it: a role is a global
+// object, so a permission put into one can be exercised anywhere it is later
+// bound. Answering "what does this actor hold everywhere" is therefore the only
+// honest ceiling to check a new role against — a permission the actor holds
+// only inside one Project would otherwise become a permission they can hand
+// themselves at global scope by writing it into a role.
+//
+// Only global bindings count. A Tenant-scoped grant is deliberately not enough:
+// it would let a Tenant administrator mint a role carrying their permissions
+// and have someone else bind it globally.
 func (service *Service) GlobalPermissions(
 	ctx context.Context,
 	userID string,

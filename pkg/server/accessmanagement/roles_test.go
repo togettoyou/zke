@@ -102,15 +102,13 @@ func createRoleInput(permissions ...string) CreateRoleInput {
 	}
 }
 
-/*
- * The check the whole role model rests on.
- *
- * Without it `rbac.manage` is the only permission anyone needs: write a role
- * carrying whatever you like, bind it to yourself, and every other permission
- * the platform defines becomes reachable. These cases are the reason the ceiling
- * exists, so they assert the refusal reaches the caller *and* that nothing was
- * written on the way.
- */
+// The check the whole role model rests on.
+//
+// Without it `rbac.manage` is the only permission anyone needs: write a role
+// carrying whatever you like, bind it to yourself, and every other permission
+// the platform defines becomes reachable. These cases are the reason the ceiling
+// exists, so they assert the refusal reaches the caller *and* that nothing was
+// written on the way.
 func TestCreateRoleRefusesPermissionsTheActorDoesNotHold(t *testing.T) {
 	t.Parallel()
 
@@ -185,13 +183,11 @@ func TestUpdateRoleRefusesPermissionsTheActorDoesNotHold(t *testing.T) {
 	}
 }
 
-/*
- * Binding is the shorter way round the same wall.
- *
- * `admin` already exists and already carries everything, so checking only the
- * authoring path would leave anyone with `rbac.manage` able to bind it to
- * themselves. This is that case.
- */
+// Binding is the shorter way round the same wall.
+//
+// `admin` already exists and already carries everything, so checking only the
+// authoring path would leave anyone with `rbac.manage` able to bind it to
+// themselves. This is that case.
 func TestCreateRoleBindingRefusesARoleBeyondTheActorsCeiling(t *testing.T) {
 	t.Parallel()
 

@@ -11,16 +11,14 @@ import (
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
-/*
- * The Pod template a typed workload create writes.
- *
- * Everything here belongs to `spec.template.spec` rather than to the controller,
- * so it is shared by all five workload types: a Deployment and a CronJob differ
- * in how Pods are produced, not in what a Pod is. Fields Kubernetes derives or
- * the platform owns — the selector, the restart policy, `zke.io/workload-id` —
- * stay out, and so do the ones with no bounded shape to validate: affinity,
- * topology spread and the rest of the security context are managed through YAML.
- */
+// The Pod template a typed workload create writes.
+//
+// Everything here belongs to `spec.template.spec` rather than to the controller,
+// so it is shared by all five workload types: a Deployment and a CronJob differ
+// in how Pods are produced, not in what a Pod is. Fields Kubernetes derives or
+// the platform owns — the selector, the restart policy, `zke.io/workload-id` —
+// stay out, and so do the ones with no bounded shape to validate: affinity,
+// topology spread and the rest of the security context are managed through YAML.
 
 const (
 	maxWorkloadEnvVars            = 100
@@ -36,13 +34,11 @@ const (
 	workloadDescriptionAnnotation = "zke.io/description"
 )
 
-/**
- * A single environment variable.
- *
- * A literal value and a reference are alternatives, never both: Kubernetes
- * rejects `value` together with `valueFrom`, and a form that accepted both would
- * have to decide which one wins.
- */
+// A single environment variable.
+//
+// A literal value and a reference are alternatives, never both: Kubernetes
+// rejects `value` together with `valueFrom`, and a form that accepted both would
+// have to decide which one wins.
 type WorkloadEnvVar struct {
 	Name            string                `json:"name"`
 	Value           string                `json:"value,omitempty"`
@@ -56,14 +52,12 @@ type WorkloadObjectKeyRef struct {
 	Optional *bool  `json:"optional,omitempty"`
 }
 
-/**
- * Compute the container asks for and may use.
- *
- * Kept as quantity maps rather than four named fields so extended resources —
- * `nvidia.com/gpu` and every other device plugin — need no new field and no new
- * release. The Console renders CPU and memory as their own inputs and puts GPUs
- * in the same map.
- */
+// Compute the container asks for and may use.
+//
+// Kept as quantity maps rather than four named fields so extended resources —
+// `nvidia.com/gpu` and every other device plugin — need no new field and no new
+// release. The Console renders CPU and memory as their own inputs and puts GPUs
+// in the same map.
 type WorkloadResourceRequirements struct {
 	Requests map[string]string `json:"requests,omitempty"`
 	Limits   map[string]string `json:"limits,omitempty"`
@@ -80,7 +74,7 @@ type WorkloadExecAction struct {
 	Command []string `json:"command"`
 }
 
-/** A port as Kubernetes accepts it: a number, or the name of a container port. */
+// A port as Kubernetes accepts it: a number, or the name of a container port.
 type WorkloadHTTPGetAction struct {
 	Path   string `json:"path,omitempty"`
 	Port   string `json:"port"`
@@ -129,13 +123,11 @@ type WorkloadConfigMapVolume struct {
 	Optional    *bool  `json:"optional,omitempty"`
 }
 
-/**
- * A Secret mounted as a volume.
- *
- * Only the reference travels: ZKE neither reads nor returns Secret contents, and
- * this names one for the kubelet to mount exactly as an Ingress names one for
- * TLS.
- */
+// A Secret mounted as a volume.
+//
+// Only the reference travels: ZKE neither reads nor returns Secret contents, and
+// this names one for the kubelet to mount exactly as an Ingress names one for
+// TLS.
 type WorkloadSecretVolume struct {
 	SecretName  string `json:"secret_name"`
 	DefaultMode *int32 `json:"default_mode,omitempty"`
@@ -153,7 +145,7 @@ type WorkloadNFSVolume struct {
 	ReadOnly bool   `json:"read_only,omitempty"`
 }
 
-/** Exactly one source is set; the Console picks it and the Server enforces it. */
+// Exactly one source is set; the Console picks it and the Server enforces it.
 type WorkloadVolume struct {
 	Name                  string                               `json:"name"`
 	EmptyDir              *WorkloadEmptyDirVolume              `json:"empty_dir,omitempty"`
@@ -303,13 +295,11 @@ func validWorkloadVolumeMounts(mounts []WorkloadVolumeMount) bool {
 	return true
 }
 
-/**
- * A subPath selects inside the volume it is mounted from.
- *
- * An absolute path or a `..` segment leaves that volume, which is both a
- * traversal the platform has no reason to pass on and something Kubernetes
- * rejects at admission anyway.
- */
+// A subPath selects inside the volume it is mounted from.
+//
+// An absolute path or a `..` segment leaves that volume, which is both a
+// traversal the platform has no reason to pass on and something Kubernetes
+// rejects at admission anyway.
 func validWorkloadSubPath(value string) bool {
 	return !strings.HasPrefix(value, "/") &&
 		!slices.Contains(strings.Split(value, "/"), "..")
@@ -393,7 +383,7 @@ func validWorkloadHTTPGetAction(action WorkloadHTTPGetAction) bool {
 		validWorkloadPath(action.Host, false)
 }
 
-/** A port number in range, or the name of a container port. */
+// A port number in range, or the name of a container port.
 func validWorkloadPort(value string) bool {
 	if value == "" {
 		return false
@@ -833,7 +823,7 @@ func workloadImagePullSecretSpec(names []string) []corev1.LocalObjectReference {
 	return result
 }
 
-/** The annotations written onto the workload, description included. */
+// The annotations written onto the workload, description included.
 func workloadAnnotations(annotations map[string]string, description string) map[string]string {
 	if len(annotations) == 0 && description == "" {
 		return nil
@@ -848,7 +838,7 @@ func workloadAnnotations(annotations map[string]string, description string) map[
 	return result
 }
 
-/** The volume names every container mounts, for the cross-check above. */
+// The volume names every container mounts, for the cross-check above.
 func workloadMountedVolumeNames(groups ...[]WorkloadContainerTemplate) map[string]struct{} {
 	names := make(map[string]struct{})
 	for _, group := range groups {

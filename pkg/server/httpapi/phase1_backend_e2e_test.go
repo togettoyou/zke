@@ -456,21 +456,19 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 		)
 	}
 
-	/*
-	 * A non-administrator walks into the routes it cannot pass.
-	 *
-	 * Everything above this point is done by the global administrator and is
-	 * therefore always allowed, so the vocabulary check further down had never
-	 * once seen a denial — which is precisely how permission names came to be
-	 * written into `action` with nothing noticing. One refusal per scope kind
-	 * exercises the middleware's global, Project and Cluster audit paths, plus
-	 * the audit query's own refusal, and puts their actions and target types in
-	 * front of the check that follows.
-	 *
-	 * Run before the RoleBinding and the user are deleted: the viewer needs a
-	 * live session and a binding that makes the Project and Cluster visible, so
-	 * that authorization refuses on the permission rather than on visibility.
-	 */
+	// A non-administrator walks into the routes it cannot pass.
+	//
+	// Everything above this point is done by the global administrator and is
+	// therefore always allowed, so the vocabulary check further down had never
+	// once seen a denial — which is precisely how permission names came to be
+	// written into `action` with nothing noticing. One refusal per scope kind
+	// exercises the middleware's global, Project and Cluster audit paths, plus
+	// the audit query's own refusal, and puts their actions and target types in
+	// front of the check that follows.
+	//
+	// Run before the RoleBinding and the user are deleted: the viewer needs a
+	// live session and a binding that makes the Project and Cluster visible, so
+	// that authorization refuses on the permission rather than on visibility.
 	viewerLogin := httptest.NewRecorder()
 	viewerLoginRequest := httptest.NewRequest(
 		http.MethodPost,
@@ -660,16 +658,14 @@ WHERE result = 'denied'
 		t.Fatal("Cluster-scoped audit query returned no events")
 	}
 
-	/*
-	 * Every action this run actually wrote must be in the published vocabulary.
-	 *
-	 * Several action names are embedded in the store's SQL rather than passed as
-	 * Go values, so nothing at compile time ties them to `auditaction`. The
-	 * Console builds its filter from that vocabulary and the filter is an exact
-	 * match, so an action missing from it is an action nobody can filter by —
-	 * and the omission is invisible until someone goes looking for those events.
-	 * This is the check that makes adding an action without publishing it fail.
-	 */
+	// Every action this run actually wrote must be in the published vocabulary.
+	//
+	// Several action names are embedded in the store's SQL rather than passed as
+	// Go values, so nothing at compile time ties them to `auditaction`. The
+	// Console builds its filter from that vocabulary and the filter is an exact
+	// match, so an action missing from it is an action nobody can filter by —
+	// and the omission is invisible until someone goes looking for those events.
+	// This is the check that makes adding an action without publishing it fail.
 	var recordedActions []string
 	rows, err := pool.Query(ctx, "SELECT DISTINCT action FROM audit_events ORDER BY action")
 	if err != nil {
@@ -804,13 +800,11 @@ SELECT
 		)
 	}
 
-	/*
-	 * And the audit trail outlived all of it, carrying the names.
-	 *
-	 * This is the whole reason the audit table holds no foreign keys: the ids
-	 * above now resolve to nothing, so without the names recorded at the time,
-	 * the record of who deleted what would be a row of dangling uuids.
-	 */
+	// And the audit trail outlived all of it, carrying the names.
+	//
+	// This is the whole reason the audit table holds no foreign keys: the ids
+	// above now resolve to nothing, so without the names recorded at the time,
+	// the record of who deleted what would be a row of dangling uuids.
 	var deletionName, deletionActor string
 	if err := pool.QueryRow(ctx, `
 SELECT COALESCE(target_name, ''), COALESCE(actor_user_name, '')

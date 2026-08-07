@@ -727,8 +727,8 @@ func kubernetesResourceErrorMappings() []errorMapping {
 		// 403 rather than 400: the rule is well formed, and the same rule from a
 		// caller holding the Secret permission would be written. What is missing
 		// is the permission being handed out, not the shape of the request.
-		{kubernetesresource.ErrSecretRuleForbidden, http.StatusForbidden, "secret_rule_forbidden", "规则授予了调用者未持有的 Secret 权限：读取需要 cluster.secret.read，写入需要 cluster.secret.manage"},
-		{kubernetesresource.ErrRoleRefForbidden, http.StatusForbidden, "role_ref_forbidden", "该绑定指向 ZKE Agent 自身的 ClusterRole，不能通过 ZKE 创建或追加主体"},
+		{kubernetesresource.ErrSecretRuleForbidden, http.StatusForbidden, "secret_rule_forbidden", "rule grants Secret access the caller does not hold: reading requires cluster.secret.read, writing requires cluster.secret.manage"},
+		{kubernetesresource.ErrRoleRefForbidden, http.StatusForbidden, "role_ref_forbidden", "binding refers to the Cluster Agent's own ClusterRole, which ZKE cannot create or add subjects to"},
 		{kubernetesresource.ErrResponseTooLarge, http.StatusBadGateway, "agent_response_too_large", "Agent response exceeded the configured limit"},
 		{kubernetesresource.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used for another Kubernetes resource request"},
 		{kubernetesresource.ErrUpstreamConflict, http.StatusConflict, "cluster_api_conflict", "Kubernetes resource changed during the request"},

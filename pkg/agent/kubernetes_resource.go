@@ -374,16 +374,14 @@ func resourceVerbName(verb agentv1.ResourceVerb) string {
 	}
 }
 
-/*
- * Why this Agent will not act on a request, or nil when it will.
- *
- * The reason travels to the Server as the response reason, and the Server maps
- * each one to an error of its own. That distinction matters at the far end: a
- * 403 the API Server returned is an RBAC gap an operator can close by granting
- * the Agent more, while these two are ZKE's own boundaries, which no amount of
- * Kubernetes permission will move. Reporting both as the same failure sends
- * whoever reads it to edit a ClusterRole that was never the problem.
- */
+// Why this Agent will not act on a request, or nil when it will.
+//
+// The reason travels to the Server as the response reason, and the Server maps
+// each one to an error of its own. That distinction matters at the far end: a
+// 403 the API Server returned is an RBAC gap an operator can close by granting
+// the Agent more, while these two are ZKE's own boundaries, which no amount of
+// Kubernetes permission will move. Reporting both as the same failure sends
+// whoever reads it to edit a ClusterRole that was never the problem.
 type resourceRefusal struct {
 	reason  string
 	message string
@@ -432,29 +430,25 @@ func supportedKubernetesResourceVerb(verb agentv1.ResourceVerb) bool {
 	}
 }
 
-/*
- * Kept out of the Discovery catalog.
- *
- * Neither is manageable through the generic resource API, and a catalog entry
- * for one would be an entry whose every request is refused. Secrets are
- * managed through their own API, which does not read this catalog.
- */
+// Kept out of the Discovery catalog.
+//
+// Neither is manageable through the generic resource API, and a catalog entry
+// for one would be an entry whose every request is refused. Secrets are
+// managed through their own API, which does not read this catalog.
 func hiddenFromKubernetesCatalog(group string, resource string) bool {
 	return group == "" && (resource == "secrets" || resource == "events")
 }
 
-/*
- * Whether this Agent will act on the resource at all, and if not, why.
- *
- * Two core resources are refused here as well as by the Server, so a Server
- * that asked for them — through a bug, or because it had been made to — still
- * gets nothing. Events have their own stream and never travel this one.
- *
- * Secrets are the exception, and only under the flag the Server's dedicated
- * Secret API sets: it is checked here rather than trusted from the Server
- * alone, which keeps the generic resource and YAML APIs unable to reach a
- * Secret no matter what they send.
- */
+// Whether this Agent will act on the resource at all, and if not, why.
+//
+// Two core resources are refused here as well as by the Server, so a Server
+// that asked for them — through a bug, or because it had been made to — still
+// gets nothing. Events have their own stream and never travel this one.
+//
+// Secrets are the exception, and only under the flag the Server's dedicated
+// Secret API sets: it is checked here rather than trusted from the Server
+// alone, which keeps the generic resource and YAML APIs unable to reach a
+// Secret no matter what they send.
 func refuseKubernetesResource(request *agentv1.ResourceRequest, identityNamespace string) *resourceRefusal {
 	resource := request.GetResource()
 	group, name := resource.GetGroup(), resource.GetResource()

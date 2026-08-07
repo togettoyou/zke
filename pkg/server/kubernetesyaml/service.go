@@ -31,25 +31,23 @@ type ResourceService interface {
 	) (map[string]any, error)
 }
 
-/*
- * The rules of a resource family that has an API of its own.
- *
- * A YAML document can say anything a typed form can, so a family whose typed
- * API refuses to write certain things has to refuse them here too — otherwise
- * the editor is a way around its own guard rails rather than a way to reach the
- * fields the form does not model. It is given both the object as it exists and
- * the object as submitted, because some of these rules are about the change
- * rather than about either state: a Secret may keep the type it has and may not
- * be given another one.
- *
- * Called after the identity check and before anything is sent, so a refusal
- * costs no write and no round trip to the Cluster.
- *
- * The third argument is what the caller may hand out about Secrets, resolved per
- * request rather than at construction: a Kubernetes PolicyRule is a way to give
- * somebody else access, and whether this manifest may do that depends on who is
- * submitting it. Guards that grant nothing ignore it.
- */
+// The rules of a resource family that has an API of its own.
+//
+// A YAML document can say anything a typed form can, so a family whose typed
+// API refuses to write certain things has to refuse them here too — otherwise
+// the editor is a way around its own guard rails rather than a way to reach the
+// fields the form does not model. It is given both the object as it exists and
+// the object as submitted, because some of these rules are about the change
+// rather than about either state: a Secret may keep the type it has and may not
+// be given another one.
+//
+// Called after the identity check and before anything is sent, so a refusal
+// costs no write and no round trip to the Cluster.
+//
+// The third argument is what the caller may hand out about Secrets, resolved per
+// request rather than at construction: a Kubernetes PolicyRule is a way to give
+// somebody else access, and whether this manifest may do that depends on who is
+// submitting it. Guards that grant nothing ignore it.
 type ManifestGuard func(
 	current map[string]any,
 	submitted map[string]any,

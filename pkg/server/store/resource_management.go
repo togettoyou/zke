@@ -167,18 +167,16 @@ func (store *ResourceManagementStore) CreateTenant(
 	}
 	defer rollbackTransaction(transaction)
 
-	/*
-	 * `ON CONFLICT DO NOTHING` rather than letting the unique index raise.
-	 *
-	 * A taken name has to be told apart from a replayed submission, and a replay
-	 * arrives here as a duplicate name: the idempotency record cannot be written
-	 * before the Tenant it references, so the first thing a retry does is insert
-	 * the same name again. Letting that raise would abort the transaction before
-	 * the replay could be recognised, and the operator would be told the name is
-	 * taken by the very Tenant their retry created. Absorbing the conflict keeps
-	 * the transaction usable, and the three reasons this can return no row are
-	 * separated below.
-	 */
+	// `ON CONFLICT DO NOTHING` rather than letting the unique index raise.
+	//
+	// A taken name has to be told apart from a replayed submission, and a replay
+	// arrives here as a duplicate name: the idempotency record cannot be written
+	// before the Tenant it references, so the first thing a retry does is insert
+	// the same name again. Letting that raise would abort the transaction before
+	// the replay could be recognised, and the operator would be told the name is
+	// taken by the very Tenant their retry created. Absorbing the conflict keeps
+	// the transaction usable, and the three reasons this can return no row are
+	// separated below.
 	var created TenantResource
 	err = transaction.QueryRow(ctx, `
 INSERT INTO tenants (id, name, status, created_at, updated_at)

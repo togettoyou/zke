@@ -12,10 +12,8 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
 )
 
-/*
- * The family and its scope come from the path, and both are resolved before the
- * request is accepted.
- */
+// The family and its scope come from the path, and both are resolved before the
+// request is accepted.
 func TestKubernetesAuthorizationYAMLHandlerResolvesTheTargetFromThePath(t *testing.T) {
 	t.Parallel()
 
@@ -56,14 +54,12 @@ func TestKubernetesAuthorizationYAMLHandlerResolvesTheTargetFromThePath(t *testi
 	}
 }
 
-/*
- * A scope the family does not have names no object.
- *
- * A ClusterRole asked for inside a Namespace, or a Role asked for without one,
- * would otherwise be resolved against whichever the URL happened to carry — and
- * an authorization object read or written in the wrong scope is not a near
- * miss, it is a different grant.
- */
+// A scope the family does not have names no object.
+//
+// A ClusterRole asked for inside a Namespace, or a Role asked for without one,
+// would otherwise be resolved against whichever the URL happened to carry — and
+// an authorization object read or written in the wrong scope is not a near
+// miss, it is a different grant.
 func TestKubernetesAuthorizationYAMLHandlerRefusesAMismatchedScope(t *testing.T) {
 	t.Parallel()
 

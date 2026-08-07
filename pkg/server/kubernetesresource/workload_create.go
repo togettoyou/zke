@@ -28,14 +28,12 @@ const (
 	maxCronJobNameLength = 52
 )
 
-/*
- * One container of the typed Pod template.
- *
- * The same shape in both directions: a detail response returns the containers
- * in these fields, and an update submits them back. A form that reads one shape
- * and writes another has to map between them twice, and every field missing
- * from the read side silently becomes a field the form deletes on save.
- */
+// One container of the typed Pod template.
+//
+// The same shape in both directions: a detail response returns the containers
+// in these fields, and an update submits them back. A form that reads one shape
+// and writes another has to map between them twice, and every field missing
+// from the read side silently becomes a field the form deletes on save.
 type WorkloadContainerTemplate struct {
 	Name            string                        `json:"name"`
 	Image           string                        `json:"image"`
@@ -52,14 +50,12 @@ type WorkloadContainerTemplate struct {
 	Privileged      *bool                         `json:"privileged,omitempty"`
 }
 
-/*
- * The part of a workload this platform models, submitted the same way whether
- * the object is being created or edited.
- *
- * One definition rather than two because an edit form is the create form on an
- * existing object: a field that only one of them accepted would be a field an
- * operator can set once and never correct, or correct but never set.
- */
+// The part of a workload this platform models, submitted the same way whether
+// the object is being created or edited.
+//
+// One definition rather than two because an edit form is the create form on an
+// existing object: a field that only one of them accepted would be a field an
+// operator can set once and never correct, or correct but never set.
 type WorkloadSpecInput struct {
 	Labels         map[string]string
 	Annotations    map[string]string
@@ -181,7 +177,7 @@ func validateCreateWorkloadInput(input CreateWorkloadInput) error {
 	return nil
 }
 
-/** Namespace, name and the name length the type imposes on it. */
+// Namespace, name and the name length the type imposes on it.
 func validWorkloadTarget(namespace string, name string, resource WorkloadResource) bool {
 	if len(k8svalidation.IsDNS1123Label(namespace)) != 0 ||
 		len(k8svalidation.IsDNS1123Subdomain(name)) != 0 {
@@ -197,7 +193,7 @@ func validWorkloadTarget(namespace string, name string, resource WorkloadResourc
 	}
 }
 
-/** Everything a create and an update validate the same way. */
+// Everything a create and an update validate the same way.
 func validWorkloadSpecFields(spec WorkloadSpecInput) bool {
 	_, hasReservedSelectorLabel := spec.Labels[workloadSelectorLabel]
 	return validNamespaceLabels(spec.Labels) &&

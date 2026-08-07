@@ -54,7 +54,7 @@ type GetResourceInput struct {
 	Resource  ResourceIdentity
 	Namespace string
 	Name      string
-	/** See ListResourcesInput.secretAccess. */
+	// See ListResourcesInput.secretAccess.
 	secretAccess bool
 }
 
@@ -72,7 +72,7 @@ type CreateResourceInput struct {
 	Options        MutationOptions
 	Confirm        bool
 	IdempotencyKey string
-	/** See ListResourcesInput.secretAccess. */
+	// See ListResourcesInput.secretAccess.
 	secretAccess bool
 }
 
@@ -85,7 +85,7 @@ type UpdateResourceInput struct {
 	Options        MutationOptions
 	Confirm        bool
 	IdempotencyKey string
-	/** See ListResourcesInput.secretAccess. */
+	// See ListResourcesInput.secretAccess.
 	secretAccess bool
 }
 
@@ -117,7 +117,7 @@ type DeleteResourceInput struct {
 	Propagation        agentv1.DeletePropagation
 	Preconditions      DeletePreconditions
 	IdempotencyKey     string
-	/** See ListResourcesInput.secretAccess. */
+	// See ListResourcesInput.secretAccess.
 	secretAccess bool
 }
 
@@ -831,15 +831,13 @@ func validPathSegment(value string) bool {
 		!strings.ContainsAny(value, "/?#")
 }
 
-/*
- * Resources the generic path will not touch.
- *
- * Events have their own API and their own stream. Secrets have their own API
- * too, and it reaches this layer with `secretAccess` set — which is why the
- * checks below take that flag rather than calling this directly for a Secret.
- * A caller outside this package cannot set it, so there is no request shape
- * the generic resource or YAML endpoints can build that gets past here.
- */
+// Resources the generic path will not touch.
+//
+// Events have their own API and their own stream. Secrets have their own API
+// too, and it reaches this layer with `secretAccess` set — which is why the
+// checks below take that flag rather than calling this directly for a Secret.
+// A caller outside this package cannot set it, so there is no request shape
+// the generic resource or YAML endpoints can build that gets past here.
 func sensitiveResource(group string, resource string) bool {
 	return group == "" && (resource == "secrets" || resource == "events")
 }

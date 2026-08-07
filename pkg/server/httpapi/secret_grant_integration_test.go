@@ -16,18 +16,16 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store"
 )
 
-/*
- * The Secret grant a Kubernetes RBAC write is allowed to hand out.
- *
- * A PolicyRule mentioning `secrets` gives every subject bound to the role what
- * `cluster.secret.read` gives its holder, so writing one requires holding it.
- * The rule itself is unit-tested; what this covers is the wiring — that the
- * middleware resolves the caller's real bindings on the target Cluster, and that
- * holding `cluster.rbac.manage` alone resolves to no grant at all.
- *
- * Custom roles are what make the case expressible: before them, no role could
- * carry `cluster.rbac.manage` without also carrying every Secret permission.
- */
+// The Secret grant a Kubernetes RBAC write is allowed to hand out.
+//
+// A PolicyRule mentioning `secrets` gives every subject bound to the role what
+// `cluster.secret.read` gives its holder, so writing one requires holding it.
+// The rule itself is unit-tested; what this covers is the wiring — that the
+// middleware resolves the caller's real bindings on the target Cluster, and that
+// holding `cluster.rbac.manage` alone resolves to no grant at all.
+//
+// Custom roles are what make the case expressible: before them, no role could
+// carry `cluster.rbac.manage` without also carrying every Secret permission.
 func TestResolveClusterSecretGrantReflectsTheCallersBindings(t *testing.T) {
 	databaseURL := requireHTTPTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

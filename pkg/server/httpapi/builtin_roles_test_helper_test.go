@@ -11,15 +11,13 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
-/*
- * applyMigrations prepares a test database the way the Server prepares a real
- * one: the schema, and then the roles the Server defines.
- *
- * The schema seeds no roles — `admin` means "every permission the Server knows",
- * which only the Server can state — so a test that applied only the migration
- * would have a database in which no RoleBinding can exist, and the initial
- * administrator could not be bootstrapped.
- */
+// applyMigrations prepares a test database the way the Server prepares a real
+// one: the schema, and then the roles the Server defines.
+//
+// The schema seeds no roles — `admin` means "every permission the Server knows",
+// which only the Server can state — so a test that applied only the migration
+// would have a database in which no RoleBinding can exist, and the initial
+// administrator could not be bootstrapped.
 func applyMigrations(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 

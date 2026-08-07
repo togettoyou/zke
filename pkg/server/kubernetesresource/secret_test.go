@@ -242,16 +242,14 @@ func TestCreateSecretRejectsPlatformLabelAndTokenType(t *testing.T) {
 	}
 }
 
-/*
- * The YAML access is the Secret service's, not a general one pointed at
- * Secrets.
- *
- * It reaches a Secret because it goes through the same read the typed API uses,
- * which is also what keeps ZKE's own Secrets out of it. Anything that is not a
- * Secret is refused outright: this access exists to serve one endpoint, and an
- * accessor that would fetch a Deployment if asked is one that has to be trusted
- * rather than one that cannot be misused.
- */
+// The YAML access is the Secret service's, not a general one pointed at
+// Secrets.
+//
+// It reaches a Secret because it goes through the same read the typed API uses,
+// which is also what keeps ZKE's own Secrets out of it. Anything that is not a
+// Secret is refused outright: this access exists to serve one endpoint, and an
+// accessor that would fetch a Deployment if asked is one that has to be trusted
+// rather than one that cannot be misused.
 func TestSecretYAMLAccessStaysOnSecretsAndRefusesTheseOfZKE(t *testing.T) {
 	t.Parallel()
 

@@ -13,22 +13,20 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
 )
 
-/*
- * YAML for one Secret.
- *
- * A route of its own, under `cluster.secret.read` and `cluster.secret.manage`,
- * for the same reason the typed Secret API has its own: reading configuration
- * and reading credentials are different asks. The generic YAML endpoint still
- * refuses `core/v1 Secret` outright, and the Agent still refuses one that does
- * not carry the Secret API's flag — this handler reaches a Secret because it
- * runs over the Secret service's own access, not because the refusal was
- * relaxed.
- *
- * What the document carries is every value in the Secret, Base64-encoded as
- * Kubernetes stores it. That is a larger exposure than the detail page, which
- * masks each value until it is asked for, and it is why the Console names it
- * before opening this.
- */
+// YAML for one Secret.
+//
+// A route of its own, under `cluster.secret.read` and `cluster.secret.manage`,
+// for the same reason the typed Secret API has its own: reading configuration
+// and reading credentials are different asks. The generic YAML endpoint still
+// refuses `core/v1 Secret` outright, and the Agent still refuses one that does
+// not carry the Secret API's flag — this handler reaches a Secret because it
+// runs over the Secret service's own access, not because the refusal was
+// relaxed.
+//
+// What the document carries is every value in the Secret, Base64-encoded as
+// Kubernetes stores it. That is a larger exposure than the detail page, which
+// masks each value until it is asked for, and it is why the Console names it
+// before opening this.
 type kubernetesSecretYAMLHandler struct {
 	kubernetesYAMLHandler
 }

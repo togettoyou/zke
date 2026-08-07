@@ -108,35 +108,33 @@ func (store *AuthStore) RecordLoginFailure(
 		var status string
 		var newlyLocked bool
 		var lockWithheld bool
-		/*
-		 * `lockable` is the last-global-administrator carve-out.
-		 *
-		 * Account lockout is a denial-of-service primitive pointed at a known
-		 * username: five wrong passwords take the account off the air for the
-		 * lock duration, revoke its live sessions, and refuse even the correct
-		 * password until it expires. For every other account that is the right
-		 * trade. For the only remaining global administrator it is not — there
-		 * is no second administrator to call `POST /users/{id}/unlock`, the
-		 * initial-admin bootstrap only runs against an empty users table, and
-		 * the deployment is left with no way back in short of the database.
-		 *
-		 * The repository already holds the matching invariant on the other side:
-		 * the last active global administrator cannot be deleted or unbound
-		 * (`ensureNotLastGlobalAdmin`). Locking one out costs exactly what
-		 * removing one costs, so it is refused on the same grounds and asks the
-		 * same question: who holds the builtin `admin` role at global scope.
-		 *
-		 * Evaluated as a CTE inside the same statement, so the decision and the
-		 * write cannot be separated by a concurrent binding change. No advisory
-		 * lock: this runs on every failed login, which is precisely when an
-		 * attack is in progress, and serialising the whole failure path behind
-		 * one lock would hand over a second denial of service.
-		 *
-		 * What is NOT withheld: the failure still counts, the audit event is
-		 * still written, and the per-account rate limit still admits at most
-		 * `max_attempts_per_account` tries per window. The account stays
-		 * reachable and stays throttled.
-		 */
+		// `lockable` is the last-global-administrator carve-out.
+		//
+		// Account lockout is a denial-of-service primitive pointed at a known
+		// username: five wrong passwords take the account off the air for the
+		// lock duration, revoke its live sessions, and refuse even the correct
+		// password until it expires. For every other account that is the right
+		// trade. For the only remaining global administrator it is not — there
+		// is no second administrator to call `POST /users/{id}/unlock`, the
+		// initial-admin bootstrap only runs against an empty users table, and
+		// the deployment is left with no way back in short of the database.
+		//
+		// The repository already holds the matching invariant on the other side:
+		// the last active global administrator cannot be deleted or unbound
+		// (`ensureNotLastGlobalAdmin`). Locking one out costs exactly what
+		// removing one costs, so it is refused on the same grounds and asks the
+		// same question: who holds the builtin `admin` role at global scope.
+		//
+		// Evaluated as a CTE inside the same statement, so the decision and the
+		// write cannot be separated by a concurrent binding change. No advisory
+		// lock: this runs on every failed login, which is precisely when an
+		// attack is in progress, and serialising the whole failure path behind
+		// one lock would hand over a second denial of service.
+		//
+		// What is NOT withheld: the failure still counts, the audit event is
+		// still written, and the per-account rate limit still admits at most
+		// `max_attempts_per_account` tries per window. The account stays
+		// reachable and stays throttled.
 		err = transaction.QueryRow(ctx, `
 WITH administrators AS (
     SELECT DISTINCT users.id
@@ -231,17 +229,15 @@ VALUES (
 				return fmt.Errorf("audit persistent account lock: %w", err)
 			}
 		}
-		/*
-		 * A control deliberately not applied has to leave a trace, or the only
-		 * evidence that the last administrator is under sustained attack is a
-		 * counter on a screen nobody is looking at.
-		 *
-		 * Written once per episode, on the attempt that crosses the threshold:
-		 * the counter keeps climbing past it and only a successful login clears
-		 * it, so the condition cannot hold twice without the account recovering
-		 * in between. Auditing every attempt past the threshold would let the
-		 * attacker choose how fast the audit table grows.
-		 */
+		// A control deliberately not applied has to leave a trace, or the only
+		// evidence that the last administrator is under sustained attack is a
+		// counter on a screen nobody is looking at.
+		//
+		// Written once per episode, on the attempt that crosses the threshold:
+		// the counter keeps climbing past it and only a successful login clears
+		// it, so the condition cannot hold twice without the account recovering
+		// in between. Auditing every attempt past the threshold would let the
+		// attacker choose how fast the audit table grows.
 		if lockWithheld {
 			if _, err := transaction.Exec(ctx, `
 INSERT INTO audit_events (

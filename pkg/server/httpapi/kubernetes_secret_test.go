@@ -52,16 +52,14 @@ func (service *fakeKubernetesSecretService) DeleteSecret(
 	return service.err
 }
 
-/*
- * Refusals that are ZKE's own, reported as such.
- *
- * Both of these were answered with a 5xx before: one as a Kubernetes API
- * failure, the other as an unmapped internal error. That status is wrong twice
- * over — the request was understood and will never be served, and a 5xx is what
- * the Console retries. An operator was shown three attempts, a "加载失败" and a
- * message blaming the Agent's Kubernetes permissions for a rule no permission
- * reaches.
- */
+// Refusals that are ZKE's own, reported as such.
+//
+// Both of these were answered with a 5xx before: one as a Kubernetes API
+// failure, the other as an unmapped internal error. That status is wrong twice
+// over — the request was understood and will never be served, and a 5xx is what
+// the Console retries. An operator was shown three attempts, a "加载失败" and a
+// message blaming the Agent's Kubernetes permissions for a rule no permission
+// reaches.
 func TestKubernetesSecretHandlerReportsPlatformRefusalsAsForbidden(t *testing.T) {
 	t.Parallel()
 

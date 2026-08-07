@@ -445,15 +445,13 @@ func (service *Service) CreateRoleBinding(
 		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
 		return CreateRoleBindingResult{}, ErrInvalidInput
 	}
-	/*
-	 * Binding is subject to the same ceiling as authoring.
-	 *
-	 * Checking only the create-a-role path would leave the shorter way round
-	 * wide open: `admin` already exists and already carries everything, so
-	 * anyone holding `rbac.manage` could bind it to themselves and be done. The
-	 * question is not who wrote the permission set but who is about to hand it
-	 * out, and the answer has to be the same either way.
-	 */
+	// Binding is subject to the same ceiling as authoring.
+	//
+	// Checking only the create-a-role path would leave the shorter way round
+	// wide open: `admin` already exists and already carries everything, so
+	// anyone holding `rbac.manage` could bind it to themselves and be done. The
+	// question is not who wrote the permission set but who is about to hand it
+	// out, and the answer has to be the same either way.
 	role, err := service.store.FindRoleByName(ctx, input.Role)
 	if errors.Is(err, store.ErrRoleNotFound) {
 		return CreateRoleBindingResult{}, ErrNotFound
@@ -613,23 +611,21 @@ func validRoleScope(
 	}
 }
 
-/*
- * Reports the effective lock state, not the stored one.
- *
- * A lock is expired lazily: the row keeps `status = 'locked'` and its elapsed
- * `lock_expires_at` until the next login attempt rewrites them. Passing that
- * through tells every reader the account cannot sign in during a window where
- * `auth.Service.Login` would in fact admit it — the API would be describing a
- * state the rest of the Server no longer believes in, and a Console rendering it
- * faithfully ends up printing "锁定至 7 秒前".
- *
- * The condition mirrors `lockActive` in the login path exactly, including the
- * nil case: a `locked` row with no expiry is not holding anyone out, so it is
- * not reported as holding anyone out.
- *
- * The failure counter is deliberately left alone. It is cleared by a successful
- * login, and until then it is the only visible evidence of what happened.
- */
+// Reports the effective lock state, not the stored one.
+//
+// A lock is expired lazily: the row keeps `status = 'locked'` and its elapsed
+// `lock_expires_at` until the next login attempt rewrites them. Passing that
+// through tells every reader the account cannot sign in during a window where
+// `auth.Service.Login` would in fact admit it — the API would be describing a
+// state the rest of the Server no longer believes in, and a Console rendering it
+// faithfully ends up printing "锁定至 7 秒前".
+//
+// The condition mirrors `lockActive` in the login path exactly, including the
+// nil case: a `locked` row with no expiry is not holding anyone out, so it is
+// not reported as holding anyone out.
+//
+// The failure counter is deliberately left alone. It is cleared by a successful
+// login, and until then it is the only visible evidence of what happened.
 func userFromStore(item store.ManagedUser, now time.Time) User {
 	status := item.Status
 	lockedAt := item.LockedAt

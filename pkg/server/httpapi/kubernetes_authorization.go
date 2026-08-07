@@ -64,14 +64,12 @@ func newKubernetesAuthorizationHandler(logger *slog.Logger, service kubernetesAu
 	return &kubernetesAuthorizationHandler{baseHandler: newBaseHandler(logger, auditService, operationTimeout), service: service}
 }
 
-/*
- * What this caller may hand out about Secrets.
- *
- * Resolved by the middleware on the write routes and read here. A request that
- * never ran it — a handler reached some other way, a test wiring one route by
- * hand — reports no grant at all, so the rule check refuses Secret access rather
- * than waving it through on a missing value.
- */
+// What this caller may hand out about Secrets.
+//
+// Resolved by the middleware on the write routes and read here. A request that
+// never ran it — a handler reached some other way, a test wiring one route by
+// hand — reports no grant at all, so the rule check refuses Secret access rather
+// than waving it through on a missing value.
 func callerSecretGrant(c *gin.Context) kubernetesresource.SecretRuleGrant {
 	grant := httpmiddleware.ClusterSecretGrant(c)
 	return kubernetesresource.SecretRuleGrant{

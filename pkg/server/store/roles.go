@@ -12,15 +12,13 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
-/*
- * Roles as rows.
- *
- * A role is a named permission set that bindings point at, so every write here
- * changes what somebody can already do — without touching their bindings. That
- * is why each one is a transaction with an audit row, and why the two builtin
- * roles are refused by the same rules rather than by a check the caller has to
- * remember.
- */
+// Roles as rows.
+//
+// A role is a named permission set that bindings point at, so every write here
+// changes what somebody can already do — without touching their bindings. That
+// is why each one is a transaction with an audit row, and why the two builtin
+// roles are refused by the same rules rather than by a check the caller has to
+// remember.
 
 // roleColumnsSQL is shared by every read so a role has one shape. The binding
 // count is a correlated subquery rather than a join with GROUP BY, because the
@@ -55,21 +53,19 @@ WHERE ($1 = '' OR ($1 = 'true') = roles.builtin)
   )
 `
 
-/*
- * EnsureBuiltinRoles brings the builtin roles into line with the Server's own
- * definition.
- *
- * This is the only thing that writes them. The schema creates an empty `roles`
- * table and seeds nothing: `admin` means "every permission the Server knows",
- * which is a statement about the permission list rather than a list of its own,
- * and a copy of it in SQL would go stale the first time a permission was added.
- * So the rows are inserted here, at startup, before anything can authorize
- * against them and before the initial administrator is bound to one.
- *
- * Only builtin rows are touched, and only by name. An operator's role is never
- * rewritten from here, and a name collision cannot happen because the API
- * refuses to create a role called `admin` or `viewer`.
- */
+// EnsureBuiltinRoles brings the builtin roles into line with the Server's own
+// definition.
+//
+// This is the only thing that writes them. The schema creates an empty `roles`
+// table and seeds nothing: `admin` means "every permission the Server knows",
+// which is a statement about the permission list rather than a list of its own,
+// and a copy of it in SQL would go stale the first time a permission was added.
+// So the rows are inserted here, at startup, before anything can authorize
+// against them and before the initial administrator is bound to one.
+//
+// Only builtin rows are touched, and only by name. An operator's role is never
+// rewritten from here, and a name collision cannot happen because the API
+// refuses to create a role called `admin` or `viewer`.
 func (store *AccessManagementStore) EnsureBuiltinRoles(
 	ctx context.Context,
 	roles []BuiltinRoleDefinition,
@@ -236,18 +232,16 @@ SELECT`+roleColumnsSQL+`FROM created AS roles
 	return item, nil
 }
 
-/*
- * UpdateRole replaces a role's editable fields.
- *
- * `name` is not among them. It is what bindings store and what audit rows
- * already recorded, so rewriting it would change what a historical record
- * appears to say about a role that no longer has that name. The display name is
- * the one an operator renames.
- *
- * The builtin guard is in the statement rather than in a read before it: a
- * separate check would leave a window in which the row could be reconciled
- * between the two, and the API would report a success the database refused.
- */
+// UpdateRole replaces a role's editable fields.
+//
+// `name` is not among them. It is what bindings store and what audit rows
+// already recorded, so rewriting it would change what a historical record
+// appears to say about a role that no longer has that name. The display name is
+// the one an operator renames.
+//
+// The builtin guard is in the statement rather than in a read before it: a
+// separate check would leave a window in which the row could be reconciled
+// between the two, and the API would report a success the database refused.
 func (store *AccessManagementStore) UpdateRole(
 	ctx context.Context,
 	input UpdateManagedRoleParams,
@@ -299,15 +293,13 @@ SELECT`+roleColumnsSQL+`FROM updated AS roles
 	return item, nil
 }
 
-/*
- * DeleteRole removes a role nobody holds.
- *
- * The binding count is read inside the transaction and the foreign key stands
- * behind it: between the two, a role that gains a binding while it is being
- * deleted is refused rather than deleted out from under whoever holds it. The
- * count is what produces the useful error; the constraint is what makes the
- * answer true.
- */
+// DeleteRole removes a role nobody holds.
+//
+// The binding count is read inside the transaction and the foreign key stands
+// behind it: between the two, a role that gains a binding while it is being
+// deleted is refused rather than deleted out from under whoever holds it. The
+// count is what produces the useful error; the constraint is what makes the
+// answer true.
 func (store *AccessManagementStore) DeleteRole(
 	ctx context.Context,
 	input DeleteManagedRoleParams,
