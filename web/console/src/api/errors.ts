@@ -137,6 +137,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   role_in_use: "角色仍被绑定，请先删除相关绑定",
   self_disable_forbidden: "不能禁用当前登录的账号",
   self_delete_forbidden: "不能删除当前登录的账号",
+  self_unbind_forbidden: "不能删除授予当前登录账号的权限绑定，请由其他管理员操作",
   token_rejected: "凭证无效或已被使用",
   credential_rejected: "接入凭证已失效或被撤销",
 

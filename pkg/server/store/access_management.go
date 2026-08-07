@@ -336,6 +336,16 @@ func (store *AccessManagementStore) UnlockUser(
 	} else if err != nil {
 		return ManagedUser{}, fmt.Errorf("lock managed user for unlock: %w", err)
 	}
+	// Unlocking is a recovery action, and on an administrator's account it is
+	// also the way to keep guessing: lockout is what ends a run of password
+	// attempts, and clearing it from outside the group hands that run back. The
+	// per-account rate limit still applies either way; this is the barrier it
+	// sits behind, not a replacement for it.
+	if err := ensureGlobalAdminTargetAllowed(
+		ctx, transaction, input.ActorUserID, input.UserID,
+	); err != nil {
+		return ManagedUser{}, err
+	}
 	if status != "locked" {
 		return ManagedUser{}, ErrAccessStateConflict
 	}
@@ -386,6 +396,13 @@ func (store *AccessManagementStore) ResetUserPassword(
 		return ManagedUser{}, ErrAccessUserNotFound
 	} else if err != nil {
 		return ManagedUser{}, fmt.Errorf("lock managed user for password reset: %w", err)
+	}
+	// Before the state check, not after: who may act on this account is settled
+	// ahead of what state the account happens to be in.
+	if err := ensureGlobalAdminTargetAllowed(
+		ctx, transaction, input.ActorUserID, input.UserID,
+	); err != nil {
+		return ManagedUser{}, err
 	}
 	if status == "disabled" {
 		return ManagedUser{}, ErrAccessStateConflict
@@ -622,6 +639,13 @@ FOR UPDATE OF role_bindings
 	if err != nil {
 		return ManagedRoleBinding{}, fmt.Errorf("lock role binding deletion: %w", err)
 	}
+	// Checked before the administrator rule, because it is the more specific
+	// account of what happened: an administrator unbinding themselves is told
+	// they cannot unbind themselves, rather than that one administrator must
+	// remain.
+	if item.SubjectID == input.ActorUserID {
+		return ManagedRoleBinding{}, ErrSelfUnbind
+	}
 	if item.Role == "admin" && item.ScopeType == "global" {
 		if err := ensureNotLastGlobalAdmin(ctx, transaction, input.ActorUserID, item.SubjectID); err != nil {
 			return ManagedRoleBinding{}, err
@@ -742,14 +766,101 @@ func ensureNotLastGlobalAdmin(
 	actorUserID string,
 	userID string,
 ) error {
-	if err := lockGlobalAdministratorInvariant(ctx, transaction); err != nil {
+	facts, err := readGlobalAdministrators(ctx, transaction, actorUserID, userID)
+	if err != nil {
 		return err
 	}
-	var targetIsAdmin, actorIsAdmin bool
-	var administrators int
+	if !facts.targetIsAdmin {
+		return nil
+	}
+	if !facts.actorIsAdmin {
+		return ErrGlobalAdminRequired
+	}
+	// Only an administrator who is currently counted can be the last one. A
+	// locked or disabled administrator is already not holding the install up, so
+	// removing them takes nothing away from the count and the second rule has
+	// nothing to refuse.
+	if facts.targetIsActiveAdmin && facts.administrators <= 1 {
+		return ErrLastGlobalAdmin
+	}
+	return nil
+}
+
+// Refuses taking over a global administrator's account from outside the group.
+//
+// The membership half of the rule above, without the count. Seizing an account
+// is not removing it, so "one must always remain" has nothing to say here —
+// but "only a global administrator may touch one" has everything to say, and
+// this is the operation that most needed it and least had it.
+//
+// A password reset hands the account to whoever asked for it. Every guard on
+// becoming a global administrator watches role bindings: `admin` may only be
+// granted by an administrator, an administrator may only be unbound by another
+// one, and no role may carry more than its author holds. None of them is
+// looking at the password. `user.manage` alone was therefore the whole ladder —
+// reset the administrator's password, sign in as them, and arrive with every
+// permission there is, holding no binding that any of those checks would ever
+// see.
+//
+// Sessions are revoked by the reset itself, so the real administrator is signed
+// out at the same moment. Discovering the takeover means noticing an audit row
+// among the ordinary helpdesk traffic that looks exactly like a password reset,
+// because that is what it is.
+func ensureGlobalAdminTargetAllowed(
+	ctx context.Context,
+	transaction pgx.Tx,
+	actorUserID string,
+	userID string,
+) error {
+	facts, err := readGlobalAdministrators(ctx, transaction, actorUserID, userID)
+	if err != nil {
+		return err
+	}
+	if !facts.targetIsAdmin || facts.actorIsAdmin {
+		return nil
+	}
+	return ErrGlobalAdminRequired
+}
+
+// What both guards need to know, read once under the invariant lock.
+//
+// Two questions, not one, and the difference is `users.status`.
+//
+// "How many are left" is about who can still sign in, so it counts active
+// accounts only — a locked or disabled administrator is not holding the install
+// up. "Is this an administrator's account" is not: the binding is what makes the
+// account worth seizing, and it survives the account being locked. Asking the
+// active-only question on the target side left a hole shaped exactly like the
+// lockout: five wrong passwords take an administrator off `active`, and every
+// guard keyed on that set then agreed the account was an ordinary one.
+type globalAdministratorFacts struct {
+	// Holds the builtin role at global scope, whatever state the account is in.
+	targetIsAdmin bool
+	// ... and is active, so counts towards the administrators below.
+	targetIsActiveAdmin bool
+	actorIsAdmin        bool
+	administrators      int
+}
+
+func readGlobalAdministrators(
+	ctx context.Context,
+	transaction pgx.Tx,
+	actorUserID string,
+	userID string,
+) (globalAdministratorFacts, error) {
+	if err := lockGlobalAdministratorInvariant(ctx, transaction); err != nil {
+		return globalAdministratorFacts{}, err
+	}
+	var facts globalAdministratorFacts
 	if err := transaction.QueryRow(ctx, `
 WITH administrators AS (`+globalAdministratorsSQL+`)
 SELECT
+    EXISTS (
+        SELECT 1 FROM role_bindings
+        WHERE role_bindings.subject_id = $2
+          AND role_bindings.scope_type = 'global'
+          AND role_bindings.role = $1
+    ),
     EXISTS (SELECT 1 FROM administrators WHERE id = $2),
     EXISTS (SELECT 1 FROM administrators WHERE id = $3),
     (SELECT count(*) FROM administrators)
@@ -757,19 +868,17 @@ SELECT
 		globalAdminRoleName,
 		userID,
 		actorUserID,
-	).Scan(&targetIsAdmin, &actorIsAdmin, &administrators); err != nil {
-		return fmt.Errorf("check global administrator invariant: %w", err)
+	).Scan(
+		&facts.targetIsAdmin,
+		&facts.targetIsActiveAdmin,
+		&facts.actorIsAdmin,
+		&facts.administrators,
+	); err != nil {
+		return globalAdministratorFacts{}, fmt.Errorf(
+			"check global administrator invariant: %w", err,
+		)
 	}
-	if !targetIsAdmin {
-		return nil
-	}
-	if !actorIsAdmin {
-		return ErrGlobalAdminRequired
-	}
-	if administrators <= 1 {
-		return ErrLastGlobalAdmin
-	}
-	return nil
+	return facts, nil
 }
 
 // Refuses granting the builtin role to anyone but by a global administrator.

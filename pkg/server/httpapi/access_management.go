@@ -29,6 +29,7 @@ var accessManagementErrors = []errorMapping{
 	{accessmanagement.ErrNotFound, http.StatusNotFound, "not_found", "access management target not found"},
 	{accessmanagement.ErrSelfDisable, http.StatusConflict, "self_disable_forbidden", "the authenticated user cannot disable itself"},
 	{accessmanagement.ErrSelfDelete, http.StatusConflict, "self_delete_forbidden", "the authenticated user cannot delete itself"},
+	{accessmanagement.ErrSelfUnbind, http.StatusConflict, "self_unbind_forbidden", "the authenticated user cannot delete its own role binding"},
 	{accessmanagement.ErrLastAdmin, http.StatusConflict, "last_global_admin", "the last active global administrator must be preserved"},
 	// 403 rather than 409: nothing about the platform's state is in the way, the
 	// caller simply is not a global administrator.

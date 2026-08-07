@@ -20,9 +20,14 @@ var (
 	// ErrLastGlobalAdmin: the platform would survive the change, and the refusal
 	// is about who is asking rather than about how many would be left.
 	ErrGlobalAdminRequired = errors.New("only a global administrator may do this")
-	ErrRoleNotFound        = errors.New("role not found")
-	ErrRoleConflict        = errors.New("role name already exists")
-	ErrRoleBuiltin         = errors.New("builtin role cannot be changed")
+	// Reported instead of letting the actor delete a binding that grants the
+	// actor's own access. Not a permission question — the actor holds
+	// `rbac.manage` or the request would not have reached here — but the one
+	// deletion whose result is that the caller can no longer undo it.
+	ErrSelfUnbind   = errors.New("cannot delete the authenticated user's own role binding")
+	ErrRoleNotFound = errors.New("role not found")
+	ErrRoleConflict = errors.New("role name already exists")
+	ErrRoleBuiltin  = errors.New("builtin role cannot be changed")
 	// Reported instead of removing a role somebody still holds. The database
 	// refuses it too — `role_bindings.role` is a foreign key — and this is that
 	// refusal named, so the API can say which of the two conflicts happened.

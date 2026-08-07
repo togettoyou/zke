@@ -30,6 +30,12 @@ var (
 	// reported to the operator as a rejected disable, describing an operation
 	// they had not asked for.
 	ErrSelfDelete = errors.New("cannot delete the authenticated user")
+	// The third member of that family, and the one whose target is not named in
+	// the request: a binding is deleted by its own id, so the actor does not
+	// have to realise the subject is themselves. Deleting it takes away the
+	// access that authorized the deletion, which is the one mistake in this
+	// resource that the operator cannot then correct.
+	ErrSelfUnbind = errors.New("cannot delete the authenticated user's own role binding")
 )
 
 type Config struct {
@@ -521,6 +527,8 @@ func (service *Service) DeleteRoleBinding(
 	switch {
 	case errors.Is(err, store.ErrRoleBindingNotFound):
 		return RoleBinding{}, ErrNotFound
+	case errors.Is(err, store.ErrSelfUnbind):
+		return RoleBinding{}, ErrSelfUnbind
 	case errors.Is(err, store.ErrLastGlobalAdmin):
 		return RoleBinding{}, ErrLastAdmin
 	case errors.Is(err, store.ErrGlobalAdminRequired):

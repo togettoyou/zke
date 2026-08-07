@@ -1220,8 +1220,12 @@ function PermissionRow({
 }
 
 function RoleBindingSection() {
-  const { permissions } = useSessionContext();
+  const { permissions, session } = useSessionContext();
   const canManage = permissions.can("rbac.manage", GLOBAL);
+  // Nothing in a binding row says whose access it is, so the one row an
+  // operator must not delete looks exactly like the rest. The Server refuses it
+  // either way; showing it disabled is what stops the click from being made.
+  const selfSubjectId = session?.user.id ?? "";
 
   const [role, setRole] = useState("all");
   const [scopeType, setScopeType] = useState("all");
@@ -1315,22 +1319,29 @@ function RoleBindingSection() {
         id: "actions",
         header: "",
         size: 90,
-        cell: ({ row }) =>
-          canManage ? (
+        cell: ({ row }) => {
+          if (!canManage) {
+            return null;
+          }
+          const isSelf = row.original.subject_id === selfSubjectId;
+          return (
             <div className="flex justify-end">
               <Button
                 size="sm"
                 variant="ghost"
                 className="text-danger"
+                disabled={isSelf}
+                title={isSelf ? "不能删除授予自己的权限绑定" : undefined}
                 onClick={() => setDeleteTarget(row.original)}
               >
                 删除
               </Button>
             </div>
-          ) : null,
+          );
+        },
       },
     ],
-    [canManage, roleOptions],
+    [canManage, roleOptions, selfSubjectId],
   );
 
   return (
