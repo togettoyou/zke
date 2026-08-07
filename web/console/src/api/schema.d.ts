@@ -510,18 +510,24 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * @description 通过目标 Cluster 的在线 Agent 聚合 Node、Namespace、Pod 以及 Deployment、
-         *     StatefulSet、DaemonSet、Job、CronJob 的实时摘要。调用需要 `cluster.read`；
-         *     Warning Event 使用独立的 `cluster.event.read` 权限和 Event API，不包含在本响应中。
+         * @description 通过目标 Cluster 的在线 Agent 聚合 Node、Namespace、Pod、PersistentVolume、
+         *     PersistentVolumeClaim 以及 Deployment、StatefulSet、DaemonSet、Job、CronJob
+         *     的实时摘要。调用需要 `cluster.read`；Warning Event 使用独立的
+         *     `cluster.event.read` 权限和 Event API，不包含在本响应中。
          *
          *     各部分通过多个有并发上限的 Kubernetes 查询组成，因此结果是最终一致快照，
          *     不是同一个 Kubernetes `resourceVersion` 下的原子视图。每一部分最多读取 10000
          *     个对象；部分查询失败或达到上限时仍返回 200，并通过 `partial: true` 和 `issues`
          *     标明不完整部分。只有所有部分都失败时，接口才返回错误响应。
          *
-         *     CPU 使用 millicores，内存使用 bytes。请求量依据 Kubernetes 调度语义计算非终态
-         *     Pod 的 requests，包含 init container、restartable init container、Pod-level
-         *     resources 和 overhead；不代表实时利用率。
+         *     一份完整快照在 Server 内按 Cluster 缓存 15 秒，窗口内的重复请求返回同一份
+         *     结果，`generated_at` 因此可能早于当前时间。含失败部分的结果不进入缓存，
+         *     只达到条目上限的结果会进入。缓存按 Cluster 定键而与调用者无关：本响应描述的是
+         *     Cluster 本身，且每个请求都独立校验该 Cluster 的 `cluster.read`。
+         *
+         *     CPU 使用 millicores，内存与存储使用 bytes。请求量依据 Kubernetes 调度语义计算
+         *     非终态 Pod 的 requests，包含 init container、restartable init container、
+         *     Pod-level resources 和 overhead；不代表实时利用率。
          */
         get: operations["getKubernetesClusterOverview"];
         put?: never;
@@ -3789,7 +3795,7 @@ export interface components {
         };
         KubernetesClusterOverviewIssue: {
             /** @enum {string} */
-            section: "nodes" | "namespaces" | "pods" | "workloads.deployments" | "workloads.statefulsets" | "workloads.daemonsets" | "workloads.jobs" | "workloads.cronjobs";
+            section: "nodes" | "namespaces" | "pods" | "workloads.deployments" | "workloads.statefulsets" | "workloads.daemonsets" | "workloads.jobs" | "workloads.cronjobs" | "storage.persistentvolumes" | "storage.persistentvolumeclaims";
             /** @enum {string} */
             code: "item_limit_reached" | "agent_not_connected" | "agent_capability_unavailable" | "resource_capacity_exhausted" | "response_budget_exhausted" | "cluster_api_unauthenticated" | "cluster_api_forbidden" | "cluster_api_unavailable" | "cluster_api_timeout" | "agent_response_too_large" | "invalid_agent_response" | "canceled" | "cluster_api_error";
         };
@@ -3799,6 +3805,13 @@ export interface components {
             /** Format: int64 */
             unschedulable: number;
             status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
+            /**
+             * @description 每个 kubelet 版本对应的节点数量。升级中的集群会出现多个版本，
+             *     版本未上报时计入 `unknown`。
+             */
+            kubernetes_versions: {
+                [key: string]: number;
+            };
         };
         KubernetesClusterNamespaceOverview: {
             /** Format: int64 */
@@ -3828,6 +3841,36 @@ export interface components {
             status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
             by_resource: components["schemas"]["KubernetesClusterWorkloadResourceOverview"][];
         };
+        KubernetesClusterPersistentVolumeOverview: {
+            /** Format: int64 */
+            total: number;
+            /**
+             * Format: int64
+             * @description 所有 PersistentVolume 的 `spec.capacity.storage` 之和，不区分阶段：
+             *     Released 卷仍然占用后端存储。
+             */
+            capacity_bytes: number;
+            status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
+        };
+        KubernetesClusterPersistentVolumeClaimOverview: {
+            /** Format: int64 */
+            total: number;
+            /**
+             * Format: int64
+             * @description 所有 PersistentVolumeClaim 的 `spec.resources.requests.storage` 之和，
+             *     表示申请量而不是实际制备量。
+             */
+            requested_bytes: number;
+            status_counts: components["schemas"]["KubernetesOverviewStatusCounts"];
+        };
+        /**
+         * @description 持久化存储按计数与容量总量返回，不返回比例：动态制备下可用容量由后端存储
+         *     决定，Kubernetes 不携带该上限，因此没有可读的分母。
+         */
+        KubernetesClusterStorageOverview: {
+            persistent_volumes: components["schemas"]["KubernetesClusterPersistentVolumeOverview"];
+            persistent_volume_claims: components["schemas"]["KubernetesClusterPersistentVolumeClaimOverview"];
+        };
         KubernetesClusterResourceTotals: {
             /** Format: int64 */
             cpu_capacity_millis: number;
@@ -3856,6 +3899,7 @@ export interface components {
             namespaces: components["schemas"]["KubernetesClusterNamespaceOverview"];
             pods: components["schemas"]["KubernetesClusterPodOverview"];
             workloads: components["schemas"]["KubernetesClusterWorkloadOverview"];
+            storage: components["schemas"]["KubernetesClusterStorageOverview"];
             resources: components["schemas"]["KubernetesClusterResourceTotals"];
         };
         KubernetesNodeSummary: {

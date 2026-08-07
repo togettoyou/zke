@@ -99,6 +99,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   List/Detail/Create/Update/Delete，独立 `cluster.rbac.read/manage`、DryRun、确认、幂等、并发身份保护、审计、
   Agent 自身授权对象保护与不包含 `escalate/bind/impersonate` 的 RBAC，以及 Console 的五类列表/详情、
   规则与主体编辑表单、删除闭环和受保护对象的只读呈现）
+- [x] 集群概览随分区能力对齐（新增 PersistentVolume/PersistentVolumeClaim 计数、容量与申请量、节点 kubelet
+  版本分布与命名空间状态分布，Server 按 Cluster 缓存 15 秒完整快照且不缓存失败部分，Console 概览的每个计数
+  可下钻到对应列表并停在对应标签页；概览仍不按状态筛选目标列表，按 Namespace 定域的列表进入后只显示当前
+  命名空间）
 
 ## Phase 3：可观测性
 

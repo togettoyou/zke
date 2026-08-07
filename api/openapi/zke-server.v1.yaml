@@ -1491,18 +1491,24 @@ paths:
       tags: [Resources]
       operationId: getKubernetesClusterOverview
       description: |
-        通过目标 Cluster 的在线 Agent 聚合 Node、Namespace、Pod 以及 Deployment、
-        StatefulSet、DaemonSet、Job、CronJob 的实时摘要。调用需要 `cluster.read`；
-        Warning Event 使用独立的 `cluster.event.read` 权限和 Event API，不包含在本响应中。
+        通过目标 Cluster 的在线 Agent 聚合 Node、Namespace、Pod、PersistentVolume、
+        PersistentVolumeClaim 以及 Deployment、StatefulSet、DaemonSet、Job、CronJob
+        的实时摘要。调用需要 `cluster.read`；Warning Event 使用独立的
+        `cluster.event.read` 权限和 Event API，不包含在本响应中。
 
         各部分通过多个有并发上限的 Kubernetes 查询组成，因此结果是最终一致快照，
         不是同一个 Kubernetes `resourceVersion` 下的原子视图。每一部分最多读取 10000
         个对象；部分查询失败或达到上限时仍返回 200，并通过 `partial: true` 和 `issues`
         标明不完整部分。只有所有部分都失败时，接口才返回错误响应。
 
-        CPU 使用 millicores，内存使用 bytes。请求量依据 Kubernetes 调度语义计算非终态
-        Pod 的 requests，包含 init container、restartable init container、Pod-level
-        resources 和 overhead；不代表实时利用率。
+        一份完整快照在 Server 内按 Cluster 缓存 15 秒，窗口内的重复请求返回同一份
+        结果，`generated_at` 因此可能早于当前时间。含失败部分的结果不进入缓存，
+        只达到条目上限的结果会进入。缓存按 Cluster 定键而与调用者无关：本响应描述的是
+        Cluster 本身，且每个请求都独立校验该 Cluster 的 `cluster.read`。
+
+        CPU 使用 millicores，内存与存储使用 bytes。请求量依据 Kubernetes 调度语义计算
+        非终态 Pod 的 requests，包含 init container、restartable init container、
+        Pod-level resources 和 overhead；不代表实时利用率。
       security:
         - sessionCookie: []
       parameters:
@@ -10123,6 +10129,8 @@ components:
             - workloads.daemonsets
             - workloads.jobs
             - workloads.cronjobs
+            - storage.persistentvolumes
+            - storage.persistentvolumeclaims
         code:
           type: string
           enum:
@@ -10142,7 +10150,7 @@ components:
     KubernetesClusterNodeOverview:
       type: object
       additionalProperties: false
-      required: [total, unschedulable, status_counts]
+      required: [total, unschedulable, status_counts, kubernetes_versions]
       properties:
         total:
           type: integer
@@ -10154,6 +10162,15 @@ components:
           minimum: 0
         status_counts:
           $ref: "#/components/schemas/KubernetesOverviewStatusCounts"
+        kubernetes_versions:
+          type: object
+          description: |
+            每个 kubelet 版本对应的节点数量。升级中的集群会出现多个版本，
+            版本未上报时计入 `unknown`。
+          additionalProperties:
+            type: integer
+            format: int64
+            minimum: 0
     KubernetesClusterNamespaceOverview:
       type: object
       additionalProperties: false
@@ -10216,6 +10233,54 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KubernetesClusterWorkloadResourceOverview"
+    KubernetesClusterPersistentVolumeOverview:
+      type: object
+      additionalProperties: false
+      required: [total, capacity_bytes, status_counts]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        capacity_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            所有 PersistentVolume 的 `spec.capacity.storage` 之和，不区分阶段：
+            Released 卷仍然占用后端存储。
+        status_counts:
+          $ref: "#/components/schemas/KubernetesOverviewStatusCounts"
+    KubernetesClusterPersistentVolumeClaimOverview:
+      type: object
+      additionalProperties: false
+      required: [total, requested_bytes, status_counts]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        requested_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            所有 PersistentVolumeClaim 的 `spec.resources.requests.storage` 之和，
+            表示申请量而不是实际制备量。
+        status_counts:
+          $ref: "#/components/schemas/KubernetesOverviewStatusCounts"
+    KubernetesClusterStorageOverview:
+      type: object
+      additionalProperties: false
+      required: [persistent_volumes, persistent_volume_claims]
+      description: |
+        持久化存储按计数与容量总量返回，不返回比例：动态制备下可用容量由后端存储
+        决定，Kubernetes 不携带该上限，因此没有可读的分母。
+      properties:
+        persistent_volumes:
+          $ref: "#/components/schemas/KubernetesClusterPersistentVolumeOverview"
+        persistent_volume_claims:
+          $ref: "#/components/schemas/KubernetesClusterPersistentVolumeClaimOverview"
     KubernetesClusterResourceTotals:
       type: object
       additionalProperties: false
@@ -10277,6 +10342,7 @@ components:
         - namespaces
         - pods
         - workloads
+        - storage
         - resources
       properties:
         generated_at:
@@ -10295,6 +10361,8 @@ components:
           $ref: "#/components/schemas/KubernetesClusterPodOverview"
         workloads:
           $ref: "#/components/schemas/KubernetesClusterWorkloadOverview"
+        storage:
+          $ref: "#/components/schemas/KubernetesClusterStorageOverview"
         resources:
           $ref: "#/components/schemas/KubernetesClusterResourceTotals"
     KubernetesNodeSummary:

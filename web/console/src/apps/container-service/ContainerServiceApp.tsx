@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Bell,
   Box,
@@ -18,7 +18,11 @@ import {
 
 import { useClusters } from "@/api/queries/clusters";
 import { useNamespaces } from "@/api/queries/namespaces";
-import type { Permission } from "@/api/types";
+import type {
+  KubernetesStorageResource,
+  KubernetesWorkloadResource,
+  Permission,
+} from "@/api/types";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -46,6 +50,8 @@ import { PodSection } from "./PodSection";
 import { PolicySection } from "./PolicySection";
 import { ResourceBrowserSection } from "./ResourceBrowserSection";
 import { useTargetClusterStore, useTargetNamespaceStore } from "./selection-store";
+import { STORAGE_TYPES } from "./storage-catalog";
+import { WORKLOAD_TYPES } from "./workload-catalog";
 import { WorkloadSection } from "./WorkloadSection";
 
 /**
@@ -93,6 +99,20 @@ const MANIFEST_PERMISSIONS: Permission[] = [
   "cluster.rbac.manage",
 ];
 
+/*
+ * A requested tab only counts while it names a tab the section actually has.
+ * The value travels as a plain string through one piece of state shared by
+ * every section, so each section checks it against its own catalogue rather
+ * than trusting it.
+ */
+function workloadTab(tab: string | null): KubernetesWorkloadResource | undefined {
+  return WORKLOAD_TYPES.find((type) => type.resource === tab)?.resource;
+}
+
+function storageTab(tab: string | null): KubernetesStorageResource | undefined {
+  return STORAGE_TYPES.find((type) => type.resource === tab)?.resource;
+}
+
 /** Sections whose queries are scoped by a Namespace as well as by a Cluster. */
 const NAMESPACED_SECTIONS = new Set([
   "workloads",
@@ -123,6 +143,22 @@ export function ContainerServiceApp() {
   // The overview is where an operator lands: it is the one view that answers
   // "what is in this cluster" before they know which category to open.
   const [section, setSection] = useState("overview");
+  /*
+   * The tab a drill-down asked for, consumed once by the section it names.
+   *
+   * A count on the overview is a count of one type — DaemonSets, or
+   * PersistentVolumeClaims — and the section that lists it opens on whichever
+   * tab it defaults to. Only one section is mounted at a time here, so the
+   * section arrives fresh and can simply start on the tab it was sent to;
+   * afterwards the tab is that section's own state and this is not consulted
+   * again. Navigating from the rail clears it, because the rail names a
+   * category and nothing narrower.
+   */
+  const [entryTab, setEntryTab] = useState<string | null>(null);
+  const navigate = useCallback((id: string, tab?: string) => {
+    setSection(id);
+    setEntryTab(tab ?? null);
+  }, []);
   const clusters = useClusters(scope.projectId, {
     limit: 100,
     offset: 0,
@@ -254,7 +290,7 @@ export function ContainerServiceApp() {
     <AppShell
       nav={nav}
       activeId={activeSection}
-      onNavigate={setSection}
+      onNavigate={navigate}
       toolbar={
         <>
           <span className="text-muted-foreground text-xs">目标集群</span>
@@ -376,7 +412,7 @@ export function ContainerServiceApp() {
        * way to drop them, and it has no tab to lose.
        */
       activeSection === "overview" ? (
-        <OverviewSection key={clusterId} clusterId={clusterId} />
+        <OverviewSection key={clusterId} clusterId={clusterId} onNavigate={navigate} />
       ) : activeSection === "nodes" ? (
         <NodeSection
           key={clusterId}
@@ -455,6 +491,7 @@ export function ContainerServiceApp() {
           namespace={namespace}
           tenantId={scope.tenantId}
           projectId={scope.projectId}
+          initialResource={storageTab(entryTab)}
           onNamespaceScopeChange={setStorageNamespaced}
         />
       ) : activeSection === "configmaps" ? (
@@ -492,6 +529,7 @@ export function ContainerServiceApp() {
           namespace={namespace}
           tenantId={scope.tenantId}
           projectId={scope.projectId}
+          initialResource={workloadTab(entryTab)}
         />
       )}
     </AppShell>

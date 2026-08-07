@@ -47,6 +47,12 @@ type StorageSectionProps = ClusterSectionProps & {
   /** Only the PersistentVolumeClaim tab is scoped by it. */
   namespace: string;
   /**
+   * The tab to open on, when the section was entered from a count of one type
+   * rather than from the navigation rail. It is the initial value only: from
+   * then on the open tab is this section's own state.
+   */
+  initialResource?: KubernetesStorageResource;
+  /**
    * Told to the shell whenever the active tab changes, so the toolbar's
    * Namespace picker appears exactly while it scopes something.
    */
@@ -67,10 +73,13 @@ export function StorageSection({
   namespace,
   tenantId,
   projectId,
+  initialResource,
   onNamespaceScopeChange,
 }: StorageSectionProps) {
   const { permissions } = useSessionContext();
-  const [resource, setResource] = useState<KubernetesStorageResource>("persistentvolumes");
+  const [resource, setResource] = useState<KubernetesStorageResource>(
+    initialResource ?? "persistentvolumes",
+  );
   const namespaced = isNamespacedStorage(resource);
   const pager = useContinuePagination(`${clusterId}/${namespaced ? namespace : ""}/${resource}`);
   const list = useStorageResources(clusterId, namespace, resource, {

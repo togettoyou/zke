@@ -42,6 +42,12 @@ type CronJobStatus = NonNullable<KubernetesWorkloadSummary["cron_job"]>;
 type WorkloadSectionProps = ClusterSectionProps & {
   /** The Namespace every query and mutation in this section is scoped to. */
   namespace: string;
+  /**
+   * The tab to open on, when the section was entered from a count of one type
+   * rather than from the navigation rail. It is the initial value only: from
+   * then on the open tab is this section's own state.
+   */
+  initialResource?: KubernetesWorkloadResource;
 };
 
 /**
@@ -57,9 +63,12 @@ export function WorkloadSection({
   namespace,
   tenantId,
   projectId,
+  initialResource,
 }: WorkloadSectionProps) {
   const { permissions } = useSessionContext();
-  const [resource, setResource] = useState<KubernetesWorkloadResource>("deployments");
+  const [resource, setResource] = useState<KubernetesWorkloadResource>(
+    initialResource ?? "deployments",
+  );
   // Switching Cluster, Namespace or type produces a different list, and a
   // continuation token is only meaningful to the list that issued it.
   const pager = useContinuePagination(`${clusterId}/${namespace}/${resource}`);

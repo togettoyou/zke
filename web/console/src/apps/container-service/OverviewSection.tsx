@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ArrowUpRight, ChevronRight } from "lucide-react";
 
 import { useClusterOverview } from "@/api/queries/cluster-overview";
 import type {
@@ -44,23 +45,44 @@ const SECTION_LABELS: Record<string, string> = {
   "workloads.daemonsets": "DaemonSet",
   "workloads.jobs": "Job",
   "workloads.cronjobs": "CronJob",
+  "storage.persistentvolumes": "PersistentVolume",
+  "storage.persistentvolumeclaims": "PersistentVolumeClaim",
 };
+
+/**
+ * Where a number on this page goes when it is clicked.
+ *
+ * The overview is the landing page because an operator arriving at a Cluster
+ * does not yet know which category to open — which is only true if the page can
+ * take them there. Every count here is a count of objects that have a list of
+ * their own, so the count is the way in.
+ */
+export type OverviewNavigate = (section: string, tab?: string) => void;
 
 /**
  * One Cluster at a glance.
  *
  * Everything here is a count or a capacity total, which is the case where a
  * number reads better than a chart: there is no trend and no comparison between
- * series, only "how many" and "how much of what is available". The two capacity
- * rows get a meter because they do have a maximum to be read against.
+ * series, only "how many" and "how much of what is available". The three
+ * capacity rows get a meter because they do have a maximum to be read against.
  */
-export function OverviewSection({ clusterId }: { clusterId: string }) {
+export function OverviewSection({
+  clusterId,
+  onNavigate,
+}: {
+  clusterId: string;
+  onNavigate?: OverviewNavigate;
+}) {
   const overview = useClusterOverview(clusterId);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* `generated_at` travels with the refresh control because together they
-          are what says this page is a snapshot rather than a live reading. */}
+          are what says this page is a snapshot rather than a live reading. The
+          Server holds a completed snapshot briefly, so a refresh inside that
+          window returns the same timestamp — which is why the timestamp is
+          shown rather than implied. */}
       <SectionToolbarActions>
         {overview.data ? (
           <span className="text-subtle-foreground text-xs">
@@ -75,19 +97,27 @@ export function OverviewSection({ clusterId }: { clusterId: string }) {
         <LoadingState />
       ) : (
         <div className="min-h-0 flex-1 overflow-auto pb-1">
-          <OverviewContent overview={overview.data} />
+          <OverviewContent overview={overview.data} onNavigate={onNavigate} />
         </div>
       )}
     </div>
   );
 }
 
-function OverviewContent({ overview }: { overview: KubernetesClusterOverview }) {
-  const { nodes, namespaces, pods, workloads, resources } = overview;
+function OverviewContent({
+  overview,
+  onNavigate,
+}: {
+  overview: KubernetesClusterOverview;
+  onNavigate?: OverviewNavigate;
+}) {
+  const { nodes, namespaces, pods, workloads, storage, resources } = overview;
   const issues = new Map(overview.issues.map((issue) => [issue.section, issue]));
   const nodeIssue = issues.get("nodes");
   const namespaceIssue = issues.get("namespaces");
   const podIssue = issues.get("pods");
+  const volumeIssue = issues.get("storage.persistentvolumes");
+  const claimIssue = issues.get("storage.persistentvolumeclaims");
   const workloadIssues = overview.issues.filter((issue) => issue.section.startsWith("workloads."));
 
   return (
@@ -98,6 +128,7 @@ function OverviewContent({ overview }: { overview: KubernetesClusterOverview }) 
         <StatTile
           label="节点"
           value={sectionValue(nodes.total, nodeIssue)}
+          open={onNavigate ? { label: "节点", run: () => onNavigate("nodes") } : undefined}
           detail={
             sectionHasData(nodeIssue) ? (
               <>
@@ -115,10 +146,38 @@ function OverviewContent({ overview }: { overview: KubernetesClusterOverview }) 
             )
           }
         />
-        <StatTile label="命名空间" value={sectionValue(namespaces.total, namespaceIssue)} />
+        <StatTile
+          label="命名空间"
+          value={sectionValue(namespaces.total, namespaceIssue)}
+          open={onNavigate ? { label: "命名空间", run: () => onNavigate("namespaces") } : undefined}
+          /* Active is the whole story until it is not: a Namespace that has been
+             terminating for a while is stuck on a finalizer, and it is the one
+             thing this count can say that the total cannot. */
+          detail={
+            sectionHasData(namespaceIssue) ? (
+              <>
+                <Badge tone="success">活跃</Badge>
+                <span className="zke-tnum">{namespaces.status_counts.active ?? 0}</span>
+                {(namespaces.status_counts.terminating ?? 0) > 0 ? (
+                  <>
+                    <Badge tone="warning">终止中</Badge>
+                    <span className="zke-tnum">{namespaces.status_counts.terminating}</span>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              "数据不可用"
+            )
+          }
+        />
         <StatTile
           label="Pod"
           value={sectionValue(pods.total, podIssue)}
+          open={
+            onNavigate
+              ? { label: "Pod", run: () => onNavigate("pods"), namespaced: true }
+              : undefined
+          }
           detail={
             sectionHasData(podIssue) ? (
               <>
@@ -145,6 +204,20 @@ function OverviewContent({ overview }: { overview: KubernetesClusterOverview }) 
         <StatTile
           label="工作负载"
           value={workloadIssues.length > 0 ? `≥${workloads.total}` : workloads.total}
+          open={
+            onNavigate
+              ? { label: "工作负载", run: () => onNavigate("workloads"), namespaced: true }
+              : undefined
+          }
+          /* The five types are broken out below; what the tile adds is the one
+             reading that spans them — how many of everything is healthy. */
+          detail={
+            <StatusCounts
+              counts={workloads.status_counts}
+              kind="workload"
+              unavailable={workloadIssues.length > 0}
+            />
+          }
         />
       </div>
 
@@ -201,22 +274,94 @@ function OverviewContent({ overview }: { overview: KubernetesClusterOverview }) 
             const entry = workloads.by_resource.find((item) => item.resource === type.resource);
             const issue = issues.get(`workloads.${type.resource}`);
             return (
-              <div
+              <CountRow
                 key={type.resource}
-                className="border-border/50 grid grid-cols-[8rem_4rem_1fr] items-baseline gap-3 border-b py-1.5 text-[13px] last:border-b-0 last:pb-0"
+                label={kindLabel(type.resource)}
+                value={sectionValue(entry?.total ?? 0, issue)}
+                open={
+                  onNavigate
+                    ? {
+                        label: kindLabel(type.resource),
+                        run: () => onNavigate("workloads", type.resource),
+                        namespaced: true,
+                      }
+                    : undefined
+                }
               >
-                <span className="text-muted-foreground">{kindLabel(type.resource)}</span>
-                <span className="zke-tnum text-foreground font-medium">
-                  {sectionValue(entry?.total ?? 0, issue)}
-                </span>
                 <StatusCounts counts={entry?.status_counts} unavailable={Boolean(issue)} />
-              </div>
+              </CountRow>
             );
           })}
         </div>
       </DetailCard>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      {/*
+       * Storage gets counts and totals, not a meter.
+       *
+       * CPU and memory are read against what the Cluster can allocate, and
+       * Kubernetes reports that number. Volume capacity has no such maximum:
+       * under a dynamic provisioner the supply is whatever the backing system
+       * will still hand out, and nothing in the API says how much that is. A bar
+       * drawn here would need a denominator that does not exist, so what is
+       * shown is how much has been provisioned, how much has been asked for, and
+       * which phases the objects are sitting in — a Pending claim is the thing
+       * worth seeing, and it is a count.
+       */}
+      <DetailCard title="存储">
+        <div className="grid gap-2 py-1">
+          <CountRow
+            label="PersistentVolume"
+            value={sectionValue(storage.persistent_volumes.total, volumeIssue)}
+            note={resourceCapacity(
+              "总容量",
+              storage.persistent_volumes.capacity_bytes,
+              formatBytes,
+              volumeIssue,
+            )}
+            open={
+              onNavigate
+                ? {
+                    label: "PersistentVolume",
+                    run: () => onNavigate("storage", "persistentvolumes"),
+                  }
+                : undefined
+            }
+          >
+            <StatusCounts
+              counts={storage.persistent_volumes.status_counts}
+              kind="volume"
+              unavailable={Boolean(volumeIssue)}
+            />
+          </CountRow>
+          <CountRow
+            label="PersistentVolumeClaim"
+            value={sectionValue(storage.persistent_volume_claims.total, claimIssue)}
+            note={resourceCapacity(
+              "申请容量",
+              storage.persistent_volume_claims.requested_bytes,
+              formatBytes,
+              claimIssue,
+            )}
+            open={
+              onNavigate
+                ? {
+                    label: "PersistentVolumeClaim",
+                    run: () => onNavigate("storage", "persistentvolumeclaims"),
+                    namespaced: true,
+                  }
+                : undefined
+            }
+          >
+            <StatusCounts
+              counts={storage.persistent_volume_claims.status_counts}
+              kind="volume"
+              unavailable={Boolean(claimIssue)}
+            />
+          </CountRow>
+        </div>
+      </DetailCard>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <DetailCard title="节点状态">
           <div className="py-1">
             <StatusCounts
@@ -230,6 +375,9 @@ function OverviewContent({ overview }: { overview: KubernetesClusterOverview }) 
           <div className="py-1">
             <StatusCounts counts={pods.status_counts} kind="pod" unavailable={Boolean(podIssue)} />
           </div>
+        </DetailCard>
+        <DetailCard title="Kubernetes 版本">
+          <VersionCounts versions={nodes.kubernetes_versions} unavailable={Boolean(nodeIssue)} />
         </DetailCard>
       </div>
     </div>
@@ -253,6 +401,26 @@ function PartialNotice({ issues }: { issues: KubernetesClusterOverviewIssue[] })
 }
 
 /**
+ * The list a count opens, and what the operator will find there.
+ *
+ * `namespaced` is not decoration. This page counts a whole Cluster, while the
+ * Pod, workload and claim lists are scoped by one Namespace, so arriving at one
+ * of them shows a smaller number than the tile that led there. Saying so before
+ * the click is cheaper than explaining the difference after it.
+ */
+type OverviewLink = { label: string; run: () => void; namespaced?: boolean };
+
+function openTitle(link: OverviewLink): string {
+  return link.namespaced
+    ? `打开「${link.label}」列表；该列表按命名空间定域，显示的是当前选中的命名空间`
+    : `打开「${link.label}」列表`;
+}
+
+/** Hover, focus and cursor treatment shared by everything on this page that opens a list. */
+const OPENS_LIST =
+  "zke-focus hover:border-primary/40 hover:bg-surface-muted/50 cursor-pointer text-left transition-colors";
+
+/**
  * A count, and what it is made of.
  *
  * The number is the headline and wears text ink; the badges beside it carry the
@@ -262,21 +430,93 @@ function StatTile({
   label,
   value,
   detail,
+  open,
 }: {
   label: string;
   value: ReactNode;
   detail?: ReactNode;
+  open?: OverviewLink;
 }) {
-  return (
-    <Card>
-      <p className="text-muted-foreground text-xs">{label}</p>
-      <p className="zke-tnum text-foreground mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+  /*
+   * Spans rather than paragraphs and divs: a clickable tile is a `button`, and
+   * a button may only contain phrasing content. The display classes make them
+   * lay out exactly as the block elements did.
+   */
+  const body = (
+    <>
+      <span className="text-muted-foreground flex items-center gap-1 text-xs">
+        {label}
+        {open ? <ArrowUpRight className="size-3 shrink-0" aria-hidden /> : null}
+      </span>
+      <span className="zke-tnum text-foreground mt-1 block text-2xl font-semibold tracking-tight">
+        {value}
+      </span>
       {detail ? (
-        <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="text-muted-foreground mt-2 flex flex-wrap items-center gap-1.5 text-xs">
           {detail}
-        </div>
+        </span>
       ) : null}
+    </>
+  );
+  if (!open) {
+    return <Card>{body}</Card>;
+  }
+  return (
+    <Card asChild>
+      <button type="button" onClick={open.run} title={openTitle(open)} className={OPENS_LIST}>
+        {body}
+      </button>
     </Card>
+  );
+}
+
+/** One named count inside a card, with its status histogram beside it. */
+function CountRow({
+  label,
+  value,
+  note,
+  open,
+  children,
+}: {
+  label: string;
+  value: ReactNode;
+  /** A second number about the same objects, such as their total capacity. */
+  note?: string;
+  open?: OverviewLink;
+  children: ReactNode;
+}) {
+  const row = (
+    <>
+      <span className="text-muted-foreground min-w-0 break-words">{label}</span>
+      <span className="zke-tnum text-foreground font-medium">{value}</span>
+      <span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+        {children}
+        {note ? <span className="text-subtle-foreground text-xs">{note}</span> : null}
+      </span>
+      {open ? (
+        <ChevronRight
+          className="text-subtle-foreground size-3.5 shrink-0 self-center"
+          aria-hidden
+        />
+      ) : null}
+    </>
+  );
+  const layout = cn(
+    "border-border/50 grid items-baseline gap-3 border-b py-1.5 text-[13px] last:border-b-0 last:pb-0",
+    open ? "grid-cols-[10rem_4rem_1fr_auto]" : "grid-cols-[10rem_4rem_1fr]",
+  );
+  if (!open) {
+    return <div className={layout}>{row}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={open.run}
+      title={openTitle(open)}
+      className={cn(layout, OPENS_LIST, "rounded-control -mx-1 px-1")}
+    >
+      {row}
+    </button>
   );
 }
 
@@ -341,7 +581,7 @@ function StatusCounts({
   unavailable = false,
 }: {
   counts: KubernetesOverviewStatusCounts | undefined;
-  kind?: "node" | "pod" | "workload";
+  kind?: "node" | "pod" | "workload" | "volume";
   unavailable?: boolean;
 }) {
   const entries = Object.entries(counts ?? {})
@@ -353,13 +593,57 @@ function StatusCounts({
     );
   }
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+    // A span, because these histograms also appear inside the rows that open a
+    // list, and those rows are buttons.
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
       {entries.map(([status, value]) => (
         <span key={status} className="flex items-center gap-1.5">
           <StatusBadge kind={kind ?? "workload"} value={statusBadgeValue(kind, status)} />
           <span className="zke-tnum text-muted-foreground">{value}</span>
         </span>
       ))}
+    </span>
+  );
+}
+
+/**
+ * How many Nodes run each kubelet version.
+ *
+ * A Cluster mid-upgrade reports more than one, and the skew between them decides
+ * which APIs are safe to use — so the second version appearing here is itself the
+ * message. It is stated rather than coloured: running two versions is what an
+ * upgrade looks like from the inside, not a fault.
+ */
+function VersionCounts({
+  versions,
+  unavailable,
+}: {
+  versions: Record<string, number>;
+  unavailable: boolean;
+}) {
+  const entries = Object.entries(versions)
+    .filter(([, value]) => value > 0)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  if (entries.length === 0) {
+    return (
+      <p className="text-subtle-foreground py-1 text-xs">{unavailable ? "数据不完整" : "—"}</p>
+    );
+  }
+  return (
+    <div className="py-1">
+      <div className="grid gap-1.5">
+        {entries.map(([version, count]) => (
+          <div key={version} className="flex items-baseline justify-between gap-3 text-[13px]">
+            <span className="zke-mono text-foreground min-w-0 break-all">{version}</span>
+            <span className="zke-tnum text-muted-foreground shrink-0">{count} 个节点</span>
+          </div>
+        ))}
+      </div>
+      {entries.length > 1 ? (
+        <p className="text-subtle-foreground mt-2 text-xs">
+          集群中的节点运行着不同版本，通常出现在升级过程中。
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -389,8 +673,15 @@ function resourceCapacity(
   return formatted === "—" ? `${label}未知` : `${label} ${formatted}`;
 }
 
-function statusBadgeValue(kind: "node" | "pod" | "workload" | undefined, status: string) {
-  if (kind !== "pod" || status.length === 0) {
+/**
+ * The overview lowercases every status it counts; two of the label tables are
+ * keyed by the Kubernetes phase as Kubernetes writes it.
+ */
+function statusBadgeValue(
+  kind: "node" | "pod" | "workload" | "volume" | undefined,
+  status: string,
+) {
+  if ((kind !== "pod" && kind !== "volume") || status.length === 0) {
     return status;
   }
   return status.charAt(0).toUpperCase() + status.slice(1);

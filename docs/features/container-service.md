@@ -6,8 +6,9 @@
 五类策略对象与 Kubernetes RBAC
 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
-- `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod 和五类工作负载的状态计数，
-  以及 Node 容量/可分配量与非终态 Pod 请求量；
+- `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod、PersistentVolume、
+  PersistentVolumeClaim 和五类工作负载的状态计数，Node 的 kubelet 版本分布，以及 Node 容量/可分配量、
+  非终态 Pod 请求量与卷容量总量；
 - `GET /api/v1/clusters/{cluster_id}/nodes`：支持 `limit`、Kubernetes continuation token、Label Selector 和
   Field Selector；
 - `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}`：返回 Node 状态、容量、地址、标签、污点、条件和
@@ -133,22 +134,55 @@
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
 表示尚未实现。
 
-集群概览后端复用现有 Resource Stream，并发但有上限地读取 Node、Namespace、Pod 以及 Deployment、
-StatefulSet、DaemonSet、Job、CronJob；Server 不直接访问 Kubernetes API。各部分分别分页，每部分最多读取
-10000 个对象，因此概览是最终一致的聚合快照，不是同一个 Kubernetes `resourceVersion` 下的原子视图。
-部分查询失败或达到上限时，接口仍返回成功响应，并通过 `partial` 和不含敏感正文的 `issues` 标明受影响部分；
-只有所有部分都失败时才返回整体错误。CPU 以 millicores、内存以 bytes 返回，Pod requests 按 Kubernetes
-调度语义统计非终态 Pod，包含 init container、restartable init container、Pod-level resources 和 overhead，
-不表示实时利用率。接口使用 `cluster.read`；Warning Event 仍通过现有 Event API 和独立的
-`cluster.event.read` 权限读取，避免概览扩大 Event 权限。
+集群概览后端复用现有 Resource Stream，并发但有上限地读取 Node、Namespace、Pod、PersistentVolume、
+PersistentVolumeClaim 以及 Deployment、StatefulSet、DaemonSet、Job、CronJob；Server 不直接访问 Kubernetes
+API。各部分分别分页，每部分最多读取 10000 个对象，因此概览是最终一致的聚合快照，不是同一个 Kubernetes
+`resourceVersion` 下的原子视图。部分查询失败或达到上限时，接口仍返回成功响应，并通过 `partial` 和不含敏感
+正文的 `issues` 标明受影响部分；只有所有部分都失败时才返回整体错误。CPU 以 millicores、内存与存储以 bytes
+返回，Pod requests 按 Kubernetes 调度语义统计非终态 Pod，包含 init container、restartable init container、
+Pod-level resources 和 overhead，不表示实时利用率。接口使用 `cluster.read`；Warning Event 仍通过现有 Event
+API 和独立的 `cluster.event.read` 权限读取，避免概览扩大 Event 权限。
+
+节点部分同时按 kubelet 版本计数。升级中的集群会出现多个版本，而版本偏斜决定了哪些 API 可以安全使用；
+该字段来自本来就要读取的 Node 摘要，不增加查询。存储部分只返回计数与容量总量，不返回比例：CPU 与内存有
+Kubernetes 报告的可分配量作分母，卷容量没有——动态制备下的可用容量由后端存储决定，API 不携带这个上限。
+PersistentVolume 返回所有卷 `spec.capacity.storage` 之和（不分阶段：已释放的卷仍占用后端存储），
+PersistentVolumeClaim 返回 `spec.resources.requests.storage` 之和，即申请量而非实际制备量，与本页其余
+requests 口径一致。
+
+一份完整快照在 Server 内按 Cluster 缓存 15 秒，窗口内的重复请求直接返回同一份结果，`generated_at` 因此
+可能早于当前时间。这是有意的：概览是每个操作者进入应用时的落地页，而一次概览是对集群的十次完整列举，也是
+本应用最贵的读取。缓存按 Cluster 定键而与调用者无关——本响应描述的是 Cluster 本身，且每个请求都独立校验
+该 Cluster 的 `cluster.read`；返回给调用方的是副本，不是缓存中的同一份对象。含失败部分的结果不进入缓存：
+操作者按刷新正是为了确认那个部分是否仍不可用，用失败本身回答这个问题等于关掉了刷新按钮；只达到条目上限的
+结果会进入缓存，因为重新列举一个数不完的集群只会在同样的代价下得到同样的上限。缓存条目数有上限，超出时
+该 Cluster 不缓存，而不是挤掉别人正要读的快照。窗口内并发到达的首批请求仍会各自列举一次集群——缓存合并的
+是完成之后的读取，不是同时在途的读取。
 
 Console 概览是容器服务的默认落地页，也是左侧导航第一项：操作者进入应用时通常还不知道该打开哪个资源类别。
-页面展示节点、命名空间、Pod 和工作负载的计数与状态分布、五类工作负载的分类计数，以及 CPU、内存和 Pod 三项
-的请求量对可分配量。这些都是计数和容量，没有趋势也没有多序列比较，因此用数字和量条呈现而不是图表；量条只在
-请求量接近或超过可分配量时改用警告和危险色，且数值始终以文字同时给出，不靠颜色单独表意。工具栏显示
-`generated_at` 并提供刷新按钮，说明这是聚合快照。`partial` 为 true 时在顶部列出受影响的部分及原因，避免把
-偏低的计数当成真实值。概览不展示 Warning Event：Event 接口按 Namespace 定域，且需要独立的
-`cluster.event.read`，跨命名空间聚合不在本接口范围内。
+页面展示节点、命名空间、Pod 和工作负载的计数与状态分布、五类工作负载的分类计数、PersistentVolume 与
+PersistentVolumeClaim 的计数与容量总量、节点的 kubelet 版本分布，以及 CPU、内存和 Pod 三项的请求量对
+可分配量。这些都是计数和容量，没有趋势也没有多序列比较，因此用数字和量条呈现而不是图表；量条只在请求量接近
+或超过可分配量时改用警告和危险色，且数值始终以文字同时给出，不靠颜色单独表意。存储没有量条，理由与后端返回
+计数的理由相同：可用容量没有可读的分母。版本分布出现多个版本时页面只陈述这一事实而不着色——运行两个版本正是
+升级过程中的正常形态，不是故障。工具栏显示 `generated_at` 并提供刷新按钮，说明这是聚合快照；服务端在短窗口内
+返回同一份快照，因此连续两次刷新可能得到相同的 `generated_at`，这也正是这个时间戳要显示出来的原因。
+`partial` 为 true 时在顶部列出受影响的部分及原因，避免把偏低的计数当成真实值。概览不展示 Warning Event：
+Event 接口按 Namespace 定域，且需要独立的 `cluster.event.read`，跨命名空间聚合不在本接口范围内。
+
+概览上的每个计数都可以点开对应的列表：节点、命名空间、Pod、工作负载四张卡片进入各自的分区，工作负载分布的每一行
+进入「工作负载」并停在该类型的标签页，存储的两行进入「存储」的对应标签页。这不是装饰——概览之所以是落地页，
+理由就是操作者此时还不知道该打开哪个类别，而一个不能把人送过去的页面并没有回答这个问题。可点击的卡片带一个
+箭头图标、可点击的行末尾带一个 `>`，因此「这里能点」是看出来的而不是试出来的。
+
+其中 Pod、工作负载和 PersistentVolumeClaim 的目标列表按 Namespace 定域，而概览统计的是整个集群，所以进去以后
+看到的数会比卡片上的小。这一点写在点击前的 `title` 里而不是解释在点击后：跳转仍然去的是正确的列表，操作者在那里
+换一个命名空间即可，但一个默不作声的落差会被读成计数错了。状态分布中的单个状态不做跳转——列表接口目前没有按状态
+筛选的入口，一个跳过去却不筛选的链接说的是它做不到的事。
+
+进入分区时携带的标签页只作为初始值使用一次，之后标签页归该分区自己的状态所有；从左侧导航进入则不携带，因为导航
+说的是一个类别而不是其中某一类。这两个分区在同一时刻只挂载一个，因此被跳转到的分区本来就是新挂载的，不需要为了
+换标签页而重置它已有的状态。
 
 Console 容器服务按资源类别组织：进入应用后先选择一个目标集群，左侧导航当前包含「概览」「节点」「命名空间」
 「工作负载」「Pod」「服务与路由」「配置管理」「存储」「自动伸缩」「策略管理」「授权管理」「资源对象浏览器」

@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
@@ -21,6 +22,19 @@ const (
 	defaultPageSize           int64 = 500
 	defaultMaxItemsPerSection int   = 10_000
 	defaultMaxParallelQueries int   = 4
+	// How long a completed snapshot answers for its Cluster.
+	//
+	// One overview is ten full listings of the Cluster, so the page that every
+	// operator lands on is also the most expensive read in this application. The
+	// window is short on purpose: it absorbs bursts — several operators opening
+	// the application, one operator moving between sections — without making a
+	// deliberate refresh return yesterday's numbers. The response carries
+	// `generated_at`, so a repeat inside the window is visibly the same snapshot
+	// rather than a silently stale one.
+	defaultCacheTTL = 15 * time.Second
+	// Cached Clusters, so the cache cannot grow with the number of Clusters a
+	// Server has ever been asked about.
+	defaultMaxCachedClusters = 64
 )
 
 type ResourceReader interface {
@@ -33,11 +47,24 @@ type Config struct {
 	PageSize           int64
 	MaxItemsPerSection int
 	MaxParallelQueries int
+	// Negative disables the cache; zero selects the default.
+	CacheTTL          time.Duration
+	MaxCachedClusters int
 }
 
 type Service struct {
 	resources ResourceReader
 	config    Config
+	// Completed snapshots, keyed by Cluster. Nothing here is caller-specific:
+	// the overview describes a Cluster, and every caller reaching this service
+	// has already been checked for `cluster.read` on that Cluster.
+	mutex sync.Mutex
+	cache map[string]cacheEntry
+}
+
+type cacheEntry struct {
+	overview  Overview
+	expiresAt time.Time
 }
 
 type Overview struct {
@@ -48,6 +75,7 @@ type Overview struct {
 	Namespaces  NamespaceOverview     `json:"namespaces"`
 	Pods        PodOverview           `json:"pods"`
 	Workloads   WorkloadOverview      `json:"workloads"`
+	Storage     StorageOverview       `json:"storage"`
 	Resources   ClusterResourceTotals `json:"resources"`
 }
 
@@ -60,6 +88,9 @@ type NodeOverview struct {
 	Total         int64            `json:"total"`
 	Unschedulable int64            `json:"unschedulable"`
 	StatusCounts  map[string]int64 `json:"status_counts"`
+	// Nodes per reported kubelet version. A Cluster mid-upgrade reports more
+	// than one, and the skew between them decides which APIs are safe to use.
+	KubernetesVersions map[string]int64 `json:"kubernetes_versions"`
 }
 
 type NamespaceOverview struct {
@@ -85,6 +116,36 @@ type WorkloadResourceOverview struct {
 	Resource     string           `json:"resource"`
 	Total        int64            `json:"total"`
 	StatusCounts map[string]int64 `json:"status_counts"`
+}
+
+// Persistent storage as counts, not as a ratio.
+//
+// Volume capacity has no Cluster-wide maximum to be read against the way CPU and
+// memory do: with a dynamic provisioner the supply is whatever the backing
+// system will still hand out, and it is not visible from Kubernetes. So this
+// section reports how much has been provisioned and asked for, and how the
+// objects are distributed across their phases — a Pending claim or a Failed
+// volume is the thing worth seeing here, and both are counts.
+type StorageOverview struct {
+	PersistentVolumes      PersistentVolumeOverview      `json:"persistent_volumes"`
+	PersistentVolumeClaims PersistentVolumeClaimOverview `json:"persistent_volume_claims"`
+}
+
+type PersistentVolumeOverview struct {
+	Total int64 `json:"total"`
+	// Sum of `spec.capacity.storage` over every PersistentVolume, whatever phase
+	// it is in: a Released volume still occupies its backing storage.
+	CapacityBytes int64            `json:"capacity_bytes"`
+	StatusCounts  map[string]int64 `json:"status_counts"`
+}
+
+type PersistentVolumeClaimOverview struct {
+	Total int64 `json:"total"`
+	// Sum of `spec.resources.requests.storage`, which is what was asked for
+	// rather than what was provisioned — the same reading as the CPU and memory
+	// request totals above.
+	RequestedBytes int64            `json:"requested_bytes"`
+	StatusCounts   map[string]int64 `json:"status_counts"`
 }
 
 type ClusterResourceTotals struct {
@@ -135,13 +196,93 @@ func NewService(resources ResourceReader, configs ...Config) *Service {
 	if config.MaxParallelQueries <= 0 {
 		config.MaxParallelQueries = defaultMaxParallelQueries
 	}
-	return &Service{resources: resources, config: config}
+	if config.CacheTTL == 0 {
+		config.CacheTTL = defaultCacheTTL
+	}
+	if config.MaxCachedClusters <= 0 {
+		config.MaxCachedClusters = defaultMaxCachedClusters
+	}
+	return &Service{
+		resources: resources,
+		config:    config,
+		cache:     make(map[string]cacheEntry),
+	}
 }
 
 func (service *Service) Get(ctx context.Context, clusterID string) (Overview, error) {
 	if service == nil || service.resources == nil || ctx == nil || !validation.IsUUID(clusterID) {
 		return Overview{}, kubernetesresource.ErrInvalidInput
 	}
+	if cached, ok := service.cached(clusterID); ok {
+		return cached, nil
+	}
+	overview, err := service.load(ctx, clusterID)
+	if err != nil {
+		return Overview{}, err
+	}
+	service.store(clusterID, overview)
+	return overview, nil
+}
+
+// The snapshot held for this Cluster, if one is still within its window.
+func (service *Service) cached(clusterID string) (Overview, bool) {
+	if service.config.CacheTTL < 0 {
+		return Overview{}, false
+	}
+	service.mutex.Lock()
+	defer service.mutex.Unlock()
+	entry, ok := service.cache[clusterID]
+	if !ok || !time.Now().Before(entry.expiresAt) {
+		return Overview{}, false
+	}
+	// A copy, because the caller receives maps and slices that the next caller
+	// will receive as well.
+	return entry.overview.clone(), true
+}
+
+// Holds a snapshot for its window, unless a section of it failed.
+//
+// A failure is not cached: an operator who sees a section reported as
+// unavailable presses refresh precisely to find out whether it still is, and a
+// cache that answers that question from the failure itself has turned the button
+// off. A section that only hit its item ceiling is cached — re-reading a Cluster
+// too large to count will produce the same ceiling at the same cost.
+func (service *Service) store(clusterID string, overview Overview) {
+	if service.config.CacheTTL < 0 || !cacheable(overview) {
+		return
+	}
+	service.mutex.Lock()
+	defer service.mutex.Unlock()
+	if _, replacing := service.cache[clusterID]; !replacing &&
+		len(service.cache) >= service.config.MaxCachedClusters {
+		now := time.Now()
+		for key, entry := range service.cache {
+			if !now.Before(entry.expiresAt) {
+				delete(service.cache, key)
+			}
+		}
+		// Still full of live entries: this Cluster simply goes uncached rather
+		// than evicting a snapshot someone else is about to read.
+		if len(service.cache) >= service.config.MaxCachedClusters {
+			return
+		}
+	}
+	service.cache[clusterID] = cacheEntry{
+		overview:  overview.clone(),
+		expiresAt: time.Now().Add(service.config.CacheTTL),
+	}
+}
+
+func cacheable(overview Overview) bool {
+	for _, issue := range overview.Issues {
+		if issue.Code != "item_limit_reached" {
+			return false
+		}
+	}
+	return true
+}
+
+func (service *Service) load(ctx context.Context, clusterID string) (Overview, error) {
 	tasks := service.tasks(clusterID)
 	results := make([]sectionResult, len(tasks))
 	group, groupContext := errgroup.WithContext(ctx)
@@ -163,12 +304,18 @@ func (service *Service) Get(ctx context.Context, clusterID string) (Overview, er
 	overview := Overview{
 		GeneratedAt: time.Now().UTC(),
 		Issues:      make([]SectionIssue, 0),
-		Nodes:       NodeOverview{StatusCounts: map[string]int64{}},
-		Namespaces:  NamespaceOverview{StatusCounts: map[string]int64{}},
-		Pods:        PodOverview{StatusCounts: map[string]int64{}},
+		Nodes: NodeOverview{
+			StatusCounts: map[string]int64{}, KubernetesVersions: map[string]int64{},
+		},
+		Namespaces: NamespaceOverview{StatusCounts: map[string]int64{}},
+		Pods:       PodOverview{StatusCounts: map[string]int64{}},
 		Workloads: WorkloadOverview{
 			StatusCounts: map[string]int64{},
 			ByResource:   make([]WorkloadResourceOverview, 0, 5),
+		},
+		Storage: StorageOverview{
+			PersistentVolumes:      PersistentVolumeOverview{StatusCounts: map[string]int64{}},
+			PersistentVolumeClaims: PersistentVolumeClaimOverview{StatusCounts: map[string]int64{}},
 		},
 	}
 	succeeded := 0
@@ -204,6 +351,10 @@ func (service *Service) Get(ctx context.Context, clusterID string) (Overview, er
 			overview.Workloads.ByResource = append(overview.Workloads.ByResource, value)
 			overview.Workloads.Total += value.Total
 			mergeStatusCounts(overview.Workloads.StatusCounts, value.StatusCounts)
+		case PersistentVolumeOverview:
+			overview.Storage.PersistentVolumes = value
+		case PersistentVolumeClaimOverview:
+			overview.Storage.PersistentVolumeClaims = value
 		}
 	}
 	if succeeded == 0 {
@@ -230,6 +381,12 @@ func (service *Service) tasks(clusterID string) []sectionTask {
 		{section: "pods", load: func(ctx context.Context) (any, bool, error) {
 			return service.loadPods(ctx, clusterID)
 		}},
+		{section: "storage.persistentvolumes", load: func(ctx context.Context) (any, bool, error) {
+			return service.loadPersistentVolumes(ctx, clusterID)
+		}},
+		{section: "storage.persistentvolumeclaims", load: func(ctx context.Context) (any, bool, error) {
+			return service.loadPersistentVolumeClaims(ctx, clusterID)
+		}},
 	}
 	for _, resourceName := range []kubernetesresource.WorkloadResource{
 		kubernetesresource.WorkloadDeployments,
@@ -250,7 +407,9 @@ func (service *Service) tasks(clusterID string) []sectionTask {
 }
 
 func (service *Service) loadNodes(ctx context.Context, clusterID string) (any, bool, error) {
-	snapshot := nodeSnapshot{overview: NodeOverview{StatusCounts: map[string]int64{}}}
+	snapshot := nodeSnapshot{overview: NodeOverview{
+		StatusCounts: map[string]int64{}, KubernetesVersions: map[string]int64{},
+	}}
 	continuation := ""
 	for {
 		page, err := service.resources.ListNodes(ctx, kubernetesresource.ListNodesInput{
@@ -265,6 +424,7 @@ func (service *Service) loadNodes(ctx context.Context, clusterID string) (any, b
 			}
 			snapshot.overview.Total++
 			incrementStatus(snapshot.overview.StatusCounts, node.Status)
+			incrementStatus(snapshot.overview.KubernetesVersions, node.KubernetesVersion)
 			if node.Unschedulable {
 				snapshot.overview.Unschedulable++
 			}
@@ -360,6 +520,95 @@ func (service *Service) loadPods(ctx context.Context, clusterID string) (any, bo
 		}
 		if page.ContinueToken == "" {
 			return snapshot, false, nil
+		}
+		if page.ContinueToken == continuation {
+			return nil, false, kubernetesresource.ErrInvalidResponse
+		}
+		continuation = page.ContinueToken
+	}
+}
+
+func (service *Service) loadPersistentVolumes(
+	ctx context.Context,
+	clusterID string,
+) (any, bool, error) {
+	overview := PersistentVolumeOverview{StatusCounts: map[string]int64{}}
+	continuation := ""
+	for {
+		page, err := service.resources.ListResources(ctx, kubernetesresource.ListResourcesInput{
+			ClusterID: clusterID,
+			Resource:  kubernetesresource.ResourceIdentity{Version: "v1", Resource: "persistentvolumes"},
+			Limit:     service.config.PageSize, ContinueToken: continuation,
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		for _, object := range page.Items {
+			if overview.Total >= int64(service.config.MaxItemsPerSection) {
+				return overview, true, nil
+			}
+			var volume corev1.PersistentVolume
+			if runtime.DefaultUnstructuredConverter.FromUnstructured(object, &volume) != nil ||
+				volume.APIVersion != "v1" || volume.Kind != "PersistentVolume" || volume.Name == "" {
+				return nil, false, kubernetesresource.ErrInvalidResponse
+			}
+			overview.Total++
+			// The phase as `kubectl get pv` prints it, and nothing derived: a
+			// volume being deleted keeps the phase that says whether anything
+			// still claims it.
+			incrementStatus(overview.StatusCounts, strings.ToLower(string(volume.Status.Phase)))
+			capacity := volume.Spec.Capacity[corev1.ResourceStorage]
+			if capacity.Sign() < 0 || !checkedAdd(&overview.CapacityBytes, capacity.Value()) {
+				return nil, false, kubernetesresource.ErrInvalidResponse
+			}
+		}
+		if page.ContinueToken == "" {
+			return overview, false, nil
+		}
+		if page.ContinueToken == continuation {
+			return nil, false, kubernetesresource.ErrInvalidResponse
+		}
+		continuation = page.ContinueToken
+	}
+}
+
+func (service *Service) loadPersistentVolumeClaims(
+	ctx context.Context,
+	clusterID string,
+) (any, bool, error) {
+	overview := PersistentVolumeClaimOverview{StatusCounts: map[string]int64{}}
+	continuation := ""
+	for {
+		page, err := service.resources.ListResources(ctx, kubernetesresource.ListResourcesInput{
+			ClusterID: clusterID,
+			Resource: kubernetesresource.ResourceIdentity{
+				Version: "v1", Resource: "persistentvolumeclaims",
+			},
+			Limit: service.config.PageSize, ContinueToken: continuation,
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		for _, object := range page.Items {
+			if overview.Total >= int64(service.config.MaxItemsPerSection) {
+				return overview, true, nil
+			}
+			var claim corev1.PersistentVolumeClaim
+			if runtime.DefaultUnstructuredConverter.FromUnstructured(object, &claim) != nil ||
+				claim.APIVersion != "v1" || claim.Kind != "PersistentVolumeClaim" ||
+				claim.Name == "" || claim.Namespace == "" {
+				return nil, false, kubernetesresource.ErrInvalidResponse
+			}
+			overview.Total++
+			incrementStatus(overview.StatusCounts, strings.ToLower(string(claim.Status.Phase)))
+			requested := claim.Spec.Resources.Requests[corev1.ResourceStorage]
+			if requested.Sign() < 0 ||
+				!checkedAdd(&overview.RequestedBytes, requested.Value()) {
+				return nil, false, kubernetesresource.ErrInvalidResponse
+			}
+		}
+		if page.ContinueToken == "" {
+			return overview, false, nil
 		}
 		if page.ContinueToken == continuation {
 			return nil, false, kubernetesresource.ErrInvalidResponse
@@ -466,6 +715,41 @@ func podReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// A snapshot handed out separately from the one held in the cache.
+//
+// The same Overview is returned to every caller inside its window, and it is
+// made of maps and slices. Copying them keeps one caller's response from being
+// something another caller could reach.
+func (overview Overview) clone() Overview {
+	copied := overview
+	copied.Issues = append(make([]SectionIssue, 0, len(overview.Issues)), overview.Issues...)
+	copied.Nodes.StatusCounts = cloneCounts(overview.Nodes.StatusCounts)
+	copied.Nodes.KubernetesVersions = cloneCounts(overview.Nodes.KubernetesVersions)
+	copied.Namespaces.StatusCounts = cloneCounts(overview.Namespaces.StatusCounts)
+	copied.Pods.StatusCounts = cloneCounts(overview.Pods.StatusCounts)
+	copied.Workloads.StatusCounts = cloneCounts(overview.Workloads.StatusCounts)
+	copied.Workloads.ByResource = make([]WorkloadResourceOverview, 0, len(overview.Workloads.ByResource))
+	for _, entry := range overview.Workloads.ByResource {
+		entry.StatusCounts = cloneCounts(entry.StatusCounts)
+		copied.Workloads.ByResource = append(copied.Workloads.ByResource, entry)
+	}
+	copied.Storage.PersistentVolumes.StatusCounts = cloneCounts(
+		overview.Storage.PersistentVolumes.StatusCounts,
+	)
+	copied.Storage.PersistentVolumeClaims.StatusCounts = cloneCounts(
+		overview.Storage.PersistentVolumeClaims.StatusCounts,
+	)
+	return copied
+}
+
+func cloneCounts(counts map[string]int64) map[string]int64 {
+	copied := make(map[string]int64, len(counts))
+	for key, value := range counts {
+		copied[key] = value
+	}
+	return copied
 }
 
 func incrementStatus(counts map[string]int64, status string) {

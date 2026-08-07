@@ -24,5 +24,14 @@ export function useClusterOverview(clusterId: string | null) {
         }),
       ),
     enabled: Boolean(clusterId),
+    /*
+     * Longer than the Console default, because one overview is ten full
+     * listings of the Cluster carried over the Agent's stream — the most
+     * expensive read in this application, on the page every operator lands on.
+     * At the shared default, stepping into a list and back was enough to make
+     * the Cluster count itself again. The page states `generated_at` and owns a
+     * refresh button, so a snapshot of this age is visible rather than implied.
+     */
+    staleTime: 60_000,
   });
 }

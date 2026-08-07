@@ -2,6 +2,7 @@ import * as React from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import * as SeparatorPrimitive from "@radix-ui/react-separator";
 import * as SwitchPrimitive from "@radix-ui/react-switch";
+import { Slot } from "@radix-ui/react-slot";
 import { Check } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -75,9 +76,17 @@ export function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
  * its own, and nesting one shadow inside another is what turns an interface into
  * a pile of cards. The hairline and the fill say where the group is.
  */
-export function Card({ className, ...props }: React.ComponentProps<"div">) {
+export function Card({
+  className,
+  asChild = false,
+  ...props
+}: React.ComponentProps<"div"> & {
+  /** Renders the card's surface onto its child, for a card that is itself a control. */
+  asChild?: boolean;
+}) {
+  const Component = asChild ? Slot : "div";
   return (
-    <div
+    <Component
       className={cn("border-border bg-surface rounded-panel border p-4", className)}
       {...props}
     />
