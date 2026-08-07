@@ -341,7 +341,11 @@ export function ManifestSection({ clusterId, clusterName }: ManifestSectionProps
             size="sm"
             variant="primary"
             disabled={
-              currentPlan === null || !currentPlan.allowed || currentPlan.failed || submit.isPending
+              currentPlan === null ||
+              !currentPlan.allowed ||
+              !currentPlan.valid ||
+              currentPlan.failed ||
+              submit.isPending
             }
             onClick={() => setConfirming(true)}
           >
@@ -367,14 +371,19 @@ export function ManifestSection({ clusterId, clusterName }: ManifestSectionProps
         </Alert>
       ) : null}
       {/*
-        Three different things a preview can say, and they must not be collapsed:
-        a document the permissions do not cover, a document Kubernetes rejected,
-        and a preview that passed. Reporting 预检通过 while the result carried a
-        failure told the operator the opposite of what the disabled 确认 button
-        was doing.
+        Four different things a preview can say, and they must not be collapsed:
+        a document ZKE cannot send, a document the permissions do not cover, a
+        document Kubernetes rejected, and a preview that passed. Reporting 预检通过
+        while the result carried a failure told the operator the opposite of what
+        the disabled 确认 button was doing.
       */}
       {shown && !outcome ? (
-        !shown.allowed ? (
+        !shown.valid ? (
+          <Alert tone="danger">
+            清单中存在无法解析成请求的文档，整份清单会被拒绝，不会写入任何对象——
+            请按下表的「说明」修正后重新预检。
+          </Alert>
+        ) : !shown.allowed ? (
           <Alert tone="danger">
             清单中存在当前身份无权处理的文档，整份清单会被拒绝，不会写入任何对象。
           </Alert>

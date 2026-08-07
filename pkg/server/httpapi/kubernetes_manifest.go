@@ -145,13 +145,26 @@ func (handler *kubernetesManifestHandler) run(
 	}
 
 	handler.recordDocuments(c, identity.User.ID, operation, query.DryRun, result)
-	if !result.Allowed {
-		// Refused whole. The documents are not returned with the error — the
-		// error envelope carries no data — but a DryRun of the same manifest
-		// returns the per-document verdicts, which is where the Console reads
-		// them from before it ever offers to execute.
-		writeError(c, http.StatusForbidden, "forbidden", manifestRefusalMessage)
-		return
+	// A dry run always answers with the per-document verdicts, even when they are
+	// all refusals. Reporting it as an error instead would be withholding the one
+	// thing the dry run exists to produce: which document is the problem and which
+	// permission it needs. Nothing was written either way — that is what makes the
+	// difference safe to draw here.
+	//
+	// An execution says so with a status, because a caller who asked to change the
+	// Cluster and changed nothing must not have to read a 200 body carefully to
+	// find that out. The malformed document is reported before the refused one
+	// when both are present: it is about what the caller sent, and it is the one
+	// they can fix without asking anybody.
+	if !query.DryRun {
+		if !result.Valid {
+			writeError(c, http.StatusBadRequest, "invalid_document", manifestInvalidMessage)
+			return
+		}
+		if !result.Allowed {
+			writeError(c, http.StatusForbidden, "forbidden", manifestRefusalMessage)
+			return
+		}
 	}
 	writeSuccess(c, http.StatusOK, manifestResponse(result))
 }
@@ -254,6 +267,7 @@ func manifestResponse(result kubernetesmanifest.Result) gin.H {
 	return gin.H{
 		"dry_run":         result.DryRun,
 		"allowed":         result.Allowed,
+		"valid":           result.Valid,
 		"failed":          result.Failed,
 		"catalog_partial": result.CatalogPartial,
 		"documents":       documents,
@@ -301,10 +315,13 @@ func manifestDocumentError(err error) (string, string) {
 	return "internal_error", "the document could not be processed"
 }
 
-// The message names no object: which documents are refused and which permission
-// each one needs is what a dry run reports per document, and a list of objects in
-// an error string makes it long without making it actionable.
-const manifestRefusalMessage = "permission denied for documents in this manifest; run a dry run to see which ones"
+// The messages name no object: which documents are affected, and why, is what a
+// dry run reports per document, and a list of objects in an error string makes it
+// long without making it actionable.
+const (
+	manifestRefusalMessage = "permission denied for documents in this manifest; run a dry run to see which ones"
+	manifestInvalidMessage = "this manifest holds a document that cannot be applied; run a dry run to see which one. Nothing was written."
+)
 
 // recordDocuments writes the audit trail for one manifest request.
 //
@@ -357,9 +374,9 @@ func manifestAuditRecords(
 	result kubernetesmanifest.Result,
 ) []manifestAuditRecord {
 	action := kubernetesMutationAuditAction(manifestAuditAction(operation), dryRun)
-	if dryRun || !result.Allowed {
+	if dryRun || !result.Executable() {
 		outcome := "failed"
-		if result.Allowed && !result.Failed {
+		if result.Executable() && !result.Failed {
 			outcome = "succeeded"
 		}
 		return []manifestAuditRecord{{
@@ -400,10 +417,13 @@ func manifestRequestTargetName(
 	operation kubernetesmanifest.Operation,
 	result kubernetesmanifest.Result,
 ) string {
-	refused := 0
+	refused, invalid := 0, 0
 	for _, document := range result.Documents {
-		if document.Status == kubernetesmanifest.StatusRefused {
+		switch document.Status {
+		case kubernetesmanifest.StatusRefused:
 			refused++
+		case kubernetesmanifest.StatusInvalid:
+			invalid++
 		}
 	}
 	target := fmt.Sprintf(
@@ -413,6 +433,9 @@ func manifestRequestTargetName(
 	)
 	if refused > 0 {
 		target += fmt.Sprintf(", %d refused", refused)
+	}
+	if invalid > 0 {
+		target += fmt.Sprintf(", %d invalid", invalid)
 	}
 	return target
 }

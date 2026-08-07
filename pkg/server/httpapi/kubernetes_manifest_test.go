@@ -68,6 +68,7 @@ func TestKubernetesManifestApplyReportsEachDocument(t *testing.T) {
 			return kubernetesmanifest.Result{
 				DryRun:  true,
 				Allowed: true,
+				Valid:   true,
 				Documents: []kubernetesmanifest.Document{{
 					Index:       0,
 					APIVersion:  "v1",
@@ -127,6 +128,7 @@ func TestKubernetesManifestRefusalIsForbiddenAndWritesNothing(t *testing.T) {
 		) (kubernetesmanifest.Result, error) {
 			return kubernetesmanifest.Result{
 				Allowed: false,
+				Valid:   true,
 				Documents: []kubernetesmanifest.Document{{
 					Index:       0,
 					Kind:        "Secret",
@@ -142,6 +144,58 @@ func TestKubernetesManifestRefusalIsForbiddenAndWritesNothing(t *testing.T) {
 		t.Fatalf("status = %d, want 403: %s", response.Code, response.Body)
 	}
 	assertErrorCode(t, response, "forbidden")
+}
+
+// A manifest holding a document ZKE cannot send is a manifest the operator is
+// about to correct, so nothing in it is written and the response says so with a
+// status rather than a 200 whose body has to be read carefully to notice.
+func TestKubernetesManifestInvalidDocumentIsBadRequestAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeKubernetesManifestService{
+		execute: func(
+			context.Context,
+			kubernetesmanifest.ResourceAccess,
+			kubernetesmanifest.Input,
+		) (kubernetesmanifest.Result, error) {
+			return kubernetesmanifest.Result{
+				Allowed: true,
+				Valid:   false,
+				Documents: []kubernetesmanifest.Document{{
+					Index:  0,
+					Kind:   "Wdget",
+					Status: kubernetesmanifest.StatusInvalid,
+					Err:    kubernetesmanifest.ErrUnknownKind,
+				}},
+			}, nil
+		},
+	}
+	response := manifestRequest(t, service, "apply", "?confirm=true", testManifest)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body)
+	}
+	assertErrorCode(t, response, "invalid_document")
+}
+
+// Both problems at once reports the malformed document: it is about what the
+// caller sent, and it is the one they can fix without asking anybody.
+func TestKubernetesManifestReportsTheMalformedDocumentBeforeTheRefusedOne(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeKubernetesManifestService{
+		execute: func(
+			context.Context,
+			kubernetesmanifest.ResourceAccess,
+			kubernetesmanifest.Input,
+		) (kubernetesmanifest.Result, error) {
+			return kubernetesmanifest.Result{Allowed: false, Valid: false}, nil
+		},
+	}
+	response := manifestRequest(t, service, "apply", "?confirm=true", testManifest)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body)
+	}
+	assertErrorCode(t, response, "invalid_document")
 }
 
 func TestKubernetesManifestRequestValidation(t *testing.T) {
@@ -316,7 +370,7 @@ func TestManifestAuditRecordsAggregateWhenNothingChanged(t *testing.T) {
 	dryRun := manifestAuditRecords(
 		kubernetesmanifest.OperationApply,
 		true,
-		kubernetesmanifest.Result{DryRun: true, Allowed: true, Documents: documents},
+		kubernetesmanifest.Result{DryRun: true, Allowed: true, Valid: true, Documents: documents},
 	)
 	if len(dryRun) != 1 {
 		t.Fatalf("a dry run wrote %d records, want 1", len(dryRun))
@@ -343,7 +397,7 @@ func TestManifestAuditRecordsAggregateWhenNothingChanged(t *testing.T) {
 	refused := manifestAuditRecords(
 		kubernetesmanifest.OperationApply,
 		false,
-		kubernetesmanifest.Result{Allowed: false, Documents: refusedDocuments},
+		kubernetesmanifest.Result{Allowed: false, Valid: true, Documents: refusedDocuments},
 	)
 	if len(refused) != 1 {
 		t.Fatalf("a refused request wrote %d records, want 1", len(refused))
@@ -368,6 +422,7 @@ func TestManifestAuditRecordsNameEveryObjectAnExecutionTouched(t *testing.T) {
 		false,
 		kubernetesmanifest.Result{
 			Allowed: true,
+			Valid:   true,
 			Failed:  true,
 			Documents: []kubernetesmanifest.Document{
 				{

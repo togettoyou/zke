@@ -55,7 +55,15 @@ export type ManifestDocument = {
 
 export type ManifestResult = {
   dry_run: boolean;
+  /** Every document's permission is covered. False means nothing was written. */
   allowed: boolean;
+  /**
+   * Every document could be turned into a request. False means nothing was
+   * written either: a file with a misspelled Kind is one the operator is about to
+   * correct, and applying the rest first would leave them correcting it against a
+   * Cluster that already holds half of it.
+   */
+  valid: boolean;
   failed: boolean;
   catalog_partial: boolean;
   documents: ManifestDocument[];

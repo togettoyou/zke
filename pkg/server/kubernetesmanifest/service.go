@@ -140,6 +140,11 @@ type Result struct {
 	DryRun bool
 	// Every document's permission is covered. False means nothing was executed.
 	Allowed bool
+	// Every document could be turned into a request. False means nothing was
+	// executed: a manifest with a document ZKE cannot send is a manifest the
+	// operator is about to correct, and applying the rest of it first would leave
+	// them correcting it against a Cluster that already holds half of it.
+	Valid bool
 	// At least one document failed, so execution stopped there.
 	Failed bool
 	// The Cluster's discovery was incomplete, so an unresolved Kind may exist in
@@ -147,6 +152,13 @@ type Result struct {
 	CatalogPartial bool
 	// In submitted order, whatever order they were executed in.
 	Documents []Document
+}
+
+// Executable reports whether the manifest was carried out at all. Both halves
+// have to hold: a document ZKE may not write and a document ZKE cannot send are
+// different problems with the same answer, which is that nothing is written.
+func (result Result) Executable() bool {
+	return result.Allowed && result.Valid
 }
 
 // ResourceAccess is the manifest's view of the resource layer, narrowed to what
@@ -254,17 +266,30 @@ func (service *Service) Execute(
 		Documents:      make([]Document, 0, len(plan)),
 	}
 	result.Allowed = true
+	result.Valid = true
 	for _, entry := range plan {
 		result.Documents = append(result.Documents, entry.document)
-		if entry.document.Status == StatusRefused {
+		switch entry.document.Status {
+		case StatusRefused:
 			result.Allowed = false
+		case StatusInvalid:
+			result.Valid = false
 		}
 	}
-	// A refusal stops the whole request, including the DryRun. Executing the
-	// documents a caller may write while refusing the rest would be a partial
-	// apply chosen by permissions rather than by the operator, and the half that
-	// went through is the half nobody asked for on its own.
-	if !result.Allowed {
+	// One unusable document stops the whole request, including the DryRun, for
+	// both reasons it can be unusable.
+	//
+	// A refusal, because executing the documents a caller may write while refusing
+	// the rest would be a partial apply chosen by permissions rather than by the
+	// operator, and the half that went through is the half nobody asked for on its
+	// own.
+	//
+	// A document that could not be turned into a request, for the same reason
+	// arrived at from the other side: a file with a misspelled Kind is a file the
+	// operator is about to correct and submit again, and having applied nine of
+	// its ten objects in the meantime makes that second submission a different
+	// operation against a Cluster that is already half-changed.
+	if !result.Executable() {
 		return result, nil
 	}
 	service.execute(ctx, access, input, plan)
@@ -372,9 +397,6 @@ func (service *Service) planApply(
 	input Input,
 	entry *plannedDocument,
 ) {
-	// Both answers before the read, so a caller who may do neither is refused
-	// without one. For every family but the generic one the two are the same
-	// question, and asking twice costs nothing: the grant is already resolved.
 	createRequirement, createAllowed, err := access.RequirementForApply(
 		entry.resource, true,
 	)
@@ -386,12 +408,20 @@ func (service *Service) planApply(
 	updateRequirement, updateAllowed, _ := access.RequirementForApply(
 		entry.resource, false,
 	)
-	if !createAllowed && !updateAllowed {
+	// A family whose creating and changing collapse into one permission is decided
+	// without reading the Cluster. Two reasons, and the second is the binding one:
+	// the answer cannot depend on whether the object exists, and for a Secret the
+	// read is itself guarded by the permission being checked — so a refused caller
+	// must not reach it.
+	//
+	// The generic family is read first even when both halves are refused, because
+	// only the read says which of the two permissions to name, and naming the wrong
+	// one sends the operator to ask for a permission that would not have helped.
+	// The read costs nothing they do not already hold: it answers to `cluster.read`,
+	// which the route required before any of this ran.
+	if createRequirement == updateRequirement && !createAllowed {
 		entry.document.Status = StatusRefused
-		// Named as the update requirement: an operator reading a refusal wants
-		// the permission that would let them change what is already there, and
-		// where the two differ the object usually already exists.
-		entry.document.Requirement = updateRequirement
+		entry.document.Requirement = createRequirement
 		entry.document.Err = kubernetesresource.ErrManifestForbidden
 		return
 	}

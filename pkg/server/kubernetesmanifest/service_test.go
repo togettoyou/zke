@@ -704,6 +704,72 @@ var fakeCatalog = map[kubernetesresource.ManifestKind]kubernetesresource.Manifes
 		Namespaced: true,
 		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
 	},
+	{Version: "v1", Kind: "Service"}: {
+		Resource:   kubernetesresource.ResourceIdentity{Version: "v1", Resource: "services"},
+		Namespaced: true,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
+	{Version: "v1", Kind: "PersistentVolumeClaim"}: {
+		Resource: kubernetesresource.ResourceIdentity{
+			Version: "v1", Resource: "persistentvolumeclaims",
+		},
+		Namespaced: true,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
+	{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"}: {
+		Resource: kubernetesresource.ResourceIdentity{
+			Group: "networking.k8s.io", Version: "v1", Resource: "ingresses",
+		},
+		Namespaced: true,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
+	// The five authorization families. They are in the catalog because a real
+	// Cluster reports them — only the Server's own resource browser filters them
+	// out — and a fixture missing them would make a manifest holding a Role look
+	// like an unknown Kind rather than a document answering to
+	// `cluster.rbac.manage`, which is the distinction most of these tests are about.
+	{Version: "v1", Kind: "ServiceAccount"}: {
+		Resource: kubernetesresource.ResourceIdentity{
+			Version: "v1", Resource: "serviceaccounts",
+		},
+		Namespaced: true,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "Role"}: {
+		Resource: kubernetesresource.ResourceIdentity{
+			Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles",
+		},
+		Namespaced: true,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "RoleBinding"}: {
+		Resource: kubernetesresource.ResourceIdentity{
+			Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings",
+		},
+		Namespaced: true,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRole"}: {
+		Resource: kubernetesresource.ResourceIdentity{
+			Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles",
+		},
+		Namespaced: false,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
+	{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRoleBinding"}: {
+		Resource: kubernetesresource.ResourceIdentity{
+			Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings",
+		},
+		Namespaced: false,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
+	// Refused by the resource layer whatever the grant, and in the catalog so the
+	// refusal is tested against a Kind that resolves rather than one that does not.
+	{Version: "v1", Kind: "Event"}: {
+		Resource:   kubernetesresource.ResourceIdentity{Version: "v1", Resource: "events"},
+		Namespaced: true,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
 }
 
 func (access *fakeAccess) DiscoverResources(

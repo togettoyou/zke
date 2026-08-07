@@ -1980,6 +1980,8 @@ export interface components {
             dry_run: boolean;
             /** @description 当前身份的权限覆盖了清单中的每一个文档。为 false 时整份清单被拒绝， 没有任何对象被写入；该情形下实际写入请求返回 403，只有 dry-run 会以 200 返回逐文档判定。 */
             allowed: boolean;
+            /** @description 清单中的每一个文档都能被转换成请求。为 false 时同样整份拒绝且不写入任何对象—— 带有拼错 Kind 的文件是操作者马上要修正后重新提交的，先把其余对象写进去只会让 这次重新提交面对一个已经改了一半的集群。该情形下实际写入请求返回 400， 只有 dry-run 会以 200 返回逐文档判定。 */
+            valid: boolean;
             /** @description 至少有一个文档执行失败，执行在该文档处停止。 */
             failed: boolean;
             /** @description 集群 Discovery 不完整，因此“Kind 未知”只表示本次没查到，不能断定集群中 不存在该类型。 */
