@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestServiceUpgradesOutdatedPasswordHash(t *testing.T) {
@@ -19,9 +18,7 @@ func TestServiceUpgradesOutdatedPasswordHash(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	password := []byte("a sufficiently long admin passphrase")
 	outdatedParams := auth.DefaultPasswordParams()
@@ -86,9 +83,7 @@ func TestServiceRejectsConcurrentCredentialChange(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	password := []byte("a sufficiently long admin passphrase")
 	passwordHash, err := auth.HashPassword(password, auth.DefaultPasswordParams())
@@ -203,9 +198,7 @@ func TestPersistentAccountLockExpiresAndRecovers(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 	password := []byte("a sufficiently long account recovery passphrase")
 	passwordHash, err := auth.HashPassword(password, auth.DefaultPasswordParams())
 	if err != nil {
@@ -363,9 +356,7 @@ func TestLastGlobalAdministratorIsNeverLockedOut(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 	password := []byte("a sufficiently long sole administrator passphrase")
 	passwordHash, err := auth.HashPassword(password, auth.DefaultPasswordParams())
 	if err != nil {

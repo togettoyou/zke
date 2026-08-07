@@ -123,7 +123,8 @@ func (store *AuthStore) RecordLoginFailure(
 		 * The repository already holds the matching invariant on the other side:
 		 * the last active global administrator cannot be deleted or unbound
 		 * (`ensureNotLastGlobalAdmin`). Locking one out costs exactly what
-		 * removing one costs, so it is refused on the same grounds.
+		 * removing one costs, so it is refused on the same grounds and asks the
+		 * same question: who holds the builtin `admin` role at global scope.
 		 *
 		 * Evaluated as a CTE inside the same statement, so the decision and the
 		 * write cannot be separated by a concurrent binding change. No advisory
@@ -137,24 +138,17 @@ func (store *AuthStore) RecordLoginFailure(
 		 * reachable and stays throttled.
 		 */
 		err = transaction.QueryRow(ctx, `
-WITH lockable AS (
+WITH administrators AS (
+    SELECT DISTINCT users.id
+    FROM users
+    JOIN role_bindings ON role_bindings.subject_id = users.id
+    WHERE users.status = 'active'
+      AND role_bindings.scope_type = 'global'
+      AND role_bindings.role = $5
+), lockable AS (
     SELECT (
-        NOT EXISTS (
-            SELECT 1
-            FROM role_bindings
-            WHERE role_bindings.subject_id = $1
-              AND role_bindings.role = 'admin'
-              AND role_bindings.scope_type = 'global'
-        )
-        OR (
-            SELECT count(DISTINCT administrators.id)
-            FROM users AS administrators
-            JOIN role_bindings
-              ON role_bindings.subject_id = administrators.id
-            WHERE administrators.status = 'active'
-              AND role_bindings.role = 'admin'
-              AND role_bindings.scope_type = 'global'
-        ) > 1
+        NOT EXISTS (SELECT 1 FROM administrators WHERE id = $1)
+        OR (SELECT count(*) FROM administrators) > 1
     ) AS allowed
 )
 UPDATE users
@@ -206,6 +200,7 @@ RETURNING
 			input.Now,
 			input.MaxFailures,
 			input.LockDuration,
+			globalAdminRoleName,
 		).Scan(&status, &newlyLocked, &lockWithheld)
 		if errors.Is(err, pgx.ErrNoRows) {
 			targetID = nil

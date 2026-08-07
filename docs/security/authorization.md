@@ -38,17 +38,83 @@ Session 创建与成功审计在同一事务中完成；登录成功、失败、
 能力发现，不能替代服务端授权。当前用户自助改密要求有效 Session、CSRF、当前密码、新密码和显式确认；成功后
 撤销该用户全部 Session、写入 `auth.password.change` 审计并要求重新登录。
 
-RBAC 基础已经实现固定权限、`admin/viewer` 角色矩阵、Global/Tenant/Project RoleBinding 继承规则、默认拒绝、
-Project/Cluster 归属解析和 HTTP 授权 middleware。Global `admin` 拥有全部固定权限；`viewer` 只拥有 Tenant、
-Project 和 Cluster 读取权限。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标 Project，跨作用域
-访问会被拒绝。
+RBAC 基础已经实现固定权限词表、可由操作者定义的角色、Global/Tenant/Project RoleBinding 继承规则、默认拒绝、
+Project/Cluster 归属解析和 HTTP 授权 middleware。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标
+Project，跨作用域访问会被拒绝。
 
-当前固定权限还包括 `user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`。Phase 1 的用户与
-RoleBinding 管理入口只允许 Global `admin` 使用，避免在委派规则尚未扩展前出现权限提升；创建的 RoleBinding
-仍可绑定 Global、Tenant 或 Project 作用域。Server 提供用户列表、详情、创建、修改显示名称、启用/禁用、
-删除、解锁和管理员密码重置 API，以及 RoleBinding 列表、详情、幂等创建和删除 API。RoleBinding 是不可变
-授权关系，修改通过删除后重新创建完成。禁止当前用户禁用或删除自身，也禁止禁用、删除或移除最后一个有效的
-Global `admin`。权限授予、权限移除、用户状态变更、删除、解锁和密码重置均要求显式确认；禁用、锁定和密码
+### 角色
+
+角色是一组权限的命名集合，`role_bindings.role` 以外键引用它。权限词表本身仍然固定在 Server 代码里——它同时
+是审计动作的一部分——但哪些权限组成一个角色由操作者决定。
+
+内置角色只有 `admin` 与 `viewer` 两个，由 Server 定义，不可编辑也不可删除。`admin` 的语义是"Server 定义的
+全部权限"而不是一份清单，`viewer` 则是一份固定清单——因为"只读"是一个需要有人明确决定的判断，新增的读权限
+不会自动进入。
+
+两者的名称、说明和权限集只存在于代码（`pkg/server/rbac.BuiltinRoles`），由 Server 在每次启动时对账写入
+数据库。**Schema 不播种任何角色**：把 `admin` 的权限清单抄进 SQL 就是把同一件事维护两遍，而抄本会在下一次新增
+权限时过时，且过时的那一份正是运维会去读的那一份。这一列里也没有通配符：一个表示"全部"的取值必须被授权判定、
+提权上限检查和能力上报三处分别解释，而它恰好又是自定义角色绝对不能持有的取值——保持这一列只存字面权限名，把
+内容交给 Server，同时避免了这三个问题。
+
+因此，迁移已执行但 Server 从未启动过的数据库里没有任何角色。这是安全的方向：那时也不可能存在任何 RoleBinding，
+因为 `role_bindings.role` 引用的正是这张表。
+
+自定义角色可以创建、修改和删除。标识（`name`）创建后不可修改：绑定和历史审计记录都以它指代该角色，改名会
+让一条历史记录看起来在说另一件事；可修改的是显示名称、说明和权限集，其中权限集是整体替换而不是增量。仍被
+绑定的角色不能删除，这一条由数据库外键强制，服务端在同一事务内先读绑定计数以给出可操作的错误。
+
+### 提权防护
+
+角色的权限集不得超出**调用者本人在 Global 作用域已持有的权限**，创建、修改角色和创建绑定三条路径都执行这条
+检查，超出时返回 `403 permission_escalation` 并列出越界的权限名。
+
+三条路径都要检查，是因为它们互为绕过：只检查创建角色，持有 `rbac.manage` 的人可以直接把已经存在的 `admin`
+绑定给自己；只检查绑定，则可以先造一个角色再绑。没有这条限制，`rbac.manage` 就等于全部权限，平台定义的其余
+权限位会全部塌缩成一个。
+
+以 Global 作用域为准，而不是调用者当前所在的作用域：角色是全局对象，可以在之后被绑定到任何地方，因此一个只在
+某个 Project 内持有的权限，否则就能通过写进角色变成在任何地方可用。Kubernetes 用 `escalate` 和 `bind` 解决
+同一个问题，ZKE 没有对应的豁免动词，这是有意的。
+
+依赖缺失按拒绝处理：Server 在构造时注入权限判定服务，缺少它时角色写入直接失败，而不是跳过检查。
+
+### 全局管理员保护
+
+**全局管理员**指在 Global 作用域绑定了内置 `admin` 角色的 `active` 账号——不是「持有等价权限集的账号」。
+围绕它有两条规则，缺一不可：
+
+1. **必须始终存在至少一个。** 否则该部署除了直连数据库没有任何回到管理态的途径。
+2. **只有全局管理员才能移除全局管理员。** 持有自定义角色不算，哪怕那个角色包含全部权限。
+
+第二条是针对账号被攻破的。它一度不存在：判定曾按「谁还持有 `user.manage` 与 `rbac.manage`」来算，于是一个
+持有全部权限的自定义角色也被算作管理员，删除真正的管理员时计数是 2、看起来安全——对平台是安全的，对平台的
+所有者不是。删除、禁用用户和删除绑定三条路径都执行这两条规则。
+
+与之配套的第三条：**授予 Global `admin` 也只有全局管理员可以做**。否则前两条形同虚设——一个包含全部权限的
+自定义角色满足 `admin` 的提权天花板，其持有者可以先把 `admin` 绑给自己、成为全局管理员，再删掉原来那个。
+守卫「最后一道账号」的这个群体，成员资格必须从群体内部授予。
+
+不按权限而按角色判定不会削弱恢复能力：`admin` 是内置角色，不可编辑，且每次启动从代码对账，所以只要还有一个
+全局管理员，Server 定义的每一项权限就都还在可达范围内。自定义角色的权限收窄因此不再需要这条检查——它触碰不到
+`admin`。所有判定与写入在同一事务内，并由 advisory lock 串行化。
+
+账户锁定同样按这条规则豁免最后一个全局管理员（见下文）。
+
+### 访问管理接口
+
+当前固定权限还包括 `user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`。用户、角色与
+RoleBinding 管理入口都要求 Global 作用域的对应权限；创建的 RoleBinding 仍可绑定 Global、Tenant 或 Project
+作用域。Server 提供用户列表、详情、创建、修改显示名称、启用/禁用、删除、解锁和管理员密码重置 API，角色列表、
+详情、创建、修改和删除 API，权限字典 API，以及 RoleBinding 列表、详情、幂等创建和删除 API。
+
+权限字典（`GET /api/v1/permissions`）返回 Server 定义的全部权限，并标注调用者本人是否在全局持有该权限。
+它由接口提供而不是固化在 Console 里：一份写在前端的清单会与 Server 静默脱节，Server 新增而前端未列出的权限
+将是一个任何角色都无法被授予的权限，且没有任何地方会报错。该接口要求 `rbac.read` 且返回调用者自己的权限上限，
+因此不对未认证访问开放。
+
+RoleBinding 是不可变授权关系，修改通过删除后重新创建完成。禁止当前用户禁用或删除自身，也禁止禁用、删除或
+移除最后一个全局管理员，也禁止非全局管理员移除全局管理员（见上文「全局管理员保护」）。权限授予、权限移除、用户状态变更、删除、解锁和密码重置均要求显式确认；禁用、锁定和密码
 重置会撤销目标用户现有 Session，删除则在同一事务中永久移除用户、全部 Session 和全部 RoleBinding，用户名
 随之释放。Enrollment、资源创建幂等记录和审计事件保留原用户 ID，审计事件还保留删除时的用户名。
 
@@ -124,25 +190,55 @@ Agent 不认识该字段会继续拒绝，因此 Server 先于 Agent 升级时�
 `app.kubernetes.io/managed-by=zke-server` 的 Secret 不列出、不可读写，返回与权限不足区分开的
 `403 secret_managed_by_platform`；指向 Agent 自身命名空间的请求返回 `403 agent_namespace_forbidden`。两者都是
 ZKE 的固定边界而不是上游 Kubernetes 的拒绝，因此不使用 5xx：那会被客户端当作可重试的故障，也会被读成给 Agent
-补 Kubernetes 权限就能解决。列表不返回任何取值，详情返回的取值默认在界面上遮蔽；审计记录发起者、目标和
-结果，不记录取值。
+补 Kubernetes 权限就能解决。列表不返回任何取值，详情返回的取值默认在界面上遮蔽。
+
+Secret 的**读取**同样写入审计，这是它与 ConfigMap 的区别所在：一次成功的读取本身就是全部暴露，权限可以收回，
+已经交出去的凭证收不回来，事后唯一还能回答的问题就是谁在什么时候取走了它。列表与单对象读取记为两个不同的
+动作（`kubernetes_secret.list` 与 `kubernetes_secret.read`），因为列表不返回任何取值——区分这两者就是区分
+"浏览"与"取走"。审计记录发起者、Cluster、Namespace、对象名和结果，不记录任何键名或取值。
 
 Secret 的 YAML 是一对独立路由，读要求 `cluster.secret.read`，写要求 `cluster.secret.manage`，不经过通用 YAML
 入口——后者对 Secret 的拒绝没有放开。该路由使用 Secret 服务自己的资源访问，其只接受 `core/v1 Secret`，因此上述
 平台对象过滤与 Agent 两条判定原样生效。写入前另外拒绝改变 `type`、拒绝写入已 immutable 的对象、拒绝为对象添加
 `app.kubernetes.io/managed-by=zke-server`。一份 YAML 会一次返回该 Secret 的全部取值，与详情接口逐键遮蔽的呈现
-方式不同，但两者要求的是同一个 `cluster.secret.read`；审计仍不记录正文。
+方式不同，但两者要求的是同一个 `cluster.secret.read`，也记入同一个 `kubernetes_secret.read` 审计动作——按更
+显眼的那个动作筛选的人不该因此漏掉暴露面更大的那条路径；审计仍不记录正文。
 
 目标集群内的 Kubernetes RBAC 使用独立的 `cluster.rbac.read` 与 `cluster.rbac.manage`，不复用普通
 `cluster.read` 或 `cluster.resource.*`。ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding
 从通用 Resource/YAML API 排除，只能通过固定资源类型和作用域的专用接口访问：类型化接口，或同样挂在
 `cluster.rbac.read/manage` 上的专用 YAML 路由（按作用域分为命名空间级与集群级两条，作用域不符即拒绝）。
 写入需要 CSRF、DryRun、确认、幂等、UID/resourceVersion 与审计；ServiceAccount 响应不返回 Secret 名称或正文。
-Agent ClusterRole 不包含 `escalate`、`bind`、`impersonate`；类型化规则与 YAML 守卫同时拒绝这些 Verb、Secret 和
-ServiceAccount Token，绑定不能直接引用内置 `zke-agent` 角色，也不能改写 `roleRef`，最终提权检查仍由 Kubernetes
-API Server 执行。ZKE 管理的 Agent 授权对象禁止经该接口更新或删除，YAML 路由只允许读取；提交的文档也不能给对象
-添加 `app.kubernetes.io/managed-by=zke-server`。YAML 与类型化接口执行同一套规则是这条路由能够存在的前提：
-两者若不一致，宽的那条就是另一条的旁路。
+Agent ClusterRole 不包含 `escalate`、`bind`、`impersonate`；类型化规则与 YAML 守卫同时拒绝这些 Verb 和
+ServiceAccount Token，最终提权检查仍由 Kubernetes API Server 执行。ZKE 管理的 Agent 授权对象禁止经该接口更新
+或删除，YAML 路由只允许读取；提交的文档也不能给对象添加 `app.kubernetes.io/managed-by=zke-server`。YAML 与
+类型化接口执行同一套规则是这条路由能够存在的前提：两者若不一致，宽的那条就是另一条的旁路。
+
+#### PolicyRule 中的 Secret：按调用者权限条件放行
+
+Kubernetes RBAC 本身就是一种「把访问权交给别人」的手段，因此规则里出现 `secrets` 等于在发放 Secret 访问权。
+这类规则要求调用者**在该 Cluster 上持有对应的 Secret 权限**，按 Verb 区分：
+
+- 只读 Verb（`get`、`list`、`watch`）→ 要求 `cluster.secret.read`
+- 其余 Verb 或通配符 `*` → 要求 `cluster.secret.manage`
+- `resources: ["*"]` 视同点名 Secret（通配符覆盖 Secret 与点名它一样确实；不依赖「Agent 没有通配符权限」这个
+  本层看不见的性质来兜底）
+
+不满足时返回 `403 secret_rule_forbidden`，与格式错误的 `400` 区分开：规则本身是良构的，换一个持有该权限的调用者
+提交就会被写入。这条限制与平台角色的提权天花板是同一条原则——**不得授出自己没有的权限**——只是作用在
+Kubernetes RBAC 这一侧。类型化接口与 YAML 守卫共用同一份判定。
+
+在此之前这类规则被无条件拒绝，代价是无法用 ZKE 给 ServiceAccount 授予读取自身配置 Secret 的权限——一个几乎每个
+应用都需要的授权，运维只能退回 `kubectl`，而那比在 ZKE 里做更缺少审计。
+
+#### 绑定不得指向 Agent 自身的 ClusterRole
+
+创建绑定和**给已有绑定追加主体**都会拒绝指向 `zke-agent` 的 `roleRef`，`roleRef` 本身也不可改写。
+
+这一条是 ZKE 独有的，Kubernetes 帮不上忙：创建绑定要求执行者持有目标角色的全部权限，而执行者正是 Agent 的
+ServiceAccount，`zke-agent` ClusterRole 恰好就是它自己的权限集，所以 API Server 会放行。`managed-by` 标签也盖
+不住——它保护那个 ClusterRole 不被改删，而绑定到它创建的是一个不带该标签的新对象。角色名取自安装器常量而非
+字面量，重命名 ServiceAccount 不会让这道检查静默失效。
 
 资源对象浏览器不引入新的权限面：资源目录与对象列表使用 `cluster.read`，YAML 编辑使用
 `cluster.resource.update`，删除使用 `cluster.resource.delete` 并要求 UID/resourceVersion 前置条件、CSRF、

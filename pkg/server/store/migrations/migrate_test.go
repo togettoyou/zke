@@ -88,6 +88,11 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 	for _, required := range []string{
 		"CONSTRAINT role_bindings_scope_shape",
 		"UNIQUE NULLS NOT DISTINCT",
+		// Roles are data, and bindings reference them. The foreign key is also
+		// the lockout guard: a role somebody still holds cannot be deleted.
+		"CREATE TABLE roles",
+		"role text NOT NULL REFERENCES roles (name)",
+		"CREATE INDEX role_bindings_role_idx",
 		"CONSTRAINT clusters_project_scope_fk",
 		"CONSTRAINT agents_cluster_scope_fk",
 		"actor_user_id uuid",
@@ -319,6 +324,28 @@ VALUES ($1, 'review-user', 'Review User', 'argon2id-placeholder', 'active', now(
 INSERT INTO clusters (id, tenant_id, project_id, name, status)
 VALUES ('30000000-0000-0000-0000-000000000001', $1, $2, 'wrong-scope', 'pending')
 `, tenantB, projectA)
+	requirePostgreSQLCode(t, err, "23503")
+
+	// The schema seeds no roles — the Server writes the builtin ones at startup
+	// — so a test exercising role_bindings has to create the role it names.
+	_, err = pool.Exec(ctx, `
+INSERT INTO roles (id, name, display_name, builtin, permissions)
+VALUES (
+    '00000000-0000-4000-8000-000000000001', 'admin', '管理员', true,
+    ARRAY['user.manage', 'rbac.manage']
+)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A binding naming a role that does not exist is refused by the foreign key.
+	// That constraint is also what stops a role from being deleted while someone
+	// still holds it.
+	_, err = pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES ('50000000-0000-0000-0000-000000000004', $1, 'no-such-role', 'global')
+`, userA)
 	requirePostgreSQLCode(t, err, "23503")
 
 	_, err = pool.Exec(ctx, `

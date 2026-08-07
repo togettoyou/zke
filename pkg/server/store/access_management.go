@@ -174,7 +174,7 @@ FOR UPDATE
 		return ManagedUser{}, fmt.Errorf("iterate managed user role binding locks: %w", err)
 	}
 	rows.Close()
-	if err := ensureNotLastGlobalAdmin(ctx, transaction, input.UserID); err != nil {
+	if err := ensureNotLastGlobalAdmin(ctx, transaction, input.ActorUserID, input.UserID); err != nil {
 		return ManagedUser{}, err
 	}
 	// Audit before removing the target so fill_audit_event_names can snapshot
@@ -279,7 +279,7 @@ func (store *AccessManagementStore) SetUserStatus(
 		return ManagedUser{}, ErrAccessStateConflict
 	}
 	if currentStatus == "active" && input.Status == "disabled" {
-		if err := ensureNotLastGlobalAdmin(ctx, transaction, input.UserID); err != nil {
+		if err := ensureNotLastGlobalAdmin(ctx, transaction, input.ActorUserID, input.UserID); err != nil {
 			return ManagedUser{}, err
 		}
 	}
@@ -508,6 +508,14 @@ func (store *AccessManagementStore) CreateRoleBinding(
 		return ManagedRoleBinding{}, false, fmt.Errorf("begin role binding creation: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	// Membership of the group that guards the account of last resort is granted
+	// from inside it. Checked before the insert, in the same transaction, so a
+	// concurrent removal of the actor's own binding cannot slip between them.
+	if err := ensureGlobalAdminGrantAllowed(
+		ctx, transaction, input.ActorUserID, input.Role, input.ScopeType,
+	); err != nil {
+		return ManagedRoleBinding{}, false, err
+	}
 	// Wrapped in a CTE because RETURNING can only see the inserted row, and the
 	// created binding has to come back in the same shape as a listed one. The CTE
 	// is named `created` rather than `role_bindings` so that it cannot be read as
@@ -615,7 +623,7 @@ FOR UPDATE OF role_bindings
 		return ManagedRoleBinding{}, fmt.Errorf("lock role binding deletion: %w", err)
 	}
 	if item.Role == "admin" && item.ScopeType == "global" {
-		if err := ensureNotLastGlobalAdmin(ctx, transaction, item.SubjectID); err != nil {
+		if err := ensureNotLastGlobalAdmin(ctx, transaction, input.ActorUserID, item.SubjectID); err != nil {
 			return ManagedRoleBinding{}, err
 		}
 	}
@@ -675,10 +683,140 @@ func scanManagedRoleBinding(row rowScannerAccess) (ManagedRoleBinding, error) {
 	return item, err
 }
 
+/*
+ * Who counts as a global administrator.
+ *
+ * The builtin `admin` role, bound at global scope, on an active account. Not
+ * "holds an equivalent set of permissions": a custom role is written by whoever
+ * holds `rbac.manage`, so treating one as equivalent would make the account of
+ * last resort removable by an account somebody else defined — and a custom role
+ * carrying all 27 permissions is exactly what an attacker who reached
+ * `rbac.manage` would build.
+ *
+ * The role name is a literal because the store sits below the authorization
+ * package and cannot import it. `TestGlobalAdminRoleMatchesAuthorization` in the
+ * rbac package fails if the two ever disagree.
+ *
+ * Nothing is lost by keying on the role rather than on permissions: `admin` is
+ * builtin, uneditable, and reconciled from code at every startup, so an install
+ * that has one has every permission the Server defines in reach.
+ */
+const globalAdminRoleName = "admin"
+
+// GlobalAdminRoleName reports the role this invariant protects, so the
+// authorization package can assert it still exists.
+func GlobalAdminRoleName() string {
+	return globalAdminRoleName
+}
+
+// globalAdministratorsSQL selects the active accounts holding the builtin role
+// at global scope.
+const globalAdministratorsSQL = `
+SELECT DISTINCT users.id
+FROM users
+JOIN role_bindings ON role_bindings.subject_id = users.id
+WHERE users.status = 'active'
+  AND role_bindings.scope_type = 'global'
+  AND role_bindings.role = $1
+`
+
+/*
+ * Refuses removing a global administrator, unless another one is asking and
+ * another one remains.
+ *
+ * Two rules, and both are needed:
+ *
+ *   - one global administrator must always exist, or the install has no way back
+ *     in short of the database;
+ *   - only a global administrator may remove one, so holding a custom role — even
+ *     one carrying every permission there is — is not enough.
+ *
+ * The second rule is the one that matters against a compromised account. Without
+ * it, reaching any account with `user.manage` and `rbac.manage` was enough to
+ * delete the real administrator and be the only one left; the count said two, so
+ * the removal looked safe. It was safe for the platform and not for its owner.
+ *
+ * The advisory lock serialises this against a concurrent check, so two
+ * transactions each removing a different administrator cannot both observe two
+ * and both proceed.
+ */
 func ensureNotLastGlobalAdmin(
 	ctx context.Context,
 	transaction pgx.Tx,
+	actorUserID string,
 	userID string,
+) error {
+	if err := lockGlobalAdministratorInvariant(ctx, transaction); err != nil {
+		return err
+	}
+	var targetIsAdmin, actorIsAdmin bool
+	var administrators int
+	if err := transaction.QueryRow(ctx, `
+WITH administrators AS (`+globalAdministratorsSQL+`)
+SELECT
+    EXISTS (SELECT 1 FROM administrators WHERE id = $2),
+    EXISTS (SELECT 1 FROM administrators WHERE id = $3),
+    (SELECT count(*) FROM administrators)
+`,
+		globalAdminRoleName,
+		userID,
+		actorUserID,
+	).Scan(&targetIsAdmin, &actorIsAdmin, &administrators); err != nil {
+		return fmt.Errorf("check global administrator invariant: %w", err)
+	}
+	if !targetIsAdmin {
+		return nil
+	}
+	if !actorIsAdmin {
+		return ErrGlobalAdminRequired
+	}
+	if administrators <= 1 {
+		return ErrLastGlobalAdmin
+	}
+	return nil
+}
+
+/*
+ * Refuses granting the builtin role to anyone but by a global administrator.
+ *
+ * Without this the rule above is theatre: a custom role carrying all 27
+ * permissions satisfies the escalation ceiling for `admin`, so its holder could
+ * bind `admin` to themselves, become a global administrator by their own hand,
+ * and then remove the original. Membership of the group that guards the account
+ * of last resort has to be granted from inside it.
+ */
+func ensureGlobalAdminGrantAllowed(
+	ctx context.Context,
+	transaction pgx.Tx,
+	actorUserID string,
+	role string,
+	scopeType string,
+) error {
+	if role != globalAdminRoleName || scopeType != "global" {
+		return nil
+	}
+	if err := lockGlobalAdministratorInvariant(ctx, transaction); err != nil {
+		return err
+	}
+	var actorIsAdmin bool
+	if err := transaction.QueryRow(ctx,
+		"WITH administrators AS ("+globalAdministratorsSQL+`)
+SELECT EXISTS (SELECT 1 FROM administrators WHERE id = $2)
+`,
+		globalAdminRoleName,
+		actorUserID,
+	).Scan(&actorIsAdmin); err != nil {
+		return fmt.Errorf("check global administrator grant: %w", err)
+	}
+	if !actorIsAdmin {
+		return ErrGlobalAdminRequired
+	}
+	return nil
+}
+
+func lockGlobalAdministratorInvariant(
+	ctx context.Context,
+	transaction pgx.Tx,
 ) error {
 	if _, err := transaction.Exec(
 		ctx,
@@ -686,37 +824,6 @@ func ensureNotLastGlobalAdmin(
 		int64(0x5a4b4541444d494e),
 	); err != nil {
 		return fmt.Errorf("lock global administrator invariant: %w", err)
-	}
-	var isGlobalAdmin bool
-	if err := transaction.QueryRow(ctx, `
-SELECT EXISTS (
-    SELECT 1
-    FROM role_bindings
-    JOIN users ON users.id = role_bindings.subject_id
-    WHERE role_bindings.subject_id = $1
-      AND role_bindings.role = 'admin'
-      AND role_bindings.scope_type = 'global'
-      AND users.status = 'active'
-)
-`, userID).Scan(&isGlobalAdmin); err != nil {
-		return fmt.Errorf("check global administrator binding: %w", err)
-	}
-	if !isGlobalAdmin {
-		return nil
-	}
-	var activeGlobalAdministrators int
-	if err := transaction.QueryRow(ctx, `
-SELECT count(DISTINCT users.id)
-FROM users
-JOIN role_bindings ON role_bindings.subject_id = users.id
-WHERE users.status = 'active'
-  AND role_bindings.role = 'admin'
-  AND role_bindings.scope_type = 'global'
-`).Scan(&activeGlobalAdministrators); err != nil {
-		return fmt.Errorf("count active global administrators: %w", err)
-	}
-	if activeGlobalAdministrators <= 1 {
-		return ErrLastGlobalAdmin
 	}
 	return nil
 }

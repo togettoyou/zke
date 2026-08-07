@@ -149,12 +149,17 @@ func TestListUsersRejectsUnusableRequests(t *testing.T) {
 	}
 }
 
+// The scope filter is still a closed set; the role filter is not, because roles
+// are operator-defined. A role name nobody has created is a filter that matches
+// nothing, and refusing it would mean the Console could not offer a filter for
+// any role the Server did not ship. Only a value that could never name a role —
+// wrong characters, too long — is a client bug worth reporting.
 func TestListRoleBindingsRejectsUnknownEnums(t *testing.T) {
 	t.Parallel()
 
 	service := NewService(nil, Config{})
 	for _, input := range []ListRoleBindingsInput{
-		{Role: "superuser", Page: validPage()},
+		{Role: "Not A Role", Page: validPage()},
 		{ScopeType: "namespace", Page: validPage()},
 	} {
 		if _, err := service.ListRoleBindings(
@@ -163,6 +168,24 @@ func TestListRoleBindingsRejectsUnknownEnums(t *testing.T) {
 		); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("ListRoleBindings(%+v) error = %v, want ErrInvalidInput", input, err)
 		}
+	}
+}
+
+func TestListRoleBindingsAcceptsAnOperatorDefinedRoleFilter(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeStore{}
+	if _, err := newTestService(fake).ListRoleBindings(
+		context.Background(),
+		ListRoleBindingsInput{Role: "release-engineer", Page: validPage()},
+	); err != nil {
+		t.Fatalf("ListRoleBindings() error = %v, want nil", err)
+	}
+	if fake.listBindingsParams.Role != "release-engineer" {
+		t.Fatalf(
+			"role filter reached the store as %q",
+			fake.listBindingsParams.Role,
+		)
 	}
 }
 
@@ -326,10 +349,12 @@ func TestCreateRoleBindingRejectsInconsistentScopes(t *testing.T) {
 			},
 		},
 		{
-			name: "unknown role",
+			// Malformed rather than merely unknown: a name nobody has created is
+			// now a missing target the store reports, not a bad request.
+			name: "malformed role name",
 			mutit: func(input *CreateRoleBindingInput) {
 				input.ScopeType = "global"
-				input.Role = "superuser"
+				input.Role = "Super User"
 			},
 		},
 	} {

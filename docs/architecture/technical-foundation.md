@@ -161,8 +161,10 @@ Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.man
 `cluster.manage`、`cluster.resource.create`、`cluster.resource.update`、`cluster.resource.delete`、
 `cluster.pod.logs.read`、`cluster.connection.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage`
 和 `audit.read`。
-内置 `admin` 与 `viewer` 角色通过 RoleBinding 绑定到 Global、Tenant 或 Project；`admin` 包含全部权限，
-`viewer` 只包含 Tenant、Project 与 Cluster 读取权限，首个管理员拥有 Global `admin` 角色。
+角色是权限的命名集合，由 `role_bindings.role` 外键引用，可由操作者创建、修改和删除。内置角色 `admin` 与
+`viewer` 由 Server 定义、不可编辑，且只定义在代码中：Schema 不播种角色，两者在每次启动时由 Server 对账写入，
+`admin` 包含全部权限，`viewer` 只包含 Tenant、Project 与 Cluster 读取权限。首个管理员拥有 Global `admin` 角色。角色的权限集不得超出调用者在 Global 已持有的
+权限，创建角色、修改角色和创建绑定三条路径都执行该检查，详见[安全与权限](../security/authorization.md)。
 
 当前认证基础已经实现：
 
@@ -185,14 +187,17 @@ Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.man
   `cluster.manage`、`cluster.resource.create`、`cluster.resource.update`、`cluster.resource.delete`、
   `cluster.rbac.read`、`cluster.rbac.manage`、
   `cluster.pod.logs.read`、`cluster.connection.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage`
-  和 `audit.read`；`admin` 拥有全部固定权限，`viewer` 只拥有 Tenant、Project 和 Cluster 读取权限。
+  和 `audit.read`；权限词表固定在代码中，角色则由操作者组合，内置 `admin` 拥有全部权限、`viewer` 只拥有
+  Tenant、Project 和 Cluster 读取权限。
 - RoleBinding 支持 Global、Tenant 和 Project 作用域；Global 绑定向下覆盖全部作用域，Tenant 绑定覆盖对应
   Tenant 及其 Project，Project 绑定只覆盖目标 Project。未命中有效绑定时默认拒绝。
 - RBAC Service、PostgreSQL Store 和 HTTP 授权 middleware 已实现；Project middleware 会根据 `project_id`
   解析 Tenant 归属，并在业务 Handler 前完成权限检查。
 
 持久化账户锁定与到期自动恢复、管理员解锁和密码重置已经实现；锁定、禁用和密码重置均撤销现有 Session。
-用户与 RoleBinding 管理 API 仅允许 Global 管理员调用，保留最后一个有效 Global 管理员并记录事务内成功审计。
+用户、角色与 RoleBinding 管理 API 要求 Global 作用域的对应权限，并记录事务内成功审计。全局管理员——在 Global
+绑定内置 `admin` 角色的账号——必须始终保留至少一个，且只有全局管理员本人才能移除或授予这个身份；持有包含全部
+权限的自定义角色也不行，否则它可以先把 `admin` 绑给自己再删掉原来的管理员。
 删除用户会在同一事务中永久移除用户记录、全部 Session 和 RoleBinding；Enrollment 与资源创建幂等记录保留
 历史用户 ID，删除审计保留用户 ID 和用户名快照。
 RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Cluster 注册凭证管理、安装 Manifest、连接撤销和

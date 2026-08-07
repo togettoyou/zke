@@ -14,7 +14,6 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestAccessManagementHTTPFlow(t *testing.T) {
@@ -22,9 +21,7 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	adminPassword := []byte("a sufficiently long access administrator passphrase")
 	admin, err := auth.CreateInitialAdmin(
@@ -67,7 +64,7 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 			AccessManagementService: accessmanagement.NewService(
 				store.NewAccessManagementStore(pool),
 				accessmanagement.Config{MaxConcurrentPasswordHashes: 1},
-			),
+			).WithPermissionAuthority(rbacService),
 		},
 		Config{Authentication: defaultAuthenticationTestConfig()},
 	)

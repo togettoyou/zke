@@ -10,6 +10,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 )
 
 const maxAccessManagementRequestBytes = 8 * 1024
@@ -17,6 +18,9 @@ const maxAccessManagementRequestBytes = 8 * 1024
 type accessManagementHandler struct {
 	baseHandler
 	service *accessmanagement.Service
+	// Answers what the caller holds, which the permission dictionary reports so
+	// the Console can show which permissions they are able to put in a role.
+	permissions *rbac.Service
 }
 
 // accessManagementErrors maps this resource's sentinels onto the API contract.
@@ -26,6 +30,13 @@ var accessManagementErrors = []errorMapping{
 	{accessmanagement.ErrSelfDisable, http.StatusConflict, "self_disable_forbidden", "the authenticated user cannot disable itself"},
 	{accessmanagement.ErrSelfDelete, http.StatusConflict, "self_delete_forbidden", "the authenticated user cannot delete itself"},
 	{accessmanagement.ErrLastAdmin, http.StatusConflict, "last_global_admin", "the last active global administrator must be preserved"},
+	// 403 rather than 409: nothing about the platform's state is in the way, the
+	// caller simply is not a global administrator.
+	{accessmanagement.ErrGlobalAdminRequired, http.StatusForbidden, "global_admin_required", "只有全局管理员可以授予或移除全局管理员"},
+	// Shared with the binding endpoints, not only the role ones: granting a role
+	// is subject to the same ceiling as writing one, so both can refuse for this
+	// reason and both have to say so rather than falling through to a 500.
+	{accessmanagement.ErrPermissionEscalation, http.StatusForbidden, "permission_escalation", "角色包含调用者未持有的权限"},
 	{accessmanagement.ErrConflict, http.StatusConflict, "resource_conflict", "access management state conflicts with the request"},
 }
 
@@ -101,12 +112,14 @@ type roleBindingResponse struct {
 func newAccessManagementHandler(
 	logger *slog.Logger,
 	service *accessmanagement.Service,
+	rbacService *rbac.Service,
 	auditService *audit.Service,
 	operationTimeout time.Duration,
 ) *accessManagementHandler {
 	return &accessManagementHandler{
 		baseHandler: newBaseHandler(logger, auditService, operationTimeout),
 		service:     service,
+		permissions: rbacService,
 	}
 }
 

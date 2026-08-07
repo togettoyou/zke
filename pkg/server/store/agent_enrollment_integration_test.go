@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
@@ -20,9 +19,7 @@ func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	tenantID := insertRBACTenant(t, ctx, pool, "Agent Enrollment Tenant")
 	projectID := insertRBACProject(t, ctx, pool, tenantID, "Agent Enrollment Project")
@@ -358,9 +355,7 @@ func TestAgentEnrollmentRejectsExpiredTokenAndRollsBackFailedCompletion(t *testi
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	tenantID := insertRBACTenant(t, ctx, pool, "Agent Enrollment Rollback Tenant")
 	projectID := insertRBACProject(t, ctx, pool, tenantID, "Agent Enrollment Rollback Project")

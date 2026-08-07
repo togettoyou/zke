@@ -560,10 +560,14 @@ func TestOpenAPIEnumsMatchServerVocabularies(t *testing.T) {
 		auditaction.TargetTypes(),
 	)
 
-	// Roles appear in several schemas. Every one of them must list the same set,
-	// so a role added in Go cannot be documented in one place and forgotten in
-	// three others.
-	roleSchemas := 0
+	// Roles are data, so no schema may pin them to a list.
+	//
+	// This check used to say the opposite: every `role` property had to enumerate
+	// the two roles the Server compiled in. Once an operator can define a role,
+	// an enum here is not documentation but a client that rejects it — the
+	// Console's types are generated from this file, so a role created through the
+	// API would arrive as a value its own types say cannot exist.
+	roleProperties := 0
 	for name, rawSchema := range schemas {
 		schema, ok := rawSchema.(map[string]interface{})
 		if !ok {
@@ -577,15 +581,16 @@ func TestOpenAPIEnumsMatchServerVocabularies(t *testing.T) {
 		if !ok {
 			continue
 		}
-		values, ok := enumValues(role)
-		if !ok {
-			continue
+		roleProperties++
+		if _, enumerated := enumValues(role); enumerated {
+			t.Errorf(
+				"%s.role enumerates role names; roles are operator-defined and cannot be a closed list",
+				name,
+			)
 		}
-		roleSchemas++
-		assertOpenAPIEnum(t, name+".role", values, rbac.Roles())
 	}
-	if roleSchemas == 0 {
-		t.Error("no schema documents a role enum; the check proves nothing")
+	if roleProperties == 0 {
+		t.Error("no schema carries a role property; the check proves nothing")
 	}
 }
 

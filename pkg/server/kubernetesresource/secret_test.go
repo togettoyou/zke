@@ -339,7 +339,11 @@ func TestSecretManifestGuard(t *testing.T) {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			err := SecretManifestGuard(object(testCase.current), object(testCase.submitted))
+			// The grant is about PolicyRules handing Secret access to others,
+			// which a Secret manifest cannot do; this guard ignores it.
+			err := SecretManifestGuard(
+				object(testCase.current), object(testCase.submitted), SecretRuleGrant{},
+			)
 			if testCase.want == nil {
 				if err != nil {
 					t.Fatalf("guard refused a permitted change: %v", err)

@@ -45,6 +45,14 @@ const (
 	RoleBindingCreate = "role_binding.create"
 	RoleBindingDelete = "role_binding.delete"
 
+	// Changing a role changes what everyone already bound to it can do, without
+	// touching a single binding. That makes these three the widest-reaching
+	// actions in the access vocabulary, and the reason the update record is
+	// worth keeping even when the permission set is the only thing that moved.
+	RoleCreate = "role.create"
+	RoleUpdate = "role.update"
+	RoleDelete = "role.delete"
+
 	TenantCreate  = "tenant.create"
 	TenantUpdate  = "tenant.update"
 	TenantSuspend = "tenant.suspend"
@@ -78,6 +86,16 @@ const (
 	KubernetesPodExecSessionCreate = "kubernetes_pod.exec_session.create"
 	KubernetesPodExec              = "kubernetes_pod.exec"
 	KubernetesEventRead            = "kubernetes_event.read"
+
+	// Reading a Secret is recorded because reading it is the whole exposure:
+	// unlike a ConfigMap or a Deployment, one successful GET hands the caller a
+	// credential, and nothing afterwards can un-hand it. The record names the
+	// Cluster, the Namespace and the object; it never carries a key name or any
+	// part of a value. Listing is recorded separately from reading one object
+	// because the list returns no value at all — knowing which of the two
+	// happened is the difference between browsing and taking.
+	KubernetesSecretList = "kubernetes_secret.list"
+	KubernetesSecretRead = "kubernetes_secret.read"
 
 	// Written by the Agent connection, not by an operator: the Agent asks for a
 	// new client certificate over the control stream and the Server signs it.
@@ -137,6 +155,7 @@ const (
 const (
 	GroupAuth        = "auth"
 	GroupUser        = "user"
+	GroupRole        = "role"
 	GroupRoleBinding = "role_binding"
 	GroupTenant      = "tenant"
 	GroupProject     = "project"
@@ -161,6 +180,7 @@ const (
 const (
 	TargetUser               = "user"
 	TargetSession            = "session"
+	TargetRole               = "role"
 	TargetRoleBinding        = "role_binding"
 	TargetTenant             = "tenant"
 	TargetProject            = "project"
@@ -175,6 +195,7 @@ const (
 var targetTypes = []string{
 	TargetUser,
 	TargetSession,
+	TargetRole,
 	TargetRoleBinding,
 	TargetTenant,
 	TargetProject,
@@ -224,6 +245,10 @@ var actions = []Action{
 	{RoleBindingCreate, GroupRoleBinding},
 	{RoleBindingDelete, GroupRoleBinding},
 
+	{RoleCreate, GroupRole},
+	{RoleUpdate, GroupRole},
+	{RoleDelete, GroupRole},
+
 	{TenantCreate, GroupTenant},
 	{TenantUpdate, GroupTenant},
 	{TenantSuspend, GroupTenant},
@@ -259,6 +284,8 @@ var actions = []Action{
 	{KubernetesPodExecSessionCreate, GroupKubernetes},
 	{KubernetesPodExec, GroupKubernetes},
 	{KubernetesEventRead, GroupKubernetes},
+	{KubernetesSecretList, GroupKubernetes},
+	{KubernetesSecretRead, GroupKubernetes},
 
 	{DeniedTenantRead, GroupDenied},
 	{DeniedTenantManage, GroupDenied},

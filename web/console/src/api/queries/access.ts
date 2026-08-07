@@ -6,7 +6,7 @@ import type {
   ListParams,
   ManagedUser,
   Pagination,
-  Role,
+  RoleName,
   RoleBinding,
   ScopeType,
   UserStatus,
@@ -16,7 +16,7 @@ export type UserListResult = { users: ManagedUser[]; pagination: Pagination };
 export type RoleBindingListResult = { role_bindings: RoleBinding[]; pagination: Pagination };
 
 type UserListParams = ListParams & { status?: UserStatus };
-type RoleBindingListParams = ListParams & { role?: Role; scope_type?: ScopeType };
+type RoleBindingListParams = ListParams & { role?: RoleName; scope_type?: ScopeType };
 
 export function useUsers(params: UserListParams = {}, enabled = true) {
   return useQuery({
@@ -151,7 +151,7 @@ export function useCreateRoleBinding() {
   return useMutation({
     mutationFn: async (input: {
       subjectId: string;
-      role: Role;
+      role: RoleName;
       scopeType: ScopeType;
       tenantId?: string;
       projectId?: string;

@@ -316,6 +316,7 @@ func New(
 		accessManagement: newAccessManagementHandler(
 			logger,
 			dependencies.AccessManagementService,
+			dependencies.RBACService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

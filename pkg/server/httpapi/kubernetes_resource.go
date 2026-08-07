@@ -724,6 +724,11 @@ func kubernetesResourceErrorMappings() []errorMapping {
 		// Produced by the Secret service and reachable from every handler that
 		// reads a Secret, including the YAML one.
 		{kubernetesresource.ErrSecretManagedByPlatform, http.StatusForbidden, "secret_managed_by_platform", "Secret is managed by ZKE and cannot be read or changed here"},
+		// 403 rather than 400: the rule is well formed, and the same rule from a
+		// caller holding the Secret permission would be written. What is missing
+		// is the permission being handed out, not the shape of the request.
+		{kubernetesresource.ErrSecretRuleForbidden, http.StatusForbidden, "secret_rule_forbidden", "规则授予了调用者未持有的 Secret 权限：读取需要 cluster.secret.read，写入需要 cluster.secret.manage"},
+		{kubernetesresource.ErrRoleRefForbidden, http.StatusForbidden, "role_ref_forbidden", "该绑定指向 ZKE Agent 自身的 ClusterRole，不能通过 ZKE 创建或追加主体"},
 		{kubernetesresource.ErrResponseTooLarge, http.StatusBadGateway, "agent_response_too_large", "Agent response exceeded the configured limit"},
 		{kubernetesresource.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used for another Kubernetes resource request"},
 		{kubernetesresource.ErrUpstreamConflict, http.StatusConflict, "cluster_api_conflict", "Kubernetes resource changed during the request"},

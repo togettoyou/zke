@@ -456,6 +456,231 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/permissions:
+    get:
+      tags: [RBAC]
+      operationId: listPermissions
+      summary: 平台权限字典
+      description: >-
+        返回 Server 定义的全部权限，并标注调用者自己是否在全局持有该权限。
+        `held` 决定调用者能否把该权限写入角色：角色不得包含作者未持有的权限。
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 权限字典
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [permissions]
+                        properties:
+                          permissions:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/PermissionDescriptor"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/roles:
+    get:
+      tags: [RBAC]
+      operationId: listRoles
+      summary: 角色列表
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOffset"
+        - $ref: "#/components/parameters/ListSearch"
+        - name: builtin
+          in: query
+          description: 只看内置角色或只看自定义角色。
+          schema:
+            type: string
+            enum: ["true", "false"]
+      responses:
+        "200":
+          description: 角色列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [roles, pagination]
+                        properties:
+                          roles:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/Role"
+                          pagination:
+                            $ref: "#/components/schemas/Pagination"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [RBAC]
+      operationId: createRole
+      summary: 新建角色
+      description: >-
+        角色的权限集不得超出调用者在全局持有的权限，否则返回 403 `permission_escalation`。
+        没有这条限制，`rbac.manage` 就等于全部权限。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleRequest"
+      responses:
+        "201":
+          description: 角色已创建
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/roles/{role_id}:
+    get:
+      tags: [RBAC]
+      operationId: getRole
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+      responses:
+        "200":
+          description: 角色详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Role"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [RBAC]
+      operationId: updateRole
+      summary: 修改角色
+      description: >-
+        权限集是整体替换。`name` 不可修改：绑定与审计记录都以它指代该角色。
+        内置角色返回 409 `builtin_role`；改动后若不再有任何账号在全局同时持有
+        `user.manage` 与 `rbac.manage`，返回 409 `last_global_admin`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleRequest"
+      responses:
+        "200":
+          description: 角色已更新
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [RBAC]
+      operationId: deleteRole
+      summary: 删除角色
+      description: >-
+        仍被绑定的角色不可删除，返回 409 `role_in_use`；请先删除相关绑定。
+        内置角色返回 409 `builtin_role`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/RoleID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Confirmation"
+      responses:
+        "200":
+          description: 角色已删除
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: "null"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/role-bindings:
     get:
       tags: [RBAC]
@@ -468,9 +693,9 @@ paths:
         - $ref: "#/components/parameters/ListSearch"
         - name: role
           in: query
+          description: 角色名。角色由操作者定义，因此不是一个封闭取值列表。
           schema:
             type: string
-            enum: [admin, viewer]
         - name: scope_type
           in: query
           schema:
@@ -5064,6 +5289,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/UUID"
+    RoleID:
+      name: role_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
     RoleBindingID:
       name: role_binding_id
       in: path
@@ -5729,7 +5960,7 @@ components:
       properties:
         role:
           type: string
-          enum: [admin, viewer]
+          description: 角色名。角色由操作者定义，取值不封闭。
         scope_type:
           type: string
           enum: [global, tenant, project]
@@ -5929,7 +6160,7 @@ components:
             以便识别并删除孤立绑定。
         role:
           type: string
-          enum: [admin, viewer]
+          description: 角色名。角色由操作者定义，取值不封闭。
         scope_type:
           type: string
           enum: [global, tenant, project]
@@ -5941,6 +6172,103 @@ components:
           $ref: "#/components/schemas/Timestamp"
         replayed:
           type: boolean
+    PermissionDescriptor:
+      type: object
+      additionalProperties: false
+      required: [name, held]
+      properties:
+        name:
+          type: string
+        held:
+          type: boolean
+          description: >-
+            调用者是否在全局持有该权限。角色不得包含作者未持有的权限，
+            因此 `held` 为 false 的权限无法被写入角色。
+    Role:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          name,
+          display_name,
+          description,
+          builtin,
+          permissions,
+          binding_count,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        name:
+          type: string
+          description: 稳定标识，绑定与审计记录以它指代角色，创建后不可修改。
+        display_name:
+          type: string
+        description:
+          type: string
+        builtin:
+          type: boolean
+          description: 由 Server 定义的角色，权限集在启动时对账，不可编辑或删除。
+        permissions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        binding_count:
+          type: integer
+          description: 引用该角色的绑定数量。大于 0 时不可删除。
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    CreateRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [name, display_name, permissions, confirm]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+          description: 不能与内置角色同名。
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        description:
+          type: string
+          maxLength: 1024
+        permissions:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+        confirm:
+          const: true
+    UpdateRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, permissions, confirm]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        description:
+          type: string
+          maxLength: 1024
+        permissions:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          description: 整体替换，不是增量。
+          items:
+            type: string
+        confirm:
+          const: true
     RoleBindingSubject:
       type: object
       additionalProperties: false
@@ -5961,7 +6289,7 @@ components:
           $ref: "#/components/schemas/UUID"
         role:
           type: string
-          enum: [admin, viewer]
+          description: 角色名。角色由操作者定义，取值不封闭。
         scope_type:
           type: string
           enum: [global, tenant, project]
@@ -10331,7 +10659,18 @@ components:
           description: 写入审计事件 `action` 字段的取值，可直接用作过滤条件。
         group:
           type: string
-          enum: [auth, user, role_binding, tenant, project, cluster, kubernetes_resource, denied]
+          enum:
+            [
+              auth,
+              user,
+              role,
+              role_binding,
+              tenant,
+              project,
+              cluster,
+              kubernetes_resource,
+              denied,
+            ]
           description: >-
             所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与
             `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。
@@ -10345,6 +10684,7 @@ components:
       enum:
         - user
         - session
+        - role
         - role_binding
         - tenant
         - project

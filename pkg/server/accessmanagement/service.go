@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/auth"
-	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
 	"github.com/togettoyou/zke/pkg/shared/pagination"
@@ -21,7 +20,11 @@ var (
 	ErrNotFound     = errors.New("access management target not found")
 	ErrConflict     = errors.New("access management conflict")
 	ErrLastAdmin    = errors.New("last global administrator")
-	ErrSelfDisable  = errors.New("cannot disable the authenticated user")
+	// Removing or granting the global administrator role is reserved to the
+	// people who already hold it. Separate from ErrLastAdmin: the platform would
+	// survive the change, and what is refused is who asked for it.
+	ErrGlobalAdminRequired = errors.New("only a global administrator may do this")
+	ErrSelfDisable         = errors.New("cannot disable the authenticated user")
 	// Deleting yourself and disabling yourself are both refused, but they are
 	// not the same refusal: sharing one sentinel meant a rejected deletion was
 	// reported to the operator as a rejected disable, describing an operation
@@ -36,6 +39,10 @@ type Config struct {
 type Service struct {
 	store          Store
 	passwordHashes chan struct{}
+	// Supplied by WithPermissionAuthority. Role writes refuse to proceed
+	// without it, because it is what keeps `rbac.manage` from being a way to
+	// grant yourself every other permission.
+	permissions PermissionAuthority
 }
 
 type User struct {
@@ -380,8 +387,12 @@ func (service *Service) ListRoleBindings(
 	ctx context.Context,
 	input ListRoleBindingsInput,
 ) (RoleBindingPage, error) {
+	// The role filter is no longer checked against a list of names: roles are
+	// data, so an unknown one is a filter that matches nothing rather than a
+	// malformed request. Its shape is still checked, because a value that could
+	// never be a role name is a client bug worth reporting.
 	if input.Page.Validate() != nil ||
-		!allowedValue(input.Role, "admin", "viewer") ||
+		(input.Role != "" && !validRoleName(input.Role)) ||
 		!allowedValue(input.ScopeType, "global", "tenant", "project") {
 		return RoleBindingPage{}, ErrInvalidInput
 	}
@@ -434,6 +445,27 @@ func (service *Service) CreateRoleBinding(
 		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
 		return CreateRoleBindingResult{}, ErrInvalidInput
 	}
+	/*
+	 * Binding is subject to the same ceiling as authoring.
+	 *
+	 * Checking only the create-a-role path would leave the shorter way round
+	 * wide open: `admin` already exists and already carries everything, so
+	 * anyone holding `rbac.manage` could bind it to themselves and be done. The
+	 * question is not who wrote the permission set but who is about to hand it
+	 * out, and the answer has to be the same either way.
+	 */
+	role, err := service.store.FindRoleByName(ctx, input.Role)
+	if errors.Is(err, store.ErrRoleNotFound) {
+		return CreateRoleBindingResult{}, ErrNotFound
+	}
+	if err != nil {
+		return CreateRoleBindingResult{}, err
+	}
+	if err := service.ensureWithinActorCeiling(
+		ctx, input.ActorUserID, role.Permissions,
+	); err != nil {
+		return CreateRoleBindingResult{}, err
+	}
 	id, err := identifier.NewUUID()
 	if err != nil {
 		return CreateRoleBindingResult{}, err
@@ -455,6 +487,8 @@ func (service *Service) CreateRoleBinding(
 	switch {
 	case errors.Is(err, store.ErrAccessUserNotFound):
 		return CreateRoleBindingResult{}, ErrNotFound
+	case errors.Is(err, store.ErrGlobalAdminRequired):
+		return CreateRoleBindingResult{}, ErrGlobalAdminRequired
 	case errors.Is(err, store.ErrRoleBindingConflict),
 		errors.Is(err, store.ErrAccessStateConflict):
 		return CreateRoleBindingResult{}, ErrConflict
@@ -491,6 +525,8 @@ func (service *Service) DeleteRoleBinding(
 		return RoleBinding{}, ErrNotFound
 	case errors.Is(err, store.ErrLastGlobalAdmin):
 		return RoleBinding{}, ErrLastAdmin
+	case errors.Is(err, store.ErrGlobalAdminRequired):
+		return RoleBinding{}, ErrGlobalAdminRequired
 	case err != nil:
 		return RoleBinding{}, err
 	default:
@@ -557,10 +593,11 @@ func validRoleScope(
 	tenantID string,
 	projectID string,
 ) bool {
-	// The accepted roles come from the authorization package rather than a
-	// second list here, so a role can never be granted before authorization
-	// knows what it permits.
-	if !rbac.RoleExists(role) {
+	// Only the shape is checked here. Whether the role exists is a question for
+	// the store, which answers it and returns the permission set the ceiling
+	// check needs — asking twice would be two answers about a role that can
+	// change between them.
+	if !validRoleName(role) {
 		return false
 	}
 	switch scopeType {
@@ -638,6 +675,8 @@ func mapUserMutation(item store.ManagedUser, now time.Time, err error) (User, er
 		return User{}, ErrConflict
 	case errors.Is(err, store.ErrLastGlobalAdmin):
 		return User{}, ErrLastAdmin
+	case errors.Is(err, store.ErrGlobalAdminRequired):
+		return User{}, ErrGlobalAdminRequired
 	case err != nil:
 		return User{}, err
 	default:

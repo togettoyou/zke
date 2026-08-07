@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 	"github.com/togettoyou/zke/pkg/shared/pagination"
 )
 
@@ -27,9 +26,7 @@ func TestPagedListQueries(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	const (
 		tenantAlphaID = "00000000-0000-4000-8000-0000000000a1"

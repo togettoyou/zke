@@ -19,7 +19,6 @@ import (
 
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestAgentRegistrationHTTPFlow(t *testing.T) {
@@ -28,9 +27,7 @@ func TestAgentRegistrationHTTPFlow(t *testing.T) {
 	defer cancel()
 
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 	var tenantID, projectID, userID string
 	if err := pool.QueryRow(ctx, `
 INSERT INTO tenants (id, name, status)

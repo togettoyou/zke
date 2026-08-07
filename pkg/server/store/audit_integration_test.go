@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 	"github.com/togettoyou/zke/pkg/shared/auditctx"
 )
 
@@ -16,9 +15,7 @@ func TestRecordProjectAuditEventPreservesScope(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	tenantID := insertRBACTenant(t, ctx, pool, "Audit Tenant")
 	projectID := insertRBACProject(t, ctx, pool, tenantID, "Audit Project")
@@ -75,9 +72,7 @@ func TestRecordSuccessfulClusterAuditEvent(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	tenantID := insertRBACTenant(t, ctx, pool, "Kubernetes Audit Tenant")
 	projectID := insertRBACProject(
@@ -149,9 +144,7 @@ func TestRecordAuditEventSurvivesRequestCancellation(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	tenantID := insertRBACTenant(t, ctx, pool, "Disconnect Tenant")
 	projectID := insertRBACProject(t, ctx, pool, tenantID, "Disconnect Project")

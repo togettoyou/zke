@@ -103,6 +103,59 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.accessManagement.resetPassword,
 	)
 
+	// Roles and bindings share the two `rbac.*` permissions: a role is what a
+	// binding hands out, and separating who may define one from who may grant it
+	// would leave each half unable to finish the job the other started.
+	roleRoutes := apiV1.Group("/roles")
+	roleRoutes.Use(
+		handlers.requestTimeout,
+		handlers.roleBindingCache,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	roleRoutes.GET(
+		"",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACRead),
+		handlers.accessManagement.listRoles,
+	)
+	roleRoutes.POST(
+		"",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACManage),
+		handlers.accessManagement.createRole,
+	)
+	roleRoutes.GET(
+		"/:role_id",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACRead),
+		handlers.accessManagement.getRole,
+	)
+	roleRoutes.PUT(
+		"/:role_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACManage),
+		handlers.accessManagement.updateRole,
+	)
+	roleRoutes.DELETE(
+		"/:role_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACManage),
+		handlers.accessManagement.deleteRole,
+	)
+
+	// The permission vocabulary, under the read permission that the role editor
+	// already requires. It reports the caller's own ceiling alongside each name,
+	// so it is not a public dictionary and does not belong outside authentication.
+	permissionRoutes := apiV1.Group("/permissions")
+	permissionRoutes.Use(
+		handlers.requestTimeout,
+		handlers.roleBindingCache,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	permissionRoutes.GET(
+		"",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionRBACRead),
+		handlers.accessManagement.listPermissions,
+	)
+
 	roleBindingRoutes := apiV1.Group("/role-bindings")
 	roleBindingRoutes.Use(
 		handlers.requestTimeout,
@@ -694,6 +747,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		"/:cluster_id/authorization/:authorization_resource",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.authorizationMiddleware.ResolveClusterSecretGrant("cluster_id"),
 		handlers.kubernetesAuthorization.create,
 	)
 	clusterRoutes.GET(
@@ -705,6 +759,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		"/:cluster_id/authorization/:authorization_resource/:authorization_name",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.authorizationMiddleware.ResolveClusterSecretGrant("cluster_id"),
 		handlers.kubernetesAuthorization.update,
 	)
 	clusterRoutes.DELETE(
@@ -725,6 +780,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		"/:cluster_id/authorization/:authorization_resource/:authorization_name/yaml",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.authorizationMiddleware.ResolveClusterSecretGrant("cluster_id"),
 		handlers.kubernetesAuthorizationYAML.update,
 	)
 	clusterRoutes.GET(
@@ -736,6 +792,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.authorizationMiddleware.ResolveClusterSecretGrant("cluster_id"),
 		handlers.kubernetesAuthorization.create,
 	)
 	clusterRoutes.GET(
@@ -747,6 +804,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource/:authorization_name",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.authorizationMiddleware.ResolveClusterSecretGrant("cluster_id"),
 		handlers.kubernetesAuthorization.update,
 	)
 	clusterRoutes.DELETE(
@@ -764,6 +822,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		"/:cluster_id/namespaces/:namespace_name/authorization/:authorization_resource/:authorization_name/yaml",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRBACManage, "cluster_id"),
+		handlers.authorizationMiddleware.ResolveClusterSecretGrant("cluster_id"),
 		handlers.kubernetesAuthorizationYAML.update,
 	)
 	// Secrets use their own permissions rather than the general cluster ones:

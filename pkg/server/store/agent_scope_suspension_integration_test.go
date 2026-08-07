@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestAgentConnectionStoreWatchesParentScopeSuspensions(t *testing.T) {
@@ -14,9 +13,7 @@ func TestAgentConnectionStoreWatchesParentScopeSuspensions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	const (
 		tenantID  = "71000000-0000-4000-8000-000000000001"

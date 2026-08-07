@@ -94,35 +94,35 @@ func TestServiceRejectsInvalidIdentifiersBeforeStoreAccess(t *testing.T) {
 	}
 }
 
-func TestRoleAndScopeRules(t *testing.T) {
+func TestBuiltinRoleAndScopeRules(t *testing.T) {
 	t.Parallel()
 
 	targetScope := projectScope(testTenantID, testProjectID)
-	if !roleGrants("admin", PermissionClusterConnectionRevoke) {
+	if !builtinRoleGrants("admin", PermissionClusterConnectionRevoke) {
 		t.Fatal("admin role did not grant cluster.connection.revoke")
 	}
-	if !roleGrants("viewer", PermissionClusterRead) {
+	if !builtinRoleGrants("viewer", PermissionClusterRead) {
 		t.Fatal("viewer role did not grant cluster.read")
 	}
-	if roleGrants("viewer", PermissionClusterEnrollmentCreate) {
+	if builtinRoleGrants("viewer", PermissionClusterEnrollmentCreate) {
 		t.Fatal("viewer role granted cluster.enrollment.create")
 	}
-	if !roleGrants("admin", PermissionClusterPodLogsRead) {
+	if !builtinRoleGrants("admin", PermissionClusterPodLogsRead) {
 		t.Fatal("admin role did not grant cluster.pod.logs.read")
 	}
-	if roleGrants("viewer", PermissionClusterPodLogsRead) {
+	if builtinRoleGrants("viewer", PermissionClusterPodLogsRead) {
 		t.Fatal("viewer role granted cluster.pod.logs.read")
 	}
-	if !roleGrants("admin", PermissionClusterEventRead) ||
-		roleGrants("viewer", PermissionClusterEventRead) {
+	if !builtinRoleGrants("admin", PermissionClusterEventRead) ||
+		builtinRoleGrants("viewer", PermissionClusterEventRead) {
 		t.Fatal("cluster.event.read must be restricted to admin")
 	}
-	if !roleGrants("admin", PermissionTenantCreate) ||
-		!roleGrants("admin", PermissionProjectCreate) {
+	if !builtinRoleGrants("admin", PermissionTenantCreate) ||
+		!builtinRoleGrants("admin", PermissionProjectCreate) {
 		t.Fatal("admin role did not grant resource creation permissions")
 	}
-	if roleGrants("viewer", PermissionTenantCreate) ||
-		roleGrants("viewer", PermissionProjectCreate) {
+	if builtinRoleGrants("viewer", PermissionTenantCreate) ||
+		builtinRoleGrants("viewer", PermissionProjectCreate) {
 		t.Fatal("viewer role granted resource creation permissions")
 	}
 	for _, permission := range []Permission{
@@ -136,10 +136,10 @@ func TestRoleAndScopeRules(t *testing.T) {
 		PermissionClusterSecretRead,
 		PermissionClusterSecretManage,
 	} {
-		if !roleGrants("admin", permission) {
+		if !builtinRoleGrants("admin", permission) {
 			t.Errorf("admin role did not grant %s", permission)
 		}
-		if roleGrants("viewer", permission) {
+		if builtinRoleGrants("viewer", permission) {
 			t.Errorf("viewer role unexpectedly granted %s", permission)
 		}
 	}

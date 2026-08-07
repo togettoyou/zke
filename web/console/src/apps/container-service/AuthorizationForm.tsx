@@ -579,6 +579,10 @@ function impacts(resource: KubernetesAuthorizationResource, editing: boolean): s
       : [
           "将创建一组权限定义；它在被绑定引用之前不授予任何主体权限。",
           "Agent 自身不持有 escalate 与 bind 权限，超出其权限范围的规则会被 Kubernetes 拒绝。",
+          // A rule about Secrets hands Secret access to whoever is bound to the
+          // role, so writing one requires holding it. Named here because the
+          // refusal arrives from the Server and reads as puzzling otherwise.
+          "涉及 secrets 的规则要求当前账号本人持有对应的 Secret 权限：只读需要 cluster.secret.read，写入需要 cluster.secret.manage。",
         ];
   }
   return editing

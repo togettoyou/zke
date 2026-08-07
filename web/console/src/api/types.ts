@@ -8,7 +8,12 @@ export type UserStatus = ManagedUser["status"];
 export type CurrentSession = Schemas["CurrentSession"];
 export type Capability = Schemas["Capability"];
 export type Permission = Capability["permissions"][number];
-export type Role = Capability["role"];
+// The name a binding stores. A plain string since roles became operator-defined:
+// the contract no longer enumerates them, and a Console type that did would
+// reject a role the Server accepted.
+export type RoleName = Capability["role"];
+export type Role = Schemas["Role"];
+export type PermissionDescriptor = Schemas["PermissionDescriptor"];
 export type ScopeType = Capability["scope_type"];
 
 export type RoleBinding = Schemas["RoleBinding"];

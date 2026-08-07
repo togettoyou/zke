@@ -192,6 +192,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 平台权限字典
+         * @description 返回 Server 定义的全部权限，并标注调用者自己是否在全局持有该权限。 `held` 决定调用者能否把该权限写入角色：角色不得包含作者未持有的权限。
+         */
+        get: operations["listPermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 角色列表 */
+        get: operations["listRoles"];
+        put?: never;
+        /**
+         * 新建角色
+         * @description 角色的权限集不得超出调用者在全局持有的权限，否则返回 403 `permission_escalation`。 没有这条限制，`rbac.manage` 就等于全部权限。
+         */
+        post: operations["createRole"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/roles/{role_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRole"];
+        /**
+         * 修改角色
+         * @description 权限集是整体替换。`name` 不可修改：绑定与审计记录都以它指代该角色。 内置角色返回 409 `builtin_role`；改动后若不再有任何账号在全局同时持有 `user.manage` 与 `rbac.manage`，返回 409 `last_global_admin`。
+         */
+        put: operations["updateRole"];
+        post?: never;
+        /**
+         * 删除角色
+         * @description 仍被绑定的角色不可删除，返回 409 `role_in_use`；请先删除相关绑定。 内置角色返回 409 `builtin_role`。
+         */
+        delete: operations["deleteRole"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/role-bindings": {
         parameters: {
             query?: never;
@@ -1565,8 +1630,8 @@ export interface components {
             capabilities: components["schemas"]["Capability"][];
         };
         Capability: {
-            /** @enum {string} */
-            role: "admin" | "viewer";
+            /** @description 角色名。角色由操作者定义，取值不封闭。 */
+            role: string;
             /** @enum {string} */
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
@@ -1643,14 +1708,50 @@ export interface components {
             subject_id: components["schemas"]["UUID"];
             /** @description 绑定所指向的账号。与绑定在同一次查询中解析，调用方无需再按 subject_id 逐个查询用户。仅当该账号记录已不存在时省略；此时 subject_id 仍然返回， 以便识别并删除孤立绑定。 */
             subject?: components["schemas"]["RoleBindingSubject"];
-            /** @enum {string} */
-            role: "admin" | "viewer";
+            /** @description 角色名。角色由操作者定义，取值不封闭。 */
+            role: string;
             /** @enum {string} */
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
             created_at: components["schemas"]["Timestamp"];
             replayed?: boolean;
+        };
+        PermissionDescriptor: {
+            name: string;
+            /** @description 调用者是否在全局持有该权限。角色不得包含作者未持有的权限， 因此 `held` 为 false 的权限无法被写入角色。 */
+            held: boolean;
+        };
+        Role: {
+            id: components["schemas"]["UUID"];
+            /** @description 稳定标识，绑定与审计记录以它指代角色，创建后不可修改。 */
+            name: string;
+            display_name: string;
+            description: string;
+            /** @description 由 Server 定义的角色，权限集在启动时对账，不可编辑或删除。 */
+            builtin: boolean;
+            permissions: string[];
+            /** @description 引用该角色的绑定数量。大于 0 时不可删除。 */
+            binding_count: number;
+            created_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+        };
+        CreateRoleRequest: {
+            /** @description 不能与内置角色同名。 */
+            name: string;
+            display_name: string;
+            description?: string;
+            permissions: string[];
+            /** @constant */
+            confirm: true;
+        };
+        UpdateRoleRequest: {
+            display_name: string;
+            description?: string;
+            /** @description 整体替换，不是增量。 */
+            permissions: string[];
+            /** @constant */
+            confirm: true;
         };
         RoleBindingSubject: {
             id: components["schemas"]["UUID"];
@@ -1659,8 +1760,8 @@ export interface components {
         };
         CreateRoleBindingRequest: {
             subject_id: components["schemas"]["UUID"];
-            /** @enum {string} */
-            role: "admin" | "viewer";
+            /** @description 角色名。角色由操作者定义，取值不封闭。 */
+            role: string;
             /** @enum {string} */
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
@@ -3912,13 +4013,13 @@ export interface components {
              * @description 所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与 `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。 `denied` 组是鉴权拒绝时记录的权限名，其事件的 `result` 恒为 `denied`。
              * @enum {string}
              */
-            group: "auth" | "user" | "role_binding" | "tenant" | "project" | "cluster" | "kubernetes_resource" | "denied";
+            group: "auth" | "user" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "kubernetes_resource" | "denied";
         };
         /**
          * @description 写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是 服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的 `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
          * @enum {string}
          */
-        AuditTargetType: "user" | "session" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource";
+        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource";
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
             pagination: components["schemas"]["Pagination"];
@@ -4230,6 +4331,7 @@ export interface components {
         CSRFToken: string;
         IdempotencyKey: string;
         UserID: components["schemas"]["UUID"];
+        RoleID: components["schemas"]["UUID"];
         RoleBindingID: components["schemas"]["UUID"];
         TenantID: components["schemas"]["UUID"];
         ProjectID: components["schemas"]["UUID"];
@@ -4713,13 +4815,203 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    listPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 权限字典 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            permissions: components["schemas"]["PermissionDescriptor"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listRoles: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["ListLimit"];
+                offset?: components["parameters"]["ListOffset"];
+                q?: components["parameters"]["ListSearch"];
+                /** @description 只看内置角色或只看自定义角色。 */
+                builtin?: "true" | "false";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 角色列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            roles: components["schemas"]["Role"][];
+                            pagination: components["schemas"]["Pagination"];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createRole: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description 角色已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Role"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_id: components["parameters"]["RoleID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 角色详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Role"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateRole: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                role_id: components["parameters"]["RoleID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description 角色已更新 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Role"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteRole: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                role_id: components["parameters"]["RoleID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Confirmation"];
+            };
+        };
+        responses: {
+            /** @description 角色已删除 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: null;
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     listRoleBindings: {
         parameters: {
             query?: {
                 limit?: components["parameters"]["ListLimit"];
                 offset?: components["parameters"]["ListOffset"];
                 q?: components["parameters"]["ListSearch"];
-                role?: "admin" | "viewer";
+                /** @description 角色名。角色由操作者定义，因此不是一个封闭取值列表。 */
+                role?: string;
                 scope_type?: "global" | "tenant" | "project";
             };
             header?: never;

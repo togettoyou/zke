@@ -49,11 +49,24 @@ func newKubernetesSecretYAMLHandler(
 
 func (handler *kubernetesSecretYAMLHandler) get(c *gin.Context) {
 	setYAMLResponseHeaders(c)
+	identity, _ := httpmiddleware.Identity(c)
+	target := resourceTargetName(
+		kubernetesresource.SecretResourceIdentity(),
+		c.Param("namespace_name"),
+		c.Param("secret_name"),
+	)
+	// Recorded under the same action as the typed detail read. The document
+	// carries more than the detail page does — every value at once — but the
+	// question the trail has to answer is the same one, and splitting it across
+	// two action names would let a reviewer filtering on the obvious one miss
+	// the larger exposure.
 	if len(c.Request.URL.Query()) != 0 {
+		handler.recordSecretRead(c, identity.User.ID, target, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "Secret YAML does not accept query parameters")
 		return
 	}
 	if handler.service == nil {
+		handler.recordSecretRead(c, identity.User.ID, target, "failed")
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Kubernetes YAML query is unavailable")
 		return
 	}
@@ -65,10 +78,27 @@ func (handler *kubernetesSecretYAMLHandler) get(c *gin.Context) {
 		Name:      c.Param("secret_name"),
 	})
 	cancel()
+	handler.recordSecretRead(c, identity.User.ID, target, readResult(err))
 	if handler.respondYAMLError(c, "get Kubernetes Secret YAML", err) {
 		return
 	}
 	writeYAML(c, result, false)
+}
+
+func (handler *kubernetesSecretYAMLHandler) recordSecretRead(
+	c *gin.Context,
+	actorID string,
+	target string,
+	result string,
+) {
+	handler.recordOperation(c, auditedOperation{
+		Scope:       auditScopeCluster,
+		ActorUserID: actorID,
+		Action:      auditaction.KubernetesSecretRead,
+		TargetType:  auditaction.TargetKubernetesResource,
+		TargetName:  target,
+		Result:      result,
+	})
 }
 
 func (handler *kubernetesSecretYAMLHandler) update(c *gin.Context) {

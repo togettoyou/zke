@@ -98,6 +98,24 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			managedFiles.AgentListenerCACertificate
 		logServerPKIExpiry(logger, managedFiles.State, cfg.CertificateMonitor.WarningBefore)
 	}
+	// Before anything can authorize, and before the initial administrator is
+	// bound to `admin`. `admin` means "every permission the Server defines", so
+	// a release that adds one widens that row here — leaving it to the migration
+	// that created the row would mean the new permission reached nobody, and a
+	// permission granted to nobody reads exactly like a denial.
+	roleContext, cancelRoles := context.WithTimeout(
+		ctx,
+		cfg.Auth.OperationTimeout,
+	)
+	err = reconcileBuiltinRoles(
+		roleContext,
+		store.NewAccessManagementStore(database),
+		time.Now().UTC(),
+	)
+	cancelRoles()
+	if err != nil {
+		return fmt.Errorf("reconcile builtin roles: %w", err)
+	}
 	authStore := store.NewAuthStore(database)
 	adminContext, cancelAdmin := context.WithTimeout(
 		ctx,
@@ -252,12 +270,15 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		store.NewResourceManagementStore(database),
 		rbacService,
 	)
+	// The authority is what stops `rbac.manage` from being a way to grant
+	// yourself every other permission, so it is supplied at construction and
+	// role management refuses to write without it.
 	accessManagementService := accessmanagement.NewService(
 		store.NewAccessManagementStore(database),
 		accessmanagement.Config{
 			MaxConcurrentPasswordHashes: cfg.Auth.MaxConcurrentPasswordChecks,
 		},
-	)
+	).WithPermissionAuthority(rbacService)
 	handler := httpapi.New(
 		logger,
 		httpapi.Dependencies{

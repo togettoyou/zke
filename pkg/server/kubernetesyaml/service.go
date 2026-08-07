@@ -44,8 +44,17 @@ type ResourceService interface {
  *
  * Called after the identity check and before anything is sent, so a refusal
  * costs no write and no round trip to the Cluster.
+ *
+ * The third argument is what the caller may hand out about Secrets, resolved per
+ * request rather than at construction: a Kubernetes PolicyRule is a way to give
+ * somebody else access, and whether this manifest may do that depends on who is
+ * submitting it. Guards that grant nothing ignore it.
  */
-type ManifestGuard func(current map[string]any, submitted map[string]any) error
+type ManifestGuard func(
+	current map[string]any,
+	submitted map[string]any,
+	grant kubernetesresource.SecretRuleGrant,
+) error
 
 type Service struct {
 	resources ResourceService
@@ -61,7 +70,10 @@ type GetInput struct {
 
 type UpdateInput struct {
 	GetInput
-	Manifest       []byte
+	Manifest []byte
+	// Passed to the guard. Zero-valued grants nothing, so a caller that does not
+	// set it gets the same treatment as one holding no Secret permissions.
+	SecretGrant    kubernetesresource.SecretRuleGrant
 	DryRun         bool
 	Confirm        bool
 	FieldManager   string
@@ -125,7 +137,7 @@ func (service *Service) Update(
 		return Result{}, err
 	}
 	if service.guard != nil {
-		if err := service.guard(current, object); err != nil {
+		if err := service.guard(current, object, input.SecretGrant); err != nil {
 			return Result{}, err
 		}
 	}

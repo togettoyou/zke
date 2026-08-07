@@ -117,7 +117,10 @@ func (handler *kubernetesAuthorizationYAMLHandler) update(c *gin.Context) {
 			Namespace: c.Param("namespace_name"),
 			Name:      c.Param("authorization_name"),
 		},
-		Manifest:       manifest,
+		Manifest: manifest,
+		// A YAML document can carry a PolicyRule as easily as the form can, so
+		// it answers to the same ceiling.
+		SecretGrant:    callerSecretGrant(c),
 		DryRun:         query.DryRun,
 		Confirm:        query.Confirm,
 		FieldManager:   query.FieldManager,

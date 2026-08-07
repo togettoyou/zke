@@ -380,11 +380,11 @@ Console 配置管理页面列出所选命名空间的 ConfigMap，展示键名�
 Secret 管理与 ConfigMap 放在同一个「配置管理」分区的两个标签页下：它们是同一件事——交给工作负载的配置——
 而形状与代价不同，因此不压成一张表。
 
-四道关卡决定谁能读到一个 Secret 的取值，缺一不可：
+四道关卡决定谁能通过 Secret 接口读到一个 Secret 的取值，缺一不可：
 
 - **专用权限**：读要求 `cluster.secret.read`，写要求 `cluster.secret.manage`。两者都不由 `cluster.read` 或
-  `cluster.resource.*` 蕴含，默认只有 admin 角色拥有——能看配置和能看凭证是两个问题，一个角色不该因为前者
-  顺带获得后者。没有读权限时 Secret 标签页不出现，服务端仍独立判定。
+  `cluster.resource.*` 蕴含——能看配置和能看凭证是两个问题，一个角色不该因为前者顺带获得后者。没有读权限时
+  Secret 标签页不出现，服务端仍独立判定。
 - **服务端专线**：通用 Resource 与 YAML 接口对 `core/v1 Secret` 的拒绝没有放开；类型化 Secret 服务是进程内
   唯一会在请求上设置 `secret_access` 的地方，而该字段在 Go 中不可导出，包外无法设置。Secret 的 YAML 路由不是
   例外：它拿到的访问器只接受 `core/v1 Secret`，其余 GVR 一律返回无效输入，因此它不是一个恰好指向 Secret 的
@@ -401,6 +401,16 @@ Secret 管理与 ConfigMap 放在同一个「配置管理」分区的两个标�
 
 安装清单为 Agent ServiceAccount 增加了 Secret 的 `get`、`list`、`create`、`update`、`delete`，没有 `watch`，
 也没有 Subresource。这个授权是该能力得以存在的前提，而不是它的授权边界——边界是上面四条。
+
+这四条约束的是 **Secret 接口**，不是 Secret 里的字节。持有 `cluster.resource.create` 的人可以创建一个挂载了某个
+Secret 的 Deployment 或 Job，再用 `cluster.pod.logs.read` 或 `cluster.pod.exec` 把内容读出来，全程不经过
+`cluster.secret.*`。这不是 ZKE 的缺陷，而是 Kubernetes 本身的权限等价关系——`kubectl` 同样如此——但它意味着
+不授予 `cluster.secret.read` 并不等于该用户读不到 Secret。真正把两者分开，需要同时限制工作负载创建权限；
+在设计角色时应当把 `cluster.resource.create` 与 `cluster.pod.exec`、`cluster.pod.logs.read` 的组合视为等同于
+该 Namespace 的 Secret 读取权限。
+
+读取本身写入审计（`kubernetes_secret.list` 与 `kubernetes_secret.read`），记录发起者、Cluster、Namespace、
+对象名和结果，不记录键名或取值。
 
 列表只返回键名、大小、类型和不可变标记；取值只在按名称打开一个对象时返回，且默认遮蔽，逐个键点击才显示：
 这个页面被用来核对名称和大小的次数远多于用来读凭证，而一打开就把命名空间里所有口令铺在屏幕上，泄露的对象
@@ -550,9 +560,18 @@ DryRun/确认和审计链路，并在提交前重跑类型化接口的全部规�
 
 该能力使用独立的 `cluster.rbac.read/manage`，并从通用 Resource/YAML 入口排除上述五类资源——那条排除正是这里
 需要专用 YAML 路由的原因：把它们放回通用入口，等于让持有 `cluster.resource.update` 的角色改写 RoleBinding。
-ZKE 安装清单不会给 Agent `escalate`、`bind` 或 `impersonate`；类型化规则与 YAML 守卫同样拒绝这些 Verb、Secret
-和 ServiceAccount Token，绑定不能直接引用内置 `zke-agent` 角色，也不能改写 `roleRef`，API Server 还会拒绝其他
-超出 Agent 当前权限上限的规则或绑定。带 `app.kubernetes.io/managed-by=zke-server` 的 Agent ServiceAccount、
+ZKE 安装清单不会给 Agent `escalate`、`bind` 或 `impersonate`；类型化规则与 YAML 守卫同样拒绝这些 Verb 和
+ServiceAccount Token，也不能改写 `roleRef`，API Server 还会拒绝其他超出 Agent 当前权限上限的规则或绑定。
+
+规则里出现 `secrets` 不再被无条件拒绝，而是要求调用者在该 Cluster 上持有对应权限：只读 Verb 要
+`cluster.secret.read`，其余 Verb 或通配符要 `cluster.secret.manage`，`resources: ["*"]` 视同点名 Secret，不满足
+返回 `403 secret_rule_forbidden`。原因是 RBAC 规则本身就是在把访问权交给别人，所以它遵守和平台角色一样的
+「不得授出自己没有的权限」；一刀切的代价则是无法用 ZKE 给 ServiceAccount 授予读取自身配置 Secret 的权限，
+而那几乎是每个应用都要的。
+
+指向 `zke-agent` 的绑定始终被拒绝，创建和给已有绑定追加主体都算——后者一度是缺口：Kubernetes 在这里不会拦，
+因为执行者就是 Agent 自己、目标角色恰好是它自己的权限集；`managed-by` 标签也不会，因为新建的绑定不带该标签。
+带 `app.kubernetes.io/managed-by=zke-server` 的 Agent ServiceAccount、
 Role、ClusterRole 和绑定禁止通过该 API 更新或删除，YAML 路由同样只允许读取；任何对象也不能通过提交把这个标签
 加到自己身上——那会把它从这套 API 中摘出去。
 
@@ -574,14 +593,14 @@ RoleRef 显示为只读并说明「要指向其他角色需要删除后重建」
 ServiceAccount 只显示关联 Secret 的数量，并在列表和详情中都写明「不展示名称」，与后端不返回 Secret 名称、
 Token 或正文一致。规则编辑器的字段用逗号分隔，API 组留空即 core 组——空字符串在 Kubernetes 里是有意义的取值，
 提交时会保留而不是当成空项丢弃。表单旁注说明 Agent 不持有 `escalate`/`bind`，超出其权限范围的规则会被
-Kubernetes 拒绝。
+Kubernetes 拒绝；涉及 `secrets` 的规则还要求提交者本人持有对应的 Secret 权限。
 
 本页的 YAML 入口走的是专用路由，而不是通用 YAML 接口：后者对这五类资源的整体排除没有放开，读取也一样被拒绝。
 详情页头的 YAML 挂在 `cluster.rbac.read` 上，写入挂在 `cluster.rbac.manage` 上，与类型化表单同一组权限。
 
-YAML 不是绕过类型化护栏的通道：提交前会重跑同一套规则——拒绝 `escalate`、`bind`、`impersonate`，拒绝 `secrets`
-与 `serviceaccounts/token`，拒绝引用内置 `zke-agent` 角色，拒绝改写 `roleRef`，拒绝给对象添上 ZKE 的 managed-by
-标签，ZKE 管理的授权对象只读打开。不这么做的话，这个编辑器就不是「表单没建模的字段的出口」，而是任何持有
+YAML 不是绕过类型化护栏的通道：提交前会重跑同一套规则——拒绝 `escalate`、`bind`、`impersonate` 与
+`serviceaccounts/token`，`secrets` 按调用者持有的 Secret 权限条件放行（与类型化表单同一份判定），拒绝引用内置
+`zke-agent` 角色，拒绝改写 `roleRef`，拒绝给对象添上 ZKE 的 managed-by 标签，ZKE 管理的授权对象只读打开。不这么做的话，这个编辑器就不是「表单没建模的字段的出口」，而是任何持有
 `cluster.rbac.manage` 的人绕开全部检查去改写授权的地方。
 
 聚合 ClusterRole 是这里唯一比表单更宽的地方：类型化编辑拒绝它，因为表单表达不了 `aggregationRule`，而一份

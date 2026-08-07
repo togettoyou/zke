@@ -201,7 +201,14 @@ func (access SecretYAMLAccess) UpdateResource(
  * same one the form gives rather than a rejection from the API Server about a
  * field the editor never showed.
  */
-func SecretManifestGuard(current map[string]any, submitted map[string]any) error {
+// The grant is ignored: this guard is about a Secret object, not about a
+// PolicyRule handing Secret access to somebody else, and the route already
+// required `cluster.secret.manage` to reach it.
+func SecretManifestGuard(
+	current map[string]any,
+	submitted map[string]any,
+	_ SecretRuleGrant,
+) error {
 	live, err := secretFromObject(current)
 	if err != nil {
 		return ErrInvalidResponse

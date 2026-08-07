@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/togettoyou/zke/pkg/server/store"
@@ -114,26 +115,53 @@ func TestBindingCacheIsScopedToOneContext(t *testing.T) {
 	}
 }
 
-func TestRoleMatrixIsTheOnlySourceOfRoles(t *testing.T) {
+func TestBuiltinRolesCoverTheirDeclaredMeaning(t *testing.T) {
 	t.Parallel()
 
-	for _, role := range Roles() {
-		if !RoleExists(role) {
-			t.Errorf("RoleExists(%q) = false for a listed role", role)
+	for _, name := range []string{RoleAdmin, RoleViewer} {
+		if !IsBuiltinRole(name) {
+			t.Errorf("IsBuiltinRole(%q) = false for a shipped role", name)
 		}
 	}
-	for _, role := range []string{"", "Admin", "operator", "owner"} {
-		if RoleExists(role) {
-			t.Errorf("RoleExists(%q) = true", role)
+	for _, name := range []string{"", "Admin", "operator", "owner"} {
+		if IsBuiltinRole(name) {
+			t.Errorf("IsBuiltinRole(%q) = true", name)
 		}
 	}
-	if !roleGrants(RoleAdmin, PermissionRBACManage) {
-		t.Error("admin does not grant rbac.manage")
+	// admin is "every permission there is" rather than a list, so the check is
+	// against the vocabulary: a permission added to the Server and missing here
+	// would be a permission nobody could hold.
+	admin := builtinRolePermissions(RoleAdmin)
+	for _, permission := range Permissions() {
+		if !slices.Contains(admin, string(permission)) {
+			t.Errorf("admin does not grant %q", permission)
+		}
 	}
-	if roleGrants(RoleViewer, PermissionRBACManage) {
+	viewer := builtinRolePermissions(RoleViewer)
+	if slices.Contains(viewer, string(PermissionRBACManage)) {
 		t.Error("viewer grants rbac.manage")
 	}
-	if !roleGrants(RoleViewer, PermissionClusterRead) {
+	if !slices.Contains(viewer, string(PermissionClusterRead)) {
 		t.Error("viewer does not grant cluster.read")
+	}
+}
+
+// The store protects the account of last resort by role name, and names that
+// role as a literal because it sits below this package. This is the check that
+// keeps the literal honest: a global administrator is someone holding the
+// builtin `admin` role, so the store and this package have to mean the same
+// role by it.
+func TestGlobalAdminRoleMatchesAuthorization(t *testing.T) {
+	t.Parallel()
+
+	if store.GlobalAdminRoleName() != RoleAdmin {
+		t.Fatalf(
+			"store.GlobalAdminRoleName() = %q, want %q",
+			store.GlobalAdminRoleName(),
+			RoleAdmin,
+		)
+	}
+	if !IsBuiltinRole(store.GlobalAdminRoleName()) {
+		t.Fatal("the global administrator role is not a builtin role")
 	}
 }

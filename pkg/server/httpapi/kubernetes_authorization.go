@@ -64,6 +64,22 @@ func newKubernetesAuthorizationHandler(logger *slog.Logger, service kubernetesAu
 	return &kubernetesAuthorizationHandler{baseHandler: newBaseHandler(logger, auditService, operationTimeout), service: service}
 }
 
+/*
+ * What this caller may hand out about Secrets.
+ *
+ * Resolved by the middleware on the write routes and read here. A request that
+ * never ran it — a handler reached some other way, a test wiring one route by
+ * hand — reports no grant at all, so the rule check refuses Secret access rather
+ * than waving it through on a missing value.
+ */
+func callerSecretGrant(c *gin.Context) kubernetesresource.SecretRuleGrant {
+	grant := httpmiddleware.ClusterSecretGrant(c)
+	return kubernetesresource.SecretRuleGrant{
+		Read:   grant.Read,
+		Manage: grant.Manage,
+	}
+}
+
 func (handler *kubernetesAuthorizationHandler) list(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	input, err := parseAuthorizationResourceListQuery(c.Request.URL.Query())
@@ -134,7 +150,8 @@ func (handler *kubernetesAuthorizationHandler) create(c *gin.Context) {
 		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"), Resource: resource, Name: request.Name,
 		Labels: request.Labels, Annotations: request.Annotations, AutomountServiceAccountToken: request.AutomountServiceAccountToken,
 		Rules: request.Rules, Subjects: request.Subjects, RoleRef: request.RoleRef,
-		DryRun: request.DryRun, Confirm: request.Confirm, IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
+		SecretGrant: callerSecretGrant(c),
+		DryRun:      request.DryRun, Confirm: request.Confirm, IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
 	})
 	cancel()
 	if err != nil {
@@ -177,7 +194,8 @@ func (handler *kubernetesAuthorizationHandler) update(c *gin.Context) {
 	result, err := handler.service.UpdateAuthorizationResource(ctx, kubernetesresource.UpdateAuthorizationResourceInput{
 		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"), Resource: resource, Name: c.Param("authorization_name"),
 		UID: request.UID, ResourceVersion: request.ResourceVersion, AutomountServiceAccountToken: request.AutomountServiceAccountToken,
-		Rules: request.Rules, Subjects: request.Subjects, DryRun: request.DryRun, Confirm: request.Confirm,
+		Rules: request.Rules, Subjects: request.Subjects, SecretGrant: callerSecretGrant(c),
+		DryRun: request.DryRun, Confirm: request.Confirm,
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
 	})
 	cancel()

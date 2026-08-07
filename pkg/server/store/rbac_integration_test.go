@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestRBACServiceScopesAndRoles(t *testing.T) {
@@ -18,9 +17,7 @@ func TestRBACServiceScopesAndRoles(t *testing.T) {
 	defer cancel()
 
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	tenantA := insertRBACTenant(t, ctx, pool, "Tenant A")
 	tenantB := insertRBACTenant(t, ctx, pool, "Tenant B")

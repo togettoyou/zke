@@ -22,11 +22,47 @@ type fakeStore struct {
 	err          error
 }
 
+// ListRoleBindings resolves each binding's permission set the way the real
+// query does — by joining the role. Test cases name a role and leave the
+// permissions empty, so filling them here keeps every case stating the thing it
+// is actually about, and keeps a builtin role's meaning defined in one place.
 func (fake *fakeStore) ListRoleBindings(
 	_ context.Context,
 	_ string,
 ) ([]store.RoleBinding, error) {
-	return fake.bindings, fake.err
+	if fake.err != nil {
+		return nil, fake.err
+	}
+	resolved := make([]store.RoleBinding, 0, len(fake.bindings))
+	for _, binding := range fake.bindings {
+		if binding.Permissions == nil {
+			binding.Permissions = builtinRolePermissions(binding.Role)
+		}
+		resolved = append(resolved, binding)
+	}
+	return resolved, nil
+}
+
+// builtinRoleGrants states what a shipped role means, which is what the tests
+// below are about. Authorization itself no longer asks this question of a role
+// name — it reads the permission set off the binding — so the helper lives here
+// rather than in the package it used to be a function of.
+func builtinRoleGrants(name string, permission Permission) bool {
+	return slices.Contains(builtinRolePermissions(name), string(permission))
+}
+
+func builtinRolePermissions(name string) []string {
+	for _, role := range BuiltinRoles() {
+		if role.Name != name {
+			continue
+		}
+		permissions := make([]string, 0, len(role.Permissions))
+		for _, permission := range role.Permissions {
+			permissions = append(permissions, string(permission))
+		}
+		return permissions
+	}
+	return nil
 }
 
 func (fake *fakeStore) FindProjectTenant(

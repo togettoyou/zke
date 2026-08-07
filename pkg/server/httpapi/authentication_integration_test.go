@@ -17,7 +17,6 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestAuthenticationHTTPFlow(t *testing.T) {
@@ -26,9 +25,7 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 	defer cancel()
 
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	authStore := store.NewAuthStore(pool)
 	password := "a sufficiently long admin passphrase"
@@ -162,9 +159,7 @@ func TestCurrentUserPasswordChange(t *testing.T) {
 	defer cancel()
 
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 	authStore := store.NewAuthStore(pool)
 	const oldPassword = "a sufficiently long original password"
 	const newPassword = "a sufficiently long replacement password"
@@ -307,9 +302,7 @@ func TestLoginRateLimitAuditsDenialOnce(t *testing.T) {
 	defer cancel()
 
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	authStore := store.NewAuthStore(pool)
 	if _, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{

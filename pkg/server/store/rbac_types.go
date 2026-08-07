@@ -11,6 +11,12 @@ type RoleBinding struct {
 	ScopeType string
 	TenantID  string
 	ProjectID string
+	// The permission set the bound role carries, resolved by the same query
+	// that reads the binding. Carrying it here rather than looking the role up
+	// afterwards keeps an authorization decision to one round trip and removes
+	// the window in which a role edited between the two reads would be
+	// evaluated against a permission set it no longer has.
+	Permissions []string
 }
 
 type ClusterAuthorizationScope struct {

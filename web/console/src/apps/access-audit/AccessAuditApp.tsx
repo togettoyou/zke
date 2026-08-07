@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   Search,
   ShieldCheck,
+  ShieldHalf,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -28,19 +29,29 @@ import {
   useUsers,
 } from "@/api/queries/access";
 import {
+  useCreateRole,
+  useDeleteRole,
+  usePermissions,
+  useRoles,
+  useUpdateRole,
+} from "@/api/queries/roles";
+import {
   DEFAULT_PAGE_SIZE,
   type AuditEvent,
   type ManagedUser,
+  type PermissionDescriptor,
   type Role,
   type RoleBinding,
+  type RoleName,
   type ScopeType,
   type UserStatus,
 } from "@/api/types";
 import { AppShell, SectionTitle, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
-import { ROLE_LABELS, roleLabel } from "@/auth/capabilities";
+import { roleLabel } from "@/auth/capabilities";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { errorMessage } from "@/api/errors";
 import { notifyFailure } from "@/components/common/notify";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import {
@@ -83,6 +94,9 @@ import {
 
 const NAV: AppNavItem[] = [
   { id: "users", label: "用户", icon: Users },
+  // Roles sit before the bindings that point at them: an operator defines what a
+  // permission set is, then decides who holds it.
+  { id: "roles", label: "角色", icon: ShieldHalf },
   { id: "role-bindings", label: "权限绑定", icon: ShieldCheck },
   { id: "audit", label: "审计事件", icon: ClipboardList },
 ];
@@ -106,6 +120,7 @@ const GLOBAL = { type: "global" } as const;
 const ACTION_GROUP_LABELS: Record<string, string> = {
   auth: "认证",
   user: "用户",
+  role: "角色",
   role_binding: "权限绑定",
   tenant: "租户",
   project: "项目",
@@ -115,11 +130,61 @@ const ACTION_GROUP_LABELS: Record<string, string> = {
 };
 
 /*
- * Both role pickers render from here. Listing the options inline meant a role
- * added to the contract would be labelled correctly everywhere it was shown and
- * still be impossible to choose.
+ * Permission labels.
+ *
+ * Names only — the set itself comes from the Server, because a list held here
+ * would be a second definition and a permission added to the Server would be one
+ * no role could be given, with nothing reporting it. An unlabelled permission
+ * falls back to its raw name, which is what the API, the audit trail and the
+ * docs call it anyway.
  */
-const ROLE_OPTIONS = Object.entries(ROLE_LABELS);
+const PERMISSION_LABELS: Record<string, string> = {
+  "tenant.create": "创建租户",
+  "tenant.read": "查看租户",
+  "tenant.manage": "管理租户",
+  "project.create": "创建项目",
+  "project.read": "查看项目",
+  "project.manage": "管理项目",
+  "cluster.enrollment.create": "创建集群注册凭证",
+  "cluster.enrollment.read": "查看集群注册凭证",
+  "cluster.enrollment.revoke": "吊销集群注册凭证",
+  "cluster.read": "查看集群",
+  "cluster.pod.logs.read": "查看 Pod 日志",
+  "cluster.pod.exec": "进入 Pod 终端",
+  "cluster.event.read": "查看集群事件",
+  "cluster.manage": "管理集群",
+  "cluster.resource.create": "创建 Kubernetes 资源",
+  "cluster.resource.update": "修改 Kubernetes 资源",
+  "cluster.resource.delete": "删除 Kubernetes 资源",
+  "cluster.rbac.read": "查看 Kubernetes 授权资源",
+  "cluster.rbac.manage": "管理 Kubernetes 授权资源",
+  "cluster.secret.read": "读取 Secret 取值",
+  "cluster.secret.manage": "管理 Secret",
+  "cluster.connection.revoke": "断开 Agent 连接",
+  "user.read": "查看用户",
+  "user.manage": "管理用户",
+  "rbac.read": "查看角色与绑定",
+  "rbac.manage": "管理角色与绑定",
+  "audit.read": "查看审计事件",
+};
+
+function permissionLabel(name: string): string {
+  return PERMISSION_LABELS[name] ?? name;
+}
+
+/*
+ * Permissions whose reach is worth naming in the role editor.
+ *
+ * Not a security control — the Server decides — but a role is written once and
+ * lived with for a long time, and these four are the ones whose consequences an
+ * operator is least likely to reconstruct from the name alone.
+ */
+const PERMISSION_WARNINGS: Record<string, string> = {
+  "cluster.secret.read": "可读取 Secret 明文取值",
+  "cluster.secret.manage": "可修改和删除 Secret",
+  "cluster.pod.exec": "可进入容器终端",
+  "rbac.manage": "可创建角色并授予自己已持有的权限",
+};
 
 const SCOPE_LABELS: Record<string, string> = {
   global: "全局",
@@ -135,6 +200,7 @@ export function AccessAuditApp(_props: AppComponentProps) {
     ...item,
     hidden:
       (item.id === "users" && !permissions.can("user.read", GLOBAL)) ||
+      (item.id === "roles" && !permissions.can("rbac.read", GLOBAL)) ||
       (item.id === "role-bindings" && !permissions.can("rbac.read", GLOBAL)) ||
       (item.id === "audit" && !permissions.canAnywhere("audit.read")),
   }));
@@ -146,7 +212,7 @@ export function AccessAuditApp(_props: AppComponentProps) {
     return (
       <div className="p-4">
         <Alert tone="warning">
-          当前账号没有用户、角色绑定或审计的读取权限。相关入口已隐藏，服务端也会拒绝对应请求。
+          当前账号没有用户、角色、角色绑定或审计的读取权限。相关入口已隐藏，服务端也会拒绝对应请求。
         </Alert>
       </div>
     );
@@ -155,6 +221,7 @@ export function AccessAuditApp(_props: AppComponentProps) {
   return (
     <AppShell nav={nav} activeId={active} onNavigate={setSection}>
       {active === "users" ? <UserSection /> : null}
+      {active === "roles" ? <RoleSection /> : null}
       {active === "role-bindings" ? <RoleBindingSection /> : null}
       {active === "audit" ? <AuditSection /> : null}
     </AppShell>
@@ -736,6 +803,420 @@ function ResetPasswordDialog({
   );
 }
 
+function RoleSection() {
+  const { permissions } = useSessionContext();
+  const canManage = permissions.can("rbac.manage", GLOBAL);
+
+  const [offset, setOffset] = useState(0);
+  const [editorTarget, setEditorTarget] = useState<Role | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
+
+  const query = useRoles({ limit: DEFAULT_PAGE_SIZE, offset });
+  const createRole = useCreateRole();
+  const updateRole = useUpdateRole();
+  const deleteRole = useDeleteRole();
+
+  const columns = useMemo<ColumnDef<Role, unknown>[]>(
+    () => [
+      {
+        header: "角色",
+        cell: ({ row }) => (
+          <div className="flex flex-col gap-0.5">
+            <span className="flex items-center gap-2">
+              <span className="text-foreground font-medium">{row.original.display_name}</span>
+              {row.original.builtin ? <Badge tone="neutral">内置</Badge> : null}
+            </span>
+            <span className="zke-mono text-muted-foreground text-xs">{row.original.name}</span>
+          </div>
+        ),
+      },
+      {
+        header: "说明",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-[13px]">{row.original.description || "—"}</span>
+        ),
+      },
+      {
+        header: "权限",
+        size: 110,
+        cell: ({ row }) => (
+          <span className="text-foreground text-[13px]">{row.original.permissions.length} 项</span>
+        ),
+      },
+      {
+        header: "绑定",
+        size: 90,
+        cell: ({ row }) => (
+          <span className="text-foreground text-[13px]">{row.original.binding_count}</span>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        size: 130,
+        cell: ({ row }) => (
+          <div className="flex justify-end gap-1">
+            <Button size="sm" variant="ghost" onClick={() => setEditorTarget(row.original)}>
+              {canManage && !row.original.builtin ? "编辑" : "查看"}
+            </Button>
+            {canManage && !row.original.builtin ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-danger"
+                onClick={() => setDeleteTarget(row.original)}
+              >
+                删除
+              </Button>
+            ) : null}
+          </div>
+        ),
+      },
+    ],
+    [canManage],
+  );
+
+  return (
+    <>
+      <div className="flex h-full min-h-0 flex-col">
+        <SectionTitle
+          title="角色"
+          description="角色是一组权限的集合。修改角色会立即改变所有已绑定该角色的用户的权限"
+          actions={
+            canManage ? (
+              <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
+                <ShieldHalf />
+                新建角色
+              </Button>
+            ) : null
+          }
+        />
+
+        <DataTable
+          columns={columns}
+          data={query.data?.roles}
+          isLoading={query.isLoading}
+          isFetching={query.isFetching}
+          error={query.error}
+          onRetry={() => void query.refetch()}
+          rowKey={(row) => row.id}
+          emptyTitle="没有角色"
+          pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
+        />
+      </div>
+
+      <RoleEditorDialog
+        open={createOpen}
+        role={null}
+        pending={createRole.isPending}
+        error={createRole.error}
+        onClose={() => setCreateOpen(false)}
+        onSubmit={async (input) => {
+          await createRole.mutateAsync({
+            name: input.name,
+            displayName: input.displayName,
+            description: input.description,
+            permissions: input.permissions,
+          });
+          toast.success("角色已创建");
+          setCreateOpen(false);
+        }}
+      />
+
+      <RoleEditorDialog
+        open={Boolean(editorTarget)}
+        role={editorTarget}
+        readOnly={!canManage || Boolean(editorTarget?.builtin)}
+        pending={updateRole.isPending}
+        error={updateRole.error}
+        onClose={() => setEditorTarget(null)}
+        onSubmit={async (input) => {
+          if (!editorTarget) {
+            return;
+          }
+          await updateRole.mutateAsync({
+            roleId: editorTarget.id,
+            displayName: input.displayName,
+            description: input.description,
+            permissions: input.permissions,
+          });
+          toast.success("角色已更新");
+          setEditorTarget(null);
+        }}
+      />
+
+      <SensitiveActionDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="删除角色"
+        destructive
+        scopeLines={[
+          {
+            label: "角色",
+            name: `${deleteTarget?.display_name ?? ""}（${deleteTarget?.name ?? ""}）`,
+            id: deleteTarget?.id ?? null,
+          },
+        ]}
+        impacts={[
+          "角色定义被移除，无法恢复",
+          "仍被绑定的角色不能删除，服务端会拒绝并要求先删除相关绑定",
+        ]}
+        confirmLabel="确认删除"
+        pending={deleteRole.isPending}
+        error={deleteRole.error}
+        onConfirm={async () => {
+          if (!deleteTarget) {
+            return;
+          }
+          try {
+            await deleteRole.mutateAsync({ roleId: deleteTarget.id });
+            toast.success("角色已删除");
+            setDeleteTarget(null);
+          } catch {
+            // Error is rendered inside the dialog.
+          }
+        }}
+      />
+    </>
+  );
+}
+
+/*
+ * One dialog for creating, editing and viewing a role.
+ *
+ * The three differ in two details — whether the name is editable and whether
+ * anything is — and splitting them into separate components meant the permission
+ * picker existed twice, which is the part worth getting right once. A builtin
+ * role opens here read-only rather than not opening at all: what `admin` grants
+ * is exactly the question an operator asks before deciding they need a narrower
+ * role.
+ */
+function RoleEditorDialog({
+  open,
+  role,
+  readOnly = false,
+  pending,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  role: Role | null;
+  readOnly?: boolean;
+  pending: boolean;
+  error: unknown;
+  onClose: () => void;
+  onSubmit: (input: {
+    name: string;
+    displayName: string;
+    description: string;
+    permissions: string[];
+  }) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [description, setDescription] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [wasOpen, setWasOpen] = useState(open);
+  const [loadedRoleId, setLoadedRoleId] = useState<string | null>(null);
+
+  const permissionsQuery = usePermissions(open);
+  const catalog = permissionsQuery.data?.permissions ?? [];
+
+  // Reset during render rather than in an effect, so the previous role's
+  // permissions are never visible for a frame after the dialog reopens.
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (!open) {
+      setLoadedRoleId(null);
+    }
+  }
+  const targetId = open ? (role?.id ?? "new") : null;
+  if (targetId !== null && targetId !== loadedRoleId) {
+    setLoadedRoleId(targetId);
+    setName(role?.name ?? "");
+    setDisplayName(role?.display_name ?? "");
+    setDescription(role?.description ?? "");
+    setSelected(role?.permissions ?? []);
+  }
+
+  const editing = Boolean(role);
+  const toggle = (permission: string) => {
+    setSelected((current) =>
+      current.includes(permission)
+        ? current.filter((item) => item !== permission)
+        : [...current, permission],
+    );
+  };
+
+  // A permission the caller does not hold globally cannot go into a role, and a
+  // role that already carries one stays selected and visible — hiding it would
+  // silently drop it on the next save.
+  const blocked = selected.filter(
+    (permission) => !catalog.some((item) => item.name === permission && item.held),
+  );
+  const valid =
+    displayName.trim() !== "" &&
+    selected.length > 0 &&
+    (editing || /^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) &&
+    blocked.length === 0;
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent aria-describedby={undefined} className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>
+            {readOnly ? "角色详情" : editing ? "编辑角色" : "新建角色"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-3">
+          {readOnly && role?.builtin ? (
+            <Alert tone="info">内置角色由 Server 定义，权限集在每次启动时对账，不可修改或删除。</Alert>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="role-name">标识</Label>
+              <Input
+                id="role-name"
+                value={name}
+                disabled={editing || readOnly}
+                placeholder="release-engineer"
+                onChange={(event) => setName(event.target.value)}
+              />
+              <FieldHint>
+                {editing
+                  ? "标识创建后不可修改：绑定与审计记录都以它指代该角色。"
+                  : "小写字母、数字和连字符。创建后不可修改。"}
+              </FieldHint>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="role-display-name">名称</Label>
+              <Input
+                id="role-display-name"
+                value={displayName}
+                disabled={readOnly}
+                placeholder="发布工程师"
+                onChange={(event) => setDisplayName(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label htmlFor="role-description">说明</Label>
+            <Input
+              id="role-description"
+              value={description}
+              disabled={readOnly}
+              placeholder="这个角色是给谁用的"
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label>权限（已选 {selected.length} 项）</Label>
+            {permissionsQuery.isLoading ? (
+              <span className="text-muted-foreground text-[13px]">正在加载权限字典…</span>
+            ) : (
+              <div className="border-border max-h-72 overflow-y-auto rounded-control border">
+                {catalog.map((permission) => (
+                  <PermissionRow
+                    key={permission.name}
+                    permission={permission}
+                    checked={selected.includes(permission.name)}
+                    disabled={readOnly || (!permission.held && !selected.includes(permission.name))}
+                    onToggle={() => toggle(permission.name)}
+                  />
+                ))}
+              </div>
+            )}
+            <FieldHint>
+              只能选择自己在全局已持有的权限。这条限制同时由服务端强制执行，否则 `rbac.manage`
+              就等于全部权限。
+            </FieldHint>
+          </div>
+
+          {blocked.length > 0 ? (
+            <Alert tone="warning">
+              该角色包含当前账号未持有的权限，无法保存：
+              {blocked.map((permission) => permissionLabel(permission)).join("、")}
+            </Alert>
+          ) : null}
+
+          {/*
+            * The Server's own message is shown rather than a fixed one: the
+            * refusals here are specific and actionable — which permission
+            * exceeded the caller's ceiling, that the role is builtin, that it is
+            * still bound — and replacing them with "保存失败" would throw away
+            * the only part worth reading.
+            */}
+          {error ? <Alert tone="danger">{errorMessage(error)}</Alert> : null}
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
+            {readOnly ? "关闭" : "取消"}
+          </Button>
+          {readOnly ? null : (
+            <Button
+              variant="primary"
+              disabled={!valid || pending}
+              onClick={() => {
+                void onSubmit({
+                  name: name.trim(),
+                  displayName: displayName.trim(),
+                  description: description.trim(),
+                  permissions: selected,
+                });
+              }}
+            >
+              {pending ? "保存中…" : "保存"}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PermissionRow({
+  permission,
+  checked,
+  disabled,
+  onToggle,
+}: {
+  permission: PermissionDescriptor;
+  checked: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const warning = PERMISSION_WARNINGS[permission.name];
+  return (
+    <label
+      className={cn(
+        "border-border flex cursor-pointer items-start gap-3 border-b px-3 py-2 last:border-b-0",
+        disabled && "cursor-not-allowed opacity-60",
+      )}
+    >
+      <input
+        type="checkbox"
+        className="mt-1"
+        checked={checked}
+        disabled={disabled}
+        onChange={onToggle}
+      />
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-foreground text-[13px]">{permissionLabel(permission.name)}</span>
+          {warning ? <Badge tone="warning">{warning}</Badge> : null}
+          {!permission.held ? <Badge tone="neutral">当前账号未持有</Badge> : null}
+        </span>
+        <span className="zke-mono text-muted-foreground text-xs">{permission.name}</span>
+      </span>
+    </label>
+  );
+}
+
 function RoleBindingSection() {
   const { permissions } = useSessionContext();
   const canManage = permissions.can("rbac.manage", GLOBAL);
@@ -749,9 +1230,15 @@ function RoleBindingSection() {
   const query = useRoleBindings({
     limit: DEFAULT_PAGE_SIZE,
     offset,
-    ...(role === "all" ? {} : { role: role as Role }),
+    ...(role === "all" ? {} : { role: role as RoleName }),
     ...(scopeType === "all" ? {} : { scope_type: scopeType as ScopeType }),
   });
+  // The filter offers whatever roles exist, not a list held here: a role an
+  // operator created must be filterable, and one they deleted must stop being
+  // offered. The page limit is generous because roles are few and the picker
+  // has no paging of its own.
+  const roles = useRoles({ limit: 100 });
+  const roleOptions = useMemo(() => roles.data?.roles ?? [], [roles.data]);
   const createRoleBinding = useCreateRoleBinding();
   const deleteRoleBinding = useDeleteRoleBinding();
 
@@ -791,12 +1278,19 @@ function RoleBindingSection() {
       },
       {
         header: "角色",
-        size: 100,
-        cell: ({ row }) => (
-          <Badge tone={row.original.role === "admin" ? "primary" : "neutral"}>
-            {roleLabel(row.original.role)}
-          </Badge>
-        ),
+        size: 140,
+        // Labelled from the roles list where it resolves, and by the stored name
+        // where it does not. A binding can outlive nothing here — the foreign key
+        // sees to that — but the list is paged, so a role beyond the first page
+        // still has to render as something an operator recognises.
+        cell: ({ row }) => {
+          const definition = roleOptions.find((item) => item.name === row.original.role);
+          return (
+            <Badge tone={row.original.role === "admin" ? "primary" : "neutral"}>
+              {definition?.display_name ?? roleLabel(row.original.role)}
+            </Badge>
+          );
+        },
       },
       {
         header: "作用域",
@@ -834,7 +1328,7 @@ function RoleBindingSection() {
           ) : null,
       },
     ],
-    [canManage],
+    [canManage, roleOptions],
   );
 
   return (
@@ -876,9 +1370,9 @@ function RoleBindingSection() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">全部角色</SelectItem>
-                  {ROLE_OPTIONS.map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
+                  {roleOptions.map((item) => (
+                    <SelectItem key={item.id} value={item.name}>
+                      {item.display_name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -977,14 +1471,14 @@ function CreateRoleBindingDialog({
   onClose: () => void;
   onSubmit: (input: {
     subjectId: string;
-    role: Role;
+    role: RoleName;
     scopeType: ScopeType;
     tenantId?: string;
     projectId?: string;
   }) => Promise<void>;
 }) {
   const [subject, setSubject] = useState<PickedRecord | null>(null);
-  const [role, setRole] = useState<Role>("viewer");
+  const [role, setRole] = useState<RoleName>("viewer");
   const [scopeType, setScopeType] = useState<ScopeType>("project");
   const [tenant, setTenant] = useState<PickedRecord | null>(null);
   const [project, setProject] = useState<PickedRecord | null>(null);
@@ -1023,7 +1517,36 @@ function CreateRoleBindingDialog({
     status: "active",
   });
 
-  const valid = Boolean(subject) && (!needsTenant || tenant) && (!needsProject || project);
+  const roles = useRoles({ limit: 100 }, open);
+  const permissionsQuery = usePermissions(open);
+  const held = useMemo(
+    () =>
+      new Set(
+        (permissionsQuery.data?.permissions ?? [])
+          .filter((permission) => permission.held)
+          .map((permission) => permission.name),
+      ),
+    [permissionsQuery.data],
+  );
+  const allRoles = useMemo(() => roles.data?.roles ?? [], [roles.data]);
+  const bindableRoles = useMemo(
+    () => allRoles.filter((item) => item.permissions.every((permission) => held.has(permission))),
+    [allRoles, held],
+  );
+  const hiddenRoleCount = allRoles.length - bindableRoles.length;
+
+  // The default has to be a role that is actually on offer. `viewer` usually is,
+  // but a caller whose own permissions do not cover it would otherwise open the
+  // dialog on a selection they cannot submit.
+  const selectableRole = bindableRoles.some((item) => item.name === role)
+    ? role
+    : (bindableRoles[0]?.name ?? "");
+  if (selectableRole !== role) {
+    setRole(selectableRole);
+  }
+
+  const valid =
+    Boolean(subject) && role !== "" && (!needsTenant || tenant) && (!needsProject || project);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -1054,18 +1577,29 @@ function CreateRoleBindingDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="binding-role">角色</Label>
-              <Select value={role} onValueChange={(value) => setRole(value as Role)}>
+              <Select value={role} onValueChange={(value) => setRole(value as RoleName)}>
                 <SelectTrigger id="binding-role">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ROLE_OPTIONS.map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
+                  {bindableRoles.map((item) => (
+                    <SelectItem key={item.id} value={item.name}>
+                      {item.display_name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {/*
+               * Only roles the caller could actually grant are offered. Binding
+               * carries the same ceiling as authoring — otherwise `admin`, which
+               * already holds everything, would be the way around it — so a role
+               * beyond the caller's own permissions is a save the Server refuses.
+               */}
+              {hiddenRoleCount > 0 ? (
+                <FieldHint>
+                  另有 {hiddenRoleCount} 个角色包含当前账号未持有的权限，无法授予。
+                </FieldHint>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="binding-scope">作用域</Label>

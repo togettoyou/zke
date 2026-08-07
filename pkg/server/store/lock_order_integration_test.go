@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestAgentEnrollmentLocksScopeBeforeEnrollment(t *testing.T) {
@@ -21,9 +20,7 @@ func TestAgentEnrollmentLocksScopeBeforeEnrollment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	tenantID := insertRBACTenant(t, ctx, pool, "Enrollment Lock Tenant")
 	projectID := insertRBACProject(t, ctx, pool, tenantID, "Enrollment Lock Project")
@@ -123,9 +120,7 @@ func TestProjectDeletionLocksClustersBeforeEnrollments(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	tenantID := insertRBACTenant(t, ctx, pool, "Delete Lock Tenant")
 	projectID := insertRBACProject(t, ctx, pool, tenantID, "Delete Lock Project")

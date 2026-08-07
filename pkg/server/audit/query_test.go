@@ -37,11 +37,35 @@ type fakeRBACStore struct {
 	bindings []store.RoleBinding
 }
 
+// ListRoleBindings resolves each binding's permission set the way the real
+// query does, by joining the role. Cases below name a builtin role and leave
+// the permissions empty, so what a role means stays defined in one place.
 func (fake *fakeRBACStore) ListRoleBindings(
 	_ context.Context,
 	_ string,
 ) ([]store.RoleBinding, error) {
-	return fake.bindings, nil
+	resolved := make([]store.RoleBinding, 0, len(fake.bindings))
+	for _, binding := range fake.bindings {
+		if binding.Permissions == nil {
+			binding.Permissions = builtinRolePermissions(binding.Role)
+		}
+		resolved = append(resolved, binding)
+	}
+	return resolved, nil
+}
+
+func builtinRolePermissions(name string) []string {
+	for _, role := range rbac.BuiltinRoles() {
+		if role.Name != name {
+			continue
+		}
+		permissions := make([]string, 0, len(role.Permissions))
+		for _, permission := range role.Permissions {
+			permissions = append(permissions, string(permission))
+		}
+		return permissions
+	}
+	return nil
 }
 
 func (fake *fakeRBACStore) FindProjectTenant(

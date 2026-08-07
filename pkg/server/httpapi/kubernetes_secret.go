@@ -24,8 +24,14 @@ const maxKubernetesSecretMutationRequestBytes = 2 * 1024 * 1024
  * Shaped like the ConfigMap endpoints because an operator manages the two the
  * same way, and separated from them because the platform does not: these
  * require `cluster.secret.read` and `cluster.secret.manage` rather than the
- * general cluster permissions, and the audit trail records that a Secret was
- * read or written without recording any part of what it held.
+ * general cluster permissions, and every one of them — the reads included —
+ * writes an audit record naming the Cluster, the Namespace and the object,
+ * without recording any part of what it held.
+ *
+ * Reads are audited here and not on the ConfigMap endpoints because a Secret
+ * read is the exposure itself. A permission can be withdrawn; a credential that
+ * has already been returned cannot be called back, so the only thing left to
+ * answer afterwards is who took it and when.
  */
 
 type kubernetesSecretService interface {
@@ -83,12 +89,16 @@ func newKubernetesSecretHandler(
 
 func (handler *kubernetesSecretHandler) list(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	actor, _ := httpmiddleware.Identity(c)
+	target := handler.target(c, "")
 	input, err := parseSecretListQuery(c.Request.URL.Query())
 	if err != nil {
+		handler.recordRead(c, actor.User.ID, auditaction.KubernetesSecretList, target, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Secret query")
 		return
 	}
 	if handler.service == nil {
+		handler.recordRead(c, actor.User.ID, auditaction.KubernetesSecretList, target, "failed")
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Secret query is unavailable")
 		return
 	}
@@ -97,6 +107,7 @@ func (handler *kubernetesSecretHandler) list(c *gin.Context) {
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.ListSecrets(ctx, input)
 	cancel()
+	handler.recordRead(c, actor.User.ID, auditaction.KubernetesSecretList, target, readResult(err))
 	if handler.respondSecretError(c, "list Kubernetes Secrets", err) {
 		return
 	}
@@ -105,11 +116,15 @@ func (handler *kubernetesSecretHandler) list(c *gin.Context) {
 
 func (handler *kubernetesSecretHandler) get(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	actor, _ := httpmiddleware.Identity(c)
+	target := handler.target(c, c.Param("secret_name"))
 	if len(c.Request.URL.Query()) != 0 {
+		handler.recordRead(c, actor.User.ID, auditaction.KubernetesSecretRead, target, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "Secret detail does not accept query parameters")
 		return
 	}
 	if handler.service == nil {
+		handler.recordRead(c, actor.User.ID, auditaction.KubernetesSecretRead, target, "failed")
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Secret query is unavailable")
 		return
 	}
@@ -118,6 +133,7 @@ func (handler *kubernetesSecretHandler) get(c *gin.Context) {
 		ctx, c.Param("cluster_id"), c.Param("namespace_name"), c.Param("secret_name"),
 	)
 	cancel()
+	handler.recordRead(c, actor.User.ID, auditaction.KubernetesSecretRead, target, readResult(err))
 	if handler.respondSecretError(c, "get Kubernetes Secret", err) {
 		return
 	}
@@ -274,6 +290,32 @@ func (handler *kubernetesSecretHandler) target(c *gin.Context, name string) stri
 func (handler *kubernetesSecretHandler) recordMutation(c *gin.Context, actorID, action, target, result string) {
 	resourceHandler := kubernetesResourceHandler{baseHandler: handler.baseHandler}
 	resourceHandler.recordKubernetesMutation(c, actorID, action, target, result)
+}
+
+// recordRead writes the audit record for a Secret read. It takes the same shape
+// as a mutation record — actor, Cluster scope, target, result — because a read
+// and a write of a Secret are the same question to whoever reviews the trail
+// later, and the answer should not be somewhere else.
+func (handler *kubernetesSecretHandler) recordRead(c *gin.Context, actorID, action, target, result string) {
+	handler.recordOperation(c, auditedOperation{
+		Scope:       auditScopeCluster,
+		ActorUserID: actorID,
+		Action:      action,
+		TargetType:  auditaction.TargetKubernetesResource,
+		TargetName:  target,
+		Result:      result,
+	})
+}
+
+// readResult maps a read outcome onto the audit vocabulary. A cancelled request
+// is recorded as failed rather than dropped: the Server cannot tell a client
+// that hung up from one that got its answer and left, and a Secret read is not
+// the place to guess in the caller's favour.
+func readResult(err error) string {
+	if err != nil {
+		return "failed"
+	}
+	return "succeeded"
 }
 
 func (handler *kubernetesSecretHandler) respondSecretError(c *gin.Context, operation string, err error) bool {

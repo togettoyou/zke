@@ -16,7 +16,6 @@ import (
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestResourceManagementHTTPFlow(t *testing.T) {
@@ -24,9 +23,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	password := []byte("a sufficiently long resource administrator passphrase")
 	admin, err := auth.CreateInitialAdmin(ctx, store.NewAuthStore(pool), auth.InitialAdminInput{

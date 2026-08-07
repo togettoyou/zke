@@ -17,7 +17,6 @@ import (
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestCreateAgentEnrollmentHTTPFlow(t *testing.T) {
@@ -26,9 +25,7 @@ func TestCreateAgentEnrollmentHTTPFlow(t *testing.T) {
 	defer cancel()
 
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	authStore := store.NewAuthStore(pool)
 	password := []byte("a sufficiently long enrollment admin passphrase")

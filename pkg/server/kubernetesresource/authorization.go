@@ -9,6 +9,7 @@ import (
 	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/server/agentinstall"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8scontent "k8s.io/apimachinery/pkg/api/validate/content"
@@ -40,6 +41,40 @@ var ErrPlatformLabelClaimed = errors.New("Kubernetes object claims the ZKE manag
 // ErrRoleRefImmutable reports an edit repointing a binding at another role.
 // Kubernetes refuses it too; this is the same refusal, before the write.
 var ErrRoleRefImmutable = errors.New("Kubernetes RoleRef cannot be changed")
+
+// ErrRoleRefForbidden reports a binding pointing at a role this API will not
+// hand out — today, the Agent's own ClusterRole. Reported separately from a
+// malformed request because the object may be perfectly valid Kubernetes and
+// still not something ZKE will add a subject to.
+var ErrRoleRefForbidden = errors.New("Kubernetes RoleRef is not allowed")
+
+// ErrSecretRuleForbidden reports a PolicyRule handing out access to Secrets that
+// the caller does not hold themselves. It is distinct from a malformed rule: the
+// manifest is well formed, and the same rule submitted by someone holding
+// `cluster.secret.manage` would be written.
+var ErrSecretRuleForbidden = errors.New(
+	"Kubernetes PolicyRule grants Secret access the caller does not hold",
+)
+
+/*
+ * What the caller may write into a PolicyRule about Secrets.
+ *
+ * Kubernetes RBAC is a way to hand out access, so a rule mentioning `secrets` is
+ * a way to hand out Secret access — and `cluster.rbac.manage` on its own must not
+ * be one. Without this, the separation between reading workload configuration and
+ * reading credentials would survive only until somebody wrote a Role.
+ *
+ * It is the same rule the platform applies to its own roles: you cannot grant
+ * what you do not hold. Resolved per request from the caller's permissions on the
+ * target Cluster, and zero-valued by default so a path that forgets to set it
+ * refuses rather than allows.
+ */
+type SecretRuleGrant struct {
+	// The caller holds `cluster.secret.read` on this Cluster.
+	Read bool
+	// The caller holds `cluster.secret.manage` on this Cluster.
+	Manage bool
+}
 
 var authorizationResourceIdentities = map[AuthorizationResource]ResourceIdentity{
 	AuthorizationServiceAccounts:     {Version: "v1", Resource: "serviceaccounts"},
@@ -124,9 +159,12 @@ type CreateAuthorizationResourceInput struct {
 	Rules                        []AuthorizationPolicyRule
 	Subjects                     []AuthorizationSubject
 	RoleRef                      *AuthorizationRoleRef
-	DryRun                       bool
-	Confirm                      bool
-	IdempotencyKey               string
+	// What the caller may hand out about Secrets. Zero-valued means "nothing",
+	// so a call site that forgets it refuses rather than allows.
+	SecretGrant    SecretRuleGrant
+	DryRun         bool
+	Confirm        bool
+	IdempotencyKey string
 }
 
 type UpdateAuthorizationResourceInput struct {
@@ -139,9 +177,11 @@ type UpdateAuthorizationResourceInput struct {
 	AutomountServiceAccountToken *bool
 	Rules                        []AuthorizationPolicyRule
 	Subjects                     []AuthorizationSubject
-	DryRun                       bool
-	Confirm                      bool
-	IdempotencyKey               string
+	/** See CreateAuthorizationResourceInput.SecretGrant. */
+	SecretGrant    SecretRuleGrant
+	DryRun         bool
+	Confirm        bool
+	IdempotencyKey string
 }
 
 type DeleteAuthorizationResourceInput struct {
@@ -306,7 +346,11 @@ func (service *Service) DeleteAuthorizationResource(ctx context.Context, input D
  * service already made, and Kubernetes' own validation, which stays the final
  * word on whether the object is well-formed.
  */
-func AuthorizationManifestGuard(current map[string]any, submitted map[string]any) error {
+func AuthorizationManifestGuard(
+	current map[string]any,
+	submitted map[string]any,
+	grant SecretRuleGrant,
+) error {
 	live := &unstructured.Unstructured{Object: current}
 	if managedAuthorizationLabels(live.GetLabels()) {
 		return ErrManagedResource
@@ -339,13 +383,11 @@ func AuthorizationManifestGuard(current map[string]any, submitted map[string]any
 		// An aggregated ClusterRole is editable here although the typed form
 		// refuses it: YAML is the only honest view of an `aggregationRule`, and
 		// the rules a controller synthesises are the controller's to overwrite.
-		if !validAuthorizationRules(
+		return validateAuthorizationRules(
 			policyRuleViews(value.Rules),
 			resource == AuthorizationClusterRoles,
-		) {
-			return ErrInvalidInput
-		}
-		return nil
+			grant,
+		)
 	case AuthorizationRoleBindings, AuthorizationClusterRoleBindings:
 		var value rbacv1.ClusterRoleBinding
 		if json.Unmarshal(body, &value) != nil {
@@ -417,8 +459,15 @@ func createAuthorizationResourceObject(input CreateAuthorizationResourceInput) (
 		}
 		object = &corev1.ServiceAccount{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"}, ObjectMeta: metadata, AutomountServiceAccountToken: cloneBoolPointer(input.AutomountServiceAccountToken)}
 	case AuthorizationRoles, AuthorizationClusterRoles:
-		if input.AutomountServiceAccountToken != nil || len(input.Subjects) != 0 || input.RoleRef != nil || !validAuthorizationRules(input.Rules, input.Resource == AuthorizationClusterRoles) {
+		if input.AutomountServiceAccountToken != nil || len(input.Subjects) != 0 || input.RoleRef != nil {
 			return nil, ErrInvalidInput
+		}
+		if err := validateAuthorizationRules(
+			input.Rules,
+			input.Resource == AuthorizationClusterRoles,
+			input.SecretGrant,
+		); err != nil {
+			return nil, err
 		}
 		rules := kubernetesPolicyRules(input.Rules)
 		if input.Resource == AuthorizationRoles {
@@ -460,8 +509,13 @@ func updateAuthorizationResourceObject(existing map[string]any, input UpdateAuth
 		value.AutomountServiceAccountToken = cloneBoolPointer(input.AutomountServiceAccountToken)
 		return typedAuthorizationObject(&value, ErrInvalidResponse)
 	case AuthorizationRoles:
-		if input.AutomountServiceAccountToken != nil || len(input.Subjects) != 0 || !validAuthorizationRules(input.Rules, false) {
+		if input.AutomountServiceAccountToken != nil || len(input.Subjects) != 0 {
 			return nil, ErrInvalidInput
+		}
+		if err := validateAuthorizationRules(
+			input.Rules, false, input.SecretGrant,
+		); err != nil {
+			return nil, err
 		}
 		var value rbacv1.Role
 		if json.Unmarshal(body, &value) != nil {
@@ -470,8 +524,13 @@ func updateAuthorizationResourceObject(existing map[string]any, input UpdateAuth
 		value.Rules = kubernetesPolicyRules(input.Rules)
 		return typedAuthorizationObject(&value, ErrInvalidResponse)
 	case AuthorizationClusterRoles:
-		if input.AutomountServiceAccountToken != nil || len(input.Subjects) != 0 || !validAuthorizationRules(input.Rules, true) {
+		if input.AutomountServiceAccountToken != nil || len(input.Subjects) != 0 {
 			return nil, ErrInvalidInput
+		}
+		if err := validateAuthorizationRules(
+			input.Rules, true, input.SecretGrant,
+		); err != nil {
+			return nil, err
 		}
 		var value rbacv1.ClusterRole
 		if json.Unmarshal(body, &value) != nil {
@@ -482,6 +541,17 @@ func updateAuthorizationResourceObject(existing map[string]any, input UpdateAuth
 		}
 		value.Rules = kubernetesPolicyRules(input.Rules)
 		return typedAuthorizationObject(&value, ErrInvalidResponse)
+	/*
+	 * The two binding families keep the RoleRef they have — it is not taken from
+	 * the request — but the one they have still has to be a RoleRef this API
+	 * would point at.
+	 *
+	 * Creation checks that; an update used not to, and the difference was
+	 * reachable: a ClusterRoleBinding created outside ZKE pointing at the Agent's
+	 * own ClusterRole carries none of ZKE's labels, so nothing stopped an
+	 * operator from adding subjects to it here. Adding a subject to that binding
+	 * hands over exactly what refusing to create one prevents.
+	 */
 	case AuthorizationRoleBindings:
 		if input.AutomountServiceAccountToken != nil || len(input.Rules) != 0 || !validAuthorizationSubjects(input.Subjects) {
 			return nil, ErrInvalidInput
@@ -489,6 +559,10 @@ func updateAuthorizationResourceObject(existing map[string]any, input UpdateAuth
 		var value rbacv1.RoleBinding
 		if json.Unmarshal(body, &value) != nil {
 			return nil, ErrInvalidResponse
+		}
+		existingRoleRef := roleRefView(value.RoleRef)
+		if !validAuthorizationRoleRef(input.Resource, &existingRoleRef) {
+			return nil, ErrRoleRefForbidden
 		}
 		value.Subjects = kubernetesSubjects(input.Subjects)
 		return typedAuthorizationObject(&value, ErrInvalidResponse)
@@ -499,6 +573,10 @@ func updateAuthorizationResourceObject(existing map[string]any, input UpdateAuth
 		var value rbacv1.ClusterRoleBinding
 		if json.Unmarshal(body, &value) != nil {
 			return nil, ErrInvalidResponse
+		}
+		existingRoleRef := roleRefView(value.RoleRef)
+		if !validAuthorizationRoleRef(input.Resource, &existingRoleRef) {
+			return nil, ErrRoleRefForbidden
 		}
 		value.Subjects = kubernetesSubjects(input.Subjects)
 		return typedAuthorizationObject(&value, ErrInvalidResponse)
@@ -638,24 +716,48 @@ func validAuthorizationAnnotations(annotations map[string]string) bool {
 	return true
 }
 
-func validAuthorizationRules(rules []AuthorizationPolicyRule, allowNonResource bool) bool {
+// validateAuthorizationRules reports why a rule set may not be written, or nil.
+// It answers with an error rather than a bool because two of the reasons are
+// different answers: a malformed rule is a bad request, while a rule handing out
+// Secret access the caller does not hold is a refusal that naming the missing
+// permission makes actionable.
+func validateAuthorizationRules(
+	rules []AuthorizationPolicyRule,
+	allowNonResource bool,
+	grant SecretRuleGrant,
+) error {
 	if len(rules) > maxAuthorizationRules {
-		return false
+		return ErrInvalidInput
 	}
 	for _, rule := range rules {
 		if len(rule.Verbs) == 0 || !validRuleValues(rule.Verbs, false) || !validRuleValues(rule.APIGroups, true) || !validRuleValues(rule.Resources, false) || !validRuleValues(rule.ResourceNames, false) || !validRuleValues(rule.NonResourceURLs, false) {
-			return false
-		}
-		if forbiddenAuthorizationRule(rule) {
-			return false
+			return ErrInvalidInput
 		}
 		resourceRule := len(rule.Resources) > 0
 		nonResourceRule := len(rule.NonResourceURLs) > 0
 		if resourceRule == nonResourceRule || nonResourceRule && (!allowNonResource || len(rule.APIGroups) != 0 || len(rule.ResourceNames) != 0) {
-			return false
+			return ErrInvalidInput
+		}
+		if forbiddenAuthorizationRule(rule, grant) {
+			// Told apart so the caller learns which of the two it was. A rule
+			// refused only for its Secret access is one the operator can fix by
+			// asking for the permission; the rest are rules to rewrite.
+			if mentionsSecrets(rule) && !secretRuleWithinGrant(rule.Verbs, grant) {
+				return ErrSecretRuleForbidden
+			}
+			return ErrInvalidInput
 		}
 	}
-	return true
+	return nil
+}
+
+func mentionsSecrets(rule AuthorizationPolicyRule) bool {
+	for _, resource := range rule.Resources {
+		if resource == "secrets" || resource == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 func validRuleValues(values []string, allowEmpty bool) bool {
@@ -691,8 +793,25 @@ func validAuthorizationSubjects(subjects []AuthorizationSubject) bool {
 	return true
 }
 
+/*
+ * Whether a binding may point where it points.
+ *
+ * The Agent's own ClusterRole is refused, and this is the only thing refusing
+ * it. Kubernetes will not help: creating a binding requires the actor to hold
+ * every permission in the referenced role, the actor is the Agent's
+ * ServiceAccount, and that ClusterRole is precisely the Agent's own permission
+ * set — so escalation prevention says yes. The `managed-by` label does not help
+ * either; it protects that ClusterRole from being edited or deleted, while a
+ * binding to it is a new object carrying no such label.
+ *
+ * What it would hand over is the Agent's cluster-wide reach: Secrets and RBAC
+ * CRUD in every Namespace. The name comes from the installer rather than a
+ * literal, so renaming the ServiceAccount cannot silently switch this check off.
+ */
 func validAuthorizationRoleRef(resource AuthorizationResource, roleRef *AuthorizationRoleRef) bool {
-	if roleRef == nil || roleRef.APIGroup != "rbac.authorization.k8s.io" || roleRef.Name == "zke-agent" || !validRBACName(roleRef.Name) {
+	if roleRef == nil || roleRef.APIGroup != "rbac.authorization.k8s.io" ||
+		roleRef.Name == agentinstall.ServiceAccountName ||
+		!validRBACName(roleRef.Name) {
 		return false
 	}
 	if resource == AuthorizationRoleBindings {
@@ -701,18 +820,61 @@ func validAuthorizationRoleRef(resource AuthorizationResource, roleRef *Authoriz
 	return resource == AuthorizationClusterRoleBindings && roleRef.Kind == "ClusterRole"
 }
 
-func forbiddenAuthorizationRule(rule AuthorizationPolicyRule) bool {
+/*
+ * The rules no manifest may carry, and the one that depends on who is asking.
+ *
+ * `escalate`, `bind` and `impersonate` are refused outright, as is
+ * `serviceaccounts/token`. Not really because of ZKE: the Agent's ClusterRole
+ * holds none of them, so Kubernetes' own escalation prevention refuses the write
+ * anyway. Refusing here turns a 502 about the Agent's Kubernetes permissions —
+ * which reads as "grant the Agent more and it will work", and it will not — into
+ * a 400 about the rule that was submitted.
+ *
+ * Secrets are the conditional one. A rule mentioning them is refused unless the
+ * caller holds the matching Secret permission on this Cluster, because the rule
+ * hands that access to somebody else. Read-only verbs need `cluster.secret.read`;
+ * anything else needs `cluster.secret.manage`.
+ */
+func forbiddenAuthorizationRule(rule AuthorizationPolicyRule, grant SecretRuleGrant) bool {
 	for _, verb := range rule.Verbs {
 		if verb == "escalate" || verb == "bind" || verb == "impersonate" {
 			return true
 		}
 	}
 	for _, resource := range rule.Resources {
-		if resource == "secrets" || resource == "serviceaccounts/token" {
+		switch resource {
+		case "serviceaccounts/token":
 			return true
+		// A wildcard covers Secrets as surely as naming them does. Kubernetes
+		// refuses a wildcard rule anyway — the Agent holds no wildcard — but
+		// leaving it to that backstop makes this check depend on a property of
+		// the Agent's ClusterRole that nothing here can see.
+		case "secrets", "*":
+			if !secretRuleWithinGrant(rule.Verbs, grant) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func secretRuleWithinGrant(verbs []string, grant SecretRuleGrant) bool {
+	if grant.Manage {
+		return true
+	}
+	if !grant.Read {
+		return false
+	}
+	// Someone who can read Secrets but not change them may hand out reading, and
+	// nothing else. A wildcard verb is not read-only.
+	for _, verb := range verbs {
+		switch verb {
+		case "get", "list", "watch":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func managedAuthorizationLabels(labels map[string]string) bool {

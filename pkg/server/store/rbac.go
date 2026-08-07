@@ -19,17 +19,24 @@ func (store *RBACStore) ListRoleBindings(
 		return nil, errors.New("RBAC user ID is required")
 	}
 
+	// Joined to roles rather than resolved afterwards: what a binding permits is
+	// a property of the role it names, and reading the two separately would let
+	// a role edited between the reads be evaluated half one way and half the
+	// other. The join is an inner one because `role_bindings.role` is a foreign
+	// key — a binding without its role does not exist.
 	rows, err := store.pool.Query(ctx, `
 SELECT
-    role,
-    scope_type,
-    COALESCE(tenant_id::text, ''),
-    COALESCE(project_id::text, '')
+    binding.role,
+    binding.scope_type,
+    COALESCE(binding.tenant_id::text, ''),
+    COALESCE(binding.project_id::text, ''),
+    roles.permissions
 FROM role_bindings AS binding
 JOIN users ON users.id = binding.subject_id
+JOIN roles ON roles.name = binding.role
 WHERE binding.subject_id = $1
   AND users.status = 'active'
-ORDER BY scope_type, tenant_id, project_id, role
+ORDER BY binding.scope_type, binding.tenant_id, binding.project_id, binding.role
 	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list user role bindings: %w", err)
@@ -44,6 +51,7 @@ ORDER BY scope_type, tenant_id, project_id, role
 			&binding.ScopeType,
 			&binding.TenantID,
 			&binding.ProjectID,
+			&binding.Permissions,
 		); err != nil {
 			return nil, fmt.Errorf("scan user role binding: %w", err)
 		}

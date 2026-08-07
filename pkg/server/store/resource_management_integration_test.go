@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestResourceCreationIsAtomicAndIdempotent(t *testing.T) {
@@ -15,9 +14,7 @@ func TestResourceCreationIsAtomicAndIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 	actorID := insertRBACUser(t, ctx, pool, "resource-creator")
 	resourceStore := store.NewResourceManagementStore(pool)
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -151,9 +148,7 @@ func TestTenantNamesAreUniqueWithoutCase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 	actorID := insertRBACUser(t, ctx, pool, "tenant-namer")
 	resourceStore := store.NewResourceManagementStore(pool)
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -286,9 +281,7 @@ func TestProjectNamesAreUniqueWithinTenant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 	actorID := insertRBACUser(t, ctx, pool, "project-namer")
 	firstTenant := insertRBACTenant(t, ctx, pool, "First Tenant")
 	secondTenant := insertRBACTenant(t, ctx, pool, "Second Tenant")

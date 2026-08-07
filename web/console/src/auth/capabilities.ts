@@ -1,22 +1,28 @@
-import type { Capability, Permission, Role } from "@/api/types";
+import type { Capability, Permission } from "@/api/types";
 
 /**
- * Display names for the Server's fixed roles.
+ * Display names for the two roles the Server defines.
  *
- * Written as a total map over `Role` rather than as `role === "admin" ? … : …`,
- * which is what these used to be in four places. The ternary does not fail when
- * the Server grows a third role — it silently labels it 只读, which is a claim
- * about someone's access that may be false. `Role` is generated from the
- * contract's enum, so a missing entry here is a type error instead.
+ * Only those two: every other role is created by an operator and carries its own
+ * `display_name`, which the roles endpoint returns and this map cannot know.
+ * Labelling an unknown role by guessing would be a claim about someone's access
+ * that may be false, so `roleLabel` falls back to the name as stored — which is
+ * also what a binding, an audit row and the API all call it.
  */
-export const ROLE_LABELS: Record<Role, string> = {
-  admin: "管理员",
+/**
+ * The role that makes someone a global administrator when bound at global scope.
+ * The Server reserves granting and removing it to the people who already hold it.
+ */
+export const BUILTIN_ADMIN_ROLE = "admin";
+
+export const BUILTIN_ROLE_LABELS: Record<string, string> = {
+  [BUILTIN_ADMIN_ROLE]: "管理员",
   viewer: "只读",
 };
 
 /** Falls back to the raw name, the way an unknown status badge does. */
 export function roleLabel(role: string): string {
-  return ROLE_LABELS[role as Role] ?? role;
+  return BUILTIN_ROLE_LABELS[role] ?? role;
 }
 
 /**
@@ -66,7 +72,14 @@ export type PermissionChecker = {
   can: (permission: Permission, scope: CapabilityScope) => boolean;
   /** True when some binding grants `permission` in any scope. */
   canAnywhere: (permission: Permission) => boolean;
-  /** True when the user holds a global admin binding. */
+  /**
+   * True when the user holds the builtin `admin` role at global scope.
+   *
+   * Asked about the role and not about permissions: the Server reserves granting
+   * and removing this role to the people who already hold it, so a custom role
+   * carrying all 27 permissions is still not a global administrator. Answering
+   * by permissions would have the Console offer actions the Server refuses.
+   */
   isGlobalAdmin: boolean;
   capabilities: Capability[];
 };
@@ -85,7 +98,7 @@ export function createPermissionChecker(capabilities: Capability[]): PermissionC
     can,
     canAnywhere,
     isGlobalAdmin: capabilities.some(
-      (capability) => capability.scope_type === "global" && capability.role === "admin",
+      (capability) => capability.scope_type === "global" && capability.role === BUILTIN_ADMIN_ROLE,
     ),
     capabilities,
   };

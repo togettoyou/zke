@@ -96,10 +96,69 @@ CREATE INDEX user_sessions_active_expiry_idx
     ON user_sessions (expires_at)
     WHERE revoked_at IS NULL;
 
+-- A role is a named permission set, and `role_bindings.role` references it.
+--
+-- This table carries no roles. Not even the two the Server defines: their names,
+-- their descriptions and above all their permission sets live in Go
+-- (`pkg/server/rbac.BuiltinRoles`) and are written here by the reconciliation
+-- the Server runs at startup, before anything can authorize against them.
+--
+-- Seeding them here would mean maintaining the same thing twice. `admin` is
+-- defined as "every permission the Server knows", which is a statement about the
+-- permission list rather than a list of its own — a copy of it in SQL would go
+-- stale the first time a permission was added, and the stale copy would be the
+-- one an operator read. There is no wildcard in this column either: a value
+-- meaning "everything" would have to be interpreted by the authorization check,
+-- by the escalation ceiling and by capability reporting, and it would be exactly
+-- the value a custom role must never be allowed to hold. Keeping the column
+-- literal and letting the Server own the content avoids all three problems.
+--
+-- A migrated database whose Server has never started therefore has no roles at
+-- all. That is the fail-closed direction: no bindings can exist yet either,
+-- because this is the table they reference.
+CREATE TABLE roles (
+    id uuid PRIMARY KEY,
+    -- The stable identifier, and what `role_bindings.role` stores. Never
+    -- rewritten after creation: a binding, an audit row and an operator's memory
+    -- all refer to a role by this name, and a rename would silently change what
+    -- a historical audit record appears to say.
+    name text NOT NULL UNIQUE CHECK (
+        name = btrim(name)
+        AND name ~ '^[a-z0-9][a-z0-9-]{0,62}$'
+    ),
+    display_name text NOT NULL CHECK (
+        display_name = btrim(display_name)
+        AND octet_length(display_name) BETWEEN 1 AND 253
+    ),
+    description text NOT NULL DEFAULT '' CHECK (octet_length(description) <= 1024),
+    -- Defined by the Server rather than by an operator. Builtin roles cannot be
+    -- edited or deleted through the API, and their permission sets are
+    -- reconciled from code at every startup.
+    builtin boolean NOT NULL DEFAULT false,
+    -- The permission names are the Server's vocabulary, not a table: they are
+    -- declared in Go, they appear in audit rows, and a name the Server no longer
+    -- knows simply never matches. Storing them as an array keeps a role readable
+    -- as one row and keeps the authorization query a single join.
+    permissions text[] NOT NULL CHECK (
+        array_position(permissions, NULL) IS NULL
+        AND array_length(permissions, 1) IS NOT NULL
+    ),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- The listing orders by display name, and builtin roles come first so the two an
+-- operator did not create are where they expect them.
+CREATE INDEX roles_listing_idx ON roles (builtin DESC, lower(display_name), id);
+
 CREATE TABLE role_bindings (
     id uuid PRIMARY KEY,
     subject_id uuid NOT NULL REFERENCES users (id),
-    role text NOT NULL CHECK (role IN ('admin', 'viewer')),
+    -- Referential integrity rather than a CHECK listing role names: roles are
+    -- data. NO ACTION on delete is also the lockout guard — a role somebody
+    -- still holds cannot be removed, so no single statement strips a user's
+    -- access by deleting the role behind it.
+    role text NOT NULL REFERENCES roles (name),
     scope_type text NOT NULL CHECK (scope_type IN ('global', 'tenant', 'project')),
     tenant_id uuid REFERENCES tenants (id),
     project_id uuid,
@@ -118,6 +177,9 @@ CREATE INDEX role_bindings_subject_id_idx ON role_bindings (subject_id);
 CREATE INDEX role_bindings_scope_idx ON role_bindings (scope_type, tenant_id, project_id);
 -- Role bindings are listed oldest-first by creation time.
 CREATE INDEX role_bindings_created_at_idx ON role_bindings (created_at, id);
+-- Supports the foreign key check on write, the "is this role still bound"
+-- question the role delete path asks, and the role filter on the binding listing.
+CREATE INDEX role_bindings_role_idx ON role_bindings (role);
 CREATE INDEX users_status_idx ON users (status);
 
 CREATE TABLE clusters (

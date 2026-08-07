@@ -7,7 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestDeleteUserPhysicallyRemovesAccessStateAndKeepsHistory(t *testing.T) {
@@ -15,9 +14,7 @@ func TestDeleteUserPhysicallyRemovesAccessStateAndKeepsHistory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool := openIsolatedDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	const (
 		actorID          = "72000000-0000-4000-8000-000000000001"

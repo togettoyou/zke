@@ -13,7 +13,6 @@ import (
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 func TestProjectAuthorizationMiddleware(t *testing.T) {
@@ -22,9 +21,7 @@ func TestProjectAuthorizationMiddleware(t *testing.T) {
 	defer cancel()
 
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	var tenantID, allowedProjectID, deniedProjectID string
 	if err := pool.QueryRow(ctx, `

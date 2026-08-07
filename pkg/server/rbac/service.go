@@ -68,9 +68,13 @@ func (service *Service) ListCapabilities(
 	}
 	result := make([]Capability, 0, len(bindings))
 	for _, binding := range bindings {
+		// Filtered through allPermissions rather than returned as stored, so a
+		// name the Server no longer defines does not reach a client as though
+		// it were a capability. That is the same rule the authorization check
+		// applies, stated once for the reporting path.
 		permissions := make([]Permission, 0, len(allPermissions))
 		for _, permission := range allPermissions {
-			if roleGrants(binding.Role, permission) {
+			if bindingGrants(binding.Permissions, permission) {
 				permissions = append(permissions, permission)
 			}
 		}
@@ -105,7 +109,7 @@ func (service *Service) ResolveVisibility(
 		projectOnly: make(map[string]string),
 	}
 	for _, binding := range bindings {
-		if !roleGrants(binding.Role, permission) {
+		if !bindingGrants(binding.Permissions, permission) {
 			continue
 		}
 		switch binding.ScopeType {
@@ -219,12 +223,51 @@ func (service *Service) authorizeValidated(
 		return err
 	}
 	for _, binding := range bindings {
-		if roleGrants(binding.Role, permission) &&
+		if bindingGrants(binding.Permissions, permission) &&
 			bindingApplies(binding, scope) {
 			return nil
 		}
 	}
 	return ErrDenied
+}
+
+/*
+ * GlobalPermissions reports the permissions a subject holds globally.
+ *
+ * Role management needs this and nothing else needs it: a role is a global
+ * object, so a permission put into one can be exercised anywhere it is later
+ * bound. Answering "what does this actor hold everywhere" is therefore the only
+ * honest ceiling to check a new role against — a permission the actor holds
+ * only inside one Project would otherwise become a permission they can hand
+ * themselves at global scope by writing it into a role.
+ *
+ * Only global bindings count. A Tenant-scoped grant is deliberately not enough:
+ * it would let a Tenant administrator mint a role carrying their permissions
+ * and have someone else bind it globally.
+ */
+func (service *Service) GlobalPermissions(
+	ctx context.Context,
+	userID string,
+) (map[Permission]struct{}, error) {
+	if !validation.IsUUID(userID) {
+		return nil, ErrDenied
+	}
+	bindings, err := service.listRoleBindings(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	held := make(map[Permission]struct{}, len(allPermissions))
+	for _, binding := range bindings {
+		if binding.ScopeType != string(scopeGlobal) {
+			continue
+		}
+		for _, permission := range allPermissions {
+			if bindingGrants(binding.Permissions, permission) {
+				held[permission] = struct{}{}
+			}
+		}
+	}
+	return held, nil
 }
 
 func validateSubjectPermission(userID string, permission Permission) error {

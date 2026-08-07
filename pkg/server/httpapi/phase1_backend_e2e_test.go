@@ -22,7 +22,6 @@ import (
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 	"github.com/togettoyou/zke/pkg/server/store"
-	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
 type phase1ConnectionSnapshots struct {
@@ -54,9 +53,7 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	pool := openHTTPTestDatabase(t, ctx, databaseURL)
-	if _, err := migrations.Apply(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
+	applyMigrations(t, ctx, pool)
 
 	authStore := store.NewAuthStore(pool)
 	const adminPassword = "a sufficiently long Phase 1 administrator password"
@@ -135,7 +132,7 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 			AccessManagementService: accessmanagement.NewService(
 				store.NewAccessManagementStore(pool),
 				accessmanagement.Config{MaxConcurrentPasswordHashes: 1},
-			),
+			).WithPermissionAuthority(rbacService),
 		},
 		Config{
 			Authentication: defaultAuthenticationTestConfig(),

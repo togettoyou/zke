@@ -15,6 +15,18 @@ var (
 	ErrRoleBindingNotFound = errors.New("role binding not found")
 	ErrRoleBindingConflict = errors.New("role binding conflict")
 	ErrLastGlobalAdmin     = errors.New("last active global administrator")
+	// Reported when the actor is not a global administrator and the operation is
+	// one only a global administrator may perform. Distinct from
+	// ErrLastGlobalAdmin: the platform would survive the change, and the refusal
+	// is about who is asking rather than about how many would be left.
+	ErrGlobalAdminRequired = errors.New("only a global administrator may do this")
+	ErrRoleNotFound        = errors.New("role not found")
+	ErrRoleConflict        = errors.New("role name already exists")
+	ErrRoleBuiltin         = errors.New("builtin role cannot be changed")
+	// Reported instead of removing a role somebody still holds. The database
+	// refuses it too — `role_bindings.role` is a foreign key — and this is that
+	// refusal named, so the API can say which of the two conflicts happened.
+	ErrRoleInUse = errors.New("role is still bound to a subject")
 )
 
 type AccessManagementStore struct {
@@ -100,6 +112,62 @@ type ResetManagedUserPasswordParams struct {
 	ActorUserID  string
 	RequestID    string
 	Now          time.Time
+}
+
+// ListManagedRolesParams filters and pages the role list.
+type ListManagedRolesParams struct {
+	// "" for every role, "true"/"false" to select only builtin or only custom
+	// ones. A string rather than a *bool so the HTTP query parameter maps onto
+	// it without a second nil-vs-false distinction to keep straight.
+	Builtin string
+	Search  string
+	Page    pagination.Request
+}
+
+type ManagedRole struct {
+	ID          string
+	Name        string
+	DisplayName string
+	Description string
+	Builtin     bool
+	Permissions []string
+	// How many bindings name this role. Resolved by the same query that reads
+	// the role, because it is the number that decides whether deleting it is
+	// possible and the Console should not have to ask separately.
+	BindingCount int
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type CreateManagedRoleParams struct {
+	ID          string
+	Name        string
+	DisplayName string
+	Description string
+	Permissions []string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+// UpdateManagedRoleParams replaces a role's editable fields. Permissions are a
+// complete replacement rather than a delta: an update carrying a subset would
+// be indistinguishable from one meaning to remove the rest.
+type UpdateManagedRoleParams struct {
+	RoleID      string
+	DisplayName string
+	Description string
+	Permissions []string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
+}
+
+type DeleteManagedRoleParams struct {
+	RoleID      string
+	ActorUserID string
+	RequestID   string
+	Now         time.Time
 }
 
 type ManagedRoleBinding struct {

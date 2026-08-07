@@ -110,6 +110,10 @@ export const queryKeys = {
   users: (params: UserListParams = {}) => ["users", params] as const,
   user: (userId: string) => ["user", userId] as const,
 
+  roles: (params: Record<string, unknown> = {}) => ["roles", params] as const,
+  role: (roleId: string) => ["role", roleId] as const,
+  permissions: () => ["permissions"] as const,
+
   roleBindings: (params: RoleBindingListParams = {}) => ["role-bindings", params] as const,
 
   auditEvents: (params: Record<string, unknown> = {}) => ["audit-events", params] as const,
@@ -137,6 +141,8 @@ export const queryKeyPrefixes = {
   pod: ["pod"] as const,
   enrollments: ["enrollments"] as const,
   users: ["users"] as const,
+  roles: ["roles"] as const,
+  role: ["role"] as const,
   roleBindings: ["role-bindings"] as const,
   authorizationResources: ["authorization-resources"] as const,
   authorizationResource: ["authorization-resource"] as const,
