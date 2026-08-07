@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   Check,
@@ -137,6 +137,17 @@ const ACTION_GROUP_LABELS: Record<string, string> = {
  * no role could be given, with nothing reporting it. An unlabelled permission
  * falls back to its raw name, which is what the API, the audit trail and the
  * docs call it anyway.
+ *
+ * A label says what the permission opens, not what it is most dangerous for —
+ * that belongs in PERMISSION_WARNINGS, where an operator reads it next to the
+ * checkbox. Naming the narrowest capability instead understates the grant.
+ *
+ * The three families that carry their own Cluster permissions — resource, rbac
+ * and secret — are labelled "Kubernetes X", so a role editor shows at a glance
+ * which entries are about objects in the target cluster rather than about ZKE's
+ * own tenants, projects, users and roles. Pod logs and the Pod terminal are left
+ * unqualified: nothing on the ZKE side is called a Pod, so there is nothing to
+ * tell them apart from.
  */
 const PERMISSION_LABELS: Record<string, string> = {
   "tenant.create": "创建租户",
@@ -158,8 +169,8 @@ const PERMISSION_LABELS: Record<string, string> = {
   "cluster.resource.delete": "删除 Kubernetes 资源",
   "cluster.rbac.read": "查看 Kubernetes 授权资源",
   "cluster.rbac.manage": "管理 Kubernetes 授权资源",
-  "cluster.secret.read": "读取 Secret 取值",
-  "cluster.secret.manage": "管理 Secret",
+  "cluster.secret.read": "查看 Kubernetes Secret",
+  "cluster.secret.manage": "管理 Kubernetes Secret",
   "cluster.connection.revoke": "断开 Agent 连接",
   "user.read": "查看用户",
   "user.manage": "管理用户",
@@ -270,6 +281,24 @@ function UserSection() {
 
   const currentUserId = session?.user.id;
 
+  // Opening a dialog clears what the previous attempt left behind.
+  //
+  // A mutation holds its error until it is reset or runs again, and these
+  // dialogs are opened by setting a target — nothing about opening one touches
+  // the mutation behind it. So a refusal stayed on screen for the rest of the
+  // session: reopen the dialog, open a different one, act on a different user,
+  // and the same red box was still there describing an operation that was not
+  // the one in front of the operator. Only one of them is open at a time, so
+  // they are cleared together rather than each open site remembering its own.
+  const clearActionErrors = useCallback(() => {
+    createUser.reset();
+    updateUser.reset();
+    setUserStatus.reset();
+    unlockUser.reset();
+    resetPassword.reset();
+    deleteUser.reset();
+  }, [createUser, updateUser, setUserStatus, unlockUser, resetPassword, deleteUser]);
+
   const columns = useMemo<ColumnDef<ManagedUser, unknown>[]>(
     () => [
       {
@@ -354,23 +383,49 @@ function UserSection() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-40">
-                  <DropdownMenuItem onSelect={() => setRenameTarget(user)}>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      clearActionErrors();
+                      setRenameTarget(user);
+                    }}
+                  >
                     改显示名
                   </DropdownMenuItem>
                   {user.status === "locked" ? (
-                    <DropdownMenuItem onSelect={() => setUnlockTarget(user)}>解锁</DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        clearActionErrors();
+                        setUnlockTarget(user);
+                      }}
+                    >
+                      解锁
+                    </DropdownMenuItem>
                   ) : null}
-                  <DropdownMenuItem onSelect={() => setResetTarget(user)}>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      clearActionErrors();
+                      setResetTarget(user);
+                    }}
+                  >
                     重置密码
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     disabled={user.id === currentUserId && disabling}
-                    onSelect={() => setStatusTarget(user)}
+                    onSelect={() => {
+                      clearActionErrors();
+                      setStatusTarget(user);
+                    }}
                   >
                     {disabling ? "禁用" : "启用"}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="danger" onSelect={() => setDeleteTarget(user)}>
+                  <DropdownMenuItem
+                    variant="danger"
+                    onSelect={() => {
+                      clearActionErrors();
+                      setDeleteTarget(user);
+                    }}
+                  >
                     删除
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -380,7 +435,7 @@ function UserSection() {
         },
       },
     ],
-    [canManage, currentUserId],
+    [canManage, currentUserId, clearActionErrors],
   );
 
   return (
@@ -394,7 +449,14 @@ function UserSection() {
           description="本地用户使用 Argon2id 摘要存储；禁用、删除与重置密码都会撤销该用户的全部会话"
           actions={
             canManage ? (
-              <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  clearActionErrors();
+                  setCreateOpen(true);
+                }}
+              >
                 <UserPlus />
                 新建用户
               </Button>
@@ -817,6 +879,15 @@ function RoleSection() {
   const updateRole = useUpdateRole();
   const deleteRole = useDeleteRole();
 
+  // See the note in the user section: opening a dialog does not touch the
+  // mutation behind it, so the last refusal outlives the attempt that produced
+  // it unless it is cleared here.
+  const clearActionErrors = useCallback(() => {
+    createRole.reset();
+    updateRole.reset();
+    deleteRole.reset();
+  }, [createRole, updateRole, deleteRole]);
+
   const columns = useMemo<ColumnDef<Role, unknown>[]>(
     () => [
       {
@@ -859,7 +930,14 @@ function RoleSection() {
         size: 130,
         cell: ({ row }) => (
           <div className="flex justify-end gap-1">
-            <Button size="sm" variant="ghost" onClick={() => setEditorTarget(row.original)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                clearActionErrors();
+                setEditorTarget(row.original);
+              }}
+            >
               {canManage && !row.original.builtin ? "编辑" : "查看"}
             </Button>
             {canManage && !row.original.builtin ? (
@@ -867,7 +945,10 @@ function RoleSection() {
                 size="sm"
                 variant="ghost"
                 className="text-danger"
-                onClick={() => setDeleteTarget(row.original)}
+                onClick={() => {
+                  clearActionErrors();
+                  setDeleteTarget(row.original);
+                }}
               >
                 删除
               </Button>
@@ -876,7 +957,7 @@ function RoleSection() {
         ),
       },
     ],
-    [canManage],
+    [canManage, clearActionErrors],
   );
 
   return (
@@ -887,7 +968,14 @@ function RoleSection() {
           description="角色是一组权限的集合。修改角色会立即改变所有已绑定该角色的用户的权限"
           actions={
             canManage ? (
-              <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  clearActionErrors();
+                  setCreateOpen(true);
+                }}
+              >
                 <ShieldHalf />
                 新建角色
               </Button>
@@ -1066,18 +1154,32 @@ function RoleEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent aria-describedby={undefined} className="max-w-2xl">
-        <DialogHeader>
+      {/*
+       * The permission catalog is long enough to outgrow any viewport, so the
+       * dialog is a column that scrolls in one place: the header names what is
+       * open and the footer keeps 关闭 reachable, both without scrolling. The
+       * list itself is deliberately not a second scroll region — nesting one
+       * inside a scrolling dialog is how a wheel over the list stops moving
+       * the page it is sitting on.
+       */}
+      <DialogContent
+        aria-describedby={undefined}
+        className="flex max-w-2xl flex-col overflow-hidden"
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>{readOnly ? "角色详情" : editing ? "编辑角色" : "新建角色"}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-3">
+        <div className="grid min-h-0 flex-1 auto-rows-min gap-3 overflow-y-auto">
           {readOnly && role?.builtin ? (
-            <Alert tone="info">
-              内置角色由 Server 定义，权限集在每次启动时对账，不可修改或删除。
-            </Alert>
+            <Alert tone="info">内置角色由 Server 定义，不可修改或删除。</Alert>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-3">
+          {/*
+           * items-start, because only one of the two columns carries a hint:
+           * a stretched cell hands its spare height to the gaps between label
+           * and input, and the two inputs stop lining up.
+           */}
+          <div className="grid grid-cols-2 items-start gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="role-name">标识</Label>
               <Input
@@ -1121,7 +1223,7 @@ function RoleEditorDialog({
             {permissionsQuery.isLoading ? (
               <span className="text-muted-foreground text-[13px]">正在加载权限字典…</span>
             ) : (
-              <div className="border-border rounded-control max-h-72 overflow-y-auto border">
+              <div className="border-border rounded-control border">
                 {catalog.map((permission) => (
                   <PermissionRow
                     key={permission.name}
@@ -1133,10 +1235,7 @@ function RoleEditorDialog({
                 ))}
               </div>
             )}
-            <FieldHint>
-              只能选择自己在全局已持有的权限。这条限制同时由服务端强制执行，否则 `rbac.manage`
-              就等于全部权限。
-            </FieldHint>
+            <FieldHint>只能选择自己在全局已持有的权限。</FieldHint>
           </div>
 
           {blocked.length > 0 ? (
@@ -1155,7 +1254,7 @@ function RoleEditorDialog({
            */}
           {error ? <Alert tone="danger">{errorMessage(error)}</Alert> : null}
         </div>
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="secondary" onClick={onClose}>
             {readOnly ? "关闭" : "取消"}
           </Button>
@@ -1248,6 +1347,12 @@ function RoleBindingSection() {
   const createRoleBinding = useCreateRoleBinding();
   const deleteRoleBinding = useDeleteRoleBinding();
 
+  // See the note in the user section.
+  const clearActionErrors = useCallback(() => {
+    createRoleBinding.reset();
+    deleteRoleBinding.reset();
+  }, [createRoleBinding, deleteRoleBinding]);
+
   const deleteSubject = deleteTarget?.subject;
 
   const columns = useMemo<ColumnDef<RoleBinding, unknown>[]>(
@@ -1332,7 +1437,10 @@ function RoleBindingSection() {
                 className="text-danger"
                 disabled={isSelf}
                 title={isSelf ? "不能删除授予自己的权限绑定" : undefined}
-                onClick={() => setDeleteTarget(row.original)}
+                onClick={() => {
+                  clearActionErrors();
+                  setDeleteTarget(row.original);
+                }}
               >
                 删除
               </Button>
@@ -1341,7 +1449,7 @@ function RoleBindingSection() {
         },
       },
     ],
-    [canManage, roleOptions, selfSubjectId],
+    [canManage, roleOptions, selfSubjectId, clearActionErrors],
   );
 
   return (
@@ -1352,7 +1460,14 @@ function RoleBindingSection() {
           description="角色绑定决定用户在 Global、租户或项目作用域内的权限"
           actions={
             canManage ? (
-              <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  clearActionErrors();
+                  setCreateOpen(true);
+                }}
+              >
                 <KeyRound />
                 新建绑定
               </Button>
@@ -1587,7 +1702,8 @@ function CreateRoleBindingDialog({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          {/* Same reason as the role editor: only the role column has a hint. */}
+          <div className="grid grid-cols-2 items-start gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="binding-role">角色</Label>
               <Select value={role} onValueChange={(value) => setRole(value as RoleName)}>

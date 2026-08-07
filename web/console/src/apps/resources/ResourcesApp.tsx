@@ -381,7 +381,14 @@ function TenantSection({ onOpenProjects }: { onOpenProjects: (tenant: Tenant) =>
 
       <SensitiveActionDialog
         open={Boolean(deleteTarget)}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            // Same reason as the name dialog above: without this the refusal
+            // stays on screen the next time the dialog opens.
+            deleteTenant.reset();
+          }
+        }}
         title="删除租户"
         destructive
         description="删除会连同其下的项目、集群、Agent 身份与凭证一并移除。记录不再存在，无法恢复。"
@@ -714,7 +721,12 @@ function ProjectSection({
 
       <SensitiveActionDialog
         open={Boolean(deleteTarget)}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            deleteProject.reset();
+          }
+        }}
         title="删除项目"
         destructive
         description="删除会连同其下的集群、Agent 身份与凭证一并移除。记录不再存在，无法恢复。"

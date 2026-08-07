@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { KeyRound, MoreHorizontal, RefreshCw, Server, ServerCog } from "lucide-react";
 import { toast } from "sonner";
@@ -147,6 +147,16 @@ function ClusterSection({
   const canRevoke = permissions.can("cluster.connection.revoke", projectScope);
   const canEnroll = permissions.can("cluster.enrollment.create", projectScope);
 
+  // Opening a dialog clears what the previous attempt left behind: a mutation
+  // holds its error until it is reset or runs again, and these dialogs open by
+  // setting a target, which touches nothing. Only one is open at a time.
+  const clearActionErrors = useCallback(() => {
+    updateCluster.reset();
+    deleteCluster.reset();
+    revokeConnection.reset();
+    reenroll.reset();
+  }, [updateCluster, deleteCluster, revokeConnection, reenroll]);
+
   const columns = useMemo<ColumnDef<ClusterAggregate, unknown>[]>(
     () => [
       {
@@ -240,6 +250,7 @@ function ClusterSection({
                   {canManage ? (
                     <DropdownMenuItem
                       onSelect={() => {
+                        clearActionErrors();
                         setRenameTarget(cluster);
                         setRenameValue(cluster.name);
                       }}
@@ -249,22 +260,43 @@ function ClusterSection({
                   ) : null}
                   {revocable || reenrollable ? <DropdownMenuSeparator /> : null}
                   {revocable ? (
-                    <DropdownMenuItem onSelect={() => setRevokeTarget(cluster)}>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        clearActionErrors();
+                        setRevokeTarget(cluster);
+                      }}
+                    >
                       撤销连接
                     </DropdownMenuItem>
                   ) : null}
                   {reenrollable ? (
-                    <DropdownMenuItem onSelect={() => setReenrollTarget(cluster)}>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        clearActionErrors();
+                        setReenrollTarget(cluster);
+                      }}
+                    >
                       重新接入
                     </DropdownMenuItem>
                   ) : null}
                   {canManage ? (
                     <>
-                      <DropdownMenuItem onSelect={() => setStatusTarget(cluster)}>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          clearActionErrors();
+                          setStatusTarget(cluster);
+                        }}
+                      >
                         {cluster.status === "suspended" ? "恢复" : "停用"}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem variant="danger" onSelect={() => setDeleteTarget(cluster)}>
+                      <DropdownMenuItem
+                        variant="danger"
+                        onSelect={() => {
+                          clearActionErrors();
+                          setDeleteTarget(cluster);
+                        }}
+                      >
                         删除
                       </DropdownMenuItem>
                     </>
@@ -276,7 +308,7 @@ function ClusterSection({
         },
       },
     ],
-    [canEnroll, canManage, canRevoke, onSelect],
+    [canEnroll, canManage, canRevoke, onSelect, clearActionErrors],
   );
 
   if (!scope.projectId) {
@@ -568,6 +600,13 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   const canCreate = permissions.can("cluster.enrollment.create", projectScope);
   const canRevoke = permissions.can("cluster.enrollment.revoke", projectScope);
 
+  // See the cluster section above.
+  const clearActionErrors = useCallback(() => {
+    createEnrollment.reset();
+    createInstallation.reset();
+    revokeEnrollment.reset();
+  }, [createEnrollment, createInstallation, revokeEnrollment]);
+
   const columns = useMemo<ColumnDef<ClusterEnrollmentRecord, unknown>[]>(
     () => [
       {
@@ -619,7 +658,10 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                 size="sm"
                 variant="ghost"
                 className="text-danger"
-                onClick={() => setRevokeTarget(row.original)}
+                onClick={() => {
+                  clearActionErrors();
+                  setRevokeTarget(row.original);
+                }}
               >
                 撤销
               </Button>
@@ -627,7 +669,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
           ) : null,
       },
     ],
-    [canRevoke],
+    [canRevoke, clearActionErrors],
   );
 
   if (!scope.projectId) {
@@ -647,6 +689,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   size="sm"
                   variant="secondary"
                   onClick={() => {
+                    clearActionErrors();
                     setClusterName("");
                     setInstallOpen(true);
                   }}
@@ -657,6 +700,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   size="sm"
                   variant="primary"
                   onClick={() => {
+                    clearActionErrors();
                     setClusterName("");
                     setCreateOpen(true);
                   }}
