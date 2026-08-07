@@ -3,10 +3,12 @@ package accessmanagement
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/auth"
+	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
 	"github.com/togettoyou/zke/pkg/shared/pagination"
@@ -36,6 +38,12 @@ var (
 	// access that authorized the deletion, which is the one mistake in this
 	// resource that the operator cannot then correct.
 	ErrSelfUnbind = errors.New("cannot delete the authenticated user's own role binding")
+	// ErrGlobalOnlyRole reports a binding whose scope cannot exercise anything
+	// its role carries. Not a permission refusal — the actor may hold every one
+	// of them — but a grant that would have done nothing at all.
+	ErrGlobalOnlyRole = errors.New(
+		"role only carries permissions that apply at global scope",
+	)
 )
 
 type Config struct {
@@ -470,6 +478,9 @@ func (service *Service) CreateRoleBinding(
 	); err != nil {
 		return CreateRoleBindingResult{}, err
 	}
+	if err := ensureScopeCanCarry(input.ScopeType, role.Permissions); err != nil {
+		return CreateRoleBindingResult{}, err
+	}
 	id, err := identifier.NewUUID()
 	if err != nil {
 		return CreateRoleBindingResult{}, err
@@ -591,6 +602,63 @@ func validActorRequest(actorUserID string, requestID string, now time.Time) bool
 	return validation.IsUUID(actorUserID) &&
 		strings.TrimSpace(requestID) != "" &&
 		!now.IsZero()
+}
+
+// Refuses a binding that would grant nothing at all.
+//
+// Some permissions are only ever checked at global scope, so on a Tenant or
+// Project binding they are inert. A role made entirely of them produces a
+// binding that grants nothing, reads as an authorization, and is a mistake with
+// no other reading — that one is refused.
+//
+// A role that mixes them is not refused, and the line is deliberately there.
+// The builtin `admin` role bound to a Tenant is a real and useful grant: 21 of
+// its 27 permissions apply inside that Tenant, and refusing it would mean no
+// scoped binding could ever use the one role that means "everything here",
+// forcing every deployment to hand-build a Tenant-shaped copy of it. What was
+// wrong was never that the grant was partial — it was that the missing part was
+// invisible. That is fixed where it was broken: `ListCapabilities` no longer
+// reports the inert permissions, the permission dictionary marks them, and the
+// Console says so on the role and on the binding form.
+//
+// Existing bindings are untouched. This is the create path, and permissions
+// that were already inert stay inert rather than being taken away by an upgrade.
+func ensureScopeCanCarry(scopeType string, permissions []string) error {
+	if scopeType == "global" || len(permissions) == 0 {
+		return nil
+	}
+	inert := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		if rbac.GlobalOnly(rbac.Permission(permission)) {
+			inert = append(inert, permission)
+		}
+	}
+	if len(inert) != len(permissions) {
+		return nil
+	}
+	sort.Strings(inert)
+	return &scopeError{permissions: inert}
+}
+
+// scopeError reports which permissions the binding's scope cannot exercise.
+type scopeError struct {
+	permissions []string
+}
+
+func (err *scopeError) Error() string {
+	return ErrGlobalOnlyRole.Error() + ": " + strings.Join(err.permissions, ", ")
+}
+
+func (err *scopeError) Is(target error) bool {
+	return target == ErrGlobalOnlyRole
+}
+
+// Detail is what the HTTP layer returns in place of the fixed message: the
+// permission names and nothing else, framed by the client. Same shape as the
+// escalation refusal, and for the same reason — the names are the part the
+// fixed message cannot carry.
+func (err *scopeError) Detail() string {
+	return strings.Join(err.permissions, ", ")
 }
 
 func validRoleScope(

@@ -11,6 +11,42 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
+// Permissions the Server only ever checks at global scope.
+//
+// A RoleBinding may name any of the three scopes, and a role may carry any
+// permission, so the two are free to be combined into a grant that can never be
+// exercised: every route that checks one of these calls `RequireGlobal`, and a
+// Tenant or Project binding never satisfies it. Bound anywhere but globally
+// they are inert, and inert is the worst thing a permission can be — the
+// operator who bound the builtin `admin` role to a Tenant reads a role that
+// holds everything and gets an account that cannot manage a user, write a role,
+// or rename the Tenant it was scoped to. Nothing refused it and nothing said so.
+//
+// Kept here rather than derived from the routes because there is nothing to
+// derive it from: the scope lives in the middleware each route is constructed
+// with, and Gin's router does not report it. `TestGlobalOnlyPermissionsMatchRoutes`
+// states the same list against `routes.go` so the two cannot drift quietly.
+//
+// `tenant.create` and `tenant.manage` are here for different reasons than the
+// rest. Creating a Tenant has no Tenant to be scoped to. Deleting one cascades
+// through every Project, Cluster and credential beneath it, which is why it is
+// deliberately not something a Tenant's own administrator can do.
+var globalOnlyPermissions = map[Permission]struct{}{
+	PermissionTenantCreate: {},
+	PermissionTenantManage: {},
+	PermissionUserRead:     {},
+	PermissionUserManage:   {},
+	PermissionRBACRead:     {},
+	PermissionRBACManage:   {},
+}
+
+// GlobalOnly reports whether a permission is only ever enforced at global
+// scope, so that a Tenant or Project binding carrying it grants nothing.
+func GlobalOnly(permission Permission) bool {
+	_, only := globalOnlyPermissions[permission]
+	return only
+}
+
 var allPermissions = []Permission{
 	PermissionTenantCreate,
 	PermissionTenantRead,
@@ -72,8 +108,18 @@ func (service *Service) ListCapabilities(
 		// name the Server no longer defines does not reach a client as though
 		// it were a capability. That is the same rule the authorization check
 		// applies, stated once for the reporting path.
+		//
+		// Global-only permissions are dropped from a scoped binding for the same
+		// reason. A capability is a claim about what the caller can do here, and
+		// this endpoint is what a client builds its interface from — reporting
+		// `user.manage` on a Tenant binding describes an operation that every
+		// route would refuse, which is a worse answer than not mentioning it.
+		scoped := binding.ScopeType != string(scopeGlobal)
 		permissions := make([]Permission, 0, len(allPermissions))
 		for _, permission := range allPermissions {
+			if scoped && GlobalOnly(permission) {
+				continue
+			}
 			if bindingGrants(binding.Permissions, permission) {
 				permissions = append(permissions, permission)
 			}

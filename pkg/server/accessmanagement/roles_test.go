@@ -272,3 +272,129 @@ func TestCreateRoleRejectsUnknownAndBuiltinNames(t *testing.T) {
 		t.Fatalf("CreateRole(no permissions) error = %v, want ErrInvalidInput", err)
 	}
 }
+
+// A binding that would grant nothing is refused rather than written.
+//
+// Every permission in this role is only ever checked at global scope, so on a
+// Tenant or Project binding it authorizes nothing while reading as an
+// authorization. The refusal names them, because the operator's next move is a
+// role that fits the scope and they cannot build one without knowing which
+// permissions did not fit.
+func TestCreateRoleBindingRefusesARoleThatGrantsNothingAtItsScope(t *testing.T) {
+	t.Parallel()
+
+	for _, scope := range []struct {
+		name      string
+		scopeType string
+		projectID string
+	}{
+		{name: "tenant", scopeType: "tenant"},
+		{name: "project", scopeType: "project", projectID: testProjectID},
+	} {
+		t.Run(scope.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakeRoleStore{
+				role: store.ManagedRole{
+					ID:   testRoleID,
+					Name: "platform-operator",
+					Permissions: []string{
+						string(rbac.PermissionUserManage),
+						string(rbac.PermissionRBACRead),
+					},
+				},
+			}
+			service := roleService(
+				fake,
+				rbac.PermissionRBACManage,
+				rbac.PermissionRBACRead,
+				rbac.PermissionUserManage,
+			)
+			_, err := service.CreateRoleBinding(context.Background(), CreateRoleBindingInput{
+				SubjectID:   testUserID,
+				Role:        "platform-operator",
+				ScopeType:   scope.scopeType,
+				TenantID:    testTenantID,
+				ProjectID:   scope.projectID,
+				ActorUserID: testUserID,
+				RequestID:   "00000000-0000-4000-8000-00000000000a",
+				Now:         time.Now().UTC(),
+			})
+			if !errors.Is(err, ErrGlobalOnlyRole) {
+				t.Fatalf("CreateRoleBinding() error = %v, want ErrGlobalOnlyRole", err)
+			}
+			var detailed interface{ Detail() string }
+			if !errors.As(err, &detailed) ||
+				detailed.Detail() != string(rbac.PermissionRBACRead)+", "+
+					string(rbac.PermissionUserManage) {
+				t.Fatalf("refusal did not name the permissions: %v", err)
+			}
+			if fake.bindCalls != 0 {
+				t.Fatal("a refused binding reached the store")
+			}
+		})
+	}
+}
+
+// A role that reaches anything at the scope is accepted, including one that
+// also carries permissions the scope cannot exercise.
+//
+// This is the case the rule must not break: `admin` scoped to a Tenant is a
+// real grant — most of it applies there — and refusing it would leave no way to
+// say "everything here" without hand-building a Tenant-shaped copy of the
+// builtin role.
+func TestCreateRoleBindingAcceptsAPartiallyReachableRole(t *testing.T) {
+	t.Parallel()
+
+	mixed := &fakeRoleStore{
+		role: store.ManagedRole{
+			ID:   testRoleID,
+			Name: "admin",
+			Permissions: []string{
+				string(rbac.PermissionProjectRead),
+				string(rbac.PermissionUserManage),
+			},
+		},
+	}
+	service := roleService(
+		mixed,
+		rbac.PermissionRBACManage,
+		rbac.PermissionProjectRead,
+		rbac.PermissionUserManage,
+	)
+	if _, err := service.CreateRoleBinding(context.Background(), CreateRoleBindingInput{
+		SubjectID:   testUserID,
+		Role:        "admin",
+		ScopeType:   "tenant",
+		TenantID:    testTenantID,
+		ActorUserID: testUserID,
+		RequestID:   "00000000-0000-4000-8000-00000000000a",
+		Now:         time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("CreateRoleBinding(partially reachable) error = %v, want nil", err)
+	}
+	if mixed.bindCalls != 1 {
+		t.Fatal("an accepted binding did not reach the store")
+	}
+
+	// The same all-global role is fine at global scope: the rule is about what
+	// this scope reaches, not about the role.
+	global := &fakeRoleStore{
+		role: store.ManagedRole{
+			ID:          testRoleID,
+			Name:        "platform-operator",
+			Permissions: []string{string(rbac.PermissionUserManage)},
+		},
+	}
+	globalService := roleService(global, rbac.PermissionRBACManage, rbac.PermissionUserManage)
+	if _, err := globalService.CreateRoleBinding(context.Background(), CreateRoleBindingInput{
+		SubjectID:   testUserID,
+		Role:        "platform-operator",
+		ScopeType:   "global",
+		ActorUserID: testUserID,
+		RequestID:   "00000000-0000-4000-8000-00000000000a",
+		Now:         time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("CreateRoleBinding(global) error = %v, want nil", err)
+	}
+}

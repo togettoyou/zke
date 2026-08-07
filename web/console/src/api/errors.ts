@@ -67,6 +67,7 @@ export function isForbidden(error: unknown): boolean {
 const DETAILED_ERROR_PREFIXES: Record<string, string> = {
   cluster_api_rejected: "Kubernetes 拒绝了该配置：",
   permission_escalation: "角色包含调用者未持有的权限：",
+  global_only_role: "该角色的权限只在全局作用域生效，绑定到租户或项目不会授予任何权限：",
 };
 
 export const ERROR_MESSAGES: Record<string, string> = {

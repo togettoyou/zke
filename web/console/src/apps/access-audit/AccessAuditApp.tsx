@@ -1310,6 +1310,13 @@ function PermissionRow({
         <span className="flex flex-wrap items-center gap-2">
           <span className="text-foreground text-[13px]">{permissionLabel(permission.name)}</span>
           {warning ? <Badge tone="warning">{warning}</Badge> : null}
+          {/*
+           * Shown on the permission rather than only on the binding form: the
+           * role is written here, and this is the last point at which "this
+           * role is for one tenant" and "this permission only works globally"
+           * are both in front of the same person.
+           */}
+          {permission.global_only ? <Badge tone="neutral">仅全局生效</Badge> : null}
           {!permission.held ? <Badge tone="neutral">当前账号未持有</Badge> : null}
         </span>
         <span className="zke-mono text-muted-foreground text-xs">{permission.name}</span>
@@ -1676,6 +1683,29 @@ function CreateRoleBindingDialog({
   const valid =
     Boolean(subject) && role !== "" && (!needsTenant || tenant) && (!needsProject || project);
 
+  // Which of the selected role's permissions this scope will not exercise.
+  //
+  // The Server refuses only a binding that reaches nothing at all, because a
+  // partly-reachable one is a real grant — `admin` on a Tenant is most of
+  // `admin`. That leaves the partial case to be shown rather than refused, and
+  // this is the moment to show it: the scope and the role are both on screen,
+  // and afterwards the binding is just a row that looks like every other.
+  const globalOnly = useMemo(
+    () =>
+      new Set(
+        (permissionsQuery.data?.permissions ?? [])
+          .filter((permission) => permission.global_only)
+          .map((permission) => permission.name),
+      ),
+    [permissionsQuery.data],
+  );
+  const inertPermissions =
+    scopeType === "global"
+      ? []
+      : (allRoles
+          .find((item) => item.name === role)
+          ?.permissions.filter((permission) => globalOnly.has(permission)) ?? []);
+
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent aria-describedby={undefined}>
@@ -1789,7 +1819,21 @@ function CreateRoleBindingDialog({
             <Alert tone="warning">全局管理员可以管理所有租户、项目、用户与权限，请谨慎授予。</Alert>
           ) : null}
 
-          {error ? <Alert tone="danger">创建失败，请确认目标与当前账号的权限。</Alert> : null}
+          {inertPermissions.length > 0 ? (
+            <Alert tone="info">
+              该角色中有 {inertPermissions.length} 项权限只在全局作用域生效，本次绑定不会授予它们：
+              {inertPermissions.map((permission) => permissionLabel(permission)).join("、")}
+              。其余权限正常生效。
+            </Alert>
+          ) : null}
+
+          {/*
+           * The Server's own message, for the same reason the role editor shows
+           * it: the refusals here name what is wrong — a role that reaches
+           * nothing at this scope, a permission the caller does not hold — and
+           * "确认目标与当前账号的权限" answers none of them.
+           */}
+          {error ? <Alert tone="danger">{errorMessage(error)}</Alert> : null}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>

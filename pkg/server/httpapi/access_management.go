@@ -30,6 +30,10 @@ var accessManagementErrors = []errorMapping{
 	{accessmanagement.ErrSelfDisable, http.StatusConflict, "self_disable_forbidden", "the authenticated user cannot disable itself"},
 	{accessmanagement.ErrSelfDelete, http.StatusConflict, "self_delete_forbidden", "the authenticated user cannot delete itself"},
 	{accessmanagement.ErrSelfUnbind, http.StatusConflict, "self_unbind_forbidden", "the authenticated user cannot delete its own role binding"},
+	// 400 rather than 403: the caller may hold every permission in the role. What
+	// is wrong is the pairing — this scope exercises none of them — so the
+	// request is malformed rather than refused.
+	{accessmanagement.ErrGlobalOnlyRole, http.StatusBadRequest, "global_only_role", "role only carries permissions that apply at global scope"},
 	{accessmanagement.ErrLastAdmin, http.StatusConflict, "last_global_admin", "the last active global administrator must be preserved"},
 	// 403 rather than 409: nothing about the platform's state is in the way, the
 	// caller simply is not a global administrator.

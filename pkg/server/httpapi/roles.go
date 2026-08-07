@@ -220,12 +220,18 @@ func (handler *accessManagementHandler) listPermissions(c *gin.Context) {
 	if handler.respondError(c, "list permissions", err, roleErrors...) {
 		return
 	}
+	// `global_only` travels with the name for the same reason `held` does: both
+	// are facts about whether putting this permission in a role will do
+	// anything, and the role editor is where that has to be visible. Without it
+	// the only way to find out that a permission cannot be exercised on a Tenant
+	// binding was to create the binding and be refused.
 	response := make([]gin.H, 0, len(rbac.Permissions()))
 	for _, permission := range rbac.Permissions() {
 		_, granted := held[permission]
 		response = append(response, gin.H{
-			"name": string(permission),
-			"held": granted,
+			"name":        string(permission),
+			"held":        granted,
+			"global_only": rbac.GlobalOnly(permission),
 		})
 	}
 	writeSuccess(c, http.StatusOK, gin.H{"permissions": response})

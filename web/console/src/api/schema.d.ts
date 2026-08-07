@@ -1721,6 +1721,8 @@ export interface components {
             name: string;
             /** @description 调用者是否在全局持有该权限。角色不得包含作者未持有的权限， 因此 `held` 为 false 的权限无法被写入角色。 */
             held: boolean;
+            /** @description 该权限是否只在 Global 作用域被校验。为 true 时，它在 Tenant 或 Project 绑定上不生效——这样的绑定仍然允许创建（角色的其余权限照常 生效），但整个角色都由此类权限组成时会返回 `400 global_only_role`，因为那样的绑定不授予任何权限。 */
+            global_only: boolean;
         };
         Role: {
             id: components["schemas"]["UUID"];

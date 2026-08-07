@@ -157,3 +157,98 @@ func TestBuiltinRoleAndScopeRules(t *testing.T) {
 		t.Fatal("different project binding applied")
 	}
 }
+
+// A scoped binding must not report permissions no scoped route ever checks.
+//
+// `me` is what a client builds its interface from, so a capability it lists is
+// a claim that the operation is available. Listing `user.manage` on a Tenant
+// binding claimed an operation that every route refuses, and the operator who
+// bound the builtin `admin` role to a Tenant was shown an account holding
+// everything.
+func TestScopedCapabilitiesOmitGlobalOnlyPermissions(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(bindingStub{bindings: []store.RoleBinding{
+		{
+			Role:        "admin",
+			ScopeType:   "tenant",
+			TenantID:    testTenantID,
+			Permissions: permissionNames(Permissions()),
+		},
+		{
+			Role:        "admin",
+			ScopeType:   "global",
+			Permissions: permissionNames(Permissions()),
+		},
+	}})
+
+	capabilities, err := service.ListCapabilities(context.Background(), testUserID)
+	if err != nil {
+		t.Fatalf("ListCapabilities() error = %v", err)
+	}
+	if len(capabilities) != 2 {
+		t.Fatalf("capabilities = %d, want 2", len(capabilities))
+	}
+
+	scoped, global := capabilities[0], capabilities[1]
+	if scoped.ScopeType != "tenant" || global.ScopeType != "global" {
+		scoped, global = global, scoped
+	}
+	for _, permission := range scoped.Permissions {
+		if GlobalOnly(permission) {
+			t.Errorf("tenant capability reported global-only %s", permission)
+		}
+	}
+	// The scoped binding keeps everything else, and the global one keeps all of
+	// it: the filter is about reach, not about narrowing the role.
+	if len(scoped.Permissions)+len(globalOnlyPermissions) != len(Permissions()) {
+		t.Errorf(
+			"tenant capability has %d permissions, want %d",
+			len(scoped.Permissions),
+			len(Permissions())-len(globalOnlyPermissions),
+		)
+	}
+	if len(global.Permissions) != len(Permissions()) {
+		t.Errorf(
+			"global capability has %d permissions, want %d",
+			len(global.Permissions),
+			len(Permissions()),
+		)
+	}
+}
+
+type bindingStub struct {
+	bindings []store.RoleBinding
+}
+
+func (stub bindingStub) ListRoleBindings(
+	_ context.Context,
+	_ string,
+) ([]store.RoleBinding, error) {
+	return stub.bindings, nil
+}
+
+func (stub bindingStub) FindProjectTenant(
+	_ context.Context,
+	_ string,
+) (string, error) {
+	return testTenantID, nil
+}
+
+func (stub bindingStub) FindClusterAuthorizationScope(
+	_ context.Context,
+	_ string,
+) (store.ClusterAuthorizationScope, error) {
+	return store.ClusterAuthorizationScope{
+		TenantID:  testTenantID,
+		ProjectID: testProjectID,
+	}, nil
+}
+
+func permissionNames(permissions []Permission) []string {
+	names := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		names = append(names, string(permission))
+	}
+	return names
+}
