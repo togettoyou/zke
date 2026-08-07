@@ -858,6 +858,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出目标 Deployment、StatefulSet 或 DaemonSet 记录的历史 Pod 模板，按修订号从新到旧返回。
+         *     Deployment 的历史来自它拥有的 ReplicaSet，StatefulSet 与 DaemonSet 的历史来自
+         *     ControllerRevision；两者都按 Pod Selector 查询并再按 owner UID 过滤，因此不会混入同一
+         *     Namespace 中其他控制器的历史。current=true 表示该修订的 Pod 模板就是当前运行的模板。
+         *     Job 与 CronJob 没有修订历史，返回 400 workload_revisions_unsupported。
+         */
+        get: operations["listKubernetesWorkloadRevisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 把目标 Deployment、StatefulSet 或 DaemonSet 回滚到指定修订记录的 Pod 模板。
+         *     只写回 spec.template：对这三类控制器而言，修订正是在 Pod 模板变化时产生的，
+         *     副本数、更新策略以及对象自身的标签与注解都不属于该修订，因此保持不变。
+         *     必须提供 UID 与 resourceVersion 前置条件，任一不匹配返回 409。
+         *     目标修订的模板与当前模板一致时返回 409 workload_revision_unchanged，
+         *     不写入一次什么都不改的更新。dry_run=true 时执行服务端预览，
+         *     实际写入要求显式 confirm=true。
+         */
+        post: operations["rollbackKubernetesWorkload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/suspend": {
         parameters: {
             query?: never;
@@ -2258,6 +2306,46 @@ export interface components {
             grace_period_seconds?: number | null;
             /** @enum {string} */
             propagation_policy?: "" | "orphan" | "background" | "foreground";
+        };
+        KubernetesRollbackWorkloadRequest: {
+            /**
+             * Format: int64
+             * @description 目标修订号，取自同一对象的修订历史。
+             */
+            revision: number;
+            /** @description 读取修订历史时该工作负载的 UID 前置条件。 */
+            uid: string;
+            /** @description 读取修订历史时该工作负载的 resourceVersion 前置条件。 */
+            resource_version: string;
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际写入必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
+        KubernetesWorkloadRevisionPage: {
+            revisions: components["schemas"]["KubernetesWorkloadRevision"][];
+            /** @description 集群中的修订对象超过单页上限时为 true，返回的不一定是全部修订。 */
+            truncated: boolean;
+        };
+        KubernetesWorkloadRevision: {
+            /** Format: int64 */
+            revision: number;
+            /** @description 承载该修订的 ReplicaSet 或 ControllerRevision 名称。 */
+            name: string;
+            uid: string;
+            /** Format: date-time */
+            creation_timestamp: string;
+            /** @description 该修订的 Pod 模板是否就是当前运行的模板。 */
+            current: boolean;
+            /** @description 对象上的 kubernetes.io/change-cause 注解；回滚不会恢复它。 */
+            change_cause?: string;
+            images: string[];
+            containers: components["schemas"]["KubernetesWorkloadRevisionContainer"][];
+            init_containers: components["schemas"]["KubernetesWorkloadRevisionContainer"][];
+        };
+        KubernetesWorkloadRevisionContainer: {
+            name: string;
+            image: string;
         };
         KubernetesWorkloadMutationResult: {
             workload: components["schemas"]["KubernetesWorkloadDetail"];
@@ -6530,6 +6618,84 @@ export interface operations {
         };
         responses: {
             /** @description 重启补丁后的工作负载或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesWorkloadRevisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 工作负载修订历史 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadRevisionPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    rollbackKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesRollbackWorkloadRequest"];
+            };
+        };
+        responses: {
+            /** @description 回滚后的工作负载或 dry-run 预览 */
             200: {
                 headers: {
                     [name: string]: unknown;

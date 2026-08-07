@@ -51,6 +51,14 @@ type kubernetesWorkloadService interface {
 		context.Context,
 		kubernetesresource.SetWorkloadSuspensionInput,
 	) (kubernetesresource.WorkloadDetail, error)
+	ListWorkloadRevisions(
+		context.Context,
+		kubernetesresource.ListWorkloadRevisionsInput,
+	) (kubernetesresource.WorkloadRevisionPage, error)
+	RollbackWorkload(
+		context.Context,
+		kubernetesresource.RollbackWorkloadInput,
+	) (kubernetesresource.WorkloadDetail, error)
 	DeleteWorkload(
 		context.Context,
 		kubernetesresource.DeleteWorkloadInput,
@@ -164,6 +172,18 @@ func workloadSpecInput(request workloadSpecRequest) kubernetesresource.WorkloadS
 
 type scaleWorkloadRequest struct {
 	Replicas int32 `json:"replicas"`
+	workloadMutationRequest
+}
+
+// A rollback names the revision it restores and the version of the workload it
+// was chosen against. Both preconditions are required, as they are for an
+// update: the revision list is read at one version of the object, and a rollback
+// confirmed after someone else has changed it is a decision about a different
+// object.
+type rollbackWorkloadRequest struct {
+	Revision        int64  `json:"revision"`
+	UID             string `json:"uid"`
+	ResourceVersion string `json:"resource_version"`
 	workloadMutationRequest
 }
 
@@ -491,6 +511,107 @@ func (handler *kubernetesWorkloadHandler) setSuspension(c *gin.Context, suspende
 	)
 }
 
+func (handler *kubernetesWorkloadHandler) revisions(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if len(c.Request.URL.Query()) != 0 {
+		writeError(c, http.StatusBadRequest, "invalid_request", "workload revisions do not accept query parameters")
+		return
+	}
+	resource, ok := kubernetesresource.ParseWorkloadResource(
+		c.Param("workload_resource"),
+	)
+	if !ok {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload resource")
+		return
+	}
+	if handler.service == nil {
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload query is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.ListWorkloadRevisions(
+		ctx,
+		kubernetesresource.ListWorkloadRevisionsInput{
+			ClusterID: c.Param("cluster_id"),
+			Namespace: c.Param("namespace_name"),
+			Resource:  resource,
+			Name:      c.Param("workload_name"),
+		},
+	)
+	cancel()
+	if handler.respondWorkloadError(c, "list Kubernetes workload revisions", err) {
+		return
+	}
+	writeSuccess(c, http.StatusOK, result)
+}
+
+func (handler *kubernetesWorkloadHandler) rollback(c *gin.Context) {
+	resource, target, ok := handler.parseMutationTarget(
+		c,
+		auditaction.KubernetesResourceUpdate,
+	)
+	if !ok {
+		return
+	}
+	identity, _ := httpmiddleware.Identity(c)
+	var request rollbackWorkloadRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(c, identity.User.ID, auditaction.KubernetesResourceUpdate, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload rollback request")
+		return
+	}
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourceUpdate,
+		request.DryRun,
+	)
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	if strings.TrimSpace(request.UID) == "" ||
+		strings.TrimSpace(request.ResourceVersion) == "" {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(
+			c,
+			http.StatusBadRequest,
+			"invalid_request",
+			"workload UID and resourceVersion preconditions are required",
+		)
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.RollbackWorkload(
+		ctx,
+		kubernetesresource.RollbackWorkloadInput{
+			WorkloadMutationInput: handler.mutationInput(
+				c,
+				resource,
+				request.workloadMutationRequest,
+			),
+			Revision:        request.Revision,
+			UID:             request.UID,
+			ResourceVersion: request.ResourceVersion,
+		},
+	)
+	cancel()
+	handler.finishMutation(
+		c,
+		identity.User.ID,
+		action,
+		target,
+		request.DryRun,
+		result,
+		err,
+		"roll back Kubernetes workload",
+	)
+}
+
 func (handler *kubernetesWorkloadHandler) update(c *gin.Context) {
 	resource, target, ok := handler.parseMutationTarget(
 		c,
@@ -766,6 +887,45 @@ func (handler *kubernetesWorkloadHandler) respondWorkloadError(
 	operation string,
 	err error,
 ) bool {
+	if err != nil {
+		// Checked before the shared mappings so that the three revision failures
+		// keep their own codes: without this they would all fall through to
+		// `invalid_request` or `cluster_api_conflict`, and the Console could not
+		// tell "this type has no history" from "you sent something malformed".
+		for _, mapping := range workloadRevisionErrorMappings() {
+			if errors.Is(err, mapping.target) {
+				writeError(c, mapping.status, mapping.code, mapping.message)
+				return true
+			}
+		}
+	}
 	resourceHandler := kubernetesResourceHandler{baseHandler: handler.baseHandler}
 	return resourceHandler.respondResourceError(c, operation, err)
+}
+
+func workloadRevisionErrorMappings() []errorMapping {
+	return []errorMapping{
+		// 400 rather than 404: the workload exists and the route is right, but a
+		// Job or a CronJob has no revision history for any request to name.
+		{
+			kubernetesresource.ErrWorkloadRevisionsUnsupported,
+			http.StatusBadRequest,
+			"workload_revisions_unsupported",
+			"workload type keeps no revision history",
+		},
+		{
+			kubernetesresource.ErrWorkloadRevisionNotFound,
+			http.StatusNotFound,
+			"workload_revision_not_found",
+			"requested workload revision does not exist",
+		},
+		// 409 rather than 400: the request was well formed and the revision does
+		// exist — it is the one already running, so there is nothing to roll back.
+		{
+			kubernetesresource.ErrWorkloadRevisionUnchanged,
+			http.StatusConflict,
+			"workload_revision_unchanged",
+			"workload already runs the selected revision",
+		},
+	}
 }

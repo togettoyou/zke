@@ -91,6 +91,42 @@ export function useWorkload(
   });
 }
 
+/**
+ * Reads the Pod templates one workload has recorded, newest revision first.
+ *
+ * Only Deployments, StatefulSets and DaemonSets have one; the Server answers
+ * `400 workload_revisions_unsupported` for the other two, which is why the
+ * Console opens this view only for the three types that do.
+ */
+export function useWorkloadRevisions(
+  clusterId: string | null,
+  namespace: string | null,
+  resource: KubernetesWorkloadResource,
+  name: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.workloadRevisions(clusterId ?? "", namespace ?? "", resource, name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/revisions",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId as string,
+                namespace_name: namespace as string,
+                workload_resource: resource,
+                workload_name: name as string,
+              },
+            },
+            signal,
+          },
+        ),
+      ),
+    enabled: Boolean(clusterId && namespace && name),
+  });
+}
+
 /** What every workload mutation needs to name its target and its submission. */
 type WorkloadMutationInput = {
   clusterId: string;
@@ -123,6 +159,17 @@ function useWorkloadInvalidation() {
       invalidations.push(
         queryClient.invalidateQueries({
           queryKey: queryKeys.workload(
+            input.clusterId,
+            input.namespace,
+            input.resource,
+            input.name,
+          ),
+        }),
+        // Any write that changes the Pod template adds a revision, and a
+        // rollback moves which one is current. The ones that cannot — a scale, a
+        // CronJob suspension — invalidate a query nobody is observing.
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.workloadRevisions(
             input.clusterId,
             input.namespace,
             input.resource,
@@ -299,6 +346,48 @@ export function useRestartWorkload() {
               header: idempotentHeaders(input.idempotencyKey),
             },
             body: { dry_run: input.dryRun, confirm: !input.dryRun },
+          },
+        ),
+      ),
+    onSuccess: (_data, variables) => invalidate(variables),
+  });
+}
+
+/**
+ * Restores the Pod template one recorded revision holds.
+ *
+ * `uid` and `resource_version` are the version the revision list was read at,
+ * and both are required: choosing a revision is a decision about one version of
+ * one object, and a rollback confirmed after someone else has changed it is a
+ * decision about something else. The Server writes back only `spec.template` —
+ * replicas, update strategy and the object's own labels and annotations were
+ * never part of the revision.
+ */
+export function useRollbackWorkload() {
+  const invalidate = useWorkloadInvalidation();
+  return useMutation({
+    mutationFn: async (
+      input: WorkloadMutationInput & {
+        revision: number;
+        uid: string;
+        resourceVersion: string;
+      },
+    ) =>
+      unwrap(
+        await api.POST(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/rollback",
+          {
+            params: {
+              path: workloadPath(input),
+              header: idempotentHeaders(input.idempotencyKey),
+            },
+            body: {
+              revision: input.revision,
+              uid: input.uid,
+              resource_version: input.resourceVersion,
+              dry_run: input.dryRun,
+              confirm: !input.dryRun,
+            },
           },
         ),
       ),

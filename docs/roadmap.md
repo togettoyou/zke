@@ -45,6 +45,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] 工作负载类型化创建、List/Detail、伸缩、滚动重启、CronJob 暂停/恢复、删除，以及 Console
   列表/详情、Namespace 作用域选择器与全部变更的 DryRun、确认、幂等和审计闭环（高级 Pod 配置和
   类型化更新表单尚未支持）
+- [x] 工作负载修订历史与回滚（Deployment 读 ReplicaSet、StatefulSet/DaemonSet 读 ControllerRevision，
+  按 owner UID 过滤；回滚只写回 `spec.template`，强制 UID 与 resourceVersion 前置条件，沿用 DryRun、
+  确认、幂等与审计，并在 Console 详情页提供「历史版本」视图；Job 与 CronJob 无修订历史）
 - [x] Pod 管理（显式 Cluster/Namespace 定域的类型化 List/Detail/Delete、Agent 最小 RBAC、DryRun、
   UID 前置条件、确认、幂等、审计与 Console 列表/详情/删除闭环；Eviction 仍未支持）
 - [x] Pod 日志（专用权限与 Agent 最小 RBAC、有界快照、实时 Follow、UID 防重建校验、取消、限流、超时、

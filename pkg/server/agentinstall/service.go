@@ -307,6 +307,17 @@ func renderManifest(
 				Verbs: []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
+				// Read-only, and only so a workload's revision history can be
+				// read: a Deployment records its revisions as the ReplicaSets it
+				// owns, a StatefulSet and a DaemonSet as ControllerRevisions. A
+				// rollback writes the recorded Pod template back onto the
+				// workload above, so nothing here needs to create, change or
+				// prune a revision — that stays the controllers' job.
+				APIGroups: []string{"apps"},
+				Resources: []string{"replicasets", "controllerrevisions"},
+				Verbs:     []string{"get", "list"},
+			},
+			{
 				APIGroups: []string{"batch"},
 				Resources: []string{"jobs", "cronjobs"},
 				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},

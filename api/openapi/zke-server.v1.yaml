@@ -2679,6 +2679,110 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/revisions:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesWorkloadRevisions
+      description: |
+        列出目标 Deployment、StatefulSet 或 DaemonSet 记录的历史 Pod 模板，按修订号从新到旧返回。
+        Deployment 的历史来自它拥有的 ReplicaSet，StatefulSet 与 DaemonSet 的历史来自
+        ControllerRevision；两者都按 Pod Selector 查询并再按 owner UID 过滤，因此不会混入同一
+        Namespace 中其他控制器的历史。current=true 表示该修订的 Pod 模板就是当前运行的模板。
+        Job 与 CronJob 没有修订历史，返回 400 workload_revisions_unsupported。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+      responses:
+        "200":
+          description: 工作负载修订历史
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadRevisionPage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/rollback:
+    post:
+      tags: [Resources]
+      operationId: rollbackKubernetesWorkload
+      description: |
+        把目标 Deployment、StatefulSet 或 DaemonSet 回滚到指定修订记录的 Pod 模板。
+        只写回 spec.template：对这三类控制器而言，修订正是在 Pod 模板变化时产生的，
+        副本数、更新策略以及对象自身的标签与注解都不属于该修订，因此保持不变。
+        必须提供 UID 与 resourceVersion 前置条件，任一不匹配返回 409。
+        目标修订的模板与当前模板一致时返回 409 workload_revision_unchanged，
+        不写入一次什么都不改的更新。dry_run=true 时执行服务端预览，
+        实际写入要求显式 confirm=true。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesRollbackWorkloadRequest"
+      responses:
+        "200":
+          description: 回滚后的工作负载或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/suspend:
     post:
       tags: [Resources]
@@ -7306,6 +7410,98 @@ components:
         propagation_policy:
           type: string
           enum: ["", orphan, background, foreground]
+    KubernetesRollbackWorkloadRequest:
+      type: object
+      additionalProperties: false
+      required: [revision, uid, resource_version, confirm]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 目标修订号，取自同一对象的修订历史。
+        uid:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 读取修订历史时该工作负载的 UID 前置条件。
+        resource_version:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: 读取修订历史时该工作负载的 resourceVersion 前置条件。
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际写入必须为 true；dry-run 可以为 false。
+    KubernetesWorkloadRevisionPage:
+      type: object
+      additionalProperties: false
+      required: [revisions, truncated]
+      properties:
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadRevision"
+        truncated:
+          type: boolean
+          description: 集群中的修订对象超过单页上限时为 true，返回的不一定是全部修订。
+    KubernetesWorkloadRevision:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          revision,
+          name,
+          uid,
+          creation_timestamp,
+          current,
+          images,
+          containers,
+          init_containers,
+        ]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        name:
+          type: string
+          description: 承载该修订的 ReplicaSet 或 ControllerRevision 名称。
+        uid:
+          type: string
+        creation_timestamp:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+          description: 该修订的 Pod 模板是否就是当前运行的模板。
+        change_cause:
+          type: string
+          description: 对象上的 kubernetes.io/change-cause 注解；回滚不会恢复它。
+        images:
+          type: array
+          items:
+            type: string
+        containers:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadRevisionContainer"
+        init_containers:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadRevisionContainer"
+    KubernetesWorkloadRevisionContainer:
+      type: object
+      additionalProperties: false
+      required: [name, image]
+      properties:
+        name:
+          type: string
+        image:
+          type: string
     KubernetesWorkloadMutationResult:
       type: object
       additionalProperties: false

@@ -28,6 +28,12 @@
   Server 从当前对象保留；强制要求 UID 与 resourceVersion 前置条件；
 - 工作负载详情作用域下的 `scale`、`restart`、`suspend` 和 `resume` 动作：分别支持
   Deployment/StatefulSet 伸缩，Deployment/StatefulSet/DaemonSet 滚动重启，以及 CronJob 暂停和恢复；
+- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/revisions`：
+  返回 Deployment、StatefulSet 或 DaemonSet 记录的历史 Pod 模板，按修订号从新到旧排列，
+  并标记哪一条就是当前运行的模板；Job 与 CronJob 返回 `400 workload_revisions_unsupported`；
+- `POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/rollback`：
+  把上述三类工作负载回滚到指定修订记录的 Pod 模板，强制要求 UID 与 resourceVersion 前置条件，
+  目标修订就是当前模板时返回 `409 workload_revision_unchanged`；
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
   删除上述五类工作负载，并强制要求 UID 删除前置条件；
 - `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}` 和
@@ -112,7 +118,9 @@
   DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
   StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、
   PriorityClass、ServiceAccount 及四类 Kubernetes RBAC 资源的
-  `get`、`list`、`create`、`update`、`delete`，Secret 的同五个动词（不含 `watch`；Agent 只在专用 Secret 接口的
+  `get`、`list`、`create`、`update`、`delete`，`apps/v1 replicasets` 与 `apps/v1 controllerrevisions` 的只读
+  `get`、`list`（工作负载修订历史的来源；回滚写回的是工作负载本身，不需要创建、修改或清理修订对象），
+  Secret 的同五个动词（不含 `watch`；Agent 只在专用 Secret 接口的
   请求上、且目标不是自身命名空间时才会执行），`apiextensions.k8s.io/v1 customresourcedefinitions` 的只读
   `get`、`list`（仅用于判定哪些资源来自 CRD，不含定义或修改 CRD 的能力），并单独授予 `pods/log` 的 `get`
   和 `pods/exec` 的 `create`；Eviction Subresource 仍未授权，
@@ -161,8 +169,8 @@ YAML、伸缩、删除、刷新等），整行不随内容滚动。三处理由�
 看哪个集群和命名空间」，本身已经有两个选择器那么宽，再塞四个按钮会把它挤成两行，反而让返回更远；返回在名称
 之前而不是行尾，是因为它在每个界面上都是同一个动作，安静地说一次就够。
 
-页头右侧的操作在所有详情页按同一次序排列：YAML 在最前，中间是随对象而定的动作（编辑、配额管理、日志、终端、
-伸缩、滚动重启、暂停），删除在最后。次序本身就是说明——最左边的只读，越往右影响越大，最右边那个收不回来；
+页头右侧的操作在所有详情页按同一次序排列：YAML 在最前，中间是随对象而定的动作（历史版本、编辑、配额管理、
+日志、终端、伸缩、滚动重启、暂停），删除在最后。次序本身就是说明——最左边的只读，越往右影响越大，最右边那个收不回来；
 如果十余个分区各排各的，操作者每进一个页面都要重新找一次删除在哪，而找错的代价并不对称。节点没有删除入口，
 行尾留给停止调度：那是该页面上影响面最大的动作。Secret 与 RBAC 对象同样从 YAML 开始；不可变的 Secret 与属于
 ZKE 自身的授权对象以只读方式打开，理由分别见下文。
@@ -262,6 +270,35 @@ Selector、容器、条件、更新策略等稳定字段。常用变更已提供
 执行链路与 `cluster.resource.*` 权限、CSRF、DryRun、显式确认、幂等和审计边界。滚动重启将
 `Idempotency-Key` 的 SHA-256 摘要写入 Pod Template 的 `zke.io/restart-request` 注解，使相同请求重试产生
 完全相同的补丁；删除必须携带当前对象 UID，避免误删同名重建对象。
+
+修订历史与回滚只对 Deployment、StatefulSet 和 DaemonSet 提供，因为只有这三类控制器由 Kubernetes 记录历史：
+Deployment 的历史是它拥有的 ReplicaSet（修订号来自 `deployment.kubernetes.io/revision` 注解），StatefulSet
+与 DaemonSet 的历史是 ControllerRevision（修订号是对象上的 `revision` 字段）。Job 跑一次就结束，CronJob
+产出的是 Job，两者都没有可回滚的上一版。Server 先读取工作负载本身，用它的 Pod Selector 查询修订对象，再按
+owner UID 二次过滤——同一 Namespace 中两个控制器可能选中同一批 Pod，标签相同不等于归属相同，而按 UID 匹配还
+避免同名重建的控制器借用旧历史。单次查询只取一页（上限 500 条），超出时以 `truncated` 说明返回的不是全部修订。
+
+回滚只写回 `spec.template`。对这三类控制器而言，修订恰恰是在 Pod 模板变化时产生的，模板就是该修订记录的全部；
+副本数、更新策略以及对象自身的标签和注解从来不属于它，因此保持不变——否则一次回滚会顺带撤销没人提起过的扩容或
+配额调整。写回的模板按记录原样落回对象，不先解码成 Server 编译期的 Pod 类型：那会静默丢掉新版本 Kubernetes
+才有的字段，而一次悄悄删字段的回滚正是它绝不能做的事。ReplicaSet 模板上的 `pod-template-hash` 标签在写回前
+移除（它标识 ReplicaSet 而不是 Deployment），ControllerRevision 记录里的 `$patch` 指令同样移除（那是给
+strategic merge patch 的指令，不是 Pod 模板的字段）。判断某个修订是否就是当前模板使用 Kubernetes 的语义比较
+而不是逐字节比较：`1` 和 `1000m` 是同一个 CPU 请求，只是写法不同的修订不构成可回滚的目标，此时接口返回
+`409 workload_revision_unchanged`，而不是写入一次什么都不改、却留下审计记录说改过的更新。
+
+回滚复用现有的 Update 执行链路：`cluster.resource.update` 权限、CSRF、幂等键、DryRun 预检、显式确认与审计，
+并强制携带读取修订列表时的 UID 与 resourceVersion，因此期间被他人改动的对象会被拒绝而不是覆盖。修订列表本身
+只要求 `cluster.read`。`kubernetes.io/change-cause` 注解按修订原样展示，但回滚不恢复它——它标注的是那次修订，
+不是模板的一部分。
+
+Console 的「历史版本」入口在 Deployment、StatefulSet、DaemonSet 详情页页头，位置紧随 YAML：它首先是拿来读的，
+而每行后面的回滚在那一页上确认。Job 与 CronJob 详情页不出现这个按钮——一个按下去必然返回 400 的入口不如不给。
+页面本身是一张表，每行是一个修订：修订号与承载它的 ReplicaSet/ControllerRevision 名称（便于直接用 kubectl
+查看那个对象）、各容器的镜像、变更说明和记录时间；当前模板那一行带「当前」标记且不提供回滚按钮，因为服务端本来
+就会拒绝它。列出镜像而不是整份模板，是因为同一个工作负载的历次修订在其余字段上大多相同，操作者比较的正是镜像。
+回滚沿用本分区其他写操作的两步链路：先服务端 DryRun，再确认；UID 与 resourceVersion 在打开对话框时固定，
+确认框写明本次只恢复 Pod 模板、控制器会按更新策略滚动替换全部 Pod，以及期间对象被改动时本次回滚会被拒绝。
 
 类型化创建支持名称、描述、标签、注解、完整的 Pod 模板，并按类型支持副本数、StatefulSet Service、Job 执行
 参数与 CronJob 调度参数。Server 使用资源类型和名称生成客户端不能覆盖的 `zke.io/workload-id` 标签；Deployment、

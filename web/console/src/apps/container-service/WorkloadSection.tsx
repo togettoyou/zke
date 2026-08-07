@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Plus } from "lucide-react";
+import { FileCode, History, Plus } from "lucide-react";
 
 import { useWorkload, useWorkloads } from "@/api/queries/workloads";
 import type {
@@ -29,8 +29,9 @@ import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { WorkloadActions } from "./WorkloadActions";
 import { WorkloadCreateView } from "./WorkloadCreateView";
+import { WorkloadRevisionsView } from "./WorkloadRevisionsView";
 import { YamlEditorView } from "./YamlEditorView";
-import { kindLabel, workloadGroup, WORKLOAD_TYPES } from "./workload-catalog";
+import { kindLabel, supportsRevisions, workloadGroup, WORKLOAD_TYPES } from "./workload-catalog";
 
 const PAGE_SIZE = 50;
 
@@ -71,6 +72,9 @@ export function WorkloadSection({
   const [detailName, setDetailName] = useState<string | null>(null);
   // The YAML editor takes over the section: it is a document, not a field.
   const [yamlName, setYamlName] = useState<string | null>(null);
+  // So does the revision history: it is a list of its own objects, with a write
+  // behind each row.
+  const [revisionsName, setRevisionsName] = useState<string | null>(null);
 
   const [creating, setCreating] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -159,6 +163,20 @@ export function WorkloadSection({
     );
   }
 
+  if (revisionsName) {
+    return (
+      <WorkloadRevisionsView
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        resource={resource}
+        name={revisionsName}
+        canUpdate={canUpdate}
+        onBack={() => setRevisionsName(null)}
+      />
+    );
+  }
+
   // The create form takes over the section rather than sitting over the list:
   // the Pod template is most of a workload, and reading it through a box laid
   // over the table is worse than leaving the table.
@@ -202,6 +220,9 @@ export function WorkloadSection({
         canDelete={canDelete}
         onEdit={() => setEditingName(detailName)}
         onOpenYaml={() => setYamlName(detailName)}
+        onOpenRevisions={
+          supportsRevisions(resource) ? () => setRevisionsName(detailName) : undefined
+        }
         onBack={() => setDetailName(null)}
       />
     );
@@ -423,6 +444,7 @@ function WorkloadDetailView({
   canDelete,
   onEdit,
   onOpenYaml,
+  onOpenRevisions,
   onBack,
 }: {
   clusterId: string;
@@ -434,6 +456,8 @@ function WorkloadDetailView({
   canDelete: boolean;
   onEdit: () => void;
   onOpenYaml: () => void;
+  /** Absent for the two types Kubernetes keeps no revision history for. */
+  onOpenRevisions?: () => void;
   onBack: () => void;
 }) {
   const detail = useWorkload(clusterId, namespace, resource, name);
@@ -449,6 +473,15 @@ function WorkloadDetailView({
               <FileCode />
               YAML
             </Button>
+            {/* Next to the YAML entry and before the actions that change this
+                object: the history is something to read, and the rollback behind
+                it is confirmed on that page rather than from here. */}
+            {onOpenRevisions ? (
+              <Button size="sm" variant="secondary" onClick={onOpenRevisions}>
+                <History />
+                历史版本
+              </Button>
+            ) : null}
             {/* The actions need the object they act on, so they appear once the
                 detail has actually loaded — a deletion pinned to a UID cannot be
                 offered before the UID is known. They end with the deletion, as

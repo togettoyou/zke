@@ -40,6 +40,16 @@ export function supportsRestart(resource: KubernetesWorkloadResource): boolean {
   return resource === "deployments" || resource === "statefulsets" || resource === "daemonsets";
 }
 
+/**
+ * Kubernetes records a revision history for exactly these three controllers: a
+ * Deployment as the ReplicaSets it owns, a StatefulSet and a DaemonSet as
+ * ControllerRevisions. A Job runs once and a CronJob stamps out Jobs, so neither
+ * has a previous version to go back to.
+ */
+export function supportsRevisions(resource: KubernetesWorkloadResource): boolean {
+  return resource === "deployments" || resource === "statefulsets" || resource === "daemonsets";
+}
+
 /** Suspension is `spec.suspend` on a CronJob. */
 export function supportsSuspension(resource: KubernetesWorkloadResource): boolean {
   return resource === "cronjobs";

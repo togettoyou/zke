@@ -28,6 +28,10 @@ type fakeKubernetesWorkloadService struct {
 	suspendInput kubernetesresource.SetWorkloadSuspensionInput
 	suspendCalls []kubernetesresource.SetWorkloadSuspensionInput
 	deleteInput  kubernetesresource.DeleteWorkloadInput
+
+	revisionsInput kubernetesresource.ListWorkloadRevisionsInput
+	rollbackInput  kubernetesresource.RollbackWorkloadInput
+	rollbackError  error
 }
 
 func (service *fakeKubernetesWorkloadService) ListWorkloads(
@@ -129,6 +133,35 @@ func (service *fakeKubernetesWorkloadService) SetWorkloadSuspension(
 ) (kubernetesresource.WorkloadDetail, error) {
 	service.suspendInput = input
 	service.suspendCalls = append(service.suspendCalls, input)
+	return fakeWorkloadMutationResult(input.WorkloadMutationInput), nil
+}
+
+func (service *fakeKubernetesWorkloadService) ListWorkloadRevisions(
+	_ context.Context,
+	input kubernetesresource.ListWorkloadRevisionsInput,
+) (kubernetesresource.WorkloadRevisionPage, error) {
+	service.revisionsInput = input
+	return kubernetesresource.WorkloadRevisionPage{
+		Revisions: []kubernetesresource.WorkloadRevision{{
+			Revision:       3,
+			Name:           input.Name + "-7c9f",
+			UID:            "00000000-0000-4000-8000-0000000000f1",
+			Current:        true,
+			Images:         []string{"example/model:v2"},
+			Containers:     []kubernetesresource.WorkloadRevisionContainer{},
+			InitContainers: []kubernetesresource.WorkloadRevisionContainer{},
+		}},
+	}, nil
+}
+
+func (service *fakeKubernetesWorkloadService) RollbackWorkload(
+	_ context.Context,
+	input kubernetesresource.RollbackWorkloadInput,
+) (kubernetesresource.WorkloadDetail, error) {
+	service.rollbackInput = input
+	if service.rollbackError != nil {
+		return kubernetesresource.WorkloadDetail{}, service.rollbackError
+	}
 	return fakeWorkloadMutationResult(input.WorkloadMutationInput), nil
 }
 
@@ -547,5 +580,163 @@ func TestKubernetesWorkloadMutationHandlersRejectUnsafeRequests(t *testing.T) {
 		service.scaleInput.ClusterID != "" ||
 		service.deleteInput.ClusterID != "" {
 		t.Fatal("unsafe workload mutation reached service")
+	}
+}
+
+func TestKubernetesWorkloadRevisionHandlersPreserveScopeAndPreconditions(t *testing.T) {
+	t.Parallel()
+
+	const (
+		clusterID      = "00000000-0000-4000-8000-000000000003"
+		idempotencyKey = "0123456789abcdef"
+	)
+	service := &fakeKubernetesWorkloadService{}
+	handler := newKubernetesWorkloadHandler(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		service,
+		nil,
+		time.Second,
+	)
+	router := gin.New()
+	baseRoute := "/clusters/:cluster_id/namespaces/:namespace_name/workloads/" +
+		":workload_resource/:workload_name"
+	router.GET(baseRoute+"/revisions", handler.revisions)
+	router.POST(baseRoute+"/rollback", handler.rollback)
+	baseURL := "/clusters/" + clusterID + "/namespaces/model-serving/workloads"
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		baseURL+"/deployments/inference/revisions",
+		nil,
+	))
+	if response.Code != http.StatusOK ||
+		service.revisionsInput.ClusterID != clusterID ||
+		service.revisionsInput.Namespace != "model-serving" ||
+		service.revisionsInput.Resource != kubernetesresource.WorkloadDeployments ||
+		service.revisionsInput.Name != "inference" ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"revisions"`)) {
+		t.Fatalf(
+			"revisions status=%d input=%+v body=%s",
+			response.Code,
+			service.revisionsInput,
+			response.Body.String(),
+		)
+	}
+
+	response = httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		baseURL+"/deployments/inference/rollback",
+		bytes.NewBufferString(
+			`{"revision":2,"uid":"deployment-uid","resource_version":"12","dry_run":false,"confirm":true}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyKeyHeaderName, idempotencyKey)
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		service.rollbackInput.ClusterID != clusterID ||
+		service.rollbackInput.Namespace != "model-serving" ||
+		service.rollbackInput.Resource != kubernetesresource.WorkloadDeployments ||
+		service.rollbackInput.Name != "inference" ||
+		service.rollbackInput.Revision != 2 ||
+		service.rollbackInput.UID != "deployment-uid" ||
+		service.rollbackInput.ResourceVersion != "12" ||
+		!service.rollbackInput.Confirm ||
+		service.rollbackInput.IdempotencyKey != idempotencyKey {
+		t.Fatalf(
+			"rollback status=%d input=%+v body=%s",
+			response.Code,
+			service.rollbackInput,
+			response.Body.String(),
+		)
+	}
+
+	// A rollback that names no version of the object, and one that was never
+	// confirmed, are both refused before the service is asked to do anything.
+	service.rollbackInput = kubernetesresource.RollbackWorkloadInput{}
+	for _, body := range []string{
+		`{"revision":2,"resource_version":"12","confirm":true}`,
+		`{"revision":2,"uid":"deployment-uid","confirm":true}`,
+		`{"revision":2,"uid":"deployment-uid","resource_version":"12","confirm":false}`,
+	} {
+		response = httptest.NewRecorder()
+		request = httptest.NewRequest(
+			http.MethodPost,
+			baseURL+"/deployments/inference/rollback",
+			bytes.NewBufferString(body),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(idempotencyKeyHeaderName, idempotencyKey)
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("rollback %s status=%d body=%s", body, response.Code, response.Body.String())
+		}
+	}
+	if service.rollbackInput.ClusterID != "" {
+		t.Fatal("unsafe rollback reached service")
+	}
+}
+
+func TestKubernetesWorkloadRollbackReportsRevisionFailuresDistinctly(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{
+			kubernetesresource.ErrWorkloadRevisionsUnsupported,
+			http.StatusBadRequest,
+			"workload_revisions_unsupported",
+		},
+		{
+			kubernetesresource.ErrWorkloadRevisionNotFound,
+			http.StatusNotFound,
+			"workload_revision_not_found",
+		},
+		{
+			kubernetesresource.ErrWorkloadRevisionUnchanged,
+			http.StatusConflict,
+			"workload_revision_unchanged",
+		},
+	}
+	for _, testCase := range testCases {
+		service := &fakeKubernetesWorkloadService{rollbackError: testCase.err}
+		handler := newKubernetesWorkloadHandler(
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			service,
+			nil,
+			time.Second,
+		)
+		router := gin.New()
+		router.POST(
+			"/clusters/:cluster_id/namespaces/:namespace_name/workloads/"+
+				":workload_resource/:workload_name/rollback",
+			handler.rollback,
+		)
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/clusters/00000000-0000-4000-8000-000000000003"+
+				"/namespaces/model-serving/workloads/deployments/inference/rollback",
+			bytes.NewBufferString(
+				`{"revision":2,"uid":"deployment-uid","resource_version":"12","confirm":true}`,
+			),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(idempotencyKeyHeaderName, "0123456789abcdef")
+		router.ServeHTTP(response, request)
+		if response.Code != testCase.status ||
+			!bytes.Contains(response.Body.Bytes(), []byte(`"`+testCase.code+`"`)) {
+			t.Fatalf(
+				"%v status=%d body=%s",
+				testCase.err,
+				response.Code,
+				response.Body.String(),
+			)
+		}
 	}
 }

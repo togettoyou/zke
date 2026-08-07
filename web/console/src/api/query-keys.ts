@@ -43,6 +43,11 @@ export const queryKeys = {
   ) => ["workloads", clusterId, namespace, resource, params] as const,
   workload: (clusterId: string, namespace: string, resource: string, name: string) =>
     ["workload", clusterId, namespace, resource, name] as const,
+  // The revision history is its own read: it is the ReplicaSets or
+  // ControllerRevisions the workload owns, not a part of the workload itself,
+  // and a write to the workload changes both.
+  workloadRevisions: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["workload-revisions", clusterId, namespace, resource, name] as const,
   // Keyed by everything that identifies the object, because the YAML endpoint
   // serves every kind through one route.
   resourceYaml: (clusterId: string, namespace: string, gvr: string, name: string) =>
@@ -131,6 +136,7 @@ export const queryKeyPrefixes = {
   namespace: ["namespace"] as const,
   workloads: ["workloads"] as const,
   workload: ["workload"] as const,
+  workloadRevisions: ["workload-revisions"] as const,
   configMaps: ["config-maps"] as const,
   configMap: ["config-map"] as const,
   secrets: ["secrets"] as const,

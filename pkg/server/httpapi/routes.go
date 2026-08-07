@@ -534,6 +534,23 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesWorkload.restart,
 	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/revisions",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.revisions,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/rollback",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceUpdate,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.rollback,
+	)
 	clusterRoutes.POST(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/suspend",
 		handlers.authMiddleware.RequireCSRF,
