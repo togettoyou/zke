@@ -1033,6 +1033,52 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesResource.delete,
 	)
+	// Manifests use a group of their own for two reasons.
+	//
+	// The timeout: clusterRoutes installs the ten seconds that bound a
+	// single-object write, and a manifest is a bounded number of them in
+	// sequence, so that budget would refuse files that were going to succeed.
+	//
+	// The authorization: every other write in the table names one object of one
+	// family in its URL, so `RequireCluster` decides it completely. A manifest
+	// carries objects of every family at once, and the families answer to
+	// different permissions on purpose — `cluster.secret.manage`,
+	// `cluster.rbac.manage`, `cluster.namespace.manage` — so no single route-level
+	// permission can decide one. `cluster.read` is the floor: it establishes that
+	// the caller may see this Cluster at all, and produces the ordinary denial
+	// record for one who may not. What each document actually requires is then
+	// resolved by ResolveClusterManifestGrant and checked per document, before
+	// anything is written, with the whole request refused if any document is not
+	// covered. That is a stricter check than a route-level one, not a weaker one:
+	// a manifest holding a Secret is refused for a caller lacking
+	// `cluster.secret.manage` no matter what else they hold.
+	manifestRoutes := apiV1.Group("/clusters")
+	manifestRoutes.Use(
+		handlers.manifestRequestTimeout,
+		handlers.roleBindingCache,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	manifestRoutes.POST(
+		"/:cluster_id/kubernetes/manifests/apply",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.ResolveClusterManifestGrant("cluster_id"),
+		handlers.kubernetesManifest.apply,
+	)
+	manifestRoutes.POST(
+		"/:cluster_id/kubernetes/manifests/delete",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.ResolveClusterManifestGrant("cluster_id"),
+		handlers.kubernetesManifest.delete,
+	)
+
 	clusterRoutes.PUT(
 		"/:cluster_id",
 		handlers.authMiddleware.RequireCSRF,

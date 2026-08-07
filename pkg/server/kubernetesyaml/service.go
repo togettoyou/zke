@@ -18,7 +18,89 @@ var (
 	ErrInvalidManifest        = errors.New("invalid Kubernetes YAML manifest")
 	ErrResourceUIDChanged     = errors.New("Kubernetes resource UID changed")
 	ErrResourceVersionChanged = errors.New("Kubernetes resource version changed")
+	ErrEmptyManifest          = errors.New("Kubernetes YAML manifest holds no documents")
+	ErrTooManyDocuments       = errors.New("Kubernetes YAML manifest holds too many documents")
 )
+
+// DocumentError says which document of a multi-document manifest was refused.
+//
+// An error naming only the problem is unusable against a file of thirty
+// objects: the operator has to find which one it is about. The index is
+// zero-based over the documents that were kept, which is the same numbering the
+// plan and the result report.
+type DocumentError struct {
+	Index int
+	Err   error
+}
+
+func (err DocumentError) Error() string {
+	return fmt.Sprintf("document %d: %v", err.Index+1, err.Err)
+}
+
+func (err DocumentError) Unwrap() error { return err.Err }
+
+// DecodeDocuments decodes a multi-document manifest, holding every document to
+// the rules one document is held to.
+//
+// The strictness is not relaxed for being one of many: no anchors or aliases, no
+// duplicate keys, no YAML-only tags, and a mapping at the top of each document.
+// A manifest is exactly where a document that means something other than what it
+// reads as would do the most damage, because nobody reviews thirty objects as
+// closely as they review one.
+//
+// Empty documents are dropped rather than refused. `---` at the head or foot of
+// a file, and the blank document a template that rendered nothing leaves behind,
+// are things every real manifest contains; `kubectl` skips them too.
+func DecodeDocuments(manifest []byte, limit int) ([]map[string]any, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(manifest))
+	documents := make([]map[string]any, 0, 8)
+	for {
+		var node yaml.Node
+		err := decoder.Decode(&node)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, DocumentError{Index: len(documents), Err: ErrInvalidManifest}
+		}
+		if len(node.Content) == 0 || isEmptyDocument(node.Content[0]) {
+			continue
+		}
+		if len(node.Content) != 1 ||
+			node.Content[0].Kind != yaml.MappingNode ||
+			validateYAMLNode(node.Content[0]) != nil {
+			return nil, DocumentError{Index: len(documents), Err: ErrInvalidManifest}
+		}
+		if limit > 0 && len(documents) == limit {
+			return nil, ErrTooManyDocuments
+		}
+		// Re-encoded rather than sliced out of the input: the decoder reports no
+		// byte range for a document, and the node has already been checked, so
+		// round-tripping it through the same JSON conversion the single-document
+		// path uses keeps one conversion rather than two.
+		encoded, err := yaml.Marshal(&node)
+		if err != nil {
+			return nil, DocumentError{Index: len(documents), Err: ErrInvalidManifest}
+		}
+		object, err := decodeManifest(encoded)
+		if err != nil {
+			return nil, DocumentError{Index: len(documents), Err: err}
+		}
+		documents = append(documents, object)
+	}
+	if len(documents) == 0 {
+		return nil, ErrEmptyManifest
+	}
+	return documents, nil
+}
+
+// A document that carries nothing: `---` on its own, or one holding an explicit
+// null. Both are separators in practice rather than objects.
+func isEmptyDocument(node *yaml.Node) bool {
+	return node == nil ||
+		(node.Kind == yaml.ScalarNode &&
+			(node.Tag == "!!null" || node.Value == ""))
+}
 
 type ResourceService interface {
 	GetResource(

@@ -3,6 +3,7 @@ import {
   Bell,
   Box,
   Database,
+  FileCode,
   Gauge,
   KeyRound,
   FileCog,
@@ -17,6 +18,7 @@ import {
 
 import { useClusters } from "@/api/queries/clusters";
 import { useNamespaces } from "@/api/queries/namespaces";
+import type { Permission } from "@/api/types";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -35,6 +37,7 @@ import { AutoscalerSection } from "./AutoscalerSection";
 import { ConfigurationSection } from "./ConfigurationSection";
 import { StorageSection } from "./StorageSection";
 import { EventSection } from "./EventSection";
+import { ManifestSection } from "./ManifestSection";
 import { NamespaceSection } from "./NamespaceSection";
 import { NetworkingSection } from "./NetworkingSection";
 import { NodeSection } from "./NodeSection";
@@ -63,10 +66,31 @@ const NAV: AppNavItem[] = [
   { id: "authorization", label: "授权管理", icon: KeyRound },
   // After the typed categories and before 事件: it is the escape hatch for the
   // types the categories above do not model, so it reads as the end of the
-  // resource list rather than an item inside it. 事件 stays last — it is not a
-  // resource category at all but a stream about the ones above.
+  // resource list rather than an item inside it. YAML 清单 sits next to it as the
+  // write-side counterpart — the browser reads any type, this one writes any
+  // type — and neither belongs inside a single resource category. 事件 stays
+  // last — it is not a resource category at all but a stream about the ones
+  // above.
   { id: "browser", label: "资源对象浏览器", icon: Search },
+  { id: "manifests", label: "YAML 清单", icon: FileCode },
   { id: "events", label: "事件", icon: Bell },
+];
+
+/**
+ * Every permission a document in a manifest can answer to.
+ *
+ * The manifest endpoint has no permission of its own: each document is decided
+ * by the family it belongs to, which is why holding any one of these makes the
+ * category worth showing and holding none of them makes it a page whose every
+ * request comes back refused.
+ */
+const MANIFEST_PERMISSIONS: Permission[] = [
+  "cluster.resource.create",
+  "cluster.resource.update",
+  "cluster.resource.delete",
+  "cluster.namespace.manage",
+  "cluster.secret.manage",
+  "cluster.rbac.manage",
 ];
 
 /** Sections whose queries are scoped by a Namespace as well as by a Cluster. */
@@ -139,6 +163,19 @@ export function ContainerServiceApp() {
     tenantId: scope.tenantId,
     projectId: scope.projectId,
   });
+  // YAML 清单 only writes. It answers to no permission of its own — each document
+  // in a manifest answers to the permission of the family it belongs to — so the
+  // rail shows it to anyone holding any of them, and hides it from a caller who
+  // could not write a single document through it. The Server decides every
+  // document regardless.
+  const projectScope = {
+    type: "project" as const,
+    tenantId: scope.tenantId,
+    projectId: scope.projectId,
+  };
+  const canWriteAnything = MANIFEST_PERMISSIONS.some((permission) =>
+    permissions.can(permission, projectScope),
+  );
   const nav = useMemo(
     () =>
       NAV.map((item) => {
@@ -148,12 +185,17 @@ export function ContainerServiceApp() {
         if (item.id === "authorization") {
           return { ...item, hidden: !canReadRbac };
         }
+        if (item.id === "manifests") {
+          return { ...item, hidden: !canWriteAnything };
+        }
         return item;
       }),
-    [canReadEvents, canReadRbac],
+    [canReadEvents, canReadRbac, canWriteAnything],
   );
   const hiddenSection =
-    (section === "events" && !canReadEvents) || (section === "authorization" && !canReadRbac);
+    (section === "events" && !canReadEvents) ||
+    (section === "authorization" && !canReadRbac) ||
+    (section === "manifests" && !canWriteAnything);
   const activeSection = hiddenSection ? "overview" : section;
 
   // Only the namespaced sections need the picker, and only they pay for the
@@ -384,6 +426,8 @@ export function ContainerServiceApp() {
           tenantId={scope.tenantId}
           projectId={scope.projectId}
         />
+      ) : activeSection === "manifests" ? (
+        <ManifestSection key={clusterId} clusterId={clusterId} clusterName={clusterName} />
       ) : activeSection === "policies" ? (
         <PolicySection
           key={clusterId}

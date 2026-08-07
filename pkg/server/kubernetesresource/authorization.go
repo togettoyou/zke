@@ -342,6 +342,11 @@ func (service *Service) DeleteAuthorizationResource(ctx context.Context, input D
 // What it does not repeat: the identity, scope and version checks the YAML
 // service already made, and Kubernetes' own validation, which stays the final
 // word on whether the object is well-formed.
+//
+// A nil `current` means the object does not exist yet, which is what a manifest
+// apply that creates one submits. Every rule below still applies except the one
+// that is about a change rather than about the submitted object: a RoleRef
+// cannot have moved when there was nothing to move it from.
 func AuthorizationManifestGuard(
 	current map[string]any,
 	submitted map[string]any,
@@ -393,6 +398,9 @@ func AuthorizationManifestGuard(
 		if !validAuthorizationSubjects(subjectViews(value.Subjects)) ||
 			!validAuthorizationRoleRef(resource, &roleRef) {
 			return ErrInvalidInput
+		}
+		if current == nil {
+			return nil
 		}
 		// Kubernetes refuses a changed RoleRef as well, with a message about a
 		// field the operator can see. Refusing it here says the same thing

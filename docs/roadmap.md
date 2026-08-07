@@ -83,6 +83,13 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   无法判定时明确报告，支持「仅显示 CRD」筛选、跨命名空间查询、YAML 查看与编辑，以及带 UID/resourceVersion
   前置条件、DryRun 与确认的删除；Secret、Event 与 Kubernetes 授权资源仍被排除在该入口之外，Namespace 可浏览
   和编辑但不能在此创建或删除）
+- [x] YAML 清单批量应用与删除（等价 `kubectl apply -f` / `delete -f` 的多文档清单接口：文件上传或手动输入、
+  Server-Side Apply 固定 field manager、按集群 Discovery 解析 Kind→GVR、逐文档权限判定并在任一文档不被覆盖时
+  整份拒绝且不写入、DryRun 逐条预检、apply 顺序执行与 delete 反序执行、首错停止并报告成功/失败/未执行、
+  delete 携带 UID/resourceVersion 前置条件、按对象身份派生的逐文档幂等键、DryRun 与被拒绝请求写聚合审计而
+  实际执行写逐文档审计，以及 Console 的「YAML 清单」分区闭环；不原子、不回滚，清单自身创建的 Namespace 内的
+  文档无法服务端预检并据实标记为「未预检」，同清单内 CRD 与其自定义资源的同类限制尚未识别，
+  Kustomize 与 Helm 渲染尚未纳入）
 - [x] 策略管理（命名空间级 ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget 与集群级
   PriorityClass 的类型化 List/Detail/Create/Update/Delete，两种作用域分路由隔离，整份托管 spec 替换式更新、
   Kubernetes 不可变字段保护（ResourceQuota scopes、PriorityClass value、PDB selector）、DryRun、确认、幂等、

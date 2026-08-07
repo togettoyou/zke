@@ -36,6 +36,16 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
 )
 
+// Most documents one manifest request may carry.
+//
+// Every document is a separate round trip to the Cluster's Agent, and they run
+// in sequence, so this is what keeps one operator's file from occupying that
+// Cluster's resource stream for as long as the file is long. It is generous
+// enough for the manifests operators actually paste — a Helm-rendered chart of a
+// single application sits well inside it — and a file larger than this is one
+// that belongs in a pipeline rather than in a console form.
+const maxManifestDocuments = 64
+
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	runContext, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
@@ -324,6 +334,14 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				SnapshotTimeout:       cfg.Auth.OperationTimeout,
 				MaximumFollowDuration: cfg.AgentListener.ResourceWatchRequestTimeout,
 				WriteTimeout:          cfg.AgentListener.WriteTimeout,
+			},
+			// A manifest runs its documents one at a time, so it is bounded by
+			// the Agent's own resource request timeout rather than by the budget
+			// for a single write, and by a document count that keeps the total
+			// finite.
+			KubernetesManifest: httpapi.KubernetesManifestHTTPConfig{
+				RequestTimeout: cfg.AgentListener.ResourceRequestTimeout,
+				MaxDocuments:   maxManifestDocuments,
 			},
 		},
 	)

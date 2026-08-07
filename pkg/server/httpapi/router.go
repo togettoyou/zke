@@ -16,6 +16,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
 	"github.com/togettoyou/zke/pkg/server/podexec"
@@ -46,11 +47,12 @@ type Dependencies struct {
 }
 
 type Config struct {
-	Authentication   AuthenticationConfig
-	AgentEnrollment  AgentEnrollmentHTTPConfig
-	PodLogs          PodLogsHTTPConfig
-	PodExec          PodExecHTTPConfig
-	KubernetesEvents KubernetesEventsHTTPConfig
+	Authentication     AuthenticationConfig
+	AgentEnrollment    AgentEnrollmentHTTPConfig
+	PodLogs            PodLogsHTTPConfig
+	PodExec            PodExecHTTPConfig
+	KubernetesEvents   KubernetesEventsHTTPConfig
+	KubernetesManifest KubernetesManifestHTTPConfig
 }
 
 type handlers struct {
@@ -82,13 +84,19 @@ type handlers struct {
 	// over a service carrying that family's rules.
 	kubernetesAuthorizationYAML *kubernetesAuthorizationYAMLHandler
 	kubernetesSecretYAML        *kubernetesSecretYAMLHandler
-	resourceManagement          *resourceManagementHandler
-	accessManagement            *accessManagementHandler
-	auditQuery                  *auditQueryHandler
-	authMiddleware              *httpmiddleware.Authentication
-	authorizationMiddleware     *httpmiddleware.Authorization
-	requestTimeout              gin.HandlerFunc
-	roleBindingCache            gin.HandlerFunc
+	// Whole manifests, whose documents may belong to any of the families above
+	// and are therefore decided one at a time rather than by the route.
+	kubernetesManifest      *kubernetesManifestHandler
+	resourceManagement      *resourceManagementHandler
+	accessManagement        *accessManagementHandler
+	auditQuery              *auditQueryHandler
+	authMiddleware          *httpmiddleware.Authentication
+	authorizationMiddleware *httpmiddleware.Authorization
+	requestTimeout          gin.HandlerFunc
+	// A manifest is a bounded number of single-object writes in sequence, so it
+	// cannot run under the budget that bounds one of them.
+	manifestRequestTimeout gin.HandlerFunc
+	roleBindingCache       gin.HandlerFunc
 }
 
 var configureGinMode sync.Once
@@ -307,6 +315,21 @@ func New(
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),
+		// The manifest service holds no resource accessor of its own: the access
+		// is built per request from the caller's resolved grant, because which
+		// families a manifest may touch is the caller's question and not the
+		// Server's.
+		kubernetesManifest: newKubernetesManifestHandler(
+			logger,
+			kubernetesmanifest.NewService(kubernetesmanifest.Config{
+				MaxDocuments: config.KubernetesManifest.MaxDocuments,
+				FieldManager: manifestFieldManager,
+			}),
+			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+			config.KubernetesManifest,
+		),
 		resourceManagement: newResourceManagementHandler(
 			logger,
 			dependencies.ResourceManagementService,
@@ -343,6 +366,9 @@ func New(
 		),
 		requestTimeout: httpmiddleware.RequestTimeout(
 			config.Authentication.OperationTimeout,
+		),
+		manifestRequestTimeout: httpmiddleware.RequestTimeout(
+			config.KubernetesManifest.RequestTimeout,
 		),
 		roleBindingCache: httpmiddleware.RoleBindingCache(),
 	}

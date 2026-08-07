@@ -103,6 +103,16 @@ type PatchResourceInput struct {
 	Options        MutationOptions
 	Confirm        bool
 	IdempotencyKey string
+	// See ListResourcesInput.secretAccess. Set only by the manifest access, and
+	// only for a document that already answered to `cluster.secret.manage`:
+	// server-side Apply is how a Secret is written from a manifest, and without
+	// this the resource layer refuses it exactly as it refuses the generic path.
+	secretAccess bool
+	// See CreateResourceInput.namespaceAccess. Set only by the manifest access,
+	// and only for a document that already answered to
+	// `cluster.namespace.manage` — Apply creates the object when it is absent,
+	// which is the half of Patch `deniedNamespaceWrite` exists to refuse.
+	namespaceAccess bool
 }
 
 type DeletePreconditions struct {
@@ -136,7 +146,13 @@ type ResourcePage struct {
 	RemainingItemCount *int64
 }
 
-func (service *Service) DiscoverResources(
+// requestDiscovery reads the Cluster's API catalog as the Agent reported it,
+// before any of the exclusions the callers apply. Two callers want different
+// exclusions — the resource browser drops what it will not serve, manifest
+// resolution keeps everything so that "which GVR is this Kind" has an answer
+// that does not depend on the caller's permissions — so the exclusions belong to
+// them and the read belongs here.
+func (service *Service) requestDiscovery(
 	ctx context.Context,
 	clusterID string,
 ) (kubernetescatalog.Catalog, error) {
@@ -166,6 +182,17 @@ func (service *Service) DiscoverResources(
 			"%w: decode Kubernetes discovery catalog",
 			ErrInvalidResponse,
 		)
+	}
+	return catalog, nil
+}
+
+func (service *Service) DiscoverResources(
+	ctx context.Context,
+	clusterID string,
+) (kubernetescatalog.Catalog, error) {
+	catalog, err := service.requestDiscovery(ctx, clusterID)
+	if err != nil {
+		return kubernetescatalog.Catalog{}, err
 	}
 	filtered := make([]kubernetescatalog.Resource, 0, len(catalog.Resources))
 	for _, resource := range catalog.Resources {
@@ -402,9 +429,7 @@ func (service *Service) PatchResource(
 	ctx context.Context,
 	input PatchResourceInput,
 ) (map[string]any, error) {
-	// No `namespaceAccess` on this input: the typed Namespace service does not
-	// patch, so nothing in the package needs the exemption.
-	if deniedNamespaceWrite(input.Resource, false) {
+	if deniedNamespaceWrite(input.Resource, input.namespaceAccess) {
 		return nil, ErrInvalidInput
 	}
 	if err := validateMutationBase(
@@ -415,7 +440,7 @@ func (service *Service) PatchResource(
 		input.Options,
 		input.Confirm,
 		input.IdempotencyKey,
-		false,
+		input.secretAccess,
 	); err != nil ||
 		!validPatchType(input.PatchType) ||
 		len(input.Patch) == 0 ||
@@ -442,7 +467,7 @@ func (service *Service) PatchResource(
 			input.Options,
 			input.Confirm,
 			input.IdempotencyKey,
-			false,
+			input.secretAccess,
 		)
 		if err != nil {
 			return nil, err
@@ -464,6 +489,7 @@ func (service *Service) PatchResource(
 			PatchType:       input.PatchType,
 			BodySize:        uint64(len(body)),
 			MutationOptions: protocolMutationOptions(input.Options),
+			SecretAccess:    input.secretAccess,
 		},
 		body,
 		input.IdempotencyKey,
@@ -648,7 +674,7 @@ func validatePatchIdentity(input PatchResourceInput) error {
 			input.Options,
 			input.Confirm,
 			input.IdempotencyKey,
-			false,
+			input.secretAccess,
 		)
 		return err
 	}

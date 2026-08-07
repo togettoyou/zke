@@ -1530,6 +1530,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/kubernetes/manifests/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 以 Server-Side Apply 应用一份多文档 Kubernetes YAML 清单，等价于
+         *     `kubectl apply -f`：对象不存在则创建，存在则合并，field manager 固定为
+         *     `zke-manifest`。正文最大 4 MiB，文档数量有上限。
+         *
+         *     权限逐文档判定，不由路由单独决定：Secret 需要 `cluster.secret.manage`，
+         *     Kubernetes RBAC 五类需要 `cluster.rbac.manage`，Namespace 需要
+         *     `cluster.namespace.manage`，其余资源按新建或更新分别需要
+         *     `cluster.resource.create` 或 `cluster.resource.update`。只要有一个文档不被
+         *     当前身份的权限覆盖，整份清单被拒绝且不写入任何对象，返回 403。
+         *
+         *     dry_run=true 时逐文档解析、探测存在性、判定权限并调用 Kubernetes DryRun，
+         *     无需 confirm，且始终返回逐文档结果；实际写入必须提供 confirm=true。
+         *
+         *     执行按文档顺序进行，遇到第一个失败即停止。Kubernetes 没有事务，因此已写入的
+         *     对象不会回滚，响应逐文档报告 succeeded、failed 与 not_attempted。
+         *
+         *     审计按集群中是否真的发生变化决定粒度：dry-run 与被整份拒绝的请求各写一条聚合记录，
+         *     带文档总数与被拒绝数；实际执行逐文档记录。两者都不记录 YAML 正文。
+         */
+        post: operations["applyKubernetesManifest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/kubernetes/manifests/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 删除一份多文档 Kubernetes YAML 清单所描述的对象，等价于
+         *     `kubectl delete -f`。清单只用于指名对象，正文其余字段不参与删除。
+         *
+         *     权限逐文档判定，规则与 apply 相同，只是通用资源需要
+         *     `cluster.resource.delete`。有任一文档不被覆盖时整份清单被拒绝。
+         *
+         *     每个对象先读取再删除，并携带读到的 UID 与 resourceVersion 作为前置条件，
+         *     因此不会删到同名重建的对象；对象已不存在的文档记为 skipped 而不是失败。
+         *
+         *     执行按文档反序进行——清单通常先写容器、后写其中的对象，反序删除才不会在
+         *     文件尚未提到依赖对象时先移除承载它们的对象。遇到第一个失败即停止，
+         *     已删除的对象不会恢复。
+         *
+         *     审计按集群中是否真的发生变化决定粒度：dry-run 与被整份拒绝的请求各写一条聚合记录，
+         *     带文档总数与被拒绝数；实际执行逐文档记录，对象本就不存在的文档不记录。
+         *     两者都不记录 YAML 正文。
+         */
+        post: operations["deleteKubernetesManifest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/cluster-enrollments": {
         parameters: {
             query?: never;
@@ -1904,6 +1974,47 @@ export interface components {
         /** @description Kubernetes Unstructured JSON 对象；metadata.managedFields 已移除。 */
         KubernetesUnstructuredResource: {
             [key: string]: unknown;
+        };
+        KubernetesManifestResult: {
+            /** @description true 表示本次只做了规划与 Kubernetes DryRun，集群状态未改变。 */
+            dry_run: boolean;
+            /** @description 当前身份的权限覆盖了清单中的每一个文档。为 false 时整份清单被拒绝， 没有任何对象被写入；该情形下实际写入请求返回 403，只有 dry-run 会以 200 返回逐文档判定。 */
+            allowed: boolean;
+            /** @description 至少有一个文档执行失败，执行在该文档处停止。 */
+            failed: boolean;
+            /** @description 集群 Discovery 不完整，因此“Kind 未知”只表示本次没查到，不能断定集群中 不存在该类型。 */
+            catalog_partial: boolean;
+            /** @description 按提交顺序排列，与实际执行顺序无关。 */
+            documents: components["schemas"]["KubernetesManifestDocument"][];
+        };
+        KubernetesManifestDocument: {
+            /** @description 在提交清单中的序号，只计非空文档，从 0 开始。 */
+            index: number;
+            api_version: string;
+            kind: string;
+            /** @description 文档自带的或由请求 namespace 填充后的 Namespace；集群级对象为空。 */
+            namespace: string;
+            name: string;
+            /**
+             * @description 读取集群后判定的实际含义。absent 表示删除的对象本就不存在； unknown 表示文档没能解析到可以判定的程度。
+             * @enum {string}
+             */
+            action: "create" | "update" | "delete" | "absent" | "unknown";
+            /**
+             * @description planned 只出现在 dry-run 结果中，表示该文档已就绪；refused 表示权限不覆盖该文档； invalid 表示文档无法解析成请求；not_attempted 表示排在失败文档之后， 从未提交给集群。dry-run 成功的文档记为 planned 而不是 succeeded——它是「准备好了」， 不是「已经发生了」。
+             * @enum {string}
+             */
+            status: "planned" | "refused" | "invalid" | "succeeded" | "skipped" | "failed" | "not_attempted";
+            /** @description Kubernetes 本身是否看到过这份文档。dry-run 中为 false 表示该文档没能提交校验： 清单先创建 Namespace 再往里放对象时，dry-run 创建的 Namespace 不落地，后续文档 提交进去只会得到 not found。这类文档仍然会被规划并在实际执行时应用，但它们的 「预检通过」只代表没有可检查的东西，不是 API Server 给出的肯定答复。 */
+            previewed: boolean;
+            /** @description 该文档所需的 ZKE 权限；文档未解析到可判定归属时为空。 */
+            permission: string;
+            uid: string;
+            resource_version: string;
+            /** @description 与其余 Kubernetes 接口共用的错误码；成功时为空。 */
+            error_code: string;
+            /** @description 面向操作者的失败说明；不包含 Server 内部信息，也不回显 YAML 正文。 */
+            error_message: string;
         };
         KubernetesGenericResourcePage: {
             api_version: string;
@@ -9031,6 +9142,109 @@ export interface operations {
                 };
                 content: {
                     "application/yaml": string;
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    applyKubernetesManifest: {
+        parameters: {
+            query?: {
+                /**
+                 * @description 为未写明 metadata.namespace 的命名空间级文档填充的目标 Namespace。
+                 *     文档自带且与之不同时该文档被判为无效，而不是被覆盖；集群级对象不受影响。
+                 */
+                namespace?: string;
+                /** @description 仅规划并调用 Kubernetes API Server DryRun，不持久化变更。 */
+                dry_run?: boolean;
+                /** @description 实际写入必须为 true；dry-run 可省略。 */
+                confirm?: boolean;
+                /** @description Server-Side Apply 字段所有权冲突时强制接管，默认拒绝冲突。 */
+                force?: boolean;
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/yaml": string;
+            };
+        };
+        responses: {
+            /** @description 清单规划或执行结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesManifestResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesManifest: {
+        parameters: {
+            query?: {
+                /** @description 为未写明 metadata.namespace 的命名空间级文档填充的目标 Namespace。 */
+                namespace?: string;
+                /** @description 仅规划并调用 Kubernetes API Server DryRun，不实际删除。 */
+                dry_run?: boolean;
+                /** @description 实际删除必须为 true；dry-run 可省略。 */
+                confirm?: boolean;
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/yaml": string;
+            };
+        };
+        responses: {
+            /** @description 清单规划或执行结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesManifestResult"];
+                    };
                 };
             };
             400: components["responses"]["InvalidRequest"];

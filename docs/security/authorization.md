@@ -290,6 +290,9 @@ Kubernetes Namespace 使用的 `cluster.namespace.manage`。
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。
 
+多文档 YAML 清单接口不引入新权限，但它的所需权限由正文而不是路由决定，见下文
+「多文档清单：逐文档判权，整份拒绝」。
+
 通用 Kubernetes 写操作只允许明确 Cluster、GVR、Namespace 和名称的非 Secret、非授权主资源；Agent 与 Server
 双重拒绝 Secret 和任意 Subresource，Kubernetes 授权资源由 Server 拒绝并要求使用专用接口，最终资源权限继续由 Agent ServiceAccount 的 Kubernetes RBAC 裁决。
 实际变更要求显式确认，DryRun 可在确认前预览 API Server 校验和默认值。Create 禁止 `generateName`，
@@ -422,6 +425,66 @@ Secret 与 Kubernetes 授权资源从该入口排除，避免绕过 `cluster.sec
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
 `resourceVersion` 和当前实时对象逐项核对；同名对象已重建或版本已变化时返回冲突。实际更新还要求 CSRF、
 幂等键与显式确认，DryRun 使用同一 API Server 校验链路。日志与审计均不记录 YAML 正文或字段值。
+
+#### 多文档清单：逐文档判权，整份拒绝
+
+`POST /api/v1/clusters/{cluster_id}/kubernetes/manifests/apply` 与 `.../manifests/delete` 是平台里**唯一**
+所需权限无法由路由决定的写接口。其余每个写路由都在 URL 里点名了一个族的一个对象，因此
+`RequireCluster` 能在 handler 运行前判完；一份清单同时携带 Deployment、Secret 和 RoleBinding，而这三者正是
+类型化 API 刻意分开的三个权限。
+
+因此权限在两处判定，缺一不可：
+
+- **路由层**只要求 `cluster.read`。它是下限——确认调用者至少看得见这个 Cluster——并为看不见的调用者产生
+  与其他路由一致的拒绝审计。它不是这两个接口的授权。
+- **逐文档层**由 `ResolveClusterManifestGrant` 一次性解析
+  `cluster.resource.create/update/delete`、`cluster.namespace.manage`、`cluster.secret.read/manage` 与
+  `cluster.rbac.manage`（与 Secret Grant 同一套「只解析、不拒绝」的中间件模式），再对每个文档判定它所属族
+  需要的权限。
+
+映射与类型化 API 完全一致，没有为清单放宽任何一条：
+
+| 文档 | apply 需要 | delete 需要 |
+| --- | --- | --- |
+| Secret | `cluster.secret.manage` | `cluster.secret.manage` |
+| Kubernetes 授权五类 | `cluster.rbac.manage` | `cluster.rbac.manage` |
+| Namespace | `cluster.namespace.manage` | `cluster.namespace.manage` |
+| Event（两个 group） | 一律拒绝 | 一律拒绝 |
+| 其余主资源 | 对象不存在时 `cluster.resource.create`，存在时 `cluster.resource.update` | `cluster.resource.delete` |
+
+这比路由级判定**更严**而不是更松：只要清单中有一个文档不被覆盖，整份清单被拒绝并返回 403，**不写入任何
+对象**——包括调用者本来有权写的那些。放行「有权的部分」等于由权限而不是操作者决定了一次部分应用，而落地的
+恰好是没人单独要求过的那一半。
+
+Namespace 之所以对 apply 一律要求 `cluster.namespace.manage`（而不是像通用 YAML 更新那样按 Update 放行），
+是因为服务端 Apply 在对象不存在时会创建它——那正是 `deniedNamespaceWrite` 存在的那一半；若按「已存在就用弱
+权限」判定，操作者只要应用两次就能满足它。
+
+`secretAccess` 与 `namespaceAccess` 仍是包外无法设置的标记。清单服务位于 `pkg/server/kubernetesmanifest`，
+够不到它们；打开这两道边界的唯一入口是 `kubernetesresource.ManifestAccess`，且只对**已经通过该族权限判定**的
+文档打开。边界没有被放宽，只是被同一套判定从另一条路径抵达。
+
+各族自己的守卫同样在清单路径上重跑，不是只在类型化路径上跑：对象不得声明 ZKE 的 `managed-by` 标签、ZKE 自身
+的 Secret 与授权对象不可读写删、Secret 的 `type` 与不可变性、RoleBinding 的 `roleRef` 不可改（创建时不适用，
+因为无从谈起「改」）、以及 PolicyRule 中的 Secret 授予必须由调用者自身持有对应 `cluster.secret.*`——
+最后一条尤其关键：少了它，一份清单就会把 `cluster.rbac.manage` 变成平台里所有 Secret 权限。
+
+执行语义与审计：apply 按文档顺序、delete 按文档反序逐条执行，遇到第一个失败即停止；Kubernetes 没有事务，
+已写入的对象不回滚，响应逐条报告 `succeeded`、`failed` 与 `not_attempted`。delete 先读取对象并携带读到的
+UID 与 `resourceVersion` 作为前置条件，对象已不存在记为跳过而非失败。幂等键按「请求键 + 操作 + 是否 DryRun +
+对象身份」派生，因此重排文件不会让某个对象沿用另一个对象的键，DryRun 与实际执行也不会共用键。
+
+审计的粒度按**集群中是否真的发生了变化**决定，两条都不新增动作名（apply 记为 `kubernetes_resource.patch`——
+服务端 Apply 本就是一次 Patch，delete 记为 `kubernetes_resource.delete`，DryRun 记为对应的 `.dry_run` 变体）：
+
+- **DryRun 与被拒绝的请求各写一条聚合记录。** 两者都没有改变任何对象，也都是会被反复发起的请求——DryRun 在
+  操作者修正文件时反复点，被拒绝的请求在权限补齐前反复试。逐文档记录会让每次预检往审计表里写几十行，把真正
+  写入了对象的记录淹没在其中。聚合记录仍然带有发起者、Cluster、操作类型、文档总数，以及被拒绝的文档数——
+  最后这个数字是这条记录与「什么都没做」的区别，它说明触到了一次权限边界。
+- **实际执行逐文档记录。** 对象确实变了，审计就必须逐个点名，包括失败的和因首错停止而未执行的那些——一次中途
+  停下的执行走到了哪里，正是审计要回答的问题。删除时对象本就不存在的文档不记录：没有向集群发出任何请求。
+
+无论哪种粒度都不记录 YAML 正文。
 
 Pod 日志读取不复用宽泛的 `cluster.read` 或通用资源写权限。请求必须明确 Cluster、Namespace、Pod 当前 UID
 和容器，Server 与 Agent 通过独立日志协议执行，最终还受 Agent ServiceAccount 的 `pods/log` 最小权限约束。
