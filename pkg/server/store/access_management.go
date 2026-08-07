@@ -639,17 +639,27 @@ FOR UPDATE OF role_bindings
 	if err != nil {
 		return ManagedRoleBinding{}, fmt.Errorf("lock role binding deletion: %w", err)
 	}
-	// Checked before the administrator rule, because it is the more specific
-	// account of what happened: an administrator unbinding themselves is told
-	// they cannot unbind themselves, rather than that one administrator must
-	// remain.
-	if item.SubjectID == input.ActorUserID {
-		return ManagedRoleBinding{}, ErrSelfUnbind
-	}
+	// The administrator rule runs first, and the order is the whole point.
+	//
+	// `administrators <= 1` can only hold when the actor and the subject are the
+	// same person: both have to be in that set for the rule to be reached, and a
+	// set of one has one member. So the last global administrator unbinding
+	// themselves is the only way ErrLastGlobalAdmin is ever produced on this
+	// path — checking self-deletion first does not merely reorder two refusals,
+	// it retires that one entirely.
+	//
+	// It is also the worse answer for the person who hit it. "Have another
+	// administrator do it" is what the self rule says, and there is no other
+	// administrator; "one must remain" is the fact they need. Below two
+	// administrators the self rule is the accurate one, and that is where it
+	// applies.
 	if item.Role == "admin" && item.ScopeType == "global" {
 		if err := ensureNotLastGlobalAdmin(ctx, transaction, input.ActorUserID, item.SubjectID); err != nil {
 			return ManagedRoleBinding{}, err
 		}
+	}
+	if item.SubjectID == input.ActorUserID {
+		return ManagedRoleBinding{}, ErrSelfUnbind
 	}
 	if _, err := transaction.Exec(
 		ctx,

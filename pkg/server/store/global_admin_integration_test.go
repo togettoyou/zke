@@ -253,16 +253,34 @@ func TestNobodyMayDeleteTheirOwnRoleBinding(t *testing.T) {
 		t.Fatalf("DeleteRoleBinding(own) error = %v, want ErrSelfUnbind", err)
 	}
 
-	// The administrator's own binding is refused for the same reason, and is
-	// reported as the self-deletion it is rather than as the last-administrator
-	// rule it would also have tripped.
+	// The sole administrator's own binding is refused by the rule above it,
+	// not by this one. Both would refuse, and the order decides which fact the
+	// operator is told: "have another administrator do it" is what the self rule
+	// says, and at this point there is no other administrator.
 	if _, err := accessStore.DeleteRoleBinding(ctx, store.DeleteManagedRoleBindingParams{
 		BindingID:   "74000000-0000-4000-8000-00000000000b",
 		ActorUserID: builtinAdminUserID,
 		RequestID:   "74000000-0000-4000-8000-0000000000fb",
 		Now:         time.Now().UTC(),
+	}); !errors.Is(err, store.ErrLastGlobalAdmin) {
+		t.Fatalf("DeleteRoleBinding(sole admin, own) error = %v, want ErrLastGlobalAdmin", err)
+	}
+
+	// With a second administrator the count rule has nothing to say, and the
+	// self rule becomes both applicable and accurate.
+	if _, err := pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES ('74000000-0000-4000-8000-0000000000e3', $1, 'admin', 'global')
+`, customAdminUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := accessStore.DeleteRoleBinding(ctx, store.DeleteManagedRoleBindingParams{
+		BindingID:   "74000000-0000-4000-8000-00000000000b",
+		ActorUserID: builtinAdminUserID,
+		RequestID:   "74000000-0000-4000-8000-000000000101",
+		Now:         time.Now().UTC(),
 	}); !errors.Is(err, store.ErrSelfUnbind) {
-		t.Fatalf("DeleteRoleBinding(own admin) error = %v, want ErrSelfUnbind", err)
+		t.Fatalf("DeleteRoleBinding(one of two admins, own) error = %v, want ErrSelfUnbind", err)
 	}
 
 	var bindings int
