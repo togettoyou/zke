@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"testing"
 	"time"
 
@@ -190,6 +192,150 @@ func TestGenericKubernetesResourceMutationHandlers(t *testing.T) {
 		)
 	}
 	assertErrorCode(t, missingConfirmation, "confirmation_required")
+}
+
+// The five Kubernetes authorization kinds must not reach the resource tree.
+//
+// They answer to `cluster.rbac.read`/`cluster.rbac.manage` and are reachable
+// only through the dedicated `/authorization` API; the resource browser is built
+// on this catalog, so a kind listed here is a kind it offers under
+// `cluster.read`. The refusal on the request path has its own test
+// (`TestGenericResourceIdentityRejectsAuthorizationResources`) — this is the
+// other half, and the half that decides what an operator is shown.
+//
+// The Agent reports them like any other kind: the exclusion is the Server's, so
+// the fake catalog carries them and the assertion is that the response does not.
+func TestDiscoveryOmitsAuthorizationResources(t *testing.T) {
+	t.Parallel()
+
+	authorization := []kubernetescatalog.Resource{
+		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles", Kind: "Role", Namespaced: true, Verbs: []string{"get", "list"}},
+		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles", Kind: "ClusterRole", Verbs: []string{"get", "list"}},
+		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings", Kind: "RoleBinding", Namespaced: true, Verbs: []string{"get", "list"}},
+		{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings", Kind: "ClusterRoleBinding", Verbs: []string{"get", "list"}},
+		{Group: "", Version: "v1", Resource: "serviceaccounts", Kind: "ServiceAccount", Namespaced: true, Verbs: []string{"get", "list"}},
+	}
+	widget := kubernetescatalog.Resource{
+		Group:      "example.io",
+		Version:    "v1alpha1",
+		Resource:   "widgets",
+		Kind:       "Widget",
+		Namespaced: true,
+		Verbs:      []string{"get", "list"},
+	}
+	router := genericResourceHandlerTestRouter(&fakeGenericKubernetesResourceService{
+		discover: func(context.Context, string) (kubernetescatalog.Catalog, error) {
+			return kubernetescatalog.Catalog{
+				Resources: append(append([]kubernetescatalog.Resource{}, authorization...), widget),
+			}, nil
+		},
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/clusters/"+testHTTPClusterID+"/kubernetes/resource-types",
+		nil,
+	))
+	if response.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d: %s", response.Code, response.Body)
+	}
+	var catalog kubernetescatalog.Catalog
+	if err := decodeSuccessResponse(response, &catalog); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, resource := range catalog.Resources {
+		for _, refused := range authorization {
+			if resource.Group == refused.Group && resource.Resource == refused.Resource {
+				t.Errorf(
+					"resource tree offers %s/%s, which is reachable only through the authorization API",
+					refused.Group,
+					refused.Resource,
+				)
+			}
+		}
+	}
+	// The unrelated kind has to survive, or an empty catalog would satisfy the
+	// assertion above without the filter doing anything.
+	if len(catalog.Resources) != 1 || catalog.Resources[0].Resource != widget.Resource {
+		t.Fatalf("unexpected catalog after filtering: %+v", catalog.Resources)
+	}
+}
+
+// The catalog drives which actions the resource browser offers, so it must not
+// advertise the two verbs this endpoint refuses for Namespaces. Reporting them
+// would put a delete button on screen that is refused on every click.
+func TestDiscoveryNarrowsNamespaceVerbs(t *testing.T) {
+	t.Parallel()
+
+	router := genericResourceHandlerTestRouter(&fakeGenericKubernetesResourceService{
+		discover: func(context.Context, string) (kubernetescatalog.Catalog, error) {
+			return kubernetescatalog.Catalog{Resources: []kubernetescatalog.Resource{{
+				Version:  "v1",
+				Resource: "namespaces",
+				Kind:     "Namespace",
+				Verbs:    []string{"get", "list", "create", "update", "patch", "delete"},
+			}}}, nil
+		},
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/clusters/"+testHTTPClusterID+"/kubernetes/resource-types",
+		nil,
+	))
+	if response.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d: %s", response.Code, response.Body)
+	}
+	var catalog kubernetescatalog.Catalog
+	if err := decodeSuccessResponse(response, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Resources) != 1 {
+		t.Fatalf("catalog = %+v, want the Namespace type", catalog.Resources)
+	}
+
+	verbs := catalog.Resources[0].Verbs
+	for _, refused := range []string{"create", "delete", "patch"} {
+		if slices.Contains(verbs, refused) {
+			t.Errorf("catalog offers %q on Namespaces, which this endpoint refuses", refused)
+		}
+	}
+	// Reading and updating stay: the browser lists Namespaces and its YAML editor
+	// updates them, both of which this endpoint still serves.
+	for _, kept := range []string{"get", "list", "update"} {
+		if !slices.Contains(verbs, kept) {
+			t.Errorf("catalog dropped %q on Namespaces, which this endpoint serves", kept)
+		}
+	}
+}
+
+// Creating and deleting a Namespace answers to `cluster.namespace.manage`, so
+// the generic path — which is authorized by `cluster.resource.*` — must not
+// offer either. Update stays open: changing an existing Namespace's metadata
+// neither creates a scope nor destroys what is in one, and the YAML editor is
+// built on it. Patch is closed because server-side Apply creates what is absent.
+func TestGenericMutationIdentityRejectsNamespaceCreateAndDelete(t *testing.T) {
+	t.Parallel()
+
+	namespaces := url.Values{"version": {"v1"}, "resource": {"namespaces"}}
+	if _, _, err := parseGenericResourceMutationIdentityQuery(namespaces); err == nil {
+		t.Error("generic mutation identity accepted core/v1 namespaces")
+	}
+	// The read and update parser is the one the browser and the YAML editor use.
+	if _, _, err := parseGenericResourceIdentityQuery(namespaces); err != nil {
+		t.Errorf("generic identity refused core/v1 namespaces for read and update: %v", err)
+	}
+	// A resource merely named `namespaces` in some other group is a custom
+	// resource like any other, and the exclusion is about the core one.
+	custom := url.Values{
+		"group": {"example.io"}, "version": {"v1"}, "resource": {"namespaces"},
+	}
+	if _, _, err := parseGenericResourceMutationIdentityQuery(custom); err != nil {
+		t.Errorf("generic mutation identity refused example.io/v1 namespaces: %v", err)
+	}
 }
 
 type fakeGenericKubernetesResourceService struct {

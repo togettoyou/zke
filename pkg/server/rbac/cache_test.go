@@ -165,3 +165,40 @@ func TestGlobalAdminRoleMatchesAuthorization(t *testing.T) {
 		t.Fatal("the global administrator role is not a builtin role")
 	}
 }
+
+// The self-lockout rule compares the actor's global permission set before and
+// after a role update, so it names no permission at all and there is nothing
+// here for it to drift against.
+//
+// What it does depend on is the ceiling being measured over global bindings —
+// the same set — since that is what makes a loss unrecoverable and the refusal
+// worth making. `GlobalPermissions` is that set, and this asserts it stays
+// global-only.
+func TestGlobalPermissionsIgnoresScopedBindings(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(bindingStub{bindings: []store.RoleBinding{
+		{
+			Role:        "scoped",
+			ScopeType:   "tenant",
+			TenantID:    testTenantID,
+			Permissions: permissionNames([]Permission{PermissionClusterRead}),
+		},
+		{
+			Role:        "global",
+			ScopeType:   "global",
+			Permissions: permissionNames([]Permission{PermissionRBACManage}),
+		},
+	}})
+
+	held, err := service.GlobalPermissions(context.Background(), testUserID)
+	if err != nil {
+		t.Fatalf("GlobalPermissions() error = %v", err)
+	}
+	if _, granted := held[PermissionRBACManage]; !granted {
+		t.Error("GlobalPermissions() dropped a permission held through a global binding")
+	}
+	if _, granted := held[PermissionClusterRead]; granted {
+		t.Error("GlobalPermissions() counted a permission held only through a tenant binding")
+	}
+}

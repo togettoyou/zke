@@ -126,6 +126,7 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getUser"];
+        /** @description 修改用户显示名称。目标是全局管理员时要求调用者本人也是全局管理员， 否则返回 `403 global_admin_required`——该规则覆盖全局管理员账号上的 一切写操作，而不只是危险的那些。 */
         put: operations["updateUser"];
         post?: never;
         /**
@@ -243,7 +244,9 @@ export interface paths {
         get: operations["getRole"];
         /**
          * 修改角色
-         * @description 权限集是整体替换。`name` 不可修改：绑定与审计记录都以它指代该角色。 内置角色返回 409 `builtin_role`；改动后若不再有任何账号在全局同时持有 `user.manage` 与 `rbac.manage`，返回 409 `last_global_admin`。
+         * @description 权限集是整体替换。`name` 不可修改：绑定与审计记录都以它指代该角色。 内置角色返回 409 `builtin_role`。
+         *     修改按「改动了什么」判定：本次**新增**的权限若超出调用者在全局持有的 范围，返回 403 `permission_escalation`；本次**移除**的权限若超出同一 范围，返回 403 `permission_revocation`——收回自己没有的权限同样越权。 两个集合里都存在的权限不参与判定，因此改说明、改名称不需要先删掉调用者 未持有的权限。两种拒绝都列出越界的权限名。
+         *     此外，改动后调用者本人在全局持有的权限集若变小，返回 409 `self_lockout_forbidden` 并列出会失去的权限名——角色只能包含作者已持有 的权限，所以那些权限之后无法由本人加回来，与禁止删除授予自身的绑定同一 条理由。收回一个人的权限只能由别人来做。
          */
         put: operations["updateRole"];
         post?: never;
@@ -283,6 +286,10 @@ export interface paths {
         get: operations["getRoleBinding"];
         put?: never;
         post?: never;
+        /**
+         * @description 删除一条授权关系。删除等于一次性收回该角色授予的全部权限，因此要求调用者 本人在全局持有该角色的每一项权限，否则返回 403 `permission_revocation` 并列出越界的权限名——收回自己没有的权限与授予自己没有的权限同样越权。
+         *     另外禁止删除授予调用者自身的绑定（409 `self_unbind_forbidden`），以及 由非全局管理员移除全局管理员、或移除最后一个全局管理员。
+         */
         delete: operations["deleteRoleBinding"];
         options?: never;
         head?: never;
@@ -576,6 +583,10 @@ export interface paths {
         /**
          * @description 在目标 Cluster 创建 Namespace。dry_run=true 时执行 Kubernetes 服务端
          *     DryRun；实际创建必须显式 confirm=true。
+         *
+         *     要求 `cluster.namespace.manage`，不由 `cluster.resource.create` 蕴含：
+         *     创建一个 Namespace 新增的是其余 Kubernetes 权限得以行使的作用域本身。
+         *     通用 Resource 接口相应拒绝 `core/v1 namespaces` 的 Create 与 Patch。
          */
         post: operations["createKubernetesNamespace"];
         delete?: never;
@@ -598,6 +609,10 @@ export interface paths {
         /**
          * @description 删除目标 Cluster 中的 Namespace。dry_run=true 时执行 Kubernetes 服务端
          *     DryRun；实际删除必须显式 confirm=true。
+         *
+         *     要求 `cluster.namespace.manage`，不由 `cluster.resource.delete` 蕴含：
+         *     删除一个 Namespace 会连同其中的全部对象一起移除。通用 Resource 接口
+         *     相应拒绝 `core/v1 namespaces` 的 Delete。
          */
         delete: operations["deleteKubernetesNamespace"];
         options?: never;
@@ -1636,7 +1651,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.event.read" | "cluster.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -1721,8 +1736,11 @@ export interface components {
             name: string;
             /** @description 调用者是否在全局持有该权限。角色不得包含作者未持有的权限， 因此 `held` 为 false 的权限无法被写入角色。 */
             held: boolean;
-            /** @description 该权限是否只在 Global 作用域被校验。为 true 时，它在 Tenant 或 Project 绑定上不生效——这样的绑定仍然允许创建（角色的其余权限照常 生效），但整个角色都由此类权限组成时会返回 `400 global_only_role`，因为那样的绑定不授予任何权限。 */
-            global_only: boolean;
+            /**
+             * @description 能够行使该权限的最窄绑定作用域。比它更窄的绑定携带该权限不生效： `global` 的权限在 Tenant 与 Project 绑定上不生效，`tenant` 的权限 （目前只有 `project.create`）在 Project 绑定上不生效。这样的绑定仍然 允许创建（角色的其余权限照常生效），但整个角色都由该作用域无法行使的 权限组成时会返回 `400 role_unreachable_at_scope`，因为那样的绑定不授予任何权限。
+             * @enum {string}
+             */
+            minimum_scope: "global" | "tenant" | "project";
         };
         Role: {
             id: components["schemas"]["UUID"];

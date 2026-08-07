@@ -96,6 +96,26 @@ func (store *AccessManagementStore) UpdateUser(
 		return ManagedUser{}, fmt.Errorf("begin managed user update: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	// Locked before the guard for the same reason the other write paths do it:
+	// the row must not change identity between being judged and being written.
+	if _, err := transaction.Exec(
+		ctx,
+		"SELECT 1 FROM users WHERE id = $1 FOR UPDATE",
+		input.UserID,
+	); err != nil {
+		return ManagedUser{}, fmt.Errorf("lock managed user for update: %w", err)
+	}
+	// A display name is not access, and this guard is not about the field. It is
+	// about the account: a global administrator's is not one that anybody outside
+	// the group gets to act on, and carving out the operations that happen to be
+	// harmless leaves the rule to be re-derived per operation, by whoever adds
+	// the next one. Renaming is the cheapest possible test of that rule, which is
+	// why it is the one that was missing.
+	if err := ensureGlobalAdminTargetAllowed(
+		ctx, transaction, input.ActorUserID, input.UserID,
+	); err != nil {
+		return ManagedUser{}, err
+	}
 	item, err := scanManagedUser(transaction.QueryRow(ctx, `
 UPDATE users
 SET display_name = $2, updated_at = GREATEST(updated_at, $4)
@@ -661,6 +681,25 @@ FOR UPDATE OF role_bindings
 	if item.SubjectID == input.ActorUserID {
 		return ManagedRoleBinding{}, ErrSelfUnbind
 	}
+	// Deleting a binding revokes everything its role grants, so it answers to the
+	// same rule as editing that role: an actor may only take away authority they
+	// hold themselves.
+	//
+	// Without it the rule on the role path is only half a rule. Removing
+	// `tenant.create` from a role is refused; deleting the binding that grants
+	// somebody a role carrying `tenant.create` is the same revocation, reaches
+	// the same person, and was the shorter way round. Global `admin` was already
+	// covered — by the administrator rules above — but a custom role carrying
+	// every permission was not, and the platform explicitly allows one to exist.
+	//
+	// Ordered after the self rule so that unbinding yourself still reports the
+	// specific refusal. The two never disagree: a binding granting you something
+	// grants nothing you do not hold, so this check passes on that path anyway.
+	if err := ensureActorMayRevokeRole(
+		ctx, transaction, input.ActorUserID, item.Role,
+	); err != nil {
+		return ManagedRoleBinding{}, err
+	}
 	if _, err := transaction.Exec(
 		ctx,
 		"DELETE FROM role_bindings WHERE id = $1",
@@ -723,7 +762,7 @@ func scanManagedRoleBinding(row rowScannerAccess) (ManagedRoleBinding, error) {
 // "holds an equivalent set of permissions": a custom role is written by whoever
 // holds `rbac.manage`, so treating one as equivalent would make the account of
 // last resort removable by an account somebody else defined — and a custom role
-// carrying all 27 permissions is exactly what an attacker who reached
+// carrying all 28 permissions is exactly what an attacker who reached
 // `rbac.manage` would build.
 //
 // The role name is a literal because the store sits below the authorization
@@ -759,8 +798,9 @@ WHERE users.status = 'active'
 //
 //   - one global administrator must always exist, or the install has no way back
 //     in short of the database;
-//   - only a global administrator may remove one, so holding a custom role — even
-//     one carrying every permission there is — is not enough.
+//   - only a global administrator may act on one — remove them, take over their
+//     account, or admit a new member — so holding a custom role, even one
+//     carrying every permission there is, is not enough.
 //
 // The second rule is the one that matters against a compromised account. Without
 // it, reaching any account with `user.manage` and `rbac.manage` was enough to
@@ -796,26 +836,31 @@ func ensureNotLastGlobalAdmin(
 	return nil
 }
 
-// Refuses taking over a global administrator's account from outside the group.
+// Refuses acting on a global administrator's account from outside the group.
 //
-// The membership half of the rule above, without the count. Seizing an account
-// is not removing it, so "one must always remain" has nothing to say here —
-// but "only a global administrator may touch one" has everything to say, and
-// this is the operation that most needed it and least had it.
+// The membership half of the rule above, without the count. Changing an account
+// is not removing it, so "one must always remain" has nothing to say here — but
+// "only a global administrator may act on one" has everything to say, and this
+// is where it is enforced: password reset, unlock, and the display name.
 //
-// A password reset hands the account to whoever asked for it. Every guard on
-// becoming a global administrator watches role bindings: `admin` may only be
-// granted by an administrator, an administrator may only be unbound by another
-// one, and no role may carry more than its author holds. None of them is
-// looking at the password. `user.manage` alone was therefore the whole ladder —
-// reset the administrator's password, sign in as them, and arrive with every
-// permission there is, holding no binding that any of those checks would ever
-// see.
+// A password reset is the reason the guard exists. It hands the account to
+// whoever asked for it, and every guard on *becoming* a global administrator
+// watches role bindings: `admin` may only be granted by an administrator, an
+// administrator may only be unbound by another one, and no role may carry more
+// than its author holds. None of them is looking at the password. `user.manage`
+// alone was therefore the whole ladder — reset the administrator's password,
+// sign in as them, and arrive with every permission there is, holding no binding
+// that any of those checks would ever see. Sessions are revoked by the reset
+// itself, so the real administrator is signed out at the same moment;
+// discovering the takeover means noticing an audit row among the ordinary
+// helpdesk traffic that looks exactly like a password reset, because that is
+// what it is.
 //
-// Sessions are revoked by the reset itself, so the real administrator is signed
-// out at the same moment. Discovering the takeover means noticing an audit row
-// among the ordinary helpdesk traffic that looks exactly like a password reset,
-// because that is what it is.
+// Renaming is here for a different reason: not because it is dangerous, but
+// because the rule is about the account and not about a list of dangerous
+// fields. Exempting the operations that look harmless means the next operation
+// added to this file has to re-derive where the line goes, and the person adding
+// it will be looking at their own operation rather than at the group.
 func ensureGlobalAdminTargetAllowed(
 	ctx context.Context,
 	transaction pgx.Tx,

@@ -220,18 +220,23 @@ func (handler *accessManagementHandler) listPermissions(c *gin.Context) {
 	if handler.respondError(c, "list permissions", err, roleErrors...) {
 		return
 	}
-	// `global_only` travels with the name for the same reason `held` does: both
-	// are facts about whether putting this permission in a role will do
+	// `minimum_scope` travels with the name for the same reason `held` does:
+	// both are facts about whether putting this permission in a role will do
 	// anything, and the role editor is where that has to be visible. Without it
 	// the only way to find out that a permission cannot be exercised on a Tenant
 	// binding was to create the binding and be refused.
+	//
+	// A scope name rather than a boolean, because there are two floors and not
+	// one: `user.manage` reaches nothing below global, `project.create` reaches
+	// nothing below tenant. A `global_only` flag answers the first and silently
+	// reports the second as unrestricted.
 	response := make([]gin.H, 0, len(rbac.Permissions()))
 	for _, permission := range rbac.Permissions() {
 		_, granted := held[permission]
 		response = append(response, gin.H{
-			"name":        string(permission),
-			"held":        granted,
-			"global_only": rbac.GlobalOnly(permission),
+			"name":          string(permission),
+			"held":          granted,
+			"minimum_scope": rbac.MinimumScope(permission),
 		})
 	}
 	writeSuccess(c, http.StatusOK, gin.H{"permissions": response})

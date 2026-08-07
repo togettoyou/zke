@@ -48,7 +48,7 @@ import {
 } from "@/api/types";
 import { AppShell, SectionTitle, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
-import { roleLabel } from "@/auth/capabilities";
+import { BUILTIN_ADMIN_ROLE, roleLabel } from "@/auth/capabilities";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { errorMessage } from "@/api/errors";
@@ -164,6 +164,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   "cluster.pod.exec": "进入 Pod 终端",
   "cluster.event.read": "查看集群事件",
   "cluster.manage": "管理集群",
+  "cluster.namespace.manage": "创建和删除 Kubernetes 命名空间",
   "cluster.resource.create": "创建 Kubernetes 资源",
   "cluster.resource.update": "修改 Kubernetes 资源",
   "cluster.resource.delete": "删除 Kubernetes 资源",
@@ -194,8 +195,48 @@ const PERMISSION_WARNINGS: Record<string, string> = {
   "cluster.secret.read": "可读取 Secret 明文取值",
   "cluster.secret.manage": "可修改和删除 Secret",
   "cluster.pod.exec": "可进入容器终端",
+  "cluster.namespace.manage": "删除命名空间会连同其中的全部对象一起移除",
   "rbac.manage": "可创建角色并授予自己已持有的权限",
 };
+
+/**
+ * Permissions that together reach Secret values without `cluster.secret.read`.
+ *
+ * Creating a workload is enough to mount any Secret in the Namespace, and either
+ * of the two Pod permissions then reads it out of the running container. That is
+ * Kubernetes' own equivalence — `kubectl` behaves the same way — so it is not
+ * something to refuse here. What can be fixed is that the role editor showed no
+ * sign of it: withholding `cluster.secret.read` looked like withholding Secret
+ * access, and it is not.
+ */
+const SECRET_REACHING_PERMISSIONS = ["cluster.pod.logs.read", "cluster.pod.exec"];
+
+/**
+ * How a permission's scope floor reads on a badge.
+ *
+ * The floor is a scope name and not a flag because there are two of them:
+ * `user.manage` reaches nothing below global, `project.create` nothing below
+ * tenant. A role bound to a Project that carries only the latter grants exactly
+ * nothing, and the old boolean had no way to say so.
+ */
+function scopeFloorLabel(minimumScope: string): string {
+  return minimumScope === "global" ? "仅全局生效" : "仅全局和租户生效";
+}
+
+const SCOPE_BREADTH: Record<string, number> = { global: 2, tenant: 1, project: 0 };
+
+/**
+ * Mirrors `rbac.InertAt` in `pkg/server/rbac/service.go`: a binding grants
+ * nothing by carrying a permission whose floor is wider than the binding's own
+ * scope. An unknown floor — a permission this Console build predates — is
+ * treated as reaching everywhere, so the form claims nothing it cannot support.
+ */
+function scopeIsBelowFloor(scopeType: string, minimumScope: string | undefined): boolean {
+  if (minimumScope === undefined) {
+    return false;
+  }
+  return (SCOPE_BREADTH[scopeType] ?? 0) < (SCOPE_BREADTH[minimumScope] ?? 0);
+}
 
 const SCOPE_LABELS: Record<string, string> = {
   global: "全局",
@@ -281,6 +322,27 @@ function UserSection() {
 
   const currentUserId = session?.user.id;
 
+  // Which of these accounts are global administrators.
+  //
+  // Marked rather than hidden, and the choice is deliberate. Seven write paths
+  // refuse a non-administrator acting on one of these accounts, and each refusal
+  // already tells the caller what the account is — the guards are the disclosure,
+  // so concealing the list would be a curtain in front of an open door. What was
+  // actually missing is that the refusals arrived with no warning: nothing on
+  // the row said why this user, and not the one above it, could not be renamed.
+  //
+  // Needs `rbac.read`, which `user.read` does not imply, so the query is gated
+  // and its absence degrades to an unmarked list rather than an error.
+  const canReadBindings = permissions.can("rbac.read", GLOBAL);
+  const adminBindings = useRoleBindings(
+    { limit: DEFAULT_PAGE_SIZE, offset: 0, role: BUILTIN_ADMIN_ROLE, scope_type: "global" },
+    canReadBindings,
+  );
+  const globalAdminIds = useMemo(
+    () => new Set((adminBindings.data?.role_bindings ?? []).map((binding) => binding.subject_id)),
+    [adminBindings.data],
+  );
+
   // Opening a dialog clears what the previous attempt left behind.
   //
   // A mutation holds its error until it is reset or runs again, and these
@@ -305,7 +367,12 @@ function UserSection() {
         header: "用户",
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
-            <span className="text-foreground font-medium">{row.original.display_name}</span>
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="text-foreground font-medium">{row.original.display_name}</span>
+              {globalAdminIds.has(row.original.id) ? (
+                <Badge tone="warning">全局管理员</Badge>
+              ) : null}
+            </span>
             {/* The id belongs here for the same reason it is on every other row
                 in this application: it is what an audit event, a role binding
                 and a support request all refer to, and it was the one table that
@@ -435,7 +502,7 @@ function UserSection() {
         },
       },
     ],
-    [canManage, currentUserId, clearActionErrors],
+    [canManage, currentUserId, clearActionErrors, globalAdminIds],
   );
 
   return (
@@ -1140,17 +1207,41 @@ function RoleEditorDialog({
     );
   };
 
-  // A permission the caller does not hold globally cannot go into a role, and a
-  // role that already carries one stays selected and visible — hiding it would
-  // silently drop it on the next save.
-  const blocked = selected.filter(
-    (permission) => !catalog.some((item) => item.name === permission && item.held),
-  );
+  /*
+   * A permission the caller does not hold globally is frozen at whatever the
+   * role already says about it — checked if the role carries it, unchecked if
+   * not — because the Server judges an edit by what it *changes*. Adding one is
+   * escalation; removing one is a revocation of authority the caller never had.
+   * Leaving it exactly as it is, is neither, so it is the only thing the caller
+   * may do with it.
+   *
+   * This also removes what used to be the only saveable edit of such a role. The
+   * checkbox was disabled when unchecked but live when checked, so the sole way
+   * to get a role past the old whole-set check was to strip every permission the
+   * editor happened not to hold — the interface offered the destructive edit and
+   * refused every other one.
+   */
+  const frozen = useMemo(() => new Set(role?.permissions ?? []), [role]);
+  const movable = (permission: PermissionDescriptor) => !readOnly && permission.held;
   const valid =
     displayName.trim() !== "" &&
     selected.length > 0 &&
-    (editing || /^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) &&
-    blocked.length === 0;
+    (editing || /^[a-z0-9][a-z0-9-]{0,62}$/.test(name));
+  const frozenCount = catalog.filter(
+    (permission) => !permission.held && frozen.has(permission.name),
+  ).length;
+
+  // Whether this role reaches Secret values without asking for them. Shown, not
+  // refused: the combination is legitimate and common — it is what running a
+  // workload and debugging it looks like — and the point is that the person
+  // writing the role finds out here rather than assuming the opposite.
+  const secretReachingSelected = SECRET_REACHING_PERMISSIONS.filter((permission) =>
+    selected.includes(permission),
+  );
+  const reachesSecretsIndirectly =
+    selected.includes("cluster.resource.create") &&
+    secretReachingSelected.length > 0 &&
+    !selected.includes("cluster.secret.read");
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -1229,31 +1320,59 @@ function RoleEditorDialog({
                     key={permission.name}
                     permission={permission}
                     checked={selected.includes(permission.name)}
-                    disabled={readOnly || (!permission.held && !selected.includes(permission.name))}
+                    disabled={!movable(permission)}
                     onToggle={() => toggle(permission.name)}
                   />
                 ))}
               </div>
             )}
-            <FieldHint>只能选择自己在全局已持有的权限。</FieldHint>
+            <FieldHint>
+              只能改动自己在全局已持有的权限。
+              {frozenCount > 0
+                ? `该角色另有 ${frozenCount} 项权限当前账号未持有，它们保持原样，既不能移除也不能新增。`
+                : null}
+            </FieldHint>
           </div>
 
-          {blocked.length > 0 ? (
-            <Alert tone="warning">
-              该角色包含当前账号未持有的权限，无法保存：
-              {blocked.map((permission) => permissionLabel(permission)).join("、")}
+          {reachesSecretsIndirectly ? (
+            <Alert tone="info">
+              该角色未包含「查看 Kubernetes Secret」，但仍可间接读到 Secret 取值：持有「创建
+              Kubernetes 资源」即可创建挂载任意 Secret 的工作负载，再用「
+              {secretReachingSelected.map((permission) => permissionLabel(permission)).join("」「")}
+              」把内容取出来。这是 Kubernetes 自身的权限等价关系，`kubectl` 同样如此。要真正隔离
+              Secret，需要一并收紧工作负载创建权限。
             </Alert>
           ) : null}
-
-          {/*
-           * The Server's own message is shown rather than a fixed one: the
-           * refusals here are specific and actionable — which permission
-           * exceeded the caller's ceiling, that the role is builtin, that it is
-           * still bound — and replacing them with "保存失败" would throw away
-           * the only part worth reading.
-           */}
-          {error ? <Alert tone="danger">{errorMessage(error)}</Alert> : null}
         </div>
+
+        {/*
+         * Everything about whether the save works sits here, outside the scroll
+         * region and directly above the button that produced it.
+         *
+         * Both used to be the last things inside the scrolling column, below a
+         * permission list nearly thirty rows tall, while the button is in the
+         * fixed footer. Clicking 保存 and being refused therefore rendered the
+         * reason somewhere the operator was not looking and had no reason to
+         * scroll to, and the refusal read as nothing happening at all. A message
+         * that answers a click has to be reachable from where the click was.
+         *
+         * The note about Secret reach stays inside the list above: it describes
+         * the selection rather than the outcome of pressing a button, and lifting
+         * every alert out here would spend the dialog's fixed height on things
+         * nobody is waiting for.
+         */}
+        {/*
+         * The Server's own message is shown rather than a fixed one: the
+         * refusals here are specific and actionable — which permission
+         * exceeded the caller's ceiling, that the role is builtin, that it is
+         * still bound — and replacing them with "保存失败" would throw away
+         * the only part worth reading.
+         */}
+        {error ? (
+          <Alert tone="danger" className="shrink-0">
+            {errorMessage(error)}
+          </Alert>
+        ) : null}
         <DialogFooter className="shrink-0">
           <Button variant="secondary" onClick={onClose}>
             {readOnly ? "关闭" : "取消"}
@@ -1316,7 +1435,9 @@ function PermissionRow({
            * role is for one tenant" and "this permission only works globally"
            * are both in front of the same person.
            */}
-          {permission.global_only ? <Badge tone="neutral">仅全局生效</Badge> : null}
+          {permission.minimum_scope !== "project" ? (
+            <Badge tone="neutral">{scopeFloorLabel(permission.minimum_scope)}</Badge>
+          ) : null}
           {!permission.held ? <Badge tone="neutral">当前账号未持有</Badge> : null}
         </span>
         <span className="zke-mono text-muted-foreground text-xs">{permission.name}</span>
@@ -1690,21 +1811,26 @@ function CreateRoleBindingDialog({
   // `admin`. That leaves the partial case to be shown rather than refused, and
   // this is the moment to show it: the scope and the role are both on screen,
   // and afterwards the binding is just a row that looks like every other.
-  const globalOnly = useMemo(
+  // Keyed by permission rather than collected into one "global only" set: the
+  // answer depends on the scope this binding is being created at. A Project
+  // binding reaches neither the global permissions nor `project.create`, a
+  // Tenant binding reaches the latter, and a Global one reaches everything.
+  const scopeFloors = useMemo(
     () =>
-      new Set(
-        (permissionsQuery.data?.permissions ?? [])
-          .filter((permission) => permission.global_only)
-          .map((permission) => permission.name),
+      new Map(
+        (permissionsQuery.data?.permissions ?? []).map((permission) => [
+          permission.name,
+          permission.minimum_scope,
+        ]),
       ),
     [permissionsQuery.data],
   );
   const inertPermissions =
-    scopeType === "global"
-      ? []
-      : (allRoles
-          .find((item) => item.name === role)
-          ?.permissions.filter((permission) => globalOnly.has(permission)) ?? []);
+    allRoles
+      .find((item) => item.name === role)
+      ?.permissions.filter((permission) =>
+        scopeIsBelowFloor(scopeType, scopeFloors.get(permission)),
+      ) ?? [];
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -1821,7 +1947,8 @@ function CreateRoleBindingDialog({
 
           {inertPermissions.length > 0 ? (
             <Alert tone="info">
-              该角色中有 {inertPermissions.length} 项权限只在全局作用域生效，本次绑定不会授予它们：
+              该角色中有 {inertPermissions.length} 项权限在
+              {SCOPE_LABELS[scopeType] ?? scopeType}作用域上不生效，本次绑定不会授予它们：
               {inertPermissions.map((permission) => permissionLabel(permission)).join("、")}
               。其余权限正常生效。
             </Alert>

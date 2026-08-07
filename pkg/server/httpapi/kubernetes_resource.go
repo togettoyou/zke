@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -139,14 +140,34 @@ func (handler *kubernetesResourceHandler) discover(c *gin.Context) {
 	}
 	filtered := result.Resources[:0]
 	for _, resource := range result.Resources {
-		if !kubernetesresource.IsAuthorizationResourceIdentity(kubernetesresource.ResourceIdentity{
+		if kubernetesresource.IsAuthorizationResourceIdentity(kubernetesresource.ResourceIdentity{
 			Group: resource.Group, Version: resource.Version, Resource: resource.Resource,
 		}) {
-			filtered = append(filtered, resource)
+			continue
 		}
+		// The verbs describe what this endpoint offers for the type, not what the
+		// Cluster supports — `supportedVerbs` already narrows them to the ones
+		// the generic path implements. Namespaces are the one type where the two
+		// differ: creating and deleting one answers to `cluster.namespace.manage`
+		// and goes through the typed API, so reporting those verbs here would put
+		// a delete button in the resource browser that is refused every time.
+		if resource.Group == "" && resource.Resource == "namespaces" {
+			resource.Verbs = withoutVerbs(resource.Verbs, "create", "delete", "patch")
+		}
+		filtered = append(filtered, resource)
 	}
 	result.Resources = filtered
 	writeSuccess(c, http.StatusOK, result)
+}
+
+func withoutVerbs(verbs []string, removed ...string) []string {
+	result := make([]string, 0, len(verbs))
+	for _, verb := range verbs {
+		if !slices.Contains(removed, verb) {
+			result = append(result, verb)
+		}
+	}
+	return result
 }
 
 func (handler *kubernetesResourceHandler) list(c *gin.Context) {
@@ -229,7 +250,7 @@ func (handler *kubernetesResourceHandler) get(c *gin.Context) {
 
 func (handler *kubernetesResourceHandler) create(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	resource, namespace, err := parseGenericResourceIdentityQuery(
+	resource, namespace, err := parseGenericResourceMutationIdentityQuery(
 		c.Request.URL.Query(),
 	)
 	identity, _ := httpmiddleware.Identity(c)
@@ -397,7 +418,7 @@ func (handler *kubernetesResourceHandler) update(c *gin.Context) {
 
 func (handler *kubernetesResourceHandler) patch(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	resource, namespace, err := parseGenericResourceIdentityQuery(
+	resource, namespace, err := parseGenericResourceMutationIdentityQuery(
 		c.Request.URL.Query(),
 	)
 	identity, _ := httpmiddleware.Identity(c)
@@ -486,7 +507,7 @@ func (handler *kubernetesResourceHandler) patch(c *gin.Context) {
 
 func (handler *kubernetesResourceHandler) delete(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	resource, namespace, err := parseGenericResourceIdentityQuery(
+	resource, namespace, err := parseGenericResourceMutationIdentityQuery(
 		c.Request.URL.Query(),
 	)
 	identity, _ := httpmiddleware.Identity(c)
@@ -640,6 +661,31 @@ func parseGenericResourceIdentityQuery(
 		return kubernetesresource.ResourceIdentity{}, "", err
 	}
 	return genericResourceIdentity(query)
+}
+
+// The identity for the writes that can bring an object into existence or remove
+// it: Create, Patch — server-side Apply creates what is absent — and Delete.
+//
+// Namespaces are refused here and nowhere else on this path. Reading them is
+// `cluster.read` like any other object, and updating an existing one is an
+// ordinary `cluster.resource.update`; it is creating and deleting that answers
+// to `cluster.namespace.manage` and therefore to the typed Namespace API. The
+// resource layer refuses the same three verbs behind a flag no caller outside
+// that package can set, so this is the second statement of one rule, kept next
+// to the endpoint it is about.
+func parseGenericResourceMutationIdentityQuery(
+	query url.Values,
+) (kubernetesresource.ResourceIdentity, string, error) {
+	resource, namespace, err := parseGenericResourceIdentityQuery(query)
+	if err != nil {
+		return kubernetesresource.ResourceIdentity{}, "", err
+	}
+	if resource.Group == "" && resource.Resource == "namespaces" {
+		return kubernetesresource.ResourceIdentity{}, "", errors.New(
+			"creating and deleting Kubernetes Namespaces requires the dedicated API",
+		)
+	}
+	return resource, namespace, nil
 }
 
 func genericResourceIdentity(

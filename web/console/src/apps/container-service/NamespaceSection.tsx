@@ -75,6 +75,13 @@ export function NamespaceSection({
   const remove = useDeleteNamespace();
 
   const projectScope = { type: "project" as const, tenantId, projectId };
+  // Creating and deleting a Namespace is its own permission: it adds or removes
+  // the scope every other Kubernetes permission is exercised in, and deleting
+  // one takes everything inside it. The three general ones below still gate what
+  // this section does to objects *within* a Namespace — its ResourceQuota and
+  // LimitRange — and the YAML editor, which updates an existing Namespace
+  // without being able to create or destroy one.
+  const canManageNamespace = permissions.can("cluster.namespace.manage", projectScope);
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
@@ -156,14 +163,14 @@ export function NamespaceSection({
             >
               <SlidersHorizontal />
             </Button>
-            {canDelete ? (
+            {canManageNamespace ? (
               <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
       },
     ],
-    [canDelete, openDelete],
+    [canManageNamespace, openDelete],
   );
 
   const nextToken = namespaces.data?.continue_token ?? "";
@@ -192,7 +199,7 @@ export function NamespaceSection({
         <NamespaceDetailView
           clusterId={clusterId}
           name={detailName}
-          canDelete={canDelete}
+          canDelete={canManageNamespace}
           onOpenQuota={() => setQuotaName(detailName)}
           onOpenYaml={() => setYamlName(detailName)}
           onDelete={openDelete}
@@ -208,7 +215,7 @@ export function NamespaceSection({
               isFetching={namespaces.isFetching}
               onRefresh={() => void namespaces.refetch()}
             />
-            {canCreate ? (
+            {canManageNamespace ? (
               <Button
                 variant="primary"
                 size="sm"

@@ -22,9 +22,10 @@ var (
 	ErrNotFound     = errors.New("access management target not found")
 	ErrConflict     = errors.New("access management conflict")
 	ErrLastAdmin    = errors.New("last global administrator")
-	// Removing or granting the global administrator role is reserved to the
-	// people who already hold it. Separate from ErrLastAdmin: the platform would
-	// survive the change, and what is refused is who asked for it.
+	// Acting on a global administrator — their membership or their account — is
+	// reserved to the people who already hold that role. Separate from
+	// ErrLastAdmin: the platform would survive the change, and what is refused is
+	// who asked for it.
 	ErrGlobalAdminRequired = errors.New("only a global administrator may do this")
 	ErrSelfDisable         = errors.New("cannot disable the authenticated user")
 	// Deleting yourself and disabling yourself are both refused, but they are
@@ -38,11 +39,19 @@ var (
 	// access that authorized the deletion, which is the one mistake in this
 	// resource that the operator cannot then correct.
 	ErrSelfUnbind = errors.New("cannot delete the authenticated user's own role binding")
-	// ErrGlobalOnlyRole reports a binding whose scope cannot exercise anything
-	// its role carries. Not a permission refusal — the actor may hold every one
-	// of them — but a grant that would have done nothing at all.
-	ErrGlobalOnlyRole = errors.New(
-		"role only carries permissions that apply at global scope",
+	// The same family, reached by editing rather than by unbinding. The
+	// escalation ceiling is what makes it permanent: a role may only carry what
+	// its author holds globally, so a permission removed from its last global
+	// source cannot be put back by the person who removed it — not into that
+	// role, not into a new one, and not by binding themselves another.
+	ErrSelfLockout = errors.New(
+		"role update would remove permissions the actor could not restore",
+	)
+	// ErrRoleUnreachableAtScope reports a binding whose scope cannot exercise
+	// anything its role carries. Not a permission refusal — the actor may hold
+	// every one of them — but a grant that would have done nothing at all.
+	ErrRoleUnreachableAtScope = errors.New(
+		"role only carries permissions the binding scope cannot exercise",
 	)
 )
 
@@ -544,6 +553,8 @@ func (service *Service) DeleteRoleBinding(
 		return RoleBinding{}, ErrLastAdmin
 	case errors.Is(err, store.ErrGlobalAdminRequired):
 		return RoleBinding{}, ErrGlobalAdminRequired
+	case errors.Is(err, store.ErrRoleRevokeForbidden):
+		return RoleBinding{}, detailedOrSentinel(err, ErrPermissionRevocation)
 	case err != nil:
 		return RoleBinding{}, err
 	default:
@@ -606,14 +617,16 @@ func validActorRequest(actorUserID string, requestID string, now time.Time) bool
 
 // Refuses a binding that would grant nothing at all.
 //
-// Some permissions are only ever checked at global scope, so on a Tenant or
-// Project binding they are inert. A role made entirely of them produces a
-// binding that grants nothing, reads as an authorization, and is a mistake with
-// no other reading — that one is refused.
+// Every permission has a scope floor — the narrowest binding scope that can
+// still exercise it — and below that floor it is inert: `user.manage` on a
+// Tenant or Project binding, `project.create` on a Project one. A role made
+// entirely of permissions this scope cannot reach produces a binding that grants
+// nothing, reads as an authorization, and is a mistake with no other reading —
+// that one is refused.
 //
 // A role that mixes them is not refused, and the line is deliberately there.
 // The builtin `admin` role bound to a Tenant is a real and useful grant: 21 of
-// its 27 permissions apply inside that Tenant, and refusing it would mean no
+// its 28 permissions apply inside that Tenant, and refusing it would mean no
 // scoped binding could ever use the one role that means "everything here",
 // forcing every deployment to hand-build a Tenant-shaped copy of it. What was
 // wrong was never that the grant was partial — it was that the missing part was
@@ -624,12 +637,12 @@ func validActorRequest(actorUserID string, requestID string, now time.Time) bool
 // Existing bindings are untouched. This is the create path, and permissions
 // that were already inert stay inert rather than being taken away by an upgrade.
 func ensureScopeCanCarry(scopeType string, permissions []string) error {
-	if scopeType == "global" || len(permissions) == 0 {
+	if len(permissions) == 0 {
 		return nil
 	}
 	inert := make([]string, 0, len(permissions))
 	for _, permission := range permissions {
-		if rbac.GlobalOnly(rbac.Permission(permission)) {
+		if rbac.InertAt(rbac.Permission(permission), scopeType) {
 			inert = append(inert, permission)
 		}
 	}
@@ -646,11 +659,11 @@ type scopeError struct {
 }
 
 func (err *scopeError) Error() string {
-	return ErrGlobalOnlyRole.Error() + ": " + strings.Join(err.permissions, ", ")
+	return ErrRoleUnreachableAtScope.Error() + ": " + strings.Join(err.permissions, ", ")
 }
 
 func (err *scopeError) Is(target error) bool {
-	return target == ErrGlobalOnlyRole
+	return target == ErrRoleUnreachableAtScope
 }
 
 // Detail is what the HTTP layer returns in place of the fixed message: the

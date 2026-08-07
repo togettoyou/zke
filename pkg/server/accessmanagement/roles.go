@@ -32,6 +32,13 @@ var (
 	ErrRoleInUse = errors.New("role is still bound to a subject")
 	// ErrPermissionEscalation reports a role carrying more than its author does.
 	ErrPermissionEscalation = errors.New("role grants permissions the actor does not hold")
+	// ErrPermissionRevocation reports the same overreach pointed the other way:
+	// taking authority away that the actor never held. Two paths reach it —
+	// editing a permission out of a role, and deleting a binding that grants one
+	// — because both revoke, and revoking what you do not hold is as far outside
+	// your own authority as granting it. Separate from escalation because the
+	// operator's fix is the opposite one, and one message cannot say both.
+	ErrPermissionRevocation = errors.New("change revokes permissions the actor does not hold")
 )
 
 // roleNamePattern matches the stable identifier a binding stores. Lowercase
@@ -208,11 +215,11 @@ func (service *Service) UpdateRole(
 		!validActorRequest(input.ActorUserID, input.RequestID, input.Now) {
 		return Role{}, ErrInvalidInput
 	}
-	if err := service.ensureWithinActorCeiling(
-		ctx, input.ActorUserID, permissions,
-	); err != nil {
-		return Role{}, err
-	}
+	// No ceiling check here. An update is judged on what it *changes*, and the
+	// stored set it is changing has to be read under the same lock as the write
+	// — so the store applies both halves of that rule, on the difference, in the
+	// transaction. Creating a role is still checked here: everything in a new
+	// role is an addition, and there is no stored set to race against.
 	item, err := service.store.UpdateRole(ctx, store.UpdateManagedRoleParams{
 		RoleID:      input.RoleID,
 		DisplayName: input.DisplayName,
@@ -293,6 +300,40 @@ func (service *Service) ensureWithinActorCeiling(
 }
 
 // escalationError reports which permissions exceeded the actor's ceiling.
+// detailedOrSentinel re-labels a store refusal as this package's sentinel while
+// keeping the account of which permissions it was about.
+//
+// The store names them and the HTTP layer returns them; without this the names
+// are dropped in between and the operator is told a set of checkboxes is wrong
+// without being told which one.
+func detailedOrSentinel(err error, sentinel error) error {
+	var detailed interface{ Detail() string }
+	if errors.As(err, &detailed) && detailed.Detail() != "" {
+		return &relabelledError{sentinel: sentinel, detail: detailed.Detail()}
+	}
+	return sentinel
+}
+
+// A string rather than the permission list: the store already formatted it, and
+// re-splitting it here only to re-join it would be two places that have to agree
+// on a separator.
+type relabelledError struct {
+	sentinel error
+	detail   string
+}
+
+func (err *relabelledError) Error() string {
+	return err.sentinel.Error() + ": " + err.detail
+}
+
+func (err *relabelledError) Is(target error) bool {
+	return target == err.sentinel
+}
+
+func (err *relabelledError) Detail() string {
+	return err.detail
+}
+
 type escalationError struct {
 	permissions []string
 }
@@ -366,6 +407,12 @@ func roleWriteError(err error) error {
 		return ErrRoleInUse
 	case errors.Is(err, store.ErrLastGlobalAdmin):
 		return ErrLastAdmin
+	case errors.Is(err, store.ErrSelfLockout):
+		return detailedOrSentinel(err, ErrSelfLockout)
+	case errors.Is(err, store.ErrRoleGrantForbidden):
+		return detailedOrSentinel(err, ErrPermissionEscalation)
+	case errors.Is(err, store.ErrRoleRevokeForbidden):
+		return detailedOrSentinel(err, ErrPermissionRevocation)
 	case errors.Is(err, store.ErrAccessStateConflict):
 		return ErrConflict
 	default:

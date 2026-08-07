@@ -66,8 +66,14 @@ export function isForbidden(error: unknown): boolean {
  */
 const DETAILED_ERROR_PREFIXES: Record<string, string> = {
   cluster_api_rejected: "Kubernetes 拒绝了该配置：",
-  permission_escalation: "角色包含调用者未持有的权限：",
-  global_only_role: "该角色的权限只在全局作用域生效，绑定到租户或项目不会授予任何权限：",
+  permission_escalation: "本次修改新增了当前账号未持有的权限，无法保存：",
+  permission_revocation:
+    "本次操作会收回当前账号未持有的权限。收回自己没有的权限同样越权，请由持有它们的管理员操作：",
+  role_unreachable_at_scope: "该角色的权限在本次绑定的作用域上都不生效，这个绑定不会授予任何权限：",
+  // Named for the same reason the escalation refusal is: the operator is looking
+  // at a list of checkboxes and needs to know which one to put back.
+  self_lockout_forbidden:
+    "该修改会移除当前登录账号自己的以下权限，而角色只能包含作者已持有的权限，因此你之后无法再把它们加回来，请由其他管理员操作：",
 };
 
 export const ERROR_MESSAGES: Record<string, string> = {
@@ -88,7 +94,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   resource_not_enabled: "ZKE 不通过该接口管理这类资源",
   agent_namespace_forbidden: "ZKE Agent 所在命名空间的 Secret 不开放读写",
   secret_managed_by_platform: "该 Secret 属于 ZKE 安装本身，不可读写",
-  global_admin_required: "只有全局管理员可以授予或移除全局管理员",
+  global_admin_required: "只有全局管理员可以操作全局管理员的账号与成员资格",
   // Both are about what the caller is handing out rather than what it may do
   // itself, so neither can fall back to the general "没有权限".
   secret_rule_forbidden:
@@ -139,6 +145,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   self_disable_forbidden: "不能禁用当前登录的账号",
   self_delete_forbidden: "不能删除当前登录的账号",
   self_unbind_forbidden: "不能删除授予当前登录账号的权限绑定，请由其他管理员操作",
+  // self_lockout_forbidden is in DETAILED_ERROR_PREFIXES: the Server names the
+  // permissions, and this list is for the codes that carry no such detail.
   token_rejected: "凭证无效或已被使用",
   credential_rejected: "接入凭证已失效或被撤销",
 

@@ -68,15 +68,38 @@ const NAV: AppNavItem[] = [
 
 export function ClusterAccessApp(_props: AppComponentProps) {
   const scope = useScopeStore((state) => state.scope);
+  const { permissions } = useSessionContext();
   const [section, setSection] = useState("clusters");
   // Which Cluster the detail view shows is navigation state, not an
   // authorization scope: Clusters live inside a Project and carry no
   // RoleBinding of their own.
   const [clusterId, setClusterId] = useState<string | null>(null);
 
+  // Reading enrollment credentials is its own permission, so the rail hides the
+  // category a caller cannot open at all — the same rule the container service
+  // applies to 事件 and 授权管理. Without it the section rendered its own 403 as
+  // the whole page: an entry that exists, is clickable, and answers "没有访问
+  // 权限" every time, which reads as something broken rather than as something
+  // this account was never given. The Server enforces it regardless.
+  const canReadEnrollments = permissions.can("cluster.enrollment.read", {
+    type: "project",
+    tenantId: scope.tenantId,
+    projectId: scope.projectId,
+  });
+  const nav = useMemo(
+    () =>
+      NAV.map((item) =>
+        item.id === "enrollments" ? { ...item, hidden: !canReadEnrollments } : item,
+      ),
+    [canReadEnrollments],
+  );
+  // A section that just became hidden must not stay open: the permission can be
+  // revoked while the page is on screen.
+  const activeSection = section === "enrollments" && !canReadEnrollments ? "clusters" : section;
+
   return (
-    <AppShell nav={NAV} activeId={section} onNavigate={setSection}>
-      {section === "clusters" ? (
+    <AppShell nav={nav} activeId={activeSection} onNavigate={setSection}>
+      {activeSection === "clusters" ? (
         <ClusterSection
           scope={scope}
           onSelect={(cluster) => {
@@ -86,9 +109,9 @@ export function ClusterAccessApp(_props: AppComponentProps) {
         />
       ) : null}
 
-      {section === "enrollments" ? <EnrollmentSection scope={scope} /> : null}
+      {activeSection === "enrollments" ? <EnrollmentSection scope={scope} /> : null}
 
-      {section === "detail" ? (
+      {activeSection === "detail" ? (
         <ClusterDetailSection clusterId={clusterId} onBack={() => setSection("clusters")} />
       ) : null}
     </AppShell>

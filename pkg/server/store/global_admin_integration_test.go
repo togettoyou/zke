@@ -200,6 +200,71 @@ func TestCustomRoleCannotResetTheGlobalAdministratorPassword(t *testing.T) {
 	}
 }
 
+// The rule is about the account, not about a list of dangerous fields.
+//
+// Renaming a global administrator gives the caller nothing — which is exactly
+// why it was the operation left open, and exactly why it belongs here: a rule
+// stated as "may not take over the account" invites each new operation to be
+// judged on its own harm, and the judgement is made by whoever is adding that
+// operation. Stated as "may not act on the account", there is nothing to judge.
+func TestCustomRoleCannotRenameTheGlobalAdministrator(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool := globalAdminPool(t, ctx)
+	accessStore := store.NewAccessManagementStore(pool)
+
+	_, err := accessStore.UpdateUser(ctx, store.UpdateManagedUserParams{
+		UserID:      builtinAdminUserID,
+		DisplayName: "renamed by an outsider",
+		ActorUserID: customAdminUserID,
+		RequestID:   "74000000-0000-4000-8000-0000000000fa",
+		Now:         time.Now().UTC(),
+	})
+	if !errors.Is(err, store.ErrGlobalAdminRequired) {
+		t.Fatalf("UpdateUser() error = %v, want ErrGlobalAdminRequired", err)
+	}
+
+	var displayName string
+	if err := pool.QueryRow(ctx,
+		"SELECT display_name FROM users WHERE id = $1", builtinAdminUserID,
+	).Scan(&displayName); err != nil {
+		t.Fatal(err)
+	}
+	if displayName == "renamed by an outsider" {
+		t.Fatal("the global administrator was renamed from outside the group")
+	}
+}
+
+// And the two halves that must keep working: another administrator may rename
+// one, and an ordinary account is not covered by the guard at all.
+func TestRenamingIsAllowedInsideTheGroupAndForOrdinaryAccounts(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool := globalAdminPool(t, ctx)
+	accessStore := store.NewAccessManagementStore(pool)
+	now := time.Now().UTC()
+
+	if _, err := accessStore.UpdateUser(ctx, store.UpdateManagedUserParams{
+		UserID:      builtinAdminUserID,
+		DisplayName: "renamed by an administrator",
+		ActorUserID: builtinAdminUserID,
+		RequestID:   "74000000-0000-4000-8000-0000000000fb",
+		Now:         now,
+	}); err != nil {
+		t.Fatalf("UpdateUser(self) error = %v, want nil", err)
+	}
+
+	if _, err := accessStore.UpdateUser(ctx, store.UpdateManagedUserParams{
+		UserID:      plainUserID,
+		DisplayName: "renamed by the helpdesk",
+		ActorUserID: customAdminUserID,
+		RequestID:   "74000000-0000-4000-8000-0000000000fc",
+		Now:         now,
+	}); err != nil {
+		t.Fatalf("UpdateUser(plain user) error = %v, want nil", err)
+	}
+}
+
 // The sole administrator may still reset their own password.
 //
 // Worth its own case because the neighbouring rule counts administrators and
@@ -232,6 +297,78 @@ func TestAGlobalAdministratorMayResetPasswords(t *testing.T) {
 		Now:          now,
 	}); err != nil {
 		t.Fatalf("ResetUserPassword(plain user) error = %v, want nil", err)
+	}
+}
+
+// Deleting a binding revokes whatever its role grants, so it answers to the
+// same rule as editing that role: you may only take away what you hold.
+//
+// The custom role here carries every permission — the platform allows that, and
+// the administrator rules do not cover it because it is not `admin`. Before this
+// check, an account with role management and nothing else could delete the
+// binding and strip its holder of authority it could never obtain, which is the
+// role-edit refusal reached by a shorter route.
+func TestRevokingABindingRequiresHoldingWhatItGrants(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool := globalAdminPool(t, ctx)
+	accessStore := store.NewAccessManagementStore(pool)
+
+	// The plain user is given the all-powerful custom role, and the actor is left
+	// holding only role management.
+	if _, err := pool.Exec(ctx, `
+INSERT INTO roles (id, name, display_name, builtin, permissions)
+VALUES (
+    '74000000-0000-4000-8000-00000000000d', 'access-only', '仅权限管理', false,
+    ARRAY['rbac.read', 'rbac.manage']
+)
+`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES
+    ('74000000-0000-4000-8000-00000000000e', $1, 'super-operator', 'global'),
+    ('74000000-0000-4000-8000-00000000000f', $2, 'access-only', 'global')
+`, plainUserID, customAdminUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		"DELETE FROM role_bindings WHERE subject_id = $1 AND role = 'super-operator'",
+		customAdminUserID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := accessStore.DeleteRoleBinding(ctx, store.DeleteManagedRoleBindingParams{
+		BindingID:   "74000000-0000-4000-8000-00000000000e",
+		ActorUserID: customAdminUserID,
+		RequestID:   "74000000-0000-4000-8000-000000000101",
+		Now:         time.Now().UTC(),
+	})
+	if !errors.Is(err, store.ErrRoleRevokeForbidden) {
+		t.Fatalf("DeleteRoleBinding() error = %v, want ErrRoleRevokeForbidden", err)
+	}
+	var remaining int
+	if err := pool.QueryRow(ctx,
+		"SELECT count(*) FROM role_bindings WHERE id = $1",
+		"74000000-0000-4000-8000-00000000000e",
+	).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatal("the refused deletion removed the binding anyway")
+	}
+
+	// The global administrator holds everything, so the same deletion is theirs
+	// to make — the rule is about who is asking, not a freeze on the binding.
+	if _, err := accessStore.DeleteRoleBinding(ctx, store.DeleteManagedRoleBindingParams{
+		BindingID:   "74000000-0000-4000-8000-00000000000e",
+		ActorUserID: builtinAdminUserID,
+		RequestID:   "74000000-0000-4000-8000-000000000102",
+		Now:         time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("DeleteRoleBinding(global administrator) error = %v, want nil", err)
 	}
 }
 

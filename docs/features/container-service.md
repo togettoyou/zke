@@ -95,7 +95,8 @@
 - Agent 使用 Kubernetes dynamic client，只接受 Discovery 声明且作用域、Verb 匹配的主资源 CRUD；
   Discovery 策略缓存有 TTL 和条目上限，Secret 和 Subresource 明确拒绝；Kubernetes 授权资源只能使用专用
   `/authorization` API，不能借通用 Resource/YAML API 绕过专用权限；Secret 与授权五类各有独立的 YAML
-  路由，见下文，它们不放宽通用接口的拒绝，而是挂在各自的权限上；
+  路由，见下文，它们不放宽通用接口的拒绝，而是挂在各自的权限上；Namespace 的读取与更新照常走通用接口，
+  但 Create、Delete 与 Patch 被排除——它们属于 `cluster.namespace.manage`，见下文；
 - 支持 DryRun、JSON Patch、JSON Merge Patch、Strategic Merge Patch、Server-Side Apply、
   删除传播策略和 UID/resourceVersion 前置条件；Apply 默认 `force=false`；
 - YAML 更新仅接受不超过 4 MiB 的 `application/yaml` 单文档，不接受 Alias、Anchor、重复字段或
@@ -144,7 +145,8 @@ Console 容器服务按资源类别组织：进入应用后先选择一个目标
 类别，而是关于上面那些资源的一条流。列表行可下钻到详情页再返回，分页使用
 Kubernetes continuation token，并与 offset 分页一样固定渲染在表格下方。目标集群按项目
 持久化在浏览器本地，只保存集群标识，且每次都会重新对照该项目当前在线的集群解析——已下线的集群不会被选中。
-离线集群仍出现在选择器中但不可选，避免操作者以为集群不存在。命名空间提供 List/Detail/Create/Delete 与配额管理；
+离线集群仍出现在选择器中但不可选，避免操作者以为集群不存在。命名空间提供 List/Detail/Create/Delete 与配额管理，
+其中创建与删除要求 `cluster.namespace.manage`，配额管理与 YAML 编辑仍是 `cluster.resource.*`；
 节点提供 List/Detail 以及停止调度和恢复调度。所有变更都经过权限门控、DryRun 预检、影响展示与二次确认。
 
 列表页不再有标题和说明段：导航栏已经写明资源类别，工具栏已经写明目标集群与命名空间，标题只是把两者再抄一遍，
@@ -409,6 +411,10 @@ Secret 的 Deployment 或 Job，再用 `cluster.pod.logs.read` 或 `cluster.pod.
 在设计角色时应当把 `cluster.resource.create` 与 `cluster.pod.exec`、`cluster.pod.logs.read` 的组合视为等同于
 该 Namespace 的 Secret 读取权限。
 
+这条等价关系不靠人记住：角色编辑器在选中 `cluster.resource.create` 与两项 Pod 权限之一、却未选中
+`cluster.secret.read` 时直接说明它。不拒绝这种组合——那是运行工作负载并排查它的日常形态，本身完全正当——要修的
+是此前界面上没有任何迹象，让「不给 Secret 读权限」看起来像是隔离了 Secret，而它不是。
+
 读取本身写入审计（`kubernetes_secret.list` 与 `kubernetes_secret.read`），记录发起者、Cluster、Namespace、
 对象名和结果，不记录键名或取值。
 
@@ -545,7 +551,10 @@ ZKE 不安装网络插件，也不为不支持的插件伪造效果。
 YAML 是唯一诚实的编辑方式。命名空间选择器提供「所有命名空间」，对应通用接口省略 Namespace 参数的跨命名空间
 查询；名称筛选只作用于已加载的当前页并在界面上说明，因为 Kubernetes Field Selector 只能精确匹配名称，把它
 当成模糊搜索会静默变成另一种语义。Secret、Event 和五类 Kubernetes 授权资源不出现在这里：它们分别被通用接口
-拒绝或只允许走专用链路。
+拒绝或只允许走专用链路。Namespace 是唯一一个「在这里但只有一半」的类型——可以浏览、查看和编辑 YAML，但资源目录
+不为它报告 `create`、`delete`、`patch`，因此这两个动作的按钮不会出现；它们属于 `cluster.namespace.manage` 和
+命名空间分区。目录里的 Verb 描述的是**这个入口提供什么**而不是集群支持什么，这一点对每个类型都成立，Namespace
+只是唯一一处两者不同的地方。
 
 Kubernetes 授权管理后端把命名空间级 ServiceAccount、Role、RoleBinding 与集群级 ClusterRole、
 ClusterRoleBinding 分开定域。Role/ClusterRole 类型化写入完整规则，RoleBinding/ClusterRoleBinding 更新只替换

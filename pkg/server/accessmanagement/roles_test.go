@@ -161,25 +161,82 @@ func TestCreateRoleAcceptsPermissionsWithinTheCeiling(t *testing.T) {
 	}
 }
 
-func TestUpdateRoleRefusesPermissionsTheActorDoesNotHold(t *testing.T) {
+// The shape the store's authority refusals actually have: a sentinel to match
+// on and the permission names to report. Mirrored here rather than exported
+// from the store, which has no other reason to publish the type.
+type detailedStoreError struct {
+	target error
+	detail string
+}
+
+func (err *detailedStoreError) Error() string {
+	return err.target.Error() + ": " + err.detail
+}
+
+func (err *detailedStoreError) Is(target error) bool {
+	return target == err.target
+}
+
+func (err *detailedStoreError) Detail() string {
+	return err.detail
+}
+
+// An update's authority check belongs to the store, and its answer has to
+// arrive here still carrying the permission names.
+//
+// The check itself moved because an update is judged on what it *changes*, and
+// the stored set it changes has to be read under the same lock as the write.
+// What this asserts is the seam: the store's two refusals become this package's
+// sentinels, and the names survive the relabelling. Dropping them would leave an
+// operator told that a list of checkboxes is wrong without being told which one.
+// The rule itself is exercised against a real database in
+// `TestUpdateRoleChecksBothDirectionsAgainstTheActor`.
+func TestUpdateRoleReportsTheStoresAuthorityRefusals(t *testing.T) {
 	t.Parallel()
 
-	fake := &fakeRoleStore{}
-	service := roleService(fake, rbac.PermissionClusterRead)
-	_, err := service.UpdateRole(context.Background(), UpdateRoleInput{
-		RoleID:      testRoleID,
-		DisplayName: "发布工程师",
-		Permissions: []string{string(rbac.PermissionRBACManage)},
-		Confirm:     true,
-		ActorUserID: testUserID,
-		RequestID:   "00000000-0000-4000-8000-00000000000a",
-		Now:         time.Now().UTC(),
-	})
-	if !errors.Is(err, ErrPermissionEscalation) {
-		t.Fatalf("UpdateRole() error = %v, want ErrPermissionEscalation", err)
-	}
-	if fake.updateCalls != 0 {
-		t.Fatal("a refused role edit reached the store")
+	for _, testCase := range []struct {
+		name  string
+		from  error
+		want  error
+		names string
+	}{
+		{
+			name:  "adding",
+			from:  store.ErrRoleGrantForbidden,
+			want:  ErrPermissionEscalation,
+			names: "rbac.manage",
+		},
+		{
+			name:  "removing",
+			from:  store.ErrRoleRevokeForbidden,
+			want:  ErrPermissionRevocation,
+			names: "tenant.create, tenant.manage",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakeRoleStore{
+				err: &detailedStoreError{target: testCase.from, detail: testCase.names},
+			}
+			service := roleService(fake, rbac.PermissionClusterRead)
+			_, err := service.UpdateRole(context.Background(), UpdateRoleInput{
+				RoleID:      testRoleID,
+				DisplayName: "发布工程师",
+				Permissions: []string{string(rbac.PermissionClusterRead)},
+				Confirm:     true,
+				ActorUserID: testUserID,
+				RequestID:   "00000000-0000-4000-8000-00000000000a",
+				Now:         time.Now().UTC(),
+			})
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("UpdateRole() error = %v, want %v", err, testCase.want)
+			}
+			var detailed interface{ Detail() string }
+			if !errors.As(err, &detailed) || detailed.Detail() != testCase.names {
+				t.Fatalf("refusal detail = %v, want %q", err, testCase.names)
+			}
+		})
 	}
 }
 
@@ -320,8 +377,8 @@ func TestCreateRoleBindingRefusesARoleThatGrantsNothingAtItsScope(t *testing.T) 
 				RequestID:   "00000000-0000-4000-8000-00000000000a",
 				Now:         time.Now().UTC(),
 			})
-			if !errors.Is(err, ErrGlobalOnlyRole) {
-				t.Fatalf("CreateRoleBinding() error = %v, want ErrGlobalOnlyRole", err)
+			if !errors.Is(err, ErrRoleUnreachableAtScope) {
+				t.Fatalf("CreateRoleBinding() error = %v, want ErrRoleUnreachableAtScope", err)
 			}
 			var detailed interface{ Detail() string }
 			if !errors.As(err, &detailed) ||
@@ -331,6 +388,66 @@ func TestCreateRoleBindingRefusesARoleThatGrantsNothingAtItsScope(t *testing.T) 
 			}
 			if fake.bindCalls != 0 {
 				t.Fatal("a refused binding reached the store")
+			}
+		})
+	}
+}
+
+// `project.create` is checked with `RequireTenant`, so a Project binding of a
+// role made only of it grants exactly nothing — and a Tenant binding of the same
+// role is a real grant.
+//
+// The two halves have to be asserted together. While the rule was a boolean
+// "global only", the first half silently passed: the permission is not global,
+// so nothing refused a binding that reached nothing.
+func TestCreateRoleBindingRefusesTenantFloorPermissionAtProjectScope(t *testing.T) {
+	t.Parallel()
+
+	for _, scope := range []struct {
+		name      string
+		scopeType string
+		projectID string
+		refused   bool
+	}{
+		{name: "project", scopeType: "project", projectID: testProjectID, refused: true},
+		{name: "tenant", scopeType: "tenant"},
+	} {
+		t.Run(scope.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakeRoleStore{
+				role: store.ManagedRole{
+					ID:          testRoleID,
+					Name:        "project-founder",
+					Permissions: []string{string(rbac.PermissionProjectCreate)},
+				},
+			}
+			service := roleService(
+				fake,
+				rbac.PermissionRBACManage,
+				rbac.PermissionProjectCreate,
+			)
+			_, err := service.CreateRoleBinding(context.Background(), CreateRoleBindingInput{
+				SubjectID:   testUserID,
+				Role:        "project-founder",
+				ScopeType:   scope.scopeType,
+				TenantID:    testTenantID,
+				ProjectID:   scope.projectID,
+				ActorUserID: testUserID,
+				RequestID:   "00000000-0000-4000-8000-00000000000a",
+				Now:         time.Now().UTC(),
+			})
+			if scope.refused {
+				if !errors.Is(err, ErrRoleUnreachableAtScope) {
+					t.Fatalf("CreateRoleBinding() error = %v, want ErrRoleUnreachableAtScope", err)
+				}
+				if fake.bindCalls != 0 {
+					t.Fatal("a refused binding reached the store")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateRoleBinding() error = %v, want the tenant binding accepted", err)
 			}
 		})
 	}

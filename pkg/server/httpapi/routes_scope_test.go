@@ -12,18 +12,18 @@ import (
 )
 
 // The routes are the only place that decides at which scope a permission is
-// checked, and `rbac.GlobalOnly` is a second statement of the same fact —
+// checked, and `rbac.MinimumScope` is a second statement of the same fact —
 // consulted when a RoleBinding is written, and when capabilities are reported.
 // Two statements of one fact drift, and this one drifts silently: a permission
-// that gains a Project-scoped route while still listed as global-only makes
-// legitimate bindings impossible, and one that loses its Tenant route without
-// being added to the list goes back to being grantable and inert.
+// that gains a Project-scoped route while still declared global-only makes
+// legitimate bindings impossible, and one that loses its Project route without
+// its floor being raised goes back to being grantable and inert.
 //
-// So the list is checked against the routes rather than trusted. `routes.go` is
+// So the map is checked against the routes rather than trusted. `routes.go` is
 // parsed instead of the built router because Gin reports a route's method, path
 // and handler chain, and nothing about which permission each middleware closed
 // over — the fact under test is exactly the one the router does not keep.
-func TestGlobalOnlyPermissionsMatchRoutes(t *testing.T) {
+func TestPermissionScopeFloorsMatchRoutes(t *testing.T) {
 	t.Parallel()
 
 	scopes := permissionScopesInRoutes(t)
@@ -32,29 +32,53 @@ func TestGlobalOnlyPermissionsMatchRoutes(t *testing.T) {
 	}
 
 	for permission, kinds := range scopes {
-		globalOnlyInRoutes := len(kinds) == 1 && kinds[0] == "RequireGlobal"
-		if globalOnlyInRoutes != rbac.GlobalOnly(rbac.Permission(permission)) {
+		expected := scopeFloorForMiddlewares(kinds)
+		if actual := rbac.MinimumScope(rbac.Permission(permission)); actual != expected {
 			t.Errorf(
-				"%s is enforced at %s but rbac.GlobalOnly() = %t",
+				"%s is enforced at %s, so its floor is %s, but rbac.MinimumScope() = %s",
 				permission,
 				strings.Join(kinds, ","),
-				rbac.GlobalOnly(rbac.Permission(permission)),
+				expected,
+				actual,
 			)
 		}
 	}
 
 	// A permission with no fixed-scope route at all — the ones resolved against
-	// the caller's visibility inside the service — must not be on the list
-	// either: nothing about them is refused at global scope only.
+	// the caller's visibility inside the service — must carry no floor either:
+	// nothing about them is refused for being bound too narrowly.
 	for _, permission := range rbac.Permissions() {
-		if _, routed := scopes[string(permission)]; !routed &&
-			rbac.GlobalOnly(permission) {
+		if _, routed := scopes[string(permission)]; routed {
+			continue
+		}
+		if floor := rbac.MinimumScope(permission); floor != "project" {
 			t.Errorf(
-				"%s has no fixed-scope route but is listed as global-only",
+				"%s has no fixed-scope route but declares the floor %s",
 				permission,
+				floor,
 			)
 		}
 	}
+}
+
+// The floor a set of middlewares implies: the narrowest binding scope that
+// satisfies at least one of the routes checking this permission.
+//
+// `RequireCluster` resolves the Cluster to its owning Project and authorizes
+// there, so it is a Project-scope check and imposes no floor.
+func scopeFloorForMiddlewares(kinds []string) string {
+	floor := "global"
+	for _, kind := range kinds {
+		switch kind {
+		case "RequireTenant":
+			if floor == "global" {
+				floor = "tenant"
+			}
+		case "RequireProject", "RequireCluster":
+			return "project"
+		}
+	}
+	return floor
 }
 
 // Maps each permission named in routes.go to the sorted, deduplicated set of

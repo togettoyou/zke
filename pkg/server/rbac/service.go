@@ -11,40 +11,79 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
-// Permissions the Server only ever checks at global scope.
+// The narrowest binding scope at which a permission can still be exercised.
 //
 // A RoleBinding may name any of the three scopes, and a role may carry any
 // permission, so the two are free to be combined into a grant that can never be
-// exercised: every route that checks one of these calls `RequireGlobal`, and a
-// Tenant or Project binding never satisfies it. Bound anywhere but globally
-// they are inert, and inert is the worst thing a permission can be — the
+// exercised: a route that checks a permission with `RequireGlobal` is never
+// satisfied by a Tenant or Project binding, and one that checks it with
+// `RequireTenant` is never satisfied by a Project binding. Below its floor a
+// permission is inert, and inert is the worst thing a permission can be — the
 // operator who bound the builtin `admin` role to a Tenant reads a role that
 // holds everything and gets an account that cannot manage a user, write a role,
 // or rename the Tenant it was scoped to. Nothing refused it and nothing said so.
 //
 // Kept here rather than derived from the routes because there is nothing to
 // derive it from: the scope lives in the middleware each route is constructed
-// with, and Gin's router does not report it. `TestGlobalOnlyPermissionsMatchRoutes`
-// states the same list against `routes.go` so the two cannot drift quietly.
+// with, and Gin's router does not report it. `TestPermissionScopeFloorsMatchRoutes`
+// states the same map against `routes.go` so the two cannot drift quietly.
 //
-// `tenant.create` and `tenant.manage` are here for different reasons than the
+// A permission absent from this map has no floor: it is checked at Project or
+// Cluster scope — and `RequireCluster` resolves the Cluster to its owning
+// Project — so every scope a binding can name reaches it.
+//
+// `tenant.create` and `tenant.manage` are global for different reasons than the
 // rest. Creating a Tenant has no Tenant to be scoped to. Deleting one cascades
 // through every Project, Cluster and credential beneath it, which is why it is
 // deliberately not something a Tenant's own administrator can do.
-var globalOnlyPermissions = map[Permission]struct{}{
-	PermissionTenantCreate: {},
-	PermissionTenantManage: {},
-	PermissionUserRead:     {},
-	PermissionUserManage:   {},
-	PermissionRBACRead:     {},
-	PermissionRBACManage:   {},
+//
+// `project.create` is the one Tenant floor. Creating a Project has no Project to
+// be scoped to, the same way creating a Tenant has no Tenant — but a Tenant is
+// exactly what it can be scoped to, so unlike `tenant.create` it is not global.
+var permissionScopeFloors = map[Permission]scopeType{
+	PermissionTenantCreate:  scopeGlobal,
+	PermissionTenantManage:  scopeGlobal,
+	PermissionUserRead:      scopeGlobal,
+	PermissionUserManage:    scopeGlobal,
+	PermissionRBACRead:      scopeGlobal,
+	PermissionRBACManage:    scopeGlobal,
+	PermissionProjectCreate: scopeTenant,
 }
 
-// GlobalOnly reports whether a permission is only ever enforced at global
-// scope, so that a Tenant or Project binding carrying it grants nothing.
-func GlobalOnly(permission Permission) bool {
-	_, only := globalOnlyPermissions[permission]
-	return only
+// MinimumScope reports the narrowest binding scope that can exercise a
+// permission, as one of `global`, `tenant` or `project`.
+func MinimumScope(permission Permission) string {
+	floor, declared := permissionScopeFloors[permission]
+	if !declared {
+		return string(scopeProject)
+	}
+	return string(floor)
+}
+
+// InertAt reports whether a binding at the given scope grants nothing by
+// carrying this permission, because the scope is narrower than the permission's
+// floor.
+//
+// An unrecognised scope counts as narrower than every floor. This answer only
+// ever reaches reporting and the create-time refusal — the authorization check
+// itself is `bindingApplies`, which refuses an unknown scope outright — so
+// failing closed here costs a claim, never an access.
+func InertAt(permission Permission, bindingScopeType string) bool {
+	return scopeBreadth(scopeType(bindingScopeType)) <
+		scopeBreadth(scopeType(MinimumScope(permission)))
+}
+
+func scopeBreadth(value scopeType) int {
+	switch value {
+	case scopeGlobal:
+		return 2
+	case scopeTenant:
+		return 1
+	case scopeProject:
+		return 0
+	default:
+		return -1
+	}
 }
 
 var allPermissions = []Permission{
@@ -62,6 +101,7 @@ var allPermissions = []Permission{
 	PermissionClusterPodExec,
 	PermissionClusterEventRead,
 	PermissionClusterManage,
+	PermissionClusterNamespaceManage,
 	PermissionClusterResourceCreate,
 	PermissionClusterResourceUpdate,
 	PermissionClusterResourceDelete,
@@ -109,15 +149,15 @@ func (service *Service) ListCapabilities(
 		// it were a capability. That is the same rule the authorization check
 		// applies, stated once for the reporting path.
 		//
-		// Global-only permissions are dropped from a scoped binding for the same
+		// Permissions below the binding's scope floor are dropped for the same
 		// reason. A capability is a claim about what the caller can do here, and
 		// this endpoint is what a client builds its interface from — reporting
-		// `user.manage` on a Tenant binding describes an operation that every
-		// route would refuse, which is a worse answer than not mentioning it.
-		scoped := binding.ScopeType != string(scopeGlobal)
+		// `user.manage` on a Tenant binding, or `project.create` on a Project
+		// one, describes an operation that every route would refuse, which is a
+		// worse answer than not mentioning it.
 		permissions := make([]Permission, 0, len(allPermissions))
 		for _, permission := range allPermissions {
-			if scoped && GlobalOnly(permission) {
+			if InertAt(permission, binding.ScopeType) {
 				continue
 			}
 			if bindingGrants(binding.Permissions, permission) {

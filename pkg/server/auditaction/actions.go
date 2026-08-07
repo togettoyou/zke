@@ -123,28 +123,29 @@ const (
 // on, and a filter on them returns the successful operation and the refused
 // attempt together — told apart by `result`, which is what `result` is for.
 const (
-	DeniedTenantRead            = "tenant.read"
-	DeniedTenantManage          = "tenant.manage"
-	DeniedProjectRead           = "project.read"
-	DeniedProjectManage         = "project.manage"
-	DeniedClusterEnrollmentRead = "cluster.enrollment.read"
-	DeniedClusterRead           = "cluster.read"
-	DeniedClusterPodLogsRead    = "cluster.pod.logs.read"
-	DeniedClusterPodExec        = "cluster.pod.exec"
-	DeniedClusterEventRead      = "cluster.event.read"
-	DeniedClusterManage         = "cluster.manage"
-	DeniedClusterResourceCreate = "cluster.resource.create"
-	DeniedClusterResourceUpdate = "cluster.resource.update"
-	DeniedClusterResourceDelete = "cluster.resource.delete"
-	DeniedClusterRBACRead       = "cluster.rbac.read"
-	DeniedClusterRBACManage     = "cluster.rbac.manage"
-	DeniedClusterSecretRead     = "cluster.secret.read"
-	DeniedClusterSecretManage   = "cluster.secret.manage"
-	DeniedUserRead              = "user.read"
-	DeniedUserManage            = "user.manage"
-	DeniedRBACRead              = "rbac.read"
-	DeniedRBACManage            = "rbac.manage"
-	DeniedAuditRead             = "audit.read"
+	DeniedTenantRead             = "tenant.read"
+	DeniedTenantManage           = "tenant.manage"
+	DeniedProjectRead            = "project.read"
+	DeniedProjectManage          = "project.manage"
+	DeniedClusterEnrollmentRead  = "cluster.enrollment.read"
+	DeniedClusterRead            = "cluster.read"
+	DeniedClusterPodLogsRead     = "cluster.pod.logs.read"
+	DeniedClusterPodExec         = "cluster.pod.exec"
+	DeniedClusterEventRead       = "cluster.event.read"
+	DeniedClusterManage          = "cluster.manage"
+	DeniedClusterNamespaceManage = "cluster.namespace.manage"
+	DeniedClusterResourceCreate  = "cluster.resource.create"
+	DeniedClusterResourceUpdate  = "cluster.resource.update"
+	DeniedClusterResourceDelete  = "cluster.resource.delete"
+	DeniedClusterRBACRead        = "cluster.rbac.read"
+	DeniedClusterRBACManage      = "cluster.rbac.manage"
+	DeniedClusterSecretRead      = "cluster.secret.read"
+	DeniedClusterSecretManage    = "cluster.secret.manage"
+	DeniedUserRead               = "user.read"
+	DeniedUserManage             = "user.manage"
+	DeniedRBACRead               = "rbac.read"
+	DeniedRBACManage             = "rbac.manage"
+	DeniedAuditRead              = "audit.read"
 )
 
 // Group names the family an action belongs to. It is declared here rather than
@@ -296,6 +297,7 @@ var actions = []Action{
 	{DeniedClusterPodExec, GroupDenied},
 	{DeniedClusterEventRead, GroupDenied},
 	{DeniedClusterManage, GroupDenied},
+	{DeniedClusterNamespaceManage, GroupDenied},
 	{DeniedClusterResourceCreate, GroupDenied},
 	{DeniedClusterResourceUpdate, GroupDenied},
 	{DeniedClusterResourceDelete, GroupDenied},

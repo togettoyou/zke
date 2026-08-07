@@ -385,11 +385,17 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesNamespace.get,
 	)
+	// Creating and deleting a Namespace is its own permission. Every other
+	// `cluster.resource.*` write acts on one object; deleting a Namespace takes
+	// everything inside it, and creating one adds a scope the rest of the
+	// permissions then apply to. Reading Namespaces stays on `cluster.read` —
+	// nothing about listing them is destructive — and so does editing an
+	// existing one's metadata, which neither creates nor destroys anything.
 	clusterRoutes.POST(
 		"/:cluster_id/namespaces",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(
-			rbac.PermissionClusterResourceCreate,
+			rbac.PermissionClusterNamespaceManage,
 			"cluster_id",
 		),
 		handlers.kubernetesNamespace.create,
@@ -398,7 +404,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		"/:cluster_id/namespaces/:namespace_name",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(
-			rbac.PermissionClusterResourceDelete,
+			rbac.PermissionClusterNamespaceManage,
 			"cluster_id",
 		),
 		handlers.kubernetesNamespace.delete,

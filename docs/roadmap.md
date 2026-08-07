@@ -23,7 +23,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] ZKE Server Phase 1 后端
 - [x] ZKE Agent Phase 1 身份与连接
 - [x] 用户认证后端
-- [x] RBAC 后端
+- [x] RBAC 后端（固定权限词表、操作者自定义角色、Global/Tenant/Project 绑定继承、默认拒绝、提权天花板与
+  自我锁死防护、覆盖账号与成员资格全部写路径的全局管理员保护，以及按权限声明作用域下限——Global 或
+  Tenant——并据此过滤能力上报、标注权限字典和拒绝授予不到任何权限的绑定）
 - [x] 集群接入
 
 ## Phase 2：容器服务
@@ -37,7 +39,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   结果，以及作为容器服务默认落地页的 Console 计数、量条与部分失败提示；Warning Event 保持独立权限和
   API，概览不跨命名空间聚合事件）
 - [x] 节点列表/详情 Console 页面与调度开关（驱逐尚未支持）
-- [x] Namespace List/Detail/Create/Delete、DryRun、确认、权限、审计与 Console 闭环
+- [x] Namespace List/Detail/Create/Delete、DryRun、确认、权限、审计与 Console 闭环（创建与删除使用独立的
+  `cluster.namespace.manage`，通用 Resource 接口相应排除 Namespace 的 Create/Delete/Patch，读取与 Update
+  不受影响）
 - [x] 工作负载类型化创建、List/Detail、伸缩、滚动重启、CronJob 暂停/恢复、删除，以及 Console
   列表/详情、Namespace 作用域选择器与全部变更的 DryRun、确认、幂等和审计闭环（高级 Pod 配置和
   类型化更新表单尚未支持）
@@ -74,7 +78,8 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
   删除闭环；Metrics Server/Adapter 由集群自行安装，VPA 与 KEDA 尚未实现）
 - [x] 资源对象浏览器（基于通用 Discovery 与通用 Resource 接口的资源树与对象列表，目录逐条标记 CRD 来源并在
   无法判定时明确报告，支持「仅显示 CRD」筛选、跨命名空间查询、YAML 查看与编辑，以及带 UID/resourceVersion
-  前置条件、DryRun 与确认的删除；Secret、Event 与 Kubernetes 授权资源仍被排除在该入口之外）
+  前置条件、DryRun 与确认的删除；Secret、Event 与 Kubernetes 授权资源仍被排除在该入口之外，Namespace 可浏览
+  和编辑但不能在此创建或删除）
 - [x] 策略管理（命名空间级 ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget 与集群级
   PriorityClass 的类型化 List/Detail/Create/Update/Delete，两种作用域分路由隔离，整份托管 spec 替换式更新、
   Kubernetes 不可变字段保护（ResourceQuota scopes、PriorityClass value、PDB selector）、DryRun、确认、幂等、

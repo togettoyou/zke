@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -251,6 +253,31 @@ func (store *AccessManagementStore) UpdateRole(
 		return ManagedRole{}, fmt.Errorf("begin role update: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	// Captured before the write, because the write is what may remove one.
+	actorPermissions, err := readActorGlobalPermissions(ctx, transaction, input.ActorUserID)
+	if err != nil {
+		return ManagedRole{}, err
+	}
+	// The row is locked before the difference is taken, and the difference is
+	// what the authority check is about. Reading the current permissions outside
+	// the transaction would compare against a set another edit may already have
+	// changed, and the permission it added in between would be one this edit
+	// removes without ever being seen.
+	var current []string
+	switch err := transaction.QueryRow(ctx,
+		"SELECT permissions FROM roles WHERE id = $1 AND NOT builtin FOR UPDATE",
+		input.RoleID,
+	).Scan(&current); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return ManagedRole{}, store.missingOrBuiltinRole(ctx, transaction, input.RoleID)
+	case err != nil:
+		return ManagedRole{}, fmt.Errorf("lock role for update: %w", err)
+	}
+	if err := ensureActorMayChange(
+		current, input.Permissions, actorPermissions,
+	); err != nil {
+		return ManagedRole{}, err
+	}
 	item, err := scanManagedRole(transaction.QueryRow(ctx, `
 WITH updated AS (
     UPDATE roles
@@ -281,6 +308,14 @@ SELECT`+roleColumnsSQL+`FROM updated AS roles
 	// `NOT builtin` excludes it, and its permission set is reconciled from code
 	// at every startup. Narrowing a custom role can take a lot away from a lot
 	// of people, but it cannot remove the account of last resort.
+	//
+	// What it can do is take the editor's own access to this API away, which is
+	// the check below.
+	if err := ensureActorLosesNoPermission(
+		ctx, transaction, input.ActorUserID, actorPermissions,
+	); err != nil {
+		return ManagedRole{}, err
+	}
 	if err := insertRoleAudit(
 		ctx, transaction, input.ActorUserID, auditaction.RoleUpdate,
 		item, "succeeded", input.RequestID, input.Now,
@@ -346,6 +381,208 @@ func (store *AccessManagementStore) DeleteRole(
 		return ManagedRole{}, fmt.Errorf("commit role deletion: %w", err)
 	}
 	return item, nil
+}
+
+// The permissions an actor holds through global bindings, which is the set the
+// escalation ceiling is measured against.
+//
+// Read twice around a role update — before and after — because the ceiling makes
+// any loss from this set permanent for the person who caused it. See
+// ensureActorLosesNoPermission.
+const actorGlobalPermissionsSQL = `
+SELECT coalesce(array_agg(DISTINCT permission), ARRAY[]::text[])
+FROM role_bindings
+JOIN users ON users.id = role_bindings.subject_id
+JOIN roles ON roles.name = role_bindings.role
+CROSS JOIN LATERAL unnest(roles.permissions) AS permission
+WHERE role_bindings.subject_id = $1
+  AND role_bindings.scope_type = 'global'
+  AND users.status = 'active'
+`
+
+// Refuses a role edit that reaches outside the actor's own authority.
+//
+// A role edit submits a whole permission set, but what the actor is *doing* is
+// the difference between the stored set and the submitted one. Both directions
+// of that difference have to be within what the actor holds globally:
+//
+//   - adding a permission they do not hold is the escalation the ceiling has
+//     always refused — hold `rbac.manage`, write `cluster.secret.read` into a
+//     role, bind it to yourself, and every other permission collapses into one;
+//   - removing a permission they do not hold is the same overreach pointed the
+//     other way. It grants nobody anything, which is why it went unrefused, but
+//     it is a unilateral revocation of authority the actor could never obtain,
+//     and the people who lose it cannot restore it themselves either. `rbac.manage`
+//     was, on this side, still equal to every permission there is.
+//
+// Permissions outside the actor's set that are present in both sets are left
+// alone, and that is the point of comparing differences rather than the whole
+// submitted set. Checking the whole set made the *only* saveable edit of such a
+// role the destructive one: keeping the permission was refused as escalation, so
+// renaming a role, or fixing its description, required stripping every
+// permission the editor happened not to hold. The refusal even named which ones
+// to remove.
+func ensureActorMayChange(current []string, submitted []string, held []string) error {
+	outside := func(permissions []string, other []string) []string {
+		result := make([]string, 0, len(permissions))
+		for _, permission := range permissions {
+			if !slices.Contains(other, permission) && !slices.Contains(held, permission) {
+				result = append(result, permission)
+			}
+		}
+		slices.Sort(result)
+		return result
+	}
+	if added := outside(submitted, current); len(added) > 0 {
+		return &roleChangeError{target: ErrRoleGrantForbidden, permissions: added}
+	}
+	if removed := outside(current, submitted); len(removed) > 0 {
+		return &roleChangeError{target: ErrRoleRevokeForbidden, permissions: removed}
+	}
+	return nil
+}
+
+// Refuses revoking a binding whose role grants more than the actor holds.
+//
+// The binding-shaped half of ensureActorMayChange. That one compares a role's
+// permissions before and after an edit; this one has no "after" to compare
+// against — deleting a binding revokes the whole role at once — so the whole
+// role is what the actor must hold.
+func ensureActorMayRevokeRole(
+	ctx context.Context,
+	transaction pgx.Tx,
+	actorUserID string,
+	role string,
+) error {
+	held, err := readActorGlobalPermissions(ctx, transaction, actorUserID)
+	if err != nil {
+		return err
+	}
+	var granted []string
+	if err := transaction.QueryRow(
+		ctx, "SELECT permissions FROM roles WHERE name = $1", role,
+	).Scan(&granted); err != nil {
+		return fmt.Errorf("read revoked role permissions: %w", err)
+	}
+	beyond := make([]string, 0, len(granted))
+	for _, permission := range granted {
+		if !slices.Contains(held, permission) {
+			beyond = append(beyond, permission)
+		}
+	}
+	if len(beyond) == 0 {
+		return nil
+	}
+	slices.Sort(beyond)
+	return &roleChangeError{target: ErrRoleRevokeForbidden, permissions: beyond}
+}
+
+// roleChangeError names the permissions the actor may not move, in whichever
+// direction they tried to move them.
+type roleChangeError struct {
+	target      error
+	permissions []string
+}
+
+func (err *roleChangeError) Error() string {
+	return err.target.Error() + ": " + strings.Join(err.permissions, ", ")
+}
+
+func (err *roleChangeError) Is(target error) bool {
+	return target == err.target
+}
+
+func (err *roleChangeError) Detail() string {
+	return strings.Join(err.permissions, ", ")
+}
+
+// Refuses a role update that would take a permission away from the actor.
+//
+// Any permission, not a chosen few, because the escalation ceiling makes every
+// one of them a one-way door. A role may only carry permissions its author holds
+// *globally*, and the same ceiling guards creating a role and creating a binding.
+// So an actor who edits the last global source of a permission out of their own
+// role cannot put it back: not into that role, not into a new one, and not by
+// binding themselves an existing role that has it. All three paths measure
+// against a set that no longer contains it. The Console shows this as a checkbox
+// disabled with 当前账号未持有 — the permission is visibly there and permanently
+// out of reach.
+//
+// That is the same shape as ErrSelfUnbind, and the reason this refusal exists:
+// an edit whose result is that the person who made it cannot undo it. The rule
+// was first written for `rbac.read` and `rbac.manage` on the theory that
+// everything else could be added back. Nothing else can be added back either.
+//
+// Read before and after inside the same transaction rather than predicted: an
+// actor may hold a permission through several global bindings, and whether this
+// edit costs them anything depends on all of them.
+//
+// Losing nothing is the common case and stays allowed — editing a role you do
+// not hold, or one you hold only through a Tenant or Project binding, does not
+// touch this set. Bindings at those scopes never contributed to the ceiling, so
+// they were never a source anything could be restored from.
+//
+// Holders of the builtin `admin` role are unaffected: it is not editable, so no
+// custom-role edit can reduce a global administrator's set.
+func ensureActorLosesNoPermission(
+	ctx context.Context,
+	transaction pgx.Tx,
+	actorUserID string,
+	before []string,
+) error {
+	var after []string
+	if err := transaction.QueryRow(
+		ctx, actorGlobalPermissionsSQL, actorUserID,
+	).Scan(&after); err != nil {
+		return fmt.Errorf("read actor permissions after role update: %w", err)
+	}
+	lost := make([]string, 0, len(before))
+	for _, permission := range before {
+		if !slices.Contains(after, permission) {
+			lost = append(lost, permission)
+		}
+	}
+	if len(lost) == 0 {
+		return nil
+	}
+	slices.Sort(lost)
+	return &selfLockoutError{permissions: lost}
+}
+
+// readActorGlobalPermissions captures the set the check above compares against.
+func readActorGlobalPermissions(
+	ctx context.Context,
+	transaction pgx.Tx,
+	actorUserID string,
+) ([]string, error) {
+	var permissions []string
+	if err := transaction.QueryRow(
+		ctx, actorGlobalPermissionsSQL, actorUserID,
+	).Scan(&permissions); err != nil {
+		return nil, fmt.Errorf("read actor permissions before role update: %w", err)
+	}
+	return permissions, nil
+}
+
+// selfLockoutError names the permissions the actor would not get back.
+//
+// Named rather than counted for the same reason the escalation refusal names
+// its own: the operator is looking at a list of checkboxes and has to know which
+// one to put back before saving.
+type selfLockoutError struct {
+	permissions []string
+}
+
+func (err *selfLockoutError) Error() string {
+	return ErrSelfLockout.Error() + ": " + strings.Join(err.permissions, ", ")
+}
+
+func (err *selfLockoutError) Is(target error) bool {
+	return target == ErrSelfLockout
+}
+
+func (err *selfLockoutError) Detail() string {
+	return strings.Join(err.permissions, ", ")
 }
 
 // missingOrBuiltinRole tells the two reasons an update matched nothing apart.

@@ -158,17 +158,26 @@ func TestBuiltinRoleAndScopeRules(t *testing.T) {
 	}
 }
 
-// A scoped binding must not report permissions no scoped route ever checks.
+// A binding must not report permissions its own scope cannot exercise.
 //
 // `me` is what a client builds its interface from, so a capability it lists is
 // a claim that the operation is available. Listing `user.manage` on a Tenant
 // binding claimed an operation that every route refuses, and the operator who
 // bound the builtin `admin` role to a Tenant was shown an account holding
-// everything.
-func TestScopedCapabilitiesOmitGlobalOnlyPermissions(t *testing.T) {
+// everything. A Project binding has a second floor above it — `project.create`
+// is checked with `RequireTenant` — so the same claim was being made one level
+// down, where a boolean "global only" could not see it.
+func TestCapabilitiesOmitPermissionsBelowTheBindingScope(t *testing.T) {
 	t.Parallel()
 
 	service := NewService(bindingStub{bindings: []store.RoleBinding{
+		{
+			Role:        "admin",
+			ScopeType:   "project",
+			TenantID:    testTenantID,
+			ProjectID:   testProjectID,
+			Permissions: permissionNames(Permissions()),
+		},
 		{
 			Role:        "admin",
 			ScopeType:   "tenant",
@@ -186,33 +195,56 @@ func TestScopedCapabilitiesOmitGlobalOnlyPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCapabilities() error = %v", err)
 	}
-	if len(capabilities) != 2 {
-		t.Fatalf("capabilities = %d, want 2", len(capabilities))
+	if len(capabilities) != 3 {
+		t.Fatalf("capabilities = %d, want 3", len(capabilities))
 	}
 
-	scoped, global := capabilities[0], capabilities[1]
-	if scoped.ScopeType != "tenant" || global.ScopeType != "global" {
-		scoped, global = global, scoped
+	byScope := make(map[string]Capability, len(capabilities))
+	for _, capability := range capabilities {
+		byScope[capability.ScopeType] = capability
 	}
-	for _, permission := range scoped.Permissions {
-		if GlobalOnly(permission) {
-			t.Errorf("tenant capability reported global-only %s", permission)
+
+	for scopeName, capability := range byScope {
+		for _, permission := range capability.Permissions {
+			if InertAt(permission, scopeName) {
+				t.Errorf(
+					"%s capability reported %s, which that scope cannot exercise",
+					scopeName,
+					permission,
+				)
+			}
 		}
 	}
-	// The scoped binding keeps everything else, and the global one keeps all of
-	// it: the filter is about reach, not about narrowing the role.
-	if len(scoped.Permissions)+len(globalOnlyPermissions) != len(Permissions()) {
-		t.Errorf(
-			"tenant capability has %d permissions, want %d",
-			len(scoped.Permissions),
-			len(Permissions())-len(globalOnlyPermissions),
-		)
+
+	// The counts come from the floors rather than from a literal, so adding a
+	// permission does not silently make this assertion weaker. The filter is
+	// about reach: nothing above the floor is dropped.
+	for _, scopeName := range []string{"global", "tenant", "project"} {
+		want := 0
+		for _, permission := range Permissions() {
+			if !InertAt(permission, scopeName) {
+				want++
+			}
+		}
+		if got := len(byScope[scopeName].Permissions); got != want {
+			t.Errorf(
+				"%s capability has %d permissions, want %d",
+				scopeName,
+				got,
+				want,
+			)
+		}
 	}
-	if len(global.Permissions) != len(Permissions()) {
+
+	// The three scopes must not all report the same thing, or the assertions
+	// above would hold for a filter that does nothing.
+	if len(byScope["global"].Permissions) <= len(byScope["tenant"].Permissions) ||
+		len(byScope["tenant"].Permissions) <= len(byScope["project"].Permissions) {
 		t.Errorf(
-			"global capability has %d permissions, want %d",
-			len(global.Permissions),
-			len(Permissions()),
+			"capability sizes global=%d tenant=%d project=%d are not strictly narrowing",
+			len(byScope["global"].Permissions),
+			len(byScope["tenant"].Permissions),
+			len(byScope["project"].Permissions),
 		)
 	}
 }

@@ -24,10 +24,25 @@ var (
 	// actor's own access. Not a permission question — the actor holds
 	// `rbac.manage` or the request would not have reached here — but the one
 	// deletion whose result is that the caller can no longer undo it.
-	ErrSelfUnbind   = errors.New("cannot delete the authenticated user's own role binding")
-	ErrRoleNotFound = errors.New("role not found")
-	ErrRoleConflict = errors.New("role name already exists")
-	ErrRoleBuiltin  = errors.New("builtin role cannot be changed")
+	ErrSelfUnbind = errors.New("cannot delete the authenticated user's own role binding")
+	// The same refusal one level up. Editing your own role is the other way to
+	// lose access you cannot get back: the escalation ceiling only lets a role
+	// carry permissions its author holds globally, so a permission edited out of
+	// its last global source can never be written back by the person who removed
+	// it. Reported instead of committing that, so the two irreversible self-edits
+	// — the binding and the role — are refused by the same reasoning rather than
+	// only one of them.
+	ErrSelfLockout = errors.New("role update would remove permissions the actor cannot restore")
+	// A role edit may only move permissions the actor holds globally. Adding one
+	// they do not hold is the escalation the ceiling has always refused; removing
+	// one they do not hold is the same overreach pointed the other way, and was
+	// not refused at all — an account with `rbac.manage` and little else could
+	// strip every custom role on the platform of authority it could never obtain.
+	ErrRoleGrantForbidden  = errors.New("role adds permissions the actor does not hold")
+	ErrRoleRevokeForbidden = errors.New("role removes permissions the actor does not hold")
+	ErrRoleNotFound        = errors.New("role not found")
+	ErrRoleConflict        = errors.New("role name already exists")
+	ErrRoleBuiltin         = errors.New("builtin role cannot be changed")
 	// Reported instead of removing a role somebody still holds. The database
 	// refuses it too — `role_bindings.role` is a foreign key — and this is that
 	// refusal named, so the API can say which of the two conflicts happened.

@@ -30,18 +30,20 @@ var accessManagementErrors = []errorMapping{
 	{accessmanagement.ErrSelfDisable, http.StatusConflict, "self_disable_forbidden", "the authenticated user cannot disable itself"},
 	{accessmanagement.ErrSelfDelete, http.StatusConflict, "self_delete_forbidden", "the authenticated user cannot delete itself"},
 	{accessmanagement.ErrSelfUnbind, http.StatusConflict, "self_unbind_forbidden", "the authenticated user cannot delete its own role binding"},
+	{accessmanagement.ErrSelfLockout, http.StatusConflict, "self_lockout_forbidden", "the role update would remove permissions from the authenticated user that only somebody else could restore"},
 	// 400 rather than 403: the caller may hold every permission in the role. What
 	// is wrong is the pairing — this scope exercises none of them — so the
 	// request is malformed rather than refused.
-	{accessmanagement.ErrGlobalOnlyRole, http.StatusBadRequest, "global_only_role", "role only carries permissions that apply at global scope"},
+	{accessmanagement.ErrRoleUnreachableAtScope, http.StatusBadRequest, "role_unreachable_at_scope", "role only carries permissions the binding scope cannot exercise"},
 	{accessmanagement.ErrLastAdmin, http.StatusConflict, "last_global_admin", "the last active global administrator must be preserved"},
 	// 403 rather than 409: nothing about the platform's state is in the way, the
 	// caller simply is not a global administrator.
-	{accessmanagement.ErrGlobalAdminRequired, http.StatusForbidden, "global_admin_required", "only a global administrator can grant or revoke global administrator"},
+	{accessmanagement.ErrGlobalAdminRequired, http.StatusForbidden, "global_admin_required", "only a global administrator can act on a global administrator's account or membership"},
 	// Shared with the binding endpoints, not only the role ones: granting a role
 	// is subject to the same ceiling as writing one, so both can refuse for this
 	// reason and both have to say so rather than falling through to a 500.
 	{accessmanagement.ErrPermissionEscalation, http.StatusForbidden, "permission_escalation", "role grants permissions the caller does not hold"},
+	{accessmanagement.ErrPermissionRevocation, http.StatusForbidden, "permission_revocation", "the change revokes permissions the caller does not hold"},
 	{accessmanagement.ErrConflict, http.StatusConflict, "resource_conflict", "access management state conflicts with the request"},
 }
 
