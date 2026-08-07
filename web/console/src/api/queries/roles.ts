@@ -23,7 +23,9 @@ export function useRoles(params: RoleListParams = {}, enabled = true) {
   return useQuery({
     queryKey: queryKeys.roles(params),
     queryFn: async ({ signal }) =>
-      unwrap(await api.GET("/api/v1/roles", { params: { query: params }, signal })) as RoleListResult,
+      unwrap(
+        await api.GET("/api/v1/roles", { params: { query: params }, signal }),
+      ) as RoleListResult,
     enabled,
     placeholderData: (previous) => previous,
   });

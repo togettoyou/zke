@@ -834,7 +834,9 @@ function RoleSection() {
       {
         header: "说明",
         cell: ({ row }) => (
-          <span className="text-muted-foreground text-[13px]">{row.original.description || "—"}</span>
+          <span className="text-muted-foreground text-[13px]">
+            {row.original.description || "—"}
+          </span>
         ),
       },
       {
@@ -1066,13 +1068,13 @@ function RoleEditorDialog({
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent aria-describedby={undefined} className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>
-            {readOnly ? "角色详情" : editing ? "编辑角色" : "新建角色"}
-          </DialogTitle>
+          <DialogTitle>{readOnly ? "角色详情" : editing ? "编辑角色" : "新建角色"}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-3">
           {readOnly && role?.builtin ? (
-            <Alert tone="info">内置角色由 Server 定义，权限集在每次启动时对账，不可修改或删除。</Alert>
+            <Alert tone="info">
+              内置角色由 Server 定义，权限集在每次启动时对账，不可修改或删除。
+            </Alert>
           ) : null}
 
           <div className="grid grid-cols-2 gap-3">
@@ -1119,7 +1121,7 @@ function RoleEditorDialog({
             {permissionsQuery.isLoading ? (
               <span className="text-muted-foreground text-[13px]">正在加载权限字典…</span>
             ) : (
-              <div className="border-border max-h-72 overflow-y-auto rounded-control border">
+              <div className="border-border rounded-control max-h-72 overflow-y-auto border">
                 {catalog.map((permission) => (
                   <PermissionRow
                     key={permission.name}
@@ -1145,12 +1147,12 @@ function RoleEditorDialog({
           ) : null}
 
           {/*
-            * The Server's own message is shown rather than a fixed one: the
-            * refusals here are specific and actionable — which permission
-            * exceeded the caller's ceiling, that the role is builtin, that it is
-            * still bound — and replacing them with "保存失败" would throw away
-            * the only part worth reading.
-            */}
+           * The Server's own message is shown rather than a fixed one: the
+           * refusals here are specific and actionable — which permission
+           * exceeded the caller's ceiling, that the role is builtin, that it is
+           * still bound — and replacing them with "保存失败" would throw away
+           * the only part worth reading.
+           */}
           {error ? <Alert tone="danger">{errorMessage(error)}</Alert> : null}
         </div>
         <DialogFooter>
