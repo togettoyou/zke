@@ -844,6 +844,25 @@ Node 规则包括 Ready 异常、Memory/Disk/PID Pressure、NetworkUnavailable�
 可分配量 90% 的容量信号。除下文单独建模的 PVC、Service、Ingress、Gateway、HPA 与策略状态资源外，其他类型走通用 describe，只返回身份与自己的
 Event，findings 恒为空数组：没有为某个类型写过的规则不是规则。
 
+类型化诊断的覆盖边界如下。这里的“无类型化入口”是有意的产品边界，不表示忘记接按钮；只有当该类型出现可由
+Kubernetes status、Condition、明确关联对象或精确 Event 归属证明的故障语义时，才应新增规则。
+
+| 资源 | 当前诊断能力 | 边界 |
+| --- | --- | --- |
+| Pod | 类型化 | Condition、容器当前/上一次状态、精确 UID Event |
+| Deployment、StatefulSet、DaemonSet、Job、CronJob | 类型化聚合 | owner UID 链、控制器、Pod、模板引用 PVC 与有界关联 Event |
+| Node | 类型化聚合 | Node Condition、taint、已分配非终止 Pod 与 scheduler requests；Node Event 受三层精确过滤 |
+| Service、Ingress、Gateway | 类型化 | EndpointSlice/后端引用或 Gateway Controller Condition；不跨 Namespace 读取 Secret/Route |
+| PersistentVolumeClaim | 类型化 | phase、Condition 与精确 UID Event |
+| HorizontalPodAutoscaler | 类型化聚合 | 标准 HPA Condition；只补充已知 apps/v1 目标状态，不读取目标 Event |
+| ResourceQuota、PodDisruptionBudget | 类型化 | quantity 用量或 `DisruptionAllowed` Condition |
+| ConfigMap、LimitRange、NetworkPolicy | 无类型化入口 | 没有可可靠解释为对象故障的 status；可在资源对象浏览器使用通用 Event-only describe |
+| Secret | 无诊断入口 | 敏感资源不经过通用资源/describe 路径，不能为事件便利放宽 Secret 读取边界 |
+| Namespace、PersistentVolume、StorageClass、PriorityClass | 无类型化入口 | 集群级 Event 的 Namespace 归属不确定，且当前没有对象级确定性规则 |
+| Role、RoleBinding、ClusterRole、ClusterRoleBinding | 无诊断入口 | 授权对象没有故障 status，且继续由独立 RBAC 权限与专用接口隔离 |
+| 其他可发现的命名空间级主资源 | 通用 Event-only | 返回对象身份和按 UID 过滤的 Event，findings 为空；不把未知类型猜成已知家族 |
+| 其他可发现的集群级主资源 | 无 Console 入口 | Server 即使收到通用 describe 也以 `unsupported_scope` 明示不读取 Event |
+
 PVC 的独立 describe 复用工作负载聚合中同一条 `PVCPending` 规则。Bound PVC 不报告问题；Pending PVC 先从自身
 Event 中选择最近的 `WaitForFirstConsumer`、`ProvisioningFailed` 或 `FailedBinding` 原因与消息，事件窗口没有对应
 记录时再使用 PVC Condition。存储页只在 PersistentVolumeClaim 标签显示诊断入口；PV 与 StorageClass 是集群级对象，
