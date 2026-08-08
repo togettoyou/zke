@@ -40,6 +40,16 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { NetworkingFormView } from "./NetworkingFormView";
 import { DescribeView } from "./DescribeView";
+import {
+  gatewayRouteDraftFromSpec,
+  type GatewayRouteRuleDraft,
+  type GRPCRouteMatchDraft,
+  type HTTPRouteMatchDraft,
+  type RouteBackendDraft,
+  type RouteParentDraft,
+  type RouteValueMatchDraft,
+} from "./gateway-route-form-model";
+import { DEFAULT_OPTION } from "./networking-form-model";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -644,7 +654,9 @@ function NetworkingDetailView({
           {item.service ? <ServiceCards view={item.service} /> : null}
           {item.ingress ? <IngressCards view={item.ingress} /> : null}
           {item.gateway ? <GatewayCards view={item.gateway} /> : null}
-          {item.gateway_route ? <GatewayRouteCards view={item.gateway_route} /> : null}
+          {item.gateway_route ? (
+            <GatewayRouteCards view={item.gateway_route} resource={resource} />
+          ) : null}
 
           <DetailCard title="标签">
             <DetailKeyValues entries={item.labels} />
@@ -702,14 +714,65 @@ function NetworkingDescribeView({
   );
 }
 
-function GatewayRouteCards({ view }: { view: NonNullable<NetworkingSummary["gateway_route"]> }) {
+function GatewayRouteCards({
+  view,
+  resource,
+}: {
+  view: NonNullable<NetworkingSummary["gateway_route"]>;
+  resource: KubernetesNetworkingResource;
+}) {
+  const draft = gatewayRouteDraftFromSpec(view.spec);
+  const topLevelAdvanced = advancedFieldNames(draft.source, ["parentRefs", "hostnames", "rules"]);
   return (
     <>
       <DetailCard title="Route">
         <DetailRow label="主机" value={view.hostnames.join(", ") || "任意/不适用"} />
-        <DetailRow label="ParentRef" value={String(view.parent_refs.length)} />
-        <DetailRow label="BackendRef" value={String(view.backend_refs.length)} />
+        <DetailRow label="规则" value={String(draft.rules.length)} />
+        <DetailRow label="后端" value={String(view.backend_refs.length)} />
+        {topLevelAdvanced.length > 0 ? (
+          <DetailRow
+            label="高级配置"
+            value={
+              <span className="zke-mono text-xs break-all">{topLevelAdvanced.join("、")}</span>
+            }
+          />
+        ) : null}
       </DetailCard>
+      <DetailCard title="父级引用">
+        {draft.parents.length === 0 ? (
+          <DetailRow label="父级" value="未显式指定" />
+        ) : (
+          draft.parents.map((parent, index) => (
+            <DetailRow
+              key={`${parent.group}/${parent.kind}/${parent.namespace}/${parent.name}/${index}`}
+              label={`父级 ${index + 1}`}
+              value={
+                <span className="zke-mono text-xs break-all">{parentReferenceLabel(parent)}</span>
+              }
+            />
+          ))
+        )}
+      </DetailCard>
+
+      <div className="md:col-span-2">
+        <DetailCard title="路由规则">
+          {draft.rules.length === 0 ? (
+            <DetailRow label="规则" value="—" />
+          ) : (
+            <div className="grid gap-3">
+              {draft.rules.map((rule, index) => (
+                <GatewayRouteRuleDetails
+                  key={`${rule.name}/${index}`}
+                  rule={rule}
+                  resource={resource}
+                  index={index}
+                />
+              ))}
+            </div>
+          )}
+        </DetailCard>
+      </div>
+
       <DetailCard title="父级状态">
         {view.parents.length === 0 ? (
           <DetailRow label="状态" value="Controller 尚未写入 status.parents" />
@@ -732,15 +795,130 @@ function GatewayRouteCards({ view }: { view: NonNullable<NetworkingSummary["gate
           ))
         )}
       </DetailCard>
-      <div className="md:col-span-2">
-        <DetailCard title="完整 Spec">
-          <pre className="zke-mono max-h-96 overflow-auto text-xs break-all whitespace-pre-wrap">
-            {JSON.stringify(view.spec, null, 2)}
-          </pre>
-        </DetailCard>
-      </div>
     </>
   );
+}
+
+function GatewayRouteRuleDetails({
+  rule,
+  resource,
+  index,
+}: {
+  rule: GatewayRouteRuleDraft;
+  resource: KubernetesNetworkingResource;
+  index: number;
+}) {
+  const advanced = advancedFieldNames(rule.source, ["name", "matches", "backendRefs"]);
+  return (
+    <div className="border-border/70 bg-surface-muted/30 grid gap-2 rounded-md border p-3">
+      <DetailRow label={`规则 ${index + 1}`} value={rule.name || "未命名"} />
+      {resource === "httproutes" ? (
+        <DetailRow
+          label="HTTP 匹配"
+          value={<MatchLines lines={rule.httpMatches.map(httpMatchLabel)} empty="全部 HTTP 请求" />}
+        />
+      ) : null}
+      {resource === "grpcroutes" ? (
+        <DetailRow
+          label="gRPC 匹配"
+          value={<MatchLines lines={rule.grpcMatches.map(grpcMatchLabel)} empty="全部 gRPC 请求" />}
+        />
+      ) : null}
+      <DetailRow
+        label="后端"
+        value={<MatchLines lines={rule.backends.map(backendReferenceLabel)} empty="未配置" />}
+      />
+      {advanced.length > 0 ? (
+        <DetailRow
+          label="高级配置"
+          value={<span className="zke-mono text-xs break-all">{advanced.join("、")}</span>}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function MatchLines({ lines, empty }: { lines: string[]; empty: string }) {
+  return lines.length === 0 ? (
+    empty
+  ) : (
+    <div className="grid gap-1">
+      {lines.map((line, index) => (
+        <span key={`${line}/${index}`} className="zke-mono text-xs break-all">
+          {line}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function parentReferenceLabel(reference: RouteParentDraft): string {
+  const group =
+    reference.group === DEFAULT_OPTION ? "gateway.networking.k8s.io" : reference.group || "core";
+  const kind = reference.kind === DEFAULT_OPTION ? "Gateway" : reference.kind;
+  const target = `${reference.namespace ? `${reference.namespace}/` : ""}${reference.name}`;
+  const section = reference.sectionName ? `#${reference.sectionName}` : "";
+  const port = reference.port ? `:${reference.port}` : "";
+  return `${group}/${kind} · ${target}${section}${port}`;
+}
+
+function backendReferenceLabel(reference: RouteBackendDraft): string {
+  const group = reference.group === DEFAULT_OPTION ? "core" : reference.group || "core";
+  const kind = reference.kind === DEFAULT_OPTION ? "Service" : reference.kind;
+  const target = `${reference.namespace ? `${reference.namespace}/` : ""}${reference.name}`;
+  const port = reference.port ? `:${reference.port}` : "";
+  const weight = reference.weight ? ` · 权重 ${reference.weight}` : "";
+  const advanced = advancedFieldNames(reference.source, [
+    "group",
+    "kind",
+    "namespace",
+    "name",
+    "port",
+    "weight",
+  ]);
+  return `${group}/${kind} · ${target}${port}${weight}${advanced.length ? ` · 高级配置 ${advanced.join("、")}` : ""}`;
+}
+
+function httpMatchLabel(match: HTTPRouteMatchDraft): string {
+  const parts: string[] = [];
+  if (match.pathType !== DEFAULT_OPTION) {
+    parts.push(`路径 ${match.pathType} ${match.pathValue || "/"}`);
+  }
+  if (match.method !== DEFAULT_OPTION) parts.push(`方法 ${match.method}`);
+  appendValueMatches(parts, "Header", match.headers);
+  appendValueMatches(parts, "查询参数", match.queryParams);
+  return parts.join(" · ") || "全部 HTTP 请求";
+}
+
+function grpcMatchLabel(match: GRPCRouteMatchDraft): string {
+  const parts: string[] = [];
+  if (match.methodType !== DEFAULT_OPTION) {
+    const target = [match.service, match.method].filter(Boolean).join("/") || "全部方法";
+    parts.push(`${match.methodType} ${target}`);
+  }
+  appendValueMatches(parts, "Header", match.headers);
+  return parts.join(" · ") || "全部 gRPC 请求";
+}
+
+function appendValueMatches(parts: string[], label: string, matches: RouteValueMatchDraft[]) {
+  if (matches.length === 0) return;
+  parts.push(
+    `${label} ${matches.map((match) => `${match.name} ${match.type} ${match.value}`).join("，")}`,
+  );
+}
+
+function advancedFieldNames(source: Record<string, unknown>, modeled: string[]): string[] {
+  const labels: Record<string, string> = {
+    filters: "过滤器",
+    timeouts: "超时",
+    retry: "重试",
+    sessionPersistence: "会话保持",
+    useDefaultGateways: "默认 Gateway",
+  };
+  const modeledFields = new Set(modeled);
+  return Object.keys(source)
+    .filter((field) => !modeledFields.has(field))
+    .map((field) => labels[field] ?? field);
 }
 
 function ServiceCards({ view }: { view: NonNullable<NetworkingSummary["service"]> }) {

@@ -430,8 +430,8 @@ metadata 与 status；跨 Namespace ParentRef/BackendRef 可以表达，但 ZKE 
 
 Console 服务与路由页面按 Service、Ingress、Gateway 和五种 Route 标签页组织。各类型形状不同，因此列表列和详情卡片
 各自独立，而不是压成一张只显示共有字段的表：Service 展示类型、ClusterIP 与端口映射，Ingress 展示
-IngressClass、主机与已分配地址，Gateway 展示 GatewayClass、监听器与地址。详情页在类型化视图之外还提供
-YAML 入口，用于查看和修改本表单未建模的字段。
+IngressClass、主机与已分配地址，Gateway 展示 GatewayClass、监听器与地址。Route 详情按父级引用、协议匹配、后端
+目标和高级配置分类展示，不直接输出 JSON；详情页仍提供 YAML 入口，用于查看和修改表单未建模字段的完整原生内容。
 
 Service 端口点击复制的是「地址:端口」，因为那才是被粘贴出去的整体；headless Service 没有地址，只复制端口号，
 也不替它拼一个 `svc.cluster.local` 域名——集群域名由集群自身配置决定，接口并不携带它。NodePort 单独可复制。
