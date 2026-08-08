@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/cn";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
+import { AdvancedSchedulingEditor } from "./AdvancedSchedulingEditor";
 import { kindLabel } from "./workload-catalog";
 import {
   buildWorkloadSpec,
@@ -564,49 +565,17 @@ export function WorkloadCreateView({
 
             <FormSection
               title="高级调度"
-              hint="完整保留 Kubernetes 的嵌套 AND/OR 语义；服务端仍会逐字段校验操作符、选择器、权重与集合上限"
+              hint="按 Kubernetes 的嵌套语义配置节点与 Pod 亲和性、反亲和性及拓扑分布"
               problem={problemIn("advancedScheduling")}
             >
-              <div className="grid gap-3 xl:grid-cols-2">
-                <Field
-                  label="亲和性（JSON）"
-                  hint="支持 node_affinity、pod_affinity 与 pod_anti_affinity；留空表示不配置"
-                >
-                  {(id) => (
-                    <Textarea
-                      id={id}
-                      value={draft.affinityJson}
-                      spellCheck={false}
-                      className="zke-mono min-h-44 text-xs"
-                      placeholder={
-                        '例如 {\n  "node_affinity": {\n    "required": [{\n      "match_expressions": [{"key": "node.kubernetes.io/instance-type", "operator": "In", "values": ["gpu"]}]\n    }]\n  }\n}'
-                      }
-                      onChange={(event) => patch({ affinityJson: event.target.value })}
-                    />
-                  )}
-                </Field>
-                <Field
-                  label="拓扑分布约束（JSON）"
-                  hint="数组中每项声明 topology_key、max_skew、调度策略及可选标签选择器"
-                >
-                  {(id) => (
-                    <Textarea
-                      id={id}
-                      value={draft.topologySpreadJson}
-                      spellCheck={false}
-                      className="zke-mono min-h-44 text-xs"
-                      placeholder={
-                        '例如 [{\n  "max_skew": 1,\n  "topology_key": "topology.kubernetes.io/zone",\n  "when_unsatisfiable": "DoNotSchedule",\n  "label_selector": {"match_labels": {"app": "api"}}\n}]'
-                      }
-                      onChange={(event) => patch({ topologySpreadJson: event.target.value })}
-                    />
-                  )}
-                </Field>
-              </div>
-              <p className="text-subtle-foreground mt-2 text-xs">
-                JSON 使用本接口的 snake_case 字段；DryRun 仍由目标集群 API Server
-                和准入策略给出最终结果。
-              </p>
+              <AdvancedSchedulingEditor
+                affinity={draft.affinity}
+                topologySpreadConstraints={draft.topologySpreadConstraints}
+                onAffinityChange={(affinity) => patch({ affinity })}
+                onTopologySpreadChange={(topologySpreadConstraints) =>
+                  patch({ topologySpreadConstraints })
+                }
+              />
             </FormSection>
           </>
         )}

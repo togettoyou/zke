@@ -43,6 +43,11 @@ const MAX_VOLUMES = 50;
 const MAX_VOLUME_MOUNTS = 50;
 const MAX_TOLERATIONS = 50;
 const MAX_NODE_SELECTORS = 50;
+const MAX_AFFINITY_TERMS = 50;
+const MAX_SELECTOR_REQUIREMENTS = 50;
+const MAX_SELECTOR_VALUES = 50;
+const MAX_AFFINITY_NAMESPACES = 50;
+const MAX_TOPOLOGY_SPREAD_CONSTRAINTS = 50;
 const MAX_IMAGE_PULL_SECRETS = 20;
 const MAX_COMMAND_ENTRIES = 100;
 const MAX_IMAGE_BYTES = 2048;
@@ -199,6 +204,28 @@ export type TolerationDraft = {
   tolerationSeconds: string;
 };
 
+export type WorkloadAffinityDraft = NonNullable<WorkloadCreateSpec["affinity"]>;
+export type WorkloadNodeAffinityDraft = NonNullable<WorkloadAffinityDraft["node_affinity"]>;
+export type WorkloadNodeSelectorTermDraft = NonNullable<
+  WorkloadNodeAffinityDraft["required"]
+>[number];
+export type WorkloadNodeSelectorRequirementDraft = NonNullable<
+  WorkloadNodeSelectorTermDraft["match_expressions"]
+>[number];
+export type WorkloadPodAffinityDraft = NonNullable<WorkloadAffinityDraft["pod_affinity"]>;
+export type WorkloadPodAffinityTermDraft = NonNullable<
+  WorkloadPodAffinityDraft["required"]
+>[number];
+export type WorkloadLabelSelectorDraft = NonNullable<
+  WorkloadPodAffinityTermDraft["label_selector"]
+>;
+export type WorkloadSelectorRequirementDraft = NonNullable<
+  WorkloadLabelSelectorDraft["match_expressions"]
+>[number];
+export type WorkloadTopologySpreadConstraintDraft = NonNullable<
+  WorkloadCreateSpec["topology_spread_constraints"]
+>[number];
+
 export type WorkloadFormDraft = {
   name: string;
   description: string;
@@ -209,9 +236,9 @@ export type WorkloadFormDraft = {
   imagePullSecrets: string[];
   nodeSelector: KeyValueDraft[];
   tolerations: TolerationDraft[];
-  /** Full typed API shapes, edited as JSON so nested AND/OR terms round-trip exactly. */
-  affinityJson: string;
-  topologySpreadJson: string;
+  /** Full typed API shapes, edited by the hierarchical scheduling form. */
+  affinity: WorkloadAffinityDraft;
+  topologySpreadConstraints: WorkloadTopologySpreadConstraintDraft[];
 
   replicas: string;
   serviceName: string;
@@ -319,8 +346,8 @@ export function emptyDraft(): WorkloadFormDraft {
     imagePullSecrets: [],
     nodeSelector: [],
     tolerations: [],
-    affinityJson: "",
-    topologySpreadJson: "",
+    affinity: {},
+    topologySpreadConstraints: [],
     replicas: "",
     serviceName: "",
     parallelism: "",
@@ -493,32 +520,12 @@ export function draftProblem(
   if (tolerationProblem) {
     return at("tolerations", tolerationProblem);
   }
-  const affinityProblem = jsonShapeProblem(draft.affinityJson, "亲和性", "object");
-  if (affinityProblem) {
-    return at("advancedScheduling", affinityProblem);
-  }
-  const topologyProblem = jsonShapeProblem(draft.topologySpreadJson, "拓扑分布约束", "array");
-  if (topologyProblem) {
-    return at("advancedScheduling", topologyProblem);
-  }
-  return null;
-}
-
-function jsonShapeProblem(source: string, label: string, shape: "object" | "array"): string | null {
-  const trimmed = source.trim();
-  if (trimmed === "") return null;
-  if (byteLength(trimmed) > 128 * 1024) return `${label} JSON 不能超过 128 KiB。`;
-  try {
-    const value: unknown = JSON.parse(trimmed);
-    if (
-      shape === "array"
-        ? !Array.isArray(value)
-        : value === null || Array.isArray(value) || typeof value !== "object"
-    ) {
-      return `${label}必须是 JSON ${shape === "array" ? "数组" : "对象"}。`;
-    }
-  } catch (error) {
-    return `${label}不是合法 JSON：${error instanceof Error ? error.message : "解析失败"}`;
+  const schedulingProblem = advancedSchedulingProblem(
+    draft.affinity,
+    draft.topologySpreadConstraints,
+  );
+  if (schedulingProblem) {
+    return at("advancedScheduling", schedulingProblem);
   }
   return null;
 }
@@ -986,6 +993,251 @@ function tolerationsProblem(tolerations: TolerationDraft[]): string | null {
   return null;
 }
 
+function advancedSchedulingProblem(
+  affinity: WorkloadAffinityDraft,
+  topology: WorkloadTopologySpreadConstraintDraft[],
+): string | null {
+  const nodeProblem = nodeAffinityProblem(affinity.node_affinity);
+  if (nodeProblem) return nodeProblem;
+  const podProblem = podAffinityProblem(affinity.pod_affinity, "Pod 亲和性");
+  if (podProblem) return podProblem;
+  const antiProblem = podAffinityProblem(affinity.pod_anti_affinity, "Pod 反亲和性");
+  if (antiProblem) return antiProblem;
+  return topologySpreadProblem(topology);
+}
+
+function nodeAffinityProblem(value?: WorkloadNodeAffinityDraft): string | null {
+  if (!value) return null;
+  if (
+    (value.required?.length ?? 0) > MAX_AFFINITY_TERMS ||
+    (value.preferred?.length ?? 0) > MAX_AFFINITY_TERMS
+  ) {
+    return `节点亲和性的硬性和偏好规则组分别不能超过 ${MAX_AFFINITY_TERMS} 个。`;
+  }
+  for (const [index, term] of (value.required ?? []).entries()) {
+    const problem = nodeTermProblem(term);
+    if (problem) return `节点硬性规则组 ${index + 1}：${problem}`;
+  }
+  for (const [index, weighted] of (value.preferred ?? []).entries()) {
+    if (!integerBetween(weighted.weight, 1, 100)) {
+      return `节点偏好规则组 ${index + 1}：权重必须是 1–100 的整数。`;
+    }
+    const problem = nodeTermProblem(weighted.preference);
+    if (problem) return `节点偏好规则组 ${index + 1}：${problem}`;
+  }
+  return null;
+}
+
+function nodeTermProblem(term: WorkloadNodeSelectorTermDraft): string | null {
+  const expressions = term.match_expressions ?? [];
+  const fields = term.match_fields ?? [];
+  if (expressions.length + fields.length === 0) {
+    return "至少需要一条节点标签或字段条件。";
+  }
+  if (expressions.length > MAX_SELECTOR_REQUIREMENTS || fields.length > MAX_SELECTOR_REQUIREMENTS) {
+    return `标签条件和字段条件分别不能超过 ${MAX_SELECTOR_REQUIREMENTS} 条。`;
+  }
+  for (const [index, requirement] of expressions.entries()) {
+    const problem = nodeRequirementProblem(requirement, false);
+    if (problem) return `标签条件 ${index + 1} ${problem}`;
+  }
+  for (const [index, requirement] of fields.entries()) {
+    const problem = nodeRequirementProblem(requirement, true);
+    if (problem) return `字段条件 ${index + 1} ${problem}`;
+  }
+  return null;
+}
+
+function nodeRequirementProblem(
+  requirement: WorkloadNodeSelectorRequirementDraft,
+  field: boolean,
+): string | null {
+  const key = requirement.key.trim();
+  if (!qualifiedName(key)) return "需要合法的 Kubernetes 键名。";
+  const values = requirement.values ?? [];
+  if (values.length > MAX_SELECTOR_VALUES) return `不能超过 ${MAX_SELECTOR_VALUES} 个匹配值。`;
+  if (requirement.operator === "In" || requirement.operator === "NotIn") {
+    if (values.length === 0 || (!field && values.some((value) => !validLabelValue(value.trim())))) {
+      return `${requirement.operator} 至少需要一个${field ? "字段" : "合法标签"}值。`;
+    }
+  } else if (requirement.operator === "Gt" || requirement.operator === "Lt") {
+    if (values.length !== 1 || !/^-?\d+$/.test(values[0]?.trim() ?? "")) {
+      return `${requirement.operator} 需要且只能填写一个整数。`;
+    }
+  } else if (values.length !== 0) {
+    return `${requirement.operator} 不接受匹配值。`;
+  }
+  return null;
+}
+
+function podAffinityProblem(
+  value: WorkloadPodAffinityDraft | undefined,
+  label: string,
+): string | null {
+  if (!value) return null;
+  if (
+    (value.required?.length ?? 0) > MAX_AFFINITY_TERMS ||
+    (value.preferred?.length ?? 0) > MAX_AFFINITY_TERMS
+  ) {
+    return `${label}的硬性和偏好规则分别不能超过 ${MAX_AFFINITY_TERMS} 个。`;
+  }
+  for (const [index, term] of (value.required ?? []).entries()) {
+    const problem = podTermProblem(term);
+    if (problem) return `${label}硬性规则 ${index + 1}：${problem}`;
+  }
+  for (const [index, weighted] of (value.preferred ?? []).entries()) {
+    if (!integerBetween(weighted.weight, 1, 100)) {
+      return `${label}偏好规则 ${index + 1}：权重必须是 1–100 的整数。`;
+    }
+    const problem = podTermProblem(weighted.pod_term);
+    if (problem) return `${label}偏好规则 ${index + 1}：${problem}`;
+  }
+  return null;
+}
+
+function podTermProblem(term: WorkloadPodAffinityTermDraft): string | null {
+  if (!qualifiedName(term.topology_key.trim())) return "拓扑键不是合法的 Kubernetes 键名。";
+  const labelProblem = labelSelectorProblem(term.label_selector, "Pod 标签选择器");
+  if (labelProblem) return labelProblem;
+  const namespaceProblem = labelSelectorProblem(term.namespace_selector, "命名空间标签选择器");
+  if (namespaceProblem) return namespaceProblem;
+  const namespacesProblem = uniqueListProblem(
+    term.namespaces ?? [],
+    "显式命名空间",
+    (value) => DNS_LABEL.test(value) && value.length <= MAX_DNS_LABEL_LENGTH,
+    MAX_AFFINITY_NAMESPACES,
+  );
+  if (namespacesProblem) return namespacesProblem;
+  const matchProblem = qualifiedKeyListProblem(term.match_label_keys ?? [], "动态匹配标签键");
+  if (matchProblem) return matchProblem;
+  const mismatchProblem = qualifiedKeyListProblem(term.mismatch_label_keys ?? [], "动态排除标签键");
+  if (mismatchProblem) return mismatchProblem;
+  if (
+    ((term.match_label_keys?.length ?? 0) > 0 || (term.mismatch_label_keys?.length ?? 0) > 0) &&
+    term.label_selector === undefined
+  ) {
+    return "使用动态标签键前需要启用 Pod 标签选择器。";
+  }
+  const selectorKeys = selectorKeySet(term.label_selector);
+  const matchKeys = new Set((term.match_label_keys ?? []).map((key) => key.trim()));
+  for (const key of [...(term.match_label_keys ?? []), ...(term.mismatch_label_keys ?? [])]) {
+    if (selectorKeys.has(key.trim())) return `动态标签键 ${key.trim()} 已在 Pod 标签选择器中使用。`;
+  }
+  for (const key of term.mismatch_label_keys ?? []) {
+    if (matchKeys.has(key.trim())) return `动态标签键 ${key.trim()} 不能同时匹配和排除。`;
+  }
+  return null;
+}
+
+function topologySpreadProblem(values: WorkloadTopologySpreadConstraintDraft[]): string | null {
+  if (values.length > MAX_TOPOLOGY_SPREAD_CONSTRAINTS) {
+    return `拓扑分布约束不能超过 ${MAX_TOPOLOGY_SPREAD_CONSTRAINTS} 条。`;
+  }
+  for (const [index, value] of values.entries()) {
+    const prefix = `拓扑分布约束 ${index + 1}：`;
+    if (!integerBetween(value.max_skew, 1, INT32_MAX)) return `${prefix}最大偏差必须是正整数。`;
+    if (!qualifiedName(value.topology_key.trim()))
+      return `${prefix}拓扑键不是合法的 Kubernetes 键名。`;
+    if (
+      value.when_unsatisfiable !== "DoNotSchedule" &&
+      value.when_unsatisfiable !== "ScheduleAnyway"
+    ) {
+      return `${prefix}需要选择无法满足时的处理策略。`;
+    }
+    if (
+      value.min_domains != null &&
+      (!integerBetween(value.min_domains, 1, INT32_MAX) ||
+        value.when_unsatisfiable !== "DoNotSchedule")
+    ) {
+      return `${prefix}最少拓扑域只能用于 DoNotSchedule，且必须是正整数。`;
+    }
+    const selectorProblem = labelSelectorProblem(value.label_selector, "Pod 标签选择器");
+    if (selectorProblem) return `${prefix}${selectorProblem}`;
+    const keysProblem = qualifiedKeyListProblem(value.match_label_keys ?? [], "动态匹配标签键");
+    if (keysProblem) return `${prefix}${keysProblem}`;
+    const selectorKeys = selectorKeySet(value.label_selector);
+    for (const key of value.match_label_keys ?? []) {
+      if (selectorKeys.has(key.trim())) {
+        return `${prefix}动态标签键 ${key.trim()} 已在 Pod 标签选择器中使用。`;
+      }
+    }
+  }
+  return null;
+}
+
+function labelSelectorProblem(
+  selector: WorkloadLabelSelectorDraft | undefined,
+  label: string,
+): string | null {
+  if (!selector) return null;
+  const labels = Object.entries(selector.match_labels ?? {}).map(([key, value]) => ({
+    key,
+    value,
+  }));
+  if (labels.some((item) => item.key.trim() === "")) {
+    return `${label}的精确匹配标签需要填写键名。`;
+  }
+  const exactProblem = keyValueProblem(labels, {
+    label: `${label}的精确匹配`,
+    values: "label",
+    max: MAX_SELECTOR_REQUIREMENTS,
+  });
+  if (exactProblem) return exactProblem;
+  const expressions = selector.match_expressions ?? [];
+  if (expressions.length > MAX_SELECTOR_REQUIREMENTS) {
+    return `${label}的表达式不能超过 ${MAX_SELECTOR_REQUIREMENTS} 条。`;
+  }
+  for (const [index, expression] of expressions.entries()) {
+    if (!qualifiedName(expression.key.trim())) return `${label}表达式 ${index + 1} 的键名不合法。`;
+    const values = expression.values ?? [];
+    if (values.length > MAX_SELECTOR_VALUES) return `${label}表达式 ${index + 1} 的值过多。`;
+    if (expression.operator === "In" || expression.operator === "NotIn") {
+      if (values.length === 0 || values.some((value) => !validLabelValue(value.trim()))) {
+        return `${label}表达式 ${index + 1} 的 ${expression.operator} 至少需要一个合法标签值。`;
+      }
+    } else if (values.length !== 0) {
+      return `${label}表达式 ${index + 1} 的 ${expression.operator} 不接受匹配值。`;
+    }
+  }
+  return null;
+}
+
+function validLabelValue(value: string): boolean {
+  return LABEL_VALUE.test(value) && value.length <= MAX_LABEL_VALUE_LENGTH;
+}
+
+function qualifiedKeyListProblem(values: string[], label: string): string | null {
+  return uniqueListProblem(values, label, qualifiedName, MAX_SELECTOR_VALUES);
+}
+
+function uniqueListProblem(
+  values: string[],
+  label: string,
+  valid: (value: string) => boolean,
+  max: number,
+): string | null {
+  if (values.length > max) return `${label}不能超过 ${max} 项。`;
+  const seen = new Set<string>();
+  for (const source of values) {
+    const value = source.trim();
+    if (!valid(value)) return `${label} ${value || "（空）"} 不合法。`;
+    if (seen.has(value)) return `${label} ${value} 重复。`;
+    seen.add(value);
+  }
+  return null;
+}
+
+function selectorKeySet(selector?: WorkloadLabelSelectorDraft): Set<string> {
+  return new Set([
+    ...Object.keys(selector?.match_labels ?? {}).map((key) => key.trim()),
+    ...(selector?.match_expressions ?? []).map((value) => value.key.trim()),
+  ]);
+}
+
+function integerBetween(value: number, minimum: number, maximum: number): boolean {
+  return Number.isInteger(value) && value >= minimum && value <= maximum;
+}
+
 /** A port number in range, or the name of a container port. */
 function validPort(value: string): boolean {
   if (INTEGER.test(value)) {
@@ -1087,13 +1339,12 @@ export function buildWorkloadSpec(
         : { toleration_seconds: Number(toleration.tolerationSeconds.trim()) }),
     }));
   }
-  if (draft.affinityJson.trim() !== "") {
-    spec.affinity = JSON.parse(draft.affinityJson) as NonNullable<WorkloadCreateSpec["affinity"]>;
+  const affinity = workloadAffinityRequest(draft.affinity);
+  if (Object.keys(affinity).length > 0) {
+    spec.affinity = affinity;
   }
-  if (draft.topologySpreadJson.trim() !== "") {
-    spec.topology_spread_constraints = JSON.parse(draft.topologySpreadJson) as NonNullable<
-      WorkloadCreateSpec["topology_spread_constraints"]
-    >;
+  if (draft.topologySpreadConstraints.length > 0) {
+    spec.topology_spread_constraints = draft.topologySpreadConstraints.map(topologySpreadRequest);
   }
 
   const replicated = resource === "deployments" || resource === "statefulsets";
@@ -1150,17 +1401,90 @@ export function buildWorkloadUpdateSpec(
   const { name: _name, service_name: _serviceName, ...spec } = buildWorkloadSpec(draft, resource);
   // Explicit empties clear an existing advanced rule. Omission is reserved for
   // older API clients and means "preserve" on update for compatibility.
-  spec.affinity =
-    draft.affinityJson.trim() === ""
-      ? {}
-      : (JSON.parse(draft.affinityJson) as NonNullable<WorkloadUpdateSpec["affinity"]>);
-  spec.topology_spread_constraints =
-    draft.topologySpreadJson.trim() === ""
-      ? []
-      : (JSON.parse(draft.topologySpreadJson) as NonNullable<
-          WorkloadUpdateSpec["topology_spread_constraints"]
-        >);
+  spec.affinity = workloadAffinityRequest(draft.affinity);
+  spec.topology_spread_constraints = draft.topologySpreadConstraints.map(topologySpreadRequest);
   return spec;
+}
+
+function workloadAffinityRequest(value: WorkloadAffinityDraft): WorkloadAffinityDraft {
+  const result: WorkloadAffinityDraft = {};
+  if (value.node_affinity) {
+    result.node_affinity = {
+      required: (value.node_affinity.required ?? []).map(nodeTermRequest),
+      preferred: (value.node_affinity.preferred ?? []).map((weighted) => ({
+        weight: weighted.weight,
+        preference: nodeTermRequest(weighted.preference),
+      })),
+    };
+  }
+  if (value.pod_affinity) result.pod_affinity = podAffinityRequest(value.pod_affinity);
+  if (value.pod_anti_affinity)
+    result.pod_anti_affinity = podAffinityRequest(value.pod_anti_affinity);
+  return result;
+}
+
+function nodeTermRequest(value: WorkloadNodeSelectorTermDraft): WorkloadNodeSelectorTermDraft {
+  return {
+    match_expressions: (value.match_expressions ?? []).map(nodeRequirementRequest),
+    match_fields: (value.match_fields ?? []).map(nodeRequirementRequest),
+  };
+}
+
+function nodeRequirementRequest(
+  value: WorkloadNodeSelectorRequirementDraft,
+): WorkloadNodeSelectorRequirementDraft {
+  return {
+    key: value.key.trim(),
+    operator: value.operator,
+    values: (value.values ?? []).map((item) => item.trim()),
+  };
+}
+
+function podAffinityRequest(value: WorkloadPodAffinityDraft): WorkloadPodAffinityDraft {
+  return {
+    required: (value.required ?? []).map(podTermRequest),
+    preferred: (value.preferred ?? []).map((weighted) => ({
+      weight: weighted.weight,
+      pod_term: podTermRequest(weighted.pod_term),
+    })),
+  };
+}
+
+function podTermRequest(value: WorkloadPodAffinityTermDraft): WorkloadPodAffinityTermDraft {
+  return {
+    topology_key: value.topology_key.trim(),
+    ...(value.label_selector ? { label_selector: labelSelectorRequest(value.label_selector) } : {}),
+    ...(value.namespace_selector
+      ? { namespace_selector: labelSelectorRequest(value.namespace_selector) }
+      : {}),
+    namespaces: (value.namespaces ?? []).map((item) => item.trim()),
+    match_label_keys: (value.match_label_keys ?? []).map((item) => item.trim()),
+    mismatch_label_keys: (value.mismatch_label_keys ?? []).map((item) => item.trim()),
+  };
+}
+
+function labelSelectorRequest(value: WorkloadLabelSelectorDraft): WorkloadLabelSelectorDraft {
+  return {
+    match_labels: Object.fromEntries(
+      Object.entries(value.match_labels ?? {}).map(([key, item]) => [key.trim(), item.trim()]),
+    ),
+    match_expressions: (value.match_expressions ?? []).map((requirement) => ({
+      key: requirement.key.trim(),
+      operator: requirement.operator,
+      values: (requirement.values ?? []).map((item) => item.trim()),
+    })),
+  };
+}
+
+function topologySpreadRequest(
+  value: WorkloadTopologySpreadConstraintDraft,
+): WorkloadTopologySpreadConstraintDraft {
+  return {
+    ...value,
+    topology_key: value.topology_key.trim(),
+    ...(value.label_selector ? { label_selector: labelSelectorRequest(value.label_selector) } : {}),
+    match_label_keys: (value.match_label_keys ?? []).map((item) => item.trim()),
+  };
 }
 
 /** The image as Kubernetes wants it: one string, tag included. */
@@ -1466,11 +1790,8 @@ export function draftFromWorkload(
       effect: toleration.effect || DEFAULT_OPTION,
       tolerationSeconds: numberInput(toleration.toleration_seconds),
     })),
-    affinityJson: workload.affinity ? JSON.stringify(workload.affinity, null, 2) : "",
-    topologySpreadJson:
-      workload.topology_spread_constraints.length > 0
-        ? JSON.stringify(workload.topology_spread_constraints, null, 2)
-        : "",
+    affinity: workload.affinity ? structuredClone(workload.affinity) : {},
+    topologySpreadConstraints: structuredClone(workload.topology_spread_constraints),
     // `replicas` is the desired count on the object, not a live one: the status
     // counts belong to the controller and are not what an edit submits.
     replicas:
