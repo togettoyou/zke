@@ -14,6 +14,9 @@ import { highlightYaml, type YamlTokenKind } from "@/lib/yaml-highlight";
  */
 const MAX_HIGHLIGHT_CHARS = 200_000;
 
+/** Avoid turning an unusually large embedded file into tens of thousands of DOM lines. */
+const MAX_NUMBERED_LINES = 20_000;
+
 const TOKEN_CLASS: Record<YamlTokenKind, string | undefined> = {
   plain: undefined,
   comment: "text-code-comment",
@@ -35,7 +38,7 @@ const TOKEN_CLASS: Record<YamlTokenKind, string | undefined> = {
  * matter to whoever is reading the file.
  */
 const LAYER =
-  "zke-mono absolute inset-0 h-full w-full px-2.5 py-2 text-xs leading-relaxed whitespace-pre";
+  "zke-mono absolute inset-0 h-full w-full py-2 pr-2.5 text-xs leading-relaxed whitespace-pre";
 
 /**
  * A YAML text editor with syntax highlighting.
@@ -64,11 +67,13 @@ export function YamlEditor({
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const paintedRef = useRef<HTMLSpanElement>(null);
+  const gutterRef = useRef<HTMLSpanElement>(null);
 
   const lines = useMemo(
     () => (value.length <= MAX_HIGHLIGHT_CHARS ? highlightYaml(value) : null),
     [value],
   );
+  const lineNumbers = useMemo(() => buildLineNumbers(value), [value]);
 
   // The painted text is offset to wherever the textarea has been scrolled to.
   //
@@ -82,10 +87,15 @@ export function YamlEditor({
   const syncScroll = () => {
     const input = inputRef.current;
     const painted = paintedRef.current;
-    if (!input || !painted) {
+    if (!input) {
       return;
     }
-    painted.style.transform = `translate(${-input.scrollLeft}px, ${-input.scrollTop}px)`;
+    if (painted) {
+      painted.style.transform = `translate(${-input.scrollLeft}px, ${-input.scrollTop}px)`;
+    }
+    if (gutterRef.current) {
+      gutterRef.current.style.transform = `translateY(${-input.scrollTop}px)`;
+    }
   };
 
   // Text replaced from outside — a reload, a discarded edit — can move the
@@ -100,10 +110,25 @@ export function YamlEditor({
         className,
       )}
     >
+      {lineNumbers ? (
+        <pre
+          aria-hidden="true"
+          className="border-border bg-surface-muted/90 text-subtle-foreground zke-mono pointer-events-none absolute inset-y-0 left-0 z-10 w-12 overflow-hidden border-r py-2 pr-2 text-right text-xs leading-relaxed whitespace-pre select-none"
+        >
+          <span ref={gutterRef} className="zke-tnum block">
+            {lineNumbers}
+          </span>
+        </pre>
+      ) : null}
+
       {lines ? (
         <pre
           aria-hidden="true"
-          className={cn(LAYER, "text-foreground pointer-events-none overflow-hidden")}
+          className={cn(
+            LAYER,
+            "text-foreground pointer-events-none overflow-hidden",
+            lineNumbers ? "pl-14" : "pl-2.5",
+          )}
         >
           {/* The moved element sits inside the padded, clipping layer, so the
               text passes under the padding exactly as the textarea's own does. */}
@@ -139,6 +164,7 @@ export function YamlEditor({
         className={cn(
           LAYER,
           "zke-code-input caret-foreground resize-none overflow-auto bg-transparent outline-none",
+          lineNumbers ? "pl-14" : "pl-2.5",
           // Transparent text over the painted layer, so the caret, the
           // selection and the text itself all stay exactly where the browser
           // put them. Without a layer to paint, the textarea shows its own text.
@@ -147,4 +173,19 @@ export function YamlEditor({
       />
     </div>
   );
+}
+
+/** Builds one compact text node instead of one React element per line. */
+function buildLineNumbers(value: string): string | null {
+  let count = 1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 10) {
+      continue;
+    }
+    count += 1;
+    if (count > MAX_NUMBERED_LINES) {
+      return null;
+    }
+  }
+  return Array.from({ length: count }, (_, index) => String(index + 1)).join("\n");
 }
