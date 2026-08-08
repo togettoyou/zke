@@ -290,6 +290,13 @@ func renderManifest(
 			},
 			{
 				APIGroups: []string{""},
+				// Port Forward has a dedicated Agent Stream and never opens a
+				// listener beyond the Agent's loopback interface.
+				Resources: []string{"pods/portforward"},
+				Verbs:     []string{"create"},
+			},
+			{
+				APIGroups: []string{""},
 				// Drain is the sole Resource Stream subresource allowlist entry.
 				// The Agent also requires the dedicated access bit, policy/v1
 				// Eviction identity and a Pod UID precondition.

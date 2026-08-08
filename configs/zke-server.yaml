@@ -151,6 +151,14 @@ agent_listener:
   max_concurrent_pod_exec_requests: 128
   pod_exec_session_ttl: 30s
   max_pending_pod_exec_sessions: 1024
+  # Pod Port Forward tickets and Streams are independent from Web Terminal.
+  pod_port_forward_request_timeout: 15m
+  max_pod_port_forward_client_bytes: 67108864
+  max_pod_port_forward_pod_bytes: 67108864
+  max_pod_port_forward_streams_per_agent: 4
+  max_concurrent_pod_port_forward_requests: 128
+  pod_port_forward_session_ttl: 30s
+  max_pending_pod_port_forward_sessions: 1024
   # Kubernetes Event Resource Watch 使用独立的全局和每 Agent 容量预算。
   resource_watch_request_timeout: 30m
   max_resource_watch_streams_per_agent: 16

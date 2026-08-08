@@ -30,6 +30,7 @@ ZKE Server 是平台统一控制端，规划负责：
 - 获取 Pod 日志；
 - 按明确 Cluster/Namespace 获取 Kubernetes Event 快照与实时 Watch；
 - 建立 Web Terminal 会话；
+- 建立单 Pod、单 TCP 端口的受限 Port Forward 会话；
 - 执行作业和模型服务相关操作；
 - 收集或转发指标、日志和事件；
 - 返回操作结果。
@@ -54,7 +55,7 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
 `get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`update`、`patch` 以及
 Namespace 的 `get`、`list`、`create`、`update`、`delete`、Pod 的 `get`、`list`、`update`、`delete` 以及 `pods/log` 的
-`get`、`pods/exec` 与 `pods/eviction` 的 `create` 权限，并授予五类工作负载、Service、Ingress 与 Gateway 主资源的完整 CRUD，
+`get`、`pods/exec`、`pods/portforward` 与 `pods/eviction` 的 `create` 权限，并授予五类工作负载、Service、Ingress 与 Gateway 主资源的完整 CRUD，
 以及 ConfigMap、存储、HorizontalPodAutoscaler、ServiceAccount 和四类 Kubernetes RBAC 主资源的
 `get`、`list`、`create`、`update`、`delete`；RBAC 不包含 `escalate`、`bind` 或 `impersonate`，Secret 主资源不在该 ClusterRole 中；
 Eviction 只由 Node Drain 的专用权限与 Agent 精确 allowlist 使用，通用资源接口仍拒绝 Subresource。
@@ -90,8 +91,9 @@ Gateway API v1 未安装时会返回可区分的能力缺失错误；ZKE 不安�
 Pod Logs 后端已通过专用权限和独立 QUIC Stream 实现有界快照与实时 Follow；Kubernetes Event Watch 和 Pod
 Exec 也已分别通过独立协议实现。Pod Exec 使用一次性同源 WebSocket 票据、权限重验和有界 QUIC 会话；Agent 到
 Kubernetes API Server 优先使用 WebSocket streaming protocol，仅为旧 API Server 或不兼容 HTTPS 代理保留
-SPDY 回退。Shell 固定优先
-bash 并回退 `/bin/sh`；Console 入口和跨 Server 实例任务路由仍未实现。
+SPDY 回退。Shell 固定优先 bash 并回退 `/bin/sh`，Console 已提供终端入口。Pod Port Forward 也通过独立
+权限、一次性同源 WebSocket 票据和有界 QUIC Stream 实现；Agent 使用回环随机端口桥接 Kubernetes
+port-forward，Console 提供 HTTP 原始响应预览。跨 Server 实例的长会话任务路由仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
 `cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含

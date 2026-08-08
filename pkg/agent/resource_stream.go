@@ -10,10 +10,11 @@ import (
 )
 
 type connectionServices struct {
-	resourceHandler      agentprotocol.ResourceHandler
-	podLogsHandler       agentprotocol.PodLogsHandler
-	podExecHandler       agentprotocol.PodExecHandler
-	resourceWatchHandler agentprotocol.ResourceWatchHandler
+	resourceHandler       agentprotocol.ResourceHandler
+	podLogsHandler        agentprotocol.PodLogsHandler
+	podExecHandler        agentprotocol.PodExecHandler
+	podPortForwardHandler agentprotocol.PodPortForwardHandler
+	resourceWatchHandler  agentprotocol.ResourceWatchHandler
 }
 
 func newBusinessStreamServer(
@@ -61,6 +62,18 @@ func newBusinessStreamServer(
 				),
 			}
 	}
+	if services.podPortForwardHandler != nil {
+		handlers[agentv1.StreamKind_STREAM_KIND_POD_PORT_FORWARD] =
+			agentprotocol.StreamHandlerConfig{
+				MaxConcurrent: cfg.Connection.MaxConcurrentPodPortForwardStreams,
+				MaxTimeout:    cfg.Connection.MaxPodPortForwardStreamTimeout,
+				Handle: agentprotocol.PodPortForwardStreamHandler(
+					cfg.Connection.MaxPodPortForwardClientBytes,
+					cfg.Connection.MaxPodPortForwardPodBytes,
+					services.podPortForwardHandler,
+				),
+			}
+	}
 	if services.resourceWatchHandler != nil {
 		handlers[agentv1.StreamKind_STREAM_KIND_RESOURCE_WATCH] =
 			agentprotocol.StreamHandlerConfig{
@@ -75,6 +88,7 @@ func newBusinessStreamServer(
 			cfg.Connection.MaxResourceRequestTimeout,
 			cfg.Connection.MaxPodLogsStreamTimeout,
 			cfg.Connection.MaxPodExecStreamTimeout,
+			cfg.Connection.MaxPodPortForwardStreamTimeout,
 			cfg.Connection.MaxResourceWatchStreamTimeout,
 		),
 		Handlers: handlers,

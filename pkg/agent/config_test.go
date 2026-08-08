@@ -44,6 +44,10 @@ connection:
   max_concurrent_pod_exec_streams: 6
   max_pod_exec_input_bytes: 4194304
   max_pod_exec_output_bytes: 12582912
+  max_pod_port_forward_stream_timeout: 11m
+  max_concurrent_pod_port_forward_streams: 5
+  max_pod_port_forward_client_bytes: 5242880
+  max_pod_port_forward_pod_bytes: 9437184
   max_resource_watch_stream_timeout: 25m
   max_concurrent_resource_watch_streams: 10
 log_level: debug
@@ -93,6 +97,12 @@ log_level: debug
 		cfg.Connection.MaxPodExecInputBytes != 4*1024*1024 ||
 		cfg.Connection.MaxPodExecOutputBytes != 12*1024*1024 {
 		t.Fatalf("unexpected Agent connection config: %+v", cfg.Connection)
+	}
+	if cfg.Connection.MaxPodPortForwardStreamTimeout != 11*time.Minute ||
+		cfg.Connection.MaxConcurrentPodPortForwardStreams != 5 ||
+		cfg.Connection.MaxPodPortForwardClientBytes != 5*1024*1024 ||
+		cfg.Connection.MaxPodPortForwardPodBytes != 9*1024*1024 {
+		t.Fatalf("unexpected Agent Pod Port Forward config: %+v", cfg.Connection)
 	}
 	if cfg.Connection.MaxResourceWatchStreamTimeout != 25*time.Minute ||
 		cfg.Connection.MaxConcurrentResourceWatchStreams != 10 {
@@ -266,27 +276,31 @@ func validAgentConfig() Config {
 			RetryMaxInterval:     15 * time.Second,
 		},
 		Connection: ConnectionConfig{
-			ServerAddress:                     "agent.example.invalid:9443",
-			CACertificateFile:                 "/server-ca.crt",
-			ConnectTimeout:                    10 * time.Second,
-			RetryInitialInterval:              time.Second,
-			RetryMaxInterval:                  30 * time.Second,
-			IdleTimeout:                       15 * time.Minute,
-			KeepAliveInterval:                 10 * time.Second,
-			MaxIncomingStreams:                128,
-			StreamHeaderTimeout:               5 * time.Second,
-			MaxResourceRequestTimeout:         2 * time.Minute,
-			MaxConcurrentResourceStreams:      64,
-			MaxResourceBodyBytes:              32 * 1024 * 1024,
-			MaxPodLogsStreamTimeout:           30 * time.Minute,
-			MaxConcurrentPodLogsStreams:       8,
-			MaxPodLogBytes:                    16 * 1024 * 1024,
-			MaxPodExecStreamTimeout:           15 * time.Minute,
-			MaxConcurrentPodExecStreams:       4,
-			MaxPodExecInputBytes:              16 * 1024 * 1024,
-			MaxPodExecOutputBytes:             32 * 1024 * 1024,
-			MaxResourceWatchStreamTimeout:     30 * time.Minute,
-			MaxConcurrentResourceWatchStreams: 16,
+			ServerAddress:                      "agent.example.invalid:9443",
+			CACertificateFile:                  "/server-ca.crt",
+			ConnectTimeout:                     10 * time.Second,
+			RetryInitialInterval:               time.Second,
+			RetryMaxInterval:                   30 * time.Second,
+			IdleTimeout:                        15 * time.Minute,
+			KeepAliveInterval:                  10 * time.Second,
+			MaxIncomingStreams:                 128,
+			StreamHeaderTimeout:                5 * time.Second,
+			MaxResourceRequestTimeout:          2 * time.Minute,
+			MaxConcurrentResourceStreams:       64,
+			MaxResourceBodyBytes:               32 * 1024 * 1024,
+			MaxPodLogsStreamTimeout:            30 * time.Minute,
+			MaxConcurrentPodLogsStreams:        8,
+			MaxPodLogBytes:                     16 * 1024 * 1024,
+			MaxPodExecStreamTimeout:            15 * time.Minute,
+			MaxConcurrentPodExecStreams:        4,
+			MaxPodExecInputBytes:               16 * 1024 * 1024,
+			MaxPodExecOutputBytes:              32 * 1024 * 1024,
+			MaxPodPortForwardStreamTimeout:     15 * time.Minute,
+			MaxConcurrentPodPortForwardStreams: 4,
+			MaxPodPortForwardClientBytes:       64 * 1024 * 1024,
+			MaxPodPortForwardPodBytes:          64 * 1024 * 1024,
+			MaxResourceWatchStreamTimeout:      30 * time.Minute,
+			MaxConcurrentResourceWatchStreams:  16,
 		},
 		LogLevel: "info",
 	}

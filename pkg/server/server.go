@@ -29,6 +29,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/pki"
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
+	"github.com/togettoyou/zke/pkg/server/podportforward"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 	"github.com/togettoyou/zke/pkg/server/resourcewatch"
@@ -199,36 +200,41 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	agentConnectionStore := store.NewAgentConnectionStore(database)
 	agentConnectionManager, err := agentconn.New(
 		agentconn.Config{
-			Address:                     cfg.AgentListener.Address,
-			TLSCertificateFile:          cfg.AgentListener.TLS.CertificateFile,
-			TLSPrivateKeyFile:           cfg.AgentListener.TLS.PrivateKeyFile,
-			ClientCACertificateFile:     cfg.AgentIdentity.CACertificateFile,
-			HandshakeTimeout:            cfg.AgentListener.HandshakeTimeout,
-			HeartbeatInterval:           cfg.AgentListener.HeartbeatInterval,
-			HeartbeatTimeout:            cfg.AgentListener.HeartbeatTimeout,
-			LastSeenWriteInterval:       cfg.AgentListener.LastSeenWriteInterval,
-			OperationTimeout:            cfg.AgentListener.OperationTimeout,
-			WriteTimeout:                cfg.AgentListener.WriteTimeout,
-			MaxConcurrentAgents:         cfg.AgentListener.MaxConcurrentAgents,
-			MaxIncomingStreams:          cfg.AgentListener.MaxIncomingStreams,
-			MaxRememberedDisconnects:    cfg.AgentListener.MaxRememberedDisconnects,
-			ResourceRequestTimeout:      cfg.AgentListener.ResourceRequestTimeout,
-			ConnectionDrainTimeout:      cfg.AgentListener.ConnectionDrainTimeout,
-			MaxResourceBodyBytes:        cfg.AgentListener.MaxResourceBodyBytes,
-			MaxResourceStreams:          cfg.AgentListener.MaxResourceStreams,
-			MaxResourceRequests:         cfg.AgentListener.MaxResourceRequests,
-			PodLogsRequestTimeout:       cfg.AgentListener.PodLogsRequestTimeout,
-			MaxPodLogBytes:              cfg.AgentListener.MaxPodLogBytes,
-			MaxPodLogsStreams:           cfg.AgentListener.MaxPodLogsStreams,
-			MaxPodLogsRequests:          cfg.AgentListener.MaxPodLogsRequests,
-			PodExecRequestTimeout:       cfg.AgentListener.PodExecRequestTimeout,
-			MaxPodExecInputBytes:        cfg.AgentListener.MaxPodExecInputBytes,
-			MaxPodExecOutputBytes:       cfg.AgentListener.MaxPodExecOutputBytes,
-			MaxPodExecStreams:           cfg.AgentListener.MaxPodExecStreams,
-			MaxPodExecRequests:          cfg.AgentListener.MaxPodExecRequests,
-			ResourceWatchRequestTimeout: cfg.AgentListener.ResourceWatchRequestTimeout,
-			MaxResourceWatchStreams:     cfg.AgentListener.MaxResourceWatchStreams,
-			MaxResourceWatchRequests:    cfg.AgentListener.MaxResourceWatchRequests,
+			Address:                      cfg.AgentListener.Address,
+			TLSCertificateFile:           cfg.AgentListener.TLS.CertificateFile,
+			TLSPrivateKeyFile:            cfg.AgentListener.TLS.PrivateKeyFile,
+			ClientCACertificateFile:      cfg.AgentIdentity.CACertificateFile,
+			HandshakeTimeout:             cfg.AgentListener.HandshakeTimeout,
+			HeartbeatInterval:            cfg.AgentListener.HeartbeatInterval,
+			HeartbeatTimeout:             cfg.AgentListener.HeartbeatTimeout,
+			LastSeenWriteInterval:        cfg.AgentListener.LastSeenWriteInterval,
+			OperationTimeout:             cfg.AgentListener.OperationTimeout,
+			WriteTimeout:                 cfg.AgentListener.WriteTimeout,
+			MaxConcurrentAgents:          cfg.AgentListener.MaxConcurrentAgents,
+			MaxIncomingStreams:           cfg.AgentListener.MaxIncomingStreams,
+			MaxRememberedDisconnects:     cfg.AgentListener.MaxRememberedDisconnects,
+			ResourceRequestTimeout:       cfg.AgentListener.ResourceRequestTimeout,
+			ConnectionDrainTimeout:       cfg.AgentListener.ConnectionDrainTimeout,
+			MaxResourceBodyBytes:         cfg.AgentListener.MaxResourceBodyBytes,
+			MaxResourceStreams:           cfg.AgentListener.MaxResourceStreams,
+			MaxResourceRequests:          cfg.AgentListener.MaxResourceRequests,
+			PodLogsRequestTimeout:        cfg.AgentListener.PodLogsRequestTimeout,
+			MaxPodLogBytes:               cfg.AgentListener.MaxPodLogBytes,
+			MaxPodLogsStreams:            cfg.AgentListener.MaxPodLogsStreams,
+			MaxPodLogsRequests:           cfg.AgentListener.MaxPodLogsRequests,
+			PodExecRequestTimeout:        cfg.AgentListener.PodExecRequestTimeout,
+			MaxPodExecInputBytes:         cfg.AgentListener.MaxPodExecInputBytes,
+			MaxPodExecOutputBytes:        cfg.AgentListener.MaxPodExecOutputBytes,
+			MaxPodExecStreams:            cfg.AgentListener.MaxPodExecStreams,
+			MaxPodExecRequests:           cfg.AgentListener.MaxPodExecRequests,
+			PodPortForwardRequestTimeout: cfg.AgentListener.PodPortForwardRequestTimeout,
+			MaxPodPortForwardClientBytes: cfg.AgentListener.MaxPodPortForwardClientBytes,
+			MaxPodPortForwardPodBytes:    cfg.AgentListener.MaxPodPortForwardPodBytes,
+			MaxPodPortForwardStreams:     cfg.AgentListener.MaxPodPortForwardStreams,
+			MaxPodPortForwardRequests:    cfg.AgentListener.MaxPodPortForwardRequests,
+			ResourceWatchRequestTimeout:  cfg.AgentListener.ResourceWatchRequestTimeout,
+			MaxResourceWatchStreams:      cfg.AgentListener.MaxResourceWatchStreams,
+			MaxResourceWatchRequests:     cfg.AgentListener.MaxResourceWatchRequests,
 		},
 		logger,
 		agentConnectionStore,
@@ -275,6 +281,15 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxOutputBytes: cfg.AgentListener.MaxPodExecOutputBytes,
 		},
 	)
+	podPortForwardService := podportforward.NewService(
+		agentConnectionManager,
+		podportforward.Config{
+			SessionTTL:     cfg.AgentListener.PodPortForwardSessionTTL,
+			MaxPending:     cfg.AgentListener.MaxPendingPodPortForwardSessions,
+			MaxClientBytes: cfg.AgentListener.MaxPodPortForwardClientBytes,
+			MaxPodBytes:    cfg.AgentListener.MaxPodPortForwardPodBytes,
+		},
+	)
 	resourceWatchService := resourcewatch.NewService(agentConnectionManager)
 	resourceManagementService := resourcemanagement.NewService(
 		store.NewResourceManagementStore(database),
@@ -304,6 +319,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			KubernetesResourceService: kubernetesResourceService,
 			PodLogsService:            podLogsService,
 			PodExecService:            podExecService,
+			PodPortForwardService:     podPortForwardService,
 			ResourceWatchService:      resourceWatchService,
 			ResourceManagementService: resourceManagementService,
 			AccessManagementService:   accessManagementService,
@@ -328,6 +344,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			},
 			PodExec: httpapi.PodExecHTTPConfig{
 				MaximumDuration: cfg.AgentListener.PodExecRequestTimeout,
+				WriteTimeout:    cfg.AgentListener.WriteTimeout,
+			},
+			PodPortForward: httpapi.PodPortForwardHTTPConfig{
+				MaximumDuration: cfg.AgentListener.PodPortForwardRequestTimeout,
 				WriteTimeout:    cfg.AgentListener.WriteTimeout,
 			},
 			KubernetesEvents: httpapi.KubernetesEventsHTTPConfig{

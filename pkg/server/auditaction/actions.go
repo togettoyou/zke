@@ -65,29 +65,31 @@ const (
 	ProjectResume  = "project.resume"
 	ProjectDelete  = "project.delete"
 
-	ClusterEnroll                  = "cluster.enroll"
-	ClusterUpdate                  = "cluster.update"
-	ClusterSuspend                 = "cluster.suspend"
-	ClusterResume                  = "cluster.resume"
-	ClusterDelete                  = "cluster.delete"
-	ClusterEnrollmentCreate        = "cluster.enrollment.create"
-	ClusterEnrollmentRevoke        = "cluster.enrollment.revoke"
-	ClusterConnectionRevoke        = "cluster.connection.revoke"
-	ClusterConnectionReenroll      = "cluster.connection.reenroll"
-	KubernetesResourceCreate       = "kubernetes_resource.create"
-	KubernetesResourceUpdate       = "kubernetes_resource.update"
-	KubernetesResourcePatch        = "kubernetes_resource.patch"
-	KubernetesResourceDelete       = "kubernetes_resource.delete"
-	KubernetesResourceCreateDryRun = "kubernetes_resource.create.dry_run"
-	KubernetesResourceUpdateDryRun = "kubernetes_resource.update.dry_run"
-	KubernetesResourcePatchDryRun  = "kubernetes_resource.patch.dry_run"
-	KubernetesResourceDeleteDryRun = "kubernetes_resource.delete.dry_run"
-	KubernetesPodLogsRead          = "kubernetes_pod.logs.read"
-	KubernetesPodExecSessionCreate = "kubernetes_pod.exec_session.create"
-	KubernetesPodExec              = "kubernetes_pod.exec"
-	KubernetesNodeDrain            = "kubernetes_node.drain"
-	KubernetesNodeDrainDryRun      = "kubernetes_node.drain.dry_run"
-	KubernetesEventRead            = "kubernetes_event.read"
+	ClusterEnroll                         = "cluster.enroll"
+	ClusterUpdate                         = "cluster.update"
+	ClusterSuspend                        = "cluster.suspend"
+	ClusterResume                         = "cluster.resume"
+	ClusterDelete                         = "cluster.delete"
+	ClusterEnrollmentCreate               = "cluster.enrollment.create"
+	ClusterEnrollmentRevoke               = "cluster.enrollment.revoke"
+	ClusterConnectionRevoke               = "cluster.connection.revoke"
+	ClusterConnectionReenroll             = "cluster.connection.reenroll"
+	KubernetesResourceCreate              = "kubernetes_resource.create"
+	KubernetesResourceUpdate              = "kubernetes_resource.update"
+	KubernetesResourcePatch               = "kubernetes_resource.patch"
+	KubernetesResourceDelete              = "kubernetes_resource.delete"
+	KubernetesResourceCreateDryRun        = "kubernetes_resource.create.dry_run"
+	KubernetesResourceUpdateDryRun        = "kubernetes_resource.update.dry_run"
+	KubernetesResourcePatchDryRun         = "kubernetes_resource.patch.dry_run"
+	KubernetesResourceDeleteDryRun        = "kubernetes_resource.delete.dry_run"
+	KubernetesPodLogsRead                 = "kubernetes_pod.logs.read"
+	KubernetesPodExecSessionCreate        = "kubernetes_pod.exec_session.create"
+	KubernetesPodExec                     = "kubernetes_pod.exec"
+	KubernetesPodPortForwardSessionCreate = "kubernetes_pod.port_forward_session.create"
+	KubernetesPodPortForward              = "kubernetes_pod.port_forward"
+	KubernetesNodeDrain                   = "kubernetes_node.drain"
+	KubernetesNodeDrainDryRun             = "kubernetes_node.drain.dry_run"
+	KubernetesEventRead                   = "kubernetes_event.read"
 
 	// Reading a Secret is recorded because reading it is the whole exposure:
 	// unlike a ConfigMap or a Deployment, one successful GET hands the caller a
@@ -133,6 +135,7 @@ const (
 	DeniedClusterRead            = "cluster.read"
 	DeniedClusterPodLogsRead     = "cluster.pod.logs.read"
 	DeniedClusterPodExec         = "cluster.pod.exec"
+	DeniedClusterPodPortForward  = "cluster.pod.port_forward"
 	DeniedClusterNodeDrain       = "cluster.node.drain"
 	DeniedClusterEventRead       = "cluster.event.read"
 	DeniedClusterManage          = "cluster.manage"
@@ -287,6 +290,8 @@ var actions = []Action{
 	{KubernetesPodLogsRead, GroupKubernetes},
 	{KubernetesPodExecSessionCreate, GroupKubernetes},
 	{KubernetesPodExec, GroupKubernetes},
+	{KubernetesPodPortForwardSessionCreate, GroupKubernetes},
+	{KubernetesPodPortForward, GroupKubernetes},
 	{KubernetesNodeDrain, GroupKubernetes},
 	{KubernetesNodeDrainDryRun, GroupKubernetes},
 	{KubernetesEventRead, GroupKubernetes},
@@ -300,6 +305,7 @@ var actions = []Action{
 	{DeniedClusterRead, GroupDenied},
 	{DeniedClusterPodLogsRead, GroupDenied},
 	{DeniedClusterPodExec, GroupDenied},
+	{DeniedClusterPodPortForward, GroupDenied},
 	{DeniedClusterNodeDrain, GroupDenied},
 	{DeniedClusterEventRead, GroupDenied},
 	{DeniedClusterManage, GroupDenied},

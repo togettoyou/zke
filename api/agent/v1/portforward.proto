@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+import "api/agent/v1/stream.proto";
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+message PodPortForwardRequest {
+  string namespace = 1;
+  string pod_name = 2;
+  string pod_uid = 3;
+  uint32 port = 4;
+  uint64 max_client_bytes = 5;
+  uint64 max_pod_bytes = 6;
+}
+
+message PodPortForwardResponse {
+  ResultCode result = 1;
+  int32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  string pod_uid = 5;
+  uint32 port = 6;
+}
+
+message PodPortForwardData {
+  bytes data = 1;
+}
+
+message PodPortForwardCloseInput {}
+
+message PodPortForwardExit {
+  ResultCode result = 1;
+  string reason = 2;
+  string message = 3;
+  uint64 client_bytes = 4;
+  uint64 pod_bytes = 5;
+  bool client_limit_reached = 6;
+  bool pod_limit_reached = 7;
+}
+
+message PodPortForwardFrame {
+  oneof message {
+    PodPortForwardData data = 1;
+    PodPortForwardCloseInput close_input = 2;
+    PodPortForwardExit exit = 3;
+  }
+}

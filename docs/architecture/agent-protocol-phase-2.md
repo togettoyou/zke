@@ -81,6 +81,7 @@ Phase 2 使用或规划以下业务 Stream：
 | `RESOURCE_WATCH` | Server | 长请求   | Kubernetes 资源 Watch                                |
 | `POD_LOGS`       | Server | 长请求   | Pod 日志读取与 Follow                                |
 | `POD_EXEC`       | Server | 长会话   | Web Terminal 的 stdin、stdout、stderr 和终端尺寸变更 |
+| `POD_PORT_FORWARD` | Server | 长会话 | 单个 Pod TCP 端口的双向原始字节转发                 |
 
 Agent 主动上报事件或数据时，应使用独立的 Agent 发起 Stream 类型；不得复用 Server 发起的 Resource Stream。
 这类上报不属于 Phase 2 第一阶段。
@@ -800,6 +801,7 @@ Node dynamic client 的 List/Detail 往返。
 - [已实现] Resource Watch；
 - [已实现] Pod Logs 有界快照与实时 Follow；
 - [已实现] Pod Exec 与 Web Terminal 后端及 xterm.js Console 入口。
+- [已实现] Pod Port Forward 独立 Stream、一次性 WebSocket 票据与 Console HTTP 预览入口。
 
 Pod Exec 使用独立 `pod-exec.v1` 能力和 `POD_EXEC` Stream 处理 stdin、stdout/stderr、resize 与 exit；Server
 HTTP 侧先创建一次性票据，再升级同源 WebSocket。Agent 校验 Pod UID/容器后优先通过 Kubernetes WebSocket
@@ -807,6 +809,11 @@ streaming protocol 执行；仅在旧 API Server 或 HTTPS 代理无法完成 We
 语义回退 SPDY。
 固定 Shell 选择逻辑优先 bash 并回退 `/bin/sh`。会话有输入/输出、空闲、总时长和并发上限，周期重验权限，
 审计不记录终端输入输出。
+
+Pod Port Forward 使用独立 `pod-port-forward.v1` 能力和 `POD_PORT_FORWARD` Stream，首帧固定 Namespace、Pod
+名称、UID、单个端口和双向字节上限。Agent 复核 UID 后使用 client-go port-forward，并只在回环随机端口建立
+进程内 TCP 桥接。Server WebSocket 票据一次性且与登录身份及完整资源路径绑定；会话周期重验
+`cluster.pod.port_forward`，流量正文不记录。
 
 ## 12. 验证与验收
 

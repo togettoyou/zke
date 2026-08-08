@@ -212,7 +212,7 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 - 以 Kubernetes Deployment 运行，每个接入集群部署一个逻辑 Agent。
 - 使用专用 ServiceAccount，并按当前启用能力授予最小 Kubernetes RBAC 权限。
 - 默认集群业务权限包含 Node 的 `get`、`list`、`update`、`patch`，Namespace 的 `get`、`list`、`create`、`update`、`delete`，
-  Pod 的 `get`、`list`、`update`、`delete`、`pods/log` 的 `get`、`pods/exec` 的 `create`，以及 Deployment、StatefulSet、DaemonSet、Job 和
+  Pod 的 `get`、`list`、`update`、`delete`、`pods/log` 的 `get`、`pods/exec` 与 `pods/portforward` 的 `create`，以及 Deployment、StatefulSet、DaemonSet、Job 和
   CronJob、Service、Ingress 和 Gateway 主资源的完整 CRUD。Node 的 `patch` 用于停止或恢复调度；`pods/eviction`
   的 `create` 只供独立权限保护的 Node Drain 使用，并由 Agent 对资源、动词、Subresource、Eviction GVK 与 Pod UID
   precondition 做精确 allowlist。Agent 通用策略允许非 Secret 主资源的 CRUD，
@@ -928,8 +928,9 @@ Server 配置结构体与 YAML 文件一一对应：加载时先构造带默认�
 - Agent 默认 ClusterRole 为 Service、Ingress 与 Gateway 主资源增加完整 CRUD，为 ConfigMap、PV、PVC、
   StorageClass、HorizontalPodAutoscaler、ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding
   增加 `get/list/create/update/delete`，但不包含 `escalate/bind/impersonate`；为 Pod 日志增加 `pods/log` 的 `get`、为 Web Terminal 增加 `pods/exec` 的
-  `create`，为 Node Drain 增加 `pods/eviction` 的 `create`，并为专用 Event Watch 增加 `events` 的
-  `get/list/watch`。日志、Exec、Eviction 和 Watch 都有独立协议位或流类型，不放宽通用 Resource/Subresource
+  `create`、为 Pod 端口转发增加 `pods/portforward` 的 `create`；三者各自由专用协议和权限定域；为 Node Drain
+  增加 `pods/eviction` 的 `create`，并为专用 Event Watch 增加 `events` 的 `get/list/watch`。日志、Exec、
+  Port Forward、Eviction 和 Watch 都有独立协议位或流类型，不放宽通用 Resource/Subresource
   拒绝策略。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - HTTP 注册 URL、QUIC Connection 地址、超时、心跳和重试参数需要上下限校验。

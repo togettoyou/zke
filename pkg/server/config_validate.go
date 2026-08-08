@@ -420,6 +420,8 @@ func (cfg Config) validateAgentListener() error {
 		{cfg.AgentListener.PodLogsRequestTimeout, maxPodLogsTimeout, "Agent Pod Logs request timeout"},
 		{cfg.AgentListener.PodExecRequestTimeout, maxPodLogsTimeout, "Agent Pod Exec request timeout"},
 		{cfg.AgentListener.PodExecSessionTTL, time.Minute, "Pod Exec pending session TTL"},
+		{cfg.AgentListener.PodPortForwardRequestTimeout, maxPodLogsTimeout, "Agent Pod Port Forward request timeout"},
+		{cfg.AgentListener.PodPortForwardSessionTTL, time.Minute, "Pod Port Forward pending session TTL"},
 		{cfg.AgentListener.ResourceWatchRequestTimeout, maxPodLogsTimeout, "Agent Resource Watch request timeout"},
 		{cfg.AgentListener.ConnectionDrainTimeout, maxShutdownTimeout, "Agent Connection drain timeout"},
 	}); err != nil {
@@ -533,6 +535,41 @@ func (cfg Config) validateAgentListener() error {
 		cfg.AgentListener.MaxPendingPodExecSessions > maxPendingPodExecSessions {
 		return fmt.Errorf(
 			"Server pending Pod Exec session limit must be between 1 and %d",
+			maxPendingPodExecSessions,
+		)
+	}
+	if cfg.AgentListener.MaxPodPortForwardClientBytes == 0 ||
+		cfg.AgentListener.MaxPodPortForwardClientBytes > maxResourceBodyBytes {
+		return fmt.Errorf(
+			"Agent Pod Port Forward client byte limit must be between 1 and %d",
+			maxResourceBodyBytes,
+		)
+	}
+	if cfg.AgentListener.MaxPodPortForwardPodBytes == 0 ||
+		cfg.AgentListener.MaxPodPortForwardPodBytes > maxResourceBodyBytes {
+		return fmt.Errorf(
+			"Agent Pod Port Forward Pod byte limit must be between 1 and %d",
+			maxResourceBodyBytes,
+		)
+	}
+	if cfg.AgentListener.MaxPodPortForwardStreams <= 0 ||
+		cfg.AgentListener.MaxPodPortForwardStreams > maxPodLogsStreams {
+		return fmt.Errorf(
+			"Agent per-connection Pod Port Forward Stream limit must be between 1 and %d",
+			maxPodLogsStreams,
+		)
+	}
+	if cfg.AgentListener.MaxPodPortForwardRequests < cfg.AgentListener.MaxPodPortForwardStreams ||
+		cfg.AgentListener.MaxPodPortForwardRequests > maxPodLogsRequests {
+		return fmt.Errorf(
+			"Server Pod Port Forward request limit must be between the per-connection limit and %d",
+			maxPodLogsRequests,
+		)
+	}
+	if cfg.AgentListener.MaxPendingPodPortForwardSessions <= 0 ||
+		cfg.AgentListener.MaxPendingPodPortForwardSessions > maxPendingPodExecSessions {
+		return fmt.Errorf(
+			"Server pending Pod Port Forward session limit must be between 1 and %d",
 			maxPendingPodExecSessions,
 		)
 	}

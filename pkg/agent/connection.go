@@ -181,6 +181,9 @@ func runConnection(
 	if services.podExecHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityPodExecV1)
 	}
+	if services.podPortForwardHandler != nil {
+		capabilities = append(capabilities, agentprotocol.CapabilityPodPortForwardV1)
+	}
 	if services.resourceWatchHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityResourceWatchV1)
 	}
@@ -233,6 +236,14 @@ func runConnection(
 		)
 	if !podExecSupported {
 		services.podExecHandler = nil
+	}
+	podPortForwardSupported := services.podPortForwardHandler != nil &&
+		serverSupportsCapability(
+			serverHello,
+			agentprotocol.CapabilityPodPortForwardV1,
+		)
+	if !podPortForwardSupported {
+		services.podPortForwardHandler = nil
 	}
 	resourceWatchSupported := services.resourceWatchHandler != nil &&
 		serverSupportsCapability(serverHello, agentprotocol.CapabilityResourceWatchV1)

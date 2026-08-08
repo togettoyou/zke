@@ -505,6 +505,12 @@ Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证
 字节和并发上限。Agent 只使用固定 Shell 选择逻辑（优先 bash，回退 `/bin/sh`），默认 ServiceAccount 仅增加
 `pods/exec` 的 `create`。审计记录票据创建、会话目标与结果，不记录终端输入输出。
 
+Pod 端口转发使用另一项默认仅授予 admin 的 `cluster.pod.port_forward`，不因持有 `cluster.read`、
+`cluster.pod.exec` 或通用资源写权限而获得。票据必须通过 CSRF、幂等键和显式确认，并绑定用户、登录 Session、
+Cluster、Namespace、Pod UID、单个远端端口与请求路径，只能消费一次；长连接周期重新验证 Session 和该权限。
+Agent ServiceAccount 只增加 `pods/portforward` 的 `create`，Agent 在连接前再次核对 Pod UID，且只在回环地址建立
+临时桥接。双向流量正文不进入日志、审计或 AI 上下文，审计只记录目标、端口、结果与字节统计。
+
 Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Resource 接口会拒绝并从 Discovery 中
 隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。普通请求必须明确 Cluster 和 Namespace，可使用受限
 字段过滤器定域到具体资源；唯一的空 Namespace 例外是 Node describe 使用的一次性非 Follow 快照，且 Server、

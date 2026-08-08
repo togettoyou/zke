@@ -85,6 +85,13 @@ agent_listener:
   max_concurrent_pod_exec_requests: 256
   pod_exec_session_ttl: 25s
   max_pending_pod_exec_sessions: 768
+  pod_port_forward_request_timeout: 11m
+  max_pod_port_forward_client_bytes: 5242880
+  max_pod_port_forward_pod_bytes: 9437184
+  max_pod_port_forward_streams_per_agent: 5
+  max_concurrent_pod_port_forward_requests: 192
+  pod_port_forward_session_ttl: 20s
+  max_pending_pod_port_forward_sessions: 640
   resource_watch_request_timeout: 25m
   max_resource_watch_streams_per_agent: 10
   max_concurrent_resource_watch_requests: 600
@@ -198,6 +205,15 @@ log_level: warn
 		cfg.AgentListener.PodExecSessionTTL != 25*time.Second ||
 		cfg.AgentListener.MaxPendingPodExecSessions != 768 {
 		t.Fatalf("unexpected Agent Pod Exec config: %+v", cfg.AgentListener)
+	}
+	if cfg.AgentListener.PodPortForwardRequestTimeout != 11*time.Minute ||
+		cfg.AgentListener.MaxPodPortForwardClientBytes != 5*1024*1024 ||
+		cfg.AgentListener.MaxPodPortForwardPodBytes != 9*1024*1024 ||
+		cfg.AgentListener.MaxPodPortForwardStreams != 5 ||
+		cfg.AgentListener.MaxPodPortForwardRequests != 192 ||
+		cfg.AgentListener.PodPortForwardSessionTTL != 20*time.Second ||
+		cfg.AgentListener.MaxPendingPodPortForwardSessions != 640 {
+		t.Fatalf("unexpected Agent Pod Port Forward config: %+v", cfg.AgentListener)
 	}
 	invalidHeartbeatConfig := cfg
 	invalidHeartbeatConfig.AgentListener.HeartbeatTimeout =

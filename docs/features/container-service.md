@@ -826,6 +826,15 @@ Console 终端入口在 Pod 列表行和详情页，需要 `cluster.pod.exec`（
 Shell 需要完整的 ANSI/VT 序列、光标寻址与回滚支持，自行实现不现实。它按需加载为独立 chunk，不进入主包，
 未打开终端的操作者不会为此付出加载成本。
 
+Pod 端口转发使用独立的 `cluster.pod.port_forward` 权限和 `pod-port-forward.v1` Agent 能力，不复用终端或
+通用资源权限。Server 创建与用户、登录 Session、Cluster、Namespace、Pod UID、单个端口和路径绑定的短期
+一次性票据，再升级同源 `zke.pod-port-forward.v1` WebSocket；二进制消息承载原始 TCP 字节，最终文本消息只
+携带终止原因与双向字节数。Agent 在传输前重新读取 Pod 核对 UID，通过 client-go 的 WebSocket-first/SPDY
+fallback port-forward 在 `127.0.0.1` 随机端口建立进程内桥接，不对节点或外部网络暴露监听端口。会话受总时长、
+空闲、双向字节和 Server/单 Agent 并发上限约束，并周期重验 Session 与权限。审计记录票据、Pod UID、端口和
+结果，不记录流量正文。Console 提供一次 HTTP GET 原始响应预览；非 HTTP 客户端可直接使用同一 WebSocket
+二进制协议，Console 不把该能力伪装成本机 `localhost` 监听。
+
 Kubernetes Event 后端固定读取所选 Cluster 与 Namespace 的 `core/v1/events`，不接受调用方覆盖 GVR。默认
 通过 SSE 返回有界初始快照；实时 Follow 使用独立 `resource-watch.v1` QUIC Stream，支持按关联资源 UID、Kind、
 Name、Event type 和 reason 过滤，并通过 resourceVersion/`Last-Event-ID` 恢复。Session 或

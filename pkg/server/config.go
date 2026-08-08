@@ -153,36 +153,43 @@ type CertificateMonitorConfig struct {
 }
 
 type AgentListenerConfig struct {
-	Address                     string        `yaml:"address"`
-	HandshakeTimeout            time.Duration `yaml:"handshake_timeout"`
-	HeartbeatInterval           time.Duration `yaml:"heartbeat_interval"`
-	HeartbeatTimeout            time.Duration `yaml:"heartbeat_timeout"`
-	LastSeenWriteInterval       time.Duration `yaml:"last_seen_write_interval"`
-	OperationTimeout            time.Duration `yaml:"operation_timeout"`
-	WriteTimeout                time.Duration `yaml:"write_timeout"`
-	MaxConcurrentAgents         int           `yaml:"max_concurrent_agents"`
-	MaxIncomingStreams          int64         `yaml:"max_incoming_streams"`
-	MaxRememberedDisconnects    int           `yaml:"max_remembered_disconnects"`
-	ResourceRequestTimeout      time.Duration `yaml:"resource_request_timeout"`
-	ConnectionDrainTimeout      time.Duration `yaml:"connection_drain_timeout"`
-	MaxResourceBodyBytes        uint64        `yaml:"max_resource_body_bytes"`
-	MaxBufferedResourceBytes    uint64        `yaml:"max_buffered_resource_response_bytes"`
-	MaxResourceStreams          int           `yaml:"max_resource_streams_per_agent"`
-	MaxResourceRequests         int           `yaml:"max_concurrent_resource_requests"`
-	PodLogsRequestTimeout       time.Duration `yaml:"pod_logs_request_timeout"`
-	MaxPodLogBytes              uint64        `yaml:"max_pod_log_bytes"`
-	MaxPodLogsStreams           int           `yaml:"max_pod_logs_streams_per_agent"`
-	MaxPodLogsRequests          int           `yaml:"max_concurrent_pod_logs_requests"`
-	PodExecRequestTimeout       time.Duration `yaml:"pod_exec_request_timeout"`
-	MaxPodExecInputBytes        uint64        `yaml:"max_pod_exec_input_bytes"`
-	MaxPodExecOutputBytes       uint64        `yaml:"max_pod_exec_output_bytes"`
-	MaxPodExecStreams           int           `yaml:"max_pod_exec_streams_per_agent"`
-	MaxPodExecRequests          int           `yaml:"max_concurrent_pod_exec_requests"`
-	PodExecSessionTTL           time.Duration `yaml:"pod_exec_session_ttl"`
-	MaxPendingPodExecSessions   int           `yaml:"max_pending_pod_exec_sessions"`
-	ResourceWatchRequestTimeout time.Duration `yaml:"resource_watch_request_timeout"`
-	MaxResourceWatchStreams     int           `yaml:"max_resource_watch_streams_per_agent"`
-	MaxResourceWatchRequests    int           `yaml:"max_concurrent_resource_watch_requests"`
+	Address                          string        `yaml:"address"`
+	HandshakeTimeout                 time.Duration `yaml:"handshake_timeout"`
+	HeartbeatInterval                time.Duration `yaml:"heartbeat_interval"`
+	HeartbeatTimeout                 time.Duration `yaml:"heartbeat_timeout"`
+	LastSeenWriteInterval            time.Duration `yaml:"last_seen_write_interval"`
+	OperationTimeout                 time.Duration `yaml:"operation_timeout"`
+	WriteTimeout                     time.Duration `yaml:"write_timeout"`
+	MaxConcurrentAgents              int           `yaml:"max_concurrent_agents"`
+	MaxIncomingStreams               int64         `yaml:"max_incoming_streams"`
+	MaxRememberedDisconnects         int           `yaml:"max_remembered_disconnects"`
+	ResourceRequestTimeout           time.Duration `yaml:"resource_request_timeout"`
+	ConnectionDrainTimeout           time.Duration `yaml:"connection_drain_timeout"`
+	MaxResourceBodyBytes             uint64        `yaml:"max_resource_body_bytes"`
+	MaxBufferedResourceBytes         uint64        `yaml:"max_buffered_resource_response_bytes"`
+	MaxResourceStreams               int           `yaml:"max_resource_streams_per_agent"`
+	MaxResourceRequests              int           `yaml:"max_concurrent_resource_requests"`
+	PodLogsRequestTimeout            time.Duration `yaml:"pod_logs_request_timeout"`
+	MaxPodLogBytes                   uint64        `yaml:"max_pod_log_bytes"`
+	MaxPodLogsStreams                int           `yaml:"max_pod_logs_streams_per_agent"`
+	MaxPodLogsRequests               int           `yaml:"max_concurrent_pod_logs_requests"`
+	PodExecRequestTimeout            time.Duration `yaml:"pod_exec_request_timeout"`
+	MaxPodExecInputBytes             uint64        `yaml:"max_pod_exec_input_bytes"`
+	MaxPodExecOutputBytes            uint64        `yaml:"max_pod_exec_output_bytes"`
+	MaxPodExecStreams                int           `yaml:"max_pod_exec_streams_per_agent"`
+	MaxPodExecRequests               int           `yaml:"max_concurrent_pod_exec_requests"`
+	PodExecSessionTTL                time.Duration `yaml:"pod_exec_session_ttl"`
+	MaxPendingPodExecSessions        int           `yaml:"max_pending_pod_exec_sessions"`
+	PodPortForwardRequestTimeout     time.Duration `yaml:"pod_port_forward_request_timeout"`
+	MaxPodPortForwardClientBytes     uint64        `yaml:"max_pod_port_forward_client_bytes"`
+	MaxPodPortForwardPodBytes        uint64        `yaml:"max_pod_port_forward_pod_bytes"`
+	MaxPodPortForwardStreams         int           `yaml:"max_pod_port_forward_streams_per_agent"`
+	MaxPodPortForwardRequests        int           `yaml:"max_concurrent_pod_port_forward_requests"`
+	PodPortForwardSessionTTL         time.Duration `yaml:"pod_port_forward_session_ttl"`
+	MaxPendingPodPortForwardSessions int           `yaml:"max_pending_pod_port_forward_sessions"`
+	ResourceWatchRequestTimeout      time.Duration `yaml:"resource_watch_request_timeout"`
+	MaxResourceWatchStreams          int           `yaml:"max_resource_watch_streams_per_agent"`
+	MaxResourceWatchRequests         int           `yaml:"max_concurrent_resource_watch_requests"`
 
 	// TLS is derived from agent_pki, not configured under agent_listener.
 	TLS TLSIdentityConfig `yaml:"-"`
@@ -236,35 +243,42 @@ func DefaultConfig() Config {
 			ImagePullPolicy: "IfNotPresent",
 		},
 		AgentListener: AgentListenerConfig{
-			HandshakeTimeout:            10 * time.Second,
-			HeartbeatInterval:           10 * time.Second,
-			HeartbeatTimeout:            30 * time.Second,
-			LastSeenWriteInterval:       time.Minute,
-			OperationTimeout:            10 * time.Second,
-			WriteTimeout:                5 * time.Second,
-			MaxConcurrentAgents:         1024,
-			MaxIncomingStreams:          16,
-			MaxRememberedDisconnects:    4096,
-			ResourceRequestTimeout:      2 * time.Minute,
-			ConnectionDrainTimeout:      10 * time.Second,
-			MaxResourceBodyBytes:        32 * 1024 * 1024,
-			MaxBufferedResourceBytes:    256 * 1024 * 1024,
-			MaxResourceStreams:          64,
-			MaxResourceRequests:         4096,
-			PodLogsRequestTimeout:       30 * time.Minute,
-			MaxPodLogBytes:              16 * 1024 * 1024,
-			MaxPodLogsStreams:           8,
-			MaxPodLogsRequests:          256,
-			PodExecRequestTimeout:       15 * time.Minute,
-			MaxPodExecInputBytes:        16 * 1024 * 1024,
-			MaxPodExecOutputBytes:       32 * 1024 * 1024,
-			MaxPodExecStreams:           4,
-			MaxPodExecRequests:          128,
-			PodExecSessionTTL:           30 * time.Second,
-			MaxPendingPodExecSessions:   1024,
-			ResourceWatchRequestTimeout: 30 * time.Minute,
-			MaxResourceWatchStreams:     16,
-			MaxResourceWatchRequests:    512,
+			HandshakeTimeout:                 10 * time.Second,
+			HeartbeatInterval:                10 * time.Second,
+			HeartbeatTimeout:                 30 * time.Second,
+			LastSeenWriteInterval:            time.Minute,
+			OperationTimeout:                 10 * time.Second,
+			WriteTimeout:                     5 * time.Second,
+			MaxConcurrentAgents:              1024,
+			MaxIncomingStreams:               16,
+			MaxRememberedDisconnects:         4096,
+			ResourceRequestTimeout:           2 * time.Minute,
+			ConnectionDrainTimeout:           10 * time.Second,
+			MaxResourceBodyBytes:             32 * 1024 * 1024,
+			MaxBufferedResourceBytes:         256 * 1024 * 1024,
+			MaxResourceStreams:               64,
+			MaxResourceRequests:              4096,
+			PodLogsRequestTimeout:            30 * time.Minute,
+			MaxPodLogBytes:                   16 * 1024 * 1024,
+			MaxPodLogsStreams:                8,
+			MaxPodLogsRequests:               256,
+			PodExecRequestTimeout:            15 * time.Minute,
+			MaxPodExecInputBytes:             16 * 1024 * 1024,
+			MaxPodExecOutputBytes:            32 * 1024 * 1024,
+			MaxPodExecStreams:                4,
+			MaxPodExecRequests:               128,
+			PodExecSessionTTL:                30 * time.Second,
+			MaxPendingPodExecSessions:        1024,
+			PodPortForwardRequestTimeout:     15 * time.Minute,
+			MaxPodPortForwardClientBytes:     64 * 1024 * 1024,
+			MaxPodPortForwardPodBytes:        64 * 1024 * 1024,
+			MaxPodPortForwardStreams:         4,
+			MaxPodPortForwardRequests:        128,
+			PodPortForwardSessionTTL:         30 * time.Second,
+			MaxPendingPodPortForwardSessions: 1024,
+			ResourceWatchRequestTimeout:      30 * time.Minute,
+			MaxResourceWatchStreams:          16,
+			MaxResourceWatchRequests:         512,
 		},
 		CertificateMonitor: CertificateMonitorConfig{
 			WarningBefore: 30 * 24 * time.Hour,

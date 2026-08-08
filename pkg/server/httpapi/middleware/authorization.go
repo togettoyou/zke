@@ -307,6 +307,7 @@ func permissionTargetType(permission rbac.Permission) string {
 	case rbac.PermissionClusterRead,
 		rbac.PermissionClusterPodLogsRead,
 		rbac.PermissionClusterPodExec,
+		rbac.PermissionClusterPodPortForward,
 		rbac.PermissionClusterEventRead,
 		rbac.PermissionClusterManage,
 		rbac.PermissionClusterConnectionRevoke:

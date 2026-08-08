@@ -2362,6 +2362,98 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/port-forward-sessions:
+    post:
+      tags: [Resources]
+      operationId: createKubernetesPodPortForwardSession
+      description: |
+        为明确 Cluster、Namespace、Pod UID 和单个远端端口创建一次性端口转发票据。
+        请求必须显式确认并携带 Idempotency-Key；票据与当前用户及登录 Session 绑定，
+        短时有效且只能消费一次。此权限独立于 Web Terminal，Agent 在建立 Kubernetes
+        port-forward 传输前重新核对 Pod UID。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesPodPortForwardSessionRequest"
+      responses:
+        "201":
+          description: 一次性 Pod Port Forward Session 票据
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesPodPortForwardSession"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/port-forward-sessions/{session_id}:
+    get:
+      tags: [Resources]
+      operationId: connectKubernetesPodPortForward
+      description: |
+        使用一次性票据升级为同源 WebSocket，协商 zke.pod-port-forward.v1。二进制
+        WebSocket 消息是原始 TCP 字节；服务端最终发送 KubernetesPodPortForwardStatus
+        JSON 文本消息。会话有最大时长、空闲超时、双向字节及并发上限，并周期重新验证
+        登录 Session 和 cluster.pod.port_forward 权限。流量正文不进入日志或审计。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "101":
+          description: WebSocket 已升级；协商子协议为 zke.pod-port-forward.v1。
+          headers:
+            Sec-WebSocket-Protocol:
+              schema:
+                type: string
+                const: zke.pod-port-forward.v1
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          description: 一次性 Session 已过期
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/events:
     get:
       tags: [Events]
@@ -6722,6 +6814,7 @@ components:
               - cluster.read
               - cluster.pod.logs.read
               - cluster.pod.exec
+              - cluster.pod.port_forward
               - cluster.node.drain
               - cluster.event.read
               - cluster.manage
@@ -11766,6 +11859,62 @@ components:
         subprotocol:
           type: string
           const: zke.pod-exec.v1
+    KubernetesPodPortForwardSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, port, confirm]
+      properties:
+        uid:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: 当前 Pod UID；Agent 在建立传输前再次校验。
+        port:
+          type: integer
+          format: uint32
+          minimum: 1
+          maximum: 65535
+          description: Pod 内监听的单个 TCP 端口。
+        confirm:
+          const: true
+    KubernetesPodPortForwardSession:
+      type: object
+      additionalProperties: false
+      required: [session_id, expires_at, websocket_path, subprotocol]
+      properties:
+        session_id:
+          $ref: "#/components/schemas/UUID"
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        websocket_path:
+          type: string
+        subprotocol:
+          type: string
+          const: zke.pod-port-forward.v1
+    KubernetesPodPortForwardStatus:
+      type: object
+      additionalProperties: false
+      required: [type, result]
+      properties:
+        type:
+          const: exit
+        result:
+          type: string
+          enum: [ok, invalid_argument, unauthenticated, forbidden, not_found, conflict, resource_exhausted, unavailable, timeout, canceled, internal]
+        reason:
+          type: string
+        message:
+          type: string
+        client_bytes:
+          type: integer
+          format: uint64
+        pod_bytes:
+          type: integer
+          format: uint64
+        client_limit_reached:
+          type: boolean
+        pod_limit_reached:
+          type: boolean
     KubernetesPodExecClientMessage:
       description: |
         WebSocket 客户端消息。type=stdin 时 data 为必填 Base64；type=resize 时
