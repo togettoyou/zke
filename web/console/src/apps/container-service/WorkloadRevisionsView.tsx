@@ -247,8 +247,8 @@ function RollbackDialog({
       title={`回滚 ${kind} 到修订 #${target.revision.revision}`}
       description={
         previewed
-          ? "DryRun 已通过。再次确认将提交实际回滚。"
-          : "首次点击只执行服务端 DryRun；预检通过后才会真正写入。"
+          ? "DryRun 预检已通过。再次确认将提交实际回滚。"
+          : "首次点击只执行服务端 DryRun 预检；通过后才会真正写入。"
       }
       scopeLines={scopeLines}
       impacts={[
@@ -277,7 +277,7 @@ function RollbackDialog({
           .then(() => {
             if (dryRun) {
               setPreviewed(true);
-              toast.success("回滚 DryRun 已通过");
+              toast.success("回滚 DryRun 预检已通过");
               return;
             }
             toast.success(`${name} 已提交回滚到修订 #${target.revision.revision}`);

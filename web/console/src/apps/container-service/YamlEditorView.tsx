@@ -197,7 +197,7 @@ export function YamlEditorView({
                 onClick={() => submit(true, text)}
               >
                 <Save />
-                {update.isPending ? "预检中…" : "保存"}
+                {update.isPending ? "DryRun 预检中…" : "保存"}
               </Button>
             ) : null}
           </>
@@ -278,7 +278,7 @@ export function YamlEditorView({
         open={previewed !== null}
         onOpenChange={(open) => !open && setPreviewed(null)}
         title={`确认更新 ${kindLabel}`}
-        description="DryRun 已通过。确认后将向同一集群提交实际更新。"
+        description="DryRun 预检已通过。确认后将向同一集群提交实际更新。"
         scopeLines={[
           { label: "集群", name: clusterName, id: identity.clusterId },
           ...(identity.namespace ? [{ label: "命名空间", name: identity.namespace }] : []),

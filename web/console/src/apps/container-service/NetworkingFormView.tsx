@@ -241,7 +241,7 @@ export function NetworkingFormView({
             disabled={problem !== null || mutation.isPending}
             onClick={() => submit(true, buildNetworkingSpec(draft, resource, existing))}
           >
-            {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
+            {mutation.isPending ? "DryRun 预检中…" : "执行 DryRun 预检"}
           </Button>
         </div>
       </div>
@@ -250,7 +250,7 @@ export function NetworkingFormView({
         open={previewed !== null}
         onOpenChange={(open) => !open && setPreviewed(null)}
         title={existing ? `确认更新 ${kind}` : `确认创建 ${kind}`}
-        description="DryRun 已通过。确认后将向同一集群提交实际变更。"
+        description="DryRun 预检已通过。确认后将向同一集群提交实际变更。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           { label: "命名空间", name: namespace },

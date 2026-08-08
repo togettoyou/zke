@@ -185,8 +185,8 @@ export function AuthorizationSection({
         title={`删除 ${authorizationKindLabel(resource)}`}
         description={
           deletePreviewed
-            ? "DryRun 已通过。再次确认将提交实际删除。"
-            : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
+            ? "DryRun 预检已通过。再次确认将提交实际删除。"
+            : "首次点击只执行服务端 DryRun 预检；通过后才能实际删除。"
         }
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
@@ -220,7 +220,7 @@ export function AuthorizationSection({
             .then(() => {
               if (dryRun) {
                 setDeletePreviewed(true);
-                toast.success("删除 DryRun 已通过");
+                toast.success("删除 DryRun 预检已通过");
                 return;
               }
               toast.success(`${authorizationKindLabel(resource)} ${deleteTarget.name} 已提交删除`);

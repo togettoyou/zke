@@ -938,7 +938,7 @@ function SecretEditor({
             disabled={!valid || mutation.isPending}
             onClick={() => submit(true)}
           >
-            {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
+            {mutation.isPending ? "DryRun 预检中…" : "执行 DryRun 预检"}
           </Button>
         </div>
       </div>
@@ -947,7 +947,7 @@ function SecretEditor({
         open={previewed}
         onOpenChange={(open) => !open && setPreviewed(false)}
         title={existing ? "确认更新 Secret" : "确认创建 Secret"}
-        description="DryRun 已通过。确认后将向同一集群提交实际变更。"
+        description="DryRun 预检已通过。确认后将向同一集群提交实际变更。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           { label: "命名空间", name: namespace },

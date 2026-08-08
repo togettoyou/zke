@@ -286,8 +286,8 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
         title={stopping ? "停止调度到该节点" : "恢复调度到该节点"}
         description={
           schedulingPreviewed
-            ? "DryRun 已通过。再次确认将提交实际变更。"
-            : "首次点击只执行服务端 DryRun；预检通过后才会实际修改节点。"
+            ? "DryRun 预检已通过。再次确认将提交实际变更。"
+            : "首次点击只执行服务端 DryRun 预检；通过后才会实际修改节点。"
         }
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
@@ -320,7 +320,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
             .then(() => {
               if (dryRun) {
                 setSchedulingPreviewed(true);
-                toast.success("节点调度变更 DryRun 已通过");
+                toast.success("节点调度变更 DryRun 预检已通过");
                 return;
               }
               toast.success(
@@ -341,8 +341,8 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
         description={
           drainPreview
             ? drainPreviewReady(drainPreview)
-              ? "DryRun 已通过。输入节点名称后可提交实际 Drain。"
-              : "预检发现阻断项或当前 PDB 不允许驱逐。调整选项或等待副本恢复后重新预检。"
+              ? "DryRun 预检已通过。输入节点名称后可提交实际 Drain。"
+              : "DryRun 预检发现阻断项或当前 PDB 不允许驱逐。调整选项或等待副本恢复后重新预检。"
             : "先执行完整清单与 Kubernetes DryRun 预检，不会在预检阶段修改节点或 Pod。"
         }
         scopeLines={[
@@ -380,7 +380,9 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
               if (dryRun) {
                 setDrainPreview(result);
                 toast.success(
-                  drainPreviewReady(result) ? "节点排空 DryRun 已通过" : "节点排空预检已完成",
+                  drainPreviewReady(result)
+                    ? "节点排空 DryRun 预检已通过"
+                    : "节点排空 DryRun 预检已完成，存在阻断项",
                 );
                 return;
               }
@@ -564,7 +566,8 @@ function DrainPreview({ result }: { result: KubernetesNodeDrainResult }) {
         <Alert tone="warning">
           {result.blocked ? (
             <p className="mb-2 text-xs">
-              清单存在静态阻断，本次预检已停止；节点未停止调度，也没有向任何 Pod 发送驱逐请求。
+              清单存在静态阻断，本次 DryRun 预检已停止；节点未停止调度，也没有向任何 Pod
+              发送驱逐请求。
             </p>
           ) : null}
           <div className="grid max-h-36 gap-1 overflow-y-auto">
@@ -580,7 +583,9 @@ function DrainPreview({ result }: { result: KubernetesNodeDrainResult }) {
           </div>
         </Alert>
       ) : (
-        <Alert tone="success">预检未发现静态阻断项；实际执行时 PDB 与 Pod 状态仍会再次校验。</Alert>
+        <Alert tone="success">
+          DryRun 预检未发现静态阻断项；实际执行时 PDB 与 Pod 状态仍会再次校验。
+        </Alert>
       )}
     </div>
   );

@@ -248,7 +248,9 @@ function ScaleDialog({ target, onClose }: { target: WorkloadTarget; onClose: () 
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>伸缩 {kindLabel(target.workload.resource)}</DialogTitle>
-            <DialogDescription>第一步只执行服务端 DryRun，不会真正改变副本数。</DialogDescription>
+            <DialogDescription>
+              第一步只执行服务端 DryRun 预检，不会真正改变副本数。
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
             <Label htmlFor="workload-replicas">目标副本数</Label>
@@ -272,7 +274,7 @@ function ScaleDialog({ target, onClose }: { target: WorkloadTarget; onClose: () 
               disabled={!valid || scale.isPending}
               onClick={() => submit(true, requested)}
             >
-              {scale.isPending ? "预检中…" : "执行 DryRun 预检"}
+              {scale.isPending ? "DryRun 预检中…" : "执行 DryRun 预检"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -282,7 +284,7 @@ function ScaleDialog({ target, onClose }: { target: WorkloadTarget; onClose: () 
         open={previewed !== null}
         onOpenChange={(open) => !open && onClose()}
         title="确认伸缩"
-        description="DryRun 已通过。确认后将向同一集群提交实际变更。"
+        description="DryRun 预检已通过。确认后将向同一集群提交实际变更。"
         scopeLines={scopeLines(target)}
         impacts={[
           `期望副本数将从 ${current} 调整为 ${previewed ?? current}。`,
@@ -313,8 +315,8 @@ function RestartDialog({ target, onClose }: { target: WorkloadTarget; onClose: (
       title={`滚动重启 ${kindLabel(target.workload.resource)}`}
       description={
         previewed
-          ? "DryRun 已通过。再次确认将提交实际重启。"
-          : "首次点击只执行服务端 DryRun；预检通过后才会真正触发重启。"
+          ? "DryRun 预检已通过。再次确认将提交实际重启。"
+          : "首次点击只执行服务端 DryRun 预检；通过后才会真正触发重启。"
       }
       scopeLines={scopeLines(target)}
       impacts={[
@@ -339,7 +341,7 @@ function RestartDialog({ target, onClose }: { target: WorkloadTarget; onClose: (
           .then(() => {
             if (dryRun) {
               setPreviewed(true);
-              toast.success("滚动重启 DryRun 已通过");
+              toast.success("滚动重启 DryRun 预检已通过");
               return;
             }
             toast.success(`${target.workload.name} 已提交滚动重启`);
@@ -366,8 +368,8 @@ function SuspensionDialog({ target, onClose }: { target: WorkloadTarget; onClose
       title={suspending ? "暂停 CronJob 调度" : "恢复 CronJob 调度"}
       description={
         previewed
-          ? "DryRun 已通过。再次确认将提交实际变更。"
-          : "首次点击只执行服务端 DryRun；预检通过后才会真正修改 CronJob。"
+          ? "DryRun 预检已通过。再次确认将提交实际变更。"
+          : "首次点击只执行服务端 DryRun 预检；通过后才会真正修改 CronJob。"
       }
       scopeLines={scopeLines(target)}
       impacts={
@@ -400,7 +402,7 @@ function SuspensionDialog({ target, onClose }: { target: WorkloadTarget; onClose
           .then(() => {
             if (dryRun) {
               setPreviewed(true);
-              toast.success("CronJob 变更 DryRun 已通过");
+              toast.success("CronJob 变更 DryRun 预检已通过");
               return;
             }
             toast.success(
@@ -438,8 +440,8 @@ function DeleteDialog({
       title={`删除 ${kind}`}
       description={
         previewed
-          ? "DryRun 已通过。再次确认将提交实际删除。"
-          : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
+          ? "DryRun 预检已通过。再次确认将提交实际删除。"
+          : "首次点击只执行服务端 DryRun 预检；通过后才能实际删除。"
       }
       scopeLines={scopeLines(target)}
       impacts={[
@@ -466,7 +468,7 @@ function DeleteDialog({
           .then(() => {
             if (dryRun) {
               setPreviewed(true);
-              toast.success(`${kind} 删除 DryRun 已通过`);
+              toast.success(`${kind} 删除 DryRun 预检已通过`);
               return;
             }
             toast.success(`${kind} ${target.workload.name} 已提交删除`);

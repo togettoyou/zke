@@ -223,6 +223,8 @@ Kubernetes continuation token，并与 offset 分页一样固定渲染在表格�
 离线集群仍出现在选择器中但不可选，避免操作者以为集群不存在。命名空间提供 List/Detail/Create/Delete 与配额管理，
 其中创建与删除要求 `cluster.namespace.manage`，配额管理与 YAML 编辑仍是 `cluster.resource.*`；
 节点提供 List/Detail 以及停止调度和恢复调度。所有变更都经过权限门控、DryRun 预检、影响展示与二次确认。
+Console 对这一步统一使用「DryRun 预检」：校验成功显示「DryRun 预检已通过」；请求已经返回但存在静态阻断或
+PDB 阻断时显示「DryRun 预检已完成，存在阻断项」，不得用「已通过」掩盖无法继续执行的结果。
 
 列表页不再有标题和说明段：导航栏已经写明资源类别，工具栏已经写明目标集群与命名空间，标题只是把两者再抄一遍，
 而说明段占据的是每一页都要让出的高度。各分区的操作——刷新、创建按钮、概览的生成时间、事件的实时跟随——通过一个
@@ -730,7 +732,7 @@ Kind」失败。能不能写仍然由 grant 判定，与其他条目一样。
 CustomResourceDefinition 与其自定义资源有同样的限制，该情形目前尚未识别，仍会以 DryRun 失败呈现。
 仅对**本清单将要创建**的 Namespace 生效，已存在的 Namespace 照常完整校验。
 
-DryRun 成功的文档记为 `planned`（界面显示「预检通过」）而不是 `succeeded`：它是「准备好了」，不是「已经
+DryRun 成功的文档记为 `planned`（界面显示「DryRun 预检已通过」）而不是 `succeeded`：它是「准备好了」，不是「已经
 发生了」，而 DryRun 最不该让人以为的就是对象已经写进去了。
 
 **权限逐文档判定，整份拒绝**，详见[安全与权限](../security/authorization.md)。请求携带的 `namespace` 只为

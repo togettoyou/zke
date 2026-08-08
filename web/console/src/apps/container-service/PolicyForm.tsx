@@ -360,7 +360,7 @@ function PolicyFormBody({
             disabled={problem !== null || pending}
             onClick={() => submit(true, editor.build())}
           >
-            {pending ? "预检中…" : "执行 DryRun 预检"}
+            {pending ? "DryRun 预检中…" : "执行 DryRun 预检"}
           </Button>
         </div>
       </div>
@@ -369,7 +369,7 @@ function PolicyFormBody({
         open={previewed !== null}
         onOpenChange={(open) => !open && setPreviewed(null)}
         title={`确认${editing ? "更新" : "创建"} ${kind}`}
-        description="DryRun 已通过。确认后将向同一集群提交实际变更。"
+        description="DryRun 预检已通过。确认后将向同一集群提交实际变更。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           ...(resource === "priorityclasses" ? [] : [{ label: "命名空间", name: namespace }]),

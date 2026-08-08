@@ -637,7 +637,7 @@ export function WorkloadCreateView({
               )
             }
           >
-            {mutation.isPending ? "预检中…" : "执行 DryRun 预检"}
+            {mutation.isPending ? "DryRun 预检中…" : "执行 DryRun 预检"}
           </Button>
         </div>
       </div>
@@ -646,7 +646,7 @@ export function WorkloadCreateView({
         open={previewed !== null}
         onOpenChange={(open) => !open && setPreviewed(null)}
         title={editing ? `确认更新 ${kind}` : `确认创建 ${kind}`}
-        description="DryRun 已通过。确认后将向同一集群发送实际写入请求。"
+        description="DryRun 预检已通过。确认后将向同一集群发送实际写入请求。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           { label: "命名空间", name: namespace },

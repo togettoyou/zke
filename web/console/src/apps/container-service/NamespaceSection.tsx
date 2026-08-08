@@ -257,7 +257,7 @@ export function NamespaceSection({
           <DialogHeader>
             <DialogTitle>创建 Namespace</DialogTitle>
             <DialogDescription>
-              第一步只执行服务端 DryRun，不会在集群中持久化对象。
+              第一步只执行服务端 DryRun 预检，不会在集群中持久化对象。
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
@@ -305,7 +305,7 @@ export function NamespaceSection({
                   .catch(() => undefined);
               }}
             >
-              {create.isPending ? "预检中…" : "执行 DryRun 预检"}
+              {create.isPending ? "DryRun 预检中…" : "执行 DryRun 预检"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -315,7 +315,7 @@ export function NamespaceSection({
         open={createPreview !== null}
         onOpenChange={(open) => !open && setCreatePreview(null)}
         title="确认创建 Namespace"
-        description="DryRun 已通过。确认后将向同一集群发送实际创建请求。"
+        description="DryRun 预检已通过。确认后将向同一集群发送实际创建请求。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           { label: "Namespace", name: createPreview?.name ?? createName },
@@ -349,8 +349,8 @@ export function NamespaceSection({
         title="删除 Namespace"
         description={
           deletePreviewed
-            ? "DryRun 已通过。再次确认将提交实际删除。"
-            : "首次点击只执行服务端 DryRun；预检通过后才能实际删除。"
+            ? "DryRun 预检已通过。再次确认将提交实际删除。"
+            : "首次点击只执行服务端 DryRun 预检；通过后才能实际删除。"
         }
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
@@ -379,7 +379,7 @@ export function NamespaceSection({
             .then(() => {
               if (dryRun) {
                 setDeletePreviewed(true);
-                toast.success("Namespace 删除 DryRun 已通过");
+                toast.success("Namespace 删除 DryRun 预检已通过");
                 return;
               }
               toast.success(`Namespace ${deleteTarget.name} 已提交删除`);

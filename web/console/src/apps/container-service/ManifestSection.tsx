@@ -56,7 +56,7 @@ const ACTION_LABELS: Record<ManifestDocument["action"], string> = {
 };
 
 const STATUS_LABELS: Record<ManifestDocument["status"], string> = {
-  planned: "预检通过",
+  planned: "DryRun 预检已通过",
   refused: "权限不足",
   invalid: "文档无效",
   succeeded: "成功",
@@ -335,7 +335,7 @@ export function ManifestSection({ clusterId, clusterName }: ManifestSectionProps
             onClick={runPlan}
           >
             {destructive ? <Trash2 /> : <Play />}
-            {submit.isPending && !confirming ? "预检中…" : "执行预检"}
+            {submit.isPending && !confirming ? "DryRun 预检中…" : "执行 DryRun 预检"}
           </Button>
           <Button
             size="sm"
@@ -389,12 +389,12 @@ export function ManifestSection({ clusterId, clusterName }: ManifestSectionProps
           </Alert>
         ) : shown.failed ? (
           <Alert tone="danger">
-            预检未通过：有文档被集群拒绝，请按下表的「说明」修正后重新预检。
+            DryRun 预检未通过：有文档被集群拒绝，请按下表的「说明」修正后重新预检。
             排在其后的文档未参与预检。
           </Alert>
         ) : (
           <Alert tone="info">
-            预检通过：{counts}。确认后按文档{destructive ? "反序" : "顺序"}执行。
+            DryRun 预检已通过：{counts}。确认后按文档{destructive ? "反序" : "顺序"}执行。
             {unpreviewed > 0
               ? `其中 ${unpreviewed} 个文档位于本清单将要创建的命名空间中，服务端无法预先校验——` +
                 "它们的「未预检」不代表有问题，只代表没有可校验的对象。"
@@ -426,7 +426,7 @@ export function ManifestSection({ clusterId, clusterName }: ManifestSectionProps
         open={confirming}
         onOpenChange={(open) => !open && setConfirming(false)}
         title={destructive ? "确认按清单删除对象" : "确认应用清单"}
-        description="DryRun 已通过。确认后将向同一集群逐条提交实际变更。"
+        description="DryRun 预检已通过。确认后将向同一集群逐条提交实际变更。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           ...(namespace ? [{ label: "默认命名空间", name: namespace }] : []),
