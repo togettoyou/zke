@@ -6,6 +6,14 @@ import type {
   KubernetesServiceSpecInput,
 } from "@/api/types";
 
+import {
+  buildGatewayRouteSpec,
+  createGatewayRouteDraft,
+  gatewayRouteDraftFromSpec,
+  gatewayRouteDraftProblem,
+  type GatewayRouteDraft,
+} from "./gateway-route-form-model";
+
 /** Radix Select cannot hold an empty value, so "leave it to Kubernetes" needs a name. */
 export const DEFAULT_OPTION = "__default__";
 
@@ -142,8 +150,6 @@ export type GatewayDraft = {
   listeners: ListenerDraft[];
 };
 
-export type GatewayRouteDraft = { specText: string };
-
 /**
  * One draft holding all three shapes.
  *
@@ -254,7 +260,7 @@ export function initialDraft(existing: NetworkingSummary | null): NetworkingDraf
       })),
     },
     gatewayRoute: {
-      specText: JSON.stringify(existing?.gateway_route?.spec ?? {}, null, 2),
+      ...gatewayRouteDraftFromSpec(existing?.gateway_route?.spec ?? {}),
     },
   };
 }
@@ -271,7 +277,7 @@ export function createDraft(resource: KubernetesNetworkingResource): NetworkingD
   if (resource === "gateways") {
     return { ...draft, gateway: { ...draft.gateway, listeners: [emptyListener()] } };
   }
-  return { ...draft, gatewayRoute: { specText: JSON.stringify(routeTemplate(resource), null, 2) } };
+  return { ...draft, gatewayRoute: createGatewayRouteDraft(resource) };
 }
 
 /**
@@ -309,22 +315,8 @@ export function networkingProblem(
   if (resource === "gateways") {
     return gatewayProblem(draft.gateway);
   }
-  return gatewayRouteProblem(draft.gatewayRoute);
-}
-
-function gatewayRouteProblem(draft: GatewayRouteDraft): NetworkingProblem | null {
-  if (new TextEncoder().encode(draft.specText).length > 256 * 1024) {
-    return at("route", "Route spec 不能超过 256 KiB。");
-  }
-  try {
-    const value: unknown = JSON.parse(draft.specText);
-    if (value === null || Array.isArray(value) || typeof value !== "object") {
-      return at("route", "Route spec 必须是一个 JSON 对象。");
-    }
-  } catch {
-    return at("route", "Route spec 不是合法的 JSON。");
-  }
-  return null;
+  const routeProblem = gatewayRouteDraftProblem(draft.gatewayRoute, resource);
+  return routeProblem ? at("route", routeProblem) : null;
 }
 
 function serviceProblem(draft: ServiceDraft): NetworkingProblem | null {
@@ -667,20 +659,8 @@ export function buildNetworkingSpec(
     return { gateway: buildGatewaySpec(draft.gateway, existing) };
   }
   return {
-    gateway_route: { spec: JSON.parse(draft.gatewayRoute.specText) as Record<string, unknown> },
+    gateway_route: { spec: buildGatewayRouteSpec(draft.gatewayRoute, resource) },
   };
-}
-
-function routeTemplate(resource: KubernetesNetworkingResource): Record<string, unknown> {
-  const backendRef = { name: "backend-service", port: 80 };
-  const common = { parentRefs: [{ name: "gateway-name" }] };
-  if (resource === "httproutes" || resource === "grpcroutes") {
-    return { ...common, rules: [{ backendRefs: [backendRef] }] };
-  }
-  if (resource === "tlsroutes") {
-    return { ...common, hostnames: ["example.com"], rules: [{ backendRefs: [backendRef] }] };
-  }
-  return { ...common, rules: [{ backendRefs: [backendRef] }] };
 }
 
 function buildServiceSpec(

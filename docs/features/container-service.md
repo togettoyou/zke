@@ -419,12 +419,14 @@ Gateway API 是目标集群的可选 CRD 能力。每一种资源操作都先通
 HTTPRoute、GRPCRoute、TLSRoute 使用 `gateway.networking.k8s.io/v1`，TCPRoute 与 UDPRoute 使用实验通道的
 `v1alpha2`；未安装其中一种只影响该标签页并返回稳定的 `409 gateway_api_unavailable`，与已安装但
 Agent ServiceAccount 无权访问时的 `403` 区分。ZKE 不负责安装 Gateway API CRD、GatewayClass 或具体
-Controller，也不把 Gateway 的 `Programmed=True` 等同于外部流量已经可达。Route 类型化接口以完整的
-Kubernetes-native `spec`（camelCase JSON）为输入，按路径类型的官方 Gateway API Go 类型严格拒绝未知字段，
-再交给目标 API Server DryRun 执行该集群实际 CRD/CEL 与准入校验。更新只替换完整 `spec`，保留 metadata、status
-和 Controller 扩展；跨 Namespace ParentRef/BackendRef 可以表达，但 ZKE 不代建 ReferenceGrant，也不追踪读取
-被引用命名空间，授权与解析结果以 Controller 写入的 `Accepted`、`ResolvedRefs` Condition 为准。Gateway 的 TLS
-同样只传递证书引用，不读取证书 Secret。
+Controller，也不把 Gateway 的 `Programmed=True` 等同于外部流量已经可达。Route 类型化接口内部仍以完整的
+Kubernetes-native `spec` 为输入，按路径类型的官方 Gateway API Go 类型严格拒绝未知字段，再交给目标 API Server
+DryRun 执行该集群实际 CRD/CEL 与准入校验。Console 不要求用户编写 JSON：五类 Route 都以结构化表单编辑父级引用、
+主机名、HTTP/gRPC 匹配条件与后端引用。更新时，表单未建模的过滤器、超时、重试、会话保持和 Controller 扩展字段
+从原始 `spec` 原样合并，避免普通编辑静默删除高级配置；这些字段通过 YAML 入口修改。更新只替换完整 `spec`，保留
+metadata 与 status；跨 Namespace ParentRef/BackendRef 可以表达，但 ZKE 不代建 ReferenceGrant，也不追踪读取被引用
+命名空间，授权与解析结果以 Controller 写入的 `Accepted`、`ResolvedRefs` Condition 为准。Gateway 的 TLS 同样只传递
+证书引用，不读取证书 Secret。
 
 Console 服务与路由页面按 Service、Ingress、Gateway 和五种 Route 标签页组织。各类型形状不同，因此列表列和详情卡片
 各自独立，而不是压成一张只显示共有字段的表：Service 展示类型、ClusterIP 与端口映射，Ingress 展示

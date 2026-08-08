@@ -13,7 +13,7 @@ import type { KubernetesNetworkingResource } from "@/api/types";
 import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { Button } from "@/components/ui/button";
-import { Input, NumericInput, Textarea } from "@/components/ui/input";
+import { Input, NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
 import {
@@ -26,6 +26,7 @@ import {
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { isGatewayRouteResource, networkingKindLabel } from "./networking-catalog";
+import { GatewayRouteEditor } from "./GatewayRouteEditor";
 import {
   buildNetworkingSpec,
   createDraft,
@@ -61,7 +62,7 @@ const SECTION_LABELS: Record<NetworkingSectionKey, string> = {
   tls: "TLS",
   gateway: "Gateway",
   listeners: "监听器",
-  route: "Route Spec",
+  route: "Route 配置",
 };
 
 /**
@@ -205,20 +206,14 @@ export function NetworkingFormView({
         {isGatewayRouteResource(resource) ? (
           <FormSection
             title={SECTION_LABELS.route}
-            hint="完整 Kubernetes-native spec（JSON/camelCase）；ParentRef 与 BackendRef 可跨命名空间，但必须由目标 Gateway/ReferenceGrant 授权"
+            hint="按 Gateway API 原生语义配置；跨命名空间引用必须由目标 Gateway/ReferenceGrant 授权"
             problem={problemIn("route")}
           >
-            <Textarea
-              value={draft.gatewayRoute.specText}
-              className="zke-mono min-h-80 resize-y text-xs leading-5"
-              spellCheck={false}
-              aria-label={`${kind} spec JSON`}
-              onChange={(event) => patch({ gatewayRoute: { specText: event.target.value } })}
+            <GatewayRouteEditor
+              resource={resource}
+              draft={draft.gatewayRoute}
+              onChange={(gatewayRoute) => patch({ gatewayRoute })}
             />
-            <p className="text-subtle-foreground mt-2 text-xs">
-              Server 会按当前 Route 类型严格拒绝未知字段；DryRun 还会执行目标集群 CRD/CEL 校验。ZKE
-              不会自动创建跨命名空间所需的 ReferenceGrant。
-            </p>
           </FormSection>
         ) : null}
 
@@ -259,7 +254,7 @@ export function NetworkingFormView({
         impacts={
           existing
             ? [
-                "本表单建模的配置会整体替换现有配置；Kubernetes 分配的字段和未建模的扩展字段由服务端保留。",
+                "本表单建模的配置会整体替换现有配置；Kubernetes 分配的字段和未建模的扩展字段会按该资源的更新语义保留。",
                 "请求携带该对象当前的 UID 与 resourceVersion，期间对象若已变化，更新会被拒绝而不是覆盖。",
                 "变更可能立即改变流量走向。",
               ]
