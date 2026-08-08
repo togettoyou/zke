@@ -66,6 +66,7 @@ func TestCreateWorkloadObjectCarriesThePodTemplate(t *testing.T) {
 			},
 		},
 		Privileged: &privileged,
+		Ports:      []WorkloadContainerPort{{Name: "http", ContainerPort: 8080, Protocol: "TCP"}},
 	}}
 	input.Volumes = []WorkloadVolume{{
 		Name:      "config",
@@ -76,6 +77,26 @@ func TestCreateWorkloadObjectCarriesThePodTemplate(t *testing.T) {
 	input.Tolerations = []WorkloadToleration{{
 		Key: "gpu", Operator: "Equal", Value: "true",
 		Effect: "NoExecute", TolerationSeconds: &tolerationSeconds,
+	}}
+	input.Affinity = &WorkloadAffinity{
+		NodeAffinity: &WorkloadNodeAffinity{Required: []WorkloadNodeSelectorTerm{{
+			MatchExpressions: []WorkloadNodeSelectorRequirement{{
+				Key: "node.kubernetes.io/instance-type", Operator: "In", Values: []string{"gpu"},
+			}},
+		}}},
+		PodAntiAffinity: &WorkloadPodAffinity{Preferred: []WorkloadWeightedPodAffinityTerm{{
+			Weight: 80,
+			PodTerm: WorkloadPodAffinityTerm{
+				TopologyKey:   "kubernetes.io/hostname",
+				LabelSelector: &WorkloadLabelSelector{MatchLabels: map[string]string{"app": "gateway"}},
+			},
+		}}},
+	}
+	minDomains := int32(2)
+	input.TopologySpreadConstraints = []WorkloadTopologySpreadConstraint{{
+		MaxSkew: 1, TopologyKey: "topology.kubernetes.io/zone", WhenUnsatisfiable: "DoNotSchedule",
+		LabelSelector: &WorkloadLabelSelector{MatchLabels: map[string]string{"app": "gateway"}},
+		MinDomains:    &minDomains, NodeAffinityPolicy: "Honor", NodeTaintsPolicy: "Ignore",
 	}}
 
 	if err := validateCreateWorkloadInput(input); err != nil {
@@ -131,6 +152,10 @@ func TestCreateWorkloadObjectCarriesThePodTemplate(t *testing.T) {
 	if container.SecurityContext == nil || !*container.SecurityContext.Privileged {
 		t.Fatalf("unexpected security context: %+v", container.SecurityContext)
 	}
+	if len(container.Ports) != 1 || container.Ports[0].Name != "http" ||
+		container.Ports[0].ContainerPort != 8080 || container.Ports[0].Protocol != "TCP" {
+		t.Fatalf("unexpected container ports: %+v", container.Ports)
+	}
 	if len(container.VolumeMounts) != 1 || container.VolumeMounts[0].SubPath != "gateway.yaml" {
 		t.Fatalf("unexpected volume mounts: %+v", container.VolumeMounts)
 	}
@@ -144,6 +169,13 @@ func TestCreateWorkloadObjectCarriesThePodTemplate(t *testing.T) {
 		spec.NodeSelector["kubernetes.io/os"] != "linux" ||
 		len(spec.Tolerations) != 1 || *spec.Tolerations[0].TolerationSeconds != 30 {
 		t.Fatalf("unexpected Pod scheduling: %+v", spec)
+	}
+	if spec.Affinity == nil || spec.Affinity.NodeAffinity == nil ||
+		len(spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms) != 1 ||
+		spec.Affinity.PodAntiAffinity == nil ||
+		len(spec.TopologySpreadConstraints) != 1 ||
+		*spec.TopologySpreadConstraints[0].MinDomains != 2 {
+		t.Fatalf("unexpected advanced scheduling: %+v", spec)
 	}
 }
 
@@ -184,6 +216,25 @@ func TestValidateCreateWorkloadInputRejectsInvalidPodTemplates(t *testing.T) {
 	negative := int64(-1)
 	zero := int32(0)
 	cases := map[string]func(*CreateWorkloadInput){
+		"a duplicate container port name": func(input *CreateWorkloadInput) {
+			input.Containers[0].Ports = []WorkloadContainerPort{
+				{Name: "http", ContainerPort: 80}, {Name: "http", ContainerPort: 8080},
+			}
+		},
+		"a node affinity expression without values": func(input *CreateWorkloadInput) {
+			input.Affinity = &WorkloadAffinity{NodeAffinity: &WorkloadNodeAffinity{
+				Required: []WorkloadNodeSelectorTerm{{MatchExpressions: []WorkloadNodeSelectorRequirement{{
+					Key: "disk", Operator: "In",
+				}}}},
+			}}
+		},
+		"a topology minDomains on a soft constraint": func(input *CreateWorkloadInput) {
+			minDomains := int32(2)
+			input.TopologySpreadConstraints = []WorkloadTopologySpreadConstraint{{
+				MaxSkew: 1, TopologyKey: "topology.kubernetes.io/zone",
+				WhenUnsatisfiable: "ScheduleAnyway", MinDomains: &minDomains,
+			}}
+		},
 		"a probe with no handler": func(input *CreateWorkloadInput) {
 			input.Containers[0].LivenessProbe = &WorkloadProbe{}
 		},

@@ -62,7 +62,7 @@ func unmodeledDeployment() *appsv1.Deployment {
 					Containers: []corev1.Container{{
 						Name:  "main",
 						Image: "example/api:v1",
-						Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
+						Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080, HostPort: 18080, HostIP: "127.0.0.1"}},
 						Env: []corev1.EnvVar{{
 							Name: "POD_IP",
 							ValueFrom: &corev1.EnvVarSource{
@@ -148,6 +148,9 @@ func TestUpdateWorkloadObjectKeepsFieldsOutsideTheTypedForm(t *testing.T) {
 	if len(container.Ports) != 1 || container.TerminationMessagePath == "" {
 		t.Fatalf("container fields outside the form were dropped: %+v", container)
 	}
+	if container.Ports[0].HostPort != 18080 || container.Ports[0].HostIP != "127.0.0.1" {
+		t.Fatalf("host port fields outside the form were dropped: %+v", container.Ports[0])
+	}
 	if container.SecurityContext == nil || container.SecurityContext.RunAsUser == nil {
 		t.Fatalf("security context outside `privileged` was dropped: %+v", container.SecurityContext)
 	}
@@ -176,6 +179,46 @@ func TestUpdateWorkloadObjectKeepsFieldsOutsideTheTypedForm(t *testing.T) {
 	// The selector cannot change, so the template has to keep matching it.
 	if result.Spec.Template.Labels["app"] != "api" {
 		t.Fatalf("template stopped matching its selector: %+v", result.Spec.Template.Labels)
+	}
+}
+
+func TestUpdateWorkloadObjectReplacesExplicitAdvancedFields(t *testing.T) {
+	t.Parallel()
+
+	existing, err := runtime.DefaultUnstructuredConverter.ToUnstructured(unmodeledDeployment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := updateWorkloadObject(existing, UpdateWorkloadInput{
+		Namespace: "default", Resource: WorkloadDeployments, Name: "api",
+		UID: "deployment-uid", ResourceVersion: "12",
+		WorkloadSpecInput: WorkloadSpecInput{
+			Labels: map[string]string{"app": "api"},
+			Containers: []WorkloadContainerTemplate{{
+				Name: "main", Image: "example/api:v2",
+				Ports: []WorkloadContainerPort{{Name: "metrics", ContainerPort: 9090, Protocol: "TCP"}},
+			}},
+			Affinity:                  &WorkloadAffinity{},
+			TopologySpreadConstraints: []WorkloadTopologySpreadConstraint{},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result appsv1.Deployment
+	if runtime.DefaultUnstructuredConverter.FromUnstructured(updated, &result) != nil {
+		t.Fatal("update produced an object that is not a Deployment")
+	}
+	podSpec := result.Spec.Template.Spec
+	if podSpec.Affinity != nil || len(podSpec.TopologySpreadConstraints) != 0 {
+		t.Fatalf("explicit empty advanced scheduling did not clear fields: %+v", podSpec)
+	}
+	ports := podSpec.Containers[0].Ports
+	if len(ports) != 1 || ports[0].Name != "metrics" || ports[0].ContainerPort != 9090 {
+		t.Fatalf("explicit container ports were not applied: %+v", ports)
+	}
+	if podSpec.ServiceAccountName != "api" || !podSpec.HostNetwork {
+		t.Fatalf("unmodeled Pod fields were not preserved: %+v", podSpec)
 	}
 }
 

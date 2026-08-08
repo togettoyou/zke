@@ -75,10 +75,11 @@ func (service *fakeKubernetesWorkloadService) GetWorkload(
 			Status:     "available",
 			Images:     []string{"example/model:v2"},
 		},
-		Annotations:    map[string]string{},
-		Containers:     []kubernetesresource.WorkloadContainerTemplate{},
-		InitContainers: []kubernetesresource.WorkloadContainerTemplate{},
-		Conditions:     []kubernetesresource.WorkloadCondition{},
+		Annotations:               map[string]string{},
+		Containers:                []kubernetesresource.WorkloadContainerTemplate{},
+		InitContainers:            []kubernetesresource.WorkloadContainerTemplate{},
+		TopologySpreadConstraints: []kubernetesresource.WorkloadTopologySpreadConstraint{},
+		Conditions:                []kubernetesresource.WorkloadCondition{},
 	}, nil
 }
 
@@ -184,10 +185,11 @@ func fakeWorkloadMutationResult(
 			Labels:    map[string]string{},
 			Images:    []string{},
 		},
-		Annotations:    map[string]string{},
-		Containers:     []kubernetesresource.WorkloadContainerTemplate{},
-		InitContainers: []kubernetesresource.WorkloadContainerTemplate{},
-		Conditions:     []kubernetesresource.WorkloadCondition{},
+		Annotations:               map[string]string{},
+		Containers:                []kubernetesresource.WorkloadContainerTemplate{},
+		InitContainers:            []kubernetesresource.WorkloadContainerTemplate{},
+		TopologySpreadConstraints: []kubernetesresource.WorkloadTopologySpreadConstraint{},
+		Conditions:                []kubernetesresource.WorkloadCondition{},
 	}
 }
 
@@ -347,8 +349,11 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 				"containers":[{
 					"name":"main",
 					"image":"example/api:v1",
-					"image_pull_policy":"IfNotPresent"
+					"image_pull_policy":"IfNotPresent",
+					"ports":[{"name":"http","container_port":8080,"protocol":"TCP"}]
 				}],
+				"affinity":{"node_affinity":{"required":[{"match_expressions":[{"key":"disk","operator":"In","values":["ssd"]}]}]}},
+				"topology_spread_constraints":[{"max_skew":1,"topology_key":"topology.kubernetes.io/zone","when_unsatisfiable":"DoNotSchedule"}],
 				"replicas":3,
 				"dry_run":false,
 				"confirm":true
@@ -435,6 +440,11 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 		service.createInput.Labels["app"] != "api" ||
 		len(service.createInput.Containers) != 1 ||
 		service.createInput.Containers[0].Image != "example/api:v1" ||
+		len(service.createInput.Containers[0].Ports) != 1 ||
+		service.createInput.Containers[0].Ports[0].ContainerPort != 8080 ||
+		service.createInput.Affinity == nil ||
+		service.createInput.Affinity.NodeAffinity == nil ||
+		len(service.createInput.TopologySpreadConstraints) != 1 ||
 		service.createInput.Replicas == nil ||
 		*service.createInput.Replicas != 3 ||
 		!service.createInput.Confirm ||
@@ -553,6 +563,14 @@ func TestKubernetesWorkloadMutationHandlersRejectUnsafeRequests(t *testing.T) {
 			method:   http.MethodPost,
 			path:     baseURL + "/scale",
 			body:     `{"replicas":4,"dry_run":true,"confirm":false,"force":true}`,
+			wantCode: "invalid_request",
+		},
+		{
+			name:   "unknown advanced scheduling field rejected",
+			method: http.MethodPost,
+			path:   "/clusters/" + clusterID + "/namespaces/model-serving/workloads/deployments",
+			body: `{"name":"api","containers":[{"name":"main","image":"example/api:v1"}],` +
+				`"affinity":{"node_affinity":{"required":[],"bypass":true}},"dry_run":true,"confirm":false}`,
 			wantCode: "invalid_request",
 		},
 	}

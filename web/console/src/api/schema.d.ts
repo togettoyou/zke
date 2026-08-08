@@ -931,7 +931,7 @@ export interface paths {
         get: operations["getKubernetesWorkload"];
         /**
          * @description 使用类型化表单更新目标 Cluster 和 Namespace 中的工作负载。请求携带的字段替换对象上的
-         *     对应部分，本表单未建模的字段——亲和性、拓扑分布约束、容器端口、securityContext 其余字段等
+         *     对应部分，本表单未建模的字段——ServiceAccount、主机网络、hostPort、securityContext 其余字段等
          *     ——由 Server 从当前对象保留，不会被清除。必须提供 UID 与 resourceVersion 前置条件，
          *     任一不匹配返回 409。Kubernetes 的不可变约束如实反映：StatefulSet 的 service_name 不接受，
          *     Job 只接受 parallelism 与 ttl_seconds_after_finished。dry_run=true 时执行服务端预览，
@@ -2424,6 +2424,83 @@ export interface components {
             post_start?: components["schemas"]["KubernetesWorkloadLifecycleHandler"];
             pre_stop?: components["schemas"]["KubernetesWorkloadLifecycleHandler"];
         };
+        KubernetesWorkloadContainerPort: {
+            /** @description 可选的 IANA service name；同一容器内不可重复。 */
+            name?: string;
+            /** Format: int32 */
+            container_port: number;
+            /**
+             * @description 空字符串与 TCP 等价。
+             * @enum {string}
+             */
+            protocol?: "" | "TCP" | "UDP" | "SCTP";
+        };
+        KubernetesWorkloadLabelSelector: {
+            match_labels?: {
+                [key: string]: string;
+            };
+            match_expressions?: components["schemas"]["KubernetesWorkloadSelectorRequirement"][];
+        };
+        KubernetesWorkloadNodeSelectorRequirement: {
+            key: string;
+            /** @enum {string} */
+            operator: "In" | "NotIn" | "Exists" | "DoesNotExist" | "Gt" | "Lt";
+            values?: string[];
+        };
+        KubernetesWorkloadNodeSelectorTerm: {
+            match_expressions?: components["schemas"]["KubernetesWorkloadNodeSelectorRequirement"][];
+            match_fields?: components["schemas"]["KubernetesWorkloadNodeSelectorRequirement"][];
+        };
+        KubernetesWorkloadPreferredNodeSelectorTerm: {
+            /** Format: int32 */
+            weight: number;
+            preference: components["schemas"]["KubernetesWorkloadNodeSelectorTerm"];
+        };
+        KubernetesWorkloadNodeAffinity: {
+            /** @description 多个 term 之间为 OR；一个 term 内的表达式为 AND。 */
+            required?: components["schemas"]["KubernetesWorkloadNodeSelectorTerm"][];
+            preferred?: components["schemas"]["KubernetesWorkloadPreferredNodeSelectorTerm"][];
+        };
+        KubernetesWorkloadPodAffinityTerm: {
+            label_selector?: components["schemas"]["KubernetesWorkloadLabelSelector"];
+            namespace_selector?: components["schemas"]["KubernetesWorkloadLabelSelector"];
+            namespaces?: string[];
+            topology_key: string;
+            match_label_keys?: string[];
+            mismatch_label_keys?: string[];
+        };
+        KubernetesWorkloadWeightedPodAffinityTerm: {
+            /** Format: int32 */
+            weight: number;
+            pod_term: components["schemas"]["KubernetesWorkloadPodAffinityTerm"];
+        };
+        KubernetesWorkloadPodAffinity: {
+            required?: components["schemas"]["KubernetesWorkloadPodAffinityTerm"][];
+            preferred?: components["schemas"]["KubernetesWorkloadWeightedPodAffinityTerm"][];
+        };
+        KubernetesWorkloadAffinity: {
+            node_affinity?: components["schemas"]["KubernetesWorkloadNodeAffinity"];
+            pod_affinity?: components["schemas"]["KubernetesWorkloadPodAffinity"];
+            pod_anti_affinity?: components["schemas"]["KubernetesWorkloadPodAffinity"];
+        };
+        KubernetesWorkloadTopologySpreadConstraint: {
+            /** Format: int32 */
+            max_skew: number;
+            topology_key: string;
+            /** @enum {string} */
+            when_unsatisfiable: "DoNotSchedule" | "ScheduleAnyway";
+            label_selector?: components["schemas"]["KubernetesWorkloadLabelSelector"];
+            /**
+             * Format: int32
+             * @description 仅 DoNotSchedule 接受。
+             */
+            min_domains?: number | null;
+            /** @enum {string} */
+            node_affinity_policy?: "" | "Honor" | "Ignore";
+            /** @enum {string} */
+            node_taints_policy?: "" | "Honor" | "Ignore";
+            match_label_keys?: string[];
+        };
         KubernetesWorkloadContainerTemplate: {
             /** @description Pod 内唯一的 DNS label 容器名；主容器与初始化容器之间也不得重复。 */
             name: string;
@@ -2446,6 +2523,8 @@ export interface components {
             lifecycle?: components["schemas"]["KubernetesWorkloadLifecycle"];
             /** @description 仅 true 会被写入 securityContext；false 与省略等价。 */
             privileged?: boolean | null;
+            /** @description 仅声明容器端口；hostPort 与 hostIP 仍通过 YAML 管理。 */
+            ports?: components["schemas"]["KubernetesWorkloadContainerPort"][];
         };
         KubernetesWorkloadEmptyDirVolume: {
             /** @enum {string} */
@@ -2524,11 +2603,13 @@ export interface components {
             volumes?: components["schemas"]["KubernetesWorkloadVolume"][];
             /** @description 只传递 Secret 名称引用，不读取 Secret 正文。 */
             image_pull_secrets?: string[];
-            /** @description 按节点标签精确匹配；亲和性等更复杂的调度规则请使用 YAML。 */
+            /** @description 按节点标签精确匹配；复杂规则使用 affinity。 */
             node_selector?: {
                 [key: string]: string;
             };
             tolerations?: components["schemas"]["KubernetesWorkloadToleration"][];
+            affinity?: components["schemas"]["KubernetesWorkloadAffinity"];
+            topology_spread_constraints?: components["schemas"]["KubernetesWorkloadTopologySpreadConstraint"][];
             /**
              * Format: int32
              * @description 仅 Deployment 和 StatefulSet 可用；省略时交由 Kubernetes 默认处理。
@@ -2609,11 +2690,15 @@ export interface components {
             volumes?: components["schemas"]["KubernetesWorkloadVolume"][];
             /** @description 只传递 Secret 名称引用，不读取 Secret 正文。 */
             image_pull_secrets?: string[];
-            /** @description 按节点标签精确匹配；亲和性等更复杂的调度规则请使用 YAML。 */
+            /** @description 按节点标签精确匹配；复杂规则使用 affinity。 */
             node_selector?: {
                 [key: string]: string;
             };
             tolerations?: components["schemas"]["KubernetesWorkloadToleration"][];
+            /** @description 省略时更新保留当前值；空对象显式清除。 */
+            affinity?: components["schemas"]["KubernetesWorkloadAffinity"];
+            /** @description 省略时更新保留当前值；空数组显式清除。 */
+            topology_spread_constraints?: components["schemas"]["KubernetesWorkloadTopologySpreadConstraint"][];
             /**
              * Format: int32
              * @description 仅 Deployment 和 StatefulSet 可用；省略时交由 Kubernetes 默认处理。
@@ -2835,6 +2920,8 @@ export interface components {
                 [key: string]: string;
             };
             tolerations: components["schemas"]["KubernetesWorkloadToleration"][];
+            affinity?: components["schemas"]["KubernetesWorkloadAffinity"];
+            topology_spread_constraints: components["schemas"]["KubernetesWorkloadTopologySpreadConstraint"][];
             conditions: components["schemas"]["KubernetesWorkloadCondition"][];
             strategy: string;
             min_ready_seconds: number;

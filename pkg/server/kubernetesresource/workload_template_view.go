@@ -15,10 +15,11 @@ import (
 // form with nothing to show for the fields it is about to submit — every one of
 // them would read as empty and be written back as empty.
 //
-// Only the modeled fields come back. Everything else on the Pod — affinity,
-// topology spread, container ports, the rest of the security context — is
-// absent here and preserved by the update rather than round-tripped through
-// the form; see `workload_update.go`.
+// Only the modeled fields come back. Pod-level affinity and topology spread are
+// returned by workloadDetailFromPodTemplate; this file returns container ports
+// with the rest of each container template. Host ports, service accounts and
+// the rest of the security context stay outside the form and are preserved by
+// the update; see `workload_update.go`.
 
 func workloadContainerTemplates(containers []corev1.Container) []WorkloadContainerTemplate {
 	result := make([]WorkloadContainerTemplate, 0, len(containers))
@@ -42,6 +43,7 @@ func workloadContainerTemplate(container corev1.Container) WorkloadContainerTemp
 		LivenessProbe:   workloadProbeView(container.LivenessProbe),
 		ReadinessProbe:  workloadProbeView(container.ReadinessProbe),
 		Lifecycle:       workloadLifecycleView(container.Lifecycle),
+		Ports:           workloadContainerPortView(container.Ports),
 	}
 	// Only reported when true, matching what the create path writes: a false
 	// `privileged` is the default said twice, and a form that showed it as

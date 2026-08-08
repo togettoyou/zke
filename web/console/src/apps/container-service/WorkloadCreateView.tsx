@@ -45,6 +45,7 @@ import {
   RESERVED_ANNOTATION_KEY,
   RESERVED_LABEL_KEY,
   type ContainerDraft,
+  type ContainerPortDraft,
   type EnvDraft,
   type FormSectionKey,
   type HookDraft,
@@ -81,6 +82,7 @@ const SECTION_LABELS: Record<FormSectionKey, string> = {
   imagePullSecrets: "镜像访问凭证",
   nodeSelector: "节点调度策略",
   tolerations: "容忍调度",
+  advancedScheduling: "高级调度",
 };
 
 const HOST_PATH_TYPES = [
@@ -537,7 +539,7 @@ export function WorkloadCreateView({
 
             <FormSection
               title="节点调度策略"
-              hint="按节点标签精确匹配；亲和性等更复杂的规则请在创建后通过 YAML 配置"
+              hint="按节点标签精确匹配；需要 AND/OR、软偏好或 Pod 间规则时使用下方高级调度"
               problem={problemIn("nodeSelector")}
             >
               <KeyValueRows
@@ -558,6 +560,53 @@ export function WorkloadCreateView({
                 rows={draft.tolerations}
                 onChange={(tolerations) => patch({ tolerations })}
               />
+            </FormSection>
+
+            <FormSection
+              title="高级调度"
+              hint="完整保留 Kubernetes 的嵌套 AND/OR 语义；服务端仍会逐字段校验操作符、选择器、权重与集合上限"
+              problem={problemIn("advancedScheduling")}
+            >
+              <div className="grid gap-3 xl:grid-cols-2">
+                <Field
+                  label="亲和性（JSON）"
+                  hint="支持 node_affinity、pod_affinity 与 pod_anti_affinity；留空表示不配置"
+                >
+                  {(id) => (
+                    <Textarea
+                      id={id}
+                      value={draft.affinityJson}
+                      spellCheck={false}
+                      className="zke-mono min-h-44 text-xs"
+                      placeholder={
+                        '例如 {\n  "node_affinity": {\n    "required": [{\n      "match_expressions": [{"key": "node.kubernetes.io/instance-type", "operator": "In", "values": ["gpu"]}]\n    }]\n  }\n}'
+                      }
+                      onChange={(event) => patch({ affinityJson: event.target.value })}
+                    />
+                  )}
+                </Field>
+                <Field
+                  label="拓扑分布约束（JSON）"
+                  hint="数组中每项声明 topology_key、max_skew、调度策略及可选标签选择器"
+                >
+                  {(id) => (
+                    <Textarea
+                      id={id}
+                      value={draft.topologySpreadJson}
+                      spellCheck={false}
+                      className="zke-mono min-h-44 text-xs"
+                      placeholder={
+                        '例如 [{\n  "max_skew": 1,\n  "topology_key": "topology.kubernetes.io/zone",\n  "when_unsatisfiable": "DoNotSchedule",\n  "label_selector": {"match_labels": {"app": "api"}}\n}]'
+                      }
+                      onChange={(event) => patch({ topologySpreadJson: event.target.value })}
+                    />
+                  )}
+                </Field>
+              </div>
+              <p className="text-subtle-foreground mt-2 text-xs">
+                JSON 使用本接口的 snake_case 字段；DryRun 仍由目标集群 API Server
+                和准入策略给出最终结果。
+              </p>
             </FormSection>
           </>
         )}
@@ -797,6 +846,15 @@ function ContainerPanel({
                 volumes={volumes}
                 onChange={(mounts) => onChange({ mounts })}
               />
+            )}
+          </Field>
+
+          <Field
+            label="容器端口"
+            hint="供 Service、探针和其他容器按名称引用；不开放会占用节点端口的 hostPort"
+          >
+            {() => (
+              <ContainerPortRows rows={container.ports} onChange={(ports) => onChange({ ports })} />
             )}
           </Field>
 
@@ -1139,6 +1197,65 @@ function EnvRows({ rows, onChange }: { rows: EnvDraft[]; onChange: (rows: EnvDra
         onClick={() =>
           onChange([...rows, { name: "", source: "value", value: "", refName: "", refKey: "" }])
         }
+      />
+    </div>
+  );
+}
+
+function ContainerPortRows({
+  rows,
+  onChange,
+}: {
+  rows: ContainerPortDraft[];
+  onChange: (rows: ContainerPortDraft[]) => void;
+}) {
+  const update = (index: number, changes: Partial<ContainerPortDraft>) =>
+    onChange(rows.map((row, position) => (position === index ? { ...row, ...changes } : row)));
+
+  return (
+    <div className="grid gap-2">
+      {rows.map((row, index) => (
+        <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <Input
+              value={row.name}
+              aria-label={`第 ${index + 1} 个端口名称`}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="名称（可选，例如 http）"
+              onChange={(event) => update(index, { name: event.target.value })}
+            />
+            <NumericInput
+              value={row.containerPort}
+              aria-label={`第 ${index + 1} 个容器端口`}
+              placeholder="容器端口"
+              onValueChange={(containerPort) => update(index, { containerPort })}
+            />
+            <Select
+              value={row.protocol}
+              onValueChange={(protocol) =>
+                update(index, { protocol: protocol as ContainerPortDraft["protocol"] })
+              }
+            >
+              <SelectTrigger aria-label={`第 ${index + 1} 个端口协议`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="TCP">TCP</SelectItem>
+                <SelectItem value="UDP">UDP</SelectItem>
+                <SelectItem value="SCTP">SCTP</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <RemoveButton
+            label={`移除第 ${index + 1} 个端口`}
+            onClick={() => onChange(rows.filter((_, position) => position !== index))}
+          />
+        </div>
+      ))}
+      <AddButton
+        label="添加容器端口"
+        onClick={() => onChange([...rows, { name: "", containerPort: "", protocol: "TCP" }])}
       />
     </div>
   );
@@ -1731,8 +1848,7 @@ function updateImpacts(
     impacts.push("修改后的模板对下一次触发的 Job 生效；已经创建的 Job 保持原样。");
   }
   impacts.push(
-    "本表单建模的字段会整体替换对象上的对应部分；未建模的字段——亲和性、拓扑分布约束、容器端口、" +
-      "securityContext 其余字段等——由服务端保留。",
+    "本表单建模的字段会整体替换对象上的对应部分；ServiceAccount、主机网络和 securityContext 其余字段等未建模内容由服务端保留。",
   );
   impacts.push(
     "请求携带打开表单时的 UID 与 resourceVersion，期间对象若已变化，更新会被拒绝而不是覆盖。",
@@ -1742,6 +1858,11 @@ function updateImpacts(
   }
   if (spec.volumes?.some((volume) => volume.host_path)) {
     impacts.push("存在主机路径数据卷：容器将直接读写所在节点的文件系统。");
+  }
+  if (spec.affinity || spec.topology_spread_constraints?.length) {
+    impacts.push(
+      "高级调度规则可能使 Pod 无法找到同时满足全部硬性约束的节点，DryRun 不保证运行时一定可调度。",
+    );
   }
   if ((resource === "deployments" || resource === "statefulsets") && spec.replicas !== undefined) {
     impacts.push(
@@ -1775,6 +1896,11 @@ function createImpacts(
   }
   if (spec.tolerations?.length) {
     impacts.push("已配置容忍调度，Pod 可以被调度到带有对应污点的节点上。");
+  }
+  if (spec.affinity || spec.topology_spread_constraints?.length) {
+    impacts.push(
+      "高级调度规则可能使 Pod 无法找到同时满足全部硬性约束的节点，DryRun 不保证运行时一定可调度。",
+    );
   }
   if (resource === "cronjobs") {
     impacts.push(

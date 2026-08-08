@@ -2723,7 +2723,7 @@ paths:
       operationId: updateKubernetesWorkload
       description: |
         使用类型化表单更新目标 Cluster 和 Namespace 中的工作负载。请求携带的字段替换对象上的
-        对应部分，本表单未建模的字段——亲和性、拓扑分布约束、容器端口、securityContext 其余字段等
+        对应部分，本表单未建模的字段——ServiceAccount、主机网络、hostPort、securityContext 其余字段等
         ——由 Server 从当前对象保留，不会被清除。必须提供 UID 与 resourceVersion 前置条件，
         任一不匹配返回 409。Kubernetes 的不可变约束如实反映：StatefulSet 的 service_name 不接受，
         Job 只接受 parallelism 与 ttl_seconds_after_finished。dry_run=true 时执行服务端预览，
@@ -7696,6 +7696,191 @@ components:
           $ref: "#/components/schemas/KubernetesWorkloadLifecycleHandler"
         pre_stop:
           $ref: "#/components/schemas/KubernetesWorkloadLifecycleHandler"
+    KubernetesWorkloadContainerPort:
+      type: object
+      additionalProperties: false
+      required: [container_port]
+      properties:
+        name:
+          type: string
+          maxLength: 15
+          description: 可选的 IANA service name；同一容器内不可重复。
+        container_port:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+        protocol:
+          type: string
+          enum: ["", TCP, UDP, SCTP]
+          description: 空字符串与 TCP 等价。
+    KubernetesWorkloadLabelSelector:
+      type: object
+      additionalProperties: false
+      properties:
+        match_labels:
+          type: object
+          maxProperties: 50
+          additionalProperties:
+            type: string
+        match_expressions:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadSelectorRequirement"
+    KubernetesWorkloadNodeSelectorRequirement:
+      type: object
+      additionalProperties: false
+      required: [key, operator]
+      properties:
+        key:
+          type: string
+        operator:
+          type: string
+          enum: [In, NotIn, Exists, DoesNotExist, Gt, Lt]
+        values:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+    KubernetesWorkloadNodeSelectorTerm:
+      type: object
+      additionalProperties: false
+      properties:
+        match_expressions:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadNodeSelectorRequirement"
+        match_fields:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadNodeSelectorRequirement"
+    KubernetesWorkloadPreferredNodeSelectorTerm:
+      type: object
+      additionalProperties: false
+      required: [weight, preference]
+      properties:
+        weight:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+        preference:
+          $ref: "#/components/schemas/KubernetesWorkloadNodeSelectorTerm"
+    KubernetesWorkloadNodeAffinity:
+      type: object
+      additionalProperties: false
+      properties:
+        required:
+          type: array
+          maxItems: 50
+          description: 多个 term 之间为 OR；一个 term 内的表达式为 AND。
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadNodeSelectorTerm"
+        preferred:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadPreferredNodeSelectorTerm"
+    KubernetesWorkloadPodAffinityTerm:
+      type: object
+      additionalProperties: false
+      required: [topology_key]
+      properties:
+        label_selector:
+          $ref: "#/components/schemas/KubernetesWorkloadLabelSelector"
+        namespace_selector:
+          $ref: "#/components/schemas/KubernetesWorkloadLabelSelector"
+        namespaces:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        topology_key:
+          type: string
+          minLength: 1
+        match_label_keys:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        mismatch_label_keys:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+    KubernetesWorkloadWeightedPodAffinityTerm:
+      type: object
+      additionalProperties: false
+      required: [weight, pod_term]
+      properties:
+        weight:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+        pod_term:
+          $ref: "#/components/schemas/KubernetesWorkloadPodAffinityTerm"
+    KubernetesWorkloadPodAffinity:
+      type: object
+      additionalProperties: false
+      properties:
+        required:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadPodAffinityTerm"
+        preferred:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadWeightedPodAffinityTerm"
+    KubernetesWorkloadAffinity:
+      type: object
+      additionalProperties: false
+      properties:
+        node_affinity:
+          $ref: "#/components/schemas/KubernetesWorkloadNodeAffinity"
+        pod_affinity:
+          $ref: "#/components/schemas/KubernetesWorkloadPodAffinity"
+        pod_anti_affinity:
+          $ref: "#/components/schemas/KubernetesWorkloadPodAffinity"
+    KubernetesWorkloadTopologySpreadConstraint:
+      type: object
+      additionalProperties: false
+      required: [max_skew, topology_key, when_unsatisfiable]
+      properties:
+        max_skew:
+          type: integer
+          format: int32
+          minimum: 1
+        topology_key:
+          type: string
+          minLength: 1
+        when_unsatisfiable:
+          type: string
+          enum: [DoNotSchedule, ScheduleAnyway]
+        label_selector:
+          $ref: "#/components/schemas/KubernetesWorkloadLabelSelector"
+        min_domains:
+          type: [integer, "null"]
+          format: int32
+          minimum: 1
+          description: 仅 DoNotSchedule 接受。
+        node_affinity_policy:
+          type: string
+          enum: ["", Honor, Ignore]
+        node_taints_policy:
+          type: string
+          enum: ["", Honor, Ignore]
+        match_label_keys:
+          type: array
+          maxItems: 50
+          items:
+            type: string
     KubernetesWorkloadContainerTemplate:
       type: object
       additionalProperties: false
@@ -7750,6 +7935,12 @@ components:
         privileged:
           type: [boolean, "null"]
           description: 仅 true 会被写入 securityContext；false 与省略等价。
+        ports:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadContainerPort"
+          description: 仅声明容器端口；hostPort 与 hostIP 仍通过 YAML 管理。
     KubernetesWorkloadEmptyDirVolume:
       type: object
       additionalProperties: false
@@ -7941,12 +8132,19 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: 按节点标签精确匹配；亲和性等更复杂的调度规则请使用 YAML。
+          description: 按节点标签精确匹配；复杂规则使用 affinity。
         tolerations:
           type: array
           maxItems: 50
           items:
             $ref: "#/components/schemas/KubernetesWorkloadToleration"
+        affinity:
+          $ref: "#/components/schemas/KubernetesWorkloadAffinity"
+        topology_spread_constraints:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadTopologySpreadConstraint"
         replicas:
           type: [integer, "null"]
           format: int32
@@ -8021,7 +8219,7 @@ components:
           type: boolean
           description: 实际创建必须为 true；dry-run 可以为 false。
     # Same modeled fields as a create, because an edit form is the create form on
-    # an existing object. Fields outside them — 亲和性、拓扑分布约束、容器端口、
+    # an existing object. Fields outside them — hostPort、ServiceAccount、
     # securityContext 其余字段等 —— 由服务端从当前对象保留，不会被本请求清除。
     # containers 对 Deployment、StatefulSet、DaemonSet 和 CronJob 必填；Job 的 Pod
     # 模板不可变，只接受 parallelism 与 ttl_seconds_after_finished。
@@ -8082,12 +8280,21 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: 按节点标签精确匹配；亲和性等更复杂的调度规则请使用 YAML。
+          description: 按节点标签精确匹配；复杂规则使用 affinity。
         tolerations:
           type: array
           maxItems: 50
           items:
             $ref: "#/components/schemas/KubernetesWorkloadToleration"
+        affinity:
+          $ref: "#/components/schemas/KubernetesWorkloadAffinity"
+          description: 省略时更新保留当前值；空对象显式清除。
+        topology_spread_constraints:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/KubernetesWorkloadTopologySpreadConstraint"
+          description: 省略时更新保留当前值；空数组显式清除。
         replicas:
           type: [integer, "null"]
           format: int32
@@ -8532,6 +8739,7 @@ components:
             - image_pull_secrets
             - node_selector
             - tolerations
+            - topology_spread_constraints
             - conditions
             - strategy
             - min_ready_seconds
@@ -8572,6 +8780,12 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/KubernetesWorkloadToleration"
+            affinity:
+              $ref: "#/components/schemas/KubernetesWorkloadAffinity"
+            topology_spread_constraints:
+              type: array
+              items:
+                $ref: "#/components/schemas/KubernetesWorkloadTopologySpreadConstraint"
             conditions:
               type: array
               items:

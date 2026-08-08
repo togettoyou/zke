@@ -17,8 +17,9 @@ import (
 // so it is shared by all five workload types: a Deployment and a CronJob differ
 // in how Pods are produced, not in what a Pod is. Fields Kubernetes derives or
 // the platform owns — the selector, the restart policy, `zke.io/workload-id` —
-// stay out, and so do the ones with no bounded shape to validate: affinity,
-// topology spread and the rest of the security context are managed through YAML.
+// stay out. Affinity, topology spread and documented container ports have
+// bounded service types in workload_advanced.go; host ports and the rest of the
+// security context remain managed through YAML.
 
 const (
 	maxWorkloadEnvVars            = 100
@@ -175,6 +176,7 @@ func validWorkloadContainerTemplate(container WorkloadContainerTemplate) bool {
 		validWorkloadEnv(container.Env) &&
 		validWorkloadResources(container.Resources) &&
 		validWorkloadVolumeMounts(container.VolumeMounts) &&
+		validWorkloadContainerPorts(container.Ports) &&
 		validWorkloadProbe(container.LivenessProbe) &&
 		validWorkloadProbe(container.ReadinessProbe) &&
 		validWorkloadLifecycle(container.Lifecycle)
@@ -596,6 +598,7 @@ func workloadContainerSpec(container WorkloadContainerTemplate) corev1.Container
 		LivenessProbe:   workloadProbeSpec(container.LivenessProbe),
 		ReadinessProbe:  workloadProbeSpec(container.ReadinessProbe),
 		Lifecycle:       workloadLifecycleSpec(container.Lifecycle),
+		Ports:           workloadContainerPortSpec(container.Ports),
 	}
 	if container.Resources != nil {
 		requests, _ := policyResourceList(container.Resources.Requests)

@@ -368,7 +368,8 @@ Service；更新仍可使用通用资源接口。
 
 Pod 模板部分对五类工作负载共用——一个 Deployment 和一个 CronJob 的差别在于 Pod 怎样被产生，而不在于 Pod 是
 什么。容器层面接受镜像与拉取策略、运行命令与参数、工作目录、环境变量、资源 requests/limits、数据卷挂载、
-存活与就绪探针、生命周期钩子和特权开关；Pod 层面接受数据卷、镜像访问凭证、节点标签选择和容忍调度。描述写入
+容器端口、存活与就绪探针、生命周期钩子和特权开关；Pod 层面接受数据卷、镜像访问凭证、节点标签选择、容忍调度、
+Node/Pod 亲和与反亲和以及拓扑分布约束。描述写入
 工作负载与 Pod 模板的 `zke.io/description` 注解，该键因此不接受在 `annotations` 中另行设置。
 
 几处校验刻意比 Kubernetes 更早拦截：探针的 `exec`、`httpGet`、`tcpSocket` 必须且只能设置一个——没有处理器的
@@ -381,8 +382,12 @@ Pod 模板部分对五类工作负载共用——一个 Deployment 和一个 Cro
 CronJob 最长 52 个字符，需要为控制器派生的 Job 名称留出余量。资源 requests/limits 保持为 quantity map 而不是
 四个具名字段，因此 `nvidia.com/gpu` 等扩展资源无需新增接口字段即可声明。
 
-亲和性、拓扑分布约束、`securityContext` 的其余字段和容器端口不在类型化范围内：它们没有可在表单中稳定表达的
-有界形状，创建后通过 YAML 管理。
+高级调度结构保持 Kubernetes 的嵌套语义：Required NodeAffinity 的多个 term 之间为 OR、同一 term 内的
+`matchExpressions` 与 `matchFields` 为 AND；PodAffinity/PodAntiAffinity 支持 required/preferred、权重、
+Namespace 列表与 selector、动态 `matchLabelKeys`/`mismatchLabelKeys`；TopologySpread 支持 `minDomains`、
+NodeAffinity/taint 纳入策略与动态标签键。Server 对每类集合设 50 项上限，校验标签选择器、操作符与 values 的组合、
+1–100 权重、拓扑键和 `minDomains` 的硬约束语义。容器端口限制为每容器 100 项、1–65535，协议为 TCP/UDP/SCTP，
+端口名在容器内唯一。`hostPort`/`hostIP` 会占用节点网络，`securityContext` 的其余字段仍通过 YAML 管理。
 
 服务与路由后端固定使用 `core/v1 Service`、`networking.k8s.io/v1 Ingress` 和
 `gateway.networking.k8s.io/v1 Gateway`，不会接受调用方覆盖 GVR。Service 支持 ClusterIP、NodePort、
@@ -1085,10 +1090,10 @@ CPU/内存、GPU）直接展开，其余收在「显示高级设置」之后。C
 改不回来。差别在于哪些字段被固定，以及写入方式。
 
 更新是合并而不是整体替换，这一点与 Service、策略等较小的类型化资源相反。那些对象是被整体读取的，因此也被
-整体替换；而一个 Pod 模板还带着亲和性、拓扑分布约束、容器端口、ServiceAccount、主机网络和 `securityContext`
-的其余字段——它们都不在本表单范围内，却都是某个人特意设过的。整份替换会让一次「只想改镜像标签」的
+整体替换；而一个 Pod 模板还带着 ServiceAccount、主机网络、hostPort 与 `securityContext`
+的其余字段——它们不在本表单范围内，却都是某个人特意设过的。整份替换会让一次「只想改镜像标签」的
 保存把它们一并删掉。因此 Server 先按 UID 与 resourceVersion 读回对象，把表单建模的字段写上去，其余文档原样
-保留：容器按名称合并，保留该容器的端口、终止设置与 `securityContext` 其余字段；`fieldRef` 等本表单无法表达的
+保留：容器按名称合并，保留该容器的 hostPort、终止设置与 `securityContext` 其余字段；`fieldRef` 等本表单无法表达的
 环境变量来源、projected/CSI 等无法表达的数据卷来源、gRPC 等无法表达的探针，都在提交回来时保持原状——它们读取
 时就只返回一个名称，没有可显示的内容，写回时也不会被清空。滚动重启写在 Pod 模板上的 `zke.io/restart-request`
 注解同样保留：删掉它本身就是一次模板变更，会再触发一轮滚动。
@@ -1100,7 +1105,7 @@ CronJob 的模板可变；Pod 模板的任何变化都会触发滚动更新，�
 触发的 Job 生效。
 
 回填要求详情接口返回完整的类型化模板，因此工作负载详情现在返回容器的命令、参数、工作目录、环境变量、资源
-requests/limits、挂载、探针、生命周期钩子和特权开关，以及 Pod 层的数据卷、镜像访问凭证、节点标签选择和容忍，
+requests/limits、挂载、端口、探针、生命周期钩子和特权开关，以及 Pod 层的数据卷、镜像访问凭证、节点标签选择、容忍、亲和性和拓扑分布约束，
 并把 Job/CronJob 声明的执行参数与调度参数一并返回。响应与请求同形——读到的就是将要写回的，否则读侧缺的每一个
 字段都会变成保存时被清空的字段。CronJob 的并行度、完成数等返回在 `parallelism`、`completions` 等字段上而不是
 `job` 状态里：CronJob 自己没有 Job，一份全是零的状态会被读成「运行过且什么都没做」。
@@ -1114,6 +1119,12 @@ requests/limits、挂载、探针、生命周期钩子和特权开关，以及 P
 resourceVersion 在挂载时固定，不随后台重新拉取更新：取一个更新的版本号会把本该被服务端拒绝的冲突变成静默覆盖。
 写入同样先 DryRun 预检再确认，并沿用 CSRF、幂等键与审计链路。
 
+Console 的容器高级设置以结构化行编辑端口，不开放 hostPort。亲和性与拓扑分布的 AND/OR 嵌套层级无法用一张
+扁平表准确表达，因此「高级调度」保留完整的接口 JSON（snake_case）编辑：编辑现有对象时从详情原样格式化回填，
+本地先检查 JSON 根类型与 128 KiB 上限，Server 再严格拒绝未知字段并执行上述语义校验，最后仍由目标集群 DryRun
+判定 schema、版本和准入策略。更新中省略这些新增字段表示兼容旧客户端并保留当前值；Console 始终显式提交，空对象
+或空数组表示有意清除。该能力没有新增旁路接口，仍使用原工作负载创建/更新的权限、目标作用域、审计与并发前置条件。
+
 通用接口返回 Unstructured JSON，并移除 `metadata.managedFields`。Discovery
 目录表示 API Server 暴露的资源，不代表 Agent ServiceAccount 已获授权；管理更多内置资源或任意 CR 时，安装方
 需要显式扩展该 ServiceAccount 的最小 RBAC，ZKE 无需增加新的资源协议或 HTTP Handler。
@@ -1124,7 +1135,6 @@ resourceVersion 在挂载时固定，不随后台重新拉取更新：取一个�
 
 后续规划能力包括：
 
-- 创建与编辑表单尚未覆盖的亲和性、拓扑分布约束与容器端口；
 - 创建工作负载时联动创建 Service 与 HorizontalPodAutoscaler（需要先定义多对象写入的部分成功与回滚语义）；
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；

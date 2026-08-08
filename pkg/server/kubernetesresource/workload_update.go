@@ -18,10 +18,9 @@ import (
 // The modeled fields replace what is on the object; everything else is kept.
 // That is the whole design, and it is not the same rule the smaller typed
 // resources use. A Service or a NetworkPolicy is read as one piece and so is
-// replaced as one piece, but a Pod template carries affinity, topology spread
-// constraints, container ports, service accounts, host networking and the rest
-// of the security context — none of which this form models, all of which some
-// operator set deliberately. Replacing the spec wholesale would delete them on
+// replaced as one piece, but a Pod template carries service accounts, host
+// networking, host ports and the rest of the security context — fields this
+// form does not model and which some operator set deliberately. Replacing the spec wholesale would delete them on
 // a save that only meant to change an image tag.
 //
 // So the update reads the object back under its UID and resourceVersion, writes
@@ -112,6 +111,8 @@ func validateUpdateWorkloadInput(input UpdateWorkloadInput) error {
 			len(spec.ImagePullSecrets) != 0 ||
 			len(spec.NodeSelector) != 0 ||
 			len(spec.Tolerations) != 0 ||
+			spec.Affinity != nil ||
+			spec.TopologySpreadConstraints != nil ||
 			spec.Replicas != nil ||
 			hasStatefulSetFields(spec) ||
 			hasCronJobFields(spec) ||
@@ -299,6 +300,14 @@ func applyWorkloadPodTemplate(
 	template.Spec.ImagePullSecrets = workloadImagePullSecretSpec(spec.ImagePullSecrets)
 	template.Spec.NodeSelector = maps.Clone(spec.NodeSelector)
 	template.Spec.Tolerations = workloadTolerationSpec(spec.Tolerations)
+	// These fields were added after typed updates already existed. Omission must
+	// preserve them for older clients; an explicit empty object/array clears them.
+	if spec.Affinity != nil {
+		template.Spec.Affinity = workloadAffinitySpec(spec.Affinity)
+	}
+	if spec.TopologySpreadConstraints != nil {
+		template.Spec.TopologySpreadConstraints = workloadTopologySpreadSpec(spec.TopologySpreadConstraints)
+	}
 }
 
 // Submitted containers, each carrying forward what the form cannot express.
@@ -335,11 +344,51 @@ func mergeWorkloadContainers(
 		merged.LivenessProbe = mergeWorkloadProbe(current.LivenessProbe, modeled.LivenessProbe)
 		merged.ReadinessProbe = mergeWorkloadProbe(current.ReadinessProbe, modeled.ReadinessProbe)
 		merged.Lifecycle = modeled.Lifecycle
+		if container.Ports != nil {
+			merged.Ports = mergeWorkloadContainerPorts(current.Ports, modeled.Ports)
+		}
 		merged.SecurityContext = mergeWorkloadSecurityContext(
 			current.SecurityContext,
 			container.Privileged,
 		)
 		result = append(result, merged)
+	}
+	return result
+}
+
+// Container port rows deliberately do not expose hostPort/hostIP. For a row
+// that still identifies the same named (or unnamed number/protocol) port, keep
+// those node-network fields rather than clearing a YAML-authored reservation.
+func mergeWorkloadContainerPorts(
+	existing []corev1.ContainerPort,
+	input []corev1.ContainerPort,
+) []corev1.ContainerPort {
+	type key struct {
+		name     string
+		port     int32
+		protocol corev1.Protocol
+	}
+	portKey := func(port corev1.ContainerPort) key {
+		if port.Name != "" {
+			return key{name: port.Name}
+		}
+		return key{port: port.ContainerPort, protocol: port.Protocol}
+	}
+	byKey := make(map[key]corev1.ContainerPort, len(existing))
+	for _, port := range existing {
+		byKey[portKey(port)] = port
+	}
+	result := make([]corev1.ContainerPort, 0, len(input))
+	for _, port := range input {
+		current, found := byKey[portKey(port)]
+		if !found {
+			result = append(result, port)
+			continue
+		}
+		current.Name = port.Name
+		current.ContainerPort = port.ContainerPort
+		current.Protocol = port.Protocol
+		result = append(result, current)
 	}
 	return result
 }

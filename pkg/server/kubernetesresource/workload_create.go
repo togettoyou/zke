@@ -48,6 +48,7 @@ type WorkloadContainerTemplate struct {
 	ReadinessProbe  *WorkloadProbe                `json:"readiness_probe,omitempty"`
 	Lifecycle       *WorkloadLifecycle            `json:"lifecycle,omitempty"`
 	Privileged      *bool                         `json:"privileged,omitempty"`
+	Ports           []WorkloadContainerPort       `json:"ports,omitempty"`
 }
 
 // The part of a workload this platform models, submitted the same way whether
@@ -63,10 +64,12 @@ type WorkloadSpecInput struct {
 	Containers     []WorkloadContainerTemplate
 	InitContainers []WorkloadContainerTemplate
 
-	Volumes          []WorkloadVolume
-	ImagePullSecrets []string
-	NodeSelector     map[string]string
-	Tolerations      []WorkloadToleration
+	Volumes                   []WorkloadVolume
+	ImagePullSecrets          []string
+	NodeSelector              map[string]string
+	Tolerations               []WorkloadToleration
+	Affinity                  *WorkloadAffinity
+	TopologySpreadConstraints []WorkloadTopologySpreadConstraint
 
 	Replicas    *int32
 	ServiceName string
@@ -208,6 +211,8 @@ func validWorkloadSpecFields(spec WorkloadSpecInput) bool {
 		validWorkloadImagePullSecrets(spec.ImagePullSecrets) &&
 		validWorkloadNodeSelector(spec.NodeSelector) &&
 		validWorkloadTolerations(spec.Tolerations) &&
+		validWorkloadAffinity(spec.Affinity) &&
+		validWorkloadTopologySpread(spec.TopologySpreadConstraints) &&
 		validNonNegativeInt32(spec.Replicas) &&
 		validNonNegativeInt32(spec.Parallelism) &&
 		validNonNegativeInt32(spec.Completions) &&
@@ -419,13 +424,15 @@ func workloadPodTemplate(
 			Annotations: workloadAnnotations(input.Annotations, input.Description),
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy:    restartPolicy,
-			Containers:       protocolWorkloadContainers(input.Containers),
-			InitContainers:   protocolWorkloadContainers(input.InitContainers),
-			Volumes:          workloadVolumeSpec(input.Volumes),
-			ImagePullSecrets: workloadImagePullSecretSpec(input.ImagePullSecrets),
-			NodeSelector:     maps.Clone(input.NodeSelector),
-			Tolerations:      workloadTolerationSpec(input.Tolerations),
+			RestartPolicy:             restartPolicy,
+			Containers:                protocolWorkloadContainers(input.Containers),
+			InitContainers:            protocolWorkloadContainers(input.InitContainers),
+			Volumes:                   workloadVolumeSpec(input.Volumes),
+			ImagePullSecrets:          workloadImagePullSecretSpec(input.ImagePullSecrets),
+			NodeSelector:              maps.Clone(input.NodeSelector),
+			Tolerations:               workloadTolerationSpec(input.Tolerations),
+			Affinity:                  workloadAffinitySpec(input.Affinity),
+			TopologySpreadConstraints: workloadTopologySpreadSpec(input.TopologySpreadConstraints),
 		},
 	}
 }

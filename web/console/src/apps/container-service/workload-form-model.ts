@@ -85,6 +85,12 @@ export type VolumeMountDraft = {
   readOnly: boolean;
 };
 
+export type ContainerPortDraft = {
+  name: string;
+  containerPort: string;
+  protocol: "TCP" | "UDP" | "SCTP";
+};
+
 export type ProbeKind = "http_get" | "tcp_socket" | "exec";
 
 export type ProbeDraft = {
@@ -132,6 +138,7 @@ export type ContainerDraft = {
   memoryLimit: string;
   gpuLimit: string;
   mounts: VolumeMountDraft[];
+  ports: ContainerPortDraft[];
   liveness: ProbeDraft;
   readiness: ProbeDraft;
   postStart: HookDraft;
@@ -202,6 +209,9 @@ export type WorkloadFormDraft = {
   imagePullSecrets: string[];
   nodeSelector: KeyValueDraft[];
   tolerations: TolerationDraft[];
+  /** Full typed API shapes, edited as JSON so nested AND/OR terms round-trip exactly. */
+  affinityJson: string;
+  topologySpreadJson: string;
 
   replicas: string;
   serviceName: string;
@@ -266,6 +276,7 @@ export function emptyContainer(index: number): ContainerDraft {
     memoryLimit: "",
     gpuLimit: "",
     mounts: [],
+    ports: [],
     liveness: emptyProbe(),
     readiness: emptyProbe(),
     postStart: emptyHook(),
@@ -308,6 +319,8 @@ export function emptyDraft(): WorkloadFormDraft {
     imagePullSecrets: [],
     nodeSelector: [],
     tolerations: [],
+    affinityJson: "",
+    topologySpreadJson: "",
     replicas: "",
     serviceName: "",
     parallelism: "",
@@ -359,7 +372,8 @@ export type FormSectionKey =
   | "schedule"
   | "imagePullSecrets"
   | "nodeSelector"
-  | "tolerations";
+  | "tolerations"
+  | "advancedScheduling";
 
 export type DraftProblem = { section: FormSectionKey; message: string };
 
@@ -478,6 +492,33 @@ export function draftProblem(
   const tolerationProblem = tolerationsProblem(draft.tolerations);
   if (tolerationProblem) {
     return at("tolerations", tolerationProblem);
+  }
+  const affinityProblem = jsonShapeProblem(draft.affinityJson, "亲和性", "object");
+  if (affinityProblem) {
+    return at("advancedScheduling", affinityProblem);
+  }
+  const topologyProblem = jsonShapeProblem(draft.topologySpreadJson, "拓扑分布约束", "array");
+  if (topologyProblem) {
+    return at("advancedScheduling", topologyProblem);
+  }
+  return null;
+}
+
+function jsonShapeProblem(source: string, label: string, shape: "object" | "array"): string | null {
+  const trimmed = source.trim();
+  if (trimmed === "") return null;
+  if (byteLength(trimmed) > 128 * 1024) return `${label} JSON 不能超过 128 KiB。`;
+  try {
+    const value: unknown = JSON.parse(trimmed);
+    if (
+      shape === "array"
+        ? !Array.isArray(value)
+        : value === null || Array.isArray(value) || typeof value !== "object"
+    ) {
+      return `${label}必须是 JSON ${shape === "array" ? "数组" : "对象"}。`;
+    }
+  } catch (error) {
+    return `${label}不是合法 JSON：${error instanceof Error ? error.message : "解析失败"}`;
   }
   return null;
 }
@@ -689,6 +730,25 @@ function containerProblem(container: ContainerDraft, volumeNames: Set<string>): 
   const mountProblem = containerMountProblem(container, name, volumeNames);
   if (mountProblem) {
     return mountProblem;
+  }
+
+  if (container.ports.length > 100) {
+    return `容器 ${name} 的端口不能超过 100 个。`;
+  }
+  const portNames = new Set<string>();
+  for (const port of container.ports) {
+    const number = Number(port.containerPort.trim());
+    if (!INTEGER.test(port.containerPort.trim()) || number < 1 || number > 65535) {
+      return `容器 ${name} 的端口必须是 1 到 65535 之间的整数。`;
+    }
+    const portName = port.name.trim();
+    if (portName !== "" && !validPort(portName)) {
+      return `容器 ${name} 的端口名 ${portName} 不合法。`;
+    }
+    if (portName !== "" && portNames.has(portName)) {
+      return `容器 ${name} 的端口名 ${portName} 重复。`;
+    }
+    portNames.add(portName);
   }
 
   // Kubernetes runs an init container to completion before the Pod starts, so it
@@ -1027,6 +1087,14 @@ export function buildWorkloadSpec(
         : { toleration_seconds: Number(toleration.tolerationSeconds.trim()) }),
     }));
   }
+  if (draft.affinityJson.trim() !== "") {
+    spec.affinity = JSON.parse(draft.affinityJson) as NonNullable<WorkloadCreateSpec["affinity"]>;
+  }
+  if (draft.topologySpreadJson.trim() !== "") {
+    spec.topology_spread_constraints = JSON.parse(draft.topologySpreadJson) as NonNullable<
+      WorkloadCreateSpec["topology_spread_constraints"]
+    >;
+  }
 
   const replicated = resource === "deployments" || resource === "statefulsets";
   const jobLike = resource === "jobs" || resource === "cronjobs";
@@ -1080,6 +1148,18 @@ export function buildWorkloadUpdateSpec(
     return spec;
   }
   const { name: _name, service_name: _serviceName, ...spec } = buildWorkloadSpec(draft, resource);
+  // Explicit empties clear an existing advanced rule. Omission is reserved for
+  // older API clients and means "preserve" on update for compatibility.
+  spec.affinity =
+    draft.affinityJson.trim() === ""
+      ? {}
+      : (JSON.parse(draft.affinityJson) as NonNullable<WorkloadUpdateSpec["affinity"]>);
+  spec.topology_spread_constraints =
+    draft.topologySpreadJson.trim() === ""
+      ? []
+      : (JSON.parse(draft.topologySpreadJson) as NonNullable<
+          WorkloadUpdateSpec["topology_spread_constraints"]
+        >);
   return spec;
 }
 
@@ -1183,6 +1263,11 @@ function containerTemplate(container: ContainerDraft): ContainerTemplate {
   if (container.privileged) {
     template.privileged = true;
   }
+  template.ports = container.ports.map((port) => ({
+    ...(port.name.trim() === "" ? {} : { name: port.name.trim() }),
+    container_port: Number(port.containerPort.trim()),
+    protocol: port.protocol,
+  }));
   return template;
 }
 
@@ -1381,6 +1466,11 @@ export function draftFromWorkload(
       effect: toleration.effect || DEFAULT_OPTION,
       tolerationSeconds: numberInput(toleration.toleration_seconds),
     })),
+    affinityJson: workload.affinity ? JSON.stringify(workload.affinity, null, 2) : "",
+    topologySpreadJson:
+      workload.topology_spread_constraints.length > 0
+        ? JSON.stringify(workload.topology_spread_constraints, null, 2)
+        : "",
     // `replicas` is the desired count on the object, not a live one: the status
     // counts belong to the controller and are not what an edit submits.
     replicas:
@@ -1438,6 +1528,11 @@ function containerDraft(container: WorkloadContainerTemplateView, init: boolean)
       mountPath: mount.mount_path,
       subPath: mount.sub_path ?? "",
       readOnly: mount.read_only === true,
+    })),
+    ports: (container.ports ?? []).map((port) => ({
+      name: port.name ?? "",
+      containerPort: String(port.container_port),
+      protocol: port.protocol || "TCP",
     })),
     liveness: probeDraft(container.liveness_probe),
     readiness: probeDraft(container.readiness_probe),

@@ -93,19 +93,21 @@ type WorkloadDetail struct {
 	Selector    *WorkloadSelector `json:"selector,omitempty"`
 	// The typed Pod template, in the shape an update submits back. Fields the
 	// template does not model stay on the object and out of this response.
-	Containers           []WorkloadContainerTemplate `json:"containers"`
-	InitContainers       []WorkloadContainerTemplate `json:"init_containers"`
-	Volumes              []WorkloadVolume            `json:"volumes"`
-	ImagePullSecrets     []string                    `json:"image_pull_secrets"`
-	NodeSelector         map[string]string           `json:"node_selector"`
-	Tolerations          []WorkloadToleration        `json:"tolerations"`
-	Conditions           []WorkloadCondition         `json:"conditions"`
-	Strategy             string                      `json:"strategy"`
-	MinReadySeconds      int32                       `json:"min_ready_seconds"`
-	RevisionHistoryLimit *int32                      `json:"revision_history_limit,omitempty"`
-	ServiceName          string                      `json:"service_name,omitempty"`
-	CompletionMode       string                      `json:"completion_mode,omitempty"`
-	ConcurrencyPolicy    string                      `json:"concurrency_policy,omitempty"`
+	Containers                []WorkloadContainerTemplate        `json:"containers"`
+	InitContainers            []WorkloadContainerTemplate        `json:"init_containers"`
+	Volumes                   []WorkloadVolume                   `json:"volumes"`
+	ImagePullSecrets          []string                           `json:"image_pull_secrets"`
+	NodeSelector              map[string]string                  `json:"node_selector"`
+	Tolerations               []WorkloadToleration               `json:"tolerations"`
+	Affinity                  *WorkloadAffinity                  `json:"affinity,omitempty"`
+	TopologySpreadConstraints []WorkloadTopologySpreadConstraint `json:"topology_spread_constraints"`
+	Conditions                []WorkloadCondition                `json:"conditions"`
+	Strategy                  string                             `json:"strategy"`
+	MinReadySeconds           int32                              `json:"min_ready_seconds"`
+	RevisionHistoryLimit      *int32                             `json:"revision_history_limit,omitempty"`
+	ServiceName               string                             `json:"service_name,omitempty"`
+	CompletionMode            string                             `json:"completion_mode,omitempty"`
+	ConcurrencyPolicy         string                             `json:"concurrency_policy,omitempty"`
 
 	// Job and CronJob execution parameters an update may change. The counts a
 	// Job reports while running are in `job`; these are what was asked for, and
@@ -533,19 +535,21 @@ func workloadDetailFromPodTemplate(
 		conditions = []WorkloadCondition{}
 	}
 	return WorkloadDetail{
-		WorkloadSummary:      summary,
-		Annotations:          cloneMap(metadata.Annotations),
-		Selector:             workloadSelector(selector),
-		Containers:           workloadContainerTemplates(podSpec.Containers),
-		InitContainers:       workloadContainerTemplates(podSpec.InitContainers),
-		Volumes:              workloadVolumeView(podSpec.Volumes),
-		ImagePullSecrets:     workloadImagePullSecretView(podSpec.ImagePullSecrets),
-		NodeSelector:         workloadNodeSelectorView(podSpec.NodeSelector),
-		Tolerations:          workloadTolerationView(podSpec.Tolerations),
-		Conditions:           conditions,
-		Strategy:             strategy,
-		MinReadySeconds:      minReadySeconds,
-		RevisionHistoryLimit: cloneInt32Pointer(revisionHistoryLimit),
+		WorkloadSummary:           summary,
+		Annotations:               cloneMap(metadata.Annotations),
+		Selector:                  workloadSelector(selector),
+		Containers:                workloadContainerTemplates(podSpec.Containers),
+		InitContainers:            workloadContainerTemplates(podSpec.InitContainers),
+		Volumes:                   workloadVolumeView(podSpec.Volumes),
+		ImagePullSecrets:          workloadImagePullSecretView(podSpec.ImagePullSecrets),
+		NodeSelector:              workloadNodeSelectorView(podSpec.NodeSelector),
+		Tolerations:               workloadTolerationView(podSpec.Tolerations),
+		Affinity:                  workloadAffinityView(podSpec.Affinity),
+		TopologySpreadConstraints: workloadTopologySpreadView(podSpec.TopologySpreadConstraints),
+		Conditions:                conditions,
+		Strategy:                  strategy,
+		MinReadySeconds:           minReadySeconds,
+		RevisionHistoryLimit:      cloneInt32Pointer(revisionHistoryLimit),
 	}
 }
 

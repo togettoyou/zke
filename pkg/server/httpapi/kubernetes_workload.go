@@ -76,19 +76,20 @@ type workloadMutationRequest struct {
 }
 
 type workloadContainerTemplateRequest struct {
-	Name            string                               `json:"name"`
-	Image           string                               `json:"image"`
-	ImagePullPolicy string                               `json:"image_pull_policy"`
-	Command         []string                             `json:"command"`
-	Args            []string                             `json:"args"`
-	WorkingDir      string                               `json:"working_dir"`
-	Env             []workloadEnvVarRequest              `json:"env"`
-	Resources       *workloadResourceRequirementsRequest `json:"resources"`
-	VolumeMounts    []workloadVolumeMountRequest         `json:"volume_mounts"`
-	LivenessProbe   *workloadProbeRequest                `json:"liveness_probe"`
-	ReadinessProbe  *workloadProbeRequest                `json:"readiness_probe"`
-	Lifecycle       *workloadLifecycleRequest            `json:"lifecycle"`
-	Privileged      *bool                                `json:"privileged"`
+	Name            string                                     `json:"name"`
+	Image           string                                     `json:"image"`
+	ImagePullPolicy string                                     `json:"image_pull_policy"`
+	Command         []string                                   `json:"command"`
+	Args            []string                                   `json:"args"`
+	WorkingDir      string                                     `json:"working_dir"`
+	Env             []workloadEnvVarRequest                    `json:"env"`
+	Resources       *workloadResourceRequirementsRequest       `json:"resources"`
+	VolumeMounts    []workloadVolumeMountRequest               `json:"volume_mounts"`
+	LivenessProbe   *workloadProbeRequest                      `json:"liveness_probe"`
+	ReadinessProbe  *workloadProbeRequest                      `json:"readiness_probe"`
+	Lifecycle       *workloadLifecycleRequest                  `json:"lifecycle"`
+	Privileged      *bool                                      `json:"privileged"`
+	Ports           []kubernetesresource.WorkloadContainerPort `json:"ports"`
 }
 
 // The modeled fields, submitted the same way by a create and an update. An
@@ -101,10 +102,12 @@ type workloadSpecRequest struct {
 	Containers     []workloadContainerTemplateRequest `json:"containers"`
 	InitContainers []workloadContainerTemplateRequest `json:"init_containers"`
 
-	Volumes          []workloadVolumeRequest     `json:"volumes"`
-	ImagePullSecrets []string                    `json:"image_pull_secrets"`
-	NodeSelector     map[string]string           `json:"node_selector"`
-	Tolerations      []workloadTolerationRequest `json:"tolerations"`
+	Volumes                   []workloadVolumeRequest                               `json:"volumes"`
+	ImagePullSecrets          []string                                              `json:"image_pull_secrets"`
+	NodeSelector              map[string]string                                     `json:"node_selector"`
+	Tolerations               []workloadTolerationRequest                           `json:"tolerations"`
+	Affinity                  *kubernetesresource.WorkloadAffinity                  `json:"affinity"`
+	TopologySpreadConstraints []kubernetesresource.WorkloadTopologySpreadConstraint `json:"topology_spread_constraints"`
 
 	Replicas    *int32 `json:"replicas"`
 	ServiceName string `json:"service_name"`
@@ -154,6 +157,8 @@ func workloadSpecInput(request workloadSpecRequest) kubernetesresource.WorkloadS
 		ImagePullSecrets:           request.ImagePullSecrets,
 		NodeSelector:               request.NodeSelector,
 		Tolerations:                workloadTolerations(request.Tolerations),
+		Affinity:                   request.Affinity,
+		TopologySpreadConstraints:  request.TopologySpreadConstraints,
 		Replicas:                   request.Replicas,
 		ServiceName:                request.ServiceName,
 		Parallelism:                request.Parallelism,
@@ -820,6 +825,7 @@ func workloadContainerTemplates(
 			ReadinessProbe:  workloadProbe(container.ReadinessProbe),
 			Lifecycle:       workloadLifecycle(container.Lifecycle),
 			Privileged:      container.Privileged,
+			Ports:           container.Ports,
 		})
 	}
 	return result
