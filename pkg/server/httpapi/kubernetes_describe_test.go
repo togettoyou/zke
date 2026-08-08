@@ -30,6 +30,15 @@ type fakeDescribeService struct {
 	ingressCall  kubernetesdescribe.IngressInput
 	gatewayCall  kubernetesdescribe.GatewayInput
 	hpaCall      kubernetesdescribe.HorizontalPodAutoscalerInput
+	policyCall   kubernetesdescribe.PolicyInput
+}
+
+func (service *fakeDescribeService) DescribePolicy(
+	_ context.Context,
+	input kubernetesdescribe.PolicyInput,
+) (kubernetesdescribe.Result, error) {
+	service.policyCall = input
+	return service.result, service.err
 }
 
 func (service *fakeDescribeService) DescribeHorizontalPodAutoscaler(
@@ -137,6 +146,10 @@ func describeTestRouter(service kubernetesDescribeService) *gin.Engine {
 		handler.horizontalPodAutoscaler,
 	)
 	router.GET(
+		"/clusters/:cluster_id/namespaces/:namespace_name/policies/:policy_resource/:policy_name/describe",
+		handler.policy,
+	)
+	router.GET(
 		"/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe",
 		handler.pod,
 	)
@@ -198,6 +211,7 @@ func TestDescribeRoutesRequireBothTheResourceAndEventPermissions(t *testing.T) {
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/storage/:storage_resource/:storage_name/describe":        false,
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name/describe":     false,
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers/:hpa_name/describe": false,
+		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/policies/:policy_resource/:policy_name/describe":         false,
 	}
 	for _, route := range parseRegisteredRoutes(t) {
 		if _, tracked := wanted[route.key()]; !tracked {
@@ -367,6 +381,58 @@ func TestDescribeHorizontalPodAutoscalerReturnsDiagnosis(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"code":"HPAMetricsUnavailable"`) {
 		t.Fatalf("HPA diagnosis missing from response: %s", recorder.Body.String())
+	}
+}
+
+func TestDescribeResourceQuotaReturnsPolicyDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeDescribeService{result: kubernetesdescribe.Result{
+		Family: kubernetesdescribe.FamilyPolicy,
+		PolicyStatus: &kubernetesdescribe.PolicyStatus{
+			QuotaUsage: []kubernetesdescribe.PolicyQuotaUsage{{
+				Resource: "pods", Used: "10", Hard: "10", Exhausted: true,
+			}},
+		},
+		Findings: []kubernetesdescribe.Finding{{
+			Code:     kubernetesdescribe.FindingResourceQuotaExhausted,
+			Severity: kubernetesdescribe.SeverityWarning,
+			Evidence: []kubernetesdescribe.Evidence{},
+		}},
+		Events:           kubernetesdescribe.Events{Items: []kubernetesdescribe.Event{}},
+		DegradedSections: []string{},
+	}}
+	router := describeTestRouter(service)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/policies/resourcequotas/compute/describe",
+		nil,
+	))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.policyCall.Resource != kubernetesresource.PolicyResourceQuotas ||
+		service.policyCall.Namespace != "models" || service.policyCall.Name != "compute" {
+		t.Fatalf("unexpected policy describe input: %+v", service.policyCall)
+	}
+	if !strings.Contains(recorder.Body.String(), `"resource":"pods"`) {
+		t.Fatalf("quota diagnosis missing from response: %s", recorder.Body.String())
+	}
+}
+
+func TestDescribePolicyRejectsUnsupportedPolicyType(t *testing.T) {
+	t.Parallel()
+
+	router := describeTestRouter(&fakeDescribeService{})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/policies/networkpolicies/default-deny/describe",
+		nil,
+	))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
 

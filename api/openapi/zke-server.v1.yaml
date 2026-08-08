@@ -3983,6 +3983,42 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}/describe:
+    get:
+      tags: [Resources]
+      operationId: describeKubernetesNamespacedPolicy
+      description: |
+        返回 ResourceQuota 或 PodDisruptionBudget 的类型化状态、确定性诊断与只属于该对象 UID 的 Event。
+        ResourceQuota 按 Kubernetes quantity 语义报告已经达到 hard 的额度；PodDisruptionBudget 只在 Controller
+        明确报告 DisruptionAllowed=False 时说明当前不允许自愿中断。其他策略类型不提供该入口。
+        要求同时持有 cluster.read 与 cluster.event.read。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/DescribePolicyResource"
+        - $ref: "#/components/parameters/PolicyResourceName"
+      responses:
+        "200":
+          description: 策略资源结构化诊断视图
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDescribe"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/authorization/{authorization_resource}:
     get:
       tags: [Resources]
@@ -6106,6 +6142,13 @@ components:
       schema:
         type: string
         enum: [resourcequotas, limitranges, networkpolicies, poddisruptionbudgets]
+    DescribePolicyResource:
+      name: policy_resource
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [resourcequotas, poddisruptionbudgets]
     PolicyResourceName:
       name: policy_name
       in: path
@@ -11149,9 +11192,9 @@ components:
           $ref: "#/components/schemas/KubernetesDescribeTarget"
         family:
           type: string
-          enum: [pod, workload, node, storage, networking, autoscaling, generic]
+          enum: [pod, workload, node, storage, networking, autoscaling, policy, generic]
           description: |
-            对象所属的家族投影。pod、workload、node、storage、networking 与 autoscaling 返回对应详情与诊断结果；
+            对象所属的家族投影。pod、workload、node、storage、networking、autoscaling 与 policy 返回对应详情与诊断结果；
             generic 表示该类型尚无家族规则，只返回身份与 Event。
         pod:
           $ref: "#/components/schemas/KubernetesPodDetail"
@@ -11175,6 +11218,10 @@ components:
           $ref: "#/components/schemas/KubernetesHPADetail"
         autoscaler_target:
           $ref: "#/components/schemas/KubernetesDescribeRelatedObject"
+        policy:
+          $ref: "#/components/schemas/KubernetesPolicyResourceDetail"
+        policy_status:
+          $ref: "#/components/schemas/KubernetesDescribePolicyStatus"
         related:
           $ref: "#/components/schemas/KubernetesDescribeRelated"
         events:
@@ -11283,6 +11330,24 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KubernetesDescribeFinding"
+    KubernetesDescribePolicyStatus:
+      type: object
+      additionalProperties: false
+      required: [quota_usage]
+      properties:
+        quota_usage:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesDescribePolicyQuotaUsage"
+    KubernetesDescribePolicyQuotaUsage:
+      type: object
+      additionalProperties: false
+      required: [resource, used, hard, exhausted]
+      properties:
+        resource: { type: string }
+        used: { type: string }
+        hard: { type: string }
+        exhausted: { type: boolean }
     KubernetesDescribeNodeResources:
       type: object
       additionalProperties: false
@@ -11509,6 +11574,8 @@ components:
             - HPAUnableToScale
             - HPAMetricsUnavailable
             - HPAScalingLimited
+            - ResourceQuotaExhausted
+            - PDBNoDisruptionsAllowed
         severity:
           type: string
           enum: [warning]

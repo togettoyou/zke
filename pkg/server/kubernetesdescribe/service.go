@@ -68,6 +68,7 @@ const (
 	FamilyStorage     = "storage"
 	FamilyNetworking  = "networking"
 	FamilyAutoscaling = "autoscaling"
+	FamilyPolicy      = "policy"
 	FamilyGeneric     = "generic"
 )
 
@@ -115,6 +116,13 @@ type ResourceAccess interface {
 		string,
 		string,
 	) (kubernetesresource.HorizontalPodAutoscalerDetail, error)
+	GetPolicyResource(
+		context.Context,
+		string,
+		string,
+		kubernetesresource.PolicyResource,
+		string,
+	) (kubernetesresource.PolicyResourceDetail, error)
 	ListResources(
 		context.Context,
 		kubernetesresource.ListResourcesInput,
@@ -200,6 +208,8 @@ type Result struct {
 	Networking       *kubernetesresource.NetworkingResourceDetail      `json:"networking,omitempty"`
 	Autoscaler       *kubernetesresource.HorizontalPodAutoscalerDetail `json:"autoscaler,omitempty"`
 	AutoscalerTarget *RelatedObject                                    `json:"autoscaler_target,omitempty"`
+	Policy           *kubernetesresource.PolicyResourceDetail          `json:"policy,omitempty"`
+	PolicyStatus     *PolicyStatus                                     `json:"policy_status,omitempty"`
 	ServiceEndpoints *ServiceEndpoints                                 `json:"service_endpoints,omitempty"`
 	IngressBackends  *IngressBackends                                  `json:"ingress_backends,omitempty"`
 	GatewayStatus    *GatewayStatus                                    `json:"gateway_status,omitempty"`
@@ -258,6 +268,17 @@ type GatewayListenerStatus struct {
 	Name           string    `json:"name"`
 	AttachedRoutes int32     `json:"attached_routes"`
 	Findings       []Finding `json:"findings"`
+}
+
+type PolicyStatus struct {
+	QuotaUsage []PolicyQuotaUsage `json:"quota_usage"`
+}
+
+type PolicyQuotaUsage struct {
+	Resource  string `json:"resource"`
+	Used      string `json:"used"`
+	Hard      string `json:"hard"`
+	Exhausted bool   `json:"exhausted"`
 }
 
 type NodeResources struct {

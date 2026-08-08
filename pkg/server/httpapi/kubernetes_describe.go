@@ -52,6 +52,38 @@ type kubernetesDescribeService interface {
 		context.Context,
 		kubernetesdescribe.HorizontalPodAutoscalerInput,
 	) (kubernetesdescribe.Result, error)
+	DescribePolicy(
+		context.Context,
+		kubernetesdescribe.PolicyInput,
+	) (kubernetesdescribe.Result, error)
+}
+
+func (handler *kubernetesDescribeHandler) policy(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	resource, ok := kubernetesresource.ParsePolicyResource(c.Param("policy_resource"))
+	if !ok || (resource != kubernetesresource.PolicyResourceQuotas &&
+		resource != kubernetesresource.PolicyDisruptionBudgets) {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"only ResourceQuota and PodDisruptionBudget support policy describe")
+		return
+	}
+	if len(c.Request.URL.Query()) != 0 {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"policy describe does not accept query parameters")
+		return
+	}
+	if handler.service == nil {
+		writeError(c, http.StatusServiceUnavailable, "unavailable",
+			"Kubernetes describe is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.DescribePolicy(ctx, kubernetesdescribe.PolicyInput{
+		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"),
+		Resource: resource, Name: c.Param("policy_name"),
+	})
+	cancel()
+	handler.finish(c, "describe Kubernetes policy resource", result, err)
 }
 
 func (handler *kubernetesDescribeHandler) horizontalPodAutoscaler(c *gin.Context) {

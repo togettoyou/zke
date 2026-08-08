@@ -517,6 +517,7 @@ describe 接口（`.../pods/{pod_name}/describe`、
 `.../nodes/{node_name}/describe`、`.../networking/{network_resource}/{network_name}/describe`、
 `.../storage/{storage_resource}/{storage_name}/describe`、
 `.../autoscaling/horizontalpodautoscalers/{hpa_name}/describe`、
+`.../policies/{policy_resource}/{policy_name}/describe`、
 `.../kubernetes/resources/{resource_name}/describe`）在一次响应里同时给出
 对象与该对象的 Event，因此要求
 调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在路由层，各自留下自己的拒绝记录。只要求 `cluster.read` 会使 describe 成为绕开 Event 权限读取命名空间事件的
@@ -548,6 +549,10 @@ Gateway describe 不读取 Route 或引用对象，只使用 Gateway 详情中 C
 HPA describe 只在同一 Cluster 与 Namespace 内读取类型化接口已支持的 `apps/v1 Deployment` 或 `StatefulSet`
 目标；自定义 scale target 不进行通用资源读取。目标读取只补充工作负载状态，不扇出读取目标 Event，HPA Event 始终
 按 HPA 自身精确 UID 过滤；因此目标聚合不会扩大 Event 权限所覆盖的对象范围。
+
+策略 describe 只接受同一 Cluster 与 Namespace 内的 ResourceQuota 和 PodDisruptionBudget，不读取它们选择或约束
+的 Pod，也不读取其他关联对象；Event 只按策略对象自身精确 UID 过滤。LimitRange、NetworkPolicy 和 PriorityClass
+没有类型化诊断路由，因此该入口不能被用作这些对象的额外读取路径。
 
 长连接读取（Event 流、Pod 日志 Follow、Web Terminal）的审计 `result` 记录的是「服务端是否完成了这次读取」，
 而不是流为什么结束。操作者关闭页面、Server 自身的最长时长到期、上游 Watch 轮换、resourceVersion 过期都属于

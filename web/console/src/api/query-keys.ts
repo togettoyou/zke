@@ -124,6 +124,8 @@ export const queryKeys = {
     ["gateway-describe", clusterId, namespace, name] as const,
   autoscalerDescribe: (clusterId: string, namespace: string, name: string) =>
     ["autoscaler-describe", clusterId, namespace, name] as const,
+  policyDescribe: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["policy-describe", clusterId, namespace, resource, name] as const,
   resourceDescribe: (clusterId: string, namespace: string, gvr: string, name: string) =>
     ["resource-describe", clusterId, namespace, gvr, name] as const,
   workloadDescribe: (clusterId: string, namespace: string, resource: string, name: string) =>

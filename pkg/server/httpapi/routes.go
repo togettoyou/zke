@@ -831,6 +831,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
 		handlers.kubernetesPolicy.get,
 	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/policies/:policy_resource/:policy_name/describe",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesDescribe.policy,
+	)
 	clusterRoutes.PUT(
 		"/:cluster_id/namespaces/:namespace_name/policies/:policy_resource/:policy_name",
 		handlers.authMiddleware.RequireCSRF,

@@ -196,6 +196,14 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
     title: "伸缩受到上下限约束",
     hint: "计算出的期望副本数超出 minReplicas 或 maxReplicas。核对副本上下限是否符合当前负载需求。",
   },
+  ResourceQuotaExhausted: {
+    title: "命名空间额度已耗尽",
+    hint: "一项或多项 used 已达到 hard，新对象可能因此被准入拒绝。核对下方具体额度；需要时释放资源或调整 ResourceQuota。",
+  },
+  PDBNoDisruptionsAllowed: {
+    title: "当前不允许自愿中断",
+    hint: "PodDisruptionBudget 当前不会批准 eviction。它可能是在按预期保护副本；结合健康/期望数与 Kubernetes 原始消息判断是等待副本恢复还是需要调整预算。",
+  },
 };
 
 const OMITTED_EVENTS: Record<string, string> = {
@@ -368,6 +376,7 @@ export function DescribeView({
             <GatewayDiagnosticSummary data={data} />
           ) : null}
           {data.autoscaler ? <AutoscalerDiagnosticSummary data={data} /> : null}
+          {data.policy && data.policy_status ? <PolicyDiagnosticSummary data={data} /> : null}
 
           {data.related ? <RelatedSection related={data.related} family={data.family} /> : null}
 
@@ -866,6 +875,72 @@ function AutoscalerDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   );
 }
 
+function PolicyDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
+  const policy = data.policy;
+  const status = data.policy_status;
+  if (!policy || !status) {
+    return null;
+  }
+  if (policy.resource_quota) {
+    return (
+      <Card>
+        <CardTitle>配额用量</CardTitle>
+        {status.quota_usage.length === 0 ? (
+          <p className="text-subtle-foreground mt-2 text-xs">该 ResourceQuota 没有 hard 额度项。</p>
+        ) : (
+          <div className="mt-2 grid gap-2">
+            {status.quota_usage.map((usage) => (
+              <div
+                key={usage.resource}
+                className="border-border/60 rounded-control flex flex-wrap items-center justify-between gap-2 border p-2.5"
+              >
+                <span className="zke-mono text-foreground text-[13px] break-all">
+                  {usage.resource}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="zke-mono text-muted-foreground text-xs">
+                    {usage.used} / {usage.hard}
+                  </span>
+                  <Badge tone={usage.exhausted ? "warning" : "success"}>
+                    {usage.exhausted ? "已耗尽" : "有余量"}
+                  </Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    );
+  }
+  const budget = policy.disruption_budget;
+  if (!budget) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardTitle>中断预算状态</CardTitle>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <DiagnosticValue
+          label="当前健康 / 期望健康"
+          value={`${budget.current_healthy} / ${budget.desired_healthy}`}
+        />
+        <DiagnosticValue label="当前可中断" value={String(budget.disruptions_allowed)} />
+        <DiagnosticValue label="预期 Pod" value={String(budget.expected_pods)} />
+        <DiagnosticValue
+          label="预算"
+          value={
+            budget.min_available
+              ? `minAvailable ${budget.min_available}`
+              : budget.max_unavailable
+                ? `maxUnavailable ${budget.max_unavailable}`
+                : "—"
+          }
+        />
+      </div>
+    </Card>
+  );
+}
+
 function DiagnosticValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="border-border/60 rounded-control min-w-0 border p-2.5">
@@ -1132,6 +1207,24 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
         );
       }
     }
+  }
+  if (data.policy?.resource_quota && data.policy_status) {
+    lines.push("", "配额用量");
+    for (const usage of data.policy_status.quota_usage) {
+      lines.push(
+        `  - ${usage.resource}: ${usage.used} / ${usage.hard}${usage.exhausted ? "（已耗尽）" : ""}`,
+      );
+    }
+  }
+  if (data.policy?.disruption_budget) {
+    const budget = data.policy.disruption_budget;
+    lines.push(
+      "",
+      "中断预算概况",
+      `  Healthy: ${budget.current_healthy} / desired ${budget.desired_healthy}`,
+      `  Disruptions allowed: ${budget.disruptions_allowed}`,
+      `  Expected Pods: ${budget.expected_pods}`,
+    );
   }
   if (data.related) {
     const objects = [

@@ -1,8 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api, unwrap } from "../client";
-import type { KubernetesWorkloadResource } from "../types";
+import type { KubernetesPolicyResource, KubernetesWorkloadResource } from "../types";
 import { queryKeys } from "../query-keys";
+
+export type PolicyDescribeResource = Extract<
+  KubernetesPolicyResource,
+  "resourcequotas" | "poddisruptionbudgets"
+>;
 
 export function useNodeDescribe(clusterId: string | null, name: string | null, enabled = true) {
   return useQuery({
@@ -164,6 +169,41 @@ export function useAutoscalerDescribe(
         ),
       ),
     enabled: enabled && Boolean(clusterId && namespace && name),
+  });
+}
+
+export function usePolicyDescribe(
+  clusterId: string | null,
+  namespace: string | null,
+  resource: PolicyDescribeResource | null,
+  name: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.policyDescribe(
+      clusterId ?? "",
+      namespace ?? "",
+      resource ?? "",
+      name ?? "",
+    ),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}/describe",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId as string,
+                namespace_name: namespace as string,
+                policy_resource: resource as PolicyDescribeResource,
+                policy_name: name as string,
+              },
+            },
+            signal,
+          },
+        ),
+      ),
+    enabled: enabled && Boolean(clusterId && namespace && resource && name),
   });
 }
 

@@ -66,6 +66,50 @@ const (
 	FindingHPAScalingLimited     = "HPAScalingLimited"
 )
 
+const (
+	FindingResourceQuotaExhausted  = "ResourceQuotaExhausted"
+	FindingPDBNoDisruptionsAllowed = "PDBNoDisruptionsAllowed"
+)
+
+func policyFindings(
+	policy kubernetesresource.PolicyResourceDetail,
+	status PolicyStatus,
+) []Finding {
+	switch policy.Resource {
+	case kubernetesresource.PolicyResourceQuotas:
+		evidence := make([]Evidence, 0, len(status.QuotaUsage))
+		for _, usage := range status.QuotaUsage {
+			if usage.Exhausted {
+				evidence = append(evidence, Evidence{
+					Kind: EvidenceObjectStatus, Name: "status.used." + usage.Resource,
+				})
+			}
+		}
+		if len(evidence) == 0 {
+			return []Finding{}
+		}
+		return []Finding{{
+			Code: FindingResourceQuotaExhausted, Severity: SeverityWarning,
+			Evidence: evidence,
+		}}
+	case kubernetesresource.PolicyDisruptionBudgets:
+		if policy.DisruptionBudgetDetail == nil {
+			return []Finding{}
+		}
+		for _, condition := range policy.DisruptionBudgetDetail.Conditions {
+			if condition.Type != "DisruptionAllowed" || condition.Status == conditionStatusTrue {
+				continue
+			}
+			return []Finding{{
+				Code: FindingPDBNoDisruptionsAllowed, Severity: SeverityWarning,
+				Reason: condition.Reason, Message: condition.Message,
+				Evidence: []Evidence{{Kind: EvidenceCondition, Name: condition.Type}},
+			}}
+		}
+	}
+	return []Finding{}
+}
+
 func hpaFindings(autoscaler kubernetesresource.HorizontalPodAutoscalerDetail) []Finding {
 	findings := make([]Finding, 0, 4)
 	if autoscaler.ObservedGeneration == nil || *autoscaler.ObservedGeneration < autoscaler.Generation {

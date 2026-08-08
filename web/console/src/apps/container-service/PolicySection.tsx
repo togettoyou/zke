@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Pencil, Plus } from "lucide-react";
+import { FileCode, Pencil, Plus, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -9,6 +9,7 @@ import {
   usePolicyResource,
   usePolicyResources,
 } from "@/api/queries/policies";
+import { usePolicyDescribe, type PolicyDescribeResource } from "@/api/queries/describe";
 import type {
   KubernetesNetworkPolicyRule,
   KubernetesPolicyResource,
@@ -37,6 +38,7 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { POLICY_TYPES, policyIdentity, policyKindLabel } from "./policy-catalog";
 import { PolicyForm } from "./PolicyForm";
+import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -82,6 +84,7 @@ export function PolicySection({
   });
   const [detailName, setDetailName] = useState<string | null>(null);
   const [yamlName, setYamlName] = useState<string | null>(null);
+  const [describeName, setDescribeName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<KubernetesPolicyResourceSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<KubernetesPolicyResourceSummary | null>(null);
@@ -96,6 +99,8 @@ export function PolicySection({
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const canDescribe =
+    supportsPolicyDescribe(resource) && permissions.can("cluster.event.read", projectScope);
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -134,9 +139,19 @@ export function PolicySection({
       {
         id: "actions",
         header: "",
-        size: 88,
+        size: canDescribe ? 128 : 88,
         cell: ({ row }) => (
           <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+            {canDescribe ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`诊断 ${row.original.name}`}
+                onClick={() => setDescribeName(row.original.name)}
+              >
+                <Stethoscope />
+              </Button>
+            ) : null}
             {canUpdate ? (
               <Button
                 size="icon-sm"
@@ -154,7 +169,7 @@ export function PolicySection({
         ),
       },
     ],
-    [resource, canUpdate, canDelete, openDelete],
+    [resource, canUpdate, canDelete, canDescribe, openDelete],
   );
 
   // The dialogs live outside the branch that picks a view. They are opened from
@@ -237,6 +252,18 @@ export function PolicySection({
     );
   }
 
+  if (describeName && supportsPolicyDescribe(resource)) {
+    return (
+      <PolicyDescribeView
+        clusterId={clusterId}
+        namespace={namespace}
+        resource={resource}
+        name={describeName}
+        onBack={() => setDescribeName(null)}
+      />
+    );
+  }
+
   // The form takes over the section rather than sitting over the list, like every
   // other typed form here: a quota's every line, or a network policy's rules, is
   // taller than a box laid over the table can show, and the table is of no use
@@ -267,8 +294,10 @@ export function PolicySection({
           name={detailName}
           canUpdate={canUpdate}
           canDelete={canDelete}
+          canDescribe={canDescribe}
           onEdit={setEditing}
           onOpenYaml={() => setYamlName(detailName)}
+          onDescribe={() => setDescribeName(detailName)}
           onDelete={openDelete}
           onBack={() => setDetailName(null)}
         />
@@ -296,6 +325,7 @@ export function PolicySection({
         onValueChange={(value) => {
           setResource(value as KubernetesPolicyResource);
           setDetailName(null);
+          setDescribeName(null);
         }}
         className="flex min-h-0 flex-1 flex-col"
       >
@@ -579,8 +609,10 @@ function PolicyDetailView({
   name,
   canUpdate,
   canDelete,
+  canDescribe,
   onEdit,
   onOpenYaml,
+  onDescribe,
   onDelete,
   onBack,
 }: {
@@ -590,8 +622,10 @@ function PolicyDetailView({
   name: string;
   canUpdate: boolean;
   canDelete: boolean;
+  canDescribe: boolean;
   onEdit: (item: KubernetesPolicyResourceSummary) => void;
   onOpenYaml: () => void;
+  onDescribe: () => void;
   onDelete: (item: KubernetesPolicyResourceSummary) => void;
   onBack: () => void;
 }) {
@@ -605,6 +639,12 @@ function PolicyDetailView({
         onBack={onBack}
         actions={
           <>
+            {canDescribe ? (
+              <Button size="sm" variant="secondary" onClick={onDescribe}>
+                <Stethoscope />
+                诊断
+              </Button>
+            ) : null}
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML
@@ -632,6 +672,40 @@ function PolicyDetailView({
       )}
     </div>
   );
+}
+
+function PolicyDescribeView({
+  clusterId,
+  namespace,
+  resource,
+  name,
+  onBack,
+}: {
+  clusterId: string;
+  namespace: string;
+  resource: PolicyDescribeResource;
+  name: string;
+  onBack: () => void;
+}) {
+  const describe = usePolicyDescribe(clusterId, namespace, resource, name);
+  return (
+    <DescribeView
+      name={name}
+      kindLabel={policyKindLabel(resource)}
+      data={describe.data}
+      isLoading={describe.isLoading}
+      isFetching={describe.isFetching}
+      error={describe.error}
+      onRetry={() => void describe.refetch()}
+      onBack={onBack}
+    />
+  );
+}
+
+function supportsPolicyDescribe(
+  resource: KubernetesPolicyResource,
+): resource is PolicyDescribeResource {
+  return resource === "resourcequotas" || resource === "poddisruptionbudgets";
 }
 
 function PolicyDetailCards({ item }: { item: KubernetesPolicyResourceDetail }) {

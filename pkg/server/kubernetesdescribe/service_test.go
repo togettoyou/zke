@@ -42,6 +42,8 @@ type fakeResourceAccess struct {
 	workloadName        string
 	autoscaler          kubernetesresource.HorizontalPodAutoscalerDetail
 	autoscalerErr       error
+	policy              kubernetesresource.PolicyResourceDetail
+	policyErr           error
 	claims              map[string]kubernetesresource.StorageResourceDetail
 	claimErr            map[string]error
 	// Keyed by the resource name of the listed type, e.g. `replicasets`.
@@ -123,6 +125,16 @@ func (access *fakeResourceAccess) GetHorizontalPodAutoscaler(
 	_ string,
 ) (kubernetesresource.HorizontalPodAutoscalerDetail, error) {
 	return access.autoscaler, access.autoscalerErr
+}
+
+func (access *fakeResourceAccess) GetPolicyResource(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ kubernetesresource.PolicyResource,
+	_ string,
+) (kubernetesresource.PolicyResourceDetail, error) {
+	return access.policy, access.policyErr
 }
 
 func (access *fakeResourceAccess) GetStorageResource(
