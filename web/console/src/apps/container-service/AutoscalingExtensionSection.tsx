@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { FileCode, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +36,7 @@ import { RowDeleteAction } from "@/components/common/delete-action";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { ErrorState, LoadingState } from "@/components/common/state";
+import { RelativeTime } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, NumericInput, Textarea } from "@/components/ui/input";
@@ -54,7 +55,7 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
 
-type Props = ClusterSectionProps & { namespace: string };
+type Props = ClusterSectionProps & { namespace: string; tabs?: ReactNode };
 type Kind = "vpa" | "keda";
 type Summary = KubernetesVPASummary | KubernetesKEDASummary;
 type Detail = KubernetesVPADetail | KubernetesKEDADetail;
@@ -74,6 +75,7 @@ function ExtensionSection({
   namespace,
   tenantId,
   projectId,
+  tabs,
 }: Props & { kind: Kind }) {
   const [detailName, setDetailName] = useState<string | null>(null);
   const [yamlName, setYamlName] = useState<string | null>(null);
@@ -115,31 +117,55 @@ function ExtensionSection({
     () => [
       {
         header: "名称",
-        cell: ({ row }) => <span className="font-medium break-all">{row.original.name}</span>,
+        size: 260,
+        cell: ({ row }) => (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-foreground font-medium break-all">{row.original.name}</span>
+            <span className="zke-mono text-subtle-foreground text-xs whitespace-nowrap">
+              {row.original.uid || "UID 尚未分配"}
+            </span>
+          </div>
+        ),
       },
       {
         header: "目标",
+        size: 220,
         cell: ({ row }) => (
-          <span>
-            {row.original.target.kind}/{row.original.target.name}
-          </span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-foreground break-all">{row.original.target.name}</span>
+            <span className="text-subtle-foreground text-xs">{row.original.target.kind}</span>
+          </div>
         ),
       },
       {
         header: kind === "vpa" ? "更新模式" : "副本范围",
+        size: 130,
         cell: ({ row }) =>
-          kind === "vpa"
-            ? (row.original as KubernetesVPASummary).update_mode || "Off"
-            : `${(row.original as KubernetesKEDASummary).min_replicas}–${(row.original as KubernetesKEDASummary).max_replicas}`,
+          kind === "vpa" ? (
+            (row.original as KubernetesVPASummary).update_mode || "Off"
+          ) : (
+            <span className="zke-tnum">
+              {(row.original as KubernetesKEDASummary).min_replicas}–
+              {(row.original as KubernetesKEDASummary).max_replicas}
+            </span>
+          ),
       },
       {
         header: "状态",
+        size: 150,
         cell: ({ row }) => <ExtensionStatus kind={kind} item={row.original} />,
       },
-      { header: "创建时间", cell: ({ row }) => formatAbsolute(row.original.creation_timestamp) },
+      {
+        header: "创建时间",
+        size: 130,
+        cell: ({ row }) => (
+          <RelativeTime value={row.original.creation_timestamp} className="text-muted-foreground" />
+        ),
+      },
       {
         id: "actions",
         header: "",
+        size: 56,
         cell: ({ row }) => (
           <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
             {canDelete && row.original.uid ? (
@@ -239,16 +265,18 @@ function ExtensionSection({
           </Button>
         ) : null}
       </SectionToolbarActions>
+      {tabs}
       {available === false ? (
-        <div className="p-4">
-          <Alert tone="info">
+        <Alert tone="info">
+          <span className="font-medium">{label} 扩展未安装。</span>
+          <span className="mt-1 block">
             当前集群未发现{" "}
             {kind === "vpa"
               ? "autoscaling.k8s.io/v1 VerticalPodAutoscaler"
               : "keda.sh/v1alpha1 ScaledObject"}{" "}
             CRD。安装对应控制器并更新 Agent 权限后即可使用，其他容器服务能力不受影响。
-          </Alert>
-        </div>
+          </span>
+        </Alert>
       ) : (
         <DataTable
           columns={columns}

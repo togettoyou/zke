@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { FileCode, Pencil, Plus, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
@@ -30,6 +30,7 @@ import { ErrorState, LoadingState } from "@/components/common/state";
 import { RelativeTime } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
@@ -48,6 +49,8 @@ const PAGE_SIZE = 50;
 type AutoscalerSectionProps = ClusterSectionProps & {
   /** The Namespace every query and mutation in this section is scoped to. */
   namespace: string;
+  /** Resource-kind switch, rendered only by a list view. */
+  tabs?: ReactNode;
 };
 
 /**
@@ -59,33 +62,20 @@ type AutoscalerSectionProps = ClusterSectionProps & {
  */
 export function AutoscalerSection(props: AutoscalerSectionProps) {
   const [kind, setKind] = useState<"hpa" | "vpa" | "keda">("hpa");
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="border-border flex shrink-0 gap-1 border-b px-4 py-2">
-        {(
-          [
-            ["hpa", "HPA"],
-            ["vpa", "VPA"],
-            ["keda", "KEDA"],
-          ] as const
-        ).map(([value, label]) => (
-          <Button
-            key={value}
-            size="sm"
-            variant={kind === value ? "secondary" : "ghost"}
-            onClick={() => setKind(value)}
-          >
-            {label}
-          </Button>
-        ))}
-      </div>
-      <div className="min-h-0 flex-1">
-        {kind === "hpa" ? <HorizontalPodAutoscalerSection {...props} /> : null}
-        {kind === "vpa" ? <VerticalPodAutoscalerSection {...props} /> : null}
-        {kind === "keda" ? <KEDAScaledObjectSection {...props} /> : null}
-      </div>
-    </div>
+  const tabs = (
+    <Tabs value={kind} onValueChange={(value) => setKind(value as typeof kind)}>
+      <TabsList className="mb-3 w-fit">
+        <TabsTrigger value="hpa">HPA</TabsTrigger>
+        <TabsTrigger value="vpa">VPA</TabsTrigger>
+        <TabsTrigger value="keda">KEDA</TabsTrigger>
+      </TabsList>
+    </Tabs>
   );
+
+  const sectionProps = { ...props, tabs };
+  if (kind === "vpa") return <VerticalPodAutoscalerSection {...sectionProps} />;
+  if (kind === "keda") return <KEDAScaledObjectSection {...sectionProps} />;
+  return <HorizontalPodAutoscalerSection {...sectionProps} />;
 }
 
 function HorizontalPodAutoscalerSection({
@@ -94,6 +84,7 @@ function HorizontalPodAutoscalerSection({
   namespace,
   tenantId,
   projectId,
+  tabs,
 }: AutoscalerSectionProps) {
   const { permissions } = useSessionContext();
   const pager = useContinuePagination(`${clusterId}/${namespace}`);
@@ -133,10 +124,11 @@ function HorizontalPodAutoscalerSection({
     () => [
       {
         header: "名称",
+        size: 260,
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
             <span className="text-foreground font-medium break-all">{row.original.name}</span>
-            <span className="zke-mono text-subtle-foreground text-xs">
+            <span className="zke-mono text-subtle-foreground text-xs whitespace-nowrap">
               {row.original.uid || "UID 尚未分配"}
             </span>
           </div>
@@ -364,6 +356,7 @@ function HorizontalPodAutoscalerSection({
           </Button>
         ) : null}
       </SectionToolbarActions>
+      {tabs}
       <DataTable
         columns={columns}
         data={list.data?.autoscalers}
