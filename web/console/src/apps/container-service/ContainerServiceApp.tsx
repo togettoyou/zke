@@ -376,9 +376,10 @@ export function ContainerServiceApp() {
           : "没有可执行请求的在线集群"
       }
     >
-      {/* Remounting on Cluster change is the hard identity boundary for every
-          target kept in the diagnostic navigation stack. */}
-      <DiagnosticNavigationProvider key={clusterId} clusterId={clusterId}>
+      {/* Cluster and section are hard identity boundaries for diagnostic
+          navigation. Rail navigation must close an overlay instead of leaving
+          it over the newly selected section. */}
+      <DiagnosticNavigationProvider key={`${clusterId}:${section}`} clusterId={clusterId}>
         {clusters.error ? (
           <ErrorState error={clusters.error} onRetry={() => void clusters.refetch()} />
         ) : clusters.isLoading ? (

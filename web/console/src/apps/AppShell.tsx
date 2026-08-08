@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, type LucideIcon } from "lucide-react";
 
@@ -22,10 +30,32 @@ export type AppNavItem = {
  */
 const ToolbarActionSlot = createContext<HTMLElement | null>(null);
 
+/*
+ * A drill-down overlay keeps the view below it mounted so returning can restore
+ * filters and scroll position. Portal contributions need a separate visibility
+ * boundary: CSS hiding the view does not hide nodes portaled into the shell.
+ */
+const AppShellContributionEnabled = createContext(true);
+
+export function AppShellContributionScope({
+  enabled,
+  children,
+}: {
+  enabled: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <AppShellContributionEnabled.Provider value={enabled}>
+      {children}
+    </AppShellContributionEnabled.Provider>
+  );
+}
+
 /** Renders its children at the right end of the enclosing {@link AppShell} toolbar. */
 export function SectionToolbarActions({ children }: { children: ReactNode }) {
   const slot = useContext(ToolbarActionSlot);
-  return slot ? createPortal(children, slot) : null;
+  const enabled = useContext(AppShellContributionEnabled);
+  return enabled && slot ? createPortal(children, slot) : null;
 }
 
 /**
@@ -38,8 +68,8 @@ export function SectionToolbarActions({ children }: { children: ReactNode }) {
 const PageHeaderSlot = createContext<{
   element: HTMLElement | null;
   scope: ReactNode;
-  onOpen: (open: boolean) => void;
-}>({ element: null, scope: null, onOpen: () => {} });
+  register: () => () => void;
+}>({ element: null, scope: null, register: () => () => {} });
 
 /**
  * The header of a view that was entered from another one: what is open, the way
@@ -74,14 +104,17 @@ export function PageHeader({
   onBack?: () => void;
   backDisabled?: boolean;
 }) {
-  const { element, scope, onOpen } = useContext(PageHeaderSlot);
+  const { element, scope, register } = useContext(PageHeaderSlot);
+  const enabled = useContext(AppShellContributionEnabled);
 
   useEffect(() => {
-    onOpen(true);
-    return () => onOpen(false);
-  }, [onOpen]);
+    if (!enabled) {
+      return;
+    }
+    return register();
+  }, [enabled, register]);
 
-  if (!element) {
+  if (!enabled || !element) {
     return null;
   }
   return createPortal(
@@ -138,10 +171,22 @@ export function AppShell({
   const visible = nav.filter((item) => !item.hidden);
   const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
   const [pageHeaderSlot, setPageHeaderSlot] = useState<HTMLElement | null>(null);
-  const [entered, setEntered] = useState(false);
+  const [openPageHeaders, setOpenPageHeaders] = useState(0);
+  const registerPageHeader = useCallback(() => {
+    let registered = true;
+    setOpenPageHeaders((current) => current + 1);
+    return () => {
+      if (!registered) {
+        return;
+      }
+      registered = false;
+      setOpenPageHeaders((current) => Math.max(0, current - 1));
+    };
+  }, []);
+  const entered = openPageHeaders > 0;
   const pageHeader = useMemo(
-    () => ({ element: pageHeaderSlot, scope, onOpen: setEntered }),
-    [pageHeaderSlot, scope],
+    () => ({ element: pageHeaderSlot, scope, register: registerPageHeader }),
+    [pageHeaderSlot, registerPageHeader, scope],
   );
 
   return (

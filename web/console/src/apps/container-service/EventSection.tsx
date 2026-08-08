@@ -194,32 +194,40 @@ export function EventSection({
     [],
   );
 
+  const streamActions = (
+    <>
+      <Button
+        size="sm"
+        variant={follow ? "primary" : "secondary"}
+        onClick={() => {
+          if (follow) {
+            stream.stop();
+          }
+          setFollow(!follow);
+        }}
+      >
+        {follow ? <Pause /> : <Play />}
+        {follow ? "停止跟随" : "实时跟随"}
+      </Button>
+      <Button size="sm" variant="secondary" onClick={stream.reload}>
+        <RotateCw />
+        重新加载
+      </Button>
+    </>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {onBack ? (
-        <PageHeader title={objectFilter ? `${objectFilter.name} · 事件` : "事件"} onBack={onBack} />
+        <PageHeader
+          title={objectFilter ? `${objectFilter.name} · 事件` : "事件"}
+          actions={streamActions}
+          onBack={onBack}
+        />
       ) : null}
       {/* The stream controls go to the toolbar; the filters stay here, because
           they are fields with labels rather than actions. */}
-      <SectionToolbarActions>
-        <Button
-          size="sm"
-          variant={follow ? "primary" : "secondary"}
-          onClick={() => {
-            if (follow) {
-              stream.stop();
-            }
-            setFollow(!follow);
-          }}
-        >
-          {follow ? <Pause /> : <Play />}
-          {follow ? "停止跟随" : "实时跟随"}
-        </Button>
-        <Button size="sm" variant="secondary" onClick={stream.reload}>
-          <RotateCw />
-          重新加载
-        </Button>
-      </SectionToolbarActions>
+      {!onBack ? <SectionToolbarActions>{streamActions}</SectionToolbarActions> : null}
 
       {objectFilter ? (
         <Alert tone="info" className="mb-3">

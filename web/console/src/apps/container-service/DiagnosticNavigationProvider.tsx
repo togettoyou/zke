@@ -9,6 +9,7 @@ import {
   useServiceDescribe,
   useWorkloadDescribe,
 } from "@/api/queries/describe";
+import { AppShellContributionScope } from "@/apps/AppShell";
 
 import { DescribeView } from "./DescribeView";
 import { EventSection } from "./EventSection";
@@ -49,7 +50,9 @@ export function DiagnosticNavigationProvider({
 
   return (
     <DiagnosticNavigationContextProvider value={value}>
-      <div className={active ? "hidden" : "h-full min-h-0"}>{children}</div>
+      <AppShellContributionScope enabled={!active}>
+        <div className={active ? "hidden" : "h-full min-h-0"}>{children}</div>
+      </AppShellContributionScope>
       {active ? (
         <DiagnosticNavigationOverlay
           key={active.key}
