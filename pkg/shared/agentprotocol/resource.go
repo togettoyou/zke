@@ -293,6 +293,10 @@ func validateResourceRequest(
 	if err := validateDeleteOptions(request); err != nil {
 		return err
 	}
+	podEviction := validPodEvictionRequest(request)
+	if request.GetPodEvictionAccess() && !podEviction {
+		return ErrStreamProtocol
+	}
 	switch request.GetVerb() {
 	case agentv1.ResourceVerb_RESOURCE_VERB_LIST:
 		if request.GetName() != "" ||
@@ -314,7 +318,12 @@ func validateResourceRequest(
 			return ErrStreamProtocol
 		}
 	case agentv1.ResourceVerb_RESOURCE_VERB_CREATE:
-		if request.GetName() != "" ||
+		// Ordinary creates address a collection and therefore carry no name in
+		// the URL. Pod eviction is the deliberately narrow exception: the
+		// Kubernetes endpoint is pods/{name}/eviction, while the body remains a
+		// policy/v1 Eviction object. The dedicated protocol flag keeps this from
+		// becoming a general named-create or subresource channel.
+		if (request.GetName() != "" && !podEviction) ||
 			request.GetBodySize() == 0 ||
 			request.GetListOptions() != nil ||
 			request.GetPatchType() != agentv1.PatchType_PATCH_TYPE_UNSPECIFIED ||
@@ -360,6 +369,19 @@ func validateResourceRequest(
 		return ErrStreamProtocol
 	}
 	return nil
+}
+
+func validPodEvictionRequest(request *agentv1.ResourceRequest) bool {
+	resource := request.GetResource()
+	return request.GetPodEvictionAccess() &&
+		resource != nil &&
+		resource.GetGroup() == "" &&
+		resource.GetVersion() == "v1" &&
+		resource.GetResource() == "pods" &&
+		request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_CREATE &&
+		request.GetNamespace() != "" &&
+		request.GetName() != "" &&
+		request.GetSubresource() == "eviction"
 }
 
 func validateMutationOptions(request *agentv1.ResourceRequest) error {
