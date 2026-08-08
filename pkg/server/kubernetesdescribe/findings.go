@@ -32,6 +32,75 @@ const (
 	FindingServiceLoadBalancerPending = "ServiceLoadBalancerPending"
 )
 
+const (
+	FindingIngressAddressPending          = "IngressAddressPending"
+	FindingIngressControllerRejected      = "IngressControllerRejected"
+	FindingIngressBackendServiceNotFound  = "IngressBackendServiceNotFound"
+	FindingIngressBackendPortNotFound     = "IngressBackendPortNotFound"
+	FindingIngressBackendNoEndpoints      = "IngressBackendNoEndpoints"
+	FindingIngressBackendNoReadyEndpoints = "IngressBackendNoReadyEndpoints"
+)
+
+var ingressRejectionEventReasons = map[string]struct{}{
+	"Rejected":            {},
+	"SyncFailed":          {},
+	"ConfigurationError":  {},
+	"InvalidIngressClass": {},
+}
+
+func ingressFindings(
+	ingress kubernetesresource.NetworkingResourceDetail,
+	events []Event,
+) []Finding {
+	if ingress.Ingress == nil {
+		return []Finding{}
+	}
+	findings := make([]Finding, 0, 2)
+	if len(ingress.Ingress.LoadBalancerIngress) == 0 {
+		findings = append(findings, Finding{
+			Code: FindingIngressAddressPending, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.loadBalancer.ingress"}},
+		})
+	}
+	if event, found := latestEvent(events, func(candidate Event) bool {
+		_, known := ingressRejectionEventReasons[candidate.Reason]
+		return candidate.Type == eventTypeWarning && known
+	}); found {
+		findings = append(findings, Finding{
+			Code: FindingIngressControllerRejected, Severity: SeverityWarning,
+			Reason: event.Reason, Message: event.Message,
+			Evidence: []Evidence{{Kind: EvidenceEvent, Name: event.UID}},
+		})
+	}
+	return findings
+}
+
+func populateIngressBackendFindings(backends *IngressBackends) {
+	if backends == nil {
+		return
+	}
+	for index := range backends.Items {
+		backend := &backends.Items[index]
+		code, evidence := "", ""
+		switch {
+		case backend.ServiceFound != nil && !*backend.ServiceFound:
+			code, evidence = FindingIngressBackendServiceNotFound, "backend.service.name"
+		case backend.PortFound != nil && !*backend.PortFound:
+			code, evidence = FindingIngressBackendPortNotFound, "backend.service.port"
+		case backend.EndpointStateAvailable && !backends.EndpointSlicesTruncated && backend.Endpoints == 0:
+			code, evidence = FindingIngressBackendNoEndpoints, "backend.endpoints"
+		case backend.EndpointStateAvailable && !backends.EndpointSlicesTruncated && backend.ReadyEndpoints == 0:
+			code, evidence = FindingIngressBackendNoReadyEndpoints, "backend.endpoints.ready"
+		}
+		if code != "" {
+			backend.Findings = append(backend.Findings, Finding{
+				Code: code, Severity: SeverityWarning,
+				Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: evidence}},
+			})
+		}
+	}
+}
+
 func serviceFindings(
 	service kubernetesresource.NetworkingResourceDetail,
 	endpoints *ServiceEndpoints,

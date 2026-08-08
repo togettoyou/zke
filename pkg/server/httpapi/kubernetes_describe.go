@@ -40,18 +40,24 @@ type kubernetesDescribeService interface {
 		context.Context,
 		kubernetesdescribe.ServiceInput,
 	) (kubernetesdescribe.Result, error)
+	DescribeIngress(
+		context.Context,
+		kubernetesdescribe.IngressInput,
+	) (kubernetesdescribe.Result, error)
 }
 
-func (handler *kubernetesDescribeHandler) serviceResource(c *gin.Context) {
+func (handler *kubernetesDescribeHandler) networkingResource(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	if c.Param("network_resource") != string(kubernetesresource.NetworkingServices) {
+	resource, ok := kubernetesresource.ParseNetworkingResource(c.Param("network_resource"))
+	if !ok || (resource != kubernetesresource.NetworkingServices &&
+		resource != kubernetesresource.NetworkingIngresses) {
 		writeError(c, http.StatusBadRequest, "invalid_request",
-			"only Service supports networking describe")
+			"only Service and Ingress support networking describe")
 		return
 	}
 	if len(c.Request.URL.Query()) != 0 {
 		writeError(c, http.StatusBadRequest, "invalid_request",
-			"Service describe does not accept query parameters")
+			"networking describe does not accept query parameters")
 		return
 	}
 	if handler.service == nil {
@@ -60,16 +66,25 @@ func (handler *kubernetesDescribeHandler) serviceResource(c *gin.Context) {
 		return
 	}
 	ctx, cancel := handler.operationContext(c)
-	result, err := handler.service.DescribeService(
-		ctx,
-		kubernetesdescribe.ServiceInput{
+	var result kubernetesdescribe.Result
+	var err error
+	operation := "describe Kubernetes Service"
+	if resource == kubernetesresource.NetworkingIngresses {
+		operation = "describe Kubernetes Ingress"
+		result, err = handler.service.DescribeIngress(ctx, kubernetesdescribe.IngressInput{
 			ClusterID: c.Param("cluster_id"),
 			Namespace: c.Param("namespace_name"),
 			Name:      c.Param("network_name"),
-		},
-	)
+		})
+	} else {
+		result, err = handler.service.DescribeService(ctx, kubernetesdescribe.ServiceInput{
+			ClusterID: c.Param("cluster_id"),
+			Namespace: c.Param("namespace_name"),
+			Name:      c.Param("network_name"),
+		})
+	}
 	cancel()
-	handler.finish(c, "describe Kubernetes Service", result, err)
+	handler.finish(c, operation, result, err)
 }
 
 func (handler *kubernetesDescribeHandler) persistentVolumeClaim(c *gin.Context) {

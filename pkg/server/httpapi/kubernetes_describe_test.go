@@ -27,6 +27,15 @@ type fakeDescribeService struct {
 	resourceCall kubernetesdescribe.ResourceInput
 	claimCall    kubernetesdescribe.PersistentVolumeClaimInput
 	serviceCall  kubernetesdescribe.ServiceInput
+	ingressCall  kubernetesdescribe.IngressInput
+}
+
+func (service *fakeDescribeService) DescribeIngress(
+	_ context.Context,
+	input kubernetesdescribe.IngressInput,
+) (kubernetesdescribe.Result, error) {
+	service.ingressCall = input
+	return service.result, service.err
 }
 
 func (service *fakeDescribeService) DescribeService(
@@ -103,7 +112,7 @@ func describeTestRouter(service kubernetesDescribeService) *gin.Engine {
 	)
 	router.GET(
 		"/clusters/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name/describe",
-		handler.serviceResource,
+		handler.networkingResource,
 	)
 	router.GET(
 		"/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe",
@@ -232,6 +241,46 @@ func TestDescribeServiceReturnsNetworkingDiagnosis(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), `"family":"networking"`) ||
 		!strings.Contains(recorder.Body.String(), `"ready_endpoints":1`) {
 		t.Fatalf("Service diagnosis missing from response: %s", recorder.Body.String())
+	}
+}
+
+func TestDescribeIngressReturnsBackendDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeDescribeService{result: kubernetesdescribe.Result{
+		Target: kubernetesdescribe.Target{
+			APIVersion: "networking.k8s.io/v1", Kind: "Ingress", Namespace: "models",
+			Name: "inference", UID: "ingress-uid",
+		},
+		Family:     kubernetesdescribe.FamilyNetworking,
+		Networking: &kubernetesresource.NetworkingResourceDetail{},
+		IngressBackends: &kubernetesdescribe.IngressBackends{
+			Items: []kubernetesdescribe.IngressBackend{{
+				ServiceName: "inference-api", PortNumber: 80,
+				Findings: []kubernetesdescribe.Finding{},
+			}},
+		},
+		Events:           kubernetesdescribe.Events{Items: []kubernetesdescribe.Event{}},
+		Findings:         []kubernetesdescribe.Finding{},
+		DegradedSections: []string{},
+	}}
+	router := describeTestRouter(service)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/networking/ingresses/inference/describe",
+		nil,
+	)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.ingressCall.ClusterID != "00000000-0000-4000-8000-000000000003" ||
+		service.ingressCall.Namespace != "models" || service.ingressCall.Name != "inference" {
+		t.Fatalf("unexpected Ingress describe input: %+v", service.ingressCall)
+	}
+	if !strings.Contains(recorder.Body.String(), `"service_name":"inference-api"`) {
+		t.Fatalf("Ingress diagnosis missing from response: %s", recorder.Body.String())
 	}
 }
 

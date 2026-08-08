@@ -118,6 +118,8 @@ export const queryKeys = {
     ["persistent-volume-claim-describe", clusterId, namespace, name] as const,
   serviceDescribe: (clusterId: string, namespace: string, name: string) =>
     ["service-describe", clusterId, namespace, name] as const,
+  ingressDescribe: (clusterId: string, namespace: string, name: string) =>
+    ["ingress-describe", clusterId, namespace, name] as const,
   resourceDescribe: (clusterId: string, namespace: string, gvr: string, name: string) =>
     ["resource-describe", clusterId, namespace, gvr, name] as const,
   workloadDescribe: (clusterId: string, namespace: string, resource: string, name: string) =>

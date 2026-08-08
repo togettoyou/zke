@@ -90,6 +90,10 @@ type ResourceAccess interface {
 		kubernetesresource.NetworkingResource,
 		string,
 	) (kubernetesresource.NetworkingResourceDetail, error)
+	ListNetworkingResources(
+		context.Context,
+		kubernetesresource.ListNetworkingResourcesInput,
+	) (kubernetesresource.NetworkingResourcePage, error)
 	GetWorkload(
 		context.Context,
 		string,
@@ -188,6 +192,7 @@ type Result struct {
 	Storage          *kubernetesresource.StorageResourceDetail    `json:"storage,omitempty"`
 	Networking       *kubernetesresource.NetworkingResourceDetail `json:"networking,omitempty"`
 	ServiceEndpoints *ServiceEndpoints                            `json:"service_endpoints,omitempty"`
+	IngressBackends  *IngressBackends                             `json:"ingress_backends,omitempty"`
 	// NodeResources is the scheduler-requested share of a Node's allocatable
 	// resources. It is separate from the Node projection because the values come
 	// from the Pods assigned to it, not from the Node object itself.
@@ -211,6 +216,28 @@ type ServiceEndpoints struct {
 	ServingEndpoints     int64 `json:"serving_endpoints"`
 	TerminatingEndpoints int64 `json:"terminating_endpoints"`
 	Truncated            bool  `json:"truncated"`
+}
+
+type IngressBackends struct {
+	Items                   []IngressBackend `json:"items"`
+	Truncated               bool             `json:"truncated"`
+	ServicesTruncated       bool             `json:"services_truncated"`
+	EndpointSlicesTruncated bool             `json:"endpoint_slices_truncated"`
+}
+
+type IngressBackend struct {
+	ServiceName            string    `json:"service_name"`
+	PortName               string    `json:"port_name"`
+	PortNumber             int32     `json:"port_number"`
+	References             []string  `json:"references"`
+	ServiceFound           *bool     `json:"service_found,omitempty"`
+	PortFound              *bool     `json:"port_found,omitempty"`
+	EndpointStateAvailable bool      `json:"endpoint_state_available"`
+	EndpointSlices         int64     `json:"endpoint_slices"`
+	Endpoints              int64     `json:"endpoints"`
+	ReadyEndpoints         int64     `json:"ready_endpoints"`
+	Findings               []Finding `json:"findings"`
+	endpointPortName       string
 }
 
 type NodeResources struct {

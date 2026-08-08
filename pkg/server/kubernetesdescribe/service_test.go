@@ -20,23 +20,26 @@ import (
 const testClusterID = "0c2ba9a5-15fb-4bfa-9fbe-7f43a2ba8a53"
 
 type fakeResourceAccess struct {
-	networking    kubernetesresource.NetworkingResourceDetail
-	networkingErr error
-	node          kubernetesresource.NodeDetail
-	nodeErr       error
-	nodePods      []kubernetesresource.NodePodDetail
-	nodePodsErr   error
-	nodePodsMore  bool
-	nodePodsInput kubernetesresource.ListPodsInput
-	pod           kubernetesresource.PodDetail
-	podErr        error
-	podDetails    []kubernetesresource.PodDetail
-	podListErr    error
-	podListInput  kubernetesresource.ListPodsInput
-	workload      kubernetesresource.WorkloadDetail
-	workloadErr   error
-	claims        map[string]kubernetesresource.StorageResourceDetail
-	claimErr      map[string]error
+	networking          kubernetesresource.NetworkingResourceDetail
+	networkingErr       error
+	networkingPage      kubernetesresource.NetworkingResourcePage
+	networkingListErr   error
+	networkingListInput kubernetesresource.ListNetworkingResourcesInput
+	node                kubernetesresource.NodeDetail
+	nodeErr             error
+	nodePods            []kubernetesresource.NodePodDetail
+	nodePodsErr         error
+	nodePodsMore        bool
+	nodePodsInput       kubernetesresource.ListPodsInput
+	pod                 kubernetesresource.PodDetail
+	podErr              error
+	podDetails          []kubernetesresource.PodDetail
+	podListErr          error
+	podListInput        kubernetesresource.ListPodsInput
+	workload            kubernetesresource.WorkloadDetail
+	workloadErr         error
+	claims              map[string]kubernetesresource.StorageResourceDetail
+	claimErr            map[string]error
 	// Keyed by the resource name of the listed type, e.g. `replicasets`.
 	lists     map[string]kubernetesresource.ResourcePage
 	listErr   error
@@ -44,6 +47,14 @@ type fakeResourceAccess struct {
 	object    map[string]any
 	objectErr error
 	lastGet   kubernetesresource.GetResourceInput
+}
+
+func (access *fakeResourceAccess) ListNetworkingResources(
+	_ context.Context,
+	input kubernetesresource.ListNetworkingResourcesInput,
+) (kubernetesresource.NetworkingResourcePage, error) {
+	access.networkingListInput = input
+	return access.networkingPage, access.networkingListErr
 }
 
 func (access *fakeResourceAccess) GetNetworkingResource(

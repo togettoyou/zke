@@ -124,6 +124,30 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
     title: "外部地址等待分配",
     hint: "LoadBalancer Service 尚未获得外部 IP 或主机名。检查集群的负载均衡控制器、云配额与相关事件。",
   },
+  IngressAddressPending: {
+    title: "Ingress 地址等待发布",
+    hint: "Ingress Controller 尚未在状态中发布入口地址。检查 IngressClass 对应的 Controller 是否运行，以及它是否接受了该对象。",
+  },
+  IngressControllerRejected: {
+    title: "Ingress Controller 拒绝配置",
+    hint: "Controller 已通过事件报告同步或配置失败。按上方 Kubernetes 原始消息核对 IngressClass、注解和路由规则。",
+  },
+  IngressBackendServiceNotFound: {
+    title: "后端 Service 不存在",
+    hint: "Ingress 引用的 Service 未出现在同一命名空间的完整清单中。核对后端名称与部署顺序。",
+  },
+  IngressBackendPortNotFound: {
+    title: "后端端口不存在",
+    hint: "Service 存在，但没有 Ingress 引用的端口名称或端口号。核对 Ingress backend 与 Service ports。",
+  },
+  IngressBackendNoEndpoints: {
+    title: "后端没有端点",
+    hint: "Service 端口存在，但相关 EndpointSlice 中没有端点。核对 Service selector 与后端 Pod。",
+  },
+  IngressBackendNoReadyEndpoints: {
+    title: "后端没有就绪端点",
+    hint: "相关 EndpointSlice 已包含端点，但没有 Ready 后端可接收流量。检查 Pod 状态与 readiness 探针。",
+  },
 };
 
 const OMITTED_EVENTS: Record<string, string> = {
@@ -289,6 +313,9 @@ export function DescribeView({
           {data.networking?.service && data.service_endpoints ? (
             <ServiceDiagnosticSummary data={data} />
           ) : null}
+          {data.networking?.ingress && data.ingress_backends ? (
+            <IngressDiagnosticSummary data={data} />
+          ) : null}
 
           {data.related ? <RelatedSection related={data.related} family={data.family} /> : null}
 
@@ -313,6 +340,17 @@ export function DescribeView({
           {data.degraded_sections.includes("service.endpoints") ? (
             <Alert tone="warning">
               本次未能读取该 Service 的 EndpointSlice，端点统计与相关诊断结论不可用。
+            </Alert>
+          ) : null}
+          {data.degraded_sections.includes("ingress.backends") ? (
+            <Alert tone="warning">
+              本次未能读取该 Ingress 引用的 Service，后端存在性、端口与端点诊断不可用。
+            </Alert>
+          ) : null}
+          {data.degraded_sections.includes("ingress.endpoints") ? (
+            <Alert tone="warning">
+              本次未能读取后端 Service 的 EndpointSlice，Service
+              与端口状态仍然有效，但端点诊断不可用。
             </Alert>
           ) : null}
           {data.events.omitted ? (
@@ -351,6 +389,9 @@ export function DescribeView({
 }
 
 function relatedHasFindings(data: KubernetesDescribe): boolean {
+  if (data.ingress_backends?.items.some((backend) => backend.findings.length > 0)) {
+    return true;
+  }
   const related = data.related;
   if (!related) {
     return false;
@@ -563,6 +604,84 @@ function ServiceDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   );
 }
 
+function IngressDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
+  const backends = data.ingress_backends;
+  if (!backends) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardTitle>Ingress 后端</CardTitle>
+      {backends.items.length === 0 ? (
+        <p className="text-subtle-foreground mt-2 text-xs">
+          没有可诊断的 Service 后端；自定义 Resource backend 不会被解释为 Service。
+        </p>
+      ) : (
+        <div className="mt-2 grid gap-2">
+          {backends.items.map((backend) => {
+            const port = backend.port_name || String(backend.port_number || "—");
+            const inventoryUnknown = backend.service_found === undefined;
+            return (
+              <div
+                key={`${backend.service_name}/${backend.port_name}/${backend.port_number}`}
+                className="border-border/60 rounded-control grid gap-1.5 border p-2.5"
+              >
+                <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                  <span className="text-foreground font-medium break-all">
+                    {backend.service_name}:{port}
+                  </span>
+                  {inventoryUnknown ? (
+                    <Badge tone="neutral">状态未知</Badge>
+                  ) : backend.service_found === false ? (
+                    <Badge tone="warning">Service 不存在</Badge>
+                  ) : backend.port_found === false ? (
+                    <Badge tone="warning">端口不存在</Badge>
+                  ) : backend.endpoint_state_available ? (
+                    <Badge tone={backend.ready_endpoints > 0 ? "success" : "warning"}>
+                      Ready {backend.ready_endpoints}/{backend.endpoints}
+                    </Badge>
+                  ) : (
+                    <Badge tone="neutral">端点不可用</Badge>
+                  )}
+                  <span className="text-subtle-foreground text-xs break-all">
+                    {backend.references.join(" · ")}
+                  </span>
+                </div>
+                {backend.findings.map((finding, index) => (
+                  <div
+                    key={`${finding.code}-${index}`}
+                    className="flex flex-wrap items-center gap-1.5"
+                  >
+                    <Badge tone="warning">
+                      {FINDING_LABELS[finding.code]?.title ?? finding.code}
+                    </Badge>
+                    <span className="text-muted-foreground text-xs">
+                      {FINDING_LABELS[finding.code]?.hint}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {backends.truncated ? (
+        <p className="text-subtle-foreground mt-2 text-xs">后端引用超过 20 个，只诊断前 20 个。</p>
+      ) : null}
+      {backends.services_truncated ? (
+        <p className="text-subtle-foreground mt-2 text-xs">
+          Service 清单还有下一页，未出现的后端状态保持未知。
+        </p>
+      ) : null}
+      {backends.endpoint_slices_truncated ? (
+        <p className="text-subtle-foreground mt-2 text-xs">
+          EndpointSlice 清单还有下一页，端点计数为下限且不生成缺失结论。
+        </p>
+      ) : null}
+    </Card>
+  );
+}
+
 function DiagnosticValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="border-border/60 rounded-control min-w-0 border p-2.5">
@@ -768,6 +887,33 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
         `  EndpointSlices: ${endpoints.endpoint_slices}`,
         `  Serving / terminating: ${endpoints.serving_endpoints} / ${endpoints.terminating_endpoints}`,
       );
+    }
+  }
+  if (data.ingress_backends) {
+    lines.push(
+      "",
+      `Ingress 后端（${data.ingress_backends.items.length}${data.ingress_backends.truncated ? "，已截断" : ""}）`,
+    );
+    for (const backend of data.ingress_backends.items) {
+      const port = backend.port_name || String(backend.port_number || "—");
+      const state =
+        backend.service_found === undefined
+          ? "状态未知"
+          : backend.service_found === false
+            ? "Service 不存在"
+            : backend.port_found === false
+              ? "端口不存在"
+              : backend.endpoint_state_available
+                ? `Ready ${backend.ready_endpoints}/${backend.endpoints}`
+                : "端点不可用";
+      lines.push(
+        `  - Service/${backend.service_name}:${port} ${state} (${backend.references.join(", ")})`,
+      );
+      for (const finding of backend.findings) {
+        lines.push(
+          `      ${FINDING_LABELS[finding.code]?.title ?? finding.code} [${finding.code}]`,
+        );
+      }
     }
   }
   if (data.related) {

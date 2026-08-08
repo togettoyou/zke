@@ -535,6 +535,11 @@ Service describe 只读取同一 Cluster 与 Namespace 中携带精确
 EndpointSlice 还会再次核对 Namespace 与 Service 标签，防止上游返回越界对象。Service 自身的 Event 仍按精确 UID
 过滤，不读取后端 Pod 的 Event，也不把 selector 匹配解释为 Kubernetes owner 关系。
 
+Ingress describe 将后端引用去重并限制为 20 个，只读取同一 Cluster 与 Namespace 的 Service 清单，以及携带这些
+Service 名称标签的 EndpointSlice；两类清单各一次且上限 500。响应再次核对 Service 的资源类型、Namespace 和
+EndpointSlice 的 Namespace、Service 标签。Service 清单分页时未找到的对象保持未知，EndpointSlice 分页时端点
+计数仅作为下限，两者都不会产生确定性的缺失结论。Ingress Event 仍只按 Ingress 自身精确 UID 读取。
+
 长连接读取（Event 流、Pod 日志 Follow、Web Terminal）的审计 `result` 记录的是「服务端是否完成了这次读取」，
 而不是流为什么结束。操作者关闭页面、Server 自身的最长时长到期、上游 Watch 轮换、resourceVersion 过期都属于
 流的正常终止，记为 `succeeded`；实时重新验证发现权限被收回记为 `denied`；Agent 不可达、上游超时、容量耗尽和

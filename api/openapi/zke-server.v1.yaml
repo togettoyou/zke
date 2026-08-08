@@ -3260,13 +3260,12 @@ paths:
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}/describe:
     get:
       tags: [Resources]
-      operationId: describeKubernetesService
+      operationId: describeKubernetesNetworkingResource
       description: |
-        返回 Service 类型化详情、EndpointSlice 就绪统计、按 selector 匹配的后端 Pod、
-        只属于该 Service UID 的 Kubernetes Event 快照和确定性诊断。EndpointSlice
-        是端点状态的事实来源；无 selector 的 Service 仍可由手工 EndpointSlice 提供后端。
-        当前仅支持 network_resource=services。要求同时持有 cluster.read 与
-        cluster.event.read，并写入 Event 读取审计。
+        返回 Service 或 Ingress 的类型化诊断。Service 聚合 EndpointSlice 与 selector
+        匹配的后端 Pod；Ingress 聚合其引用的 Service、端口和 EndpointSlice，并只在
+        资源清单完整时生成缺失结论。Gateway 当前不支持此入口。要求同时持有
+        cluster.read 与 cluster.event.read，并写入 Event 读取审计。
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/ClusterID"
@@ -3275,7 +3274,7 @@ paths:
         - $ref: "#/components/parameters/NetworkResourceName"
       responses:
         "200":
-          description: Service describe 视图
+          description: Service 或 Ingress describe 视图
           content:
             application/json:
               schema:
@@ -11134,6 +11133,8 @@ components:
           $ref: "#/components/schemas/KubernetesNetworkingResourceDetail"
         service_endpoints:
           $ref: "#/components/schemas/KubernetesDescribeServiceEndpoints"
+        ingress_backends:
+          $ref: "#/components/schemas/KubernetesDescribeIngressBackends"
         related:
           $ref: "#/components/schemas/KubernetesDescribeRelated"
         events:
@@ -11149,7 +11150,7 @@ components:
             “这里没有问题”，因此缺失必须显式说明。
           items:
             type: string
-            enum: [events, events.related, related, related.persistent_volume_claims, node.resources, service.endpoints]
+            enum: [events, events.related, related, related.persistent_volume_claims, node.resources, service.endpoints, ingress.backends, ingress.endpoints]
     KubernetesDescribeServiceEndpoints:
       type: object
       additionalProperties: false
@@ -11169,6 +11170,59 @@ components:
         truncated:
           type: boolean
           description: EndpointSlice 列表还有下一页；端点计数为下限，不用于生成缺失端点结论。
+    KubernetesDescribeIngressBackends:
+      type: object
+      additionalProperties: false
+      required: [items, truncated, services_truncated, endpoint_slices_truncated]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesDescribeIngressBackend"
+        truncated:
+          type: boolean
+          description: Ingress 引用的唯一 Service/端口组合超过本次最多处理的 20 个。
+        services_truncated:
+          type: boolean
+          description: Namespace 的 Service 清单还有下一页；未出现的 Service 状态为未知而非不存在。
+        endpoint_slices_truncated:
+          type: boolean
+          description: 相关 EndpointSlice 还有下一页；端点计数为下限且不生成缺失端点结论。
+    KubernetesDescribeIngressBackend:
+      type: object
+      additionalProperties: false
+      required:
+        - service_name
+        - port_name
+        - port_number
+        - references
+        - endpoint_state_available
+        - endpoint_slices
+        - endpoints
+        - ready_endpoints
+        - findings
+      properties:
+        service_name: { type: string }
+        port_name: { type: string }
+        port_number: { type: integer, format: int32 }
+        references:
+          type: array
+          items: { type: string }
+        service_found:
+          type: boolean
+          description: 未出现表示 Service 清单被截断，无法确认该 Service 是否存在。
+        port_found:
+          type: boolean
+          description: 仅在 Service 已找到时出现。
+        endpoint_state_available:
+          type: boolean
+        endpoint_slices: { type: integer, format: int64, minimum: 0 }
+        endpoints: { type: integer, format: int64, minimum: 0 }
+        ready_endpoints: { type: integer, format: int64, minimum: 0 }
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesDescribeFinding"
     KubernetesDescribeNodeResources:
       type: object
       additionalProperties: false
@@ -11377,6 +11431,12 @@ components:
             - ServiceNoEndpoints
             - ServiceNoReadyEndpoints
             - ServiceLoadBalancerPending
+            - IngressAddressPending
+            - IngressControllerRejected
+            - IngressBackendServiceNotFound
+            - IngressBackendPortNotFound
+            - IngressBackendNoEndpoints
+            - IngressBackendNoReadyEndpoints
         severity:
           type: string
           enum: [warning]

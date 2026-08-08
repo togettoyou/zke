@@ -1090,13 +1090,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * @description 返回 Service 类型化详情、EndpointSlice 就绪统计、按 selector 匹配的后端 Pod、
-         *     只属于该 Service UID 的 Kubernetes Event 快照和确定性诊断。EndpointSlice
-         *     是端点状态的事实来源；无 selector 的 Service 仍可由手工 EndpointSlice 提供后端。
-         *     当前仅支持 network_resource=services。要求同时持有 cluster.read 与
-         *     cluster.event.read，并写入 Event 读取审计。
+         * @description 返回 Service 或 Ingress 的类型化诊断。Service 聚合 EndpointSlice 与 selector
+         *     匹配的后端 Pod；Ingress 聚合其引用的 Service、端口和 EndpointSlice，并只在
+         *     资源清单完整时生成缺失结论。Gateway 当前不支持此入口。要求同时持有
+         *     cluster.read 与 cluster.event.read，并写入 Event 读取审计。
          */
-        get: operations["describeKubernetesService"];
+        get: operations["describeKubernetesNetworkingResource"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4265,6 +4264,7 @@ export interface components {
             storage?: components["schemas"]["KubernetesStorageResourceDetail"];
             networking?: components["schemas"]["KubernetesNetworkingResourceDetail"];
             service_endpoints?: components["schemas"]["KubernetesDescribeServiceEndpoints"];
+            ingress_backends?: components["schemas"]["KubernetesDescribeIngressBackends"];
             related?: components["schemas"]["KubernetesDescribeRelated"];
             events: components["schemas"]["KubernetesDescribeEvents"];
             findings: components["schemas"]["KubernetesDescribeFinding"][];
@@ -4272,7 +4272,7 @@ export interface components {
              * @description 请求了但没有拿到的部分。为空表示结果完整；静默丢弃某一部分会被读成
              *     “这里没有问题”，因此缺失必须显式说明。
              */
-            degraded_sections: ("events" | "events.related" | "related" | "related.persistent_volume_claims" | "node.resources" | "service.endpoints")[];
+            degraded_sections: ("events" | "events.related" | "related" | "related.persistent_volume_claims" | "node.resources" | "service.endpoints" | "ingress.backends" | "ingress.endpoints")[];
         };
         KubernetesDescribeServiceEndpoints: {
             /** Format: int64 */
@@ -4287,6 +4287,34 @@ export interface components {
             terminating_endpoints: number;
             /** @description EndpointSlice 列表还有下一页；端点计数为下限，不用于生成缺失端点结论。 */
             truncated: boolean;
+        };
+        KubernetesDescribeIngressBackends: {
+            items: components["schemas"]["KubernetesDescribeIngressBackend"][];
+            /** @description Ingress 引用的唯一 Service/端口组合超过本次最多处理的 20 个。 */
+            truncated: boolean;
+            /** @description Namespace 的 Service 清单还有下一页；未出现的 Service 状态为未知而非不存在。 */
+            services_truncated: boolean;
+            /** @description 相关 EndpointSlice 还有下一页；端点计数为下限且不生成缺失端点结论。 */
+            endpoint_slices_truncated: boolean;
+        };
+        KubernetesDescribeIngressBackend: {
+            service_name: string;
+            port_name: string;
+            /** Format: int32 */
+            port_number: number;
+            references: string[];
+            /** @description 未出现表示 Service 清单被截断，无法确认该 Service 是否存在。 */
+            service_found?: boolean;
+            /** @description 仅在 Service 已找到时出现。 */
+            port_found?: boolean;
+            endpoint_state_available: boolean;
+            /** Format: int64 */
+            endpoint_slices: number;
+            /** Format: int64 */
+            endpoints: number;
+            /** Format: int64 */
+            ready_endpoints: number;
+            findings: components["schemas"]["KubernetesDescribeFinding"][];
         };
         KubernetesDescribeNodeResources: {
             /** Format: int64 */
@@ -4387,7 +4415,7 @@ export interface components {
          */
         KubernetesDescribeFinding: {
             /** @enum {string} */
-            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending";
+            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints";
             /**
              * @description findings 只报告问题，因此只有一个级别。
              * @enum {string}
@@ -7597,7 +7625,7 @@ export interface operations {
             504: components["responses"]["Timeout"];
         };
     };
-    describeKubernetesService: {
+    describeKubernetesNetworkingResource: {
         parameters: {
             query?: never;
             header?: never;
@@ -7611,7 +7639,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Service describe 视图 */
+            /** @description Service 或 Ingress describe 视图 */
             200: {
                 headers: {
                     [name: string]: unknown;

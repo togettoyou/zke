@@ -659,7 +659,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			rbac.PermissionClusterEventRead,
 			"cluster_id",
 		),
-		handlers.kubernetesDescribe.serviceResource,
+		handlers.kubernetesDescribe.networkingResource,
 	)
 	clusterRoutes.PUT(
 		"/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name",

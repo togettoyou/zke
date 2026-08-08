@@ -26,6 +26,175 @@ func testServiceDetail() kubernetesresource.NetworkingResourceDetail {
 	}
 }
 
+func testIngressDetail() kubernetesresource.NetworkingResourceDetail {
+	return kubernetesresource.NetworkingResourceDetail{
+		NetworkingResourceSummary: kubernetesresource.NetworkingResourceSummary{
+			Resource:   kubernetesresource.NetworkingIngresses,
+			APIVersion: "networking.k8s.io/v1", Kind: "Ingress", Namespace: "models",
+			Name: "inference", UID: "ingress-uid", ResourceVersion: "61",
+			Ingress: &kubernetesresource.IngressView{Spec: kubernetesresource.IngressSpec{
+				IngressClassName: "nginx",
+				Rules: []kubernetesresource.IngressRule{{
+					Host: "models.example.com",
+					Paths: []kubernetesresource.IngressPath{{
+						Path: "/v1", PathType: "Prefix",
+						Backend: kubernetesresource.IngressServiceBackend{Name: "inference-api", PortNumber: 80},
+					}},
+				}},
+			}},
+		},
+	}
+}
+
+func TestDescribeIngressJoinsBackendServicesAndEndpointSlices(t *testing.T) {
+	t.Parallel()
+
+	ready := false
+	portName, portNumber := "http", int32(8080)
+	slice := discoveryv1.EndpointSlice{
+		TypeMeta: metav1.TypeMeta{APIVersion: "discovery.k8s.io/v1", Kind: "EndpointSlice"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "inference-api-a", Namespace: "models",
+			Labels: map[string]string{discoveryv1.LabelServiceName: "inference-api"},
+		},
+		Ports: []discoveryv1.EndpointPort{{Name: &portName, Port: &portNumber}},
+		Endpoints: []discoveryv1.Endpoint{{
+			Addresses:  []string{"10.0.0.51"},
+			Conditions: discoveryv1.EndpointConditions{Ready: &ready},
+		}},
+	}
+	item, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&slice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := &fakeResourceAccess{
+		networking: testIngressDetail(),
+		networkingPage: kubernetesresource.NetworkingResourcePage{
+			Resources: []kubernetesresource.NetworkingResourceSummary{{
+				Resource:   kubernetesresource.NetworkingServices,
+				APIVersion: "v1", Kind: "Service", Namespace: "models", Name: "inference-api",
+				Service: &kubernetesresource.ServiceView{Spec: kubernetesresource.ServiceSpec{
+					Ports: []kubernetesresource.ServicePort{{Name: "http", Port: 80}},
+				}},
+			}},
+		},
+		lists: map[string]kubernetesresource.ResourcePage{
+			"endpointslices": {Items: []map[string]any{item}},
+		},
+	}
+	result, err := NewService(access, &fakeEventSource{}, Config{}).DescribeIngress(
+		context.Background(),
+		IngressInput{ClusterID: testClusterID, Namespace: "models", Name: "inference"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IngressBackends == nil || len(result.IngressBackends.Items) != 1 {
+		t.Fatalf("missing Ingress backend status: %+v", result)
+	}
+	backend := result.IngressBackends.Items[0]
+	if backend.ServiceFound == nil || !*backend.ServiceFound ||
+		backend.PortFound == nil || !*backend.PortFound ||
+		backend.Endpoints != 1 || backend.ReadyEndpoints != 0 ||
+		!hasFindingCode(backend.Findings, FindingIngressBackendNoReadyEndpoints) {
+		t.Fatalf("unexpected backend diagnosis: %+v", backend)
+	}
+	if access.networkingListInput.Resource != kubernetesresource.NetworkingServices ||
+		access.networkingListInput.Limit != kubernetesresource.MaxResourceListLimit ||
+		access.listInput["endpointslices"].LabelSelector != "kubernetes.io/service-name in (inference-api)" {
+		t.Fatalf("unexpected inventory queries: services=%+v slices=%+v",
+			access.networkingListInput, access.listInput["endpointslices"])
+	}
+	if !hasFindingCode(result.Findings, FindingIngressAddressPending) {
+		t.Fatalf("missing Ingress address finding: %+v", result.Findings)
+	}
+}
+
+func TestDescribeIngressOnlyReportsMissingServiceFromCompleteInventory(t *testing.T) {
+	t.Parallel()
+
+	access := &fakeResourceAccess{networking: testIngressDetail()}
+	result, err := NewService(access, &fakeEventSource{}, Config{}).DescribeIngress(
+		context.Background(),
+		IngressInput{ClusterID: testClusterID, Namespace: "models", Name: "inference"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IngressBackends == nil ||
+		!hasFindingCode(result.IngressBackends.Items[0].Findings, FindingIngressBackendServiceNotFound) {
+		t.Fatalf("complete inventory did not report missing Service: %+v", result.IngressBackends)
+	}
+
+	access.networkingPage.ContinueToken = "next-page"
+	result, err = NewService(access, &fakeEventSource{}, Config{}).DescribeIngress(
+		context.Background(),
+		IngressInput{ClusterID: testClusterID, Namespace: "models", Name: "inference"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := result.IngressBackends.Items[0]
+	if backend.ServiceFound != nil || len(backend.Findings) != 0 {
+		t.Fatalf("truncated inventory produced a definitive missing-Service finding: %+v", backend)
+	}
+}
+
+func TestDescribeIngressReportsMissingServicePort(t *testing.T) {
+	t.Parallel()
+
+	access := &fakeResourceAccess{
+		networking: testIngressDetail(),
+		networkingPage: kubernetesresource.NetworkingResourcePage{
+			Resources: []kubernetesresource.NetworkingResourceSummary{{
+				Resource:  kubernetesresource.NetworkingServices,
+				Namespace: "models", Name: "inference-api",
+				Service: &kubernetesresource.ServiceView{Spec: kubernetesresource.ServiceSpec{
+					Ports: []kubernetesresource.ServicePort{{Name: "https", Port: 443}},
+				}},
+			}},
+		},
+	}
+	result, err := NewService(access, &fakeEventSource{}, Config{}).DescribeIngress(
+		context.Background(),
+		IngressInput{ClusterID: testClusterID, Namespace: "models", Name: "inference"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := result.IngressBackends.Items[0]
+	if backend.PortFound == nil || *backend.PortFound ||
+		!hasFindingCode(backend.Findings, FindingIngressBackendPortNotFound) {
+		t.Fatalf("missing backend-port finding: %+v", backend)
+	}
+	if _, called := access.listInput["endpointslices"]; called {
+		t.Fatal("EndpointSlices were listed for a backend whose Service port does not exist")
+	}
+}
+
+func TestIngressFindingsKeepControllerRejectionEvidence(t *testing.T) {
+	t.Parallel()
+
+	findings := ingressFindings(testIngressDetail(), []Event{{
+		UID: "event-rejected", Type: "Warning", Reason: "Rejected",
+		Message: "annotation contains an invalid value",
+	}})
+	if !hasFindingCode(findings, FindingIngressAddressPending) ||
+		!hasFindingCode(findings, FindingIngressControllerRejected) {
+		t.Fatalf("missing Ingress findings: %+v", findings)
+	}
+	var rejected Finding
+	for _, finding := range findings {
+		if finding.Code == FindingIngressControllerRejected {
+			rejected = finding
+		}
+	}
+	if rejected.Reason != "Rejected" || rejected.Message != "annotation contains an invalid value" ||
+		len(rejected.Evidence) != 1 || rejected.Evidence[0].Name != "event-rejected" {
+		t.Fatalf("controller evidence was not preserved: %+v", rejected)
+	}
+}
+
 func TestDescribeSelectorlessServiceUsesManualEndpointSlices(t *testing.T) {
 	t.Parallel()
 
