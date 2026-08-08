@@ -892,6 +892,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 返回工作负载本身、它所拥有的对象，以及三者合并后的 Kubernetes Event 时间线。
+         *
+         *     工作负载本身通常不是答案：副本不足只是现象，原因在没能创建 Pod 的控制器上，或在已创建
+         *     但起不来的 Pod 上。因此接口按类型沿 owner 链下钻：Deployment → ReplicaSet → Pod，
+         *     CronJob → Job（不再下钻到 Pod，那属于对应 Job 的 describe），StatefulSet、DaemonSet 与
+         *     Job 直接到 Pod。可使用 Pod Selector 的链路先以它缩小列表，最终每一跳都按 owner UID
+         *     过滤，因此不会混入同一 Namespace 中其他控制器的对象。
+         *
+         *     related.pods 按不健康优先排序后截断，related.controllers 取最近创建的若干个；工作负载
+         *     模板引用的 PVC 位于 related.persistent_volume_claims，Pending PVC 会给出 PVCPending 结论。
+         *     truncated=true 表示集群中还有未展示的关联对象。每个 Pod 携带按 Pod 规则得出的 findings；
+         *     工作负载自身的 findings 只包含它作为控制器的问题：进度停滞、副本创建被拒绝、任务失败。
+         *     Event 读取次数有上限，只有排在前面的关联对象会单独读取自己的 Event。
+         *
+         *     与其他 describe 一致，要求同时持有 `cluster.read` 与 `cluster.event.read`。关联对象读取
+         *     失败时以 degraded_sections 说明，工作负载本身仍然返回。
+         */
+        get: operations["describeKubernetesWorkload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/revisions": {
         parameters: {
             query?: never;
@@ -4149,19 +4183,45 @@ export interface components {
         KubernetesDescribe: {
             target: components["schemas"]["KubernetesDescribeTarget"];
             /**
-             * @description 对象所属的家族投影。pod 表示同时返回 Pod 详情与 Pod 诊断规则的结果；
+             * @description 对象所属的家族投影。pod 与 workload 分别返回该家族的详情与诊断结果；
              *     generic 表示该类型尚无家族规则，只返回身份与 Event。
              * @enum {string}
              */
-            family: "pod" | "generic";
+            family: "pod" | "workload" | "generic";
             pod?: components["schemas"]["KubernetesPodDetail"];
+            workload?: components["schemas"]["KubernetesWorkloadDetail"];
+            related?: components["schemas"]["KubernetesDescribeRelated"];
             events: components["schemas"]["KubernetesDescribeEvents"];
             findings: components["schemas"]["KubernetesDescribeFinding"][];
             /**
              * @description 请求了但没有拿到的部分。为空表示结果完整；静默丢弃某一部分会被读成
              *     “这里没有问题”，因此缺失必须显式说明。
              */
-            degraded_sections: "events"[];
+            degraded_sections: ("events" | "events.related" | "related" | "related.persistent_volume_claims")[];
+        };
+        /**
+         * @description 工作负载与运行它的 Pod 之间的对象。两组分开的原因是它们回答不同的问题：
+         *     Deployment 的 ReplicaSet 是「Pod 还没被创建出来」的记录位置（配额或准入策略在 Pod
+         *     存在之前就拒绝了它），Pod 则记录创建之后发生的一切。
+         */
+        KubernetesDescribeRelated: {
+            controllers: components["schemas"]["KubernetesDescribeRelatedObject"][];
+            pods: components["schemas"]["KubernetesDescribeRelatedObject"][];
+            /** @description 工作负载 Pod 模板引用的 PVC；Pending 的排在前面并携带 PVCPending 结论。 */
+            persistent_volume_claims: components["schemas"]["KubernetesDescribeRelatedObject"][];
+            /** @description 工作负载拥有或引用的关联对象多于本次返回；不保证被省略的对象均为健康状态。 */
+            truncated: boolean;
+        };
+        KubernetesDescribeRelatedObject: {
+            kind: string;
+            name: string;
+            uid: string;
+            namespace: string;
+            /** @description 对象对自身的概括：Pod/PVC 的 phase，ReplicaSet 或 Job 的副本计数。 */
+            status: string;
+            ready: boolean;
+            /** @description 按该对象所属家族的规则得出的结论。工作负载的失败原因通常在这里，而不在工作负载自身。 */
+            findings: components["schemas"]["KubernetesDescribeFinding"][];
         };
         /**
          * @description 实际被描述的对象，取自集群中的活对象而非请求参数：以请求名称配上另一个对象的
@@ -4202,8 +4262,18 @@ export interface components {
              *     `spec.containers{name}`；对象级 Event 没有该字段。
              */
             container?: string;
+            regarding: components["schemas"]["KubernetesDescribeEventSubject"];
             first_seen?: components["schemas"]["Timestamp"];
             last_seen?: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description Event 所指向的对象。工作负载的 describe 会把工作负载、其下控制器与 Pod 的 Event 合成
+         *     一条时间线，「某个容器起不来」这句话必须说明是哪个 Pod 的。
+         */
+        KubernetesDescribeEventSubject: {
+            kind: string;
+            name: string;
+            uid: string;
         };
         /**
          * @description 对象没有按预期运行的一条原因。只携带稳定 code 与上游原文，不携带服务端自撰的解释：
@@ -4212,7 +4282,7 @@ export interface components {
          */
         KubernetesDescribeFinding: {
             /** @enum {string} */
-            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure";
+            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed";
             /**
              * @description findings 只报告问题，因此只有一个级别。
              * @enum {string}
@@ -4230,8 +4300,8 @@ export interface components {
         };
         KubernetesDescribeEvidence: {
             /** @enum {string} */
-            kind: "Condition" | "ContainerState" | "Event";
-            /** @description Condition 类型、容器名，或 Event UID。 */
+            kind: "Condition" | "ContainerState" | "Event" | "ObjectStatus";
+            /** @description Condition 类型、容器名、Event UID，或对象状态字段名。 */
             name: string;
         };
         KubernetesPodExecSessionRequest: {
@@ -6971,6 +7041,41 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    describeKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 工作负载 describe 视图 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDescribe"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

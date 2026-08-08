@@ -23,6 +23,20 @@ const (
 	FindingOOMKilled            = "OOMKilled"
 	FindingVolumeMountFailure   = "VolumeMountFailure"
 	FindingProbeFailure         = "ProbeFailure"
+	FindingPVCPending           = "PVCPending"
+)
+
+// The findings derived for a workload itself.
+//
+// They are deliberately few. A workload that is short of replicas is a symptom,
+// and its cause is on the Pods that did not start or on the controller that
+// could not create them — which is why a workload describe carries those objects
+// and their findings rather than restating the shortfall as a diagnosis of its
+// own.
+const (
+	FindingWorkloadProgressStalled = "WorkloadProgressStalled"
+	FindingReplicaCreateRejected   = "ReplicaCreateRejected"
+	FindingWorkloadFailed          = "WorkloadFailed"
 )
 
 // Container waiting reasons that mean the image never arrived.
@@ -52,7 +66,21 @@ var volumeFailureEventReasons = map[string]struct{}{
 	"FailedMapVolume":    {},
 }
 
+// PVC Event reasons that explain why a claim is still Pending. Kubernetes can
+// legitimately wait for a Pod to be scheduled before binding, while a failed
+// provisioner or binding decision is actionable immediately; both belong next
+// to the Pending phase rather than being guessed from it.
+var pendingPVCEventReasons = map[string]struct{}{
+	"WaitForFirstConsumer": {},
+	"ProvisioningFailed":   {},
+	"FailedBinding":        {},
+}
+
 const (
+	progressingConditionType    = "Progressing"
+	replicaFailureConditionType = "ReplicaFailure"
+	failedConditionType         = "Failed"
+	createFailedEventReason     = "FailedCreate"
 	scheduledConditionType      = "PodScheduled"
 	readyConditionType          = "Ready"
 	conditionStatusFalse        = "False"
@@ -94,6 +122,157 @@ func podFindings(
 		findings = append(findings, containerFindings(container, events)...)
 	}
 	return append(findings, probeFindings(pod, events)...)
+}
+
+// workloadFindings reads a workload's own conditions and the Events of it and
+// the objects under it.
+//
+// Everything here is about the workload as a controller: whether it gave up
+// making progress, whether something refused the Pods it tried to create,
+// whether it finished by failing. Why an individual Pod did not run is a Pod
+// finding, and it stays on that Pod.
+func workloadFindings(
+	workload kubernetesresource.WorkloadDetail,
+	events []Event,
+) []Finding {
+	findings := make([]Finding, 0, 2)
+	if finding, found := replicaFailureFinding(workload, events); found {
+		findings = append(findings, finding)
+	}
+	if condition, found := workloadCondition(
+		workload, progressingConditionType,
+	); found && condition.Status == conditionStatusFalse {
+		// `Progressing=False` is the Deployment controller reporting that it has
+		// stopped waiting: the rollout passed its progress deadline. The reason
+		// says which deadline and the message names the ReplicaSet involved.
+		findings = append(findings, Finding{
+			Code:     FindingWorkloadProgressStalled,
+			Severity: SeverityWarning,
+			Reason:   condition.Reason,
+			Message:  condition.Message,
+			Evidence: []Evidence{
+				{Kind: EvidenceCondition, Name: progressingConditionType},
+			},
+		})
+	}
+	if condition, found := workloadCondition(
+		workload, failedConditionType,
+	); found && condition.Status == conditionStatusTrue {
+		// A Job that exhausted its backoff limit or ran past its deadline. The
+		// reason is the Kubernetes one — `BackoffLimitExceeded`,
+		// `DeadlineExceeded` — and the Pods carry what actually went wrong.
+		findings = append(findings, Finding{
+			Code:     FindingWorkloadFailed,
+			Severity: SeverityWarning,
+			Reason:   condition.Reason,
+			Message:  condition.Message,
+			Evidence: []Evidence{
+				{Kind: EvidenceCondition, Name: failedConditionType},
+			},
+		})
+	}
+	return findings
+}
+
+// persistentVolumeClaimFindings reports a referenced claim that has not bound.
+// The phase is the stable fact; when the PVC's own Event was inside the bounded
+// event window, its reason and message explain whether binding is waiting for a
+// consumer or failed at the provisioner.
+func persistentVolumeClaimFindings(
+	claim kubernetesresource.StorageResourceDetail,
+	events []Event,
+) []Finding {
+	if claim.PersistentVolumeClaim == nil ||
+		claim.PersistentVolumeClaim.Phase != "Pending" {
+		return []Finding{}
+	}
+	finding := Finding{
+		Code:     FindingPVCPending,
+		Severity: SeverityWarning,
+		Reason:   "Pending",
+		Evidence: []Evidence{{
+			Kind: EvidenceObjectStatus,
+			Name: "phase",
+		}},
+	}
+	if event, found := latestEvent(events, func(candidate Event) bool {
+		_, matches := pendingPVCEventReasons[candidate.Reason]
+		return matches
+	}); found {
+		finding.Reason = event.Reason
+		finding.Message = event.Message
+		finding.Evidence = append(finding.Evidence, Evidence{
+			Kind: EvidenceEvent,
+			Name: event.UID,
+		})
+	} else if claim.PersistentVolumeClaimDetail != nil {
+		for _, condition := range claim.PersistentVolumeClaimDetail.Conditions {
+			if condition.Status != conditionStatusTrue {
+				continue
+			}
+			finding.Reason = condition.Reason
+			finding.Message = condition.Message
+			finding.Evidence = append(finding.Evidence, Evidence{
+				Kind: EvidenceCondition,
+				Name: condition.Type,
+			})
+			break
+		}
+	}
+	return []Finding{finding}
+}
+
+// replicaFailureFinding reports Pods that were refused before they existed.
+//
+// This is the failure a Pod-level rule can never see, because there is no Pod:
+// a ResourceQuota, a Pod Security admission policy or a missing ServiceAccount
+// makes the creation itself fail, and the only record is the controller's
+// condition and its `FailedCreate` Event. For a Deployment that Event is on the
+// ReplicaSet rather than the Deployment, which is why the workload describe
+// reads the Events of the controllers under it as well.
+func replicaFailureFinding(
+	workload kubernetesresource.WorkloadDetail,
+	events []Event,
+) (Finding, bool) {
+	finding := Finding{
+		Code:     FindingReplicaCreateRejected,
+		Severity: SeverityWarning,
+		Evidence: []Evidence{},
+	}
+	condition, found := workloadCondition(workload, replicaFailureConditionType)
+	if found && condition.Status == conditionStatusTrue {
+		finding.Reason, finding.Message = condition.Reason, condition.Message
+		finding.Evidence = append(finding.Evidence, Evidence{
+			Kind: EvidenceCondition, Name: replicaFailureConditionType,
+		})
+	}
+	event, hasEvent := latestEvent(events, func(candidate Event) bool {
+		return candidate.Reason == createFailedEventReason
+	})
+	if hasEvent {
+		if finding.Message == "" {
+			finding.Reason, finding.Message = event.Reason, event.Message
+		}
+		finding.Evidence = append(finding.Evidence, Evidence{
+			Kind: EvidenceEvent, Name: event.UID,
+		})
+	}
+	if len(finding.Evidence) == 0 {
+		return Finding{}, false
+	}
+	return finding, true
+}
+
+func workloadCondition(
+	workload kubernetesresource.WorkloadDetail,
+	conditionType string,
+) (kubernetesresource.WorkloadCondition, bool) {
+	for _, condition := range workload.Conditions {
+		if condition.Type == conditionType {
+			return condition, true
+		}
+	}
+	return kubernetesresource.WorkloadCondition{}, false
 }
 
 // unschedulableFinding reports a Pod the scheduler could not place.

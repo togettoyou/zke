@@ -12,12 +12,17 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
+	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 )
 
 type kubernetesDescribeService interface {
 	DescribePod(
 		context.Context,
 		kubernetesdescribe.PodInput,
+	) (kubernetesdescribe.Result, error)
+	DescribeWorkload(
+		context.Context,
+		kubernetesdescribe.WorkloadInput,
 	) (kubernetesdescribe.Result, error)
 	DescribeResource(
 		context.Context,
@@ -65,6 +70,40 @@ func (handler *kubernetesDescribeHandler) pod(c *gin.Context) {
 	)
 	cancel()
 	handler.finish(c, "describe Kubernetes Pod", result, err)
+}
+
+func (handler *kubernetesDescribeHandler) workload(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if len(c.Request.URL.Query()) != 0 {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"workload describe does not accept query parameters")
+		return
+	}
+	resource, ok := kubernetesresource.ParseWorkloadResource(
+		c.Param("workload_resource"),
+	)
+	if !ok {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"invalid workload resource")
+		return
+	}
+	if handler.service == nil {
+		writeError(c, http.StatusServiceUnavailable, "unavailable",
+			"Kubernetes describe is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.DescribeWorkload(
+		ctx,
+		kubernetesdescribe.WorkloadInput{
+			ClusterID: c.Param("cluster_id"),
+			Resource:  resource,
+			Namespace: c.Param("namespace_name"),
+			Name:      c.Param("workload_name"),
+		},
+	)
+	cancel()
+	handler.finish(c, "describe Kubernetes workload", result, err)
 }
 
 func (handler *kubernetesDescribeHandler) resource(c *gin.Context) {

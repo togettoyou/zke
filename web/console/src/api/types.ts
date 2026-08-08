@@ -116,6 +116,8 @@ export type KubernetesDescribeEvent = Schemas["KubernetesDescribeEvent"];
 export type KubernetesDescribeFinding = Schemas["KubernetesDescribeFinding"];
 export type KubernetesDescribeFindingCode = KubernetesDescribeFinding["code"];
 export type KubernetesDescribeEvidence = Schemas["KubernetesDescribeEvidence"];
+export type KubernetesDescribeRelated = Schemas["KubernetesDescribeRelated"];
+export type KubernetesDescribeRelatedObject = Schemas["KubernetesDescribeRelatedObject"];
 
 export type AuditEvent = Schemas["AuditEvent"];
 export type AuditEventPage = Schemas["AuditEventPage"];

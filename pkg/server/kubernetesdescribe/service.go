@@ -62,14 +62,37 @@ const (
 // is the part the Console could not assemble before. It gets no findings,
 // because a rule that has not been written for a type is not a rule.
 const (
-	FamilyPod     = "pod"
-	FamilyGeneric = "generic"
+	FamilyPod      = "pod"
+	FamilyWorkload = "workload"
+	FamilyGeneric  = "generic"
 )
 
 // ResourceAccess is the read half of the Kubernetes resource service. Describe
 // never writes.
 type ResourceAccess interface {
 	GetPod(context.Context, string, string, string) (kubernetesresource.PodDetail, error)
+	ListPodDetails(
+		context.Context,
+		kubernetesresource.ListPodsInput,
+	) ([]kubernetesresource.PodDetail, bool, error)
+	GetWorkload(
+		context.Context,
+		string,
+		string,
+		kubernetesresource.WorkloadResource,
+		string,
+	) (kubernetesresource.WorkloadDetail, error)
+	GetStorageResource(
+		context.Context,
+		string,
+		string,
+		kubernetesresource.StorageResource,
+		string,
+	) (kubernetesresource.StorageResourceDetail, error)
+	ListResources(
+		context.Context,
+		kubernetesresource.ListResourcesInput,
+	) (kubernetesresource.ResourcePage, error)
 	GetResource(
 		context.Context,
 		kubernetesresource.GetResourceInput,
@@ -144,13 +167,51 @@ type Result struct {
 	// The family projection, present for the families that have one. Same shape
 	// the family's own detail endpoint returns, so the Console renders it with
 	// the components it already has.
-	Pod      *kubernetesresource.PodDetail `json:"pod,omitempty"`
-	Events   Events                        `json:"events"`
-	Findings []Finding                     `json:"findings"`
+	Pod      *kubernetesresource.PodDetail      `json:"pod,omitempty"`
+	Workload *kubernetesresource.WorkloadDetail `json:"workload,omitempty"`
+	// What the described object owns, for the families where the object itself is
+	// never the thing that failed: a Deployment that will not come up is a
+	// statement about its Pods.
+	Related  *Related  `json:"related,omitempty"`
+	Events   Events    `json:"events"`
+	Findings []Finding `json:"findings"`
 	// Sections that were asked for and did not arrive. Empty means the answer is
 	// complete; a describe that silently dropped a section would read as
 	// "nothing wrong here".
 	DegradedSections []string `json:"degraded_sections"`
+}
+
+// Related is what stands between a workload and the Pods that run it.
+//
+// The two groups are kept apart because they answer different questions. A
+// Deployment's ReplicaSet is where a rejected creation is reported — a quota or
+// an admission policy refuses the Pod before one exists — while the Pods are
+// where everything that happens after creation is reported. Reading them as one
+// list would put "there is no Pod" next to "this Pod will not start" as if they
+// were the same kind of fact.
+type Related struct {
+	Controllers            []RelatedObject `json:"controllers"`
+	Pods                   []RelatedObject `json:"pods"`
+	PersistentVolumeClaims []RelatedObject `json:"persistent_volume_claims"`
+	// The workload owns or references more objects than this bounded view carries.
+	// Each family defines its own order; callers must not infer that omitted
+	// objects are healthy.
+	Truncated bool `json:"truncated"`
+}
+
+type RelatedObject struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	UID       string `json:"uid"`
+	Namespace string `json:"namespace"`
+	// The object's own summary of itself: a Pod's phase, a ReplicaSet's or Job's
+	// replica counts.
+	Status string `json:"status"`
+	Ready  bool   `json:"ready"`
+	// Findings derived for this object, by the rules of its own family. A
+	// workload's failure is usually one of these rather than anything on the
+	// workload itself.
+	Findings []Finding `json:"findings"`
 }
 
 type Events struct {
@@ -173,9 +234,20 @@ type Event struct {
 	// The container the Event was reported against, when it named one. This is
 	// what lets a container's finding cite the Event that explains it instead of
 	// the newest Event about the Pod.
-	Container string     `json:"container,omitempty"`
-	FirstSeen *time.Time `json:"first_seen,omitempty"`
-	LastSeen  *time.Time `json:"last_seen,omitempty"`
+	Container string `json:"container,omitempty"`
+	// Which object the Event is about. A workload's describe merges the Events of
+	// the workload, of the controllers under it and of its Pods into one
+	// timeline, and a line saying a container could not start means nothing
+	// without saying which Pod it was.
+	Regarding EventSubject `json:"regarding"`
+	FirstSeen *time.Time   `json:"first_seen,omitempty"`
+	LastSeen  *time.Time   `json:"last_seen,omitempty"`
+}
+
+type EventSubject struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	UID  string `json:"uid"`
 }
 
 // Finding is one reason the object is not doing what it was asked to do.
@@ -209,6 +281,7 @@ const (
 	EvidenceCondition      = "Condition"
 	EvidenceContainerState = "ContainerState"
 	EvidenceEvent          = "Event"
+	EvidenceObjectStatus   = "ObjectStatus"
 )
 
 type Evidence struct {
@@ -317,31 +390,45 @@ func (service *Service) objectEvents(
 		return Events{Items: []Event{}, Omitted: EventsOmittedUnsupportedScope},
 			[]string{}
 	}
-	if service.events == nil || target.UID == "" {
-		return Events{Items: []Event{}, Omitted: EventsOmittedUnavailable},
-			[]string{"events"}
-	}
-	collector := &eventCollector{limit: service.eventLimit}
-	// Filtered by UID rather than by name: a Pod that was deleted and recreated
-	// under the same name leaves its predecessor's Events behind, and attaching
-	// those to the live object is how a describe explains a failure that already
-	// ended.
-	_, err := service.events.Stream(ctx, resourcewatch.Input{
-		ClusterID:      clusterID,
-		Namespace:      target.Namespace,
-		IncludeInitial: true,
-		Follow:         false,
-		InitialLimit:   service.eventLimit,
-		ResourceUID:    target.UID,
-	}, collector)
+	items, truncated, err := service.readObjectEvents(
+		ctx,
+		clusterID,
+		target.Namespace,
+		target.UID,
+	)
 	if err != nil {
 		return Events{Items: []Event{}, Omitted: EventsOmittedUnavailable},
 			[]string{"events"}
 	}
-	return Events{
-		Items:     collector.collected(),
-		Truncated: collector.truncated,
-	}, []string{}
+	return Events{Items: items, Truncated: truncated}, []string{}
+}
+
+// readObjectEvents reads the bounded Event snapshot of exactly one object.
+//
+// Filtered by UID rather than by name: an object deleted and recreated under the
+// same name leaves its predecessor's Events behind, and attaching those to the
+// live object is how a describe explains a failure that already ended.
+func (service *Service) readObjectEvents(
+	ctx context.Context,
+	clusterID string,
+	namespace string,
+	uid string,
+) ([]Event, bool, error) {
+	if service.events == nil || namespace == "" || uid == "" {
+		return nil, false, ErrInvalidInput
+	}
+	collector := &eventCollector{limit: service.eventLimit}
+	if _, err := service.events.Stream(ctx, resourcewatch.Input{
+		ClusterID:      clusterID,
+		Namespace:      namespace,
+		IncludeInitial: true,
+		Follow:         false,
+		InitialLimit:   service.eventLimit,
+		ResourceUID:    uid,
+	}, collector); err != nil {
+		return nil, false, err
+	}
+	return collector.collected(), collector.truncated, nil
 }
 
 // eventCollector is the snapshot counterpart of the SSE sink: same Resource
@@ -415,6 +502,11 @@ func describeEvent(event corev1.Event) Event {
 		Count:     event.Count,
 		Source:    eventSource(event),
 		Container: eventContainer(event.InvolvedObject.FieldPath),
+		Regarding: EventSubject{
+			Kind: event.InvolvedObject.Kind,
+			Name: event.InvolvedObject.Name,
+			UID:  string(event.InvolvedObject.UID),
+		},
 	}
 	if !event.FirstTimestamp.IsZero() {
 		value := event.FirstTimestamp.UTC()

@@ -6,6 +6,8 @@ import type {
   KubernetesDescribeEvent,
   KubernetesDescribeFinding,
   KubernetesDescribeFindingCode,
+  KubernetesDescribeRelated,
+  KubernetesDescribeRelatedObject,
 } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { DataTable } from "@/components/common/data-table";
@@ -58,6 +60,22 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
     title: "探针未通过",
     hint: "readiness 或 liveness 探针持续失败，Pod 因此不进入服务。核对探针路径、端口与初始延迟。",
   },
+  PVCPending: {
+    title: "存储声明等待绑定",
+    hint: "工作负载引用的 PVC 尚未绑定。核对 StorageClass、动态供应器、容量与访问模式；WaitForFirstConsumer 表示需要先完成 Pod 调度。",
+  },
+  WorkloadProgressStalled: {
+    title: "发布进度停滞",
+    hint: "控制器已超过进度期限并停止等待。原因通常在下方未就绪的 Pod 上。",
+  },
+  ReplicaCreateRejected: {
+    title: "Pod 创建被拒绝",
+    hint: "Pod 在被创建出来之前就被拒绝，因此没有 Pod 可查。常见于 ResourceQuota 超限、Pod Security 准入策略或 ServiceAccount 缺失。",
+  },
+  WorkloadFailed: {
+    title: "任务失败",
+    hint: "Job 已达到重试上限或运行超期。具体失败原因在它的 Pod 与容器退出码上。",
+  },
 };
 
 const OMITTED_EVENTS: Record<string, string> = {
@@ -101,6 +119,10 @@ export function DescribeView({
   onRetry,
   onBack,
 }: DescribeViewProps) {
+  // A workload's timeline carries the Events of several objects, so each line
+  // has to say which one it is about. A single object's does not: every line
+  // would repeat the name in the page header.
+  const aggregated = Boolean(data?.related);
   const columns = useMemo<ColumnDef<KubernetesDescribeEvent, unknown>[]>(
     () => [
       {
@@ -108,6 +130,24 @@ export function DescribeView({
         size: 90,
         cell: ({ row }) => <StatusBadge kind="eventType" value={row.original.type} />,
       },
+      ...(aggregated
+        ? [
+            {
+              header: "对象",
+              size: 190,
+              cell: ({ row }: { row: { original: KubernetesDescribeEvent } }) => (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-foreground break-all">
+                    {row.original.regarding.name || "—"}
+                  </span>
+                  <span className="text-subtle-foreground text-xs">
+                    {row.original.regarding.kind || "未知类型"}
+                  </span>
+                </div>
+              ),
+            } satisfies ColumnDef<KubernetesDescribeEvent, unknown>,
+          ]
+        : []),
       {
         header: "原因",
         size: 170,
@@ -153,7 +193,7 @@ export function DescribeView({
         ),
       },
     ],
-    [],
+    [aggregated],
   );
 
   return (
@@ -176,13 +216,14 @@ export function DescribeView({
       ) : isLoading || !data ? (
         <LoadingState />
       ) : (
-        <div className="flex min-h-0 flex-col gap-3">
-          {data.findings.length === 0 ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-1">
+          {data.findings.length === 0 && !relatedHasFindings(data) ? (
             <Alert tone="success">
               未发现已知问题。诊断规则只覆盖已建模的类型与已知失败模式，没有结论不等于对象一定健康，
               仍可结合下方事件与对象详情判断。
             </Alert>
-          ) : (
+          ) : null}
+          {data.findings.length > 0 ? (
             <div className="grid gap-2">
               {data.findings.map((finding, index) => (
                 <FindingCard
@@ -191,33 +232,143 @@ export function DescribeView({
                 />
               ))}
             </div>
-          )}
+          ) : null}
 
+          {data.related ? <RelatedSection related={data.related} /> : null}
+
+          {data.degraded_sections.includes("related") ? (
+            <Alert tone="warning">
+              本次未能读取该工作负载拥有的对象，因此下方只有它自身的状态与事件。
+            </Alert>
+          ) : null}
+          {data.degraded_sections.includes("related.persistent_volume_claims") ? (
+            <Alert tone="warning">
+              部分工作负载引用的 PVC 未能读取，关联存储与诊断结论可能不完整。
+            </Alert>
+          ) : null}
           {data.events.omitted ? (
             <Alert tone={data.events.omitted === "unavailable" ? "warning" : "info"}>
               {OMITTED_EVENTS[data.events.omitted] ?? `事件未返回：${data.events.omitted}`}
             </Alert>
           ) : null}
+          {data.degraded_sections.includes("events.related") ? (
+            <Alert tone="warning">部分关联对象的事件未能读取，时间线并不完整。</Alert>
+          ) : null}
           {data.events.truncated ? (
             <Alert tone="info">
-              该对象的事件多于本次窗口，只展示最近的一部分；更早的事件可在事件页按对象查看。
+              事件多于本次窗口，只展示最近的一部分；更早的事件可在事件页按对象查看。
             </Alert>
           ) : null}
 
-          <Card className="flex min-h-0 flex-1 flex-col">
-            <CardTitle>该对象的事件</CardTitle>
+          {/* Keep enough viewport for several rows. On a short window the whole
+              diagnosis scrolls, instead of shrinking this table to a header and
+              a sliver of one row. */}
+          <Card className="flex min-h-72 flex-1 flex-col">
+            <CardTitle>{aggregated ? "事件时间线" : "该对象的事件"}</CardTitle>
             <div className="mt-2 flex min-h-0 flex-1 flex-col">
               <DataTable
                 columns={columns}
                 data={data.events.items}
                 rowKey={(event) => event.uid}
-                emptyTitle="没有该对象的事件"
-                emptyDescription="集群中没有属于该对象的 Kubernetes Event，或事件已按保留期被回收。"
+                emptyTitle="没有相关事件"
+                emptyDescription="集群中没有属于这些对象的 Kubernetes Event，或事件已按保留期被回收。"
               />
             </div>
           </Card>
         </div>
       )}
+    </div>
+  );
+}
+
+function relatedHasFindings(data: KubernetesDescribe): boolean {
+  const related = data.related;
+  if (!related) {
+    return false;
+  }
+  return [...related.controllers, ...related.persistent_volume_claims, ...related.pods].some(
+    (object) => object.findings.length > 0,
+  );
+}
+
+/**
+ * What the workload owns.
+ *
+ * A workload that will not come up is almost always a statement about these
+ * objects rather than about itself, so they are given the same weight as the
+ * workload's own findings: unhealthy first, each carrying the conclusion drawn
+ * for it. The healthy ones stay as one line — they are context, and a page that
+ * spent ten rows on the replicas that are fine would bury the one that is not.
+ */
+function RelatedSection({ related }: { related: KubernetesDescribeRelated }) {
+  const unhealthy = related.pods.filter((pod) => !pod.ready || pod.findings.length > 0);
+  const healthy = related.pods.filter((pod) => pod.ready && pod.findings.length === 0);
+  if (
+    related.controllers.length === 0 &&
+    related.persistent_volume_claims.length === 0 &&
+    related.pods.length === 0
+  ) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardTitle>关联对象</CardTitle>
+      <div className="mt-2 grid gap-2">
+        {related.controllers.map((controller) => (
+          <RelatedRow key={controller.uid} object={controller} />
+        ))}
+        {related.persistent_volume_claims.map((claim) => (
+          <RelatedRow key={claim.uid} object={claim} />
+        ))}
+        {unhealthy.map((pod) => (
+          <RelatedRow key={pod.uid} object={pod} />
+        ))}
+        {healthy.length > 0 ? (
+          <div className="text-subtle-foreground flex flex-wrap items-center gap-1.5 text-xs">
+            <span>就绪 {healthy.length} 个：</span>
+            {healthy.map((pod) => (
+              <span key={pod.uid} className="zke-mono break-all">
+                {pod.name}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {related.truncated ? (
+          <p className="text-subtle-foreground text-xs">
+            该工作负载拥有或引用的对象多于此处展示的；这里只展示有界窗口，其余对象已省略。
+          </p>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+function RelatedRow({ object }: { object: KubernetesDescribeRelatedObject }) {
+  return (
+    <div className="border-border/60 rounded-control grid gap-1 border p-2.5">
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
+        <span className="text-foreground font-medium break-all">{object.name}</span>
+        <span className="text-subtle-foreground text-xs">{object.kind}</span>
+        <Badge tone={object.ready ? "success" : "warning"}>{object.status || "—"}</Badge>
+      </div>
+      {object.findings.map((finding, index) => (
+        <div key={`${finding.code}-${finding.scope ?? ""}-${index}`} className="grid gap-0.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge tone="warning">{FINDING_LABELS[finding.code]?.title ?? finding.code}</Badge>
+            {finding.scope ? (
+              <span className="text-muted-foreground text-xs break-all">容器 {finding.scope}</span>
+            ) : null}
+            {finding.exit_code !== undefined ? (
+              <span className="zke-tnum text-subtle-foreground text-xs">
+                退出码 {finding.exit_code}
+              </span>
+            ) : null}
+          </div>
+          {finding.message ? (
+            <span className="text-muted-foreground text-xs break-words">{finding.message}</span>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }
@@ -278,6 +429,8 @@ function evidenceLabel(kind: string): string {
       return "容器状态";
     case "Event":
       return "事件";
+    case "ObjectStatus":
+      return "对象状态";
     default:
       return kind;
   }
@@ -313,15 +466,37 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
       lines.push(`      ${finding.message}`);
     }
   }
+  if (data.related) {
+    const objects = [
+      ...data.related.controllers,
+      ...data.related.persistent_volume_claims,
+      ...data.related.pods,
+    ];
+    lines.push("", `关联对象（${objects.length}${data.related.truncated ? "，已截断" : ""}）`);
+    for (const object of objects) {
+      lines.push(`  - ${object.kind}/${object.name} ${object.status}`);
+      for (const finding of object.findings) {
+        const label = FINDING_LABELS[finding.code]?.title ?? finding.code;
+        lines.push(
+          `      ${label} [${finding.code}]${finding.scope ? ` 容器=${finding.scope}` : ""}` +
+            `${finding.message ? ` ${finding.message}` : ""}`,
+        );
+      }
+    }
+  }
   lines.push("", `事件（${data.events.items.length}${data.events.truncated ? "，已截断" : ""}）`);
   if (data.events.omitted) {
     lines.push(`  未读取：${data.events.omitted}`);
   }
   for (const event of data.events.items) {
     const seen = event.last_seen ?? event.first_seen;
+    // The subject is written out only for the aggregated timelines, where the
+    // lines are about several objects and a line without it says nothing.
+    const subject = data.related ? ` ${event.regarding.kind}/${event.regarding.name}` : "";
     lines.push(
       `  ${seen ? formatAbsolute(seen) : "—"} ${event.type} ${event.reason}` +
-        `${event.container ? ` (${event.container})` : ""} x${event.count || 1} ${event.message}`,
+        `${subject}${event.container ? ` (${event.container})` : ""}` +
+        ` x${event.count || 1} ${event.message}`,
     );
   }
   return lines.join("\n");

@@ -115,6 +115,8 @@ export const queryKeys = {
     ["pod-describe", clusterId, namespace, name] as const,
   resourceDescribe: (clusterId: string, namespace: string, gvr: string, name: string) =>
     ["resource-describe", clusterId, namespace, gvr, name] as const,
+  workloadDescribe: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["workload-describe", clusterId, namespace, resource, name] as const,
 
   enrollments: (projectId: string, params: EnrollmentListParams = {}) =>
     ["enrollments", projectId, params] as const,

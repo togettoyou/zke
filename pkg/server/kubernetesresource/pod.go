@@ -169,6 +169,40 @@ func (service *Service) ListPods(
 	return result, nil
 }
 
+// ListPodDetails returns the same page ListPods returns, without the reduction
+// to summaries.
+//
+// The Pod list endpoint answers a table, so it drops container states and
+// conditions on the way out. A caller reading several Pods to work out why none
+// of them started needs exactly those fields, and getting them by reading each
+// Pod again one at a time would cost a round trip per replica.
+func (service *Service) ListPodDetails(
+	ctx context.Context,
+	input ListPodsInput,
+) ([]PodDetail, bool, error) {
+	page, err := service.ListResources(ctx, ListResourcesInput{
+		ClusterID:     input.ClusterID,
+		Resource:      podIdentity,
+		Namespace:     input.Namespace,
+		Limit:         input.Limit,
+		ContinueToken: input.ContinueToken,
+		LabelSelector: input.LabelSelector,
+		FieldSelector: input.FieldSelector,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	pods := make([]PodDetail, 0, len(page.Items))
+	for _, item := range page.Items {
+		detail, err := podDetail(item, input.Namespace, "")
+		if err != nil {
+			return nil, false, err
+		}
+		pods = append(pods, detail)
+	}
+	return pods, page.ContinueToken != "", nil
+}
+
 func (service *Service) GetPod(
 	ctx context.Context,
 	clusterID string,

@@ -22,6 +22,7 @@ type fakeDescribeService struct {
 	result       kubernetesdescribe.Result
 	err          error
 	podInput     kubernetesdescribe.PodInput
+	workloadCall kubernetesdescribe.WorkloadInput
 	resourceCall kubernetesdescribe.ResourceInput
 }
 
@@ -30,6 +31,14 @@ func (service *fakeDescribeService) DescribePod(
 	input kubernetesdescribe.PodInput,
 ) (kubernetesdescribe.Result, error) {
 	service.podInput = input
+	return service.result, service.err
+}
+
+func (service *fakeDescribeService) DescribeWorkload(
+	_ context.Context,
+	input kubernetesdescribe.WorkloadInput,
+) (kubernetesdescribe.Result, error) {
+	service.workloadCall = input
 	return service.result, service.err
 }
 
@@ -51,6 +60,10 @@ func describeTestRouter(service kubernetesDescribeService) *gin.Engine {
 		handler.pod,
 	)
 	router.GET(
+		"/clusters/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/describe",
+		handler.workload,
+	)
+	router.GET(
 		"/clusters/:cluster_id/kubernetes/resources/:resource_name/describe",
 		handler.resource,
 	)
@@ -65,8 +78,9 @@ func TestDescribeRoutesRequireBothTheResourceAndEventPermissions(t *testing.T) {
 	t.Parallel()
 
 	wanted := map[string]bool{
-		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe": false,
-		"GET /api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name/describe":       false,
+		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe":                              false,
+		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/describe": false,
+		"GET /api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name/describe":                                    false,
 	}
 	for _, route := range parseRegisteredRoutes(t) {
 		if _, tracked := wanted[route.key()]; !tracked {
@@ -196,6 +210,73 @@ func TestDescribePodHandlerRefusesQueryParameters(t *testing.T) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	if service.podInput.Name != "" {
+		t.Fatal("the Cluster was asked about a request that was refused")
+	}
+}
+
+func TestDescribeWorkloadHandlerCarriesTheWorkloadResource(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeDescribeService{result: kubernetesdescribe.Result{
+		Family: kubernetesdescribe.FamilyWorkload,
+		Related: &kubernetesdescribe.Related{
+			Controllers: []kubernetesdescribe.RelatedObject{},
+			Pods: []kubernetesdescribe.RelatedObject{{
+				Kind: "Pod",
+				Name: "inference-7d9f-aaa",
+				UID:  "pod-a",
+				Findings: []kubernetesdescribe.Finding{{
+					Code:     kubernetesdescribe.FindingImagePullFailure,
+					Severity: kubernetesdescribe.SeverityWarning,
+					Evidence: []kubernetesdescribe.Evidence{},
+				}},
+			}},
+		},
+		Findings:         []kubernetesdescribe.Finding{},
+		DegradedSections: []string{},
+	}}
+	router := describeTestRouter(service)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/model-serving/workloads/deployments/inference/describe",
+		nil,
+	))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if service.workloadCall.Resource != kubernetesresource.WorkloadDeployments ||
+		service.workloadCall.Namespace != "model-serving" ||
+		service.workloadCall.Name != "inference" {
+		t.Fatalf("unexpected describe input: %+v", service.workloadCall)
+	}
+	if !strings.Contains(response.Body.String(), `"related"`) ||
+		!strings.Contains(response.Body.String(), kubernetesdescribe.FindingImagePullFailure) {
+		t.Fatalf("the related objects did not reach the response: %s", response.Body.String())
+	}
+}
+
+// A workload type the Server does not model is refused before the Cluster is
+// asked about it.
+func TestDescribeWorkloadHandlerRefusesAnUnknownWorkloadResource(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeDescribeService{}
+	router := describeTestRouter(service)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/model-serving/workloads/replicasets/inference-7d9f/describe",
+		nil,
+	))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if service.workloadCall.Name != "" {
 		t.Fatal("the Cluster was asked about a request that was refused")
 	}
 }

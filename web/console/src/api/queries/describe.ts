@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api, unwrap } from "../client";
+import type { KubernetesWorkloadResource } from "../types";
 import { queryKeys } from "../query-keys";
 
 /**
@@ -38,6 +39,49 @@ export function usePodDescribe(
         ),
       ),
     enabled: enabled && Boolean(clusterId && namespace && name),
+  });
+}
+
+/**
+ * A workload's describe, which is about more than the workload.
+ *
+ * The Server walks down to the objects it owns — the ReplicaSet that could not
+ * create a Pod, the Pods that were created and did not start — because that is
+ * where a workload's failure actually is. It is the same endpoint shape and the
+ * same two permissions as the others.
+ */
+export function useWorkloadDescribe(
+  clusterId: string | null,
+  namespace: string | null,
+  resource: KubernetesWorkloadResource | null,
+  name: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.workloadDescribe(
+      clusterId ?? "",
+      namespace ?? "",
+      resource ?? "",
+      name ?? "",
+    ),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/describe",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId as string,
+                namespace_name: namespace as string,
+                workload_resource: resource as KubernetesWorkloadResource,
+                workload_name: name as string,
+              },
+            },
+            signal,
+          },
+        ),
+      ),
+    enabled: enabled && Boolean(clusterId && namespace && resource && name),
   });
 }
 

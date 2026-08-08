@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, History, Plus } from "lucide-react";
+import { FileCode, History, Plus, Stethoscope } from "lucide-react";
 
+import { useWorkloadDescribe } from "@/api/queries/describe";
 import { useWorkload, useWorkloads } from "@/api/queries/workloads";
 import type {
   KubernetesWorkloadDetail,
@@ -29,6 +30,7 @@ import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { WorkloadActions } from "./WorkloadActions";
 import { WorkloadCreateView } from "./WorkloadCreateView";
+import { DescribeView } from "./DescribeView";
 import { WorkloadRevisionsView } from "./WorkloadRevisionsView";
 import { YamlEditorView } from "./YamlEditorView";
 import { kindLabel, supportsRevisions, workloadGroup, WORKLOAD_TYPES } from "./workload-catalog";
@@ -84,6 +86,9 @@ export function WorkloadSection({
   // So does the revision history: it is a list of its own objects, with a write
   // behind each row.
   const [revisionsName, setRevisionsName] = useState<string | null>(null);
+  // The diagnosis reaches past the workload to the objects it owns, so it is a
+  // view of its own rather than a card on the detail page.
+  const [describeName, setDescribeName] = useState<string | null>(null);
 
   const [creating, setCreating] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
@@ -94,6 +99,10 @@ export function WorkloadSection({
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
   const canCreate = permissions.can("cluster.resource.create", projectScope);
+  // Describe carries the Events of the workload and of everything under it,
+  // which is `cluster.event.read` rather than `cluster.read`. The Server
+  // requires both, so an operator without it is not offered the button.
+  const canDescribe = permissions.can("cluster.event.read", projectScope);
 
   const columns = useMemo<ColumnDef<KubernetesWorkloadSummary, unknown>[]>(
     () => [
@@ -130,11 +139,21 @@ export function WorkloadSection({
       {
         id: "actions",
         header: "",
-        size: 48,
+        size: 88,
         cell: ({ row }) => (
           // The row opens the workload; the menu must not, or every action would
           // navigate away from the object it just changed.
-          <div className="flex justify-end" onClick={(event) => event.stopPropagation()}>
+          <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+            {canDescribe ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`诊断 ${row.original.name}`}
+                onClick={() => setDescribeName(row.original.name)}
+              >
+                <Stethoscope />
+              </Button>
+            ) : null}
             <WorkloadActions
               target={{
                 clusterId,
@@ -150,8 +169,20 @@ export function WorkloadSection({
         ),
       },
     ],
-    [resource, clusterId, clusterName, namespace, canUpdate, canDelete],
+    [resource, clusterId, clusterName, namespace, canUpdate, canDelete, canDescribe],
   );
+
+  if (describeName) {
+    return (
+      <WorkloadDescribeView
+        clusterId={clusterId}
+        namespace={namespace}
+        resource={resource}
+        name={describeName}
+        onBack={() => setDescribeName(null)}
+      />
+    );
+  }
 
   if (yamlName) {
     return (
@@ -229,6 +260,8 @@ export function WorkloadSection({
         canDelete={canDelete}
         onEdit={() => setEditingName(detailName)}
         onOpenYaml={() => setYamlName(detailName)}
+        canDescribe={canDescribe}
+        onOpenDescribe={() => setDescribeName(detailName)}
         onOpenRevisions={
           supportsRevisions(resource) ? () => setRevisionsName(detailName) : undefined
         }
@@ -451,8 +484,10 @@ function WorkloadDetailView({
   name,
   canUpdate,
   canDelete,
+  canDescribe,
   onEdit,
   onOpenYaml,
+  onOpenDescribe,
   onOpenRevisions,
   onBack,
 }: {
@@ -463,8 +498,10 @@ function WorkloadDetailView({
   name: string;
   canUpdate: boolean;
   canDelete: boolean;
+  canDescribe: boolean;
   onEdit: () => void;
   onOpenYaml: () => void;
+  onOpenDescribe: () => void;
   /** Absent for the two types Kubernetes keeps no revision history for. */
   onOpenRevisions?: () => void;
   onBack: () => void;
@@ -478,6 +515,14 @@ function WorkloadDetailView({
         onBack={onBack}
         actions={
           <>
+            {/* Ahead of YAML: an operator opening a workload that will not come
+                up is asking why, and this is the page that answers it. */}
+            {canDescribe ? (
+              <Button size="sm" variant="secondary" onClick={onOpenDescribe}>
+                <Stethoscope />
+                诊断
+              </Button>
+            ) : null}
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML
@@ -728,5 +773,41 @@ function ContainerImage({ image, policy }: { image: string; policy: string | und
       <span className="zke-mono text-xs break-all">{image || "—"}</span>
       {policy ? <span className="text-subtle-foreground text-xs">{policy}</span> : null}
     </div>
+  );
+}
+
+/**
+ * A workload's diagnosis: its own findings, the objects it owns and their
+ * findings, and one Event timeline over all of them.
+ *
+ * Read here rather than in the section so leaving the view drops it: it is a
+ * snapshot of objects that are moving, and a rollout usually finishes while an
+ * operator is reading about why it had not.
+ */
+function WorkloadDescribeView({
+  clusterId,
+  namespace,
+  resource,
+  name,
+  onBack,
+}: {
+  clusterId: string;
+  namespace: string;
+  resource: KubernetesWorkloadResource;
+  name: string;
+  onBack: () => void;
+}) {
+  const describe = useWorkloadDescribe(clusterId, namespace, resource, name);
+  return (
+    <DescribeView
+      name={name}
+      kindLabel={kindLabel(resource)}
+      data={describe.data}
+      isLoading={describe.isLoading}
+      isFetching={describe.isFetching}
+      error={describe.error}
+      onRetry={() => void describe.refetch()}
+      onBack={onBack}
+    />
   );
 }

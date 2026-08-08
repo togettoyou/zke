@@ -553,6 +553,21 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesWorkload.restart,
 	)
+	// The workload's own describe reads more than the workload: the objects it
+	// owns and their Events are where a rollout that will not come up actually
+	// fails. Same two permissions as the other describes, for the same reason.
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/describe",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesDescribe.workload,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/revisions",
 		handlers.authorizationMiddleware.RequireCluster(

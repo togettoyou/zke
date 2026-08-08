@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,8 +20,19 @@ import (
 const testClusterID = "0c2ba9a5-15fb-4bfa-9fbe-7f43a2ba8a53"
 
 type fakeResourceAccess struct {
-	pod       kubernetesresource.PodDetail
-	podErr    error
+	pod          kubernetesresource.PodDetail
+	podErr       error
+	podDetails   []kubernetesresource.PodDetail
+	podListErr   error
+	podListInput kubernetesresource.ListPodsInput
+	workload     kubernetesresource.WorkloadDetail
+	workloadErr  error
+	claims       map[string]kubernetesresource.StorageResourceDetail
+	claimErr     map[string]error
+	// Keyed by the resource name of the listed type, e.g. `replicasets`.
+	lists     map[string]kubernetesresource.ResourcePage
+	listErr   error
+	listInput map[string]kubernetesresource.ListResourcesInput
 	object    map[string]any
 	objectErr error
 	lastGet   kubernetesresource.GetResourceInput
@@ -35,6 +47,51 @@ func (access *fakeResourceAccess) GetPod(
 	return access.pod, access.podErr
 }
 
+func (access *fakeResourceAccess) ListPodDetails(
+	_ context.Context,
+	input kubernetesresource.ListPodsInput,
+) ([]kubernetesresource.PodDetail, bool, error) {
+	access.podListInput = input
+	return access.podDetails, false, access.podListErr
+}
+
+func (access *fakeResourceAccess) GetWorkload(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ kubernetesresource.WorkloadResource,
+	_ string,
+) (kubernetesresource.WorkloadDetail, error) {
+	return access.workload, access.workloadErr
+}
+
+func (access *fakeResourceAccess) GetStorageResource(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ kubernetesresource.StorageResource,
+	name string,
+) (kubernetesresource.StorageResourceDetail, error) {
+	if err := access.claimErr[name]; err != nil {
+		return kubernetesresource.StorageResourceDetail{}, err
+	}
+	return access.claims[name], nil
+}
+
+func (access *fakeResourceAccess) ListResources(
+	_ context.Context,
+	input kubernetesresource.ListResourcesInput,
+) (kubernetesresource.ResourcePage, error) {
+	if access.listInput == nil {
+		access.listInput = map[string]kubernetesresource.ListResourcesInput{}
+	}
+	access.listInput[input.Resource.Resource] = input
+	if access.listErr != nil {
+		return kubernetesresource.ResourcePage{}, access.listErr
+	}
+	return access.lists[input.Resource.Resource], nil
+}
+
 func (access *fakeResourceAccess) GetResource(
 	_ context.Context,
 	input kubernetesresource.GetResourceInput,
@@ -44,10 +101,17 @@ func (access *fakeResourceAccess) GetResource(
 }
 
 type fakeEventSource struct {
-	events    []corev1.Event
+	events []corev1.Event
+	// Events per object UID, for the describes that read more than one object.
+	// A UID with no entry here falls back to `events`.
+	byUID map[string][]corev1.Event
+	// UIDs whose read fails, for the partial-failure paths.
+	failUID   map[string]error
 	truncated bool
 	err       error
 	called    bool
+	mu        sync.Mutex
+	requested []string
 	input     resourcewatch.Input
 }
 
@@ -56,10 +120,23 @@ func (source *fakeEventSource) Stream(
 	input resourcewatch.Input,
 	sink agentprotocol.ResourceWatchSink,
 ) (resourcewatch.Result, error) {
+	source.mu.Lock()
 	source.called = true
 	source.input = input
-	if source.err != nil {
-		return resourcewatch.Result{}, source.err
+	source.requested = append(source.requested, input.ResourceUID)
+	events := source.events
+	if scoped, exists := source.byUID[input.ResourceUID]; exists {
+		events = scoped
+	} else if source.byUID != nil {
+		events = nil
+	}
+	err := source.err
+	if scoped, exists := source.failUID[input.ResourceUID]; exists {
+		err = scoped
+	}
+	source.mu.Unlock()
+	if err != nil {
+		return resourcewatch.Result{}, err
 	}
 	if err := sink.Start(&agentv1.ResourceWatchResponse{
 		Result:                 agentv1.ResultCode_RESULT_CODE_OK,
@@ -68,7 +145,7 @@ func (source *fakeEventSource) Stream(
 	}); err != nil {
 		return resourcewatch.Result{}, err
 	}
-	for _, event := range source.events {
+	for _, event := range events {
 		payload, err := json.Marshal(event)
 		if err != nil {
 			return resourcewatch.Result{}, err

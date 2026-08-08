@@ -70,10 +70,12 @@
   Field Selector；
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：删除明确作用域内的
   Pod，强制要求 UID 前置条件，并支持 DryRun、显式确认、幂等、删除传播策略和审计；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe` 和
-  `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
-  只属于该对象的 Kubernetes Event 快照，以及由两者共同支持的诊断结论；两者都要求同时持有 `cluster.read`
-  与 `cluster.event.read`，Event 读取写入与 Event 流一致的审计记录；
+- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe`、
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/describe`
+  和 `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
+  只属于该对象的 Kubernetes Event 快照，以及由两者共同支持的诊断结论；工作负载还会沿 owner 链返回它拥有的
+  控制器、Pod、Pod 模板引用的 PVC 及各自的结论；三者都要求同时持有 `cluster.read` 与
+  `cluster.event.read`，Event 读取写入与 Event 流一致的审计记录；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs`：要求当前 Pod UID、
   明确容器和专用 `cluster.pod.logs.read` 权限，支持默认最近 200 行的有界快照以及 `follow=true` 实时流；
 - `POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions`：要求当前
@@ -839,10 +841,35 @@ Namespace 属于约定而非规则，接口以 `events.omitted=unsupported_scope
 读取本身失败时接口仍返回对象部分，以 `events.omitted=unavailable` 与 `degraded_sections` 说明——静默返回空
 事件列表会被读成「这个对象什么都没发生过」。
 
-Console 诊断入口在 Pod 列表行和 Pod 详情页页头，在详情页排在 YAML 之前：打开一个没跑起来的 Pod 时，这就是
-操作者带着的那个问题。资源对象浏览器的命名空间级类型行上也有同一个入口（集群级类型不提供，那里的视图只会
-说自己没有可展示的事件）。页面上方是结论卡片，下方是该对象的事件表，页头提供「复制为文本」，把结论与事件
-渲染成可直接贴进工单的纯文本；该文本在前端生成，不是第二份由服务端维护、会与界面漂移的措辞。没有
+工作负载的 describe 多做一件事：沿 owner 链下钻。工作负载自身通常不是答案——副本不足只是现象，原因在没能
+创建出 Pod 的控制器上，或在已创建但起不来的 Pod 上。因此接口按类型走不同的链路：Deployment → ReplicaSet →
+Pod，CronJob → Job（不再下钻到 Pod，那属于对应 Job 的 describe，再走一级只会对「哪些 Pod 属于谁」做出更弱的
+判断），StatefulSet、DaemonSet 与 Job 直接到 Pod。可使用 Pod Selector 的链路先以它缩小列表，最终每一跳都按
+controller owner UID 过滤，与修订历史用的是同一条规则：标签相同不等于归属相同，而按 UID 匹配还避免同名重建
+的控制器借用别人的对象。
+
+关联 Pod 按不健康优先排序后截断（上限 10 个），控制器取最近创建的 2 个，Pod 模板引用的 PVC 去重后最多读取
+10 个；`truncated` 说明还有未展示的关联对象，但不承诺被省略的对象均为健康状态。每个 Pod 携带按 Pod 规则得出
+的结论，Pending PVC 给出 `PVCPending`，并在事件窗口包含 `WaitForFirstConsumer`、`ProvisioningFailed` 或
+`FailedBinding` 时附上其原始原因和消息。工作负载自身的结论只包含它作为控制器的问题：
+进度停滞（`Progressing=False`）、副本创建被拒绝（`ReplicaFailure=True` 或 `FailedCreate` 事件）、任务失败
+（Job 的 `Failed=True`）。副本创建被拒绝是 Pod 级规则永远看不到的一类失败——配额、Pod Security 准入或
+ServiceAccount 缺失让创建本身失败，根本没有 Pod 可查，而对 Deployment 来说这条事件记录在 ReplicaSet 上，
+这正是接口要读关联控制器事件的原因。
+
+事件按对象逐个读取并合并成一条时间线，每条注明它属于哪个对象。读取次数有上限（工作负载自身，加最多 4 个
+排在前面的关联对象）；控制器和 PVC 排在 Pod 前面，为只存在于 ReplicaSet 的 `FailedCreate` 与只存在于 PVC 的
+供应/绑定原因保留读取预算，同批 Pod 失败则由前几个代表。被读到事件的 Pod 会用
+这些事件重新推导一次结论——状态只能说「Unschedulable」，调度器的事件才说清是哪种资源不够。工作负载自身的
+事件读取失败会让整段事件为空，关联对象的读取失败只是让时间线变短，两者分别以 `events` 和 `events.related`
+出现在 `degraded_sections` 中。
+
+Console 诊断入口在 Pod 与工作负载的列表行和详情页页头，在详情页排在 YAML 之前：打开一个没跑起来的对象时，
+这就是操作者带着的那个问题。资源对象浏览器的命名空间级类型行上也有同一个入口（集群级类型不提供，那里的视图
+只会说自己没有可展示的事件）。页面上方是结论卡片，中间是关联对象（不健康的逐个展开并带上自己的结论，就绪的
+折成一行），下方是事件表，工作负载的事件表多一列说明每条属于哪个对象。页头提供「复制为文本」，把结论、关联
+对象与事件渲染成可直接贴进工单的纯文本；该文本在前端生成，不是第二份由服务端维护、会与界面漂移的措辞。诊断
+主体整体纵向滚动，事件表保留可展示多行的最小高度，避免小窗口被上方结论和关联对象压缩成只有表头。没有
 `cluster.event.read` 时入口不出现——一个按下去必然返回 403 的按钮不如不给。
 
 Console YAML 入口出现在支持它的各分区详情页（节点、命名空间、工作负载、Pod、配置管理、存储、服务与路由、
