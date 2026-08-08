@@ -117,6 +117,10 @@ func TestBuiltinRoleAndScopeRules(t *testing.T) {
 		builtinRoleGrants("viewer", PermissionClusterEventRead) {
 		t.Fatal("cluster.event.read must be restricted to admin")
 	}
+	if !builtinRoleGrants("admin", PermissionClusterNodeDrain) ||
+		builtinRoleGrants("viewer", PermissionClusterNodeDrain) {
+		t.Fatal("cluster.node.drain must be restricted to admin")
+	}
 	if !builtinRoleGrants("admin", PermissionTenantCreate) ||
 		!builtinRoleGrants("admin", PermissionProjectCreate) {
 		t.Fatal("admin role did not grant resource creation permissions")

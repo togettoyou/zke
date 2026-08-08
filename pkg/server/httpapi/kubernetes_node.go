@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
+	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 )
 
@@ -22,6 +25,10 @@ type kubernetesNodeService interface {
 		string,
 		string,
 	) (kubernetesresource.NodeDetail, error)
+	DrainNode(
+		context.Context,
+		kubernetesresource.DrainNodeInput,
+	) (kubernetesresource.DrainNodeResult, error)
 }
 
 type kubernetesNodeHandler struct {
@@ -90,12 +97,94 @@ type nodeDetailResponse struct {
 func newKubernetesNodeHandler(
 	logger *slog.Logger,
 	service kubernetesNodeService,
+	auditService *audit.Service,
 	operationTimeout time.Duration,
 ) *kubernetesNodeHandler {
 	return &kubernetesNodeHandler{
-		baseHandler: newBaseHandler(logger, nil, operationTimeout),
+		baseHandler: newBaseHandler(logger, auditService, operationTimeout),
 		service:     service,
 	}
+}
+
+const maxNodeDrainRequestBytes = 4096
+
+type nodeDrainRequest struct {
+	UID                string `json:"uid"`
+	DryRun             bool   `json:"dry_run"`
+	Confirm            bool   `json:"confirm"`
+	ForceUnmanaged     bool   `json:"force_unmanaged"`
+	DeleteEmptyDirData bool   `json:"delete_empty_dir_data"`
+	GracePeriodSeconds *int64 `json:"grace_period_seconds"`
+}
+
+func (handler *kubernetesNodeHandler) drain(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	identity, _ := httpmiddleware.Identity(c)
+	request := nodeDrainRequest{}
+	target := "core/v1/nodes name:" + c.Param("node_name")
+	if decodeJSONRequest(c, &request, maxNodeDrainRequestBytes) != nil {
+		handler.recordDrain(c, identity.User.ID, auditaction.KubernetesNodeDrain, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Node drain request")
+		return
+	}
+	action := auditaction.KubernetesNodeDrain
+	if request.DryRun {
+		action = auditaction.KubernetesNodeDrainDryRun
+	}
+	target += " uid:" + request.UID
+	if handler.service == nil {
+		handler.recordDrain(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Node drain is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.DrainNode(ctx, kubernetesresource.DrainNodeInput{
+		ClusterID:          c.Param("cluster_id"),
+		NodeName:           c.Param("node_name"),
+		NodeUID:            request.UID,
+		DryRun:             request.DryRun,
+		Confirm:            request.Confirm,
+		ForceUnmanaged:     request.ForceUnmanaged,
+		DeleteEmptyDirData: request.DeleteEmptyDirData,
+		GracePeriodSeconds: request.GracePeriodSeconds,
+		IdempotencyKey:     c.GetHeader(idempotencyKeyHeaderName),
+	})
+	cancel()
+	if err != nil {
+		handler.recordDrain(c, identity.User.ID, action, target, "failed")
+		handler.respondNodeError(c, "drain Kubernetes Node", err)
+		return
+	}
+	auditResult := "succeeded"
+	if !request.DryRun && !drainCompleted(result) {
+		auditResult = "failed"
+	}
+	handler.recordDrain(c, identity.User.ID, action, target, auditResult)
+	writeSuccess(c, http.StatusOK, result)
+}
+
+func drainCompleted(result kubernetesresource.DrainNodeResult) bool {
+	if result.Blocked {
+		return false
+	}
+	for _, pod := range result.Pods {
+		if pod.Result == kubernetesresource.DrainPodFailed ||
+			pod.Result == kubernetesresource.DrainPodPDBBlocked {
+			return false
+		}
+	}
+	return true
+}
+
+func (handler *kubernetesNodeHandler) recordDrain(c *gin.Context, actor, action, target, result string) {
+	handler.recordOperation(c, auditedOperation{
+		Scope:       auditScopeCluster,
+		ActorUserID: actor,
+		Action:      action,
+		TargetType:  auditaction.TargetKubernetesResource,
+		TargetName:  target,
+		Result:      result,
+	})
 }
 
 func (handler *kubernetesNodeHandler) list(c *gin.Context) {
@@ -197,6 +286,7 @@ func (handler *kubernetesNodeHandler) respondNodeError(
 		err,
 		errorMapping{kubernetesresource.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Node request"},
 		errorMapping{kubernetesresource.ErrNodeNotFound, http.StatusNotFound, "node_not_found", "Node not found"},
+		errorMapping{kubernetesresource.ErrDrainInventoryTruncated, http.StatusConflict, "drain_inventory_truncated", "Node has more Pods than the bounded drain inventory can safely process"},
 		errorMapping{kubernetesresource.ErrAgentNotConnected, http.StatusServiceUnavailable, "agent_not_connected", "Cluster Agent is not connected"},
 		errorMapping{kubernetesresource.ErrAgentUnsupported, http.StatusServiceUnavailable, "agent_capability_unavailable", "Cluster Agent does not support resource queries"},
 		errorMapping{kubernetesresource.ErrRequestCapacity, http.StatusTooManyRequests, "resource_capacity_exhausted", "resource query capacity is exhausted"},

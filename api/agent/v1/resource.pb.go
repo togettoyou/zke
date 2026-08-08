@@ -579,9 +579,14 @@ type ResourceRequest struct {
 	// made to ask. An Agent that predates this field ignores it and keeps
 	// refusing, which is the behaviour a Server upgraded ahead of its Agents
 	// should get.
-	SecretAccess  bool `protobuf:"varint,12,opt,name=secret_access,json=secretAccess,proto3" json:"secret_access,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SecretAccess bool `protobuf:"varint,12,opt,name=secret_access,json=secretAccess,proto3" json:"secret_access,omitempty"`
+	// Set only by the Server's dedicated Node Drain API. The Agent accepts it
+	// solely for CREATE core/v1 pods/{name}/eviction with a policy/v1 Eviction
+	// body whose Namespace, Name and UID precondition match this request. It is
+	// not a generic permission to address arbitrary subresources.
+	PodEvictionAccess bool `protobuf:"varint,13,opt,name=pod_eviction_access,json=podEvictionAccess,proto3" json:"pod_eviction_access,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ResourceRequest) Reset() {
@@ -698,6 +703,13 @@ func (x *ResourceRequest) GetSecretAccess() bool {
 	return false
 }
 
+func (x *ResourceRequest) GetPodEvictionAccess() bool {
+	if x != nil {
+		return x.PodEvictionAccess
+	}
+	return false
+}
+
 type ResourceResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Result               ResultCode             `protobuf:"varint,1,opt,name=result,proto3,enum=zke.agent.v1.ResultCode" json:"result,omitempty"`
@@ -809,7 +821,7 @@ const file_api_agent_v1_resource_proto_rawDesc = "" +
 	"\x14grace_period_seconds\x18\x02 \x01(\x03H\x00R\x12gracePeriodSeconds\x88\x01\x01\x12A\n" +
 	"\vpropagation\x18\x03 \x01(\x0e2\x1f.zke.agent.v1.DeletePropagationR\vpropagation\x12I\n" +
 	"\rpreconditions\x18\x04 \x01(\v2#.zke.agent.v1.ResourcePreconditionsR\rpreconditionsB\x17\n" +
-	"\x15_grace_period_seconds\"\xe9\x04\n" +
+	"\x15_grace_period_seconds\"\x99\x05\n" +
 	"\x0fResourceRequest\x12.\n" +
 	"\x04verb\x18\x01 \x01(\x0e2\x1a.zke.agent.v1.ResourceVerbR\x04verb\x12>\n" +
 	"\bresource\x18\x02 \x01(\v2\".zke.agent.v1.GroupVersionResourceR\bresource\x12\x1c\n" +
@@ -824,7 +836,8 @@ const file_api_agent_v1_resource_proto_rawDesc = "" +
 	"\x10mutation_options\x18\n" +
 	" \x01(\v2\x1d.zke.agent.v1.MutationOptionsR\x0fmutationOptions\x12B\n" +
 	"\x0edelete_options\x18\v \x01(\v2\x1b.zke.agent.v1.DeleteOptionsR\rdeleteOptions\x12#\n" +
-	"\rsecret_access\x18\f \x01(\bR\fsecretAccess\"\xec\x01\n" +
+	"\rsecret_access\x18\f \x01(\bR\fsecretAccess\x12.\n" +
+	"\x13pod_eviction_access\x18\r \x01(\bR\x11podEvictionAccess\"\xec\x01\n" +
 	"\x10ResourceResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\x05R\x14kubernetesStatusCode\x12\x16\n" +

@@ -20,18 +20,18 @@ ZKE Copilot 提供稳定边界。
 
 ## 2. 决策状态
 
-| 主题 | 状态 | 基线 |
-| --- | --- | --- |
-| ZKE Server | 已确定 | Go 1.26 |
-| ZKE Agent | 已确定 | Go 1.26 |
-| Server HTTP 框架 | 已确定 | Gin；使用自建 `http.Server` 承载并统一配置超时 |
-| Server–Agent 传输 | 已确定 | QUIC/`quic-go` + mTLS，Agent 主动建立连接 |
-| Agent 消息编码 | 已确定 | 版本化 Protobuf 消息和长度前缀帧 |
-| 用户管理 API | 已确定 | HTTP/JSON + OpenAPI；SSE 提供单向实时状态，WebSocket 仅用于交互式会话 |
-| 主数据存储 | 已确定 | PostgreSQL |
-| 用户认证 | 已确定 | ZKE 内置本地用户、Argon2id 密码摘要和 Server 端不透明会话 |
-| Agent 身份 | 已确定 | 一次性注册凭证完成引导，注册后使用 mTLS |
-| 仓库组织 | 已确定 | 单仓库；Server 与 Agent 初期共用一个 Go module |
+| 主题              | 状态   | 基线                                                                  |
+| ----------------- | ------ | --------------------------------------------------------------------- |
+| ZKE Server        | 已确定 | Go 1.26                                                               |
+| ZKE Agent         | 已确定 | Go 1.26                                                               |
+| Server HTTP 框架  | 已确定 | Gin；使用自建 `http.Server` 承载并统一配置超时                        |
+| Server–Agent 传输 | 已确定 | QUIC/`quic-go` + mTLS，Agent 主动建立连接                             |
+| Agent 消息编码    | 已确定 | 版本化 Protobuf 消息和长度前缀帧                                      |
+| 用户管理 API      | 已确定 | HTTP/JSON + OpenAPI；SSE 提供单向实时状态，WebSocket 仅用于交互式会话 |
+| 主数据存储        | 已确定 | PostgreSQL                                                            |
+| 用户认证          | 已确定 | ZKE 内置本地用户、Argon2id 密码摘要和 Server 端不透明会话             |
+| Agent 身份        | 已确定 | 一次性注册凭证完成引导，注册后使用 mTLS                               |
+| 仓库组织          | 已确定 | 单仓库；Server 与 Agent 初期共用一个 Go module                        |
 
 初始化工程时显式设置 Go 1.26 的 `go` 与 `toolchain` 指令，工具版本通过 Go module 固定。
 
@@ -213,8 +213,9 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 - 使用专用 ServiceAccount，并按当前启用能力授予最小 Kubernetes RBAC 权限。
 - 默认集群业务权限包含 Node 的 `get`、`list`、`update`、`patch`，Namespace 的 `get`、`list`、`create`、`update`、`delete`，
   Pod 的 `get`、`list`、`update`、`delete`、`pods/log` 的 `get`、`pods/exec` 的 `create`，以及 Deployment、StatefulSet、DaemonSet、Job 和
-  CronJob、Service、Ingress 和 Gateway 主资源的完整 CRUD。Node 的 `patch` 用于停止或恢复调度；驱逐需要 `pods/eviction` Subresource，
-  尚未开放。Agent 通用策略允许非 Secret 主资源的 CRUD，
+  CronJob、Service、Ingress 和 Gateway 主资源的完整 CRUD。Node 的 `patch` 用于停止或恢复调度；`pods/eviction`
+  的 `create` 只供独立权限保护的 Node Drain 使用，并由 Agent 对资源、动词、Subresource、Eviction GVK 与 Pod UID
+  precondition 做精确 allowlist。Agent 通用策略允许非 Secret 主资源的 CRUD，
   但实际读取或变更默认集合以外的内置资源、CRD 或 CR 时必须由安装方显式扩展 ServiceAccount RBAC，无需修改
   Agent 代码。
 - Agent 首次启动时创建固定名称身份 Secret，之后读取和更新它。ServiceAccount 至少需要所在 Namespace 内
@@ -438,11 +439,11 @@ Server 和 Agent 必须配置并验证：
 
 Agent 状态拆分为：
 
-| 状态 | 取值 | 来源 |
-| --- | --- | --- |
-| 生命周期 | `pending`、`active`、`revoked` | 数据库 |
-| 连接 | `online`、`offline` | 当前 Connection 与心跳，Server 内存派生 |
-| 健康 | `unknown`、`healthy`、`degraded` | Agent 健康上报 |
+| 状态     | 取值                             | 来源                                    |
+| -------- | -------------------------------- | --------------------------------------- |
+| 生命周期 | `pending`、`active`、`revoked`   | 数据库                                  |
+| 连接     | `online`、`offline`              | 当前 Connection 与心跳，Server 内存派生 |
+| 健康     | `unknown`、`healthy`、`degraded` | Agent 健康上报                          |
 
 注册完成后生命周期为 `pending`，首次有效连接后转为 `active`。
 
@@ -462,23 +463,23 @@ HTTP JSON 响应中的时间统一使用 RFC 3339 和固定 `UTC+8` 偏移（`+0
 
 Phase 1 API 权限映射：
 
-| API | 权限 |
-| --- | --- |
-| 创建/查看/管理 Tenant | `tenant.create`、`tenant.read`、`tenant.manage`（管理权限为 Global） |
-| 创建/查看/管理 Project | `project.create`、`project.read`、`project.manage` |
-| 创建/查看/撤销 Cluster 接入凭证 | `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` |
-| 查看 Cluster | `cluster.read` |
-| 管理 Cluster | `cluster.manage` |
-| 创建 Kubernetes 主资源 | `cluster.resource.create` |
-| 更新或 Patch Kubernetes 主资源 | `cluster.resource.update` |
-| 删除 Kubernetes 主资源 | `cluster.resource.delete` |
-| 查看和管理目标集群的 Kubernetes RBAC | `cluster.rbac.read`、`cluster.rbac.manage` |
-| 读取 Pod 日志快照或实时流 | `cluster.pod.logs.read` |
-| 读取 Kubernetes Event 快照或实时流 | `cluster.event.read` |
-| 撤销 Cluster 当前连接 | `cluster.connection.revoke` |
-| 查看和管理用户 | `user.read`、`user.manage`（Global） |
-| 查看和管理 RoleBinding | `rbac.read`、`rbac.manage`（Global） |
-| 查询审计事件 | `audit.read`（按 RoleBinding 作用域过滤） |
+| API                                  | 权限                                                                                |
+| ------------------------------------ | ----------------------------------------------------------------------------------- |
+| 创建/查看/管理 Tenant                | `tenant.create`、`tenant.read`、`tenant.manage`（管理权限为 Global）                |
+| 创建/查看/管理 Project               | `project.create`、`project.read`、`project.manage`                                  |
+| 创建/查看/撤销 Cluster 接入凭证      | `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` |
+| 查看 Cluster                         | `cluster.read`                                                                      |
+| 管理 Cluster                         | `cluster.manage`                                                                    |
+| 创建 Kubernetes 主资源               | `cluster.resource.create`                                                           |
+| 更新或 Patch Kubernetes 主资源       | `cluster.resource.update`                                                           |
+| 删除 Kubernetes 主资源               | `cluster.resource.delete`                                                           |
+| 查看和管理目标集群的 Kubernetes RBAC | `cluster.rbac.read`、`cluster.rbac.manage`                                          |
+| 读取 Pod 日志快照或实时流            | `cluster.pod.logs.read`                                                             |
+| 读取 Kubernetes Event 快照或实时流   | `cluster.event.read`                                                                |
+| 撤销 Cluster 当前连接                | `cluster.connection.revoke`                                                         |
+| 查看和管理用户                       | `user.read`、`user.manage`（Global）                                                |
+| 查看和管理 RoleBinding               | `rbac.read`、`rbac.manage`（Global）                                                |
+| 查询审计事件                         | `audit.read`（按 RoleBinding 作用域过滤）                                           |
 
 `/api/v1/events` 根据订阅者已有的读取权限和作用域过滤事件。
 
@@ -730,20 +731,20 @@ TLS 1.3 和 mTLS，不经过 HTTP 网关，也不复用 HTTP TLS 身份。
 
 ## 9. 最小数据模型
 
-| 实体 | 关键字段 | 说明 |
-| --- | --- | --- |
-| Tenant | `id`, `name`, `status` | 顶层权限边界；名称全局唯一且不区分大小写，已停用的 Tenant 仍占用其名称，删除才释放 |
-| Project | `id`, `tenant_id`, `name`, `status` | Cluster 的直接管理范围；名称在其 Tenant 内唯一且不区分大小写，规则与 Tenant 相同 |
-| User | `id`, `username_normalized`, `display_name`, `password_hash`, `status`, `failed_login_count`, `locked_at`, `lock_expires_at`, `password_changed_at` | 本地用户，规范化用户名唯一；只保存 Argon2id 摘要，锁定状态持久化 |
-| UserSession | `id`, `user_id`, `token_digest`, `idle_expires_at`, `expires_at`, `revoked_at` | Server 端不透明会话，只保存 Token 摘要 |
-| RoleBinding | `subject_id`, `role`, `scope_type`, `tenant_id`, `project_id` | 服务端授权依据；作用域形状由约束校验 |
-| Cluster | `id`, `tenant_id`, `project_id`, `name`, `status`, `last_seen_at` | 全局逻辑资源；操作仍在该集群执行；名称在其 Project 内唯一且不区分大小写，未使用的 Enrollment 同样占用名称 |
-| Agent | `id`, `cluster_id`, `version`, `protocol_version`, `lifecycle_status`, `health_status`, `active_credential_serial`, `last_seen_at` | Cluster 的内部连接身份；不作为独立管理资源暴露，可保留多次接入历史 |
-| AgentCredential | `id`, `agent_id`, `serial`, `csr_fingerprint`, `certificate_pem`, `expires_at`, `revoked_at` | 客户端证书及元数据 |
-| Enrollment | `id`, `tenant_id`, `project_id`, `cluster_id`, `cluster_name`, `token_digest`, `expires_at`, `consumed_at`, `revoked_at` | 首次接入绑定名称，重新接入绑定现有 Cluster 的一次性凭证 |
-| EnrollmentAttempt | `id`, `enrollment_id`, `idempotency_key`, `csr_fingerprint`, `status`, `response`, `created_at` | 注册幂等与结果恢复 |
-| ServerPKIState | Client/Listener CA 与 Listener 叶子证书的 `fingerprint`, `expires_at` | Managed PKI 的数据库绑定和 PV 丢失保护 |
-| AuditEvent | `id`, `actor_type`, `actor_user_id`, `actor_user_name`, `actor_agent_id`, `scope_type`, `tenant_id`, `tenant_name`, `project_id`, `project_name`, `cluster_id`, `cluster_name`, `action`, `target_type`, `target_id`, `target_name`, `result`, `request_id`, `created_at` | 审计元数据；不对用户、Tenant、Project、Cluster、Agent 建立外键，以便记录在对象被删除后继续存在，并随事件保存当时的名称；不保存敏感操作正文 |
+| 实体              | 关键字段                                                                                                                                                                                                                                                                  | 说明                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tenant            | `id`, `name`, `status`                                                                                                                                                                                                                                                    | 顶层权限边界；名称全局唯一且不区分大小写，已停用的 Tenant 仍占用其名称，删除才释放                                                         |
+| Project           | `id`, `tenant_id`, `name`, `status`                                                                                                                                                                                                                                       | Cluster 的直接管理范围；名称在其 Tenant 内唯一且不区分大小写，规则与 Tenant 相同                                                           |
+| User              | `id`, `username_normalized`, `display_name`, `password_hash`, `status`, `failed_login_count`, `locked_at`, `lock_expires_at`, `password_changed_at`                                                                                                                       | 本地用户，规范化用户名唯一；只保存 Argon2id 摘要，锁定状态持久化                                                                           |
+| UserSession       | `id`, `user_id`, `token_digest`, `idle_expires_at`, `expires_at`, `revoked_at`                                                                                                                                                                                            | Server 端不透明会话，只保存 Token 摘要                                                                                                     |
+| RoleBinding       | `subject_id`, `role`, `scope_type`, `tenant_id`, `project_id`                                                                                                                                                                                                             | 服务端授权依据；作用域形状由约束校验                                                                                                       |
+| Cluster           | `id`, `tenant_id`, `project_id`, `name`, `status`, `last_seen_at`                                                                                                                                                                                                         | 全局逻辑资源；操作仍在该集群执行；名称在其 Project 内唯一且不区分大小写，未使用的 Enrollment 同样占用名称                                  |
+| Agent             | `id`, `cluster_id`, `version`, `protocol_version`, `lifecycle_status`, `health_status`, `active_credential_serial`, `last_seen_at`                                                                                                                                        | Cluster 的内部连接身份；不作为独立管理资源暴露，可保留多次接入历史                                                                         |
+| AgentCredential   | `id`, `agent_id`, `serial`, `csr_fingerprint`, `certificate_pem`, `expires_at`, `revoked_at`                                                                                                                                                                              | 客户端证书及元数据                                                                                                                         |
+| Enrollment        | `id`, `tenant_id`, `project_id`, `cluster_id`, `cluster_name`, `token_digest`, `expires_at`, `consumed_at`, `revoked_at`                                                                                                                                                  | 首次接入绑定名称，重新接入绑定现有 Cluster 的一次性凭证                                                                                    |
+| EnrollmentAttempt | `id`, `enrollment_id`, `idempotency_key`, `csr_fingerprint`, `status`, `response`, `created_at`                                                                                                                                                                           | 注册幂等与结果恢复                                                                                                                         |
+| ServerPKIState    | Client/Listener CA 与 Listener 叶子证书的 `fingerprint`, `expires_at`                                                                                                                                                                                                     | Managed PKI 的数据库绑定和 PV 丢失保护                                                                                                     |
+| AuditEvent        | `id`, `actor_type`, `actor_user_id`, `actor_user_name`, `actor_agent_id`, `scope_type`, `tenant_id`, `tenant_name`, `project_id`, `project_name`, `cluster_id`, `cluster_name`, `action`, `target_type`, `target_id`, `target_name`, `result`, `request_id`, `created_at` | 审计元数据；不对用户、Tenant、Project、Cluster、Agent 建立外键，以便记录在对象被删除后继续存在，并随事件保存当时的名称；不保存敏感操作正文 |
 
 Tenant、Project 和 Cluster 都只有两个生命周期动作：**停用**与**删除**。
 
@@ -927,7 +928,8 @@ Server 配置结构体与 YAML 文件一一对应：加载时先构造带默认�
 - Agent 默认 ClusterRole 为 Service、Ingress 与 Gateway 主资源增加完整 CRUD，为 ConfigMap、PV、PVC、
   StorageClass、HorizontalPodAutoscaler、ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding
   增加 `get/list/create/update/delete`，但不包含 `escalate/bind/impersonate`；为 Pod 日志增加 `pods/log` 的 `get`、为 Web Terminal 增加 `pods/exec` 的
-  `create`，并为专用 Event Watch 增加 `events` 的 `get/list/watch`；不授予 `pods/eviction`。日志、Exec 和 Watch 协议都不放宽通用 Resource/Subresource
+  `create`，为 Node Drain 增加 `pods/eviction` 的 `create`，并为专用 Event Watch 增加 `events` 的
+  `get/list/watch`。日志、Exec、Eviction 和 Watch 都有独立协议位或流类型，不放宽通用 Resource/Subresource
   拒绝策略。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - HTTP 注册 URL、QUIC Connection 地址、超时、心跳和重试参数需要上下限校验。

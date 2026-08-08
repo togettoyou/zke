@@ -369,6 +369,15 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesNode.get,
 	)
+	clusterRoutes.POST(
+		"/:cluster_id/nodes/:node_name/drain",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterNodeDrain,
+			"cluster_id",
+		),
+		handlers.kubernetesNode.drain,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/nodes/:node_name/describe",
 		handlers.authorizationMiddleware.RequireCluster(

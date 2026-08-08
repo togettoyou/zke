@@ -1,11 +1,15 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Ban, FileCode, PlayCircle, Stethoscope } from "lucide-react";
+import { ArrowDownToLine, Ban, FileCode, PlayCircle, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
-import { useNode, useNodes, useSetNodeSchedulable } from "@/api/queries/nodes";
+import { useDrainNode, useNode, useNodes, useSetNodeSchedulable } from "@/api/queries/nodes";
 import { useNodeDescribe } from "@/api/queries/describe";
-import type { KubernetesNodeDetail, KubernetesNodeSummary } from "@/api/types";
+import type {
+  KubernetesNodeDetail,
+  KubernetesNodeDrainResult,
+  KubernetesNodeSummary,
+} from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
@@ -21,6 +25,7 @@ import { ErrorState, LoadingState } from "@/components/common/state";
 import { AddressValues, StatusBadge } from "@/components/common/status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Alert, Checkbox } from "@/components/ui/misc";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
@@ -55,12 +60,34 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
   const schedulingPreviewKey = useSubmissionKey(schedulingTarget !== null);
   const schedulingApplyKey = useSubmissionKey(schedulingTarget !== null);
   const setSchedulable = useSetNodeSchedulable();
+  const drain = useDrainNode();
+  const [drainTarget, setDrainTarget] = useState<Pick<
+    KubernetesNodeSummary,
+    "name" | "uid"
+  > | null>(null);
+  const [drainPreview, setDrainPreview] = useState<KubernetesNodeDrainResult | null>(null);
+  const [forceUnmanaged, setForceUnmanaged] = useState(false);
+  const [deleteEmptyDirData, setDeleteEmptyDirData] = useState(false);
+  const drainPreviewKey = useSubmissionKey(drainTarget !== null);
+  const drainApplyKey = useSubmissionKey(drainTarget !== null);
 
   const projectScope = { type: "project" as const, tenantId, projectId };
   // Scheduling is a patch of the Node object, so it is an update rather than a
   // Node-specific permission.
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDescribe = permissions.can("cluster.event.read", projectScope);
+  const canDrain = permissions.can("cluster.node.drain", projectScope);
+
+  const openDrain = useCallback(
+    (node: Pick<KubernetesNodeSummary, "name" | "uid">) => {
+      setDrainTarget(node);
+      setDrainPreview(null);
+      setForceUnmanaged(false);
+      setDeleteEmptyDirData(false);
+      drain.reset();
+    },
+    [drain],
+  );
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -128,7 +155,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
         header: "",
         size: 88,
         cell: ({ row }) =>
-          canDescribe || canUpdate ? (
+          canDescribe || canUpdate || canDrain ? (
             <div
               className="flex items-center justify-end"
               onClick={(event) => event.stopPropagation()}
@@ -172,11 +199,22 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
                   </Button>
                 </>
               ) : null}
+              {canDrain && row.original.uid ? (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  className="text-danger hover:text-danger"
+                  aria-label={`排空节点 ${row.original.name}`}
+                  onClick={() => openDrain(row.original)}
+                >
+                  <ArrowDownToLine />
+                </Button>
+              ) : null}
             </div>
           ) : null,
       },
     ],
-    [canDescribe, canUpdate, openScheduling],
+    [canDescribe, canUpdate, canDrain, openDrain, openScheduling],
   );
 
   const nextToken = nodes.data?.continue_token ?? "";
@@ -206,10 +244,12 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           name={detailName}
           canUpdate={canUpdate}
           canDescribe={canDescribe}
+          canDrain={canDrain}
           onBack={() => setDetailName(null)}
           onToggleScheduling={openScheduling}
           onOpenYaml={() => setYamlName(detailName)}
           onOpenDescribe={() => setDescribeName(detailName)}
+          onDrain={openDrain}
         />
       ) : (
         // No heading over the list: the navigation rail already says 节点 and the
@@ -293,6 +333,103 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
             .catch(() => undefined);
         }}
       />
+
+      <SensitiveActionDialog
+        open={drainTarget !== null}
+        onOpenChange={(open) => !open && setDrainTarget(null)}
+        title="排空节点"
+        description={
+          drainPreview
+            ? drainPreviewReady(drainPreview)
+              ? "DryRun 已通过。输入节点名称后可提交实际 Drain。"
+              : "预检发现阻断项或当前 PDB 不允许驱逐。调整选项或等待副本恢复后重新预检。"
+            : "先执行完整清单与 Kubernetes DryRun 预检，不会在预检阶段修改节点或 Pod。"
+        }
+        scopeLines={[
+          { label: "集群", name: clusterName, id: clusterId },
+          { label: "节点", name: drainTarget?.name ?? "", id: drainTarget?.uid },
+        ]}
+        impacts={[
+          "节点会先停止调度；受控制器管理的普通 Pod 随后通过 Eviction API 驱逐并由控制器重建。",
+          "PodDisruptionBudget 会被遵守；预算不足时对应 Pod 保留在节点上，操作明确报告为未完成。",
+          "Mirror Pod、DaemonSet Pod 和已终止中的 Pod 不会被驱逐。",
+        ]}
+        confirmationText={drainPreviewReady(drainPreview) ? drainTarget?.name : undefined}
+        confirmLabel={drainPreviewReady(drainPreview) ? "确认排空" : "执行 DryRun 预检"}
+        destructive
+        pending={drain.isPending}
+        error={drain.error}
+        onConfirm={() => {
+          if (!drainTarget) return;
+          const dryRun = !drainPreviewReady(drainPreview);
+          void drain
+            .mutateAsync({
+              clusterId,
+              name: drainTarget.name,
+              idempotencyKey: dryRun ? drainPreviewKey : drainApplyKey,
+              request: {
+                uid: drainTarget.uid,
+                dry_run: dryRun,
+                confirm: !dryRun,
+                force_unmanaged: forceUnmanaged,
+                delete_empty_dir_data: deleteEmptyDirData,
+              },
+            })
+            .then((result) => {
+              if (dryRun) {
+                setDrainPreview(result);
+                toast.success(
+                  drainPreviewReady(result) ? "节点排空 DryRun 已通过" : "节点排空预检已完成",
+                );
+                return;
+              }
+              if (drainPreviewReady(result)) {
+                const accepted = result.pods.filter((pod) => pod.result === "evicted").length;
+                toast.success(`节点已停止调度，已提交 ${accepted} 个 Pod 驱逐请求`);
+                setDrainTarget(null);
+              } else {
+                const remaining = result.pods.filter(
+                  (pod) => pod.result === "pdb_blocked" || pod.result === "failed",
+                ).length;
+                toast.warning(
+                  `节点已停止调度，仍有 ${remaining} 个 Pod 未完成驱逐，请重新打开后重试`,
+                );
+                setDrainTarget(null);
+              }
+            })
+            .catch(() => undefined);
+        }}
+      >
+        <div className="grid gap-3">
+          <label className="flex items-start gap-2 text-[13px]">
+            <Checkbox
+              checked={forceUnmanaged}
+              onCheckedChange={(checked) => {
+                setForceUnmanaged(checked === true);
+                setDrainPreview(null);
+              }}
+            />
+            <span>
+              <span className="text-foreground block font-medium">驱逐无控制器 Pod</span>
+              <span className="text-muted-foreground">这类 Pod 不会被控制器自动重建。</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-[13px]">
+            <Checkbox
+              checked={deleteEmptyDirData}
+              onCheckedChange={(checked) => {
+                setDeleteEmptyDirData(checked === true);
+                setDrainPreview(null);
+              }}
+            />
+            <span>
+              <span className="text-foreground block font-medium">接受 emptyDir 数据丢失</span>
+              <span className="text-muted-foreground">Pod 重建后 emptyDir 中的数据无法恢复。</span>
+            </span>
+          </label>
+          {drainPreview ? <DrainPreview result={drainPreview} /> : null}
+        </div>
+      </SensitiveActionDialog>
     </>
   );
 }
@@ -302,19 +439,23 @@ function NodeDetailView({
   name,
   canUpdate,
   canDescribe,
+  canDrain,
   onBack,
   onToggleScheduling,
   onOpenYaml,
   onOpenDescribe,
+  onDrain,
 }: {
   clusterId: string;
   name: string;
   canUpdate: boolean;
   canDescribe: boolean;
+  canDrain: boolean;
   onBack: () => void;
   onToggleScheduling: (node: SchedulingTarget) => void;
   onOpenYaml: () => void;
   onOpenDescribe: () => void;
+  onDrain: (node: Pick<KubernetesNodeSummary, "name" | "uid">) => void;
 }) {
   const detail = useNode(clusterId, name);
 
@@ -357,6 +498,16 @@ function NodeDetailView({
                 {detail.data.unschedulable ? "恢复调度" : "停止调度"}
               </Button>
             ) : null}
+            {canDrain && detail.data?.uid ? (
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => onDrain({ name: detail.data.name, uid: detail.data.uid })}
+              >
+                <ArrowDownToLine />
+                排空节点
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -369,6 +520,62 @@ function NodeDetailView({
       )}
     </div>
   );
+}
+
+function drainPreviewReady(result: KubernetesNodeDrainResult | null): boolean {
+  return Boolean(
+    result &&
+    !result.blocked &&
+    result.pods.every(
+      (pod) => pod.result !== "failed" && pod.result !== "pdb_blocked" && pod.result !== "blocked",
+    ),
+  );
+}
+
+function DrainPreview({ result }: { result: KubernetesNodeDrainResult }) {
+  const evict = result.pods.filter((pod) => pod.decision === "evict");
+  const skipped = result.pods.filter((pod) => pod.decision === "skip");
+  const blocked = result.pods.filter(
+    (pod) => pod.decision === "block" || pod.result === "pdb_blocked" || pod.result === "failed",
+  );
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-1.5">
+        <Badge tone={blocked.length > 0 ? "warning" : "success"}>待驱逐 {evict.length}</Badge>
+        <Badge tone="neutral">跳过 {skipped.length}</Badge>
+        <Badge tone={blocked.length > 0 ? "danger" : "neutral"}>阻断 {blocked.length}</Badge>
+      </div>
+      {blocked.length > 0 ? (
+        <Alert tone="warning">
+          <div className="grid max-h-36 gap-1 overflow-y-auto">
+            {blocked.map((pod) => (
+              <div key={pod.uid} className="text-xs break-words">
+                <span className="zke-mono text-foreground">
+                  {pod.namespace}/{pod.name}
+                </span>{" "}
+                · {drainReasonLabel(pod.reason)}
+                {pod.message ? `：${pod.message}` : ""}
+              </div>
+            ))}
+          </div>
+        </Alert>
+      ) : (
+        <Alert tone="success">预检未发现静态阻断项；实际执行时 PDB 与 Pod 状态仍会再次校验。</Alert>
+      )}
+    </div>
+  );
+}
+
+function drainReasonLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    UnmanagedPod: "无控制器 Pod",
+    EmptyDirData: "包含 emptyDir 数据",
+    DaemonSetPod: "DaemonSet Pod",
+    MirrorPod: "Mirror Pod",
+    Terminating: "正在终止",
+    TooManyRequests: "PodDisruptionBudget 暂不允许驱逐",
+  };
+  return labels[reason] ?? (reason || "未知原因");
 }
 
 function NodeDescribeView({

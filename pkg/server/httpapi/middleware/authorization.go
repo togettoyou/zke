@@ -312,6 +312,7 @@ func permissionTargetType(permission rbac.Permission) string {
 		rbac.PermissionClusterConnectionRevoke:
 		return auditaction.TargetCluster
 	case rbac.PermissionClusterNamespaceManage,
+		rbac.PermissionClusterNodeDrain,
 		rbac.PermissionClusterResourceCreate,
 		rbac.PermissionClusterResourceUpdate,
 		rbac.PermissionClusterResourceDelete:

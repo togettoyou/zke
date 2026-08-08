@@ -959,3 +959,39 @@ func TestSecretRequestsAreRefusedWithoutTheFlagOrInTheAgentNamespace(t *testing.
 		t.Fatal("the Secret flag allowed an Event request")
 	}
 }
+
+func TestPodEvictionIsTheOnlyAllowedResourceSubresource(t *testing.T) {
+	t.Parallel()
+
+	request := func(resource, subresource string, access bool) *agentv1.ResourceRequest {
+		return &agentv1.ResourceRequest{
+			Verb:              agentv1.ResourceVerb_RESOURCE_VERB_CREATE,
+			Resource:          &agentv1.GroupVersionResource{Version: "v1", Resource: resource},
+			Namespace:         "default",
+			Name:              "api-123",
+			Subresource:       subresource,
+			PodEvictionAccess: access,
+		}
+	}
+	eviction := request("pods", "eviction", true)
+	if refusal := refuseKubernetesResourceRequest(eviction, "zke-system"); refusal != nil {
+		t.Fatalf("dedicated Pod eviction was refused: %+v", refusal)
+	}
+	if refuseKubernetesResourceRequest(request("pods", "eviction", false), "zke-system") != refusalNotEnabled {
+		t.Fatal("Pod eviction without the dedicated flag was allowed")
+	}
+	if refuseKubernetesResourceRequest(request("services", "eviction", true), "zke-system") != refusalNotEnabled {
+		t.Fatal("eviction flag widened another resource subresource")
+	}
+	if refuseKubernetesResourceRequest(request("pods", "exec", true), "zke-system") != refusalNotEnabled {
+		t.Fatal("eviction flag widened another Pod subresource")
+	}
+	validBody := []byte(`{"apiVersion":"policy/v1","kind":"Eviction","metadata":{"name":"api-123","namespace":"default"},"deleteOptions":{"preconditions":{"uid":"pod-uid"}}}`)
+	if _, err := decodePodEvictionObject(eviction, validBody); err != nil {
+		t.Fatalf("valid eviction body refused: %v", err)
+	}
+	withoutUID := []byte(`{"apiVersion":"policy/v1","kind":"Eviction","metadata":{"name":"api-123","namespace":"default"}}`)
+	if _, err := decodePodEvictionObject(eviction, withoutUID); err == nil {
+		t.Fatal("eviction without a Pod UID precondition was accepted")
+	}
+}

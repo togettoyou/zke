@@ -85,6 +85,8 @@ const (
 	KubernetesPodLogsRead          = "kubernetes_pod.logs.read"
 	KubernetesPodExecSessionCreate = "kubernetes_pod.exec_session.create"
 	KubernetesPodExec              = "kubernetes_pod.exec"
+	KubernetesNodeDrain            = "kubernetes_node.drain"
+	KubernetesNodeDrainDryRun      = "kubernetes_node.drain.dry_run"
 	KubernetesEventRead            = "kubernetes_event.read"
 
 	// Reading a Secret is recorded because reading it is the whole exposure:
@@ -131,6 +133,7 @@ const (
 	DeniedClusterRead            = "cluster.read"
 	DeniedClusterPodLogsRead     = "cluster.pod.logs.read"
 	DeniedClusterPodExec         = "cluster.pod.exec"
+	DeniedClusterNodeDrain       = "cluster.node.drain"
 	DeniedClusterEventRead       = "cluster.event.read"
 	DeniedClusterManage          = "cluster.manage"
 	DeniedClusterNamespaceManage = "cluster.namespace.manage"
@@ -284,6 +287,8 @@ var actions = []Action{
 	{KubernetesPodLogsRead, GroupKubernetes},
 	{KubernetesPodExecSessionCreate, GroupKubernetes},
 	{KubernetesPodExec, GroupKubernetes},
+	{KubernetesNodeDrain, GroupKubernetes},
+	{KubernetesNodeDrainDryRun, GroupKubernetes},
 	{KubernetesEventRead, GroupKubernetes},
 	{KubernetesSecretList, GroupKubernetes},
 	{KubernetesSecretRead, GroupKubernetes},
@@ -295,6 +300,7 @@ var actions = []Action{
 	{DeniedClusterRead, GroupDenied},
 	{DeniedClusterPodLogsRead, GroupDenied},
 	{DeniedClusterPodExec, GroupDenied},
+	{DeniedClusterNodeDrain, GroupDenied},
 	{DeniedClusterEventRead, GroupDenied},
 	{DeniedClusterManage, GroupDenied},
 	{DeniedClusterNamespaceManage, GroupDenied},

@@ -207,6 +207,7 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/log"}, []string{"get"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/exec"}, []string{"create"})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/eviction"}, []string{"create"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"events"}, []string{"get", "list", "watch"})
 	// Secrets are granted, but only the five verbs the typed Secret API uses:
 	// no `watch`, no `deletecollection`, and no Subresource. What keeps the
@@ -219,7 +220,10 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	for _, rule := range clusterRole.Rules {
 		for _, resource := range rule.Resources {
 			if resource == "*" ||
-				(strings.Contains(resource, "/") && resource != "pods/log" && resource != "pods/exec") {
+				(strings.Contains(resource, "/") &&
+					resource != "pods/log" &&
+					resource != "pods/exec" &&
+					resource != "pods/eviction") {
 				t.Fatalf("ClusterRole grants wildcard or Subresource access: %+v", rule)
 			}
 		}

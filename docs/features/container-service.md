@@ -143,7 +143,7 @@
   Secret 的同五个动词（不含 `watch`；Agent 只在专用 Secret 接口的
   请求上、且目标不是自身命名空间时才会执行），`apiextensions.k8s.io/v1 customresourcedefinitions` 的只读
   `get`、`list`（仅用于判定哪些资源来自 CRD，不含定义或修改 CRD 的能力），并单独授予 `pods/log` 的 `get`
-  和 `pods/exec` 的 `create`；Eviction Subresource 仍未授权，
+  和 `pods/exec`、`pods/eviction` 的 `create`；后者只能经专用 Drain 接口与 Agent 的精确 allowlist 使用，
   其他资源也需安装方显式增加最小 RBAC。
 
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
@@ -281,9 +281,15 @@ ZKE 自身的授权对象以只读方式打开，理由分别见下文。
 或已复制时占位，因此静止状态下不会把每个值的右边缘撑开。`title` 写明将要复制的内容，因此屏幕上分开显示的
 地址与端口可以作为一个整体复制。ClusterIP 为 `None` 时保持纯文本：那是「没有地址」的说法，不是一个地址。
 
-节点的调度开关是对 `spec.unschedulable` 的 merge patch，走既有的受控通用 CRUD 路由，不需要专用接口，要求
-`cluster.resource.update` 权限。它只阻止新 Pod 被调度到该节点，不驱逐已运行的 Pod；驱逐（drain）需要
-`pods/eviction` Subresource，当前协议明确拒绝所有 Subresource，因此尚未支持。
+节点的调度开关是对 `spec.unschedulable` 的 merge patch，走既有的受控通用 CRUD 路由，要求
+`cluster.resource.update`。节点 Drain 使用独立的 `cluster.node.drain`（默认只授予 admin）：先按 Node UID
+复核并用 `spec.nodeName` 一次列全 Pod，超过 500 个或出现下一页时拒绝执行；Mirror、DaemonSet 和终止中的 Pod
+跳过，无控制器 Pod 与 emptyDir 默认阻断整个操作，必须分别显式接受才会继续。无阻断项后以带 UID test 的 JSON
+Patch 停止调度，再为每个 Pod 提交携带 UID precondition 的 `policy/v1 Eviction`。PDB 的 429 逐 Pod 报告为
+`pdb_blocked`，不回退成 DELETE；DryRun 同时覆盖 cordon 与 eviction。Agent 只对 core/v1 Pod 的 create eviction
+组合接受专用协议位，通用 Resource、YAML 与 Manifest 路径无法设置该位，因此新增 Kubernetes RBAC 不会成为任意
+Subresource 通道。响应中的 `evicted` 表示 API Server 已接受驱逐请求，不虚构 Pod 已越过终止宽限期；需要确认
+节点已经为空时重新读取节点诊断中的已分配 Pod。
 
 命名空间的配额管理是同一批 `policies/resourcequotas` 类型化接口的另一个视图，不是新的后端能力：入口在命名空间
 列表行和详情页，页面把 `core/v1 ResourceQuota` 的 `hard` 按计算资源配额、存储资源限制和其他资源限制三组展开成
@@ -782,7 +788,8 @@ Annotations、完整 Owner References、调度与网络信息、主容器、初�
 状态、资源 requests/limits、重启次数以及 Pod Conditions。删除 Pod 时必须携带当前 UID，避免误删同名重建对象；
 由 Deployment、StatefulSet、DaemonSet、Job 等控制器管理的 Pod 删除后通常会被控制器重新创建。Pod 删除不是
 Eviction，不执行 PodDisruptionBudget 语义；Logs 通过独立协议和最小 `pods/log` 权限实现，不会放宽通用
-Subresource 边界；Exec 只通过独立 Pod Exec 协议开放，Eviction 仍留待后续设计。
+Subresource 边界；Exec 只通过独立 Pod Exec 协议开放。Eviction 只由节点 Drain 的精确 allowlist 使用，Pod
+详情中的删除仍然是 DELETE，不会伪装成 PDB 感知的操作。
 
 Pod 日志后端在读取前和打开 Kubernetes 日志流后分别核对 Pod UID，避免同名 Pod 重建竞态；支持主容器、
 初始化容器和临时容器，`tail_lines` 最大 5000、`since_seconds` 最大 7 天。`previous` 不接受与 `follow`
@@ -1100,7 +1107,6 @@ resourceVersion 在挂载时固定，不随后台重新拉取更新：取一个�
 
 后续规划能力包括：
 
-- 节点驱逐，以及它依赖的 Subresource allowlist 设计；
 - 创建与编辑表单尚未覆盖的亲和性、拓扑分布约束与容器端口；
 - 创建工作负载时联动创建 Service 与 HorizontalPodAutoscaler（需要先定义多对象写入的部分成功与回滚语义）；
 - 终端会话的录制与回放；

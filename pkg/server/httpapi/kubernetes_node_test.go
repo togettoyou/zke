@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -12,6 +13,36 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 )
 
+func TestKubernetesNodeHandlerDrain(t *testing.T) {
+	t.Parallel()
+	service := &fakeKubernetesNodeService{
+		drain: func(_ context.Context, input kubernetesresource.DrainNodeInput) (kubernetesresource.DrainNodeResult, error) {
+			if input.ClusterID != testHTTPClusterID || input.NodeName != "worker-a" ||
+				input.NodeUID != "node-uid" || !input.DryRun || input.Confirm ||
+				!input.ForceUnmanaged || input.DeleteEmptyDirData ||
+				input.IdempotencyKey != "0123456789abcdef" {
+				t.Fatalf("unexpected DrainNode input: %+v", input)
+			}
+			return kubernetesresource.DrainNodeResult{
+				NodeName: input.NodeName, NodeUID: input.NodeUID, DryRun: true,
+				Pods: []kubernetesresource.DrainPod{},
+			}, nil
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/clusters/"+testHTTPClusterID+"/nodes/worker-a/drain",
+		bytes.NewBufferString(`{"uid":"node-uid","dry_run":true,"confirm":false,"force_unmanaged":true,"delete_empty_dir_data":false}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyKeyHeaderName, "0123456789abcdef")
+	response := httptest.NewRecorder()
+	nodeHandlerTestRouter(service).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 type fakeKubernetesNodeService struct {
 	list func(
 		context.Context,
@@ -22,6 +53,20 @@ type fakeKubernetesNodeService struct {
 		string,
 		string,
 	) (kubernetesresource.NodeDetail, error)
+	drain func(
+		context.Context,
+		kubernetesresource.DrainNodeInput,
+	) (kubernetesresource.DrainNodeResult, error)
+}
+
+func (service *fakeKubernetesNodeService) DrainNode(
+	ctx context.Context,
+	input kubernetesresource.DrainNodeInput,
+) (kubernetesresource.DrainNodeResult, error) {
+	if service.drain == nil {
+		return kubernetesresource.DrainNodeResult{}, errors.New("unexpected Node drain")
+	}
+	return service.drain(ctx, input)
 }
 
 func (service *fakeKubernetesNodeService) ListNodes(
@@ -265,6 +310,7 @@ func nodeHandlerTestRouter(service kubernetesNodeService) http.Handler {
 	handler := newKubernetesNodeHandler(
 		discardLogger(),
 		service,
+		nil,
 		5*time.Second,
 	)
 	router.GET(
@@ -274,6 +320,10 @@ func nodeHandlerTestRouter(service kubernetesNodeService) http.Handler {
 	router.GET(
 		"/api/v1/clusters/:cluster_id/nodes/:node_name",
 		handler.get,
+	)
+	router.POST(
+		"/api/v1/clusters/:cluster_id/nodes/:node_name/drain",
+		handler.drain,
 	)
 	return router
 }

@@ -601,6 +601,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/nodes/{node_name}/drain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 使用独立的 `cluster.node.drain` 权限维护节点。每次请求先按 Node UID
+         *     复核身份，再完整列出该节点上的 Pod。Mirror Pod、DaemonSet Pod 和已进入删除的
+         *     Pod 会跳过；无控制器 Pod 与使用 emptyDir 的 Pod 默认阻断整个操作，只有调用方
+         *     明确设置对应接受开关才会进入驱逐集合。
+         *
+         *     无阻断项后，Server 先用带 UID test 的 JSON Patch 将 Node 标记为不可调度，再通过
+         *     Agent 的唯一 `pods/eviction` allowlist 逐 Pod 提交 policy/v1 Eviction。Eviction 固定
+         *     携带 Pod UID precondition，因此会遵守 PodDisruptionBudget，也不会命中同名重建 Pod。
+         *     PDB 返回的 429 以逐 Pod `pdb_blocked` 结果返回，绝不回退为 Pod DELETE。`dry_run`
+         *     同时覆盖 Node Patch 与每个 Eviction；预检只能证明每个 Eviction 在当前快照下可单独
+         *     被接受，实际执行时预算仍可能变化。
+         */
+        post: operations["drainKubernetesNode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces": {
         parameters: {
             query?: never;
@@ -1974,7 +2003,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.node.drain" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -4134,6 +4163,40 @@ export interface components {
             continue_token: string;
             resource_version: string;
             remaining_item_count: number | null;
+        };
+        KubernetesNodeDrainRequest: {
+            uid: string;
+            dry_run: boolean;
+            /** @description 实际执行必须为 true；DryRun 可以为 false。 */
+            confirm: boolean;
+            /** @description 接受驱逐无控制器 Pod；默认 false 时这类 Pod 阻断整个操作。 */
+            force_unmanaged: boolean;
+            /** @description 接受 emptyDir 数据随 Pod 驱逐而丢失；默认 false 时阻断整个操作。 */
+            delete_empty_dir_data: boolean;
+            /** Format: int64 */
+            grace_period_seconds?: number | null;
+        };
+        KubernetesNodeDrainPod: {
+            namespace: string;
+            name: string;
+            uid: string;
+            /** @enum {string} */
+            decision: "evict" | "skip" | "block";
+            /** @enum {string} */
+            result: "pending" | "evicted" | "skipped" | "blocked" | "pdb_blocked" | "failed";
+            reason: string;
+            message: string;
+        };
+        KubernetesNodeDrainResult: {
+            node_name: string;
+            node_uid: string;
+            dry_run: boolean;
+            already_cordoned: boolean;
+            cordoned: boolean;
+            /** @description 本请求的 cordon Patch 已被 Kubernetes 接受；DryRun 时不表示已实际写入。 */
+            cordon_validated: boolean;
+            blocked: boolean;
+            pods: components["schemas"]["KubernetesNodeDrainPod"][];
         };
         KubernetesNamespaceSummary: {
             name: string;
@@ -6495,6 +6558,47 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    drainKubernetesNode: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                node_name: components["parameters"]["NodeName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesNodeDrainRequest"];
+            };
+        };
+        responses: {
+            /** @description Drain 预检或驱逐提交结果；evicted 表示 Eviction 已接受，Pod 可能仍处于终止宽限期。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNodeDrainResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

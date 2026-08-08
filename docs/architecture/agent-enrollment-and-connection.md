@@ -59,14 +59,14 @@ HTTP 注册和 QUIC 长连接分离是当前明确设计。注册属于尚未建
 `agent_pki.mode: managed` 时，Server 首次启动会在配置目录生成以下六个文件。该目录在部署中必须挂载到受保护的
 持久卷：
 
-| 文件 | 运行时使用者 | 作用 | 生命周期 |
-| --- | --- | --- | --- |
-| `agent-client-ca.crt` | ZKE Server | 验证 Agent 客户端证书 | 默认 10 年；CA 到期前人工规划轮换 |
-| `agent-client-ca.key` | ZKE Server | 注册和续期时签发 Agent 客户端证书 | 高敏感；CA 轮换时更换 |
-| `agent-listener-ca.crt` | ZKE Agent | 验证 QUIC Listener 的服务端证书 | 默认 20 年；CA 到期前人工规划轮换 |
-| `agent-listener-ca.key` | ZKE Server | 自动签发或续期 Agent Listener 证书 | 高敏感；Managed 模式保存在 PV |
-| `agent-listener.crt` | ZKE Server | QUIC Listener 向 Agent 证明服务端身份 | 默认 10 年；启动时进入续期窗口会自动续期 |
-| `agent-listener.key` | ZKE Server | QUIC Listener TLS 私钥 | Listener 续期时复用 |
+| 文件                    | 运行时使用者 | 作用                                  | 生命周期                                 |
+| ----------------------- | ------------ | ------------------------------------- | ---------------------------------------- |
+| `agent-client-ca.crt`   | ZKE Server   | 验证 Agent 客户端证书                 | 默认 10 年；CA 到期前人工规划轮换        |
+| `agent-client-ca.key`   | ZKE Server   | 注册和续期时签发 Agent 客户端证书     | 高敏感；CA 轮换时更换                    |
+| `agent-listener-ca.crt` | ZKE Agent    | 验证 QUIC Listener 的服务端证书       | 默认 20 年；CA 到期前人工规划轮换        |
+| `agent-listener-ca.key` | ZKE Server   | 自动签发或续期 Agent Listener 证书    | 高敏感；Managed 模式保存在 PV            |
+| `agent-listener.crt`    | ZKE Server   | QUIC Listener 向 Agent 证明服务端身份 | 默认 10 年；启动时进入续期窗口会自动续期 |
+| `agent-listener.key`    | ZKE Server   | QUIC Listener TLS 私钥                | Listener 续期时复用                      |
 
 两条 CA 信任链在密码学上可以合并，但不建议这样做：
 
@@ -110,16 +110,16 @@ agent_pki:
 每个 Agent 在自己的 Kubernetes 集群中维护一个长期身份 Secret，默认名称为
 `zke-system/zke-agent-identity`：
 
-| Secret Key | 内容 | 使用阶段 |
-| --- | --- | --- |
-| `tls.key` | Agent 本地生成的 ECDSA P-256 私钥 | 注册 CSR、每次 QUIC/mTLS 握手 |
-| `tls.crt` | Agent 客户端叶子证书 | 每次 QUIC/mTLS 握手 |
-| `cluster-id` | Server 分配的 Cluster ID | `ClientHello` 和作用域校验 |
-| `agent-id` | Server 分配的 Agent ID | `ClientHello` 和作用域校验 |
-| `certificate-expires-at` | 客户端证书过期时间 | Agent 启动校验 |
-| `enrollment.csr` | 待注册 CSR | 仅注册未完成时存在 |
-| `enrollment.idempotency-key` | Agent 注册幂等键 | 仅注册未完成时存在 |
-| `certificate.renewal.csr` | 待续期 CSR | 仅续期未完成时存在，用于重试恢复 |
+| Secret Key                   | 内容                              | 使用阶段                         |
+| ---------------------------- | --------------------------------- | -------------------------------- |
+| `tls.key`                    | Agent 本地生成的 ECDSA P-256 私钥 | 注册 CSR、每次 QUIC/mTLS 握手    |
+| `tls.crt`                    | Agent 客户端叶子证书              | 每次 QUIC/mTLS 握手              |
+| `cluster-id`                 | Server 分配的 Cluster ID          | `ClientHello` 和作用域校验       |
+| `agent-id`                   | Server 分配的 Agent ID            | `ClientHello` 和作用域校验       |
+| `certificate-expires-at`     | 客户端证书过期时间                | Agent 启动校验                   |
+| `enrollment.csr`             | 待注册 CSR                        | 仅注册未完成时存在               |
+| `enrollment.idempotency-key` | Agent 注册幂等键                  | 仅注册未完成时存在               |
+| `certificate.renewal.csr`    | 待续期 CSR                        | 仅续期未完成时存在，用于重试恢复 |
 
 注册成功后会删除 CSR 和注册幂等键，但保留私钥、证书和身份元数据。Agent 私钥从不发送给 Server。
 
@@ -164,13 +164,13 @@ Enrollment 的幂等键用于防止调用方因网络重试而生成多个 Token
 
 这一阶段的必要性如下：
 
-| 步骤 | 判断 | 原因 |
-| --- | --- | --- |
-| 身份认证和 Project RBAC | 必需 | 决定谁可以把集群接入哪个作用域 |
-| 一次性引导凭据 | 当前架构必需 | Agent 尚无客户端证书，需要初始信任 |
-| 短有效期和单次消费 | 必需 | 降低 Token 泄露后的可利用窗口 |
-| 创建请求幂等 | 强烈建议 | 防止重试生成重复 Enrollment |
-| Kubernetes Secret 交付 | 可替换实现 | 必须有安全交付通道，当前由 client-go 定域读取 |
+| 步骤                    | 判断         | 原因                                          |
+| ----------------------- | ------------ | --------------------------------------------- |
+| 身份认证和 Project RBAC | 必需         | 决定谁可以把集群接入哪个作用域                |
+| 一次性引导凭据          | 当前架构必需 | Agent 尚无客户端证书，需要初始信任            |
+| 短有效期和单次消费      | 必需         | 降低 Token 泄露后的可利用窗口                 |
+| 创建请求幂等            | 强烈建议     | 防止重试生成重复 Enrollment                   |
+| Kubernetes Secret 交付  | 可替换实现   | 必须有安全交付通道，当前由 client-go 定域读取 |
 
 ### 3.1 一键安装 Manifest
 
@@ -202,7 +202,8 @@ Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Se
 该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass、ServiceAccount、四类 RBAC 资源、Pod Logs 和 Kubernetes Event 当前后端能力。
 其中 `apiextensions.k8s.io/v1 customresourcedefinitions` 只授予 `get` 与 `list`，仅用于在 Discovery 目录中
 标记哪些资源来自 CRD，不包含定义或修改 CRD 的能力。Node、Namespace 和 Pod 的 `update` 用于完整 YAML 管理，Pod Logs 只增加 `pods/log` 的 `get`，Pod Exec
-只增加 `pods/exec` 的 `create`，Event 只增加 `events` 的 `get/list/watch`，不授予 Eviction。Agent 的通用
+只增加 `pods/exec` 的 `create`，Node Drain 只增加 `pods/eviction` 的 `create`，Event 只增加
+`events` 的 `get/list/watch`。Eviction 仍需专用协议位、精确 GVR/Subresource 与 Pod UID precondition；Agent 的通用
 Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限；需要读取或变更更多内置资源、CRD 或 CR 时，安装方
 必须为同一 ServiceAccount 增加明确的最小 RBAC。
 不得为了使用通用接口直接绑定 `cluster-admin`。

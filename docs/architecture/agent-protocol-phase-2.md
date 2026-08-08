@@ -75,12 +75,12 @@ Stream。
 
 Phase 2 使用或规划以下业务 Stream：
 
-| Stream 类型 | 发起方 | 生命周期 | 用途 |
-| --- | --- | --- | --- |
-| `RESOURCE` | Server | 短请求 | List、Get 及后续资源变更 |
-| `RESOURCE_WATCH` | Server | 长请求 | Kubernetes 资源 Watch |
-| `POD_LOGS` | Server | 长请求 | Pod 日志读取与 Follow |
-| `POD_EXEC` | Server | 长会话 | Web Terminal 的 stdin、stdout、stderr 和终端尺寸变更 |
+| Stream 类型      | 发起方 | 生命周期 | 用途                                                 |
+| ---------------- | ------ | -------- | ---------------------------------------------------- |
+| `RESOURCE`       | Server | 短请求   | List、Get 及后续资源变更                             |
+| `RESOURCE_WATCH` | Server | 长请求   | Kubernetes 资源 Watch                                |
+| `POD_LOGS`       | Server | 长请求   | Pod 日志读取与 Follow                                |
+| `POD_EXEC`       | Server | 长会话   | Web Terminal 的 stdin、stdout、stderr 和终端尺寸变更 |
 
 Agent 主动上报事件或数据时，应使用独立的 Agent 发起 Stream 类型；不得复用 Server 发起的 Resource Stream。
 这类上报不属于 Phase 2 第一阶段。
@@ -291,7 +291,9 @@ message DeleteOptions {
 写操作遵守以下约束：
 
 - 只开放 Kubernetes Discovery 可见、Agent 策略允许且 ServiceAccount RBAC 授权的主资源；
-- Secret 和任意 Subresource 默认拒绝，`status`、`scale`、`eviction` 后续按独立 allowlist 设计；
+- Secret 和任意 Subresource 默认拒绝；当前唯一例外是 Node Drain 的 Pod Eviction，它要求专用协议位、
+  `CREATE core/v1 pods/{name}/eviction`、`policy/v1 Eviction` 正文和 Pod UID precondition 全部匹配；
+  `status`、`scale` 仍需后续独立 allowlist；
 - `CREATE` 必须使用 `metadata.name`，不接受 `generateName`，确保重试不会创建多个不同对象；
 - `UPDATE` 的 URL 名称、正文 `metadata.name`、Namespace 和 GVK 必须一致，并要求正文携带
   `metadata.resourceVersion`；
@@ -555,10 +557,10 @@ QUIC 提供 Stream 级多路复用和流控，但同一 Connection 上的 Stream
 `max_incoming_streams` 是 QUIC 传输层对一条 Connection 的双向 Stream 总量硬限制。该值由接收端配置，
 限制对端能够同时创建的 Stream，而不是限制本端创建的 Stream：
 
-| 配置位置 | 被限制的方向 | Phase 2 中包含的 Stream |
-| --- | --- | --- |
-| Server `agent_listener.max_incoming_streams` | Agent → Server | Control，以及未来 Agent 主动上报 |
-| Agent `connection.max_incoming_streams` | Server → Agent | Resource、Watch、Pod Logs、Pod Exec |
+| 配置位置                                     | 被限制的方向   | Phase 2 中包含的 Stream             |
+| -------------------------------------------- | -------------- | ----------------------------------- |
+| Server `agent_listener.max_incoming_streams` | Agent → Server | Control，以及未来 Agent 主动上报    |
+| Agent `connection.max_incoming_streams`      | Server → Agent | Resource、Watch、Pod Logs、Pod Exec |
 
 Control Stream 由 Agent 创建并在 Connection 生命周期内持续存在，因此占用 Server incoming 额度中的一个。
 Control Stream 不占用 Agent incoming 额度。当前协议不接受 QUIC 单向 Stream。
@@ -612,10 +614,10 @@ Pod Logs、Watch 或 Pod Exec 不得耗尽全部 Stream，导致 Resource 请求
 
 Phase 2 混合负载测试可以使用以下数值作为验证基线：
 
-| 接收端 | QUIC incoming 总额度 | 应用层额度 |
-| --- | ---: | --- |
-| Agent | 128 | Resource 64、Watch 16、Pod Logs 24、Pod Exec 8、预留 16 |
-| Server | 16 | Control 1，其余为未来 Agent 主动上报及预留 |
+| 接收端 | QUIC incoming 总额度 | 应用层额度                                              |
+| ------ | -------------------: | ------------------------------------------------------- |
+| Agent  |                  128 | Resource 64、Watch 16、Pod Logs 24、Pod Exec 8、预留 16 |
+| Server |                   16 | Control 1，其余为未来 Agent 主动上报及预留              |
 
 这些数值不是生产承诺，也不表示为每条 Connection 预先创建处理任务或分配正文内存。QUIC 额度只允许
 最多打开这些 Stream，内存和 Kubernetes API 压力仍由实际打开数量及应用层额度决定。
@@ -771,7 +773,8 @@ Node dynamic client 的 List/Detail 往返。
   Create/Patch/Delete；Console 已实现类型化创建和其他变更操作的 DryRun、影响展示与确认闭环。
 - Pod 已实现显式 Cluster/Namespace 定域的类型化 List/Detail 投影和带 UID 前置条件的删除后端；Console
   已完成列表、详情和删除确认闭环；Pod Logs 已实现有界快照、实时 Follow，以及固定 Pod UID、容器选择、
-  取消、下载和有界浏览器缓冲的 Console 闭环；Pod Exec 与 xterm.js Console 闭环已实现，Eviction 尚未实现。
+  取消、下载和有界浏览器缓冲的 Console 闭环；Pod Exec 与 xterm.js Console 闭环已实现；Eviction 只由
+  PDB 感知的 Node Drain 使用，普通 Pod 删除仍走 DELETE。
 - Service、Ingress 和 Gateway 已实现固定 GVR、显式 Cluster/Namespace 定域的类型化
   List/Detail/Create/Update/Delete 后端；Gateway 操作会先确认目标集群已安装 Gateway API v1，Console 和
   HTTPRoute 等 Route 类型尚未实现。

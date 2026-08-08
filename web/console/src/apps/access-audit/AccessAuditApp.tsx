@@ -162,6 +162,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   "cluster.read": "查看集群",
   "cluster.pod.logs.read": "查看 Pod 日志",
   "cluster.pod.exec": "进入 Pod 终端",
+  "cluster.node.drain": "排空节点",
   "cluster.event.read": "查看集群事件",
   "cluster.manage": "管理集群",
   "cluster.namespace.manage": "创建和删除 Kubernetes 命名空间",
@@ -195,6 +196,7 @@ const PERMISSION_WARNINGS: Record<string, string> = {
   "cluster.secret.read": "可读取 Secret 明文取值",
   "cluster.secret.manage": "可修改和删除 Secret",
   "cluster.pod.exec": "可进入容器终端",
+  "cluster.node.drain": "可排空节点并驱逐 Pod",
   "cluster.namespace.manage": "删除命名空间会连同其中的全部对象一起移除",
   "rbac.manage": "可创建角色并授予自己已持有的权限",
 };

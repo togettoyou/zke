@@ -90,6 +90,11 @@ message ResourceRequest {
   // refusing, which is the behaviour a Server upgraded ahead of its Agents
   // should get.
   bool secret_access = 12;
+  // Set only by the Server's dedicated Node Drain API. The Agent accepts it
+  // solely for CREATE core/v1 pods/{name}/eviction with a policy/v1 Eviction
+  // body whose Namespace, Name and UID precondition match this request. It is
+  // not a generic permission to address arbitrary subresources.
+  bool pod_eviction_access = 13;
 }
 
 message ResourceResponse {

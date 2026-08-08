@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, idempotentHeaders, unwrap } from "../client";
+import type { KubernetesNodeDrainRequest } from "../types";
 import { queryKeys, queryKeyPrefixes } from "../query-keys";
 
 export type NodeListParams = {
@@ -55,8 +56,8 @@ export function useNode(clusterId: string | null, name: string | null) {
  * route already covers. The patch names only that one field, so it cannot carry
  * an unrelated change to the Node along with it.
  *
- * Draining is a different operation and is not available: it evicts Pods through
- * the `pods/eviction` subresource, which the Resource protocol rejects.
+ * Draining is a separate, more sensitive operation below: it has its own
+ * permission and the Agent accepts only the exact pods/eviction request shape.
  */
 export function useSetNodeSchedulable() {
   const queryClient = useQueryClient();
@@ -94,6 +95,41 @@ export function useSetNodeSchedulable() {
           }),
           queryClient.invalidateQueries({
             queryKey: queryKeys.node(variables.clusterId, variables.name),
+          }),
+        ]);
+      }
+    },
+  });
+}
+
+export function useDrainNode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      clusterId: string;
+      name: string;
+      request: KubernetesNodeDrainRequest;
+      idempotencyKey: string;
+    }) =>
+      unwrap(
+        await api.POST("/api/v1/clusters/{cluster_id}/nodes/{node_name}/drain", {
+          params: {
+            path: { cluster_id: input.clusterId, node_name: input.name },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: input.request,
+        }),
+      ),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents });
+      if (!variables.request.dry_run) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["nodes", variables.clusterId] }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.node(variables.clusterId, variables.name),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.nodeDescribe(variables.clusterId, variables.name),
           }),
         ]);
       }

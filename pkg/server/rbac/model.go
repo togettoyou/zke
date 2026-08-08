@@ -15,6 +15,7 @@ const (
 	PermissionClusterRead             Permission = "cluster.read"
 	PermissionClusterPodLogsRead      Permission = "cluster.pod.logs.read"
 	PermissionClusterPodExec          Permission = "cluster.pod.exec"
+	PermissionClusterNodeDrain        Permission = "cluster.node.drain"
 	PermissionClusterEventRead        Permission = "cluster.event.read"
 	PermissionClusterManage           Permission = "cluster.manage"
 	PermissionClusterNamespaceManage  Permission = "cluster.namespace.manage"

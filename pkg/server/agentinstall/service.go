@@ -261,8 +261,6 @@ func renderManifest(
 				Resources: []string{"nodes"},
 				// `patch` covers marking a Node schedulable or unschedulable;
 				// `update` is the full-object YAML management path.
-				// Draining is not included: it needs the pods/eviction
-				// subresource, which the Resource protocol still rejects.
 				Verbs: []string{"get", "list", "update", "patch"},
 			},
 			{
@@ -288,6 +286,14 @@ func renderManifest(
 				// shell selection (bash, then /bin/sh) and validates Pod UID and
 				// container identity.
 				Resources: []string{"pods/exec"},
+				Verbs:     []string{"create"},
+			},
+			{
+				APIGroups: []string{""},
+				// Drain is the sole Resource Stream subresource allowlist entry.
+				// The Agent also requires the dedicated access bit, policy/v1
+				// Eviction identity and a Pod UID precondition.
+				Resources: []string{"pods/eviction"},
 				Verbs:     []string{"create"},
 			},
 			{

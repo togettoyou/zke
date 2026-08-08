@@ -1686,6 +1686,66 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/nodes/{node_name}/drain:
+    post:
+      tags: [Resources]
+      operationId: drainKubernetesNode
+      description: |
+        使用独立的 `cluster.node.drain` 权限维护节点。每次请求先按 Node UID
+        复核身份，再完整列出该节点上的 Pod。Mirror Pod、DaemonSet Pod 和已进入删除的
+        Pod 会跳过；无控制器 Pod 与使用 emptyDir 的 Pod 默认阻断整个操作，只有调用方
+        明确设置对应接受开关才会进入驱逐集合。
+
+        无阻断项后，Server 先用带 UID test 的 JSON Patch 将 Node 标记为不可调度，再通过
+        Agent 的唯一 `pods/eviction` allowlist 逐 Pod 提交 policy/v1 Eviction。Eviction 固定
+        携带 Pod UID precondition，因此会遵守 PodDisruptionBudget，也不会命中同名重建 Pod。
+        PDB 返回的 429 以逐 Pod `pdb_blocked` 结果返回，绝不回退为 Pod DELETE。`dry_run`
+        同时覆盖 Node Patch 与每个 Eviction；预检只能证明每个 Eviction 在当前快照下可单独
+        被接受，实际执行时预算仍可能变化。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NodeName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesNodeDrainRequest"
+      responses:
+        "200":
+          description: Drain 预检或驱逐提交结果；evicted 表示 Eviction 已接受，Pod 可能仍处于终止宽限期。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesNodeDrainResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces:
     get:
       tags: [Resources]
@@ -6662,6 +6722,7 @@ components:
               - cluster.read
               - cluster.pod.logs.read
               - cluster.pod.exec
+              - cluster.node.drain
               - cluster.event.read
               - cluster.manage
               - cluster.namespace.manage
@@ -10806,6 +10867,64 @@ components:
         remaining_item_count:
           type: [integer, "null"]
           minimum: 0
+    KubernetesNodeDrainRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, dry_run, confirm, force_unmanaged, delete_empty_dir_data]
+      properties:
+        uid:
+          type: string
+          minLength: 1
+          maxLength: 128
+        dry_run:
+          type: boolean
+        confirm:
+          type: boolean
+          description: 实际执行必须为 true；DryRun 可以为 false。
+        force_unmanaged:
+          type: boolean
+          description: 接受驱逐无控制器 Pod；默认 false 时这类 Pod 阻断整个操作。
+        delete_empty_dir_data:
+          type: boolean
+          description: 接受 emptyDir 数据随 Pod 驱逐而丢失；默认 false 时阻断整个操作。
+        grace_period_seconds:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+    KubernetesNodeDrainPod:
+      type: object
+      additionalProperties: false
+      required: [namespace, name, uid, decision, result, reason, message]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        uid: { type: string }
+        decision:
+          type: string
+          enum: [evict, skip, block]
+        result:
+          type: string
+          enum: [pending, evicted, skipped, blocked, pdb_blocked, failed]
+        reason: { type: string }
+        message: { type: string }
+    KubernetesNodeDrainResult:
+      type: object
+      additionalProperties: false
+      required: [node_name, node_uid, dry_run, already_cordoned, cordoned, cordon_validated, blocked, pods]
+      properties:
+        node_name: { type: string }
+        node_uid: { type: string }
+        dry_run: { type: boolean }
+        already_cordoned: { type: boolean }
+        cordoned: { type: boolean }
+        cordon_validated:
+          type: boolean
+          description: 本请求的 cordon Patch 已被 Kubernetes 接受；DryRun 时不表示已实际写入。
+        blocked: { type: boolean }
+        pods:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesNodeDrainPod"
     KubernetesNamespaceSummary:
       type: object
       additionalProperties: false

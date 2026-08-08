@@ -213,6 +213,7 @@ func New(
 		kubernetesNode: newKubernetesNodeHandler(
 			logger,
 			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesNamespace: newKubernetesNamespaceHandler(

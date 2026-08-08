@@ -409,11 +409,31 @@ func refuseKubernetesResourceRequest(
 ) *resourceRefusal {
 	resource := request.GetResource()
 	if resource == nil ||
-		request.GetSubresource() != "" ||
 		!supportedKubernetesResourceVerb(request.GetVerb()) {
 		return refusalNotEnabled
 	}
+	if request.GetPodEvictionAccess() {
+		if !isPodEvictionRequest(request) {
+			return refusalNotEnabled
+		}
+		return nil
+	}
+	if request.GetSubresource() != "" {
+		return refusalNotEnabled
+	}
 	return refuseKubernetesResource(request, identityNamespace)
+}
+
+func isPodEvictionRequest(request *agentv1.ResourceRequest) bool {
+	resource := request.GetResource()
+	return resource != nil &&
+		resource.GetGroup() == "" &&
+		resource.GetVersion() == "v1" &&
+		resource.GetResource() == "pods" &&
+		request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_CREATE &&
+		request.GetSubresource() == "eviction" &&
+		request.GetNamespace() != "" &&
+		request.GetName() != ""
 }
 
 func supportedKubernetesResourceVerb(verb agentv1.ResourceVerb) bool {
@@ -730,18 +750,31 @@ func executeKubernetesResourceMutation(
 	dryRun := mutationDryRun(request)
 	switch request.GetVerb() {
 	case agentv1.ResourceVerb_RESOURCE_VERB_CREATE:
-		object, err = decodeMutationObject(request, body, false)
+		if isPodEvictionRequest(request) {
+			object, err = decodePodEvictionObject(request, body)
+		} else {
+			object, err = decodeMutationObject(request, body, false)
+		}
 		if err != nil {
 			return invalidMutationResult(
 				"InvalidObject",
 				"Kubernetes resource identity does not match the request",
 			), nil
 		}
-		object, err = target.Create(
-			ctx,
-			object,
-			createOptions(request.GetMutationOptions()),
-		)
+		if request.GetSubresource() == "" {
+			object, err = target.Create(
+				ctx,
+				object,
+				createOptions(request.GetMutationOptions()),
+			)
+		} else {
+			object, err = target.Create(
+				ctx,
+				object,
+				createOptions(request.GetMutationOptions()),
+				request.GetSubresource(),
+			)
+		}
 		statusCode = http.StatusCreated
 	case agentv1.ResourceVerb_RESOURCE_VERB_UPDATE:
 		object, err = decodeMutationObject(request, body, true)
@@ -834,6 +867,33 @@ func executeKubernetesResourceMutation(
 		body:     responseBody,
 		applied:  !dryRun,
 	}, nil
+}
+
+func decodePodEvictionObject(
+	request *agentv1.ResourceRequest,
+	body []byte,
+) (*unstructured.Unstructured, error) {
+	object := &unstructured.Unstructured{}
+	if err := object.UnmarshalJSON(body); err != nil {
+		return nil, err
+	}
+	uid, found, err := unstructured.NestedString(
+		object.Object,
+		"deleteOptions",
+		"preconditions",
+		"uid",
+	)
+	if err != nil || !found || uid == "" {
+		return nil, errors.New("Pod eviction UID precondition is required")
+	}
+	if object.GetAPIVersion() != "policy/v1" ||
+		object.GetKind() != "Eviction" ||
+		object.GetName() != request.GetName() ||
+		object.GetNamespace() != request.GetNamespace() ||
+		object.GetGenerateName() != "" {
+		return nil, errors.New("Pod eviction identity mismatch")
+	}
+	return object, nil
 }
 
 // mutationFailureApplied reports whether a failed mutation may still have
