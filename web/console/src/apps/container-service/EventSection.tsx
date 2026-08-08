@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Pause, Play, RotateCw } from "lucide-react";
+import { Pause, Play, RotateCw, X } from "lucide-react";
 
 import { errorMessage } from "@/api/errors";
 import {
@@ -10,7 +10,7 @@ import {
   type KubernetesEventReference,
 } from "@/api/queries/kubernetes-events";
 import { useResourceTypes } from "@/api/queries/kubernetes-resources";
-import { SectionToolbarActions } from "@/apps/AppShell";
+import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { DataTable } from "@/components/common/data-table";
 import { RelativeTime, StatusBadge } from "@/components/common/status";
 import { statusLabel } from "@/components/common/status-labels";
@@ -52,6 +52,8 @@ const CLOSE_REASONS: Record<string, string> = {
 type EventSectionProps = {
   clusterId: string;
   namespace: string;
+  initialObjectFilter?: { kind: string; name: string; uid: string };
+  onBack?: () => void;
 };
 
 /**
@@ -61,12 +63,18 @@ type EventSectionProps = {
  * than the generic Resource stream, which rejects them outright — reading them
  * is not implied by reading the Cluster.
  */
-export function EventSection({ clusterId, namespace }: EventSectionProps) {
+export function EventSection({
+  clusterId,
+  namespace,
+  initialObjectFilter,
+  onBack,
+}: EventSectionProps) {
   const [follow, setFollow] = useState(true);
   const [limit, setLimit] = useState(200);
   const [type, setType] = useState(ANY_TYPE);
-  const [kind, setKind] = useState(ANY_KIND);
-  const [name, setName] = useState("");
+  const [objectFilter, setObjectFilter] = useState(initialObjectFilter);
+  const [kind, setKind] = useState(initialObjectFilter?.kind ?? ANY_KIND);
+  const [name, setName] = useState(initialObjectFilter?.name ?? "");
   const [reason, setReason] = useState("");
 
   // Type and Kind are whole values chosen from a list, so they are sent to the
@@ -85,7 +93,15 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
     limit,
     filters: {
       ...(type === ANY_TYPE ? {} : { type: type as "Normal" | "Warning" }),
-      ...(kind === ANY_KIND ? {} : { resourceKind: kind }),
+      ...(objectFilter
+        ? {
+            resourceUid: objectFilter.uid,
+            resourceKind: objectFilter.kind,
+            resourceName: objectFilter.name,
+          }
+        : kind === ANY_KIND
+          ? {}
+          : { resourceKind: kind }),
     },
   });
 
@@ -180,6 +196,9 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {onBack ? (
+        <PageHeader title={objectFilter ? `${objectFilter.name} · 事件` : "事件"} onBack={onBack} />
+      ) : null}
       {/* The stream controls go to the toolbar; the filters stay here, because
           they are fields with labels rather than actions. */}
       <SectionToolbarActions>
@@ -202,6 +221,29 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
         </Button>
       </SectionToolbarActions>
 
+      {objectFilter ? (
+        <Alert tone="info" className="mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              已按对象 UID 精确筛选 {objectFilter.kind}/{objectFilter.name}
+              ，不会混入同名重建对象的事件。
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setObjectFilter(undefined);
+                setKind(ANY_KIND);
+                setName("");
+              }}
+            >
+              <X />
+              清除对象筛选
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
+
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div className="grid content-start gap-1.5">
           <Label htmlFor="event-type">类型</Label>
@@ -220,7 +262,7 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
         </div>
         <div className="grid content-start gap-1.5">
           <Label htmlFor="event-kind">关联资源类型</Label>
-          <Select value={kind} onValueChange={setKind}>
+          <Select value={kind} onValueChange={setKind} disabled={Boolean(objectFilter)}>
             <SelectTrigger id="event-kind" className="w-48">
               <SelectValue />
             </SelectTrigger>
@@ -243,6 +285,7 @@ export function EventSection({ clusterId, namespace }: EventSectionProps) {
             autoComplete="off"
             spellCheck={false}
             placeholder="模糊匹配"
+            disabled={Boolean(objectFilter)}
             onChange={(event) => setName(event.target.value)}
           />
         </div>

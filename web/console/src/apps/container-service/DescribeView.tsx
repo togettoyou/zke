@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
+import { Bell, ExternalLink, ScrollText } from "lucide-react";
 
 import type {
   KubernetesDescribe,
@@ -10,13 +11,19 @@ import type {
   KubernetesDescribeRelatedObject,
 } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
+import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { CopyButton, RelativeTime, StatusBadge } from "@/components/common/status";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardTitle, Alert } from "@/components/ui/misc";
+import { cn } from "@/lib/cn";
 import { formatAbsolute } from "@/lib/time";
+import { useScopeStore } from "@/scope/scope-store";
+
+import { useDiagnosticNavigation } from "./diagnostic-navigation-context";
 
 /**
  * What each finding means, and what to do about it.
@@ -247,6 +254,48 @@ export function DescribeView({
   onRetry,
   onBack,
 }: DescribeViewProps) {
+  const navigation = useDiagnosticNavigation();
+  const { permissions } = useSessionContext();
+  const scope = useScopeStore((state) => state.scope);
+  const projectScope = {
+    type: "project" as const,
+    tenantId: scope.tenantId,
+    projectId: scope.projectId,
+  };
+  const canReadEvents = permissions.can("cluster.event.read", projectScope);
+  const canReadLogs = permissions.can("cluster.pod.logs.read", projectScope);
+  const [highlightedEvidence, setHighlightedEvidence] = useState<string | null>(null);
+
+  const focusEvidence = (kind: string, evidenceName: string) => {
+    const anchor = evidenceAnchor(kind, evidenceName);
+    const element = document.getElementById(anchor);
+    if (!element) {
+      return;
+    }
+    setHighlightedEvidence(anchor);
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(
+      () => setHighlightedEvidence((current) => (current === anchor ? null : current)),
+      2_000,
+    );
+  };
+
+  const openPodLogs = (
+    pod: { name: string; uid: string; namespace: string },
+    finding: KubernetesDescribeFinding,
+  ) => {
+    if (!navigation || !canReadLogs || !finding.scope || !pod.uid) {
+      return;
+    }
+    navigation.open({
+      view: "pod-logs",
+      namespace: pod.namespace,
+      pod: { name: pod.name, uid: pod.uid },
+      container: finding.scope,
+      previous: previousLogsFinding(finding.code),
+    });
+  };
+
   // A workload's timeline carries the Events of several objects, so each line
   // has to say which one it is about. A single object's does not: every line
   // would repeat the name in the page header.
@@ -280,7 +329,14 @@ export function DescribeView({
         header: "原因",
         size: 170,
         cell: ({ row }) => (
-          <div className="flex flex-col gap-0.5">
+          <div
+            id={evidenceAnchor("Event", row.original.uid)}
+            className={cn(
+              "-m-1 flex flex-col gap-0.5 rounded px-1 py-1 transition-colors",
+              highlightedEvidence === evidenceAnchor("Event", row.original.uid) &&
+                "bg-warning/15 ring-warning/40 ring-1",
+            )}
+          >
             <span className="text-foreground font-medium break-words">{row.original.reason}</span>
             {row.original.container ? (
               <span className="text-subtle-foreground text-xs break-all">
@@ -321,7 +377,7 @@ export function DescribeView({
         ),
       },
     ],
-    [aggregated],
+    [aggregated, highlightedEvidence],
   );
 
   return (
@@ -331,7 +387,29 @@ export function DescribeView({
         onBack={onBack}
         actions={
           data ? (
-            <CopyButton value={() => describeText(data, kindLabel)} label="复制为文本" />
+            <div className="flex items-center gap-1.5">
+              {navigation && canReadEvents && data.target.namespace && data.target.uid ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    navigation.open({
+                      view: "events",
+                      namespace: data.target.namespace,
+                      object: {
+                        kind: data.target.kind,
+                        name: data.target.name,
+                        uid: data.target.uid,
+                      },
+                    })
+                  }
+                >
+                  <Bell />
+                  精确事件
+                </Button>
+              ) : null}
+              <CopyButton value={() => describeText(data, kindLabel)} label="复制为文本" />
+            </div>
           ) : null
         }
       />
@@ -357,6 +435,32 @@ export function DescribeView({
                 <FindingCard
                   key={`${finding.code}-${finding.scope ?? ""}-${index}`}
                   finding={finding}
+                  canOpenLogs={Boolean(
+                    canReadLogs &&
+                    data.pod?.uid &&
+                    data.target.namespace &&
+                    finding.scope &&
+                    logFinding(finding.code),
+                  )}
+                  onOpenLogs={() =>
+                    openPodLogs(
+                      {
+                        name: data.target.name,
+                        uid: data.pod?.uid ?? "",
+                        namespace: data.target.namespace,
+                      },
+                      finding,
+                    )
+                  }
+                  onFocusEvidence={focusEvidence}
+                  canFocusEvidence={(kind, evidenceName) =>
+                    kind === "Event"
+                      ? data.events.items.some((event) => event.uid === evidenceName)
+                      : kind === "Condition" &&
+                        describeConditions(data).some(
+                          (condition) => condition.type === evidenceName,
+                        )
+                  }
                 />
               ))}
             </div>
@@ -378,7 +482,17 @@ export function DescribeView({
           {data.autoscaler ? <AutoscalerDiagnosticSummary data={data} /> : null}
           {data.policy && data.policy_status ? <PolicyDiagnosticSummary data={data} /> : null}
 
-          {data.related ? <RelatedSection related={data.related} family={data.family} /> : null}
+          {data.related ? (
+            <RelatedSection
+              related={data.related}
+              family={data.family}
+              defaultNamespace={data.target.namespace}
+              canReadLogs={canReadLogs}
+              onOpenPodLogs={openPodLogs}
+            />
+          ) : null}
+
+          <ConditionEvidenceSection data={data} highlightedEvidence={highlightedEvidence} />
 
           {data.degraded_sections.includes("related") ? (
             <Alert tone="warning">
@@ -473,6 +587,104 @@ function relatedHasFindings(data: KubernetesDescribe): boolean {
   );
 }
 
+type EvidenceCondition = {
+  type: string;
+  status: string;
+  reason?: string;
+  message?: string;
+};
+
+/** Conditions named by a finding, rendered as inspectable evidence anchors. */
+function ConditionEvidenceSection({
+  data,
+  highlightedEvidence,
+}: {
+  data: KubernetesDescribe;
+  highlightedEvidence: string | null;
+}) {
+  const referenced = new Set(
+    allDescribeFindings(data).flatMap((finding) =>
+      finding.evidence
+        .filter((evidence) => evidence.kind === "Condition")
+        .map((evidence) => evidence.name),
+    ),
+  );
+  const seen = new Set<string>();
+  const conditions = describeConditions(data).filter((condition) => {
+    if (!referenced.has(condition.type) || seen.has(condition.type)) {
+      return false;
+    }
+    seen.add(condition.type);
+    return true;
+  });
+  if (conditions.length === 0) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardTitle>诊断依据</CardTitle>
+      <div className="mt-2 grid gap-2">
+        {conditions.map((condition) => {
+          const anchor = evidenceAnchor("Condition", condition.type);
+          return (
+            <div
+              key={condition.type}
+              id={anchor}
+              className={cn(
+                "border-border/60 rounded-control border p-2.5 transition-colors",
+                highlightedEvidence === anchor && "bg-warning/10 ring-warning/40 ring-1",
+              )}
+            >
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-foreground font-medium">{condition.type}</span>
+                <span className="zke-mono text-subtle-foreground">{condition.status}</span>
+                {condition.reason ? (
+                  <span className="zke-mono text-subtle-foreground">{condition.reason}</span>
+                ) : null}
+              </div>
+              {condition.message ? (
+                <p className="text-muted-foreground mt-1 text-xs break-words">
+                  {condition.message}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function allDescribeFindings(data: KubernetesDescribe): KubernetesDescribeFinding[] {
+  const related = data.related
+    ? [
+        ...data.related.controllers,
+        ...data.related.persistent_volume_claims,
+        ...data.related.pods,
+      ].flatMap((object) => object.findings)
+    : [];
+  return [
+    ...data.findings,
+    ...related,
+    ...(data.ingress_backends?.items.flatMap((backend) => backend.findings) ?? []),
+    ...(data.gateway_status?.listeners.flatMap((listener) => listener.findings) ?? []),
+    ...(data.autoscaler_target?.findings ?? []),
+  ];
+}
+
+function describeConditions(data: KubernetesDescribe): EvidenceCondition[] {
+  return [
+    ...(data.pod?.conditions ?? []),
+    ...(data.workload?.conditions ?? []),
+    ...(data.node?.conditions ?? []),
+    ...(data.storage?.persistent_volume_claim_detail?.conditions ?? []),
+    ...(data.networking?.gateway?.conditions ?? []),
+    ...(data.networking?.gateway?.listeners.flatMap((listener) => listener.conditions) ?? []),
+    ...(data.autoscaler?.conditions ?? []),
+    ...(data.policy?.disruption_budget_detail?.conditions ?? []),
+  ];
+}
+
 /**
  * What the workload owns.
  *
@@ -485,10 +697,20 @@ function relatedHasFindings(data: KubernetesDescribe): boolean {
 function RelatedSection({
   related,
   family,
+  defaultNamespace,
+  canReadLogs,
+  onOpenPodLogs,
 }: {
   related: KubernetesDescribeRelated;
   family: KubernetesDescribe["family"];
+  defaultNamespace: string;
+  canReadLogs: boolean;
+  onOpenPodLogs: (
+    pod: { name: string; uid: string; namespace: string },
+    finding: KubernetesDescribeFinding,
+  ) => void;
 }) {
+  const navigation = useDiagnosticNavigation();
   const unhealthy = related.pods.filter((pod) => !pod.ready || pod.findings.length > 0);
   const healthy = related.pods.filter((pod) => pod.ready && pod.findings.length === 0);
   if (
@@ -508,10 +730,53 @@ function RelatedSection({
           <RelatedRow key={controller.uid} object={controller} showNamespace={family === "node"} />
         ))}
         {related.persistent_volume_claims.map((claim) => (
-          <RelatedRow key={claim.uid} object={claim} showNamespace={family === "node"} />
+          <RelatedRow
+            key={claim.uid}
+            object={claim}
+            showNamespace={family === "node"}
+            onOpenDescribe={
+              navigation
+                ? () =>
+                    navigation.open({
+                      view: "describe",
+                      type: "persistent-volume-claim",
+                      namespace: claim.namespace || defaultNamespace,
+                      name: claim.name,
+                    })
+                : undefined
+            }
+          />
         ))}
         {unhealthy.map((pod) => (
-          <RelatedRow key={pod.uid} object={pod} showNamespace={family === "node"} />
+          <RelatedRow
+            key={pod.uid}
+            object={pod}
+            showNamespace={family === "node"}
+            onOpenDescribe={
+              navigation
+                ? () =>
+                    navigation.open({
+                      view: "describe",
+                      type: "pod",
+                      namespace: pod.namespace || defaultNamespace,
+                      name: pod.name,
+                    })
+                : undefined
+            }
+            onOpenFindingLogs={
+              canReadLogs && pod.uid
+                ? (finding) =>
+                    onOpenPodLogs(
+                      {
+                        name: pod.name,
+                        uid: pod.uid,
+                        namespace: pod.namespace || defaultNamespace,
+                      },
+                      finding,
+                    )
+                : undefined
+            }
+          />
         ))}
         {healthy.length > 0 ? (
           <div className="text-subtle-foreground flex flex-wrap items-center gap-1.5 text-xs">
@@ -678,6 +943,7 @@ function ServiceDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
 
 function IngressDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   const backends = data.ingress_backends;
+  const navigation = useDiagnosticNavigation();
   if (!backends) {
     return null;
   }
@@ -718,6 +984,23 @@ function IngressDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
                   <span className="text-subtle-foreground text-xs break-all">
                     {backend.references.join(" · ")}
                   </span>
+                  {navigation && backend.service_found ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        navigation.open({
+                          view: "describe",
+                          type: "service",
+                          namespace: data.target.namespace,
+                          name: backend.service_name,
+                        })
+                      }
+                    >
+                      <ExternalLink />
+                      诊断 Service
+                    </Button>
+                  ) : null}
                 </div>
                 {backend.findings.map((finding, index) => (
                   <div
@@ -821,6 +1104,7 @@ function GatewayDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
 
 function AutoscalerDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   const autoscaler = data.autoscaler;
+  const navigation = useDiagnosticNavigation();
   if (!autoscaler) {
     return null;
   }
@@ -855,6 +1139,24 @@ function AutoscalerDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
             <Badge tone={target.ready && target.findings.length === 0 ? "success" : "warning"}>
               {target.status || "状态未知"}
             </Badge>
+            {navigation && workloadResourceForKind(target.kind) ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  navigation.open({
+                    view: "describe",
+                    type: "workload",
+                    namespace: target.namespace || data.target.namespace,
+                    resource: workloadResourceForKind(target.kind)!,
+                    name: target.name,
+                  })
+                }
+              >
+                <ExternalLink />
+                诊断工作负载
+              </Button>
+            ) : null}
           </div>
           {target.findings.map((finding, index) => (
             <div key={`${finding.code}-${index}`} className="grid gap-0.5">
@@ -968,9 +1270,13 @@ function formatBytes(value: number): string {
 function RelatedRow({
   object,
   showNamespace,
+  onOpenDescribe,
+  onOpenFindingLogs,
 }: {
   object: KubernetesDescribeRelatedObject;
   showNamespace: boolean;
+  onOpenDescribe?: () => void;
+  onOpenFindingLogs?: (finding: KubernetesDescribeFinding) => void;
 }) {
   return (
     <div className="border-border/60 rounded-control grid gap-1 border p-2.5">
@@ -980,6 +1286,12 @@ function RelatedRow({
         </span>
         <span className="text-subtle-foreground text-xs">{object.kind}</span>
         <Badge tone={object.ready ? "success" : "warning"}>{object.status || "—"}</Badge>
+        {onOpenDescribe ? (
+          <Button size="sm" variant="ghost" onClick={onOpenDescribe}>
+            <ExternalLink />
+            诊断
+          </Button>
+        ) : null}
       </div>
       {object.findings.map((finding, index) => (
         <div key={`${finding.code}-${finding.scope ?? ""}-${index}`} className="grid gap-0.5">
@@ -993,6 +1305,12 @@ function RelatedRow({
                 退出码 {finding.exit_code}
               </span>
             ) : null}
+            {onOpenFindingLogs && finding.scope && logFinding(finding.code) ? (
+              <Button size="sm" variant="ghost" onClick={() => onOpenFindingLogs(finding)}>
+                <ScrollText />
+                {previousLogsFinding(finding.code) ? "上一次日志" : "当前日志"}
+              </Button>
+            ) : null}
           </div>
           {finding.message ? (
             <span className="text-muted-foreground text-xs break-words">{finding.message}</span>
@@ -1003,7 +1321,19 @@ function RelatedRow({
   );
 }
 
-function FindingCard({ finding }: { finding: KubernetesDescribeFinding }) {
+function FindingCard({
+  finding,
+  canOpenLogs,
+  onOpenLogs,
+  onFocusEvidence,
+  canFocusEvidence,
+}: {
+  finding: KubernetesDescribeFinding;
+  canOpenLogs: boolean;
+  onOpenLogs: () => void;
+  onFocusEvidence: (kind: string, name: string) => void;
+  canFocusEvidence: (kind: string, name: string) => boolean;
+}) {
   const label = FINDING_LABELS[finding.code];
   return (
     <Card className="border-warning/35">
@@ -1022,6 +1352,12 @@ function FindingCard({ finding }: { finding: KubernetesDescribeFinding }) {
             退出码 {finding.exit_code}
           </span>
         ) : null}
+        {canOpenLogs ? (
+          <Button size="sm" variant="ghost" onClick={onOpenLogs}>
+            <ScrollText />
+            {previousLogsFinding(finding.code) ? "查看上一次日志" : "查看当前日志"}
+          </Button>
+        ) : null}
       </div>
       {finding.message ? (
         // Kubernetes' own words, kept as they arrived: this is the line an
@@ -1037,18 +1373,58 @@ function FindingCard({ finding }: { finding: KubernetesDescribeFinding }) {
       {finding.evidence.length > 0 ? (
         <div className="text-subtle-foreground mt-2 flex flex-wrap items-center gap-1.5 text-xs">
           <span>依据</span>
-          {finding.evidence.map((item) => (
-            <span
-              key={`${item.kind}-${item.name}`}
-              className="border-border/60 rounded-full border px-2 py-0.5"
-            >
-              {evidenceLabel(item.kind)} · {item.name}
-            </span>
-          ))}
+          {finding.evidence.map((item) =>
+            canFocusEvidence(item.kind, item.name) ? (
+              <button
+                key={`${item.kind}-${item.name}`}
+                type="button"
+                className="border-border/60 hover:bg-surface-muted focus-visible:ring-accent rounded-full border px-2 py-0.5 transition-colors focus-visible:ring-2 focus-visible:outline-none"
+                onClick={() => onFocusEvidence(item.kind, item.name)}
+              >
+                {evidenceLabel(item.kind)} · {item.name}
+              </button>
+            ) : (
+              <span
+                key={`${item.kind}-${item.name}`}
+                className="border-border/60 rounded-full border px-2 py-0.5"
+              >
+                {evidenceLabel(item.kind)} · {item.name}
+              </span>
+            ),
+          )}
         </div>
       ) : null}
     </Card>
   );
+}
+
+function logFinding(code: KubernetesDescribeFindingCode): boolean {
+  return ["CrashLoopBackOff", "ContainerTerminated", "OOMKilled", "ProbeFailure"].includes(code);
+}
+
+function previousLogsFinding(code: KubernetesDescribeFindingCode): boolean {
+  return ["CrashLoopBackOff", "ContainerTerminated", "OOMKilled"].includes(code);
+}
+
+function workloadResourceForKind(kind: string) {
+  switch (kind) {
+    case "Deployment":
+      return "deployments" as const;
+    case "StatefulSet":
+      return "statefulsets" as const;
+    case "DaemonSet":
+      return "daemonsets" as const;
+    case "Job":
+      return "jobs" as const;
+    case "CronJob":
+      return "cronjobs" as const;
+    default:
+      return undefined;
+  }
+}
+
+function evidenceAnchor(kind: string, name: string): string {
+  return `describe-evidence-${kind}-${encodeURIComponent(name)}`;
 }
 
 function evidenceLabel(kind: string): string {

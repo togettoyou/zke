@@ -45,12 +45,16 @@ export function PodLogsView({
   namespace,
   podName,
   podUid,
+  initialContainer,
+  initialPrevious = false,
   onBack,
 }: {
   clusterId: string;
   namespace: string;
   podName: string;
   podUid: string;
+  initialContainer?: string;
+  initialPrevious?: boolean;
   onBack: () => void;
 }) {
   const detail = usePod(clusterId, namespace, podName);
@@ -71,7 +75,14 @@ export function PodLogsView({
           </Alert>
         </div>
       ) : (
-        <PodLogReader clusterId={clusterId} namespace={namespace} pod={pod} podUid={podUid} />
+        <PodLogReader
+          clusterId={clusterId}
+          namespace={namespace}
+          pod={pod}
+          podUid={podUid}
+          initialContainer={initialContainer}
+          initialPrevious={initialPrevious}
+        />
       )}
     </div>
   );
@@ -92,16 +103,24 @@ function PodLogReader({
   namespace,
   pod,
   podUid,
+  initialContainer,
+  initialPrevious,
 }: {
   clusterId: string;
   namespace: string;
   pod: KubernetesPodDetail;
   podUid: string;
+  initialContainer?: string;
+  initialPrevious: boolean;
 }) {
   const choices = containerChoices(pod);
-  const [container, setContainer] = useState(choices[0]?.name ?? "");
+  const [container, setContainer] = useState(
+    choices.some((choice) => choice.name === initialContainer)
+      ? (initialContainer as string)
+      : (choices[0]?.name ?? ""),
+  );
   const [follow, setFollow] = useState(false);
-  const [previous, setPrevious] = useState(false);
+  const [previous, setPrevious] = useState(initialPrevious);
   const [timestamps, setTimestamps] = useState(false);
   const [tailLines, setTailLines] = useState(200);
   const [since, setSince] = useState("all");

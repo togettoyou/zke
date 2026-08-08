@@ -39,6 +39,7 @@ import { useScopeStore } from "@/scope/scope-store";
 import { AuthorizationSection } from "./AuthorizationSection";
 import { AutoscalerSection } from "./AutoscalerSection";
 import { ConfigurationSection } from "./ConfigurationSection";
+import { DiagnosticNavigationProvider } from "./DiagnosticNavigationProvider";
 import { StorageSection } from "./StorageSection";
 import { EventSection } from "./EventSection";
 import { ManifestSection } from "./ManifestSection";
@@ -375,163 +376,167 @@ export function ContainerServiceApp() {
           : "没有可执行请求的在线集群"
       }
     >
-      {clusters.error ? (
-        <ErrorState error={clusters.error} onRetry={() => void clusters.refetch()} />
-      ) : clusters.isLoading ? (
-        <LoadingState />
-      ) : projectClusters.length === 0 ? (
-        <EmptyNotice
-          title="该项目没有已接入的集群"
-          description="请先在「集群接入管理」中接入并启用集群。"
-        />
-      ) : clusterId === "" ? (
-        <EmptyNotice
-          title="该项目没有在线集群"
-          description="容器服务的每个查询和变更都由目标集群的 Agent 定域执行，需要至少一个 Agent 处于在线状态。"
-        />
-      ) : /*
-       * Every section is keyed by the target Cluster, and only the Cluster.
-       *
-       * The key is a reset: changing it throws the section's state away. The
-       * Cluster belongs there — nothing an operator was looking at survives
-       * pointing the window at different infrastructure. The Namespace does not.
-       * A section's state is which tab is open and which page of the list is
-       * showing, and the second one resets itself: a continuation token is only
-       * meaningful to the list that issued it, so every list here already keys its
-       * pager on the Namespace. Keying the section on it as well only discarded
-       * the tab, which is how selecting a Namespace while reading DaemonSets
-       * landed back on Deployments.
-       *
-       * Nothing namespaced is left stale by that. The views that hold one object —
-       * a detail page, a form, the YAML editor — put up a page header, and the
-       * shell hides the toolbar while one is up, so the Namespace picker is not on
-       * screen to be changed; a confirmation dialog is modal, for the same effect.
-       *
-       * 事件 is the exception and stays keyed on the Namespace: its state is an
-       * accumulated stream of that Namespace's events, so a remount is the correct
-       * way to drop them, and it has no tab to lose.
-       */
-      activeSection === "overview" ? (
-        <OverviewSection key={clusterId} clusterId={clusterId} onNavigate={navigate} />
-      ) : activeSection === "nodes" ? (
-        <NodeSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-        />
-      ) : activeSection === "namespaces" ? (
-        <NamespaceSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-        />
-      ) : awaitsNamespace && namespaces.error ? (
-        <ErrorState error={namespaces.error} onRetry={() => void namespaces.refetch()} />
-      ) : awaitsNamespace && namespaces.isLoading ? (
-        <LoadingState />
-      ) : awaitsNamespace && namespace === "" ? (
-        <EmptyNotice
-          title="该集群没有可见的命名空间"
-          description="工作负载、Pod、服务与路由、配置管理、自动伸缩、事件和 PersistentVolumeClaim 按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
-        />
-      ) : activeSection === "events" ? (
-        <EventSection
-          key={`${clusterId}/${namespace}`}
-          clusterId={clusterId}
-          namespace={namespace}
-        />
-      ) : activeSection === "authorization" ? (
-        <AuthorizationSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-          onNamespaceScopeChange={setAuthorizationNamespaced}
-        />
-      ) : activeSection === "browser" ? (
-        <ResourceBrowserSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-        />
-      ) : activeSection === "manifests" ? (
-        <ManifestSection key={clusterId} clusterId={clusterId} clusterName={clusterName} />
-      ) : activeSection === "policies" ? (
-        <PolicySection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-          onNamespaceScopeChange={setPoliciesNamespaced}
-        />
-      ) : activeSection === "autoscaling" ? (
-        <AutoscalerSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-        />
-      ) : activeSection === "storage" ? (
-        <StorageSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-          initialResource={storageTab(entryTab)}
-          onNamespaceScopeChange={setStorageNamespaced}
-        />
-      ) : activeSection === "configmaps" ? (
-        <ConfigurationSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-        />
-      ) : activeSection === "networking" ? (
-        <NetworkingSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-        />
-      ) : activeSection === "pods" ? (
-        <PodSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-        />
-      ) : (
-        <WorkloadSection
-          key={clusterId}
-          clusterId={clusterId}
-          clusterName={clusterName}
-          namespace={namespace}
-          tenantId={scope.tenantId}
-          projectId={scope.projectId}
-          initialResource={workloadTab(entryTab)}
-        />
-      )}
+      {/* Remounting on Cluster change is the hard identity boundary for every
+          target kept in the diagnostic navigation stack. */}
+      <DiagnosticNavigationProvider key={clusterId} clusterId={clusterId}>
+        {clusters.error ? (
+          <ErrorState error={clusters.error} onRetry={() => void clusters.refetch()} />
+        ) : clusters.isLoading ? (
+          <LoadingState />
+        ) : projectClusters.length === 0 ? (
+          <EmptyNotice
+            title="该项目没有已接入的集群"
+            description="请先在「集群接入管理」中接入并启用集群。"
+          />
+        ) : clusterId === "" ? (
+          <EmptyNotice
+            title="该项目没有在线集群"
+            description="容器服务的每个查询和变更都由目标集群的 Agent 定域执行，需要至少一个 Agent 处于在线状态。"
+          />
+        ) : /*
+         * Every section is keyed by the target Cluster, and only the Cluster.
+         *
+         * The key is a reset: changing it throws the section's state away. The
+         * Cluster belongs there — nothing an operator was looking at survives
+         * pointing the window at different infrastructure. The Namespace does not.
+         * A section's state is which tab is open and which page of the list is
+         * showing, and the second one resets itself: a continuation token is only
+         * meaningful to the list that issued it, so every list here already keys its
+         * pager on the Namespace. Keying the section on it as well only discarded
+         * the tab, which is how selecting a Namespace while reading DaemonSets
+         * landed back on Deployments.
+         *
+         * Nothing namespaced is left stale by that. The views that hold one object —
+         * a detail page, a form, the YAML editor — put up a page header, and the
+         * shell hides the toolbar while one is up, so the Namespace picker is not on
+         * screen to be changed; a confirmation dialog is modal, for the same effect.
+         *
+         * 事件 is the exception and stays keyed on the Namespace: its state is an
+         * accumulated stream of that Namespace's events, so a remount is the correct
+         * way to drop them, and it has no tab to lose.
+         */
+        activeSection === "overview" ? (
+          <OverviewSection key={clusterId} clusterId={clusterId} onNavigate={navigate} />
+        ) : activeSection === "nodes" ? (
+          <NodeSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+          />
+        ) : activeSection === "namespaces" ? (
+          <NamespaceSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+          />
+        ) : awaitsNamespace && namespaces.error ? (
+          <ErrorState error={namespaces.error} onRetry={() => void namespaces.refetch()} />
+        ) : awaitsNamespace && namespaces.isLoading ? (
+          <LoadingState />
+        ) : awaitsNamespace && namespace === "" ? (
+          <EmptyNotice
+            title="该集群没有可见的命名空间"
+            description="工作负载、Pod、服务与路由、配置管理、自动伸缩、事件和 PersistentVolumeClaim 按命名空间定域查询，需要目标集群中至少存在一个当前身份可见的命名空间。"
+          />
+        ) : activeSection === "events" ? (
+          <EventSection
+            key={`${clusterId}/${namespace}`}
+            clusterId={clusterId}
+            namespace={namespace}
+          />
+        ) : activeSection === "authorization" ? (
+          <AuthorizationSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+            onNamespaceScopeChange={setAuthorizationNamespaced}
+          />
+        ) : activeSection === "browser" ? (
+          <ResourceBrowserSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+          />
+        ) : activeSection === "manifests" ? (
+          <ManifestSection key={clusterId} clusterId={clusterId} clusterName={clusterName} />
+        ) : activeSection === "policies" ? (
+          <PolicySection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+            onNamespaceScopeChange={setPoliciesNamespaced}
+          />
+        ) : activeSection === "autoscaling" ? (
+          <AutoscalerSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+          />
+        ) : activeSection === "storage" ? (
+          <StorageSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+            initialResource={storageTab(entryTab)}
+            onNamespaceScopeChange={setStorageNamespaced}
+          />
+        ) : activeSection === "configmaps" ? (
+          <ConfigurationSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+          />
+        ) : activeSection === "networking" ? (
+          <NetworkingSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+          />
+        ) : activeSection === "pods" ? (
+          <PodSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+          />
+        ) : (
+          <WorkloadSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
+            initialResource={workloadTab(entryTab)}
+          />
+        )}
+      </DiagnosticNavigationProvider>
     </AppShell>
   );
 }

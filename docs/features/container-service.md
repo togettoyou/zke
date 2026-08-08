@@ -847,21 +847,21 @@ Event，findings 恒为空数组：没有为某个类型写过的规则不是规
 类型化诊断的覆盖边界如下。这里的“无类型化入口”是有意的产品边界，不表示忘记接按钮；只有当该类型出现可由
 Kubernetes status、Condition、明确关联对象或精确 Event 归属证明的故障语义时，才应新增规则。
 
-| 资源 | 当前诊断能力 | 边界 |
-| --- | --- | --- |
-| Pod | 类型化 | Condition、容器当前/上一次状态、精确 UID Event |
-| Deployment、StatefulSet、DaemonSet、Job、CronJob | 类型化聚合 | owner UID 链、控制器、Pod、模板引用 PVC 与有界关联 Event |
-| Node | 类型化聚合 | Node Condition、taint、已分配非终止 Pod 与 scheduler requests；Node Event 受三层精确过滤 |
-| Service、Ingress、Gateway | 类型化 | EndpointSlice/后端引用或 Gateway Controller Condition；不跨 Namespace 读取 Secret/Route |
-| PersistentVolumeClaim | 类型化 | phase、Condition 与精确 UID Event |
-| HorizontalPodAutoscaler | 类型化聚合 | 标准 HPA Condition；只补充已知 apps/v1 目标状态，不读取目标 Event |
-| ResourceQuota、PodDisruptionBudget | 类型化 | quantity 用量或 `DisruptionAllowed` Condition |
-| ConfigMap、LimitRange、NetworkPolicy | 无类型化入口 | 没有可可靠解释为对象故障的 status；可在资源对象浏览器使用通用 Event-only describe |
-| Secret | 无诊断入口 | 敏感资源不经过通用资源/describe 路径，不能为事件便利放宽 Secret 读取边界 |
-| Namespace、PersistentVolume、StorageClass、PriorityClass | 无类型化入口 | 集群级 Event 的 Namespace 归属不确定，且当前没有对象级确定性规则 |
-| Role、RoleBinding、ClusterRole、ClusterRoleBinding | 无诊断入口 | 授权对象没有故障 status，且继续由独立 RBAC 权限与专用接口隔离 |
-| 其他可发现的命名空间级主资源 | 通用 Event-only | 返回对象身份和按 UID 过滤的 Event，findings 为空；不把未知类型猜成已知家族 |
-| 其他可发现的集群级主资源 | 无 Console 入口 | Server 即使收到通用 describe 也以 `unsupported_scope` 明示不读取 Event |
+| 资源                                                     | 当前诊断能力    | 边界                                                                                     |
+| -------------------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------- |
+| Pod                                                      | 类型化          | Condition、容器当前/上一次状态、精确 UID Event                                           |
+| Deployment、StatefulSet、DaemonSet、Job、CronJob         | 类型化聚合      | owner UID 链、控制器、Pod、模板引用 PVC 与有界关联 Event                                 |
+| Node                                                     | 类型化聚合      | Node Condition、taint、已分配非终止 Pod 与 scheduler requests；Node Event 受三层精确过滤 |
+| Service、Ingress、Gateway                                | 类型化          | EndpointSlice/后端引用或 Gateway Controller Condition；不跨 Namespace 读取 Secret/Route  |
+| PersistentVolumeClaim                                    | 类型化          | phase、Condition 与精确 UID Event                                                        |
+| HorizontalPodAutoscaler                                  | 类型化聚合      | 标准 HPA Condition；只补充已知 apps/v1 目标状态，不读取目标 Event                        |
+| ResourceQuota、PodDisruptionBudget                       | 类型化          | quantity 用量或 `DisruptionAllowed` Condition                                            |
+| ConfigMap、LimitRange、NetworkPolicy                     | 无类型化入口    | 没有可可靠解释为对象故障的 status；可在资源对象浏览器使用通用 Event-only describe        |
+| Secret                                                   | 无诊断入口      | 敏感资源不经过通用资源/describe 路径，不能为事件便利放宽 Secret 读取边界                 |
+| Namespace、PersistentVolume、StorageClass、PriorityClass | 无类型化入口    | 集群级 Event 的 Namespace 归属不确定，且当前没有对象级确定性规则                         |
+| Role、RoleBinding、ClusterRole、ClusterRoleBinding       | 无诊断入口      | 授权对象没有故障 status，且继续由独立 RBAC 权限与专用接口隔离                            |
+| 其他可发现的命名空间级主资源                             | 通用 Event-only | 返回对象身份和按 UID 过滤的 Event，findings 为空；不把未知类型猜成已知家族               |
+| 其他可发现的集群级主资源                                 | 无 Console 入口 | Server 即使收到通用 describe 也以 `unsupported_scope` 明示不读取 Event                   |
 
 PVC 的独立 describe 复用工作负载聚合中同一条 `PVCPending` 规则。Bound PVC 不报告问题；Pending PVC 先从自身
 Event 中选择最近的 `WaitForFirstConsumer`、`ProvisioningFailed` 或 `FailedBinding` 原因与消息，事件窗口没有对应
@@ -949,6 +949,14 @@ Console 诊断入口在 Pod、工作负载、Node、PVC、Service、Ingress、Ga
 对象与事件渲染成可直接贴进工单的纯文本；该文本在前端生成，不是第二份由服务端维护、会与界面漂移的措辞。诊断
 主体整体纵向滚动，事件表保留可展示多行的最小高度，避免小窗口被上方结论和关联对象压缩成只有表头。没有
 `cluster.event.read` 时入口不出现——一个按下去必然返回 403 的按钮不如不给。
+
+诊断页内的处理入口形成一条可返回的证据链：CrashLoopBackOff、异常退出和 OOMKilled 可直接打开对应容器的
+上一次日志，探针失败打开当前日志；Pod 日志按钮只在调用者持有 `cluster.pod.logs.read` 时出现，并固定携带诊断
+快照中的 Pod UID，防止同名重建后读到另一个实例。关联 Pod、PVC、Ingress 后端 Service 与 HPA 目标工作负载可
+继续打开各自诊断；每次跳转都叠在当前诊断之上，返回时保留原页面的滚动位置和快照。Condition 证据标签会滚动并
+短暂高亮对应的原始 Condition，Event 证据标签会定位到时间线中的精确 Event。页头的「精确事件」用对象 UID、
+Kind 和 Name 一起下推到 Event Watch，不会混入同名重建对象；该入口继续要求 `cluster.event.read`。这些前端入口
+只负责可达性，日志、事件和关联 describe 的最终权限检查仍分别由 Server 端对应路由执行。
 
 Console YAML 入口出现在支持它的各分区详情页（节点、命名空间、工作负载、Pod、配置管理、存储、服务与路由、
 自动伸缩、策略管理、授权管理与资源对象浏览器），占据整个应用视图。同一个编辑器接三条后端路由——通用、Secret
@@ -1098,7 +1106,6 @@ resourceVersion 在挂载时固定，不随后台重新拉取更新：取一个�
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
 - Gateway API 的 HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 类型化管理；
-- 从 Pod、工作负载等具体对象直接跳转到按 UID 过滤的关联事件；
 - YAML 编辑器的结构校验与差异对比；
 - 面向具体资源的表单化创建、更新和删除体验。
 
