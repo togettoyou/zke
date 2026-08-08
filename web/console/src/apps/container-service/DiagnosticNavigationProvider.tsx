@@ -51,7 +51,12 @@ export function DiagnosticNavigationProvider({
   return (
     <DiagnosticNavigationContextProvider value={value}>
       <AppShellContributionScope enabled={!active}>
-        <div className={active ? "hidden" : "h-full min-h-0"}>{children}</div>
+        {/* Do not introduce a fixed-height layout box here. Long detail pages
+            overflowed that box without increasing its flow height, so the
+            AppShell's trailing spacer was laid out before the actual end of
+            the detail. `contents` keeps the mounted view as the shell's layout
+            child while `hidden` can still suppress it under an overlay. */}
+        <div className={active ? "hidden" : "contents"}>{children}</div>
       </AppShellContributionScope>
       {active ? (
         <DiagnosticNavigationOverlay
