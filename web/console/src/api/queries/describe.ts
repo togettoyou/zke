@@ -4,6 +4,25 @@ import { api, unwrap } from "../client";
 import type { KubernetesWorkloadResource } from "../types";
 import { queryKeys } from "../query-keys";
 
+export function useNodeDescribe(clusterId: string | null, name: string | null, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.nodeDescribe(clusterId ?? "", name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET("/api/v1/clusters/{cluster_id}/nodes/{node_name}/describe", {
+          params: {
+            path: {
+              cluster_id: clusterId as string,
+              node_name: name as string,
+            },
+          },
+          signal,
+        }),
+      ),
+    enabled: enabled && Boolean(clusterId && name),
+  });
+}
+
 /**
  * Describe joins an object with the Kubernetes Events that name it, and reports
  * the findings the two together support.

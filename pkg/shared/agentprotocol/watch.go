@@ -10,6 +10,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -300,7 +301,7 @@ func validateResourceWatchRequest(header *agentv1.StreamHeader, request *agentv1
 	if request == nil || header.GetIdempotencyKey() != "" || resource == nil ||
 		resource.GetVersion() == "" || resource.GetResource() == "" ||
 		len(resource.GetGroup()) > 253 || len(resource.GetVersion()) > 63 || len(resource.GetResource()) > 253 ||
-		len(k8svalidation.IsDNS1123Label(request.GetNamespace())) != 0 ||
+		!validResourceWatchScope(request) ||
 		len(request.GetFieldSelector()) > maxResourceWatchSelectorLength ||
 		strings.TrimSpace(request.GetFieldSelector()) != request.GetFieldSelector() ||
 		len(request.GetResourceVersion()) > maxResourceWatchVersionLength ||
@@ -312,6 +313,28 @@ func validateResourceWatchRequest(header *agentv1.StreamHeader, request *agentv1
 		return ErrStreamProtocol
 	}
 	return nil
+}
+
+func validResourceWatchScope(request *agentv1.ResourceWatchRequest) bool {
+	if request.GetNamespace() != "" {
+		return len(k8svalidation.IsDNS1123Label(request.GetNamespace())) == 0
+	}
+	return !request.GetFollow() &&
+		IsNodeEventFieldSelector(request.GetFieldSelector())
+}
+
+// IsNodeEventFieldSelector recognizes the only cluster-wide Event query the
+// protocol permits: one exact Node UID. Kubernetes Events are namespaced even
+// when their involved object is not; allowing NamespaceAll without both exact
+// terms would expose unrelated Namespaces through a describe request.
+func IsNodeEventFieldSelector(value string) bool {
+	selector, err := fields.ParseSelector(value)
+	if err != nil {
+		return false
+	}
+	uid, hasUID := selector.RequiresExactMatch("involvedObject.uid")
+	kind, hasKind := selector.RequiresExactMatch("involvedObject.kind")
+	return hasUID && uid != "" && hasKind && kind == "Node"
 }
 
 func validateResourceWatchResponse(response *agentv1.ResourceWatchResponse, hasSource bool) error {

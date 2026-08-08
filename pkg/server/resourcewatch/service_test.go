@@ -59,6 +59,40 @@ func TestServiceBuildsFixedEventWatchAndSelectors(t *testing.T) {
 	}
 }
 
+func TestServiceAllowsOnlyAnExactNodeSnapshotAcrossNamespaces(t *testing.T) {
+	requester := &fakeRequester{}
+	_, err := NewService(requester).Stream(context.Background(), Input{
+		ClusterID:      "00000000-0000-4000-8000-000000000003",
+		IncludeInitial: true,
+		InitialLimit:   50,
+		ResourceUID:    "node-uid",
+		ResourceKind:   "Node",
+	}, &discardSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requester.request.GetNamespace() != "" ||
+		!agentprotocol.IsNodeEventFieldSelector(requester.request.GetFieldSelector()) {
+		t.Fatalf("unexpected Node Event request: %+v", requester.request)
+	}
+	for _, input := range []Input{
+		{
+			ClusterID: "00000000-0000-4000-8000-000000000003", IncludeInitial: true, InitialLimit: 50,
+			ResourceUID: "node-uid",
+		},
+		{
+			ClusterID: "00000000-0000-4000-8000-000000000003", IncludeInitial: true, Follow: true, InitialLimit: 50,
+			ResourceUID: "node-uid", ResourceKind: "Node",
+		},
+	} {
+		if _, err := NewService(&fakeRequester{}).Stream(
+			context.Background(), input, &discardSink{},
+		); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("unsafe cross-Namespace input accepted: %+v err=%v", input, err)
+		}
+	}
+}
+
 func TestServiceMapsExpiredResourceVersion(t *testing.T) {
 	requester := &fakeRequester{trailer: &agentv1.ResourceWatchTrailer{
 		Result: agentv1.ResultCode_RESULT_CODE_CONFLICT, KubernetesStatusCode: 410,

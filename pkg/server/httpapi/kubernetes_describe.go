@@ -16,6 +16,10 @@ import (
 )
 
 type kubernetesDescribeService interface {
+	DescribeNode(
+		context.Context,
+		kubernetesdescribe.NodeInput,
+	) (kubernetesdescribe.Result, error)
 	DescribePod(
 		context.Context,
 		kubernetesdescribe.PodInput,
@@ -28,6 +32,27 @@ type kubernetesDescribeService interface {
 		context.Context,
 		kubernetesdescribe.ResourceInput,
 	) (kubernetesdescribe.Result, error)
+}
+
+func (handler *kubernetesDescribeHandler) node(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if len(c.Request.URL.Query()) != 0 {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"Node describe does not accept query parameters")
+		return
+	}
+	if handler.service == nil {
+		writeError(c, http.StatusServiceUnavailable, "unavailable",
+			"Kubernetes describe is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.DescribeNode(ctx, kubernetesdescribe.NodeInput{
+		ClusterID: c.Param("cluster_id"),
+		Name:      c.Param("node_name"),
+	})
+	cancel()
+	handler.finish(c, "describe Kubernetes Node", result, err)
 }
 
 type kubernetesDescribeHandler struct {
@@ -170,16 +195,23 @@ func (handler *kubernetesDescribeHandler) recordEventRead(
 		outcome = "failed"
 	}
 	identity, _ := httpmiddleware.Identity(c)
+	targetName := fmt.Sprintf(
+		"core/v1/events namespace:%s resource_uid:%s",
+		result.Target.Namespace,
+		result.Target.UID,
+	)
+	if result.Target.Kind == "Node" && result.Target.Namespace == "" {
+		targetName = fmt.Sprintf(
+			"core/v1/events all-namespaces resource_uid:%s resource_kind:Node",
+			result.Target.UID,
+		)
+	}
 	handler.recordOperation(c, auditedOperation{
 		Scope:       auditScopeCluster,
 		ActorUserID: identity.User.ID,
 		Action:      auditaction.KubernetesEventRead,
 		TargetType:  auditaction.TargetKubernetesResource,
-		TargetName: fmt.Sprintf(
-			"core/v1/events namespace:%s resource_uid:%s",
-			result.Target.Namespace,
-			result.Target.UID,
-		),
-		Result: outcome,
+		TargetName:  targetName,
+		Result:      outcome,
 	})
 }

@@ -135,6 +135,7 @@ func TestServiceGetsNodeDetail(t *testing.T) {
 
 	now := time.Date(2026, time.July, 29, 8, 0, 0, 0, time.UTC)
 	node := testNode("worker-a", now)
+	node.ResourceVersion = "43"
 	requester := &fakeResourceRequester{handle: func(
 		_ context.Context,
 		clusterID string,
@@ -158,6 +159,7 @@ func TestServiceGetsNodeDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Name != "worker-a" ||
+		result.ResourceVersion != "43" ||
 		result.ProviderID != "test://worker-a" ||
 		result.PodCIDR != "10.244.1.0/24" ||
 		result.Architecture != "amd64" ||

@@ -576,6 +576,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/nodes/{node_name}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 返回 Node 条件、污点、精确属于该 Node UID 的 Event 快照，以及分配到该节点的
+         *     非终止 Pod 与 scheduler requests 汇总。Pod 列表与 Event 数量均有界；列表存在
+         *     下一页时 requests 只表示下限，并且不会生成资源占比结论。
+         *
+         *     Node Event 是跨 Namespace 的一次性快照，但 Server 与 Agent 都只允许
+         *     involvedObject.kind=Node 且 involvedObject.uid 精确匹配的非 follow 请求。接口要求
+         *     同时持有 cluster.read 与 cluster.event.read，并写入 Event 读取审计。
+         */
+        get: operations["describeKubernetesNode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces": {
         parameters: {
             query?: never;
@@ -4187,9 +4212,11 @@ export interface components {
              *     generic 表示该类型尚无家族规则，只返回身份与 Event。
              * @enum {string}
              */
-            family: "pod" | "workload" | "generic";
+            family: "pod" | "workload" | "node" | "generic";
             pod?: components["schemas"]["KubernetesPodDetail"];
             workload?: components["schemas"]["KubernetesWorkloadDetail"];
+            node?: components["schemas"]["KubernetesNodeDetail"];
+            node_resources?: components["schemas"]["KubernetesDescribeNodeResources"];
             related?: components["schemas"]["KubernetesDescribeRelated"];
             events: components["schemas"]["KubernetesDescribeEvents"];
             findings: components["schemas"]["KubernetesDescribeFinding"][];
@@ -4197,7 +4224,23 @@ export interface components {
              * @description 请求了但没有拿到的部分。为空表示结果完整；静默丢弃某一部分会被读成
              *     “这里没有问题”，因此缺失必须显式说明。
              */
-            degraded_sections: ("events" | "events.related" | "related" | "related.persistent_volume_claims")[];
+            degraded_sections: ("events" | "events.related" | "related" | "related.persistent_volume_claims" | "node.resources")[];
+        };
+        KubernetesDescribeNodeResources: {
+            /** Format: int64 */
+            cpu_allocatable_millis: number;
+            /** Format: int64 */
+            cpu_requested_millis: number;
+            /** Format: int64 */
+            memory_allocatable_bytes: number;
+            /** Format: int64 */
+            memory_requested_bytes: number;
+            /** Format: int64 */
+            pod_allocatable: number;
+            /** Format: int64 */
+            non_terminal_pods: number;
+            /** @description Pod 列表还有下一页；requests 为下限，不用于生成比例结论。 */
+            truncated: boolean;
         };
         /**
          * @description 工作负载与运行它的 Pod 之间的对象。两组分开的原因是它们回答不同的问题：
@@ -4282,7 +4325,7 @@ export interface components {
          */
         KubernetesDescribeFinding: {
             /** @enum {string} */
-            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed";
+            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh";
             /**
              * @description findings 只报告问题，因此只有一个级别。
              * @enum {string}
@@ -6255,6 +6298,39 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["KubernetesNodeDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    describeKubernetesNode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                node_name: components["parameters"]["NodeName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Node describe 视图 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDescribe"];
                     };
                 };
             };

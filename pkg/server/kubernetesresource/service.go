@@ -125,61 +125,64 @@ type NodePage struct {
 }
 
 type NodeSummary struct {
-	Name              string
-	UID               string
-	CreationTimestamp time.Time
-	Status            string
-	Unschedulable     bool
-	Roles             []string
-	InternalIP        string
-	KubernetesVersion string
-	OperatingSystem   string
-	OSImage           string
-	KernelVersion     string
-	ContainerRuntime  string
-	CPUCapacity       string
-	MemoryCapacity    string
-	PodsCapacity      string
-	CPUAllocatable    string
-	MemoryAllocatable string
-	PodsAllocatable   string
+	Name              string    `json:"name"`
+	UID               string    `json:"uid"`
+	CreationTimestamp time.Time `json:"creation_timestamp"`
+	Status            string    `json:"status"`
+	Unschedulable     bool      `json:"unschedulable"`
+	Roles             []string  `json:"roles"`
+	InternalIP        string    `json:"internal_ip"`
+	KubernetesVersion string    `json:"kubernetes_version"`
+	OperatingSystem   string    `json:"operating_system"`
+	OSImage           string    `json:"os_image"`
+	KernelVersion     string    `json:"kernel_version"`
+	ContainerRuntime  string    `json:"container_runtime"`
+	CPUCapacity       string    `json:"cpu_capacity"`
+	MemoryCapacity    string    `json:"memory_capacity"`
+	PodsCapacity      string    `json:"pods_capacity"`
+	CPUAllocatable    string    `json:"cpu_allocatable"`
+	MemoryAllocatable string    `json:"memory_allocatable"`
+	PodsAllocatable   string    `json:"pods_allocatable"`
 }
 
 type NodeAddress struct {
-	Type    string
-	Address string
+	Type    string `json:"type"`
+	Address string `json:"address"`
 }
 
 type NodeTaint struct {
-	Key       string
-	Value     string
-	Effect    string
-	TimeAdded *time.Time
+	Key       string     `json:"key"`
+	Value     string     `json:"value"`
+	Effect    string     `json:"effect"`
+	TimeAdded *time.Time `json:"time_added,omitempty"`
 }
 
 type NodeCondition struct {
-	Type               string
-	Status             string
-	Reason             string
-	Message            string
-	LastHeartbeatTime  time.Time
-	LastTransitionTime time.Time
+	Type               string    `json:"type"`
+	Status             string    `json:"status"`
+	Reason             string    `json:"reason"`
+	Message            string    `json:"message"`
+	LastHeartbeatTime  time.Time `json:"last_heartbeat_time"`
+	LastTransitionTime time.Time `json:"last_transition_time"`
 }
 
 type NodeDetail struct {
 	NodeSummary
-	Labels       map[string]string
-	Annotations  map[string]string
-	ProviderID   string
-	PodCIDR      string
-	PodCIDRs     []string
-	Addresses    []NodeAddress
-	Taints       []NodeTaint
-	Conditions   []NodeCondition
-	Architecture string
-	BootID       string
-	MachineID    string
-	SystemUUID   string
+	// ResourceVersion is internal concurrency identity used by aggregate reads;
+	// the public Node detail contract intentionally remains unchanged.
+	ResourceVersion string            `json:"-"`
+	Labels          map[string]string `json:"labels"`
+	Annotations     map[string]string `json:"annotations"`
+	ProviderID      string            `json:"provider_id"`
+	PodCIDR         string            `json:"pod_cidr"`
+	PodCIDRs        []string          `json:"pod_cidrs"`
+	Addresses       []NodeAddress     `json:"addresses"`
+	Taints          []NodeTaint       `json:"taints"`
+	Conditions      []NodeCondition   `json:"conditions"`
+	Architecture    string            `json:"architecture"`
+	BootID          string            `json:"boot_id"`
+	MachineID       string            `json:"machine_id"`
+	SystemUUID      string            `json:"system_uuid"`
 }
 
 func NewService(requester ResourceRequester, configs ...Config) *Service {
@@ -532,19 +535,20 @@ func detailNode(node *corev1.Node) NodeDetail {
 		})
 	}
 	return NodeDetail{
-		NodeSummary:  summarizeNode(node),
-		Labels:       cloneMap(node.Labels),
-		Annotations:  cloneMap(node.Annotations),
-		ProviderID:   node.Spec.ProviderID,
-		PodCIDR:      node.Spec.PodCIDR,
-		PodCIDRs:     append([]string(nil), node.Spec.PodCIDRs...),
-		Addresses:    addresses,
-		Taints:       taints,
-		Conditions:   conditions,
-		Architecture: node.Status.NodeInfo.Architecture,
-		BootID:       node.Status.NodeInfo.BootID,
-		MachineID:    node.Status.NodeInfo.MachineID,
-		SystemUUID:   node.Status.NodeInfo.SystemUUID,
+		NodeSummary:     summarizeNode(node),
+		ResourceVersion: node.ResourceVersion,
+		Labels:          cloneMap(node.Labels),
+		Annotations:     cloneMap(node.Annotations),
+		ProviderID:      node.Spec.ProviderID,
+		PodCIDR:         node.Spec.PodCIDR,
+		PodCIDRs:        append(make([]string, 0, len(node.Spec.PodCIDRs)), node.Spec.PodCIDRs...),
+		Addresses:       addresses,
+		Taints:          taints,
+		Conditions:      conditions,
+		Architecture:    node.Status.NodeInfo.Architecture,
+		BootID:          node.Status.NodeInfo.BootID,
+		MachineID:       node.Status.NodeInfo.MachineID,
+		SystemUUID:      node.Status.NodeInfo.SystemUUID,
 	}
 }
 

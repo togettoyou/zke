@@ -457,6 +457,9 @@ FIN
   Follow 通过心跳维持连接并周期重新验证 Session 和专用权限。
 - 通用 Resource 路径在 Server 与 Agent 双重拒绝 Event，Discovery 也隐藏 Event，避免通过 `cluster.read`
   绕过 `cluster.event.read`。Event message 不进入 Server 日志或审计正文。
+- Resource Watch 通常必须携带 Namespace。Node describe 的 Event 快照是唯一空 Namespace 例外：必须为
+  `include_initial=true`、`follow=false`，Field Selector 同时精确匹配非空 `involvedObject.uid` 与
+  `involvedObject.kind=Node`；Server、共享协议校验与 Agent 都执行该约束，不能退化为跨 Namespace Event 列表或 Watch。
 
 ## 7. Stream 生命周期
 

@@ -99,7 +99,7 @@ func (service *Service) Stream(ctx context.Context, input Input, sink agentproto
 }
 
 func validateInput(input Input) error {
-	if !validation.IsUUID(input.ClusterID) || len(k8svalidation.IsDNS1123Label(input.Namespace)) != 0 ||
+	if !validation.IsUUID(input.ClusterID) || !validEventScope(input) ||
 		(!input.IncludeInitial && !input.Follow) || input.InitialLimit == 0 || input.InitialLimit > agentprotocol.MaxResourceWatchInitialEvents ||
 		len(input.ResourceVersion) > 256 {
 		return ErrInvalidInput
@@ -113,6 +113,17 @@ func validateInput(input Input) error {
 		return ErrInvalidInput
 	}
 	return nil
+}
+
+// An empty Namespace is reserved for a bounded snapshot of one cluster-scoped
+// Node. The ordinary Event page remains Namespace-scoped, and a caller cannot
+// turn this exception into a cross-Namespace follow or an unfiltered list.
+func validEventScope(input Input) bool {
+	if input.Namespace != "" {
+		return len(k8svalidation.IsDNS1123Label(input.Namespace)) == 0
+	}
+	return input.IncludeInitial && !input.Follow &&
+		input.ResourceUID != "" && input.ResourceKind == "Node"
 }
 
 func eventFieldSelector(input Input) string {

@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
+	resourcehelper "k8s.io/component-helpers/resource"
 )
 
 var podIdentity = ResourceIdentity{
@@ -76,6 +77,16 @@ type PodDetail struct {
 	InitContainers      []PodContainer      `json:"init_containers"`
 	EphemeralContainers []PodContainer      `json:"ephemeral_containers"`
 	Conditions          []PodCondition      `json:"conditions"`
+}
+
+// NodePodDetail is the internal projection a Node diagnosis needs. Resource
+// requests use Kubernetes' scheduler semantics, including init containers,
+// restartable init containers, Pod-level resources and overhead; summing the
+// public container projection would silently under-count those cases.
+type NodePodDetail struct {
+	PodDetail
+	CPURequestMillis   int64
+	MemoryRequestBytes int64
 }
 
 type PodOwnerReference struct {
@@ -199,6 +210,55 @@ func (service *Service) ListPodDetails(
 			return nil, false, err
 		}
 		pods = append(pods, detail)
+	}
+	return pods, page.ContinueToken != "", nil
+}
+
+// ListNodePodDetails returns Pods selected across Namespaces with their exact
+// scheduler requests. It is intentionally separate from the public Pod list:
+// the values are aggregation inputs for one Node describe, not another Pod API
+// contract.
+func (service *Service) ListNodePodDetails(
+	ctx context.Context,
+	input ListPodsInput,
+) ([]NodePodDetail, bool, error) {
+	page, err := service.ListResources(ctx, ListResourcesInput{
+		ClusterID:     input.ClusterID,
+		Resource:      podIdentity,
+		Namespace:     input.Namespace,
+		Limit:         input.Limit,
+		ContinueToken: input.ContinueToken,
+		LabelSelector: input.LabelSelector,
+		FieldSelector: input.FieldSelector,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	pods := make([]NodePodDetail, 0, len(page.Items))
+	for _, item := range page.Items {
+		resource := &unstructured.Unstructured{Object: item}
+		detail, err := podDetail(item, resource.GetNamespace(), "")
+		if err != nil {
+			return nil, false, err
+		}
+		var pod corev1.Pod
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item, &pod); err != nil {
+			return nil, false, ErrInvalidResponse
+		}
+		requests := resourcehelper.PodRequests(&pod, resourcehelper.PodResourcesOptions{})
+		cpu := requests[corev1.ResourceCPU]
+		memory := requests[corev1.ResourceMemory]
+		cpuMillis := cpu.MilliValue()
+		memoryBytes := memory.Value()
+		if cpu.Sign() < 0 || memory.Sign() < 0 ||
+			cpuMillis < 0 || memoryBytes < 0 {
+			return nil, false, ErrInvalidResponse
+		}
+		pods = append(pods, NodePodDetail{
+			PodDetail:          detail,
+			CPURequestMillis:   cpuMillis,
+			MemoryRequestBytes: memoryBytes,
+		})
 	}
 	return pods, page.ContinueToken != "", nil
 }

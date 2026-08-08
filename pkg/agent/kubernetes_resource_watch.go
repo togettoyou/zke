@@ -28,6 +28,15 @@ func newKubernetesResourceWatchHandler(client kubernetes.Interface) agentprotoco
 				"ResourceWatchForbidden", "only core/v1 Kubernetes Events may be watched",
 			), nil, nil
 		}
+		if request.GetNamespace() == "" &&
+			(!request.GetIncludeInitialEvents() || request.GetFollow() ||
+				!agentprotocol.IsNodeEventFieldSelector(request.GetFieldSelector())) {
+			return resourceWatchResponseError(
+				agentv1.ResultCode_RESULT_CODE_FORBIDDEN, http.StatusForbidden,
+				"ClusterEventWatchForbidden",
+				"cluster-wide Events require an exact Node UID snapshot",
+			), nil, nil
+		}
 		options := metav1.ListOptions{
 			FieldSelector:       request.GetFieldSelector(),
 			ResourceVersion:     request.GetResourceVersion(),

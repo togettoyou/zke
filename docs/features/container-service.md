@@ -72,9 +72,11 @@
   Pod，强制要求 UID 前置条件，并支持 DryRun、显式确认、幂等、删除传播策略和审计；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe`、
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/describe`
-  和 `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
+  `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}/describe` 和
+  `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
   只属于该对象的 Kubernetes Event 快照，以及由两者共同支持的诊断结论；工作负载还会沿 owner 链返回它拥有的
-  控制器、Pod、Pod 模板引用的 PVC 及各自的结论；三者都要求同时持有 `cluster.read` 与
+  控制器、Pod、Pod 模板引用的 PVC 及各自的结论，Node 还会返回已分配的非终止 Pod 与 requests 汇总；这些接口
+  都要求同时持有 `cluster.read` 与
   `cluster.event.read`，Event 读取写入与 Event 流一致的审计记录；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs`：要求当前 Pod UID、
   明确容器和专用 `cluster.pod.logs.read` 权限，支持默认最近 200 行的有界快照以及 `follow=true` 实时流；
@@ -827,17 +829,21 @@ Event 按 UID 而不是名称过滤：同名重建的 Pod 会留下前一个对�
 诊断结论（findings）只报告问题，且只从 Kubernetes 已经报告的状态读出，不做推断：退出码 137 就报成退出码
 137，只有 reason 明确是 `OOMKilled` 时才报成内存超限——137 是 SIGKILL，谁发的信号需要 Kubernetes 自己说。
 每条结论携带稳定 code、Kubernetes 原始 reason 与 message 原文，以及指向 Condition、容器状态或 Event 的证据，
-面向操作者的中文标题与处理建议由 Console 按 code 渲染，Server 不写这层措辞。当前规则只覆盖 Pod 家族，包括
+面向操作者的中文标题与处理建议由 Console 按 code 渲染，Server 不写这层措辞。Pod 规则包括
 无法调度（`PodScheduled=False` 加调度器的 `FailedScheduling` 事件）、镜像拉取失败、容器配置错误（引用的
 ConfigMap/Secret 不存在）、反复重启、容器异常退出、内存超限被终止、存储挂载失败和探针未通过。探针只在
 Running 且未就绪时报告——启动过程中失败一次随后通过是常态，报出来会让每个热身稍慢的 Pod 都变成告警。
-其他类型走通用 describe，只返回身份与自己的 Event，findings 恒为空数组：没有为某个类型写过的规则不是规则。
+Node 规则包括 Ready 异常、Memory/Disk/PID Pressure、NetworkUnavailable、停止调度，以及 requests 或 Pod 数达到
+可分配量 90% 的容量信号。其他类型走通用 describe，只返回身份与自己的 Event，findings 恒为空数组：没有为
+某个类型写过的规则不是规则。
 
 describe 同时读取资源与 Event，因此要求调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在
 路由层且各自留下自己的拒绝记录，被拒时能看出缺的是哪一个；只要 `cluster.read` 就能通过的话，describe 会成为
 绕开 `cluster.event.read` 读取命名空间事件的通道，而 Event 恰恰是这里最值钱的那一半。Event 读取写入与 Event
-流一致的审计记录，避免同一件事经由两条路径时审计只记下其中一条。集群级对象不返回 Event：Event 归属哪个
-Namespace 属于约定而非规则，接口以 `events.omitted=unsupported_scope` 说明，而不是猜一个 `default`。Event
+流一致的审计记录，避免同一件事经由两条路径时审计只记下其中一条。通用集群级对象不返回 Event：Event 归属哪个
+Namespace 属于约定而非规则，接口以 `events.omitted=unsupported_scope` 说明，而不是猜一个 `default`。Node 是
+显式建模的例外：只允许关闭 Follow 的一次性快照，并在 Server、协议校验和 Agent 三层强制
+`involvedObject.kind=Node` 与精确 UID，不能借此读取宽泛的跨 Namespace Event。Event
 读取本身失败时接口仍返回对象部分，以 `events.omitted=unavailable` 与 `degraded_sections` 说明——静默返回空
 事件列表会被读成「这个对象什么都没发生过」。
 
@@ -864,7 +870,14 @@ ServiceAccount 缺失让创建本身失败，根本没有 Pod 可查，而对 De
 事件读取失败会让整段事件为空，关联对象的读取失败只是让时间线变短，两者分别以 `events` 和 `events.related`
 出现在 `degraded_sections` 中。
 
-Console 诊断入口在 Pod 与工作负载的列表行和详情页页头，在详情页排在 YAML 之前：打开一个没跑起来的对象时，
+Node 的 describe 只用一次跨 Namespace Pod List，Field Selector 固定为 `spec.nodeName=<node>`，不会按 Pod 逐个
+往返。非终止 Pod 的 requests 使用 Kubernetes scheduler 语义计算，包含普通容器、init/restartable init、
+Pod-level resources 和 overhead，不等同于实时利用率；Pod 列表单页最多 500 个，关联视图不健康优先并最多展示
+10 个。如果列表还有下一页，CPU、内存 requests 与 Pod 数只代表已读取部分的下限，响应显式标记 `truncated`，
+且不生成 90% 容量结论，避免用不完整分母分子给出确定判断。Node Event 只读取 Node 自身，不扇出读取其上每个 Pod
+的事件。
+
+Console 诊断入口在 Pod、工作负载与 Node 的列表行和详情页页头，在详情页排在 YAML 之前：打开一个没跑起来的对象时，
 这就是操作者带着的那个问题。资源对象浏览器的命名空间级类型行上也有同一个入口（集群级类型不提供，那里的视图
 只会说自己没有可展示的事件）。页面上方是结论卡片，中间是关联对象（不健康的逐个展开并带上自己的结论，就绪的
 折成一行），下方是事件表，工作负载的事件表多一列说明每条属于哪个对象。页头提供「复制为文本」，把结论、关联

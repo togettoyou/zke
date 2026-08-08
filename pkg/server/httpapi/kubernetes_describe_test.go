@@ -22,8 +22,17 @@ type fakeDescribeService struct {
 	result       kubernetesdescribe.Result
 	err          error
 	podInput     kubernetesdescribe.PodInput
+	nodeInput    kubernetesdescribe.NodeInput
 	workloadCall kubernetesdescribe.WorkloadInput
 	resourceCall kubernetesdescribe.ResourceInput
+}
+
+func (service *fakeDescribeService) DescribeNode(
+	_ context.Context,
+	input kubernetesdescribe.NodeInput,
+) (kubernetesdescribe.Result, error) {
+	service.nodeInput = input
+	return service.result, service.err
 }
 
 func (service *fakeDescribeService) DescribePod(
@@ -56,6 +65,10 @@ func describeTestRouter(service kubernetesDescribeService) *gin.Engine {
 	router := gin.New()
 	router.Use(httpmiddleware.RequestLogger(logger))
 	router.GET(
+		"/clusters/:cluster_id/nodes/:node_name/describe",
+		handler.node,
+	)
+	router.GET(
 		"/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe",
 		handler.pod,
 	)
@@ -78,6 +91,7 @@ func TestDescribeRoutesRequireBothTheResourceAndEventPermissions(t *testing.T) {
 	t.Parallel()
 
 	wanted := map[string]bool{
+		"GET /api/v1/clusters/:cluster_id/nodes/:node_name/describe":                                                       false,
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe":                              false,
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/describe": false,
 		"GET /api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name/describe":                                    false,
@@ -111,6 +125,48 @@ func TestDescribeRoutesRequireBothTheResourceAndEventPermissions(t *testing.T) {
 		if !found {
 			t.Errorf("describe route %s is no longer registered", key)
 		}
+	}
+}
+
+func TestDescribeNodeReturnsTheClusterScopedDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	node := kubernetesresource.NodeDetail{NodeSummary: kubernetesresource.NodeSummary{
+		Name: "worker-a", UID: "node-uid", CPUAllocatable: "4",
+	}}
+	service := &fakeDescribeService{result: kubernetesdescribe.Result{
+		Target: kubernetesdescribe.Target{
+			APIVersion: "v1",
+			Kind:       "Node",
+			Name:       "worker-a",
+			UID:        "node-uid",
+		},
+		Family:           kubernetesdescribe.FamilyNode,
+		Node:             &node,
+		Events:           kubernetesdescribe.Events{Items: []kubernetesdescribe.Event{}},
+		Findings:         []kubernetesdescribe.Finding{},
+		DegradedSections: []string{},
+	}}
+	router := describeTestRouter(service)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/nodes/worker-a/describe",
+		nil,
+	)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.nodeInput.ClusterID != "00000000-0000-4000-8000-000000000003" ||
+		service.nodeInput.Name != "worker-a" {
+		t.Fatalf("unexpected Node describe input: %+v", service.nodeInput)
+	}
+	if !strings.Contains(recorder.Body.String(), `"family":"node"`) ||
+		!strings.Contains(recorder.Body.String(), `"cpu_allocatable":"4"`) ||
+		strings.Contains(recorder.Body.String(), `"NodeSummary"`) ||
+		strings.Contains(recorder.Body.String(), `"CPUAllocatable"`) {
+		t.Fatalf("Node diagnosis missing from response: %s", recorder.Body.String())
 	}
 }
 

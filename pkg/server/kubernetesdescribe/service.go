@@ -64,6 +64,7 @@ const (
 const (
 	FamilyPod      = "pod"
 	FamilyWorkload = "workload"
+	FamilyNode     = "node"
 	FamilyGeneric  = "generic"
 )
 
@@ -75,6 +76,11 @@ type ResourceAccess interface {
 		context.Context,
 		kubernetesresource.ListPodsInput,
 	) ([]kubernetesresource.PodDetail, bool, error)
+	ListNodePodDetails(
+		context.Context,
+		kubernetesresource.ListPodsInput,
+	) ([]kubernetesresource.NodePodDetail, bool, error)
+	GetNode(context.Context, string, string) (kubernetesresource.NodeDetail, error)
 	GetWorkload(
 		context.Context,
 		string,
@@ -169,6 +175,11 @@ type Result struct {
 	// the components it already has.
 	Pod      *kubernetesresource.PodDetail      `json:"pod,omitempty"`
 	Workload *kubernetesresource.WorkloadDetail `json:"workload,omitempty"`
+	Node     *kubernetesresource.NodeDetail     `json:"node,omitempty"`
+	// NodeResources is the scheduler-requested share of a Node's allocatable
+	// resources. It is separate from the Node projection because the values come
+	// from the Pods assigned to it, not from the Node object itself.
+	NodeResources *NodeResources `json:"node_resources,omitempty"`
 	// What the described object owns, for the families where the object itself is
 	// never the thing that failed: a Deployment that will not come up is a
 	// statement about its Pods.
@@ -179,6 +190,18 @@ type Result struct {
 	// complete; a describe that silently dropped a section would read as
 	// "nothing wrong here".
 	DegradedSections []string `json:"degraded_sections"`
+}
+
+type NodeResources struct {
+	CPUAllocatableMillis   int64 `json:"cpu_allocatable_millis"`
+	CPURequestedMillis     int64 `json:"cpu_requested_millis"`
+	MemoryAllocatableBytes int64 `json:"memory_allocatable_bytes"`
+	MemoryRequestedBytes   int64 `json:"memory_requested_bytes"`
+	PodAllocatable         int64 `json:"pod_allocatable"`
+	NonTerminalPods        int64 `json:"non_terminal_pods"`
+	// Truncated means the assigned-Pod list had another page. Requested totals
+	// are then lower bounds, so percentage findings must not be derived from them.
+	Truncated bool `json:"truncated"`
 }
 
 // Related is what stands between a workload and the Pods that run it.
@@ -414,7 +437,20 @@ func (service *Service) readObjectEvents(
 	namespace string,
 	uid string,
 ) ([]Event, bool, error) {
-	if service.events == nil || namespace == "" || uid == "" {
+	return service.readEvents(ctx, clusterID, namespace, uid, "")
+}
+
+// readEvents also supports a cluster-scoped Node. That exceptional scope is
+// constrained again by Resource Watch validation and by the Agent to an exact
+// Node UID snapshot, so it cannot become a namespace-wide Event back door.
+func (service *Service) readEvents(
+	ctx context.Context,
+	clusterID string,
+	namespace string,
+	uid string,
+	kind string,
+) ([]Event, bool, error) {
+	if service.events == nil || uid == "" || (namespace == "" && kind != "Node") {
 		return nil, false, ErrInvalidInput
 	}
 	collector := &eventCollector{limit: service.eventLimit}
@@ -425,6 +461,7 @@ func (service *Service) readObjectEvents(
 		Follow:         false,
 		InitialLimit:   service.eventLimit,
 		ResourceUID:    uid,
+		ResourceKind:   kind,
 	}, collector); err != nil {
 		return nil, false, err
 	}

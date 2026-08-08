@@ -116,6 +116,31 @@ func TestResourceWatchValidationRequiresBounds(t *testing.T) {
 	}
 }
 
+func TestResourceWatchValidationBoundsClusterWideEventsToOneNode(t *testing.T) {
+	header := &agentv1.StreamHeader{ProtocolVersion: ProtocolVersion,
+		Kind:      agentv1.StreamKind_STREAM_KIND_RESOURCE_WATCH,
+		RequestId: "00000000-0000-4000-8000-000000000032", TimeoutMillis: 1000}
+	valid := validResourceWatchRequest()
+	valid.Namespace = ""
+	valid.FieldSelector = "involvedObject.kind=Node,involvedObject.uid=node-uid"
+	if err := validateResourceWatchRequest(header, valid); err != nil {
+		t.Fatalf("exact Node snapshot rejected: %v", err)
+	}
+	for _, selector := range []string{
+		"involvedObject.kind=Node",
+		"involvedObject.uid=node-uid",
+		"involvedObject.kind=Pod,involvedObject.uid=pod-uid",
+		"",
+	} {
+		candidate := validResourceWatchRequest()
+		candidate.Namespace = ""
+		candidate.FieldSelector = selector
+		if err := validateResourceWatchRequest(header, candidate); err == nil {
+			t.Fatalf("unsafe cluster-wide selector accepted: %q", selector)
+		}
+	}
+}
+
 func validResourceWatchRequest() *agentv1.ResourceWatchRequest {
 	return &agentv1.ResourceWatchRequest{
 		Resource: &agentv1.GroupVersionResource{Version: "v1", Resource: "events"}, Namespace: "default",

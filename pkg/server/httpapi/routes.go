@@ -370,6 +370,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesNode.get,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/nodes/:node_name/describe",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesDescribe.node,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/namespaces",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,

@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Ban, FileCode, PlayCircle } from "lucide-react";
+import { Ban, FileCode, PlayCircle, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
 import { useNode, useNodes, useSetNodeSchedulable } from "@/api/queries/nodes";
+import { useNodeDescribe } from "@/api/queries/describe";
 import type { KubernetesNodeDetail, KubernetesNodeSummary } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
@@ -24,6 +25,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { YamlEditorView } from "./YamlEditorView";
+import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 
@@ -45,6 +47,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
   // Drilling into a Node keeps the list's paging alive, so coming back lands on
   // the page the operator left rather than on page one.
   const [detailName, setDetailName] = useState<string | null>(null);
+  const [describeName, setDescribeName] = useState<string | null>(null);
   // The YAML editor takes over the section: it is a document, not a field.
   const [yamlName, setYamlName] = useState<string | null>(null);
   const [schedulingTarget, setSchedulingTarget] = useState<SchedulingTarget | null>(null);
@@ -57,6 +60,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
   // Scheduling is a patch of the Node object, so it is an update rather than a
   // Node-specific permission.
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
+  const canDescribe = permissions.can("cluster.event.read", projectScope);
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -122,40 +126,57 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
       {
         id: "actions",
         header: "",
-        size: 48,
+        size: 88,
         cell: ({ row }) =>
-          canUpdate ? (
-            <div onClick={(event) => event.stopPropagation()}>
-              {/*
-               * The two directions are one control in the same cell, so they are
-               * told apart by colour as well as by icon — and by the colour the
-               * section already uses for the state each one produces: the
-               * scheduling badge is warning while a Node is stopped and success
-               * while it is schedulable.
-               */}
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className={
-                  row.original.unschedulable
-                    ? "text-success hover:text-success"
-                    : "text-warning hover:text-warning"
-                }
-                aria-label={`${row.original.unschedulable ? "恢复调度" : "停止调度"} ${row.original.name}`}
-                onClick={() =>
-                  openScheduling({
-                    name: row.original.name,
-                    unschedulable: row.original.unschedulable,
-                  })
-                }
-              >
-                {row.original.unschedulable ? <PlayCircle /> : <Ban />}
-              </Button>
+          canDescribe || canUpdate ? (
+            <div
+              className="flex items-center justify-end"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {canDescribe ? (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={`诊断 ${row.original.name}`}
+                  onClick={() => setDescribeName(row.original.name)}
+                >
+                  <Stethoscope />
+                </Button>
+              ) : null}
+              {canUpdate ? (
+                <>
+                  {/*
+                   * The two directions are one control in the same cell, so they are
+                   * told apart by colour as well as by icon — and by the colour the
+                   * section already uses for the state each one produces: the
+                   * scheduling badge is warning while a Node is stopped and success
+                   * while it is schedulable.
+                   */}
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    className={
+                      row.original.unschedulable
+                        ? "text-success hover:text-success"
+                        : "text-warning hover:text-warning"
+                    }
+                    aria-label={`${row.original.unschedulable ? "恢复调度" : "停止调度"} ${row.original.name}`}
+                    onClick={() =>
+                      openScheduling({
+                        name: row.original.name,
+                        unschedulable: row.original.unschedulable,
+                      })
+                    }
+                  >
+                    {row.original.unschedulable ? <PlayCircle /> : <Ban />}
+                  </Button>
+                </>
+              ) : null}
             </div>
           ) : null,
       },
     ],
-    [canUpdate, openScheduling],
+    [canDescribe, canUpdate, openScheduling],
   );
 
   const nextToken = nodes.data?.continue_token ?? "";
@@ -173,14 +194,22 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           canUpdate={canUpdate}
           onBack={() => setYamlName(null)}
         />
+      ) : describeName ? (
+        <NodeDescribeView
+          clusterId={clusterId}
+          name={describeName}
+          onBack={() => setDescribeName(null)}
+        />
       ) : detailName ? (
         <NodeDetailView
           clusterId={clusterId}
           name={detailName}
           canUpdate={canUpdate}
+          canDescribe={canDescribe}
           onBack={() => setDetailName(null)}
           onToggleScheduling={openScheduling}
           onOpenYaml={() => setYamlName(detailName)}
+          onOpenDescribe={() => setDescribeName(detailName)}
         />
       ) : (
         // No heading over the list: the navigation rail already says 节点 and the
@@ -272,16 +301,20 @@ function NodeDetailView({
   clusterId,
   name,
   canUpdate,
+  canDescribe,
   onBack,
   onToggleScheduling,
   onOpenYaml,
+  onOpenDescribe,
 }: {
   clusterId: string;
   name: string;
   canUpdate: boolean;
+  canDescribe: boolean;
   onBack: () => void;
   onToggleScheduling: (node: SchedulingTarget) => void;
   onOpenYaml: () => void;
+  onOpenDescribe: () => void;
 }) {
   const detail = useNode(clusterId, name);
 
@@ -296,6 +329,12 @@ function NodeDetailView({
         // switch — the action with a blast radius — takes that place.
         actions={
           <>
+            {canDescribe ? (
+              <Button size="sm" variant="secondary" onClick={onOpenDescribe}>
+                <Stethoscope />
+                诊断
+              </Button>
+            ) : null}
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML
@@ -329,6 +368,30 @@ function NodeDetailView({
         <NodeDetailCards node={detail.data} />
       )}
     </div>
+  );
+}
+
+function NodeDescribeView({
+  clusterId,
+  name,
+  onBack,
+}: {
+  clusterId: string;
+  name: string;
+  onBack: () => void;
+}) {
+  const describe = useNodeDescribe(clusterId, name);
+  return (
+    <DescribeView
+      name={name}
+      kindLabel="Node"
+      data={describe.data}
+      isLoading={describe.isLoading}
+      isFetching={describe.isFetching}
+      error={describe.error}
+      onRetry={() => void describe.refetch()}
+      onBack={onBack}
+    />
   );
 }
 

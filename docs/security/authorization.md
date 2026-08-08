@@ -506,17 +506,20 @@ Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证
 `pods/exec` 的 `create`。审计记录票据创建、会话目标与结果，不记录终端输入输出。
 
 Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Resource 接口会拒绝并从 Discovery 中
-隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。请求必须明确 Cluster 和 Namespace，可使用受限
-字段过滤器定域到具体资源；实时 Follow 周期重新验证 Session 与 `cluster.event.read`。Agent ServiceAccount 仅
+隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。普通请求必须明确 Cluster 和 Namespace，可使用受限
+字段过滤器定域到具体资源；唯一的空 Namespace 例外是 Node describe 使用的一次性非 Follow 快照，且 Server、
+协议校验和 Agent 都要求 `involvedObject.kind=Node` 与非空精确 UID。实时 Follow 周期重新验证 Session 与
+`cluster.event.read`。Agent ServiceAccount 仅
 增加 `events` 的 `get/list/watch`，Event 的 message 正文不写入日志或审计，审计只记录作用域、过滤目标和结果。
 
 describe 接口（`.../pods/{pod_name}/describe`、
 `.../workloads/{workload_resource}/{workload_name}/describe` 与
-`.../kubernetes/resources/{resource_name}/describe`）在一次响应里同时给出对象与该对象的 Event，因此要求
+`.../nodes/{node_name}/describe`、`.../kubernetes/resources/{resource_name}/describe`）在一次响应里同时给出
+对象与该对象的 Event，因此要求
 调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在路由层，各自留下自己的拒绝记录。只要求 `cluster.read` 会使 describe 成为绕开 Event 权限读取命名空间事件的
 通道；而把 Event 当作可选部分静默省略，则会让缺少权限的调用者拿到一份看不出缺了什么的结论。Event 读取写入
 与 Event 流一致的 `kubernetes_event.read` 审计记录，避免同一次读取因为走了另一个接口就在审计中消失。集群级
-对象不返回 Event（`events.omitted=unsupported_scope`），Event 读取失败时返回对象部分并显式标注
+对象除已单独建模并受精确 UID 约束的 Node 外不返回 Event（`events.omitted=unsupported_scope`），Event 读取失败时返回对象部分并显式标注
 （`events.omitted=unavailable`）。describe 的结论只从 Kubernetes 报告的 Condition、容器状态和 Event 读出，
 消息原文照搬，不写入日志或审计。
 

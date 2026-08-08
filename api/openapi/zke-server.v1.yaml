@@ -1640,6 +1640,52 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/nodes/{node_name}/describe:
+    get:
+      tags: [Resources]
+      operationId: describeKubernetesNode
+      description: |
+        返回 Node 条件、污点、精确属于该 Node UID 的 Event 快照，以及分配到该节点的
+        非终止 Pod 与 scheduler requests 汇总。Pod 列表与 Event 数量均有界；列表存在
+        下一页时 requests 只表示下限，并且不会生成资源占比结论。
+
+        Node Event 是跨 Namespace 的一次性快照，但 Server 与 Agent 都只允许
+        involvedObject.kind=Node 且 involvedObject.uid 精确匹配的非 follow 请求。接口要求
+        同时持有 cluster.read 与 cluster.event.read，并写入 Event 读取审计。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NodeName"
+      responses:
+        "200":
+          description: Node describe 视图
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDescribe"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces:
     get:
       tags: [Resources]
@@ -10997,7 +11043,7 @@ components:
           $ref: "#/components/schemas/KubernetesDescribeTarget"
         family:
           type: string
-          enum: [pod, workload, generic]
+          enum: [pod, workload, node, generic]
           description: |
             对象所属的家族投影。pod 与 workload 分别返回该家族的详情与诊断结果；
             generic 表示该类型尚无家族规则，只返回身份与 Event。
@@ -11005,6 +11051,10 @@ components:
           $ref: "#/components/schemas/KubernetesPodDetail"
         workload:
           $ref: "#/components/schemas/KubernetesWorkloadDetail"
+        node:
+          $ref: "#/components/schemas/KubernetesNodeDetail"
+        node_resources:
+          $ref: "#/components/schemas/KubernetesDescribeNodeResources"
         related:
           $ref: "#/components/schemas/KubernetesDescribeRelated"
         events:
@@ -11020,7 +11070,46 @@ components:
             “这里没有问题”，因此缺失必须显式说明。
           items:
             type: string
-            enum: [events, events.related, related, related.persistent_volume_claims]
+            enum: [events, events.related, related, related.persistent_volume_claims, node.resources]
+    KubernetesDescribeNodeResources:
+      type: object
+      additionalProperties: false
+      required:
+        - cpu_allocatable_millis
+        - cpu_requested_millis
+        - memory_allocatable_bytes
+        - memory_requested_bytes
+        - pod_allocatable
+        - non_terminal_pods
+        - truncated
+      properties:
+        cpu_allocatable_millis:
+          type: integer
+          format: int64
+          minimum: 0
+        cpu_requested_millis:
+          type: integer
+          format: int64
+          minimum: 0
+        memory_allocatable_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        memory_requested_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        pod_allocatable:
+          type: integer
+          format: int64
+          minimum: 0
+        non_terminal_pods:
+          type: integer
+          format: int64
+          minimum: 0
+        truncated:
+          type: boolean
+          description: Pod 列表还有下一页；requests 为下限，不用于生成比例结论。
     KubernetesDescribeRelated:
       type: object
       additionalProperties: false
@@ -11178,6 +11267,15 @@ components:
             - WorkloadProgressStalled
             - ReplicaCreateRejected
             - WorkloadFailed
+            - NodeNotReady
+            - NodeMemoryPressure
+            - NodeDiskPressure
+            - NodePIDPressure
+            - NodeNetworkUnavailable
+            - NodeSchedulingDisabled
+            - NodeCPURequestsHigh
+            - NodeMemoryRequestsHigh
+            - NodePodCapacityHigh
         severity:
           type: string
           enum: [warning]

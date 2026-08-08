@@ -39,6 +39,21 @@ const (
 	FindingWorkloadFailed          = "WorkloadFailed"
 )
 
+// Node findings keep controller-reported health separate from scheduler
+// capacity signals. Conditions say the Node is unhealthy; request ratios say
+// new Pods are likely to have little room even when current utilization is low.
+const (
+	FindingNodeNotReady           = "NodeNotReady"
+	FindingNodeMemoryPressure     = "NodeMemoryPressure"
+	FindingNodeDiskPressure       = "NodeDiskPressure"
+	FindingNodePIDPressure        = "NodePIDPressure"
+	FindingNodeNetworkUnavailable = "NodeNetworkUnavailable"
+	FindingNodeSchedulingDisabled = "NodeSchedulingDisabled"
+	FindingNodeCPURequestsHigh    = "NodeCPURequestsHigh"
+	FindingNodeMemoryRequestsHigh = "NodeMemoryRequestsHigh"
+	FindingNodePodCapacityHigh    = "NodePodCapacityHigh"
+)
+
 // Container waiting reasons that mean the image never arrived.
 var imagePullWaitingReasons = map[string]struct{}{
 	"ErrImagePull":              {},
@@ -95,6 +110,106 @@ const (
 	runningPodPhase             = "Running"
 	eventTypeWarning            = "Warning"
 )
+
+func nodeConditionFindings(
+	node kubernetesresource.NodeDetail,
+) []Finding {
+	findings := make([]Finding, 0, 6)
+	readyConditionFound := false
+	for _, condition := range node.Conditions {
+		code := ""
+		reported := false
+		switch condition.Type {
+		case "Ready":
+			readyConditionFound = true
+			code = FindingNodeNotReady
+			reported = condition.Status != conditionStatusTrue
+		case "MemoryPressure":
+			code = FindingNodeMemoryPressure
+			reported = condition.Status == conditionStatusTrue
+		case "DiskPressure":
+			code = FindingNodeDiskPressure
+			reported = condition.Status == conditionStatusTrue
+		case "PIDPressure":
+			code = FindingNodePIDPressure
+			reported = condition.Status == conditionStatusTrue
+		case "NetworkUnavailable":
+			code = FindingNodeNetworkUnavailable
+			reported = condition.Status == conditionStatusTrue
+		}
+		if !reported {
+			continue
+		}
+		findings = append(findings, Finding{
+			Code:     code,
+			Severity: SeverityWarning,
+			Reason:   condition.Reason,
+			Message:  condition.Message,
+			Evidence: []Evidence{{
+				Kind: EvidenceCondition,
+				Name: condition.Type,
+			}},
+		})
+	}
+	if !readyConditionFound {
+		findings = append(findings, Finding{
+			Code:     FindingNodeNotReady,
+			Severity: SeverityWarning,
+			Evidence: []Evidence{{
+				Kind: EvidenceObjectStatus,
+				Name: "status",
+			}},
+		})
+	}
+	if node.Unschedulable {
+		findings = append(findings, Finding{
+			Code:     FindingNodeSchedulingDisabled,
+			Severity: SeverityWarning,
+			Evidence: []Evidence{{
+				Kind: EvidenceObjectStatus,
+				Name: "spec.unschedulable",
+			}},
+		})
+	}
+	return findings
+}
+
+func nodeResourceFindings(resources NodeResources) []Finding {
+	if resources.Truncated {
+		return []Finding{}
+	}
+	findings := make([]Finding, 0, 3)
+	checks := []struct {
+		code        string
+		evidence    string
+		requested   int64
+		allocatable int64
+	}{
+		{FindingNodeCPURequestsHigh, "resources.cpu", resources.CPURequestedMillis, resources.CPUAllocatableMillis},
+		{FindingNodeMemoryRequestsHigh, "resources.memory", resources.MemoryRequestedBytes, resources.MemoryAllocatableBytes},
+		{FindingNodePodCapacityHigh, "resources.pods", resources.NonTerminalPods, resources.PodAllocatable},
+	}
+	for _, check := range checks {
+		if check.allocatable <= 0 || check.requested < ninetyPercent(check.allocatable) {
+			continue
+		}
+		findings = append(findings, Finding{
+			Code:     check.code,
+			Severity: SeverityWarning,
+			Evidence: []Evidence{{
+				Kind: EvidenceObjectStatus,
+				Name: check.evidence,
+			}},
+		})
+	}
+	return findings
+}
+
+// ninetyPercent rounds the boundary up without multiplying a potentially
+// huge quantity by nine first.
+func ninetyPercent(value int64) int64 {
+	return value/10*9 + (value%10*9+9)/10
+}
 
 // podFindings reads the Pod's own status and the Events naming it, and returns
 // what the two together support.

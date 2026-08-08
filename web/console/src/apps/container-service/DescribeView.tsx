@@ -76,6 +76,42 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
     title: "任务失败",
     hint: "Job 已达到重试上限或运行超期。具体失败原因在它的 Pod 与容器退出码上。",
   },
+  NodeNotReady: {
+    title: "节点未就绪",
+    hint: "kubelet 未持续报告 Ready。核对节点网络、kubelet 状态、运行时与系统资源。",
+  },
+  NodeMemoryPressure: {
+    title: "节点内存压力",
+    hint: "kubelet 已报告内存压力。检查节点内存用量、Pod requests/limits 与驱逐记录。",
+  },
+  NodeDiskPressure: {
+    title: "节点磁盘压力",
+    hint: "kubelet 已报告磁盘压力。检查镜像文件系统、容器日志和临时存储空间。",
+  },
+  NodePIDPressure: {
+    title: "节点 PID 压力",
+    hint: "节点可用进程 ID 接近耗尽。检查异常进程数量以及 Pod 的进程使用。",
+  },
+  NodeNetworkUnavailable: {
+    title: "节点网络不可用",
+    hint: "节点网络尚未正确配置。检查 CNI 组件、路由与节点网络状态。",
+  },
+  NodeSchedulingDisabled: {
+    title: "节点已停止调度",
+    hint: "该节点被标记为不可调度。若维护已经结束，可在确认节点健康后恢复调度。",
+  },
+  NodeCPURequestsHigh: {
+    title: "CPU 请求接近可分配上限",
+    hint: "非终止 Pod 的 CPU requests 已达到节点可分配量的 90%。新 Pod 可能因 CPU 不足无法调度。",
+  },
+  NodeMemoryRequestsHigh: {
+    title: "内存请求接近可分配上限",
+    hint: "非终止 Pod 的内存 requests 已达到节点可分配量的 90%。新 Pod 可能因内存不足无法调度。",
+  },
+  NodePodCapacityHigh: {
+    title: "Pod 数接近可分配上限",
+    hint: "节点上的非终止 Pod 数已达到可分配 Pod 数的 90%。新 Pod 可能因 Pod 容量不足无法调度。",
+  },
 };
 
 const OMITTED_EVENTS: Record<string, string> = {
@@ -122,7 +158,7 @@ export function DescribeView({
   // A workload's timeline carries the Events of several objects, so each line
   // has to say which one it is about. A single object's does not: every line
   // would repeat the name in the page header.
-  const aggregated = Boolean(data?.related);
+  const aggregated = data?.family === "workload";
   const columns = useMemo<ColumnDef<KubernetesDescribeEvent, unknown>[]>(
     () => [
       {
@@ -234,12 +270,20 @@ export function DescribeView({
             </div>
           ) : null}
 
-          {data.related ? <RelatedSection related={data.related} /> : null}
+          {data.node ? <NodeDiagnosticSummary data={data} /> : null}
+
+          {data.related ? <RelatedSection related={data.related} family={data.family} /> : null}
 
           {data.degraded_sections.includes("related") ? (
             <Alert tone="warning">
-              本次未能读取该工作负载拥有的对象，因此下方只有它自身的状态与事件。
+              {data.family === "node"
+                ? "本次未能读取分配到该节点的 Pod，关联对象与资源请求汇总不可用。"
+                : "本次未能读取该工作负载拥有的对象，因此下方只有它自身的状态与事件。"}
             </Alert>
+          ) : null}
+          {data.degraded_sections.includes("node.resources") &&
+          !data.degraded_sections.includes("related") ? (
+            <Alert tone="warning">本次无法计算节点资源请求汇总，节点条件与事件仍然有效。</Alert>
           ) : null}
           {data.degraded_sections.includes("related.persistent_volume_claims") ? (
             <Alert tone="warning">
@@ -300,7 +344,13 @@ function relatedHasFindings(data: KubernetesDescribe): boolean {
  * for it. The healthy ones stay as one line — they are context, and a page that
  * spent ten rows on the replicas that are fine would bury the one that is not.
  */
-function RelatedSection({ related }: { related: KubernetesDescribeRelated }) {
+function RelatedSection({
+  related,
+  family,
+}: {
+  related: KubernetesDescribeRelated;
+  family: KubernetesDescribe["family"];
+}) {
   const unhealthy = related.pods.filter((pod) => !pod.ready || pod.findings.length > 0);
   const healthy = related.pods.filter((pod) => pod.ready && pod.findings.length === 0);
   if (
@@ -312,30 +362,32 @@ function RelatedSection({ related }: { related: KubernetesDescribeRelated }) {
   }
   return (
     <Card>
-      <CardTitle>关联对象</CardTitle>
+      <CardTitle>{family === "node" ? "已分配 Pod" : "关联对象"}</CardTitle>
       <div className="mt-2 grid gap-2">
         {related.controllers.map((controller) => (
-          <RelatedRow key={controller.uid} object={controller} />
+          <RelatedRow key={controller.uid} object={controller} showNamespace={family === "node"} />
         ))}
         {related.persistent_volume_claims.map((claim) => (
-          <RelatedRow key={claim.uid} object={claim} />
+          <RelatedRow key={claim.uid} object={claim} showNamespace={family === "node"} />
         ))}
         {unhealthy.map((pod) => (
-          <RelatedRow key={pod.uid} object={pod} />
+          <RelatedRow key={pod.uid} object={pod} showNamespace={family === "node"} />
         ))}
         {healthy.length > 0 ? (
           <div className="text-subtle-foreground flex flex-wrap items-center gap-1.5 text-xs">
             <span>就绪 {healthy.length} 个：</span>
             {healthy.map((pod) => (
               <span key={pod.uid} className="zke-mono break-all">
-                {pod.name}
+                {family === "node" && pod.namespace ? `${pod.namespace}/${pod.name}` : pod.name}
               </span>
             ))}
           </div>
         ) : null}
         {related.truncated ? (
           <p className="text-subtle-foreground text-xs">
-            该工作负载拥有或引用的对象多于此处展示的；这里只展示有界窗口，其余对象已省略。
+            {family === "node"
+              ? "该节点上的非终止 Pod 多于此处展示的；这里只展示有界窗口，其余对象已省略。"
+              : "该工作负载拥有或引用的对象多于此处展示的；这里只展示有界窗口，其余对象已省略。"}
           </p>
         ) : null}
       </div>
@@ -343,11 +395,95 @@ function RelatedSection({ related }: { related: KubernetesDescribeRelated }) {
   );
 }
 
-function RelatedRow({ object }: { object: KubernetesDescribeRelatedObject }) {
+function NodeDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
+  if (!data.node) {
+    return null;
+  }
+  const resources = data.node_resources;
+  return (
+    <Card>
+      <CardTitle>节点概况</CardTitle>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <DiagnosticValue
+          label="CPU requests / 可分配"
+          value={
+            resources
+              ? `${formatMilliCPU(resources.cpu_requested_millis)} / ${formatMilliCPU(resources.cpu_allocatable_millis)}`
+              : "—"
+          }
+        />
+        <DiagnosticValue
+          label="内存 requests / 可分配"
+          value={
+            resources
+              ? `${formatBytes(resources.memory_requested_bytes)} / ${formatBytes(resources.memory_allocatable_bytes)}`
+              : "—"
+          }
+        />
+        <DiagnosticValue
+          label="非终止 Pod / 可分配"
+          value={resources ? `${resources.non_terminal_pods} / ${resources.pod_allocatable}` : "—"}
+        />
+        <DiagnosticValue
+          label="污点"
+          value={
+            data.node.taints.length === 0
+              ? "无"
+              : data.node.taints
+                  .map(
+                    (taint) =>
+                      `${taint.key}${taint.value ? `=${taint.value}` : ""}:${taint.effect}`,
+                  )
+                  .join(", ")
+          }
+        />
+      </div>
+      {resources?.truncated ? (
+        <p className="text-subtle-foreground mt-2 text-xs">
+          Pod 列表超过单次读取上限，requests 仅为已读取部分的下限，因此不生成资源占比结论。
+        </p>
+      ) : null}
+    </Card>
+  );
+}
+
+function DiagnosticValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border-border/60 rounded-control min-w-0 border p-2.5">
+      <p className="text-subtle-foreground text-xs">{label}</p>
+      <p className="zke-mono text-foreground mt-1 text-[13px] break-all">{value}</p>
+    </div>
+  );
+}
+
+function formatMilliCPU(value: number): string {
+  return value % 1000 === 0 ? `${value / 1000}` : `${value}m`;
+}
+
+function formatBytes(value: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let amount = value;
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  return `${amount >= 10 || unit === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
+}
+
+function RelatedRow({
+  object,
+  showNamespace,
+}: {
+  object: KubernetesDescribeRelatedObject;
+  showNamespace: boolean;
+}) {
   return (
     <div className="border-border/60 rounded-control grid gap-1 border p-2.5">
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
-        <span className="text-foreground font-medium break-all">{object.name}</span>
+        <span className="text-foreground font-medium break-all">
+          {showNamespace && object.namespace ? `${object.namespace}/${object.name}` : object.name}
+        </span>
         <span className="text-subtle-foreground text-xs">{object.kind}</span>
         <Badge tone={object.ready ? "success" : "warning"}>{object.status || "—"}</Badge>
       </div>
@@ -466,6 +602,26 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
       lines.push(`      ${finding.message}`);
     }
   }
+  if (data.node) {
+    lines.push("", "节点概况");
+    if (data.node_resources) {
+      const resources = data.node_resources;
+      lines.push(
+        `  CPU requests: ${formatMilliCPU(resources.cpu_requested_millis)} / ${formatMilliCPU(resources.cpu_allocatable_millis)}`,
+        `  Memory requests: ${formatBytes(resources.memory_requested_bytes)} / ${formatBytes(resources.memory_allocatable_bytes)}`,
+        `  Non-terminal Pods: ${resources.non_terminal_pods} / ${resources.pod_allocatable}${resources.truncated ? "（下限，列表已截断）" : ""}`,
+      );
+    }
+    lines.push(
+      `  Taints: ${
+        data.node.taints.length === 0
+          ? "无"
+          : data.node.taints
+              .map((taint) => `${taint.key}${taint.value ? `=${taint.value}` : ""}:${taint.effect}`)
+              .join(", ")
+      }`,
+    );
+  }
   if (data.related) {
     const objects = [
       ...data.related.controllers,
@@ -474,7 +630,11 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
     ];
     lines.push("", `关联对象（${objects.length}${data.related.truncated ? "，已截断" : ""}）`);
     for (const object of objects) {
-      lines.push(`  - ${object.kind}/${object.name} ${object.status}`);
+      const objectName =
+        data.family === "node" && object.namespace
+          ? `${object.namespace}/${object.name}`
+          : object.name;
+      lines.push(`  - ${object.kind}/${objectName} ${object.status}`);
       for (const finding of object.findings) {
         const label = FINDING_LABELS[finding.code]?.title ?? finding.code;
         lines.push(
@@ -492,7 +652,8 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
     const seen = event.last_seen ?? event.first_seen;
     // The subject is written out only for the aggregated timelines, where the
     // lines are about several objects and a line without it says nothing.
-    const subject = data.related ? ` ${event.regarding.kind}/${event.regarding.name}` : "";
+    const subject =
+      data.family === "workload" ? ` ${event.regarding.kind}/${event.regarding.name}` : "";
     lines.push(
       `  ${seen ? formatAbsolute(seen) : "—"} ${event.type} ${event.reason}` +
         `${subject}${event.container ? ` (${event.container})` : ""}` +

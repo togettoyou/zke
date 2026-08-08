@@ -130,6 +130,68 @@ func TestServiceListsAndGetsPodsWithinNamespace(t *testing.T) {
 	}
 }
 
+func TestServiceListsNodePodsAcrossNamespacesWithSchedulerRequests(t *testing.T) {
+	t.Parallel()
+
+	pod := testPod()
+	pod.Namespace = "other-namespace"
+	pod.Spec.Containers[0].Resources.Requests = corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("500m"),
+		corev1.ResourceMemory: resource.MustParse("1Gi"),
+	}
+	pod.Spec.InitContainers[0].Resources.Requests = corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("2"),
+		corev1.ResourceMemory: resource.MustParse("2Gi"),
+	}
+	pod.Spec.Overhead = corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse("100m"),
+		corev1.ResourceMemory: resource.MustParse("128Mi"),
+	}
+	object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&pod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := unstructured.UnstructuredList{
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "PodList",
+			"metadata": map[string]any{
+				"continue": "next-page",
+			},
+		},
+		Items: []unstructured.Unstructured{{Object: object}},
+	}
+	requester := &fakeResourceRequester{handle: func(
+		_ context.Context,
+		_ string,
+		request *agentv1.ResourceRequest,
+		responseBody io.Writer,
+	) (*agentv1.ResourceResponse, error) {
+		if request.GetNamespace() != "" ||
+			request.GetListOptions().GetFieldSelector() != "spec.nodeName=worker-a" {
+			t.Fatalf("unexpected Node Pod request: %+v", request)
+		}
+		return writeKubernetesObject(t, responseBody, &list), nil
+	}}
+
+	pods, truncated, err := NewService(requester).ListNodePodDetails(
+		context.Background(),
+		ListPodsInput{
+			ClusterID:     testClusterID,
+			Limit:         MaxResourceListLimit,
+			FieldSelector: "spec.nodeName=worker-a",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods) != 1 || pods[0].Namespace != "other-namespace" ||
+		pods[0].CPURequestMillis != 2100 ||
+		pods[0].MemoryRequestBytes != 2176*1024*1024 || !truncated {
+		t.Fatalf("unexpected scheduler request projection: %+v truncated=%v", pods, truncated)
+	}
+}
+
 func TestServiceDeletesPodWithSafetyOptions(t *testing.T) {
 	t.Parallel()
 
