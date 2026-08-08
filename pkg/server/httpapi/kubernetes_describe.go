@@ -48,6 +48,35 @@ type kubernetesDescribeService interface {
 		context.Context,
 		kubernetesdescribe.GatewayInput,
 	) (kubernetesdescribe.Result, error)
+	DescribeHorizontalPodAutoscaler(
+		context.Context,
+		kubernetesdescribe.HorizontalPodAutoscalerInput,
+	) (kubernetesdescribe.Result, error)
+}
+
+func (handler *kubernetesDescribeHandler) horizontalPodAutoscaler(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if len(c.Request.URL.Query()) != 0 {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"HorizontalPodAutoscaler describe does not accept query parameters")
+		return
+	}
+	if handler.service == nil {
+		writeError(c, http.StatusServiceUnavailable, "unavailable",
+			"Kubernetes describe is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.DescribeHorizontalPodAutoscaler(
+		ctx,
+		kubernetesdescribe.HorizontalPodAutoscalerInput{
+			ClusterID: c.Param("cluster_id"),
+			Namespace: c.Param("namespace_name"),
+			Name:      c.Param("hpa_name"),
+		},
+	)
+	cancel()
+	handler.finish(c, "describe Kubernetes HorizontalPodAutoscaler", result, err)
 }
 
 func (handler *kubernetesDescribeHandler) networkingResource(c *gin.Context) {

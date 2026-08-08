@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Pencil, Plus } from "lucide-react";
+import { FileCode, Pencil, Plus, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -12,6 +12,7 @@ import {
   type AutoscalerSummary,
 } from "@/api/queries/autoscaling";
 import type { KubernetesHPABehavior, KubernetesHPAMetricView } from "@/api/types";
+import { useAutoscalerDescribe } from "@/api/queries/describe";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
@@ -32,6 +33,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { AutoscalerForm } from "./AutoscalerForm";
+import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -65,6 +67,7 @@ export function AutoscalerSection({
   });
   const [detailName, setDetailName] = useState<string | null>(null);
   const [yamlName, setYamlName] = useState<string | null>(null);
+  const [describeName, setDescribeName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AutoscalerSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AutoscalerSummary | null>(null);
@@ -77,6 +80,7 @@ export function AutoscalerSection({
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const canDescribe = permissions.can("cluster.event.read", projectScope);
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -146,9 +150,19 @@ export function AutoscalerSection({
       {
         id: "actions",
         header: "",
-        size: 88,
+        size: canDescribe ? 128 : 88,
         cell: ({ row }) => (
           <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+            {canDescribe ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`诊断 ${row.original.name}`}
+                onClick={() => setDescribeName(row.original.name)}
+              >
+                <Stethoscope />
+              </Button>
+            ) : null}
             {canUpdate ? (
               <Button
                 size="icon-sm"
@@ -166,7 +180,7 @@ export function AutoscalerSection({
         ),
       },
     ],
-    [canUpdate, canDelete, openDelete],
+    [canUpdate, canDelete, canDescribe, openDelete],
   );
 
   // The dialogs live outside the branch that picks a view. They are opened from
@@ -250,6 +264,17 @@ export function AutoscalerSection({
     );
   }
 
+  if (describeName) {
+    return (
+      <AutoscalerDescribeView
+        clusterId={clusterId}
+        namespace={namespace}
+        name={describeName}
+        onBack={() => setDescribeName(null)}
+      />
+    );
+  }
+
   // The form takes over the section rather than sitting over the list, like every
   // other typed form here: a few metrics with both scaling directions customised
   // is taller than a box laid over the table can show, and the table is of no use
@@ -278,8 +303,10 @@ export function AutoscalerSection({
           name={detailName}
           canUpdate={canUpdate}
           canDelete={canDelete}
+          canDescribe={canDescribe}
           onEdit={setEditing}
           onOpenYaml={() => setYamlName(detailName)}
+          onDescribe={() => setDescribeName(detailName)}
           onDelete={openDelete}
           onBack={() => setDetailName(null)}
         />
@@ -374,8 +401,10 @@ function AutoscalerDetailView({
   name,
   canUpdate,
   canDelete,
+  canDescribe,
   onEdit,
   onOpenYaml,
+  onDescribe,
   onDelete,
   onBack,
 }: {
@@ -384,8 +413,10 @@ function AutoscalerDetailView({
   name: string;
   canUpdate: boolean;
   canDelete: boolean;
+  canDescribe: boolean;
   onEdit: (item: AutoscalerSummary) => void;
   onOpenYaml: () => void;
+  onDescribe: () => void;
   onDelete: (item: AutoscalerSummary) => void;
   onBack: () => void;
 }) {
@@ -399,6 +430,12 @@ function AutoscalerDetailView({
         onBack={onBack}
         actions={
           <>
+            {canDescribe ? (
+              <Button size="sm" variant="secondary" onClick={onDescribe}>
+                <Stethoscope />
+                诊断
+              </Button>
+            ) : null}
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML
@@ -425,6 +462,32 @@ function AutoscalerDetailView({
         <AutoscalerDetailCards item={item} />
       )}
     </div>
+  );
+}
+
+function AutoscalerDescribeView({
+  clusterId,
+  namespace,
+  name,
+  onBack,
+}: {
+  clusterId: string;
+  namespace: string;
+  name: string;
+  onBack: () => void;
+}) {
+  const describe = useAutoscalerDescribe(clusterId, namespace, name);
+  return (
+    <DescribeView
+      name={name}
+      kindLabel="HorizontalPodAutoscaler"
+      data={describe.data}
+      isLoading={describe.isLoading}
+      isFetching={describe.isFetching}
+      error={describe.error}
+      onRetry={() => void describe.refetch()}
+      onBack={onBack}
+    />
   );
 }
 

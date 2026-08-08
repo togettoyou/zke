@@ -62,12 +62,13 @@ const (
 // is the part the Console could not assemble before. It gets no findings,
 // because a rule that has not been written for a type is not a rule.
 const (
-	FamilyPod        = "pod"
-	FamilyWorkload   = "workload"
-	FamilyNode       = "node"
-	FamilyStorage    = "storage"
-	FamilyNetworking = "networking"
-	FamilyGeneric    = "generic"
+	FamilyPod         = "pod"
+	FamilyWorkload    = "workload"
+	FamilyNode        = "node"
+	FamilyStorage     = "storage"
+	FamilyNetworking  = "networking"
+	FamilyAutoscaling = "autoscaling"
+	FamilyGeneric     = "generic"
 )
 
 // ResourceAccess is the read half of the Kubernetes resource service. Describe
@@ -108,6 +109,12 @@ type ResourceAccess interface {
 		kubernetesresource.StorageResource,
 		string,
 	) (kubernetesresource.StorageResourceDetail, error)
+	GetHorizontalPodAutoscaler(
+		context.Context,
+		string,
+		string,
+		string,
+	) (kubernetesresource.HorizontalPodAutoscalerDetail, error)
 	ListResources(
 		context.Context,
 		kubernetesresource.ListResourcesInput,
@@ -186,14 +193,16 @@ type Result struct {
 	// The family projection, present for the families that have one. Same shape
 	// the family's own detail endpoint returns, so the Console renders it with
 	// the components it already has.
-	Pod              *kubernetesresource.PodDetail                `json:"pod,omitempty"`
-	Workload         *kubernetesresource.WorkloadDetail           `json:"workload,omitempty"`
-	Node             *kubernetesresource.NodeDetail               `json:"node,omitempty"`
-	Storage          *kubernetesresource.StorageResourceDetail    `json:"storage,omitempty"`
-	Networking       *kubernetesresource.NetworkingResourceDetail `json:"networking,omitempty"`
-	ServiceEndpoints *ServiceEndpoints                            `json:"service_endpoints,omitempty"`
-	IngressBackends  *IngressBackends                             `json:"ingress_backends,omitempty"`
-	GatewayStatus    *GatewayStatus                               `json:"gateway_status,omitempty"`
+	Pod              *kubernetesresource.PodDetail                     `json:"pod,omitempty"`
+	Workload         *kubernetesresource.WorkloadDetail                `json:"workload,omitempty"`
+	Node             *kubernetesresource.NodeDetail                    `json:"node,omitempty"`
+	Storage          *kubernetesresource.StorageResourceDetail         `json:"storage,omitempty"`
+	Networking       *kubernetesresource.NetworkingResourceDetail      `json:"networking,omitempty"`
+	Autoscaler       *kubernetesresource.HorizontalPodAutoscalerDetail `json:"autoscaler,omitempty"`
+	AutoscalerTarget *RelatedObject                                    `json:"autoscaler_target,omitempty"`
+	ServiceEndpoints *ServiceEndpoints                                 `json:"service_endpoints,omitempty"`
+	IngressBackends  *IngressBackends                                  `json:"ingress_backends,omitempty"`
+	GatewayStatus    *GatewayStatus                                    `json:"gateway_status,omitempty"`
 	// NodeResources is the scheduler-requested share of a Node's allocatable
 	// resources. It is separate from the Node projection because the values come
 	// from the Pods assigned to it, not from the Node object itself.

@@ -180,6 +180,22 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
     title: "监听器引用无效",
     hint: "Listener 的证书或其他对象引用没有解析成功。检查对象名称、命名空间、类型和引用授权。",
   },
+  HPAStatusStale: {
+    title: "HPA 状态尚未追上配置",
+    hint: "控制器观察到的 Generation 落后于当前配置。等待下一次同步；若持续不变，检查 HPA Controller 状态。",
+  },
+  HPAUnableToScale: {
+    title: "无法读取或更新伸缩目标",
+    hint: "HPA Controller 无法读取目标的 scale 子资源或更新副本数。按 Kubernetes 原始消息核对目标名称、类型和权限。",
+  },
+  HPAMetricsUnavailable: {
+    title: "伸缩指标不可用",
+    hint: "HPA 当前无法计算期望副本数。检查 Metrics API、指标适配器、指标名称和目标工作负载的资源 requests。",
+  },
+  HPAScalingLimited: {
+    title: "伸缩受到上下限约束",
+    hint: "计算出的期望副本数超出 minReplicas 或 maxReplicas。核对副本上下限是否符合当前负载需求。",
+  },
 };
 
 const OMITTED_EVENTS: Record<string, string> = {
@@ -351,6 +367,7 @@ export function DescribeView({
           {data.networking?.gateway && data.gateway_status ? (
             <GatewayDiagnosticSummary data={data} />
           ) : null}
+          {data.autoscaler ? <AutoscalerDiagnosticSummary data={data} /> : null}
 
           {data.related ? <RelatedSection related={data.related} family={data.family} /> : null}
 
@@ -386,6 +403,11 @@ export function DescribeView({
             <Alert tone="warning">
               本次未能读取后端 Service 的 EndpointSlice，Service
               与端口状态仍然有效，但端点诊断不可用。
+            </Alert>
+          ) : null}
+          {data.degraded_sections.includes("autoscaler.target") ? (
+            <Alert tone="warning">
+              本次未能读取 HPA 的类型化伸缩目标，HPA 自身 Condition 与事件仍然有效。
             </Alert>
           ) : null}
           {data.events.omitted ? (
@@ -428,6 +450,9 @@ function relatedHasFindings(data: KubernetesDescribe): boolean {
     return true;
   }
   if (data.gateway_status?.listeners.some((listener) => listener.findings.length > 0)) {
+    return true;
+  }
+  if (data.autoscaler_target?.findings.length) {
     return true;
   }
   const related = data.related;
@@ -785,6 +810,62 @@ function GatewayDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   );
 }
 
+function AutoscalerDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
+  const autoscaler = data.autoscaler;
+  if (!autoscaler) {
+    return null;
+  }
+  const target = data.autoscaler_target;
+  return (
+    <Card>
+      <CardTitle>自动伸缩状态</CardTitle>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <DiagnosticValue
+          label="伸缩目标"
+          value={`${autoscaler.target.kind}/${autoscaler.target.name}`}
+        />
+        <DiagnosticValue
+          label="当前 / 期望副本"
+          value={`${autoscaler.current_replicas} → ${autoscaler.desired_replicas}`}
+        />
+        <DiagnosticValue
+          label="副本区间"
+          value={`${autoscaler.min_replicas} – ${autoscaler.max_replicas}`}
+        />
+        <DiagnosticValue
+          label="Generation"
+          value={`${autoscaler.generation}（已观察 ${autoscaler.observed_generation ?? "—"}）`}
+        />
+      </div>
+      {target ? (
+        <div className="border-border/60 rounded-control mt-2 grid gap-1.5 border p-2.5">
+          <div className="flex flex-wrap items-center gap-2 text-[13px]">
+            <span className="text-foreground font-medium break-all">
+              {target.kind}/{target.name}
+            </span>
+            <Badge tone={target.ready && target.findings.length === 0 ? "success" : "warning"}>
+              {target.status || "状态未知"}
+            </Badge>
+          </div>
+          {target.findings.map((finding, index) => (
+            <div key={`${finding.code}-${index}`} className="grid gap-0.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge tone="warning">{FINDING_LABELS[finding.code]?.title ?? finding.code}</Badge>
+                {finding.reason ? (
+                  <span className="zke-mono text-subtle-foreground text-xs">{finding.reason}</span>
+                ) : null}
+              </div>
+              {finding.message ? (
+                <span className="text-muted-foreground text-xs break-words">{finding.message}</span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 function DiagnosticValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="border-border/60 rounded-control min-w-0 border p-2.5">
@@ -1027,6 +1108,26 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
         lines.push(
           `      ${FINDING_LABELS[finding.code]?.title ?? finding.code} [${finding.code}]` +
             `${finding.reason ? ` reason=${finding.reason}` : ""}` +
+            `${finding.message ? ` ${finding.message}` : ""}`,
+        );
+      }
+    }
+  }
+  if (data.autoscaler) {
+    const autoscaler = data.autoscaler;
+    lines.push(
+      "",
+      "自动伸缩概况",
+      `  Target: ${autoscaler.target.api_version} ${autoscaler.target.kind}/${autoscaler.target.name}`,
+      `  Replicas: ${autoscaler.current_replicas} -> ${autoscaler.desired_replicas} (${autoscaler.min_replicas}-${autoscaler.max_replicas})`,
+      `  Generation: ${autoscaler.generation} / observed ${autoscaler.observed_generation ?? "—"}`,
+    );
+    if (data.autoscaler_target) {
+      const target = data.autoscaler_target;
+      lines.push(`  Target status: ${target.kind}/${target.name} ${target.status || "—"}`);
+      for (const finding of target.findings) {
+        lines.push(
+          `      ${FINDING_LABELS[finding.code]?.title ?? finding.code} [${finding.code}]` +
             `${finding.message ? ` ${finding.message}` : ""}`,
         );
       }

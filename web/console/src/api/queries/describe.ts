@@ -139,6 +139,34 @@ export function useGatewayDescribe(
   });
 }
 
+export function useAutoscalerDescribe(
+  clusterId: string | null,
+  namespace: string | null,
+  name: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.autoscalerDescribe(clusterId ?? "", namespace ?? "", name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/describe",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId as string,
+                namespace_name: namespace as string,
+                hpa_name: name as string,
+              },
+            },
+            signal,
+          },
+        ),
+      ),
+    enabled: enabled && Boolean(clusterId && namespace && name),
+  });
+}
+
 /**
  * Describe joins an object with the Kubernetes Events that name it, and reports
  * the findings the two together support.

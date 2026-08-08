@@ -74,11 +74,13 @@
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/describe`、
   `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}/describe`、
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}/describe`、
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}/describe`
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}/describe`、
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/describe`
   和 `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
   只属于该对象的 Kubernetes Event 快照，以及由两者共同支持的诊断结论；工作负载还会沿 owner 链返回它拥有的
   控制器、Pod、Pod 模板引用的 PVC 及各自的结论，Node 还会返回已分配的非终止 Pod 与 requests 汇总，Service
-  会返回 EndpointSlice 端点统计和 selector 匹配的后端 Pod，Ingress 会返回所引用 Service、端口与端点状态；这些接口
+  会返回 EndpointSlice 端点统计和 selector 匹配的后端 Pod，Ingress 会返回所引用 Service、端口与端点状态，HPA
+  会返回控制器 Condition 与已知类型化伸缩目标的状态；这些接口
   都要求同时持有 `cluster.read` 与
   `cluster.event.read`，Event 读取写入与 Event 流一致的审计记录；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs`：要求当前 Pod UID、
@@ -837,7 +839,7 @@ Event 按 UID 而不是名称过滤：同名重建的 Pod 会留下前一个对�
 ConfigMap/Secret 不存在）、反复重启、容器异常退出、内存超限被终止、存储挂载失败和探针未通过。探针只在
 Running 且未就绪时报告——启动过程中失败一次随后通过是常态，报出来会让每个热身稍慢的 Pod 都变成告警。
 Node 规则包括 Ready 异常、Memory/Disk/PID Pressure、NetworkUnavailable、停止调度，以及 requests 或 Pod 数达到
-可分配量 90% 的容量信号。除下文单独建模的 PVC、Service、Ingress 与 Gateway 外，其他类型走通用 describe，只返回身份与自己的
+可分配量 90% 的容量信号。除下文单独建模的 PVC、Service、Ingress、Gateway 与 HPA 外，其他类型走通用 describe，只返回身份与自己的
 Event，findings 恒为空数组：没有为某个类型写过的规则不是规则。
 
 PVC 的独立 describe 复用工作负载聚合中同一条 `PVCPending` 规则。Bound PVC 不报告问题；Pending PVC 先从自身
@@ -863,6 +865,13 @@ Gateway 的独立 describe 直接使用 Gateway API Controller 报告的对象�
 未接受、未编程、配置冲突和 `ResolvedRefs` 失败。每条结论保留 Condition 的 reason、message 与带 Listener 名称的
 证据路径。Gateway 不额外枚举 Route：Listener 已提供 `attachedRoutes`，而跨类型 Route 支持与授权关系需要单独的
 Route 模型，当前不以不完整的 owner 推断代替。
+
+HPA 的独立 describe 使用 `status.observedGeneration` 与 `AbleToScale`、`ScalingActive`、`ScalingLimited`
+三个标准 Condition，分别报告控制器状态滞后、无法读取或更新伸缩目标、指标不可用和伸缩受到上下限约束；reason
+与 message 保留 Kubernetes 原文。它只对类型化 HPA 表单支持的 `apps/v1 Deployment` 和 `StatefulSet` 读取一次
+同 Namespace 目标详情并展示就绪副本与目标自身的工作负载结论。自定义 scale target 仍是合法对象，保持只由 HPA
+Condition 解释，不因未读取目标而降级；已知目标读取失败则以 `autoscaler.target` 显式降级。Event 只按 HPA 自身
+精确 UID 读取，不读取目标 Event，避免一次诊断变成跨对象事件通道。
 
 describe 同时读取资源与 Event，因此要求调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在
 路由层且各自留下自己的拒绝记录，被拒时能看出缺的是哪一个；只要 `cluster.read` 就能通过的话，describe 会成为
@@ -904,7 +913,7 @@ Pod-level resources 和 overhead，不等同于实时利用率；Pod 列表单�
 且不生成 90% 容量结论，避免用不完整分母分子给出确定判断。Node Event 只读取 Node 自身，不扇出读取其上每个 Pod
 的事件。
 
-Console 诊断入口在 Pod、工作负载、Node、PVC、Service、Ingress 与 Gateway 的列表行和详情页页头，在详情页排在 YAML 之前：打开
+Console 诊断入口在 Pod、工作负载、Node、PVC、Service、Ingress、Gateway 与 HPA 的列表行和详情页页头，在详情页排在 YAML 之前：打开
 一个没跑起来的对象时，这就是操作者带着的那个问题。资源对象浏览器的命名空间级类型行上也有同一个入口（集群级
 类型不提供，那里的视图只会说自己没有可展示的事件）。页面上方是结论卡片，中间是关联对象（不健康的逐个展开并带上自己的结论，就绪的
 折成一行），下方是事件表，工作负载的事件表多一列说明每条属于哪个对象。页头提供「复制为文本」，把结论、关联

@@ -38,6 +38,10 @@ type fakeResourceAccess struct {
 	podListInput        kubernetesresource.ListPodsInput
 	workload            kubernetesresource.WorkloadDetail
 	workloadErr         error
+	workloadResource    kubernetesresource.WorkloadResource
+	workloadName        string
+	autoscaler          kubernetesresource.HorizontalPodAutoscalerDetail
+	autoscalerErr       error
 	claims              map[string]kubernetesresource.StorageResourceDetail
 	claimErr            map[string]error
 	// Keyed by the resource name of the listed type, e.g. `replicasets`.
@@ -104,10 +108,21 @@ func (access *fakeResourceAccess) GetWorkload(
 	_ context.Context,
 	_ string,
 	_ string,
-	_ kubernetesresource.WorkloadResource,
-	_ string,
+	resource kubernetesresource.WorkloadResource,
+	name string,
 ) (kubernetesresource.WorkloadDetail, error) {
+	access.workloadResource = resource
+	access.workloadName = name
 	return access.workload, access.workloadErr
+}
+
+func (access *fakeResourceAccess) GetHorizontalPodAutoscaler(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ string,
+) (kubernetesresource.HorizontalPodAutoscalerDetail, error) {
+	return access.autoscaler, access.autoscalerErr
 }
 
 func (access *fakeResourceAccess) GetStorageResource(

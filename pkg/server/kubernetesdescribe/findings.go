@@ -59,6 +59,42 @@ const (
 	FindingGatewayListenerReferencesInvalid = "GatewayListenerReferencesInvalid"
 )
 
+const (
+	FindingHPAStatusStale        = "HPAStatusStale"
+	FindingHPAUnableToScale      = "HPAUnableToScale"
+	FindingHPAMetricsUnavailable = "HPAMetricsUnavailable"
+	FindingHPAScalingLimited     = "HPAScalingLimited"
+)
+
+func hpaFindings(autoscaler kubernetesresource.HorizontalPodAutoscalerDetail) []Finding {
+	findings := make([]Finding, 0, 4)
+	if autoscaler.ObservedGeneration == nil || *autoscaler.ObservedGeneration < autoscaler.Generation {
+		findings = append(findings, Finding{
+			Code: FindingHPAStatusStale, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.observedGeneration"}},
+		})
+	}
+	for _, condition := range autoscaler.Conditions {
+		code, report := "", false
+		switch condition.Type {
+		case "AbleToScale":
+			code, report = FindingHPAUnableToScale, condition.Status != conditionStatusTrue
+		case "ScalingActive":
+			code, report = FindingHPAMetricsUnavailable, condition.Status != conditionStatusTrue
+		case "ScalingLimited":
+			code, report = FindingHPAScalingLimited, condition.Status == conditionStatusTrue
+		}
+		if report {
+			findings = append(findings, Finding{
+				Code: code, Severity: SeverityWarning,
+				Reason: condition.Reason, Message: condition.Message,
+				Evidence: []Evidence{{Kind: EvidenceCondition, Name: condition.Type}},
+			})
+		}
+	}
+	return findings
+}
+
 func gatewayFindings(gateway kubernetesresource.NetworkingResourceDetail) []Finding {
 	if gateway.Gateway == nil {
 		return []Finding{}

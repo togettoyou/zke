@@ -3700,6 +3700,40 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/describe:
+    get:
+      tags: [Resources]
+      operationId: describeKubernetesHorizontalPodAutoscaler
+      description: |
+        返回 HPA 自身状态、标准 Condition 诊断、只属于该 HPA UID 的 Event，以及类型化接口已知的
+        apps/v1 Deployment 或 StatefulSet 目标状态。自定义 scale target 不做推测，也不产生降级；已知目标
+        读取失败时在 autoscaler.target 降级区段中说明。要求同时持有 cluster.read 与 cluster.event.read。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HPAName"
+      responses:
+        "200":
+          description: HPA 结构化诊断视图
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDescribe"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/policies/{policy_resource}:
     get:
       tags: [Resources]
@@ -11115,9 +11149,9 @@ components:
           $ref: "#/components/schemas/KubernetesDescribeTarget"
         family:
           type: string
-          enum: [pod, workload, node, storage, networking, generic]
+          enum: [pod, workload, node, storage, networking, autoscaling, generic]
           description: |
-            对象所属的家族投影。pod、workload、node、storage 与 networking 返回对应详情与诊断结果；
+            对象所属的家族投影。pod、workload、node、storage、networking 与 autoscaling 返回对应详情与诊断结果；
             generic 表示该类型尚无家族规则，只返回身份与 Event。
         pod:
           $ref: "#/components/schemas/KubernetesPodDetail"
@@ -11137,6 +11171,10 @@ components:
           $ref: "#/components/schemas/KubernetesDescribeIngressBackends"
         gateway_status:
           $ref: "#/components/schemas/KubernetesDescribeGatewayStatus"
+        autoscaler:
+          $ref: "#/components/schemas/KubernetesHPADetail"
+        autoscaler_target:
+          $ref: "#/components/schemas/KubernetesDescribeRelatedObject"
         related:
           $ref: "#/components/schemas/KubernetesDescribeRelated"
         events:
@@ -11152,7 +11190,7 @@ components:
             “这里没有问题”，因此缺失必须显式说明。
           items:
             type: string
-            enum: [events, events.related, related, related.persistent_volume_claims, node.resources, service.endpoints, ingress.backends, ingress.endpoints]
+            enum: [events, events.related, related, related.persistent_volume_claims, node.resources, service.endpoints, ingress.backends, ingress.endpoints, autoscaler.target]
     KubernetesDescribeServiceEndpoints:
       type: object
       additionalProperties: false
@@ -11467,6 +11505,10 @@ components:
             - GatewayListenerNotProgrammed
             - GatewayListenerConflicted
             - GatewayListenerReferencesInvalid
+            - HPAStatusStale
+            - HPAUnableToScale
+            - HPAMetricsUnavailable
+            - HPAScalingLimited
         severity:
           type: string
           enum: [warning]

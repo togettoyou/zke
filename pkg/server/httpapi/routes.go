@@ -763,6 +763,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
 		handlers.kubernetesHPA.get,
 	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers/:hpa_name/describe",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesDescribe.horizontalPodAutoscaler,
+	)
 	clusterRoutes.PUT(
 		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers/:hpa_name",
 		handlers.authMiddleware.RequireCSRF,

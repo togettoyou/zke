@@ -1237,6 +1237,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 返回 HPA 自身状态、标准 Condition 诊断、只属于该 HPA UID 的 Event，以及类型化接口已知的
+         *     apps/v1 Deployment 或 StatefulSet 目标状态。自定义 scale target 不做推测，也不产生降级；已知目标
+         *     读取失败时在 autoscaler.target 降级区段中说明。要求同时持有 cluster.read 与 cluster.event.read。
+         */
+        get: operations["describeKubernetesHorizontalPodAutoscaler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/policies/{policy_resource}": {
         parameters: {
             query?: never;
@@ -4252,11 +4273,11 @@ export interface components {
         KubernetesDescribe: {
             target: components["schemas"]["KubernetesDescribeTarget"];
             /**
-             * @description 对象所属的家族投影。pod、workload、node、storage 与 networking 返回对应详情与诊断结果；
+             * @description 对象所属的家族投影。pod、workload、node、storage、networking 与 autoscaling 返回对应详情与诊断结果；
              *     generic 表示该类型尚无家族规则，只返回身份与 Event。
              * @enum {string}
              */
-            family: "pod" | "workload" | "node" | "storage" | "networking" | "generic";
+            family: "pod" | "workload" | "node" | "storage" | "networking" | "autoscaling" | "generic";
             pod?: components["schemas"]["KubernetesPodDetail"];
             workload?: components["schemas"]["KubernetesWorkloadDetail"];
             node?: components["schemas"]["KubernetesNodeDetail"];
@@ -4266,6 +4287,8 @@ export interface components {
             service_endpoints?: components["schemas"]["KubernetesDescribeServiceEndpoints"];
             ingress_backends?: components["schemas"]["KubernetesDescribeIngressBackends"];
             gateway_status?: components["schemas"]["KubernetesDescribeGatewayStatus"];
+            autoscaler?: components["schemas"]["KubernetesHPADetail"];
+            autoscaler_target?: components["schemas"]["KubernetesDescribeRelatedObject"];
             related?: components["schemas"]["KubernetesDescribeRelated"];
             events: components["schemas"]["KubernetesDescribeEvents"];
             findings: components["schemas"]["KubernetesDescribeFinding"][];
@@ -4273,7 +4296,7 @@ export interface components {
              * @description 请求了但没有拿到的部分。为空表示结果完整；静默丢弃某一部分会被读成
              *     “这里没有问题”，因此缺失必须显式说明。
              */
-            degraded_sections: ("events" | "events.related" | "related" | "related.persistent_volume_claims" | "node.resources" | "service.endpoints" | "ingress.backends" | "ingress.endpoints")[];
+            degraded_sections: ("events" | "events.related" | "related" | "related.persistent_volume_claims" | "node.resources" | "service.endpoints" | "ingress.backends" | "ingress.endpoints" | "autoscaler.target")[];
         };
         KubernetesDescribeServiceEndpoints: {
             /** Format: int64 */
@@ -4425,7 +4448,7 @@ export interface components {
          */
         KubernetesDescribeFinding: {
             /** @enum {string} */
-            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints" | "GatewayAddressPending" | "GatewayNotAccepted" | "GatewayNotProgrammed" | "GatewayNotReady" | "GatewayListenerNotAccepted" | "GatewayListenerNotProgrammed" | "GatewayListenerConflicted" | "GatewayListenerReferencesInvalid";
+            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints" | "GatewayAddressPending" | "GatewayNotAccepted" | "GatewayNotProgrammed" | "GatewayNotReady" | "GatewayListenerNotAccepted" | "GatewayListenerNotProgrammed" | "GatewayListenerConflicted" | "GatewayListenerReferencesInvalid" | "HPAStatusStale" | "HPAUnableToScale" | "HPAMetricsUnavailable" | "HPAScalingLimited";
             /**
              * @description findings 只报告问题，因此只有一个级别。
              * @enum {string}
@@ -8142,6 +8165,40 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    describeKubernetesHorizontalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                hpa_name: components["parameters"]["HPAName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description HPA 结构化诊断视图 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDescribe"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
