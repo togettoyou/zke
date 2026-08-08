@@ -260,20 +260,10 @@ export function AppShell({
           ref={setPageHeaderSlot}
           className="border-border bg-surface-muted/30 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-3 py-2 empty:hidden [&>*]:min-h-9"
         />
-        <div
-          className={cn(
-            "min-h-0 flex-1 overflow-auto",
-            // Chrome does not reliably include an overflow container's own
-            // bottom padding after a tall child. Put the entered view's
-            // trailing space in normal flow instead, so every detail, editor
-            // and quota page can scroll past its final card by the same amount.
-            entered ? "px-4 pt-4" : "p-4",
-          )}
-        >
+        <div className="min-h-0 flex-1 overflow-auto p-4">
           <PageHeaderSlot.Provider value={pageHeader}>
             <ToolbarActionSlot.Provider value={actionSlot}>{children}</ToolbarActionSlot.Provider>
           </PageHeaderSlot.Provider>
-          {entered ? <div className="h-4" aria-hidden /> : null}
         </div>
         {statusBar ? (
           <div className="border-border text-subtle-foreground shrink-0 border-t px-3 py-1.5 text-xs">
