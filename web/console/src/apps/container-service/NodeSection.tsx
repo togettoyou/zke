@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowDownToLine, Ban, FileCode, PlayCircle, Stethoscope } from "lucide-react";
+import { Ban, FileCode, PlayCircle, ServerOff, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDrainNode, useNode, useNodes, useSetNodeSchedulable } from "@/api/queries/nodes";
@@ -207,7 +207,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
                   aria-label={`排空节点 ${row.original.name}`}
                   onClick={() => openDrain(row.original)}
                 >
-                  <ArrowDownToLine />
+                  <ServerOff />
                 </Button>
               ) : null}
             </div>
@@ -355,7 +355,8 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           "Mirror Pod、DaemonSet Pod 和已终止中的 Pod 不会被驱逐。",
         ]}
         confirmationText={drainPreviewReady(drainPreview) ? drainTarget?.name : undefined}
-        confirmLabel={drainPreviewReady(drainPreview) ? "确认排空" : "执行 DryRun 预检"}
+        confirmLabel={drainConfirmLabel(drainPreview)}
+        confirmDisabled={drainPreviewHasStaticBlockers(drainPreview)}
         destructive
         pending={drain.isPending}
         error={drain.error}
@@ -504,7 +505,7 @@ function NodeDetailView({
                 variant="danger"
                 onClick={() => onDrain({ name: detail.data.name, uid: detail.data.uid })}
               >
-                <ArrowDownToLine />
+                <ServerOff />
                 排空节点
               </Button>
             ) : null}
@@ -532,6 +533,20 @@ function drainPreviewReady(result: KubernetesNodeDrainResult | null): boolean {
   );
 }
 
+function drainPreviewHasStaticBlockers(result: KubernetesNodeDrainResult | null): boolean {
+  return Boolean(result?.blocked);
+}
+
+function drainConfirmLabel(result: KubernetesNodeDrainResult | null): string {
+  if (drainPreviewReady(result)) {
+    return "确认排空";
+  }
+  if (drainPreviewHasStaticBlockers(result)) {
+    return "请先处理阻断项";
+  }
+  return result ? "重新执行 DryRun 预检" : "执行 DryRun 预检";
+}
+
 function DrainPreview({ result }: { result: KubernetesNodeDrainResult }) {
   const evict = result.pods.filter((pod) => pod.decision === "evict");
   const skipped = result.pods.filter((pod) => pod.decision === "skip");
@@ -541,12 +556,17 @@ function DrainPreview({ result }: { result: KubernetesNodeDrainResult }) {
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap gap-1.5">
-        <Badge tone={blocked.length > 0 ? "warning" : "success"}>待驱逐 {evict.length}</Badge>
+        <Badge tone={blocked.length > 0 ? "warning" : "success"}>计划驱逐 {evict.length}</Badge>
         <Badge tone="neutral">跳过 {skipped.length}</Badge>
         <Badge tone={blocked.length > 0 ? "danger" : "neutral"}>阻断 {blocked.length}</Badge>
       </div>
       {blocked.length > 0 ? (
         <Alert tone="warning">
+          {result.blocked ? (
+            <p className="mb-2 text-xs">
+              清单存在静态阻断，本次预检已停止；节点未停止调度，也没有向任何 Pod 发送驱逐请求。
+            </p>
+          ) : null}
           <div className="grid max-h-36 gap-1 overflow-y-auto">
             {blocked.map((pod) => (
               <div key={pod.uid} className="text-xs break-words">
@@ -554,7 +574,7 @@ function DrainPreview({ result }: { result: KubernetesNodeDrainResult }) {
                   {pod.namespace}/{pod.name}
                 </span>{" "}
                 · {drainReasonLabel(pod.reason)}
-                {pod.message ? `：${pod.message}` : ""}
+                {drainPodResolution(pod.reason, pod.message)}
               </div>
             ))}
           </div>
@@ -564,6 +584,15 @@ function DrainPreview({ result }: { result: KubernetesNodeDrainResult }) {
       )}
     </div>
   );
+}
+
+function drainPodResolution(reason: string, message: string): string {
+  const resolutions: Record<string, string> = {
+    UnmanagedPod: "：勾选“驱逐无控制器 Pod”后重新预检",
+    EmptyDirData: "：勾选“接受 emptyDir 数据丢失”后重新预检",
+    TooManyRequests: "：等待 PodDisruptionBudget 预算恢复后重新预检",
+  };
+  return resolutions[reason] ?? (message ? `：${message}` : "");
 }
 
 function drainReasonLabel(reason: string): string {

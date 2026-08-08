@@ -33,6 +33,8 @@ export type SensitiveActionDialogProps = {
   /** When set, the operator must type this value (usually the resource name). */
   confirmationText?: string;
   confirmLabel?: string;
+  /** Additional operation-specific gate beyond typed confirmation and pending state. */
+  confirmDisabled?: boolean;
   destructive?: boolean;
   pending?: boolean;
   error?: unknown;
@@ -59,6 +61,7 @@ export function SensitiveActionDialog({
   impacts,
   confirmationText,
   confirmLabel = "确认执行",
+  confirmDisabled = false,
   destructive = false,
   pending = false,
   error,
@@ -171,7 +174,7 @@ export function SensitiveActionDialog({
           </Button>
           <Button
             variant={destructive ? "danger" : "primary"}
-            disabled={!confirmationSatisfied || pending}
+            disabled={confirmDisabled || !confirmationSatisfied || pending}
             onClick={onConfirm}
           >
             {pending ? "执行中…" : confirmLabel}

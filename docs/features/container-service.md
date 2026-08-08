@@ -302,7 +302,9 @@ Patch 停止调度，再为每个 Pod 提交携带 UID precondition 的 `policy/
 `pdb_blocked`，不回退成 DELETE；DryRun 同时覆盖 cordon 与 eviction。Agent 只对 core/v1 Pod 的 create eviction
 组合接受专用协议位，通用 Resource、YAML 与 Manifest 路径无法设置该位，因此新增 Kubernetes RBAC 不会成为任意
 Subresource 通道。响应中的 `evicted` 表示 API Server 已接受驱逐请求，不虚构 Pod 已越过终止宽限期；需要确认
-节点已经为空时重新读取节点诊断中的已分配 Pod。
+节点已经为空时重新读取节点诊断中的已分配 Pod。Console 将清单分类得到的候选显示为“计划驱逐”；存在无控制器
+Pod 或 emptyDir 等静态阻断时，明确说明尚未停止调度、也未发送 Eviction，并要求先接受对应风险后才能重新预检。
+PDB 等可能随副本状态恢复的动态阻断仍可直接重新执行 DryRun。
 
 命名空间的配额管理是同一批 `policies/resourcequotas` 类型化接口的另一个视图，不是新的后端能力：入口在命名空间
 列表行和详情页，页面把 `core/v1 ResourceQuota` 的 `hard` 按计算资源配额、存储资源限制和其他资源限制三组展开成
