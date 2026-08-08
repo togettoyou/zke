@@ -101,8 +101,13 @@ type PodContainer struct {
 }
 
 type PodContainerState struct {
-	Type       string     `json:"type"`
-	Reason     string     `json:"reason"`
+	Type   string `json:"type"`
+	Reason string `json:"reason"`
+	// What the kubelet said about this state. The reason names the class of
+	// failure and the message names the instance of it: `CreateContainerConfigError`
+	// is the same reason whether the missing thing is a Secret or a key inside
+	// one, and only the message says which.
+	Message    string     `json:"message"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	ExitCode   *int32     `json:"exit_code,omitempty"`
@@ -422,6 +427,7 @@ func podContainerState(input corev1.ContainerState) PodContainerState {
 		return PodContainerState{
 			Type:       "terminated",
 			Reason:     input.Terminated.Reason,
+			Message:    input.Terminated.Message,
 			StartedAt:  timePointer(input.Terminated.StartedAt),
 			FinishedAt: timePointer(input.Terminated.FinishedAt),
 			ExitCode:   &exitCode,
@@ -429,7 +435,11 @@ func podContainerState(input corev1.ContainerState) PodContainerState {
 		}
 	}
 	if input.Waiting != nil {
-		return PodContainerState{Type: "waiting", Reason: input.Waiting.Reason}
+		return PodContainerState{
+			Type:    "waiting",
+			Reason:  input.Waiting.Reason,
+			Message: input.Waiting.Message,
+		}
 	}
 	return PodContainerState{Type: "unknown"}
 }

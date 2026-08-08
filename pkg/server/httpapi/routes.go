@@ -434,6 +434,25 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesPod.get,
 	)
+	// Describe joins an object with the Events that name it, so it answers to
+	// both permissions rather than to the weaker of the two. `cluster.read`
+	// alone would turn describe into a way to read a Namespace's Events without
+	// `cluster.event.read`, which is the separation that permission exists for;
+	// the Events are not an incidental part of the response but the half an
+	// operator opened it for. Both checks are route-level and each records its
+	// own denial, so a refusal says which permission was missing.
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesDescribe.pod,
+	)
 	clusterRoutes.DELETE(
 		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name",
 		handlers.authMiddleware.RequireCSRF,
@@ -987,6 +1006,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesYAML.get,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/kubernetes/resources/:resource_name/describe",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesDescribe.resource,
 	)
 	clusterRoutes.POST(
 		"/:cluster_id/kubernetes/resources",

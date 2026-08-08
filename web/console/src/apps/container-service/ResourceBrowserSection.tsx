@@ -1,9 +1,18 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useIsFetching, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, FileCode, Folder, LayoutGrid, Search } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileCode,
+  Folder,
+  LayoutGrid,
+  Search,
+  Stethoscope,
+} from "lucide-react";
 import { toast } from "sonner";
 
+import { useResourceDescribe } from "@/api/queries/describe";
 import { useNamespaces } from "@/api/queries/namespaces";
 import {
   groupResourceTypes,
@@ -37,6 +46,7 @@ import { cn } from "@/lib/cn";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
+import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -75,6 +85,8 @@ export function ResourceBrowserSection({
   const projectScope = { type: "project" as const, tenantId, projectId };
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  // Describe carries the object's Events, which are their own permission.
+  const canDescribe = permissions.can("cluster.event.read", projectScope);
 
   // The fallback is memoised with the catalog rather than written inline: a new
   // empty array on every render would re-filter and re-group the whole catalog
@@ -148,6 +160,7 @@ export function ResourceBrowserSection({
             type={active}
             canUpdate={canUpdate}
             canDelete={canDelete}
+            canDescribe={canDescribe}
           />
         ) : (
           <div className="border-border rounded-panel bg-surface flex items-center justify-center border p-6">
@@ -372,12 +385,14 @@ function ResourceObjectPanel({
   type,
   canUpdate,
   canDelete,
+  canDescribe,
 }: {
   clusterId: string;
   clusterName: string;
   type: KubernetesResourceType;
   canUpdate: boolean;
   canDelete: boolean;
+  canDescribe: boolean;
 }) {
   const identity: GenericResourceIdentity = {
     group: type.group,
@@ -387,6 +402,7 @@ function ResourceObjectPanel({
   const [namespace, setNamespace] = useState(ALL_NAMESPACES);
   const [nameQuery, setNameQuery] = useState("");
   const [yamlTarget, setYamlTarget] = useState<UnstructuredObject | null>(null);
+  const [describeTarget, setDescribeTarget] = useState<UnstructuredObject | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UnstructuredObject | null>(null);
   const [deletePreviewed, setDeletePreviewed] = useState(false);
   const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
@@ -406,6 +422,10 @@ function ResourceObjectPanel({
   // The YAML editor reads through the same generic route, so it needs the verbs
   // that route uses.
   const readable = type.verbs.includes("get");
+  // Only for Namespaced types. Events name a Namespace, so the Server refuses to
+  // guess which one holds a Cluster-scoped object's Events; offering the action
+  // there would open a view that can only say it has nothing to show.
+  const describable = canDescribe && readable && type.namespaced;
 
   const items = (list.data?.items ?? []) as UnstructuredObject[];
   const needle = nameQuery.trim().toLowerCase();
@@ -460,6 +480,16 @@ function ResourceObjectPanel({
       size: 100,
       cell: ({ row }) => (
         <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+          {describable ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => setDescribeTarget(row.original)}
+              aria-label={`诊断 ${row.original.metadata?.name ?? ""}`}
+            >
+              <Stethoscope />
+            </Button>
+          ) : null}
           {readable ? (
             // Icon only, like every other row action in this app: the column is
             // narrow, the word repeats down the whole page, and the label the
@@ -487,7 +517,19 @@ function ResourceObjectPanel({
       ),
     });
     return base;
-  }, [type.namespaced, readable, deletable, remove]);
+  }, [type.namespaced, readable, describable, deletable, remove]);
+
+  if (describeTarget) {
+    return (
+      <ResourceDescribeView
+        clusterId={clusterId}
+        identity={identity}
+        kindLabel={type.kind}
+        object={describeTarget}
+        onBack={() => setDescribeTarget(null)}
+      />
+    );
+  }
 
   if (yamlTarget) {
     const targetNamespace = yamlTarget.metadata?.namespace ?? "";
@@ -653,6 +695,51 @@ function ResourceObjectPanel({
         }}
       />
     </div>
+  );
+}
+
+/**
+ * One object's Events, reached from the browser.
+ *
+ * The findings are empty here whatever the object is: the rules are written per
+ * family and only Pods have them so far, so what this adds for a PVC or a CRD is
+ * the part that was missing anyway — the Events that name this object, without
+ * reading the whole Namespace's stream to find them.
+ */
+function ResourceDescribeView({
+  clusterId,
+  identity,
+  kindLabel,
+  object,
+  onBack,
+}: {
+  clusterId: string;
+  identity: GenericResourceIdentity;
+  kindLabel: string;
+  object: UnstructuredObject;
+  onBack: () => void;
+}) {
+  const name = object.metadata?.name ?? "";
+  const namespace = object.metadata?.namespace ?? "";
+  const describe = useResourceDescribe({
+    clusterId,
+    ...(identity.group ? { group: identity.group } : {}),
+    version: identity.version,
+    resource: identity.resource,
+    ...(namespace ? { namespace } : {}),
+    name,
+  });
+  return (
+    <DescribeView
+      name={name}
+      kindLabel={kindLabel}
+      data={describe.data}
+      isLoading={describe.isLoading}
+      isFetching={describe.isFetching}
+      error={describe.error}
+      onRetry={() => void describe.refetch()}
+      onBack={onBack}
+    />
   );
 }
 

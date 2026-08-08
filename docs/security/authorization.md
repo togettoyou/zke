@@ -510,6 +510,15 @@ Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Res
 字段过滤器定域到具体资源；实时 Follow 周期重新验证 Session 与 `cluster.event.read`。Agent ServiceAccount 仅
 增加 `events` 的 `get/list/watch`，Event 的 message 正文不写入日志或审计，审计只记录作用域、过滤目标和结果。
 
+describe 接口（`.../pods/{pod_name}/describe` 与 `.../kubernetes/resources/{resource_name}/describe`）在一次
+响应里同时给出对象与该对象的 Event，因此要求调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查
+都在路由层，各自留下自己的拒绝记录。只要求 `cluster.read` 会使 describe 成为绕开 Event 权限读取命名空间事件的
+通道；而把 Event 当作可选部分静默省略，则会让缺少权限的调用者拿到一份看不出缺了什么的结论。Event 读取写入
+与 Event 流一致的 `kubernetes_event.read` 审计记录，避免同一次读取因为走了另一个接口就在审计中消失。集群级
+对象不返回 Event（`events.omitted=unsupported_scope`），Event 读取失败时返回对象部分并显式标注
+（`events.omitted=unavailable`）。describe 的结论只从 Kubernetes 报告的 Condition、容器状态和 Event 读出，
+消息原文照搬，不写入日志或审计。
+
 长连接读取（Event 流、Pod 日志 Follow、Web Terminal）的审计 `result` 记录的是「服务端是否完成了这次读取」，
 而不是流为什么结束。操作者关闭页面、Server 自身的最长时长到期、上游 Watch 轮换、resourceVersion 过期都属于
 流的正常终止，记为 `succeeded`；实时重新验证发现权限被收回记为 `denied`；Agent 不可达、上游超时、容量耗尽和

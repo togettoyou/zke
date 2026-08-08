@@ -16,6 +16,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
 	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
@@ -80,6 +81,7 @@ type handlers struct {
 	kubernetesSecret        *kubernetesSecretHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
+	kubernetesDescribe      *kubernetesDescribeHandler
 	// The families whose YAML is reached through their own permissions, each
 	// over a service carrying that family's rules.
 	kubernetesAuthorizationYAML *kubernetesAuthorizationYAMLHandler
@@ -133,7 +135,16 @@ func New(
 	var yamlService kubernetesYAMLService
 	var authorizationYAMLService kubernetesYAMLService
 	var secretYAMLService kubernetesYAMLService
+	var describeService kubernetesDescribeService
 	if dependencies.KubernetesResourceService != nil {
+		// A Server with no Resource Watch service still describes: that service
+		// reports its own absence, and describe carries the object half of the
+		// answer with the Event section marked unavailable.
+		describeService = kubernetesdescribe.NewService(
+			dependencies.KubernetesResourceService,
+			dependencies.ResourceWatchService,
+			kubernetesdescribe.Config{},
+		)
 		yamlService = kubernetesyaml.NewService(
 			dependencies.KubernetesResourceService,
 			nil,
@@ -300,6 +311,15 @@ func New(
 		kubernetesYAML: newKubernetesYAMLHandler(
 			logger,
 			yamlService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		// Describe holds no accessor of its own either: it reads the object
+		// through the resource service and the Events through the same Resource
+		// Watch the Event stream uses, so it can reach nothing those two cannot.
+		kubernetesDescribe: newKubernetesDescribeHandler(
+			logger,
+			describeService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

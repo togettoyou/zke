@@ -110,6 +110,13 @@ export type KubernetesPodOwnerReference = Schemas["KubernetesPodOwnerReference"]
 export type KubernetesPodPhase = KubernetesPodSummary["phase"];
 export type KubernetesDeleteResult = Schemas["KubernetesDeleteResult"];
 
+export type KubernetesDescribe = Schemas["KubernetesDescribe"];
+export type KubernetesDescribeTarget = Schemas["KubernetesDescribeTarget"];
+export type KubernetesDescribeEvent = Schemas["KubernetesDescribeEvent"];
+export type KubernetesDescribeFinding = Schemas["KubernetesDescribeFinding"];
+export type KubernetesDescribeFindingCode = KubernetesDescribeFinding["code"];
+export type KubernetesDescribeEvidence = Schemas["KubernetesDescribeEvidence"];
+
 export type AuditEvent = Schemas["AuditEvent"];
 export type AuditEventPage = Schemas["AuditEventPage"];
 export type AuditAction = Schemas["AuditAction"];

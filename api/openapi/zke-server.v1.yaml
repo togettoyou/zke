@@ -2007,6 +2007,56 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe:
+    get:
+      tags: [Resources]
+      operationId: describeKubernetesPod
+      description: |
+        在一次请求内返回 Pod 详情、只属于该 Pod 的 Kubernetes Event 快照，以及由两者共同
+        支持的诊断结论（findings）。Event 按对象 UID 过滤并按时间正序返回，数量有界。
+
+        findings 只包含问题项，且只来自 Kubernetes 已经报告的状态：每条携带稳定的 code、
+        Kubernetes 原始 reason 与 message，以及指向 Condition、容器状态或 Event 的证据，
+        不额外推断。当前仅 Pod 家族有诊断规则。
+
+        该接口同时读取资源与 Event，因此要求调用者同时持有 cluster.read 和
+        cluster.event.read；Event 读取会写入与 Event 流一致的审计记录。若 Event 读取本身
+        失败，接口仍返回对象部分，并在 events.omitted 与 degraded_sections 中说明。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+      responses:
+        "200":
+          description: Pod describe 视图
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDescribe"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs:
     get:
       tags: [Resources]
@@ -4708,6 +4758,56 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe:
+    get:
+      tags: [Resources]
+      operationId: describeGenericKubernetesResource
+      description: |
+        返回任意主资源的身份与只属于该对象的 Kubernetes Event 快照。诊断规则按家族编写，
+        当前只有 Pod 家族具备，因此该接口的 findings 恒为空数组，不对未建模的类型做猜测。
+
+        Cluster 级资源不返回 Event：Event 归属哪个 Namespace 属于约定而非规则，接口以
+        events.omitted=unsupported_scope 说明，而不是返回可能属于其他对象的 Event。
+
+        与 Pod describe 一样要求同时持有 cluster.read 和 cluster.event.read。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/KubernetesResourceName"
+        - $ref: "#/components/parameters/KubernetesGroup"
+        - $ref: "#/components/parameters/KubernetesVersion"
+        - $ref: "#/components/parameters/KubernetesResource"
+        - $ref: "#/components/parameters/KubernetesNamespace"
+      responses:
+        "200":
+          description: 通用资源 describe 视图
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDescribe"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "502":
@@ -10581,13 +10681,19 @@ components:
     KubernetesPodContainerState:
       type: object
       additionalProperties: false
-      required: [type, reason]
+      required: [type, reason, message]
       properties:
         type:
           type: string
           enum: [unknown, waiting, running, terminated]
         reason:
           type: string
+        message:
+          type: string
+          description: |
+            kubelet 对该状态的说明。reason 表示失败类别，message 表示具体实例：
+            CreateContainerConfigError 无论缺的是 Secret 还是其中某个 key 都是同一个
+            reason，只有 message 说明缺的是哪一个。
         started_at:
           $ref: "#/components/schemas/Timestamp"
         finished_at:
@@ -10825,6 +10931,155 @@ components:
         remaining_item_count:
           type: [integer, "null"]
           minimum: 0
+    KubernetesDescribe:
+      type: object
+      additionalProperties: false
+      required: [target, family, events, findings, degraded_sections]
+      properties:
+        target:
+          $ref: "#/components/schemas/KubernetesDescribeTarget"
+        family:
+          type: string
+          enum: [pod, generic]
+          description: |
+            对象所属的家族投影。pod 表示同时返回 Pod 详情与 Pod 诊断规则的结果；
+            generic 表示该类型尚无家族规则，只返回身份与 Event。
+        pod:
+          $ref: "#/components/schemas/KubernetesPodDetail"
+        events:
+          $ref: "#/components/schemas/KubernetesDescribeEvents"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesDescribeFinding"
+        degraded_sections:
+          type: array
+          description: |
+            请求了但没有拿到的部分。为空表示结果完整；静默丢弃某一部分会被读成
+            “这里没有问题”，因此缺失必须显式说明。
+          items:
+            type: string
+            enum: [events]
+    KubernetesDescribeTarget:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, namespace, name, uid, resource_version]
+      description: |
+        实际被描述的对象，取自集群中的活对象而非请求参数：以请求名称配上另一个对象的
+        Event，比没有 describe 更糟。
+      properties:
+        api_version:
+          type: string
+        kind:
+          type: string
+        namespace:
+          type: string
+        name:
+          type: string
+        uid:
+          type: string
+        resource_version:
+          type: string
+    KubernetesDescribeEvents:
+      type: object
+      additionalProperties: false
+      required: [items, truncated]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesDescribeEvent"
+        truncated:
+          type: boolean
+          description: 集群中属于该对象的 Event 多于本次窗口。
+        omitted:
+          type: string
+          enum: [unsupported_scope, unavailable]
+          description: |
+            Event 为空的原因，仅在并非“确实没有 Event”时出现。
+            unsupported_scope：Cluster 级对象，不猜测 Event 所在 Namespace；
+            unavailable：Event 读取本身失败，对象部分仍然有效。
+    KubernetesDescribeEvent:
+      type: object
+      additionalProperties: false
+      required: [uid, name, type, reason, message, count, source]
+      properties:
+        uid:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        reason:
+          type: string
+        message:
+          type: string
+        count:
+          type: integer
+          format: int32
+        source:
+          type: string
+          description: 上报者，取 source.component 或 reportingController。
+        container:
+          type: string
+          description: |
+            Event 指向的容器，取自 involvedObject.fieldPath 中的
+            `spec.containers{name}`；对象级 Event 没有该字段。
+        first_seen:
+          $ref: "#/components/schemas/Timestamp"
+        last_seen:
+          $ref: "#/components/schemas/Timestamp"
+    KubernetesDescribeFinding:
+      type: object
+      additionalProperties: false
+      required: [code, severity, evidence]
+      description: |
+        对象没有按预期运行的一条原因。只携带稳定 code 与上游原文，不携带服务端自撰的解释：
+        面向用户的措辞属于 Console，而在 Kubernetes 消息之上再编一层说明，正是 describe
+        开始说出集群从未说过的话的方式。evidence 指明结论的来源，便于跳转与复核。
+      properties:
+        code:
+          type: string
+          enum:
+            - PodUnschedulable
+            - ImagePullFailure
+            - ContainerConfigError
+            - CrashLoopBackOff
+            - ContainerTerminated
+            - OOMKilled
+            - VolumeMountFailure
+            - ProbeFailure
+        severity:
+          type: string
+          enum: [warning]
+          description: findings 只报告问题，因此只有一个级别。
+        scope:
+          type: string
+          description: 结论所属容器；对象级结论没有该字段。
+        reason:
+          type: string
+          description: Kubernetes 原始 reason。
+        message:
+          type: string
+          description: 上游消息原文，未经改写。
+        exit_code:
+          type: integer
+          format: int32
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesDescribeEvidence"
+    KubernetesDescribeEvidence:
+      type: object
+      additionalProperties: false
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum: [Condition, ContainerState, Event]
+        name:
+          type: string
+          description: Condition 类型、容器名，或 Event UID。
     KubernetesPodExecSessionRequest:
       type: object
       additionalProperties: false

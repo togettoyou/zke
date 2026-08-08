@@ -668,6 +668,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 在一次请求内返回 Pod 详情、只属于该 Pod 的 Kubernetes Event 快照，以及由两者共同
+         *     支持的诊断结论（findings）。Event 按对象 UID 过滤并按时间正序返回，数量有界。
+         *
+         *     findings 只包含问题项，且只来自 Kubernetes 已经报告的状态：每条携带稳定的 code、
+         *     Kubernetes 原始 reason 与 message，以及指向 Condition、容器状态或 Event 的证据，
+         *     不额外推断。当前仅 Pod 家族有诊断规则。
+         *
+         *     该接口同时读取资源与 Event，因此要求调用者同时持有 cluster.read 和
+         *     cluster.event.read；Event 读取会写入与 Event 流一致的审计记录。若 Event 读取本身
+         *     失败，接口仍返回对象部分，并在 events.omitted 与 degraded_sections 中说明。
+         */
+        get: operations["describeKubernetesPod"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs": {
         parameters: {
             query?: never;
@@ -1470,6 +1498,31 @@ export interface paths {
          *     dry-run 可用于预览 API Server 默认值和校验结果。
          */
         post: operations["createGenericKubernetesResource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 返回任意主资源的身份与只属于该对象的 Kubernetes Event 快照。诊断规则按家族编写，
+         *     当前只有 Pod 家族具备，因此该接口的 findings 恒为空数组，不对未建模的类型做猜测。
+         *
+         *     Cluster 级资源不返回 Event：Event 归属哪个 Namespace 属于约定而非规则，接口以
+         *     events.omitted=unsupported_scope 说明，而不是返回可能属于其他对象的 Event。
+         *
+         *     与 Pod describe 一样要求同时持有 cluster.read 和 cluster.event.read。
+         */
+        get: operations["describeGenericKubernetesResource"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3993,6 +4046,12 @@ export interface components {
             /** @enum {string} */
             type: "unknown" | "waiting" | "running" | "terminated";
             reason: string;
+            /**
+             * @description kubelet 对该状态的说明。reason 表示失败类别，message 表示具体实例：
+             *     CreateContainerConfigError 无论缺的是 Secret 还是其中某个 key 都是同一个
+             *     reason，只有 message 说明缺的是哪一个。
+             */
+            message: string;
             started_at?: components["schemas"]["Timestamp"];
             finished_at?: components["schemas"]["Timestamp"];
             /** Format: int32 */
@@ -4086,6 +4145,94 @@ export interface components {
             continue_token: string;
             resource_version: string;
             remaining_item_count: number | null;
+        };
+        KubernetesDescribe: {
+            target: components["schemas"]["KubernetesDescribeTarget"];
+            /**
+             * @description 对象所属的家族投影。pod 表示同时返回 Pod 详情与 Pod 诊断规则的结果；
+             *     generic 表示该类型尚无家族规则，只返回身份与 Event。
+             * @enum {string}
+             */
+            family: "pod" | "generic";
+            pod?: components["schemas"]["KubernetesPodDetail"];
+            events: components["schemas"]["KubernetesDescribeEvents"];
+            findings: components["schemas"]["KubernetesDescribeFinding"][];
+            /**
+             * @description 请求了但没有拿到的部分。为空表示结果完整；静默丢弃某一部分会被读成
+             *     “这里没有问题”，因此缺失必须显式说明。
+             */
+            degraded_sections: "events"[];
+        };
+        /**
+         * @description 实际被描述的对象，取自集群中的活对象而非请求参数：以请求名称配上另一个对象的
+         *     Event，比没有 describe 更糟。
+         */
+        KubernetesDescribeTarget: {
+            api_version: string;
+            kind: string;
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+        };
+        KubernetesDescribeEvents: {
+            items: components["schemas"]["KubernetesDescribeEvent"][];
+            /** @description 集群中属于该对象的 Event 多于本次窗口。 */
+            truncated: boolean;
+            /**
+             * @description Event 为空的原因，仅在并非“确实没有 Event”时出现。
+             *     unsupported_scope：Cluster 级对象，不猜测 Event 所在 Namespace；
+             *     unavailable：Event 读取本身失败，对象部分仍然有效。
+             * @enum {string}
+             */
+            omitted?: "unsupported_scope" | "unavailable";
+        };
+        KubernetesDescribeEvent: {
+            uid: string;
+            name: string;
+            type: string;
+            reason: string;
+            message: string;
+            /** Format: int32 */
+            count: number;
+            /** @description 上报者，取 source.component 或 reportingController。 */
+            source: string;
+            /**
+             * @description Event 指向的容器，取自 involvedObject.fieldPath 中的
+             *     `spec.containers{name}`；对象级 Event 没有该字段。
+             */
+            container?: string;
+            first_seen?: components["schemas"]["Timestamp"];
+            last_seen?: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description 对象没有按预期运行的一条原因。只携带稳定 code 与上游原文，不携带服务端自撰的解释：
+         *     面向用户的措辞属于 Console，而在 Kubernetes 消息之上再编一层说明，正是 describe
+         *     开始说出集群从未说过的话的方式。evidence 指明结论的来源，便于跳转与复核。
+         */
+        KubernetesDescribeFinding: {
+            /** @enum {string} */
+            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure";
+            /**
+             * @description findings 只报告问题，因此只有一个级别。
+             * @enum {string}
+             */
+            severity: "warning";
+            /** @description 结论所属容器；对象级结论没有该字段。 */
+            scope?: string;
+            /** @description Kubernetes 原始 reason。 */
+            reason?: string;
+            /** @description 上游消息原文，未经改写。 */
+            message?: string;
+            /** Format: int32 */
+            exit_code?: number;
+            evidence: components["schemas"]["KubernetesDescribeEvidence"][];
+        };
+        KubernetesDescribeEvidence: {
+            /** @enum {string} */
+            kind: "Condition" | "ContainerState" | "Event";
+            /** @description Condition 类型、容器名，或 Event UID。 */
+            name: string;
         };
         KubernetesPodExecSessionRequest: {
             /** @description 当前 Pod UID；Agent 在打开 Exec 前再次校验。 */
@@ -6318,6 +6465,40 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    describeKubernetesPod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pod describe 视图 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDescribe"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
@@ -8916,6 +9097,46 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    describeGenericKubernetesResource: {
+        parameters: {
+            query: {
+                /** @description Core API Group 使用空字符串或省略该参数。 */
+                group?: components["parameters"]["KubernetesGroup"];
+                version: components["parameters"]["KubernetesVersion"];
+                resource: components["parameters"]["KubernetesResource"];
+                /** @description Cluster-scoped 资源为空；Namespaced 列表为空时表示所有 Namespace。 */
+                namespace?: components["parameters"]["KubernetesNamespace"];
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                resource_name: components["parameters"]["KubernetesResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 通用资源 describe 视图 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDescribe"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

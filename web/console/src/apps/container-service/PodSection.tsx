@@ -1,8 +1,9 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, ScrollText, SquareTerminal } from "lucide-react";
+import { FileCode, ScrollText, SquareTerminal, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
+import { usePodDescribe } from "@/api/queries/describe";
 import { useDeletePod, usePod, usePods } from "@/api/queries/pods";
 import type {
   KubernetesPodContainer,
@@ -29,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
+import { DescribeView } from "./DescribeView";
 import { PodLogsView } from "./PodLogsView";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
@@ -84,6 +86,9 @@ export function PodSection({
   // So does the terminal, which additionally must not be a dialog the operator
   // can dismiss by accident while a shell is attached.
   const [terminalTarget, setTerminalTarget] = useState<PodLogTarget | null>(null);
+  // The diagnosis is a view of its own for the same reason as the log reader:
+  // an operator opens it to work through a failure, not to glance at a field.
+  const [describeName, setDescribeName] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<KubernetesPodSummary | null>(null);
   const [deletePreviewed, setDeletePreviewed] = useState(false);
   const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
@@ -98,6 +103,10 @@ export function PodSection({
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   // Opening a shell is its own permission, granted to admin only by default.
   const canExec = permissions.can("cluster.pod.exec", projectScope);
+  // The diagnosis embeds the Pod's Events, so the Server requires the Event
+  // permission alongside `cluster.read`. Offered only to callers holding both:
+  // a button that can only produce a 403 is worse than no button.
+  const canDescribe = permissions.can("cluster.event.read", projectScope);
 
   const onOpenLogs = useCallback(
     (pod: PodLogTarget) => setLogsTarget({ name: pod.name, uid: pod.uid }),
@@ -176,6 +185,19 @@ export function PodSection({
         size: 120,
         cell: ({ row }) => (
           <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+            {/* Reachable from the row and not only from the detail: an operator
+                scanning a list for the Pod that will not start is already
+                looking at the one they want to ask about. */}
+            {canDescribe ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`诊断 ${row.original.name}`}
+                onClick={() => setDescribeName(row.original.name)}
+              >
+                <Stethoscope />
+              </Button>
+            ) : null}
             {/* Both actions are pinned to the Pod's UID, so a row that somehow
                 arrived without one gets neither. */}
             {canReadLogs && row.original.uid ? (
@@ -205,7 +227,7 @@ export function PodSection({
         ),
       },
     ],
-    [canDelete, canReadLogs, canExec, onOpenLogs, onOpenTerminal, openDelete],
+    [canDelete, canDescribe, canReadLogs, canExec, onOpenLogs, onOpenTerminal, openDelete],
   );
 
   const nextToken = pods.data?.continue_token ?? "";
@@ -223,6 +245,13 @@ export function PodSection({
             onBack={() => setTerminalTarget(null)}
           />
         </Suspense>
+      ) : describeName ? (
+        <PodDescribeView
+          clusterId={clusterId}
+          namespace={namespace}
+          name={describeName}
+          onBack={() => setDescribeName(null)}
+        />
       ) : yamlName ? (
         <YamlEditorView
           identity={{ clusterId, version: "v1", resource: "pods", namespace, name: yamlName }}
@@ -251,6 +280,8 @@ export function PodSection({
           onOpenLogs={onOpenLogs}
           onOpenTerminal={onOpenTerminal}
           onOpenYaml={() => setYamlName(detailName)}
+          canDescribe={canDescribe}
+          onOpenDescribe={() => setDescribeName(detailName)}
           onBack={() => setDetailName(null)}
         />
       ) : (
@@ -371,29 +402,66 @@ function PodStatusCell({ pod }: { pod: KubernetesPodSummary }) {
   );
 }
 
+/**
+ * The Pod's diagnosis: its findings and its own Events.
+ *
+ * The read lives here rather than in the section so that leaving the view drops
+ * it: it is a snapshot of a moving object, and holding one from an earlier visit
+ * would show a failure that has since been fixed.
+ */
+function PodDescribeView({
+  clusterId,
+  namespace,
+  name,
+  onBack,
+}: {
+  clusterId: string;
+  namespace: string;
+  name: string;
+  onBack: () => void;
+}) {
+  const describe = usePodDescribe(clusterId, namespace, name);
+  return (
+    <DescribeView
+      name={name}
+      kindLabel="Pod"
+      data={describe.data}
+      isLoading={describe.isLoading}
+      isFetching={describe.isFetching}
+      error={describe.error}
+      onRetry={() => void describe.refetch()}
+      onBack={onBack}
+    />
+  );
+}
+
 function PodDetailView({
   clusterId,
   namespace,
   name,
   canDelete,
+  canDescribe,
   canReadLogs,
   canExec,
   onDelete,
   onOpenLogs,
   onOpenTerminal,
   onOpenYaml,
+  onOpenDescribe,
   onBack,
 }: {
   clusterId: string;
   namespace: string;
   name: string;
   canDelete: boolean;
+  canDescribe: boolean;
   canReadLogs: boolean;
   canExec: boolean;
   onDelete: (pod: KubernetesPodSummary) => void;
   onOpenLogs: (pod: PodLogTarget) => void;
   onOpenTerminal: (pod: PodLogTarget) => void;
   onOpenYaml: () => void;
+  onOpenDescribe: () => void;
   onBack: () => void;
 }) {
   const detail = usePod(clusterId, namespace, name);
@@ -408,6 +476,14 @@ function PodDetailView({
         onBack={onBack}
         actions={
           <>
+            {/* First among the detail's actions: when an operator opens a Pod
+                that is not running, this is the question they came with. */}
+            {canDescribe ? (
+              <Button size="sm" variant="secondary" onClick={onOpenDescribe}>
+                <Stethoscope />
+                诊断
+              </Button>
+            ) : null}
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML
@@ -624,12 +700,20 @@ function StateLine({ label, state }: { label: string; state: KubernetesPodContai
     parts.push(formatAbsolute(timestamp));
   }
   const text = parts.filter(Boolean).join(" · ");
-  if (!text) {
+  if (!text && !state.message) {
     return null;
   }
   return (
-    <span className="text-muted-foreground text-xs break-words">
-      {label}：{text}
+    <span className="text-muted-foreground grid gap-0.5 text-xs break-words">
+      {text ? (
+        <span>
+          {label}：{text}
+        </span>
+      ) : null}
+      {/* The kubelet's own sentence. The reason names the class of failure —
+          `CreateContainerConfigError` — and this is the line that says which
+          Secret was missing. */}
+      {state.message ? <span className="text-subtle-foreground">{state.message}</span> : null}
     </span>
   );
 }

@@ -70,6 +70,10 @@
   Field Selector；
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：删除明确作用域内的
   Pod，强制要求 UID 前置条件，并支持 DryRun、显式确认、幂等、删除传播策略和审计；
+- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe` 和
+  `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
+  只属于该对象的 Kubernetes Event 快照，以及由两者共同支持的诊断结论；两者都要求同时持有 `cluster.read`
+  与 `cluster.event.read`，Event 读取写入与 Event 流一致的审计记录；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs`：要求当前 Pod UID、
   明确容器和专用 `cluster.pod.logs.read` 权限，支持默认最近 200 行的有界快照以及 `follow=true` 实时流；
 - `POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions`：要求当前
@@ -809,6 +813,37 @@ Kubernetes Event 后端固定读取所选 Cluster 与 Namespace 的 `core/v1/eve
 Name、Event type 和 reason 过滤，并通过 resourceVersion/`Last-Event-ID` 恢复。Session 或
 `cluster.event.read` 被撤销时立即取消，`410 Expired` 以 `resource_version_expired` 的正文内 close 原因提示
 客户端重新拉取快照。Event 正文不写入日志或审计。
+
+describe 接口回答的是「这个对象为什么没跑起来」。这个答案原本分在两处：对象详情说某个容器在 waiting，
+为什么则要离开当前页面，去命名空间事件流里翻找同一时间窗内所有对象的事件。describe 在 Server 上做这次
+join——读对象、按对象 UID 读它自己的 Event、给出两者共同支持的结论——并且不向 Agent 协议增加任何能力：对象
+走既有资源服务，Event 走 Event 流用的同一条有界 `resource-watch.v1`，只是关掉 Follow 当快照用。
+
+Event 按 UID 而不是名称过滤：同名重建的 Pod 会留下前一个对象的事件，把它们挂到当前对象上，等于用一场已经
+结束的故障解释眼前的现象。快照默认 50 条，按时间正序返回，超出窗口时以 `truncated` 说明。
+
+诊断结论（findings）只报告问题，且只从 Kubernetes 已经报告的状态读出，不做推断：退出码 137 就报成退出码
+137，只有 reason 明确是 `OOMKilled` 时才报成内存超限——137 是 SIGKILL，谁发的信号需要 Kubernetes 自己说。
+每条结论携带稳定 code、Kubernetes 原始 reason 与 message 原文，以及指向 Condition、容器状态或 Event 的证据，
+面向操作者的中文标题与处理建议由 Console 按 code 渲染，Server 不写这层措辞。当前规则只覆盖 Pod 家族，包括
+无法调度（`PodScheduled=False` 加调度器的 `FailedScheduling` 事件）、镜像拉取失败、容器配置错误（引用的
+ConfigMap/Secret 不存在）、反复重启、容器异常退出、内存超限被终止、存储挂载失败和探针未通过。探针只在
+Running 且未就绪时报告——启动过程中失败一次随后通过是常态，报出来会让每个热身稍慢的 Pod 都变成告警。
+其他类型走通用 describe，只返回身份与自己的 Event，findings 恒为空数组：没有为某个类型写过的规则不是规则。
+
+describe 同时读取资源与 Event，因此要求调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在
+路由层且各自留下自己的拒绝记录，被拒时能看出缺的是哪一个；只要 `cluster.read` 就能通过的话，describe 会成为
+绕开 `cluster.event.read` 读取命名空间事件的通道，而 Event 恰恰是这里最值钱的那一半。Event 读取写入与 Event
+流一致的审计记录，避免同一件事经由两条路径时审计只记下其中一条。集群级对象不返回 Event：Event 归属哪个
+Namespace 属于约定而非规则，接口以 `events.omitted=unsupported_scope` 说明，而不是猜一个 `default`。Event
+读取本身失败时接口仍返回对象部分，以 `events.omitted=unavailable` 与 `degraded_sections` 说明——静默返回空
+事件列表会被读成「这个对象什么都没发生过」。
+
+Console 诊断入口在 Pod 列表行和 Pod 详情页页头，在详情页排在 YAML 之前：打开一个没跑起来的 Pod 时，这就是
+操作者带着的那个问题。资源对象浏览器的命名空间级类型行上也有同一个入口（集群级类型不提供，那里的视图只会
+说自己没有可展示的事件）。页面上方是结论卡片，下方是该对象的事件表，页头提供「复制为文本」，把结论与事件
+渲染成可直接贴进工单的纯文本；该文本在前端生成，不是第二份由服务端维护、会与界面漂移的措辞。没有
+`cluster.event.read` 时入口不出现——一个按下去必然返回 403 的按钮不如不给。
 
 Console YAML 入口出现在支持它的各分区详情页（节点、命名空间、工作负载、Pod、配置管理、存储、服务与路由、
 自动伸缩、策略管理、授权管理与资源对象浏览器），占据整个应用视图。同一个编辑器接三条后端路由——通用、Secret
