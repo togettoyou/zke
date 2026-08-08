@@ -35,7 +35,7 @@ const (
 	workloadDescriptionAnnotation = "zke.io/description"
 )
 
-// A single environment variable.
+// WorkloadEnvVar is a single environment variable.
 //
 // A literal value and a reference are alternatives, never both: Kubernetes
 // rejects `value` together with `valueFrom`, and a form that accepted both would
@@ -53,7 +53,7 @@ type WorkloadObjectKeyRef struct {
 	Optional *bool  `json:"optional,omitempty"`
 }
 
-// Compute the container asks for and may use.
+// WorkloadResourceRequirements describes compute the container asks for and may use.
 //
 // Kept as quantity maps rather than four named fields so extended resources —
 // `nvidia.com/gpu` and every other device plugin — need no new field and no new
@@ -75,7 +75,7 @@ type WorkloadExecAction struct {
 	Command []string `json:"command"`
 }
 
-// A port as Kubernetes accepts it: a number, or the name of a container port.
+// WorkloadHTTPGetAction carries a port as Kubernetes accepts it: a number, or the name of a container port.
 type WorkloadHTTPGetAction struct {
 	Path   string `json:"path,omitempty"`
 	Port   string `json:"port"`
@@ -124,7 +124,7 @@ type WorkloadConfigMapVolume struct {
 	Optional    *bool  `json:"optional,omitempty"`
 }
 
-// A Secret mounted as a volume.
+// WorkloadSecretVolume is a Secret mounted as a volume.
 //
 // Only the reference travels: ZKE neither reads nor returns Secret contents, and
 // this names one for the kubelet to mount exactly as an Ingress names one for
@@ -146,7 +146,7 @@ type WorkloadNFSVolume struct {
 	ReadOnly bool   `json:"read_only,omitempty"`
 }
 
-// Exactly one source is set; the Console picks it and the Server enforces it.
+// WorkloadVolume has exactly one source; the Console picks it and the Server enforces it.
 type WorkloadVolume struct {
 	Name                  string                               `json:"name"`
 	EmptyDir              *WorkloadEmptyDirVolume              `json:"empty_dir,omitempty"`
@@ -739,7 +739,7 @@ func workloadHTTPGetSpec(action WorkloadHTTPGetAction) *corev1.HTTPGetAction {
 }
 
 func workloadPortValue(value string) intstr.IntOrString {
-	if number, err := strconv.Atoi(value); err == nil {
+	if number, err := strconv.ParseInt(value, 10, 32); err == nil {
 		return intstr.FromInt32(int32(number))
 	}
 	return intstr.FromString(value)

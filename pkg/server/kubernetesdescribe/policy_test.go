@@ -1,6 +1,7 @@
 package kubernetesdescribe
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
@@ -98,7 +99,7 @@ func TestDescribePolicyRejectsTypesWithoutDiagnosticStatus(t *testing.T) {
 			Resource: kubernetesresource.PolicyNetworkPolicies, Name: "default-deny",
 		},
 	)
-	if err != ErrInvalidInput {
+	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected invalid input, got %v", err)
 	}
 }

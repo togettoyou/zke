@@ -28,7 +28,7 @@ const (
 	maxCronJobNameLength = 52
 )
 
-// One container of the typed Pod template.
+// WorkloadContainerTemplate is one container of the typed Pod template.
 //
 // The same shape in both directions: a detail response returns the containers
 // in these fields, and an update submits them back. A form that reads one shape
@@ -51,7 +51,7 @@ type WorkloadContainerTemplate struct {
 	Ports           []WorkloadContainerPort       `json:"ports,omitempty"`
 }
 
-// The part of a workload this platform models, submitted the same way whether
+// WorkloadSpecInput is the part of a workload this platform models, submitted the same way whether
 // the object is being created or edited.
 //
 // One definition rather than two because an edit form is the create form on an

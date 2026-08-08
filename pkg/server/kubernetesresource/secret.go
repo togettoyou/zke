@@ -142,7 +142,7 @@ func SecretResourceIdentity() ResourceIdentity {
 	return secretIdentity
 }
 
-// The Secret service's own access, narrowed to what a YAML editor needs.
+// SecretYAMLAccess is the Secret service's own access, narrowed to what a YAML editor needs.
 //
 // `secretAccess` stays unexported, and this is not a way to set it: the two
 // methods below accept nothing but a Secret, and they route through the same
@@ -186,7 +186,7 @@ func (access SecretYAMLAccess) UpdateResource(
 	return access.service.UpdateResource(ctx, input)
 }
 
-// The Secret rules a manifest has to keep.
+// SecretManifestGuard enforces the Secret rules a manifest has to keep.
 //
 // Kubernetes enforces most of what matters about a Secret — its size, the keys
 // its type requires, the refusal to change an immutable one — and this does not

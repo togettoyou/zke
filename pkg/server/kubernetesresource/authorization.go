@@ -56,7 +56,7 @@ var ErrSecretRuleForbidden = errors.New(
 	"Kubernetes PolicyRule grants Secret access the caller does not hold",
 )
 
-// What the caller may write into a PolicyRule about Secrets.
+// SecretRuleGrant defines what the caller may write into a PolicyRule about Secrets.
 //
 // Kubernetes RBAC is a way to hand out access, so a rule mentioning `secrets` is
 // a way to hand out Secret access — and `cluster.rbac.manage` on its own must not
@@ -331,7 +331,7 @@ func (service *Service) DeleteAuthorizationResource(ctx context.Context, input D
 	})
 }
 
-// The typed API's rules, applied to a submitted manifest.
+// AuthorizationManifestGuard applies the typed API's rules to a submitted manifest.
 //
 // A YAML document can say everything a form can and more, so the editor has to
 // refuse what the form refuses. Without this it would not be an editor for the

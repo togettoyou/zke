@@ -908,14 +908,14 @@ func networkPolicyKubernetesPort(input NetworkPolicyPort) (networkingv1.NetworkP
 		}
 		return result, nil
 	}
-	if number, err := strconv.Atoi(value); err == nil {
+	if number, err := strconv.ParseInt(value, 10, 32); err == nil {
 		if number < 1 || number > 65535 {
 			return networkingv1.NetworkPolicyPort{}, ErrInvalidInput
 		}
 		port := intstr.FromInt32(int32(number))
 		result.Port = &port
 		if input.EndPort != nil {
-			if *input.EndPort < int32(number) || *input.EndPort > 65535 {
+			if int64(*input.EndPort) < number || *input.EndPort > 65535 {
 				return networkingv1.NetworkPolicyPort{}, ErrInvalidInput
 			}
 			endPort := *input.EndPort
@@ -1297,14 +1297,14 @@ func policyQuantityMap(values corev1.ResourceList) map[string]string {
 // count of Pods, or a percentage of the selected set.
 func policyIntOrPercent(value string) (*intstr.IntOrString, error) {
 	if strings.HasSuffix(value, "%") {
-		percentage, err := strconv.Atoi(strings.TrimSuffix(value, "%"))
+		percentage, err := strconv.ParseInt(strings.TrimSuffix(value, "%"), 10, 32)
 		if err != nil || percentage < 0 || percentage > 100 {
 			return nil, ErrInvalidInput
 		}
 		result := intstr.FromString(value)
 		return &result, nil
 	}
-	count, err := strconv.Atoi(value)
+	count, err := strconv.ParseInt(value, 10, 32)
 	if err != nil || count < 0 || count > 1_000_000 {
 		return nil, ErrInvalidInput
 	}

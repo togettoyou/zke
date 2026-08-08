@@ -14,7 +14,7 @@ import (
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/httpstream"
+	"k8s.io/apimachinery/pkg/util/httpstream" //nolint:staticcheck // client-go portforward still exposes the legacy Dialer type.
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"

@@ -72,7 +72,7 @@ type WorkloadRevisionPage struct {
 	Truncated bool `json:"truncated"`
 }
 
-// One recorded Pod template of a workload.
+// WorkloadRevision is one recorded Pod template of a workload.
 //
 // `name` and `uid` identify the object the record was read from — a ReplicaSet
 // or a ControllerRevision — which is what makes a revision inspectable in the
@@ -95,7 +95,7 @@ type WorkloadRevisionContainer struct {
 	Image string `json:"image"`
 }
 
-// A rollback of one workload to one recorded revision.
+// RollbackWorkloadInput requests a rollback of one workload to one recorded revision.
 //
 // The preconditions are the ones an update carries, and for the same reason:
 // the revision list was read against one version of the object, and a rollback

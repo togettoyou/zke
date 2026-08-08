@@ -113,7 +113,7 @@ type ResourceService interface {
 	) (map[string]any, error)
 }
 
-// The rules of a resource family that has an API of its own.
+// ManifestGuard enforces the rules of a resource family that has an API of its own.
 //
 // A YAML document can say anything a typed form can, so a family whose typed
 // API refuses to write certain things has to refuse them here too — otherwise

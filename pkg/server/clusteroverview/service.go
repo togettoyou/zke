@@ -118,7 +118,7 @@ type WorkloadResourceOverview struct {
 	StatusCounts map[string]int64 `json:"status_counts"`
 }
 
-// Persistent storage as counts, not as a ratio.
+// StorageOverview reports persistent storage as counts, not as a ratio.
 //
 // Volume capacity has no Cluster-wide maximum to be read against the way CPU and
 // memory do: with a dynamic provisioner the supply is whatever the backing

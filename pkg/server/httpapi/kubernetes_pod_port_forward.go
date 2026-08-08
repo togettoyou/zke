@@ -156,7 +156,7 @@ func (handler *kubernetesPodPortForwardHandler) connect(c *gin.Context) {
 		handler.record(c, identity.User.ID, auditaction.KubernetesPodPortForward, target, "failed")
 		return
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	connection.SetReadLimit(maxPodPortForwardMessageBytes)
 	peer := &podPortForwardWebSocketPeer{connection: connection, writeTimeout: handler.config.WriteTimeout}
 	peer.touch()

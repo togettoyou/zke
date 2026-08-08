@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// A typed update of one workload.
+// UpdateWorkloadInput is a typed update of one workload.
 //
 // The modeled fields replace what is on the object; everything else is kept.
 // That is the whole design, and it is not the same rule the smaller typed

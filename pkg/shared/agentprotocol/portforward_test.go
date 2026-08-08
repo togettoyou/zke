@@ -2,6 +2,7 @@ package agentprotocol
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -79,12 +80,12 @@ func TestPodPortForwardFramePumpsEnforceDirectionLimits(t *testing.T) {
 		&agentv1.PodPortForwardFrame{Message: &agentv1.PodPortForwardFrame_Data{
 			Data: &agentv1.PodPortForwardData{Data: []byte("too-long")},
 		}}), &discardWriter{}, 3, &clientCount)
-	if err != ErrPodPortForwardClientLimit || clientCount.Load() != 0 {
+	if !errors.Is(err, ErrPodPortForwardClientLimit) || clientCount.Load() != 0 {
 		t.Fatalf("client limit err=%v bytes=%d", err, clientCount.Load())
 	}
 	var podCount atomic.Uint64
 	err = sendPortForwardFrames(context.Background(), &discardWriter{}, &oneRead{data: []byte("too-long")}, 3, &podCount)
-	if err != ErrPodPortForwardPodLimit || podCount.Load() != 0 {
+	if !errors.Is(err, ErrPodPortForwardPodLimit) || podCount.Load() != 0 {
 		t.Fatalf("Pod limit err=%v bytes=%d", err, podCount.Load())
 	}
 }
