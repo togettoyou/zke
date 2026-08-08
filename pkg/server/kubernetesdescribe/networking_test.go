@@ -46,6 +46,59 @@ func testIngressDetail() kubernetesresource.NetworkingResourceDetail {
 	}
 }
 
+func testGatewayDetail() kubernetesresource.NetworkingResourceDetail {
+	return kubernetesresource.NetworkingResourceDetail{
+		NetworkingResourceSummary: kubernetesresource.NetworkingResourceSummary{
+			Resource:   kubernetesresource.NetworkingGateways,
+			APIVersion: "gateway.networking.k8s.io/v1", Kind: "Gateway", Namespace: "models",
+			Name: "public", UID: "gateway-uid", ResourceVersion: "71",
+			Gateway: &kubernetesresource.GatewayView{
+				Conditions: []kubernetesresource.ResourceCondition{{
+					Type: "Accepted", Status: "False", Reason: "Invalid",
+					Message: "GatewayClass does not accept this Gateway",
+				}},
+				Listeners: []kubernetesresource.GatewayListenerStatus{{
+					Name: "https", AttachedRoutes: 0,
+					Conditions: []kubernetesresource.ResourceCondition{{
+						Type: "ResolvedRefs", Status: "False", Reason: "InvalidCertificateRef",
+						Message: "certificate reference is invalid",
+					}},
+				}},
+			},
+		},
+	}
+}
+
+func TestDescribeGatewayUsesGatewayAndListenerConditions(t *testing.T) {
+	t.Parallel()
+
+	result, err := NewService(
+		&fakeResourceAccess{networking: testGatewayDetail()},
+		&fakeEventSource{}, Config{},
+	).DescribeGateway(context.Background(), GatewayInput{
+		ClusterID: testClusterID, Namespace: "models", Name: "public",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GatewayStatus == nil || len(result.GatewayStatus.Listeners) != 1 {
+		t.Fatalf("missing Gateway listener diagnosis: %+v", result)
+	}
+	if !hasFindingCode(result.Findings, FindingGatewayAddressPending) ||
+		!hasFindingCode(result.Findings, FindingGatewayNotAccepted) {
+		t.Fatalf("missing Gateway findings: %+v", result.Findings)
+	}
+	listener := result.GatewayStatus.Listeners[0]
+	if listener.Name != "https" ||
+		!hasFindingCode(listener.Findings, FindingGatewayListenerReferencesInvalid) {
+		t.Fatalf("missing listener finding: %+v", listener)
+	}
+	if listener.Findings[0].Reason != "InvalidCertificateRef" ||
+		listener.Findings[0].Message != "certificate reference is invalid" {
+		t.Fatalf("listener condition evidence was not preserved: %+v", listener.Findings)
+	}
+}
+
 func TestDescribeIngressJoinsBackendServicesAndEndpointSlices(t *testing.T) {
 	t.Parallel()
 

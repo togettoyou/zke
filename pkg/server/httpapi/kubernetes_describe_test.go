@@ -28,6 +28,15 @@ type fakeDescribeService struct {
 	claimCall    kubernetesdescribe.PersistentVolumeClaimInput
 	serviceCall  kubernetesdescribe.ServiceInput
 	ingressCall  kubernetesdescribe.IngressInput
+	gatewayCall  kubernetesdescribe.GatewayInput
+}
+
+func (service *fakeDescribeService) DescribeGateway(
+	_ context.Context,
+	input kubernetesdescribe.GatewayInput,
+) (kubernetesdescribe.Result, error) {
+	service.gatewayCall = input
+	return service.result, service.err
 }
 
 func (service *fakeDescribeService) DescribeIngress(
@@ -281,6 +290,37 @@ func TestDescribeIngressReturnsBackendDiagnosis(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"service_name":"inference-api"`) {
 		t.Fatalf("Ingress diagnosis missing from response: %s", recorder.Body.String())
+	}
+}
+
+func TestDescribeGatewayReturnsListenerDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeDescribeService{result: kubernetesdescribe.Result{
+		Family: kubernetesdescribe.FamilyNetworking,
+		GatewayStatus: &kubernetesdescribe.GatewayStatus{
+			Listeners: []kubernetesdescribe.GatewayListenerStatus{{
+				Name: "https", Findings: []kubernetesdescribe.Finding{},
+			}},
+		},
+		Events:   kubernetesdescribe.Events{Items: []kubernetesdescribe.Event{}},
+		Findings: []kubernetesdescribe.Finding{}, DegradedSections: []string{},
+	}}
+	router := describeTestRouter(service)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/networking/gateways/public/describe",
+		nil,
+	))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.gatewayCall.Namespace != "models" || service.gatewayCall.Name != "public" {
+		t.Fatalf("unexpected Gateway describe input: %+v", service.gatewayCall)
+	}
+	if !strings.Contains(recorder.Body.String(), `"name":"https"`) {
+		t.Fatalf("Gateway diagnosis missing from response: %s", recorder.Body.String())
 	}
 }
 

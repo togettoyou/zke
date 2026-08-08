@@ -3262,10 +3262,10 @@ paths:
       tags: [Resources]
       operationId: describeKubernetesNetworkingResource
       description: |
-        返回 Service 或 Ingress 的类型化诊断。Service 聚合 EndpointSlice 与 selector
-        匹配的后端 Pod；Ingress 聚合其引用的 Service、端口和 EndpointSlice，并只在
-        资源清单完整时生成缺失结论。Gateway 当前不支持此入口。要求同时持有
-        cluster.read 与 cluster.event.read，并写入 Event 读取审计。
+        返回 Service、Ingress 或 Gateway 的类型化诊断。Service 聚合 EndpointSlice 与 selector
+        匹配的后端 Pod；Ingress 聚合其引用的 Service、端口和 EndpointSlice；Gateway
+        解释对象及 Listener Condition。要求同时持有 cluster.read 与 cluster.event.read，
+        并写入 Event 读取审计。
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/ClusterID"
@@ -3274,7 +3274,7 @@ paths:
         - $ref: "#/components/parameters/NetworkResourceName"
       responses:
         "200":
-          description: Service 或 Ingress describe 视图
+          description: Service、Ingress 或 Gateway describe 视图
           content:
             application/json:
               schema:
@@ -11135,6 +11135,8 @@ components:
           $ref: "#/components/schemas/KubernetesDescribeServiceEndpoints"
         ingress_backends:
           $ref: "#/components/schemas/KubernetesDescribeIngressBackends"
+        gateway_status:
+          $ref: "#/components/schemas/KubernetesDescribeGatewayStatus"
         related:
           $ref: "#/components/schemas/KubernetesDescribeRelated"
         events:
@@ -11219,6 +11221,26 @@ components:
         endpoint_slices: { type: integer, format: int64, minimum: 0 }
         endpoints: { type: integer, format: int64, minimum: 0 }
         ready_endpoints: { type: integer, format: int64, minimum: 0 }
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesDescribeFinding"
+    KubernetesDescribeGatewayStatus:
+      type: object
+      additionalProperties: false
+      required: [listeners]
+      properties:
+        listeners:
+          type: array
+          items:
+            $ref: "#/components/schemas/KubernetesDescribeGatewayListenerStatus"
+    KubernetesDescribeGatewayListenerStatus:
+      type: object
+      additionalProperties: false
+      required: [name, attached_routes, findings]
+      properties:
+        name: { type: string }
+        attached_routes: { type: integer, format: int32, minimum: 0 }
         findings:
           type: array
           items:
@@ -11437,6 +11459,14 @@ components:
             - IngressBackendPortNotFound
             - IngressBackendNoEndpoints
             - IngressBackendNoReadyEndpoints
+            - GatewayAddressPending
+            - GatewayNotAccepted
+            - GatewayNotProgrammed
+            - GatewayNotReady
+            - GatewayListenerNotAccepted
+            - GatewayListenerNotProgrammed
+            - GatewayListenerConflicted
+            - GatewayListenerReferencesInvalid
         severity:
           type: string
           enum: [warning]

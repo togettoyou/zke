@@ -44,15 +44,18 @@ type kubernetesDescribeService interface {
 		context.Context,
 		kubernetesdescribe.IngressInput,
 	) (kubernetesdescribe.Result, error)
+	DescribeGateway(
+		context.Context,
+		kubernetesdescribe.GatewayInput,
+	) (kubernetesdescribe.Result, error)
 }
 
 func (handler *kubernetesDescribeHandler) networkingResource(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	resource, ok := kubernetesresource.ParseNetworkingResource(c.Param("network_resource"))
-	if !ok || (resource != kubernetesresource.NetworkingServices &&
-		resource != kubernetesresource.NetworkingIngresses) {
+	if !ok {
 		writeError(c, http.StatusBadRequest, "invalid_request",
-			"only Service and Ingress support networking describe")
+			"invalid networking resource")
 		return
 	}
 	if len(c.Request.URL.Query()) != 0 {
@@ -69,7 +72,14 @@ func (handler *kubernetesDescribeHandler) networkingResource(c *gin.Context) {
 	var result kubernetesdescribe.Result
 	var err error
 	operation := "describe Kubernetes Service"
-	if resource == kubernetesresource.NetworkingIngresses {
+	if resource == kubernetesresource.NetworkingGateways {
+		operation = "describe Kubernetes Gateway"
+		result, err = handler.service.DescribeGateway(ctx, kubernetesdescribe.GatewayInput{
+			ClusterID: c.Param("cluster_id"),
+			Namespace: c.Param("namespace_name"),
+			Name:      c.Param("network_name"),
+		})
+	} else if resource == kubernetesresource.NetworkingIngresses {
 		operation = "describe Kubernetes Ingress"
 		result, err = handler.service.DescribeIngress(ctx, kubernetesdescribe.IngressInput{
 			ClusterID: c.Param("cluster_id"),

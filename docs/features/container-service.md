@@ -837,7 +837,7 @@ Event 按 UID 而不是名称过滤：同名重建的 Pod 会留下前一个对�
 ConfigMap/Secret 不存在）、反复重启、容器异常退出、内存超限被终止、存储挂载失败和探针未通过。探针只在
 Running 且未就绪时报告——启动过程中失败一次随后通过是常态，报出来会让每个热身稍慢的 Pod 都变成告警。
 Node 规则包括 Ready 异常、Memory/Disk/PID Pressure、NetworkUnavailable、停止调度，以及 requests 或 Pod 数达到
-可分配量 90% 的容量信号。除下文单独建模的 PVC、Service 与 Ingress 外，其他类型走通用 describe，只返回身份与自己的
+可分配量 90% 的容量信号。除下文单独建模的 PVC、Service、Ingress 与 Gateway 外，其他类型走通用 describe，只返回身份与自己的
 Event，findings 恒为空数组：没有为某个类型写过的规则不是规则。
 
 PVC 的独立 describe 复用工作负载聚合中同一条 `PVCPending` 规则。Bound PVC 不报告问题；Pending PVC 先从自身
@@ -857,6 +857,12 @@ List，不按路径逐个往返。它报告入口地址尚未发布、Controller
 不存在、Service 端口不存在、没有端点和没有 Ready 端点；Controller 事件的 reason 与 message 保留原文。Service
 或 EndpointSlice 清单存在下一页时，计数按下限展示，但不把未出现在当前页解释为不存在或没有端点。Ingress 的
 自定义 Resource backend 当前不在类型化投影中，因此不会被误报成缺失 Service。
+
+Gateway 的独立 describe 直接使用 Gateway API Controller 报告的对象与 Listener Condition，不猜测 Controller
+内部状态。对象级规则覆盖地址尚未分配，以及 `Accepted`、`Programmed`、`Ready` 不为 True；Listener 规则覆盖
+未接受、未编程、配置冲突和 `ResolvedRefs` 失败。每条结论保留 Condition 的 reason、message 与带 Listener 名称的
+证据路径。Gateway 不额外枚举 Route：Listener 已提供 `attachedRoutes`，而跨类型 Route 支持与授权关系需要单独的
+Route 模型，当前不以不完整的 owner 推断代替。
 
 describe 同时读取资源与 Event，因此要求调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在
 路由层且各自留下自己的拒绝记录，被拒时能看出缺的是哪一个；只要 `cluster.read` 就能通过的话，describe 会成为
@@ -898,7 +904,7 @@ Pod-level resources 和 overhead，不等同于实时利用率；Pod 列表单�
 且不生成 90% 容量结论，避免用不完整分母分子给出确定判断。Node Event 只读取 Node 自身，不扇出读取其上每个 Pod
 的事件。
 
-Console 诊断入口在 Pod、工作负载、Node、PVC、Service 与 Ingress 的列表行和详情页页头，在详情页排在 YAML 之前：打开
+Console 诊断入口在 Pod、工作负载、Node、PVC、Service、Ingress 与 Gateway 的列表行和详情页页头，在详情页排在 YAML 之前：打开
 一个没跑起来的对象时，这就是操作者带着的那个问题。资源对象浏览器的命名空间级类型行上也有同一个入口（集群级
 类型不提供，那里的视图只会说自己没有可展示的事件）。页面上方是结论卡片，中间是关联对象（不健康的逐个展开并带上自己的结论，就绪的
 折成一行），下方是事件表，工作负载的事件表多一列说明每条属于哪个对象。页头提供「复制为文本」，把结论、关联

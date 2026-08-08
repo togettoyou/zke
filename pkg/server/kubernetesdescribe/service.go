@@ -193,6 +193,7 @@ type Result struct {
 	Networking       *kubernetesresource.NetworkingResourceDetail `json:"networking,omitempty"`
 	ServiceEndpoints *ServiceEndpoints                            `json:"service_endpoints,omitempty"`
 	IngressBackends  *IngressBackends                             `json:"ingress_backends,omitempty"`
+	GatewayStatus    *GatewayStatus                               `json:"gateway_status,omitempty"`
 	// NodeResources is the scheduler-requested share of a Node's allocatable
 	// resources. It is separate from the Node projection because the values come
 	// from the Pods assigned to it, not from the Node object itself.
@@ -238,6 +239,16 @@ type IngressBackend struct {
 	ReadyEndpoints         int64     `json:"ready_endpoints"`
 	Findings               []Finding `json:"findings"`
 	endpointPortName       string
+}
+
+type GatewayStatus struct {
+	Listeners []GatewayListenerStatus `json:"listeners"`
+}
+
+type GatewayListenerStatus struct {
+	Name           string    `json:"name"`
+	AttachedRoutes int32     `json:"attached_routes"`
+	Findings       []Finding `json:"findings"`
 }
 
 type NodeResources struct {

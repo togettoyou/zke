@@ -540,6 +540,10 @@ Service 名称标签的 EndpointSlice；两类清单各一次且上限 500。响
 EndpointSlice 的 Namespace、Service 标签。Service 清单分页时未找到的对象保持未知，EndpointSlice 分页时端点
 计数仅作为下限，两者都不会产生确定性的缺失结论。Ingress Event 仍只按 Ingress 自身精确 UID 读取。
 
+Gateway describe 不读取 Route 或引用对象，只使用 Gateway 详情中 Controller 已报告的对象/Listener Condition，
+并按 Gateway 自身精确 UID 读取 Event。这样既不跨 Namespace 追踪证书或 Route，也不会把 Listener 的
+`attachedRoutes` 计数解释成调用方有权读取那些 Route 的授权。
+
 长连接读取（Event 流、Pod 日志 Follow、Web Terminal）的审计 `result` 记录的是「服务端是否完成了这次读取」，
 而不是流为什么结束。操作者关闭页面、Server 自身的最长时长到期、上游 Watch 轮换、resourceVersion 过期都属于
 流的正常终止，记为 `succeeded`；实时重新验证发现权限被收回记为 `denied`；Agent 不可达、上游超时、容量耗尽和

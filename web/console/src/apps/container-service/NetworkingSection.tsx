@@ -10,7 +10,7 @@ import {
   useNetworkingResources,
   type NetworkingSummary,
 } from "@/api/queries/networking";
-import { useIngressDescribe, useServiceDescribe } from "@/api/queries/describe";
+import { useGatewayDescribe, useIngressDescribe, useServiceDescribe } from "@/api/queries/describe";
 import type { KubernetesNetworkingResource } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
@@ -88,8 +88,7 @@ export function NetworkingSection({
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
-  const canDescribe =
-    resource !== "gateways" && permissions.can("cluster.event.read", projectScope);
+  const canDescribe = permissions.can("cluster.event.read", projectScope);
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -619,11 +618,17 @@ function NetworkingDescribeView({
 }) {
   const serviceDescribe = useServiceDescribe(clusterId, namespace, name, resource === "services");
   const ingressDescribe = useIngressDescribe(clusterId, namespace, name, resource === "ingresses");
-  const describe = resource === "ingresses" ? ingressDescribe : serviceDescribe;
+  const gatewayDescribe = useGatewayDescribe(clusterId, namespace, name, resource === "gateways");
+  const describe =
+    resource === "gateways"
+      ? gatewayDescribe
+      : resource === "ingresses"
+        ? ingressDescribe
+        : serviceDescribe;
   return (
     <DescribeView
       name={name}
-      kindLabel={resource === "ingresses" ? "Ingress" : "Service"}
+      kindLabel={networkingKindLabel(resource)}
       data={describe.data}
       isLoading={describe.isLoading}
       isFetching={describe.isFetching}

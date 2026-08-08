@@ -26,6 +26,12 @@ type IngressInput struct {
 	Name      string
 }
 
+type GatewayInput struct {
+	ClusterID string
+	Namespace string
+	Name      string
+}
+
 var endpointSliceIdentity = kubernetesresource.ResourceIdentity{
 	Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices",
 }
@@ -145,6 +151,54 @@ func (service *Service) DescribeIngress(
 	result.Findings = ingressFindings(object, result.Events.Items)
 	populateIngressBackendFindings(&backends)
 	return result, nil
+}
+
+// DescribeGateway keeps Gateway API's own Condition vocabulary intact. The
+// controller already reports acceptance, programming and listener reference
+// failures, so no related-object fanout is needed to explain them.
+func (service *Service) DescribeGateway(
+	ctx context.Context,
+	input GatewayInput,
+) (Result, error) {
+	if service == nil || service.resources == nil {
+		return Result{}, ErrInvalidInput
+	}
+	object, err := service.resources.GetNetworkingResource(
+		ctx, input.ClusterID, input.Namespace,
+		kubernetesresource.NetworkingGateways, input.Name,
+	)
+	if err != nil {
+		return Result{}, err
+	}
+	if object.UID == "" || object.Gateway == nil {
+		return Result{}, kubernetesresource.ErrInvalidResponse
+	}
+	result := Result{
+		Target: Target{
+			APIVersion: object.APIVersion, Kind: object.Kind,
+			Namespace: object.Namespace, Name: object.Name, UID: object.UID,
+			ResourceVersion: object.ResourceVersion,
+		},
+		Family: FamilyNetworking, Networking: &object,
+		GatewayStatus: &GatewayStatus{Listeners: gatewayListenerDiagnostics(*object.Gateway)},
+		Findings:      gatewayFindings(object), DegradedSections: []string{},
+	}
+	result.Events, _ = service.objectEvents(ctx, input.ClusterID, result.Target)
+	if result.Events.Omitted == EventsOmittedUnavailable {
+		result.DegradedSections = append(result.DegradedSections, "events")
+	}
+	return result, nil
+}
+
+func gatewayListenerDiagnostics(view kubernetesresource.GatewayView) []GatewayListenerStatus {
+	listeners := make([]GatewayListenerStatus, 0, len(view.Listeners))
+	for _, listener := range view.Listeners {
+		listeners = append(listeners, GatewayListenerStatus{
+			Name: listener.Name, AttachedRoutes: listener.AttachedRoutes,
+			Findings: gatewayListenerFindings(listener),
+		})
+	}
+	return listeners
 }
 
 func ingressBackendReferences(view kubernetesresource.IngressView) IngressBackends {

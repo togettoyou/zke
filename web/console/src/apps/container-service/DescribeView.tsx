@@ -148,6 +148,38 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
     title: "后端没有就绪端点",
     hint: "相关 EndpointSlice 已包含端点，但没有 Ready 后端可接收流量。检查 Pod 状态与 readiness 探针。",
   },
+  GatewayAddressPending: {
+    title: "Gateway 地址等待分配",
+    hint: "Gateway Controller 尚未在状态中发布地址。核对 GatewayClass Controller、地址池和对象 Condition。",
+  },
+  GatewayNotAccepted: {
+    title: "Gateway 未被接受",
+    hint: "GatewayClass 对应的 Controller 尚未接受该 Gateway。按 Kubernetes 原始 reason 与 message 核对类和配置。",
+  },
+  GatewayNotProgrammed: {
+    title: "Gateway 尚未编程",
+    hint: "Controller 尚未把期望配置下发到数据面。检查 Controller 状态与 Gateway Condition。",
+  },
+  GatewayNotReady: {
+    title: "Gateway 未就绪",
+    hint: "Gateway Controller 明确报告 Ready 不为 True。结合 Condition 原始消息定位数据面或基础设施问题。",
+  },
+  GatewayListenerNotAccepted: {
+    title: "监听器未被接受",
+    hint: "Controller 未接受该 Listener。检查协议、端口、主机名以及 GatewayClass 支持范围。",
+  },
+  GatewayListenerNotProgrammed: {
+    title: "监听器尚未编程",
+    hint: "Listener 配置尚未下发到数据面。结合 Programmed Condition 的原始消息检查 Controller。",
+  },
+  GatewayListenerConflicted: {
+    title: "监听器配置冲突",
+    hint: "Listener 与同一 Gateway 上的其他监听器发生冲突。检查端口、协议和主机名组合。",
+  },
+  GatewayListenerReferencesInvalid: {
+    title: "监听器引用无效",
+    hint: "Listener 的证书或其他对象引用没有解析成功。检查对象名称、命名空间、类型和引用授权。",
+  },
 };
 
 const OMITTED_EVENTS: Record<string, string> = {
@@ -316,6 +348,9 @@ export function DescribeView({
           {data.networking?.ingress && data.ingress_backends ? (
             <IngressDiagnosticSummary data={data} />
           ) : null}
+          {data.networking?.gateway && data.gateway_status ? (
+            <GatewayDiagnosticSummary data={data} />
+          ) : null}
 
           {data.related ? <RelatedSection related={data.related} family={data.family} /> : null}
 
@@ -390,6 +425,9 @@ export function DescribeView({
 
 function relatedHasFindings(data: KubernetesDescribe): boolean {
   if (data.ingress_backends?.items.some((backend) => backend.findings.length > 0)) {
+    return true;
+  }
+  if (data.gateway_status?.listeners.some((listener) => listener.findings.length > 0)) {
     return true;
   }
   const related = data.related;
@@ -682,6 +720,71 @@ function IngressDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   );
 }
 
+function GatewayDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
+  const gateway = data.networking?.gateway;
+  const status = data.gateway_status;
+  if (!gateway || !status) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardTitle>Gateway 状态</CardTitle>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <DiagnosticValue
+          label="地址"
+          value={gateway.addresses.map((item) => item.value).join(", ") || "尚未分配"}
+        />
+        <DiagnosticValue label="监听器状态" value={`${status.listeners.length} 个`} />
+      </div>
+      {status.listeners.length === 0 ? (
+        <p className="text-subtle-foreground mt-2 text-xs">
+          Controller 尚未报告 Listener 状态，仍可结合上方 Gateway Condition 与事件判断。
+        </p>
+      ) : (
+        <div className="mt-2 grid gap-2">
+          {status.listeners.map((listener) => (
+            <div
+              key={listener.name}
+              className="border-border/60 rounded-control grid gap-1.5 border p-2.5"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                <span className="text-foreground font-medium break-all">{listener.name}</span>
+                <Badge tone={listener.findings.length === 0 ? "success" : "warning"}>
+                  {listener.findings.length === 0
+                    ? "状态正常"
+                    : `${listener.findings.length} 个问题`}
+                </Badge>
+                <span className="text-subtle-foreground text-xs">
+                  已附加 Route {listener.attached_routes} 个
+                </span>
+              </div>
+              {listener.findings.map((finding, index) => (
+                <div key={`${finding.code}-${index}`} className="grid gap-0.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge tone="warning">
+                      {FINDING_LABELS[finding.code]?.title ?? finding.code}
+                    </Badge>
+                    {finding.reason ? (
+                      <span className="zke-mono text-subtle-foreground text-xs">
+                        {finding.reason}
+                      </span>
+                    ) : null}
+                  </div>
+                  {finding.message ? (
+                    <span className="text-muted-foreground text-xs break-words">
+                      {finding.message}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function DiagnosticValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="border-border/60 rounded-control min-w-0 border p-2.5">
@@ -912,6 +1015,19 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
       for (const finding of backend.findings) {
         lines.push(
           `      ${FINDING_LABELS[finding.code]?.title ?? finding.code} [${finding.code}]`,
+        );
+      }
+    }
+  }
+  if (data.gateway_status) {
+    lines.push("", `Gateway 监听器（${data.gateway_status.listeners.length}）`);
+    for (const listener of data.gateway_status.listeners) {
+      lines.push(`  - ${listener.name} attachedRoutes=${listener.attached_routes}`);
+      for (const finding of listener.findings) {
+        lines.push(
+          `      ${FINDING_LABELS[finding.code]?.title ?? finding.code} [${finding.code}]` +
+            `${finding.reason ? ` reason=${finding.reason}` : ""}` +
+            `${finding.message ? ` ${finding.message}` : ""}`,
         );
       }
     }

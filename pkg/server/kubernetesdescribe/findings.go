@@ -48,6 +48,80 @@ var ingressRejectionEventReasons = map[string]struct{}{
 	"InvalidIngressClass": {},
 }
 
+const (
+	FindingGatewayAddressPending            = "GatewayAddressPending"
+	FindingGatewayNotAccepted               = "GatewayNotAccepted"
+	FindingGatewayNotProgrammed             = "GatewayNotProgrammed"
+	FindingGatewayNotReady                  = "GatewayNotReady"
+	FindingGatewayListenerNotAccepted       = "GatewayListenerNotAccepted"
+	FindingGatewayListenerNotProgrammed     = "GatewayListenerNotProgrammed"
+	FindingGatewayListenerConflicted        = "GatewayListenerConflicted"
+	FindingGatewayListenerReferencesInvalid = "GatewayListenerReferencesInvalid"
+)
+
+func gatewayFindings(gateway kubernetesresource.NetworkingResourceDetail) []Finding {
+	if gateway.Gateway == nil {
+		return []Finding{}
+	}
+	findings := make([]Finding, 0, 4)
+	if len(gateway.Gateway.Addresses) == 0 {
+		findings = append(findings, Finding{
+			Code: FindingGatewayAddressPending, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.addresses"}},
+		})
+	}
+	checks := map[string]string{
+		"Accepted":   FindingGatewayNotAccepted,
+		"Programmed": FindingGatewayNotProgrammed,
+		"Ready":      FindingGatewayNotReady,
+	}
+	for _, condition := range gateway.Gateway.Conditions {
+		code, tracked := checks[condition.Type]
+		if !tracked || condition.Status == conditionStatusTrue {
+			continue
+		}
+		findings = append(findings, conditionFinding(code, condition, condition.Type))
+	}
+	return findings
+}
+
+func gatewayListenerFindings(
+	listener kubernetesresource.GatewayListenerStatus,
+) []Finding {
+	findings := make([]Finding, 0, 4)
+	for _, condition := range listener.Conditions {
+		code, report := "", false
+		switch condition.Type {
+		case "Accepted":
+			code, report = FindingGatewayListenerNotAccepted, condition.Status != conditionStatusTrue
+		case "Programmed":
+			code, report = FindingGatewayListenerNotProgrammed, condition.Status != conditionStatusTrue
+		case "Conflicted":
+			code, report = FindingGatewayListenerConflicted, condition.Status == conditionStatusTrue
+		case "ResolvedRefs":
+			code, report = FindingGatewayListenerReferencesInvalid, condition.Status != conditionStatusTrue
+		}
+		if report {
+			findings = append(findings, conditionFinding(
+				code, condition, "listener/"+listener.Name+"/"+condition.Type,
+			))
+		}
+	}
+	return findings
+}
+
+func conditionFinding(
+	code string,
+	condition kubernetesresource.ResourceCondition,
+	evidenceName string,
+) Finding {
+	return Finding{
+		Code: code, Severity: SeverityWarning,
+		Reason: condition.Reason, Message: condition.Message,
+		Evidence: []Evidence{{Kind: EvidenceCondition, Name: evidenceName}},
+	}
+}
+
 func ingressFindings(
 	ingress kubernetesresource.NetworkingResourceDetail,
 	events []Event,

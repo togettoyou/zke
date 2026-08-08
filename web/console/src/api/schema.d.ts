@@ -1090,10 +1090,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * @description 返回 Service 或 Ingress 的类型化诊断。Service 聚合 EndpointSlice 与 selector
-         *     匹配的后端 Pod；Ingress 聚合其引用的 Service、端口和 EndpointSlice，并只在
-         *     资源清单完整时生成缺失结论。Gateway 当前不支持此入口。要求同时持有
-         *     cluster.read 与 cluster.event.read，并写入 Event 读取审计。
+         * @description 返回 Service、Ingress 或 Gateway 的类型化诊断。Service 聚合 EndpointSlice 与 selector
+         *     匹配的后端 Pod；Ingress 聚合其引用的 Service、端口和 EndpointSlice；Gateway
+         *     解释对象及 Listener Condition。要求同时持有 cluster.read 与 cluster.event.read，
+         *     并写入 Event 读取审计。
          */
         get: operations["describeKubernetesNetworkingResource"];
         put?: never;
@@ -4265,6 +4265,7 @@ export interface components {
             networking?: components["schemas"]["KubernetesNetworkingResourceDetail"];
             service_endpoints?: components["schemas"]["KubernetesDescribeServiceEndpoints"];
             ingress_backends?: components["schemas"]["KubernetesDescribeIngressBackends"];
+            gateway_status?: components["schemas"]["KubernetesDescribeGatewayStatus"];
             related?: components["schemas"]["KubernetesDescribeRelated"];
             events: components["schemas"]["KubernetesDescribeEvents"];
             findings: components["schemas"]["KubernetesDescribeFinding"][];
@@ -4314,6 +4315,15 @@ export interface components {
             endpoints: number;
             /** Format: int64 */
             ready_endpoints: number;
+            findings: components["schemas"]["KubernetesDescribeFinding"][];
+        };
+        KubernetesDescribeGatewayStatus: {
+            listeners: components["schemas"]["KubernetesDescribeGatewayListenerStatus"][];
+        };
+        KubernetesDescribeGatewayListenerStatus: {
+            name: string;
+            /** Format: int32 */
+            attached_routes: number;
             findings: components["schemas"]["KubernetesDescribeFinding"][];
         };
         KubernetesDescribeNodeResources: {
@@ -4415,7 +4425,7 @@ export interface components {
          */
         KubernetesDescribeFinding: {
             /** @enum {string} */
-            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints";
+            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints" | "GatewayAddressPending" | "GatewayNotAccepted" | "GatewayNotProgrammed" | "GatewayNotReady" | "GatewayListenerNotAccepted" | "GatewayListenerNotProgrammed" | "GatewayListenerConflicted" | "GatewayListenerReferencesInvalid";
             /**
              * @description findings 只报告问题，因此只有一个级别。
              * @enum {string}
@@ -7639,7 +7649,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Service 或 Ingress describe 视图 */
+            /** @description Service、Ingress 或 Gateway describe 视图 */
             200: {
                 headers: {
                     [name: string]: unknown;
