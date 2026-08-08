@@ -61,8 +61,8 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
       WebSocket-first/SPDY fallback、Agent 回环桥接、双向字节/空闲/时长/并发限制、权限重验、无正文审计，
       以及 Console HTTP 原始响应预览）
 - [x] YAML 管理（完整 YAML 读取、严格单文档更新、DryRun、UID/resourceVersion 防误改、显式确认、幂等
-      和审计，以及节点、命名空间、工作负载和 Pod 详情页的 Console 查看与编辑闭环；编辑器为纯文本，语法高亮
-      与结构校验尚未实现）
+      和审计，以及节点、命名空间、工作负载和 Pod 详情页的 Console 查看与编辑闭环；编辑器支持语法高亮、
+      本地严格结构/身份校验，并在确认前展示当前对象与 Kubernetes DryRun 最终对象的有界行级差异）
 - [x] Kubernetes Event（独立 `resource-watch.v1`、专用权限与 Agent 最小 RBAC、Namespace/资源过滤、
       初始快照与实时 Follow、SSE 心跳与正文内终止原因、resourceVersion 恢复、取消、限流、超时、权限重验、
       审计和真实 QUIC 测试，以及 Console 的筛选、跟随、按 UID 归并与断流恢复闭环；从具体对象跳转到关联事件

@@ -664,6 +664,14 @@ manager 保持不变时才会在重复运行中收敛，客户端可选会让第
 默认拒绝，可显式勾选强制接管。既有的单对象 YAML 编辑器**语义不变**——它仍是「整份替换 + UID/resourceVersion
 前置条件」，那是编辑一个已知对象，与 apply 是两件事，不应合并。
 
+单对象编辑器在输入停止 250ms 后执行本地严格校验：拒绝多文档、重复键、非映射顶层、anchor/alias、自定义 tag，
+并要求 `apiVersion`、`kind`、名称、Namespace、UID 与 resourceVersion 和刚读取的对象身份一致。该检查只在
+浏览器内运行，不产生请求或审计，也不宣称代替集群 schema；保存仍先走目标集群 Kubernetes DryRun，由 API
+Server 和准入控制给出权威结果。DryRun 通过后，确认框比较当前对象和 **DryRun 返回的最终 YAML**，因此能把
+默认化、准入修改与用户输入共同造成的真实增删行展示出来。普通文档使用精确行级差异；超大内嵌内容使用有界粗粒度
+差异、变化区间统计和抽样渲染，避免一个 4 MiB ConfigMap 卡住浏览器。Secret 仍只通过专用权限读取
+和更新，差异不发送到其他服务或进入审计正文。
+
 **Kind 到 GVR 的解析**来自目标集群自身的 API Discovery，键是 `apiVersion` 的 group、version 加 `kind` 三元组
 而不是 Kind 单独一项：`Ingress` 和 `Event` 都在多个 group 中出现过，只凭 Kind 无法定位，而文档总是携带
 `apiVersion`。Discovery 不完整时接口返回 `catalog_partial`，界面据此说明「集群未提供该 Kind」只表示本次没
@@ -1121,7 +1129,6 @@ resourceVersion 在挂载时固定，不随后台重新拉取更新：取一个�
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
 - Gateway API 的 HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 类型化管理；
-- YAML 编辑器的结构校验与差异对比；
 - 面向具体资源的表单化创建、更新和删除体验。
 
 产品体验将参考成熟 Kubernetes 管理平台的通用实践，但不会以与任何现有平台完全相同为目标。

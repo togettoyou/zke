@@ -37,6 +37,8 @@ export type SensitiveActionDialogProps = {
   pending?: boolean;
   error?: unknown;
   children?: ReactNode;
+  /** Optional sizing override for review-heavy actions such as a YAML diff. */
+  contentClassName?: string;
   onConfirm: () => void;
 };
 
@@ -61,6 +63,7 @@ export function SensitiveActionDialog({
   pending = false,
   error,
   children,
+  contentClassName,
   onConfirm,
 }: SensitiveActionDialogProps) {
   const [typed, setTyped] = useState("");
@@ -80,7 +83,7 @@ export function SensitiveActionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-describedby={undefined}>
+      <DialogContent aria-describedby={undefined} className={contentClassName}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {destructive ? (
