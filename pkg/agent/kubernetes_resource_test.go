@@ -421,6 +421,36 @@ func TestKubernetesResourceDiscoveryPolicyBoundsCache(t *testing.T) {
 	}
 }
 
+func TestKubernetesResourceDiscoveryPolicyCachesMissingGroupVersion(t *testing.T) {
+	t.Parallel()
+
+	fakeDiscovery := &discoveryfake.FakeDiscovery{Fake: &k8stesting.Fake{}}
+	policy := &kubernetesResourceDiscoveryPolicy{
+		client:  fakeDiscovery,
+		entries: make(map[schema.GroupVersionResource]discoveredKubernetesResource),
+	}
+	request := &agentv1.ResourceRequest{
+		Verb: agentv1.ResourceVerb_RESOURCE_VERB_LIST,
+		Resource: &agentv1.GroupVersionResource{
+			Group: "autoscaling.k8s.io", Version: "v1", Resource: "verticalpodautoscalers",
+		},
+		Namespace: "default",
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		allowed, invalidScope, err := policy.allowed(context.Background(), request)
+		if err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		if allowed || invalidScope {
+			t.Fatalf("attempt %d: allowed=%t invalidScope=%t, want false/false", attempt, allowed, invalidScope)
+		}
+	}
+	if actions := fakeDiscovery.Actions(); len(actions) != 1 {
+		t.Fatalf("Discovery actions = %d, want one cached lookup", len(actions))
+	}
+}
+
 func TestKubernetesResourceHandlerDiscoversBuiltInAndCustomResources(
 	t *testing.T,
 ) {

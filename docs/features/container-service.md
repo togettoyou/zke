@@ -647,7 +647,9 @@ HPA 摘要同时返回 `generation` 与 `observed_generation`，Console 据此�
 Console 自动伸缩区分 HPA、VPA 与 KEDA 三个视图。VPA/KEDA 都提供列表、详情、YAML、类型化创建和编辑、
 DryRun 后二次确认以及带 UID/resourceVersion 的删除。控制器未安装时对应视图说明所缺 CRD 并禁用创建，不影响
 HPA 或其他容器服务页面。三类列表使用与工作负载、存储等资源分区一致的页签和表格骨架；进入详情、YAML 或表单
-后隐藏资源类型页签，避免让一个只作用于列表的切换控件悬在对象页面上。
+后隐藏资源类型页签，避免让一个只作用于列表的切换控件悬在对象页面上。Agent 将不存在的可选 API Group 缓存为
+负向 Discovery 结果，Server 稳定返回 `available=false`；Console 不对扩展能力探测自动重试，因此未安装状态无需
+等待错误重试退避，真实 5xx 也会立即展示并由操作者决定是否重试。
 
 策略管理后端把五类约束放在一组接口下：命名空间级的 `core/v1 ResourceQuota`、`core/v1 LimitRange`、
 `networking.k8s.io/v1 NetworkPolicy`、`policy/v1 PodDisruptionBudget`，以及集群级的

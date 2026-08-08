@@ -144,6 +144,10 @@ export function useVerticalPodAutoscalers(
         continue_token: string;
       },
     enabled: Boolean(clusterId && namespace),
+    // Missing optional CRDs are a stable capability result. A genuine 5xx is
+    // shown immediately and retried explicitly by the operator instead of
+    // keeping the tab on a spinner through the global exponential backoff.
+    retry: false,
   });
 }
 
@@ -194,6 +198,7 @@ export function useKEDAScaledObjects(
         continue_token: string;
       },
     enabled: Boolean(clusterId && namespace),
+    retry: false,
   });
 }
 

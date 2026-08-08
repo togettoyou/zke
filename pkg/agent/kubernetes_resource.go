@@ -307,6 +307,18 @@ func (policy *kubernetesResourceDiscoveryPolicy) resource(
 		groupVersion = gvr.Group + "/" + gvr.Version
 	}
 	list, err := policy.client.ServerResourcesForGroupVersion(groupVersion)
+	// An optional API group that is not installed is a normal negative
+	// discovery result, not an unavailable Kubernetes API. Remembering it keeps
+	// repeated capability probes cheap and lets the Server return available=false
+	// instead of turning a fast 404 into a retryable 503.
+	if apierrors.IsNotFound(err) {
+		result := discoveredKubernetesResource{
+			verbs:     make(map[string]struct{}),
+			expiresAt: now.Add(kubernetesResourceDiscoveryTTL),
+		}
+		policy.remember(gvr, result)
+		return result, nil
+	}
 	if err != nil {
 		return discoveredKubernetesResource{}, err
 	}
