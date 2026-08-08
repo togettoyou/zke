@@ -10,6 +10,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
@@ -93,6 +94,8 @@ type MutationResourceRequester interface {
 type Service struct {
 	requester      ResourceRequester
 	responseBudget *semaphore.Weighted
+	trendMutex     sync.Mutex
+	hpaTrends      map[string][]HPAMetricTrendPoint
 }
 
 type Config struct {
@@ -196,6 +199,7 @@ func NewService(requester ResourceRequester, configs ...Config) *Service {
 	return &Service{
 		requester:      requester,
 		responseBudget: semaphore.NewWeighted(config.MaxBufferedResponseBytes),
+		hpaTrends:      make(map[string][]HPAMetricTrendPoint),
 	}
 }
 

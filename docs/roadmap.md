@@ -82,7 +82,9 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
 - [x] 自动伸缩（固定 `autoscaling/v2 HorizontalPodAutoscaler` 的 List/Detail/Create/Update/Delete，
       Deployment/StatefulSet 目标约束，Resource/ContainerResource 指标、ScaleUp/ScaleDown Behavior、DryRun、
       确认、幂等、并发身份保护、审计和 Agent 最小 RBAC，以及 Console 的列表/详情、类型化创建与编辑表单和
-      删除闭环；Metrics Server/Adapter 由集群自行安装，VPA 与 KEDA 尚未实现）
+      删除闭环；增加 HPA status 最近一小时的有界运行时趋势，并为可选的 `autoscaling.k8s.io/v1` VPA 与
+      `keda.sh/v1alpha1` ScaledObject 提供能力探测、类型化 CRUD、敏感 metadata 拒绝/脱敏、状态与建议展示；
+      Metrics Server/Adapter、VPA 与 KEDA 控制器仍由集群自行安装）
 - [x] 资源对象浏览器（基于通用 Discovery 与通用 Resource 接口的资源树与对象列表，目录逐条标记 CRD 来源并在
       无法判定时明确报告，支持「仅显示 CRD」筛选、跨命名空间查询、YAML 查看与编辑，以及带 UID/resourceVersion
       前置条件、DryRun 与确认的删除；Secret、Event 与 Kubernetes 授权资源仍被排除在该入口之外，Namespace 可浏览

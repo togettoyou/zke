@@ -176,6 +176,12 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "autoscaling", []string{"horizontalpodautoscalers"}, []string{
 		"get", "list", "create", "update", "delete",
 	})
+	assertPolicyRule(t, clusterRole.Rules, "autoscaling.k8s.io", []string{"verticalpodautoscalers"}, []string{
+		"get", "list", "create", "update", "delete",
+	})
+	assertPolicyRule(t, clusterRole.Rules, "keda.sh", []string{"scaledobjects"}, []string{
+		"get", "list", "create", "update", "delete",
+	})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"serviceaccounts"}, []string{
 		"get", "list", "create", "update", "delete",
 	})

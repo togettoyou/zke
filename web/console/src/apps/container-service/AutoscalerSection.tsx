@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import {
   isAutoscalerStale,
   useAutoscaler,
+  useAutoscalerMetricTrend,
   useAutoscalers,
   useDeleteAutoscaler,
   type AutoscalerDetail,
@@ -33,6 +34,10 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { AutoscalerForm } from "./AutoscalerForm";
+import {
+  KEDAScaledObjectSection,
+  VerticalPodAutoscalerSection,
+} from "./AutoscalingExtensionSection";
 import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
@@ -52,7 +57,38 @@ type AutoscalerSectionProps = ClusterSectionProps & {
  * page an operator has to keep in mind: once one exists, scaling the Deployment
  * by hand is undone by the controller within a cycle.
  */
-export function AutoscalerSection({
+export function AutoscalerSection(props: AutoscalerSectionProps) {
+  const [kind, setKind] = useState<"hpa" | "vpa" | "keda">("hpa");
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="border-border flex shrink-0 gap-1 border-b px-4 py-2">
+        {(
+          [
+            ["hpa", "HPA"],
+            ["vpa", "VPA"],
+            ["keda", "KEDA"],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            size="sm"
+            variant={kind === value ? "secondary" : "ghost"}
+            onClick={() => setKind(value)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1">
+        {kind === "hpa" ? <HorizontalPodAutoscalerSection {...props} /> : null}
+        {kind === "vpa" ? <VerticalPodAutoscalerSection {...props} /> : null}
+        {kind === "keda" ? <KEDAScaledObjectSection {...props} /> : null}
+      </div>
+    </div>
+  );
+}
+
+function HorizontalPodAutoscalerSection({
   clusterId,
   clusterName,
   namespace,
@@ -459,7 +495,7 @@ function AutoscalerDetailView({
       ) : detail.isLoading || !item ? (
         <LoadingState />
       ) : (
-        <AutoscalerDetailCards item={item} />
+        <AutoscalerDetailCards clusterId={clusterId} namespace={namespace} item={item} />
       )}
     </div>
   );
@@ -491,7 +527,15 @@ function AutoscalerDescribeView({
   );
 }
 
-function AutoscalerDetailCards({ item }: { item: AutoscalerDetail }) {
+function AutoscalerDetailCards({
+  clusterId,
+  namespace,
+  item,
+}: {
+  clusterId: string;
+  namespace: string;
+  item: AutoscalerDetail;
+}) {
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <DetailCard title="概览">
@@ -567,11 +611,114 @@ function AutoscalerDetailCards({ item }: { item: AutoscalerDetail }) {
         <DetailConditions conditions={item.conditions} />
       </DetailCard>
 
+      <AutoscalerTrendCard clusterId={clusterId} namespace={namespace} name={item.name} />
+
       <DetailCard title="标签">
         <DetailKeyValues entries={item.labels} />
       </DetailCard>
       <DetailCard title="注解">
         <DetailKeyValues entries={item.annotations} />
+      </DetailCard>
+    </div>
+  );
+}
+
+function AutoscalerTrendCard({
+  clusterId,
+  namespace,
+  name,
+}: {
+  clusterId: string;
+  namespace: string;
+  name: string;
+}) {
+  const trend = useAutoscalerMetricTrend(clusterId, namespace, name);
+  const points = trend.data?.points ?? [];
+  const values = points.flatMap((point) => [point.current_replicas, point.desired_replicas]);
+  const maximum = Math.max(1, ...values);
+  const polyline = (field: "current_replicas" | "desired_replicas") =>
+    points
+      .map((point, index) => {
+        const x = points.length < 2 ? 50 : (index / (points.length - 1)) * 100;
+        const y = 28 - (point[field] / maximum) * 24;
+        return `${x},${y}`;
+      })
+      .join(" ");
+
+  return (
+    <div className="md:col-span-2">
+      <DetailCard title="指标趋势">
+        {trend.error ? (
+          <ErrorState error={trend.error} onRetry={() => void trend.refetch()} />
+        ) : points.length === 0 ? (
+          <DetailRow label="趋势" value="正在采集第一个样本" />
+        ) : (
+          <div className="grid gap-3">
+            <div className="flex items-center gap-4 text-xs">
+              <span className="text-primary">— 当前副本</span>
+              <span className="text-warning-foreground">— 期望副本</span>
+              <span className="text-muted-foreground ml-auto">
+                最近 1 小时 · 15 秒刷新 · Server 运行时窗口
+              </span>
+            </div>
+            <svg
+              viewBox="0 0 100 32"
+              className="bg-muted/30 h-28 w-full rounded"
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="HPA 当前和期望副本趋势"
+            >
+              <polyline
+                points={polyline("current_replicas")}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                className="text-primary"
+                vectorEffect="non-scaling-stroke"
+              />
+              <polyline
+                points={polyline("desired_replicas")}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                className="text-warning-foreground"
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-muted-foreground border-border border-b text-left">
+                    <th className="py-1 pr-3">时间</th>
+                    <th className="py-1 pr-3">副本</th>
+                    <th className="py-1">当前指标</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {points
+                    .slice(-8)
+                    .reverse()
+                    .map((point) => (
+                      <tr key={point.timestamp} className="border-border/60 border-b">
+                        <td className="py-1 pr-3">{formatAbsolute(point.timestamp)}</td>
+                        <td className="zke-tnum py-1 pr-3">
+                          {point.current_replicas} → {point.desired_replicas}
+                        </td>
+                        <td className="py-1">
+                          {point.metrics
+                            .map(
+                              (metric) =>
+                                `${metricLabel(metric)}=${targetLabel(metric.current) || "—"}`,
+                            )
+                            .join(" · ") || "指标不可用"}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </DetailCard>
     </div>
   );

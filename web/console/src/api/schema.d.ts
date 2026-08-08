@@ -1377,6 +1377,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/metrics-trend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 采样 HPA status 中的当前指标与副本数，返回 Server 进程内最近一小时、最多 240 个点的运行时趋势；Server 重启后历史清空。 */
+        get: operations["getKubernetesHorizontalPodAutoscalerMetricTrend"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/verticalpodautoscalers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询可选的 autoscaling.k8s.io/v1 VerticalPodAutoscaler；未安装 CRD 时以 available=false 稳定返回。 */
+        get: operations["listKubernetesVerticalPodAutoscalers"];
+        put?: never;
+        /** @description 创建 VPA；实际写入要求确认并支持服务端 dry-run。 */
+        post: operations["createKubernetesVerticalPodAutoscaler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/verticalpodautoscalers/{vpa_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getKubernetesVerticalPodAutoscaler"];
+        /** @description 使用当前 UID/resourceVersion 整体替换 VPA spec；实际写入要求确认并支持服务端 dry-run。 */
+        put: operations["updateKubernetesVerticalPodAutoscaler"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除 VPA；实际删除要求确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesVerticalPodAutoscaler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/scaledobjects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 查询可选的 keda.sh/v1alpha1 ScaledObject；未安装 CRD 时以 available=false 稳定返回。 */
+        get: operations["listKubernetesKEDAScaledObjects"];
+        put?: never;
+        /** @description 创建 KEDA ScaledObject；敏感认证值必须通过 TriggerAuthentication 引用，实际写入要求确认并支持服务端 dry-run。 */
+        post: operations["createKubernetesKEDAScaledObject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/scaledobjects/{scaled_object_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getKubernetesKEDAScaledObject"];
+        /** @description 使用当前 UID/resourceVersion 整体替换 ScaledObject spec；敏感值不得内嵌，实际写入要求确认并支持 dry-run。 */
+        put: operations["updateKubernetesKEDAScaledObject"];
+        post?: never;
+        /** @description 使用 UID/resourceVersion 前置条件删除 ScaledObject；实际删除要求确认并支持 dry-run。 */
+        delete: operations["deleteKubernetesKEDAScaledObject"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/policies/{policy_resource}": {
         parameters: {
             query?: never;
@@ -3493,6 +3582,231 @@ export interface components {
             dry_run: boolean;
             target: string;
         };
+        KubernetesHPAMetricTrendPoint: {
+            timestamp: components["schemas"]["Timestamp"];
+            /** Format: int32 */
+            current_replicas: number;
+            /** Format: int32 */
+            desired_replicas: number;
+            metrics: components["schemas"]["KubernetesHPAMetricView"][];
+        };
+        KubernetesHPAMetricTrend: {
+            uid: string;
+            name: string;
+            namespace: string;
+            /**
+             * Format: int64
+             * @constant
+             */
+            window_seconds: 3600;
+            points: components["schemas"]["KubernetesHPAMetricTrendPoint"][];
+        };
+        KubernetesAutoscalingTarget: {
+            /** @constant */
+            api_version: "apps/v1";
+            /** @enum {string} */
+            kind: "Deployment" | "StatefulSet" | "DaemonSet";
+            name: string;
+        };
+        KubernetesKEDATarget: {
+            /** @constant */
+            api_version: "apps/v1";
+            /** @enum {string} */
+            kind: "Deployment" | "StatefulSet";
+            name: string;
+        };
+        KubernetesAutoscalingCondition: {
+            type: string;
+            status: string;
+            reason: string;
+            message: string;
+            last_transition_time?: components["schemas"]["Timestamp"];
+        };
+        KubernetesVPAContainerPolicy: {
+            container_name: string;
+            /** @enum {string} */
+            mode: "" | "Auto" | "Off";
+            min_allowed: {
+                [key: string]: string;
+            };
+            max_allowed: {
+                [key: string]: string;
+            };
+            controlled_resources: ("cpu" | "memory")[];
+            /** @enum {string} */
+            controlled_values: "" | "RequestsOnly" | "RequestsAndLimits";
+        };
+        KubernetesVPASpecInput: {
+            target: components["schemas"]["KubernetesAutoscalingTarget"];
+            /** @enum {string} */
+            update_mode: "" | "Off" | "Initial" | "Recreate" | "InPlaceOrRecreate" | "InPlace";
+            container_policies: components["schemas"]["KubernetesVPAContainerPolicy"][];
+        };
+        KubernetesVPARecommendation: {
+            container_name: string;
+            target: {
+                [key: string]: string;
+            };
+            lower_bound: {
+                [key: string]: string;
+            };
+            upper_bound: {
+                [key: string]: string;
+            };
+            uncapped_target: {
+                [key: string]: string;
+            };
+        };
+        KubernetesVPASummary: {
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            /** Format: int64 */
+            generation: number;
+            /** Format: int64 */
+            observed_generation: number;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            target: components["schemas"]["KubernetesAutoscalingTarget"];
+            update_mode: string;
+            recommendation_count: number;
+            conditions: components["schemas"]["KubernetesAutoscalingCondition"][];
+        };
+        KubernetesVPADetail: components["schemas"]["KubernetesVPASummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            container_policies: components["schemas"]["KubernetesVPAContainerPolicy"][];
+            recommendations: components["schemas"]["KubernetesVPARecommendation"][];
+        };
+        KubernetesVPAPage: {
+            available: boolean;
+            /** @enum {string} */
+            unavailable_reason?: "not_installed";
+            autoscalers: components["schemas"]["KubernetesVPASummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesCreateVPARequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            spec: components["schemas"]["KubernetesVPASpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesUpdateVPARequest: {
+            uid: string;
+            resource_version: string;
+            spec: components["schemas"]["KubernetesVPASpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesVPAMutationResult: {
+            autoscaler: components["schemas"]["KubernetesVPADetail"];
+            dry_run: boolean;
+        };
+        KubernetesKEDATrigger: {
+            type: string;
+            name: string;
+            use_cached_metrics: boolean;
+            metadata: {
+                [key: string]: string;
+            };
+            redacted_metadata_keys: string[];
+            authentication_ref_name: string;
+        };
+        KubernetesKEDASpecInput: {
+            target: components["schemas"]["KubernetesKEDATarget"];
+            /** Format: int64 */
+            polling_interval: number;
+            /** Format: int64 */
+            cooldown_period: number;
+            /** Format: int32 */
+            min_replicas: number;
+            /** Format: int32 */
+            max_replicas: number;
+            triggers: components["schemas"]["KubernetesKEDATrigger"][];
+        };
+        KubernetesKEDASummary: {
+            namespace: string;
+            name: string;
+            uid: string;
+            resource_version: string;
+            /** Format: int64 */
+            generation: number;
+            creation_timestamp: components["schemas"]["Timestamp"];
+            labels: {
+                [key: string]: string;
+            };
+            target: components["schemas"]["KubernetesAutoscalingTarget"];
+            /** Format: int32 */
+            min_replicas: number;
+            /** Format: int32 */
+            max_replicas: number;
+            trigger_count: number;
+            ready: boolean;
+            active: boolean;
+            fallback: boolean;
+            paused: boolean;
+        };
+        KubernetesKEDADetail: components["schemas"]["KubernetesKEDASummary"] & {
+            annotations: {
+                [key: string]: string;
+            };
+            /** Format: int64 */
+            polling_interval: number;
+            /** Format: int64 */
+            cooldown_period: number;
+            triggers: components["schemas"]["KubernetesKEDATrigger"][];
+            conditions: components["schemas"]["KubernetesAutoscalingCondition"][];
+            external_metric_names: string[];
+            hpa_name: string;
+        };
+        KubernetesKEDAPage: {
+            available: boolean;
+            /** @enum {string} */
+            unavailable_reason?: "not_installed";
+            scaled_objects: components["schemas"]["KubernetesKEDASummary"][];
+            continue_token: string;
+            resource_version: string;
+            remaining_item_count: number | null;
+        };
+        KubernetesCreateKEDARequest: {
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+            annotations?: {
+                [key: string]: string;
+            };
+            spec: components["schemas"]["KubernetesKEDASpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesUpdateKEDARequest: {
+            uid: string;
+            resource_version: string;
+            spec: components["schemas"]["KubernetesKEDASpecInput"];
+            /** @default false */
+            dry_run: boolean;
+            confirm: boolean;
+        };
+        KubernetesKEDAMutationResult: {
+            autoscaler: components["schemas"]["KubernetesKEDADetail"];
+            dry_run: boolean;
+        };
         /** @enum {string} */
         KubernetesAuthorizationResource: "serviceaccounts" | "roles" | "clusterroles" | "rolebindings" | "clusterrolebindings";
         KubernetesAuthorizationRoleRef: {
@@ -5240,6 +5554,83 @@ export interface components {
                 };
             };
         };
+        /** @description HorizontalPodAutoscaler 运行时指标趋势 */
+        KubernetesHPAMetricTrendSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesHPAMetricTrend"];
+                };
+            };
+        };
+        /** @description VerticalPodAutoscaler 分页结果或 CRD 不可用状态 */
+        KubernetesVPAPageSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesVPAPage"];
+                };
+            };
+        };
+        /** @description VerticalPodAutoscaler 详情 */
+        KubernetesVPADetailSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesVPADetail"];
+                };
+            };
+        };
+        /** @description VerticalPodAutoscaler 写入结果或 DryRun 预览 */
+        KubernetesVPAMutationSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesVPAMutationResult"];
+                };
+            };
+        };
+        /** @description KEDA ScaledObject 分页结果或 CRD 不可用状态 */
+        KubernetesKEDAPageSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesKEDAPage"];
+                };
+            };
+        };
+        /** @description KEDA ScaledObject 详情，敏感 metadata 值会脱敏 */
+        KubernetesKEDADetailSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesKEDADetail"];
+                };
+            };
+        };
+        /** @description KEDA ScaledObject 写入结果或 DryRun 预览 */
+        KubernetesKEDAMutationSuccess: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["SuccessResponse"] & {
+                    data: components["schemas"]["KubernetesKEDAMutationResult"];
+                };
+            };
+        };
         /** @description Kubernetes 授权资源分页结果 */
         KubernetesAuthorizationListSuccess: {
             headers: {
@@ -5400,6 +5791,8 @@ export interface components {
         WorkloadResource: components["schemas"]["KubernetesWorkloadResource"];
         WorkloadName: string;
         HPAName: string;
+        VPAName: string;
+        KEDAScaledObjectName: string;
         ClusterAuthorizationResource: "clusterroles" | "clusterrolebindings";
         NamespacedAuthorizationResource: "serviceaccounts" | "roles" | "rolebindings";
         AuthorizationName: string;
@@ -8788,6 +9181,322 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesHorizontalPodAutoscalerMetricTrend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                hpa_name: components["parameters"]["HPAName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesHPAMetricTrendSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesVerticalPodAutoscalers: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesVPAPageSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesVerticalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateVPARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesVPAMutationSuccess"];
+            201: components["responses"]["KubernetesVPAMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesVerticalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                vpa_name: components["parameters"]["VPAName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesVPADetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesVerticalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                vpa_name: components["parameters"]["VPAName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateVPARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesVPAMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesVerticalPodAutoscaler: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                vpa_name: components["parameters"]["VPAName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteHPARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesHPADeleteSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesKEDAScaledObjects: {
+        parameters: {
+            query?: {
+                limit?: number;
+                continue?: string;
+                label_selector?: string;
+                field_selector?: string;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesKEDAPageSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createKubernetesKEDAScaledObject: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCreateKEDARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesKEDAMutationSuccess"];
+            201: components["responses"]["KubernetesKEDAMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getKubernetesKEDAScaledObject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                scaled_object_name: components["parameters"]["KEDAScaledObjectName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["KubernetesKEDADetailSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateKubernetesKEDAScaledObject: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                scaled_object_name: components["parameters"]["KEDAScaledObjectName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesUpdateKEDARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesKEDAMutationSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteKubernetesKEDAScaledObject: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                scaled_object_name: components["parameters"]["KEDAScaledObjectName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesDeleteHPARequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["KubernetesHPADeleteSuccess"];
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

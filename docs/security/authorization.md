@@ -341,6 +341,17 @@ HorizontalPodAutoscaler 类型化接口固定 `autoscaling/v2` 和明确 Namespa
 要求 CSRF、幂等键和显式确认，更新前重新读取并核对 HPA UID/resourceVersion，删除把二者作为 Kubernetes
 前置条件。审计记录 HPA 资源身份和操作结果，不记录指标 Selector 或完整 spec 正文。
 
+VerticalPodAutoscaler 与 KEDA ScaledObject 类型化接口分别固定 `autoscaling.k8s.io/v1` 和
+`keda.sh/v1alpha1`，同样沿用 `cluster.read` 与 `cluster.resource.create/update/delete`，并始终定域到明确
+Cluster 和 Namespace。两类更新都先读回对象核对 UID/resourceVersion，删除把两者交给 Kubernetes 作为前置条件；
+实际写入要求 CSRF、幂等键和显式确认。缺少 CRD 的列表返回稳定的不可用状态，但 ServiceAccount 已发现 CRD 后的
+权限不足仍返回禁止访问，不能用“可选组件”语义掩盖 RBAC 拒绝。KEDA metadata 中疑似凭证的键在写入时被拒绝，
+已有对象读取时只返回脱敏占位符；认证只能通过同 Namespace 的 TriggerAuthentication 名称引用。接口不读取该认证
+对象或任何 Secret 正文，审计也只记录 ScaledObject 身份和结果。
+
+HPA 指标趋势只是对受 `cluster.read` 保护的 HPA status 进行有界采样，没有新增越权的数据源；每个序列最多 240 点、
+保留一小时，Server 进程内最多 2000 个序列并淘汰最旧项。它不读取 Metrics API、Pod 日志或 Secret，也不持久化。
+
 ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget 与 PriorityClass 同样沿用 `cluster.read` 和
 `cluster.resource.create/update/delete`：这五类对象约束工作负载可以做什么，但不能提升调用者自身在 ZKE 或
 Kubernetes 中的权限，因此不引入独立权限位，也不从通用 Resource/YAML 入口排除。HTTP 与领域层同时校验作用域，

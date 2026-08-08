@@ -3966,6 +3966,268 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/metrics-trend:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesHorizontalPodAutoscalerMetricTrend
+      description: 采样 HPA status 中的当前指标与副本数，返回 Server 进程内最近一小时、最多 240 个点的运行时趋势；Server 重启后历史清空。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HPAName"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesHPAMetricTrendSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/verticalpodautoscalers:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesVerticalPodAutoscalers
+      description: 查询可选的 autoscaling.k8s.io/v1 VerticalPodAutoscaler；未安装 CRD 时以 available=false 稳定返回。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: continue, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: label_selector, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: field_selector, in: query, schema: { type: string, maxLength: 4096 } }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesVPAPageSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createKubernetesVerticalPodAutoscaler
+      description: 创建 VPA；实际写入要求确认并支持服务端 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesCreateVPARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesVPAMutationSuccess" }
+        "201": { $ref: "#/components/responses/KubernetesVPAMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/verticalpodautoscalers/{vpa_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesVerticalPodAutoscaler
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/VPAName"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesVPADetailSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: updateKubernetesVerticalPodAutoscaler
+      description: 使用当前 UID/resourceVersion 整体替换 VPA spec；实际写入要求确认并支持服务端 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/VPAName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateVPARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesVPAMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesVerticalPodAutoscaler
+      description: 使用 UID/resourceVersion 前置条件删除 VPA；实际删除要求确认并支持 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/VPAName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteHPARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesHPADeleteSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/scaledobjects:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesKEDAScaledObjects
+      description: 查询可选的 keda.sh/v1alpha1 ScaledObject；未安装 CRD 时以 available=false 稳定返回。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: continue, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: label_selector, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: field_selector, in: query, schema: { type: string, maxLength: 4096 } }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesKEDAPageSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Resources]
+      operationId: createKubernetesKEDAScaledObject
+      description: 创建 KEDA ScaledObject；敏感认证值必须通过 TriggerAuthentication 引用，实际写入要求确认并支持服务端 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesCreateKEDARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesKEDAMutationSuccess" }
+        "201": { $ref: "#/components/responses/KubernetesKEDAMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/scaledobjects/{scaled_object_name}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesKEDAScaledObject
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/KEDAScaledObjectName"
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesKEDADetailSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Resources]
+      operationId: updateKubernetesKEDAScaledObject
+      description: 使用当前 UID/resourceVersion 整体替换 ScaledObject spec；敏感值不得内嵌，实际写入要求确认并支持 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/KEDAScaledObjectName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesUpdateKEDARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesKEDAMutationSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: deleteKubernetesKEDAScaledObject
+      description: 使用 UID/resourceVersion 前置条件删除 ScaledObject；实际删除要求确认并支持 dry-run。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/KEDAScaledObjectName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KubernetesDeleteHPARequest" }
+      responses:
+        "200": { $ref: "#/components/responses/KubernetesHPADeleteSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/policies/{policy_resource}:
     get:
       tags: [Resources]
@@ -6266,6 +6528,22 @@ components:
         type: string
         minLength: 1
         maxLength: 253
+    VPAName:
+      name: vpa_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
+    KEDAScaledObjectName:
+      name: scaled_object_name
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
     ClusterAuthorizationResource:
       name: authorization_resource
       in: path
@@ -6668,6 +6946,83 @@ components:
                 required: [data]
                 properties:
                   data: { $ref: "#/components/schemas/KubernetesHPADeleteResult" }
+    KubernetesHPAMetricTrendSuccess:
+      description: HorizontalPodAutoscaler 运行时指标趋势
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesHPAMetricTrend" }
+    KubernetesVPAPageSuccess:
+      description: VerticalPodAutoscaler 分页结果或 CRD 不可用状态
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesVPAPage" }
+    KubernetesVPADetailSuccess:
+      description: VerticalPodAutoscaler 详情
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesVPADetail" }
+    KubernetesVPAMutationSuccess:
+      description: VerticalPodAutoscaler 写入结果或 DryRun 预览
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesVPAMutationResult" }
+    KubernetesKEDAPageSuccess:
+      description: KEDA ScaledObject 分页结果或 CRD 不可用状态
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesKEDAPage" }
+    KubernetesKEDADetailSuccess:
+      description: KEDA ScaledObject 详情，敏感 metadata 值会脱敏
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesKEDADetail" }
+    KubernetesKEDAMutationSuccess:
+      description: KEDA ScaledObject 写入结果或 DryRun 预览
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/KubernetesKEDAMutationResult" }
     KubernetesAuthorizationListSuccess:
       description: Kubernetes 授权资源分页结果
       content:
@@ -9746,6 +10101,305 @@ components:
         deleted: { type: boolean }
         dry_run: { type: boolean }
         target: { type: string }
+    KubernetesHPAMetricTrendPoint:
+      type: object
+      additionalProperties: false
+      required: [timestamp, current_replicas, desired_replicas, metrics]
+      properties:
+        timestamp: { $ref: "#/components/schemas/Timestamp" }
+        current_replicas: { type: integer, format: int32, minimum: 0 }
+        desired_replicas: { type: integer, format: int32, minimum: 0 }
+        metrics:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesHPAMetricView" }
+    KubernetesHPAMetricTrend:
+      type: object
+      additionalProperties: false
+      required: [uid, name, namespace, window_seconds, points]
+      properties:
+        uid: { type: string }
+        name: { type: string }
+        namespace: { type: string }
+        window_seconds: { type: integer, format: int64, const: 3600 }
+        points:
+          type: array
+          maxItems: 240
+          items: { $ref: "#/components/schemas/KubernetesHPAMetricTrendPoint" }
+    KubernetesAutoscalingTarget:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, name]
+      properties:
+        api_version: { type: string, const: apps/v1 }
+        kind: { type: string, enum: [Deployment, StatefulSet, DaemonSet] }
+        name: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesKEDATarget:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, name]
+      properties:
+        api_version: { type: string, const: apps/v1 }
+        kind: { type: string, enum: [Deployment, StatefulSet] }
+        name: { type: string, minLength: 1, maxLength: 253 }
+    KubernetesAutoscalingCondition:
+      type: object
+      additionalProperties: false
+      required: [type, status, reason, message]
+      properties:
+        type: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        message: { type: string }
+        last_transition_time: { $ref: "#/components/schemas/Timestamp" }
+    KubernetesVPAContainerPolicy:
+      type: object
+      additionalProperties: false
+      required: [container_name, mode, min_allowed, max_allowed, controlled_resources, controlled_values]
+      properties:
+        container_name: { type: string, minLength: 1, maxLength: 63 }
+        mode: { type: string, enum: ["", Auto, Off] }
+        min_allowed:
+          type: object
+          additionalProperties: { type: string }
+        max_allowed:
+          type: object
+          additionalProperties: { type: string }
+        controlled_resources:
+          type: array
+          uniqueItems: true
+          maxItems: 2
+          items: { type: string, enum: [cpu, memory] }
+        controlled_values: { type: string, enum: ["", RequestsOnly, RequestsAndLimits] }
+    KubernetesVPASpecInput:
+      type: object
+      additionalProperties: false
+      required: [target, update_mode, container_policies]
+      properties:
+        target: { $ref: "#/components/schemas/KubernetesAutoscalingTarget" }
+        update_mode: { type: string, enum: ["", Off, Initial, Recreate, InPlaceOrRecreate, InPlace] }
+        container_policies:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/KubernetesVPAContainerPolicy" }
+    KubernetesVPARecommendation:
+      type: object
+      additionalProperties: false
+      required: [container_name, target, lower_bound, upper_bound, uncapped_target]
+      properties:
+        container_name: { type: string }
+        target:
+          type: object
+          additionalProperties: { type: string }
+        lower_bound:
+          type: object
+          additionalProperties: { type: string }
+        upper_bound:
+          type: object
+          additionalProperties: { type: string }
+        uncapped_target:
+          type: object
+          additionalProperties: { type: string }
+    KubernetesVPASummary:
+      type: object
+      additionalProperties: false
+      required: [namespace, name, uid, resource_version, generation, observed_generation, creation_timestamp, labels, target, update_mode, recommendation_count, conditions]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        uid: { type: string }
+        resource_version: { type: string }
+        generation: { type: integer, format: int64 }
+        observed_generation: { type: integer, format: int64 }
+        creation_timestamp: { $ref: "#/components/schemas/Timestamp" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        target: { $ref: "#/components/schemas/KubernetesAutoscalingTarget" }
+        update_mode: { type: string }
+        recommendation_count: { type: integer, minimum: 0 }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesAutoscalingCondition" }
+    KubernetesVPADetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesVPASummary"
+        - type: object
+          required: [annotations, container_policies, recommendations]
+          properties:
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            container_policies:
+              type: array
+              items: { $ref: "#/components/schemas/KubernetesVPAContainerPolicy" }
+            recommendations:
+              type: array
+              items: { $ref: "#/components/schemas/KubernetesVPARecommendation" }
+    KubernetesVPAPage:
+      type: object
+      additionalProperties: false
+      required: [available, autoscalers, continue_token, resource_version, remaining_item_count]
+      properties:
+        available: { type: boolean }
+        unavailable_reason: { type: string, enum: [not_installed] }
+        autoscalers:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesVPASummary" }
+        continue_token: { type: string }
+        resource_version: { type: string }
+        remaining_item_count: { type: [integer, "null"], minimum: 0 }
+    KubernetesCreateVPARequest:
+      type: object
+      additionalProperties: false
+      required: [name, spec, confirm]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 253 }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        spec: { $ref: "#/components/schemas/KubernetesVPASpecInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesUpdateVPARequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, spec, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 256 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        spec: { $ref: "#/components/schemas/KubernetesVPASpecInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesVPAMutationResult:
+      type: object
+      additionalProperties: false
+      required: [autoscaler, dry_run]
+      properties:
+        autoscaler: { $ref: "#/components/schemas/KubernetesVPADetail" }
+        dry_run: { type: boolean }
+    KubernetesKEDATrigger:
+      type: object
+      additionalProperties: false
+      required: [type, name, use_cached_metrics, metadata, redacted_metadata_keys, authentication_ref_name]
+      properties:
+        type: { type: string, minLength: 1, maxLength: 63 }
+        name: { type: string, maxLength: 63 }
+        use_cached_metrics: { type: boolean }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        redacted_metadata_keys:
+          type: array
+          items: { type: string }
+        authentication_ref_name: { type: string, maxLength: 253 }
+    KubernetesKEDASpecInput:
+      type: object
+      additionalProperties: false
+      required: [target, polling_interval, cooldown_period, min_replicas, max_replicas, triggers]
+      properties:
+        target: { $ref: "#/components/schemas/KubernetesKEDATarget" }
+        polling_interval: { type: integer, format: int64, minimum: 1, maximum: 3600 }
+        cooldown_period: { type: integer, format: int64, minimum: 0, maximum: 86400 }
+        min_replicas: { type: integer, format: int32, minimum: 0, maximum: 1000000 }
+        max_replicas: { type: integer, format: int32, minimum: 1, maximum: 1000000 }
+        triggers:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: "#/components/schemas/KubernetesKEDATrigger" }
+    KubernetesKEDASummary:
+      type: object
+      additionalProperties: false
+      required: [namespace, name, uid, resource_version, generation, creation_timestamp, labels, target, min_replicas, max_replicas, trigger_count, ready, active, fallback, paused]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        uid: { type: string }
+        resource_version: { type: string }
+        generation: { type: integer, format: int64 }
+        creation_timestamp: { $ref: "#/components/schemas/Timestamp" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        target: { $ref: "#/components/schemas/KubernetesAutoscalingTarget" }
+        min_replicas: { type: integer, format: int32, minimum: 0 }
+        max_replicas: { type: integer, format: int32, minimum: 1 }
+        trigger_count: { type: integer, minimum: 0 }
+        ready: { type: boolean }
+        active: { type: boolean }
+        fallback: { type: boolean }
+        paused: { type: boolean }
+    KubernetesKEDADetail:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/KubernetesKEDASummary"
+        - type: object
+          required: [annotations, polling_interval, cooldown_period, triggers, conditions, external_metric_names, hpa_name]
+          properties:
+            annotations:
+              type: object
+              additionalProperties: { type: string }
+            polling_interval: { type: integer, format: int64, minimum: 1 }
+            cooldown_period: { type: integer, format: int64, minimum: 0 }
+            triggers:
+              type: array
+              items: { $ref: "#/components/schemas/KubernetesKEDATrigger" }
+            conditions:
+              type: array
+              items: { $ref: "#/components/schemas/KubernetesAutoscalingCondition" }
+            external_metric_names:
+              type: array
+              items: { type: string }
+            hpa_name: { type: string }
+    KubernetesKEDAPage:
+      type: object
+      additionalProperties: false
+      required: [available, scaled_objects, continue_token, resource_version, remaining_item_count]
+      properties:
+        available: { type: boolean }
+        unavailable_reason: { type: string, enum: [not_installed] }
+        scaled_objects:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesKEDASummary" }
+        continue_token: { type: string }
+        resource_version: { type: string }
+        remaining_item_count: { type: [integer, "null"], minimum: 0 }
+    KubernetesCreateKEDARequest:
+      type: object
+      additionalProperties: false
+      required: [name, spec, confirm]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 253 }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+        spec: { $ref: "#/components/schemas/KubernetesKEDASpecInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesUpdateKEDARequest:
+      type: object
+      additionalProperties: false
+      required: [uid, resource_version, spec, confirm]
+      properties:
+        uid: { type: string, minLength: 1, maxLength: 256 }
+        resource_version: { type: string, minLength: 1, maxLength: 256 }
+        spec: { $ref: "#/components/schemas/KubernetesKEDASpecInput" }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    KubernetesKEDAMutationResult:
+      type: object
+      additionalProperties: false
+      required: [autoscaler, dry_run]
+      properties:
+        autoscaler: { $ref: "#/components/schemas/KubernetesKEDADetail" }
+        dry_run: { type: boolean }
     KubernetesAuthorizationResource:
       type: string
       enum: [serviceaccounts, roles, clusterroles, rolebindings, clusterrolebindings]

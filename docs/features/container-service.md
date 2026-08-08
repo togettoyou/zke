@@ -2,7 +2,7 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass、HorizontalPodAutoscaler、
+当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass、HorizontalPodAutoscaler，以及可选的 VerticalPodAutoscaler 与 KEDA ScaledObject、
 五类策略对象与 Kubernetes RBAC
 类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
 
@@ -60,6 +60,16 @@
 - `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers` 和
   对应单对象 `GET`、`PUT`、`DELETE`：固定管理 `autoscaling/v2 HorizontalPodAutoscaler`；类型化创建和更新
   只接受同一 Namespace 中的 Deployment/StatefulSet，以及 Resource/ContainerResource 指标和伸缩行为；
+- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/metrics-trend`：
+  从 HPA status 采样当前指标和副本数，返回 Server 进程内最近一小时、最多 240 点的轻量趋势；每个 HPA 至少间隔
+  5 秒采样，Console 每 15 秒刷新，Server 重启会清空这段运行时历史；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/verticalpodautoscalers` 与
+  对应单对象 `GET`、`PUT`、`DELETE`：类型化管理可选的 `autoscaling.k8s.io/v1 VerticalPodAutoscaler`，支持
+  Deployment、StatefulSet、DaemonSet 目标、明确的更新模式、容器资源边界、建议值和 Condition；
+- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/scaledobjects` 与对应
+  单对象 `GET`、`PUT`、`DELETE`：类型化管理可选的 `keda.sh/v1alpha1 ScaledObject`，支持 Deployment、
+  StatefulSet 目标、副本区间、轮询/冷却时间、触发器、认证引用和控制器状态；VPA/KEDA CRD 未安装时列表以
+  `available=false` 返回，不把可选组件缺失显示成容器服务故障；
 - 集群级 `/authorization/{authorization_resource}` 与命名空间级
   `/namespaces/{namespace_name}/authorization/{authorization_resource}` 提供 ServiceAccount、Role、ClusterRole、
   RoleBinding、ClusterRoleBinding 的类型化 List/Detail/Create/Update/Delete；读取和写入分别要求独立的
@@ -607,7 +617,15 @@ ScaleUp/ScaleDown 稳定窗口、Max/Min/Disabled 选择策略，以及 Pods/Per
 
 HPA 与手动伸缩会同时写目标工作负载的 replicas；启用 HPA 后，手动副本数可能在下一次控制循环被覆盖。删除 HPA
 只停止后续自动调节，不删除目标工作负载，也不会自动把副本数恢复到启用前的值。实际写入继续要求 CSRF、DryRun、
-显式确认、幂等和审计。VPA 与 KEDA 依赖额外组件或 CRD，本轮未作为内置能力实现。
+显式确认、幂等和审计。
+
+VPA 与 KEDA 是可选集成，ZKE 不安装对应控制器或 CRD。VPA 类型化接口固定 `autoscaling.k8s.io/v1`，创建时
+不接受已废弃的 `Auto` 更新模式，而要求显式选择 Off、Initial、Recreate、InPlaceOrRecreate 或 InPlace；容器策略
+只允许 CPU/Memory 的正数 Kubernetes Quantity，且下界不得超过上界。KEDA 类型化接口固定
+`keda.sh/v1alpha1`，每个触发器必须提供非空 metadata；密码、Token、Secret、API Key、账户密钥、SAS Token
+和连接串等敏感值不得直接写入 metadata，必须用 `authentication_ref_name` 引用同 Namespace 的
+TriggerAuthentication。为兼容集群中已有对象，读取时发现这些敏感键只返回 `[redacted]` 并列出脱敏键，不把正文
+送到 Console、日志或审计。类型化编辑会拒绝把脱敏占位符写回，操作者需先移除敏感键并配置认证引用。
 
 Console 自动伸缩页面列出所选命名空间的 HPA，展示目标工作负载、当前副本与期望副本、副本区间、指标数量、
 状态和最近一次伸缩时间。状态只显示需要注意的情况——无法伸缩、指标不可用、已触达上下限、尚未同步——健康的
@@ -621,6 +639,12 @@ Max/Min/Disabled 选择策略、Pods/Percent 策略）。更新替换整份 spec
 详情仍可读取，编辑请走 YAML——该表单不会打开，并说明用它保存会丢掉这些指标。
 
 HPA 摘要同时返回 `generation` 与 `observed_generation`，Console 据此区分控制器尚未处理最新 spec 的状态。
+详情页另外展示当前/期望副本折线与近期 status 指标样本。该趋势只是有界的 Server 运行时采样，不替代 Prometheus
+等持久监控后端，不跨 Server 重启保留，也不会主动安装 Metrics Server 或指标 Adapter。
+
+Console 自动伸缩区分 HPA、VPA 与 KEDA 三个视图。VPA/KEDA 都提供列表、详情、YAML、类型化创建和编辑、
+DryRun 后二次确认以及带 UID/resourceVersion 的删除。控制器未安装时对应视图说明所缺 CRD 并禁用创建，不影响
+HPA 或其他容器服务页面。
 
 策略管理后端把五类约束放在一组接口下：命名空间级的 `core/v1 ResourceQuota`、`core/v1 LimitRange`、
 `networking.k8s.io/v1 NetworkPolicy`、`policy/v1 PodDisruptionBudget`，以及集群级的

@@ -808,6 +808,11 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesHPA.get,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers/:hpa_name/metrics-trend",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesHPA.metricTrend,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/autoscaling/horizontalpodautoscalers/:hpa_name/describe",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,
@@ -830,6 +835,62 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceDelete, "cluster_id"),
 		handlers.kubernetesHPA.delete,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/verticalpodautoscalers",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesHPA.listVPA,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/verticalpodautoscalers",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceCreate, "cluster_id"),
+		handlers.kubernetesHPA.createVPA,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/verticalpodautoscalers/:vpa_name",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesHPA.getVPA,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/verticalpodautoscalers/:vpa_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceUpdate, "cluster_id"),
+		handlers.kubernetesHPA.updateVPA,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/verticalpodautoscalers/:vpa_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceDelete, "cluster_id"),
+		handlers.kubernetesHPA.deleteVPA,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/scaledobjects",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesHPA.listKEDA,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/scaledobjects",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceCreate, "cluster_id"),
+		handlers.kubernetesHPA.createKEDA,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/scaledobjects/:scaled_object_name",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.kubernetesHPA.getKEDA,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/scaledobjects/:scaled_object_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceUpdate, "cluster_id"),
+		handlers.kubernetesHPA.updateKEDA,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/autoscaling/scaledobjects/:scaled_object_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceDelete, "cluster_id"),
+		handlers.kubernetesHPA.deleteKEDA,
 	)
 	clusterRoutes.GET(
 		"/:cluster_id/policies/:policy_resource",

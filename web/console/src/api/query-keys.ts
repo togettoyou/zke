@@ -64,6 +64,19 @@ export const queryKeys = {
     ["autoscalers", clusterId, namespace, params] as const,
   autoscaler: (clusterId: string, namespace: string, name: string) =>
     ["autoscaler", clusterId, namespace, name] as const,
+  autoscalerMetricTrend: (clusterId: string, namespace: string, name: string) =>
+    ["autoscaler-metric-trend", clusterId, namespace, name] as const,
+  verticalPodAutoscalers: (
+    clusterId: string,
+    namespace: string,
+    params: Record<string, unknown> = {},
+  ) => ["vertical-pod-autoscalers", clusterId, namespace, params] as const,
+  verticalPodAutoscaler: (clusterId: string, namespace: string, name: string) =>
+    ["vertical-pod-autoscaler", clusterId, namespace, name] as const,
+  kedaScaledObjects: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
+    ["keda-scaled-objects", clusterId, namespace, params] as const,
+  kedaScaledObject: (clusterId: string, namespace: string, name: string) =>
+    ["keda-scaled-object", clusterId, namespace, name] as const,
   storageResources: (
     clusterId: string,
     namespace: string,
@@ -165,6 +178,9 @@ export const queryKeyPrefixes = {
   workloads: ["workloads"] as const,
   workload: ["workload"] as const,
   workloadRevisions: ["workload-revisions"] as const,
+  autoscalers: ["autoscalers"] as const,
+  verticalPodAutoscalers: ["vertical-pod-autoscalers"] as const,
+  kedaScaledObjects: ["keda-scaled-objects"] as const,
   configMaps: ["config-maps"] as const,
   configMap: ["config-map"] as const,
   secrets: ["secrets"] as const,

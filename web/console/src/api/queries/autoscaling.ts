@@ -2,7 +2,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, idempotentHeaders, unwrap } from "../client";
 import { queryKeys, queryKeyPrefixes } from "../query-keys";
-import type { KubernetesHPADetail, KubernetesHPASpecInput, KubernetesHPASummary } from "../types";
+import type {
+  KubernetesHPADetail,
+  KubernetesHPAMetricTrend,
+  KubernetesHPASpecInput,
+  KubernetesHPASummary,
+  KubernetesKEDADetail,
+  KubernetesKEDASpecInput,
+  KubernetesKEDASummary,
+  KubernetesVPADetail,
+  KubernetesVPASpecInput,
+  KubernetesVPASummary,
+} from "../types";
 
 export type AutoscalerListParams = {
   limit?: number;
@@ -25,6 +36,16 @@ const LIST_PATH =
   "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers";
 const ITEM_PATH =
   "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}";
+const TREND_PATH =
+  "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/metrics-trend";
+const VPA_LIST_PATH =
+  "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/verticalpodautoscalers";
+const VPA_ITEM_PATH =
+  "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/verticalpodautoscalers/{vpa_name}";
+const KEDA_LIST_PATH =
+  "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/scaledobjects";
+const KEDA_ITEM_PATH =
+  "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/scaledobjects/{scaled_object_name}";
 
 export function useAutoscalers(
   clusterId: string | null,
@@ -71,6 +92,131 @@ export function useAutoscaler(
           signal,
         }),
       ) as AutoscalerDetail,
+    enabled: Boolean(clusterId && namespace && name),
+  });
+}
+
+export function useAutoscalerMetricTrend(
+  clusterId: string | null,
+  namespace: string | null,
+  name: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.autoscalerMetricTrend(clusterId ?? "", namespace ?? "", name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(TREND_PATH, {
+          params: {
+            path: {
+              cluster_id: clusterId as string,
+              namespace_name: namespace as string,
+              hpa_name: name as string,
+            },
+          },
+          signal,
+        }),
+      ) as KubernetesHPAMetricTrend,
+    enabled: Boolean(clusterId && namespace && name),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useVerticalPodAutoscalers(
+  clusterId: string | null,
+  namespace: string | null,
+  params: AutoscalerListParams = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.verticalPodAutoscalers(clusterId ?? "", namespace ?? "", params),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(VPA_LIST_PATH, {
+          params: {
+            path: { cluster_id: clusterId as string, namespace_name: namespace as string },
+            query: params,
+          },
+          signal,
+        }),
+      ) as {
+        available: boolean;
+        unavailable_reason?: string;
+        autoscalers: KubernetesVPASummary[];
+        continue_token: string;
+      },
+    enabled: Boolean(clusterId && namespace),
+  });
+}
+
+export function useVerticalPodAutoscaler(
+  clusterId: string | null,
+  namespace: string | null,
+  name: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.verticalPodAutoscaler(clusterId ?? "", namespace ?? "", name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(VPA_ITEM_PATH, {
+          params: {
+            path: {
+              cluster_id: clusterId as string,
+              namespace_name: namespace as string,
+              vpa_name: name as string,
+            },
+          },
+          signal,
+        }),
+      ) as KubernetesVPADetail,
+    enabled: Boolean(clusterId && namespace && name),
+  });
+}
+
+export function useKEDAScaledObjects(
+  clusterId: string | null,
+  namespace: string | null,
+  params: AutoscalerListParams = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.kedaScaledObjects(clusterId ?? "", namespace ?? "", params),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(KEDA_LIST_PATH, {
+          params: {
+            path: { cluster_id: clusterId as string, namespace_name: namespace as string },
+            query: params,
+          },
+          signal,
+        }),
+      ) as {
+        available: boolean;
+        unavailable_reason?: string;
+        scaled_objects: KubernetesKEDASummary[];
+        continue_token: string;
+      },
+    enabled: Boolean(clusterId && namespace),
+  });
+}
+
+export function useKEDAScaledObject(
+  clusterId: string | null,
+  namespace: string | null,
+  name: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.kedaScaledObject(clusterId ?? "", namespace ?? "", name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(KEDA_ITEM_PATH, {
+          params: {
+            path: {
+              cluster_id: clusterId as string,
+              namespace_name: namespace as string,
+              scaled_object_name: name as string,
+            },
+          },
+          signal,
+        }),
+      ) as KubernetesKEDADetail,
     enabled: Boolean(clusterId && namespace && name),
   });
 }
@@ -206,5 +352,194 @@ export function useDeleteAutoscaler() {
       }
       await invalidate(variables);
     },
+  });
+}
+
+type ExtensionMutationTarget = MutationTarget & {
+  name: string;
+  uid?: string;
+  resourceVersion?: string;
+};
+
+function useExtensionInvalidation(kind: "vpa" | "keda") {
+  const queryClient = useQueryClient();
+  return async (input: ExtensionMutationTarget) => {
+    await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents });
+    if (input.dryRun) return;
+    await queryClient.invalidateQueries({
+      queryKey:
+        kind === "vpa"
+          ? ["vertical-pod-autoscalers", input.clusterId, input.namespace]
+          : ["keda-scaled-objects", input.clusterId, input.namespace],
+    });
+    await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.workloads });
+    await queryClient.invalidateQueries({
+      queryKey:
+        kind === "vpa"
+          ? queryKeys.verticalPodAutoscaler(input.clusterId, input.namespace, input.name)
+          : queryKeys.kedaScaledObject(input.clusterId, input.namespace, input.name),
+    });
+  };
+}
+
+export function useCreateVerticalPodAutoscaler() {
+  const invalidate = useExtensionInvalidation("vpa");
+  return useMutation({
+    mutationFn: async (input: MutationTarget & { name: string; spec: KubernetesVPASpecInput }) =>
+      unwrap(
+        await api.POST(VPA_LIST_PATH, {
+          params: {
+            path: { cluster_id: input.clusterId, namespace_name: input.namespace },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: {
+            name: input.name,
+            spec: input.spec,
+            dry_run: input.dryRun,
+            confirm: !input.dryRun,
+          },
+        }),
+      ),
+    onSuccess: (_data, variables) => invalidate(variables),
+  });
+}
+
+export function useUpdateVerticalPodAutoscaler() {
+  const invalidate = useExtensionInvalidation("vpa");
+  return useMutation({
+    mutationFn: async (
+      input: ExtensionMutationTarget & {
+        uid: string;
+        resourceVersion: string;
+        spec: KubernetesVPASpecInput;
+      },
+    ) =>
+      unwrap(
+        await api.PUT(VPA_ITEM_PATH, {
+          params: {
+            path: {
+              cluster_id: input.clusterId,
+              namespace_name: input.namespace,
+              vpa_name: input.name,
+            },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: {
+            uid: input.uid,
+            resource_version: input.resourceVersion,
+            spec: input.spec,
+            dry_run: input.dryRun,
+            confirm: !input.dryRun,
+          },
+        }),
+      ),
+    onSuccess: (_data, variables) => invalidate(variables),
+  });
+}
+
+export function useDeleteVerticalPodAutoscaler() {
+  const invalidate = useExtensionInvalidation("vpa");
+  return useMutation({
+    mutationFn: async (input: ExtensionMutationTarget & { uid: string; resourceVersion: string }) =>
+      unwrap(
+        await api.DELETE(VPA_ITEM_PATH, {
+          params: {
+            path: {
+              cluster_id: input.clusterId,
+              namespace_name: input.namespace,
+              vpa_name: input.name,
+            },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: {
+            uid: input.uid,
+            resource_version: input.resourceVersion,
+            dry_run: input.dryRun,
+            confirm: !input.dryRun,
+          },
+        }),
+      ),
+    onSuccess: (_data, variables) => invalidate(variables),
+  });
+}
+
+export function useCreateKEDAScaledObject() {
+  const invalidate = useExtensionInvalidation("keda");
+  return useMutation({
+    mutationFn: async (input: MutationTarget & { name: string; spec: KubernetesKEDASpecInput }) =>
+      unwrap(
+        await api.POST(KEDA_LIST_PATH, {
+          params: {
+            path: { cluster_id: input.clusterId, namespace_name: input.namespace },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: {
+            name: input.name,
+            spec: input.spec,
+            dry_run: input.dryRun,
+            confirm: !input.dryRun,
+          },
+        }),
+      ),
+    onSuccess: (_data, variables) => invalidate(variables),
+  });
+}
+
+export function useUpdateKEDAScaledObject() {
+  const invalidate = useExtensionInvalidation("keda");
+  return useMutation({
+    mutationFn: async (
+      input: ExtensionMutationTarget & {
+        uid: string;
+        resourceVersion: string;
+        spec: KubernetesKEDASpecInput;
+      },
+    ) =>
+      unwrap(
+        await api.PUT(KEDA_ITEM_PATH, {
+          params: {
+            path: {
+              cluster_id: input.clusterId,
+              namespace_name: input.namespace,
+              scaled_object_name: input.name,
+            },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: {
+            uid: input.uid,
+            resource_version: input.resourceVersion,
+            spec: input.spec,
+            dry_run: input.dryRun,
+            confirm: !input.dryRun,
+          },
+        }),
+      ),
+    onSuccess: (_data, variables) => invalidate(variables),
+  });
+}
+
+export function useDeleteKEDAScaledObject() {
+  const invalidate = useExtensionInvalidation("keda");
+  return useMutation({
+    mutationFn: async (input: ExtensionMutationTarget & { uid: string; resourceVersion: string }) =>
+      unwrap(
+        await api.DELETE(KEDA_ITEM_PATH, {
+          params: {
+            path: {
+              cluster_id: input.clusterId,
+              namespace_name: input.namespace,
+              scaled_object_name: input.name,
+            },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: {
+            uid: input.uid,
+            resource_version: input.resourceVersion,
+            dry_run: input.dryRun,
+            confirm: !input.dryRun,
+          },
+        }),
+      ),
+    onSuccess: (_data, variables) => invalidate(variables),
   });
 }

@@ -199,7 +199,7 @@ Deployment。不会创建 Kubernetes Service，
 或 `apply` 该 identity Secret，避免覆盖 Agent 已签发的身份。Enrollment Secret 默认保留；Agent 通过
 Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Secret。
 
-该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass、ServiceAccount、四类 RBAC 资源、Pod Logs 和 Kubernetes Event 当前后端能力。
+该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、可选 VerticalPodAutoscaler/KEDA ScaledObject、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass、ServiceAccount、四类 RBAC 资源、Pod Logs 和 Kubernetes Event 当前后端能力。
 其中 `apiextensions.k8s.io/v1 customresourcedefinitions` 只授予 `get` 与 `list`，仅用于在 Discovery 目录中
 标记哪些资源来自 CRD，不包含定义或修改 CRD 的能力。Node、Namespace 和 Pod 的 `update` 用于完整 YAML 管理，Pod Logs 只增加 `pods/log` 的 `get`，Pod Exec
 只增加 `pods/exec` 的 `create`，Pod Port Forward 只增加 `pods/portforward` 的 `create`，Node Drain 只增加
@@ -212,7 +212,11 @@ Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限；需要读取�
 在 Kubernetes 授权管理后端上线前使用旧清单接入的集群不会自动获得新增权限；管理员需要增加
 `core/v1 serviceaccounts` 与 `rbac.authorization.k8s.io/v1 roles,clusterroles,rolebindings,clusterrolebindings`
 的 `get`、`list`、`create`、`update`、`delete`，且不应增加 `escalate`、`bind` 或 `impersonate`。在自动伸缩后端上线前使用旧清单接入的集群需要为同一 ClusterRole 增加
-`autoscaling/v2 horizontalpodautoscalers` 的 `get`、`list`、`create`、`update`、`delete`。在存储后端上线前
+`autoscaling/v2 horizontalpodautoscalers` 的 `get`、`list`、`create`、`update`、`delete`。在 VPA/KEDA 扩展
+上线前生成清单的集群，如需使用对应可选控制器，还需分别增加
+`autoscaling.k8s.io/v1 verticalpodautoscalers` 与 `keda.sh/v1alpha1 scaledobjects` 的
+`get`、`list`、`create`、`update`、`delete`；不使用这些控制器的集群无需安装 CRD，也无需额外授权。该规则不包含
+TriggerAuthentication 或 Secret 读取，KEDA 控制器使用自己的 ServiceAccount 解析认证引用。在存储后端上线前
 接入的集群还需增加
 `core/v1 persistentvolumes,persistentvolumeclaims` 与 `storage.k8s.io/v1 storageclasses` 的
 `get`、`list`、`create`、`update`、`delete`。在 ConfigMap 后端上线前接入的集群还需增加

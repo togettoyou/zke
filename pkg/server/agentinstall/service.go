@@ -372,6 +372,16 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "create", "update", "delete"},
 			},
 			{
+				APIGroups: []string{"autoscaling.k8s.io"},
+				Resources: []string{"verticalpodautoscalers"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
+				APIGroups: []string{"keda.sh"},
+				Resources: []string{"scaledobjects"},
+				Verbs:     []string{"get", "list", "create", "update", "delete"},
+			},
+			{
 				APIGroups: []string{""},
 				// The two Namespace-level constraints: how much may be consumed,
 				// and what a container's limits default to.

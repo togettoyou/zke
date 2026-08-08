@@ -13,11 +13,13 @@ import (
 )
 
 type fakeKubernetesHPAService struct {
-	listInput   kubernetesresource.ListHorizontalPodAutoscalersInput
-	createInput kubernetesresource.CreateHorizontalPodAutoscalerInput
-	updateInput kubernetesresource.UpdateHorizontalPodAutoscalerInput
-	deleteInput kubernetesresource.DeleteHorizontalPodAutoscalerInput
-	err         error
+	listInput       kubernetesresource.ListHorizontalPodAutoscalersInput
+	createInput     kubernetesresource.CreateHorizontalPodAutoscalerInput
+	updateInput     kubernetesresource.UpdateHorizontalPodAutoscalerInput
+	deleteInput     kubernetesresource.DeleteHorizontalPodAutoscalerInput
+	vpaCreateInput  kubernetesresource.CreateVPAInput
+	kedaDeleteInput kubernetesresource.DeleteAutoscalingExtensionInput
+	err             error
 }
 
 func (service *fakeKubernetesHPAService) ListHorizontalPodAutoscalers(
@@ -53,6 +55,52 @@ func (service *fakeKubernetesHPAService) DeleteHorizontalPodAutoscaler(
 	input kubernetesresource.DeleteHorizontalPodAutoscalerInput,
 ) error {
 	service.deleteInput = input
+	return service.err
+}
+
+func (service *fakeKubernetesHPAService) GetHorizontalPodAutoscalerMetricTrend(context.Context, string, string, string) (kubernetesresource.HPAMetricTrend, error) {
+	return kubernetesresource.HPAMetricTrend{}, service.err
+}
+
+func (service *fakeKubernetesHPAService) ListVerticalPodAutoscalers(context.Context, kubernetesresource.AutoscalingExtensionListInput) (kubernetesresource.VPAPage, error) {
+	return kubernetesresource.VPAPage{}, service.err
+}
+
+func (service *fakeKubernetesHPAService) GetVerticalPodAutoscaler(context.Context, string, string, string) (kubernetesresource.VPADetail, error) {
+	return kubernetesresource.VPADetail{}, service.err
+}
+
+func (service *fakeKubernetesHPAService) CreateVerticalPodAutoscaler(_ context.Context, input kubernetesresource.CreateVPAInput) (kubernetesresource.VPADetail, error) {
+	service.vpaCreateInput = input
+	return kubernetesresource.VPADetail{VPASummary: kubernetesresource.VPASummary{Name: input.Name}}, service.err
+}
+
+func (service *fakeKubernetesHPAService) UpdateVerticalPodAutoscaler(context.Context, kubernetesresource.UpdateVPAInput) (kubernetesresource.VPADetail, error) {
+	return kubernetesresource.VPADetail{}, service.err
+}
+
+func (service *fakeKubernetesHPAService) DeleteVerticalPodAutoscaler(context.Context, kubernetesresource.DeleteAutoscalingExtensionInput) error {
+	return service.err
+}
+
+func (service *fakeKubernetesHPAService) ListKEDAScaledObjects(context.Context, kubernetesresource.AutoscalingExtensionListInput) (kubernetesresource.KEDAScaledObjectPage, error) {
+	return kubernetesresource.KEDAScaledObjectPage{}, service.err
+}
+
+func (service *fakeKubernetesHPAService) GetKEDAScaledObject(context.Context, string, string, string) (kubernetesresource.KEDAScaledObjectDetail, error) {
+	return kubernetesresource.KEDAScaledObjectDetail{}, service.err
+}
+
+func (service *fakeKubernetesHPAService) CreateKEDAScaledObject(context.Context, kubernetesresource.CreateKEDAScaledObjectInput) (kubernetesresource.KEDAScaledObjectDetail, error) {
+	return kubernetesresource.KEDAScaledObjectDetail{}, service.err
+}
+
+func (service *fakeKubernetesHPAService) UpdateKEDAScaledObject(context.Context, kubernetesresource.UpdateKEDAScaledObjectInput) (kubernetesresource.KEDAScaledObjectDetail, error) {
+	return kubernetesresource.KEDAScaledObjectDetail{}, service.err
+}
+
+func (service *fakeKubernetesHPAService) DeleteKEDAScaledObject(_ context.Context, input kubernetesresource.DeleteAutoscalingExtensionInput) error {
+	service.kedaDeleteInput = input
 	return service.err
 }
 
@@ -119,6 +167,50 @@ func TestKubernetesHPAHandlerRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestKubernetesVPAHandlerCreatesWithScopedSafetyContext(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeKubernetesHPAService{}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/clusters/"+testHTTPClusterID+"/namespaces/default/autoscaling/verticalpodautoscalers",
+		strings.NewReader(`{"name":"api","spec":{"target":{"api_version":"apps/v1","kind":"Deployment","name":"api"},"update_mode":"Off","container_policies":[]},"dry_run":true}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyKeyHeaderName, "vpa-create-0001")
+	hpaHandlerTestRouter(service).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body)
+	}
+	if service.vpaCreateInput.ClusterID != testHTTPClusterID || service.vpaCreateInput.Namespace != "default" ||
+		service.vpaCreateInput.Name != "api" || !service.vpaCreateInput.DryRun ||
+		service.vpaCreateInput.IdempotencyKey != "vpa-create-0001" {
+		t.Fatalf("unexpected VPA create input: %+v", service.vpaCreateInput)
+	}
+}
+
+func TestKubernetesKEDAHandlerRequiresDeleteConfirmation(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeKubernetesHPAService{}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/v1/clusters/"+testHTTPClusterID+"/namespaces/default/autoscaling/scaledobjects/worker",
+		strings.NewReader(`{"uid":"scaled-object-uid","resource_version":"8"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	hpaHandlerTestRouter(service).ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d: %s", response.Code, response.Body)
+	}
+	assertErrorCode(t, response, "confirmation_required")
+	if service.kedaDeleteInput.Name != "" {
+		t.Fatal("unconfirmed KEDA delete reached service")
+	}
+}
+
 func hpaHandlerTestRouter(service kubernetesHorizontalPodAutoscalerService) http.Handler {
 	configureGinMode.Do(func() { gin.SetMode(gin.ReleaseMode) })
 	router := gin.New()
@@ -129,5 +221,9 @@ func hpaHandlerTestRouter(service kubernetesHorizontalPodAutoscalerService) http
 	router.GET(base+"/:hpa_name", handler.get)
 	router.PUT(base+"/:hpa_name", handler.update)
 	router.DELETE(base+"/:hpa_name", handler.delete)
+	vpaBase := "/api/v1/clusters/:cluster_id/namespaces/:namespace_name/autoscaling/verticalpodautoscalers"
+	router.POST(vpaBase, handler.createVPA)
+	kedaBase := "/api/v1/clusters/:cluster_id/namespaces/:namespace_name/autoscaling/scaledobjects"
+	router.DELETE(kedaBase+"/:scaled_object_name", handler.deleteKEDA)
 	return router
 }
