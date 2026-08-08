@@ -179,6 +179,21 @@ func (*fakePodExecHTTPService) Run(
 	return podexec.Result{ExitCode: 7, OutputBytes: 6}, nil
 }
 
+func (*fakePodExecHTTPService) ListRecordings(
+	context.Context,
+	podexec.RecordingScope,
+) ([]podexec.Recording, error) {
+	return nil, nil
+}
+
+func (*fakePodExecHTTPService) GetRecording(
+	context.Context,
+	podexec.RecordingScope,
+	string,
+) (podexec.Recording, error) {
+	return podexec.Recording{}, podexec.ErrRecordingNotFound
+}
+
 func testHTTPSession() podexec.Session {
 	return podexec.Session{
 		ID:            "00000000-0000-4000-8000-000000000010",

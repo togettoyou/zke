@@ -91,6 +91,9 @@
   Pod UID、明确容器、`cluster.pod.exec`、CSRF、幂等键和显式确认，创建与用户及登录 Session 绑定的一次性票据；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions/{session_id}`：
   通过同源 `zke.pod-exec.v1` WebSocket 传输 stdin、stdout、stderr、resize 和 exit 帧；
+- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings` 与
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings/{recording_id}`：
+  使用独立 `cluster.pod.terminal_recording.read` 权限列出和读取显式选择录制的终端输出；
 - `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}` 与
   `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}`：
   ResourceQuota、LimitRange、NetworkPolicy 和 PodDisruptionBudget 的类型化 CRUD；
@@ -817,8 +820,9 @@ Kubernetes 之前先按容器状态判断该容器是否运行过：没有重启
 错误返回。Kubernetes 对这两种情况都回 400，照直传给操作者就成了「请求内容无效，请检查输入」，而请求本身
 是良构的，缺的是被请求的对象。快照和 Follow 都使用独立 QUIC
 Stream 逐块转发，默认每条最多 16 MiB，Follow 最长 30 分钟。Follow 会周期重新验证 Session 和权限；客户端
-断开、权限撤销、超时或 Agent 连接排空都会取消目标 Kubernetes 请求。HTTP 正文为未包装的 `text/plain`，
-终止状态和字节统计通过 Trailer 返回，日志正文不会进入 Server 日志或审计事件。
+断开、权限撤销、超时或 Agent 连接排空都会取消目标 Kubernetes 请求。默认 HTTP 正文为未包装的 `text/plain`，
+终止状态和字节统计通过 Trailer 返回；Console 使用 `application/x-ndjson`，日志块以 Base64 帧承载，最终 `end`
+帧明确区分正常结束、服务端字节上限、最长读取时长、权限撤销、取消和异常中断。日志正文不会进入 Server 日志或审计事件。
 
 Web Terminal 后端使用两步会话：先创建短期、一次性且与用户、登录 Session、Cluster、Pod UID、容器和路径绑定的
 票据，再以同源 WebSocket 消费。Agent 在 Kubernetes Exec 前重新读取 Pod 并核对 UID 和容器；到 Kubernetes
@@ -826,12 +830,16 @@ API Server 优先使用 WebSocket streaming protocol，仅在旧 API Server 或 
 时回退 SPDY。
 启动命令固定为优先 `bash`、不存在时回退 `/bin/sh`，不接受客户端提供任意命令。会话具有最大时长、空闲超时、输入/输出字节
 上限和 Server/单 Agent 并发上限，并周期重新验证 Session 与 `cluster.pod.exec`。审计只记录票据创建、目标和
-会话结果，不记录或摘要终端输入输出。该顺序与 Kubernetes 1.31 开始默认使用 WebSocket 的
+会话结果，不记录或摘要终端输入输出。操作者可显式选择录制 stdout/stderr；该选择额外要求
+`cluster.pod.terminal_recording.create`，stdin、Cookie、票据和认证头始终不录制。录制副本不超过终端输出上限，
+默认保留 7 天，过期后清理；读取另需 `cluster.pod.terminal_recording.read`，并重新按 Cluster UUID 判权和按
+Cluster、Namespace、Pod 名称、recording ID 联合定域，`cluster.pod.exec` 本身不授予历史输出读取能力。该顺序与 Kubernetes 1.31 开始默认使用 WebSocket 的
 [Streaming Transitions](https://kubernetes.io/zh-cn/blog/2024/08/20/websockets-transition/) 一致；SPDY 只作为
 未定义最低支持版本前的临时兼容路径。
 
 Console 终端入口在 Pod 列表行和详情页，需要 `cluster.pod.exec`（默认只授予 admin）。终端占据整个应用视图，
-打开前弹出确认，说明将在目标容器中启动交互式 Shell、命令以容器自身身份执行、以及审计不记录终端输入输出。
+打开前弹出确认，说明将在目标容器中启动交互式 Shell、命令以容器自身身份执行、以及默认不记录终端输入输出；
+持有录制创建权限时可在确认框显式勾选输出录制，持有读取权限时可打开同一 Pod 名称下的历史列表并按帧时间回放。
 确认后才创建票据并立即用它建立 WebSocket；票据不落任何前端存储，重新连接就是重新申请一张。视图打开时会重新
 读取 Pod，若 UID 与入口绑定的不一致则拒绝连接并要求返回列表重开。终端实例在整个视图生命周期内只创建一次，
 会话结束后保留回滚缓冲；离开视图或点击断开都会关闭 WebSocket，从而结束容器中的 Shell。终端尺寸由前端测量后
@@ -1058,10 +1066,10 @@ Kubernetes 请求。点击停止只放弃请求本身：已经到达的行留在
 同一行——否则一行长日志会在非页边距处断开，跨该处选中的文本还会多出一个换行。复制与下载取的是拼回的完整缓冲，
 不是 DOM 文本。
 
-Server 通过 HTTP Trailer 返回终止状态（`succeeded`、`timeout`、`canceled`、`access_revoked`、`failed`）和
-字节统计，但主流浏览器的 `fetch` 均不暴露 Trailer，因此 Console 目前无法区分「正常结束」与「服务端因字节
-上限、时长上限或权限撤销提前结束」，两者都显示为「已结束」。如果需要在界面上区分，需要另行设计在正文内或
-响应头中传达该状态的方式。
+Server 的原始文本表示继续通过 HTTP Trailer 返回终止状态和字节统计。主流浏览器的 `fetch` 不暴露 Trailer，
+因此 Console 请求 NDJSON 表示：任意二进制和换行安全地放入 Base64 `chunk` 帧，最终 `end` 帧携带
+`succeeded`、`limit_reached`、`timeout`、`canceled`、`access_revoked` 或 `failed`。状态栏据此显示精确原因，
+手动停止则由浏览器本地标记为 `stopped`；正文缺少最终帧会按协议中断而不是误报正常结束。
 
 Console 工作负载页面在目标 Cluster 和 Namespace 内按类型切换 Deployment、StatefulSet、DaemonSet、Job 和
 CronJob，列表展示状态、副本或 Job/CronJob 进度、镜像和创建时间，可下钻到包含副本或 Job/CronJob 状态、
@@ -1147,8 +1155,6 @@ Console 的容器高级设置以结构化行编辑端口，不开放 hostPort。
 后续规划能力包括：
 
 - 创建工作负载时联动创建 Service 与 HorizontalPodAutoscaler（需要先定义多对象写入的部分成功与回滚语义）；
-- 终端会话的录制与回放；
-- 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
 - 面向具体资源的表单化创建、更新和删除体验。
 
 产品体验将参考成熟 Kubernetes 管理平台的通用实践，但不会以与任何现有平台完全相同为目标。

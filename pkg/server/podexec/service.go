@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,7 @@ var (
 	ErrOutputLimit            = errors.New("Pod terminal output limit reached")
 	ErrUpstreamFailure        = errors.New("Kubernetes Pod Exec request failed")
 	ErrInvalidResponse        = errors.New("invalid Agent Pod Exec response")
+	ErrRecordingNotFound      = errors.New("Pod terminal recording not found")
 )
 
 type Requester interface {
@@ -50,10 +52,12 @@ type Requester interface {
 }
 
 type Config struct {
-	SessionTTL     time.Duration
-	MaxPending     int
-	MaxInputBytes  uint64
-	MaxOutputBytes uint64
+	SessionTTL         time.Duration
+	MaxPending         int
+	MaxInputBytes      uint64
+	MaxOutputBytes     uint64
+	MaxRecordingBytes  uint64
+	RecordingRetention time.Duration
 }
 
 type CreateInput struct {
@@ -68,6 +72,7 @@ type CreateInput struct {
 	Columns        uint32
 	Rows           uint32
 	Confirm        bool
+	RecordOutput   bool
 	Now            time.Time
 }
 
@@ -94,12 +99,54 @@ type Session struct {
 	Rows          uint32
 	CreatedAt     time.Time
 	ExpiresAt     time.Time
+	RecordingID   string
 }
 
 type Result struct {
 	ExitCode           int32
 	OutputBytes        uint64
 	OutputLimitReached bool
+	RecordingID        string
+	RecordingSaved     bool
+}
+
+type RecordingFrame struct {
+	OffsetMilliseconds int64  `json:"offset_ms"`
+	Stream             string `json:"stream"`
+	Data               []byte `json:"data"`
+}
+
+type Recording struct {
+	ID             string           `json:"id"`
+	UserID         string           `json:"user_id"`
+	ClusterID      string           `json:"cluster_id"`
+	Namespace      string           `json:"namespace"`
+	PodName        string           `json:"pod_name"`
+	PodUID         string           `json:"pod_uid"`
+	Container      string           `json:"container"`
+	Columns        uint32           `json:"columns"`
+	Rows           uint32           `json:"rows"`
+	StartedAt      time.Time        `json:"started_at"`
+	EndedAt        time.Time        `json:"ended_at"`
+	ExpiresAt      time.Time        `json:"expires_at"`
+	Result         string           `json:"result"`
+	ExitCode       int32            `json:"exit_code"`
+	OutputBytes    uint64           `json:"output_bytes"`
+	RecordingBytes uint64           `json:"recording_bytes"`
+	Truncated      bool             `json:"truncated"`
+	Frames         []RecordingFrame `json:"frames,omitempty"`
+}
+
+type RecordingScope struct {
+	ClusterID string
+	Namespace string
+	PodName   string
+}
+
+type RecordingStore interface {
+	SaveRecording(context.Context, Recording) error
+	ListRecordings(context.Context, RecordingScope, int) ([]Recording, error)
+	GetRecording(context.Context, RecordingScope, string) (Recording, error)
 }
 
 type idempotencyRecord struct {
@@ -113,9 +160,10 @@ type Service struct {
 	mutex       sync.Mutex
 	pending     map[string]Session
 	idempotency map[string]idempotencyRecord
+	recordings  RecordingStore
 }
 
-func NewService(requester Requester, config Config) *Service {
+func NewService(requester Requester, recordings RecordingStore, config Config) *Service {
 	if config.SessionTTL <= 0 {
 		config.SessionTTL = 30 * time.Second
 	}
@@ -128,11 +176,18 @@ func NewService(requester Requester, config Config) *Service {
 	if config.MaxOutputBytes == 0 {
 		config.MaxOutputBytes = agentprotocol.DefaultMaxPodExecOutputBytes
 	}
+	if config.MaxRecordingBytes == 0 || config.MaxRecordingBytes > config.MaxOutputBytes {
+		config.MaxRecordingBytes = config.MaxOutputBytes
+	}
+	if config.RecordingRetention <= 0 {
+		config.RecordingRetention = 7 * 24 * time.Hour
+	}
 	return &Service{
 		requester:   requester,
 		config:      config,
 		pending:     make(map[string]Session),
 		idempotency: make(map[string]idempotencyRecord),
+		recordings:  recordings,
 	}
 }
 
@@ -166,6 +221,13 @@ func (service *Service) Create(input CreateInput) (Session, error) {
 	if err != nil {
 		return Session{}, fmt.Errorf("generate Pod terminal session identifier: %w", err)
 	}
+	recordingID := ""
+	if input.RecordOutput {
+		recordingID, err = identifier.NewUUID()
+		if err != nil {
+			return Session{}, fmt.Errorf("generate Pod terminal recording identifier: %w", err)
+		}
+	}
 	session := Session{
 		ID:            sessionID,
 		UserID:        input.UserID,
@@ -179,6 +241,7 @@ func (service *Service) Create(input CreateInput) (Session, error) {
 		Rows:          input.Rows,
 		CreatedAt:     input.Now,
 		ExpiresAt:     input.Now.Add(service.config.SessionTTL),
+		RecordingID:   recordingID,
 	}
 	service.pending[session.ID] = session
 	service.idempotency[key] = idempotencyRecord{fingerprint: fingerprint, session: session}
@@ -215,12 +278,43 @@ func (service *Service) Run(
 	ctx context.Context,
 	session Session,
 	peer agentprotocol.PodExecPeer,
-) (Result, error) {
+) (result Result, runErr error) {
 	if service == nil || service.requester == nil {
 		return Result{}, ErrAgentUnsupported
 	}
 	if peer == nil || ctx == nil || !validation.IsUUID(session.ID) {
 		return Result{}, ErrInvalidInput
+	}
+	startedAt := time.Now().UTC()
+	var recorder *recordingPeer
+	if session.RecordingID != "" {
+		recorder = &recordingPeer{
+			PodExecPeer: peer,
+			startedAt:   startedAt,
+			maxBytes:    service.config.MaxRecordingBytes,
+		}
+		peer = recorder
+		result.RecordingID = session.RecordingID
+		defer func() {
+			if service.recordings == nil {
+				return
+			}
+			endedAt := time.Now().UTC()
+			recording := Recording{
+				ID: session.RecordingID, UserID: session.UserID,
+				ClusterID: session.ClusterID, Namespace: session.Namespace,
+				PodName: session.PodName, PodUID: session.PodUID,
+				Container: session.Container, Columns: session.Columns, Rows: session.Rows,
+				StartedAt: startedAt, EndedAt: endedAt,
+				ExpiresAt: endedAt.Add(service.config.RecordingRetention),
+				Result:    recordingResult(runErr), ExitCode: result.ExitCode,
+				OutputBytes: result.OutputBytes, RecordingBytes: recorder.bytes,
+				Truncated: recorder.truncated, Frames: recorder.frames,
+			}
+			persistContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			result.RecordingSaved = service.recordings.SaveRecording(persistContext, recording) == nil
+		}()
 	}
 	response, exit, err := service.requester.RequestPodExec(
 		ctx,
@@ -239,22 +333,95 @@ func (service *Service) Run(
 		peer,
 	)
 	if err != nil {
-		return Result{}, requestError(ctx, err)
+		return result, requestError(ctx, err)
 	}
 	if err := responseError(response); err != nil {
-		return Result{}, err
+		return result, err
 	}
 	if err := exitError(exit); err != nil {
-		return Result{
-			OutputBytes:        exit.GetOutputBytes(),
-			OutputLimitReached: exit.GetOutputLimitReached(),
-		}, err
+		result.OutputBytes = exit.GetOutputBytes()
+		result.OutputLimitReached = exit.GetOutputLimitReached()
+		return result, err
 	}
-	return Result{
-		ExitCode:           exit.GetExitCode(),
-		OutputBytes:        exit.GetOutputBytes(),
-		OutputLimitReached: exit.GetOutputLimitReached(),
-	}, nil
+	result.ExitCode = exit.GetExitCode()
+	result.OutputBytes = exit.GetOutputBytes()
+	result.OutputLimitReached = exit.GetOutputLimitReached()
+	return result, nil
+}
+
+func (service *Service) ListRecordings(
+	ctx context.Context,
+	scope RecordingScope,
+) ([]Recording, error) {
+	if service == nil || service.recordings == nil || validateRecordingScope(scope) != nil {
+		return nil, ErrInvalidInput
+	}
+	return service.recordings.ListRecordings(ctx, scope, 50)
+}
+
+func (service *Service) GetRecording(
+	ctx context.Context,
+	scope RecordingScope,
+	id string,
+) (Recording, error) {
+	if service == nil || service.recordings == nil || validateRecordingScope(scope) != nil ||
+		!validation.IsUUID(id) {
+		return Recording{}, ErrInvalidInput
+	}
+	return service.recordings.GetRecording(ctx, scope, id)
+}
+
+func validateRecordingScope(scope RecordingScope) error {
+	if !validation.IsUUID(scope.ClusterID) ||
+		len(k8svalidation.IsDNS1123Label(scope.Namespace)) != 0 ||
+		len(k8svalidation.IsDNS1123Subdomain(scope.PodName)) != 0 {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+type recordingPeer struct {
+	agentprotocol.PodExecPeer
+	startedAt time.Time
+	maxBytes  uint64
+	bytes     uint64
+	truncated bool
+	frames    []RecordingFrame
+}
+
+func (peer *recordingPeer) Send(ctx context.Context, frame *agentv1.PodExecFrame) error {
+	if output := frame.GetOutput(); output != nil && len(output.GetData()) > 0 {
+		remaining := peer.maxBytes - peer.bytes
+		data := output.GetData()
+		if uint64(len(data)) > remaining {
+			data = data[:remaining]
+			peer.truncated = true
+		}
+		if len(data) > 0 {
+			peer.frames = append(peer.frames, RecordingFrame{
+				OffsetMilliseconds: time.Since(peer.startedAt).Milliseconds(),
+				Stream:             strings.ToLower(strings.TrimPrefix(output.GetStream().String(), "POD_EXEC_OUTPUT_STREAM_")),
+				Data:               append([]byte(nil), data...),
+			})
+			peer.bytes += uint64(len(data))
+		}
+	}
+	return peer.PodExecPeer.Send(ctx, frame)
+}
+
+func recordingResult(err error) string {
+	switch {
+	case err == nil:
+		return "succeeded"
+	case errors.Is(err, ErrOutputLimit):
+		return "output_limit"
+	case errors.Is(err, ErrClusterTimeout), errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled), errors.Is(err, io.EOF):
+		return "canceled"
+	default:
+		return "failed"
+	}
 }
 
 func validateCreateInput(input CreateInput) error {
@@ -283,6 +450,7 @@ func createFingerprint(input CreateInput) ([sha256.Size]byte, error) {
 		Container     string
 		Columns       uint32
 		Rows          uint32
+		RecordOutput  bool
 	}{
 		input.AuthSessionID,
 		input.ClusterID,
@@ -292,6 +460,7 @@ func createFingerprint(input CreateInput) ([sha256.Size]byte, error) {
 		input.Container,
 		input.Columns,
 		input.Rows,
+		input.RecordOutput,
 	})
 	if err != nil {
 		return [sha256.Size]byte{}, err

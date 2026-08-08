@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -113,7 +115,8 @@ func (handler *kubernetesPodLogsHandler) stream(c *gin.Context) {
 		)
 	}
 
-	writer := newPodLogHTTPWriter(c.Writer, input.Follow, handler.config.WriteTimeout)
+	framed := strings.EqualFold(c.GetHeader("Accept"), "application/x-ndjson")
+	writer := newPodLogHTTPWriter(c.Writer, input.Follow, handler.config.WriteTimeout, framed)
 	if input.Follow {
 		// net/http's Server.WriteTimeout is an absolute per-request deadline.
 		// A quiet follow stream could otherwise expire before its first log line;
@@ -138,7 +141,11 @@ func (handler *kubernetesPodLogsHandler) stream(c *gin.Context) {
 		return
 	}
 	writer.Start()
-	writer.Finish("succeeded", result)
+	streamResult := "succeeded"
+	if result.LimitReached {
+		streamResult = "limit_reached"
+	}
+	writer.Finish(streamResult, result)
 	handler.recordPodLogs(c, identity.User.ID, target, "succeeded")
 }
 
@@ -353,14 +360,28 @@ type podLogHTTPWriter struct {
 	writeTimeout time.Duration
 	started      bool
 	bytesSent    uint64
+	framed       bool
+}
+
+type podLogFrame struct {
+	Type         string `json:"type"`
+	Data         []byte `json:"data,omitempty"`
+	Result       string `json:"result,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Message      string `json:"message,omitempty"`
+	Bytes        uint64 `json:"bytes,omitempty"`
+	LimitReached bool   `json:"limit_reached,omitempty"`
 }
 
 func newPodLogHTTPWriter(
 	writer http.ResponseWriter,
 	follow bool,
 	writeTimeout time.Duration,
+	framed bool,
 ) *podLogHTTPWriter {
-	return &podLogHTTPWriter{writer: writer, follow: follow, writeTimeout: writeTimeout}
+	return &podLogHTTPWriter{
+		writer: writer, follow: follow, writeTimeout: writeTimeout, framed: framed,
+	}
 }
 
 func (writer *podLogHTTPWriter) Started() bool {
@@ -372,7 +393,11 @@ func (writer *podLogHTTPWriter) Start() {
 		return
 	}
 	header := writer.writer.Header()
-	header.Set("Content-Type", "text/plain; charset=utf-8")
+	if writer.framed {
+		header.Set("Content-Type", "application/x-ndjson")
+	} else {
+		header.Set("Content-Type", "text/plain; charset=utf-8")
+	}
 	header.Set("Cache-Control", "no-store")
 	header.Set("X-Content-Type-Options", "nosniff")
 	header.Set("Trailer", podLogTrailerNames)
@@ -387,7 +412,16 @@ func (writer *podLogHTTPWriter) Write(data []byte) (int, error) {
 	writer.Start()
 	controller := http.NewResponseController(writer.writer)
 	_ = controller.SetWriteDeadline(time.Now().Add(writer.writeTimeout))
-	written, err := writer.writer.Write(data)
+	written := 0
+	var err error
+	if writer.framed {
+		err = json.NewEncoder(writer.writer).Encode(podLogFrame{Type: "chunk", Data: data})
+		if err == nil {
+			written = len(data)
+		}
+	} else {
+		written, err = writer.writer.Write(data)
+	}
 	writer.bytesSent += uint64(written)
 	if err == nil && writer.follow {
 		err = controller.Flush()
@@ -398,6 +432,17 @@ func (writer *podLogHTTPWriter) Write(data []byte) (int, error) {
 
 func (writer *podLogHTTPWriter) Finish(result string, stream podlogs.Result) {
 	writer.Start()
+	if writer.framed {
+		controller := http.NewResponseController(writer.writer)
+		_ = controller.SetWriteDeadline(time.Now().Add(writer.writeTimeout))
+		_ = json.NewEncoder(writer.writer).Encode(podLogFrame{
+			Type: "end", Result: result, Reason: stream.Reason, Message: stream.Message,
+			Bytes: writer.bytesSent, LimitReached: stream.LimitReached,
+		})
+		_ = controller.Flush()
+		_ = controller.SetWriteDeadline(time.Time{})
+		return
+	}
 	header := writer.writer.Header()
 	header.Set("X-ZKE-Log-Result", result)
 	header.Set("X-ZKE-Log-Limit-Reached", strconv.FormatBool(stream.LimitReached))

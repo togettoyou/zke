@@ -439,6 +439,22 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesPodExec.create,
 	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/terminal-recordings",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterPodTerminalRecordingRead,
+			"cluster_id",
+		),
+		handlers.kubernetesPodExec.listRecordings,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/terminal-recordings/:recording_id",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterPodTerminalRecordingRead,
+			"cluster_id",
+		),
+		handlers.kubernetesPodExec.getRecording,
+	)
 	clusterRoutes.POST(
 		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/port-forward-sessions",
 		handlers.authMiddleware.RequireCSRF,

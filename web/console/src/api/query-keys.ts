@@ -108,6 +108,10 @@ export const queryKeys = {
     ["pods", clusterId, namespace, params] as const,
   pod: (clusterId: string, namespace: string, name: string) =>
     ["pod", clusterId, namespace, name] as const,
+  podTerminalRecordings: (clusterId: string, namespace: string, name: string) =>
+    ["pod-terminal-recordings", clusterId, namespace, name] as const,
+  podTerminalRecording: (clusterId: string, namespace: string, name: string, recordingId: string) =>
+    ["pod-terminal-recording", clusterId, namespace, name, recordingId] as const,
   // Describe is its own read rather than part of the object's: it joins the
   // object with the Events naming it, answers to a second permission, and goes
   // stale on a different clock — the Events move while the object stands still.

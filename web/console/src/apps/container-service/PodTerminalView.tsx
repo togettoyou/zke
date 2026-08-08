@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Play, Square } from "lucide-react";
+import { History, Play, Square } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -11,6 +12,8 @@ import {
   POD_EXEC_SUBPROTOCOL,
   terminalSocketUrl,
   useCreateTerminalSession,
+  useTerminalRecording,
+  useTerminalRecordings,
   type PodExecClientMessage,
   type PodExecServerMessage,
 } from "@/api/queries/pod-exec";
@@ -22,7 +25,7 @@ import { ErrorState, LoadingState } from "@/components/common/state";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Alert } from "@/components/ui/misc";
+import { Alert, Checkbox } from "@/components/ui/misc";
 import {
   Select,
   SelectContent,
@@ -33,8 +36,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSubmissionKey } from "@/lib/use-submission-key";
+import { formatAbsolute } from "@/lib/time";
+import { queryKeys } from "@/api/query-keys";
 
-type ConnectionState = "idle" | "connecting" | "open" | "closed";
+type ConnectionState = "idle" | "connecting" | "open" | "replaying" | "closed";
 
 /** How a session ended, for the line written into the terminal when it does. */
 type ExitNotice = { text: string; failed: boolean };
@@ -53,6 +58,8 @@ export function PodTerminalView({
   namespace,
   podName,
   podUid,
+  canRecord,
+  canReadRecordings,
   onBack,
 }: {
   clusterId: string;
@@ -61,6 +68,8 @@ export function PodTerminalView({
   podName: string;
   /** Pinned when the entry was opened, so a rebuilt Pod cannot be attached to. */
   podUid: string;
+  canRecord: boolean;
+  canReadRecordings: boolean;
   onBack: () => void;
 }) {
   const detail = usePod(clusterId, namespace, podName);
@@ -83,6 +92,8 @@ export function PodTerminalView({
           clusterName={clusterName}
           namespace={namespace}
           pod={pod}
+          canRecord={canRecord}
+          canReadRecordings={canReadRecordings}
         />
       )}
     </div>
@@ -102,24 +113,43 @@ function TerminalSession({
   clusterName,
   namespace,
   pod,
+  canRecord,
+  canReadRecordings,
 }: {
   clusterId: string;
   clusterName: string;
   namespace: string;
   pod: KubernetesPodDetail;
+  canRecord: boolean;
+  canReadRecordings: boolean;
 }) {
   const choices = containerChoices(pod);
   const [container, setContainer] = useState(choices[0]?.name ?? "");
   const [state, setState] = useState<ConnectionState>("idle");
   const [exit, setExit] = useState<ExitNotice | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [recordOutput, setRecordOutput] = useState(false);
+  const [showRecordings, setShowRecordings] = useState(false);
+  const [replayId, setReplayId] = useState<string | null>(null);
+  const [replayNonce, setReplayNonce] = useState(0);
+  const [recordingNotice, setRecordingNotice] = useState<string | null>(null);
   const createSession = useCreateTerminalSession();
+  const queryClient = useQueryClient();
+  const recordings = useTerminalRecordings(
+    clusterId,
+    namespace,
+    pod.name,
+    canReadRecordings && showRecordings,
+  );
+  const recording = useTerminalRecording(clusterId, namespace, pod.name, replayId);
   const ticketKey = useSubmissionKey(confirming);
 
   const surfaceRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const replayTimerRef = useRef<number | null>(null);
+  const replayAttemptRef = useRef(0);
   // Invalidates a pending ticket request and all handlers belonging to an old
   // socket. In particular, a request resolving after this view unmounts must
   // not create a shell nobody can see or close.
@@ -192,6 +222,10 @@ function TerminalSession({
       connectionAttemptRef.current += 1;
       socketRef.current?.close(1000, "view closed");
       socketRef.current = null;
+      replayAttemptRef.current += 1;
+      if (replayTimerRef.current !== null) {
+        window.clearTimeout(replayTimerRef.current);
+      }
     };
   }, []);
 
@@ -199,6 +233,11 @@ function TerminalSession({
     connectionAttemptRef.current += 1;
     socketRef.current?.close(1000, "closed by operator");
     socketRef.current = null;
+    replayAttemptRef.current += 1;
+    if (replayTimerRef.current !== null) {
+      window.clearTimeout(replayTimerRef.current);
+      replayTimerRef.current = null;
+    }
     setState("closed");
   };
 
@@ -209,6 +248,7 @@ function TerminalSession({
     }
     fitRef.current?.fit();
     setExit(null);
+    setRecordingNotice(null);
     setState("connecting");
     const attempt = connectionAttemptRef.current + 1;
     connectionAttemptRef.current = attempt;
@@ -222,6 +262,7 @@ function TerminalSession({
         columns: terminal.cols,
         rows: terminal.rows,
         idempotencyKey: ticketKey,
+        recordOutput,
       })
       .then((session) => {
         if (connectionAttemptRef.current !== attempt) {
@@ -258,6 +299,19 @@ function TerminalSession({
             setExit(exitNotice(message));
             return;
           }
+          if (message.type === "recording") {
+            setRecordingNotice(
+              message.recording_saved
+                ? `终端输出已保存为记录 ${message.recording_id}`
+                : "终端输出录制保存失败，在线会话不受影响",
+            );
+            if (message.recording_saved) {
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.podTerminalRecordings(clusterId, namespace, pod.name),
+              });
+            }
+            return;
+          }
           if (message.data) {
             terminal.write(decodeTerminalOutput(message.data));
           }
@@ -284,6 +338,54 @@ function TerminalSession({
       });
   };
 
+  useEffect(() => {
+    const item = recording.data;
+    const terminal = terminalRef.current;
+    if (!item || !terminal || replayId === null) {
+      return;
+    }
+    replayAttemptRef.current += 1;
+    const attempt = replayAttemptRef.current;
+    terminal.reset();
+    setExit(null);
+    setState("replaying");
+    const frames = item.frames ?? [];
+    const started = performance.now();
+    let index = 0;
+    const writeNext = () => {
+      if (replayAttemptRef.current !== attempt) {
+        return;
+      }
+      if (index >= frames.length) {
+        replayTimerRef.current = null;
+        setState("closed");
+        setExit({ text: `[ZKE] 回放结束 · ${item.result}`, failed: item.result === "failed" });
+        return;
+      }
+      const frame = frames[index];
+      if (!frame) {
+        setState("closed");
+        return;
+      }
+      const delay = Math.max(0, frame.offset_ms - (performance.now() - started));
+      replayTimerRef.current = window.setTimeout(() => {
+        terminal.write(decodeTerminalOutput(frame.data));
+        index += 1;
+        writeNext();
+      }, delay);
+    };
+    writeNext();
+    return () => {
+      if (replayAttemptRef.current === attempt) {
+        replayAttemptRef.current += 1;
+      }
+      if (replayTimerRef.current !== null) {
+        window.clearTimeout(replayTimerRef.current);
+        replayTimerRef.current = null;
+      }
+    };
+  }, [recording.data, replayId, replayNonce]);
+
   // The notice is written into the terminal itself, where the operator is
   // already looking, rather than into a banner above it.
   useEffect(() => {
@@ -300,17 +402,14 @@ function TerminalSession({
     return accumulator;
   }, {});
   const connected = state === "open";
+  const busy = connected || state === "connecting" || state === "replaying";
 
   return (
     <>
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div className="grid content-start gap-1.5">
           <Label htmlFor="terminal-container">容器</Label>
-          <Select
-            value={container}
-            onValueChange={setContainer}
-            disabled={connected || state === "connecting"}
-          >
+          <Select value={container} onValueChange={setContainer} disabled={busy}>
             <SelectTrigger id="terminal-container" className="w-56">
               <SelectValue placeholder="选择容器" />
             </SelectTrigger>
@@ -330,10 +429,21 @@ function TerminalSession({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {connected ? (
+          {canReadRecordings ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={connected || state === "connecting"}
+              onClick={() => setShowRecordings((value) => !value)}
+            >
+              <History />
+              会话记录
+            </Button>
+          ) : null}
+          {connected || state === "replaying" ? (
             <Button size="sm" variant="secondary" className="text-danger" onClick={disconnect}>
               <Square />
-              断开
+              {state === "replaying" ? "停止回放" : "断开"}
             </Button>
           ) : (
             <Button
@@ -349,9 +459,60 @@ function TerminalSession({
         </div>
       </div>
 
+      {showRecordings ? (
+        <div className="border-border bg-muted/30 mb-3 max-h-44 overflow-auto rounded-lg border p-2">
+          {recordings.isLoading ? (
+            <span className="text-subtle-foreground text-xs">正在读取会话记录…</span>
+          ) : recordings.error ? (
+            <Alert tone="danger">{errorMessage(recordings.error)}</Alert>
+          ) : recordings.data?.length ? (
+            <div className="grid gap-2">
+              {recordings.data.map((item) => (
+                <div
+                  key={item.id}
+                  className="border-border bg-background flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs"
+                >
+                  <span className="font-medium">{item.container}</span>
+                  <span className="text-subtle-foreground">{formatAbsolute(item.started_at)}</span>
+                  <Badge tone={item.result === "failed" ? "danger" : "neutral"}>
+                    {item.result}
+                  </Badge>
+                  {item.truncated ? <Badge tone="warning">录制已截断</Badge> : null}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="ml-auto"
+                    disabled={busy || recording.isFetching}
+                    onClick={() => {
+                      setReplayId(item.id);
+                      setReplayNonce((value) => value + 1);
+                    }}
+                  >
+                    <Play />
+                    回放
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <span className="text-subtle-foreground text-xs">暂无尚未过期的终端输出录制。</span>
+          )}
+        </div>
+      ) : null}
+
       {createSession.error ? (
         <Alert tone="danger" className="mb-3">
           {errorMessage(createSession.error)}
+        </Alert>
+      ) : null}
+      {recording.error ? (
+        <Alert tone="danger" className="mb-3">
+          {errorMessage(recording.error)}
+        </Alert>
+      ) : null}
+      {recordingNotice ? (
+        <Alert tone="info" className="mb-3">
+          {recordingNotice}
         </Alert>
       ) : null}
 
@@ -397,7 +558,9 @@ function TerminalSession({
         ]}
         impacts={[
           "将在该容器中启动交互式 Shell，命令以容器自身的身份和权限执行。",
-          "Server 只记录会话的发起者、目标和结果，终端的输入与输出不写入审计。",
+          recordOutput
+            ? "将录制终端 stdout/stderr（可能包含敏感输出）并保留 7 天；stdin、Cookie 与票据始终不录制。"
+            : "Server 只记录会话的发起者、目标和结果，终端输入输出不写入审计或录制。",
           "票据一次性且很快过期，会话另有最长时长和空闲超时。",
         ]}
         confirmLabel="打开终端"
@@ -405,7 +568,17 @@ function TerminalSession({
         pending={createSession.isPending}
         error={createSession.error}
         onConfirm={connect}
-      />
+      >
+        {canRecord ? (
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox
+              checked={recordOutput}
+              onCheckedChange={(checked) => setRecordOutput(checked === true)}
+            />
+            <span>录制本次终端输出（不录制键盘输入，记录 7 天后过期）</span>
+          </label>
+        ) : null}
+      </SensitiveActionDialog>
     </>
   );
 }
@@ -438,6 +611,14 @@ function ConnectionBadge({ state }: { state: ConnectionState }) {
       <Badge tone="info">
         <StatusDot tone="info" />
         连接中
+      </Badge>
+    );
+  }
+  if (state === "replaying") {
+    return (
+      <Badge tone="info">
+        <StatusDot tone="info" />
+        回放中
       </Badge>
     );
   }

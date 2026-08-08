@@ -1,7 +1,9 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, idempotentHeaders, unwrap } from "../client";
 import { queryKeyPrefixes } from "../query-keys";
+import { queryKeys } from "../query-keys";
+import type { KubernetesPodTerminalRecording } from "../types";
 
 /** The wire protocol the `zke.pod-exec.v1` subprotocol carries, as JSON frames. */
 export const POD_EXEC_SUBPROTOCOL = "zke.pod-exec.v1";
@@ -28,7 +30,8 @@ export type PodExecServerMessage =
       message?: string;
       output_bytes?: number;
       output_limit_reached?: boolean;
-    };
+    }
+  | { type: "recording"; recording_id: string; recording_saved: boolean };
 
 /**
  * Requests a one-shot ticket for a Pod terminal.
@@ -50,6 +53,7 @@ export function useCreateTerminalSession() {
       columns: number;
       rows: number;
       idempotencyKey: string;
+      recordOutput: boolean;
     }) =>
       unwrap(
         await api.POST(
@@ -69,12 +73,70 @@ export function useCreateTerminalSession() {
               columns: input.columns,
               rows: input.rows,
               confirm: true,
+              record_output: input.recordOutput,
             },
           },
         ),
       ),
     // Opening a terminal is audited whether or not anything is typed into it.
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents }),
+  });
+}
+
+export function useTerminalRecordings(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: queryKeys.podTerminalRecordings(clusterId, namespace, podName),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId,
+                namespace_name: namespace,
+                pod_name: podName,
+              },
+            },
+            signal,
+          },
+        ),
+      ) as KubernetesPodTerminalRecording[],
+    enabled,
+  });
+}
+
+export function useTerminalRecording(
+  clusterId: string,
+  namespace: string,
+  podName: string,
+  recordingId: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.podTerminalRecording(clusterId, namespace, podName, recordingId ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings/{recording_id}",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId,
+                namespace_name: namespace,
+                pod_name: podName,
+                recording_id: recordingId as string,
+              },
+            },
+            signal,
+          },
+        ),
+      ) as KubernetesPodTerminalRecording,
+    enabled: recordingId !== null,
   });
 }
 

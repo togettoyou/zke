@@ -19,6 +19,20 @@ export type PodLogOptions = {
 
 export type PodLogStatus = "idle" | "loading" | "streaming" | "ended" | "error";
 
+export type PodLogTermination = {
+  result:
+    | "succeeded"
+    | "limit_reached"
+    | "timeout"
+    | "access_revoked"
+    | "canceled"
+    | "failed"
+    | "stopped";
+  reason?: string;
+  message?: string;
+  limitReached: boolean;
+};
+
 /**
  * One block of the buffer.
  *
@@ -53,6 +67,8 @@ export type PodLogStream = {
   bytes: number;
   /** True once the client buffer started discarding the oldest lines. */
   truncated: boolean;
+  /** The Server's explicit end frame; unlike HTTP trailers this is visible to fetch. */
+  termination: PodLogTermination | null;
   /** Restarts the stream from scratch. */
   reload: () => void;
   /**
@@ -115,6 +131,26 @@ function logsUrl(options: PodLogOptions): string {
   return `${path}?${query.toString()}`;
 }
 
+type PodLogWireFrame =
+  | { type: "chunk"; data: string }
+  | {
+      type: "end";
+      result: PodLogTermination["result"];
+      reason?: string;
+      message?: string;
+      bytes?: number;
+      limit_reached?: boolean;
+    };
+
+function decodeBase64(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
 function pageText(page: PodLogPage): string {
   return page.endsLine ? `${page.text}\n` : page.text;
 }
@@ -130,11 +166,10 @@ function pageText(page: PodLogPage): string {
  * aborting the fetch is what tells the Server to cancel the Kubernetes request
  * behind it — a follow stream nobody is reading must not keep running.
  *
- * Note on the terminal status: the Server reports it in HTTP trailers, which no
- * major browser exposes to `fetch`. So a stream that the Server ended early —
- * on its byte ceiling, its duration limit, or a revoked permission — is
- * indistinguishable here from one that ended normally, and is reported as
- * "ended" either way.
+ * The Console asks for NDJSON framing. Log bytes remain base64-safe even when a
+ * container writes arbitrary binary data or newlines, and a final `end` frame
+ * carries the termination reason browsers cannot read from HTTP trailers. The
+ * default HTTP representation stays text/plain for curl and downloads.
  */
 export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
   const [pages, setPages] = useState<PodLogPage[]>([]);
@@ -142,6 +177,7 @@ export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
   const [error, setError] = useState<unknown>(null);
   const [bytes, setBytes] = useState(0);
   const [truncated, setTruncated] = useState(false);
+  const [termination, setTermination] = useState<PodLogTermination | null>(null);
   const [attempt, setAttempt] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -155,6 +191,7 @@ export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
     // microtask, and the caller turns its follow mode off in this same event, so
     // the render in between would otherwise still see a running stream.
     setStatus("ended");
+    setTermination({ result: "stopped", limitReached: false });
   }, []);
 
   const reload = useCallback(() => setAttempt((value) => value + 1), []);
@@ -191,6 +228,7 @@ export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
     setPages([]);
     setBytes(0);
     setTruncated(false);
+    setTermination(null);
     setError(null);
     setStatus(streamKey === null ? "idle" : "loading");
   }
@@ -281,7 +319,7 @@ export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
         const response = await fetch(requestUrl, {
           credentials: "same-origin",
           signal: controller.signal,
-          headers: { Accept: "text/plain" },
+          headers: { Accept: "application/x-ndjson" },
         });
         if (!response.ok) {
           await raiseResponseError(response);
@@ -295,7 +333,10 @@ export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
         }
         setStatus("streaming");
         const reader = body.getReader();
-        const decoder = new TextDecoder();
+        const frameDecoder = new TextDecoder();
+        const logDecoder = new TextDecoder();
+        let framedText = "";
+        let ended = false;
         for (;;) {
           const { done, value } = await reader.read();
           if (!isCurrent()) {
@@ -304,13 +345,44 @@ export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
           if (done) {
             break;
           }
-          pending += decoder.decode(value, { stream: true });
-          receivedBytes += value.byteLength;
+          framedText += frameDecoder.decode(value, { stream: true });
+          for (;;) {
+            const newline = framedText.indexOf("\n");
+            if (newline < 0) {
+              break;
+            }
+            const line = framedText.slice(0, newline);
+            framedText = framedText.slice(newline + 1);
+            if (line === "") {
+              continue;
+            }
+            const frame = JSON.parse(line) as PodLogWireFrame;
+            if (frame.type === "chunk") {
+              const bytes = decodeBase64(frame.data);
+              pending += logDecoder.decode(bytes, { stream: true });
+              receivedBytes += bytes.byteLength;
+            } else if (frame.type === "end") {
+              ended = true;
+              setTermination({
+                result: frame.result,
+                reason: frame.reason,
+                message: frame.message,
+                limitReached: frame.limit_reached ?? false,
+              });
+            }
+          }
           if (pendingFrame === null) {
             pendingFrame = requestAnimationFrame(flush);
           }
         }
-        pending += decoder.decode();
+        framedText += frameDecoder.decode();
+        pending += logDecoder.decode();
+        if (framedText.trim() !== "") {
+          throw new Error("Pod log stream ended with an incomplete frame");
+        }
+        if (!ended) {
+          throw new Error("Pod log stream ended without a termination frame");
+        }
         flushNow();
         setStatus("ended");
       } catch (caught) {
@@ -321,6 +393,7 @@ export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
           // Stopping a stream on purpose, or leaving the view, is not a failure.
           flushNow();
           setStatus("ended");
+          setTermination({ result: "stopped", limitReached: false });
           return;
         }
         setError(caught);
@@ -355,6 +428,7 @@ export function usePodLogStream(options: PodLogOptions | null): PodLogStream {
     error,
     bytes,
     truncated,
+    termination,
     reload,
     stop,
   };

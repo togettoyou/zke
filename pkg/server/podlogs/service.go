@@ -65,6 +65,12 @@ type Input struct {
 type Result struct {
 	BytesSent    uint64
 	LimitReached bool
+	// Reason and Message are the Agent's bounded, sanitized explanation for how
+	// an already-open stream ended. They are deliberately returned separately
+	// from the Go error so an HTTP transport can publish a stable result code
+	// without throwing away Kubernetes' useful evidence.
+	Reason  string
+	Message string
 }
 
 func NewService(requester Requester, config Config) *Service {
@@ -117,12 +123,17 @@ func (service *Service) Stream(
 	}
 	if err := trailerError(trailer); err != nil {
 		return Result{
-			BytesSent: trailer.GetBytesSent(),
+			BytesSent:    trailer.GetBytesSent(),
+			LimitReached: trailer.GetLimitReached(),
+			Reason:       trailer.GetReason(),
+			Message:      trailer.GetMessage(),
 		}, err
 	}
 	return Result{
 		BytesSent:    trailer.GetBytesSent(),
 		LimitReached: trailer.GetLimitReached(),
+		Reason:       trailer.GetReason(),
+		Message:      trailer.GetMessage(),
 	}, nil
 }
 

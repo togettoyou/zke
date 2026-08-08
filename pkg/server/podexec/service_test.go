@@ -20,7 +20,7 @@ func TestPodExecSessionIsIdempotentBoundAndOneTime(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	service := NewService(nil, Config{SessionTTL: 30 * time.Second, MaxPending: 2})
+	service := NewService(nil, nil, Config{SessionTTL: 30 * time.Second, MaxPending: 2})
 	input := testCreateInput(now)
 	created, err := service.Create(input)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestPodExecSessionBindingMismatchConsumesTicket(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	service := NewService(nil, Config{})
+	service := NewService(nil, nil, Config{})
 	created, err := service.Create(testCreateInput(now))
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestPodExecRunBuildsBoundedTTYRequest(t *testing.T) {
 	t.Parallel()
 
 	requester := &fakePodExecRequester{}
-	service := NewService(requester, Config{MaxInputBytes: 123, MaxOutputBytes: 456})
+	service := NewService(requester, nil, Config{MaxInputBytes: 123, MaxOutputBytes: 456})
 	session := Session{
 		ID: "00000000-0000-4000-8000-000000000010", ClusterID: testClusterID,
 		Namespace: "workloads", PodName: "api-0", PodUID: "pod-uid", Container: "main",
@@ -93,6 +93,35 @@ func TestPodExecRunBuildsBoundedTTYRequest(t *testing.T) {
 		request.GetPodUid() != "pod-uid" || request.GetContainer() != "main" ||
 		result.ExitCode != 9 || result.OutputBytes != 42 {
 		t.Fatalf("request=%+v result=%+v", request, result)
+	}
+}
+
+func TestPodExecRecordingCapturesOnlyBoundedOutput(t *testing.T) {
+	t.Parallel()
+	store := &fakeRecordingStore{}
+	service := NewService(
+		&recordingPodExecRequester{},
+		store,
+		Config{MaxOutputBytes: 64, MaxRecordingBytes: 5, RecordingRetention: time.Hour},
+	)
+	session := Session{
+		ID: "00000000-0000-4000-8000-000000000010", UserID: testUserID,
+		ClusterID: testClusterID, Namespace: "workloads", PodName: "api-0",
+		PodUID: "pod-uid", Container: "main", Columns: 120, Rows: 40,
+		RecordingID: "00000000-0000-4000-8000-000000000011",
+	}
+	result, err := service.Run(context.Background(), session, &fakePodExecPeer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RecordingSaved || result.RecordingID != session.RecordingID {
+		t.Fatalf("result=%+v", result)
+	}
+	recording := store.saved
+	if recording.UserID != testUserID || recording.ClusterID != testClusterID ||
+		recording.RecordingBytes != 5 || !recording.Truncated || len(recording.Frames) != 1 ||
+		string(recording.Frames[0].Data) != "secre" {
+		t.Fatalf("recording=%+v", recording)
 	}
 }
 
@@ -133,4 +162,41 @@ func (*fakePodExecPeer) Receive(context.Context) (*agentv1.PodExecFrame, error) 
 
 func (*fakePodExecPeer) Send(context.Context, *agentv1.PodExecFrame) error {
 	return nil
+}
+
+type fakeRecordingStore struct {
+	saved Recording
+}
+
+func (store *fakeRecordingStore) SaveRecording(_ context.Context, recording Recording) error {
+	store.saved = recording
+	return nil
+}
+
+func (*fakeRecordingStore) ListRecordings(context.Context, RecordingScope, int) ([]Recording, error) {
+	return nil, nil
+}
+
+func (*fakeRecordingStore) GetRecording(context.Context, RecordingScope, string) (Recording, error) {
+	return Recording{}, ErrRecordingNotFound
+}
+
+type recordingPodExecRequester struct{}
+
+func (*recordingPodExecRequester) RequestPodExec(
+	ctx context.Context,
+	_ string,
+	_ *agentv1.PodExecRequest,
+	peer agentprotocol.PodExecPeer,
+) (*agentv1.PodExecResponse, *agentv1.PodExecExit, error) {
+	if err := peer.Send(ctx, &agentv1.PodExecFrame{Message: &agentv1.PodExecFrame_Output{
+		Output: &agentv1.PodExecOutput{
+			Stream: agentv1.PodExecOutputStream_POD_EXEC_OUTPUT_STREAM_STDOUT,
+			Data:   []byte("secret-output"),
+		},
+	}}); err != nil {
+		return nil, nil, err
+	}
+	return &agentv1.PodExecResponse{Result: agentv1.ResultCode_RESULT_CODE_OK},
+		&agentv1.PodExecExit{Result: agentv1.ResultCode_RESULT_CODE_OK, OutputBytes: 13}, nil
 }

@@ -282,7 +282,8 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` 和
 `cluster.connection.revoke`，以及通用 Kubernetes 写操作使用的 `cluster.resource.create`、
 `cluster.resource.update` 和 `cluster.resource.delete`，以及读取 Pod 日志使用的专用
-`cluster.pod.logs.read`、Web Terminal 使用的 `cluster.pod.exec`，以及读取 Kubernetes Event 使用的
+`cluster.pod.logs.read`、Web Terminal 使用的 `cluster.pod.exec`、终端输出录制使用的
+`cluster.pod.terminal_recording.create` 与 `cluster.pod.terminal_recording.read`，以及读取 Kubernetes Event 使用的
 `cluster.event.read`，以及目标集群 Kubernetes RBAC 使用的 `cluster.rbac.read`、`cluster.rbac.manage`，
 以及读写 Kubernetes Secret 使用的 `cluster.secret.read`、`cluster.secret.manage`，以及创建和删除
 Kubernetes Namespace 使用的 `cluster.namespace.manage`。
@@ -503,7 +504,13 @@ Web Terminal 使用独立的 `cluster.pod.exec`，不复用 `cluster.read` 或 K
 必须通过 CSRF、幂等键和显式确认；WebSocket 必须同源并使用固定子协议，票据绑定用户、登录 Session、Cluster、
 Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证 Session 与权限，设置空闲/总时长、输入/输出
 字节和并发上限。Agent 只使用固定 Shell 选择逻辑（优先 bash，回退 `/bin/sh`），默认 ServiceAccount 仅增加
-`pods/exec` 的 `create`。审计记录票据创建、会话目标与结果，不记录终端输入输出。
+`pods/exec` 的 `create`。审计记录票据创建、会话目标与结果，默认不记录终端输入输出。
+
+终端输出录制必须由操作者显式选择，创建额外要求默认仅授予 admin 的
+`cluster.pod.terminal_recording.create`；只旁路保存 stdout/stderr，不保存 stdin、Cookie、一次性票据或认证头。
+读取录制使用另一项 `cluster.pod.terminal_recording.read`，不从 `cluster.pod.exec` 推导，并在每次列表/详情请求上
+重新执行项目范围内的 Cluster 判权和审计。数据库记录绑定不可变 Cluster UUID、Namespace、Pod 名称与 Pod UID，
+详情还必须匹配 recording ID；记录有界且默认 7 天过期，列表不返回输出帧，只有详情读取暴露正文。
 
 Pod 端口转发使用另一项默认仅授予 admin 的 `cluster.pod.port_forward`，不因持有 `cluster.read`、
 `cluster.pod.exec` 或通用资源写权限而获得。票据必须通过 CSRF、幂等键和显式确认，并绑定用户、登录 Session、

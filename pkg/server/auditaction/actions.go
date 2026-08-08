@@ -85,6 +85,9 @@ const (
 	KubernetesPodLogsRead                 = "kubernetes_pod.logs.read"
 	KubernetesPodExecSessionCreate        = "kubernetes_pod.exec_session.create"
 	KubernetesPodExec                     = "kubernetes_pod.exec"
+	KubernetesPodTerminalRecordingCreate  = "kubernetes_pod.terminal_recording.create"
+	KubernetesPodTerminalRecordingList    = "kubernetes_pod.terminal_recording.list"
+	KubernetesPodTerminalRecordingRead    = "kubernetes_pod.terminal_recording.read"
 	KubernetesPodPortForwardSessionCreate = "kubernetes_pod.port_forward_session.create"
 	KubernetesPodPortForward              = "kubernetes_pod.port_forward"
 	KubernetesNodeDrain                   = "kubernetes_node.drain"
@@ -127,31 +130,33 @@ const (
 // on, and a filter on them returns the successful operation and the refused
 // attempt together — told apart by `result`, which is what `result` is for.
 const (
-	DeniedTenantRead             = "tenant.read"
-	DeniedTenantManage           = "tenant.manage"
-	DeniedProjectRead            = "project.read"
-	DeniedProjectManage          = "project.manage"
-	DeniedClusterEnrollmentRead  = "cluster.enrollment.read"
-	DeniedClusterRead            = "cluster.read"
-	DeniedClusterPodLogsRead     = "cluster.pod.logs.read"
-	DeniedClusterPodExec         = "cluster.pod.exec"
-	DeniedClusterPodPortForward  = "cluster.pod.port_forward"
-	DeniedClusterNodeDrain       = "cluster.node.drain"
-	DeniedClusterEventRead       = "cluster.event.read"
-	DeniedClusterManage          = "cluster.manage"
-	DeniedClusterNamespaceManage = "cluster.namespace.manage"
-	DeniedClusterResourceCreate  = "cluster.resource.create"
-	DeniedClusterResourceUpdate  = "cluster.resource.update"
-	DeniedClusterResourceDelete  = "cluster.resource.delete"
-	DeniedClusterRBACRead        = "cluster.rbac.read"
-	DeniedClusterRBACManage      = "cluster.rbac.manage"
-	DeniedClusterSecretRead      = "cluster.secret.read"
-	DeniedClusterSecretManage    = "cluster.secret.manage"
-	DeniedUserRead               = "user.read"
-	DeniedUserManage             = "user.manage"
-	DeniedRBACRead               = "rbac.read"
-	DeniedRBACManage             = "rbac.manage"
-	DeniedAuditRead              = "audit.read"
+	DeniedTenantRead                        = "tenant.read"
+	DeniedTenantManage                      = "tenant.manage"
+	DeniedProjectRead                       = "project.read"
+	DeniedProjectManage                     = "project.manage"
+	DeniedClusterEnrollmentRead             = "cluster.enrollment.read"
+	DeniedClusterRead                       = "cluster.read"
+	DeniedClusterPodLogsRead                = "cluster.pod.logs.read"
+	DeniedClusterPodExec                    = "cluster.pod.exec"
+	DeniedClusterPodTerminalRecordingCreate = "cluster.pod.terminal_recording.create"
+	DeniedClusterPodTerminalRecordingRead   = "cluster.pod.terminal_recording.read"
+	DeniedClusterPodPortForward             = "cluster.pod.port_forward"
+	DeniedClusterNodeDrain                  = "cluster.node.drain"
+	DeniedClusterEventRead                  = "cluster.event.read"
+	DeniedClusterManage                     = "cluster.manage"
+	DeniedClusterNamespaceManage            = "cluster.namespace.manage"
+	DeniedClusterResourceCreate             = "cluster.resource.create"
+	DeniedClusterResourceUpdate             = "cluster.resource.update"
+	DeniedClusterResourceDelete             = "cluster.resource.delete"
+	DeniedClusterRBACRead                   = "cluster.rbac.read"
+	DeniedClusterRBACManage                 = "cluster.rbac.manage"
+	DeniedClusterSecretRead                 = "cluster.secret.read"
+	DeniedClusterSecretManage               = "cluster.secret.manage"
+	DeniedUserRead                          = "user.read"
+	DeniedUserManage                        = "user.manage"
+	DeniedRBACRead                          = "rbac.read"
+	DeniedRBACManage                        = "rbac.manage"
+	DeniedAuditRead                         = "audit.read"
 )
 
 // Group names the family an action belongs to. It is declared here rather than
@@ -290,6 +295,9 @@ var actions = []Action{
 	{KubernetesPodLogsRead, GroupKubernetes},
 	{KubernetesPodExecSessionCreate, GroupKubernetes},
 	{KubernetesPodExec, GroupKubernetes},
+	{KubernetesPodTerminalRecordingCreate, GroupKubernetes},
+	{KubernetesPodTerminalRecordingList, GroupKubernetes},
+	{KubernetesPodTerminalRecordingRead, GroupKubernetes},
 	{KubernetesPodPortForwardSessionCreate, GroupKubernetes},
 	{KubernetesPodPortForward, GroupKubernetes},
 	{KubernetesNodeDrain, GroupKubernetes},
@@ -305,6 +313,8 @@ var actions = []Action{
 	{DeniedClusterRead, GroupDenied},
 	{DeniedClusterPodLogsRead, GroupDenied},
 	{DeniedClusterPodExec, GroupDenied},
+	{DeniedClusterPodTerminalRecordingCreate, GroupDenied},
+	{DeniedClusterPodTerminalRecordingRead, GroupDenied},
 	{DeniedClusterPodPortForward, GroupDenied},
 	{DeniedClusterNodeDrain, GroupDenied},
 	{DeniedClusterEventRead, GroupDenied},

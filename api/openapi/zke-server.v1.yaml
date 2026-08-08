@@ -2170,9 +2170,10 @@ paths:
       description: |
         通过目标 Cluster 的 Agent 读取指定 Pod UID 和 Container 的日志。默认返回最近
         200 行的有界快照；follow=true 时实时转发新日志，直到客户端取消、权限或 Session
-        被撤销、达到最大时长或字节上限。响应正文是未包装的 UTF-8 文本，不进入 JSON
-        信封；终止原因、是否达到字节上限和已发送字节数通过 HTTP Trailer 返回。日志正文
-        不写入 Server 日志或审计事件。
+        被撤销、达到最大时长或字节上限。默认响应是未包装 UTF-8 文本，并用 HTTP Trailer
+        返回终止状态；Accept: application/x-ndjson 时，每个日志块以 Base64 chunk 帧返回，
+        最后一个 end 帧明确给出终止原因、字节数和上限状态，供无法读取 Trailer 的浏览器使用。
+        日志正文不写入 Server 日志或审计事件。
       security:
         - sessionCookie: []
       parameters:
@@ -2250,6 +2251,9 @@ paths:
             text/plain:
               schema:
                 type: string
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/KubernetesPodLogFrame"
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
@@ -2362,6 +2366,78 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings:
+    get:
+      tags: [Resources]
+      operationId: listKubernetesPodTerminalRecordings
+      description: |
+        列出当前 Cluster、Namespace 与 Pod 名称下尚未过期的输出录制元数据，最多 50 条。
+        需要独立的 cluster.pod.terminal_recording.read 权限；cluster.pod.exec 本身不授予历史
+        输出读取能力。列表不包含输出帧。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+      responses:
+        "200":
+          description: 终端录制元数据
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/KubernetesPodTerminalRecording"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings/{recording_id}:
+    get:
+      tags: [Resources]
+      operationId: getKubernetesPodTerminalRecording
+      description: |
+        读取一条尚未过期的终端输出录制及其时间帧。记录必须同时匹配 URL 中的 Cluster UUID、
+        Namespace 和 Pod 名称；请求仍需 cluster.pod.terminal_recording.read 权限并写入审计。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+        - name: recording_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: 终端输出录制
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesPodTerminalRecording"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/port-forward-sessions:
     post:
       tags: [Resources]
@@ -6818,6 +6894,8 @@ components:
               - cluster.read
               - cluster.pod.logs.read
               - cluster.pod.exec
+              - cluster.pod.terminal_recording.create
+              - cluster.pod.terminal_recording.read
               - cluster.pod.port_forward
               - cluster.node.drain
               - cluster.event.read
@@ -12136,6 +12214,12 @@ components:
           maximum: 4096
         confirm:
           const: true
+        record_output:
+          type: boolean
+          default: false
+          description: |
+            显式选择仅录制服务端返回的 stdout/stderr；不录制 stdin、Cookie、票据或认证头。
+            设为 true 还需要 cluster.pod.terminal_recording.create 权限。
     KubernetesPodExecSession:
       type: object
       additionalProperties: false
@@ -12150,6 +12234,120 @@ components:
         subprotocol:
           type: string
           const: zke.pod-exec.v1
+        recording_id:
+          $ref: "#/components/schemas/UUID"
+    KubernetesPodLogFrame:
+      description: application/x-ndjson 每行一个对象；最后一行必须是 end 帧。
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type, data]
+          properties:
+            type:
+              const: chunk
+            data:
+              type: string
+              format: byte
+        - type: object
+          additionalProperties: false
+          required: [type, result, bytes, limit_reached]
+          properties:
+            type:
+              const: end
+            result:
+              type: string
+              enum: [succeeded, limit_reached, timeout, canceled, access_revoked, failed]
+            reason:
+              type: string
+            message:
+              type: string
+            bytes:
+              type: integer
+              format: uint64
+            limit_reached:
+              type: boolean
+    KubernetesPodTerminalRecordingFrame:
+      type: object
+      additionalProperties: false
+      required: [offset_ms, stream, data]
+      properties:
+        offset_ms:
+          type: integer
+          format: int64
+          minimum: 0
+        stream:
+          type: string
+          enum: [stdout, stderr]
+        data:
+          type: string
+          format: byte
+    KubernetesPodTerminalRecording:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - user_id
+        - cluster_id
+        - namespace
+        - pod_name
+        - pod_uid
+        - container
+        - columns
+        - rows
+        - started_at
+        - ended_at
+        - expires_at
+        - result
+        - exit_code
+        - output_bytes
+        - recording_bytes
+        - truncated
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        user_id:
+          $ref: "#/components/schemas/UUID"
+        cluster_id:
+          $ref: "#/components/schemas/UUID"
+        namespace:
+          type: string
+        pod_name:
+          type: string
+        pod_uid:
+          type: string
+        container:
+          type: string
+        columns:
+          type: integer
+          format: uint32
+        rows:
+          type: integer
+          format: uint32
+        started_at:
+          $ref: "#/components/schemas/Timestamp"
+        ended_at:
+          $ref: "#/components/schemas/Timestamp"
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        result:
+          type: string
+          enum: [succeeded, output_limit, timeout, canceled, failed]
+        exit_code:
+          type: integer
+          format: int32
+        output_bytes:
+          type: integer
+          format: uint64
+        recording_bytes:
+          type: integer
+          format: uint64
+        truncated:
+          type: boolean
+        frames:
+          type: array
+          description: 列表响应省略；详情响应返回按时间顺序排列的输出帧。
+          items:
+            $ref: "#/components/schemas/KubernetesPodTerminalRecordingFrame"
     KubernetesPodPortForwardSessionRequest:
       type: object
       additionalProperties: false
@@ -12276,6 +12474,16 @@ components:
               format: uint64
               minimum: 0
             output_limit_reached:
+              type: boolean
+        - type: object
+          additionalProperties: false
+          required: [type, recording_id, recording_saved]
+          properties:
+            type:
+              const: recording
+            recording_id:
+              $ref: "#/components/schemas/UUID"
+            recording_saved:
               type: boolean
     KubernetesDeletePodRequest:
       type: object

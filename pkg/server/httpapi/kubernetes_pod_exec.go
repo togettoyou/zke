@@ -44,6 +44,8 @@ type podExecService interface {
 	Create(podexec.CreateInput) (podexec.Session, error)
 	Consume(podexec.ConsumeInput) (podexec.Session, error)
 	Run(context.Context, podexec.Session, agentprotocol.PodExecPeer) (podexec.Result, error)
+	ListRecordings(context.Context, podexec.RecordingScope) ([]podexec.Recording, error)
+	GetRecording(context.Context, podexec.RecordingScope, string) (podexec.Recording, error)
 }
 
 type kubernetesPodExecHandler struct {
@@ -56,11 +58,12 @@ type kubernetesPodExecHandler struct {
 }
 
 type podExecCreateRequest struct {
-	PodUID    string `json:"uid"`
-	Container string `json:"container"`
-	Columns   uint32 `json:"columns"`
-	Rows      uint32 `json:"rows"`
-	Confirm   bool   `json:"confirm"`
+	PodUID       string `json:"uid"`
+	Container    string `json:"container"`
+	Columns      uint32 `json:"columns"`
+	Rows         uint32 `json:"rows"`
+	Confirm      bool   `json:"confirm"`
+	RecordOutput bool   `json:"record_output"`
 }
 
 type podExecCreateResponse struct {
@@ -68,6 +71,7 @@ type podExecCreateResponse struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 	WebSocketPath string    `json:"websocket_path"`
 	Subprotocol   string    `json:"subprotocol"`
+	RecordingID   string    `json:"recording_id,omitempty"`
 }
 
 type podExecWireMessage struct {
@@ -81,6 +85,8 @@ type podExecWireMessage struct {
 	Message            string `json:"message,omitempty"`
 	OutputBytes        uint64 `json:"output_bytes,omitempty"`
 	OutputLimitReached bool   `json:"output_limit_reached,omitempty"`
+	RecordingID        string `json:"recording_id,omitempty"`
+	RecordingSaved     *bool  `json:"recording_saved,omitempty"`
 }
 
 func newKubernetesPodExecHandler(
@@ -131,6 +137,9 @@ func (handler *kubernetesPodExecHandler) create(c *gin.Context) {
 		return
 	}
 	target = podExecTarget(c, request.PodUID, request.Container)
+	if request.RecordOutput && !handler.authorizeRecordingCreate(c, identity.User.ID, target) {
+		return
+	}
 	if handler.service == nil {
 		handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodExecSessionCreate, target, "failed")
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Pod terminal is unavailable")
@@ -148,10 +157,14 @@ func (handler *kubernetesPodExecHandler) create(c *gin.Context) {
 		Columns:        request.Columns,
 		Rows:           request.Rows,
 		Confirm:        request.Confirm,
+		RecordOutput:   request.RecordOutput,
 		Now:            time.Now().UTC(),
 	})
 	if err != nil {
 		handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodExecSessionCreate, target, "failed")
+		if request.RecordOutput {
+			handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodTerminalRecordingCreate, target, "failed")
+		}
 		handler.respondCreatePodExecError(c, err)
 		return
 	}
@@ -168,6 +181,7 @@ func (handler *kubernetesPodExecHandler) create(c *gin.Context) {
 		ExpiresAt:     session.ExpiresAt,
 		WebSocketPath: path,
 		Subprotocol:   podExecWebSocketProtocol,
+		RecordingID:   session.RecordingID,
 	})
 }
 
@@ -222,8 +236,9 @@ func (handler *kubernetesPodExecHandler) connect(c *gin.Context) {
 		identity,
 		peer,
 		accessRevoked,
+		session.RecordingID != "",
 	)
-	_, runErr := handler.service.Run(sessionContext, session, peer)
+	runResult, runErr := handler.service.Run(sessionContext, session, peer)
 	cancelSession()
 	<-monitorDone
 	result := "succeeded"
@@ -236,7 +251,113 @@ func (handler *kubernetesPodExecHandler) connect(c *gin.Context) {
 			handler.logInternal(c, "run Kubernetes Pod terminal", runErr)
 		}
 	}
+	if runResult.RecordingID != "" {
+		saved := runResult.RecordingSaved
+		_ = peer.write(context.Background(), podExecWireMessage{
+			Type: "recording", RecordingID: runResult.RecordingID, RecordingSaved: &saved,
+		})
+		recordingResult := "failed"
+		if saved {
+			recordingResult = "succeeded"
+		}
+		handler.recordPodExec(
+			c, identity.User.ID, auditaction.KubernetesPodTerminalRecordingCreate,
+			target+" recording:"+runResult.RecordingID, recordingResult,
+		)
+	}
 	handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodExec, target, result)
+}
+
+func (handler *kubernetesPodExecHandler) authorizeRecordingCreate(
+	c *gin.Context,
+	userID string,
+	target string,
+) bool {
+	if handler.rbacService == nil {
+		handler.recordPodExec(c, userID, auditaction.DeniedClusterPodTerminalRecordingCreate, target, "denied")
+		writeError(c, http.StatusForbidden, "forbidden", "Pod terminal recording permission is required")
+		return false
+	}
+	ctx, cancel := handler.operationContext(c)
+	_, err := handler.rbacService.AuthorizeCluster(
+		ctx, userID, rbac.PermissionClusterPodTerminalRecordingCreate, c.Param("cluster_id"),
+	)
+	cancel()
+	if err == nil {
+		return true
+	}
+	handler.recordPodExec(c, userID, auditaction.DeniedClusterPodTerminalRecordingCreate, target, "denied")
+	if errors.Is(err, rbac.ErrDenied) {
+		writeError(c, http.StatusForbidden, "forbidden", "Pod terminal recording permission is required")
+	} else {
+		handler.logInternal(c, "authorize Pod terminal recording", err)
+		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
+	}
+	return false
+}
+
+func (handler *kubernetesPodExecHandler) listRecordings(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	identity, _ := httpmiddleware.Identity(c)
+	target := podExecTarget(c, "", "recordings")
+	if handler.service == nil {
+		handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodTerminalRecordingList, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Pod terminal recordings are unavailable")
+		return
+	}
+	if len(c.Request.URL.Query()) != 0 {
+		writeError(c, http.StatusBadRequest, "invalid_request", "terminal recording list does not accept query parameters")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	items, err := handler.service.ListRecordings(ctx, podExecRecordingScope(c))
+	cancel()
+	if err != nil {
+		handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodTerminalRecordingList, target, "failed")
+		handler.respondRecordingError(c, "list Pod terminal recordings", err)
+		return
+	}
+	handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodTerminalRecordingList, target, "succeeded")
+	writeSuccess(c, http.StatusOK, items)
+}
+
+func (handler *kubernetesPodExecHandler) getRecording(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	identity, _ := httpmiddleware.Identity(c)
+	target := podExecTarget(c, "", "recording:"+c.Param("recording_id"))
+	if handler.service == nil {
+		handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodTerminalRecordingRead, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "Pod terminal recordings are unavailable")
+		return
+	}
+	if len(c.Request.URL.Query()) != 0 {
+		writeError(c, http.StatusBadRequest, "invalid_request", "terminal recording detail does not accept query parameters")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	item, err := handler.service.GetRecording(ctx, podExecRecordingScope(c), c.Param("recording_id"))
+	cancel()
+	if err != nil {
+		handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodTerminalRecordingRead, target, "failed")
+		handler.respondRecordingError(c, "get Pod terminal recording", err)
+		return
+	}
+	handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodTerminalRecordingRead, target, "succeeded")
+	writeSuccess(c, http.StatusOK, item)
+}
+
+func podExecRecordingScope(c *gin.Context) podexec.RecordingScope {
+	return podexec.RecordingScope{
+		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"),
+		PodName: c.Param("pod_name"),
+	}
+}
+
+func (handler *kubernetesPodExecHandler) respondRecordingError(c *gin.Context, operation string, err error) {
+	handler.respondError(c, operation, err,
+		errorMapping{podexec.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Pod terminal recording request"},
+		errorMapping{podexec.ErrRecordingNotFound, http.StatusNotFound, "recording_not_found", "Pod terminal recording was not found or has expired"},
+	)
 }
 
 func (handler *kubernetesPodExecHandler) monitorPodExecAccess(
@@ -246,6 +367,7 @@ func (handler *kubernetesPodExecHandler) monitorPodExecAccess(
 	identity auth.Identity,
 	peer *podExecWebSocketPeer,
 	revoked *atomic.Bool,
+	recording bool,
 ) <-chan struct{} {
 	done := make(chan struct{})
 	sessionToken, tokenExists := httpmiddleware.SessionToken(c)
@@ -289,6 +411,14 @@ func (handler *kubernetesPodExecHandler) monitorPodExecAccess(
 						rbac.PermissionClusterPodExec,
 						clusterID,
 					)
+					if authorizationErr == nil && recording {
+						_, authorizationErr = handler.rbacService.AuthorizeCluster(
+							operationContext,
+							identity.User.ID,
+							rbac.PermissionClusterPodTerminalRecordingCreate,
+							clusterID,
+						)
+					}
 				}
 				cancelOperation()
 				if authErr != nil || authorizationErr != nil {

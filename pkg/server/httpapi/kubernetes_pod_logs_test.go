@@ -117,6 +117,35 @@ func TestKubernetesPodLogsHandlerStreamsSnapshotAndFollowWithoutJSONEnvelope(t *
 	}
 }
 
+func TestKubernetesPodLogsHandlerFramesTerminationForBrowsers(t *testing.T) {
+	t.Parallel()
+	service := &fakePodLogsService{}
+	handler := newKubernetesPodLogsHandler(
+		slog.New(slog.NewTextHandler(io.Discard, nil)), service, nil, nil, nil,
+		time.Second, PodLogsHTTPConfig{},
+	)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("authenticated_identity", auth.Identity{User: auth.User{ID: "00000000-0000-4000-8000-000000000001"}})
+		c.Next()
+	})
+	router.GET("/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/logs", handler.stream)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/default/pods/example/logs?uid=current&container=main",
+		nil,
+	)
+	request.Header.Set("Accept", "application/x-ndjson")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		response.Header().Get("Content-Type") != "application/x-ndjson" ||
+		!strings.Contains(response.Body.String(), `{"type":"chunk","data":"c2VjcmV0LWxvZy1saW5lCg=="}`) ||
+		!strings.Contains(response.Body.String(), `{"type":"end","result":"succeeded","bytes":16}`) {
+		t.Fatalf("status=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+}
+
 func TestKubernetesPodLogsHandlerKeepsStructuredErrorsBeforeStreamStarts(t *testing.T) {
 	t.Parallel()
 

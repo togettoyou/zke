@@ -274,6 +274,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	)
 	podExecService := podexec.NewService(
 		agentConnectionManager,
+		podexec.NewPostgresRecordingStore(database),
 		podexec.Config{
 			SessionTTL:     cfg.AgentListener.PodExecSessionTTL,
 			MaxPending:     cfg.AgentListener.MaxPendingPodExecSessions,

@@ -3,7 +3,7 @@ import { Download, Pause, Play, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
-import { usePodLogStream } from "@/api/queries/pod-logs";
+import { usePodLogStream, type PodLogTermination } from "@/api/queries/pod-logs";
 import { usePod } from "@/api/queries/pods";
 import type { KubernetesPodDetail } from "@/api/types";
 import { PageHeader } from "@/apps/AppShell";
@@ -343,7 +343,11 @@ function PodLogReader({
       </div>
 
       <div className="text-subtle-foreground flex flex-wrap items-center gap-3 text-xs">
-        <StreamStatus status={stream.status} following={follow && !previous} />
+        <StreamStatus
+          status={stream.status}
+          following={follow && !previous}
+          termination={stream.termination}
+        />
         <span className="zke-tnum">已接收 {formatBytes(stream.bytes)}</span>
         {stream.truncated ? <span>已丢弃较早的日志以限制浏览器内存占用</span> : null}
         {stickToBottom ? null : <span>已暂停自动滚动——滚动到底部可恢复</span>}
@@ -352,7 +356,15 @@ function PodLogReader({
   );
 }
 
-function StreamStatus({ status, following }: { status: string; following: boolean }) {
+function StreamStatus({
+  status,
+  following,
+  termination,
+}: {
+  status: string;
+  following: boolean;
+  termination: PodLogTermination | null;
+}) {
   if (status === "streaming" && following) {
     return (
       <Badge tone="success">
@@ -374,6 +386,23 @@ function StreamStatus({ status, following }: { status: string; following: boolea
       <Badge tone="danger">
         <StatusDot tone="danger" />
         读取失败
+      </Badge>
+    );
+  }
+  if (termination && termination.result !== "succeeded") {
+    const label = {
+      limit_reached: "达到服务端上限",
+      timeout: "达到最长读取时长",
+      access_revoked: "权限已撤销",
+      canceled: "上游已取消",
+      failed: "异常中断",
+      stopped: "已手动停止",
+    }[termination.result];
+    return (
+      <Badge tone={termination.result === "stopped" ? "neutral" : "warning"}>
+        <StatusDot tone={termination.result === "stopped" ? "neutral" : "warning"} />
+        {label}
+        {termination.reason ? ` · ${termination.reason}` : ""}
       </Badge>
     );
   }

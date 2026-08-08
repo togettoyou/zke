@@ -760,9 +760,10 @@ export interface paths {
         /**
          * @description 通过目标 Cluster 的 Agent 读取指定 Pod UID 和 Container 的日志。默认返回最近
          *     200 行的有界快照；follow=true 时实时转发新日志，直到客户端取消、权限或 Session
-         *     被撤销、达到最大时长或字节上限。响应正文是未包装的 UTF-8 文本，不进入 JSON
-         *     信封；终止原因、是否达到字节上限和已发送字节数通过 HTTP Trailer 返回。日志正文
-         *     不写入 Server 日志或审计事件。
+         *     被撤销、达到最大时长或字节上限。默认响应是未包装 UTF-8 文本，并用 HTTP Trailer
+         *     返回终止状态；Accept: application/x-ndjson 时，每个日志块以 Base64 chunk 帧返回，
+         *     最后一个 end 帧明确给出终止原因、字节数和上限状态，供无法读取 Trailer 的浏览器使用。
+         *     日志正文不写入 Server 日志或审计事件。
          */
         get: operations["streamKubernetesPodLogs"];
         put?: never;
@@ -811,6 +812,47 @@ export interface paths {
          *     并周期性重新验证登录 Session 和 cluster.pod.exec 权限。终端输入输出不进入日志或审计。
          */
         get: operations["connectKubernetesPodTerminal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出当前 Cluster、Namespace 与 Pod 名称下尚未过期的输出录制元数据，最多 50 条。
+         *     需要独立的 cluster.pod.terminal_recording.read 权限；cluster.pod.exec 本身不授予历史
+         *     输出读取能力。列表不包含输出帧。
+         */
+        get: operations["listKubernetesPodTerminalRecordings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings/{recording_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 读取一条尚未过期的终端输出录制及其时间帧。记录必须同时匹配 URL 中的 Cluster UUID、
+         *     Namespace 和 Pod 名称；请求仍需 cluster.pod.terminal_recording.read 权限并写入审计。
+         */
+        get: operations["getKubernetesPodTerminalRecording"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2051,7 +2093,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -4752,6 +4794,12 @@ export interface components {
             rows: number;
             /** @constant */
             confirm: true;
+            /**
+             * @description 显式选择仅录制服务端返回的 stdout/stderr；不录制 stdin、Cookie、票据或认证头。
+             *     设为 true 还需要 cluster.pod.terminal_recording.create 权限。
+             * @default false
+             */
+            record_output: boolean;
         };
         KubernetesPodExecSession: {
             session_id: components["schemas"]["UUID"];
@@ -4759,6 +4807,59 @@ export interface components {
             websocket_path: string;
             /** @constant */
             subprotocol: "zke.pod-exec.v1";
+            recording_id?: components["schemas"]["UUID"];
+        };
+        /** @description application/x-ndjson 每行一个对象；最后一行必须是 end 帧。 */
+        KubernetesPodLogFrame: {
+            /** @constant */
+            type: "chunk";
+            /** Format: byte */
+            data: string;
+        } | {
+            /** @constant */
+            type: "end";
+            /** @enum {string} */
+            result: "succeeded" | "limit_reached" | "timeout" | "canceled" | "access_revoked" | "failed";
+            reason?: string;
+            message?: string;
+            /** Format: uint64 */
+            bytes: number;
+            limit_reached: boolean;
+        };
+        KubernetesPodTerminalRecordingFrame: {
+            /** Format: int64 */
+            offset_ms: number;
+            /** @enum {string} */
+            stream: "stdout" | "stderr";
+            /** Format: byte */
+            data: string;
+        };
+        KubernetesPodTerminalRecording: {
+            id: components["schemas"]["UUID"];
+            user_id: components["schemas"]["UUID"];
+            cluster_id: components["schemas"]["UUID"];
+            namespace: string;
+            pod_name: string;
+            pod_uid: string;
+            container: string;
+            /** Format: uint32 */
+            columns: number;
+            /** Format: uint32 */
+            rows: number;
+            started_at: components["schemas"]["Timestamp"];
+            ended_at: components["schemas"]["Timestamp"];
+            expires_at: components["schemas"]["Timestamp"];
+            /** @enum {string} */
+            result: "succeeded" | "output_limit" | "timeout" | "canceled" | "failed";
+            /** Format: int32 */
+            exit_code: number;
+            /** Format: uint64 */
+            output_bytes: number;
+            /** Format: uint64 */
+            recording_bytes: number;
+            truncated: boolean;
+            /** @description 列表响应省略；详情响应返回按时间顺序排列的输出帧。 */
+            frames?: components["schemas"]["KubernetesPodTerminalRecordingFrame"][];
         };
         KubernetesPodPortForwardSessionRequest: {
             /** @description 当前 Pod UID；Agent 在建立传输前再次校验。 */
@@ -4831,6 +4932,11 @@ export interface components {
             /** Format: uint64 */
             output_bytes?: number;
             output_limit_reached?: boolean;
+        } | {
+            /** @constant */
+            type: "recording";
+            recording_id: components["schemas"]["UUID"];
+            recording_saved: boolean;
         };
         KubernetesDeletePodRequest: {
             /** @default false */
@@ -7161,6 +7267,7 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                    "application/x-ndjson": components["schemas"]["KubernetesPodLogFrame"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -7249,6 +7356,65 @@ export interface operations {
                 };
             };
             503: components["responses"]["Unavailable"];
+        };
+    };
+    listKubernetesPodTerminalRecordings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 终端录制元数据 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodTerminalRecording"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getKubernetesPodTerminalRecording: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+                recording_id: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 终端输出录制 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodTerminalRecording"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     createKubernetesPodPortForwardSession: {

@@ -113,6 +113,8 @@ export type KubernetesPodPage = Schemas["KubernetesPodPage"];
 export type KubernetesPodContainer = Schemas["KubernetesPodContainer"];
 export type KubernetesPodOwnerReference = Schemas["KubernetesPodOwnerReference"];
 export type KubernetesPodPhase = KubernetesPodSummary["phase"];
+export type KubernetesPodTerminalRecording = Schemas["KubernetesPodTerminalRecording"];
+export type KubernetesPodTerminalRecordingFrame = Schemas["KubernetesPodTerminalRecordingFrame"];
 export type KubernetesDeleteResult = Schemas["KubernetesDeleteResult"];
 
 export type KubernetesDescribe = Schemas["KubernetesDescribe"];

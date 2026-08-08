@@ -105,6 +105,14 @@ export function PodSection({
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   // Opening a shell is its own permission, granted to admin only by default.
   const canExec = permissions.can("cluster.pod.exec", projectScope);
+  const canCreateTerminalRecording = permissions.can(
+    "cluster.pod.terminal_recording.create",
+    projectScope,
+  );
+  const canReadTerminalRecordings = permissions.can(
+    "cluster.pod.terminal_recording.read",
+    projectScope,
+  );
   const canPortForward = permissions.can("cluster.pod.port_forward", projectScope);
   // The diagnosis embeds the Pod's Events, so the Server requires the Event
   // permission alongside `cluster.read`. Offered only to callers holding both:
@@ -270,6 +278,8 @@ export function PodSection({
             namespace={namespace}
             podName={terminalTarget.name}
             podUid={terminalTarget.uid}
+            canRecord={canCreateTerminalRecording}
+            canReadRecordings={canReadTerminalRecordings}
             onBack={() => setTerminalTarget(null)}
           />
         </Suspense>
