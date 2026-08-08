@@ -1156,6 +1156,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}/describe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 返回 PVC 类型化详情、只属于该 UID 的 Kubernetes Event 快照和绑定诊断。
+         *     Pending PVC 会结合 WaitForFirstConsumer、ProvisioningFailed、FailedBinding
+         *     Event 或 PVC Condition 给出 PVCPending 结论。要求同时持有 cluster.read
+         *     与 cluster.event.read，并写入 Event 读取审计。
+         */
+        get: operations["describeKubernetesPersistentVolumeClaim"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers": {
         parameters: {
             query?: never;
@@ -4208,15 +4230,16 @@ export interface components {
         KubernetesDescribe: {
             target: components["schemas"]["KubernetesDescribeTarget"];
             /**
-             * @description 对象所属的家族投影。pod 与 workload 分别返回该家族的详情与诊断结果；
+             * @description 对象所属的家族投影。pod、workload、node 与 storage 返回对应详情与诊断结果；
              *     generic 表示该类型尚无家族规则，只返回身份与 Event。
              * @enum {string}
              */
-            family: "pod" | "workload" | "node" | "generic";
+            family: "pod" | "workload" | "node" | "storage" | "generic";
             pod?: components["schemas"]["KubernetesPodDetail"];
             workload?: components["schemas"]["KubernetesWorkloadDetail"];
             node?: components["schemas"]["KubernetesNodeDetail"];
             node_resources?: components["schemas"]["KubernetesDescribeNodeResources"];
+            storage?: components["schemas"]["KubernetesStorageResourceDetail"];
             related?: components["schemas"]["KubernetesDescribeRelated"];
             events: components["schemas"]["KubernetesDescribeEvents"];
             findings: components["schemas"]["KubernetesDescribeFinding"][];
@@ -7826,6 +7849,41 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    describeKubernetesPersistentVolumeClaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                storage_resource: components["parameters"]["NamespacedStorageResource"];
+                storage_name: components["parameters"]["StorageResourceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PersistentVolumeClaim describe 视图 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesDescribe"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

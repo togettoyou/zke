@@ -71,9 +71,10 @@
 - `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：删除明确作用域内的
   Pod，强制要求 UID 前置条件，并支持 DryRun、显式确认、幂等、删除传播策略和审计；
 - `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe`、
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/describe`
-  `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}/describe` 和
-  `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/describe`、
+  `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}/describe`、
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}/describe`
+  和 `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
   只属于该对象的 Kubernetes Event 快照，以及由两者共同支持的诊断结论；工作负载还会沿 owner 链返回它拥有的
   控制器、Pod、Pod 模板引用的 PVC 及各自的结论，Node 还会返回已分配的非终止 Pod 与 requests 汇总；这些接口
   都要求同时持有 `cluster.read` 与
@@ -837,6 +838,11 @@ Node 规则包括 Ready 异常、Memory/Disk/PID Pressure、NetworkUnavailable�
 可分配量 90% 的容量信号。其他类型走通用 describe，只返回身份与自己的 Event，findings 恒为空数组：没有为
 某个类型写过的规则不是规则。
 
+PVC 的独立 describe 复用工作负载聚合中同一条 `PVCPending` 规则。Bound PVC 不报告问题；Pending PVC 先从自身
+Event 中选择最近的 `WaitForFirstConsumer`、`ProvisioningFailed` 或 `FailedBinding` 原因与消息，事件窗口没有对应
+记录时再使用 PVC Condition。存储页只在 PersistentVolumeClaim 标签显示诊断入口；PV 与 StorageClass 是集群级对象，
+在没有明确且安全的 Event 归属与诊断规则前不提供一个只会返回空结论的入口。
+
 describe 同时读取资源与 Event，因此要求调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在
 路由层且各自留下自己的拒绝记录，被拒时能看出缺的是哪一个；只要 `cluster.read` 就能通过的话，describe 会成为
 绕开 `cluster.event.read` 读取命名空间事件的通道，而 Event 恰恰是这里最值钱的那一半。Event 读取写入与 Event
@@ -877,7 +883,7 @@ Pod-level resources 和 overhead，不等同于实时利用率；Pod 列表单�
 且不生成 90% 容量结论，避免用不完整分母分子给出确定判断。Node Event 只读取 Node 自身，不扇出读取其上每个 Pod
 的事件。
 
-Console 诊断入口在 Pod、工作负载与 Node 的列表行和详情页页头，在详情页排在 YAML 之前：打开一个没跑起来的对象时，
+Console 诊断入口在 Pod、工作负载、Node 与 PVC 的列表行和详情页页头，在详情页排在 YAML 之前：打开一个没跑起来的对象时，
 这就是操作者带着的那个问题。资源对象浏览器的命名空间级类型行上也有同一个入口（集群级类型不提供，那里的视图
 只会说自己没有可展示的事件）。页面上方是结论卡片，中间是关联对象（不健康的逐个展开并带上自己的结论，就绪的
 折成一行），下方是事件表，工作负载的事件表多一列说明每条属于哪个对象。页头提供「复制为文本」，把结论、关联

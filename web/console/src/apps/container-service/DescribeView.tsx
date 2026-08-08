@@ -271,6 +271,9 @@ export function DescribeView({
           ) : null}
 
           {data.node ? <NodeDiagnosticSummary data={data} /> : null}
+          {data.storage?.persistent_volume_claim ? (
+            <PersistentVolumeClaimDiagnosticSummary data={data} />
+          ) : null}
 
           {data.related ? <RelatedSection related={data.related} family={data.family} /> : null}
 
@@ -442,6 +445,49 @@ function NodeDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
         <p className="text-subtle-foreground mt-2 text-xs">
           Pod 列表超过单次读取上限，requests 仅为已读取部分的下限，因此不生成资源占比结论。
         </p>
+      ) : null}
+    </Card>
+  );
+}
+
+function PersistentVolumeClaimDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
+  const claim = data.storage?.persistent_volume_claim;
+  if (!claim) {
+    return null;
+  }
+  const conditions = data.storage?.persistent_volume_claim_detail?.conditions ?? [];
+  return (
+    <Card>
+      <CardTitle>存储声明概况</CardTitle>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <DiagnosticValue label="状态" value={claim.phase || "—"} />
+        <DiagnosticValue
+          label="容量 / 申请"
+          value={`${claim.capacity || "尚未分配"} / ${claim.requested_capacity || "—"}`}
+        />
+        <DiagnosticValue label="StorageClass" value={claim.storage_class_name ?? "默认"} />
+        <DiagnosticValue label="绑定卷" value={claim.volume_name || "未绑定"} />
+      </div>
+      {conditions.length > 0 ? (
+        <div className="mt-2 grid gap-1.5">
+          {conditions.map((condition) => (
+            <div
+              key={condition.type}
+              className="border-border/60 rounded-control border px-2.5 py-2 text-xs"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-foreground font-medium">{condition.type}</span>
+                <span className="zke-mono text-subtle-foreground">{condition.status}</span>
+                {condition.reason ? (
+                  <span className="zke-mono text-subtle-foreground">{condition.reason}</span>
+                ) : null}
+              </div>
+              {condition.message ? (
+                <p className="text-muted-foreground mt-1 break-words">{condition.message}</p>
+              ) : null}
+            </div>
+          ))}
+        </div>
       ) : null}
     </Card>
   );
@@ -620,6 +666,17 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
               .map((taint) => `${taint.key}${taint.value ? `=${taint.value}` : ""}:${taint.effect}`)
               .join(", ")
       }`,
+    );
+  }
+  if (data.storage?.persistent_volume_claim) {
+    const claim = data.storage.persistent_volume_claim;
+    lines.push(
+      "",
+      "存储声明概况",
+      `  Phase: ${claim.phase || "—"}`,
+      `  Capacity: ${claim.capacity || "尚未分配"} / requested ${claim.requested_capacity || "—"}`,
+      `  StorageClass: ${claim.storage_class_name ?? "默认"}`,
+      `  Volume: ${claim.volume_name || "未绑定"}`,
     );
   }
   if (data.related) {

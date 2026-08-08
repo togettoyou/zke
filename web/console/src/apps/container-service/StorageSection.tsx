@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Pencil, Plus } from "lucide-react";
+import { FileCode, Pencil, Plus, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -9,6 +9,7 @@ import {
   useStorageResource,
   useStorageResources,
 } from "@/api/queries/storage";
+import { usePersistentVolumeClaimDescribe } from "@/api/queries/describe";
 import type {
   KubernetesStorageResource,
   KubernetesStorageResourceDetail,
@@ -39,6 +40,7 @@ import { StorageFormView } from "./StorageFormView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
+import { DescribeView } from "./DescribeView";
 import { STORAGE_TYPES, storageIdentity, storageKindLabel } from "./storage-catalog";
 
 const PAGE_SIZE = 50;
@@ -87,6 +89,7 @@ export function StorageSection({
     ...(pager.token ? { continue: pager.token } : {}),
   });
   const [detailName, setDetailName] = useState<string | null>(null);
+  const [describeName, setDescribeName] = useState<string | null>(null);
   const [yamlName, setYamlName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<KubernetesStorageResourceSummary | null>(null);
@@ -102,6 +105,8 @@ export function StorageSection({
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const canDescribe =
+    resource === "persistentvolumeclaims" && permissions.can("cluster.event.read", projectScope);
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -140,9 +145,19 @@ export function StorageSection({
       {
         id: "actions",
         header: "",
-        size: 88,
+        size: canDescribe ? 128 : 88,
         cell: ({ row }) => (
           <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+            {canDescribe ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`诊断 ${row.original.name}`}
+                onClick={() => setDescribeName(row.original.name)}
+              >
+                <Stethoscope />
+              </Button>
+            ) : null}
             {canUpdate ? (
               <Button
                 size="icon-sm"
@@ -160,7 +175,7 @@ export function StorageSection({
         ),
       },
     ],
-    [resource, canUpdate, canDelete, openDelete],
+    [resource, canUpdate, canDelete, canDescribe, openDelete],
   );
 
   // The confirmation lives outside the branch that picks a view. It is opened
@@ -241,6 +256,17 @@ export function StorageSection({
     );
   }
 
+  if (describeName) {
+    return (
+      <PersistentVolumeClaimDescribeView
+        clusterId={clusterId}
+        namespace={namespace}
+        name={describeName}
+        onBack={() => setDescribeName(null)}
+      />
+    );
+  }
+
   // The form takes over the section rather than sitting over the list, as the
   // workload and networking forms do: editing shows the whole object, most of
   // it read-only, which is more than a box laid over the table can hold. From
@@ -272,8 +298,10 @@ export function StorageSection({
           name={detailName}
           canUpdate={canUpdate}
           canDelete={canDelete}
+          canDescribe={canDescribe}
           onEdit={setEditing}
           onOpenYaml={() => setYamlName(detailName)}
+          onOpenDescribe={() => setDescribeName(detailName)}
           onDelete={openDelete}
           onBack={() => setDetailName(null)}
         />
@@ -301,6 +329,7 @@ export function StorageSection({
         onValueChange={(value) => {
           setResource(value as KubernetesStorageResource);
           setDetailName(null);
+          setDescribeName(null);
         }}
         className="flex min-h-0 flex-1 flex-col"
       >
@@ -518,8 +547,10 @@ function StorageDetailView({
   name,
   canUpdate,
   canDelete,
+  canDescribe,
   onEdit,
   onOpenYaml,
+  onOpenDescribe,
   onDelete,
   onBack,
 }: {
@@ -529,8 +560,10 @@ function StorageDetailView({
   name: string;
   canUpdate: boolean;
   canDelete: boolean;
+  canDescribe: boolean;
   onEdit: (item: KubernetesStorageResourceSummary) => void;
   onOpenYaml: () => void;
+  onOpenDescribe: () => void;
   onDelete: (item: KubernetesStorageResourceSummary) => void;
   onBack: () => void;
 }) {
@@ -544,6 +577,12 @@ function StorageDetailView({
         onBack={onBack}
         actions={
           <>
+            {canDescribe ? (
+              <Button size="sm" variant="secondary" onClick={onOpenDescribe}>
+                <Stethoscope />
+                诊断
+              </Button>
+            ) : null}
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML
@@ -570,6 +609,32 @@ function StorageDetailView({
         <StorageDetailCards item={item} />
       )}
     </div>
+  );
+}
+
+function PersistentVolumeClaimDescribeView({
+  clusterId,
+  namespace,
+  name,
+  onBack,
+}: {
+  clusterId: string;
+  namespace: string;
+  name: string;
+  onBack: () => void;
+}) {
+  const describe = usePersistentVolumeClaimDescribe(clusterId, namespace, name);
+  return (
+    <DescribeView
+      name={name}
+      kindLabel="PersistentVolumeClaim"
+      data={describe.data}
+      isLoading={describe.isLoading}
+      isFetching={describe.isFetching}
+      error={describe.error}
+      onRetry={() => void describe.refetch()}
+      onBack={onBack}
+    />
   );
 }
 

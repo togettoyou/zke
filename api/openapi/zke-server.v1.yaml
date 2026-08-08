@@ -3506,6 +3506,42 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}/describe:
+    get:
+      tags: [Resources]
+      operationId: describeKubernetesPersistentVolumeClaim
+      description: |
+        返回 PVC 类型化详情、只属于该 UID 的 Kubernetes Event 快照和绑定诊断。
+        Pending PVC 会结合 WaitForFirstConsumer、ProvisioningFailed、FailedBinding
+        Event 或 PVC Condition 给出 PVCPending 结论。要求同时持有 cluster.read
+        与 cluster.event.read，并写入 Event 读取审计。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NamespacedStorageResource"
+        - $ref: "#/components/parameters/StorageResourceName"
+      responses:
+        "200":
+          description: PersistentVolumeClaim describe 视图
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDescribe"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers:
     get:
       tags: [Resources]
@@ -11043,9 +11079,9 @@ components:
           $ref: "#/components/schemas/KubernetesDescribeTarget"
         family:
           type: string
-          enum: [pod, workload, node, generic]
+          enum: [pod, workload, node, storage, generic]
           description: |
-            对象所属的家族投影。pod 与 workload 分别返回该家族的详情与诊断结果；
+            对象所属的家族投影。pod、workload、node 与 storage 返回对应详情与诊断结果；
             generic 表示该类型尚无家族规则，只返回身份与 Event。
         pod:
           $ref: "#/components/schemas/KubernetesPodDetail"
@@ -11055,6 +11091,8 @@ components:
           $ref: "#/components/schemas/KubernetesNodeDetail"
         node_resources:
           $ref: "#/components/schemas/KubernetesDescribeNodeResources"
+        storage:
+          $ref: "#/components/schemas/KubernetesStorageResourceDetail"
         related:
           $ref: "#/components/schemas/KubernetesDescribeRelated"
         events:

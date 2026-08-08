@@ -23,6 +23,35 @@ export function useNodeDescribe(clusterId: string | null, name: string | null, e
   });
 }
 
+export function usePersistentVolumeClaimDescribe(
+  clusterId: string | null,
+  namespace: string | null,
+  name: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.persistentVolumeClaimDescribe(clusterId ?? "", namespace ?? "", name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}/describe",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId as string,
+                namespace_name: namespace as string,
+                storage_resource: "persistentvolumeclaims",
+                storage_name: name as string,
+              },
+            },
+            signal,
+          },
+        ),
+      ),
+    enabled: enabled && Boolean(clusterId && namespace && name),
+  });
+}
+
 /**
  * Describe joins an object with the Kubernetes Events that name it, and reports
  * the findings the two together support.

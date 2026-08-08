@@ -25,6 +25,15 @@ type fakeDescribeService struct {
 	nodeInput    kubernetesdescribe.NodeInput
 	workloadCall kubernetesdescribe.WorkloadInput
 	resourceCall kubernetesdescribe.ResourceInput
+	claimCall    kubernetesdescribe.PersistentVolumeClaimInput
+}
+
+func (service *fakeDescribeService) DescribePersistentVolumeClaim(
+	_ context.Context,
+	input kubernetesdescribe.PersistentVolumeClaimInput,
+) (kubernetesdescribe.Result, error) {
+	service.claimCall = input
+	return service.result, service.err
 }
 
 func (service *fakeDescribeService) DescribeNode(
@@ -68,6 +77,17 @@ func describeTestRouter(service kubernetesDescribeService) *gin.Engine {
 		"/clusters/:cluster_id/nodes/:node_name/describe",
 		handler.node,
 	)
+	// Mirrors the existing typed storage detail route. The describe route must
+	// share its dynamic prefix; a static `persistentvolumeclaims` sibling would
+	// shadow this GET and turn a valid detail read into 405.
+	router.GET(
+		"/clusters/:cluster_id/namespaces/:namespace_name/storage/:storage_resource/:storage_name",
+		func(c *gin.Context) { c.Status(http.StatusNoContent) },
+	)
+	router.GET(
+		"/clusters/:cluster_id/namespaces/:namespace_name/storage/:storage_resource/:storage_name/describe",
+		handler.persistentVolumeClaim,
+	)
 	router.GET(
 		"/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe",
 		handler.pod,
@@ -83,6 +103,22 @@ func describeTestRouter(service kubernetesDescribeService) *gin.Engine {
 	return router
 }
 
+func TestPersistentVolumeClaimDescribeDoesNotShadowStorageDetail(t *testing.T) {
+	t.Parallel()
+
+	router := describeTestRouter(&fakeDescribeService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/storage/persistentvolumeclaims/weights",
+		nil,
+	)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("storage detail was shadowed: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // Describe reads Events, and reading Events is its own permission. A route that
 // asked only for cluster.read would hand out a Namespace's Events to callers
 // the Event stream refuses, which is the separation cluster.event.read exists
@@ -95,6 +131,7 @@ func TestDescribeRoutesRequireBothTheResourceAndEventPermissions(t *testing.T) {
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe":                              false,
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/describe": false,
 		"GET /api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name/describe":                                    false,
+		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/storage/:storage_resource/:storage_name/describe":     false,
 	}
 	for _, route := range parseRegisteredRoutes(t) {
 		if _, tracked := wanted[route.key()]; !tracked {
@@ -167,6 +204,40 @@ func TestDescribeNodeReturnsTheClusterScopedDiagnosis(t *testing.T) {
 		strings.Contains(recorder.Body.String(), `"NodeSummary"`) ||
 		strings.Contains(recorder.Body.String(), `"CPUAllocatable"`) {
 		t.Fatalf("Node diagnosis missing from response: %s", recorder.Body.String())
+	}
+}
+
+func TestDescribePersistentVolumeClaimReturnsStorageDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeDescribeService{result: kubernetesdescribe.Result{
+		Target: kubernetesdescribe.Target{
+			APIVersion: "v1", Kind: "PersistentVolumeClaim", Namespace: "models",
+			Name: "weights", UID: "claim-uid",
+		},
+		Family:           kubernetesdescribe.FamilyStorage,
+		Storage:          &kubernetesresource.StorageResourceDetail{},
+		Events:           kubernetesdescribe.Events{Items: []kubernetesdescribe.Event{}},
+		Findings:         []kubernetesdescribe.Finding{},
+		DegradedSections: []string{},
+	}}
+	router := describeTestRouter(service)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/storage/persistentvolumeclaims/weights/describe",
+		nil,
+	)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.claimCall.ClusterID != "00000000-0000-4000-8000-000000000003" ||
+		service.claimCall.Namespace != "models" || service.claimCall.Name != "weights" {
+		t.Fatalf("unexpected PVC describe input: %+v", service.claimCall)
+	}
+	if !strings.Contains(recorder.Body.String(), `"family":"storage"`) {
+		t.Fatalf("PVC diagnosis missing from response: %s", recorder.Body.String())
 	}
 }
 

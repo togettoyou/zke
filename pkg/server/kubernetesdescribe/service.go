@@ -65,6 +65,7 @@ const (
 	FamilyPod      = "pod"
 	FamilyWorkload = "workload"
 	FamilyNode     = "node"
+	FamilyStorage  = "storage"
 	FamilyGeneric  = "generic"
 )
 
@@ -173,9 +174,10 @@ type Result struct {
 	// The family projection, present for the families that have one. Same shape
 	// the family's own detail endpoint returns, so the Console renders it with
 	// the components it already has.
-	Pod      *kubernetesresource.PodDetail      `json:"pod,omitempty"`
-	Workload *kubernetesresource.WorkloadDetail `json:"workload,omitempty"`
-	Node     *kubernetesresource.NodeDetail     `json:"node,omitempty"`
+	Pod      *kubernetesresource.PodDetail             `json:"pod,omitempty"`
+	Workload *kubernetesresource.WorkloadDetail        `json:"workload,omitempty"`
+	Node     *kubernetesresource.NodeDetail            `json:"node,omitempty"`
+	Storage  *kubernetesresource.StorageResourceDetail `json:"storage,omitempty"`
 	// NodeResources is the scheduler-requested share of a Node's allocatable
 	// resources. It is separate from the Node projection because the values come
 	// from the Pods assigned to it, not from the Node object itself.

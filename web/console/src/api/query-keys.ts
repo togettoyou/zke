@@ -114,6 +114,8 @@ export const queryKeys = {
   podDescribe: (clusterId: string, namespace: string, name: string) =>
     ["pod-describe", clusterId, namespace, name] as const,
   nodeDescribe: (clusterId: string, name: string) => ["node-describe", clusterId, name] as const,
+  persistentVolumeClaimDescribe: (clusterId: string, namespace: string, name: string) =>
+    ["persistent-volume-claim-describe", clusterId, namespace, name] as const,
   resourceDescribe: (clusterId: string, namespace: string, gvr: string, name: string) =>
     ["resource-describe", clusterId, namespace, gvr, name] as const,
   workloadDescribe: (clusterId: string, namespace: string, resource: string, name: string) =>

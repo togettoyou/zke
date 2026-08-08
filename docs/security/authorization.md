@@ -514,7 +514,8 @@ Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Res
 
 describe 接口（`.../pods/{pod_name}/describe`、
 `.../workloads/{workload_resource}/{workload_name}/describe` 与
-`.../nodes/{node_name}/describe`、`.../kubernetes/resources/{resource_name}/describe`）在一次响应里同时给出
+`.../nodes/{node_name}/describe`、`.../storage/{storage_resource}/{storage_name}/describe`、
+`.../kubernetes/resources/{resource_name}/describe`）在一次响应里同时给出
 对象与该对象的 Event，因此要求
 调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在路由层，各自留下自己的拒绝记录。只要求 `cluster.read` 会使 describe 成为绕开 Event 权限读取命名空间事件的
 通道；而把 Event 当作可选部分静默省略，则会让缺少权限的调用者拿到一份看不出缺了什么的结论。Event 读取写入

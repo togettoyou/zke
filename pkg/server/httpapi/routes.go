@@ -711,6 +711,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
 		handlers.kubernetesStorage.get,
 	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/storage/:storage_resource/:storage_name/describe",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesDescribe.persistentVolumeClaim,
+	)
 	clusterRoutes.PUT(
 		"/:cluster_id/namespaces/:namespace_name/storage/:storage_resource/:storage_name",
 		handlers.authMiddleware.RequireCSRF,
