@@ -17,6 +17,7 @@ import (
 // single place and an absent key simply keeps its default.
 type Config struct {
 	HTTP               HTTPConfig               `yaml:"http"`
+	PodAccess          PodAccessConfig          `yaml:"pod_access"`
 	Database           DatabaseConfig           `yaml:"database"`
 	Auth               AuthConfig               `yaml:"auth"`
 	AgentPKI           AgentPKIConfig           `yaml:"agent_pki"`
@@ -39,6 +40,25 @@ type HTTPConfig struct {
 	ReadTimeout       time.Duration     `yaml:"read_timeout"`
 	WriteTimeout      time.Duration     `yaml:"write_timeout"`
 	IdleTimeout       time.Duration     `yaml:"idle_timeout"`
+}
+
+// PodAccessConfig owns a second HTTP listener whose origin is reserved for
+// proxied Pod applications. It deliberately does not share the API router:
+// arbitrary Pod content must never execute in the Console/API origin.
+type PodAccessConfig struct {
+	Enabled                  bool              `yaml:"enabled"`
+	Address                  string            `yaml:"address"`
+	ExternalURL              string            `yaml:"external_url"`
+	TLS                      TLSIdentityConfig `yaml:"tls"`
+	ReadHeaderTimeout        time.Duration     `yaml:"read_header_timeout"`
+	IdleTimeout              time.Duration     `yaml:"idle_timeout"`
+	ActivationTTL            time.Duration     `yaml:"activation_ttl"`
+	SessionTTL               time.Duration     `yaml:"session_ttl"`
+	RevalidateInterval       time.Duration     `yaml:"revalidate_interval"`
+	MaxPendingSessions       int               `yaml:"max_pending_sessions"`
+	MaxActiveSessions        int               `yaml:"max_active_sessions"`
+	MaxConnections           int               `yaml:"max_connections"`
+	MaxConnectionsPerSession int               `yaml:"max_connections_per_session"`
 }
 
 type TLSIdentityConfig struct {
@@ -198,6 +218,18 @@ type AgentListenerConfig struct {
 // DefaultConfig reports the configuration used when the file omits a key.
 func DefaultConfig() Config {
 	return Config{
+		PodAccess: PodAccessConfig{
+			Address:                  "127.0.0.1:8081",
+			ReadHeaderTimeout:        5 * time.Second,
+			IdleTimeout:              60 * time.Second,
+			ActivationTTL:            30 * time.Second,
+			SessionTTL:               15 * time.Minute,
+			RevalidateInterval:       15 * time.Second,
+			MaxPendingSessions:       1024,
+			MaxActiveSessions:        256,
+			MaxConnections:           128,
+			MaxConnectionsPerSession: 2,
+		},
 		Database: DatabaseConfig{
 			MaxConnections:  16,
 			MinConnections:  2,

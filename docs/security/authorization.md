@@ -523,11 +523,20 @@ Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证
 重新执行项目范围内的 Cluster 判权和审计。数据库记录绑定不可变 Cluster UUID、Namespace、Pod 名称与 Pod UID，
 详情还必须匹配 recording ID；记录有界且默认 7 天过期，列表不返回输出帧，只有详情读取暴露正文。
 
-Pod 端口转发使用另一项默认仅授予 admin 的 `cluster.pod.port_forward`，不因持有 `cluster.read`、
-`cluster.pod.exec` 或通用资源写权限而获得。票据必须通过 CSRF、幂等键和显式确认，并绑定用户、登录 Session、
-Cluster、Namespace、Pod UID、单个远端端口与请求路径，只能消费一次；长连接周期重新验证 Session 和该权限。
-Agent ServiceAccount 只增加 `pods/portforward` 的 `create`，Agent 在连接前再次核对 Pod UID，且只在回环地址建立
-临时桥接。双向流量正文不进入日志、审计或 AI 上下文，审计只记录目标、端口、结果与字节统计。
+Pod 端口访问使用另一项默认仅授予 admin 的 `cluster.pod.port_forward`，不因持有 `cluster.read`、
+`cluster.pod.exec` 或通用资源写权限而获得。原始 WebSocket 票据与浏览器 Pod Access 激活地址都必须通过 CSRF、
+幂等键和显式确认，并绑定用户、登录 Session、Cluster、Namespace、Pod UID 与单个远端端口，只能消费一次；
+长连接或活跃访问会话周期重新验证 Session 和该权限。Agent ServiceAccount 只增加 `pods/portforward` 的 `create`，
+Agent 在连接前再次核对 Pod UID，且只在回环地址建立临时桥接。
+
+浏览器入口使用不承载任何 ZKE API 的独立 Pod Access Origin。激活 Token 与访问 Cookie 使用 256-bit 随机值并
+短时有效，Token 消费后从 URL 清除；除短期幂等响应外，服务端只持有摘要。Listener 不信任 Pod 内容：进入 Pod
+前删除 ZKE Session、CSRF 与其他非当前访问会话 Cookie，返回浏览器的 Pod Cookie 使用会话级命名空间并移除
+Domain。即使 Access Listener 与 API 使用同一 IP 的不同端口——Cookie 本身并不按端口隔离——Pod 也拿不到
+平台登录凭证，不能通过 `Set-Cookie` 覆盖它。`Clear-Site-Data`、HSTS、Alt-Svc 等会改变共享 Host 状态的响应头
+同样由 Listener 删除，只能由部署入口设置。外部访问地址必须使用 HTTPS；仅本地回环开发允许明文 HTTP，
+Listener 原生 TLS 可由受信上游网关的 TLS 终止替代。双向流量正文、Token、Cookie、Authorization 和响应头不
+进入日志、审计或 AI 上下文；审计只记录创建者、目标 Cluster/Namespace/Pod UID、端口与会话结果。
 
 Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Resource 接口会拒绝并从 Discovery 中
 隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。普通请求必须明确 Cluster 和 Namespace，可使用受限

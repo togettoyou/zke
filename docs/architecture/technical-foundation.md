@@ -861,6 +861,11 @@ kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernete
 迁移校验和变化而拒绝启动；此时需要明确执行 `docker compose -f deploy/development/compose.yaml down --volumes`
 后重新启动数据库，而不是让应用静默改写已执行迁移。
 
+本地 Server 配置还启用了独立 Pod Access Listener：Console/API 使用 `127.0.0.1:8080`，Pod HTTP 访问使用
+`127.0.0.1:8081`。部署时通过 `pod_access.external_url` 填写浏览器真正访问的第二 Origin；可以在
+`pod_access.tls` 配置原生证书，也可以让云入口终止 HTTPS 后转发到 Listener 的 HTTP 地址。生产或远程入口的
+`external_url` 不接受明文 HTTP；云入口必须保留该 External URL 的原始 Host 头。
+
 Server 启动时自动执行数据库迁移；没有待应用版本时不会修改业务表。Agent 会使用 client-go 创建或访问固定名称
 身份 Secret，并在没有完整身份时调用注册接口；注册完成后使用该身份建立 QUIC/mTLS Connection，并在 Control
 Stream 上执行 Hello 与心跳。Server 提供 `GET /healthz` 存活检查和使用 PostgreSQL 连接状态的 `GET /readyz`

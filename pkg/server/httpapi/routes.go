@@ -464,6 +464,15 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesPodPortForward.create,
 	)
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/access-sessions",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterPodPortForward,
+			"cluster_id",
+		),
+		handlers.kubernetesPodAccess.create,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/pods",
 		handlers.authorizationMiddleware.RequireCluster(

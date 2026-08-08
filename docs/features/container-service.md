@@ -890,14 +890,38 @@ Console 终端入口在 Pod 列表行和详情页，需要 `cluster.pod.exec`（
 Shell 需要完整的 ANSI/VT 序列、光标寻址与回滚支持，自行实现不现实。它按需加载为独立 chunk，不进入主包，
 未打开终端的操作者不会为此付出加载成本。
 
-Pod 端口转发使用独立的 `cluster.pod.port_forward` 权限和 `pod-port-forward.v1` Agent 能力，不复用终端或
-通用资源权限。Server 创建与用户、登录 Session、Cluster、Namespace、Pod UID、单个端口和路径绑定的短期
-一次性票据，再升级同源 `zke.pod-port-forward.v1` WebSocket；二进制消息承载原始 TCP 字节，最终文本消息只
-携带终止原因与双向字节数。Agent 在传输前重新读取 Pod 核对 UID，通过 client-go 的 WebSocket-first/SPDY
-fallback port-forward 在 `127.0.0.1` 随机端口建立进程内桥接，不对节点或外部网络暴露监听端口。会话受总时长、
-空闲、双向字节和 Server/单 Agent 并发上限约束，并周期重验 Session 与权限。审计记录票据、Pod UID、端口和
-结果，不记录流量正文。Console 提供一次 HTTP GET 原始响应预览；非 HTTP 客户端可直接使用同一 WebSocket
-二进制协议，Console 不把该能力伪装成本机 `localhost` 监听。
+Pod HTTP 访问使用独立的 `cluster.pod.port_forward` 权限和 `pod-port-forward.v1` Agent 能力，不复用终端或
+通用资源权限。Console 不再发送一次 HTTP GET 后显示原始响应，而是向 Server 申请短时、一次性的 Pod Access
+激活地址。地址位于 `pod_access.external_url` 指定的独立 Origin；激活成功后该 Origin 从根路径反向代理普通
+HTTP、流式响应、SSE 和 WebSocket，因此使用 `/assets`、`/api` 等绝对根路径的应用不需要为每次随机会话配置
+Base Path。它只代理所选 Pod 端口，不挂载 Console、认证或任何 ZKE API 路由。
+
+Pod Access Listener 与主 HTTP Listener 运行在同一个 Server 进程，可以绑定相同 IP 的另一个端口，也可以由
+云入口映射为第二个固定域名。Listener 的 TLS 可选：配置 `pod_access.tls` 时 Server 原生提供 HTTPS；留空时可由
+上游网关终止 HTTPS 并向 Listener 转发 HTTP。携带 Bearer 激活凭证的外部 URL 必须是 HTTPS，只有回环本地开发
+允许使用 HTTP。相同主机的 Cookie 不按端口隔离，所以 Listener 会删除所有非本访问会话的 Cookie，绝不把
+`zke_session`、CSRF Cookie 或 Pod Access Cookie 发给 Pod；Pod 的 `Set-Cookie` 则按访问会话随机前缀改名，回送
+Pod 前恢复原名并去掉 Domain，避免 Pod 页面覆盖 Console 登录态或与另一条 Pod 会话串用 Cookie。
+
+创建请求通过 CSRF、幂等键、显式确认和 `cluster.pod.port_forward` 判权，绑定用户、登录 Session、Cluster、
+Namespace、Pod UID 与单个端口。激活 Token 和访问 Cookie 都是 256-bit 随机值，Server 内存只按 SHA-256 摘要
+查找（幂等重试所需的同一激活地址仅保留到激活票据到期）；URL Token 消费一次后立即从地址栏清除。活跃会话
+周期重验登录 Session 与权限，退出登录或权限收回会取消它持有的全部上游连接。每个 HTTP 上游连接复用现有
+Agent port-forward Stream；`http.Transport` 在单会话内池化 Keep-Alive 连接，并同时受单会话、Server 全局和
+单 Agent 并发上限约束。双向字节上限按整个访问会话累计，不能靠重新建连接绕过；总时长到期、Pod UID 改变、
+权限撤销或 Server 关闭都会关闭连接。审计记录创建、激活、权限撤销、Pod UID 和端口，不记录 Token、Cookie、
+请求头或流量正文。
+
+固定 Access Origin 通过一个 HttpOnly Cookie 选择当前目标，所以同一浏览器配置同时只能激活一个 Pod 入口；
+发现已有入口时，新激活地址先返回冲突说明，不会静默切换目标；操作者关闭旧页面并明确选择替换后才结束旧入口。
+需要并行访问时使用不同浏览器配置或隐私窗口。这个限制换取了根路径代理能力；把会话放回 URL Path 会重新引入
+绝对路径、Cookie Path 和 WebSocket 不兼容问题。
+
+底层原始 WebSocket port-forward API 继续保留给协议客户端：一次性票据升级
+`zke.pod-port-forward.v1` WebSocket，二进制消息承载 TCP 字节。Agent 在传输前重新读取 Pod 核对 UID，通过
+client-go 的 WebSocket-first/SPDY fallback port-forward 在 `127.0.0.1` 随机端口建立进程内桥接，不在 Agent
+节点或 Server 主机暴露端口。Pod Access 只承诺 HTTP 语义；Redis、MySQL、SSH 等非 HTTP 协议不通过浏览器入口
+伪装为可用能力。
 
 Kubernetes Event 后端固定读取所选 Cluster 与 Namespace 的 `core/v1/events`，不接受调用方覆盖 GVR。默认
 通过 SSE 返回有界初始快照；实时 Follow 使用独立 `resource-watch.v1` QUIC Stream，支持按关联资源 UID、Kind、

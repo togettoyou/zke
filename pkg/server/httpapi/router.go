@@ -20,6 +20,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
+	"github.com/togettoyou/zke/pkg/server/podaccess"
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/podportforward"
@@ -44,6 +45,7 @@ type Dependencies struct {
 	PodLogsService            *podlogs.Service
 	PodExecService            *podexec.Service
 	PodPortForwardService     *podportforward.Service
+	PodAccessService          *podaccess.Service
 	ResourceWatchService      *resourcewatch.Service
 	ResourceManagementService *resourcemanagement.Service
 	AccessManagementService   *accessmanagement.Service
@@ -74,6 +76,7 @@ type handlers struct {
 	kubernetesPodLogs        *kubernetesPodLogsHandler
 	kubernetesPodExec        *kubernetesPodExecHandler
 	kubernetesPodPortForward *kubernetesPodPortForwardHandler
+	kubernetesPodAccess      *kubernetesPodAccessHandler
 	kubernetesEvents         *kubernetesEventsHandler
 	kubernetesWorkload       *kubernetesWorkloadHandler
 	kubernetesNetworking     *kubernetesNetworkingHandler
@@ -258,6 +261,12 @@ func New(
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 			config.PodPortForward,
+		),
+		kubernetesPodAccess: newKubernetesPodAccessHandler(
+			logger,
+			dependencies.PodAccessService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
 		),
 		kubernetesEvents: newKubernetesEventsHandler(
 			logger,

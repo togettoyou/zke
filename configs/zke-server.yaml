@@ -12,6 +12,31 @@ http:
   write_timeout: 15s
   idle_timeout: 60s
 
+# Optional, isolated browser origin for HTTP services running inside Pods.
+# It is a second listener in the same Server process and never exposes ZKE API
+# routes. Keep disabled until external_url is reachable by the operator's
+# browser. Native TLS is optional; an upstream gateway may terminate HTTPS and
+# forward plain HTTP to this listener. Direct external HTTP is accepted only on
+# loopback for local development because activation URLs are bearer credentials.
+# A gateway in front of this listener must preserve the external Host header.
+pod_access:
+  enabled: true
+  address: 127.0.0.1:8081
+  external_url: http://127.0.0.1:8081
+  # tls:
+  #   certificate_file: /var/run/secrets/zke-pod-access/tls.crt
+  #   private_key_file: /var/run/secrets/zke-pod-access/tls.key
+  read_header_timeout: 5s
+  idle_timeout: 60s
+  activation_ttl: 30s
+  session_ttl: 15m
+  revalidate_interval: 15s
+  max_pending_sessions: 1024
+  max_active_sessions: 256
+  # Each upstream HTTP connection consumes one Agent Pod Port Forward Stream.
+  max_connections: 128
+  max_connections_per_session: 2
+
 database:
   url: postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable
   connect_timeout: 5s

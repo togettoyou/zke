@@ -2486,6 +2486,56 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/access-sessions:
+    post:
+      tags: [Resources]
+      operationId: createKubernetesPodAccessSession
+      description: |
+        为明确 Cluster、Namespace、Pod UID 和单个 HTTP 端口创建短时、一次性的 Pod
+        Access 激活地址。请求需要 cluster.pod.port_forward 权限、CSRF、显式确认和
+        Idempotency-Key。激活地址位于独立 Pod Access Origin；成功激活后由该 Origin
+        代理根路径、流式响应和 WebSocket，不暴露任何 ZKE API。激活及活跃会话均绑定
+        创建者的登录 Session，服务端周期重新验证登录状态和权限，并限制会话时长、
+        双向总字节、全局及单会话连接数。Token 与正文不进入日志或审计。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesPodPortForwardSessionRequest"
+      responses:
+        "201":
+          description: 一次性 Pod Access 激活地址
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesPodAccessSession"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/port-forward-sessions/{session_id}:
     get:
       tags: [Resources]
@@ -13034,6 +13084,22 @@ components:
         subprotocol:
           type: string
           const: zke.pod-port-forward.v1
+    KubernetesPodAccessSession:
+      type: object
+      additionalProperties: false
+      required: [access_url, activation_expires_at, session_expires_in_seconds]
+      properties:
+        access_url:
+          type: string
+          format: uri
+          description: 位于独立 Pod Access Origin 的一次性激活地址。
+        activation_expires_at:
+          $ref: "#/components/schemas/Timestamp"
+        session_expires_in_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 激活成功后访问会话的最长持续秒数。
     KubernetesPodPortForwardStatus:
       type: object
       additionalProperties: false

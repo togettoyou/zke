@@ -21,6 +21,22 @@ http:
   read_timeout: 20s
   write_timeout: 15s
   idle_timeout: 60s
+pod_access:
+  enabled: true
+  address: 127.0.0.1:10443
+  external_url: https://access.example.com:10443
+  tls:
+    certificate_file: /run/secrets/pod-access.crt
+    private_key_file: /run/secrets/pod-access.key
+  read_header_timeout: 4s
+  idle_timeout: 50s
+  activation_ttl: 25s
+  session_ttl: 10m
+  revalidate_interval: 10s
+  max_pending_sessions: 500
+  max_active_sessions: 100
+  max_connections: 128
+  max_connections_per_session: 3
 database:
   url: postgres://file-value
   connect_timeout: 4s
@@ -119,6 +135,17 @@ log_level: warn
 	}
 	if cfg.HTTP.ReadTimeout != 20*time.Second {
 		t.Fatalf("read timeout = %s, want YAML value", cfg.HTTP.ReadTimeout)
+	}
+	if !cfg.PodAccess.Enabled || cfg.PodAccess.Address != "127.0.0.1:10443" ||
+		cfg.PodAccess.ExternalURL != "https://access.example.com:10443" ||
+		cfg.PodAccess.TLS.CertificateFile != "/run/secrets/pod-access.crt" ||
+		cfg.PodAccess.TLS.PrivateKeyFile != "/run/secrets/pod-access.key" ||
+		cfg.PodAccess.ReadHeaderTimeout != 4*time.Second || cfg.PodAccess.IdleTimeout != 50*time.Second ||
+		cfg.PodAccess.ActivationTTL != 25*time.Second || cfg.PodAccess.SessionTTL != 10*time.Minute ||
+		cfg.PodAccess.RevalidateInterval != 10*time.Second || cfg.PodAccess.MaxPendingSessions != 500 ||
+		cfg.PodAccess.MaxActiveSessions != 100 || cfg.PodAccess.MaxConnections != 128 ||
+		cfg.PodAccess.MaxConnectionsPerSession != 3 {
+		t.Fatalf("unexpected Pod Access config: %+v", cfg.PodAccess)
 	}
 	if cfg.Database.MigrationTimeout != 90*time.Second {
 		t.Fatalf("migration timeout = %s, want YAML value", cfg.Database.MigrationTimeout)
@@ -263,6 +290,22 @@ log_level: warn
 	sharedListenerConfig.AgentListener.Address = "localhost:9000"
 	if err := sharedListenerConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted the HTTP port for the Agent Listener")
+	}
+	sharedPodAccessConfig := cfg
+	sharedPodAccessConfig.PodAccess.Address = "localhost:9000"
+	if err := sharedPodAccessConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted the HTTP port for Pod Access")
+	}
+	insecurePodAccessConfig := cfg
+	insecurePodAccessConfig.PodAccess.TLS = TLSIdentityConfig{}
+	insecurePodAccessConfig.PodAccess.ExternalURL = "http://access.example.com:10443"
+	if err := insecurePodAccessConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted a non-loopback HTTP Pod Access URL")
+	}
+	partialPodAccessTLSConfig := cfg
+	partialPodAccessTLSConfig.PodAccess.TLS.PrivateKeyFile = ""
+	if err := partialPodAccessTLSConfig.Validate(); err == nil {
+		t.Fatal("Validate() accepted a Pod Access TLS certificate without its private key")
 	}
 	if cfg.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("shutdown timeout = %s, want YAML value", cfg.ShutdownTimeout)

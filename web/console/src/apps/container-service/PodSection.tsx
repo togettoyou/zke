@@ -240,7 +240,7 @@ export function PodSection({
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label={`转发 ${row.original.name} 的端口`}
+                aria-label={`访问 ${row.original.name} 的 HTTP 端口`}
                 onClick={() => onOpenPortForward(row.original)}
               >
                 <Cable />
@@ -556,7 +556,7 @@ function PodDetailView({
             {canPortForward && pod?.uid ? (
               <Button size="sm" variant="secondary" onClick={() => onOpenPortForward(pod)}>
                 <Cable />
-                端口转发
+                Pod 访问
               </Button>
             ) : null}
             {canDelete && pod?.uid ? (

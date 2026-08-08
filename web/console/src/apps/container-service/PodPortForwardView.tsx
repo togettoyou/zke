@@ -1,36 +1,18 @@
-import { useEffect, useRef, useState } from "react";
-import { Cable, Square } from "lucide-react";
+import { useState } from "react";
+import { ExternalLink, Link2 } from "lucide-react";
 
 import { errorMessage } from "@/api/errors";
-import {
-  POD_PORT_FORWARD_SUBPROTOCOL,
-  podPortForwardSocketUrl,
-  useCreatePodPortForwardSession,
-  type PodPortForwardStatus,
-} from "@/api/queries/pod-port-forward";
+import { useCreatePodAccessSession } from "@/api/queries/pod-port-forward";
 import { usePod } from "@/api/queries/pods";
 import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { CopyButton } from "@/components/common/status";
 import { ErrorState, LoadingState } from "@/components/common/state";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
 import { useSubmissionKey } from "@/lib/use-submission-key";
-
-const MAX_PREVIEW_CHARACTERS = 2 * 1024 * 1024;
-
-function isSafeHttpPath(value: string): boolean {
-  return (
-    value.startsWith("/") &&
-    value.length <= 2_048 &&
-    !Array.from(value).some((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code <= 32 || code === 127;
-    })
-  );
-}
 
 export function PodPortForwardView({
   clusterId,
@@ -50,7 +32,7 @@ export function PodPortForwardView({
   const detail = usePod(clusterId, namespace, podName);
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader title={`${podName} · 端口转发`} onBack={onBack} />
+      <PageHeader title={`${podName} · Pod 访问`} onBack={onBack} />
       {detail.error ? (
         <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
       ) : detail.isLoading || !detail.data ? (
@@ -60,7 +42,7 @@ export function PodPortForwardView({
           该 Pod 已被同名重新创建，本次入口绑定的 UID 已失效。请返回列表重新打开。
         </Alert>
       ) : (
-        <PortPreview
+        <PodAccessForm
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
@@ -72,7 +54,7 @@ export function PodPortForwardView({
   );
 }
 
-function PortPreview({
+function PodAccessForm({
   clusterId,
   clusterName,
   namespace,
@@ -86,42 +68,14 @@ function PortPreview({
   podUid: string;
 }) {
   const [port, setPort] = useState("8080");
-  const [path, setPath] = useState("/");
   const [confirming, setConfirming] = useState(false);
-  const [state, setState] = useState<"idle" | "connecting" | "open" | "closed">("idle");
-  const [response, setResponse] = useState("");
-  const [status, setStatus] = useState<PodPortForwardStatus | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const attemptRef = useRef(0);
-  const decoderRef = useRef(new TextDecoder());
-  const createSession = useCreatePodPortForwardSession();
-  const ticketKey = useSubmissionKey(confirming);
+  const createSession = useCreatePodAccessSession();
+  const submissionKey = useSubmissionKey(confirming);
   const portNumber = Number(port);
   const validPort = Number.isInteger(portNumber) && portNumber >= 1 && portNumber <= 65_535;
-  const validPath = isSafeHttpPath(path);
+  const ticket = createSession.data;
 
-  useEffect(
-    () => () => {
-      attemptRef.current += 1;
-      socketRef.current?.close(1000, "view closed");
-    },
-    [],
-  );
-
-  const disconnect = () => {
-    attemptRef.current += 1;
-    socketRef.current?.close(1000, "closed by operator");
-    socketRef.current = null;
-    setState("closed");
-  };
-
-  const connect = () => {
-    if (!validPort || !validPath) return;
-    setState("connecting");
-    setResponse("");
-    setStatus(null);
-    decoderRef.current = new TextDecoder();
-    const attempt = ++attemptRef.current;
+  const create = () => {
     void createSession
       .mutateAsync({
         clusterId,
@@ -129,133 +83,88 @@ function PortPreview({
         podName,
         uid: podUid,
         port: portNumber,
-        idempotencyKey: ticketKey,
+        idempotencyKey: submissionKey,
       })
-      .then((session) => {
-        if (attempt !== attemptRef.current) return;
-        const socket = new WebSocket(podPortForwardSocketUrl(session.websocket_path), [
-          POD_PORT_FORWARD_SUBPROTOCOL,
-        ]);
-        socket.binaryType = "arraybuffer";
-        socketRef.current = socket;
-        socket.onopen = () => {
-          if (attempt !== attemptRef.current || socket.protocol !== POD_PORT_FORWARD_SUBPROTOCOL) {
-            socket.close(1002, "subprotocol mismatch");
-            return;
-          }
-          setState("open");
-          socket.send(
-            new TextEncoder().encode(
-              `GET ${path} HTTP/1.1\r\nHost: ${podName}:${portNumber}\r\nConnection: close\r\nAccept: */*\r\n\r\n`,
-            ),
-          );
-        };
-        socket.onmessage = (event) => {
-          if (attempt !== attemptRef.current) return;
-          if (event.data instanceof ArrayBuffer) {
-            const text = decoderRef.current.decode(new Uint8Array(event.data), { stream: true });
-            setResponse((current) => {
-              const next = current + text;
-              if (next.length <= MAX_PREVIEW_CHARACTERS) return next;
-              socket.close(1009, "preview limit reached");
-              return `${next.slice(0, MAX_PREVIEW_CHARACTERS)}\n\n[Console 预览已达到 2 MiB，连接已关闭]`;
-            });
-            return;
-          }
-          try {
-            setStatus(JSON.parse(String(event.data)) as PodPortForwardStatus);
-          } catch {
-            setStatus({ type: "exit", result: "internal", message: "服务端返回了无效的状态消息" });
-          }
-        };
-        socket.onclose = () => {
-          if (attempt === attemptRef.current) {
-            socketRef.current = null;
-            setState("closed");
-          }
-        };
-        socket.onerror = () => {
-          if (attempt === attemptRef.current) setState("closed");
-        };
-      })
-      .catch(() => setState("closed"));
+      .then(() => setConfirming(false))
+      .catch(() => undefined);
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col px-5 pb-5">
-      <Alert tone="info" className="mb-4">
-        Console 通过受限二进制隧道发送一次 HTTP GET 并显示原始响应；不会在 Agent 上暴露监听端口。 非
-        HTTP 协议可直接使用同一 WebSocket API 传输原始 TCP 字节。
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-5 pb-5">
+      <Alert tone="info">
+        创建一个位于独立 Pod Access 地址的临时入口。浏览器对该地址的根路径、静态资源、流式响应和
+        WebSocket 请求会转发到 Pod；ZKE API 和登录 Cookie 不会转发。该能力仅适用于 HTTP 服务，不支持
+        Redis、MySQL、SSH 等非 HTTP 协议。
       </Alert>
-      <div className="border-border rounded-panel mb-4 flex flex-wrap items-end gap-3 border p-4">
+
+      <div className="border-border rounded-panel flex flex-wrap items-end gap-3 border p-4">
         <div className="grid gap-1.5">
-          <Label htmlFor="port-forward-port">Pod 端口</Label>
+          <Label htmlFor="pod-access-port">Pod HTTP 端口</Label>
           <Input
-            id="port-forward-port"
-            className="w-32"
+            id="pod-access-port"
+            className="w-40"
             inputMode="numeric"
             value={port}
-            disabled={state === "open" || state === "connecting"}
-            onChange={(event) => setPort(event.target.value)}
+            onChange={(event) => {
+              setPort(event.target.value);
+              createSession.reset();
+            }}
           />
         </div>
-        <div className="grid min-w-56 flex-1 gap-1.5">
-          <Label htmlFor="port-forward-path">HTTP 路径</Label>
-          <Input
-            id="port-forward-path"
-            value={path}
-            disabled={state === "open" || state === "connecting"}
-            onChange={(event) => setPath(event.target.value)}
-          />
-        </div>
-        {state === "open" ? (
-          <Button variant="secondary" className="text-danger" onClick={disconnect}>
-            <Square />
-            断开
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            disabled={!validPort || !validPath || state === "connecting"}
-            onClick={() => setConfirming(true)}
-          >
-            <Cable />
-            {state === "connecting" ? "连接中…" : "连接并请求"}
-          </Button>
-        )}
+        <Button
+          variant="primary"
+          disabled={!validPort || createSession.isPending}
+          onClick={() => setConfirming(true)}
+        >
+          <Link2 />
+          {createSession.isPending ? "创建中…" : ticket ? "重新创建地址" : "创建访问地址"}
+        </Button>
       </div>
+
       {createSession.error ? (
-        <Alert tone="danger" className="mb-3">
-          {errorMessage(createSession.error)}
-        </Alert>
+        <Alert tone="danger">{errorMessage(createSession.error)}</Alert>
       ) : null}
-      <pre className="border-border bg-surface-muted rounded-panel min-h-0 flex-1 overflow-auto border p-4 text-xs break-all whitespace-pre-wrap">
-        {response || "响应将显示在这里。"}
-      </pre>
-      <div className="text-subtle-foreground mt-3 flex flex-wrap items-center gap-3 text-xs">
-        <Badge tone={state === "open" ? "success" : state === "connecting" ? "warning" : "neutral"}>
-          {state === "open"
-            ? "已连接"
-            : state === "connecting"
-              ? "连接中"
-              : state === "closed"
-                ? "已结束"
-                : "未连接"}
-        </Badge>
-        {status ? (
-          <span>
-            {status.result === "ok"
-              ? "转发已结束"
-              : status.message || status.reason || status.result}{" "}
-            · 上行 {status.client_bytes ?? 0} B / 下行 {status.pod_bytes ?? 0} B
-          </span>
-        ) : null}
-      </div>
+
+      {ticket ? (
+        <section className="border-border bg-surface-muted rounded-panel grid gap-3 border p-4">
+          <div>
+            <h3 className="text-sm font-semibold">一次性激活地址</h3>
+            <p className="text-subtle-foreground mt-1 text-xs">
+              地址需在 {new Date(ticket.activation_expires_at).toLocaleTimeString()}{" "}
+              前首次打开；激活后访问会话最长持续 {Math.ceil(ticket.session_expires_in_seconds / 60)}{" "}
+              分钟。地址等同临时凭证，请勿分享。
+            </p>
+          </div>
+          <Input
+            readOnly
+            value={ticket.access_url}
+            className="zke-mono"
+            aria-label="Pod 访问地址"
+          />
+          <div className="flex flex-wrap gap-2">
+            <CopyButton value={ticket.access_url} label="复制地址" />
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => window.open(ticket.access_url, "_blank", "noopener,noreferrer")}
+            >
+              <ExternalLink />
+              新窗口打开
+            </Button>
+          </div>
+          <Alert tone="warning">
+            激活地址只能使用一次。打开后请保留新窗口；再次打开同一地址会提示失效，需要在这里重新创建。
+            同一浏览器配置只能激活一个 Pod
+            入口；已有入口时会先要求明确替换。需要并行访问时请使用不同浏览器配置或隐私窗口。
+          </Alert>
+        </section>
+      ) : null}
+
       <SensitiveActionDialog
         open={confirming}
         onOpenChange={setConfirming}
-        title="确认打开 Pod 端口转发"
-        description="该操作会建立到 Pod 内指定 TCP 端口的临时数据通道。"
+        title="确认创建 Pod 访问地址"
+        description="该操作会允许浏览器在限定时间内访问 Pod 中指定端口的 HTTP 服务。"
         scopeLines={[
           { label: "集群", name: clusterName, id: clusterId },
           { label: "命名空间", name: namespace },
@@ -263,16 +172,15 @@ function PortPreview({
           { label: "远端端口", name: String(portNumber) },
         ]}
         impacts={[
-          "通道绑定当前登录 Session、Pod UID 和单个端口，只能使用一次。",
-          "访问结果取决于 Pod 内进程；传输正文不会写入日志或审计。",
+          "地址绑定当前登录 Session、Pod UID 和单个端口，首次打开后失效。",
+          "同一浏览器配置同时只保留一个 Pod 访问入口；替换旧入口前会再次明确提示。",
+          "访问权限会被周期复核；退出登录、权限收回、Pod 被替换或到期后连接会关闭。",
+          "请求与响应正文不会写入日志或审计，但访问地址持有人可使用创建者获准的临时入口。",
         ]}
-        confirmLabel="连接并请求"
+        confirmLabel="创建访问地址"
         pending={createSession.isPending}
         error={createSession.error}
-        onConfirm={() => {
-          setConfirming(false);
-          connect();
-        }}
+        onConfirm={create}
       />
     </div>
   );

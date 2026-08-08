@@ -59,7 +59,8 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
       xterm.js 的 Console 容器选择、确认、连接/断开与 resize 闭环；会话录制与回放尚未支持）
 - [x] Pod Port Forward（独立权限和 Agent Stream、一次性同源 WebSocket 票据、Pod UID/单端口绑定、
       WebSocket-first/SPDY fallback、Agent 回环桥接、双向字节/空闲/时长/并发限制、权限重验、无正文审计，
-      以及 Console HTTP 原始响应预览）
+      以及同进程独立 HTTP/可选 HTTPS Pod Access Listener、一次性激活地址、根路径 HTTP/SSE/WebSocket 代理、
+      Cookie 隔离、连接池和会话级累计字节上限）
 - [x] YAML 管理（完整 YAML 读取、严格单文档更新、DryRun、UID/resourceVersion 防误改、显式确认、幂等
       和审计，以及节点、命名空间、工作负载和 Pod 详情页的 Console 查看与编辑闭环；编辑器支持语法高亮、
       本地严格结构/身份校验，并在确认前展示当前对象与 Kubernetes DryRun 最终对象的有界行级差异）

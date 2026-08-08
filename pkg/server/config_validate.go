@@ -43,6 +43,8 @@ const (
 	maxPendingPodExecSessions     = 100_000
 	maxResourceWatchStreams       = 4096
 	maxResourceWatchRequests      = 100_000
+	maxPodAccessSessions          = 100_000
+	maxPodAccessConnections       = 100_000
 )
 
 // boundedDuration describes a duration that must be positive and capped.
@@ -97,6 +99,7 @@ func validateUnpaddedPaths(items []requiredPath) error {
 func (cfg Config) Validate() error {
 	for _, validate := range []func() error{
 		cfg.validateHTTP,
+		cfg.validatePodAccess,
 		cfg.validateDatabase,
 		cfg.validateAuth,
 		cfg.validateAgentPKI,
@@ -110,6 +113,66 @@ func (cfg Config) Validate() error {
 		if err := validate(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (cfg Config) validatePodAccess() error {
+	if !cfg.PodAccess.Enabled {
+		return validateUnpaddedPaths([]requiredPath{
+			{cfg.PodAccess.TLS.CertificateFile, "Pod Access TLS certificate file"},
+			{cfg.PodAccess.TLS.PrivateKeyFile, "Pod Access TLS private key file"},
+		})
+	}
+	if _, _, err := net.SplitHostPort(cfg.PodAccess.Address); err != nil {
+		return fmt.Errorf("Pod Access address must include a valid host and port: %w", err)
+	}
+	externalURL, err := url.Parse(cfg.PodAccess.ExternalURL)
+	if err != nil || externalURL.Host == "" ||
+		(externalURL.Scheme != "https" && externalURL.Scheme != "http") ||
+		externalURL.User != nil || externalURL.RawQuery != "" || externalURL.Fragment != "" ||
+		(externalURL.Path != "" && externalURL.Path != "/") {
+		return errors.New("enabled Pod Access external URL must be an HTTP(S) origin without credentials, path, query, or fragment")
+	}
+	if externalURL.Scheme == "http" && !isLoopbackAddress(externalURL.Hostname()) {
+		return errors.New("Pod Access external URL requires HTTPS except for loopback development")
+	}
+	certificateConfigured := strings.TrimSpace(cfg.PodAccess.TLS.CertificateFile) != ""
+	privateKeyConfigured := strings.TrimSpace(cfg.PodAccess.TLS.PrivateKeyFile) != ""
+	if certificateConfigured != privateKeyConfigured {
+		return errors.New("Pod Access TLS certificate and private key files must be configured together")
+	}
+	if certificateConfigured && externalURL.Scheme != "https" {
+		return errors.New("native Pod Access TLS requires an HTTPS external URL")
+	}
+	if err := validateUnpaddedPaths([]requiredPath{
+		{cfg.PodAccess.TLS.CertificateFile, "Pod Access TLS certificate file"},
+		{cfg.PodAccess.TLS.PrivateKeyFile, "Pod Access TLS private key file"},
+	}); err != nil {
+		return err
+	}
+	if err := validateDurations([]boundedDuration{
+		{cfg.PodAccess.ReadHeaderTimeout, maxHTTPTimeout, "Pod Access read header timeout"},
+		{cfg.PodAccess.IdleTimeout, maxIdleTimeout, "Pod Access idle timeout"},
+		{cfg.PodAccess.ActivationTTL, time.Minute, "Pod Access activation TTL"},
+		{cfg.PodAccess.SessionTTL, maxPodLogsTimeout, "Pod Access session TTL"},
+		{cfg.PodAccess.RevalidateInterval, time.Minute, "Pod Access revalidation interval"},
+	}); err != nil {
+		return err
+	}
+	if cfg.PodAccess.RevalidateInterval >= cfg.PodAccess.SessionTTL {
+		return errors.New("Pod Access revalidation interval must be below its session TTL")
+	}
+	if cfg.PodAccess.MaxPendingSessions <= 0 || cfg.PodAccess.MaxPendingSessions > maxPodAccessSessions ||
+		cfg.PodAccess.MaxActiveSessions <= 0 || cfg.PodAccess.MaxActiveSessions > maxPodAccessSessions {
+		return fmt.Errorf("Pod Access pending and active session limits must be between 1 and %d", maxPodAccessSessions)
+	}
+	if cfg.PodAccess.MaxConnections <= 0 || cfg.PodAccess.MaxConnections > maxPodAccessConnections {
+		return fmt.Errorf("Pod Access connection limit must be between 1 and %d", maxPodAccessConnections)
+	}
+	if cfg.PodAccess.MaxConnectionsPerSession <= 0 ||
+		cfg.PodAccess.MaxConnectionsPerSession > cfg.PodAccess.MaxConnections {
+		return errors.New("Pod Access per-session connection limit must be between 1 and the global connection limit")
 	}
 	return nil
 }
@@ -635,6 +698,21 @@ func (cfg Config) validateCrossSection() error {
 	}
 	if agentListenerPort == httpPort {
 		return errors.New("HTTP and Agent Listener ports must be different")
+	}
+	if cfg.PodAccess.Enabled {
+		_, podAccessPort, err := net.SplitHostPort(cfg.PodAccess.Address)
+		if err != nil {
+			return fmt.Errorf("Pod Access address must include a valid host and port: %w", err)
+		}
+		if podAccessPort == httpPort || podAccessPort == agentListenerPort {
+			return errors.New("Pod Access, HTTP, and Agent Listener ports must be different")
+		}
+		if cfg.PodAccess.MaxConnections > cfg.AgentListener.MaxPodPortForwardRequests {
+			return errors.New("Pod Access connection limit must not exceed the Server Pod Port Forward request limit")
+		}
+		if cfg.PodAccess.MaxConnectionsPerSession > cfg.AgentListener.MaxPodPortForwardStreams {
+			return errors.New("Pod Access per-session connection limit must not exceed the per-Agent Pod Port Forward stream limit")
+		}
 	}
 	return nil
 }

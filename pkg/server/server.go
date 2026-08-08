@@ -27,6 +27,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/pki"
+	"github.com/togettoyou/zke/pkg/server/podaccess"
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/podportforward"
@@ -291,6 +292,35 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxPodBytes:    cfg.AgentListener.MaxPodPortForwardPodBytes,
 		},
 	)
+	var podAccessService *podaccess.Service
+	if cfg.PodAccess.Enabled {
+		podAccessService, err = podaccess.NewService(
+			runContext,
+			logger,
+			authenticationService,
+			rbacService,
+			auditService,
+			podPortForwardService,
+			podaccess.Config{
+				Enabled:                  true,
+				ExternalURL:              cfg.PodAccess.ExternalURL,
+				ActivationTTL:            cfg.PodAccess.ActivationTTL,
+				SessionTTL:               cfg.PodAccess.SessionTTL,
+				RevalidateInterval:       cfg.PodAccess.RevalidateInterval,
+				OperationTimeout:         cfg.Auth.OperationTimeout,
+				IdleConnectionTimeout:    cfg.PodAccess.IdleTimeout,
+				MaxPending:               cfg.PodAccess.MaxPendingSessions,
+				MaxActive:                cfg.PodAccess.MaxActiveSessions,
+				MaxConnections:           cfg.PodAccess.MaxConnections,
+				MaxConnectionsPerSession: cfg.PodAccess.MaxConnectionsPerSession,
+				MaxClientBytes:           cfg.AgentListener.MaxPodPortForwardClientBytes,
+				MaxPodBytes:              cfg.AgentListener.MaxPodPortForwardPodBytes,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("configure Pod Access service: %w", err)
+		}
+	}
 	resourceWatchService := resourcewatch.NewService(agentConnectionManager)
 	resourceManagementService := resourcemanagement.NewService(
 		store.NewResourceManagementStore(database),
@@ -321,6 +351,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			PodLogsService:            podLogsService,
 			PodExecService:            podExecService,
 			PodPortForwardService:     podPortForwardService,
+			PodAccessService:          podAccessService,
 			ResourceWatchService:      resourceWatchService,
 			ResourceManagementService: resourceManagementService,
 			AccessManagementService:   accessManagementService,
@@ -393,8 +424,22 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MinVersion: tls.VersionTLS12,
 		},
 	}
+	var podAccessServer *http.Server
+	if podAccessService != nil {
+		podAccessServer = &http.Server{
+			Addr:              cfg.PodAccess.Address,
+			Handler:           podAccessService,
+			ReadHeaderTimeout: cfg.PodAccess.ReadHeaderTimeout,
+			IdleTimeout:       cfg.PodAccess.IdleTimeout,
+			MaxHeaderBytes:    64 * 1024,
+			BaseContext: func(net.Listener) context.Context {
+				return runContext
+			},
+			TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		}
+	}
 
-	serverErrors := make(chan error, 1)
+	serverErrors := make(chan error, 2)
 	backgroundTasks.Add(1)
 	go func() {
 		defer backgroundTasks.Done()
@@ -417,6 +462,36 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		}
 		serverErrors <- httpServer.ListenAndServe()
 	}()
+	if podAccessServer != nil {
+		backgroundTasks.Add(1)
+		go func() {
+			defer backgroundTasks.Done()
+			tlsEnabled := strings.TrimSpace(cfg.PodAccess.TLS.CertificateFile) != ""
+			scheme := "http"
+			if tlsEnabled {
+				scheme = "https"
+			}
+			logger.Info("Pod Access server starting",
+				slog.String("address", cfg.PodAccess.Address),
+				slog.String("external_url", cfg.PodAccess.ExternalURL),
+				slog.String("scheme", scheme),
+			)
+			var serveErr error
+			if tlsEnabled {
+				serveErr = podAccessServer.ListenAndServeTLS(
+					cfg.PodAccess.TLS.CertificateFile,
+					cfg.PodAccess.TLS.PrivateKeyFile,
+				)
+			} else {
+				serveErr = podAccessServer.ListenAndServe()
+			}
+			if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				serverErrors <- fmt.Errorf("serve Pod Access HTTP: %w", serveErr)
+				return
+			}
+			serverErrors <- serveErr
+		}()
+	}
 	agentErrors := make(chan error, 1)
 	backgroundTasks.Add(1)
 	go func() {
@@ -441,6 +516,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 
 	cancelRun()
 	shutdownError := shutdownHTTPServer(httpServer, cfg.ShutdownTimeout)
+	if podAccessServer != nil {
+		shutdownError = errors.Join(shutdownError, shutdownHTTPServer(podAccessServer, cfg.ShutdownTimeout))
+	}
 	// Wait before returning: the deferred database.Close runs on return, and
 	// Agent heartbeats or the certificate monitor may still be mid-query.
 	backgroundTasks.Wait()

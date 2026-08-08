@@ -883,6 +883,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/access-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 为明确 Cluster、Namespace、Pod UID 和单个 HTTP 端口创建短时、一次性的 Pod
+         *     Access 激活地址。请求需要 cluster.pod.port_forward 权限、CSRF、显式确认和
+         *     Idempotency-Key。激活地址位于独立 Pod Access Origin；成功激活后由该 Origin
+         *     代理根路径、流式响应和 WebSocket，不暴露任何 ZKE API。激活及活跃会话均绑定
+         *     创建者的登录 Session，服务端周期重新验证登录状态和权限，并限制会话时长、
+         *     双向总字节、全局及单会话连接数。Token 与正文不进入日志或审计。
+         */
+        post: operations["createKubernetesPodAccessSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/port-forward-sessions/{session_id}": {
         parameters: {
             query?: never;
@@ -5193,6 +5217,19 @@ export interface components {
             /** @constant */
             subprotocol: "zke.pod-port-forward.v1";
         };
+        KubernetesPodAccessSession: {
+            /**
+             * Format: uri
+             * @description 位于独立 Pod Access Origin 的一次性激活地址。
+             */
+            access_url: string;
+            activation_expires_at: components["schemas"]["Timestamp"];
+            /**
+             * Format: int64
+             * @description 激活成功后访问会话的最长持续秒数。
+             */
+            session_expires_in_seconds: number;
+        };
         KubernetesPodPortForwardStatus: {
             /** @constant */
             type: "exit";
@@ -7838,6 +7875,45 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["KubernetesPodPortForwardSession"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createKubernetesPodAccessSession: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesPodPortForwardSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description 一次性 Pod Access 激活地址 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodAccessSession"];
                     };
                 };
             };

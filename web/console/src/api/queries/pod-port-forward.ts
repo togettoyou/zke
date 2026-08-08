@@ -47,6 +47,37 @@ export function useCreatePodPortForwardSession() {
   });
 }
 
+export function useCreatePodAccessSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      clusterId: string;
+      namespace: string;
+      podName: string;
+      uid: string;
+      port: number;
+      idempotencyKey: string;
+    }) =>
+      unwrap(
+        await api.POST(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/access-sessions",
+          {
+            params: {
+              path: {
+                cluster_id: input.clusterId,
+                namespace_name: input.namespace,
+                pod_name: input.podName,
+              },
+              header: idempotentHeaders(input.idempotencyKey),
+            },
+            body: { uid: input.uid, port: input.port, confirm: true },
+          },
+        ),
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents }),
+  });
+}
+
 export function podPortForwardSocketUrl(websocketPath: string): string {
   const url = new URL(websocketPath, location.origin);
   if (url.origin !== location.origin) {
