@@ -62,11 +62,12 @@ const (
 // is the part the Console could not assemble before. It gets no findings,
 // because a rule that has not been written for a type is not a rule.
 const (
-	FamilyPod      = "pod"
-	FamilyWorkload = "workload"
-	FamilyNode     = "node"
-	FamilyStorage  = "storage"
-	FamilyGeneric  = "generic"
+	FamilyPod        = "pod"
+	FamilyWorkload   = "workload"
+	FamilyNode       = "node"
+	FamilyStorage    = "storage"
+	FamilyNetworking = "networking"
+	FamilyGeneric    = "generic"
 )
 
 // ResourceAccess is the read half of the Kubernetes resource service. Describe
@@ -82,6 +83,13 @@ type ResourceAccess interface {
 		kubernetesresource.ListPodsInput,
 	) ([]kubernetesresource.NodePodDetail, bool, error)
 	GetNode(context.Context, string, string) (kubernetesresource.NodeDetail, error)
+	GetNetworkingResource(
+		context.Context,
+		string,
+		string,
+		kubernetesresource.NetworkingResource,
+		string,
+	) (kubernetesresource.NetworkingResourceDetail, error)
 	GetWorkload(
 		context.Context,
 		string,
@@ -174,10 +182,12 @@ type Result struct {
 	// The family projection, present for the families that have one. Same shape
 	// the family's own detail endpoint returns, so the Console renders it with
 	// the components it already has.
-	Pod      *kubernetesresource.PodDetail             `json:"pod,omitempty"`
-	Workload *kubernetesresource.WorkloadDetail        `json:"workload,omitempty"`
-	Node     *kubernetesresource.NodeDetail            `json:"node,omitempty"`
-	Storage  *kubernetesresource.StorageResourceDetail `json:"storage,omitempty"`
+	Pod              *kubernetesresource.PodDetail                `json:"pod,omitempty"`
+	Workload         *kubernetesresource.WorkloadDetail           `json:"workload,omitempty"`
+	Node             *kubernetesresource.NodeDetail               `json:"node,omitempty"`
+	Storage          *kubernetesresource.StorageResourceDetail    `json:"storage,omitempty"`
+	Networking       *kubernetesresource.NetworkingResourceDetail `json:"networking,omitempty"`
+	ServiceEndpoints *ServiceEndpoints                            `json:"service_endpoints,omitempty"`
 	// NodeResources is the scheduler-requested share of a Node's allocatable
 	// resources. It is separate from the Node projection because the values come
 	// from the Pods assigned to it, not from the Node object itself.
@@ -192,6 +202,15 @@ type Result struct {
 	// complete; a describe that silently dropped a section would read as
 	// "nothing wrong here".
 	DegradedSections []string `json:"degraded_sections"`
+}
+
+type ServiceEndpoints struct {
+	EndpointSlices       int64 `json:"endpoint_slices"`
+	Endpoints            int64 `json:"endpoints"`
+	ReadyEndpoints       int64 `json:"ready_endpoints"`
+	ServingEndpoints     int64 `json:"serving_endpoints"`
+	TerminatingEndpoints int64 `json:"terminating_endpoints"`
+	Truncated            bool  `json:"truncated"`
 }
 
 type NodeResources struct {

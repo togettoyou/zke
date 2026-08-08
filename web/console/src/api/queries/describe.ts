@@ -52,6 +52,35 @@ export function usePersistentVolumeClaimDescribe(
   });
 }
 
+export function useServiceDescribe(
+  clusterId: string | null,
+  namespace: string | null,
+  name: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.serviceDescribe(clusterId ?? "", namespace ?? "", name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}/describe",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId as string,
+                namespace_name: namespace as string,
+                network_resource: "services",
+                network_name: name as string,
+              },
+            },
+            signal,
+          },
+        ),
+      ),
+    enabled: enabled && Boolean(clusterId && namespace && name),
+  });
+}
+
 /**
  * Describe joins an object with the Kubernetes Events that name it, and reports
  * the findings the two together support.

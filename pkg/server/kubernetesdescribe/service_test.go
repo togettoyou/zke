@@ -20,6 +20,8 @@ import (
 const testClusterID = "0c2ba9a5-15fb-4bfa-9fbe-7f43a2ba8a53"
 
 type fakeResourceAccess struct {
+	networking    kubernetesresource.NetworkingResourceDetail
+	networkingErr error
 	node          kubernetesresource.NodeDetail
 	nodeErr       error
 	nodePods      []kubernetesresource.NodePodDetail
@@ -42,6 +44,16 @@ type fakeResourceAccess struct {
 	object    map[string]any
 	objectErr error
 	lastGet   kubernetesresource.GetResourceInput
+}
+
+func (access *fakeResourceAccess) GetNetworkingResource(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ kubernetesresource.NetworkingResource,
+	_ string,
+) (kubernetesresource.NetworkingResourceDetail, error) {
+	return access.networking, access.networkingErr
 }
 
 func (access *fakeResourceAccess) GetNode(

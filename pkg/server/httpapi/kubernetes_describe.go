@@ -36,6 +36,40 @@ type kubernetesDescribeService interface {
 		context.Context,
 		kubernetesdescribe.PersistentVolumeClaimInput,
 	) (kubernetesdescribe.Result, error)
+	DescribeService(
+		context.Context,
+		kubernetesdescribe.ServiceInput,
+	) (kubernetesdescribe.Result, error)
+}
+
+func (handler *kubernetesDescribeHandler) serviceResource(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if c.Param("network_resource") != string(kubernetesresource.NetworkingServices) {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"only Service supports networking describe")
+		return
+	}
+	if len(c.Request.URL.Query()) != 0 {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"Service describe does not accept query parameters")
+		return
+	}
+	if handler.service == nil {
+		writeError(c, http.StatusServiceUnavailable, "unavailable",
+			"Kubernetes describe is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.DescribeService(
+		ctx,
+		kubernetesdescribe.ServiceInput{
+			ClusterID: c.Param("cluster_id"),
+			Namespace: c.Param("namespace_name"),
+			Name:      c.Param("network_name"),
+		},
+	)
+	cancel()
+	handler.finish(c, "describe Kubernetes Service", result, err)
 }
 
 func (handler *kubernetesDescribeHandler) persistentVolumeClaim(c *gin.Context) {

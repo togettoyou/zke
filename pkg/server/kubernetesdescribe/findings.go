@@ -26,6 +26,45 @@ const (
 	FindingPVCPending           = "PVCPending"
 )
 
+const (
+	FindingServiceNoEndpoints         = "ServiceNoEndpoints"
+	FindingServiceNoReadyEndpoints    = "ServiceNoReadyEndpoints"
+	FindingServiceLoadBalancerPending = "ServiceLoadBalancerPending"
+)
+
+func serviceFindings(
+	service kubernetesresource.NetworkingResourceDetail,
+	endpoints *ServiceEndpoints,
+) []Finding {
+	if service.Service == nil {
+		return []Finding{}
+	}
+	findings := make([]Finding, 0, 2)
+	view := service.Service
+	if view.Spec.Type == "LoadBalancer" && len(view.LoadBalancerIngress) == 0 {
+		findings = append(findings, Finding{
+			Code: FindingServiceLoadBalancerPending, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.loadBalancer.ingress"}},
+		})
+	}
+	if view.Spec.Type == "ExternalName" || endpoints == nil || endpoints.Truncated {
+		return findings
+	}
+	code := ""
+	if endpoints.Endpoints == 0 {
+		code = FindingServiceNoEndpoints
+	} else if endpoints.ReadyEndpoints == 0 {
+		code = FindingServiceNoReadyEndpoints
+	}
+	if code != "" {
+		findings = append(findings, Finding{
+			Code: code, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "endpoints.ready"}},
+		})
+	}
+	return findings
+}
+
 // The findings derived for a workload itself.
 //
 // They are deliberately few. A workload that is short of replicas is a symptom,

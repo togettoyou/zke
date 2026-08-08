@@ -26,6 +26,15 @@ type fakeDescribeService struct {
 	workloadCall kubernetesdescribe.WorkloadInput
 	resourceCall kubernetesdescribe.ResourceInput
 	claimCall    kubernetesdescribe.PersistentVolumeClaimInput
+	serviceCall  kubernetesdescribe.ServiceInput
+}
+
+func (service *fakeDescribeService) DescribeService(
+	_ context.Context,
+	input kubernetesdescribe.ServiceInput,
+) (kubernetesdescribe.Result, error) {
+	service.serviceCall = input
+	return service.result, service.err
 }
 
 func (service *fakeDescribeService) DescribePersistentVolumeClaim(
@@ -89,6 +98,14 @@ func describeTestRouter(service kubernetesDescribeService) *gin.Engine {
 		handler.persistentVolumeClaim,
 	)
 	router.GET(
+		"/clusters/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name",
+		func(c *gin.Context) { c.Status(http.StatusNoContent) },
+	)
+	router.GET(
+		"/clusters/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name/describe",
+		handler.serviceResource,
+	)
+	router.GET(
 		"/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name/describe",
 		handler.pod,
 	)
@@ -119,6 +136,22 @@ func TestPersistentVolumeClaimDescribeDoesNotShadowStorageDetail(t *testing.T) {
 	}
 }
 
+func TestServiceDescribeDoesNotShadowNetworkingDetail(t *testing.T) {
+	t.Parallel()
+
+	router := describeTestRouter(&fakeDescribeService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/networking/services/inference",
+		nil,
+	)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("networking detail was shadowed: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // Describe reads Events, and reading Events is its own permission. A route that
 // asked only for cluster.read would hand out a Namespace's Events to callers
 // the Event stream refuses, which is the separation cluster.event.read exists
@@ -132,6 +165,7 @@ func TestDescribeRoutesRequireBothTheResourceAndEventPermissions(t *testing.T) {
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/describe": false,
 		"GET /api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name/describe":                                    false,
 		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/storage/:storage_resource/:storage_name/describe":     false,
+		"GET /api/v1/clusters/:cluster_id/namespaces/:namespace_name/networking/:network_resource/:network_name/describe":  false,
 	}
 	for _, route := range parseRegisteredRoutes(t) {
 		if _, tracked := wanted[route.key()]; !tracked {
@@ -162,6 +196,42 @@ func TestDescribeRoutesRequireBothTheResourceAndEventPermissions(t *testing.T) {
 		if !found {
 			t.Errorf("describe route %s is no longer registered", key)
 		}
+	}
+}
+
+func TestDescribeServiceReturnsNetworkingDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeDescribeService{result: kubernetesdescribe.Result{
+		Target: kubernetesdescribe.Target{
+			APIVersion: "v1", Kind: "Service", Namespace: "models",
+			Name: "inference", UID: "service-uid",
+		},
+		Family:           kubernetesdescribe.FamilyNetworking,
+		Networking:       &kubernetesresource.NetworkingResourceDetail{},
+		ServiceEndpoints: &kubernetesdescribe.ServiceEndpoints{Endpoints: 2, ReadyEndpoints: 1},
+		Events:           kubernetesdescribe.Events{Items: []kubernetesdescribe.Event{}},
+		Findings:         []kubernetesdescribe.Finding{},
+		DegradedSections: []string{},
+	}}
+	router := describeTestRouter(service)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/networking/services/inference/describe",
+		nil,
+	)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.serviceCall.ClusterID != "00000000-0000-4000-8000-000000000003" ||
+		service.serviceCall.Namespace != "models" || service.serviceCall.Name != "inference" {
+		t.Fatalf("unexpected Service describe input: %+v", service.serviceCall)
+	}
+	if !strings.Contains(recorder.Body.String(), `"family":"networking"`) ||
+		!strings.Contains(recorder.Body.String(), `"ready_endpoints":1`) {
+		t.Fatalf("Service diagnosis missing from response: %s", recorder.Body.String())
 	}
 }
 

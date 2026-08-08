@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileCode, Pencil, Plus } from "lucide-react";
+import { FileCode, Pencil, Plus, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorCode } from "@/api/errors";
@@ -10,6 +10,7 @@ import {
   useNetworkingResources,
   type NetworkingSummary,
 } from "@/api/queries/networking";
+import { useServiceDescribe } from "@/api/queries/describe";
 import type { KubernetesNetworkingResource } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
@@ -33,6 +34,7 @@ import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { NetworkingFormView } from "./NetworkingFormView";
+import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
@@ -72,6 +74,7 @@ export function NetworkingSection({
     ...(pager.token ? { continue: pager.token } : {}),
   });
   const [detailName, setDetailName] = useState<string | null>(null);
+  const [describeName, setDescribeName] = useState<string | null>(null);
   const [yamlName, setYamlName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<NetworkingSummary | null>(null);
@@ -85,6 +88,8 @@ export function NetworkingSection({
   const canCreate = permissions.can("cluster.resource.create", projectScope);
   const canUpdate = permissions.can("cluster.resource.update", projectScope);
   const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const canDescribe =
+    resource === "services" && permissions.can("cluster.event.read", projectScope);
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -123,9 +128,19 @@ export function NetworkingSection({
       {
         id: "actions",
         header: "",
-        size: 88,
+        size: canDescribe ? 128 : 88,
         cell: ({ row }) => (
           <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
+            {canDescribe ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`诊断 ${row.original.name}`}
+                onClick={() => setDescribeName(row.original.name)}
+              >
+                <Stethoscope />
+              </Button>
+            ) : null}
             {canUpdate ? (
               <Button
                 size="icon-sm"
@@ -143,7 +158,7 @@ export function NetworkingSection({
         ),
       },
     ],
-    [resource, canUpdate, canDelete, openDelete],
+    [resource, canUpdate, canDelete, canDescribe, openDelete],
   );
 
   // The confirmation lives outside the branch that picks a view. It is opened
@@ -219,6 +234,17 @@ export function NetworkingSection({
     );
   }
 
+  if (describeName) {
+    return (
+      <ServiceDescribeView
+        clusterId={clusterId}
+        namespace={namespace}
+        name={describeName}
+        onBack={() => setDescribeName(null)}
+      />
+    );
+  }
+
   // The form takes over the section rather than sitting over the list: a
   // Gateway's listeners or an Ingress's routes are taller than a box laid over
   // the table can show, and the table is of no use while they are being filled
@@ -249,11 +275,13 @@ export function NetworkingSection({
           name={detailName}
           canUpdate={canUpdate}
           canDelete={canDelete}
+          canDescribe={canDescribe}
           // The detail stays open underneath, so leaving the form returns to the
           // object that was being read rather than to the list — the same way the
           // YAML view below returns here.
           onEdit={setEditing}
           onOpenYaml={() => setYamlName(detailName)}
+          onDescribe={() => setDescribeName(detailName)}
           onDelete={openDelete}
           onBack={() => setDetailName(null)}
         />
@@ -282,6 +310,7 @@ export function NetworkingSection({
         onValueChange={(value) => {
           setResource(value as KubernetesNetworkingResource);
           setDetailName(null);
+          setDescribeName(null);
         }}
         className="flex min-h-0 flex-1 flex-col"
       >
@@ -476,8 +505,10 @@ function NetworkingDetailView({
   name,
   canUpdate,
   canDelete,
+  canDescribe,
   onEdit,
   onOpenYaml,
+  onDescribe,
   onDelete,
   onBack,
 }: {
@@ -487,8 +518,10 @@ function NetworkingDetailView({
   name: string;
   canUpdate: boolean;
   canDelete: boolean;
+  canDescribe: boolean;
   onEdit: (item: NetworkingSummary) => void;
   onOpenYaml: () => void;
+  onDescribe: () => void;
   onDelete: (item: NetworkingSummary) => void;
   onBack: () => void;
 }) {
@@ -502,6 +535,12 @@ function NetworkingDetailView({
         onBack={onBack}
         actions={
           <>
+            {canDescribe ? (
+              <Button size="sm" variant="secondary" onClick={onDescribe}>
+                <Stethoscope />
+                诊断
+              </Button>
+            ) : null}
             <Button size="sm" variant="secondary" onClick={onOpenYaml}>
               <FileCode />
               YAML
@@ -561,6 +600,32 @@ function NetworkingDetailView({
         </div>
       )}
     </div>
+  );
+}
+
+function ServiceDescribeView({
+  clusterId,
+  namespace,
+  name,
+  onBack,
+}: {
+  clusterId: string;
+  namespace: string;
+  name: string;
+  onBack: () => void;
+}) {
+  const describe = useServiceDescribe(clusterId, namespace, name);
+  return (
+    <DescribeView
+      name={name}
+      kindLabel="Service"
+      data={describe.data}
+      isLoading={describe.isLoading}
+      isFetching={describe.isFetching}
+      error={describe.error}
+      onRetry={() => void describe.refetch()}
+      onBack={onBack}
+    />
   );
 }
 

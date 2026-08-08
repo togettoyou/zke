@@ -112,6 +112,18 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
     title: "Pod 数接近可分配上限",
     hint: "节点上的非终止 Pod 数已达到可分配 Pod 数的 90%。新 Pod 可能因 Pod 容量不足无法调度。",
   },
+  ServiceNoEndpoints: {
+    title: "没有后端端点",
+    hint: "该 Service 的 EndpointSlice 中没有端点。核对 selector 是否能匹配目标 Pod，或 selectorless Service 是否已创建对应 EndpointSlice。",
+  },
+  ServiceNoReadyEndpoints: {
+    title: "没有就绪后端",
+    hint: "EndpointSlice 已包含后端，但当前没有可接收流量的就绪端点。检查下方后端 Pod 的状态、readiness 探针和终止状态。",
+  },
+  ServiceLoadBalancerPending: {
+    title: "外部地址等待分配",
+    hint: "LoadBalancer Service 尚未获得外部 IP 或主机名。检查集群的负载均衡控制器、云配额与相关事件。",
+  },
 };
 
 const OMITTED_EVENTS: Record<string, string> = {
@@ -274,6 +286,9 @@ export function DescribeView({
           {data.storage?.persistent_volume_claim ? (
             <PersistentVolumeClaimDiagnosticSummary data={data} />
           ) : null}
+          {data.networking?.service && data.service_endpoints ? (
+            <ServiceDiagnosticSummary data={data} />
+          ) : null}
 
           {data.related ? <RelatedSection related={data.related} family={data.family} /> : null}
 
@@ -281,7 +296,9 @@ export function DescribeView({
             <Alert tone="warning">
               {data.family === "node"
                 ? "本次未能读取分配到该节点的 Pod，关联对象与资源请求汇总不可用。"
-                : "本次未能读取该工作负载拥有的对象，因此下方只有它自身的状态与事件。"}
+                : data.family === "networking"
+                  ? "本次未能读取该 Service selector 匹配的后端 Pod，端点统计与 Service 自身事件仍然有效。"
+                  : "本次未能读取该工作负载拥有的对象，因此下方只有它自身的状态与事件。"}
             </Alert>
           ) : null}
           {data.degraded_sections.includes("node.resources") &&
@@ -291,6 +308,11 @@ export function DescribeView({
           {data.degraded_sections.includes("related.persistent_volume_claims") ? (
             <Alert tone="warning">
               部分工作负载引用的 PVC 未能读取，关联存储与诊断结论可能不完整。
+            </Alert>
+          ) : null}
+          {data.degraded_sections.includes("service.endpoints") ? (
+            <Alert tone="warning">
+              本次未能读取该 Service 的 EndpointSlice，端点统计与相关诊断结论不可用。
             </Alert>
           ) : null}
           {data.events.omitted ? (
@@ -365,7 +387,9 @@ function RelatedSection({
   }
   return (
     <Card>
-      <CardTitle>{family === "node" ? "已分配 Pod" : "关联对象"}</CardTitle>
+      <CardTitle>
+        {family === "node" ? "已分配 Pod" : family === "networking" ? "后端 Pod" : "关联对象"}
+      </CardTitle>
       <div className="mt-2 grid gap-2">
         {related.controllers.map((controller) => (
           <RelatedRow key={controller.uid} object={controller} showNamespace={family === "node"} />
@@ -390,7 +414,9 @@ function RelatedSection({
           <p className="text-subtle-foreground text-xs">
             {family === "node"
               ? "该节点上的非终止 Pod 多于此处展示的；这里只展示有界窗口，其余对象已省略。"
-              : "该工作负载拥有或引用的对象多于此处展示的；这里只展示有界窗口，其余对象已省略。"}
+              : family === "networking"
+                ? "该 Service selector 匹配的 Pod 多于此处展示的；这里只展示有界窗口，其余对象已省略。"
+                : "该工作负载拥有或引用的对象多于此处展示的；这里只展示有界窗口，其余对象已省略。"}
           </p>
         ) : null}
       </div>
@@ -488,6 +514,50 @@ function PersistentVolumeClaimDiagnosticSummary({ data }: { data: KubernetesDesc
             </div>
           ))}
         </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function ServiceDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
+  const service = data.networking?.service;
+  const endpoints = data.service_endpoints;
+  if (!service || !endpoints) {
+    return null;
+  }
+  if (service.spec.type === "ExternalName") {
+    return (
+      <Card>
+        <CardTitle>Service 端点概况</CardTitle>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <DiagnosticValue label="类型" value="ExternalName" />
+          <DiagnosticValue label="外部名称" value={service.spec.external_name || "—"} />
+        </div>
+        <p className="text-subtle-foreground mt-2 text-xs">
+          ExternalName 通过 DNS 别名转发，不要求 EndpointSlice 或集群内后端 Pod。
+        </p>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardTitle>Service 端点概况</CardTitle>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <DiagnosticValue label="类型" value={service.spec.type || "ClusterIP"} />
+        <DiagnosticValue
+          label="就绪 / 全部端点"
+          value={`${endpoints.ready_endpoints} / ${endpoints.endpoints}`}
+        />
+        <DiagnosticValue label="EndpointSlice" value={String(endpoints.endpoint_slices)} />
+        <DiagnosticValue
+          label="Serving / 终止中"
+          value={`${endpoints.serving_endpoints} / ${endpoints.terminating_endpoints}`}
+        />
+      </div>
+      {endpoints.truncated ? (
+        <p className="text-subtle-foreground mt-2 text-xs">
+          EndpointSlice 超过单次读取上限，端点计数仅为已读取部分的下限，因此不生成缺失端点结论。
+        </p>
       ) : null}
     </Card>
   );
@@ -679,13 +749,37 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
       `  Volume: ${claim.volume_name || "未绑定"}`,
     );
   }
+  if (data.networking?.service && data.service_endpoints) {
+    const service = data.networking.service;
+    const endpoints = data.service_endpoints;
+    if (service.spec.type === "ExternalName") {
+      lines.push(
+        "",
+        "Service 端点概况",
+        "  Type: ExternalName",
+        `  ExternalName: ${service.spec.external_name || "—"}`,
+      );
+    } else {
+      lines.push(
+        "",
+        "Service 端点概况",
+        `  Type: ${service.spec.type || "ClusterIP"}`,
+        `  Ready endpoints: ${endpoints.ready_endpoints} / ${endpoints.endpoints}${endpoints.truncated ? "（下限，列表已截断）" : ""}`,
+        `  EndpointSlices: ${endpoints.endpoint_slices}`,
+        `  Serving / terminating: ${endpoints.serving_endpoints} / ${endpoints.terminating_endpoints}`,
+      );
+    }
+  }
   if (data.related) {
     const objects = [
       ...data.related.controllers,
       ...data.related.persistent_volume_claims,
       ...data.related.pods,
     ];
-    lines.push("", `关联对象（${objects.length}${data.related.truncated ? "，已截断" : ""}）`);
+    lines.push(
+      "",
+      `${data.family === "networking" ? "后端 Pod" : "关联对象"}（${objects.length}${data.related.truncated ? "，已截断" : ""}）`,
+    );
     for (const object of objects) {
       const objectName =
         data.family === "node" && object.namespace

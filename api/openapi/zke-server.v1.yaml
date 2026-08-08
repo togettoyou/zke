@@ -3257,6 +3257,43 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}/describe:
+    get:
+      tags: [Resources]
+      operationId: describeKubernetesService
+      description: |
+        返回 Service 类型化详情、EndpointSlice 就绪统计、按 selector 匹配的后端 Pod、
+        只属于该 Service UID 的 Kubernetes Event 快照和确定性诊断。EndpointSlice
+        是端点状态的事实来源；无 selector 的 Service 仍可由手工 EndpointSlice 提供后端。
+        当前仅支持 network_resource=services。要求同时持有 cluster.read 与
+        cluster.event.read，并写入 Event 读取审计。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/NetworkResource"
+        - $ref: "#/components/parameters/NetworkResourceName"
+      responses:
+        "200":
+          description: Service describe 视图
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesDescribe"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/storage/{storage_resource}:
     get:
       tags: [Resources]
@@ -11079,9 +11116,9 @@ components:
           $ref: "#/components/schemas/KubernetesDescribeTarget"
         family:
           type: string
-          enum: [pod, workload, node, storage, generic]
+          enum: [pod, workload, node, storage, networking, generic]
           description: |
-            对象所属的家族投影。pod、workload、node 与 storage 返回对应详情与诊断结果；
+            对象所属的家族投影。pod、workload、node、storage 与 networking 返回对应详情与诊断结果；
             generic 表示该类型尚无家族规则，只返回身份与 Event。
         pod:
           $ref: "#/components/schemas/KubernetesPodDetail"
@@ -11093,6 +11130,10 @@ components:
           $ref: "#/components/schemas/KubernetesDescribeNodeResources"
         storage:
           $ref: "#/components/schemas/KubernetesStorageResourceDetail"
+        networking:
+          $ref: "#/components/schemas/KubernetesNetworkingResourceDetail"
+        service_endpoints:
+          $ref: "#/components/schemas/KubernetesDescribeServiceEndpoints"
         related:
           $ref: "#/components/schemas/KubernetesDescribeRelated"
         events:
@@ -11108,7 +11149,26 @@ components:
             “这里没有问题”，因此缺失必须显式说明。
           items:
             type: string
-            enum: [events, events.related, related, related.persistent_volume_claims, node.resources]
+            enum: [events, events.related, related, related.persistent_volume_claims, node.resources, service.endpoints]
+    KubernetesDescribeServiceEndpoints:
+      type: object
+      additionalProperties: false
+      required:
+        - endpoint_slices
+        - endpoints
+        - ready_endpoints
+        - serving_endpoints
+        - terminating_endpoints
+        - truncated
+      properties:
+        endpoint_slices: { type: integer, format: int64, minimum: 0 }
+        endpoints: { type: integer, format: int64, minimum: 0 }
+        ready_endpoints: { type: integer, format: int64, minimum: 0 }
+        serving_endpoints: { type: integer, format: int64, minimum: 0 }
+        terminating_endpoints: { type: integer, format: int64, minimum: 0 }
+        truncated:
+          type: boolean
+          description: EndpointSlice 列表还有下一页；端点计数为下限，不用于生成缺失端点结论。
     KubernetesDescribeNodeResources:
       type: object
       additionalProperties: false
@@ -11314,6 +11374,9 @@ components:
             - NodeCPURequestsHigh
             - NodeMemoryRequestsHigh
             - NodePodCapacityHigh
+            - ServiceNoEndpoints
+            - ServiceNoReadyEndpoints
+            - ServiceLoadBalancerPending
         severity:
           type: string
           enum: [warning]

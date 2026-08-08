@@ -514,7 +514,8 @@ Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Res
 
 describe 接口（`.../pods/{pod_name}/describe`、
 `.../workloads/{workload_resource}/{workload_name}/describe` 与
-`.../nodes/{node_name}/describe`、`.../storage/{storage_resource}/{storage_name}/describe`、
+`.../nodes/{node_name}/describe`、`.../networking/{network_resource}/{network_name}/describe`、
+`.../storage/{storage_resource}/{storage_name}/describe`、
 `.../kubernetes/resources/{resource_name}/describe`）在一次响应里同时给出
 对象与该对象的 Event，因此要求
 调用方同时持有 `cluster.read` 与 `cluster.event.read`，两个检查都在路由层，各自留下自己的拒绝记录。只要求 `cluster.read` 会使 describe 成为绕开 Event 权限读取命名空间事件的
@@ -528,6 +529,11 @@ describe 接口（`.../pods/{pod_name}/describe`、
 都在同一个 Cluster 与 Namespace 内，走的是 `cluster.read` 已经覆盖的读取路径；控制器与 Pod 每一跳都按
 controller owner UID 过滤，PVC 只按模板里的明确名称读取，因此不会把同一 Namespace 中其他工作负载的对象算
 进来。关联对象与它们的事件读取次数都有上限，避免一次页面加载放大成对目标集群 Agent 的大量往返。
+
+Service describe 只读取同一 Cluster 与 Namespace 中携带精确
+`kubernetes.io/service-name=<Service name>` 标签的 EndpointSlice，以及由 Service selector 匹配的 Pod；响应中的
+EndpointSlice 还会再次核对 Namespace 与 Service 标签，防止上游返回越界对象。Service 自身的 Event 仍按精确 UID
+过滤，不读取后端 Pod 的 Event，也不把 selector 匹配解释为 Kubernetes owner 关系。
 
 长连接读取（Event 流、Pod 日志 Follow、Web Terminal）的审计 `result` 记录的是「服务端是否完成了这次读取」，
 而不是流为什么结束。操作者关闭页面、Server 自身的最长时长到期、上游 Watch 轮换、resourceVersion 过期都属于
