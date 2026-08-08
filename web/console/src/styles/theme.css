@@ -432,6 +432,14 @@
     background: var(--subtle-foreground);
     background-clip: content-box;
   }
+
+  /* Chromium paints a separate native box where horizontal and vertical
+     scrollbars meet. Without an explicit colour it falls back to white even
+     under `color-scheme: dark`, which is most visible in the YAML textarea. */
+  ::-webkit-scrollbar-corner,
+  ::-webkit-resizer {
+    background: var(--surface);
+  }
 }
 
 @layer utilities {
