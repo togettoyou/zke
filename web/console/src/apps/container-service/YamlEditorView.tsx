@@ -297,6 +297,7 @@ export function YamlEditorView({
         pending={update.isPending}
         error={update.error}
         contentClassName="w-[min(1120px,calc(100vw-2rem))]"
+        pinConfirmationControls
         onConfirm={() => previewed !== null && submit(false, previewed.submitted)}
       >
         {previewed ? <YamlDiff before={loaded} after={previewed.effective} /> : null}

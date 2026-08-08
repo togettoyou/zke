@@ -6,6 +6,41 @@ type DiffRow = { kind: DiffKind; text: string; before?: number; after?: number }
 const MAX_EXACT_CELLS = 2_000_000;
 const MAX_RENDERED_ROWS = 5_000;
 const MAX_ANALYZED_LINES = 20_000;
+const CONTEXT_LINES = 3;
+
+/**
+ * Keeps only the unchanged lines that explain a change.
+ *
+ * Marking around every changed row also merges nearby changes naturally: when
+ * their context overlaps there is no gap to insert between them.
+ */
+function collapseUnchangedRows(rows: DiffRow[]): DiffRow[] {
+  const keep = new Uint8Array(rows.length);
+  for (let index = 0; index < rows.length; index += 1) {
+    if (rows[index]?.kind === "same") {
+      continue;
+    }
+    const start = Math.max(0, index - CONTEXT_LINES);
+    const end = Math.min(rows.length, index + CONTEXT_LINES + 1);
+    keep.fill(1, start, end);
+  }
+
+  const visible: DiffRow[] = [];
+  let index = 0;
+  while (index < rows.length) {
+    if (keep[index]) {
+      visible.push(rows[index]!);
+      index += 1;
+      continue;
+    }
+    const start = index;
+    while (index < rows.length && !keep[index]) {
+      index += 1;
+    }
+    visible.push({ kind: "gap", text: `省略 ${index - start} 行未变化内容` });
+  }
+  return visible;
+}
 
 function buildLargeRows(left: string[], right: string[], prefix: number, suffix: number) {
   const rows: DiffRow[] = [];
@@ -36,7 +71,7 @@ function buildLargeRows(left: string[], right: string[], prefix: number, suffix:
     }
   };
 
-  const leadingContextStart = Math.max(0, prefix - 20);
+  const leadingContextStart = Math.max(0, prefix - CONTEXT_LINES);
   if (leadingContextStart > 0) {
     rows.push({ kind: "gap", text: `省略前方 ${leadingContextStart} 行未变化内容` });
   }
@@ -44,7 +79,7 @@ function buildLargeRows(left: string[], right: string[], prefix: number, suffix:
   addSample("remove", left, prefix, left.length - suffix);
   addSample("add", right, prefix, right.length - suffix);
   if (suffix > 0) {
-    const suffixSample = Math.min(suffix, 20);
+    const suffixSample = Math.min(suffix, CONTEXT_LINES);
     for (let offset = 0; offset < suffixSample; offset += 1) {
       rows.push({
         kind: "same",
@@ -53,8 +88,11 @@ function buildLargeRows(left: string[], right: string[], prefix: number, suffix:
         after: right.length - suffix + offset + 1,
       });
     }
-    if (suffix > 20) {
-      rows.push({ kind: "gap", text: `省略后方 ${suffix - 20} 行未变化内容` });
+    if (suffix > CONTEXT_LINES) {
+      rows.push({
+        kind: "gap",
+        text: `省略后方 ${suffix - CONTEXT_LINES} 行未变化内容`,
+      });
     }
   }
   return {
@@ -155,14 +193,15 @@ function buildRows(
   });
   const added = allRows.filter((row) => row.kind === "add").length;
   const removed = allRows.filter((row) => row.kind === "remove").length;
-  if (allRows.length <= MAX_RENDERED_ROWS)
-    return { rows: allRows, added, removed, truncated: false, coarse: false };
+  const visibleRows = collapseUnchangedRows(allRows);
+  if (visibleRows.length <= MAX_RENDERED_ROWS)
+    return { rows: visibleRows, added, removed, truncated: false, coarse: false };
   const half = Math.floor(MAX_RENDERED_ROWS / 2);
   return {
     rows: [
-      ...allRows.slice(0, half),
-      { kind: "gap", text: `省略 ${allRows.length - half * 2} 行` },
-      ...allRows.slice(-half),
+      ...visibleRows.slice(0, half),
+      { kind: "gap", text: `省略 ${visibleRows.length - half * 2} 行差异内容` },
+      ...visibleRows.slice(-half),
     ],
     added,
     removed,
@@ -178,6 +217,7 @@ export function YamlDiff({ before, after }: { before: string; after: string }) {
     <section>
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <h4 className="text-foreground mr-auto text-sm font-medium">DryRun 最终差异</h4>
+        <span className="text-subtle-foreground text-xs">变更上下各 {CONTEXT_LINES} 行</span>
         <Badge tone={diff.added > 0 ? "success" : "neutral"}>+{diff.added}</Badge>
         <Badge tone={diff.removed > 0 ? "danger" : "neutral"}>−{diff.removed}</Badge>
       </div>
@@ -186,7 +226,7 @@ export function YamlDiff({ before, after }: { before: string; after: string }) {
           DryRun 返回对象与当前对象没有文本差异。
         </div>
       ) : (
-        <div className="border-border rounded-panel bg-surface-muted max-h-[min(46vh,520px)] overflow-auto border">
+        <div className="border-border rounded-panel bg-surface-muted max-h-[min(28vh,320px)] overflow-auto border">
           <table className="zke-mono w-full border-collapse text-xs leading-5">
             <tbody>
               {diff.rows.map((row, index) => (
