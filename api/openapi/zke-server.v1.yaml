@@ -3201,9 +3201,10 @@ paths:
       tags: [Resources]
       operationId: listKubernetesNetworkingResources
       description: |
-        在明确的 Cluster 和 Namespace 中查询 Service、Ingress 或 Gateway。Gateway
-        固定使用 Gateway API `gateway.networking.k8s.io/v1`；目标集群未安装该 CRD
-        时返回 409 `gateway_api_unavailable`。分页使用 Kubernetes continuation token。
+        在明确的 Cluster 和 Namespace 中查询 Service、Ingress、Gateway 或协议型 Route。
+        Gateway/HTTPRoute/GRPCRoute/TLSRoute 使用 `gateway.networking.k8s.io/v1`，
+        TCPRoute/UDPRoute 使用 `v1alpha2`；目标集群未提供路径指定的资源与版本时返回
+        409 `gateway_api_unavailable`。ZKE 不安装 CRD。分页使用 Kubernetes continuation token。
       security:
         - sessionCookie: []
       parameters:
@@ -3247,8 +3248,9 @@ paths:
       tags: [Resources]
       operationId: createKubernetesNetworkingResource
       description: |
-        创建路径指定的 Service、Ingress 或 Gateway。请求必须只携带与路径类型对应的
-        `service`、`ingress` 或 `gateway` 配置。实际创建要求显式确认；dry-run 使用
+        创建路径指定的 Service、Ingress、Gateway 或 Gateway API Route。请求必须只携带与路径类型对应的
+        `service`、`ingress`、`gateway` 或 `gateway_route` 配置。Route 的 `spec` 使用
+        Kubernetes 原生 camelCase 字段并按路径类型严格解码，未知字段会被拒绝。实际创建要求显式确认；dry-run 使用
         Kubernetes 服务端校验，不会持久化对象。Gateway API 不由 ZKE 自动安装。
       security:
         - sessionCookie: []
@@ -3299,7 +3301,7 @@ paths:
     get:
       tags: [Resources]
       operationId: getKubernetesNetworkingResource
-      description: 查询一个 Service、Ingress 或 Gateway 的类型化详情和状态。
+      description: 查询一个 Service、Ingress、Gateway 或 Gateway API Route 的类型化详情和状态。
       security:
         - sessionCookie: []
       parameters:
@@ -3414,9 +3416,11 @@ paths:
       tags: [Resources]
       operationId: describeKubernetesNetworkingResource
       description: |
-        返回 Service、Ingress 或 Gateway 的类型化诊断。Service 聚合 EndpointSlice 与 selector
+        返回 Service、Ingress、Gateway 或 Gateway API Route 的类型化诊断。Service 聚合 EndpointSlice 与 selector
         匹配的后端 Pod；Ingress 聚合其引用的 Service、端口和 EndpointSlice；Gateway
-        解释对象及 Listener Condition。要求同时持有 cluster.read 与 cluster.event.read，
+        解释对象及 Listener Condition；Route 解释各 Parent 的 Accepted、ResolvedRefs 与
+        PartiallyInvalid Condition，跨命名空间授权以 Controller 的 ReferenceGrant 判定为准，
+        不越权读取被引用命名空间。要求同时持有 cluster.read 与 cluster.event.read，
         并写入 Event 读取审计。
       security: [{ sessionCookie: [] }]
       parameters:
@@ -8832,7 +8836,7 @@ components:
               minimum: 0
     KubernetesNetworkingResource:
       type: string
-      enum: [services, ingresses, gateways]
+      enum: [services, ingresses, gateways, httproutes, grpcroutes, tlsroutes, tcproutes, udproutes]
     KubernetesServicePort:
       type: object
       additionalProperties: false
@@ -9146,6 +9150,70 @@ components:
         listeners:
           type: array
           items: { $ref: "#/components/schemas/KubernetesGatewayListenerStatus" }
+    KubernetesGatewayRouteReference:
+      type: object
+      additionalProperties: false
+      required: [group, kind, namespace, name, section_name, port, weight, rule]
+      properties:
+        group: { type: string, maxLength: 253 }
+        kind: { type: string, maxLength: 253 }
+        namespace: { type: string, maxLength: 63 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        section_name: { type: string, maxLength: 253 }
+        port: { type: integer, minimum: 0, maximum: 65535 }
+        weight: { type: integer, minimum: 0, maximum: 1000000 }
+        rule:
+          type: integer
+          minimum: -1
+          description: 后端所在规则的零基下标；ParentRef 为 -1。
+    KubernetesGatewayRouteParentStatus:
+      type: object
+      additionalProperties: false
+      required: [parent, controller_name, conditions]
+      properties:
+        parent: { $ref: "#/components/schemas/KubernetesGatewayRouteReference" }
+        controller_name: { type: string }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesResourceCondition" }
+    KubernetesGatewayRouteView:
+      type: object
+      additionalProperties: false
+      required: [spec, hostnames, parent_refs, backend_refs, parents]
+      properties:
+        spec:
+          type: object
+          additionalProperties: true
+          description: |
+            路径类型对应的完整 Kubernetes-native Gateway API spec，字段使用 camelCase。
+            Server 按 HTTPRoute/GRPCRoute/TLSRoute/TCPRoute/UDPRoute 的官方 Go 类型严格解码。
+        hostnames:
+          type: array
+          maxItems: 16
+          items: { type: string }
+        parent_refs:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/KubernetesGatewayRouteReference" }
+        backend_refs:
+          type: array
+          maxItems: 256
+          items: { $ref: "#/components/schemas/KubernetesGatewayRouteReference" }
+        parents:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/KubernetesGatewayRouteParentStatus" }
+    KubernetesGatewayRouteSpecInput:
+      type: object
+      additionalProperties: false
+      required: [spec]
+      properties:
+        spec:
+          type: object
+          additionalProperties: true
+          description: |
+            Kubernetes-native Route spec。字段使用 camelCase，类型由路径中的 network_resource 固定；
+            Server 会拒绝该 Route 类型不存在的字段，并由目标 API Server DryRun 执行 CRD/CEL 校验。
     KubernetesGatewayAddressInput:
       type: object
       additionalProperties: false
@@ -9240,7 +9308,7 @@ components:
       properties:
         resource: { $ref: "#/components/schemas/KubernetesNetworkingResource" }
         api_version: { type: string }
-        kind: { type: string, enum: [Service, Ingress, Gateway] }
+        kind: { type: string, enum: [Service, Ingress, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute] }
         namespace: { type: string, minLength: 1, maxLength: 63 }
         name: { type: string, minLength: 1, maxLength: 253 }
         uid: { type: string }
@@ -9252,6 +9320,7 @@ components:
         service: { $ref: "#/components/schemas/KubernetesServiceView" }
         ingress: { $ref: "#/components/schemas/KubernetesIngressView" }
         gateway: { $ref: "#/components/schemas/KubernetesGatewayView" }
+        gateway_route: { $ref: "#/components/schemas/KubernetesGatewayRouteView" }
     KubernetesNetworkingResourceDetail:
       unevaluatedProperties: false
       allOf:
@@ -9288,12 +9357,14 @@ components:
         service: { $ref: "#/components/schemas/KubernetesServiceSpecInput" }
         ingress: { $ref: "#/components/schemas/KubernetesIngressSpecInput" }
         gateway: { $ref: "#/components/schemas/KubernetesGatewaySpecInput" }
+        gateway_route: { $ref: "#/components/schemas/KubernetesGatewayRouteSpecInput" }
         dry_run: { type: boolean, default: false }
         confirm: { type: boolean }
       oneOf:
         - required: [service]
         - required: [ingress]
         - required: [gateway]
+        - required: [gateway_route]
     KubernetesUpdateNetworkingResourceRequest:
       type: object
       additionalProperties: false
@@ -9304,12 +9375,14 @@ components:
         service: { $ref: "#/components/schemas/KubernetesServiceSpecInput" }
         ingress: { $ref: "#/components/schemas/KubernetesIngressSpecInput" }
         gateway: { $ref: "#/components/schemas/KubernetesGatewaySpecInput" }
+        gateway_route: { $ref: "#/components/schemas/KubernetesGatewayRouteSpecInput" }
         dry_run: { type: boolean, default: false }
         confirm: { type: boolean }
       oneOf:
         - required: [service]
         - required: [ingress]
         - required: [gateway]
+        - required: [gateway_route]
     KubernetesDeleteNetworkingResourceRequest:
       type: object
       additionalProperties: false
@@ -11996,6 +12069,10 @@ components:
             - GatewayListenerNotProgrammed
             - GatewayListenerConflicted
             - GatewayListenerReferencesInvalid
+            - GatewayRouteUnattached
+            - GatewayRouteNotAccepted
+            - GatewayRouteReferencesInvalid
+            - GatewayRoutePartiallyInvalid
             - HPAStatusStale
             - HPAUnableToScale
             - HPAMetricsUnavailable

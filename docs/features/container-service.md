@@ -389,20 +389,24 @@ NodeAffinity/taint 纳入策略与动态标签键。Server 对每类集合设 50
 1–100 权重、拓扑键和 `minDomains` 的硬约束语义。容器端口限制为每容器 100 项、1–65535，协议为 TCP/UDP/SCTP，
 端口名在容器内唯一。`hostPort`/`hostIP` 会占用节点网络，`securityContext` 的其余字段仍通过 YAML 管理。
 
-服务与路由后端固定使用 `core/v1 Service`、`networking.k8s.io/v1 Ingress` 和
-`gateway.networking.k8s.io/v1 Gateway`，不会接受调用方覆盖 GVR。Service 支持 ClusterIP、NodePort、
+服务与路由后端固定使用 `core/v1 Service`、`networking.k8s.io/v1 Ingress`、Gateway API 的 Gateway 与五种
+协议型 Route，不会接受调用方覆盖 GVR。Service 支持 ClusterIP、NodePort、
 LoadBalancer、ExternalName 与 headless 语义，更新时保留 Kubernetes 分配的 ClusterIP、IP family 和适用的
 health check NodePort，并拒绝通过类型化接口切换不可变的 headless 身份。Ingress 支持 class、默认后端、
 Host/Path、Service backend 和 TLS Secret 名称；接口只返回 Secret 引用名称，不读取 Secret 正文。
 
-Gateway API 是目标集群的可选 CRD 能力。每次 Gateway 操作先通过 Discovery 确认
-`gateway.networking.k8s.io/v1 Gateway` 存在；未安装时返回稳定的 `409 gateway_api_unavailable`，与已安装但
+Gateway API 是目标集群的可选 CRD 能力。每一种资源操作都先通过 Discovery 独立确认目标 GVR 存在：Gateway、
+HTTPRoute、GRPCRoute、TLSRoute 使用 `gateway.networking.k8s.io/v1`，TCPRoute 与 UDPRoute 使用实验通道的
+`v1alpha2`；未安装其中一种只影响该标签页并返回稳定的 `409 gateway_api_unavailable`，与已安装但
 Agent ServiceAccount 无权访问时的 `403` 区分。ZKE 不负责安装 Gateway API CRD、GatewayClass 或具体
-Controller，也不把 Gateway 的 `Programmed=True` 等同于外部流量已经可达。本轮只提供 Gateway 本身，
-HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 等 Route 类型暂未纳入类型化接口，仍可在安装方授予
-最小 RBAC 后通过通用资源接口管理。Gateway 的 TLS 同样只传递证书引用，不读取证书 Secret。
+Controller，也不把 Gateway 的 `Programmed=True` 等同于外部流量已经可达。Route 类型化接口以完整的
+Kubernetes-native `spec`（camelCase JSON）为输入，按路径类型的官方 Gateway API Go 类型严格拒绝未知字段，
+再交给目标 API Server DryRun 执行该集群实际 CRD/CEL 与准入校验。更新只替换完整 `spec`，保留 metadata、status
+和 Controller 扩展；跨 Namespace ParentRef/BackendRef 可以表达，但 ZKE 不代建 ReferenceGrant，也不追踪读取
+被引用命名空间，授权与解析结果以 Controller 写入的 `Accepted`、`ResolvedRefs` Condition 为准。Gateway 的 TLS
+同样只传递证书引用，不读取证书 Secret。
 
-Console 服务与路由页面按 Service、Ingress、Gateway 三个标签页组织。三者形状不同，因此列表列和详情卡片
+Console 服务与路由页面按 Service、Ingress、Gateway 和五种 Route 标签页组织。各类型形状不同，因此列表列和详情卡片
 各自独立，而不是压成一张只显示共有字段的表：Service 展示类型、ClusterIP 与端口映射，Ingress 展示
 IngressClass、主机与已分配地址，Gateway 展示 GatewayClass、监听器与地址。详情页在类型化视图之外还提供
 YAML 入口，用于查看和修改本表单未建模的字段。
@@ -451,7 +455,8 @@ ZKE 不能替 Kubernetes 补上这个检查——真实范围由该集群 API Se
 连接中断结束、结果无法判定时，改动内容再提交才会返回 `idempotency_conflict`，此时该键可能已经对应一次真实
 写入，正确的做法是重新读取该对象。
 
-目标集群没有安装 Gateway API 时，列表返回 `409 gateway_api_unavailable`，Console 据此展示说明而不是错误，
+目标集群没有安装当前标签所需的 Gateway API GVR 时，列表返回 `409 gateway_api_unavailable`，Console 据此展示具体
+group/version/resource 说明而不是错误，
 并隐藏创建入口；这与已安装但 Agent 无权访问的 `403` 是两回事，后者仍按权限错误呈现。
 
 ConfigMap 类型化后端固定使用 `core/v1 ConfigMap`，不会接受调用方覆盖 GVR。列表不返回配置值，避免列表和
@@ -881,7 +886,7 @@ Kubernetes status、Condition、明确关联对象或精确 Event 归属证明�
 | Pod                                                      | 类型化          | Condition、容器当前/上一次状态、精确 UID Event                                           |
 | Deployment、StatefulSet、DaemonSet、Job、CronJob         | 类型化聚合      | owner UID 链、控制器、Pod、模板引用 PVC 与有界关联 Event                                 |
 | Node                                                     | 类型化聚合      | Node Condition、taint、已分配非终止 Pod 与 scheduler requests；Node Event 受三层精确过滤 |
-| Service、Ingress、Gateway                                | 类型化          | EndpointSlice/后端引用或 Gateway Controller Condition；不跨 Namespace 读取 Secret/Route  |
+| Service、Ingress、Gateway、五种 Gateway API Route        | 类型化          | EndpointSlice/后端引用或 Gateway Controller Condition；不跨 Namespace 读取 Secret/Route  |
 | PersistentVolumeClaim                                    | 类型化          | phase、Condition 与精确 UID Event                                                        |
 | HorizontalPodAutoscaler                                  | 类型化聚合      | 标准 HPA Condition；只补充已知 apps/v1 目标状态，不读取目标 Event                        |
 | ResourceQuota、PodDisruptionBudget                       | 类型化          | quantity 用量或 `DisruptionAllowed` Condition                                            |
@@ -913,8 +918,14 @@ List，不按路径逐个往返。它报告入口地址尚未发布、Controller
 Gateway 的独立 describe 直接使用 Gateway API Controller 报告的对象与 Listener Condition，不猜测 Controller
 内部状态。对象级规则覆盖地址尚未分配，以及 `Accepted`、`Programmed`、`Ready` 不为 True；Listener 规则覆盖
 未接受、未编程、配置冲突和 `ResolvedRefs` 失败。每条结论保留 Condition 的 reason、message 与带 Listener 名称的
-证据路径。Gateway 不额外枚举 Route：Listener 已提供 `attachedRoutes`，而跨类型 Route 支持与授权关系需要单独的
-Route 模型，当前不以不完整的 owner 推断代替。
+证据路径。Gateway 不额外枚举 Route：Listener 已提供 `attachedRoutes`，避免把一次 Gateway 诊断扩大成全 Namespace
+Route 清单读取。
+
+Route 的独立 describe 使用每个 `status.parents` 条目中的 Controller Condition：没有任何条目报告未绑定；
+`Accepted` 不为 True 报告父级未接受；`ResolvedRefs` 不为 True 报告后端/授权引用未解析；
+`PartiallyInvalid=True` 报告部分规则无效。ParentRef 只作为关联对象身份展示，不据此读取父级或后端所在的其他
+Namespace；特别是 `RefNotPermitted` 直接保留 Controller 对 ReferenceGrant 的判定和原始消息，不能为了诊断便利
+绕过调用者的 Namespace 与资源读取边界。
 
 HPA 的独立 describe 使用 `status.observedGeneration` 与 `AbleToScale`、`ScalingActive`、`ScalingLimited`
 三个标准 Condition，分别报告控制器状态滞后、无法读取或更新伸缩目标、指标不可用和伸缩受到上下限约束；reason
@@ -1138,7 +1149,6 @@ Console 的容器高级设置以结构化行编辑端口，不开放 hostPort。
 - 创建工作负载时联动创建 Service 与 HorizontalPodAutoscaler（需要先定义多对象写入的部分成功与回滚语义）；
 - 终端会话的录制与回放；
 - 在 Console 中区分日志流的终止原因（依赖 Trailer 之外的传达方式）；
-- Gateway API 的 HTTPRoute、GRPCRoute、TLSRoute、TCPRoute 和 UDPRoute 类型化管理；
 - 面向具体资源的表单化创建、更新和删除体验。
 
 产品体验将参考成熟 Kubernetes 管理平台的通用实践，但不会以与任何现有平台完全相同为目标。

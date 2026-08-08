@@ -4,6 +4,7 @@ import { api, idempotentHeaders, unwrap } from "../client";
 import { queryKeys, queryKeyPrefixes } from "../query-keys";
 import type {
   KubernetesGatewaySpecInput,
+  KubernetesGatewayRouteSpecInput,
   KubernetesIngressSpecInput,
   KubernetesNetworkingResource,
   KubernetesNetworkingResourceDetail,
@@ -28,6 +29,7 @@ export type NetworkingSpecInput = {
   service?: KubernetesServiceSpecInput;
   ingress?: KubernetesIngressSpecInput;
   gateway?: KubernetesGatewaySpecInput;
+  gateway_route?: KubernetesGatewayRouteSpecInput;
 };
 
 const LIST_PATH =

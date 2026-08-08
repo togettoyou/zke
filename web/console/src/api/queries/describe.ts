@@ -1,7 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api, unwrap } from "../client";
-import type { KubernetesPolicyResource, KubernetesWorkloadResource } from "../types";
+import type {
+  KubernetesNetworkingResource,
+  KubernetesPolicyResource,
+  KubernetesWorkloadResource,
+} from "../types";
 import { queryKeys } from "../query-keys";
 
 export type PolicyDescribeResource = Extract<
@@ -133,6 +137,41 @@ export function useGatewayDescribe(
                 cluster_id: clusterId as string,
                 namespace_name: namespace as string,
                 network_resource: "gateways",
+                network_name: name as string,
+              },
+            },
+            signal,
+          },
+        ),
+      ),
+    enabled: enabled && Boolean(clusterId && namespace && name),
+  });
+}
+
+export function useGatewayRouteDescribe(
+  clusterId: string | null,
+  namespace: string | null,
+  resource: KubernetesNetworkingResource,
+  name: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.gatewayRouteDescribe(
+      clusterId ?? "",
+      namespace ?? "",
+      resource,
+      name ?? "",
+    ),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}/describe",
+          {
+            params: {
+              path: {
+                cluster_id: clusterId as string,
+                namespace_name: namespace as string,
+                network_resource: resource,
                 network_name: name as string,
               },
             },

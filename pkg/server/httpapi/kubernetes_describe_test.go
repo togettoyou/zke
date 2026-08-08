@@ -29,8 +29,17 @@ type fakeDescribeService struct {
 	serviceCall  kubernetesdescribe.ServiceInput
 	ingressCall  kubernetesdescribe.IngressInput
 	gatewayCall  kubernetesdescribe.GatewayInput
+	routeCall    kubernetesdescribe.GatewayRouteInput
 	hpaCall      kubernetesdescribe.HorizontalPodAutoscalerInput
 	policyCall   kubernetesdescribe.PolicyInput
+}
+
+func (service *fakeDescribeService) DescribeGatewayRoute(
+	_ context.Context,
+	input kubernetesdescribe.GatewayRouteInput,
+) (kubernetesdescribe.Result, error) {
+	service.routeCall = input
+	return service.result, service.err
 }
 
 func (service *fakeDescribeService) DescribePolicy(
@@ -349,6 +358,29 @@ func TestDescribeGatewayReturnsListenerDiagnosis(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"name":"https"`) {
 		t.Fatalf("Gateway diagnosis missing from response: %s", recorder.Body.String())
+	}
+}
+
+func TestDescribeGatewayRouteUsesPathScopedType(t *testing.T) {
+	t.Parallel()
+	service := &fakeDescribeService{result: kubernetesdescribe.Result{
+		Family:   kubernetesdescribe.FamilyNetworking,
+		Events:   kubernetesdescribe.Events{Items: []kubernetesdescribe.Event{}},
+		Findings: []kubernetesdescribe.Finding{}, DegradedSections: []string{},
+	}}
+	router := describeTestRouter(service)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodGet,
+		"/clusters/00000000-0000-4000-8000-000000000003/namespaces/models/networking/httproutes/public/describe",
+		nil,
+	))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.routeCall.Resource != kubernetesresource.NetworkingHTTPRoutes ||
+		service.routeCall.Namespace != "models" || service.routeCall.Name != "public" {
+		t.Fatalf("unexpected Gateway Route describe input: %+v", service.routeCall)
 	}
 }
 

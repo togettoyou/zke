@@ -69,6 +69,69 @@ func testGatewayDetail() kubernetesresource.NetworkingResourceDetail {
 	}
 }
 
+func testGatewayRouteDetail() kubernetesresource.NetworkingResourceDetail {
+	return kubernetesresource.NetworkingResourceDetail{
+		NetworkingResourceSummary: kubernetesresource.NetworkingResourceSummary{
+			Resource:   kubernetesresource.NetworkingHTTPRoutes,
+			APIVersion: "gateway.networking.k8s.io/v1", Kind: "HTTPRoute", Namespace: "models",
+			Name: "public", UID: "route-uid", ResourceVersion: "72",
+			GatewayRoute: &kubernetesresource.GatewayRouteView{
+				Spec: map[string]any{}, Hostnames: []string{"models.example.com"},
+				ParentRefs:  []kubernetesresource.GatewayRouteReference{{Name: "edge"}},
+				BackendRefs: []kubernetesresource.GatewayRouteReference{{Name: "inference", Port: 80}},
+				Parents: []kubernetesresource.GatewayRouteParentStatus{{
+					Parent:         kubernetesresource.GatewayRouteReference{Name: "edge"},
+					ControllerName: "example.io/gateway-controller",
+					Conditions: []kubernetesresource.ResourceCondition{{
+						Type: "ResolvedRefs", Status: "False", Reason: "RefNotPermitted",
+						Message: "cross namespace backend has no ReferenceGrant",
+					}},
+				}},
+			},
+		},
+	}
+}
+
+func TestDescribeGatewayRouteUsesParentConditionsWithoutCrossNamespaceReads(t *testing.T) {
+	t.Parallel()
+	access := &fakeResourceAccess{networking: testGatewayRouteDetail()}
+	result, err := NewService(access, &fakeEventSource{}, Config{}).DescribeGatewayRoute(
+		context.Background(), GatewayRouteInput{ClusterID: testClusterID, Namespace: "models",
+			Resource: kubernetesresource.NetworkingHTTPRoutes, Name: "public"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasFindingCode(result.Findings, FindingGatewayRouteReferencesInvalid) ||
+		result.Findings[0].Reason != "RefNotPermitted" {
+		t.Fatalf("missing Route reference finding: %+v", result.Findings)
+	}
+	if result.Related == nil || len(result.Related.Controllers) != 1 ||
+		result.Related.Controllers[0].Namespace != "models" {
+		t.Fatalf("missing scoped parent reference: %+v", result.Related)
+	}
+	if access.networkingListInput.Resource != "" {
+		t.Fatalf("Route diagnosis widened scope with an inventory read: %+v", access.networkingListInput)
+	}
+}
+
+func TestGatewayRouteWithoutControllerStatusIsUnattached(t *testing.T) {
+	t.Parallel()
+	route := testGatewayRouteDetail()
+	route.GatewayRoute.Parents = []kubernetesresource.GatewayRouteParentStatus{}
+	result, err := NewService(&fakeResourceAccess{networking: route}, &fakeEventSource{}, Config{}).
+		DescribeGatewayRoute(context.Background(), GatewayRouteInput{
+			ClusterID: testClusterID, Namespace: "models",
+			Resource: kubernetesresource.NetworkingHTTPRoutes, Name: "public",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasFindingCode(result.Findings, FindingGatewayRouteUnattached) {
+		t.Fatalf("missing unattached finding: %+v", result.Findings)
+	}
+}
+
 func TestDescribeGatewayUsesGatewayAndListenerConditions(t *testing.T) {
 	t.Parallel()
 

@@ -1,9 +1,11 @@
 package kubernetesresource
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"maps"
 	"net"
 	"strconv"
@@ -18,14 +20,21 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 type NetworkingResource string
 
 const (
-	NetworkingServices  NetworkingResource = "services"
-	NetworkingIngresses NetworkingResource = "ingresses"
-	NetworkingGateways  NetworkingResource = "gateways"
+	NetworkingServices   NetworkingResource = "services"
+	NetworkingIngresses  NetworkingResource = "ingresses"
+	NetworkingGateways   NetworkingResource = "gateways"
+	NetworkingHTTPRoutes NetworkingResource = "httproutes"
+	NetworkingGRPCRoutes NetworkingResource = "grpcroutes"
+	NetworkingTLSRoutes  NetworkingResource = "tlsroutes"
+	NetworkingTCPRoutes  NetworkingResource = "tcproutes"
+	NetworkingUDPRoutes  NetworkingResource = "udproutes"
 
 	maxNetworkingPorts        = 100
 	maxIngressRules           = 256
@@ -37,12 +46,23 @@ const (
 	maxNetworkingAnnotations  = 256 * 1024
 )
 
-var ErrGatewayAPIUnavailable = errors.New("Gateway API v1 is not installed")
+var ErrGatewayAPIUnavailable = errors.New("requested Gateway API resource is not installed")
 
 var networkingResourceIdentities = map[NetworkingResource]ResourceIdentity{
-	NetworkingServices:  {Version: "v1", Resource: "services"},
-	NetworkingIngresses: {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
-	NetworkingGateways:  {Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gateways"},
+	NetworkingServices:   {Version: "v1", Resource: "services"},
+	NetworkingIngresses:  {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
+	NetworkingGateways:   {Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gateways"},
+	NetworkingHTTPRoutes: {Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"},
+	NetworkingGRPCRoutes: {Group: "gateway.networking.k8s.io", Version: "v1", Resource: "grpcroutes"},
+	NetworkingTLSRoutes:  {Group: "gateway.networking.k8s.io", Version: "v1", Resource: "tlsroutes"},
+	NetworkingTCPRoutes:  {Group: "gateway.networking.k8s.io", Version: "v1alpha2", Resource: "tcproutes"},
+	NetworkingUDPRoutes:  {Group: "gateway.networking.k8s.io", Version: "v1alpha2", Resource: "udproutes"},
+}
+
+var networkingResourceKinds = map[NetworkingResource]string{
+	NetworkingGateways: "Gateway", NetworkingHTTPRoutes: "HTTPRoute",
+	NetworkingGRPCRoutes: "GRPCRoute", NetworkingTLSRoutes: "TLSRoute",
+	NetworkingTCPRoutes: "TCPRoute", NetworkingUDPRoutes: "UDPRoute",
 }
 
 type ListNetworkingResourcesInput struct {
@@ -75,6 +95,7 @@ type NetworkingResourceSummary struct {
 	Service           *ServiceView       `json:"service,omitempty"`
 	Ingress           *IngressView       `json:"ingress,omitempty"`
 	Gateway           *GatewayView       `json:"gateway,omitempty"`
+	GatewayRoute      *GatewayRouteView  `json:"gateway_route,omitempty"`
 }
 
 type NetworkingResourceDetail struct {
@@ -222,6 +243,39 @@ type GatewayView struct {
 	Listeners  []GatewayListenerStatus `json:"listeners"`
 }
 
+// GatewayRouteSpec carries the Kubernetes-native spec for one concrete Route
+// kind. The path fixes that kind and API version; the Server decodes this map
+// into the matching upstream Gateway API Go type with unknown-field rejection
+// before any request reaches the Agent.
+type GatewayRouteSpec struct {
+	Spec map[string]any `json:"spec"`
+}
+
+type GatewayRouteReference struct {
+	Group       string `json:"group"`
+	Kind        string `json:"kind"`
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+	SectionName string `json:"section_name"`
+	Port        int32  `json:"port"`
+	Weight      int32  `json:"weight"`
+	Rule        int32  `json:"rule"`
+}
+
+type GatewayRouteParentStatus struct {
+	Parent         GatewayRouteReference `json:"parent"`
+	ControllerName string                `json:"controller_name"`
+	Conditions     []ResourceCondition   `json:"conditions"`
+}
+
+type GatewayRouteView struct {
+	Spec        map[string]any             `json:"spec"`
+	Hostnames   []string                   `json:"hostnames"`
+	ParentRefs  []GatewayRouteReference    `json:"parent_refs"`
+	BackendRefs []GatewayRouteReference    `json:"backend_refs"`
+	Parents     []GatewayRouteParentStatus `json:"parents"`
+}
+
 type CreateNetworkingResourceInput struct {
 	ClusterID      string
 	Namespace      string
@@ -232,6 +286,7 @@ type CreateNetworkingResourceInput struct {
 	Service        *ServiceSpec
 	Ingress        *IngressSpec
 	Gateway        *GatewaySpec
+	GatewayRoute   *GatewayRouteSpec
 	DryRun         bool
 	Confirm        bool
 	IdempotencyKey string
@@ -247,6 +302,7 @@ type UpdateNetworkingResourceInput struct {
 	Service         *ServiceSpec
 	Ingress         *IngressSpec
 	Gateway         *GatewaySpec
+	GatewayRoute    *GatewayRouteSpec
 	DryRun          bool
 	Confirm         bool
 	IdempotencyKey  string
@@ -356,7 +412,7 @@ func (service *Service) UpdateNetworkingResource(
 ) (NetworkingResourceDetail, error) {
 	identity, err := service.networkingIdentity(ctx, input.ClusterID, input.Resource)
 	if err != nil || !validNetworkingMutationIdentity(input.Namespace, input.Name, input.UID, input.ResourceVersion) ||
-		!validNetworkingSpec(input.Resource, input.Service, input.Ingress, input.Gateway) {
+		!validNetworkingSpec(input.Resource, input.Service, input.Ingress, input.Gateway, input.GatewayRoute) {
 		return NetworkingResourceDetail{}, firstNetworkingError(err)
 	}
 	existing, err := service.GetResource(ctx, GetResourceInput{
@@ -410,16 +466,17 @@ func (service *Service) networkingIdentity(
 	if !exists {
 		return ResourceIdentity{}, ErrInvalidInput
 	}
-	if resourceName != NetworkingGateways {
+	if !isGatewayAPIResource(resourceName) {
 		return identity, nil
 	}
 	catalog, err := service.DiscoverResources(ctx, clusterID)
 	if err != nil {
 		return ResourceIdentity{}, err
 	}
+	kind := networkingResourceKinds[resourceName]
 	for _, discovered := range catalog.Resources {
 		if discovered.Group == identity.Group && discovered.Version == identity.Version &&
-			discovered.Resource == identity.Resource && discovered.Kind == "Gateway" && discovered.Namespaced {
+			discovered.Resource == identity.Resource && discovered.Kind == kind && discovered.Namespaced {
 			return identity, nil
 		}
 	}
@@ -427,6 +484,26 @@ func (service *Service) networkingIdentity(
 		return ResourceIdentity{}, ErrClusterUnavailable
 	}
 	return ResourceIdentity{}, ErrGatewayAPIUnavailable
+}
+
+func isGatewayAPIResource(resourceName NetworkingResource) bool {
+	return resourceName == NetworkingGateways || isGatewayRouteResource(resourceName)
+}
+
+func isGatewayRouteResource(resourceName NetworkingResource) bool {
+	switch resourceName {
+	case NetworkingHTTPRoutes, NetworkingGRPCRoutes, NetworkingTLSRoutes,
+		NetworkingTCPRoutes, NetworkingUDPRoutes:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsGatewayRouteResource reports whether the networking path identifies one
+// of Gateway API's protocol-specific Route kinds.
+func IsGatewayRouteResource(resourceName NetworkingResource) bool {
+	return isGatewayRouteResource(resourceName)
 }
 
 func firstNetworkingError(err error) error {
@@ -467,16 +544,177 @@ func validNetworkingSpec(
 	serviceSpec *ServiceSpec,
 	ingressSpec *IngressSpec,
 	gatewaySpec *GatewaySpec,
+	gatewayRouteSpec *GatewayRouteSpec,
 ) bool {
 	switch resourceName {
 	case NetworkingServices:
-		return serviceSpec != nil && ingressSpec == nil && gatewaySpec == nil && validServiceSpec(*serviceSpec)
+		return serviceSpec != nil && ingressSpec == nil && gatewaySpec == nil && gatewayRouteSpec == nil && validServiceSpec(*serviceSpec)
 	case NetworkingIngresses:
-		return serviceSpec == nil && ingressSpec != nil && gatewaySpec == nil && validIngressSpec(*ingressSpec)
+		return serviceSpec == nil && ingressSpec != nil && gatewaySpec == nil && gatewayRouteSpec == nil && validIngressSpec(*ingressSpec)
 	case NetworkingGateways:
-		return serviceSpec == nil && ingressSpec == nil && gatewaySpec != nil && validGatewaySpec(*gatewaySpec)
+		return serviceSpec == nil && ingressSpec == nil && gatewaySpec != nil && gatewayRouteSpec == nil && validGatewaySpec(*gatewaySpec)
 	default:
+		return serviceSpec == nil && ingressSpec == nil && gatewaySpec == nil &&
+			gatewayRouteSpec != nil && validGatewayRouteSpec(resourceName, *gatewayRouteSpec)
+	}
+}
+
+func validGatewayRouteSpec(resourceName NetworkingResource, input GatewayRouteSpec) bool {
+	if !isGatewayRouteResource(resourceName) || input.Spec == nil {
 		return false
+	}
+	body, err := json.Marshal(input.Spec)
+	if err != nil || len(body) == 0 || len(body) > maxNetworkingAnnotations {
+		return false
+	}
+	var target any
+	switch resourceName {
+	case NetworkingHTTPRoutes:
+		target = &gatewayv1.HTTPRouteSpec{}
+	case NetworkingGRPCRoutes:
+		target = &gatewayv1.GRPCRouteSpec{}
+	case NetworkingTLSRoutes:
+		target = &gatewayv1.TLSRouteSpec{}
+	case NetworkingTCPRoutes:
+		target = &gatewayv1alpha2.TCPRouteSpec{}
+	case NetworkingUDPRoutes:
+		target = &gatewayv1alpha2.UDPRouteSpec{}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(target) != nil {
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return false
+	}
+	return validGatewayRouteReferences(input.Spec)
+}
+
+func validGatewayRouteReferences(spec map[string]any) bool {
+	parents, ok := nestedObjectSlice(spec["parentRefs"])
+	if !ok || len(parents) > 32 {
+		return false
+	}
+	for _, reference := range parents {
+		if !validGatewayRouteReference(reference, false) {
+			return false
+		}
+	}
+	hostnames, ok := nestedStringSlice(spec["hostnames"])
+	if !ok || len(hostnames) > 16 {
+		return false
+	}
+	for _, hostname := range hostnames {
+		if !validNetworkingHostname(hostname) {
+			return false
+		}
+	}
+	rules, ok := nestedObjectSlice(spec["rules"])
+	if !ok || len(rules) > 64 {
+		return false
+	}
+	backendCount := 0
+	for _, rule := range rules {
+		backends, valid := nestedObjectSlice(rule["backendRefs"])
+		if !valid || len(backends) > 64 {
+			return false
+		}
+		backendCount += len(backends)
+		if backendCount > 256 {
+			return false
+		}
+		for _, reference := range backends {
+			if !validGatewayRouteReference(reference, true) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validGatewayRouteReference(reference map[string]any, backend bool) bool {
+	name, _ := reference["name"].(string)
+	if len(k8svalidation.IsDNS1123Subdomain(name)) != 0 {
+		return false
+	}
+	if namespace, _ := reference["namespace"].(string); namespace != "" &&
+		len(k8svalidation.IsDNS1123Label(namespace)) != 0 {
+		return false
+	}
+	if group, _ := reference["group"].(string); group != "" &&
+		len(k8svalidation.IsDNS1123Subdomain(group)) != 0 {
+		return false
+	}
+	if kind, _ := reference["kind"].(string); kind != "" &&
+		len(k8svalidation.IsQualifiedName(kind)) != 0 {
+		return false
+	}
+	if value, exists := reference["port"]; exists {
+		port, valid := integerValue(value)
+		if !valid || port < 1 || port > 65535 {
+			return false
+		}
+	}
+	if backend {
+		if value, exists := reference["weight"]; exists {
+			weight, valid := integerValue(value)
+			if !valid || weight < 0 || weight > 1_000_000 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func nestedObjectSlice(value any) ([]map[string]any, bool) {
+	if value == nil {
+		return []map[string]any{}, true
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		result = append(result, object)
+	}
+	return result, true
+}
+
+func nestedStringSlice(value any) ([]string, bool) {
+	if value == nil {
+		return []string{}, true
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		result = append(result, text)
+	}
+	return result, true
+}
+
+func integerValue(value any) (int64, bool) {
+	switch number := value.(type) {
+	case int64:
+		return number, true
+	case float64:
+		integer := int64(number)
+		return integer, float64(integer) == number
+	default:
+		return 0, false
 	}
 }
 
@@ -719,7 +957,7 @@ func validGatewayAllowedRoutes(routes GatewayAllowedRoutes) bool {
 
 func createNetworkingObject(input CreateNetworkingResourceInput) (map[string]any, error) {
 	if !validNetworkingMetadata(input.Namespace, input.Name, input.Labels, input.Annotations) ||
-		!validNetworkingSpec(input.Resource, input.Service, input.Ingress, input.Gateway) ||
+		!validNetworkingSpec(input.Resource, input.Service, input.Ingress, input.Gateway, input.GatewayRoute) ||
 		input.Resource == NetworkingServices && len(k8svalidation.IsDNS1035Label(input.Name)) != 0 {
 		return nil, ErrInvalidInput
 	}
@@ -735,6 +973,15 @@ func createNetworkingObject(input CreateNetworkingResourceInput) (map[string]any
 		object = &networkingv1.Ingress{TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"}, ObjectMeta: metadata, Spec: ingressKubernetesSpec(*input.Ingress)}
 	case NetworkingGateways:
 		object = gatewayObject{APIVersion: "gateway.networking.k8s.io/v1", Kind: "Gateway", Metadata: metadata, Spec: gatewayWireSpec(*input.Gateway)}
+	case NetworkingHTTPRoutes, NetworkingGRPCRoutes, NetworkingTLSRoutes,
+		NetworkingTCPRoutes, NetworkingUDPRoutes:
+		identity := networkingResourceIdentities[input.Resource]
+		object = map[string]any{
+			"apiVersion": identity.Group + "/" + identity.Version,
+			"kind":       networkingResourceKinds[input.Resource],
+			"metadata":   metadata,
+			"spec":       runtime.DeepCopyJSONValue(input.GatewayRoute.Spec),
+		}
 	default:
 		return nil, ErrInvalidInput
 	}
@@ -794,6 +1041,14 @@ func updateNetworkingObject(existing map[string]any, input UpdateNetworkingResou
 			delete(currentSpec, "addresses")
 		}
 		copy["spec"] = currentSpec
+		return copy, nil
+	case NetworkingHTTPRoutes, NetworkingGRPCRoutes, NetworkingTLSRoutes,
+		NetworkingTCPRoutes, NetworkingUDPRoutes:
+		copy := runtime.DeepCopyJSONValue(existing).(map[string]any)
+		if _, found, err := unstructured.NestedMap(copy, "spec"); err != nil || !found {
+			return nil, ErrInvalidResponse
+		}
+		copy["spec"] = runtime.DeepCopyJSONValue(input.GatewayRoute.Spec)
 		return copy, nil
 	default:
 		return nil, ErrInvalidInput
@@ -968,6 +1223,18 @@ func networkingResourceDetail(
 		}
 		view := gatewayView(value)
 		summary.Gateway = &view
+	case NetworkingHTTPRoutes, NetworkingGRPCRoutes, NetworkingTLSRoutes,
+		NetworkingTCPRoutes, NetworkingUDPRoutes:
+		identity := networkingResourceIdentities[resourceName]
+		if metadata.GetAPIVersion() != identity.Group+"/"+identity.Version ||
+			metadata.GetKind() != networkingResourceKinds[resourceName] {
+			return NetworkingResourceDetail{}, ErrInvalidResponse
+		}
+		view, err := gatewayRouteView(object)
+		if err != nil {
+			return NetworkingResourceDetail{}, err
+		}
+		summary.GatewayRoute = &view
 	default:
 		return NetworkingResourceDetail{}, ErrInvalidInput
 	}
@@ -1179,6 +1446,99 @@ func gatewayView(value gatewayObject) GatewayView {
 		view.Listeners = append(view.Listeners, GatewayListenerStatus{Name: listener.Name, AttachedRoutes: listener.AttachedRoutes, Conditions: gatewayConditions(listener.Conditions)})
 	}
 	return view
+}
+
+func gatewayRouteView(object map[string]any) (GatewayRouteView, error) {
+	spec, found, err := unstructured.NestedMap(object, "spec")
+	if err != nil || !found {
+		return GatewayRouteView{}, ErrInvalidResponse
+	}
+	view := GatewayRouteView{
+		Spec:      runtime.DeepCopyJSONValue(spec).(map[string]any),
+		Hostnames: []string{}, ParentRefs: []GatewayRouteReference{},
+		BackendRefs: []GatewayRouteReference{}, Parents: []GatewayRouteParentStatus{},
+	}
+	if hostnames, ok := nestedStringSlice(spec["hostnames"]); ok {
+		view.Hostnames = hostnames
+	} else {
+		return GatewayRouteView{}, ErrInvalidResponse
+	}
+	parents, ok := nestedObjectSlice(spec["parentRefs"])
+	if !ok {
+		return GatewayRouteView{}, ErrInvalidResponse
+	}
+	for _, reference := range parents {
+		view.ParentRefs = append(view.ParentRefs, gatewayRouteReferenceView(reference, -1))
+	}
+	rules, ok := nestedObjectSlice(spec["rules"])
+	if !ok {
+		return GatewayRouteView{}, ErrInvalidResponse
+	}
+	for ruleIndex, rule := range rules {
+		backends, valid := nestedObjectSlice(rule["backendRefs"])
+		if !valid {
+			return GatewayRouteView{}, ErrInvalidResponse
+		}
+		for _, reference := range backends {
+			view.BackendRefs = append(view.BackendRefs,
+				gatewayRouteReferenceView(reference, int32(ruleIndex)))
+		}
+	}
+	statusParents, found, err := unstructured.NestedSlice(object, "status", "parents")
+	if err != nil {
+		return GatewayRouteView{}, ErrInvalidResponse
+	}
+	if !found {
+		return view, nil
+	}
+	for _, item := range statusParents {
+		parent, ok := item.(map[string]any)
+		if !ok {
+			return GatewayRouteView{}, ErrInvalidResponse
+		}
+		parentRef, _ := parent["parentRef"].(map[string]any)
+		conditions, err := gatewayRouteConditions(parent["conditions"])
+		if err != nil {
+			return GatewayRouteView{}, err
+		}
+		view.Parents = append(view.Parents, GatewayRouteParentStatus{
+			Parent:         gatewayRouteReferenceView(parentRef, -1),
+			ControllerName: networkingStringValue(parent["controllerName"]), Conditions: conditions,
+		})
+	}
+	return view, nil
+}
+
+func gatewayRouteReferenceView(value map[string]any, rule int32) GatewayRouteReference {
+	port, _ := integerValue(value["port"])
+	weight, _ := integerValue(value["weight"])
+	return GatewayRouteReference{
+		Group: networkingStringValue(value["group"]), Kind: networkingStringValue(value["kind"]),
+		Namespace: networkingStringValue(value["namespace"]), Name: networkingStringValue(value["name"]),
+		SectionName: networkingStringValue(value["sectionName"]), Port: int32(port),
+		Weight: int32(weight), Rule: rule,
+	}
+}
+
+func gatewayRouteConditions(value any) ([]ResourceCondition, error) {
+	items, ok := nestedObjectSlice(value)
+	if !ok {
+		return nil, ErrInvalidResponse
+	}
+	conditions := make([]metav1.Condition, 0, len(items))
+	for _, item := range items {
+		var condition metav1.Condition
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(item, &condition) != nil {
+			return nil, ErrInvalidResponse
+		}
+		conditions = append(conditions, condition)
+	}
+	return gatewayConditions(conditions), nil
+}
+
+func networkingStringValue(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 func gatewayLabelSelector(input *WorkloadSelector) *metav1.LabelSelector {

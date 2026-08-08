@@ -10,7 +10,12 @@ import {
   useNetworkingResources,
   type NetworkingSummary,
 } from "@/api/queries/networking";
-import { useGatewayDescribe, useIngressDescribe, useServiceDescribe } from "@/api/queries/describe";
+import {
+  useGatewayDescribe,
+  useGatewayRouteDescribe,
+  useIngressDescribe,
+  useServiceDescribe,
+} from "@/api/queries/describe";
 import type { KubernetesNetworkingResource } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
@@ -40,6 +45,7 @@ import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
 import {
   GATEWAY_UNAVAILABLE_CODE,
+  isGatewayRouteResource,
   NETWORKING_TYPES,
   networkingIdentity,
   networkingKindLabel,
@@ -291,7 +297,9 @@ export function NetworkingSection({
   }
 
   const gatewayMissing =
-    resource === "gateways" && errorCode(list.error) === GATEWAY_UNAVAILABLE_CODE;
+    (resource === "gateways" || isGatewayRouteResource(resource)) &&
+    errorCode(list.error) === GATEWAY_UNAVAILABLE_CODE;
+  const gatewayIdentity = networkingIdentity(resource);
   const nextToken = list.data?.continue_token ?? "";
 
   return (
@@ -314,7 +322,7 @@ export function NetworkingSection({
         }}
         className="flex min-h-0 flex-1 flex-col"
       >
-        <TabsList className="w-fit">
+        <TabsList className="h-auto w-fit max-w-full flex-wrap">
           {NETWORKING_TYPES.map((type) => (
             <TabsTrigger key={type.resource} value={type.resource}>
               {type.label}
@@ -326,8 +334,10 @@ export function NetworkingSection({
             <Alert tone="info" className="flex items-center justify-between gap-3">
               <span>
                 该集群没有安装 Gateway API（
-                <code className="zke-mono">gateway.networking.k8s.io/v1</code>）。ZKE
-                不会自动安装它；需要由集群管理员先部署 Gateway API CRD 与 Controller。
+                <code className="zke-mono">
+                  {gatewayIdentity.group}/{gatewayIdentity.version}/{gatewayIdentity.resource}
+                </code>
+                ）。ZKE 不会自动安装它；需要由集群管理员先部署对应 Gateway API CRD 与 Controller。
               </span>
               <Button size="sm" variant="secondary" onClick={() => void list.refetch()}>
                 重新检测
@@ -374,6 +384,12 @@ function deleteImpacts(resource: KubernetesNetworkingResource): string[] {
   }
   if (resource === "ingresses") {
     return ["删除后 Ingress Controller 会撤销对应的对外路由规则。", ...shared];
+  }
+  if (isGatewayRouteResource(resource)) {
+    return [
+      "删除后该 Route 对应的协议流量规则会被撤销，但它引用的 Gateway 与后端不会被删除。",
+      ...shared,
+    ];
   }
   return ["删除后该 Gateway 的监听器会被撤销，绑定到它的 Route 将失去接入点。", ...shared];
 }
@@ -455,6 +471,44 @@ function typeColumns(
             empty="尚未分配"
             className="text-muted-foreground"
           />
+        ),
+      },
+    ];
+  }
+  if (isGatewayRouteResource(resource)) {
+    return [
+      {
+        header: "主机",
+        cell: ({ row }) => (
+          <span className="zke-mono text-muted-foreground text-xs break-all">
+            {(row.original.gateway_route?.hostnames ?? []).join(" · ") || "任意/不适用"}
+          </span>
+        ),
+      },
+      {
+        header: "父级",
+        cell: ({ row }) => (
+          <span className="zke-mono text-muted-foreground text-xs break-all">
+            {(row.original.gateway_route?.parent_refs ?? [])
+              .map(
+                (ref) =>
+                  `${ref.namespace ? `${ref.namespace}/` : ""}${ref.name}${ref.section_name ? `#${ref.section_name}` : ""}`,
+              )
+              .join(" · ") || "—"}
+          </span>
+        ),
+      },
+      {
+        header: "后端",
+        cell: ({ row }) => (
+          <span className="zke-mono text-muted-foreground text-xs break-all">
+            {(row.original.gateway_route?.backend_refs ?? [])
+              .map(
+                (ref) =>
+                  `${ref.namespace ? `${ref.namespace}/` : ""}${ref.name}${ref.port ? `:${ref.port}` : ""}`,
+              )
+              .join(" · ") || "—"}
+          </span>
         ),
       },
     ];
@@ -590,6 +644,7 @@ function NetworkingDetailView({
           {item.service ? <ServiceCards view={item.service} /> : null}
           {item.ingress ? <IngressCards view={item.ingress} /> : null}
           {item.gateway ? <GatewayCards view={item.gateway} /> : null}
+          {item.gateway_route ? <GatewayRouteCards view={item.gateway_route} /> : null}
 
           <DetailCard title="标签">
             <DetailKeyValues entries={item.labels} />
@@ -619,8 +674,16 @@ function NetworkingDescribeView({
   const serviceDescribe = useServiceDescribe(clusterId, namespace, name, resource === "services");
   const ingressDescribe = useIngressDescribe(clusterId, namespace, name, resource === "ingresses");
   const gatewayDescribe = useGatewayDescribe(clusterId, namespace, name, resource === "gateways");
-  const describe =
-    resource === "gateways"
+  const gatewayRouteDescribe = useGatewayRouteDescribe(
+    clusterId,
+    namespace,
+    resource,
+    name,
+    isGatewayRouteResource(resource),
+  );
+  const describe = isGatewayRouteResource(resource)
+    ? gatewayRouteDescribe
+    : resource === "gateways"
       ? gatewayDescribe
       : resource === "ingresses"
         ? ingressDescribe
@@ -636,6 +699,47 @@ function NetworkingDescribeView({
       onRetry={() => void describe.refetch()}
       onBack={onBack}
     />
+  );
+}
+
+function GatewayRouteCards({ view }: { view: NonNullable<NetworkingSummary["gateway_route"]> }) {
+  return (
+    <>
+      <DetailCard title="Route">
+        <DetailRow label="主机" value={view.hostnames.join(", ") || "任意/不适用"} />
+        <DetailRow label="ParentRef" value={String(view.parent_refs.length)} />
+        <DetailRow label="BackendRef" value={String(view.backend_refs.length)} />
+      </DetailCard>
+      <DetailCard title="父级状态">
+        {view.parents.length === 0 ? (
+          <DetailRow label="状态" value="Controller 尚未写入 status.parents" />
+        ) : (
+          view.parents.map((parent, index) => (
+            <div
+              key={`${parent.controller_name}/${parent.parent.name}/${index}`}
+              className="border-border grid gap-2 border-b py-2 last:border-0"
+            >
+              <DetailRow
+                label={parent.parent.name || "未知父级"}
+                value={
+                  <span className="zke-mono text-xs break-all">
+                    {parent.controller_name || "未知 Controller"}
+                  </span>
+                }
+              />
+              <DetailConditions conditions={parent.conditions} />
+            </div>
+          ))
+        )}
+      </DetailCard>
+      <div className="md:col-span-2">
+        <DetailCard title="完整 Spec">
+          <pre className="zke-mono max-h-96 overflow-auto text-xs break-all whitespace-pre-wrap">
+            {JSON.stringify(view.spec, null, 2)}
+          </pre>
+        </DetailCard>
+      </div>
+    </>
   );
 }
 

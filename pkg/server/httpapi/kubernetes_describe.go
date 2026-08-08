@@ -48,6 +48,10 @@ type kubernetesDescribeService interface {
 		context.Context,
 		kubernetesdescribe.GatewayInput,
 	) (kubernetesdescribe.Result, error)
+	DescribeGatewayRoute(
+		context.Context,
+		kubernetesdescribe.GatewayRouteInput,
+	) (kubernetesdescribe.Result, error)
 	DescribeHorizontalPodAutoscaler(
 		context.Context,
 		kubernetesdescribe.HorizontalPodAutoscalerInput,
@@ -133,7 +137,13 @@ func (handler *kubernetesDescribeHandler) networkingResource(c *gin.Context) {
 	var result kubernetesdescribe.Result
 	var err error
 	operation := "describe Kubernetes Service"
-	if resource == kubernetesresource.NetworkingGateways {
+	if kubernetesresource.IsGatewayRouteResource(resource) {
+		operation = "describe Kubernetes Gateway Route"
+		result, err = handler.service.DescribeGatewayRoute(ctx, kubernetesdescribe.GatewayRouteInput{
+			ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"),
+			Resource: resource, Name: c.Param("network_name"),
+		})
+	} else if resource == kubernetesresource.NetworkingGateways {
 		operation = "describe Kubernetes Gateway"
 		result, err = handler.service.DescribeGateway(ctx, kubernetesdescribe.GatewayInput{
 			ClusterID: c.Param("cluster_id"),

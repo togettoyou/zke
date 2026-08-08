@@ -13,7 +13,7 @@ import type { KubernetesNetworkingResource } from "@/api/types";
 import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { Button } from "@/components/ui/button";
-import { Input, NumericInput } from "@/components/ui/input";
+import { Input, NumericInput, Textarea } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
 import {
@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/select";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-import { networkingKindLabel } from "./networking-catalog";
+import { isGatewayRouteResource, networkingKindLabel } from "./networking-catalog";
 import {
   buildNetworkingSpec,
   createDraft,
@@ -61,6 +61,7 @@ const SECTION_LABELS: Record<NetworkingSectionKey, string> = {
   tls: "TLS",
   gateway: "Gateway",
   listeners: "监听器",
+  route: "Route Spec",
 };
 
 /**
@@ -200,6 +201,25 @@ export function NetworkingFormView({
             onChange={(gateway) => patch({ gateway })}
             problemIn={problemIn}
           />
+        ) : null}
+        {isGatewayRouteResource(resource) ? (
+          <FormSection
+            title={SECTION_LABELS.route}
+            hint="完整 Kubernetes-native spec（JSON/camelCase）；ParentRef 与 BackendRef 可跨命名空间，但必须由目标 Gateway/ReferenceGrant 授权"
+            problem={problemIn("route")}
+          >
+            <Textarea
+              value={draft.gatewayRoute.specText}
+              className="zke-mono min-h-80 resize-y text-xs leading-5"
+              spellCheck={false}
+              aria-label={`${kind} spec JSON`}
+              onChange={(event) => patch({ gatewayRoute: { specText: event.target.value } })}
+            />
+            <p className="text-subtle-foreground mt-2 text-xs">
+              Server 会按当前 Route 类型严格拒绝未知字段；DryRun 还会执行目标集群 CRD/CEL 校验。ZKE
+              不会自动创建跨命名空间所需的 ReferenceGrant。
+            </p>
+          </FormSection>
         ) : null}
 
         {/*

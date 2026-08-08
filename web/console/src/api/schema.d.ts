@@ -1114,15 +1114,17 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * @description 在明确的 Cluster 和 Namespace 中查询 Service、Ingress 或 Gateway。Gateway
-         *     固定使用 Gateway API `gateway.networking.k8s.io/v1`；目标集群未安装该 CRD
-         *     时返回 409 `gateway_api_unavailable`。分页使用 Kubernetes continuation token。
+         * @description 在明确的 Cluster 和 Namespace 中查询 Service、Ingress、Gateway 或协议型 Route。
+         *     Gateway/HTTPRoute/GRPCRoute/TLSRoute 使用 `gateway.networking.k8s.io/v1`，
+         *     TCPRoute/UDPRoute 使用 `v1alpha2`；目标集群未提供路径指定的资源与版本时返回
+         *     409 `gateway_api_unavailable`。ZKE 不安装 CRD。分页使用 Kubernetes continuation token。
          */
         get: operations["listKubernetesNetworkingResources"];
         put?: never;
         /**
-         * @description 创建路径指定的 Service、Ingress 或 Gateway。请求必须只携带与路径类型对应的
-         *     `service`、`ingress` 或 `gateway` 配置。实际创建要求显式确认；dry-run 使用
+         * @description 创建路径指定的 Service、Ingress、Gateway 或 Gateway API Route。请求必须只携带与路径类型对应的
+         *     `service`、`ingress`、`gateway` 或 `gateway_route` 配置。Route 的 `spec` 使用
+         *     Kubernetes 原生 camelCase 字段并按路径类型严格解码，未知字段会被拒绝。实际创建要求显式确认；dry-run 使用
          *     Kubernetes 服务端校验，不会持久化对象。Gateway API 不由 ZKE 自动安装。
          */
         post: operations["createKubernetesNetworkingResource"];
@@ -1139,7 +1141,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description 查询一个 Service、Ingress 或 Gateway 的类型化详情和状态。 */
+        /** @description 查询一个 Service、Ingress、Gateway 或 Gateway API Route 的类型化详情和状态。 */
         get: operations["getKubernetesNetworkingResource"];
         /**
          * @description 更新类型化配置。必须携带当前 UID 和 resourceVersion；Server 在写入前重新读取对象，
@@ -1163,9 +1165,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * @description 返回 Service、Ingress 或 Gateway 的类型化诊断。Service 聚合 EndpointSlice 与 selector
+         * @description 返回 Service、Ingress、Gateway 或 Gateway API Route 的类型化诊断。Service 聚合 EndpointSlice 与 selector
          *     匹配的后端 Pod；Ingress 聚合其引用的 Service、端口和 EndpointSlice；Gateway
-         *     解释对象及 Listener Condition。要求同时持有 cluster.read 与 cluster.event.read，
+         *     解释对象及 Listener Condition；Route 解释各 Parent 的 Accepted、ResolvedRefs 与
+         *     PartiallyInvalid Condition，跨命名空间授权以 Controller 的 ReferenceGrant 判定为准，
+         *     不越权读取被引用命名空间。要求同时持有 cluster.read 与 cluster.event.read，
          *     并写入 Event 读取审计。
          */
         get: operations["describeKubernetesNetworkingResource"];
@@ -2940,7 +2944,7 @@ export interface components {
             failed_jobs_history_limit?: number;
         };
         /** @enum {string} */
-        KubernetesNetworkingResource: "services" | "ingresses" | "gateways";
+        KubernetesNetworkingResource: "services" | "ingresses" | "gateways" | "httproutes" | "grpcroutes" | "tlsroutes" | "tcproutes" | "udproutes";
         KubernetesServicePort: {
             name: string;
             /** @enum {string} */
@@ -3123,6 +3127,44 @@ export interface components {
             conditions: components["schemas"]["KubernetesResourceCondition"][];
             listeners: components["schemas"]["KubernetesGatewayListenerStatus"][];
         };
+        KubernetesGatewayRouteReference: {
+            group: string;
+            kind: string;
+            namespace: string;
+            name: string;
+            section_name: string;
+            port: number;
+            weight: number;
+            /** @description 后端所在规则的零基下标；ParentRef 为 -1。 */
+            rule: number;
+        };
+        KubernetesGatewayRouteParentStatus: {
+            parent: components["schemas"]["KubernetesGatewayRouteReference"];
+            controller_name: string;
+            conditions: components["schemas"]["KubernetesResourceCondition"][];
+        };
+        KubernetesGatewayRouteView: {
+            /**
+             * @description 路径类型对应的完整 Kubernetes-native Gateway API spec，字段使用 camelCase。
+             *     Server 按 HTTPRoute/GRPCRoute/TLSRoute/TCPRoute/UDPRoute 的官方 Go 类型严格解码。
+             */
+            spec: {
+                [key: string]: unknown;
+            };
+            hostnames: string[];
+            parent_refs: components["schemas"]["KubernetesGatewayRouteReference"][];
+            backend_refs: components["schemas"]["KubernetesGatewayRouteReference"][];
+            parents: components["schemas"]["KubernetesGatewayRouteParentStatus"][];
+        };
+        KubernetesGatewayRouteSpecInput: {
+            /**
+             * @description Kubernetes-native Route spec。字段使用 camelCase，类型由路径中的 network_resource 固定；
+             *     Server 会拒绝该 Route 类型不存在的字段，并由目标 API Server DryRun 执行 CRD/CEL 校验。
+             */
+            spec: {
+                [key: string]: unknown;
+            };
+        };
         KubernetesGatewayAddressInput: {
             type?: string;
             value: string;
@@ -3172,7 +3214,7 @@ export interface components {
             resource: components["schemas"]["KubernetesNetworkingResource"];
             api_version: string;
             /** @enum {string} */
-            kind: "Service" | "Ingress" | "Gateway";
+            kind: "Service" | "Ingress" | "Gateway" | "HTTPRoute" | "GRPCRoute" | "TLSRoute" | "TCPRoute" | "UDPRoute";
             namespace: string;
             name: string;
             uid: string;
@@ -3184,6 +3226,7 @@ export interface components {
             service?: components["schemas"]["KubernetesServiceView"];
             ingress?: components["schemas"]["KubernetesIngressView"];
             gateway?: components["schemas"]["KubernetesGatewayView"];
+            gateway_route?: components["schemas"]["KubernetesGatewayRouteView"];
         };
         KubernetesNetworkingResourceDetail: components["schemas"]["KubernetesNetworkingResourceSummary"] & {
             annotations: {
@@ -3207,20 +3250,22 @@ export interface components {
             service?: components["schemas"]["KubernetesServiceSpecInput"];
             ingress?: components["schemas"]["KubernetesIngressSpecInput"];
             gateway?: components["schemas"]["KubernetesGatewaySpecInput"];
+            gateway_route?: components["schemas"]["KubernetesGatewayRouteSpecInput"];
             /** @default false */
             dry_run: boolean;
             confirm: boolean;
-        } & (unknown | unknown | unknown);
+        } & (unknown | unknown | unknown | unknown);
         KubernetesUpdateNetworkingResourceRequest: {
             uid: string;
             resource_version: string;
             service?: components["schemas"]["KubernetesServiceSpecInput"];
             ingress?: components["schemas"]["KubernetesIngressSpecInput"];
             gateway?: components["schemas"]["KubernetesGatewaySpecInput"];
+            gateway_route?: components["schemas"]["KubernetesGatewayRouteSpecInput"];
             /** @default false */
             dry_run: boolean;
             confirm: boolean;
-        } & (unknown | unknown | unknown);
+        } & (unknown | unknown | unknown | unknown);
         KubernetesDeleteNetworkingResourceRequest: {
             uid: string;
             resource_version: string;
@@ -4675,7 +4720,7 @@ export interface components {
          */
         KubernetesDescribeFinding: {
             /** @enum {string} */
-            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints" | "GatewayAddressPending" | "GatewayNotAccepted" | "GatewayNotProgrammed" | "GatewayNotReady" | "GatewayListenerNotAccepted" | "GatewayListenerNotProgrammed" | "GatewayListenerConflicted" | "GatewayListenerReferencesInvalid" | "HPAStatusStale" | "HPAUnableToScale" | "HPAMetricsUnavailable" | "HPAScalingLimited" | "ResourceQuotaExhausted" | "PDBNoDisruptionsAllowed";
+            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints" | "GatewayAddressPending" | "GatewayNotAccepted" | "GatewayNotProgrammed" | "GatewayNotReady" | "GatewayListenerNotAccepted" | "GatewayListenerNotProgrammed" | "GatewayListenerConflicted" | "GatewayListenerReferencesInvalid" | "GatewayRouteUnattached" | "GatewayRouteNotAccepted" | "GatewayRouteReferencesInvalid" | "GatewayRoutePartiallyInvalid" | "HPAStatusStale" | "HPAUnableToScale" | "HPAMetricsUnavailable" | "HPAScalingLimited" | "ResourceQuotaExhausted" | "PDBNoDisruptionsAllowed";
             /**
              * @description findings 只报告问题，因此只有一个级别。
              * @enum {string}

@@ -32,9 +32,10 @@ type kubernetesNetworkingHandler struct {
 }
 
 type networkingConfigurationRequest struct {
-	Service *kubernetesresource.ServiceSpec `json:"service"`
-	Ingress *kubernetesresource.IngressSpec `json:"ingress"`
-	Gateway *kubernetesresource.GatewaySpec `json:"gateway"`
+	Service      *kubernetesresource.ServiceSpec      `json:"service"`
+	Ingress      *kubernetesresource.IngressSpec      `json:"ingress"`
+	Gateway      *kubernetesresource.GatewaySpec      `json:"gateway"`
+	GatewayRoute *kubernetesresource.GatewayRouteSpec `json:"gateway_route"`
 }
 
 type createNetworkingResourceRequest struct {
@@ -154,7 +155,8 @@ func (handler *kubernetesNetworkingHandler) create(c *gin.Context) {
 		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"), Resource: resourceName,
 		Name: request.Name, Labels: request.Labels, Annotations: request.Annotations,
 		Service: request.Service, Ingress: request.Ingress, Gateway: request.Gateway,
-		DryRun: request.DryRun, Confirm: request.Confirm,
+		GatewayRoute: request.GatewayRoute,
+		DryRun:       request.DryRun, Confirm: request.Confirm,
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
 	})
 	cancel()
@@ -199,7 +201,8 @@ func (handler *kubernetesNetworkingHandler) update(c *gin.Context) {
 		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"), Resource: resourceName,
 		Name: c.Param("network_name"), UID: request.UID, ResourceVersion: request.ResourceVersion,
 		Service: request.Service, Ingress: request.Ingress, Gateway: request.Gateway,
-		DryRun: request.DryRun, Confirm: request.Confirm,
+		GatewayRoute: request.GatewayRoute,
+		DryRun:       request.DryRun, Confirm: request.Confirm,
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
 	})
 	cancel()
@@ -292,7 +295,7 @@ func (handler *kubernetesNetworkingHandler) recordMutation(c *gin.Context, actor
 
 func (handler *kubernetesNetworkingHandler) respondNetworkingError(c *gin.Context, operation string, err error) bool {
 	if errors.Is(err, kubernetesresource.ErrGatewayAPIUnavailable) {
-		writeError(c, http.StatusConflict, "gateway_api_unavailable", "Gateway API gateway.networking.k8s.io/v1 is not installed in the Cluster")
+		writeError(c, http.StatusConflict, "gateway_api_unavailable", "the requested Gateway API resource and version are not installed in the Cluster")
 		return true
 	}
 	resourceHandler := kubernetesResourceHandler{baseHandler: handler.baseHandler}

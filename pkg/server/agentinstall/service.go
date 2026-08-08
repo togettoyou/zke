@@ -419,8 +419,10 @@ func renderManifest(
 				// Gateway API is optional. Kubernetes accepts this RBAC rule even
 				// when the CRD is absent; the Server reports that state separately.
 				APIGroups: []string{"gateway.networking.k8s.io"},
-				Resources: []string{"gateways"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Resources: []string{
+					"gateways", "httproutes", "grpcroutes", "tlsroutes", "tcproutes", "udproutes",
+				},
+				Verbs: []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 		},
 	}

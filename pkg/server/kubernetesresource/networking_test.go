@@ -88,6 +88,131 @@ func TestCreateNetworkingObjectsCoversServiceIngressAndGateway(t *testing.T) {
 	}
 }
 
+func TestGatewayRouteCreateDetailAndUpdatePreserveObjectState(t *testing.T) {
+	t.Parallel()
+	input := &GatewayRouteSpec{Spec: map[string]any{
+		"parentRefs": []any{map[string]any{"name": "edge", "sectionName": "https"}},
+		"hostnames":  []any{"api.example.com"},
+		"rules": []any{map[string]any{"backendRefs": []any{
+			map[string]any{"name": "api", "port": float64(8080)},
+		}}},
+	}}
+	object, err := createNetworkingObject(CreateNetworkingResourceInput{
+		Namespace: "default", Resource: NetworkingHTTPRoutes, Name: "api", GatewayRoute: input,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := object["metadata"].(map[string]any)
+	metadata["uid"], metadata["resourceVersion"] = "route-uid", "4"
+	object["status"] = map[string]any{"parents": []any{map[string]any{
+		"parentRef":      map[string]any{"name": "edge", "sectionName": "https"},
+		"controllerName": "example.io/gateway-controller",
+		"conditions": []any{map[string]any{
+			"type": "Accepted", "status": "True", "reason": "Accepted", "message": "attached",
+			"observedGeneration": int64(1), "lastTransitionTime": "2026-08-08T00:00:00Z",
+		}},
+	}}}
+	detail, err := networkingResourceDetail(object, NetworkingHTTPRoutes, "default", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.GatewayRoute == nil || len(detail.GatewayRoute.BackendRefs) != 1 ||
+		detail.GatewayRoute.BackendRefs[0].Port != 8080 ||
+		detail.GatewayRoute.Parents[0].Conditions[0].Type != "Accepted" {
+		t.Fatalf("unexpected HTTPRoute detail: %+v", detail.GatewayRoute)
+	}
+	object["status"].(map[string]any)["controllerExtension"] = "preserve"
+	updated, err := updateNetworkingObject(object, UpdateNetworkingResourceInput{
+		Resource: NetworkingHTTPRoutes, GatewayRoute: &GatewayRouteSpec{Spec: map[string]any{
+			"parentRefs": []any{map[string]any{"name": "internal"}},
+			"rules": []any{map[string]any{"backendRefs": []any{
+				map[string]any{"name": "api-v2", "port": float64(8081)},
+			}}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated["status"].(map[string]any)["controllerExtension"] != "preserve" {
+		t.Fatalf("Route status extension was not preserved: %+v", updated["status"])
+	}
+	rules := updated["spec"].(map[string]any)["rules"].([]any)
+	refs := rules[0].(map[string]any)["backendRefs"].([]any)
+	if refs[0].(map[string]any)["name"] != "api-v2" {
+		t.Fatalf("Route spec was not replaced: %+v", updated["spec"])
+	}
+}
+
+func TestGatewayRouteSpecRejectsUnknownFieldsAndInvalidReferences(t *testing.T) {
+	t.Parallel()
+	for name, spec := range map[string]GatewayRouteSpec{
+		"unknown": {Spec: map[string]any{"unknownField": true, "rules": []any{map[string]any{}}}},
+		"bad backend namespace": {Spec: map[string]any{
+			"rules": []any{map[string]any{"backendRefs": []any{
+				map[string]any{"name": "api", "namespace": "NOT_VALID"},
+			}}},
+		}},
+	} {
+		spec := spec
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if validGatewayRouteSpec(NetworkingHTTPRoutes, spec) {
+				t.Fatalf("invalid spec accepted: %+v", spec)
+			}
+		})
+	}
+}
+
+func TestGatewayRouteKindsUseTheirFixedTypeAndVersion(t *testing.T) {
+	t.Parallel()
+	for resource, spec := range map[NetworkingResource]map[string]any{
+		NetworkingHTTPRoutes: {
+			"rules": []any{map[string]any{
+				"backendRefs": []any{map[string]any{"name": "api", "port": float64(80)}},
+			}},
+		},
+		NetworkingGRPCRoutes: {
+			"rules": []any{map[string]any{
+				"backendRefs": []any{map[string]any{"name": "api", "port": float64(80)}},
+			}},
+		},
+		NetworkingTLSRoutes: {
+			"hostnames": []any{"api.example.com"},
+			"rules": []any{map[string]any{
+				"backendRefs": []any{map[string]any{"name": "api", "port": float64(443)}},
+			}},
+		},
+		NetworkingTCPRoutes: {
+			"rules": []any{map[string]any{
+				"backendRefs": []any{map[string]any{"name": "api", "port": float64(5432)}},
+			}},
+		},
+		NetworkingUDPRoutes: {
+			"rules": []any{map[string]any{
+				"backendRefs": []any{map[string]any{"name": "api", "port": float64(53)}},
+			}},
+		},
+	} {
+		resource, spec := resource, spec
+		t.Run(string(resource), func(t *testing.T) {
+			t.Parallel()
+			object, err := createNetworkingObject(CreateNetworkingResourceInput{
+				Namespace: "default", Resource: resource, Name: "route",
+				GatewayRoute: &GatewayRouteSpec{Spec: spec},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity := networkingResourceIdentities[resource]
+			if object["apiVersion"] != identity.Group+"/"+identity.Version ||
+				object["kind"] != networkingResourceKinds[resource] {
+				t.Fatalf("unexpected identity: apiVersion=%v kind=%v", object["apiVersion"], object["kind"])
+			}
+		})
+	}
+}
+
 func TestCreateExternalNameServiceWithoutPorts(t *testing.T) {
 	t.Parallel()
 
@@ -260,6 +385,39 @@ func TestGatewayAPIUnavailableIsDistinctFromAccessDenied(t *testing.T) {
 	)
 	if !errors.Is(err, ErrGatewayAPIUnavailable) {
 		t.Fatalf("error = %v, want Gateway API unavailable", err)
+	}
+}
+
+func TestGatewayRouteDiscoveryIsPerConcreteKindAndVersion(t *testing.T) {
+	t.Parallel()
+	catalogBody, err := json.Marshal(kubernetescatalog.Catalog{Resources: []kubernetescatalog.Resource{
+		{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes", Kind: "HTTPRoute", Namespaced: true, Verbs: []string{"get", "list"}},
+		{Group: "gateway.networking.k8s.io", Version: "v1alpha2", Resource: "tcproutes", Kind: "TCPRoute", Namespaced: true, Verbs: []string{"get", "list"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester := &fakeResourceRequester{handle: func(
+		_ context.Context, _ string, request *agentv1.ResourceRequest, responseBody io.Writer,
+	) (*agentv1.ResourceResponse, error) {
+		if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DISCOVER {
+			_, _ = responseBody.Write(catalogBody)
+			return &agentv1.ResourceResponse{Result: agentv1.ResultCode_RESULT_CODE_OK,
+				KubernetesStatusCode: http.StatusOK, ContentType: kubernetesJSONContentType,
+				BodySize: uint64(len(catalogBody))}, nil
+		}
+		return &agentv1.ResourceResponse{Result: agentv1.ResultCode_RESULT_CODE_OK,
+			KubernetesStatusCode: http.StatusOK, ContentType: kubernetesJSONContentType}, nil
+	}}
+	service := NewService(requester)
+	if _, err := service.networkingIdentity(context.Background(), testClusterID, NetworkingHTTPRoutes); err != nil {
+		t.Fatalf("HTTPRoute discovery failed: %v", err)
+	}
+	if _, err := service.networkingIdentity(context.Background(), testClusterID, NetworkingTCPRoutes); err != nil {
+		t.Fatalf("TCPRoute discovery failed: %v", err)
+	}
+	if _, err := service.networkingIdentity(context.Background(), testClusterID, NetworkingGRPCRoutes); !errors.Is(err, ErrGatewayAPIUnavailable) {
+		t.Fatalf("GRPCRoute discovery error = %v, want unavailable", err)
 	}
 }
 

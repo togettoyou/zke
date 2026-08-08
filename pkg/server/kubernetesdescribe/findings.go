@@ -27,6 +27,13 @@ const (
 )
 
 const (
+	FindingGatewayRouteUnattached        = "GatewayRouteUnattached"
+	FindingGatewayRouteNotAccepted       = "GatewayRouteNotAccepted"
+	FindingGatewayRouteReferencesInvalid = "GatewayRouteReferencesInvalid"
+	FindingGatewayRoutePartiallyInvalid  = "GatewayRoutePartiallyInvalid"
+)
+
+const (
 	FindingServiceNoEndpoints         = "ServiceNoEndpoints"
 	FindingServiceNoReadyEndpoints    = "ServiceNoReadyEndpoints"
 	FindingServiceLoadBalancerPending = "ServiceLoadBalancerPending"
@@ -161,6 +168,42 @@ func gatewayFindings(gateway kubernetesresource.NetworkingResourceDetail) []Find
 			continue
 		}
 		findings = append(findings, conditionFinding(code, condition, condition.Type))
+	}
+	return findings
+}
+
+func gatewayRouteFindings(route kubernetesresource.NetworkingResourceDetail) []Finding {
+	if route.GatewayRoute == nil {
+		return []Finding{}
+	}
+	if len(route.GatewayRoute.Parents) == 0 {
+		return []Finding{{
+			Code: FindingGatewayRouteUnattached, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.parents"}},
+		}}
+	}
+	findings := make([]Finding, 0, len(route.GatewayRoute.Parents)*2)
+	for _, parent := range route.GatewayRoute.Parents {
+		parentName := parent.Parent.Name
+		if parentName == "" {
+			parentName = "unknown"
+		}
+		for _, condition := range parent.Conditions {
+			code, report := "", false
+			switch condition.Type {
+			case "Accepted":
+				code, report = FindingGatewayRouteNotAccepted, condition.Status != conditionStatusTrue
+			case "ResolvedRefs":
+				code, report = FindingGatewayRouteReferencesInvalid, condition.Status != conditionStatusTrue
+			case "PartiallyInvalid":
+				code, report = FindingGatewayRoutePartiallyInvalid, condition.Status == conditionStatusTrue
+			}
+			if report {
+				findings = append(findings, conditionFinding(
+					code, condition, "parent/"+parentName+"/"+condition.Type,
+				))
+			}
+		}
 	}
 	return findings
 }

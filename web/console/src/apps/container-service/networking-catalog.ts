@@ -1,7 +1,7 @@
 import type { KubernetesNetworkingResource } from "@/api/types";
 
 /**
- * The three types the networking API exposes, labelled with the Kubernetes kind.
+ * The networking types exposed by the scoped typed API.
  *
  * Gateway is last because it is the one that may not exist: the Gateway API is a
  * set of CRDs a Cluster either has or does not, and ZKE does not install it.
@@ -10,6 +10,11 @@ export const NETWORKING_TYPES: { resource: KubernetesNetworkingResource; label: 
   { resource: "services", label: "Service" },
   { resource: "ingresses", label: "Ingress" },
   { resource: "gateways", label: "Gateway" },
+  { resource: "httproutes", label: "HTTPRoute" },
+  { resource: "grpcroutes", label: "GRPCRoute" },
+  { resource: "tlsroutes", label: "TLSRoute" },
+  { resource: "tcproutes", label: "TCPRoute" },
+  { resource: "udproutes", label: "UDPRoute" },
 ];
 
 export function networkingKindLabel(resource: KubernetesNetworkingResource): string {
@@ -27,9 +32,31 @@ export function networkingIdentity(resource: KubernetesNetworkingResource): {
       return { group: "", version: "v1", resource: "services" };
     case "ingresses":
       return { group: "networking.k8s.io", version: "v1", resource: "ingresses" };
-    default:
+    case "gateways":
       return { group: "gateway.networking.k8s.io", version: "v1", resource: "gateways" };
+    case "httproutes":
+      return { group: "gateway.networking.k8s.io", version: "v1", resource: "httproutes" };
+    case "grpcroutes":
+      return { group: "gateway.networking.k8s.io", version: "v1", resource: "grpcroutes" };
+    case "tlsroutes":
+      return { group: "gateway.networking.k8s.io", version: "v1", resource: "tlsroutes" };
+    case "tcproutes":
+      return {
+        group: "gateway.networking.k8s.io",
+        version: "v1alpha2",
+        resource: "tcproutes",
+      };
+    case "udproutes":
+      return {
+        group: "gateway.networking.k8s.io",
+        version: "v1alpha2",
+        resource: "udproutes",
+      };
   }
+}
+
+export function isGatewayRouteResource(resource: KubernetesNetworkingResource): boolean {
+  return resource.endsWith("routes") && resource !== "ingresses";
 }
 
 /**

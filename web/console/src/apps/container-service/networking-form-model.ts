@@ -86,7 +86,8 @@ export type NetworkingSectionKey =
   | "rules"
   | "tls"
   | "gateway"
-  | "listeners";
+  | "listeners"
+  | "route";
 
 export type NetworkingProblem = { section: NetworkingSectionKey; message: string };
 
@@ -141,6 +142,8 @@ export type GatewayDraft = {
   listeners: ListenerDraft[];
 };
 
+export type GatewayRouteDraft = { specText: string };
+
 /**
  * One draft holding all three shapes.
  *
@@ -153,6 +156,7 @@ export type NetworkingDraft = {
   service: ServiceDraft;
   ingress: IngressDraft;
   gateway: GatewayDraft;
+  gatewayRoute: GatewayRouteDraft;
 };
 
 export function emptyPort(): PortDraft {
@@ -249,6 +253,9 @@ export function initialDraft(existing: NetworkingSummary | null): NetworkingDraf
         namespacesFrom: listener.allowed_routes.namespaces_from || DEFAULT_OPTION,
       })),
     },
+    gatewayRoute: {
+      specText: JSON.stringify(existing?.gateway_route?.spec ?? {}, null, 2),
+    },
   };
 }
 
@@ -261,7 +268,10 @@ export function createDraft(resource: KubernetesNetworkingResource): NetworkingD
   if (resource === "ingresses") {
     return { ...draft, ingress: { ...draft.ingress, rules: [emptyRule()] } };
   }
-  return { ...draft, gateway: { ...draft.gateway, listeners: [emptyListener()] } };
+  if (resource === "gateways") {
+    return { ...draft, gateway: { ...draft.gateway, listeners: [emptyListener()] } };
+  }
+  return { ...draft, gatewayRoute: { specText: JSON.stringify(routeTemplate(resource), null, 2) } };
 }
 
 /**
@@ -296,7 +306,25 @@ export function networkingProblem(
   if (resource === "ingresses") {
     return ingressProblem(draft.ingress);
   }
-  return gatewayProblem(draft.gateway);
+  if (resource === "gateways") {
+    return gatewayProblem(draft.gateway);
+  }
+  return gatewayRouteProblem(draft.gatewayRoute);
+}
+
+function gatewayRouteProblem(draft: GatewayRouteDraft): NetworkingProblem | null {
+  if (new TextEncoder().encode(draft.specText).length > 256 * 1024) {
+    return at("route", "Route spec 不能超过 256 KiB。");
+  }
+  try {
+    const value: unknown = JSON.parse(draft.specText);
+    if (value === null || Array.isArray(value) || typeof value !== "object") {
+      return at("route", "Route spec 必须是一个 JSON 对象。");
+    }
+  } catch {
+    return at("route", "Route spec 不是合法的 JSON。");
+  }
+  return null;
 }
 
 function serviceProblem(draft: ServiceDraft): NetworkingProblem | null {
@@ -635,7 +663,24 @@ export function buildNetworkingSpec(
   if (resource === "ingresses") {
     return { ingress: buildIngressSpec(draft.ingress) };
   }
-  return { gateway: buildGatewaySpec(draft.gateway, existing) };
+  if (resource === "gateways") {
+    return { gateway: buildGatewaySpec(draft.gateway, existing) };
+  }
+  return {
+    gateway_route: { spec: JSON.parse(draft.gatewayRoute.specText) as Record<string, unknown> },
+  };
+}
+
+function routeTemplate(resource: KubernetesNetworkingResource): Record<string, unknown> {
+  const backendRef = { name: "backend-service", port: 80 };
+  const common = { parentRefs: [{ name: "gateway-name" }] };
+  if (resource === "httproutes" || resource === "grpcroutes") {
+    return { ...common, rules: [{ backendRefs: [backendRef] }] };
+  }
+  if (resource === "tlsroutes") {
+    return { ...common, hostnames: ["example.com"], rules: [{ backendRefs: [backendRef] }] };
+  }
+  return { ...common, rules: [{ backendRefs: [backendRef] }] };
 }
 
 function buildServiceSpec(

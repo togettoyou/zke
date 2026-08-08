@@ -122,6 +122,8 @@ export const queryKeys = {
     ["ingress-describe", clusterId, namespace, name] as const,
   gatewayDescribe: (clusterId: string, namespace: string, name: string) =>
     ["gateway-describe", clusterId, namespace, name] as const,
+  gatewayRouteDescribe: (clusterId: string, namespace: string, resource: string, name: string) =>
+    ["gateway-route-describe", clusterId, namespace, resource, name] as const,
   autoscalerDescribe: (clusterId: string, namespace: string, name: string) =>
     ["autoscaler-describe", clusterId, namespace, name] as const,
   policyDescribe: (clusterId: string, namespace: string, resource: string, name: string) =>

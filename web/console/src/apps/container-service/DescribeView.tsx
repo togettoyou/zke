@@ -13,6 +13,7 @@ import type {
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailConditions } from "@/components/common/detail";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { CopyButton, RelativeTime, StatusBadge } from "@/components/common/status";
@@ -186,6 +187,22 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
   GatewayListenerReferencesInvalid: {
     title: "监听器引用无效",
     hint: "Listener 的证书或其他对象引用没有解析成功。检查对象名称、命名空间、类型和引用授权。",
+  },
+  GatewayRouteUnattached: {
+    title: "Route 尚未绑定",
+    hint: "Controller 尚未为任何 ParentRef 写入状态。核对 Gateway 名称、命名空间、Listener 的 allowedRoutes，以及 Controller 是否支持该 Route 类型。",
+  },
+  GatewayRouteNotAccepted: {
+    title: "Route 未被父级接受",
+    hint: "按父级 Accepted Condition 核对 Listener 协议、hostname、sectionName、allowedRoutes 与 Controller 支持范围。",
+  },
+  GatewayRouteReferencesInvalid: {
+    title: "Route 引用未解析",
+    hint: "核对 BackendRef 名称、类型、端口和命名空间；跨命名空间 BackendRef 必须由目标命名空间的 ReferenceGrant 明确授权。",
+  },
+  GatewayRoutePartiallyInvalid: {
+    title: "Route 部分规则无效",
+    hint: "Controller 只接受了部分规则或回退到上一份有效配置。按原始消息检查具体 match、filter 与 backendRef。",
   },
   HPAStatusStale: {
     title: "HPA 状态尚未追上配置",
@@ -479,6 +496,7 @@ export function DescribeView({
           {data.networking?.gateway && data.gateway_status ? (
             <GatewayDiagnosticSummary data={data} />
           ) : null}
+          {data.networking?.gateway_route ? <GatewayRouteDiagnosticSummary data={data} /> : null}
           {data.autoscaler ? <AutoscalerDiagnosticSummary data={data} /> : null}
           {data.policy && data.policy_status ? <PolicyDiagnosticSummary data={data} /> : null}
 
@@ -679,7 +697,18 @@ function describeConditions(data: KubernetesDescribe): EvidenceCondition[] {
     ...(data.node?.conditions ?? []),
     ...(data.storage?.persistent_volume_claim_detail?.conditions ?? []),
     ...(data.networking?.gateway?.conditions ?? []),
-    ...(data.networking?.gateway?.listeners.flatMap((listener) => listener.conditions) ?? []),
+    ...(data.networking?.gateway?.listeners.flatMap((listener) =>
+      listener.conditions.map((condition) => ({
+        ...condition,
+        type: `listener/${listener.name}/${condition.type}`,
+      })),
+    ) ?? []),
+    ...(data.networking?.gateway_route?.parents.flatMap((parent) =>
+      parent.conditions.map((condition) => ({
+        ...condition,
+        type: `parent/${parent.parent.name || "unknown"}/${condition.type}`,
+      })),
+    ) ?? []),
     ...(data.autoscaler?.conditions ?? []),
     ...(data.policy?.disruption_budget_detail?.conditions ?? []),
   ];
@@ -1098,6 +1127,40 @@ function GatewayDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
           ))}
         </div>
       )}
+    </Card>
+  );
+}
+
+function GatewayRouteDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
+  const route = data.networking?.gateway_route;
+  if (!route) return null;
+  return (
+    <Card>
+      <CardTitle>Route 状态</CardTitle>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <DiagnosticValue label="ParentRef" value={`${route.parent_refs.length} 个`} />
+        <DiagnosticValue label="BackendRef" value={`${route.backend_refs.length} 个`} />
+        <DiagnosticValue label="Controller 状态" value={`${route.parents.length} 个`} />
+      </div>
+      <div className="mt-2 grid gap-2">
+        {route.parents.map((parent, index) => (
+          <div
+            key={`${parent.controller_name}/${parent.parent.name}/${index}`}
+            className="border-border/60 rounded-control grid gap-1.5 border p-2.5"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-[13px]">
+              <span className="text-foreground font-medium">
+                {parent.parent.namespace ? `${parent.parent.namespace}/` : ""}
+                {parent.parent.name || "未知父级"}
+              </span>
+              <span className="zke-mono text-subtle-foreground text-xs break-all">
+                {parent.controller_name || "未知 Controller"}
+              </span>
+            </div>
+            <DetailConditions conditions={parent.conditions} />
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }

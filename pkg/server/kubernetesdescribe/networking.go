@@ -32,6 +32,13 @@ type GatewayInput struct {
 	Name      string
 }
 
+type GatewayRouteInput struct {
+	ClusterID string
+	Namespace string
+	Resource  kubernetesresource.NetworkingResource
+	Name      string
+}
+
 var endpointSliceIdentity = kubernetesresource.ResourceIdentity{
 	Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices",
 }
@@ -182,6 +189,57 @@ func (service *Service) DescribeGateway(
 		Family: FamilyNetworking, Networking: &object,
 		GatewayStatus: &GatewayStatus{Listeners: gatewayListenerDiagnostics(*object.Gateway)},
 		Findings:      gatewayFindings(object), DegradedSections: []string{},
+	}
+	result.Events, _ = service.objectEvents(ctx, input.ClusterID, result.Target)
+	if result.Events.Omitted == EventsOmittedUnavailable {
+		result.DegradedSections = append(result.DegradedSections, "events")
+	}
+	return result, nil
+}
+
+// DescribeGatewayRoute reports the parent-specific Conditions written by the
+// Gateway controller. They are authoritative for attachment and for backend
+// reference authorization, including cross-namespace ReferenceGrant checks;
+// ZKE deliberately does not widen the caller's Namespace by following those
+// references itself.
+func (service *Service) DescribeGatewayRoute(
+	ctx context.Context,
+	input GatewayRouteInput,
+) (Result, error) {
+	if service == nil || service.resources == nil ||
+		!kubernetesresource.IsGatewayRouteResource(input.Resource) {
+		return Result{}, ErrInvalidInput
+	}
+	object, err := service.resources.GetNetworkingResource(
+		ctx, input.ClusterID, input.Namespace, input.Resource, input.Name,
+	)
+	if err != nil {
+		return Result{}, err
+	}
+	if object.UID == "" || object.GatewayRoute == nil {
+		return Result{}, kubernetesresource.ErrInvalidResponse
+	}
+	result := Result{
+		Target: Target{APIVersion: object.APIVersion, Kind: object.Kind,
+			Namespace: object.Namespace, Name: object.Name, UID: object.UID,
+			ResourceVersion: object.ResourceVersion},
+		Family: FamilyNetworking, Networking: &object,
+		Related: &Related{Controllers: []RelatedObject{}, Pods: []RelatedObject{},
+			PersistentVolumeClaims: []RelatedObject{}},
+		Findings: gatewayRouteFindings(object), DegradedSections: []string{},
+	}
+	for _, parent := range object.GatewayRoute.ParentRefs {
+		namespace := parent.Namespace
+		if namespace == "" {
+			namespace = object.Namespace
+		}
+		kind := parent.Kind
+		if kind == "" {
+			kind = "Gateway"
+		}
+		result.Related.Controllers = append(result.Related.Controllers, RelatedObject{
+			Kind: kind, Name: parent.Name, Namespace: namespace, Findings: []Finding{},
+		})
 	}
 	result.Events, _ = service.objectEvents(ctx, input.ClusterID, result.Target)
 	if result.Events.Omitted == EventsOmittedUnavailable {

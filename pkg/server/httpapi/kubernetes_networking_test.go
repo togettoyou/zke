@@ -114,6 +114,28 @@ func TestKubernetesNetworkingHandlerCreatesWithSafetyContext(t *testing.T) {
 	}
 }
 
+func TestKubernetesNetworkingHandlerKeepsGatewayRouteTypeInPath(t *testing.T) {
+	t.Parallel()
+	service := &fakeKubernetesNetworkingService{}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/clusters/"+testHTTPClusterID+"/namespaces/models/networking/httproutes",
+		strings.NewReader(`{"name":"public","gateway_route":{"spec":{"parentRefs":[{"name":"edge"}],"rules":[{"backendRefs":[{"name":"api","port":80}]}]}},"dry_run":true}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyKeyHeaderName, "network-route-create-0001")
+	networkingHandlerTestRouter(service).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body)
+	}
+	if service.createInput.Resource != kubernetesresource.NetworkingHTTPRoutes ||
+		service.createInput.Namespace != "models" || service.createInput.GatewayRoute == nil ||
+		service.createInput.GatewayRoute.Spec["parentRefs"] == nil || !service.createInput.DryRun {
+		t.Fatalf("unexpected Route create input: %+v", service.createInput)
+	}
+}
+
 func TestKubernetesNetworkingHandlerRequiresConfirmation(t *testing.T) {
 	t.Parallel()
 
