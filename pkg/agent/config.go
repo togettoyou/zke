@@ -59,24 +59,24 @@ type ConnectionConfig struct {
 	KeepAliveInterval time.Duration
 	// MaxIncomingStreams bounds the streams a Server may open towards this
 	// Agent. The Agent-created Control Stream is not counted in this direction.
-	MaxIncomingStreams                 int64
-	StreamHeaderTimeout                time.Duration
-	MaxResourceRequestTimeout          time.Duration
-	MaxConcurrentResourceStreams       int
-	MaxResourceBodyBytes               uint64
-	MaxPodLogsStreamTimeout            time.Duration
-	MaxConcurrentPodLogsStreams        int
-	MaxPodLogBytes                     uint64
-	MaxPodExecStreamTimeout            time.Duration
-	MaxConcurrentPodExecStreams        int
-	MaxPodExecInputBytes               uint64
-	MaxPodExecOutputBytes              uint64
-	MaxPodPortForwardStreamTimeout     time.Duration
-	MaxConcurrentPodPortForwardStreams int
-	MaxPodPortForwardClientBytes       uint64
-	MaxPodPortForwardPodBytes          uint64
-	MaxResourceWatchStreamTimeout      time.Duration
-	MaxConcurrentResourceWatchStreams  int
+	MaxIncomingStreams                int64
+	StreamHeaderTimeout               time.Duration
+	MaxResourceRequestTimeout         time.Duration
+	MaxConcurrentResourceStreams      int
+	MaxResourceBodyBytes              uint64
+	MaxPodLogsStreamTimeout           time.Duration
+	MaxConcurrentPodLogsStreams       int
+	MaxPodLogBytes                    uint64
+	MaxPodExecStreamTimeout           time.Duration
+	MaxConcurrentPodExecStreams       int
+	MaxPodExecInputBytes              uint64
+	MaxPodExecOutputBytes             uint64
+	MaxPodAccessStreamTimeout         time.Duration
+	MaxConcurrentPodAccessStreams     int
+	MaxPodAccessClientBytes           uint64
+	MaxPodAccessPodBytes              uint64
+	MaxResourceWatchStreamTimeout     time.Duration
+	MaxConcurrentResourceWatchStreams int
 }
 
 type fileConfig struct {
@@ -94,31 +94,31 @@ type fileConfig struct {
 		RetryMaxInterval     string `yaml:"retry_max_interval"`
 	} `yaml:"registration"`
 	Connection struct {
-		ServerAddress                      string  `yaml:"server_address"`
-		CACertificateFile                  string  `yaml:"ca_certificate_file"`
-		ConnectTimeout                     string  `yaml:"connect_timeout"`
-		RetryInitialInterval               string  `yaml:"retry_initial_interval"`
-		RetryMaxInterval                   string  `yaml:"retry_max_interval"`
-		IdleTimeout                        string  `yaml:"idle_timeout"`
-		KeepAliveInterval                  string  `yaml:"keep_alive_interval"`
-		MaxIncomingStreams                 *int64  `yaml:"max_incoming_streams"`
-		StreamHeaderTimeout                string  `yaml:"stream_header_timeout"`
-		MaxResourceRequestTimeout          string  `yaml:"max_resource_request_timeout"`
-		MaxConcurrentResourceStreams       *int    `yaml:"max_concurrent_resource_streams"`
-		MaxResourceBodyBytes               *uint64 `yaml:"max_resource_body_bytes"`
-		MaxPodLogsStreamTimeout            string  `yaml:"max_pod_logs_stream_timeout"`
-		MaxConcurrentPodLogsStreams        *int    `yaml:"max_concurrent_pod_logs_streams"`
-		MaxPodLogBytes                     *uint64 `yaml:"max_pod_log_bytes"`
-		MaxPodExecStreamTimeout            string  `yaml:"max_pod_exec_stream_timeout"`
-		MaxConcurrentPodExecStreams        *int    `yaml:"max_concurrent_pod_exec_streams"`
-		MaxPodExecInputBytes               *uint64 `yaml:"max_pod_exec_input_bytes"`
-		MaxPodExecOutputBytes              *uint64 `yaml:"max_pod_exec_output_bytes"`
-		MaxPodPortForwardStreamTimeout     string  `yaml:"max_pod_port_forward_stream_timeout"`
-		MaxConcurrentPodPortForwardStreams *int    `yaml:"max_concurrent_pod_port_forward_streams"`
-		MaxPodPortForwardClientBytes       *uint64 `yaml:"max_pod_port_forward_client_bytes"`
-		MaxPodPortForwardPodBytes          *uint64 `yaml:"max_pod_port_forward_pod_bytes"`
-		MaxResourceWatchStreamTimeout      string  `yaml:"max_resource_watch_stream_timeout"`
-		MaxConcurrentResourceWatchStreams  *int    `yaml:"max_concurrent_resource_watch_streams"`
+		ServerAddress                     string  `yaml:"server_address"`
+		CACertificateFile                 string  `yaml:"ca_certificate_file"`
+		ConnectTimeout                    string  `yaml:"connect_timeout"`
+		RetryInitialInterval              string  `yaml:"retry_initial_interval"`
+		RetryMaxInterval                  string  `yaml:"retry_max_interval"`
+		IdleTimeout                       string  `yaml:"idle_timeout"`
+		KeepAliveInterval                 string  `yaml:"keep_alive_interval"`
+		MaxIncomingStreams                *int64  `yaml:"max_incoming_streams"`
+		StreamHeaderTimeout               string  `yaml:"stream_header_timeout"`
+		MaxResourceRequestTimeout         string  `yaml:"max_resource_request_timeout"`
+		MaxConcurrentResourceStreams      *int    `yaml:"max_concurrent_resource_streams"`
+		MaxResourceBodyBytes              *uint64 `yaml:"max_resource_body_bytes"`
+		MaxPodLogsStreamTimeout           string  `yaml:"max_pod_logs_stream_timeout"`
+		MaxConcurrentPodLogsStreams       *int    `yaml:"max_concurrent_pod_logs_streams"`
+		MaxPodLogBytes                    *uint64 `yaml:"max_pod_log_bytes"`
+		MaxPodExecStreamTimeout           string  `yaml:"max_pod_exec_stream_timeout"`
+		MaxConcurrentPodExecStreams       *int    `yaml:"max_concurrent_pod_exec_streams"`
+		MaxPodExecInputBytes              *uint64 `yaml:"max_pod_exec_input_bytes"`
+		MaxPodExecOutputBytes             *uint64 `yaml:"max_pod_exec_output_bytes"`
+		MaxPodAccessStreamTimeout         string  `yaml:"max_pod_access_stream_timeout"`
+		MaxConcurrentPodAccessStreams     *int    `yaml:"max_concurrent_pod_access_streams"`
+		MaxPodAccessClientBytes           *uint64 `yaml:"max_pod_access_client_bytes"`
+		MaxPodAccessPodBytes              *uint64 `yaml:"max_pod_access_pod_bytes"`
+		MaxResourceWatchStreamTimeout     string  `yaml:"max_resource_watch_stream_timeout"`
+		MaxConcurrentResourceWatchStreams *int    `yaml:"max_concurrent_resource_watch_streams"`
 	} `yaml:"connection"`
 	LogLevel string `yaml:"log_level"`
 }
@@ -142,29 +142,29 @@ func LoadConfig(args []string) (Config, error) {
 			RetryMaxInterval:     15 * time.Second,
 		},
 		Connection: ConnectionConfig{
-			ConnectTimeout:                     10 * time.Second,
-			RetryInitialInterval:               time.Second,
-			RetryMaxInterval:                   30 * time.Second,
-			IdleTimeout:                        15 * time.Minute,
-			KeepAliveInterval:                  10 * time.Second,
-			MaxIncomingStreams:                 128,
-			StreamHeaderTimeout:                5 * time.Second,
-			MaxResourceRequestTimeout:          2 * time.Minute,
-			MaxConcurrentResourceStreams:       64,
-			MaxResourceBodyBytes:               32 * 1024 * 1024,
-			MaxPodLogsStreamTimeout:            30 * time.Minute,
-			MaxConcurrentPodLogsStreams:        8,
-			MaxPodLogBytes:                     16 * 1024 * 1024,
-			MaxPodExecStreamTimeout:            15 * time.Minute,
-			MaxConcurrentPodExecStreams:        4,
-			MaxPodExecInputBytes:               16 * 1024 * 1024,
-			MaxPodExecOutputBytes:              32 * 1024 * 1024,
-			MaxPodPortForwardStreamTimeout:     time.Hour,
-			MaxConcurrentPodPortForwardStreams: 4,
-			MaxPodPortForwardClientBytes:       1024 * 1024 * 1024,
-			MaxPodPortForwardPodBytes:          1024 * 1024 * 1024,
-			MaxResourceWatchStreamTimeout:      30 * time.Minute,
-			MaxConcurrentResourceWatchStreams:  16,
+			ConnectTimeout:                    10 * time.Second,
+			RetryInitialInterval:              time.Second,
+			RetryMaxInterval:                  30 * time.Second,
+			IdleTimeout:                       15 * time.Minute,
+			KeepAliveInterval:                 10 * time.Second,
+			MaxIncomingStreams:                128,
+			StreamHeaderTimeout:               5 * time.Second,
+			MaxResourceRequestTimeout:         2 * time.Minute,
+			MaxConcurrentResourceStreams:      64,
+			MaxResourceBodyBytes:              32 * 1024 * 1024,
+			MaxPodLogsStreamTimeout:           30 * time.Minute,
+			MaxConcurrentPodLogsStreams:       8,
+			MaxPodLogBytes:                    16 * 1024 * 1024,
+			MaxPodExecStreamTimeout:           15 * time.Minute,
+			MaxConcurrentPodExecStreams:       4,
+			MaxPodExecInputBytes:              16 * 1024 * 1024,
+			MaxPodExecOutputBytes:             32 * 1024 * 1024,
+			MaxPodAccessStreamTimeout:         time.Hour,
+			MaxConcurrentPodAccessStreams:     4,
+			MaxPodAccessClientBytes:           1024 * 1024 * 1024,
+			MaxPodAccessPodBytes:              1024 * 1024 * 1024,
+			MaxResourceWatchStreamTimeout:     30 * time.Minute,
+			MaxConcurrentResourceWatchStreams: 16,
 		},
 		LogLevel: defaultLogLevel,
 	}
@@ -341,20 +341,20 @@ func applyFile(cfg *Config, path string) error {
 		cfg.Connection.MaxPodExecOutputBytes = *raw.Connection.MaxPodExecOutputBytes
 	}
 	if err := applyAgentDuration(
-		&cfg.Connection.MaxPodPortForwardStreamTimeout,
-		raw.Connection.MaxPodPortForwardStreamTimeout,
-		"connection.max_pod_port_forward_stream_timeout",
+		&cfg.Connection.MaxPodAccessStreamTimeout,
+		raw.Connection.MaxPodAccessStreamTimeout,
+		"connection.max_pod_access_stream_timeout",
 	); err != nil {
 		return err
 	}
-	if raw.Connection.MaxConcurrentPodPortForwardStreams != nil {
-		cfg.Connection.MaxConcurrentPodPortForwardStreams = *raw.Connection.MaxConcurrentPodPortForwardStreams
+	if raw.Connection.MaxConcurrentPodAccessStreams != nil {
+		cfg.Connection.MaxConcurrentPodAccessStreams = *raw.Connection.MaxConcurrentPodAccessStreams
 	}
-	if raw.Connection.MaxPodPortForwardClientBytes != nil {
-		cfg.Connection.MaxPodPortForwardClientBytes = *raw.Connection.MaxPodPortForwardClientBytes
+	if raw.Connection.MaxPodAccessClientBytes != nil {
+		cfg.Connection.MaxPodAccessClientBytes = *raw.Connection.MaxPodAccessClientBytes
 	}
-	if raw.Connection.MaxPodPortForwardPodBytes != nil {
-		cfg.Connection.MaxPodPortForwardPodBytes = *raw.Connection.MaxPodPortForwardPodBytes
+	if raw.Connection.MaxPodAccessPodBytes != nil {
+		cfg.Connection.MaxPodAccessPodBytes = *raw.Connection.MaxPodAccessPodBytes
 	}
 	if err := applyAgentDuration(
 		&cfg.Connection.MaxResourceWatchStreamTimeout,
@@ -491,7 +491,7 @@ func (cfg Config) Validate() error {
 		{cfg.Connection.MaxResourceRequestTimeout, time.Hour, "Resource Stream request timeout"},
 		{cfg.Connection.MaxPodLogsStreamTimeout, time.Hour, "Pod Logs Stream timeout"},
 		{cfg.Connection.MaxPodExecStreamTimeout, time.Hour, "Pod Exec Stream timeout"},
-		{cfg.Connection.MaxPodPortForwardStreamTimeout, time.Hour, "Pod Port Forward Stream timeout"},
+		{cfg.Connection.MaxPodAccessStreamTimeout, time.Hour, "Pod Access Stream timeout"},
 		{cfg.Connection.MaxResourceWatchStreamTimeout, time.Hour, "Resource Watch Stream timeout"},
 	} {
 		if item.value <= 0 {
@@ -536,9 +536,9 @@ func (cfg Config) Validate() error {
 			"business Stream header timeout must not exceed Pod Exec Stream timeout",
 		)
 	}
-	if cfg.Connection.StreamHeaderTimeout > cfg.Connection.MaxPodPortForwardStreamTimeout {
+	if cfg.Connection.StreamHeaderTimeout > cfg.Connection.MaxPodAccessStreamTimeout {
 		return errors.New(
-			"business Stream header timeout must not exceed Pod Port Forward Stream timeout",
+			"business Stream header timeout must not exceed Pod Access Stream timeout",
 		)
 	}
 	if cfg.Connection.MaxConcurrentResourceStreams < 1 ||
@@ -572,7 +572,7 @@ func (cfg Config) Validate() error {
 		int64(cfg.Connection.MaxConcurrentResourceStreams)+
 			int64(cfg.Connection.MaxConcurrentPodLogsStreams)+
 			int64(cfg.Connection.MaxConcurrentPodExecStreams)+
-			int64(cfg.Connection.MaxConcurrentPodPortForwardStreams)+
+			int64(cfg.Connection.MaxConcurrentPodAccessStreams)+
 			int64(cfg.Connection.MaxConcurrentResourceWatchStreams) >
 			cfg.Connection.MaxIncomingStreams {
 		return errors.New(
@@ -594,19 +594,19 @@ func (cfg Config) Validate() error {
 			"maximum Pod Exec output bytes must be between 1 and 1073741824",
 		)
 	}
-	if cfg.Connection.MaxConcurrentPodPortForwardStreams < 1 {
-		return errors.New("maximum concurrent Pod Port Forward Streams must be positive")
+	if cfg.Connection.MaxConcurrentPodAccessStreams < 1 {
+		return errors.New("maximum concurrent Pod Access Streams must be positive")
 	}
-	if cfg.Connection.MaxPodPortForwardClientBytes < 1 ||
-		cfg.Connection.MaxPodPortForwardClientBytes > maxResourceBodyBytes {
+	if cfg.Connection.MaxPodAccessClientBytes < 1 ||
+		cfg.Connection.MaxPodAccessClientBytes > maxResourceBodyBytes {
 		return errors.New(
-			"maximum Pod Port Forward client bytes must be between 1 and 1073741824",
+			"maximum Pod Access client bytes must be between 1 and 1073741824",
 		)
 	}
-	if cfg.Connection.MaxPodPortForwardPodBytes < 1 ||
-		cfg.Connection.MaxPodPortForwardPodBytes > maxResourceBodyBytes {
+	if cfg.Connection.MaxPodAccessPodBytes < 1 ||
+		cfg.Connection.MaxPodAccessPodBytes > maxResourceBodyBytes {
 		return errors.New(
-			"maximum Pod Port Forward Pod bytes must be between 1 and 1073741824",
+			"maximum Pod Access Pod bytes must be between 1 and 1073741824",
 		)
 	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {

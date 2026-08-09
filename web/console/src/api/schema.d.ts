@@ -861,28 +861,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/port-forward-sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * @description 为明确 Cluster、Namespace、Pod UID 和单个远端端口创建一次性端口转发票据。
-         *     请求必须显式确认并携带 Idempotency-Key；票据与当前用户及登录 Session 绑定，
-         *     短时有效且只能消费一次。此权限独立于 Web Terminal，Agent 在建立 Kubernetes
-         *     port-forward 传输前重新核对 Pod UID。
-         */
-        post: operations["createKubernetesPodPortForwardSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/access-sessions": {
         parameters: {
             query?: never;
@@ -901,28 +879,6 @@ export interface paths {
          *     双向总字节、全局及单会话连接数。Token 与正文不进入日志或审计。
          */
         post: operations["createKubernetesPodAccessSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/port-forward-sessions/{session_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * @description 使用一次性票据升级为同源 WebSocket，协商 zke.pod-port-forward.v1。二进制
-         *     WebSocket 消息是原始 TCP 字节；服务端最终发送 KubernetesPodPortForwardStatus
-         *     JSON 文本消息。会话有最大时长、空闲超时、双向字节及并发上限，并周期重新验证
-         *     登录 Session 和 cluster.pod.port_forward 权限。流量正文不进入日志或审计。
-         */
-        get: operations["connectKubernetesPodPortForward"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5199,24 +5155,6 @@ export interface components {
             /** @description 列表响应省略；详情响应返回按时间顺序排列的输出帧。 */
             frames?: components["schemas"]["KubernetesPodTerminalRecordingFrame"][];
         };
-        KubernetesPodPortForwardSessionRequest: {
-            /** @description 当前 Pod UID；Agent 在建立传输前再次校验。 */
-            uid: string;
-            /**
-             * Format: uint32
-             * @description Pod 内监听的单个 TCP 端口。
-             */
-            port: number;
-            /** @constant */
-            confirm: true;
-        };
-        KubernetesPodPortForwardSession: {
-            session_id: components["schemas"]["UUID"];
-            expires_at: components["schemas"]["Timestamp"];
-            websocket_path: string;
-            /** @constant */
-            subprotocol: "zke.pod-port-forward.v1";
-        };
         KubernetesPodAccessSessionRequest: {
             /** @description 当前 Pod UID；Agent 在建立传输前再次校验。 */
             uid: string;
@@ -5248,20 +5186,6 @@ export interface components {
              * @description 激活成功后访问会话的最长持续秒数。
              */
             session_expires_in_seconds: number;
-        };
-        KubernetesPodPortForwardStatus: {
-            /** @constant */
-            type: "exit";
-            /** @enum {string} */
-            result: "ok" | "invalid_argument" | "unauthenticated" | "forbidden" | "not_found" | "conflict" | "resource_exhausted" | "unavailable" | "timeout" | "canceled" | "internal";
-            reason?: string;
-            message?: string;
-            /** Format: uint64 */
-            client_bytes?: number;
-            /** Format: uint64 */
-            pod_bytes?: number;
-            client_limit_reached?: boolean;
-            pod_limit_reached?: boolean;
         };
         /**
          * @description WebSocket 客户端消息。type=stdin 时 data 为必填 Base64；type=resize 时
@@ -7866,45 +7790,6 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
-    createKubernetesPodPortForwardSession: {
-        parameters: {
-            query?: never;
-            header: {
-                "X-CSRF-Token": components["parameters"]["CSRFToken"];
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                cluster_id: components["parameters"]["ClusterID"];
-                namespace_name: components["parameters"]["NamespaceName"];
-                pod_name: components["parameters"]["PodName"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["KubernetesPodPortForwardSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description 一次性 Pod Port Forward Session 票据 */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuccessResponse"] & {
-                        data: components["schemas"]["KubernetesPodPortForwardSession"];
-                    };
-                };
-            };
-            400: components["responses"]["InvalidRequest"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            409: components["responses"]["Conflict"];
-            429: components["responses"]["TooManyRequests"];
-            503: components["responses"]["Unavailable"];
-        };
-    };
     createKubernetesPodAccessSession: {
         parameters: {
             query?: never;
@@ -7941,44 +7826,6 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
-            503: components["responses"]["Unavailable"];
-        };
-    };
-    connectKubernetesPodPortForward: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                cluster_id: components["parameters"]["ClusterID"];
-                namespace_name: components["parameters"]["NamespaceName"];
-                pod_name: components["parameters"]["PodName"];
-                session_id: components["schemas"]["UUID"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description WebSocket 已升级；协商子协议为 zke.pod-port-forward.v1。 */
-            101: {
-                headers: {
-                    "Sec-WebSocket-Protocol"?: "zke.pod-port-forward.v1";
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: components["responses"]["InvalidRequest"];
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            /** @description 一次性 Session 已过期 */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
             503: components["responses"]["Unavailable"];
         };
     };

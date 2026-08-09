@@ -91,9 +91,9 @@ Gateway API v1 未安装时会返回可区分的能力缺失错误；ZKE 不安�
 Pod Logs 后端已通过专用权限和独立 QUIC Stream 实现有界快照与实时 Follow；Kubernetes Event Watch 和 Pod
 Exec 也已分别通过独立协议实现。Pod Exec 使用一次性同源 WebSocket 票据、权限重验和有界 QUIC 会话；Agent 到
 Kubernetes API Server 优先使用 WebSocket streaming protocol，仅为旧 API Server 或不兼容 HTTPS 代理保留
-SPDY 回退。Shell 固定优先 bash 并回退 `/bin/sh`，Console 已提供终端入口。Pod Port Forward 也通过独立
-权限、一次性同源 WebSocket 票据和有界 QUIC Stream 实现；Agent 使用回环随机端口桥接 Kubernetes
-port-forward。Console 另通过同一传输提供独立 Origin 的 Pod Access HTTP 反向代理，支持普通 HTTP、SSE 和
+SPDY 回退。Shell 固定优先 bash 并回退 `/bin/sh`，Console 已提供终端入口。Pod Access 通过独立权限和有界
+Port Forward QUIC Stream 实现；Agent 使用回环随机端口桥接 Kubernetes port-forward，Server 通过独立 Origin
+提供 HTTP 反向代理，支持普通 HTTP、SSE 和
 WebSocket；同一 Cluster/Pod UID 只保留一个入口，替换需要显式确认。跨 Server 实例的长会话任务路由仍未实现。
 
 当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发

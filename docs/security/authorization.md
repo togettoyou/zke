@@ -524,7 +524,7 @@ Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证
 详情还必须匹配 recording ID；记录有界且默认 7 天过期，列表不返回输出帧，只有详情读取暴露正文。
 
 Pod 端口访问使用另一项默认仅授予 admin 的 `cluster.pod.port_forward`，不因持有 `cluster.read`、
-`cluster.pod.exec` 或通用资源写权限而获得。原始 WebSocket 票据与浏览器 Pod Access 激活地址都必须通过 CSRF、
+`cluster.pod.exec` 或通用资源写权限而获得。浏览器 Pod Access 激活地址必须通过 CSRF、
 幂等键和显式确认，并绑定用户、登录 Session、Cluster、Namespace、Pod UID、单个远端端口与用户从 15、30、
 60 分钟中选择的时长，只能消费一次；所选时长不得超过 Server 配置的一小时硬上限，并进入幂等指纹与审计目标；
 长连接或活跃访问会话周期重新验证 Session 和该权限。Agent ServiceAccount 只增加 `pods/portforward` 的 `create`，
@@ -532,8 +532,8 @@ Agent 在连接前再次核对 Pod UID，且只在回环地址建立临时桥接
 
 Server 以 Cluster UUID 与 Pod UID 唯一定域待激活和活跃入口。已存在入口时普通创建返回冲突，只有显式携带
 替换确认的请求才会结束旧地址及其连接；该选择进入幂等指纹与审计。Pod Access 的会话级双向流量预算默认各
-1 GiB，底层原始 WebSocket Port Forward 仍使用默认各 64 MiB 的较低产品预算；两者都不能超过 Server 与 Agent
-统一执行的 1 小时、1 GiB 传输硬上限。达到预算、权限撤销或上游失败会关闭全部相关连接，内存中只短期保留
+1 GiB，并受 Server 与 Agent 统一执行的 1 小时、1 GiB 传输硬上限约束。达到预算、权限撤销或上游失败会关闭
+全部相关连接，内存中只短期保留
 Cookie 摘要对应的终止原因，不保存 Token 或流量正文。
 
 浏览器入口使用不承载任何 ZKE API 的独立 Pod Access Origin。激活 Token 与访问 Cookie 使用 256-bit 随机值并

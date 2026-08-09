@@ -65,34 +65,34 @@ const (
 	ProjectResume  = "project.resume"
 	ProjectDelete  = "project.delete"
 
-	ClusterEnroll                         = "cluster.enroll"
-	ClusterUpdate                         = "cluster.update"
-	ClusterSuspend                        = "cluster.suspend"
-	ClusterResume                         = "cluster.resume"
-	ClusterDelete                         = "cluster.delete"
-	ClusterEnrollmentCreate               = "cluster.enrollment.create"
-	ClusterEnrollmentRevoke               = "cluster.enrollment.revoke"
-	ClusterConnectionRevoke               = "cluster.connection.revoke"
-	ClusterConnectionReenroll             = "cluster.connection.reenroll"
-	KubernetesResourceCreate              = "kubernetes_resource.create"
-	KubernetesResourceUpdate              = "kubernetes_resource.update"
-	KubernetesResourcePatch               = "kubernetes_resource.patch"
-	KubernetesResourceDelete              = "kubernetes_resource.delete"
-	KubernetesResourceCreateDryRun        = "kubernetes_resource.create.dry_run"
-	KubernetesResourceUpdateDryRun        = "kubernetes_resource.update.dry_run"
-	KubernetesResourcePatchDryRun         = "kubernetes_resource.patch.dry_run"
-	KubernetesResourceDeleteDryRun        = "kubernetes_resource.delete.dry_run"
-	KubernetesPodLogsRead                 = "kubernetes_pod.logs.read"
-	KubernetesPodExecSessionCreate        = "kubernetes_pod.exec_session.create"
-	KubernetesPodExec                     = "kubernetes_pod.exec"
-	KubernetesPodTerminalRecordingCreate  = "kubernetes_pod.terminal_recording.create"
-	KubernetesPodTerminalRecordingList    = "kubernetes_pod.terminal_recording.list"
-	KubernetesPodTerminalRecordingRead    = "kubernetes_pod.terminal_recording.read"
-	KubernetesPodPortForwardSessionCreate = "kubernetes_pod.port_forward_session.create"
-	KubernetesPodPortForward              = "kubernetes_pod.port_forward"
-	KubernetesNodeDrain                   = "kubernetes_node.drain"
-	KubernetesNodeDrainDryRun             = "kubernetes_node.drain.dry_run"
-	KubernetesEventRead                   = "kubernetes_event.read"
+	ClusterEnroll                        = "cluster.enroll"
+	ClusterUpdate                        = "cluster.update"
+	ClusterSuspend                       = "cluster.suspend"
+	ClusterResume                        = "cluster.resume"
+	ClusterDelete                        = "cluster.delete"
+	ClusterEnrollmentCreate              = "cluster.enrollment.create"
+	ClusterEnrollmentRevoke              = "cluster.enrollment.revoke"
+	ClusterConnectionRevoke              = "cluster.connection.revoke"
+	ClusterConnectionReenroll            = "cluster.connection.reenroll"
+	KubernetesResourceCreate             = "kubernetes_resource.create"
+	KubernetesResourceUpdate             = "kubernetes_resource.update"
+	KubernetesResourcePatch              = "kubernetes_resource.patch"
+	KubernetesResourceDelete             = "kubernetes_resource.delete"
+	KubernetesResourceCreateDryRun       = "kubernetes_resource.create.dry_run"
+	KubernetesResourceUpdateDryRun       = "kubernetes_resource.update.dry_run"
+	KubernetesResourcePatchDryRun        = "kubernetes_resource.patch.dry_run"
+	KubernetesResourceDeleteDryRun       = "kubernetes_resource.delete.dry_run"
+	KubernetesPodLogsRead                = "kubernetes_pod.logs.read"
+	KubernetesPodExecSessionCreate       = "kubernetes_pod.exec_session.create"
+	KubernetesPodExec                    = "kubernetes_pod.exec"
+	KubernetesPodTerminalRecordingCreate = "kubernetes_pod.terminal_recording.create"
+	KubernetesPodTerminalRecordingList   = "kubernetes_pod.terminal_recording.list"
+	KubernetesPodTerminalRecordingRead   = "kubernetes_pod.terminal_recording.read"
+	KubernetesPodAccessSessionCreate     = "kubernetes_pod.access_session.create"
+	KubernetesPodAccess                  = "kubernetes_pod.access"
+	KubernetesNodeDrain                  = "kubernetes_node.drain"
+	KubernetesNodeDrainDryRun            = "kubernetes_node.drain.dry_run"
+	KubernetesEventRead                  = "kubernetes_event.read"
 
 	// Reading a Secret is recorded because reading it is the whole exposure:
 	// unlike a ConfigMap or a Deployment, one successful GET hands the caller a
@@ -298,8 +298,8 @@ var actions = []Action{
 	{KubernetesPodTerminalRecordingCreate, GroupKubernetes},
 	{KubernetesPodTerminalRecordingList, GroupKubernetes},
 	{KubernetesPodTerminalRecordingRead, GroupKubernetes},
-	{KubernetesPodPortForwardSessionCreate, GroupKubernetes},
-	{KubernetesPodPortForward, GroupKubernetes},
+	{KubernetesPodAccessSessionCreate, GroupKubernetes},
+	{KubernetesPodAccess, GroupKubernetes},
 	{KubernetesNodeDrain, GroupKubernetes},
 	{KubernetesNodeDrainDryRun, GroupKubernetes},
 	{KubernetesEventRead, GroupKubernetes},

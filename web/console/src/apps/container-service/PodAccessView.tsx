@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ExternalLink, Link2 } from "lucide-react";
 
 import { errorCode, errorMessage } from "@/api/errors";
-import { useCreatePodAccessSession } from "@/api/queries/pod-port-forward";
+import { useCreatePodAccessSession } from "@/api/queries/pod-access";
 import { usePod } from "@/api/queries/pods";
 import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
-export function PodPortForwardView({
+export function PodAccessView({
   clusterId,
   clusterName,
   namespace,

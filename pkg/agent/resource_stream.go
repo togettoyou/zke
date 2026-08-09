@@ -65,11 +65,11 @@ func newBusinessStreamServer(
 	if services.podPortForwardHandler != nil {
 		handlers[agentv1.StreamKind_STREAM_KIND_POD_PORT_FORWARD] =
 			agentprotocol.StreamHandlerConfig{
-				MaxConcurrent: cfg.Connection.MaxConcurrentPodPortForwardStreams,
-				MaxTimeout:    cfg.Connection.MaxPodPortForwardStreamTimeout,
+				MaxConcurrent: cfg.Connection.MaxConcurrentPodAccessStreams,
+				MaxTimeout:    cfg.Connection.MaxPodAccessStreamTimeout,
 				Handle: agentprotocol.PodPortForwardStreamHandler(
-					cfg.Connection.MaxPodPortForwardClientBytes,
-					cfg.Connection.MaxPodPortForwardPodBytes,
+					cfg.Connection.MaxPodAccessClientBytes,
+					cfg.Connection.MaxPodAccessPodBytes,
 					services.podPortForwardHandler,
 				),
 			}
@@ -88,7 +88,7 @@ func newBusinessStreamServer(
 			cfg.Connection.MaxResourceRequestTimeout,
 			cfg.Connection.MaxPodLogsStreamTimeout,
 			cfg.Connection.MaxPodExecStreamTimeout,
-			cfg.Connection.MaxPodPortForwardStreamTimeout,
+			cfg.Connection.MaxPodAccessStreamTimeout,
 			cfg.Connection.MaxResourceWatchStreamTimeout,
 		),
 		Handlers: handlers,

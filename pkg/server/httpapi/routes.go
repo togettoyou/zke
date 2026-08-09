@@ -456,15 +456,6 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesPodExec.getRecording,
 	)
 	clusterRoutes.POST(
-		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/port-forward-sessions",
-		handlers.authMiddleware.RequireCSRF,
-		handlers.authorizationMiddleware.RequireCluster(
-			rbac.PermissionClusterPodPortForward,
-			"cluster_id",
-		),
-		handlers.kubernetesPodPortForward.create,
-	)
-	clusterRoutes.POST(
 		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/access-sessions",
 		handlers.authMiddleware.RequireCSRF,
 		handlers.authorizationMiddleware.RequireCluster(
@@ -543,16 +534,6 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesPodExec.connect,
-	)
-	podPortForwardRoutes := apiV1.Group("/clusters")
-	podPortForwardRoutes.Use(handlers.authMiddleware.RequireAuthentication)
-	podPortForwardRoutes.GET(
-		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/port-forward-sessions/:session_id",
-		handlers.authorizationMiddleware.RequireCluster(
-			rbac.PermissionClusterPodPortForward,
-			"cluster_id",
-		),
-		handlers.kubernetesPodPortForward.connect,
 	)
 	// Kubernetes Events use an independent, bounded SSE route so that the
 	// short HTTP operation timeout does not terminate a quiet follow stream.

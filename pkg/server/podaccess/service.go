@@ -151,19 +151,20 @@ h1 { margin: 0 0 10px; font-size: clamp(25px, 4vw, 32px); line-height: 1.25; let
 )
 
 var (
-	ErrInvalidInput        = errors.New("invalid Pod access input")
-	ErrDisabled            = errors.New("Pod access is disabled")
-	ErrCapacity            = errors.New("Pod access capacity is exhausted")
-	ErrIdempotencyConflict = errors.New("Pod access idempotency conflict")
-	ErrTargetReserved      = errors.New("Pod already has a Pod access session or activation")
-	ErrActivationNotFound  = errors.New("Pod access activation was not found")
-	ErrActivationExpired   = errors.New("Pod access activation expired")
-	ErrAccessNotFound      = errors.New("Pod access session was not found")
-	ErrAccessExpired       = errors.New("Pod access session expired")
-	ErrAccessRevoked       = errors.New("Pod access permission was revoked")
-	ErrAccessReplaced      = errors.New("Pod access session was replaced")
-	ErrAccessFailed        = errors.New("Pod access upstream connection failed")
-	ErrByteLimit           = errors.New("Pod access byte limit reached")
+	ErrInvalidInput         = errors.New("invalid Pod access input")
+	ErrDisabled             = errors.New("Pod access is disabled")
+	ErrCapacity             = errors.New("Pod access capacity is exhausted")
+	ErrConfirmationRequired = errors.New("Pod access confirmation is required")
+	ErrIdempotencyConflict  = errors.New("Pod access idempotency conflict")
+	ErrTargetReserved       = errors.New("Pod already has a Pod access session or activation")
+	ErrActivationNotFound   = errors.New("Pod access activation was not found")
+	ErrActivationExpired    = errors.New("Pod access activation expired")
+	ErrAccessNotFound       = errors.New("Pod access session was not found")
+	ErrAccessExpired        = errors.New("Pod access session expired")
+	ErrAccessRevoked        = errors.New("Pod access permission was revoked")
+	ErrAccessReplaced       = errors.New("Pod access session was replaced")
+	ErrAccessFailed         = errors.New("Pod access upstream connection failed")
+	ErrByteLimit            = errors.New("Pod access byte limit reached")
 )
 
 type Authenticator interface {
@@ -179,7 +180,7 @@ type Auditor interface {
 }
 
 type Forwarder interface {
-	RunWithLimits(context.Context, podportforward.Session, agentprotocol.PodPortForwardPeer,
+	Run(context.Context, podportforward.Session, agentprotocol.PodPortForwardPeer,
 		uint64, uint64) (podportforward.Result, error)
 }
 
@@ -364,7 +365,7 @@ func (service *Service) Create(input CreateInput) (Ticket, error) {
 		return Ticket{}, ErrInvalidInput
 	}
 	if !input.Confirm {
-		return Ticket{}, podportforward.ErrConfirmationRequired
+		return Ticket{}, ErrConfirmationRequired
 	}
 	fingerprint := sha256.Sum256([]byte(strings.Join([]string{
 		input.AuthSessionID, input.ClusterID, input.Namespace, input.PodName, input.PodUID,
@@ -778,8 +779,8 @@ func (service *Service) recordWithReason(input CreateInput, result, reason strin
 	defer cancel()
 	err := service.auditor.RecordClusterEvent(ctx, audit.ClusterEventInput{
 		ActorUserID: input.UserID, ClusterID: input.ClusterID,
-		Action: auditaction.KubernetesPodPortForward, TargetType: auditaction.TargetKubernetesResource,
-		TargetName: fmt.Sprintf("core/v1/pods %s/%s uid:%s port-forward:%d duration:%s%s",
+		Action: auditaction.KubernetesPodAccess, TargetType: auditaction.TargetKubernetesResource,
+		TargetName: fmt.Sprintf("core/v1/pods %s/%s uid:%s pod-access:%d duration:%s%s",
 			input.Namespace, input.PodName, input.PodUID, input.Port, input.SessionTTL, auditReason(reason)),
 		Result: result, RequestID: input.RequestID,
 	})
@@ -988,7 +989,7 @@ func (session *activeSession) dialContext(ctx context.Context, _, _ string) (net
 	managed := &managedConnection{Conn: client, release: session.release}
 	peer := &pipePeer{connection: peerConnection}
 	go func() {
-		_, err := session.service.forwarder.RunWithLimits(session.ctx, session.forward, peer,
+		_, err := session.service.forwarder.Run(session.ctx, session.forward, peer,
 			session.service.config.MaxClientBytes, session.service.config.MaxPodBytes)
 		_ = peerConnection.Close()
 		_ = managed.Close()

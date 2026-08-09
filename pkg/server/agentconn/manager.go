@@ -188,9 +188,9 @@ const (
 	defaultMaxPodExecOutputBytes        = 32 * 1024 * 1024
 	defaultMaxPodExecStreams            = 4
 	defaultMaxPodExecRequests           = 128
-	defaultPodPortForwardRequestTimeout = 15 * time.Minute
-	defaultMaxPodPortForwardClientBytes = 64 * 1024 * 1024
-	defaultMaxPodPortForwardPodBytes    = 64 * 1024 * 1024
+	defaultPodPortForwardRequestTimeout = time.Hour
+	defaultMaxPodPortForwardClientBytes = agentprotocol.MaxPodPortForwardBytes
+	defaultMaxPodPortForwardPodBytes    = agentprotocol.MaxPodPortForwardBytes
 	defaultMaxPodPortForwardStreams     = 4
 	defaultMaxPodPortForwardRequests    = 128
 	defaultResourceWatchRequestTimeout  = 30 * time.Minute

@@ -67,7 +67,7 @@ type httpForwarder struct {
 
 type webSocketForwarder struct{}
 
-func (webSocketForwarder) RunWithLimits(ctx context.Context, _ podportforward.Session,
+func (webSocketForwarder) Run(ctx context.Context, _ podportforward.Session,
 	peer agentprotocol.PodPortForwardPeer, _, _ uint64) (podportforward.Result, error) {
 	var request bytes.Buffer
 	for !strings.Contains(request.String(), "\r\n\r\n") {
@@ -124,7 +124,7 @@ func readWebSocketFrame(ctx context.Context, peer agentprotocol.PodPortForwardPe
 	return payload, nil
 }
 
-func (forwarder *httpForwarder) RunWithLimits(ctx context.Context, _ podportforward.Session,
+func (forwarder *httpForwarder) Run(ctx context.Context, _ podportforward.Session,
 	peer agentprotocol.PodPortForwardPeer, _, _ uint64) (podportforward.Result, error) {
 	var request bytes.Buffer
 	for !strings.Contains(request.String(), "\r\n\r\n") {

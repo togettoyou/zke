@@ -13,8 +13,9 @@ import (
 	"github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	apiresponse "github.com/togettoyou/zke/pkg/server/httpapi/response"
 	"github.com/togettoyou/zke/pkg/server/podaccess"
-	"github.com/togettoyou/zke/pkg/server/podportforward"
 )
+
+const maxPodAccessCreateBytes = 2048
 
 type podAccessService interface {
 	Create(podaccess.CreateInput) (podaccess.Ticket, error)
@@ -51,14 +52,14 @@ func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := middleware.Identity(c)
 	request := podAccessCreateRequest{}
-	target := podPortForwardTarget(c, request.PodUID, request.Port)
-	if decodeJSONRequest(c, &request, maxPodPortForwardCreateBytes) != nil {
+	target := podAccessTarget(c, request.PodUID, request.Port)
+	if decodeJSONRequest(c, &request, maxPodAccessCreateBytes) != nil {
 		handler.record(c, identity.User.ID, target, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Pod access session request")
 		return
 	}
 	sessionTTL := podAccessSessionTTL(request.SessionDurationSeconds)
-	target = fmt.Sprintf("%s duration:%s replace:%t", podPortForwardTarget(c, request.PodUID, request.Port),
+	target = fmt.Sprintf("%s duration:%s replace:%t", podAccessTarget(c, request.PodUID, request.Port),
 		sessionTTL, request.ReplaceExisting)
 	sessionToken, tokenExists := middleware.SessionToken(c)
 	if handler.service == nil || !tokenExists {
@@ -81,7 +82,7 @@ func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 		}
 		handler.respondError(c, "create Kubernetes Pod access session", err,
 			errorMapping{podaccess.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Pod access session request"},
-			errorMapping{podportforward.ErrConfirmationRequired, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required"},
+			errorMapping{podaccess.ErrConfirmationRequired, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required"},
 			errorMapping{podaccess.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used for another Pod access request"},
 			errorMapping{podaccess.ErrTargetReserved, http.StatusConflict, "pod_access_already_active", "Pod already has an active or pending access session"},
 			errorMapping{podaccess.ErrCapacity, http.StatusTooManyRequests, "capacity_exhausted", "Pod access session capacity is exhausted"})
@@ -92,6 +93,11 @@ func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 		AccessURL: ticket.AccessURL, ActivationExpires: ticket.ExpiresAt,
 		SessionExpiresIn: int64(ticket.SessionTTL.Seconds()),
 	})
+}
+
+func podAccessTarget(c *gin.Context, uid string, port uint32) string {
+	return fmt.Sprintf("core/v1/pods %s/%s uid:%s pod-access:%d",
+		c.Param("namespace_name"), c.Param("pod_name"), uid, port)
 }
 
 func podAccessSessionTTL(seconds *int64) time.Duration {
@@ -111,7 +117,7 @@ func podAccessSessionTTL(seconds *int64) time.Duration {
 func (handler *kubernetesPodAccessHandler) record(c *gin.Context, userID, target, result string) {
 	handler.recordOperation(c, auditedOperation{
 		Scope: auditScopeCluster, ActorUserID: userID,
-		Action:     auditaction.KubernetesPodPortForwardSessionCreate,
+		Action:     auditaction.KubernetesPodAccessSessionCreate,
 		TargetType: auditaction.TargetKubernetesResource, TargetName: target, Result: result,
 	})
 }

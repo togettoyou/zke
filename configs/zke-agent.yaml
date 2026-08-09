@@ -61,12 +61,11 @@ connection:
   max_concurrent_pod_exec_streams: 4
   max_pod_exec_input_bytes: 16777216
   max_pod_exec_output_bytes: 33554432
-  # Pod Port Forward is an independent binary Stream. These are transport
-  # ceilings; Server applies lower limits to raw client sessions.
-  max_pod_port_forward_stream_timeout: 1h
-  max_concurrent_pod_port_forward_streams: 4
-  max_pod_port_forward_client_bytes: 1073741824
-  max_pod_port_forward_pod_bytes: 1073741824
+  # Pod Access upstream connections use a dedicated Agent Stream.
+  max_pod_access_stream_timeout: 1h
+  max_concurrent_pod_access_streams: 4
+  max_pod_access_client_bytes: 1073741824
+  max_pod_access_pod_bytes: 1073741824
   # Resource Watch currently permits core/v1/events only. Its concurrency and
   # timeout budgets are independent from Pod logs.
   max_resource_watch_stream_timeout: 30m

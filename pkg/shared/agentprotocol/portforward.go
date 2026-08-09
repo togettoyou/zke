@@ -13,10 +13,8 @@ import (
 )
 
 const (
-	DefaultMaxPodPortForwardClientBytes uint64 = 64 * 1024 * 1024
-	DefaultMaxPodPortForwardPodBytes    uint64 = 64 * 1024 * 1024
-	MaxPodPortForwardBytes              uint64 = 1024 * 1024 * 1024
-	podPortForwardChunkBytes                   = 32 * 1024
+	MaxPodPortForwardBytes   uint64 = 1024 * 1024 * 1024
+	podPortForwardChunkBytes        = 32 * 1024
 )
 
 var (

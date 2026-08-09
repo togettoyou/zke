@@ -228,11 +228,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxPodExecOutputBytes:        cfg.AgentListener.MaxPodExecOutputBytes,
 			MaxPodExecStreams:            cfg.AgentListener.MaxPodExecStreams,
 			MaxPodExecRequests:           cfg.AgentListener.MaxPodExecRequests,
-			PodPortForwardRequestTimeout: cfg.AgentListener.PodPortForwardRequestTimeout,
-			MaxPodPortForwardClientBytes: cfg.AgentListener.MaxPodPortForwardClientBytes,
-			MaxPodPortForwardPodBytes:    cfg.AgentListener.MaxPodPortForwardPodBytes,
-			MaxPodPortForwardStreams:     cfg.AgentListener.MaxPodPortForwardStreams,
-			MaxPodPortForwardRequests:    cfg.AgentListener.MaxPodPortForwardRequests,
+			PodPortForwardRequestTimeout: cfg.PodAccess.SessionTTL,
+			MaxPodPortForwardClientBytes: cfg.PodAccess.MaxClientBytes,
+			MaxPodPortForwardPodBytes:    cfg.PodAccess.MaxPodBytes,
+			MaxPodPortForwardStreams:     cfg.PodAccess.MaxConnectionsPerAgent,
+			MaxPodPortForwardRequests:    cfg.PodAccess.MaxConnections,
 			ResourceWatchRequestTimeout:  cfg.AgentListener.ResourceWatchRequestTimeout,
 			MaxResourceWatchStreams:      cfg.AgentListener.MaxResourceWatchStreams,
 			MaxResourceWatchRequests:     cfg.AgentListener.MaxResourceWatchRequests,
@@ -283,15 +283,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxOutputBytes: cfg.AgentListener.MaxPodExecOutputBytes,
 		},
 	)
-	podPortForwardService := podportforward.NewService(
-		agentConnectionManager,
-		podportforward.Config{
-			SessionTTL:     cfg.AgentListener.PodPortForwardSessionTTL,
-			MaxPending:     cfg.AgentListener.MaxPendingPodPortForwardSessions,
-			MaxClientBytes: cfg.AgentListener.PodPortForwardSessionClientBytes,
-			MaxPodBytes:    cfg.AgentListener.PodPortForwardSessionPodBytes,
-		},
-	)
+	podPortForwardService := podportforward.NewService(agentConnectionManager)
 	var podAccessService *podaccess.Service
 	if cfg.PodAccess.Enabled {
 		podAccessService, err = podaccess.NewService(
@@ -350,7 +342,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			KubernetesResourceService: kubernetesResourceService,
 			PodLogsService:            podLogsService,
 			PodExecService:            podExecService,
-			PodPortForwardService:     podPortForwardService,
 			PodAccessService:          podAccessService,
 			ResourceWatchService:      resourceWatchService,
 			ResourceManagementService: resourceManagementService,
@@ -376,10 +367,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			},
 			PodExec: httpapi.PodExecHTTPConfig{
 				MaximumDuration: cfg.AgentListener.PodExecRequestTimeout,
-				WriteTimeout:    cfg.AgentListener.WriteTimeout,
-			},
-			PodPortForward: httpapi.PodPortForwardHTTPConfig{
-				MaximumDuration: cfg.AgentListener.PodPortForwardMaximumDuration,
 				WriteTimeout:    cfg.AgentListener.WriteTimeout,
 			},
 			KubernetesEvents: httpapi.KubernetesEventsHTTPConfig{

@@ -911,8 +911,7 @@ Namespace、Pod UID、单个端口与所选时长。Console 提供 15、30、60 
 周期重验登录 Session 与权限，退出登录或权限收回会取消它持有的全部上游连接。每个 HTTP 上游连接复用现有
 Agent port-forward Stream；`http.Transport` 在单会话内池化 Keep-Alive 连接，并同时受单会话、Server 全局和
 单 Agent 并发上限约束。双向字节上限按整个访问会话累计，不能靠重新建连接绕过；Pod Access 默认每个方向
-1 GiB，并与底层原始 WebSocket Port Forward 默认的 64 MiB 产品预算分开配置。Agent/Server 传输层统一保留
-1 小时、1 GiB 的硬上限，原始接口仍只开放 15 分钟和 64 MiB。达到流量上限、权限撤销、Pod UID 改变或上游
+1 GiB；Agent/Server 传输层同样以 1 小时、1 GiB 为硬上限。达到流量上限、权限撤销、Pod UID 改变或上游
 中断后，Server 会短期保留不含凭证的内存终止原因，使下一次刷新能显示具体原因，而不是统一显示地址失效。
 总时长到期或 Server 关闭同样会关闭连接。审计记录创建、替换、激活、终止原因、Pod UID、端口和所选时长，
 不记录 Token、Cookie、请求头或流量正文。
@@ -924,11 +923,9 @@ Cookie 选择当前目标，所以同一浏览器配置同时只能激活一个 
 配置如何都只有最新入口有效。这些限制换取根路径代理能力，并避免重复入口持续占用 Agent Stream；把会话放回
 URL Path 会重新引入绝对路径、Cookie Path 和 WebSocket 不兼容问题。
 
-底层原始 WebSocket port-forward API 继续保留给协议客户端：一次性票据升级
-`zke.pod-port-forward.v1` WebSocket，二进制消息承载 TCP 字节。Agent 在传输前重新读取 Pod 核对 UID，通过
-client-go 的 WebSocket-first/SPDY fallback port-forward 在 `127.0.0.1` 随机端口建立进程内桥接，不在 Agent
-节点或 Server 主机暴露端口。Pod Access 只承诺 HTTP 语义；Redis、MySQL、SSH 等非 HTTP 协议不通过浏览器入口
-伪装为可用能力。
+Agent 在传输前重新读取 Pod 核对 UID，通过 client-go 的 WebSocket-first/SPDY fallback port-forward 在
+`127.0.0.1` 随机端口建立进程内桥接，不在 Agent 节点或 Server 主机暴露端口。Pod Access 只承诺 HTTP 语义；
+Redis、MySQL、SSH 等非 HTTP 协议不通过浏览器入口伪装为可用能力。
 
 Kubernetes Event 后端固定读取所选 Cluster 与 Namespace 的 `core/v1/events`，不接受调用方覆盖 GVR。默认
 通过 SSE 返回有界初始快照；实时 Follow 使用独立 `resource-watch.v1` QUIC Stream，支持按关联资源 UID、Kind、

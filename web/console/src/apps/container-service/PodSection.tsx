@@ -32,7 +32,7 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { DescribeView } from "./DescribeView";
 import { PodLogsView } from "./PodLogsView";
-import { PodPortForwardView } from "./PodPortForwardView";
+import { PodAccessView } from "./PodAccessView";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
@@ -87,7 +87,7 @@ export function PodSection({
   // So does the terminal, which additionally must not be a dialog the operator
   // can dismiss by accident while a shell is attached.
   const [terminalTarget, setTerminalTarget] = useState<PodLogTarget | null>(null);
-  const [portForwardTarget, setPortForwardTarget] = useState<PodLogTarget | null>(null);
+  const [podAccessTarget, setPodAccessTarget] = useState<PodLogTarget | null>(null);
   // The diagnosis is a view of its own for the same reason as the log reader:
   // an operator opens it to work through a failure, not to glance at a field.
   const [describeName, setDescribeName] = useState<string | null>(null);
@@ -113,7 +113,7 @@ export function PodSection({
     "cluster.pod.terminal_recording.read",
     projectScope,
   );
-  const canPortForward = permissions.can("cluster.pod.port_forward", projectScope);
+  const canPodAccess = permissions.can("cluster.pod.port_forward", projectScope);
   // The diagnosis embeds the Pod's Events, so the Server requires the Event
   // permission alongside `cluster.read`. Offered only to callers holding both:
   // a button that can only produce a 403 is worse than no button.
@@ -129,8 +129,8 @@ export function PodSection({
     [],
   );
 
-  const onOpenPortForward = useCallback(
-    (pod: PodLogTarget) => setPortForwardTarget({ name: pod.name, uid: pod.uid }),
+  const onOpenPodAccess = useCallback(
+    (pod: PodLogTarget) => setPodAccessTarget({ name: pod.name, uid: pod.uid }),
     [],
   );
 
@@ -236,12 +236,12 @@ export function PodSection({
                 <SquareTerminal />
               </Button>
             ) : null}
-            {canPortForward && row.original.uid ? (
+            {canPodAccess && row.original.uid ? (
               <Button
                 size="icon-sm"
                 variant="ghost"
                 aria-label={`访问 ${row.original.name} 的 HTTP 端口`}
-                onClick={() => onOpenPortForward(row.original)}
+                onClick={() => onOpenPodAccess(row.original)}
               >
                 <Cable />
               </Button>
@@ -258,10 +258,10 @@ export function PodSection({
       canDescribe,
       canReadLogs,
       canExec,
-      canPortForward,
+      canPodAccess,
       onOpenLogs,
       onOpenTerminal,
-      onOpenPortForward,
+      onOpenPodAccess,
       openDelete,
     ],
   );
@@ -283,14 +283,14 @@ export function PodSection({
             onBack={() => setTerminalTarget(null)}
           />
         </Suspense>
-      ) : portForwardTarget ? (
-        <PodPortForwardView
+      ) : podAccessTarget ? (
+        <PodAccessView
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={namespace}
-          podName={portForwardTarget.name}
-          podUid={portForwardTarget.uid}
-          onBack={() => setPortForwardTarget(null)}
+          podName={podAccessTarget.name}
+          podUid={podAccessTarget.uid}
+          onBack={() => setPodAccessTarget(null)}
         />
       ) : describeName ? (
         <PodDescribeView
@@ -323,11 +323,11 @@ export function PodSection({
           canDelete={canDelete}
           canReadLogs={canReadLogs}
           canExec={canExec}
-          canPortForward={canPortForward}
+          canPodAccess={canPodAccess}
           onDelete={openDelete}
           onOpenLogs={onOpenLogs}
           onOpenTerminal={onOpenTerminal}
-          onOpenPortForward={onOpenPortForward}
+          onOpenPodAccess={onOpenPodAccess}
           onOpenYaml={() => setYamlName(detailName)}
           canDescribe={canDescribe}
           onOpenDescribe={() => setDescribeName(detailName)}
@@ -492,11 +492,11 @@ function PodDetailView({
   canDescribe,
   canReadLogs,
   canExec,
-  canPortForward,
+  canPodAccess,
   onDelete,
   onOpenLogs,
   onOpenTerminal,
-  onOpenPortForward,
+  onOpenPodAccess,
   onOpenYaml,
   onOpenDescribe,
   onBack,
@@ -508,11 +508,11 @@ function PodDetailView({
   canDescribe: boolean;
   canReadLogs: boolean;
   canExec: boolean;
-  canPortForward: boolean;
+  canPodAccess: boolean;
   onDelete: (pod: KubernetesPodSummary) => void;
   onOpenLogs: (pod: PodLogTarget) => void;
   onOpenTerminal: (pod: PodLogTarget) => void;
-  onOpenPortForward: (pod: PodLogTarget) => void;
+  onOpenPodAccess: (pod: PodLogTarget) => void;
   onOpenYaml: () => void;
   onOpenDescribe: () => void;
   onBack: () => void;
@@ -553,8 +553,8 @@ function PodDetailView({
                 终端
               </Button>
             ) : null}
-            {canPortForward && pod?.uid ? (
-              <Button size="sm" variant="secondary" onClick={() => onOpenPortForward(pod)}>
+            {canPodAccess && pod?.uid ? (
+              <Button size="sm" variant="secondary" onClick={() => onOpenPodAccess(pod)}>
                 <Cable />
                 Pod 访问
               </Button>

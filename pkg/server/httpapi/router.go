@@ -23,7 +23,6 @@ import (
 	"github.com/togettoyou/zke/pkg/server/podaccess"
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
-	"github.com/togettoyou/zke/pkg/server/podportforward"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/resourcemanagement"
 	"github.com/togettoyou/zke/pkg/server/resourcewatch"
@@ -44,7 +43,6 @@ type Dependencies struct {
 	KubernetesResourceService *kubernetesresource.Service
 	PodLogsService            *podlogs.Service
 	PodExecService            *podexec.Service
-	PodPortForwardService     *podportforward.Service
 	PodAccessService          *podaccess.Service
 	ResourceWatchService      *resourcewatch.Service
 	ResourceManagementService *resourcemanagement.Service
@@ -56,39 +54,37 @@ type Config struct {
 	AgentEnrollment    AgentEnrollmentHTTPConfig
 	PodLogs            PodLogsHTTPConfig
 	PodExec            PodExecHTTPConfig
-	PodPortForward     PodPortForwardHTTPConfig
 	KubernetesEvents   KubernetesEventsHTTPConfig
 	KubernetesManifest KubernetesManifestHTTPConfig
 }
 
 type handlers struct {
-	health                   *healthHandler
-	auth                     *authHandler
-	enrollment               *enrollmentHandler
-	agentRegistration        *agentRegistrationHandler
-	agentInstallation        *agentInstallationHandler
-	agentManagement          *agentManagementHandler
-	agentStatus              *agentStatusHandler
-	clusterOverview          *clusterOverviewHandler
-	kubernetesNode           *kubernetesNodeHandler
-	kubernetesNamespace      *kubernetesNamespaceHandler
-	kubernetesPod            *kubernetesPodHandler
-	kubernetesPodLogs        *kubernetesPodLogsHandler
-	kubernetesPodExec        *kubernetesPodExecHandler
-	kubernetesPodPortForward *kubernetesPodPortForwardHandler
-	kubernetesPodAccess      *kubernetesPodAccessHandler
-	kubernetesEvents         *kubernetesEventsHandler
-	kubernetesWorkload       *kubernetesWorkloadHandler
-	kubernetesNetworking     *kubernetesNetworkingHandler
-	kubernetesStorage        *kubernetesStorageHandler
-	kubernetesHPA            *kubernetesHorizontalPodAutoscalerHandler
-	kubernetesPolicy         *kubernetesPolicyHandler
-	kubernetesAuthorization  *kubernetesAuthorizationHandler
-	kubernetesConfigMap      *kubernetesConfigMapHandler
-	kubernetesSecret         *kubernetesSecretHandler
-	kubernetesResource       *kubernetesResourceHandler
-	kubernetesYAML           *kubernetesYAMLHandler
-	kubernetesDescribe       *kubernetesDescribeHandler
+	health                  *healthHandler
+	auth                    *authHandler
+	enrollment              *enrollmentHandler
+	agentRegistration       *agentRegistrationHandler
+	agentInstallation       *agentInstallationHandler
+	agentManagement         *agentManagementHandler
+	agentStatus             *agentStatusHandler
+	clusterOverview         *clusterOverviewHandler
+	kubernetesNode          *kubernetesNodeHandler
+	kubernetesNamespace     *kubernetesNamespaceHandler
+	kubernetesPod           *kubernetesPodHandler
+	kubernetesPodLogs       *kubernetesPodLogsHandler
+	kubernetesPodExec       *kubernetesPodExecHandler
+	kubernetesPodAccess     *kubernetesPodAccessHandler
+	kubernetesEvents        *kubernetesEventsHandler
+	kubernetesWorkload      *kubernetesWorkloadHandler
+	kubernetesNetworking    *kubernetesNetworkingHandler
+	kubernetesStorage       *kubernetesStorageHandler
+	kubernetesHPA           *kubernetesHorizontalPodAutoscalerHandler
+	kubernetesPolicy        *kubernetesPolicyHandler
+	kubernetesAuthorization *kubernetesAuthorizationHandler
+	kubernetesConfigMap     *kubernetesConfigMapHandler
+	kubernetesSecret        *kubernetesSecretHandler
+	kubernetesResource      *kubernetesResourceHandler
+	kubernetesYAML          *kubernetesYAMLHandler
+	kubernetesDescribe      *kubernetesDescribeHandler
 	// The families whose YAML is reached through their own permissions, each
 	// over a service carrying that family's rules.
 	kubernetesAuthorizationYAML *kubernetesAuthorizationYAMLHandler
@@ -252,15 +248,6 @@ func New(
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 			config.PodExec,
-		),
-		kubernetesPodPortForward: newKubernetesPodPortForwardHandler(
-			logger,
-			dependencies.PodPortForwardService,
-			dependencies.AuthService,
-			dependencies.RBACService,
-			dependencies.AuditService,
-			config.Authentication.OperationTimeout,
-			config.PodPortForward,
 		),
 		kubernetesPodAccess: newKubernetesPodAccessHandler(
 			logger,

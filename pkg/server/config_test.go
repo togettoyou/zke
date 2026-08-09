@@ -37,6 +37,7 @@ pod_access:
   max_active_sessions: 100
   max_connections: 128
   max_connections_per_session: 3
+  max_connections_per_agent: 5
   max_client_bytes: 4194304
   max_pod_bytes: 8388608
 database:
@@ -103,16 +104,6 @@ agent_listener:
   max_concurrent_pod_exec_requests: 256
   pod_exec_session_ttl: 25s
   max_pending_pod_exec_sessions: 768
-  pod_port_forward_request_timeout: 31m
-  pod_port_forward_maximum_duration: 10m
-  max_pod_port_forward_client_bytes: 5242880
-  max_pod_port_forward_pod_bytes: 9437184
-  pod_port_forward_session_client_bytes: 3145728
-  pod_port_forward_session_pod_bytes: 7340032
-  max_pod_port_forward_streams_per_agent: 5
-  max_concurrent_pod_port_forward_requests: 192
-  pod_port_forward_session_ttl: 20s
-  max_pending_pod_port_forward_sessions: 640
   resource_watch_request_timeout: 25m
   max_resource_watch_streams_per_agent: 10
   max_concurrent_resource_watch_requests: 600
@@ -149,7 +140,8 @@ log_level: warn
 		cfg.PodAccess.ActivationTTL != 25*time.Second || cfg.PodAccess.SessionTTL != 30*time.Minute ||
 		cfg.PodAccess.RevalidateInterval != 10*time.Second || cfg.PodAccess.MaxPendingSessions != 500 ||
 		cfg.PodAccess.MaxActiveSessions != 100 || cfg.PodAccess.MaxConnections != 128 ||
-		cfg.PodAccess.MaxConnectionsPerSession != 3 || cfg.PodAccess.MaxClientBytes != 4*1024*1024 ||
+		cfg.PodAccess.MaxConnectionsPerSession != 3 || cfg.PodAccess.MaxConnectionsPerAgent != 5 ||
+		cfg.PodAccess.MaxClientBytes != 4*1024*1024 ||
 		cfg.PodAccess.MaxPodBytes != 8*1024*1024 {
 		t.Fatalf("unexpected Pod Access config: %+v", cfg.PodAccess)
 	}
@@ -239,18 +231,6 @@ log_level: warn
 		cfg.AgentListener.MaxPendingPodExecSessions != 768 {
 		t.Fatalf("unexpected Agent Pod Exec config: %+v", cfg.AgentListener)
 	}
-	if cfg.AgentListener.PodPortForwardRequestTimeout != 31*time.Minute ||
-		cfg.AgentListener.PodPortForwardMaximumDuration != 10*time.Minute ||
-		cfg.AgentListener.MaxPodPortForwardClientBytes != 5*1024*1024 ||
-		cfg.AgentListener.MaxPodPortForwardPodBytes != 9*1024*1024 ||
-		cfg.AgentListener.PodPortForwardSessionClientBytes != 3*1024*1024 ||
-		cfg.AgentListener.PodPortForwardSessionPodBytes != 7*1024*1024 ||
-		cfg.AgentListener.MaxPodPortForwardStreams != 5 ||
-		cfg.AgentListener.MaxPodPortForwardRequests != 192 ||
-		cfg.AgentListener.PodPortForwardSessionTTL != 20*time.Second ||
-		cfg.AgentListener.MaxPendingPodPortForwardSessions != 640 {
-		t.Fatalf("unexpected Agent Pod Port Forward config: %+v", cfg.AgentListener)
-	}
 	invalidHeartbeatConfig := cfg
 	invalidHeartbeatConfig.AgentListener.HeartbeatTimeout =
 		invalidHeartbeatConfig.AgentListener.HeartbeatInterval
@@ -325,11 +305,6 @@ log_level: warn
 	longPodAccessSession.PodAccess.SessionTTL = 61 * time.Minute
 	if err := longPodAccessSession.Validate(); err == nil {
 		t.Fatal("Validate() accepted a Pod Access maximum session TTL above one hour")
-	}
-	shortPodAccessTransport := cfg
-	shortPodAccessTransport.AgentListener.PodPortForwardRequestTimeout = 29 * time.Minute
-	if err := shortPodAccessTransport.Validate(); err == nil {
-		t.Fatal("Validate() accepted a Pod Access session TTL above its Agent transport timeout")
 	}
 	if cfg.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("shutdown timeout = %s, want YAML value", cfg.ShutdownTimeout)
