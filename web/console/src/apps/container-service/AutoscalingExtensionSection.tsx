@@ -35,6 +35,7 @@ import { RelativeTime } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/misc";
+import { formatResourceQuantity } from "@/lib/quantity";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
@@ -756,6 +757,8 @@ function BooleanState({
 }
 
 function quantityMap(values?: Record<string, string> | null): string {
-  const items = Object.entries(values ?? {}).map(([key, value]) => `${key}=${value}`);
+  const items = Object.entries(values ?? {}).map(
+    ([key, value]) => `${key}=${formatResourceQuantity(key, value)}`,
+  );
   return items.length > 0 ? items.join(", ") : "—";
 }

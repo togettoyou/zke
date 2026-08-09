@@ -98,6 +98,37 @@ export function quantityToDisplay(value: string, unit: QuantityUnit): string | n
 }
 
 /**
+ * Formats a resource quantity for read-only summaries. Kubernetes may
+ * canonicalise VPA memory recommendations to a bare byte count, so displaying
+ * the stored string verbatim can produce values such as `865936536` with no
+ * visible unit.
+ */
+export function formatResourceQuantity(resource: string, value: string): string {
+  const base = parseQuantity(value);
+  if (base === null || base < 0) {
+    return value;
+  }
+  if (resource === "cpu") {
+    return value;
+  }
+  if (resource === "memory" || resource === "ephemeral-storage") {
+    return formatBinaryBytes(base);
+  }
+  return value;
+}
+
+function formatBinaryBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+  let unitIndex = 0;
+  let display = bytes;
+  while (display >= 1024 && unitIndex < units.length - 1) {
+    display /= 1024;
+    unitIndex += 1;
+  }
+  return `${trimNumber(display, unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`;
+}
+
+/**
  * Turns what the operator typed into the quantity string to submit, or null when
  * the field does not hold a number this unit can carry.
  *
