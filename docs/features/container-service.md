@@ -926,7 +926,8 @@ Pod 前恢复原名并去掉 Domain，避免 Pod 页面覆盖 Console 登录态�
 
 创建请求通过 CSRF、幂等键、显式确认和 `cluster.pod.port_forward` 判权，绑定用户、登录 Session、Cluster、
 Namespace、Pod UID、单个端口与所选时长。Console 提供 15、30、60 分钟三个档位；请求值只能是这三档之一，
-且不得超过 `pod_access.session_ttl` 配置的一小时硬上限。时长进入幂等指纹、确认信息与审计目标，不能通过重试
+且不得超过 `pod_access.session_ttl` 配置的一小时硬上限。Pod 端口不提供预填默认值，必须由操作者输入
+`1–65535` 之间的整数。时长进入幂等指纹、确认信息与审计目标，不能通过重试
 同一幂等键改变。激活 Token 和访问 Cookie 都是 256-bit 随机值，Server 内存只按 SHA-256 摘要
 查找（幂等重试所需的同一激活地址仅保留到激活票据到期）；URL Token 消费一次后立即从地址栏清除。活跃会话
 周期重验登录 Session 与权限，退出登录或权限收回会取消它持有的全部上游连接。每个 HTTP 上游连接复用现有

@@ -9,8 +9,8 @@ import { SensitiveActionDialog } from "@/components/common/sensitive-action-dial
 import { CopyButton } from "@/components/common/status";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Input, NumericInput } from "@/components/ui/input";
+import { FieldError, Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
 import {
   Select,
@@ -74,7 +74,7 @@ function PodAccessForm({
   podName: string;
   podUid: string;
 }) {
-  const [port, setPort] = useState("8080");
+  const [port, setPort] = useState("");
   const [sessionDuration, setSessionDuration] = useState("900");
   const [confirming, setConfirming] = useState(false);
   const [replacing, setReplacing] = useState(false);
@@ -121,13 +121,17 @@ function PodAccessForm({
       <div className="border-border rounded-panel flex flex-wrap items-end gap-3 border p-4">
         <div className="grid gap-1.5">
           <Label htmlFor="pod-access-port">Pod HTTP 端口</Label>
-          <Input
+          <NumericInput
             id="pod-access-port"
             className="w-40"
-            inputMode="numeric"
+            placeholder="1–65535"
+            required
+            maxLength={5}
             value={port}
-            onChange={(event) => {
-              setPort(event.target.value);
+            aria-invalid={port !== "" && !validPort ? true : undefined}
+            aria-describedby={!validPort && port !== "" ? "pod-access-port-error" : undefined}
+            onValueChange={(value) => {
+              setPort(value);
               createSession.reset();
               setReplacing(false);
             }}
@@ -161,6 +165,11 @@ function PodAccessForm({
           <Link2 />
           {createSession.isPending ? "创建中…" : ticket ? "重新创建地址" : "创建访问地址"}
         </Button>
+        {!validPort && port !== "" ? (
+          <FieldError id="pod-access-port-error" className="basis-full">
+            端口必须是 1–65535 之间的整数。
+          </FieldError>
+        ) : null}
       </div>
 
       {createSession.error ? (
