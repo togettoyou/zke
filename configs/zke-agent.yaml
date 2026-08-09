@@ -71,4 +71,4 @@ connection:
   max_resource_watch_stream_timeout: 30m
   max_concurrent_resource_watch_streams: 16
 
-log_level: info
+log_level: debug
