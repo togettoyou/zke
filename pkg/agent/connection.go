@@ -187,6 +187,9 @@ func runConnection(
 	if services.resourceWatchHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityResourceWatchV1)
 	}
+	if services.terminalSessionHandler != nil {
+		capabilities = append(capabilities, agentprotocol.CapabilityTerminalSessionV1)
+	}
 	if err := agentprotocol.WriteFrame(controlStream, &agentv1.ControlFrame{
 		ProtocolVersion: agentprotocol.ProtocolVersion,
 		Message: &agentv1.ControlFrame_ClientHello{
@@ -249,6 +252,11 @@ func runConnection(
 		serverSupportsCapability(serverHello, agentprotocol.CapabilityResourceWatchV1)
 	if !resourceWatchSupported {
 		services.resourceWatchHandler = nil
+	}
+	terminalSessionSupported := services.terminalSessionHandler != nil &&
+		serverSupportsCapability(serverHello, agentprotocol.CapabilityTerminalSessionV1)
+	if !terminalSessionSupported {
+		services.terminalSessionHandler = nil
 	}
 	businessServer, err := newBusinessStreamServer(
 		cfg,

@@ -65,6 +65,7 @@ flowchart TB
 | --- | --- | --- | --- |
 | 集群接入管理 | 多集群 | 以 Cluster 聚合接入状态、连接身份和诊断信息 | [查看](docs/features/agent-management.md) |
 | 容器服务 | 单集群 | 管理当前集群的 Kubernetes 资源 | [查看](docs/features/container-service.md) |
+| 终端 | 单集群 | 在当前角色权限边界内使用临时浏览器 CloudShell 与标准 `kubectl` | [查看](docs/features/terminal.md) |
 | 作业平台 | 单集群为主 | 管理批处理、训练和 GPU 作业 | [查看](docs/features/job-platform.md) |
 | 算力平台 | 多集群 | 统一管理算力、模型与 API 服务 | [查看](docs/features/compute-platform.md) |
 | 可观测性平台 | 多集群 | 汇总指标、日志、事件与告警 | [查看](docs/features/observability.md) |

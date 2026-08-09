@@ -86,6 +86,15 @@ export function SensitiveActionDialog({
 
   const confirmationSatisfied = !confirmationText || typed.trim() === confirmationText;
   const requestId = errorRequestId(error);
+  const handleOpenChange = (nextOpen: boolean) => {
+    // Once a sensitive request has started, its result must remain attached to
+    // this dialog. In particular, terminal creation can take long enough that
+    // an accidental overlay click would otherwise hide the pending session.
+    if (!nextOpen && pending) {
+      return;
+    }
+    onOpenChange(nextOpen);
+  };
   const confirmationControl = confirmationText ? (
     <div className={pinConfirmationControls ? "grid gap-1.5" : "mt-4 grid gap-1.5"}>
       <Label htmlFor="sensitive-action-confirmation">
@@ -124,9 +133,21 @@ export function SensitiveActionDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         aria-describedby={undefined}
+        aria-busy={pending}
+        showClose={!pending}
+        onEscapeKeyDown={(event) => {
+          if (pending) {
+            event.preventDefault();
+          }
+        }}
+        onInteractOutside={(event) => {
+          if (pending) {
+            event.preventDefault();
+          }
+        }}
         className={
           pinConfirmationControls
             ? `flex max-h-[calc(100vh-4rem)] flex-col overflow-hidden ${contentClassName ?? ""}`

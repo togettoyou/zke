@@ -53,6 +53,8 @@ const PAGE_SIZE = 50;
 type PodSectionProps = ClusterSectionProps & {
   /** The Namespace every query and deletion in this section is scoped to. */
   namespace: string;
+  /** Whether this application's desktop window currently owns focus. */
+  active: boolean;
 };
 
 type PodLogTarget = Pick<KubernetesPodSummary, "name" | "uid">;
@@ -71,6 +73,7 @@ export function PodSection({
   namespace,
   tenantId,
   projectId,
+  active,
 }: PodSectionProps) {
   const { permissions } = useSessionContext();
   const pager = useContinuePagination(`${clusterId}/${namespace}`);
@@ -280,6 +283,7 @@ export function PodSection({
             podUid={terminalTarget.uid}
             canRecord={canCreateTerminalRecording}
             canReadRecordings={canReadTerminalRecordings}
+            active={active}
             onBack={() => setTerminalTarget(null)}
           />
         </Suspense>

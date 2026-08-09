@@ -10,7 +10,7 @@ import { IconGrid } from "./IconGrid";
 import { TopBar } from "./TopBar";
 import { Window } from "./Window";
 import { clearDesktopState, loadDesktopState, saveDesktopState } from "./persistence";
-import { toPersistedDesktop, useWindowStore } from "./window-store";
+import { toPersistedDesktop, useWindowStore, type WindowInstance } from "./window-store";
 
 const STACKED_BREAKPOINT = 1024;
 const PERSIST_DEBOUNCE_MS = 400;
@@ -218,12 +218,20 @@ export function Desktop() {
     }
   }, [closeAll, resetScope, userId]);
 
-  // Stacking is derived from the focus counter, then flattened into a small
-  // bounded range so a window can never render above the Dock or the top bar.
-  const visibleWindows = order
+  // Keep every open application mounted. Minimizing a live terminal is a
+  // presentation change, not a request to tear down its WebSocket and process.
+  const openWindows = order
     .map((id) => windows[id])
-    .filter((instance) => Boolean(instance) && instance!.mode !== "minimized")
-    .sort((left, right) => left!.zIndex - right!.zIndex);
+    .filter((instance): instance is WindowInstance => Boolean(instance));
+
+  // Keep the React/DOM order tied to the stable launch order. Reordering these
+  // keyed subtrees on every focus change moves an application's live DOM node;
+  // canvas-backed views such as xterm can lose their rendered surface during
+  // that move. Stacking is instead derived separately and applied only through
+  // CSS z-index, which changes which window is in front without relocating it.
+  const stackedWindows = [...openWindows].sort((left, right) => left.zIndex - right.zIndex);
+  const stackIndexById = new Map(stackedWindows.map((instance, index) => [instance.id, index]));
+  const visibleWindows = stackedWindows.filter((instance) => instance.mode !== "minimized");
 
   const topStackedId = stacked ? (visibleWindows[visibleWindows.length - 1]?.id ?? null) : null;
 
@@ -273,18 +281,17 @@ export function Desktop() {
       {/* Window coordinates are viewport coordinates, so this layer spans the
           whole desktop and only the windows themselves capture the pointer. */}
       <main className="pointer-events-none absolute inset-0" aria-label="应用窗口">
-        {visibleWindows.map((instance, index) =>
-          instance && (!stacked || instance.id === topStackedId) ? (
-            <Window
-              key={instance.id}
-              instance={instance}
-              focused={instance.id === focusedId}
-              stacked={stacked}
-              stackIndex={index}
-              revealed={desktopRevealed}
-            />
-          ) : null,
-        )}
+        {openWindows.map((instance) => (
+          <Window
+            key={instance.id}
+            instance={instance}
+            focused={instance.id === focusedId}
+            stacked={stacked}
+            stackIndex={stackIndexById.get(instance.id) ?? 0}
+            revealed={desktopRevealed}
+            parked={instance.mode === "minimized" || (stacked && instance.id !== topStackedId)}
+          />
+        ))}
       </main>
 
       <Dock visible={dockVisible} onToggleVisible={toggleDock} />

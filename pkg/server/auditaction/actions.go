@@ -85,6 +85,7 @@ const (
 	KubernetesPodLogsRead                = "kubernetes_pod.logs.read"
 	KubernetesPodExecSessionCreate       = "kubernetes_pod.exec_session.create"
 	KubernetesPodExec                    = "kubernetes_pod.exec"
+	KubernetesTerminalSessionCreate      = "kubernetes_terminal.session.create"
 	KubernetesPodTerminalRecordingCreate = "kubernetes_pod.terminal_recording.create"
 	KubernetesPodTerminalRecordingList   = "kubernetes_pod.terminal_recording.list"
 	KubernetesPodTerminalRecordingRead   = "kubernetes_pod.terminal_recording.read"
@@ -138,6 +139,7 @@ const (
 	DeniedClusterRead                       = "cluster.read"
 	DeniedClusterPodLogsRead                = "cluster.pod.logs.read"
 	DeniedClusterPodExec                    = "cluster.pod.exec"
+	DeniedClusterTerminalExec               = "cluster.terminal.exec"
 	DeniedClusterPodTerminalRecordingCreate = "cluster.pod.terminal_recording.create"
 	DeniedClusterPodTerminalRecordingRead   = "cluster.pod.terminal_recording.read"
 	DeniedClusterPodPortForward             = "cluster.pod.port_forward"
@@ -295,6 +297,7 @@ var actions = []Action{
 	{KubernetesPodLogsRead, GroupKubernetes},
 	{KubernetesPodExecSessionCreate, GroupKubernetes},
 	{KubernetesPodExec, GroupKubernetes},
+	{KubernetesTerminalSessionCreate, GroupKubernetes},
 	{KubernetesPodTerminalRecordingCreate, GroupKubernetes},
 	{KubernetesPodTerminalRecordingList, GroupKubernetes},
 	{KubernetesPodTerminalRecordingRead, GroupKubernetes},
@@ -313,6 +316,7 @@ var actions = []Action{
 	{DeniedClusterRead, GroupDenied},
 	{DeniedClusterPodLogsRead, GroupDenied},
 	{DeniedClusterPodExec, GroupDenied},
+	{DeniedClusterTerminalExec, GroupDenied},
 	{DeniedClusterPodTerminalRecordingCreate, GroupDenied},
 	{DeniedClusterPodTerminalRecordingRead, GroupDenied},
 	{DeniedClusterPodPortForward, GroupDenied},

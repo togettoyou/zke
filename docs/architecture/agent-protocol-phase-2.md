@@ -82,6 +82,7 @@ Phase 2 使用或规划以下业务 Stream：
 | `POD_LOGS`       | Server | 长请求   | Pod 日志读取与 Follow                                |
 | `POD_EXEC`       | Server | 长会话   | Web Terminal 的 stdin、stdout、stderr 和终端尺寸变更 |
 | `POD_PORT_FORWARD` | Server | 长会话 | 单个 Pod TCP 端口的双向原始字节转发                 |
+| `TERMINAL_SESSION` | Server | 短请求 | 创建或清理独立终端 App 的会话 Pod 与临时 RBAC       |
 
 Agent 主动上报事件或数据时，应使用独立的 Agent 发起 Stream 类型；不得复用 Server 发起的 Resource Stream。
 这类上报不属于 Phase 2 第一阶段。
@@ -100,6 +101,7 @@ api/agent/v1/
 ├── resource.proto
 ├── logs.proto
 ├── exec.proto
+├── terminal.proto
 └── watch.proto
 ```
 
@@ -114,6 +116,7 @@ package zke.agent.v1;
 - `resource.proto`：通用 Kubernetes 资源请求与响应；
 - `logs.proto`：Pod 日志请求及流式数据；
 - `exec.proto`：Pod Exec 会话消息；
+- `terminal.proto`：独立终端 App 的短生命周期 Pod 与权限快照消息；
 - `watch.proto`：资源 Watch 请求及事件。
 
 业务正文不统一包装在一个连接级或全协议级的巨大 `oneof` 中。读取 `StreamHeader` 后，处理器直接按
@@ -138,6 +141,7 @@ enum StreamKind {
   STREAM_KIND_RESOURCE_WATCH = 11;
   STREAM_KIND_POD_LOGS = 20;
   STREAM_KIND_POD_EXEC = 21;
+  STREAM_KIND_TERMINAL_SESSION = 30;
 }
 ```
 
@@ -166,6 +170,7 @@ resource-write.v1
 resource-watch.v1
 pod-logs.v1
 pod-exec.v1
+terminal-session.v1
 ```
 
 未声明 `resource.v1` 的旧 Agent 仍可维持 Phase 1 Control Stream，Server 不得向其打开 Resource Stream；
@@ -802,6 +807,8 @@ Node dynamic client 的 List/Detail 往返。
 - [已实现] Pod Logs 有界快照与实时 Follow；
 - [已实现] Pod Exec 与 Web Terminal 后端及 xterm.js Console 入口。
 - [已实现] Pod Access 使用独立 Port Forward Stream 与固定 Origin HTTP/SSE/WebSocket 代理。
+- [已实现] 独立终端 App 使用 `TERMINAL_SESSION` 创建短生命周期 Pod、ServiceAccount 和临时 RBAC，再复用
+  `POD_EXEC` 传输终端数据。
 
 Pod Exec 使用独立 `pod-exec.v1` 能力和 `POD_EXEC` Stream 处理 stdin、stdout/stderr、resize 与 exit；Server
 HTTP 侧先创建一次性票据，再升级同源 WebSocket。Agent 校验 Pod UID/容器后优先通过 Kubernetes WebSocket
@@ -809,6 +816,13 @@ streaming protocol 执行；仅在旧 API Server 或 HTTPS 代理无法完成 We
 语义回退 SPDY。
 固定 Shell 选择逻辑优先 bash 并回退 `/bin/sh`。会话有输入/输出、空闲、总时长和并发上限，周期重验权限，
 审计不记录终端输入输出。
+
+独立终端 App 不使用 Agent ServiceAccount 运行 `kubectl`。Server 将当前用户在目标 Cluster 已持有的
+`cluster.*` 权限快照发送给 Agent；Agent 将 Pod 与 ServiceAccount 固定创建在 Agent Namespace，并通过一个
+命名空间级 ClusterRole 和各现有业务 Namespace 中的 RoleBinding 投射权限，明确排除 Agent Namespace。集群级
+资源另用受限 ClusterRole，不使用通配符，也不接受浏览器直接提交 Kubernetes PolicyRule。
+`cluster.terminal.exec` 只控制入口，不隐含 Secret、RBAC 或通用资源权限。会话连接周期重验入口权限和快照中的
+全部权限，撤权后关闭连接并清理临时资源。
 
 Pod Access 的上游连接使用独立 `pod-port-forward.v1` 能力和 `POD_PORT_FORWARD` Stream，首帧固定 Namespace、Pod
 名称、UID、单个端口和双向字节上限。Agent 复核 UID 后使用 client-go port-forward，并只在回环随机端口建立

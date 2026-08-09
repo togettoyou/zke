@@ -164,39 +164,21 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 		"jobs", "cronjobs",
 	}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"services"}, workloadVerbs)
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"configmaps"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"configmaps"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{
 		"persistentvolumes", "persistentvolumeclaims",
-	}, []string{"get", "list", "create", "update", "delete"})
-	assertPolicyRule(t, clusterRole.Rules, "storage.k8s.io", []string{"storageclasses"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
-	assertPolicyRule(t, clusterRole.Rules, "autoscaling", []string{"horizontalpodautoscalers"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
-	assertPolicyRule(t, clusterRole.Rules, "autoscaling.k8s.io", []string{"verticalpodautoscalers"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
-	assertPolicyRule(t, clusterRole.Rules, "keda.sh", []string{"scaledobjects"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"serviceaccounts"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
+	}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "storage.k8s.io", []string{"storageclasses"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "autoscaling", []string{"horizontalpodautoscalers"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "autoscaling.k8s.io", []string{"verticalpodautoscalers"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "keda.sh", []string{"scaledobjects"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"serviceaccounts"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "rbac.authorization.k8s.io", []string{
 		"roles", "clusterroles", "rolebindings", "clusterrolebindings",
-	}, []string{"get", "list", "create", "update", "delete"})
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"resourcequotas", "limitranges"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
-	assertPolicyRule(t, clusterRole.Rules, "policy", []string{"poddisruptionbudgets"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
-	assertPolicyRule(t, clusterRole.Rules, "scheduling.k8s.io", []string{"priorityclasses"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
+	}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"resourcequotas", "limitranges"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "policy", []string{"poddisruptionbudgets"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "scheduling.k8s.io", []string{"priorityclasses"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "apiextensions.k8s.io", []string{
 		"customresourcedefinitions",
 	}, []string{"get", "list"})
@@ -209,12 +191,8 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"nodes"}, []string{
 		"get", "list", "update", "patch",
 	})
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"namespaces"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods"}, []string{
-		"get", "list", "update", "delete",
-	})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"namespaces"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/log"}, []string{"get"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/exec"}, []string{"create"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/portforward"}, []string{"create"})
@@ -225,9 +203,7 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	// grant from becoming general Secret access is the Agent itself, which
 	// refuses a Secret request that does not come from that API and any request
 	// touching its own namespace.
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"secrets"}, []string{
-		"get", "list", "create", "update", "delete",
-	})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"secrets"}, workloadVerbs)
 	for _, rule := range clusterRole.Rules {
 		for _, resource := range rule.Resources {
 			if resource == "*" ||

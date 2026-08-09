@@ -43,6 +43,7 @@ type PodExecHTTPConfig struct {
 type podExecService interface {
 	Create(podexec.CreateInput) (podexec.Session, error)
 	Consume(podexec.ConsumeInput) (podexec.Session, error)
+	ConsumeBound(podexec.ConsumeInput) (podexec.Session, error)
 	Run(context.Context, podexec.Session, agentprotocol.PodExecPeer) (podexec.Result, error)
 	ListRecordings(context.Context, podexec.RecordingScope) ([]podexec.Recording, error)
 	GetRecording(context.Context, podexec.RecordingScope, string) (podexec.Recording, error)
@@ -186,6 +187,16 @@ func (handler *kubernetesPodExecHandler) create(c *gin.Context) {
 }
 
 func (handler *kubernetesPodExecHandler) connect(c *gin.Context) {
+	handler.connectSession(c, false, rbac.PermissionClusterPodExec, nil, nil)
+}
+
+func (handler *kubernetesPodExecHandler) connectSession(
+	c *gin.Context,
+	bound bool,
+	permission rbac.Permission,
+	requiredPermissions []rbac.Permission,
+	finish func(context.Context, string) error,
+) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)
 	if !podExecSameOrigin(c.Request) {
@@ -200,20 +211,35 @@ func (handler *kubernetesPodExecHandler) connect(c *gin.Context) {
 		writeError(c, http.StatusServiceUnavailable, "unavailable", "Pod terminal is unavailable")
 		return
 	}
-	session, err := handler.service.Consume(podexec.ConsumeInput{
+	consume := podexec.ConsumeInput{
 		ID:            c.Param("session_id"),
 		UserID:        identity.User.ID,
 		AuthSessionID: identity.SessionID,
 		ClusterID:     c.Param("cluster_id"),
-		Namespace:     c.Param("namespace_name"),
-		PodName:       c.Param("pod_name"),
 		Now:           time.Now().UTC(),
-	})
+	}
+	var session podexec.Session
+	var err error
+	if bound {
+		session, err = handler.service.ConsumeBound(consume)
+	} else {
+		consume.Namespace, consume.PodName = c.Param("namespace_name"), c.Param("pod_name")
+		session, err = handler.service.Consume(consume)
+	}
 	if err != nil {
 		handler.respondConsumePodExecError(c, err)
 		return
 	}
-	target := podExecTarget(c, session.PodUID, session.Container)
+	if finish != nil {
+		defer func() {
+			cleanupContext, cancelCleanup := context.WithTimeout(context.WithoutCancel(c.Request.Context()), handler.operationTimeout)
+			defer cancelCleanup()
+			if cleanupErr := finish(cleanupContext, session.ID); cleanupErr != nil {
+				handler.logInternal(c, "clean up Cluster terminal session", cleanupErr)
+			}
+		}()
+	}
+	target := fmt.Sprintf("core/v1/pods %s/%s uid:%s exec:%s", session.Namespace, session.PodName, session.PodUID, session.Container)
 	connection, err := handler.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		handler.recordPodExec(c, identity.User.ID, auditaction.KubernetesPodExec, target, "failed")
@@ -226,6 +252,10 @@ func (handler *kubernetesPodExecHandler) connect(c *gin.Context) {
 		writeTimeout: handler.config.WriteTimeout,
 	}
 	peer.touch()
+	connection.SetPongHandler(func(string) error {
+		peer.touch()
+		return nil
+	})
 
 	sessionContext, cancelSession := context.WithTimeout(c.Request.Context(), handler.config.MaximumDuration)
 	accessRevoked := &atomic.Bool{}
@@ -237,6 +267,8 @@ func (handler *kubernetesPodExecHandler) connect(c *gin.Context) {
 		peer,
 		accessRevoked,
 		session.RecordingID != "",
+		permission,
+		requiredPermissions,
 	)
 	runResult, runErr := handler.service.Run(sessionContext, session, peer)
 	cancelSession()
@@ -368,6 +400,8 @@ func (handler *kubernetesPodExecHandler) monitorPodExecAccess(
 	peer *podExecWebSocketPeer,
 	revoked *atomic.Bool,
 	recording bool,
+	permission rbac.Permission,
+	requiredPermissions []rbac.Permission,
 ) <-chan struct{} {
 	done := make(chan struct{})
 	sessionToken, tokenExists := httpmiddleware.SessionToken(c)
@@ -382,6 +416,10 @@ func (handler *kubernetesPodExecHandler) monitorPodExecAccess(
 				return
 			case <-ticker.C:
 				if time.Since(peer.lastActivity()) > handler.config.IdleTimeout {
+					cancel()
+					return
+				}
+				if err := peer.ping(); err != nil {
 					cancel()
 					return
 				}
@@ -408,7 +446,7 @@ func (handler *kubernetesPodExecHandler) monitorPodExecAccess(
 					_, authorizationErr = handler.rbacService.AuthorizeCluster(
 						operationContext,
 						identity.User.ID,
-						rbac.PermissionClusterPodExec,
+						permission,
 						clusterID,
 					)
 					if authorizationErr == nil && recording {
@@ -418,6 +456,19 @@ func (handler *kubernetesPodExecHandler) monitorPodExecAccess(
 							rbac.PermissionClusterPodTerminalRecordingCreate,
 							clusterID,
 						)
+					}
+					if authorizationErr == nil {
+						for _, required := range requiredPermissions {
+							if required == permission {
+								continue
+							}
+							_, authorizationErr = handler.rbacService.AuthorizeCluster(
+								operationContext, identity.User.ID, required, clusterID,
+							)
+							if authorizationErr != nil {
+								break
+							}
+						}
 					}
 				}
 				cancelOperation()
@@ -649,6 +700,16 @@ func (peer *podExecWebSocketPeer) write(ctx context.Context, message podExecWire
 	}
 	peer.touch()
 	return nil
+}
+
+func (peer *podExecWebSocketPeer) ping() error {
+	peer.writeMutex.Lock()
+	defer peer.writeMutex.Unlock()
+	return peer.connection.WriteControl(
+		websocket.PingMessage,
+		nil,
+		time.Now().Add(peer.writeTimeout),
+	)
 }
 
 func (peer *podExecWebSocketPeer) touch() {

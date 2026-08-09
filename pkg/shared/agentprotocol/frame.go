@@ -25,6 +25,7 @@ const (
 	CapabilityPodExecV1                  = "pod-exec.v1"
 	CapabilityPodPortForwardV1           = "pod-port-forward.v1"
 	CapabilityResourceWatchV1            = "resource-watch.v1"
+	CapabilityTerminalSessionV1          = "terminal-session.v1"
 
 	CloseNormal              quic.ApplicationErrorCode = 0
 	CloseProtocolError       quic.ApplicationErrorCode = 1

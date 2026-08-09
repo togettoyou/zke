@@ -41,6 +41,7 @@ export const Window = memo(function Window({
   stacked,
   stackIndex,
   revealed,
+  parked,
 }: {
   instance: WindowInstance;
   focused: boolean;
@@ -50,6 +51,8 @@ export const Window = memo(function Window({
   stackIndex: number;
   /** Show desktop: held off screen, keeping its place and everything in it. */
   revealed: boolean;
+  /** Not drawn, but kept mounted so live application state survives switching. */
+  parked: boolean;
 }) {
   const bounds = useWindowStore((state) => state.bounds);
   const viewport = useWindowStore((state) => state.viewport);
@@ -65,7 +68,7 @@ export const Window = memo(function Window({
   const interaction = useWindowInteraction({
     rect: instance.rect,
     viewport,
-    disabled: stacked || instance.mode === "maximized",
+    disabled: parked || stacked || instance.mode === "maximized",
     onStart: () => focusWindow(instance.id),
     onCommit: (rect) => setWindowRect(instance.id, rect),
     onSnap: (zone) => {
@@ -182,12 +185,16 @@ export const Window = memo(function Window({
         data-window-id={instance.id}
         data-app-id={instance.appId}
         data-focused={focused}
+        aria-hidden={parked || undefined}
         className={cn(
           "bg-surface zke-pointer-layer absolute flex flex-col overflow-hidden border",
           fullscreen ? "rounded-none" : "rounded-window",
           focused ? "border-border-strong shadow-window-focused" : "border-border shadow-window",
           !interaction.isInteracting && "zke-window-motion",
-          !focused && "saturate-[0.92]",
+          // Do not apply a CSS filter to the whole unfocused window. Both xterm
+          // views render through canvas, and moving that canvas in and out of a
+          // filtered compositing layer can leave it black after refocusing.
+          // Border and shadow already carry the focus distinction.
           // Parked at the edge, and out of the pointer's way with it. The strip
           // still showing is meant to be clicked, and taking no pointer is how
           // it works: the click falls through to the desktop, which is what
@@ -197,6 +204,7 @@ export const Window = memo(function Window({
         style={{
           ...geometry,
           zIndex,
+          display: parked ? "none" : undefined,
           // Two properties, because only one of them is transitioned — see
           // `.zke-window-motion`. Both are composited, and they cannot collide:
           // a revealed window takes no pointer, so nothing can be dragged while

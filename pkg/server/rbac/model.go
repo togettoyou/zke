@@ -15,6 +15,7 @@ const (
 	PermissionClusterRead                       Permission = "cluster.read"
 	PermissionClusterPodLogsRead                Permission = "cluster.pod.logs.read"
 	PermissionClusterPodExec                    Permission = "cluster.pod.exec"
+	PermissionClusterTerminalExec               Permission = "cluster.terminal.exec"
 	PermissionClusterPodTerminalRecordingCreate Permission = "cluster.pod.terminal_recording.create"
 	PermissionClusterPodTerminalRecordingRead   Permission = "cluster.pod.terminal_recording.read"
 	PermissionClusterPodPortForward             Permission = "cluster.pod.port_forward"

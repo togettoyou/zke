@@ -822,6 +822,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/terminal-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 在目标 Cluster 的 Agent Namespace 创建短生命周期集群终端。终端使用独立 Pod、ServiceAccount、
+         *     ClusterRole 与各业务 Namespace 的 RoleBinding，权限由当前用户在该 Cluster 实际持有的权限生成，
+         *     不复用 Agent 身份，也不向 Agent Namespace 投射业务资源权限。
+         *     要求 cluster.terminal.exec、CSRF、Idempotency-Key 和显式确认。
+         */
+        post: operations["createClusterTerminalSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/terminal-sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 消费一次性票据并升级为 zke.pod-exec.v1 WebSocket。会话周期重新验证登录 Session
+         *     和 cluster.terminal.exec；结束后删除临时 Pod、ServiceAccount 和 Kubernetes RBAC。
+         */
+        get: operations["connectClusterTerminalSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions": {
         parameters: {
             query?: never;
@@ -2211,7 +2253,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -5188,6 +5230,14 @@ export interface components {
              */
             record_output: boolean;
         };
+        ClusterTerminalSessionRequest: {
+            /** Format: uint32 */
+            columns: number;
+            /** Format: uint32 */
+            rows: number;
+            /** @constant */
+            confirm: true;
+        };
         KubernetesPodExecSession: {
             session_id: components["schemas"]["UUID"];
             expires_at: components["schemas"]["Timestamp"];
@@ -7808,6 +7858,76 @@ export interface operations {
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];
+        };
+    };
+    createClusterTerminalSession: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClusterTerminalSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description 一次性集群终端连接票据 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodExecSession"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    connectClusterTerminalSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                session_id: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebSocket 已升级；协商子协议为 zke.pod-exec.v1。 */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 一次性 Session 已过期 */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     createKubernetesPodTerminalSession: {

@@ -11,9 +11,11 @@ import type { AppAccent, AppManifest } from "./types";
  */
 const ACCENT_FILL: Record<AppAccent, string> = {
   blue: "bg-linear-to-b from-[var(--app-blue-from)] to-[var(--app-blue-to)]",
+  cyan: "bg-linear-to-b from-[var(--app-cyan-from)] to-[var(--app-cyan-to)]",
   violet: "bg-linear-to-b from-[var(--app-violet-from)] to-[var(--app-violet-to)]",
   emerald: "bg-linear-to-b from-[var(--app-emerald-from)] to-[var(--app-emerald-to)]",
   amber: "bg-linear-to-b from-[var(--app-amber-from)] to-[var(--app-amber-to)]",
+  slate: "bg-linear-to-b from-[var(--app-slate-from)] to-[var(--app-slate-to)]",
 };
 
 /**
@@ -23,9 +25,11 @@ const ACCENT_FILL: Record<AppAccent, string> = {
  */
 const ACCENT_GLOW: Record<AppAccent, string> = {
   blue: "group-hover:drop-shadow-[0_9px_16px_var(--app-blue-glow)]",
+  cyan: "group-hover:drop-shadow-[0_9px_16px_var(--app-cyan-glow)]",
   violet: "group-hover:drop-shadow-[0_9px_16px_var(--app-violet-glow)]",
   emerald: "group-hover:drop-shadow-[0_9px_16px_var(--app-emerald-glow)]",
   amber: "group-hover:drop-shadow-[0_9px_16px_var(--app-amber-glow)]",
+  slate: "group-hover:drop-shadow-[0_9px_16px_var(--app-slate-glow)]",
 };
 
 /**

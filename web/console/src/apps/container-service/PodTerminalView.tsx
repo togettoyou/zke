@@ -60,6 +60,7 @@ export function PodTerminalView({
   podUid,
   canRecord,
   canReadRecordings,
+  active,
   onBack,
 }: {
   clusterId: string;
@@ -70,6 +71,8 @@ export function PodTerminalView({
   podUid: string;
   canRecord: boolean;
   canReadRecordings: boolean;
+  /** Refits and repaints xterm when this application's window returns to front. */
+  active: boolean;
   onBack: () => void;
 }) {
   const detail = usePod(clusterId, namespace, podName);
@@ -94,6 +97,7 @@ export function PodTerminalView({
           pod={pod}
           canRecord={canRecord}
           canReadRecordings={canReadRecordings}
+          active={active}
         />
       )}
     </div>
@@ -115,6 +119,7 @@ function TerminalSession({
   pod,
   canRecord,
   canReadRecordings,
+  active,
 }: {
   clusterId: string;
   clusterName: string;
@@ -122,6 +127,7 @@ function TerminalSession({
   pod: KubernetesPodDetail;
   canRecord: boolean;
   canReadRecordings: boolean;
+  active: boolean;
 }) {
   const choices = containerChoices(pod);
   const [container, setContainer] = useState(choices[0]?.name ?? "");
@@ -149,6 +155,7 @@ function TerminalSession({
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const replayTimerRef = useRef<number | null>(null);
+  const refitRef = useRef<(() => void) | null>(null);
   const replayAttemptRef = useRef(0);
   // Invalidates a pending ticket request and all handlers belonging to an old
   // socket. In particular, a request resolving after this view unmounts must
@@ -181,18 +188,44 @@ function TerminalSession({
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(surface);
-    fit.fit();
     terminalRef.current = terminal;
     fitRef.current = fit;
 
-    const observer = new ResizeObserver(() => {
+    let fitFrame = 0;
+    let refreshFrame = 0;
+    const fitVisibleTerminal = () => {
+      const bounds = surface.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0 || !surface.isConnected) return;
       try {
         fit.fit();
+        cancelAnimationFrame(refreshFrame);
+        refreshFrame = requestAnimationFrame(() => {
+          if (surface.getClientRects().length > 0 && terminal.rows > 0) {
+            terminal.refresh(0, terminal.rows - 1);
+          }
+        });
       } catch {
         // A view being torn down can report a zero-sized box; nothing to fit.
       }
+    };
+    const scheduleFit = () => {
+      cancelAnimationFrame(fitFrame);
+      fitFrame = requestAnimationFrame(fitVisibleTerminal);
+    };
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      if (entry && entry.contentRect.width > 0 && entry.contentRect.height > 0) scheduleFit();
     });
-    observer.observe(surface);
+    resizeObserver.observe(surface);
+    const visibilityObserver = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) scheduleFit();
+    });
+    visibilityObserver.observe(surface);
+    const handleVisibilityChange = () => {
+      if (!document.hidden) scheduleFit();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    refitRef.current = scheduleFit;
+    scheduleFit();
 
     const inputSubscription = terminal.onData((data) => {
       for (const chunk of encodeTerminalInput(data)) {
@@ -206,7 +239,12 @@ function TerminalSession({
     );
 
     return () => {
-      observer.disconnect();
+      cancelAnimationFrame(fitFrame);
+      cancelAnimationFrame(refreshFrame);
+      resizeObserver.disconnect();
+      visibilityObserver.disconnect();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      refitRef.current = null;
       inputSubscription.dispose();
       resizeSubscription.dispose();
       terminal.dispose();
@@ -214,6 +252,10 @@ function TerminalSession({
       fitRef.current = null;
     };
   }, [send]);
+
+  useEffect(() => {
+    if (active) refitRef.current?.();
+  }, [active]);
 
   // Nothing must outlive the view: an abandoned socket keeps a shell running in
   // the container.

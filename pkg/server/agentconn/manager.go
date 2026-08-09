@@ -212,18 +212,19 @@ type certificateIdentity struct {
 }
 
 var (
-	ErrAgentNotConnected               = errors.New("target Cluster Agent is not connected")
-	ErrResourceCapabilityMissing       = errors.New("target Cluster Agent does not support Resource Streams")
-	ErrResourceRequestExhausted        = errors.New("Resource Stream request capacity is exhausted")
-	ErrResourceVerbUnsupported         = errors.New("Resource Stream verb is not implemented")
-	ErrPodLogsCapabilityMissing        = errors.New("target Cluster Agent does not support Pod Logs Streams")
-	ErrPodLogsRequestExhausted         = errors.New("Pod Logs Stream request capacity is exhausted")
-	ErrPodExecCapabilityMissing        = errors.New("target Cluster Agent does not support Pod Exec Streams")
-	ErrPodExecRequestExhausted         = errors.New("Pod Exec Stream request capacity is exhausted")
-	ErrPodPortForwardCapabilityMissing = errors.New("target Cluster Agent does not support Pod Port Forward Streams")
-	ErrPodPortForwardRequestExhausted  = errors.New("Pod Port Forward Stream request capacity is exhausted")
-	ErrResourceWatchCapabilityMissing  = errors.New("target Cluster Agent does not support Resource Watch Streams")
-	ErrResourceWatchRequestExhausted   = errors.New("Resource Watch Stream request capacity is exhausted")
+	ErrAgentNotConnected                = errors.New("target Cluster Agent is not connected")
+	ErrResourceCapabilityMissing        = errors.New("target Cluster Agent does not support Resource Streams")
+	ErrResourceRequestExhausted         = errors.New("Resource Stream request capacity is exhausted")
+	ErrResourceVerbUnsupported          = errors.New("Resource Stream verb is not implemented")
+	ErrPodLogsCapabilityMissing         = errors.New("target Cluster Agent does not support Pod Logs Streams")
+	ErrPodLogsRequestExhausted          = errors.New("Pod Logs Stream request capacity is exhausted")
+	ErrPodExecCapabilityMissing         = errors.New("target Cluster Agent does not support Pod Exec Streams")
+	ErrPodExecRequestExhausted          = errors.New("Pod Exec Stream request capacity is exhausted")
+	ErrPodPortForwardCapabilityMissing  = errors.New("target Cluster Agent does not support Pod Port Forward Streams")
+	ErrPodPortForwardRequestExhausted   = errors.New("Pod Port Forward Stream request capacity is exhausted")
+	ErrResourceWatchCapabilityMissing   = errors.New("target Cluster Agent does not support Resource Watch Streams")
+	ErrResourceWatchRequestExhausted    = errors.New("Resource Watch Stream request capacity is exhausted")
+	ErrTerminalSessionCapabilityMissing = errors.New("target Cluster Agent does not support Terminal Session Streams")
 )
 
 func New(
@@ -604,6 +605,10 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityResourceWatchV1) {
 		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityResourceWatchV1)
 		current.capabilities[agentprotocol.CapabilityResourceWatchV1] = struct{}{}
+	}
+	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityTerminalSessionV1) {
+		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityTerminalSessionV1)
+		current.capabilities[agentprotocol.CapabilityTerminalSessionV1] = struct{}{}
 	}
 	previous := manager.register(current)
 	if previous != nil {
@@ -1205,6 +1210,50 @@ func (manager *Manager) requestResource(
 		responseBody,
 		manager.config.MaxResourceBodyBytes,
 	)
+}
+
+func (manager *Manager) RequestTerminalSession(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.TerminalSessionRequest,
+	idempotencyKey string,
+) (*agentv1.TerminalSessionResponse, error) {
+	if ctx == nil || !validation.IsUUID(clusterID) || request == nil ||
+		!validation.IsIdempotencyKey(idempotencyKey) {
+		return nil, errors.New("Terminal Session request is invalid")
+	}
+	manager.mutex.Lock()
+	current := manager.connectionsByCluster[clusterID]
+	manager.mutex.Unlock()
+	if current == nil || current.business == nil || !current.beginBusiness() {
+		return nil, ErrAgentNotConnected
+	}
+	defer current.endBusiness()
+	if _, supported := current.capabilities[agentprotocol.CapabilityTerminalSessionV1]; !supported {
+		return nil, ErrTerminalSessionCapabilityMissing
+	}
+	if !tryAcquire(manager.resourceAdmissions) {
+		return nil, ErrResourceRequestExhausted
+	}
+	defer release(manager.resourceAdmissions)
+	if !tryAcquire(current.resourceAdmissions) {
+		return nil, ErrResourceRequestExhausted
+	}
+	defer release(current.resourceAdmissions)
+	requestContext, cancelRequest := context.WithTimeout(ctx, manager.config.ResourceRequestTimeout)
+	defer cancelRequest()
+	deadline, _ := requestContext.Deadline()
+	requestID, err := streamRequestID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return agentprotocol.DoTerminalSession(requestContext, current.business, &agentv1.StreamHeader{
+		ProtocolVersion: agentprotocol.ProtocolVersion,
+		Kind:            agentv1.StreamKind_STREAM_KIND_TERMINAL_SESSION,
+		RequestId:       requestID,
+		TimeoutMillis:   uint64(max(int64(1), time.Until(deadline).Milliseconds())),
+		IdempotencyKey:  idempotencyKey,
+	}, request)
 }
 
 func (manager *Manager) RequestPodLogs(

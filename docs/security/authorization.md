@@ -77,11 +77,11 @@ Project，跨作用域访问会被拒绝。
 **修改角色按「改动了什么」判定，两个方向都要在调用者的权限之内。** 一次修改提交的是整份权限集，但调用者实际
 在做的是它与已存权限集的差：
 
-| 差 | 判定 | 拒绝 |
-| --- | --- | --- |
+| 差                           | 判定                           | 拒绝                        |
+| ---------------------------- | ------------------------------ | --------------------------- |
 | 新增（在新集合、不在旧集合） | 必须是调用者在 Global 已持有的 | `403 permission_escalation` |
-| 移除（在旧集合、不在新集合） | 同上 | `403 permission_revocation` |
-| 两个集合里都有 | 不判定，原样保留 | — |
+| 移除（在旧集合、不在新集合） | 同上                           | `403 permission_revocation` |
+| 两个集合里都有               | 不判定，原样保留               | —                           |
 
 移除那一侧此前完全没有检查。它不授予任何人任何东西，所以不是提权，但它是对**高于自己权限层级的一次单方面
 处置**：一个只持有 `rbac.read` 与 `rbac.manage` 的账号可以把平台上每个自定义角色的权限剥光，包括它自己永远
@@ -156,11 +156,11 @@ Project，跨作用域访问会被拒绝。
 「控制」是**这个账号上的一切写操作**，而不是一份危险操作清单。共七条路径，从群体外部发起时都返回
 `403 global_admin_required`：
 
-| 路径 | 执行的规则 |
-| --- | --- |
-| 删除用户、禁用用户、删除 RoleBinding | 两条都执行 |
-| 授予 Global `admin` | 只有第二条——授予不会移除任何人 |
-| 重置密码、解锁账户、修改显示名称 | 只有第二条 |
+| 路径                                 | 执行的规则                     |
+| ------------------------------------ | ------------------------------ |
+| 删除用户、禁用用户、删除 RoleBinding | 两条都执行                     |
+| 授予 Global `admin`                  | 只有第二条——授予不会移除任何人 |
+| 重置密码、解锁账户、修改显示名称     | 只有第二条                     |
 
 最后一行只执行第二条是必要的：夺取账号不等于移除账号，若把「必须保留一个」也套上，唯一的管理员将无法重置自己的
 密码，也无法改自己的名字。
@@ -205,13 +205,13 @@ RoleBinding，而重置全局管理员的密码再以其身份登录，拿到的
 绑定可以选三种作用域，角色可以装任意权限，于是两者能被组合成一条永远不生效的授予。每项权限因此有一个**作用域
 下限**——能够行使它的最窄绑定作用域，比它更窄的绑定携带它不生效。下限共两档，其余权限没有下限。
 
-| 权限 | 下限 | 原因 |
-| --- | --- | --- |
-| `user.read`、`user.manage` | Global | 用户是全局对象，不属于任何租户 |
-| `rbac.read`、`rbac.manage` | Global | 角色是全局对象，见上文提权天花板 |
-| `tenant.create` | Global | 创建租户时还没有可供限定的租户 |
-| `tenant.manage` | Global | 删除租户会级联移除其下全部项目、集群与凭证，**有意不交给租户自己的管理员** |
-| `project.create` | Tenant | 创建项目时还没有可供限定的项目，但租户正是它可以被限定到的东西——所以它不是 Global |
+| 权限                       | 下限   | 原因                                                                              |
+| -------------------------- | ------ | --------------------------------------------------------------------------------- |
+| `user.read`、`user.manage` | Global | 用户是全局对象，不属于任何租户                                                    |
+| `rbac.read`、`rbac.manage` | Global | 角色是全局对象，见上文提权天花板                                                  |
+| `tenant.create`            | Global | 创建租户时还没有可供限定的租户                                                    |
+| `tenant.manage`            | Global | 删除租户会级联移除其下全部项目、集群与凭证，**有意不交给租户自己的管理员**        |
+| `project.create`           | Tenant | 创建项目时还没有可供限定的项目，但租户正是它可以被限定到的东西——所以它不是 Global |
 
 `project.create` 是唯一一项 Tenant 下限，它的存在正是这里从「是否仅全局」改为「下限是哪一档」的原因：一个只含
 `project.create` 的角色绑到 Project 上授予的恰好是零，而一个布尔标记会把它报成不受限。
@@ -286,7 +286,8 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 `cluster.pod.terminal_recording.create` 与 `cluster.pod.terminal_recording.read`，以及读取 Kubernetes Event 使用的
 `cluster.event.read`，以及目标集群 Kubernetes RBAC 使用的 `cluster.rbac.read`、`cluster.rbac.manage`，
 以及读写 Kubernetes Secret 使用的 `cluster.secret.read`、`cluster.secret.manage`，以及创建和删除
-Kubernetes Namespace 使用的 `cluster.namespace.manage`。
+Kubernetes Namespace 使用的 `cluster.namespace.manage`，以及独立终端 App 的入口权限
+`cluster.terminal.exec`。
 所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。
@@ -456,13 +457,13 @@ Secret 与 Kubernetes 授权资源从该入口排除，避免绕过 `cluster.sec
 
 映射与类型化 API 完全一致，没有为清单放宽任何一条：
 
-| 文档 | apply 需要 | delete 需要 |
-| --- | --- | --- |
-| Secret | `cluster.secret.manage` | `cluster.secret.manage` |
-| Kubernetes 授权五类 | `cluster.rbac.manage` | `cluster.rbac.manage` |
-| Namespace | `cluster.namespace.manage` | `cluster.namespace.manage` |
-| Event（两个 group） | 一律拒绝 | 一律拒绝 |
-| 其余主资源 | 对象不存在时 `cluster.resource.create`，存在时 `cluster.resource.update` | `cluster.resource.delete` |
+| 文档                | apply 需要                                                               | delete 需要                |
+| ------------------- | ------------------------------------------------------------------------ | -------------------------- |
+| Secret              | `cluster.secret.manage`                                                  | `cluster.secret.manage`    |
+| Kubernetes 授权五类 | `cluster.rbac.manage`                                                    | `cluster.rbac.manage`      |
+| Namespace           | `cluster.namespace.manage`                                               | `cluster.namespace.manage` |
+| Event（两个 group） | 一律拒绝                                                                 | 一律拒绝                   |
+| 其余主资源          | 对象不存在时 `cluster.resource.create`，存在时 `cluster.resource.update` | `cluster.resource.delete`  |
 
 这比路由级判定**更严**而不是更松：只要清单中有一个文档不被覆盖，整份清单被拒绝并返回 403，**不写入任何
 对象**——包括调用者本来有权写的那些。放行「有权的部分」等于由权限而不是操作者决定了一次部分应用，而落地的
@@ -516,6 +517,17 @@ Web Terminal 使用独立的 `cluster.pod.exec`，不复用 `cluster.read` 或 K
 Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证 Session 与权限，设置空闲/总时长、输入/输出
 字节和并发上限。Agent 只使用固定 Shell 选择逻辑（优先 bash，回退 `/bin/sh`），默认 ServiceAccount 仅增加
 `pods/exec` 的 `create`。审计记录票据创建、会话目标与结果，默认不记录终端输入输出。
+
+独立终端 App 使用另一项 `cluster.terminal.exec`，可通过现有自定义角色分配。该权限只允许创建终端会话，不等于
+Kubernetes 资源权限。Server 在目标 Cluster 上逐项计算当前登录用户实际持有的 `cluster.*` 权限，Agent 将其按
+固定白名单投影到会话专属 ServiceAccount 的 Role/ClusterRole。例如，没有 `cluster.secret.read` 的用户即使可以
+进入终端，`kubectl get secret` 仍由 Kubernetes RBAC 拒绝；`cluster.secret.manage` 也不隐含读取。
+
+终端必须明确目标 Cluster。Terminal Pod 与专属 ServiceAccount 固定落到 Agent 身份 Namespace，但不在该
+Namespace 投射业务资源权限；命名空间级权限通过 RoleBinding 覆盖会话建立时已存在的其他 Namespace。Pod 不挂载宿主机目录，以非 root、
+禁提权、丢弃全部 Linux capabilities 和受限资源运行。会话权限在长连接中周期重验；入口权限或快照内任何权限被
+收回时立即断开并清理 ServiceAccount、RoleBinding 和 Pod。审计记录会话创建、目标和连接结果，不记录命令、
+stdin/stdout 或 Secret 正文；逐条 `kubectl` API 请求审计依赖目标集群启用 Kubernetes Audit。
 
 终端输出录制必须由操作者显式选择，创建额外要求默认仅授予 admin 的
 `cluster.pod.terminal_recording.create`；只旁路保存 stdout/stderr，不保存 stdin、Cookie、一次性票据或认证头。

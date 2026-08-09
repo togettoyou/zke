@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  SquareTerminal,
 } from "lucide-react";
 
 import type { AppManifest } from "./types";
@@ -29,6 +30,9 @@ const SettingsApp = lazy(async () => ({
 const ContainerServiceApp = lazy(async () => ({
   default: (await import("./container-service/ContainerServiceApp")).ContainerServiceApp,
 }));
+const TerminalApp = lazy(async () => ({
+  default: (await import("./terminal/TerminalApp")).TerminalApp,
+}));
 const PlannedApp = lazy(async () => ({
   default: (await import("./planned/PlannedApp")).PlannedApp,
 }));
@@ -47,7 +51,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "集群接入管理",
     description: "接入、查看和管理 Kubernetes 集群与其连接状态",
     icon: Server,
-    accent: "blue",
+    accent: "cyan",
     requiredPermissions: ["cluster.read", "cluster.enrollment.read", "cluster.enrollment.create"],
     availability: { state: "available" },
     defaultSize: { width: 1_020, height: 660 },
@@ -95,6 +99,17 @@ export const APP_MANIFESTS: AppManifest[] = [
     availability: { state: "available" },
     defaultSize: { width: 1_060, height: 680 },
     entry: ContainerServiceApp,
+  },
+  {
+    id: "terminal",
+    title: "终端",
+    description: "在所选集群中使用按当前角色授权的 kubectl",
+    icon: SquareTerminal,
+    accent: "slate",
+    requiredPermissions: ["cluster.terminal.exec"],
+    availability: { state: "available" },
+    defaultSize: { width: 1_060, height: 680 },
+    entry: TerminalApp,
   },
   {
     id: "observability",

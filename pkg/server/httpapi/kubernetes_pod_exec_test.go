@@ -119,6 +119,43 @@ func TestKubernetesPodExecWebSocketUsesProtocolFrames(t *testing.T) {
 	}
 }
 
+func TestPodExecPeerSendsWebSocketPing(t *testing.T) {
+	pingSent := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(writer, request, nil)
+		if err != nil {
+			pingSent <- err
+			return
+		}
+		defer connection.Close()
+		peer := &podExecWebSocketPeer{connection: connection, writeTimeout: time.Second}
+		pingSent <- peer.ping()
+	}))
+	defer server.Close()
+
+	connection, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	pingReceived := make(chan struct{}, 1)
+	connection.SetPingHandler(func(data string) error {
+		pingReceived <- struct{}{}
+		return connection.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(time.Second))
+	})
+	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, _ = connection.ReadMessage()
+
+	select {
+	case <-pingReceived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client did not receive WebSocket ping")
+	}
+	if err := <-pingSent; err != nil {
+		t.Fatalf("ping() error = %v", err)
+	}
+}
+
 func TestPodExecSameOriginRequiresExactHost(t *testing.T) {
 	t.Parallel()
 
@@ -152,6 +189,11 @@ func (service *fakePodExecHTTPService) Create(input podexec.CreateInput) (podexe
 }
 
 func (service *fakePodExecHTTPService) Consume(input podexec.ConsumeInput) (podexec.Session, error) {
+	service.consumeInput = input
+	return service.session, nil
+}
+
+func (service *fakePodExecHTTPService) ConsumeBound(input podexec.ConsumeInput) (podexec.Session, error) {
 	service.consumeInput = input
 	return service.session, nil
 }

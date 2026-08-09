@@ -455,6 +455,24 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesPodExec.create,
 	)
+	// Creating a standalone terminal may include the image's first pull, so it
+	// has the Agent Resource request budget rather than the short budget shared
+	// by ordinary Cluster API calls.
+	terminalCreateRoutes := apiV1.Group("/clusters")
+	terminalCreateRoutes.Use(
+		handlers.terminalRequestTimeout,
+		handlers.roleBindingCache,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	terminalCreateRoutes.POST(
+		"/:cluster_id/terminal-sessions",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterTerminalExec,
+			"cluster_id",
+		),
+		handlers.clusterTerminal.create,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/terminal-recordings",
 		handlers.authorizationMiddleware.RequireCluster(
@@ -550,6 +568,14 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesPodExec.connect,
+	)
+	podExecRoutes.GET(
+		"/:cluster_id/terminal-sessions/:session_id",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterTerminalExec,
+			"cluster_id",
+		),
+		handlers.clusterTerminal.connect,
 	)
 	// Kubernetes Events use an independent, bounded SSE route so that the
 	// short HTTP operation timeout does not terminate a quiet follow stream.

@@ -113,6 +113,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
       版本分布与命名空间状态分布，Server 按 Cluster 缓存 15 秒完整快照且不缓存失败部分，Console 概览的每个计数
       可下钻到对应列表并停在对应标签页；概览仍不按状态筛选目标列表，按 Namespace 定域的列表进入后只显示当前
       命名空间）
+- [x] 独立终端 App 基础闭环（按目标 Cluster 在 Agent Namespace 创建临时 Terminal Pod、会话专属 ServiceAccount，
+      并通过各业务 Namespace 的 RoleBinding 投影 Secret、RBAC、资源和 Pod Subresource 权限，独立
+      `cluster.terminal.exec`、显式确认、一次性 WebSocket 票据、权限重验、会话清理与过期资源回收；任意 CRD
+      自动授权、逐条 Kubernetes Audit 汇聚及额外 CLI 工具仍未纳入）
 
 ## Phase 3：可观测性
 

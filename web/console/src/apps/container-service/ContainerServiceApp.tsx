@@ -25,6 +25,7 @@ import type {
   Permission,
 } from "@/api/types";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
+import type { AppComponentProps } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { StatusBadge } from "@/components/common/status";
@@ -36,6 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useScopeStore } from "@/scope/scope-store";
+import { useWindowStore } from "@/desktop/window-store";
 
 import { AuthorizationSection } from "./AuthorizationSection";
 import { AutoscalerSection } from "./AutoscalerSection";
@@ -141,8 +143,11 @@ const NAMESPACE_PICKER_LIMIT = 500;
  * Only online Clusters can be the target, because each request is executed by
  * that Cluster's Agent.
  */
-export function ContainerServiceApp() {
+export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windowId">) {
   const scope = useScopeStore((state) => state.scope);
+  const active = useWindowStore(
+    (state) => state.focusedId === windowId && state.windows[windowId]?.mode !== "minimized",
+  );
   const { permissions } = useSessionContext();
   // The overview is where an operator lands: it is the one view that answers
   // "what is in this cluster" before they know which category to open.
@@ -539,6 +544,7 @@ export function ContainerServiceApp() {
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
+            active={active}
           />
         ) : (
           <WorkloadSection

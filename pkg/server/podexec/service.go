@@ -274,6 +274,27 @@ func (service *Service) Consume(input ConsumeInput) (Session, error) {
 	return session, nil
 }
 
+func (service *Service) ConsumeBound(input ConsumeInput) (Session, error) {
+	if service == nil || !validation.IsUUID(input.ID) || !validation.IsUUID(input.UserID) ||
+		!validation.IsUUID(input.AuthSessionID) || !validation.IsUUID(input.ClusterID) || input.Now.IsZero() {
+		return Session{}, ErrInvalidInput
+	}
+	service.mutex.Lock()
+	defer service.mutex.Unlock()
+	session, exists := service.pending[input.ID]
+	if !exists {
+		return Session{}, ErrSessionNotFound
+	}
+	delete(service.pending, input.ID)
+	if !input.Now.Before(session.ExpiresAt) {
+		return Session{}, ErrSessionExpired
+	}
+	if session.UserID != input.UserID || session.AuthSessionID != input.AuthSessionID || session.ClusterID != input.ClusterID {
+		return Session{}, ErrSessionBindingMismatch
+	}
+	return session, nil
+}
+
 func (service *Service) Run(
 	ctx context.Context,
 	session Session,

@@ -106,6 +106,7 @@ func (cfg Config) Validate() error {
 		cfg.validateAgentPKI,
 		cfg.validateAgentEnrollment,
 		cfg.validateAgentInstall,
+		cfg.validateClusterTerminal,
 		cfg.validateAgentListener,
 		cfg.validateCertificateMonitor,
 		cfg.validateProcess,
@@ -114,6 +115,20 @@ func (cfg Config) Validate() error {
 		if err := validate(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (cfg Config) validateClusterTerminal() error {
+	if cfg.ClusterTerminal.Image == "" {
+		return nil
+	}
+	if strings.TrimSpace(cfg.ClusterTerminal.Image) != cfg.ClusterTerminal.Image ||
+		strings.ContainsAny(cfg.ClusterTerminal.Image, " \t\r\n") {
+		return errors.New("Cluster terminal image is invalid")
+	}
+	if cfg.ClusterTerminal.SessionTTL < time.Minute || cfg.ClusterTerminal.SessionTTL > time.Hour {
+		return errors.New("Cluster terminal session TTL must be between 1 minute and 1 hour")
 	}
 	return nil
 }

@@ -2357,6 +2357,83 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/terminal-sessions:
+    post:
+      tags: [Resources]
+      operationId: createClusterTerminalSession
+      description: |
+        在目标 Cluster 的 Agent Namespace 创建短生命周期集群终端。终端使用独立 Pod、ServiceAccount、
+        ClusterRole 与各业务 Namespace 的 RoleBinding，权限由当前用户在该 Cluster 实际持有的权限生成，
+        不复用 Agent 身份，也不向 Agent Namespace 投射业务资源权限。
+        要求 cluster.terminal.exec、CSRF、Idempotency-Key 和显式确认。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterTerminalSessionRequest"
+      responses:
+        "201":
+          description: 一次性集群终端连接票据
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesPodExecSession"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/clusters/{cluster_id}/terminal-sessions/{session_id}:
+    get:
+      tags: [Resources]
+      operationId: connectClusterTerminalSession
+      description: |
+        消费一次性票据并升级为 zke.pod-exec.v1 WebSocket。会话周期重新验证登录 Session
+        和 cluster.terminal.exec；结束后删除临时 Pod、ServiceAccount 和 Kubernetes RBAC。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "101":
+          description: WebSocket 已升级；协商子协议为 zke.pod-exec.v1。
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          description: 一次性 Session 已过期
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions:
     post:
       tags: [Resources]
@@ -7293,6 +7370,7 @@ components:
               - cluster.read
               - cluster.pod.logs.read
               - cluster.pod.exec
+              - cluster.terminal.exec
               - cluster.pod.terminal_recording.create
               - cluster.pod.terminal_recording.read
               - cluster.pod.port_forward
@@ -13026,6 +13104,23 @@ components:
           description: |
             显式选择仅录制服务端返回的 stdout/stderr；不录制 stdin、Cookie、票据或认证头。
             设为 true 还需要 cluster.pod.terminal_recording.create 权限。
+    ClusterTerminalSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [columns, rows, confirm]
+      properties:
+        columns:
+          type: integer
+          format: uint32
+          minimum: 1
+          maximum: 4096
+        rows:
+          type: integer
+          format: uint32
+          minimum: 1
+          maximum: 4096
+        confirm:
+          const: true
     KubernetesPodExecSession:
       type: object
       additionalProperties: false

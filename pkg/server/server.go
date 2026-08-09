@@ -23,6 +23,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
+	"github.com/togettoyou/zke/pkg/server/clusterterminal"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
@@ -283,6 +284,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxOutputBytes: cfg.AgentListener.MaxPodExecOutputBytes,
 		},
 	)
+	clusterTerminalService := clusterterminal.NewService(
+		agentConnectionManager,
+		podExecService,
+		clusterterminal.Config{Image: cfg.ClusterTerminal.Image, Namespace: cfg.AgentInstall.Namespace, TTL: cfg.ClusterTerminal.SessionTTL},
+	)
 	podPortForwardService := podportforward.NewService(agentConnectionManager)
 	var podAccessService *podaccess.Service
 	if cfg.PodAccess.Enabled {
@@ -342,6 +348,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			KubernetesResourceService: kubernetesResourceService,
 			PodLogsService:            podLogsService,
 			PodExecService:            podExecService,
+			ClusterTerminalService:    clusterTerminalService,
 			PodAccessService:          podAccessService,
 			ResourceWatchService:      resourceWatchService,
 			ResourceManagementService: resourceManagementService,
@@ -359,6 +366,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				OperationTimeout:     cfg.AgentEnrollment.OperationTimeout,
 				RateLimitWindow:      cfg.AgentEnrollment.RateLimit.Window,
 				MaxAttemptsPerSource: cfg.AgentEnrollment.RateLimit.MaxAttemptsPerSource,
+			},
+			ClusterTerminal: httpapi.ClusterTerminalHTTPConfig{
+				CreationTimeout: cfg.AgentListener.ResourceRequestTimeout,
 			},
 			PodLogs: httpapi.PodLogsHTTPConfig{
 				SnapshotTimeout:       cfg.Auth.OperationTimeout,

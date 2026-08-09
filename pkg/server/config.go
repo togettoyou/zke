@@ -23,6 +23,7 @@ type Config struct {
 	AgentPKI           AgentPKIConfig           `yaml:"agent_pki"`
 	AgentEnrollment    AgentEnrollmentConfig    `yaml:"agent_enrollment"`
 	AgentInstall       AgentInstallConfig       `yaml:"agent_install"`
+	ClusterTerminal    ClusterTerminalConfig    `yaml:"cluster_terminal"`
 	AgentListener      AgentListenerConfig      `yaml:"agent_listener"`
 	CertificateMonitor CertificateMonitorConfig `yaml:"certificate_monitor"`
 	ShutdownTimeout    time.Duration            `yaml:"shutdown_timeout"`
@@ -171,6 +172,11 @@ type AgentInstallConfig struct {
 	RegistrationCACertificateFile string `yaml:"registration_ca_certificate_file"`
 }
 
+type ClusterTerminalConfig struct {
+	Image      string        `yaml:"image"`
+	SessionTTL time.Duration `yaml:"session_ttl"`
+}
+
 type CertificateMonitorConfig struct {
 	WarningBefore time.Duration `yaml:"warning_before"`
 	CheckInterval time.Duration `yaml:"check_interval"`
@@ -274,6 +280,7 @@ func DefaultConfig() Config {
 			Namespace:       "zke-system",
 			ImagePullPolicy: "IfNotPresent",
 		},
+		ClusterTerminal: ClusterTerminalConfig{SessionTTL: 15 * time.Minute},
 		AgentListener: AgentListenerConfig{
 			HandshakeTimeout:            10 * time.Second,
 			HeartbeatInterval:           10 * time.Second,

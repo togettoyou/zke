@@ -97,6 +97,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		slog.String("agent_id", identity.AgentID),
 		slog.Time("certificate_expires_at", identity.CertificateExpiresAt),
 	)
+	go runTerminalSessionJanitor(ctx, kubernetesClient, cfg.IdentityNamespace, logger)
 	startupID, err := identifier.NewUUID()
 	if err != nil {
 		return fmt.Errorf("generate Agent startup identifier: %w", err)
@@ -116,10 +117,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				cfg.Connection.MaxResourceBodyBytes,
 				cfg.IdentityNamespace,
 			),
-			podLogsHandler:        newKubernetesPodLogsHandler(kubernetesClient),
-			podExecHandler:        newKubernetesPodExecHandler(kubernetesClient, kubernetesConfig),
-			podPortForwardHandler: newKubernetesPodPortForwardHandler(kubernetesClient, kubernetesConfig),
-			resourceWatchHandler:  newKubernetesResourceWatchHandler(kubernetesClient),
+			podLogsHandler:         newKubernetesPodLogsHandler(kubernetesClient),
+			podExecHandler:         newKubernetesPodExecHandler(kubernetesClient, kubernetesConfig),
+			podPortForwardHandler:  newKubernetesPodPortForwardHandler(kubernetesClient, kubernetesConfig),
+			resourceWatchHandler:   newKubernetesResourceWatchHandler(kubernetesClient),
+			terminalSessionHandler: newKubernetesTerminalSessionHandler(kubernetesClient, cfg.IdentityNamespace),
 		},
 	)
 	logger.Info("agent stopped")

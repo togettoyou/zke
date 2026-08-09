@@ -25,7 +25,7 @@ export type AppComponentProps = {
  * application is saturated, an unlit tile says "not yet" before any caption
  * under it does.
  */
-export type AppAccent = "blue" | "violet" | "emerald" | "amber";
+export type AppAccent = "blue" | "cyan" | "violet" | "emerald" | "amber" | "slate";
 
 export type AppManifest = {
   id: string;

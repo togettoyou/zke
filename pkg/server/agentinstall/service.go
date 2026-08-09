@@ -271,12 +271,12 @@ func renderManifest(
 			{
 				APIGroups: []string{""},
 				Resources: []string{"namespaces"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"pods"},
-				Verbs:     []string{"get", "list", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
@@ -348,7 +348,7 @@ func renderManifest(
 			{
 				APIGroups: []string{""},
 				Resources: []string{"configmaps"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
@@ -359,49 +359,49 @@ func renderManifest(
 				// certificates it trusts the Server by live. This grant is what
 				// makes that API possible; it is not what authorizes it.
 				Resources: []string{"secrets"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"persistentvolumes", "persistentvolumeclaims"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"storage.k8s.io"},
 				Resources: []string{"storageclasses"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"autoscaling"},
 				Resources: []string{"horizontalpodautoscalers"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"autoscaling.k8s.io"},
 				Resources: []string{"verticalpodautoscalers"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"keda.sh"},
 				Resources: []string{"scaledobjects"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				// The two Namespace-level constraints: how much may be consumed,
 				// and what a container's limits default to.
 				Resources: []string{"resourcequotas", "limitranges"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"policy"},
 				Resources: []string{"poddisruptionbudgets"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"scheduling.k8s.io"},
 				Resources: []string{"priorityclasses"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				// Read-only, and only to answer which discovered resources come
@@ -415,7 +415,7 @@ func renderManifest(
 			{
 				APIGroups: []string{""},
 				Resources: []string{"serviceaccounts"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				// Deliberately omit escalate, bind and impersonate. Kubernetes
@@ -423,7 +423,7 @@ func renderManifest(
 				// existing permission ceiling.
 				APIGroups: []string{"rbac.authorization.k8s.io"},
 				Resources: []string{"roles", "clusterroles", "rolebindings", "clusterrolebindings"},
-				Verbs:     []string{"get", "list", "create", "update", "delete"},
+				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"networking.k8s.io"},

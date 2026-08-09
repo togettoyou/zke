@@ -12,11 +12,12 @@ import (
 )
 
 type connectionServices struct {
-	resourceHandler       agentprotocol.ResourceHandler
-	podLogsHandler        agentprotocol.PodLogsHandler
-	podExecHandler        agentprotocol.PodExecHandler
-	podPortForwardHandler agentprotocol.PodPortForwardHandler
-	resourceWatchHandler  agentprotocol.ResourceWatchHandler
+	resourceHandler        agentprotocol.ResourceHandler
+	podLogsHandler         agentprotocol.PodLogsHandler
+	podExecHandler         agentprotocol.PodExecHandler
+	podPortForwardHandler  agentprotocol.PodPortForwardHandler
+	resourceWatchHandler   agentprotocol.ResourceWatchHandler
+	terminalSessionHandler agentprotocol.TerminalSessionHandler
 }
 
 func newBusinessStreamServer(
@@ -83,6 +84,14 @@ func newBusinessStreamServer(
 				MaxConcurrent: cfg.Connection.MaxConcurrentResourceWatchStreams,
 				MaxTimeout:    cfg.Connection.MaxResourceWatchStreamTimeout,
 				Handle:        agentprotocol.ResourceWatchStreamHandler(services.resourceWatchHandler),
+			}
+	}
+	if services.terminalSessionHandler != nil {
+		handlers[agentv1.StreamKind_STREAM_KIND_TERMINAL_SESSION] =
+			agentprotocol.StreamHandlerConfig{
+				MaxConcurrent: 4,
+				MaxTimeout:    cfg.Connection.MaxResourceRequestTimeout,
+				Handle:        agentprotocol.TerminalSessionStreamHandler(services.terminalSessionHandler),
 			}
 	}
 	return agentprotocol.NewStreamServer(agentprotocol.StreamServerConfig{

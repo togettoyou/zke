@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+import "api/agent/v1/stream.proto";
+
+enum TerminalSessionAction {
+  TERMINAL_SESSION_ACTION_UNSPECIFIED = 0;
+  TERMINAL_SESSION_ACTION_CREATE = 1;
+  TERMINAL_SESSION_ACTION_DELETE = 2;
+}
+
+message TerminalSessionRequest {
+  TerminalSessionAction action = 1;
+  string session_id = 2;
+  string user_id = 3;
+  string namespace = 4;
+  repeated string permissions = 5;
+  uint64 ttl_seconds = 6;
+  string image = 7;
+}
+
+message TerminalSessionResponse {
+  ResultCode result = 1;
+  uint32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  string session_id = 5;
+  string namespace = 6;
+  string pod_name = 7;
+  string pod_uid = 8;
+  string container = 9;
+  int64 expires_at_unix = 10;
+}

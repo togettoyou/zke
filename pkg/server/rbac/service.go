@@ -99,6 +99,7 @@ var allPermissions = []Permission{
 	PermissionClusterRead,
 	PermissionClusterPodLogsRead,
 	PermissionClusterPodExec,
+	PermissionClusterTerminalExec,
 	PermissionClusterPodTerminalRecordingCreate,
 	PermissionClusterPodTerminalRecordingRead,
 	PermissionClusterPodPortForward,

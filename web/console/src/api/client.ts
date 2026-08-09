@@ -7,6 +7,7 @@ import type { paths } from "./schema";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const DEFAULT_TIMEOUT_MS = 30_000;
+const LONG_REQUEST_TIMEOUT_MS = 5 * 60_000 + 10_000;
 
 /**
  * Server-side double-submit CSRF: the `zke_csrf` cookie is readable by scripts
@@ -26,7 +27,14 @@ const csrfMiddleware: Middleware = {
   },
 };
 
-function timeoutFetch(input: Request): Promise<Response> {
+function timeoutFetch(timeoutMs: number) {
+  return (input: Request): Promise<Response> =>
+    fetch(input, {
+      signal: AbortSignal.any([input.signal, AbortSignal.timeout(timeoutMs)]),
+    });
+}
+
+function createApiClient(timeoutMs: number) {
   // Every request gets an upper bound so a hung connection cannot keep a
   // window's loading state forever. SSE does not use this client.
   //
@@ -35,22 +43,23 @@ function timeoutFetch(input: Request): Promise<Response> {
   // already carried, which is how the caller's cancellation — a closed window,
   // a superseded search — used to be dropped on the floor and every abandoned
   // request ran to completion anyway.
-  return fetch(input, {
-    signal: AbortSignal.any([input.signal, AbortSignal.timeout(DEFAULT_TIMEOUT_MS)]),
+  const client = createClient<paths>({
+    baseUrl,
+    credentials: "same-origin",
+    fetch: timeoutFetch(timeoutMs),
   });
+  client.use(csrfMiddleware);
+  return client;
 }
 
 // Requests are always same-origin. The origin is spelled out because `Request`
 // requires an absolute URL outside the browser (unit tests run under Node).
 const baseUrl = typeof location === "undefined" ? "http://localhost" : location.origin;
 
-export const api = createClient<paths>({
-  baseUrl,
-  credentials: "same-origin",
-  fetch: timeoutFetch,
-});
+export const api = createApiClient(DEFAULT_TIMEOUT_MS);
 
-api.use(csrfMiddleware);
+/** Explicit client for bounded operations such as a first Cluster Terminal image pull. */
+export const longRequestApi = createApiClient(LONG_REQUEST_TIMEOUT_MS);
 
 type UnauthenticatedListener = () => void;
 

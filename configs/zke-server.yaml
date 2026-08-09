@@ -141,6 +141,13 @@ agent_install:
   # Set only when the HTTPS registration endpoint uses a private CA.
   # registration_ca_certificate_file: /var/run/secrets/zke-http/ca.crt
 
+# Optional standalone Cluster Terminal App. Build build/terminal/Dockerfile and
+# set the resulting image here; an empty image keeps terminal session creation
+# disabled even when a role carries cluster.terminal.exec.
+cluster_terminal:
+  image: "ghcr.io/togettoyou/zke-terminal:latest"
+  session_ttl: 15m
+
 agent_listener:
   # Dedicated QUIC/UDP endpoint for persistent Agent mTLS connections.
   address: 127.0.0.1:8443

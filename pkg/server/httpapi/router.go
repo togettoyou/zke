@@ -14,6 +14,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
+	"github.com/togettoyou/zke/pkg/server/clusterterminal"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
@@ -43,6 +44,7 @@ type Dependencies struct {
 	KubernetesResourceService *kubernetesresource.Service
 	PodLogsService            *podlogs.Service
 	PodExecService            *podexec.Service
+	ClusterTerminalService    *clusterterminal.Service
 	PodAccessService          *podaccess.Service
 	ResourceWatchService      *resourcewatch.Service
 	ResourceManagementService *resourcemanagement.Service
@@ -52,6 +54,7 @@ type Dependencies struct {
 type Config struct {
 	Authentication     AuthenticationConfig
 	AgentEnrollment    AgentEnrollmentHTTPConfig
+	ClusterTerminal    ClusterTerminalHTTPConfig
 	PodLogs            PodLogsHTTPConfig
 	PodExec            PodExecHTTPConfig
 	KubernetesEvents   KubernetesEventsHTTPConfig
@@ -73,6 +76,7 @@ type handlers struct {
 	kubernetesPod           *kubernetesPodHandler
 	kubernetesPodLogs       *kubernetesPodLogsHandler
 	kubernetesPodExec       *kubernetesPodExecHandler
+	clusterTerminal         *clusterTerminalHandler
 	kubernetesPodAccess     *kubernetesPodAccessHandler
 	kubernetesEvents        *kubernetesEventsHandler
 	kubernetesWorkload      *kubernetesWorkloadHandler
@@ -99,6 +103,7 @@ type handlers struct {
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
 	requestTimeout          gin.HandlerFunc
+	terminalRequestTimeout  gin.HandlerFunc
 	// A manifest is a bounded number of single-object writes in sequence, so it
 	// cannot run under the budget that bounds one of them.
 	manifestRequestTimeout gin.HandlerFunc
@@ -409,6 +414,16 @@ func New(
 		),
 		roleBindingCache: httpmiddleware.RoleBindingCache(),
 	}
+	routeHandlers.clusterTerminal = newClusterTerminalHandler(
+		logger, dependencies.ClusterTerminalService, routeHandlers.kubernetesPodExec,
+		dependencies.RBACService, dependencies.AuditService, config.Authentication.OperationTimeout,
+		config.ClusterTerminal,
+	)
+	terminalCreationTimeout := config.ClusterTerminal.CreationTimeout
+	if terminalCreationTimeout <= 0 {
+		terminalCreationTimeout = config.Authentication.OperationTimeout
+	}
+	routeHandlers.terminalRequestTimeout = httpmiddleware.RequestTimeout(terminalCreationTimeout)
 	registerRoutes(router, routeHandlers)
 	return router
 }
