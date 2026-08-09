@@ -257,6 +257,11 @@ func renderManifest(
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
+				APIGroups: []string{"metrics.k8s.io"},
+				Resources: []string{"nodes", "pods"},
+				Verbs:     []string{"get", "list"},
+			},
+			{
 				APIGroups: []string{""},
 				Resources: []string{"nodes"},
 				// `patch` covers marking a Node schedulable or unschedulable;

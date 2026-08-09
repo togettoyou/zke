@@ -13,6 +13,10 @@
   Field Selector；
 - `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}`：返回 Node 状态、容量、地址、标签、污点、条件和
   Node System Info；
+- `GET /api/v1/clusters/{cluster_id}/metrics/nodes` 和
+  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/metrics/pods`：通过目标 Cluster Agent 读取
+  `metrics.k8s.io/v1beta1`，分别提供与 `kubectl top node`、`kubectl top pod` 同口径的 Node 以及明确
+  Namespace 内 Pod 的实时 CPU/内存用量；Pod 数值为各容器用量之和；
 - `GET /api/v1/clusters/{cluster_id}/namespaces` 和
   `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}`：返回 Namespace 列表与详情；
 - `POST /api/v1/clusters/{cluster_id}/namespaces` 和
@@ -146,7 +150,8 @@
   状态的结果会占用幂等键：DryRun 与 Kubernetes 以 4xx 拒绝的写入都没有落地，因此不占用，被拒绝后改正内容
   再次提交是一次新请求而不是冲突；5xx、超时和取消这些 Agent 无法判定结果的失败仍然占用该键，那正是重放缓存
   存在的场合；
-- 安装 Manifest 为 Agent ServiceAccount 增加 Node 的 `get`、`list`、`update`、`patch`，Namespace 的
+- 安装 Manifest 为 Agent ServiceAccount 增加 `metrics.k8s.io` NodeMetrics/PodMetrics 的只读 `get`、`list`，
+  Core Node 的 `get`、`list`、`update`、`patch`，Namespace 的
   `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
   DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
   StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、
@@ -161,6 +166,14 @@
 
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
 表示尚未实现。
+
+资源用量同样只经 Resource Stream 读取目标集群，不要求 Server 直连 Kubernetes API。Node 指标按 Cluster
+列举，Pod 指标始终携带明确 Namespace；接口和 Console 每 30 秒重新读取，返回采样时间与 Metrics Server 的
+采样窗口，不把瞬时值保存为趋势。ZKE 不负责安装 Metrics Server：当 Discovery 中没有
+`metrics.k8s.io/v1beta1` 时响应以 `available=false` 和 `metrics_api_not_installed` 提示安装；APIService 已存在但
+暂不可用时以 `metrics_api_unavailable` 提示检查 Metrics Server 与 APIService。Agent 离线、Agent
+ServiceAccount RBAC 被拒绝和其他访问错误仍返回相应错误，不伪装成可选组件缺失。Console 的「资源用量」分区
+包含 Node 与 Pod 两个标签页，只有 Pod 标签页显示 Namespace 选择器。
 
 集群概览后端复用现有 Resource Stream，并发但有上限地读取 Node、Namespace、Pod、PersistentVolume、
 PersistentVolumeClaim 以及 Deployment、StatefulSet、DaemonSet、Job、CronJob；Server 不直接访问 Kubernetes
@@ -213,8 +226,8 @@ Event 接口按 Namespace 定域，且需要独立的 `cluster.event.read`，跨
 换标签页而重置它已有的状态。
 
 Console 容器服务按资源类别组织：进入应用后先选择一个目标集群，左侧导航当前包含「概览」「节点」「命名空间」
-「工作负载」「Pod」「服务与路由」「配置管理」「存储」「自动伸缩」「策略管理」「授权管理」「资源对象浏览器」
-「YAML 清单」和「事件」十四项，默认落在「概览」。「资源对象浏览器」排在全部类型化类别之后、「事件」之前：
+「工作负载」「Pod」「资源用量」「服务与路由」「配置管理」「存储」「自动伸缩」「策略管理」「授权管理」
+「资源对象浏览器」「YAML 清单」和「事件」十五项，默认落在「概览」。「资源对象浏览器」排在全部类型化类别之后、「事件」之前：
 它是上面这些类别没有建模的类型的兜底入口，读起来该是这份资源清单的收尾而不是其中一项；「YAML 清单」紧随其后，
 是同一件事的写入侧——浏览器读任意类型，它写任意类型，两者都不从属于任何单个资源类别；「事件」仍在最后，
 它根本不是一个资源类别，而是关于上面那些资源的一条流。列表行可下钻到详情页再返回，分页使用

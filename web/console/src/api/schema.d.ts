@@ -559,6 +559,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/metrics/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的 Agent 读取 `metrics.k8s.io/v1beta1` NodeMetrics，语义对应
+         *     `kubectl top node` 的实时 CPU 与内存用量。调用需要 `cluster.read`。
+         *
+         *     Metrics API 未注册或暂不可用时仍返回 200，并以 `available: false`、稳定的
+         *     `reason` 和提示文本说明 Metrics Server 需要安装或检查；Agent 离线、RBAC
+         *     拒绝及其他集群访问错误仍按错误响应返回，不能伪装成组件未安装。
+         */
+        get: operations["listKubernetesNodeMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/metrics/pods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的 Agent 在明确 Namespace 中读取
+         *     `metrics.k8s.io/v1beta1` PodMetrics，语义对应 `kubectl top pod`。每个 Pod
+         *     的 CPU 与内存为其容器指标之和。调用需要 `cluster.read`。
+         *
+         *     Metrics API 未注册或暂不可用时采用与 Node 指标相同的可用性响应；权限和
+         *     连接错误不会被隐藏。
+         */
+        get: operations["listKubernetesPodMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/nodes/{node_name}": {
         parameters: {
             query?: never;
@@ -4675,6 +4723,43 @@ export interface components {
             /** @description Kubernetes Quantity */
             pods_allocatable: string;
         };
+        KubernetesMetricsAvailability: {
+            available: boolean;
+            /** @enum {string} */
+            reason: "" | "metrics_api_not_installed" | "metrics_api_unavailable";
+            /** @description available=true 时为空；不可用时为可直接展示的运维提示。 */
+            message: string;
+        };
+        KubernetesNodeMetric: {
+            name: string;
+            timestamp: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            window_seconds: number;
+            /** Format: int64 */
+            cpu_usage_millis: number;
+            /** Format: int64 */
+            memory_usage_bytes: number;
+        };
+        KubernetesPodMetric: {
+            name: string;
+            timestamp: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            window_seconds: number;
+            /** Format: int64 */
+            container_count: number;
+            /** Format: int64 */
+            cpu_usage_millis: number;
+            /** Format: int64 */
+            memory_usage_bytes: number;
+        };
+        KubernetesNodeMetricsSnapshot: components["schemas"]["KubernetesMetricsAvailability"] & {
+            generated_at: components["schemas"]["Timestamp"];
+            items: components["schemas"]["KubernetesNodeMetric"][];
+        };
+        KubernetesPodMetricsSnapshot: components["schemas"]["KubernetesMetricsAvailability"] & {
+            generated_at: components["schemas"]["Timestamp"];
+            items: components["schemas"]["KubernetesPodMetric"][];
+        };
         KubernetesNodePage: {
             nodes: components["schemas"]["KubernetesNodeSummary"][];
             /** @description Kubernetes 原生 opaque continuation token；空字符串表示没有下一页。 */
@@ -7181,6 +7266,69 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["KubernetesNodePage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesNodeMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Node 实时资源用量或 Metrics API 可用性提示 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesNodeMetricsSnapshot"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listKubernetesPodMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前 Namespace 的 Pod 实时资源用量或 Metrics API 可用性提示 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodMetricsSnapshot"];
                     };
                 };
             };

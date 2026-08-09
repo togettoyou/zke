@@ -200,6 +200,9 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "apiextensions.k8s.io", []string{
 		"customresourcedefinitions",
 	}, []string{"get", "list"})
+	assertPolicyRule(t, clusterRole.Rules, "metrics.k8s.io", []string{
+		"nodes", "pods",
+	}, []string{"get", "list"})
 	assertPolicyRule(t, clusterRole.Rules, "networking.k8s.io", []string{"ingresses", "networkpolicies"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "gateway.networking.k8s.io",
 		[]string{"gateways", "httproutes", "grpcroutes", "tlsroutes", "tcproutes", "udproutes"}, workloadVerbs)

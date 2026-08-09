@@ -68,6 +68,7 @@ type handlers struct {
 	agentStatus             *agentStatusHandler
 	clusterOverview         *clusterOverviewHandler
 	kubernetesNode          *kubernetesNodeHandler
+	kubernetesMetrics       *kubernetesMetricsHandler
 	kubernetesNamespace     *kubernetesNamespaceHandler
 	kubernetesPod           *kubernetesPodHandler
 	kubernetesPodLogs       *kubernetesPodLogsHandler
@@ -214,6 +215,12 @@ func New(
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesNode: newKubernetesNodeHandler(
+			logger,
+			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		kubernetesMetrics: newKubernetesMetricsHandler(
 			logger,
 			dependencies.KubernetesResourceService,
 			dependencies.AuditService,

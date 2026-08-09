@@ -362,6 +362,14 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.kubernetesNode.list,
 	)
 	clusterRoutes.GET(
+		"/:cluster_id/metrics/nodes",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesMetrics.nodes,
+	)
+	clusterRoutes.GET(
 		"/:cluster_id/nodes/:node_name",
 		handlers.authorizationMiddleware.RequireCluster(
 			rbac.PermissionClusterRead,
@@ -405,6 +413,14 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesNamespace.get,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/metrics/pods",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.kubernetesMetrics.pods,
 	)
 	// Creating and deleting a Namespace is its own permission. Every other
 	// `cluster.resource.*` write acts on one object; deleting a Namespace takes

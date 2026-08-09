@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import {
+  Activity,
   Bell,
   Box,
   Database,
@@ -50,6 +51,7 @@ import { OverviewSection } from "./OverviewSection";
 import { PodSection } from "./PodSection";
 import { PolicySection } from "./PolicySection";
 import { ResourceBrowserSection } from "./ResourceBrowserSection";
+import { ResourceUsageSection } from "./ResourceUsageSection";
 import { useTargetClusterStore, useTargetNamespaceStore } from "./selection-store";
 import { STORAGE_TYPES } from "./storage-catalog";
 import { WORKLOAD_TYPES } from "./workload-catalog";
@@ -65,6 +67,7 @@ const NAV: AppNavItem[] = [
   { id: "namespaces", label: "命名空间", icon: FolderTree },
   { id: "workloads", label: "工作负载", icon: Layers },
   { id: "pods", label: "Pod", icon: Box },
+  { id: "metrics", label: "资源用量", icon: Activity },
   { id: "networking", label: "服务与路由", icon: Network },
   { id: "configmaps", label: "配置管理", icon: FileCog },
   { id: "storage", label: "存储", icon: Database },
@@ -250,8 +253,11 @@ export function ContainerServiceApp() {
   // Policies too: PriorityClass ranks Pods across the Cluster, the other four
   // constrain one Namespace.
   const [policiesNamespaced, setPoliciesNamespaced] = useState(true);
+  // Node usage is Cluster-scoped while Pod usage follows the selected Namespace.
+  const [metricsNamespaced, setMetricsNamespaced] = useState(false);
   const namespaced =
     NAMESPACED_SECTIONS.has(activeSection) ||
+    (activeSection === "metrics" && metricsNamespaced) ||
     (activeSection === "storage" && storageNamespaced) ||
     (activeSection === "authorization" && authorizationNamespaced) ||
     (activeSection === "policies" && policiesNamespaced);
@@ -265,7 +271,8 @@ export function ContainerServiceApp() {
     namespaced &&
     activeSection !== "storage" &&
     activeSection !== "authorization" &&
-    activeSection !== "policies";
+    activeSection !== "policies" &&
+    activeSection !== "metrics";
   const namespaces = useNamespaces(namespaced && clusterId ? clusterId : null, {
     limit: NAMESPACE_PICKER_LIMIT,
   });
@@ -458,6 +465,13 @@ export function ContainerServiceApp() {
             tenantId={scope.tenantId}
             projectId={scope.projectId}
             onNamespaceScopeChange={setAuthorizationNamespaced}
+          />
+        ) : activeSection === "metrics" ? (
+          <ResourceUsageSection
+            key={clusterId}
+            clusterId={clusterId}
+            namespace={namespace}
+            onNamespaceScopeChange={setMetricsNamespaced}
           />
         ) : activeSection === "browser" ? (
           <ResourceBrowserSection
