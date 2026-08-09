@@ -35,3 +35,22 @@ func TestResponseErrorKeepsKubernetesRejectionText(t *testing.T) {
 		t.Fatalf("generic invalid input error = %v", err)
 	}
 }
+
+func TestResponseErrorKeepsAdmissionWebhookRejectionText(t *testing.T) {
+	t.Parallel()
+
+	detail := `admission webhook "vscaledobject.kb.io" denied the request: ` +
+		`the scaledobject has a cpu trigger but the container grafana doesn't have the cpu request defined`
+	err := responseErrorWithNotFound(&agentv1.ResourceResponse{
+		Result:  agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT,
+		Reason:  "AdmissionDenied",
+		Message: detail,
+	}, ErrResourceNotFound)
+	if !errors.Is(err, ErrUpstreamRejected) {
+		t.Fatalf("admission rejection error = %v, want ErrUpstreamRejected", err)
+	}
+	var rejection *UpstreamRejection
+	if !errors.As(err, &rejection) || rejection.Detail() != detail {
+		t.Fatalf("admission rejection detail = %v", err)
+	}
+}

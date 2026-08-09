@@ -635,6 +635,9 @@ VPA 与 KEDA 是可选集成，ZKE 不安装对应控制器或 CRD。VPA 类型�
 和连接串等敏感值不得直接写入 metadata，必须用 `authentication_ref_name` 引用同 Namespace 的
 TriggerAuthentication。为兼容集群中已有对象，读取时发现这些敏感键只返回 `[redacted]` 并列出脱敏键，不把正文
 送到 Console、日志或审计。类型化编辑会拒绝把脱敏占位符写回，操作者需先移除敏感键并配置认证引用。
+Kubernetes 准入 Webhook 对提交对象的拒绝会作为 `cluster_api_rejected` 400 返回并保留其有界校验说明；它与 Agent
+ServiceAccount 的 RBAC 403 分开处理。例如 KEDA 的 CPU Utilization 触发器若指向未设置 CPU request 的容器，界面
+应直接展示 KEDA 的缺失 request 原因，而不是误报 Agent 无权访问。
 
 Console 自动伸缩页面列出所选命名空间的 HPA，展示目标工作负载、当前副本与期望副本、副本区间、指标数量、
 状态和最近一次伸缩时间。状态只显示需要注意的情况——无法伸缩、指标不可用、已触达上下限、尚未同步——健康的
@@ -669,7 +672,8 @@ VPA 与 KEDA 的创建和编辑不要求操作者编写 JSON。VPA 以逐容器�
 受控资源和 Requests/Limits 调整范围；空策略明确表示使用控制器默认值。KEDA 以逐触发器卡片编辑类型、可选名称、
 缓存指标开关、TriggerAuthentication 引用，以及可增删的 metadata 键值行。已有 ScaledObject 中被脱敏的 metadata
 不会回填到输入框；表单要求先配置 TriggerAuthentication，保存时移除这些内嵌敏感键，避免把 `[redacted]` 当成
-真实凭证写回。
+真实凭证写回。DryRun 或实际提交失败时，表单内持续展示后端的安全错误说明与请求 ID，同时给出全局失败通知；无法
+识别的异常至少显示网络错误兜底，不能只在浏览器 Network 面板留下失败请求。
 
 策略管理后端把五类约束放在一组接口下：命名空间级的 `core/v1 ResourceQuota`、`core/v1 LimitRange`、
 `networking.k8s.io/v1 NetworkPolicy`、`policy/v1 PodDisruptionBudget`，以及集群级的

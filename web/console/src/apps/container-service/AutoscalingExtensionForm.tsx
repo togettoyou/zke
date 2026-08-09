@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
+import { errorMessage, errorRequestId } from "@/api/errors";
 import {
   useCreateKEDAScaledObject,
   useCreateVerticalPodAutoscaler,
@@ -17,6 +18,7 @@ import type {
   KubernetesVPAContainerPolicy,
 } from "@/api/types";
 import { PageHeader } from "@/apps/AppShell";
+import { notifyFailure } from "@/components/common/notify";
 import { Button } from "@/components/ui/button";
 import { Input, NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -172,6 +174,14 @@ export function AutoscalingExtensionForm({
   const updateKEDA = useUpdateKEDAScaledObject();
   const pending =
     createVPA.isPending || updateVPA.isPending || createKEDA.isPending || updateKEDA.isPending;
+  const mutationError =
+    kind === "vpa"
+      ? vpa
+        ? updateVPA.error
+        : createVPA.error
+      : keda
+        ? updateKEDA.error
+        : createKEDA.error;
   const previewKey = useSubmissionKey(true);
   const applyKey = useSubmissionKey(true);
   const label = kind === "vpa" ? "VPA" : "KEDA ScaledObject";
@@ -263,7 +273,9 @@ export function AutoscalingExtensionForm({
           onClose();
         }
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        notifyFailure(`${label}${dryRun ? " DryRun 预检" : " 保存"}失败`, error);
+      });
   };
 
   return (
@@ -354,6 +366,16 @@ export function AutoscalingExtensionForm({
         )}
 
         {problem ? <Alert tone="danger">{problem}</Alert> : null}
+        {mutationError ? (
+          <Alert tone="danger" role="alert" aria-live="assertive">
+            {errorMessage(mutationError)}
+            {errorRequestId(mutationError) ? (
+              <span className="zke-mono mt-1 block text-xs opacity-80">
+                请求 ID：{errorRequestId(mutationError)}
+              </span>
+            ) : null}
+          </Alert>
+        ) : null}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" disabled={pending} onClick={onClose}>
             取消

@@ -1115,7 +1115,7 @@ func kubernetesResourceError(err error) *agentv1.ResourceResponse {
 	statusCode := int32(http.StatusInternalServerError)
 	switch {
 	case apierrors.IsBadRequest(err), apierrors.IsInvalid(err),
-		apierrors.IsMethodNotSupported(err):
+		apierrors.IsMethodNotSupported(err), kubernetesAdmissionDenied(err):
 		result = agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT
 	case apierrors.IsUnauthorized(err):
 		result = agentv1.ResultCode_RESULT_CODE_UNAUTHENTICATED
@@ -1134,6 +1134,9 @@ func kubernetesResourceError(err error) *agentv1.ResourceResponse {
 	}
 
 	reason := string(apierrors.ReasonForError(err))
+	if kubernetesAdmissionDenied(err) {
+		reason = "AdmissionDenied"
+	}
 	if reason == "" {
 		reason = "KubernetesAPIError"
 	}
@@ -1156,15 +1159,15 @@ const maxKubernetesRejectionMessage = 1024
 
 // kubernetesRejectionMessage is what the caller is told about a failed request.
 //
-// For `Invalid` — the API Server refusing the very object this caller submitted
-// — it is the API Server's own explanation, because that explanation is about
-// the submitted fields and is often the only place the reason appears at all: a
-// NodePort outside the cluster's configured range is rejected with the range in
-// the message, and nothing else in the request or the object says what that
-// range is. Every other failure keeps a fixed message; those are about the
-// cluster rather than the request, and their text is not the caller's business.
+// For `Invalid`, or a validating admission Webhook explicitly denying the
+// request, it is the API Server's own explanation. Both describe the submitted
+// object and are often the only place the actionable reason appears at all: a
+// NodePort outside the cluster's configured range names that range, while a
+// KEDA denial explains which workload request is missing. Every other failure
+// keeps a fixed message; those are about the cluster rather than the request,
+// and their text is not the caller's business.
 func kubernetesRejectionMessage(err error) string {
-	if !apierrors.IsInvalid(err) {
+	if !apierrors.IsInvalid(err) && !kubernetesAdmissionDenied(err) {
 		return "Kubernetes API request failed"
 	}
 	var status apierrors.APIStatus
@@ -1179,6 +1182,25 @@ func kubernetesRejectionMessage(err error) string {
 		return message[:maxKubernetesRejectionMessage]
 	}
 	return message
+}
+
+// A validating admission Webhook uses HTTP 403 for a rejected object, just as
+// Kubernetes RBAC does. The API machinery exposes no separate StatusReason, so
+// keep the distinction deliberately narrow: only the API Server's canonical
+// admission-denial wrapper is a caller-correctable rejection. An ordinary
+// Forbidden response remains an Agent credential/RBAC failure and its detail is
+// not returned.
+func kubernetesAdmissionDenied(err error) bool {
+	if !apierrors.IsForbidden(err) {
+		return false
+	}
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(status.Status().Message))
+	return strings.Contains(message, "admission webhook") &&
+		strings.Contains(message, "denied the request")
 }
 
 func resourceErrorResponse(

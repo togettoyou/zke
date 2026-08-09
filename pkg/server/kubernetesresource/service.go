@@ -34,6 +34,7 @@ const (
 	// predates them reports a plain FORBIDDEN, which still maps to a denial.
 	agentResourceNotAllowedReason         = "ResourceNotAllowed"
 	agentNamespaceForbiddenReason         = "AgentNamespaceForbidden"
+	agentAdmissionDeniedReason            = "AdmissionDenied"
 	defaultMaxBufferedResponseBytes int64 = 256 * 1024 * 1024
 )
 
@@ -437,11 +438,13 @@ func responseErrorWithNotFound(
 	}
 	switch response.GetResult() {
 	case agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT:
-		// `Invalid` is the API Server refusing the submitted object and saying
-		// which field it refused. That explanation is carried through; a request
-		// this Server itself found malformed never reaches an Agent, so nothing
-		// here is a guess about what the caller meant.
-		if response.GetReason() == "Invalid" && response.GetMessage() != "" {
+		// `Invalid` and `AdmissionDenied` are the API Server refusing the
+		// submitted object and saying why. That explanation is carried through; a
+		// request this Server itself found malformed never reaches an Agent, so
+		// nothing here is a guess about what the caller meant.
+		if (response.GetReason() == "Invalid" ||
+			response.GetReason() == agentAdmissionDeniedReason) &&
+			response.GetMessage() != "" {
 			return &UpstreamRejection{Message: response.GetMessage()}
 		}
 		return ErrInvalidInput

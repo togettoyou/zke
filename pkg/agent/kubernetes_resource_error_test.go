@@ -38,8 +38,23 @@ func TestKubernetesResourceErrorCarriesRejectionText(t *testing.T) {
 		t.Fatalf("rejection message = %q, want the API Server's own explanation", response.GetMessage())
 	}
 
-	// Everything else is about the cluster rather than the request, and keeps a
-	// fixed message.
+	admissionMessage := `admission webhook "vscaledobject.kb.io" denied the request: ` +
+		`the scaledobject has a cpu trigger but the container grafana doesn't have the cpu request defined`
+	admissionDenied := &apierrors.StatusError{ErrStatus: metav1.Status{
+		Status:  metav1.StatusFailure,
+		Code:    http.StatusForbidden,
+		Reason:  metav1.StatusReasonForbidden,
+		Message: admissionMessage,
+	}}
+	response = kubernetesResourceError(admissionDenied)
+	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT ||
+		response.GetReason() != "AdmissionDenied" ||
+		response.GetMessage() != admissionMessage {
+		t.Fatalf("unexpected admission rejection response: %+v", response)
+	}
+
+	// An ordinary Forbidden is about cluster access rather than the submitted
+	// object, and keeps a fixed message.
 	forbidden := apierrors.NewForbidden(
 		schema.GroupResource{Resource: "services"},
 		"test1",
@@ -49,6 +64,9 @@ func TestKubernetesResourceErrorCarriesRejectionText(t *testing.T) {
 	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_FORBIDDEN ||
 		response.GetMessage() != "Kubernetes API request failed" {
 		t.Fatalf("unexpected forbidden response: %+v", response)
+	}
+	if kubernetesAdmissionDenied(forbidden) {
+		t.Fatal("ordinary Kubernetes RBAC denial was classified as admission rejection")
 	}
 
 	// A rejection with no text of its own still says something.
