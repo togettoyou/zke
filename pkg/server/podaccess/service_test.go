@@ -189,6 +189,13 @@ func TestAccessActivationProxyAndCookieIsolation(t *testing.T) {
 	if replacementResponse.Code != http.StatusConflict {
 		t.Fatalf("replacement status = %d, want 409", replacementResponse.Code)
 	}
+	if body := replacementResponse.Body.String(); !strings.Contains(body, `class="status-card"`) ||
+		!strings.Contains(body, "结束旧入口并继续") {
+		t.Fatalf("replacement page is missing the styled status card or action: %q", body)
+	}
+	if policy := replacementResponse.Header().Get("Content-Security-Policy"); !strings.Contains(policy, "form-action 'self'") || !strings.Contains(policy, "frame-ancestors 'none'") {
+		t.Fatalf("replacement page content security policy = %q", policy)
+	}
 	privacyRequest := httptest.NewRequest(http.MethodGet, replacementTicket.AccessURL, nil)
 	privacyRequest.Host = replacementURL.Host
 	privacyResponse := httptest.NewRecorder()
@@ -203,6 +210,10 @@ func TestAccessActivationProxyAndCookieIsolation(t *testing.T) {
 	service.ServeHTTP(reusedResponse, reusedRequest)
 	if reusedResponse.Code != http.StatusGone {
 		t.Fatalf("reused activation status = %d, want 410", reusedResponse.Code)
+	}
+	if body := reusedResponse.Body.String(); !strings.Contains(body, `class="status-card"`) ||
+		!strings.Contains(body, "此 Pod 访问地址已失效") || !strings.Contains(body, "返回 ZKE Console") {
+		t.Fatalf("expired page is missing the styled status card or recovery guidance: %q", body)
 	}
 
 	proxyRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081/dashboard", nil)

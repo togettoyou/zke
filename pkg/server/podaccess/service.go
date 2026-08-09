@@ -37,6 +37,114 @@ const (
 	opaqueTokenBytes       = 32
 	proxyBufferBytes       = 32 * 1024
 	maxResponseHeaderBytes = 1024 * 1024
+	podAccessPageStart     = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f4f6fb;
+  --glow: rgba(79, 70, 229, .16);
+  --card: rgba(255, 255, 255, .92);
+  --border: #e1e6f0;
+  --text: #182033;
+  --muted: #68738a;
+  --soft: #f7f8fc;
+  --primary: #5262e5;
+  --primary-hover: #4453cf;
+  --warning: #b86c0f;
+  --warning-soft: #fff5dc;
+  --danger: #c24432;
+  --danger-soft: #fff0ed;
+  --shadow: 0 24px 64px rgba(29, 39, 69, .13);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 15% 12%, var(--glow), transparent 28rem),
+    radial-gradient(circle at 88% 86%, rgba(43, 184, 196, .09), transparent 26rem),
+    var(--page);
+  font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.status-card {
+  width: min(100%, 640px);
+  overflow: hidden;
+  padding: 38px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; color: var(--muted); font-weight: 650; }
+.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: white; background: linear-gradient(145deg, #6978ef, #4351ce); }
+.brand-mark svg { width: 18px; height: 18px; }
+.status-icon { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 20px; border-radius: 17px; }
+.status-icon svg { width: 30px; height: 30px; }
+.status-icon.warning { color: var(--warning); background: var(--warning-soft); }
+.status-icon.danger { color: var(--danger); background: var(--danger-soft); }
+h1 { margin: 0 0 10px; font-size: clamp(25px, 4vw, 32px); line-height: 1.25; letter-spacing: -.02em; }
+.lead { margin: 0; color: var(--muted); font-size: 16px; }
+.notice { display: grid; grid-template-columns: auto 1fr; gap: 12px; margin: 24px 0; padding: 16px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--soft); }
+.notice svg { width: 19px; height: 19px; margin-top: 3px; color: var(--primary); }
+.notice strong { display: block; margin-bottom: 2px; }
+.notice p { margin: 0; color: var(--muted); }
+.actions { display: flex; align-items: center; gap: 16px; margin-top: 26px; }
+.primary-button {
+  appearance: none;
+  border: 0;
+  border-radius: 11px;
+  padding: 12px 20px;
+  color: white;
+  background: var(--primary);
+  box-shadow: 0 8px 18px rgba(82, 98, 229, .24);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  transition: transform .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.primary-button:hover { transform: translateY(-1px); background: var(--primary-hover); box-shadow: 0 10px 22px rgba(82, 98, 229, .3); }
+.primary-button:focus-visible { outline: 3px solid rgba(82, 98, 229, .28); outline-offset: 3px; }
+.alternative { color: var(--muted); font-size: 14px; }
+.footnote { margin: 24px 0 0; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+@media (max-width: 560px) {
+  body { padding: 14px; }
+  .status-card { padding: 26px 22px; border-radius: 19px; }
+  .brand { margin-bottom: 22px; }
+  .actions { align-items: stretch; flex-direction: column; }
+  .primary-button { width: 100%; }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #101522;
+    --glow: rgba(91, 104, 230, .2);
+    --card: rgba(25, 32, 49, .94);
+    --border: #303a51;
+    --text: #edf1fa;
+    --muted: #aab3c6;
+    --soft: #20283a;
+    --primary: #7180f0;
+    --primary-hover: #8190fa;
+    --warning: #f1b75d;
+    --warning-soft: rgba(184, 108, 15, .17);
+    --danger: #f08b7b;
+    --danger-soft: rgba(194, 68, 50, .17);
+    --shadow: 0 24px 70px rgba(0, 0, 0, .3);
+  }
+}
+</style>`
+	podAccessBrand = `<div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 7v10l7 4 7-4V7l-7-4Z"/><path d="m5 7 7 4 7-4M12 11v10"/></svg></span><span>ZKE Pod Access</span></div>`
 )
 
 var (
@@ -324,12 +432,21 @@ func (service *Service) serveActivation(writer http.ResponseWriter, request *htt
 }
 
 func (service *Service) writeReplacementRequired(writer http.ResponseWriter, activationPath string) {
-	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	setPodAccessPageHeaders(writer)
 	writer.WriteHeader(http.StatusConflict)
-	_, _ = io.WriteString(writer, "<!doctype html><meta charset=utf-8><title>Pod access already active</title>"+
-		"<h1>当前浏览器已有 Pod 访问会话</h1>"+
-		"<p>为避免旧标签页静默访问到新的 Pod，本次地址尚未激活。可改用隐私窗口，或先关闭旧页面并明确替换当前入口。</p>"+
-		"<form method=post action=\""+html.EscapeString(activationPath)+"\"><button type=submit>结束旧入口并继续</button></form>")
+	_, _ = io.WriteString(writer, podAccessPageStart+`<title>当前已有 Pod 访问会话 · ZKE</title>
+</head>
+<body>
+<main class="status-card">`+podAccessBrand+`
+  <div class="status-icon warning" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5m0 3h.01"/><path d="M10.3 3.9 2.6 17.1A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.9L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></div>
+  <h1>当前已有 Pod 访问会话</h1>
+  <p class="lead">为避免旧标签页在不知情的情况下访问到新的 Pod，本次地址尚未激活。</p>
+  <div class="notice"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></svg><div><strong>请选择如何继续</strong><p>结束当前浏览器中的旧入口，或在隐私窗口中打开此地址以保留两个独立会话。</p></div></div>
+  <div class="actions"><form method="post" action="`+html.EscapeString(activationPath)+`"><button class="primary-button" type="submit">结束旧入口并继续</button></form><span class="alternative">不会自动替换现有会话</span></div>
+  <p class="footnote">Pod 访问会话与当前浏览器隔离，并会在到期或权限被收回后自动失效。</p>
+</main>
+</body>
+</html>`)
 }
 
 func (service *Service) activate(ctx context.Context, token string, now time.Time) (string, *activeSession, error) {
@@ -481,9 +598,25 @@ func (service *Service) clearAccessCookie(writer http.ResponseWriter) {
 }
 
 func (service *Service) writeAccessRequired(writer http.ResponseWriter, status int) {
-	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	setPodAccessPageHeaders(writer)
 	writer.WriteHeader(status)
-	_, _ = io.WriteString(writer, "<!doctype html><meta charset=utf-8><title>Pod access unavailable</title><p>Pod 访问地址无效、已过期或权限已被收回，请返回 ZKE 重新创建。</p>")
+	_, _ = io.WriteString(writer, podAccessPageStart+`<title>Pod 访问地址已失效 · ZKE</title>
+</head>
+<body>
+<main class="status-card">`+podAccessBrand+`
+  <div class="status-icon danger" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></svg></div>
+  <h1>此 Pod 访问地址已失效</h1>
+  <p class="lead">该地址无法继续访问，可能已经使用、过期，或当前登录与权限已被收回。</p>
+  <div class="notice"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/></svg><div><strong>请返回 ZKE Console</strong><p>关闭此页面，在原 Pod 详情中重新创建访问地址。出于安全考虑，失效地址不能恢复或重复激活。</p></div></div>
+  <p class="footnote">如果访问权限刚刚发生变化，请刷新 Console 并确认当前账号仍具有 Pod 端口转发权限。</p>
+</main>
+</body>
+</html>`)
+}
+
+func setPodAccessPageHeaders(writer http.ResponseWriter) {
+	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 }
 
 func setPrivateHeaders(header http.Header) {
