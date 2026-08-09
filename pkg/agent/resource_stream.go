@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/quic-go/quic-go"
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
@@ -71,6 +73,7 @@ func newBusinessStreamServer(
 					cfg.Connection.MaxPodAccessClientBytes,
 					cfg.Connection.MaxPodAccessPodBytes,
 					services.podPortForwardHandler,
+					podAccessStreamObserver(logger, clusterID),
 				),
 			}
 	}
@@ -110,6 +113,92 @@ func newBusinessStreamServer(
 			logger.Debug("Agent business Stream stopped", attributes...)
 		},
 	})
+}
+
+func podAccessStreamObserver(logger *slog.Logger, clusterID string) agentprotocol.PodPortForwardObserver {
+	return agentprotocol.PodPortForwardObserver{
+		Opened: func(observation agentprotocol.PodPortForwardObservation) {
+			if logger == nil {
+				return
+			}
+			attributes := append(
+				podAccessStreamAttributes(clusterID, observation),
+				slog.Duration("setup_duration", observation.Duration),
+			)
+			logger.Debug("Pod access upstream opened", attributes...)
+		},
+		Closed: func(observation agentprotocol.PodPortForwardObservation) {
+			if logger == nil {
+				return
+			}
+			attributes := podAccessStreamAttributes(clusterID, observation)
+			attributes = append(attributes, slog.Duration("duration", observation.Duration))
+			level := slog.LevelDebug
+			message := "Pod access upstream closed"
+			result, reason := podAccessStreamResult(observation)
+			attributes = append(attributes, slog.String("result", result), slog.String("reason", reason))
+			if observation.Exit != nil {
+				attributes = append(attributes,
+					slog.Uint64("client_bytes", observation.Exit.GetClientBytes()),
+					slog.Uint64("pod_bytes", observation.Exit.GetPodBytes()),
+				)
+			}
+			if observation.Err != nil {
+				attributes = append(attributes, slog.String("error", observation.Err.Error()))
+			}
+			if result != "ok" && result != "canceled" {
+				level = slog.LevelWarn
+				message = "Pod access upstream failed"
+			}
+			logger.Log(context.Background(), level, message, attributes...)
+		},
+	}
+}
+
+func podAccessStreamAttributes(clusterID string, observation agentprotocol.PodPortForwardObservation) []any {
+	request := observation.Request
+	header := observation.Header
+	attributes := []any{slog.String("cluster_id", clusterID)}
+	if header != nil {
+		attributes = append(attributes, slog.String("request_id", header.GetRequestId()))
+	}
+	if request != nil {
+		attributes = append(attributes,
+			slog.String("namespace", request.GetNamespace()),
+			slog.String("pod_name", request.GetPodName()),
+			slog.String("pod_uid", request.GetPodUid()),
+			slog.Int("pod_port", int(request.GetPort())),
+		)
+	}
+	return attributes
+}
+
+func podAccessStreamResult(observation agentprotocol.PodPortForwardObservation) (string, string) {
+	if observation.Exit != nil {
+		reason := observation.Exit.GetReason()
+		if reason == "" {
+			reason = "completed"
+		}
+		return agentResultName(observation.Exit.GetResult()), reason
+	}
+	if observation.Response != nil && observation.Response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+		reason := observation.Response.GetReason()
+		if reason == "" {
+			reason = "rejected"
+		}
+		return agentResultName(observation.Response.GetResult()), reason
+	}
+	if observation.Err != nil {
+		if errors.Is(observation.Err, context.Canceled) {
+			return "canceled", "stream_canceled"
+		}
+		return "failed", "stream_error"
+	}
+	return "ok", "completed"
+}
+
+func agentResultName(result agentv1.ResultCode) string {
+	return strings.ToLower(strings.TrimPrefix(result.String(), "RESULT_CODE_"))
 }
 
 func runBusinessStreamServer(

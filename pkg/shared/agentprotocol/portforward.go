@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"sync/atomic"
+	"time"
 
 	"github.com/quic-go/quic-go"
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/shared/requestctx"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -31,6 +33,22 @@ type PodPortForwardHandler func(
 	*agentv1.PodPortForwardRequest,
 ) (*agentv1.PodPortForwardResponse, PodPortForwardConnection, error)
 
+// PodPortForwardObservation exposes lifecycle metadata for operational logs.
+// It deliberately contains no transported bytes, HTTP headers, or credentials.
+type PodPortForwardObservation struct {
+	Header   *agentv1.StreamHeader
+	Request  *agentv1.PodPortForwardRequest
+	Response *agentv1.PodPortForwardResponse
+	Exit     *agentv1.PodPortForwardExit
+	Err      error
+	Duration time.Duration
+}
+
+type PodPortForwardObserver struct {
+	Opened func(PodPortForwardObservation)
+	Closed func(PodPortForwardObservation)
+}
+
 type PodPortForwardPeer interface {
 	Read(context.Context) ([]byte, error)
 	Write(context.Context, []byte) error
@@ -40,11 +58,17 @@ func PodPortForwardStreamHandler(
 	maxClientBytes uint64,
 	maxPodBytes uint64,
 	handler PodPortForwardHandler,
+	observers ...PodPortForwardObserver,
 ) IncomingStreamHandler {
-	return func(ctx context.Context, stream *quic.Stream, header *agentv1.StreamHeader) error {
+	observer := PodPortForwardObserver{}
+	if len(observers) > 0 {
+		observer = observers[0]
+	}
+	return func(ctx context.Context, stream *quic.Stream, header *agentv1.StreamHeader) (handlerErr error) {
 		if handler == nil {
 			return &StreamFailure{Code: StreamErrorUnsupported, Err: ErrStreamUnsupported}
 		}
+		startedAt := time.Now()
 		request := &agentv1.PodPortForwardRequest{}
 		if err := ReadMessage(stream, request); err != nil {
 			return fmt.Errorf("%w: read PodPortForwardRequest: %w", ErrStreamProtocol, err)
@@ -53,9 +77,21 @@ func PodPortForwardStreamHandler(
 			request.GetMaxClientBytes() > maxClientBytes || request.GetMaxPodBytes() > maxPodBytes {
 			return ErrStreamProtocol
 		}
-		forward, cancel := context.WithCancel(ctx)
+		var response *agentv1.PodPortForwardResponse
+		var exit *agentv1.PodPortForwardExit
+		defer func() {
+			if observer.Closed != nil {
+				observer.Closed(PodPortForwardObservation{
+					Header: header, Request: request, Response: response, Exit: exit,
+					Err: handlerErr, Duration: time.Since(startedAt),
+				})
+			}
+		}()
+		forward, cancel := context.WithCancel(requestctx.WithID(ctx, header.GetRequestId()))
 		defer cancel()
-		response, connection, err := handler(forward, request)
+		var connection PodPortForwardConnection
+		response, connection, handlerErr = handler(forward, request)
+		err := handlerErr
 		if err != nil {
 			return err
 		}
@@ -65,10 +101,16 @@ func PodPortForwardStreamHandler(
 		if validatePodPortForwardResponse(response, request, connection != nil) != nil {
 			return ErrStreamProtocol
 		}
+		if response.GetResult() == agentv1.ResultCode_RESULT_CODE_OK && observer.Opened != nil {
+			observer.Opened(PodPortForwardObservation{
+				Header: header, Request: request, Response: response, Duration: time.Since(startedAt),
+			})
+		}
 		if err := WriteMessage(stream, response); err != nil || response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
 			return err
 		}
-		return servePodPortForward(forward, cancel, stream, connection, request)
+		exit, handlerErr = servePodPortForward(forward, cancel, stream, connection, request)
+		return handlerErr
 	}
 }
 
@@ -193,7 +235,7 @@ func servePodPortForward(
 	stream *quic.Stream,
 	connection PodPortForwardConnection,
 	request *agentv1.PodPortForwardRequest,
-) error {
+) (*agentv1.PodPortForwardExit, error) {
 	clientBytes := &atomic.Uint64{}
 	podBytes := &atomic.Uint64{}
 	errorsChannel := make(chan error, 2)
@@ -232,7 +274,7 @@ func servePodPortForward(
 		exit.Reason = "ForwardingFailed"
 		exit.Message = "Pod port forwarding ended unexpectedly"
 	}
-	return WriteMessage(stream, &agentv1.PodPortForwardFrame{
+	return exit, WriteMessage(stream, &agentv1.PodPortForwardFrame{
 		Message: &agentv1.PodPortForwardFrame_Exit{Exit: exit},
 	})
 }

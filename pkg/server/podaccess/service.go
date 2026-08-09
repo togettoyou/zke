@@ -27,6 +27,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
+	"github.com/togettoyou/zke/pkg/shared/requestctx"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
@@ -246,6 +247,7 @@ const (
 	endReplaced
 	endByteLimit
 	endFailed
+	endServerShutdown
 )
 
 type endedSession struct {
@@ -425,8 +427,10 @@ func (service *Service) Create(input CreateInput) (Ticket, error) {
 	service.mutex.Unlock()
 	if replaced != nil {
 		replaced.close()
+		service.logSessionEnded(replaced, endReplaced)
 		service.recordWithReason(replaced.input, "succeeded", "replaced")
 	}
+	service.logActivationCreated(input, expiresAt)
 	return ticket, nil
 }
 
@@ -570,7 +574,10 @@ func (service *Service) activate(ctx context.Context, token string, now time.Tim
 		service.record(pending.CreateInput, "failed")
 		return "", nil, err
 	}
-	sessionContext, cancel := context.WithDeadline(service.rootContext, now.Add(pending.SessionTTL))
+	sessionContext, cancel := context.WithDeadline(
+		requestctx.WithID(service.rootContext, pending.RequestID),
+		now.Add(pending.SessionTTL),
+	)
 	session := &activeSession{
 		service: service, key: key, input: pending.CreateInput,
 		forward: podportforward.Session{ID: forwardID, UserID: pending.UserID, AuthSessionID: pending.AuthSessionID,
@@ -605,6 +612,7 @@ func (service *Service) activate(ctx context.Context, token string, now time.Tim
 	}
 	service.mutex.Unlock()
 	service.record(pending.CreateInput, "succeeded")
+	service.logSessionActivated(session)
 	go session.monitor()
 	return cookieToken, session, nil
 }
@@ -662,6 +670,7 @@ func (service *Service) deactivate(key [sha256.Size]byte, reason endReason) {
 	service.mutex.Unlock()
 	if session != nil {
 		session.close()
+		service.logSessionEnded(session, reason)
 		switch reason {
 		case endRevoked:
 			service.recordWithReason(session.input, "denied", "permission_revoked")
@@ -757,7 +766,10 @@ func (service *Service) removeExpiredLocked(now time.Time) {
 				delete(service.reservations, target)
 			}
 			service.rememberEndedLocked(key, endExpired, now, session.expiresAt)
-			go session.close()
+			go func(expired *activeSession) {
+				expired.close()
+				service.logSessionEnded(expired, endExpired)
+			}(session)
 		}
 	}
 	for key, ended := range service.ended {
@@ -794,6 +806,78 @@ func auditReason(reason string) string {
 		return ""
 	}
 	return " end:" + reason
+}
+
+func (service *Service) logActivationCreated(input CreateInput, expiresAt time.Time) {
+	service.logger.Info("Pod access activation created", append(
+		podAccessLogAttributes(input),
+		slog.Time("activation_expires_at", expiresAt),
+		slog.Duration("session_duration", input.SessionTTL),
+		slog.Bool("replace_existing", input.ReplaceExisting),
+	)...)
+}
+
+func (service *Service) logSessionActivated(session *activeSession) {
+	service.logger.Info("Pod access session activated", append(
+		podAccessSessionLogAttributes(session),
+		slog.Time("session_expires_at", session.expiresAt),
+	)...)
+}
+
+func (service *Service) logSessionEnded(session *activeSession, reason endReason) {
+	if session == nil {
+		return
+	}
+	attributes := append(
+		podAccessSessionLogAttributes(session),
+		slog.String("reason", reason.String()),
+		slog.Duration("duration", time.Since(session.forward.CreatedAt)),
+		slog.Uint64("client_bytes", session.clientBytes.Load()),
+		slog.Uint64("pod_bytes", session.podBytes.Load()),
+	)
+	if reason == endRevoked || reason == endByteLimit || reason == endFailed {
+		service.logger.Warn("Pod access session closed", attributes...)
+		return
+	}
+	service.logger.Info("Pod access session closed", attributes...)
+}
+
+func podAccessLogAttributes(input CreateInput) []any {
+	return []any{
+		slog.String("request_id", input.RequestID),
+		slog.String("user_id", input.UserID),
+		slog.String("cluster_id", input.ClusterID),
+		slog.String("namespace", input.Namespace),
+		slog.String("pod_name", input.PodName),
+		slog.String("pod_uid", input.PodUID),
+		slog.Int("pod_port", int(input.Port)),
+	}
+}
+
+func podAccessSessionLogAttributes(session *activeSession) []any {
+	return append(
+		podAccessLogAttributes(session.input),
+		slog.String("session_id", session.forward.ID),
+	)
+}
+
+func (reason endReason) String() string {
+	switch reason {
+	case endExpired:
+		return "expired"
+	case endRevoked:
+		return "permission_revoked"
+	case endReplaced:
+		return "replaced"
+	case endByteLimit:
+		return "byte_limit"
+	case endFailed:
+		return "upstream_failure"
+	case endServerShutdown:
+		return "server_shutdown"
+	default:
+		return "unknown"
+	}
 }
 
 func (service *Service) clearAccessCookie(writer http.ResponseWriter) {
@@ -913,7 +997,11 @@ func (session *activeSession) monitor() {
 	for {
 		select {
 		case <-session.ctx.Done():
-			session.service.deactivate(session.key, endExpired)
+			reason := endExpired
+			if time.Now().Before(session.expiresAt) {
+				reason = endServerShutdown
+			}
+			session.service.deactivate(session.key, reason)
 			return
 		case now := <-ticker.C:
 			if err := session.service.revalidate(session.ctx, session.input, now.UTC()); err != nil {
@@ -982,17 +1070,20 @@ func (session *activeSession) newProxy() *httputil.ReverseProxy {
 }
 
 func (session *activeSession) dialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	startedAt := time.Now()
 	if err := session.acquire(ctx); err != nil {
+		session.logUpstreamResult(podportforward.Result{}, err, time.Since(startedAt))
 		return nil, err
 	}
 	client, peerConnection := net.Pipe()
 	managed := &managedConnection{Conn: client, release: session.release}
 	peer := &pipePeer{connection: peerConnection}
 	go func() {
-		_, err := session.service.forwarder.Run(session.ctx, session.forward, peer,
+		result, err := session.service.forwarder.Run(session.ctx, session.forward, peer,
 			session.service.config.MaxClientBytes, session.service.config.MaxPodBytes)
 		_ = peerConnection.Close()
 		_ = managed.Close()
+		session.logUpstreamResult(result, err, time.Since(startedAt))
 		switch {
 		case errors.Is(err, podportforward.ErrByteLimit):
 			session.fail(endByteLimit)
@@ -1001,6 +1092,59 @@ func (session *activeSession) dialContext(ctx context.Context, _, _ string) (net
 		}
 	}()
 	return &limitedConnection{Conn: managed, session: session}, nil
+}
+
+func (session *activeSession) logUpstreamResult(result podportforward.Result, err error, duration time.Duration) {
+	attributes := append(
+		podAccessSessionLogAttributes(session),
+		slog.Duration("duration", duration),
+		slog.Uint64("client_bytes", result.ClientBytes),
+		slog.Uint64("pod_bytes", result.PodBytes),
+		slog.String("reason", podAccessUpstreamReason(err)),
+	)
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrAccessExpired) {
+		session.service.logger.Debug("Pod access upstream closed", attributes...)
+		return
+	}
+	attributes = append(attributes, slog.String("error", err.Error()))
+	session.service.logger.Warn("Pod access upstream failed", attributes...)
+}
+
+func podAccessUpstreamReason(err error) string {
+	switch {
+	case err == nil:
+		return "completed"
+	case errors.Is(err, context.Canceled):
+		return "session_closed"
+	case errors.Is(err, ErrAccessExpired):
+		return "session_closed"
+	case errors.Is(err, ErrCapacity):
+		return "capacity_exhausted"
+	case errors.Is(err, podportforward.ErrByteLimit):
+		return "byte_limit"
+	case errors.Is(err, podportforward.ErrPodReplaced):
+		return "pod_replaced"
+	case errors.Is(err, podportforward.ErrAgentNotConnected):
+		return "agent_disconnected"
+	case errors.Is(err, podportforward.ErrAgentUnsupported):
+		return "agent_unsupported"
+	case errors.Is(err, podportforward.ErrRequestCapacity):
+		return "capacity_exhausted"
+	case errors.Is(err, podportforward.ErrPodNotFound):
+		return "pod_not_found"
+	case errors.Is(err, podportforward.ErrClusterUnauthenticated):
+		return "kubernetes_unauthenticated"
+	case errors.Is(err, podportforward.ErrClusterAccessDenied):
+		return "kubernetes_forbidden"
+	case errors.Is(err, podportforward.ErrClusterUnavailable):
+		return "kubernetes_unavailable"
+	case errors.Is(err, podportforward.ErrClusterTimeout):
+		return "timeout"
+	case errors.Is(err, podportforward.ErrInvalidResponse):
+		return "invalid_agent_response"
+	default:
+		return "upstream_failure"
+	}
 }
 
 func (session *activeSession) acquire(ctx context.Context) error {

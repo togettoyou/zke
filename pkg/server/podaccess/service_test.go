@@ -260,6 +260,60 @@ func TestAccessActivationProxyAndCookieIsolation(t *testing.T) {
 	}
 }
 
+func TestPodAccessLifecycleLogsAreStructuredAndExcludeCredentials(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	service, err := NewService(ctx, logger, &testAuthenticator{allowed: true}, testAuthorizer{}, nil,
+		&httpForwarder{requests: make(chan string, 1)}, Config{
+			Enabled: true, ExternalURL: "http://127.0.0.1:8081", ActivationTTL: time.Minute,
+			MaxSessionTTL: time.Hour, RevalidateInterval: time.Minute, OperationTimeout: time.Second,
+			MaxPending: 4, MaxActive: 4, MaxConnections: 4, MaxConnectionsPerSession: 2,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validCreateInput(time.Now().UTC())
+	ticket, err := service.Create(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationURL, _ := url.Parse(ticket.AccessURL)
+	activationRequest := httptest.NewRequest(http.MethodGet, ticket.AccessURL, nil)
+	activationRequest.Host = activationURL.Host
+	activationResponse := httptest.NewRecorder()
+	service.ServeHTTP(activationResponse, activationRequest)
+	if activationResponse.Code != http.StatusSeeOther {
+		t.Fatalf("activation status = %d", activationResponse.Code)
+	}
+	accessCookie := responseCookie(t, activationResponse.Result(), accessCookieName)
+	service.deactivateToken(accessCookie.Value, endReplaced)
+
+	logs := output.String()
+	for _, expected := range []string{
+		`"msg":"Pod access activation created"`,
+		`"msg":"Pod access session activated"`,
+		`"msg":"Pod access session closed"`,
+		`"request_id":"` + testRequestID + `"`,
+		`"cluster_id":"` + testClusterID + `"`,
+		`"pod_uid":"pod-uid"`,
+		`"pod_port":8080`,
+		`"reason":"replaced"`,
+	} {
+		if !strings.Contains(logs, expected) {
+			t.Errorf("lifecycle logs are missing %q: %s", expected, logs)
+		}
+	}
+	activationToken := strings.TrimPrefix(activationURL.Path, activationPathPrefix)
+	for _, sensitive := range []string{testSessionToken, accessCookie.Value, activationToken} {
+		if strings.Contains(logs, sensitive) {
+			t.Errorf("lifecycle logs contain a credential: %s", logs)
+		}
+	}
+}
+
 func TestActiveSessionIsRemovedAfterAuthenticationRevocation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

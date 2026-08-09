@@ -10,11 +10,14 @@ import (
 	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/shared/requestctx"
 )
 
 func TestRealQUICPodPortForwardRelaysBinaryTrafficAndExit(t *testing.T) {
 	client, server, stop := openStreamTestConnection(t)
 	defer stop()
+	opened := make(chan PodPortForwardObservation, 1)
+	closed := make(chan PodPortForwardObservation, 1)
 	streamServer, err := NewStreamServer(StreamServerConfig{
 		HeaderTimeout: 200 * time.Millisecond,
 		MaxTimeout:    2 * time.Second,
@@ -22,9 +25,12 @@ func TestRealQUICPodPortForwardRelaysBinaryTrafficAndExit(t *testing.T) {
 			agentv1.StreamKind_STREAM_KIND_POD_PORT_FORWARD: {
 				MaxConcurrent: 1,
 				Handle: PodPortForwardStreamHandler(1024, 1024, func(
-					_ context.Context,
+					ctx context.Context,
 					request *agentv1.PodPortForwardRequest,
 				) (*agentv1.PodPortForwardResponse, PodPortForwardConnection, error) {
+					if requestctx.ID(ctx) != "00000000-0000-4000-8000-000000000081" {
+						t.Errorf("handler request ID = %q", requestctx.ID(ctx))
+					}
 					forward, backend := net.Pipe()
 					go func() {
 						defer backend.Close()
@@ -35,6 +41,9 @@ func TestRealQUICPodPortForwardRelaysBinaryTrafficAndExit(t *testing.T) {
 					}()
 					return &agentv1.PodPortForwardResponse{Result: agentv1.ResultCode_RESULT_CODE_OK,
 						KubernetesStatusCode: 200, PodUid: request.GetPodUid(), Port: request.GetPort()}, forward, nil
+				}, PodPortForwardObserver{
+					Opened: func(observation PodPortForwardObservation) { opened <- observation },
+					Closed: func(observation PodPortForwardObservation) { closed <- observation },
 				}),
 			},
 		},
@@ -71,6 +80,14 @@ func TestRealQUICPodPortForwardRelaysBinaryTrafficAndExit(t *testing.T) {
 		exit.GetResult() != agentv1.ResultCode_RESULT_CODE_OK || exit.GetClientBytes() != 4 ||
 		exit.GetPodBytes() != 4 || string(peer.output()) != "pong" {
 		t.Fatalf("response=%+v exit=%+v output=%q", response, exit, peer.output())
+	}
+	openedObservation := <-opened
+	closedObservation := <-closed
+	if openedObservation.Header.GetRequestId() != "00000000-0000-4000-8000-000000000081" ||
+		openedObservation.Request.GetPodUid() != "pod-uid" ||
+		closedObservation.Exit.GetClientBytes() != 4 || closedObservation.Exit.GetPodBytes() != 4 ||
+		closedObservation.Err != nil || closedObservation.Duration <= 0 {
+		t.Fatalf("opened=%+v closed=%+v", openedObservation, closedObservation)
 	}
 }
 
