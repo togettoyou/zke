@@ -45,6 +45,7 @@ type HTTPConfig struct {
 // PodAccessConfig owns a second HTTP listener whose origin is reserved for
 // proxied Pod applications. It deliberately does not share the API router:
 // arbitrary Pod content must never execute in the Console/API origin.
+// SessionTTL is the maximum duration a user may select for one access session.
 type PodAccessConfig struct {
 	Enabled                  bool              `yaml:"enabled"`
 	Address                  string            `yaml:"address"`
@@ -223,7 +224,7 @@ func DefaultConfig() Config {
 			ReadHeaderTimeout:        5 * time.Second,
 			IdleTimeout:              60 * time.Second,
 			ActivationTTL:            30 * time.Second,
-			SessionTTL:               15 * time.Minute,
+			SessionTTL:               time.Hour,
 			RevalidateInterval:       15 * time.Second,
 			MaxPendingSessions:       1024,
 			MaxActiveSessions:        256,

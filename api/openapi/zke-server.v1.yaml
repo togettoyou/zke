@@ -2510,7 +2510,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/KubernetesPodPortForwardSessionRequest"
+              $ref: "#/components/schemas/KubernetesPodAccessSessionRequest"
       responses:
         "201":
           description: 一次性 Pod Access 激活地址
@@ -13084,6 +13084,29 @@ components:
         subprotocol:
           type: string
           const: zke.pod-port-forward.v1
+    KubernetesPodAccessSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, port, session_duration_seconds, confirm]
+      properties:
+        uid:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: 当前 Pod UID；Agent 在建立传输前再次校验。
+        port:
+          type: integer
+          format: uint32
+          minimum: 1
+          maximum: 65535
+          description: Pod 内监听的单个 HTTP 端口。
+        session_duration_seconds:
+          type: integer
+          format: int64
+          enum: [900, 1800, 3600]
+          description: 用户选择的访问会话最长持续秒数；同时受 Server 配置的最大时长限制。
+        confirm:
+          const: true
     KubernetesPodAccessSession:
       type: object
       additionalProperties: false

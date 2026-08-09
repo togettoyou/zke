@@ -56,6 +56,7 @@ export function useCreatePodAccessSession() {
       podName: string;
       uid: string;
       port: number;
+      sessionDurationSeconds: 900 | 1800 | 3600;
       idempotencyKey: string;
     }) =>
       unwrap(
@@ -70,7 +71,12 @@ export function useCreatePodAccessSession() {
               },
               header: idempotentHeaders(input.idempotencyKey),
             },
-            body: { uid: input.uid, port: input.port, confirm: true },
+            body: {
+              uid: input.uid,
+              port: input.port,
+              session_duration_seconds: input.sessionDurationSeconds,
+              confirm: true,
+            },
           },
         ),
       ),

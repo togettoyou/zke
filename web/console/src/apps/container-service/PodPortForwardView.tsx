@@ -12,6 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 export function PodPortForwardView({
@@ -68,10 +75,12 @@ function PodAccessForm({
   podUid: string;
 }) {
   const [port, setPort] = useState("8080");
+  const [sessionDuration, setSessionDuration] = useState("900");
   const [confirming, setConfirming] = useState(false);
   const createSession = useCreatePodAccessSession();
   const submissionKey = useSubmissionKey(confirming);
   const portNumber = Number(port);
+  const sessionDurationSeconds = parseSessionDuration(sessionDuration);
   const validPort = Number.isInteger(portNumber) && portNumber >= 1 && portNumber <= 65_535;
   const ticket = createSession.data;
 
@@ -83,6 +92,7 @@ function PodAccessForm({
         podName,
         uid: podUid,
         port: portNumber,
+        sessionDurationSeconds,
         idempotencyKey: submissionKey,
       })
       .then(() => setConfirming(false))
@@ -111,6 +121,25 @@ function PodAccessForm({
             }}
           />
         </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="pod-access-duration">访问时长</Label>
+          <Select
+            value={sessionDuration}
+            onValueChange={(value) => {
+              setSessionDuration(value);
+              createSession.reset();
+            }}
+          >
+            <SelectTrigger id="pod-access-duration" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="900">15 分钟</SelectItem>
+              <SelectItem value="1800">30 分钟</SelectItem>
+              <SelectItem value="3600">1 小时</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <Button
           variant="primary"
           disabled={!validPort || createSession.isPending}
@@ -131,8 +160,9 @@ function PodAccessForm({
             <h3 className="text-sm font-semibold">一次性激活地址</h3>
             <p className="text-subtle-foreground mt-1 text-xs">
               地址需在 {new Date(ticket.activation_expires_at).toLocaleTimeString()}{" "}
-              前首次打开；激活后访问会话最长持续 {Math.ceil(ticket.session_expires_in_seconds / 60)}{" "}
-              分钟。地址等同临时凭证，请勿分享。
+              前首次打开；激活后访问会话最长持续{" "}
+              {formatSessionDuration(ticket.session_expires_in_seconds)}
+              。地址等同临时凭证，请勿分享。
             </p>
           </div>
           <Input
@@ -170,6 +200,7 @@ function PodAccessForm({
           { label: "命名空间", name: namespace },
           { label: "Pod", name: podName, id: podUid },
           { label: "远端端口", name: String(portNumber) },
+          { label: "访问时长", name: formatSessionDuration(sessionDurationSeconds) },
         ]}
         impacts={[
           "地址绑定当前登录 Session、Pod UID 和单个端口，首次打开后失效。",
@@ -184,4 +215,19 @@ function PodAccessForm({
       />
     </div>
   );
+}
+
+function formatSessionDuration(seconds: number): string {
+  return seconds === 3600 ? "1 小时" : `${seconds / 60} 分钟`;
+}
+
+function parseSessionDuration(value: string): 900 | 1800 | 3600 {
+  switch (value) {
+    case "1800":
+      return 1800;
+    case "3600":
+      return 3600;
+    default:
+      return 900;
+  }
 }

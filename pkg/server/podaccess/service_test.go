@@ -6,6 +6,7 @@ import (
 	"crypto/sha1" //nolint:gosec // SHA-1 is fixed by RFC 6455 for the WebSocket handshake, not used for security.
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -154,7 +155,7 @@ func TestAccessActivationProxyAndCookieIsolation(t *testing.T) {
 	service, err := NewService(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), authenticator,
 		testAuthorizer{}, nil, forwarder, Config{
 			Enabled: true, ExternalURL: "http://127.0.0.1:8081", ActivationTTL: time.Minute,
-			SessionTTL: time.Minute, RevalidateInterval: time.Minute, OperationTimeout: time.Second,
+			MaxSessionTTL: time.Hour, RevalidateInterval: time.Minute, OperationTimeout: time.Second,
 			MaxPending: 4, MaxActive: 4, MaxConnections: 4, MaxConnectionsPerSession: 2,
 			MaxClientBytes: 1024 * 1024, MaxPodBytes: 1024 * 1024,
 		})
@@ -174,6 +175,13 @@ func TestAccessActivationProxyAndCookieIsolation(t *testing.T) {
 		t.Fatalf("activation status = %d, want 303; body=%s", activationResponse.Code, activationResponse.Body.String())
 	}
 	accessCookie := responseCookie(t, activationResponse.Result(), accessCookieName)
+	active, err := service.resolve(accessCookie.Value, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duration := active.expiresAt.Sub(active.forward.CreatedAt); duration != sessionTTL15Minutes {
+		t.Fatalf("active session duration = %s, want %s", duration, sessionTTL15Minutes)
+	}
 	replacementInput := validCreateInput(time.Now().UTC())
 	replacementInput.IdempotencyKey = "pod-access-test-2"
 	replacementTicket, err := service.Create(replacementInput)
@@ -258,7 +266,7 @@ func TestActiveSessionIsRemovedAfterAuthenticationRevocation(t *testing.T) {
 	service, err := NewService(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), authenticator,
 		testAuthorizer{}, nil, &httpForwarder{requests: make(chan string, 1)}, Config{
 			Enabled: true, ExternalURL: "http://127.0.0.1:8081", ActivationTTL: time.Minute,
-			SessionTTL: time.Minute, RevalidateInterval: 5 * time.Millisecond, OperationTimeout: time.Second,
+			MaxSessionTTL: time.Hour, RevalidateInterval: 5 * time.Millisecond, OperationTimeout: time.Second,
 			MaxPending: 4, MaxActive: 4, MaxConnections: 4, MaxConnectionsPerSession: 2,
 		})
 	if err != nil {
@@ -305,7 +313,7 @@ func TestPodAccessProxiesWebSocketUpgrade(t *testing.T) {
 	service, err := NewService(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)),
 		&testAuthenticator{allowed: true}, testAuthorizer{}, nil, webSocketForwarder{}, Config{
 			Enabled: true, ExternalURL: externalURL, ActivationTTL: time.Minute,
-			SessionTTL: time.Minute, RevalidateInterval: time.Minute, OperationTimeout: time.Second,
+			MaxSessionTTL: time.Hour, RevalidateInterval: time.Minute, OperationTimeout: time.Second,
 			MaxPending: 4, MaxActive: 4, MaxConnections: 4, MaxConnectionsPerSession: 2,
 		})
 	if err != nil {
@@ -369,13 +377,55 @@ func TestCreateIsIdempotentAndRejectsTargetReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if first.SessionTTL != sessionTTL15Minutes {
+		t.Fatalf("session TTL = %s, want %s", first.SessionTTL, sessionTTL15Minutes)
+	}
 	second, err := service.Create(input)
 	if err != nil || second.AccessURL != first.AccessURL {
 		t.Fatalf("idempotent create = %+v, %v; want same ticket", second, err)
 	}
-	input.Port++
+	input.SessionTTL = sessionTTL30Minutes
 	if _, err := service.Create(input); !errors.Is(err, ErrIdempotencyConflict) {
-		t.Fatalf("target reuse error = %v, want idempotency conflict", err)
+		t.Fatalf("duration reuse error = %v, want idempotency conflict", err)
+	}
+}
+
+func TestCreateAcceptsOnlyConfiguredSessionDurations(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	newService := func(maxSessionTTL time.Duration) *Service {
+		service, err := NewService(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)),
+			&testAuthenticator{allowed: true}, testAuthorizer{}, nil,
+			&httpForwarder{requests: make(chan string, 1)}, Config{
+				Enabled: true, ExternalURL: "http://127.0.0.1:8081", MaxSessionTTL: maxSessionTTL,
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return service
+	}
+	service := newService(time.Hour)
+	for index, duration := range []time.Duration{sessionTTL15Minutes, sessionTTL30Minutes, sessionTTL1Hour} {
+		input := validCreateInput(time.Now().UTC())
+		input.IdempotencyKey = fmt.Sprintf("pod-access-duration-%d", index)
+		input.SessionTTL = duration
+		ticket, err := service.Create(input)
+		if err != nil || ticket.SessionTTL != duration {
+			t.Fatalf("create duration %s = %+v, %v", duration, ticket, err)
+		}
+	}
+	unsupported := validCreateInput(time.Now().UTC())
+	unsupported.IdempotencyKey = "pod-access-duration-unsupported"
+	unsupported.SessionTTL = 45 * time.Minute
+	if _, err := service.Create(unsupported); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unsupported duration error = %v, want invalid input", err)
+	}
+	aboveConfiguredMaximum := validCreateInput(time.Now().UTC())
+	aboveConfiguredMaximum.IdempotencyKey = "pod-access-duration-above-maximum"
+	aboveConfiguredMaximum.SessionTTL = sessionTTL1Hour
+	if _, err := newService(sessionTTL30Minutes).Create(aboveConfiguredMaximum); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("duration above configured maximum error = %v, want invalid input", err)
 	}
 }
 
@@ -383,7 +433,8 @@ func validCreateInput(now time.Time) CreateInput {
 	return CreateInput{
 		UserID: testUserID, AuthSessionID: testAuthID, AuthSessionToken: testSessionToken,
 		IdempotencyKey: "pod-access-test-1", ClusterID: testClusterID, Namespace: "default",
-		PodName: "api-0", PodUID: "pod-uid", RequestID: testRequestID, Port: 8080, Confirm: true, Now: now,
+		PodName: "api-0", PodUID: "pod-uid", RequestID: testRequestID, Port: 8080,
+		SessionTTL: sessionTTL15Minutes, Confirm: true, Now: now,
 	}
 }
 

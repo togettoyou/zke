@@ -5217,6 +5217,23 @@ export interface components {
             /** @constant */
             subprotocol: "zke.pod-port-forward.v1";
         };
+        KubernetesPodAccessSessionRequest: {
+            /** @description 当前 Pod UID；Agent 在建立传输前再次校验。 */
+            uid: string;
+            /**
+             * Format: uint32
+             * @description Pod 内监听的单个 HTTP 端口。
+             */
+            port: number;
+            /**
+             * Format: int64
+             * @description 用户选择的访问会话最长持续秒数；同时受 Server 配置的最大时长限制。
+             * @enum {integer}
+             */
+            session_duration_seconds: 900 | 1800 | 3600;
+            /** @constant */
+            confirm: true;
+        };
         KubernetesPodAccessSession: {
             /**
              * Format: uri
@@ -7902,7 +7919,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["KubernetesPodPortForwardSessionRequest"];
+                "application/json": components["schemas"]["KubernetesPodAccessSessionRequest"];
             };
         };
         responses: {

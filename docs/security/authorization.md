@@ -525,7 +525,8 @@ Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证
 
 Pod 端口访问使用另一项默认仅授予 admin 的 `cluster.pod.port_forward`，不因持有 `cluster.read`、
 `cluster.pod.exec` 或通用资源写权限而获得。原始 WebSocket 票据与浏览器 Pod Access 激活地址都必须通过 CSRF、
-幂等键和显式确认，并绑定用户、登录 Session、Cluster、Namespace、Pod UID 与单个远端端口，只能消费一次；
+幂等键和显式确认，并绑定用户、登录 Session、Cluster、Namespace、Pod UID、单个远端端口与用户从 15、30、
+60 分钟中选择的时长，只能消费一次；所选时长不得超过 Server 配置的一小时硬上限，并进入幂等指纹与审计目标；
 长连接或活跃访问会话周期重新验证 Session 和该权限。Agent ServiceAccount 只增加 `pods/portforward` 的 `create`，
 Agent 在连接前再次核对 Pod UID，且只在回环地址建立临时桥接。
 
@@ -536,7 +537,7 @@ Domain。即使 Access Listener 与 API 使用同一 IP 的不同端口——Coo
 平台登录凭证，不能通过 `Set-Cookie` 覆盖它。`Clear-Site-Data`、HSTS、Alt-Svc 等会改变共享 Host 状态的响应头
 同样由 Listener 删除，只能由部署入口设置。外部访问地址必须使用 HTTPS；仅本地回环开发允许明文 HTTP，
 Listener 原生 TLS 可由受信上游网关的 TLS 终止替代。双向流量正文、Token、Cookie、Authorization 和响应头不
-进入日志、审计或 AI 上下文；审计只记录创建者、目标 Cluster/Namespace/Pod UID、端口与会话结果。
+进入日志、审计或 AI 上下文；审计只记录创建者、目标 Cluster/Namespace/Pod UID、端口、时长与会话结果。
 
 Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Resource 接口会拒绝并从 Discovery 中
 隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。普通请求必须明确 Cluster 和 Namespace，可使用受限

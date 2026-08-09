@@ -31,7 +31,7 @@ pod_access:
   read_header_timeout: 4s
   idle_timeout: 50s
   activation_ttl: 25s
-  session_ttl: 10m
+  session_ttl: 30m
   revalidate_interval: 10s
   max_pending_sessions: 500
   max_active_sessions: 100
@@ -141,7 +141,7 @@ log_level: warn
 		cfg.PodAccess.TLS.CertificateFile != "/run/secrets/pod-access.crt" ||
 		cfg.PodAccess.TLS.PrivateKeyFile != "/run/secrets/pod-access.key" ||
 		cfg.PodAccess.ReadHeaderTimeout != 4*time.Second || cfg.PodAccess.IdleTimeout != 50*time.Second ||
-		cfg.PodAccess.ActivationTTL != 25*time.Second || cfg.PodAccess.SessionTTL != 10*time.Minute ||
+		cfg.PodAccess.ActivationTTL != 25*time.Second || cfg.PodAccess.SessionTTL != 30*time.Minute ||
 		cfg.PodAccess.RevalidateInterval != 10*time.Second || cfg.PodAccess.MaxPendingSessions != 500 ||
 		cfg.PodAccess.MaxActiveSessions != 100 || cfg.PodAccess.MaxConnections != 128 ||
 		cfg.PodAccess.MaxConnectionsPerSession != 3 {
@@ -306,6 +306,16 @@ log_level: warn
 	partialPodAccessTLSConfig.PodAccess.TLS.PrivateKeyFile = ""
 	if err := partialPodAccessTLSConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted a Pod Access TLS certificate without its private key")
+	}
+	shortPodAccessSession := cfg
+	shortPodAccessSession.PodAccess.SessionTTL = 14 * time.Minute
+	if err := shortPodAccessSession.Validate(); err == nil {
+		t.Fatal("Validate() accepted a Pod Access maximum session TTL below 15 minutes")
+	}
+	longPodAccessSession := cfg
+	longPodAccessSession.PodAccess.SessionTTL = 61 * time.Minute
+	if err := longPodAccessSession.Validate(); err == nil {
+		t.Fatal("Validate() accepted a Pod Access maximum session TTL above one hour")
 	}
 	if cfg.ShutdownTimeout != 8*time.Second {
 		t.Fatalf("shutdown timeout = %s, want YAML value", cfg.ShutdownTimeout)

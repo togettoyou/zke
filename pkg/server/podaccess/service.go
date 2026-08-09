@@ -37,6 +37,9 @@ const (
 	opaqueTokenBytes       = 32
 	proxyBufferBytes       = 32 * 1024
 	maxResponseHeaderBytes = 1024 * 1024
+	sessionTTL15Minutes    = 15 * time.Minute
+	sessionTTL30Minutes    = 30 * time.Minute
+	sessionTTL1Hour        = time.Hour
 	podAccessPageStart     = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -180,7 +183,7 @@ type Config struct {
 	Enabled                  bool
 	ExternalURL              string
 	ActivationTTL            time.Duration
-	SessionTTL               time.Duration
+	MaxSessionTTL            time.Duration
 	RevalidateInterval       time.Duration
 	OperationTimeout         time.Duration
 	IdleConnectionTimeout    time.Duration
@@ -197,6 +200,7 @@ type CreateInput struct {
 	ClusterID, Namespace, PodName, PodUID                   string
 	RequestID                                               string
 	Port                                                    uint32
+	SessionTTL                                              time.Duration
 	Confirm                                                 bool
 	Now                                                     time.Time
 }
@@ -287,8 +291,8 @@ func applyDefaults(config *Config) {
 	if config.ActivationTTL <= 0 {
 		config.ActivationTTL = 30 * time.Second
 	}
-	if config.SessionTTL <= 0 {
-		config.SessionTTL = 15 * time.Minute
+	if config.MaxSessionTTL <= 0 {
+		config.MaxSessionTTL = sessionTTL1Hour
 	}
 	if config.RevalidateInterval <= 0 {
 		config.RevalidateInterval = 15 * time.Second
@@ -320,7 +324,7 @@ func applyDefaults(config *Config) {
 }
 
 func (service *Service) Create(input CreateInput) (Ticket, error) {
-	if service == nil || validateCreateInput(input) != nil {
+	if service == nil || validateCreateInput(input) != nil || input.SessionTTL > service.config.MaxSessionTTL {
 		return Ticket{}, ErrInvalidInput
 	}
 	if !input.Confirm {
@@ -328,7 +332,7 @@ func (service *Service) Create(input CreateInput) (Ticket, error) {
 	}
 	fingerprint := sha256.Sum256([]byte(strings.Join([]string{
 		input.AuthSessionID, input.ClusterID, input.Namespace, input.PodName, input.PodUID,
-		strconv.FormatUint(uint64(input.Port), 10),
+		strconv.FormatUint(uint64(input.Port), 10), strconv.FormatInt(int64(input.SessionTTL/time.Second), 10),
 	}, "\x00")))
 	idempotencyKey := input.UserID + "\x00" + input.IdempotencyKey
 	service.mutex.Lock()
@@ -352,7 +356,7 @@ func (service *Service) Create(input CreateInput) (Ticket, error) {
 	activation := *service.externalURL
 	activation.Path = activationPathPrefix + token
 	activation.RawPath = ""
-	ticket := Ticket{AccessURL: activation.String(), ExpiresAt: expiresAt, SessionTTL: service.config.SessionTTL}
+	ticket := Ticket{AccessURL: activation.String(), ExpiresAt: expiresAt, SessionTTL: input.SessionTTL}
 	service.idempotency[idempotencyKey] = idempotencyRecord{fingerprint: fingerprint, ticket: ticket}
 	return ticket, nil
 }
@@ -363,10 +367,15 @@ func validateCreateInput(input CreateInput) error {
 		!validation.IsUUID(input.ClusterID) || !validation.IsUUID(input.RequestID) || input.Now.IsZero() ||
 		len(k8svalidation.IsDNS1123Label(input.Namespace)) != 0 ||
 		len(k8svalidation.IsDNS1123Subdomain(input.PodName)) != 0 || input.PodUID == "" || len(input.PodUID) > 256 ||
-		strings.TrimSpace(input.PodUID) != input.PodUID || input.Port == 0 || input.Port > 65535 {
+		strings.TrimSpace(input.PodUID) != input.PodUID || input.Port == 0 || input.Port > 65535 ||
+		!supportedSessionTTL(input.SessionTTL) {
 		return ErrInvalidInput
 	}
 	return nil
+}
+
+func supportedSessionTTL(value time.Duration) bool {
+	return value == sessionTTL15Minutes || value == sessionTTL30Minutes || value == sessionTTL1Hour
 }
 
 func (service *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -483,13 +492,13 @@ func (service *Service) activate(ctx context.Context, token string, now time.Tim
 		service.record(pending.CreateInput, "failed")
 		return "", nil, err
 	}
-	sessionContext, cancel := context.WithDeadline(service.rootContext, now.Add(service.config.SessionTTL))
+	sessionContext, cancel := context.WithDeadline(service.rootContext, now.Add(pending.SessionTTL))
 	session := &activeSession{
 		service: service, key: key, input: pending.CreateInput,
 		forward: podportforward.Session{ID: forwardID, UserID: pending.UserID, AuthSessionID: pending.AuthSessionID,
 			ClusterID: pending.ClusterID, Namespace: pending.Namespace, PodName: pending.PodName,
-			PodUID: pending.PodUID, Port: pending.Port, CreatedAt: now, ExpiresAt: now.Add(service.config.SessionTTL)},
-		expiresAt:    now.Add(service.config.SessionTTL),
+			PodUID: pending.PodUID, Port: pending.Port, CreatedAt: now, ExpiresAt: now.Add(pending.SessionTTL)},
+		expiresAt:    now.Add(pending.SessionTTL),
 		cookiePrefix: "zke_pa_" + base64.RawURLEncoding.EncodeToString(prefixBytes) + "_",
 		ctx:          sessionContext, cancel: cancel,
 		connections: make(chan struct{}, service.config.MaxConnectionsPerSession),
@@ -584,8 +593,9 @@ func (service *Service) record(input CreateInput, result string) {
 	err := service.auditor.RecordClusterEvent(ctx, audit.ClusterEventInput{
 		ActorUserID: input.UserID, ClusterID: input.ClusterID,
 		Action: auditaction.KubernetesPodPortForward, TargetType: auditaction.TargetKubernetesResource,
-		TargetName: fmt.Sprintf("core/v1/pods %s/%s uid:%s port-forward:%d", input.Namespace, input.PodName, input.PodUID, input.Port),
-		Result:     result, RequestID: input.RequestID,
+		TargetName: fmt.Sprintf("core/v1/pods %s/%s uid:%s port-forward:%d duration:%s",
+			input.Namespace, input.PodName, input.PodUID, input.Port, input.SessionTTL),
+		Result: result, RequestID: input.RequestID,
 	})
 	if err != nil {
 		service.logger.Error("record Pod access audit", slog.String("request_id", input.RequestID), slog.String("error", err.Error()))

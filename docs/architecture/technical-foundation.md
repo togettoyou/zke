@@ -864,7 +864,8 @@ kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernete
 本地 Server 配置还启用了独立 Pod Access Listener：Console/API 使用 `127.0.0.1:8080`，Pod HTTP 访问使用
 `127.0.0.1:8081`。部署时通过 `pod_access.external_url` 填写浏览器真正访问的第二 Origin；可以在
 `pod_access.tls` 配置原生证书，也可以让云入口终止 HTTPS 后转发到 Listener 的 HTTP 地址。生产或远程入口的
-`external_url` 不接受明文 HTTP；云入口必须保留该 External URL 的原始 Host 头。
+`external_url` 不接受明文 HTTP；云入口必须保留该 External URL 的原始 Host 头。`pod_access.session_ttl`
+是允许用户选择的会话最大时长，Server 硬限制为一小时；仓库配置使用一小时，以开放 15、30、60 分钟三个档位。
 
 Server 启动时自动执行数据库迁移；没有待应用版本时不会修改业务表。Agent 会使用 client-go 创建或访问固定名称
 身份 Secret，并在没有完整身份时调用注册接口；注册完成后使用该身份建立 QUIC/mTLS Connection，并在 Control

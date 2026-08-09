@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -30,6 +31,13 @@ type podAccessCreateResponse struct {
 	SessionExpiresIn  int64     `json:"session_expires_in_seconds"`
 }
 
+type podAccessCreateRequest struct {
+	PodUID                 string `json:"uid"`
+	Port                   uint32 `json:"port"`
+	SessionDurationSeconds *int64 `json:"session_duration_seconds"`
+	Confirm                bool   `json:"confirm"`
+}
+
 func newKubernetesPodAccessHandler(logger *slog.Logger, service podAccessService,
 	auditService *audit.Service, operationTimeout time.Duration) *kubernetesPodAccessHandler {
 	return &kubernetesPodAccessHandler{
@@ -41,14 +49,15 @@ func newKubernetesPodAccessHandler(logger *slog.Logger, service podAccessService
 func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := middleware.Identity(c)
-	request := podPortForwardCreateRequest{}
+	request := podAccessCreateRequest{}
 	target := podPortForwardTarget(c, request.PodUID, request.Port)
 	if decodeJSONRequest(c, &request, maxPodPortForwardCreateBytes) != nil {
 		handler.record(c, identity.User.ID, target, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Pod access session request")
 		return
 	}
-	target = podPortForwardTarget(c, request.PodUID, request.Port)
+	sessionTTL := podAccessSessionTTL(request.SessionDurationSeconds)
+	target = fmt.Sprintf("%s duration:%s", podPortForwardTarget(c, request.PodUID, request.Port), sessionTTL)
 	sessionToken, tokenExists := middleware.SessionToken(c)
 	if handler.service == nil || !tokenExists {
 		handler.record(c, identity.User.ID, target, "failed")
@@ -59,7 +68,7 @@ func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 		UserID: identity.User.ID, AuthSessionID: identity.SessionID, AuthSessionToken: sessionToken,
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
 		ClusterID:      c.Param("cluster_id"), Namespace: c.Param("namespace_name"), PodName: c.Param("pod_name"),
-		PodUID: request.PodUID, Port: request.Port, Confirm: request.Confirm,
+		PodUID: request.PodUID, Port: request.Port, SessionTTL: sessionTTL, Confirm: request.Confirm,
 		RequestID: middleware.RequestID(c), Now: time.Now().UTC(),
 	})
 	if err != nil {
@@ -79,6 +88,20 @@ func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 		AccessURL: ticket.AccessURL, ActivationExpires: ticket.ExpiresAt,
 		SessionExpiresIn: int64(ticket.SessionTTL.Seconds()),
 	})
+}
+
+func podAccessSessionTTL(seconds *int64) time.Duration {
+	// Requests created before selectable durations existed omitted this field.
+	// Preserve their original 15-minute behavior while the current contract requires it.
+	if seconds == nil {
+		return 15 * time.Minute
+	}
+	switch *seconds {
+	case int64((15 * time.Minute) / time.Second), int64((30 * time.Minute) / time.Second), int64(time.Hour / time.Second):
+		return time.Duration(*seconds) * time.Second
+	default:
+		return 0
+	}
 }
 
 func (handler *kubernetesPodAccessHandler) record(c *gin.Context, userID, target, result string) {

@@ -29,7 +29,8 @@ pod_access:
   read_header_timeout: 5s
   idle_timeout: 60s
   activation_ttl: 30s
-  session_ttl: 15m
+  # Maximum user-selectable access duration. The Server hard limit is 1h.
+  session_ttl: 1h
   revalidate_interval: 15s
   max_pending_sessions: 1024
   max_active_sessions: 256

@@ -40,6 +40,7 @@ const (
 	maxPodLogsTimeout             = time.Hour
 	maxPodLogsStreams             = 4096
 	maxPodLogsRequests            = 100_000
+	maxPodAccessSessionTTL        = time.Hour
 	maxPendingPodExecSessions     = 100_000
 	maxResourceWatchStreams       = 4096
 	maxResourceWatchRequests      = 100_000
@@ -155,10 +156,13 @@ func (cfg Config) validatePodAccess() error {
 		{cfg.PodAccess.ReadHeaderTimeout, maxHTTPTimeout, "Pod Access read header timeout"},
 		{cfg.PodAccess.IdleTimeout, maxIdleTimeout, "Pod Access idle timeout"},
 		{cfg.PodAccess.ActivationTTL, time.Minute, "Pod Access activation TTL"},
-		{cfg.PodAccess.SessionTTL, maxPodLogsTimeout, "Pod Access session TTL"},
+		{cfg.PodAccess.SessionTTL, maxPodAccessSessionTTL, "Pod Access maximum session TTL"},
 		{cfg.PodAccess.RevalidateInterval, time.Minute, "Pod Access revalidation interval"},
 	}); err != nil {
 		return err
+	}
+	if cfg.PodAccess.SessionTTL < 15*time.Minute {
+		return errors.New("Pod Access maximum session TTL must be at least 15m")
 	}
 	if cfg.PodAccess.RevalidateInterval >= cfg.PodAccess.SessionTTL {
 		return errors.New("Pod Access revalidation interval must be below its session TTL")

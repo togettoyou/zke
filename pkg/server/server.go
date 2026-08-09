@@ -305,7 +305,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				Enabled:                  true,
 				ExternalURL:              cfg.PodAccess.ExternalURL,
 				ActivationTTL:            cfg.PodAccess.ActivationTTL,
-				SessionTTL:               cfg.PodAccess.SessionTTL,
+				MaxSessionTTL:            cfg.PodAccess.SessionTTL,
 				RevalidateInterval:       cfg.PodAccess.RevalidateInterval,
 				OperationTimeout:         cfg.Auth.OperationTimeout,
 				IdleConnectionTimeout:    cfg.PodAccess.IdleTimeout,

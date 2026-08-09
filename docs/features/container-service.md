@@ -904,12 +904,14 @@ Pod Access Listener 与主 HTTP Listener 运行在同一个 Server 进程，可�
 Pod 前恢复原名并去掉 Domain，避免 Pod 页面覆盖 Console 登录态或与另一条 Pod 会话串用 Cookie。
 
 创建请求通过 CSRF、幂等键、显式确认和 `cluster.pod.port_forward` 判权，绑定用户、登录 Session、Cluster、
-Namespace、Pod UID 与单个端口。激活 Token 和访问 Cookie 都是 256-bit 随机值，Server 内存只按 SHA-256 摘要
+Namespace、Pod UID、单个端口与所选时长。Console 提供 15、30、60 分钟三个档位；请求值只能是这三档之一，
+且不得超过 `pod_access.session_ttl` 配置的一小时硬上限。时长进入幂等指纹、确认信息与审计目标，不能通过重试
+同一幂等键改变。激活 Token 和访问 Cookie 都是 256-bit 随机值，Server 内存只按 SHA-256 摘要
 查找（幂等重试所需的同一激活地址仅保留到激活票据到期）；URL Token 消费一次后立即从地址栏清除。活跃会话
 周期重验登录 Session 与权限，退出登录或权限收回会取消它持有的全部上游连接。每个 HTTP 上游连接复用现有
 Agent port-forward Stream；`http.Transport` 在单会话内池化 Keep-Alive 连接，并同时受单会话、Server 全局和
 单 Agent 并发上限约束。双向字节上限按整个访问会话累计，不能靠重新建连接绕过；总时长到期、Pod UID 改变、
-权限撤销或 Server 关闭都会关闭连接。审计记录创建、激活、权限撤销、Pod UID 和端口，不记录 Token、Cookie、
+权限撤销或 Server 关闭都会关闭连接。审计记录创建、激活、权限撤销、Pod UID、端口和所选时长，不记录 Token、Cookie、
 请求头或流量正文。
 
 固定 Access Origin 通过一个 HttpOnly Cookie 选择当前目标，所以同一浏览器配置同时只能激活一个 Pod 入口；
