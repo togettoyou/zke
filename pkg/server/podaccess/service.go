@@ -352,7 +352,7 @@ func applyDefaults(config *Config) {
 		config.MaxConnections = 128
 	}
 	if config.MaxConnectionsPerSession <= 0 {
-		config.MaxConnectionsPerSession = 2
+		config.MaxConnectionsPerSession = 8
 	}
 	if config.MaxClientBytes == 0 {
 		config.MaxClientBytes = agentprotocol.MaxPodPortForwardBytes
@@ -1034,6 +1034,7 @@ func (session *activeSession) newTransport() *http.Transport {
 		ForceAttemptHTTP2:      false,
 		MaxIdleConns:           session.service.config.MaxConnectionsPerSession,
 		MaxIdleConnsPerHost:    session.service.config.MaxConnectionsPerSession,
+		MaxConnsPerHost:        session.service.config.MaxConnectionsPerSession,
 		IdleConnTimeout:        session.service.config.IdleConnectionTimeout,
 		ExpectContinueTimeout:  time.Second,
 		MaxResponseHeaderBytes: maxResponseHeaderBytes,
@@ -1148,23 +1149,22 @@ func podAccessUpstreamReason(err error) string {
 }
 
 func (session *activeSession) acquire(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := session.ctx.Err(); err != nil {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-session.ctx.Done():
 		return ErrAccessExpired
-	}
-	select {
 	case session.connections <- struct{}{}:
-	default:
-		return ErrCapacity
 	}
 	select {
+	case <-ctx.Done():
+		<-session.connections
+		return ctx.Err()
+	case <-session.ctx.Done():
+		<-session.connections
+		return ErrAccessExpired
 	case session.service.connections <- struct{}{}:
 		return nil
-	default:
-		<-session.connections
-		return ErrCapacity
 	}
 }
 

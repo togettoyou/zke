@@ -446,6 +446,74 @@ func TestCreateIsIdempotentAndRejectsTargetReuse(t *testing.T) {
 	}
 }
 
+func TestActiveSessionWaitsForConnectionCapacity(t *testing.T) {
+	t.Parallel()
+	sessionContext, cancelSession := context.WithCancel(context.Background())
+	defer cancelSession()
+	session := &activeSession{
+		service:     &Service{connections: make(chan struct{}, 2)},
+		ctx:         sessionContext,
+		connections: make(chan struct{}, 1),
+	}
+	if err := session.acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	waiting := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		close(waiting)
+		result <- session.acquire(context.Background())
+	}()
+	<-waiting
+	select {
+	case err := <-result:
+		t.Fatalf("capacity waiter returned before a slot was released: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	session.release()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("capacity waiter failed after a slot was released: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("capacity waiter did not acquire the released slot")
+	}
+	session.release()
+
+	if len(session.connections) != 0 || len(session.service.connections) != 0 {
+		t.Fatalf("connection admissions leaked: session=%d global=%d",
+			len(session.connections), len(session.service.connections))
+	}
+}
+
+func TestActiveSessionCapacityWaitCanBeCanceled(t *testing.T) {
+	t.Parallel()
+	sessionContext, cancelSession := context.WithCancel(context.Background())
+	defer cancelSession()
+	session := &activeSession{
+		service:     &Service{connections: make(chan struct{}, 2)},
+		ctx:         sessionContext,
+		connections: make(chan struct{}, 1),
+	}
+	if err := session.acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitContext, cancelWait := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- session.acquire(waitContext) }()
+	cancelWait()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled capacity waiter error = %v", err)
+	}
+	session.release()
+	if len(session.connections) != 0 || len(session.service.connections) != 0 {
+		t.Fatalf("canceled capacity waiter leaked admissions: session=%d global=%d",
+			len(session.connections), len(session.service.connections))
+	}
+}
+
 func TestCreateAcceptsOnlyConfiguredSessionDurations(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

@@ -63,7 +63,7 @@ connection:
   max_pod_exec_output_bytes: 33554432
   # Pod Access upstream connections use a dedicated Agent Stream.
   max_pod_access_stream_timeout: 1h
-  max_concurrent_pod_access_streams: 4
+  max_concurrent_pod_access_streams: 16
   max_pod_access_client_bytes: 1073741824
   max_pod_access_pod_bytes: 1073741824
   # Resource Watch currently permits core/v1/events only. Its concurrency and

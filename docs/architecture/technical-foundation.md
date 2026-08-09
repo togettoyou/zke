@@ -868,7 +868,7 @@ kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernete
 是允许用户选择的会话最大时长，Server 硬限制为一小时；仓库配置使用一小时，以开放 15、30、60 分钟三个档位。
 `pod_access.max_client_bytes` 与 `max_pod_bytes` 是整个浏览器访问会话的累计预算，仓库默认各 1 GiB；
 `max_connections_per_agent` 限制单个 Agent 同时承载的上游连接。Agent 的 `max_pod_access_*` 配置提供对应的
-传输硬上限，默认同样为一小时、每方向 1 GiB 和 4 条并发 Stream。
+传输硬上限，默认同样为一小时、每方向 1 GiB 和 16 条并发 Stream；单个浏览器会话最多使用其中 8 条。
 
 Server 启动时自动执行数据库迁移；没有待应用版本时不会修改业务表。Agent 会使用 client-go 创建或访问固定名称
 身份 Secret，并在没有完整身份时调用注册接口；注册完成后使用该身份建立 QUIC/mTLS Connection，并在 Control

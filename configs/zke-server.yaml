@@ -36,8 +36,8 @@ pod_access:
   max_active_sessions: 256
   # Each upstream HTTP connection consumes one Agent Pod Port Forward Stream.
   max_connections: 128
-  max_connections_per_session: 2
-  max_connections_per_agent: 4
+  max_connections_per_session: 8
+  max_connections_per_agent: 16
   # Aggregate browser-to-Pod and Pod-to-browser budgets for one access session.
   max_client_bytes: 1073741824
   max_pod_bytes: 1073741824

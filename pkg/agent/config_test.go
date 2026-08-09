@@ -296,7 +296,7 @@ func validAgentConfig() Config {
 			MaxPodExecInputBytes:              16 * 1024 * 1024,
 			MaxPodExecOutputBytes:             32 * 1024 * 1024,
 			MaxPodAccessStreamTimeout:         time.Hour,
-			MaxConcurrentPodAccessStreams:     4,
+			MaxConcurrentPodAccessStreams:     16,
 			MaxPodAccessClientBytes:           1024 * 1024 * 1024,
 			MaxPodAccessPodBytes:              1024 * 1024 * 1024,
 			MaxResourceWatchStreamTimeout:     30 * time.Minute,
