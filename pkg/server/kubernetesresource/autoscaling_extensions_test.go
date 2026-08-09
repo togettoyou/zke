@@ -83,6 +83,46 @@ func TestAutoscalingExtensionDetailsNormalizeOptionalCollections(t *testing.T) {
 	}
 }
 
+func TestKEDAResourceMetricTypeIsTopLevel(t *testing.T) {
+	t.Parallel()
+
+	spec, err := kedaKubernetesSpec(KEDAScaledObjectSpec{
+		Target:          AutoscalingTarget{APIVersion: "apps/v1", Kind: "Deployment", Name: "worker"},
+		PollingInterval: 30, CooldownPeriod: 300, MaxReplicas: 10,
+		Triggers: []KEDATrigger{{Type: "cpu", MetricType: "AverageValue", Metadata: map[string]string{"value": "80m"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	triggers := spec["triggers"].([]any)
+	trigger := triggers[0].(map[string]any)
+	if trigger["metricType"] != "AverageValue" {
+		t.Fatalf("metricType = %v, want AverageValue", trigger["metricType"])
+	}
+	metadata := trigger["metadata"].(map[string]any)
+	if _, exists := metadata["type"]; exists {
+		t.Fatalf("deprecated metadata.type was written: %+v", metadata)
+	}
+
+	for _, invalid := range []KEDATrigger{
+		{Type: "cpu", Metadata: map[string]string{"type": "AverageValue", "value": "80m"}},
+		{Type: "memory", MetricType: "Value", Metadata: map[string]string{"value": "128Mi"}},
+	} {
+		if validKEDATrigger(invalid) {
+			t.Fatalf("invalid resource trigger was accepted: %+v", invalid)
+		}
+	}
+
+	object := extensionObject("keda.sh/v1alpha1", "ScaledObject", "default", "worker", nil, nil, spec)
+	detail, err := kedaDetail(object, "default", "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Triggers[0].MetricType != "AverageValue" {
+		t.Fatalf("parsed metric type = %q", detail.Triggers[0].MetricType)
+	}
+}
+
 func TestKEDATriggerSecretsAreRejectedAndExistingValuesAreRedacted(t *testing.T) {
 	t.Parallel()
 

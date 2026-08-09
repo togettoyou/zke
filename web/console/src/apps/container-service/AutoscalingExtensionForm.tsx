@@ -54,10 +54,12 @@ type VPAPolicyDraft = {
 };
 
 type MetadataDraft = { key: string; value: string };
+type KEDAMetricType = NonNullable<KubernetesKEDATrigger["metric_type"]>;
 
 type KEDATriggerDraft = {
   type: string;
   name: string;
+  metricType: KEDAMetricType;
   useCachedMetrics: boolean;
   authenticationRefName: string;
   metadata: MetadataDraft[];
@@ -107,6 +109,7 @@ function emptyKEDATrigger(): KEDATriggerDraft {
   return {
     type: "prometheus",
     name: "",
+    metricType: "",
     useCachedMetrics: false,
     authenticationRefName: "",
     metadata: [
@@ -121,12 +124,24 @@ function emptyKEDATrigger(): KEDATriggerDraft {
 function kedaTriggerDraft(trigger: KubernetesKEDATrigger): KEDATriggerDraft {
   const redactedMetadataKeys = trigger.redacted_metadata_keys ?? [];
   const redacted = new Set(redactedMetadataKeys);
+  const legacyMetricType =
+    isResourceMetricTrigger(trigger.type) &&
+    (trigger.metadata?.type === "Utilization" || trigger.metadata?.type === "AverageValue")
+      ? trigger.metadata.type
+      : "";
   const metadata = Object.entries(trigger.metadata ?? {})
-    .filter(([key, value]) => !redacted.has(key) && value !== "[redacted]")
+    .filter(
+      ([key, value]) =>
+        !redacted.has(key) && value !== "[redacted]" && !(key === "type" && legacyMetricType),
+    )
     .map(([key, value]) => ({ key, value }));
   return {
     type: trigger.type,
     name: trigger.name,
+    metricType:
+      trigger.metric_type ||
+      legacyMetricType ||
+      (isResourceMetricTrigger(trigger.type) ? "Utilization" : ""),
     useCachedMetrics: trigger.use_cached_metrics,
     authenticationRefName: trigger.authentication_ref_name,
     metadata: metadata.length > 0 ? metadata : [{ key: "", value: "" }],
@@ -676,7 +691,7 @@ function KEDATriggerEditor({
               <X />
             </Button>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             <Field
               label="类型"
               htmlFor={`keda-trigger-${index}-type`}
@@ -686,7 +701,18 @@ function KEDATriggerEditor({
                 id={`keda-trigger-${index}-type`}
                 value={trigger.type}
                 disabled={disabled}
-                onChange={(event) => update(index, { type: event.target.value })}
+                onChange={(event) => {
+                  const type = event.target.value;
+                  update(index, {
+                    type,
+                    metricType:
+                      isResourceMetricTrigger(type) &&
+                      trigger.metricType !== "Utilization" &&
+                      trigger.metricType !== "AverageValue"
+                        ? "Utilization"
+                        : trigger.metricType,
+                  });
+                }}
               />
             </Field>
             <Field label="名称（可选）" htmlFor={`keda-trigger-${index}-name`}>
@@ -698,9 +724,41 @@ function KEDATriggerEditor({
               />
             </Field>
             <Field
+              label="指标目标类型"
+              htmlFor={`keda-trigger-${index}-metric-type`}
+              hint={
+                isResourceMetricTrigger(trigger.type)
+                  ? "CPU/Memory 必须选择 Utilization 或 AverageValue"
+                  : "可选；对应 KEDA trigger.metricType"
+              }
+            >
+              <Select
+                value={trigger.metricType || DEFAULT_OPTION}
+                onValueChange={(value) =>
+                  update(index, {
+                    metricType: value === DEFAULT_OPTION ? "" : (value as KEDAMetricType),
+                  })
+                }
+              >
+                <SelectTrigger id={`keda-trigger-${index}-metric-type`} disabled={disabled}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {!isResourceMetricTrigger(trigger.type) ? (
+                    <SelectItem value={DEFAULT_OPTION}>控制器默认</SelectItem>
+                  ) : null}
+                  <SelectItem value="Utilization">Utilization</SelectItem>
+                  {!isResourceMetricTrigger(trigger.type) ? (
+                    <SelectItem value="Value">Value</SelectItem>
+                  ) : null}
+                  <SelectItem value="AverageValue">AverageValue</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field
               label="TriggerAuthentication 名称（可选）"
               htmlFor={`keda-trigger-${index}-auth`}
-              className="md:col-span-2"
+              className="md:col-span-2 xl:col-span-3"
             >
               <Input
                 id={`keda-trigger-${index}-auth`}
@@ -823,6 +881,7 @@ function buildKEDATrigger(trigger: KEDATriggerDraft): KubernetesKEDATrigger {
   return {
     type: trigger.type.trim(),
     name: trigger.name.trim(),
+    metric_type: trigger.metricType,
     use_cached_metrics: trigger.useCachedMetrics,
     authentication_ref_name: trigger.authenticationRefName.trim(),
     metadata: Object.fromEntries(trigger.metadata.map((row) => [row.key, row.value])),
@@ -918,6 +977,13 @@ function kedaProblem(
     if (triggerName && (triggerName.length > 63 || !DNS_LABEL.test(triggerName))) {
       return `${where}的名称必须是合法的 DNS 标签。`;
     }
+    if (
+      isResourceMetricTrigger(type) &&
+      trigger.metricType !== "Utilization" &&
+      trigger.metricType !== "AverageValue"
+    ) {
+      return `${where}的 CPU/Memory 指标目标类型必须是 Utilization 或 AverageValue。`;
+    }
     const auth = trigger.authenticationRefName.trim();
     if (auth && (auth.length > 253 || !DNS_SUBDOMAIN.test(auth))) {
       return `${where}的 TriggerAuthentication 名称必须是合法的 DNS 子域名。`;
@@ -933,12 +999,19 @@ function kedaProblem(
       if (row.value.trim() !== row.value) return `${position}的值不能带首尾空白。`;
       if (keys.has(row.key)) return `${where}包含重复的 metadata 键 ${row.key}。`;
       keys.add(row.key);
+      if (isResourceMetricTrigger(type) && row.key === "type") {
+        return `${where}不能再使用 metadata.type；KEDA 2.18 起请改用上方的指标目标类型字段。`;
+      }
       if (sensitiveKEDAMetadataKey(row.key)) {
         return `${position}可能包含敏感认证信息，请改用 TriggerAuthentication。`;
       }
     }
   }
   return null;
+}
+
+function isResourceMetricTrigger(type: string): boolean {
+  return type.trim() === "cpu" || type.trim() === "memory";
 }
 
 function sensitiveKEDAMetadataKey(key: string): boolean {

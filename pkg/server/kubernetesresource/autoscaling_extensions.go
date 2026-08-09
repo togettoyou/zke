@@ -111,6 +111,7 @@ type VPAPage struct {
 type KEDATrigger struct {
 	Type                  string            `json:"type"`
 	Name                  string            `json:"name"`
+	MetricType            string            `json:"metric_type"`
 	UseCachedMetrics      bool              `json:"use_cached_metrics"`
 	Metadata              map[string]string `json:"metadata"`
 	RedactedMetadataKeys  []string          `json:"redacted_metadata_keys"`
@@ -454,6 +455,9 @@ func kedaKubernetesSpec(input KEDAScaledObjectSpec) (map[string]any, error) {
 		if trigger.Name != "" {
 			item["name"] = trigger.Name
 		}
+		if trigger.MetricType != "" {
+			item["metricType"] = trigger.MetricType
+		}
 		if trigger.UseCachedMetrics {
 			item["useCachedMetrics"] = true
 		}
@@ -470,7 +474,12 @@ func kedaKubernetesSpec(input KEDAScaledObjectSpec) (map[string]any, error) {
 }
 
 func validKEDATrigger(trigger KEDATrigger) bool {
-	if len(k8svalidation.IsDNS1123Label(trigger.Type)) != 0 || trigger.Name != "" && len(k8svalidation.IsDNS1123Label(trigger.Name)) != 0 || trigger.AuthenticationRefName != "" && len(k8svalidation.IsDNS1123Subdomain(trigger.AuthenticationRefName)) != 0 || len(trigger.Metadata) == 0 || len(trigger.Metadata) > maxAutoscalingExtensionEntries {
+	if len(k8svalidation.IsDNS1123Label(trigger.Type)) != 0 || trigger.Name != "" && len(k8svalidation.IsDNS1123Label(trigger.Name)) != 0 || !validKEDAMetricType(trigger.MetricType) || trigger.AuthenticationRefName != "" && len(k8svalidation.IsDNS1123Subdomain(trigger.AuthenticationRefName)) != 0 || len(trigger.Metadata) == 0 || len(trigger.Metadata) > maxAutoscalingExtensionEntries {
+		return false
+	}
+	_, legacyResourceMetricType := trigger.Metadata["type"]
+	if (trigger.Type == "cpu" || trigger.Type == "memory") &&
+		(trigger.MetricType != "Utilization" && trigger.MetricType != "AverageValue" || legacyResourceMetricType) {
 		return false
 	}
 	total := 0
@@ -481,6 +490,10 @@ func validKEDATrigger(trigger KEDATrigger) bool {
 		total += len(key) + len(value)
 	}
 	return total <= maxAutoscalingExtensionBytes
+}
+
+func validKEDAMetricType(value string) bool {
+	return value == "" || value == "Utilization" || value == "Value" || value == "AverageValue"
 }
 
 func vpaDetail(object map[string]any, namespace, name string) (VPADetail, error) {
@@ -565,6 +578,7 @@ func parseKEDATriggers(object map[string]any) []KEDATrigger {
 		}
 		typeName, _, _ := unstructured.NestedString(item, "type")
 		name, _, _ := unstructured.NestedString(item, "name")
+		metricType, _, _ := unstructured.NestedString(item, "metricType")
 		cached, _, _ := unstructured.NestedBool(item, "useCachedMetrics")
 		authName, _, _ := unstructured.NestedString(item, "authenticationRef", "name")
 		metadata := nestedStringMap(item, "metadata")
@@ -576,7 +590,7 @@ func parseKEDATriggers(object map[string]any) []KEDATrigger {
 			}
 		}
 		sort.Strings(redacted)
-		result = append(result, KEDATrigger{Type: typeName, Name: name, UseCachedMetrics: cached, Metadata: metadata, RedactedMetadataKeys: redacted, AuthenticationRefName: authName})
+		result = append(result, KEDATrigger{Type: typeName, Name: name, MetricType: metricType, UseCachedMetrics: cached, Metadata: metadata, RedactedMetadataKeys: redacted, AuthenticationRefName: authName})
 	}
 	return result
 }

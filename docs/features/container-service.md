@@ -670,7 +670,9 @@ VPA/KEDA 详情页与 HPA 使用同一套信息层级：概览明确名称、命
 
 VPA 与 KEDA 的创建和编辑不要求操作者编写 JSON。VPA 以逐容器策略卡片编辑容器名、模式、CPU/Memory 上下界、
 受控资源和 Requests/Limits 调整范围；空策略明确表示使用控制器默认值。KEDA 以逐触发器卡片编辑类型、可选名称、
-缓存指标开关、TriggerAuthentication 引用，以及可增删的 metadata 键值行。已有 ScaledObject 中被脱敏的 metadata
+顶层 `metricType`、缓存指标开关、TriggerAuthentication 引用，以及可增删的 metadata 键值行。CPU/Memory 触发器
+把 Utilization 或 AverageValue 写入 `trigger.metricType`；KEDA 2.18 已移除旧的 `metadata.type`，表单会在编辑旧对象时
+自动迁移该字段并禁止再次提交旧格式。已有 ScaledObject 中被脱敏的 metadata
 不会回填到输入框；表单要求先配置 TriggerAuthentication，保存时移除这些内嵌敏感键，避免把 `[redacted]` 当成
 真实凭证写回。DryRun 或实际提交失败时，表单内持续展示后端的安全错误说明与请求 ID，同时给出全局失败通知；无法
 识别的异常至少显示网络错误兜底，不能只在浏览器 Network 面板留下失败请求。

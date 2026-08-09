@@ -10247,6 +10247,10 @@ components:
       properties:
         type: { type: string, minLength: 1, maxLength: 63 }
         name: { type: string, maxLength: 63 }
+        metric_type:
+          type: string
+          enum: ["", Utilization, Value, AverageValue]
+          description: KEDA trigger-level metricType；CPU/Memory 只接受 Utilization 或 AverageValue。
         use_cached_metrics: { type: boolean }
         metadata:
           type: object

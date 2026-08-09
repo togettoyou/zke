@@ -3700,6 +3700,11 @@ export interface components {
         KubernetesKEDATrigger: {
             type: string;
             name: string;
+            /**
+             * @description KEDA trigger-level metricType；CPU/Memory 只接受 Utilization 或 AverageValue。
+             * @enum {string}
+             */
+            metric_type?: "" | "Utilization" | "Value" | "AverageValue";
             use_cached_metrics: boolean;
             metadata: {
                 [key: string]: string;
