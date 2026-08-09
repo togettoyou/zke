@@ -658,6 +658,19 @@ HPA 或其他容器服务页面。三类列表使用与工作负载、存储等�
 负向 Discovery 结果，Server 稳定返回 `available=false`；Console 不对扩展能力探测自动重试，因此未安装状态无需
 等待错误重试退避，真实 5xx 也会立即展示并由操作者决定是否重试。
 
+VPA/KEDA 详情页与 HPA 使用同一套信息层级：概览明确名称、命名空间、目标及 API Version、控制器状态、Generation
+和创建时间；VPA 展开建议上下界、未限幅建议与完整容器策略，KEDA 展开 Ready/Active/Fallback/Paused、触发器、
+认证引用、外部指标及生成的 HPA；生成的 HPA 可继续进入 HPA 诊断。持有 `cluster.event.read` 时，列表与详情均提供诊断入口。VPA 诊断识别状态未同步、
+无建议、配置不支持、未匹配 Pod 与低置信度；KEDA 诊断识别未就绪与回退状态。两者都通过精确 GVR 读取活对象，
+按 UID 获取只属于该对象的 Event，并在已建模的 apps/v1 目标上附带工作负载健康摘要；读取目标失败会显式标记诊断
+降级，不把缺少证据解释为健康。
+
+VPA 与 KEDA 的创建和编辑不要求操作者编写 JSON。VPA 以逐容器策略卡片编辑容器名、模式、CPU/Memory 上下界、
+受控资源和 Requests/Limits 调整范围；空策略明确表示使用控制器默认值。KEDA 以逐触发器卡片编辑类型、可选名称、
+缓存指标开关、TriggerAuthentication 引用，以及可增删的 metadata 键值行。已有 ScaledObject 中被脱敏的 metadata
+不会回填到输入框；表单要求先配置 TriggerAuthentication，保存时移除这些内嵌敏感键，避免把 `[redacted]` 当成
+真实凭证写回。
+
 策略管理后端把五类约束放在一组接口下：命名空间级的 `core/v1 ResourceQuota`、`core/v1 LimitRange`、
 `networking.k8s.io/v1 NetworkPolicy`、`policy/v1 PodDisruptionBudget`，以及集群级的
 `scheduling.k8s.io/v1 PriorityClass`。两种作用域是两组路由，互相拒绝对方的资源，因此一个没有 Namespace 的
@@ -949,8 +962,8 @@ Event 按 UID 而不是名称过滤：同名重建的 Pod 会留下前一个对�
 ConfigMap/Secret 不存在）、反复重启、容器异常退出、内存超限被终止、存储挂载失败和探针未通过。探针只在
 Running 且未就绪时报告——启动过程中失败一次随后通过是常态，报出来会让每个热身稍慢的 Pod 都变成告警。
 Node 规则包括 Ready 异常、Memory/Disk/PID Pressure、NetworkUnavailable、停止调度，以及 requests 或 Pod 数达到
-可分配量 90% 的容量信号。除下文单独建模的 PVC、Service、Ingress、Gateway、HPA 与策略状态资源外，其他类型走通用 describe，只返回身份与自己的
-Event，findings 恒为空数组：没有为某个类型写过的规则不是规则。
+可分配量 90% 的容量信号。除下文单独建模的 PVC、Service、Ingress、Gateway、HPA、VPA、KEDA 与策略状态资源外，
+其他类型走通用 describe，只返回身份与自己的 Event，findings 恒为空数组：没有为某个类型写过的规则不是规则。
 
 类型化诊断的覆盖边界如下。这里的“无类型化入口”是有意的产品边界，不表示忘记接按钮；只有当该类型出现可由
 Kubernetes status、Condition、明确关联对象或精确 Event 归属证明的故障语义时，才应新增规则。
@@ -963,6 +976,8 @@ Kubernetes status、Condition、明确关联对象或精确 Event 归属证明�
 | Service、Ingress、Gateway、五种 Gateway API Route        | 类型化          | EndpointSlice/后端引用或 Gateway Controller Condition；不跨 Namespace 读取 Secret/Route  |
 | PersistentVolumeClaim                                    | 类型化          | phase、Condition 与精确 UID Event                                                        |
 | HorizontalPodAutoscaler                                  | 类型化聚合      | 标准 HPA Condition；只补充已知 apps/v1 目标状态，不读取目标 Event                        |
+| VerticalPodAutoscaler                                    | 类型化聚合      | VPA Generation、建议与 Condition；补充 Deployment/StatefulSet/DaemonSet 目标状态         |
+| KEDA ScaledObject                                        | 类型化聚合      | Ready/Fallback Condition、精确 UID Event；补充 Deployment/StatefulSet 目标状态            |
 | ResourceQuota、PodDisruptionBudget                       | 类型化          | quantity 用量或 `DisruptionAllowed` Condition                                            |
 | ConfigMap、LimitRange、NetworkPolicy                     | 无类型化入口    | 没有可可靠解释为对象故障的 status；可在资源对象浏览器使用通用 Event-only describe        |
 | Secret                                                   | 无诊断入口      | 敏感资源不经过通用资源/describe 路径，不能为事件便利放宽 Secret 读取边界                 |

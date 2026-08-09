@@ -5,9 +5,9 @@ import { formatAbsolute } from "@/lib/time";
 
 export function DetailCard({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Card>
-      <CardTitle>{title}</CardTitle>
-      <dl className="mt-2">{children}</dl>
+    <Card className="min-w-0">
+      <CardTitle className="min-w-0 break-words">{title}</CardTitle>
+      <dl className="mt-2 min-w-0">{children}</dl>
     </Card>
   );
 }
@@ -27,7 +27,7 @@ export function DetailRow({ label, value }: { label: string; value: ReactNode })
           is a starting point rather than a width, and a long one is drawn over
           the value beside it. */}
       <dt className="text-muted-foreground min-w-0 break-words">{label}</dt>
-      <dd className="text-foreground min-w-0">{value}</dd>
+      <dd className="text-foreground min-w-0 [overflow-wrap:anywhere] break-words">{value}</dd>
     </div>
   );
 }
@@ -55,20 +55,24 @@ export function DetailConditions({ conditions }: { conditions: DetailCondition[]
     return <div className="text-subtle-foreground py-2 text-[13px]">—</div>;
   }
   return (
-    <div className="grid">
+    <div className="grid min-w-0">
       {conditions.map((condition) => {
         const explanation = [condition.reason, condition.message].filter(Boolean).join(" · ");
         return (
           <div
             key={condition.type}
-            className="border-border/50 grid gap-0.5 border-b py-2 text-[13px] last:border-b-0 last:pb-0"
+            className="border-border/50 grid min-w-0 gap-0.5 border-b py-2 text-[13px] last:border-b-0 last:pb-0"
           >
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-foreground min-w-0 break-words">{condition.type}</span>
+              <span className="text-foreground min-w-0 [overflow-wrap:anywhere] break-words">
+                {condition.type}
+              </span>
               <span className="text-muted-foreground shrink-0">{condition.status}</span>
             </div>
             {explanation ? (
-              <span className="text-muted-foreground text-xs break-words">{explanation}</span>
+              <span className="text-muted-foreground min-w-0 text-xs [overflow-wrap:anywhere] break-words">
+                {explanation}
+              </span>
             ) : null}
             {condition.last_transition_time ? (
               <span className="text-subtle-foreground text-xs">
@@ -96,7 +100,7 @@ export function DetailKeyValues({ entries }: { entries: Record<string, string> }
   // Plain `div`s rather than a list: this renders inside a DetailCard's `dl`,
   // where `div` is the one grouping element HTML allows.
   return (
-    <div className="grid gap-1 py-1">
+    <div className="grid min-w-0 gap-1 py-1">
       {pairs.map(([key, value]) => (
         <div key={key} className="zke-mono text-muted-foreground text-xs break-all">
           <span className="text-foreground">{key}</span>

@@ -1846,8 +1846,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * @description 返回任意主资源的身份与只属于该对象的 Kubernetes Event 快照。诊断规则按家族编写，
-         *     当前只有 Pod 家族具备，因此该接口的 findings 恒为空数组，不对未建模的类型做猜测。
+         * @description 返回任意主资源的身份与只属于该对象的 Kubernetes Event 快照。诊断规则按家族编写；
+         *     VPA 与 KEDA ScaledObject 虽然是 CRD，精确匹配其 GVR 时仍返回 autoscaling 家族投影、
+         *     控制器状态结论与目标工作负载摘要。其他未建模类型的 findings 为空，不做猜测。
          *
          *     Cluster 级资源不返回 Event：Event 归属哪个 Namespace 属于约定而非规则，接口以
          *     events.omitted=unsupported_scope 说明，而不是返回可能属于其他对象的 Event。
@@ -4885,6 +4886,8 @@ export interface components {
             ingress_backends?: components["schemas"]["KubernetesDescribeIngressBackends"];
             gateway_status?: components["schemas"]["KubernetesDescribeGatewayStatus"];
             autoscaler?: components["schemas"]["KubernetesHPADetail"];
+            vertical_pod_autoscaler?: components["schemas"]["KubernetesVPADetail"];
+            keda_scaled_object?: components["schemas"]["KubernetesKEDADetail"];
             autoscaler_target?: components["schemas"]["KubernetesDescribeRelatedObject"];
             policy?: components["schemas"]["KubernetesPolicyResourceDetail"];
             policy_status?: components["schemas"]["KubernetesDescribePolicyStatus"];
@@ -5056,7 +5059,7 @@ export interface components {
          */
         KubernetesDescribeFinding: {
             /** @enum {string} */
-            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints" | "GatewayAddressPending" | "GatewayNotAccepted" | "GatewayNotProgrammed" | "GatewayNotReady" | "GatewayListenerNotAccepted" | "GatewayListenerNotProgrammed" | "GatewayListenerConflicted" | "GatewayListenerReferencesInvalid" | "GatewayRouteUnattached" | "GatewayRouteNotAccepted" | "GatewayRouteReferencesInvalid" | "GatewayRoutePartiallyInvalid" | "HPAStatusStale" | "HPAUnableToScale" | "HPAMetricsUnavailable" | "HPAScalingLimited" | "ResourceQuotaExhausted" | "PDBNoDisruptionsAllowed";
+            code: "PodUnschedulable" | "ImagePullFailure" | "ContainerConfigError" | "CrashLoopBackOff" | "ContainerTerminated" | "OOMKilled" | "VolumeMountFailure" | "ProbeFailure" | "PVCPending" | "WorkloadProgressStalled" | "ReplicaCreateRejected" | "WorkloadFailed" | "NodeNotReady" | "NodeMemoryPressure" | "NodeDiskPressure" | "NodePIDPressure" | "NodeNetworkUnavailable" | "NodeSchedulingDisabled" | "NodeCPURequestsHigh" | "NodeMemoryRequestsHigh" | "NodePodCapacityHigh" | "ServiceNoEndpoints" | "ServiceNoReadyEndpoints" | "ServiceLoadBalancerPending" | "IngressAddressPending" | "IngressControllerRejected" | "IngressBackendServiceNotFound" | "IngressBackendPortNotFound" | "IngressBackendNoEndpoints" | "IngressBackendNoReadyEndpoints" | "GatewayAddressPending" | "GatewayNotAccepted" | "GatewayNotProgrammed" | "GatewayNotReady" | "GatewayListenerNotAccepted" | "GatewayListenerNotProgrammed" | "GatewayListenerConflicted" | "GatewayListenerReferencesInvalid" | "GatewayRouteUnattached" | "GatewayRouteNotAccepted" | "GatewayRouteReferencesInvalid" | "GatewayRoutePartiallyInvalid" | "HPAStatusStale" | "HPAUnableToScale" | "HPAMetricsUnavailable" | "HPAScalingLimited" | "VPAStatusStale" | "VPARecommendationUnavailable" | "VPAConfigurationUnsupported" | "VPANoPodsMatched" | "VPALowConfidence" | "KEDANotReady" | "KEDAFallbackActive" | "ResourceQuotaExhausted" | "PDBNoDisruptionsAllowed";
             /**
              * @description findings 只报告问题，因此只有一个级别。
              * @enum {string}

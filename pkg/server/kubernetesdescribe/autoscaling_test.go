@@ -71,6 +71,100 @@ func TestDescribeHorizontalPodAutoscalerReportsControllerConditionsAndTarget(t *
 	}
 }
 
+func TestDescribeResourceUsesVPAAutoscalingDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	access := &fakeResourceAccess{
+		verticalAutoscaler: kubernetesresource.VPADetail{
+			VPASummary: kubernetesresource.VPASummary{
+				Namespace: "models", Name: "inference", UID: "vpa-uid",
+				ResourceVersion: "11", Generation: 3, ObservedGeneration: 2,
+				Target: kubernetesresource.AutoscalingTarget{
+					APIVersion: "apps/v1", Kind: "DaemonSet", Name: "inference",
+				},
+				Conditions: []kubernetesresource.AutoscalingExtensionCondition{
+					{Type: "NoPodsMatched", Status: "True", Reason: "NoPodsMatched", Message: "no matching pods found"},
+				},
+			},
+			Recommendations: []kubernetesresource.VPARecommendation{},
+		},
+		workload: kubernetesresource.WorkloadDetail{
+			WorkloadSummary: kubernetesresource.WorkloadSummary{
+				Resource:   kubernetesresource.WorkloadDaemonSets,
+				APIVersion: "apps/v1", Kind: "DaemonSet", Namespace: "models",
+				Name: "inference", UID: "daemonset-uid", Status: "progressing",
+				Replicas: &kubernetesresource.WorkloadReplicaStatus{Desired: 3, Ready: 1},
+			},
+		},
+	}
+	events := &fakeEventSource{}
+	result, err := NewService(access, events, Config{}).DescribeResource(t.Context(), ResourceInput{
+		ClusterID: testClusterID, Namespace: "models", Name: "inference",
+		Resource: kubernetesresource.VerticalPodAutoscalerResourceIdentity(),
+	})
+	if err != nil {
+		t.Fatalf("describe VPA: %v", err)
+	}
+	if result.Family != FamilyAutoscaling || result.VerticalPodAutoscaler == nil || result.Target.Kind != "VerticalPodAutoscaler" {
+		t.Fatalf("unexpected VPA projection: %+v", result)
+	}
+	if access.workloadResource != kubernetesresource.WorkloadDaemonSets || result.AutoscalerTarget == nil {
+		t.Fatalf("VPA target was not resolved: %+v", result.AutoscalerTarget)
+	}
+	want := []string{FindingVPAStatusStale, FindingVPARecommendationUnavailable, FindingVPANoPodsMatched}
+	if len(result.Findings) != len(want) {
+		t.Fatalf("unexpected VPA findings: %+v", result.Findings)
+	}
+	for index, code := range want {
+		if result.Findings[index].Code != code {
+			t.Fatalf("finding %d = %q, want %q", index, result.Findings[index].Code, code)
+		}
+	}
+	if !events.called || events.input.ResourceUID != "vpa-uid" {
+		t.Fatalf("events were not scoped to the VPA: %+v", events.input)
+	}
+}
+
+func TestDescribeResourceUsesKEDAAutoscalingDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	access := &fakeResourceAccess{
+		kedaScaledObject: kubernetesresource.KEDAScaledObjectDetail{
+			KEDAScaledObjectSummary: kubernetesresource.KEDAScaledObjectSummary{
+				Namespace: "models", Name: "worker", UID: "keda-uid", ResourceVersion: "12",
+				Target: kubernetesresource.AutoscalingTarget{
+					APIVersion: "apps/v1", Kind: "Deployment", Name: "worker",
+				},
+				Ready: false, Fallback: true,
+			},
+			Conditions: []kubernetesresource.AutoscalingExtensionCondition{
+				{Type: "Ready", Status: "False", Reason: "ScalerFailed", Message: "cannot read the trigger"},
+				{Type: "Fallback", Status: "True", Reason: "FallbackExists", Message: "fallback is active"},
+			},
+		},
+		workload: kubernetesresource.WorkloadDetail{
+			WorkloadSummary: kubernetesresource.WorkloadSummary{
+				Resource:   kubernetesresource.WorkloadDeployments,
+				APIVersion: "apps/v1", Kind: "Deployment", Namespace: "models",
+				Name: "worker", UID: "deployment-uid", Status: "available",
+				Replicas: &kubernetesresource.WorkloadReplicaStatus{Desired: 2, Ready: 2},
+			},
+		},
+	}
+	result, err := NewService(access, &fakeEventSource{}, Config{}).DescribeResource(t.Context(), ResourceInput{
+		ClusterID: testClusterID, Namespace: "models", Name: "worker",
+		Resource: kubernetesresource.KEDAScaledObjectResourceIdentity(),
+	})
+	if err != nil {
+		t.Fatalf("describe KEDA ScaledObject: %v", err)
+	}
+	if result.KEDAScaledObject == nil || len(result.Findings) != 2 ||
+		result.Findings[0].Code != FindingKEDANotReady ||
+		result.Findings[1].Code != FindingKEDAFallbackActive {
+		t.Fatalf("unexpected KEDA diagnosis: %+v", result)
+	}
+}
+
 func TestDescribeHorizontalPodAutoscalerDegradesKnownTargetRead(t *testing.T) {
 	t.Parallel()
 

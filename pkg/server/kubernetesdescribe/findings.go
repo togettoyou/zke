@@ -74,6 +74,16 @@ const (
 )
 
 const (
+	FindingVPAStatusStale               = "VPAStatusStale"
+	FindingVPARecommendationUnavailable = "VPARecommendationUnavailable"
+	FindingVPAConfigurationUnsupported  = "VPAConfigurationUnsupported"
+	FindingVPANoPodsMatched             = "VPANoPodsMatched"
+	FindingVPALowConfidence             = "VPALowConfidence"
+	FindingKEDANotReady                 = "KEDANotReady"
+	FindingKEDAFallbackActive           = "KEDAFallbackActive"
+)
+
+const (
 	FindingResourceQuotaExhausted  = "ResourceQuotaExhausted"
 	FindingPDBNoDisruptionsAllowed = "PDBNoDisruptionsAllowed"
 )
@@ -144,6 +154,83 @@ func hpaFindings(autoscaler kubernetesresource.HorizontalPodAutoscalerDetail) []
 		}
 	}
 	return findings
+}
+
+func vpaFindings(autoscaler kubernetesresource.VPADetail) []Finding {
+	findings := make([]Finding, 0, 5)
+	if autoscaler.ObservedGeneration < autoscaler.Generation {
+		findings = append(findings, Finding{
+			Code: FindingVPAStatusStale, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.observedGeneration"}},
+		})
+	}
+	if len(autoscaler.Recommendations) == 0 {
+		finding := Finding{
+			Code: FindingVPARecommendationUnavailable, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.recommendation"}},
+		}
+		if condition, ok := extensionCondition(autoscaler.Conditions, "RecommendationProvided"); ok {
+			finding.Reason, finding.Message = condition.Reason, condition.Message
+			finding.Evidence = []Evidence{{Kind: EvidenceCondition, Name: condition.Type}}
+		}
+		findings = append(findings, finding)
+	}
+	conditionFindings := map[string]string{
+		"ConfigUnsupported": FindingVPAConfigurationUnsupported,
+		"NoPodsMatched":     FindingVPANoPodsMatched,
+		"LowConfidence":     FindingVPALowConfidence,
+	}
+	for _, condition := range autoscaler.Conditions {
+		code, tracked := conditionFindings[condition.Type]
+		if !tracked || condition.Status != conditionStatusTrue {
+			continue
+		}
+		findings = append(findings, Finding{
+			Code: code, Severity: SeverityWarning,
+			Reason: condition.Reason, Message: condition.Message,
+			Evidence: []Evidence{{Kind: EvidenceCondition, Name: condition.Type}},
+		})
+	}
+	return findings
+}
+
+func kedaFindings(autoscaler kubernetesresource.KEDAScaledObjectDetail) []Finding {
+	findings := make([]Finding, 0, 2)
+	if !autoscaler.Ready {
+		finding := Finding{
+			Code: FindingKEDANotReady, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.conditions.Ready"}},
+		}
+		if condition, ok := extensionCondition(autoscaler.Conditions, "Ready"); ok {
+			finding.Reason, finding.Message = condition.Reason, condition.Message
+			finding.Evidence = []Evidence{{Kind: EvidenceCondition, Name: condition.Type}}
+		}
+		findings = append(findings, finding)
+	}
+	if autoscaler.Fallback {
+		finding := Finding{
+			Code: FindingKEDAFallbackActive, Severity: SeverityWarning,
+			Evidence: []Evidence{{Kind: EvidenceObjectStatus, Name: "status.conditions.Fallback"}},
+		}
+		if condition, ok := extensionCondition(autoscaler.Conditions, "Fallback"); ok {
+			finding.Reason, finding.Message = condition.Reason, condition.Message
+			finding.Evidence = []Evidence{{Kind: EvidenceCondition, Name: condition.Type}}
+		}
+		findings = append(findings, finding)
+	}
+	return findings
+}
+
+func extensionCondition(
+	conditions []kubernetesresource.AutoscalingExtensionCondition,
+	typeName string,
+) (kubernetesresource.AutoscalingExtensionCondition, bool) {
+	for _, condition := range conditions {
+		if condition.Type == typeName {
+			return condition, true
+		}
+	}
+	return kubernetesresource.AutoscalingExtensionCondition{}, false
 }
 
 func gatewayFindings(gateway kubernetesresource.NetworkingResourceDetail) []Finding {

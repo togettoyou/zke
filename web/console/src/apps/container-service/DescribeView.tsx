@@ -220,6 +220,34 @@ const FINDING_LABELS: Record<KubernetesDescribeFindingCode, { title: string; hin
     title: "伸缩受到上下限约束",
     hint: "计算出的期望副本数超出 minReplicas 或 maxReplicas。核对副本上下限是否符合当前负载需求。",
   },
+  VPAStatusStale: {
+    title: "VPA 状态尚未追上配置",
+    hint: "控制器观察到的 Generation 落后于当前配置。等待下一次同步；若持续不变，检查 VPA Controller 状态与事件。",
+  },
+  VPARecommendationUnavailable: {
+    title: "尚无资源建议",
+    hint: "VPA Controller 尚未生成容器资源建议。检查目标是否有可匹配的 Pod、历史指标是否充足，以及 Metrics API 是否可用。",
+  },
+  VPAConfigurationUnsupported: {
+    title: "VPA 配置不受支持",
+    hint: "VPA Controller 明确拒绝了当前策略。按 Kubernetes 原始消息核对更新模式、受控资源和容器策略。",
+  },
+  VPANoPodsMatched: {
+    title: "VPA 未匹配到 Pod",
+    hint: "伸缩目标当前没有可供 VPA 采样的 Pod。核对目标名称、工作负载副本和 Pod selector。",
+  },
+  VPALowConfidence: {
+    title: "VPA 建议置信度较低",
+    hint: "可用历史样本不足，当前建议可能不稳定。继续观察指标采集，并谨慎使用会自动驱逐或重建 Pod 的更新模式。",
+  },
+  KEDANotReady: {
+    title: "KEDA ScaledObject 未就绪",
+    hint: "KEDA Controller 尚未接受或完成当前伸缩配置。按原始 reason 和 message 检查触发器、认证引用与指标端点。",
+  },
+  KEDAFallbackActive: {
+    title: "KEDA 已进入回退状态",
+    hint: "触发器连续读取失败，KEDA 正在使用回退副本策略。检查外部指标源、网络连通性与 TriggerAuthentication。",
+  },
   ResourceQuotaExhausted: {
     title: "命名空间额度已耗尽",
     hint: "一项或多项 used 已达到 hard，新对象可能因此被准入拒绝。核对下方具体额度；需要时释放资源或调整 ResourceQuota。",
@@ -497,7 +525,9 @@ export function DescribeView({
             <GatewayDiagnosticSummary data={data} />
           ) : null}
           {data.networking?.gateway_route ? <GatewayRouteDiagnosticSummary data={data} /> : null}
-          {data.autoscaler ? <AutoscalerDiagnosticSummary data={data} /> : null}
+          {data.autoscaler || data.vertical_pod_autoscaler || data.keda_scaled_object ? (
+            <AutoscalerDiagnosticSummary data={data} />
+          ) : null}
           {data.policy && data.policy_status ? <PolicyDiagnosticSummary data={data} /> : null}
 
           {data.related ? (
@@ -548,7 +578,7 @@ export function DescribeView({
           ) : null}
           {data.degraded_sections.includes("autoscaler.target") ? (
             <Alert tone="warning">
-              本次未能读取 HPA 的类型化伸缩目标，HPA 自身 Condition 与事件仍然有效。
+              本次未能读取自动伸缩对象的类型化目标，其自身 Condition 与事件仍然有效。
             </Alert>
           ) : null}
           {data.events.omitted ? (
@@ -710,6 +740,8 @@ function describeConditions(data: KubernetesDescribe): EvidenceCondition[] {
       })),
     ) ?? []),
     ...(data.autoscaler?.conditions ?? []),
+    ...(data.vertical_pod_autoscaler?.conditions ?? []),
+    ...(data.keda_scaled_object?.conditions ?? []),
     ...(data.policy?.disruption_budget_detail?.conditions ?? []),
   ];
 }
@@ -1166,11 +1198,14 @@ function GatewayRouteDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
 }
 
 function AutoscalerDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
-  const autoscaler = data.autoscaler;
+  const hpa = data.autoscaler;
+  const vpa = data.vertical_pod_autoscaler;
+  const keda = data.keda_scaled_object;
   const navigation = useDiagnosticNavigation();
-  if (!autoscaler) {
+  if (!hpa && !vpa && !keda) {
     return null;
   }
+  const autoscalingTarget = hpa?.target ?? vpa?.target ?? keda?.target;
   const target = data.autoscaler_target;
   return (
     <Card>
@@ -1178,20 +1213,56 @@ function AutoscalerDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <DiagnosticValue
           label="伸缩目标"
-          value={`${autoscaler.target.kind}/${autoscaler.target.name}`}
+          value={
+            autoscalingTarget ? `${autoscalingTarget.kind}/${autoscalingTarget.name}` : "状态不可用"
+          }
         />
-        <DiagnosticValue
-          label="当前 / 期望副本"
-          value={`${autoscaler.current_replicas} → ${autoscaler.desired_replicas}`}
-        />
-        <DiagnosticValue
-          label="副本区间"
-          value={`${autoscaler.min_replicas} – ${autoscaler.max_replicas}`}
-        />
-        <DiagnosticValue
-          label="Generation"
-          value={`${autoscaler.generation}（已观察 ${autoscaler.observed_generation ?? "—"}）`}
-        />
+        {hpa ? (
+          <>
+            <DiagnosticValue
+              label="当前 / 期望副本"
+              value={`${hpa.current_replicas} → ${hpa.desired_replicas}`}
+            />
+            <DiagnosticValue label="副本区间" value={`${hpa.min_replicas} – ${hpa.max_replicas}`} />
+            <DiagnosticValue
+              label="Generation"
+              value={`${hpa.generation}（已观察 ${hpa.observed_generation ?? "—"}）`}
+            />
+          </>
+        ) : null}
+        {vpa ? (
+          <>
+            <DiagnosticValue label="更新模式" value={vpa.update_mode || "Off"} />
+            <DiagnosticValue label="容器建议" value={`${(vpa.recommendations ?? []).length} 个`} />
+            <DiagnosticValue
+              label="Generation"
+              value={`${vpa.generation}（已观察 ${vpa.observed_generation || "—"}）`}
+            />
+          </>
+        ) : null}
+        {keda ? (
+          <>
+            <DiagnosticValue
+              label="副本区间"
+              value={`${keda.min_replicas} – ${keda.max_replicas}`}
+            />
+            <DiagnosticValue
+              label="控制器状态"
+              value={
+                keda.paused
+                  ? "已暂停"
+                  : keda.fallback
+                    ? "回退中"
+                    : keda.ready
+                      ? keda.active
+                        ? "活跃"
+                        : "等待触发"
+                      : "未就绪"
+              }
+            />
+            <DiagnosticValue label="生成的 HPA" value={keda.hpa_name || "尚未生成"} />
+          </>
+        ) : null}
       </div>
       {target ? (
         <div className="border-border/60 rounded-control mt-2 grid gap-1.5 border p-2.5">
@@ -1645,6 +1716,38 @@ function describeText(data: KubernetesDescribe, kindLabel: string): string {
             `${finding.message ? ` ${finding.message}` : ""}`,
         );
       }
+    }
+  }
+  if (data.vertical_pod_autoscaler) {
+    const autoscaler = data.vertical_pod_autoscaler;
+    lines.push(
+      "",
+      "VPA 概况",
+      `  Target: ${autoscaler.target.api_version} ${autoscaler.target.kind}/${autoscaler.target.name}`,
+      `  Update mode: ${autoscaler.update_mode || "Off"}`,
+      `  Recommendations: ${(autoscaler.recommendations ?? []).length}`,
+      `  Generation: ${autoscaler.generation} / observed ${autoscaler.observed_generation || "—"}`,
+    );
+  }
+  if (data.keda_scaled_object) {
+    const autoscaler = data.keda_scaled_object;
+    lines.push(
+      "",
+      "KEDA ScaledObject 概况",
+      `  Target: ${autoscaler.target.api_version} ${autoscaler.target.kind}/${autoscaler.target.name}`,
+      `  Replicas: ${autoscaler.min_replicas}-${autoscaler.max_replicas}`,
+      `  Ready / active / fallback / paused: ${autoscaler.ready} / ${autoscaler.active} / ${autoscaler.fallback} / ${autoscaler.paused}`,
+      `  Generated HPA: ${autoscaler.hpa_name || "—"}`,
+    );
+  }
+  if (!data.autoscaler && data.autoscaler_target) {
+    const target = data.autoscaler_target;
+    lines.push(`  Target status: ${target.kind}/${target.name} ${target.status || "—"}`);
+    for (const finding of target.findings) {
+      lines.push(
+        `      ${FINDING_LABELS[finding.code]?.title ?? finding.code} [${finding.code}]` +
+          `${finding.message ? ` ${finding.message}` : ""}`,
+      );
     }
   }
   if (data.policy?.resource_quota && data.policy_status) {

@@ -20,32 +20,36 @@ import (
 const testClusterID = "0c2ba9a5-15fb-4bfa-9fbe-7f43a2ba8a53"
 
 type fakeResourceAccess struct {
-	networking          kubernetesresource.NetworkingResourceDetail
-	networkingErr       error
-	networkingPage      kubernetesresource.NetworkingResourcePage
-	networkingListErr   error
-	networkingListInput kubernetesresource.ListNetworkingResourcesInput
-	node                kubernetesresource.NodeDetail
-	nodeErr             error
-	nodePods            []kubernetesresource.NodePodDetail
-	nodePodsErr         error
-	nodePodsMore        bool
-	nodePodsInput       kubernetesresource.ListPodsInput
-	pod                 kubernetesresource.PodDetail
-	podErr              error
-	podDetails          []kubernetesresource.PodDetail
-	podListErr          error
-	podListInput        kubernetesresource.ListPodsInput
-	workload            kubernetesresource.WorkloadDetail
-	workloadErr         error
-	workloadResource    kubernetesresource.WorkloadResource
-	workloadName        string
-	autoscaler          kubernetesresource.HorizontalPodAutoscalerDetail
-	autoscalerErr       error
-	policy              kubernetesresource.PolicyResourceDetail
-	policyErr           error
-	claims              map[string]kubernetesresource.StorageResourceDetail
-	claimErr            map[string]error
+	networking            kubernetesresource.NetworkingResourceDetail
+	networkingErr         error
+	networkingPage        kubernetesresource.NetworkingResourcePage
+	networkingListErr     error
+	networkingListInput   kubernetesresource.ListNetworkingResourcesInput
+	node                  kubernetesresource.NodeDetail
+	nodeErr               error
+	nodePods              []kubernetesresource.NodePodDetail
+	nodePodsErr           error
+	nodePodsMore          bool
+	nodePodsInput         kubernetesresource.ListPodsInput
+	pod                   kubernetesresource.PodDetail
+	podErr                error
+	podDetails            []kubernetesresource.PodDetail
+	podListErr            error
+	podListInput          kubernetesresource.ListPodsInput
+	workload              kubernetesresource.WorkloadDetail
+	workloadErr           error
+	workloadResource      kubernetesresource.WorkloadResource
+	workloadName          string
+	autoscaler            kubernetesresource.HorizontalPodAutoscalerDetail
+	autoscalerErr         error
+	verticalAutoscaler    kubernetesresource.VPADetail
+	verticalAutoscalerErr error
+	kedaScaledObject      kubernetesresource.KEDAScaledObjectDetail
+	kedaScaledObjectErr   error
+	policy                kubernetesresource.PolicyResourceDetail
+	policyErr             error
+	claims                map[string]kubernetesresource.StorageResourceDetail
+	claimErr              map[string]error
 	// Keyed by the resource name of the listed type, e.g. `replicasets`.
 	lists     map[string]kubernetesresource.ResourcePage
 	listErr   error
@@ -125,6 +129,24 @@ func (access *fakeResourceAccess) GetHorizontalPodAutoscaler(
 	_ string,
 ) (kubernetesresource.HorizontalPodAutoscalerDetail, error) {
 	return access.autoscaler, access.autoscalerErr
+}
+
+func (access *fakeResourceAccess) GetVerticalPodAutoscaler(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ string,
+) (kubernetesresource.VPADetail, error) {
+	return access.verticalAutoscaler, access.verticalAutoscalerErr
+}
+
+func (access *fakeResourceAccess) GetKEDAScaledObject(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ string,
+) (kubernetesresource.KEDAScaledObjectDetail, error) {
+	return access.kedaScaledObject, access.kedaScaledObjectErr
 }
 
 func (access *fakeResourceAccess) GetPolicyResource(

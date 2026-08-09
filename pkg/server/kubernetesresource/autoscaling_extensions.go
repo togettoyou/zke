@@ -521,7 +521,7 @@ func kedaDetail(object map[string]any, namespace, name string) (KEDAScaledObject
 	ready, active, fallback, paused := conditionTrue(conditions, "Ready"), conditionTrue(conditions, "Active"), conditionTrue(conditions, "Fallback"), conditionTrue(conditions, "Paused")
 	metricNames, _, _ := unstructured.NestedStringSlice(object, "status", "externalMetricNames")
 	hpaName, _, _ := unstructured.NestedString(object, "status", "hpaName")
-	return KEDAScaledObjectDetail{KEDAScaledObjectSummary: KEDAScaledObjectSummary{Namespace: namespace, Name: value.GetName(), UID: string(value.GetUID()), ResourceVersion: value.GetResourceVersion(), Generation: value.GetGeneration(), CreationTimestamp: value.GetCreationTimestamp().Time, Labels: normalizedStringMap(value.GetLabels()), Target: target, MinReplicas: int32(minimum), MaxReplicas: int32(maximum), TriggerCount: len(triggers), Ready: ready, Active: active, Fallback: fallback, Paused: paused}, Annotations: normalizedStringMap(value.GetAnnotations()), PollingInterval: polling, CooldownPeriod: cooldown, Triggers: triggers, Conditions: conditions, ExternalMetricNames: metricNames, HPAName: hpaName}, nil
+	return KEDAScaledObjectDetail{KEDAScaledObjectSummary: KEDAScaledObjectSummary{Namespace: namespace, Name: value.GetName(), UID: string(value.GetUID()), ResourceVersion: value.GetResourceVersion(), Generation: value.GetGeneration(), CreationTimestamp: value.GetCreationTimestamp().Time, Labels: normalizedStringMap(value.GetLabels()), Target: target, MinReplicas: int32(minimum), MaxReplicas: int32(maximum), TriggerCount: len(triggers), Ready: ready, Active: active, Fallback: fallback, Paused: paused}, Annotations: normalizedStringMap(value.GetAnnotations()), PollingInterval: polling, CooldownPeriod: cooldown, Triggers: triggers, Conditions: conditions, ExternalMetricNames: normalizedStrings(metricNames), HPAName: hpaName}, nil
 }
 
 func parseVPAContainerPolicies(object map[string]any) []VPAContainerPolicy {
@@ -536,7 +536,7 @@ func parseVPAContainerPolicies(object map[string]any) []VPAContainerPolicy {
 		mode, _, _ := unstructured.NestedString(item, "mode")
 		controlledValues, _, _ := unstructured.NestedString(item, "controlledValues")
 		controlled, _, _ := unstructured.NestedStringSlice(item, "controlledResources")
-		result = append(result, VPAContainerPolicy{ContainerName: name, Mode: mode, MinAllowed: nestedStringMap(item, "minAllowed"), MaxAllowed: nestedStringMap(item, "maxAllowed"), ControlledResources: controlled, ControlledValues: controlledValues})
+		result = append(result, VPAContainerPolicy{ContainerName: name, Mode: mode, MinAllowed: nestedStringMap(item, "minAllowed"), MaxAllowed: nestedStringMap(item, "maxAllowed"), ControlledResources: normalizedStrings(controlled), ControlledValues: controlledValues})
 	}
 	return result
 }

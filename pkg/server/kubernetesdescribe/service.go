@@ -116,6 +116,18 @@ type ResourceAccess interface {
 		string,
 		string,
 	) (kubernetesresource.HorizontalPodAutoscalerDetail, error)
+	GetVerticalPodAutoscaler(
+		context.Context,
+		string,
+		string,
+		string,
+	) (kubernetesresource.VPADetail, error)
+	GetKEDAScaledObject(
+		context.Context,
+		string,
+		string,
+		string,
+	) (kubernetesresource.KEDAScaledObjectDetail, error)
 	GetPolicyResource(
 		context.Context,
 		string,
@@ -201,18 +213,20 @@ type Result struct {
 	// The family projection, present for the families that have one. Same shape
 	// the family's own detail endpoint returns, so the Console renders it with
 	// the components it already has.
-	Pod              *kubernetesresource.PodDetail                     `json:"pod,omitempty"`
-	Workload         *kubernetesresource.WorkloadDetail                `json:"workload,omitempty"`
-	Node             *kubernetesresource.NodeDetail                    `json:"node,omitempty"`
-	Storage          *kubernetesresource.StorageResourceDetail         `json:"storage,omitempty"`
-	Networking       *kubernetesresource.NetworkingResourceDetail      `json:"networking,omitempty"`
-	Autoscaler       *kubernetesresource.HorizontalPodAutoscalerDetail `json:"autoscaler,omitempty"`
-	AutoscalerTarget *RelatedObject                                    `json:"autoscaler_target,omitempty"`
-	Policy           *kubernetesresource.PolicyResourceDetail          `json:"policy,omitempty"`
-	PolicyStatus     *PolicyStatus                                     `json:"policy_status,omitempty"`
-	ServiceEndpoints *ServiceEndpoints                                 `json:"service_endpoints,omitempty"`
-	IngressBackends  *IngressBackends                                  `json:"ingress_backends,omitempty"`
-	GatewayStatus    *GatewayStatus                                    `json:"gateway_status,omitempty"`
+	Pod                   *kubernetesresource.PodDetail                     `json:"pod,omitempty"`
+	Workload              *kubernetesresource.WorkloadDetail                `json:"workload,omitempty"`
+	Node                  *kubernetesresource.NodeDetail                    `json:"node,omitempty"`
+	Storage               *kubernetesresource.StorageResourceDetail         `json:"storage,omitempty"`
+	Networking            *kubernetesresource.NetworkingResourceDetail      `json:"networking,omitempty"`
+	Autoscaler            *kubernetesresource.HorizontalPodAutoscalerDetail `json:"autoscaler,omitempty"`
+	VerticalPodAutoscaler *kubernetesresource.VPADetail                     `json:"vertical_pod_autoscaler,omitempty"`
+	KEDAScaledObject      *kubernetesresource.KEDAScaledObjectDetail        `json:"keda_scaled_object,omitempty"`
+	AutoscalerTarget      *RelatedObject                                    `json:"autoscaler_target,omitempty"`
+	Policy                *kubernetesresource.PolicyResourceDetail          `json:"policy,omitempty"`
+	PolicyStatus          *PolicyStatus                                     `json:"policy_status,omitempty"`
+	ServiceEndpoints      *ServiceEndpoints                                 `json:"service_endpoints,omitempty"`
+	IngressBackends       *IngressBackends                                  `json:"ingress_backends,omitempty"`
+	GatewayStatus         *GatewayStatus                                    `json:"gateway_status,omitempty"`
 	// NodeResources is the scheduler-requested share of a Node's allocatable
 	// resources. It is separate from the Node projection because the values come
 	// from the Pods assigned to it, not from the Node object itself.
@@ -452,6 +466,16 @@ func (service *Service) DescribeResource(
 ) (Result, error) {
 	if service == nil || service.resources == nil {
 		return Result{}, ErrInvalidInput
+	}
+	// VPA and KEDA are CRDs, so they enter through the generic GVR describe
+	// route. Once their exact identity is known, keep the generic route but use
+	// the typed projection and autoscaling findings instead of throwing away the
+	// controller status that makes a diagnosis useful.
+	switch input.Resource {
+	case kubernetesresource.VerticalPodAutoscalerResourceIdentity():
+		return service.describeVerticalPodAutoscaler(ctx, input)
+	case kubernetesresource.KEDAScaledObjectResourceIdentity():
+		return service.describeKEDAScaledObject(ctx, input)
 	}
 	object, err := service.resources.GetResource(
 		ctx,

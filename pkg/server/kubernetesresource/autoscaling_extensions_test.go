@@ -53,6 +53,36 @@ func TestVPAInputValidationAndRecommendationParsing(t *testing.T) {
 	}
 }
 
+func TestAutoscalingExtensionDetailsNormalizeOptionalCollections(t *testing.T) {
+	t.Parallel()
+
+	vpaObject := extensionObject("autoscaling.k8s.io/v1", "VerticalPodAutoscaler", "default", "api", nil, nil, map[string]any{
+		"targetRef": map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "name": "api"},
+		"resourcePolicy": map[string]any{"containerPolicies": []any{map[string]any{
+			"containerName": "api",
+		}}},
+	})
+	vpa, err := vpaDetail(vpaObject, "default", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vpa.ContainerPolicies[0].ControlledResources == nil {
+		t.Fatal("unset VPA controlledResources was not normalized to an empty array")
+	}
+
+	kedaObject := extensionObject("keda.sh/v1alpha1", "ScaledObject", "default", "worker", nil, nil, map[string]any{
+		"scaleTargetRef": map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "name": "worker"},
+		"triggers":       []any{map[string]any{"type": "cpu", "metadata": map[string]any{"value": "80"}}},
+	})
+	keda, err := kedaDetail(kedaObject, "default", "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keda.ExternalMetricNames == nil {
+		t.Fatal("unset KEDA externalMetricNames was not normalized to an empty array")
+	}
+}
+
 func TestKEDATriggerSecretsAreRejectedAndExistingValuesAreRedacted(t *testing.T) {
 	t.Parallel()
 
