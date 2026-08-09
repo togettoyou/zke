@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ExternalLink, Link2 } from "lucide-react";
 
-import { errorMessage } from "@/api/errors";
+import { errorCode, errorMessage } from "@/api/errors";
 import { useCreatePodAccessSession } from "@/api/queries/pod-port-forward";
 import { usePod } from "@/api/queries/pods";
 import { PageHeader } from "@/apps/AppShell";
@@ -77,14 +77,15 @@ function PodAccessForm({
   const [port, setPort] = useState("8080");
   const [sessionDuration, setSessionDuration] = useState("900");
   const [confirming, setConfirming] = useState(false);
+  const [replacing, setReplacing] = useState(false);
   const createSession = useCreatePodAccessSession();
-  const submissionKey = useSubmissionKey(confirming);
+  const submissionKey = useSubmissionKey(confirming || replacing);
   const portNumber = Number(port);
   const sessionDurationSeconds = parseSessionDuration(sessionDuration);
   const validPort = Number.isInteger(portNumber) && portNumber >= 1 && portNumber <= 65_535;
   const ticket = createSession.data;
 
-  const create = () => {
+  const create = (replaceExisting: boolean) => {
     void createSession
       .mutateAsync({
         clusterId,
@@ -93,10 +94,20 @@ function PodAccessForm({
         uid: podUid,
         port: portNumber,
         sessionDurationSeconds,
+        replaceExisting,
         idempotencyKey: submissionKey,
       })
-      .then(() => setConfirming(false))
-      .catch(() => undefined);
+      .then(() => {
+        setConfirming(false);
+        setReplacing(false);
+      })
+      .catch((error: unknown) => {
+        if (!replaceExisting && errorCode(error) === "pod_access_already_active") {
+          createSession.reset();
+          setConfirming(false);
+          setReplacing(true);
+        }
+      });
   };
 
   return (
@@ -118,6 +129,7 @@ function PodAccessForm({
             onChange={(event) => {
               setPort(event.target.value);
               createSession.reset();
+              setReplacing(false);
             }}
           />
         </div>
@@ -128,6 +140,7 @@ function PodAccessForm({
             onValueChange={(value) => {
               setSessionDuration(value);
               createSession.reset();
+              setReplacing(false);
             }}
           >
             <SelectTrigger id="pod-access-duration" className="w-40">
@@ -184,8 +197,8 @@ function PodAccessForm({
           </div>
           <Alert tone="warning">
             激活地址只能使用一次。打开后请保留新窗口；再次打开同一地址会提示失效，需要在这里重新创建。
-            同一浏览器配置只能激活一个 Pod
-            入口；已有入口时会先要求明确替换。需要并行访问时请使用不同浏览器配置或隐私窗口。
+            同一个 Pod 同时只保留一个待激活地址或访问会话；再次创建时会先要求明确替换。不同 Pod
+            需要在同一浏览器中切换入口时，激活页也会要求确认。
           </Alert>
         </section>
       ) : null}
@@ -204,14 +217,39 @@ function PodAccessForm({
         ]}
         impacts={[
           "地址绑定当前登录 Session、Pod UID 和单个端口，首次打开后失效。",
-          "同一浏览器配置同时只保留一个 Pod 访问入口；替换旧入口前会再次明确提示。",
+          "同一个 Pod 同时只保留一个待激活地址或访问会话；已有入口时会再次要求明确替换。",
           "访问权限会被周期复核；退出登录、权限收回、Pod 被替换或到期后连接会关闭。",
           "请求与响应正文不会写入日志或审计，但访问地址持有人可使用创建者获准的临时入口。",
         ]}
         confirmLabel="创建访问地址"
         pending={createSession.isPending}
         error={createSession.error}
-        onConfirm={create}
+        onConfirm={() => create(false)}
+      />
+
+      <SensitiveActionDialog
+        open={replacing}
+        onOpenChange={setReplacing}
+        destructive
+        title="替换已有 Pod 访问入口"
+        description="同一个 Pod 已有待激活地址或访问会话。继续会立即使旧地址和现有代理连接失效。"
+        scopeLines={[
+          { label: "集群", name: clusterName, id: clusterId },
+          { label: "命名空间", name: namespace },
+          { label: "Pod", name: podName, id: podUid },
+          { label: "远端端口", name: String(portNumber) },
+          { label: "新访问时长", name: formatSessionDuration(sessionDurationSeconds) },
+        ]}
+        impacts={[
+          "旧的待激活地址会立即失效，不能再次使用。",
+          "已激活的旧入口及其 HTTP、流式响应或 WebSocket 连接会立即关闭。",
+          "替换只针对当前集群中的这个 Pod UID，不会影响其他 Pod。",
+          "新地址仍需在短期内首次打开，之后按所选时长和流量上限运行。",
+        ]}
+        confirmLabel="替换并创建新地址"
+        pending={createSession.isPending}
+        error={createSession.error}
+        onConfirm={() => create(true)}
       />
     </div>
   );

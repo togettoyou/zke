@@ -60,6 +60,8 @@ type PodAccessConfig struct {
 	MaxActiveSessions        int               `yaml:"max_active_sessions"`
 	MaxConnections           int               `yaml:"max_connections"`
 	MaxConnectionsPerSession int               `yaml:"max_connections_per_session"`
+	MaxClientBytes           uint64            `yaml:"max_client_bytes"`
+	MaxPodBytes              uint64            `yaml:"max_pod_bytes"`
 }
 
 type TLSIdentityConfig struct {
@@ -202,8 +204,11 @@ type AgentListenerConfig struct {
 	PodExecSessionTTL                time.Duration `yaml:"pod_exec_session_ttl"`
 	MaxPendingPodExecSessions        int           `yaml:"max_pending_pod_exec_sessions"`
 	PodPortForwardRequestTimeout     time.Duration `yaml:"pod_port_forward_request_timeout"`
+	PodPortForwardMaximumDuration    time.Duration `yaml:"pod_port_forward_maximum_duration"`
 	MaxPodPortForwardClientBytes     uint64        `yaml:"max_pod_port_forward_client_bytes"`
 	MaxPodPortForwardPodBytes        uint64        `yaml:"max_pod_port_forward_pod_bytes"`
+	PodPortForwardSessionClientBytes uint64        `yaml:"pod_port_forward_session_client_bytes"`
+	PodPortForwardSessionPodBytes    uint64        `yaml:"pod_port_forward_session_pod_bytes"`
 	MaxPodPortForwardStreams         int           `yaml:"max_pod_port_forward_streams_per_agent"`
 	MaxPodPortForwardRequests        int           `yaml:"max_concurrent_pod_port_forward_requests"`
 	PodPortForwardSessionTTL         time.Duration `yaml:"pod_port_forward_session_ttl"`
@@ -230,6 +235,8 @@ func DefaultConfig() Config {
 			MaxActiveSessions:        256,
 			MaxConnections:           128,
 			MaxConnectionsPerSession: 2,
+			MaxClientBytes:           1024 * 1024 * 1024,
+			MaxPodBytes:              1024 * 1024 * 1024,
 		},
 		Database: DatabaseConfig{
 			MaxConnections:  16,
@@ -302,9 +309,12 @@ func DefaultConfig() Config {
 			MaxPodExecRequests:               128,
 			PodExecSessionTTL:                30 * time.Second,
 			MaxPendingPodExecSessions:        1024,
-			PodPortForwardRequestTimeout:     15 * time.Minute,
-			MaxPodPortForwardClientBytes:     64 * 1024 * 1024,
-			MaxPodPortForwardPodBytes:        64 * 1024 * 1024,
+			PodPortForwardRequestTimeout:     time.Hour,
+			PodPortForwardMaximumDuration:    15 * time.Minute,
+			MaxPodPortForwardClientBytes:     1024 * 1024 * 1024,
+			MaxPodPortForwardPodBytes:        1024 * 1024 * 1024,
+			PodPortForwardSessionClientBytes: 64 * 1024 * 1024,
+			PodPortForwardSessionPodBytes:    64 * 1024 * 1024,
 			MaxPodPortForwardStreams:         4,
 			MaxPodPortForwardRequests:        128,
 			PodPortForwardSessionTTL:         30 * time.Second,

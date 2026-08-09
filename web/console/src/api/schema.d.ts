@@ -5231,6 +5231,8 @@ export interface components {
              * @enum {integer}
              */
             session_duration_seconds: 900 | 1800 | 3600;
+            /** @description 同一 Pod 已有待激活地址或访问会话时，是否明确结束旧入口并创建新地址；省略时为 false。 */
+            replace_existing?: boolean;
             /** @constant */
             confirm: true;
         };

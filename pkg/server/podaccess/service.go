@@ -155,11 +155,14 @@ var (
 	ErrDisabled            = errors.New("Pod access is disabled")
 	ErrCapacity            = errors.New("Pod access capacity is exhausted")
 	ErrIdempotencyConflict = errors.New("Pod access idempotency conflict")
+	ErrTargetReserved      = errors.New("Pod already has a Pod access session or activation")
 	ErrActivationNotFound  = errors.New("Pod access activation was not found")
 	ErrActivationExpired   = errors.New("Pod access activation expired")
 	ErrAccessNotFound      = errors.New("Pod access session was not found")
 	ErrAccessExpired       = errors.New("Pod access session expired")
 	ErrAccessRevoked       = errors.New("Pod access permission was revoked")
+	ErrAccessReplaced      = errors.New("Pod access session was replaced")
+	ErrAccessFailed        = errors.New("Pod access upstream connection failed")
 	ErrByteLimit           = errors.New("Pod access byte limit reached")
 )
 
@@ -176,7 +179,8 @@ type Auditor interface {
 }
 
 type Forwarder interface {
-	Run(context.Context, podportforward.Session, agentprotocol.PodPortForwardPeer) (podportforward.Result, error)
+	RunWithLimits(context.Context, podportforward.Session, agentprotocol.PodPortForwardPeer,
+		uint64, uint64) (podportforward.Result, error)
 }
 
 type Config struct {
@@ -201,6 +205,7 @@ type CreateInput struct {
 	RequestID                                               string
 	Port                                                    uint32
 	SessionTTL                                              time.Duration
+	ReplaceExisting                                         bool
 	Confirm                                                 bool
 	Now                                                     time.Time
 }
@@ -219,6 +224,33 @@ type pendingSession struct {
 type idempotencyRecord struct {
 	fingerprint [sha256.Size]byte
 	ticket      Ticket
+}
+
+type podTarget struct {
+	clusterID string
+	podUID    string
+}
+
+type targetReservation struct {
+	key            [sha256.Size]byte
+	idempotencyKey string
+	active         bool
+}
+
+type endReason uint8
+
+const (
+	endExpired endReason = iota + 1
+	endRevoked
+	endReplaced
+	endByteLimit
+	endFailed
+)
+
+type endedSession struct {
+	reason    endReason
+	endedAt   time.Time
+	expiresAt time.Time
 }
 
 type activeSession struct {
@@ -251,10 +283,12 @@ type Service struct {
 	secure      bool
 	connections chan struct{}
 
-	mutex       sync.Mutex
-	pending     map[[sha256.Size]byte]pendingSession
-	active      map[[sha256.Size]byte]*activeSession
-	idempotency map[string]idempotencyRecord
+	mutex        sync.Mutex
+	pending      map[[sha256.Size]byte]pendingSession
+	active       map[[sha256.Size]byte]*activeSession
+	reservations map[podTarget]targetReservation
+	ended        map[[sha256.Size]byte]endedSession
+	idempotency  map[string]idempotencyRecord
 }
 
 func NewService(ctx context.Context, logger *slog.Logger, authenticator Authenticator,
@@ -271,19 +305,21 @@ func NewService(ctx context.Context, logger *slog.Logger, authenticator Authenti
 	}
 	applyDefaults(&config)
 	return &Service{
-		rootContext: ctx,
-		logger:      logger,
-		auth:        authenticator,
-		authorizer:  authorizer,
-		auditor:     auditor,
-		forwarder:   forwarder,
-		config:      config,
-		externalURL: externalURL,
-		secure:      externalURL.Scheme == "https",
-		connections: make(chan struct{}, config.MaxConnections),
-		pending:     make(map[[sha256.Size]byte]pendingSession),
-		active:      make(map[[sha256.Size]byte]*activeSession),
-		idempotency: make(map[string]idempotencyRecord),
+		rootContext:  ctx,
+		logger:       logger,
+		auth:         authenticator,
+		authorizer:   authorizer,
+		auditor:      auditor,
+		forwarder:    forwarder,
+		config:       config,
+		externalURL:  externalURL,
+		secure:       externalURL.Scheme == "https",
+		connections:  make(chan struct{}, config.MaxConnections),
+		pending:      make(map[[sha256.Size]byte]pendingSession),
+		active:       make(map[[sha256.Size]byte]*activeSession),
+		reservations: make(map[podTarget]targetReservation),
+		ended:        make(map[[sha256.Size]byte]endedSession),
+		idempotency:  make(map[string]idempotencyRecord),
 	}, nil
 }
 
@@ -316,10 +352,10 @@ func applyDefaults(config *Config) {
 		config.MaxConnectionsPerSession = 2
 	}
 	if config.MaxClientBytes == 0 {
-		config.MaxClientBytes = agentprotocol.DefaultMaxPodPortForwardClientBytes
+		config.MaxClientBytes = agentprotocol.MaxPodPortForwardBytes
 	}
 	if config.MaxPodBytes == 0 {
-		config.MaxPodBytes = agentprotocol.DefaultMaxPodPortForwardPodBytes
+		config.MaxPodBytes = agentprotocol.MaxPodPortForwardBytes
 	}
 }
 
@@ -333,32 +369,68 @@ func (service *Service) Create(input CreateInput) (Ticket, error) {
 	fingerprint := sha256.Sum256([]byte(strings.Join([]string{
 		input.AuthSessionID, input.ClusterID, input.Namespace, input.PodName, input.PodUID,
 		strconv.FormatUint(uint64(input.Port), 10), strconv.FormatInt(int64(input.SessionTTL/time.Second), 10),
+		strconv.FormatBool(input.ReplaceExisting),
 	}, "\x00")))
 	idempotencyKey := input.UserID + "\x00" + input.IdempotencyKey
-	service.mutex.Lock()
-	defer service.mutex.Unlock()
-	service.removeExpiredLocked(input.Now)
-	if record, exists := service.idempotency[idempotencyKey]; exists {
-		if record.fingerprint != fingerprint {
-			return Ticket{}, ErrIdempotencyConflict
-		}
-		return record.ticket, nil
-	}
-	if len(service.pending) >= service.config.MaxPending || len(service.idempotency) >= service.config.MaxPending {
-		return Ticket{}, ErrCapacity
-	}
 	token, digest, err := newOpaqueToken()
 	if err != nil {
 		return Ticket{}, fmt.Errorf("generate Pod access activation: %w", err)
 	}
 	expiresAt := input.Now.Add(service.config.ActivationTTL)
-	service.pending[digest] = pendingSession{CreateInput: input, expiresAt: expiresAt}
 	activation := *service.externalURL
 	activation.Path = activationPathPrefix + token
 	activation.RawPath = ""
 	ticket := Ticket{AccessURL: activation.String(), ExpiresAt: expiresAt, SessionTTL: input.SessionTTL}
+	target := input.target()
+	var replaced *activeSession
+	service.mutex.Lock()
+	service.removeExpiredLocked(input.Now)
+	if record, exists := service.idempotency[idempotencyKey]; exists {
+		if record.fingerprint != fingerprint {
+			service.mutex.Unlock()
+			return Ticket{}, ErrIdempotencyConflict
+		}
+		service.mutex.Unlock()
+		return record.ticket, nil
+	}
+	reservation, reserved := service.reservations[target]
+	pendingCount, idempotencyCount := len(service.pending), len(service.idempotency)
+	if reserved {
+		if !input.ReplaceExisting {
+			service.mutex.Unlock()
+			return Ticket{}, ErrTargetReserved
+		}
+		if !reservation.active {
+			if _, exists := service.pending[reservation.key]; exists {
+				pendingCount--
+			}
+		}
+		if _, exists := service.idempotency[reservation.idempotencyKey]; exists {
+			idempotencyCount--
+		}
+	}
+	// A replacement must not revoke the working session before the new ticket
+	// has passed the same bounded-capacity check as a normal creation.
+	if pendingCount >= service.config.MaxPending || idempotencyCount >= service.config.MaxPending {
+		service.mutex.Unlock()
+		return Ticket{}, ErrCapacity
+	}
+	if reserved {
+		replaced = service.removeReservationLocked(target, reservation, input.Now, endReplaced)
+	}
+	service.pending[digest] = pendingSession{CreateInput: input, expiresAt: expiresAt}
+	service.reservations[target] = targetReservation{key: digest, idempotencyKey: idempotencyKey}
 	service.idempotency[idempotencyKey] = idempotencyRecord{fingerprint: fingerprint, ticket: ticket}
+	service.mutex.Unlock()
+	if replaced != nil {
+		replaced.close()
+		service.recordWithReason(replaced.input, "succeeded", "replaced")
+	}
 	return ticket, nil
+}
+
+func (input CreateInput) target() podTarget {
+	return podTarget{clusterID: input.ClusterID, podUID: input.PodUID}
 }
 
 func validateCreateInput(input CreateInput) error {
@@ -390,13 +462,13 @@ func (service *Service) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 	cookie, err := request.Cookie(accessCookieName)
 	if err != nil || cookie.Value == "" {
-		service.writeAccessRequired(writer, http.StatusUnauthorized)
+		service.writeAccessRequired(writer, http.StatusUnauthorized, ErrAccessNotFound)
 		return
 	}
 	session, err := service.resolve(cookie.Value, time.Now().UTC())
 	if err != nil {
 		service.clearAccessCookie(writer)
-		service.writeAccessRequired(writer, http.StatusUnauthorized)
+		service.writeAccessRequired(writer, accessErrorStatus(err), err)
 		return
 	}
 	rewriteRequestCookies(request, session.cookiePrefix)
@@ -421,14 +493,14 @@ func (service *Service) serveActivation(writer http.ResponseWriter, request *htt
 				service.writeReplacementRequired(writer, request.URL.EscapedPath())
 				return
 			}
-			service.deactivateToken(oldCookie.Value, false)
+			service.deactivateToken(oldCookie.Value, endReplaced)
 		} else {
 			service.clearAccessCookie(writer)
 		}
 	}
 	cookieToken, session, err := service.activate(request.Context(), token, time.Now().UTC())
 	if err != nil {
-		service.writeAccessRequired(writer, http.StatusGone)
+		service.writeAccessRequired(writer, http.StatusGone, err)
 		return
 	}
 	http.SetCookie(writer, &http.Cookie{
@@ -461,34 +533,39 @@ func (service *Service) writeReplacementRequired(writer http.ResponseWriter, act
 func (service *Service) activate(ctx context.Context, token string, now time.Time) (string, *activeSession, error) {
 	digest := digestToken(token)
 	service.mutex.Lock()
+	service.removeExpiredLocked(now)
 	pending, exists := service.pending[digest]
 	if exists {
 		delete(service.pending, digest)
 	}
-	service.removeExpiredLocked(now)
 	service.mutex.Unlock()
 	if !exists {
 		return "", nil, ErrActivationNotFound
 	}
 	if !now.Before(pending.expiresAt) {
+		service.releasePendingReservation(pending.CreateInput.target(), digest)
 		return "", nil, ErrActivationExpired
 	}
 	if err := service.revalidate(ctx, pending.CreateInput, now); err != nil {
+		service.releasePendingReservation(pending.CreateInput.target(), digest)
 		service.record(pending.CreateInput, "denied")
 		return "", nil, err
 	}
 	cookieToken, key, err := newOpaqueToken()
 	if err != nil {
+		service.releasePendingReservation(pending.CreateInput.target(), digest)
 		service.record(pending.CreateInput, "failed")
 		return "", nil, err
 	}
 	forwardID, err := identifier.NewUUID()
 	if err != nil {
+		service.releasePendingReservation(pending.CreateInput.target(), digest)
 		service.record(pending.CreateInput, "failed")
 		return "", nil, err
 	}
 	prefixBytes := make([]byte, 9)
 	if _, err := rand.Read(prefixBytes); err != nil {
+		service.releasePendingReservation(pending.CreateInput.target(), digest)
 		service.record(pending.CreateInput, "failed")
 		return "", nil, err
 	}
@@ -507,13 +584,24 @@ func (service *Service) activate(ctx context.Context, token string, now time.Tim
 	session.proxy = session.newProxy()
 	service.mutex.Lock()
 	service.removeExpiredLocked(now)
-	if len(service.active) >= service.config.MaxActive {
+	reservation, reserved := service.reservations[pending.CreateInput.target()]
+	if !reserved || reservation.active || reservation.key != digest {
 		service.mutex.Unlock()
-		session.close(false)
+		session.close()
+		service.record(pending.CreateInput, "failed")
+		return "", nil, ErrActivationNotFound
+	}
+	if len(service.active) >= service.config.MaxActive {
+		delete(service.reservations, pending.CreateInput.target())
+		service.mutex.Unlock()
+		session.close()
 		service.record(pending.CreateInput, "failed")
 		return "", nil, ErrCapacity
 	}
 	service.active[key] = session
+	service.reservations[pending.CreateInput.target()] = targetReservation{
+		key: key, idempotencyKey: reservation.idempotencyKey, active: true,
+	}
 	service.mutex.Unlock()
 	service.record(pending.CreateInput, "succeeded")
 	go session.monitor()
@@ -527,12 +615,16 @@ func (service *Service) resolve(token string, now time.Time) (*activeSession, er
 	key := digestToken(token)
 	service.mutex.Lock()
 	session, exists := service.active[key]
+	ended := service.ended[key]
 	service.mutex.Unlock()
 	if !exists {
+		if ended.reason != 0 && now.Before(ended.expiresAt) {
+			return nil, ended.reason.err()
+		}
 		return nil, ErrAccessNotFound
 	}
 	if !now.Before(session.expiresAt) || session.ctx.Err() != nil {
-		service.deactivate(key, false)
+		service.deactivate(key, endExpired)
 		return nil, ErrAccessExpired
 	}
 	return session, nil
@@ -551,17 +643,93 @@ func (service *Service) revalidate(parent context.Context, input CreateInput, no
 	return nil
 }
 
-func (service *Service) deactivateToken(token string, denied bool) {
-	service.deactivate(digestToken(token), denied)
+func (service *Service) deactivateToken(token string, reason endReason) {
+	service.deactivate(digestToken(token), reason)
 }
 
-func (service *Service) deactivate(key [sha256.Size]byte, denied bool) {
+func (service *Service) deactivate(key [sha256.Size]byte, reason endReason) {
 	service.mutex.Lock()
 	session := service.active[key]
 	delete(service.active, key)
+	if session != nil {
+		target := session.input.target()
+		if reservation := service.reservations[target]; reservation.active && reservation.key == key {
+			delete(service.reservations, target)
+		}
+		service.rememberEndedLocked(key, reason, time.Now().UTC(), session.expiresAt)
+	}
 	service.mutex.Unlock()
 	if session != nil {
-		session.close(denied)
+		session.close()
+		switch reason {
+		case endRevoked:
+			service.recordWithReason(session.input, "denied", "permission_revoked")
+		case endReplaced:
+			service.recordWithReason(session.input, "succeeded", "replaced")
+		case endByteLimit:
+			service.recordWithReason(session.input, "failed", "byte_limit")
+		case endFailed:
+			service.recordWithReason(session.input, "failed", "upstream_failure")
+		}
+	}
+}
+
+func (service *Service) releasePendingReservation(target podTarget, key [sha256.Size]byte) {
+	service.mutex.Lock()
+	if reservation := service.reservations[target]; !reservation.active && reservation.key == key {
+		delete(service.reservations, target)
+		delete(service.idempotency, reservation.idempotencyKey)
+	}
+	service.mutex.Unlock()
+}
+
+func (service *Service) removeReservationLocked(target podTarget, reservation targetReservation,
+	now time.Time, reason endReason) *activeSession {
+	delete(service.reservations, target)
+	delete(service.idempotency, reservation.idempotencyKey)
+	if reservation.active {
+		session := service.active[reservation.key]
+		delete(service.active, reservation.key)
+		if session != nil {
+			service.rememberEndedLocked(reservation.key, reason, now, session.expiresAt)
+		}
+		return session
+	}
+	delete(service.pending, reservation.key)
+	return nil
+}
+
+func (service *Service) rememberEndedLocked(key [sha256.Size]byte, reason endReason, now, sessionExpiry time.Time) {
+	expiresAt := sessionExpiry
+	if maximum := now.Add(service.config.MaxSessionTTL); maximum.Before(expiresAt) {
+		expiresAt = maximum
+	}
+	service.ended[key] = endedSession{reason: reason, endedAt: now, expiresAt: expiresAt}
+	if len(service.ended) <= service.config.MaxActive {
+		return
+	}
+	var oldestKey [sha256.Size]byte
+	var oldest time.Time
+	for candidate, ended := range service.ended {
+		if oldest.IsZero() || ended.endedAt.Before(oldest) {
+			oldestKey, oldest = candidate, ended.endedAt
+		}
+	}
+	delete(service.ended, oldestKey)
+}
+
+func (reason endReason) err() error {
+	switch reason {
+	case endReplaced:
+		return ErrAccessReplaced
+	case endByteLimit:
+		return ErrByteLimit
+	case endRevoked:
+		return ErrAccessRevoked
+	case endFailed:
+		return ErrAccessFailed
+	default:
+		return ErrAccessExpired
 	}
 }
 
@@ -569,6 +737,10 @@ func (service *Service) removeExpiredLocked(now time.Time) {
 	for key, pending := range service.pending {
 		if !now.Before(pending.expiresAt) {
 			delete(service.pending, key)
+			target := pending.CreateInput.target()
+			if reservation := service.reservations[target]; !reservation.active && reservation.key == key {
+				delete(service.reservations, target)
+			}
 		}
 	}
 	for key, record := range service.idempotency {
@@ -579,12 +751,26 @@ func (service *Service) removeExpiredLocked(now time.Time) {
 	for key, session := range service.active {
 		if !now.Before(session.expiresAt) || session.ctx.Err() != nil {
 			delete(service.active, key)
-			go session.close(false)
+			target := session.input.target()
+			if reservation := service.reservations[target]; reservation.active && reservation.key == key {
+				delete(service.reservations, target)
+			}
+			service.rememberEndedLocked(key, endExpired, now, session.expiresAt)
+			go session.close()
+		}
+	}
+	for key, ended := range service.ended {
+		if !now.Before(ended.expiresAt) {
+			delete(service.ended, key)
 		}
 	}
 }
 
 func (service *Service) record(input CreateInput, result string) {
+	service.recordWithReason(input, result, "")
+}
+
+func (service *Service) recordWithReason(input CreateInput, result, reason string) {
 	if service.auditor == nil {
 		return
 	}
@@ -593,8 +779,8 @@ func (service *Service) record(input CreateInput, result string) {
 	err := service.auditor.RecordClusterEvent(ctx, audit.ClusterEventInput{
 		ActorUserID: input.UserID, ClusterID: input.ClusterID,
 		Action: auditaction.KubernetesPodPortForward, TargetType: auditaction.TargetKubernetesResource,
-		TargetName: fmt.Sprintf("core/v1/pods %s/%s uid:%s port-forward:%d duration:%s",
-			input.Namespace, input.PodName, input.PodUID, input.Port, input.SessionTTL),
+		TargetName: fmt.Sprintf("core/v1/pods %s/%s uid:%s port-forward:%d duration:%s%s",
+			input.Namespace, input.PodName, input.PodUID, input.Port, input.SessionTTL, auditReason(reason)),
 		Result: result, RequestID: input.RequestID,
 	})
 	if err != nil {
@@ -602,23 +788,67 @@ func (service *Service) record(input CreateInput, result string) {
 	}
 }
 
+func auditReason(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return " end:" + reason
+}
+
 func (service *Service) clearAccessCookie(writer http.ResponseWriter) {
 	http.SetCookie(writer, &http.Cookie{Name: accessCookieName, Path: "/", Expires: time.Unix(1, 0).UTC(),
 		MaxAge: -1, HttpOnly: true, Secure: service.secure, SameSite: http.SameSiteLaxMode})
 }
 
-func (service *Service) writeAccessRequired(writer http.ResponseWriter, status int) {
+func accessErrorStatus(err error) int {
+	if errors.Is(err, ErrAccessFailed) {
+		return http.StatusBadGateway
+	}
+	if errors.Is(err, ErrByteLimit) {
+		return http.StatusInsufficientStorage
+	}
+	return http.StatusUnauthorized
+}
+
+func (service *Service) writeAccessRequired(writer http.ResponseWriter, status int, err error) {
+	title := "此 Pod 访问地址已失效"
+	lead := "该地址无法继续访问，可能已经使用、过期，或当前登录与权限已被收回。"
+	noticeTitle := "请返回 ZKE Console"
+	noticeBody := "关闭此页面，在原 Pod 详情中重新创建访问地址。出于安全考虑，失效地址不能恢复或重复激活。"
+	footnote := "如果访问权限刚刚发生变化，请刷新 Console 并确认当前账号仍具有 Pod 端口转发权限。"
+	switch {
+	case errors.Is(err, ErrAccessReplaced):
+		title = "此 Pod 访问会话已被替换"
+		lead = "已为同一个 Pod 创建新的访问地址，当前旧入口已主动结束。"
+		noticeBody = "请关闭此页面，改用 ZKE Console 中最近创建的 Pod 访问地址。"
+		footnote = "同一个 Pod 同时只保留一个待激活地址或访问会话，避免多个入口长期占用连接与权限。"
+	case errors.Is(err, ErrByteLimit):
+		title = "此 Pod 访问会话已达到流量上限"
+		lead = "为保护 Server 与 Agent，当前会话的累计请求或响应流量已达到配置上限。"
+		noticeBody = "请关闭此页面，并从原 Pod 详情重新创建访问地址；如持续发生，请联系管理员评估 Pod Access 流量上限。"
+		footnote = "普通刷新不会立即用尽默认上限；大文件下载、持续流式响应或大量资源请求会累计计入会话流量。"
+	case errors.Is(err, ErrAccessRevoked):
+		title = "此 Pod 访问权限已被收回"
+		lead = "当前登录 Session 已失效，或账号不再具有该集群的 Pod 端口转发权限。"
+		noticeBody = "请返回 ZKE Console，重新登录或确认权限后再创建访问地址。"
+		footnote = "权限由 Server 周期复核，已建立的连接也会在权限收回后关闭。"
+	case errors.Is(err, ErrAccessFailed):
+		title = "Pod 服务连接已中断"
+		lead = "Pod 已被替换、Agent 连接中断，或上游端口转发无法继续。"
+		noticeBody = "请返回 ZKE Console，确认 Pod 状态和端口后重新创建访问地址。"
+		footnote = "ZKE 不会把已中断的入口静默切换到同名新建的 Pod。"
+	}
 	setPodAccessPageHeaders(writer)
 	writer.WriteHeader(status)
-	_, _ = io.WriteString(writer, podAccessPageStart+`<title>Pod 访问地址已失效 · ZKE</title>
+	_, _ = io.WriteString(writer, podAccessPageStart+`<title>`+html.EscapeString(title)+` · ZKE</title>
 </head>
 <body>
 <main class="status-card">`+podAccessBrand+`
   <div class="status-icon danger" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></svg></div>
-  <h1>此 Pod 访问地址已失效</h1>
-  <p class="lead">该地址无法继续访问，可能已经使用、过期，或当前登录与权限已被收回。</p>
-  <div class="notice"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/></svg><div><strong>请返回 ZKE Console</strong><p>关闭此页面，在原 Pod 详情中重新创建访问地址。出于安全考虑，失效地址不能恢复或重复激活。</p></div></div>
-  <p class="footnote">如果访问权限刚刚发生变化，请刷新 Console 并确认当前账号仍具有 Pod 端口转发权限。</p>
+	<h1>`+html.EscapeString(title)+`</h1>
+	<p class="lead">`+html.EscapeString(lead)+`</p>
+	<div class="notice"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/></svg><div><strong>`+html.EscapeString(noticeTitle)+`</strong><p>`+html.EscapeString(noticeBody)+`</p></div></div>
+	<p class="footnote">`+html.EscapeString(footnote)+`</p>
 </main>
 </body>
 </html>`)
@@ -682,22 +912,19 @@ func (session *activeSession) monitor() {
 	for {
 		select {
 		case <-session.ctx.Done():
-			session.service.deactivate(session.key, false)
+			session.service.deactivate(session.key, endExpired)
 			return
 		case now := <-ticker.C:
 			if err := session.service.revalidate(session.ctx, session.input, now.UTC()); err != nil {
-				session.service.deactivate(session.key, true)
+				session.service.deactivate(session.key, endRevoked)
 				return
 			}
 		}
 	}
 }
 
-func (session *activeSession) close(denied bool) {
+func (session *activeSession) close() {
 	session.closeOnce.Do(func() {
-		if denied {
-			session.service.record(session.input, "denied")
-		}
 		session.cancel()
 		if session.transport != nil {
 			session.transport.CloseIdleConnections()
@@ -705,10 +932,9 @@ func (session *activeSession) close(denied bool) {
 	})
 }
 
-func (session *activeSession) fail() {
+func (session *activeSession) fail(reason endReason) {
 	session.failureOnce.Do(func() {
-		session.service.record(session.input, "failed")
-		session.service.deactivate(session.key, false)
+		session.service.deactivate(session.key, reason)
 	})
 }
 
@@ -762,11 +988,15 @@ func (session *activeSession) dialContext(ctx context.Context, _, _ string) (net
 	managed := &managedConnection{Conn: client, release: session.release}
 	peer := &pipePeer{connection: peerConnection}
 	go func() {
-		_, err := session.service.forwarder.Run(session.ctx, session.forward, peer)
+		_, err := session.service.forwarder.RunWithLimits(session.ctx, session.forward, peer,
+			session.service.config.MaxClientBytes, session.service.config.MaxPodBytes)
 		_ = peerConnection.Close()
 		_ = managed.Close()
-		if errors.Is(err, podportforward.ErrPodReplaced) || errors.Is(err, podportforward.ErrClusterAccessDenied) {
-			session.fail()
+		switch {
+		case errors.Is(err, podportforward.ErrByteLimit):
+			session.fail(endByteLimit)
+		case errors.Is(err, podportforward.ErrPodReplaced), errors.Is(err, podportforward.ErrClusterAccessDenied):
+			session.fail(endFailed)
 		}
 	}()
 	return &limitedConnection{Conn: managed, session: session}, nil
@@ -817,7 +1047,7 @@ type limitedConnection struct {
 
 func (connection *limitedConnection) Write(data []byte) (int, error) {
 	if exceedsLimit(&connection.session.clientBytes, uint64(len(data)), connection.session.service.config.MaxClientBytes) {
-		connection.session.fail()
+		connection.session.fail(endByteLimit)
 		return 0, ErrByteLimit
 	}
 	return connection.Conn.Write(data)
@@ -826,7 +1056,7 @@ func (connection *limitedConnection) Write(data []byte) (int, error) {
 func (connection *limitedConnection) Read(data []byte) (int, error) {
 	read, err := connection.Conn.Read(data)
 	if read > 0 && exceedsLimit(&connection.session.podBytes, uint64(read), connection.session.service.config.MaxPodBytes) {
-		connection.session.fail()
+		connection.session.fail(endByteLimit)
 		return read, ErrByteLimit
 	}
 	return read, err

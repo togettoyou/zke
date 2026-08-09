@@ -13105,6 +13105,9 @@ components:
           format: int64
           enum: [900, 1800, 3600]
           description: 用户选择的访问会话最长持续秒数；同时受 Server 配置的最大时长限制。
+        replace_existing:
+          type: boolean
+          description: 同一 Pod 已有待激活地址或访问会话时，是否明确结束旧入口并创建新地址；省略时为 false。
         confirm:
           const: true
     KubernetesPodAccessSession:

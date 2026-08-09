@@ -530,6 +530,12 @@ Pod 端口访问使用另一项默认仅授予 admin 的 `cluster.pod.port_forwa
 长连接或活跃访问会话周期重新验证 Session 和该权限。Agent ServiceAccount 只增加 `pods/portforward` 的 `create`，
 Agent 在连接前再次核对 Pod UID，且只在回环地址建立临时桥接。
 
+Server 以 Cluster UUID 与 Pod UID 唯一定域待激活和活跃入口。已存在入口时普通创建返回冲突，只有显式携带
+替换确认的请求才会结束旧地址及其连接；该选择进入幂等指纹与审计。Pod Access 的会话级双向流量预算默认各
+1 GiB，底层原始 WebSocket Port Forward 仍使用默认各 64 MiB 的较低产品预算；两者都不能超过 Server 与 Agent
+统一执行的 1 小时、1 GiB 传输硬上限。达到预算、权限撤销或上游失败会关闭全部相关连接，内存中只短期保留
+Cookie 摘要对应的终止原因，不保存 Token 或流量正文。
+
 浏览器入口使用不承载任何 ZKE API 的独立 Pod Access Origin。激活 Token 与访问 Cookie 使用 256-bit 随机值并
 短时有效，Token 消费后从 URL 清除；除短期幂等响应外，服务端只持有摘要。Listener 不信任 Pod 内容：进入 Pod
 前删除 ZKE Session、CSRF 与其他非当前访问会话 Cookie，返回浏览器的 Pod Cookie 使用会话级命名空间并移除

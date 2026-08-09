@@ -79,6 +79,23 @@ func TestRunBuildsUIDAndPortBoundRequestWithLimits(t *testing.T) {
 	}
 }
 
+func TestRunWithLimitsUsesCallerSpecificTransportCeilings(t *testing.T) {
+	t.Parallel()
+	requester := &fakeRequester{}
+	service := NewService(requester, Config{MaxClientBytes: 123, MaxPodBytes: 456})
+	_, err := service.RunWithLimits(context.Background(), Session{
+		ID: "00000000-0000-4000-8000-000000000010", ClusterID: testClusterID,
+		Namespace: "workloads", PodName: "api-0", PodUID: "pod-uid", Port: 8080,
+	}, &fakePeer{}, 789, 987)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request := requester.request; request.GetMaxClientBytes() != 789 || request.GetMaxPodBytes() != 987 {
+		t.Fatalf("caller-specific request limits = %d/%d, want 789/987",
+			request.GetMaxClientBytes(), request.GetMaxPodBytes())
+	}
+}
+
 func createInput(now time.Time) CreateInput {
 	return CreateInput{UserID: testUserID, AuthSessionID: testSessionID, IdempotencyKey: "port-forward-session-1",
 		ClusterID: testClusterID, Namespace: "workloads", PodName: "api-0", PodUID: "pod-uid", Port: 8080,

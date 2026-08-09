@@ -57,6 +57,7 @@ export function useCreatePodAccessSession() {
       uid: string;
       port: number;
       sessionDurationSeconds: 900 | 1800 | 3600;
+      replaceExisting: boolean;
       idempotencyKey: string;
     }) =>
       unwrap(
@@ -75,6 +76,7 @@ export function useCreatePodAccessSession() {
               uid: input.uid,
               port: input.port,
               session_duration_seconds: input.sessionDurationSeconds,
+              replace_existing: input.replaceExisting,
               confirm: true,
             },
           },

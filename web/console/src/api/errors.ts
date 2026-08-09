@@ -118,6 +118,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   previous_logs_not_found: "该容器没有上一个实例的日志：它没有重启过，或上一个实例的日志已被清理",
   resource_conflict: "资源状态与请求冲突",
   resource_state_conflict: "目标资源当前状态不允许该操作",
+  pod_access_already_active: "该 Pod 已有待激活地址或访问会话，需要明确替换后才能继续",
   // Only one situation reaches this now: a previous submission under this key
   // failed in a way the Agent could not account for — a Kubernetes 5xx, a
   // timeout, a dropped connection — so it may have been applied, and what has

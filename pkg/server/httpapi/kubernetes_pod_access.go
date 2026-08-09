@@ -35,6 +35,7 @@ type podAccessCreateRequest struct {
 	PodUID                 string `json:"uid"`
 	Port                   uint32 `json:"port"`
 	SessionDurationSeconds *int64 `json:"session_duration_seconds"`
+	ReplaceExisting        bool   `json:"replace_existing"`
 	Confirm                bool   `json:"confirm"`
 }
 
@@ -57,7 +58,8 @@ func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 		return
 	}
 	sessionTTL := podAccessSessionTTL(request.SessionDurationSeconds)
-	target = fmt.Sprintf("%s duration:%s", podPortForwardTarget(c, request.PodUID, request.Port), sessionTTL)
+	target = fmt.Sprintf("%s duration:%s replace:%t", podPortForwardTarget(c, request.PodUID, request.Port),
+		sessionTTL, request.ReplaceExisting)
 	sessionToken, tokenExists := middleware.SessionToken(c)
 	if handler.service == nil || !tokenExists {
 		handler.record(c, identity.User.ID, target, "failed")
@@ -68,7 +70,8 @@ func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 		UserID: identity.User.ID, AuthSessionID: identity.SessionID, AuthSessionToken: sessionToken,
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
 		ClusterID:      c.Param("cluster_id"), Namespace: c.Param("namespace_name"), PodName: c.Param("pod_name"),
-		PodUID: request.PodUID, Port: request.Port, SessionTTL: sessionTTL, Confirm: request.Confirm,
+		PodUID: request.PodUID, Port: request.Port, SessionTTL: sessionTTL,
+		ReplaceExisting: request.ReplaceExisting, Confirm: request.Confirm,
 		RequestID: middleware.RequestID(c), Now: time.Now().UTC(),
 	})
 	if err != nil {
@@ -80,6 +83,7 @@ func (handler *kubernetesPodAccessHandler) create(c *gin.Context) {
 			errorMapping{podaccess.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Pod access session request"},
 			errorMapping{podportforward.ErrConfirmationRequired, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required"},
 			errorMapping{podaccess.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used for another Pod access request"},
+			errorMapping{podaccess.ErrTargetReserved, http.StatusConflict, "pod_access_already_active", "Pod already has an active or pending access session"},
 			errorMapping{podaccess.ErrCapacity, http.StatusTooManyRequests, "capacity_exhausted", "Pod access session capacity is exhausted"})
 		return
 	}

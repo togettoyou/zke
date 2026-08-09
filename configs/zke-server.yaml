@@ -37,6 +37,9 @@ pod_access:
   # Each upstream HTTP connection consumes one Agent Pod Port Forward Stream.
   max_connections: 128
   max_connections_per_session: 2
+  # Aggregate browser-to-Pod and Pod-to-browser budgets for one access session.
+  max_client_bytes: 1073741824
+  max_pod_bytes: 1073741824
 
 database:
   url: postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable
@@ -177,15 +180,19 @@ agent_listener:
   max_concurrent_pod_exec_requests: 128
   pod_exec_session_ttl: 30s
   max_pending_pod_exec_sessions: 1024
-  # Pod Port Forward tickets and Streams are independent from Web Terminal.
-  pod_port_forward_request_timeout: 15m
-  max_pod_port_forward_client_bytes: 67108864
-  max_pod_port_forward_pod_bytes: 67108864
+  # Transport ceilings shared by raw Port Forward and Pod Access. Raw client
+  # sessions retain the lower duration and byte budgets below.
+  pod_port_forward_request_timeout: 1h
+  pod_port_forward_maximum_duration: 15m
+  max_pod_port_forward_client_bytes: 1073741824
+  max_pod_port_forward_pod_bytes: 1073741824
+  pod_port_forward_session_client_bytes: 67108864
+  pod_port_forward_session_pod_bytes: 67108864
   max_pod_port_forward_streams_per_agent: 4
   max_concurrent_pod_port_forward_requests: 128
   pod_port_forward_session_ttl: 30s
   max_pending_pod_port_forward_sessions: 1024
-  # Kubernetes Event Resource Watch 使用独立的全局和每 Agent 容量预算。
+  # Kubernetes Event Resource Watch has independent global and per-Agent budgets.
   resource_watch_request_timeout: 30m
   max_resource_watch_streams_per_agent: 16
   max_concurrent_resource_watch_requests: 512

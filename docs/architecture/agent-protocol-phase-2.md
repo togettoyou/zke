@@ -813,7 +813,8 @@ streaming protocol 执行；仅在旧 API Server 或 HTTPS 代理无法完成 We
 Pod Port Forward 使用独立 `pod-port-forward.v1` 能力和 `POD_PORT_FORWARD` Stream，首帧固定 Namespace、Pod
 名称、UID、单个端口和双向字节上限。Agent 复核 UID 后使用 client-go port-forward，并只在回环随机端口建立
 进程内 TCP 桥接。Server WebSocket 票据一次性且与登录身份及完整资源路径绑定；会话周期重验
-`cluster.pod.port_forward`，流量正文不记录。
+`cluster.pod.port_forward`，流量正文不记录。协议硬上限为一小时、每方向 1 GiB；Server 可按调用方传入更低
+预算，原始 WebSocket 接口默认 15 分钟、64 MiB，Pod Access 默认一小时内每方向累计 1 GiB。
 
 ## 12. 验证与验收
 

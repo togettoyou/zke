@@ -171,15 +171,24 @@ func (service *Service) Consume(input ConsumeInput) (Session, error) {
 }
 
 func (service *Service) Run(ctx context.Context, session Session, peer agentprotocol.PodPortForwardPeer) (Result, error) {
+	return service.RunWithLimits(ctx, session, peer, service.config.MaxClientBytes, service.config.MaxPodBytes)
+}
+
+// RunWithLimits executes a transport with caller-specific byte ceilings. The
+// raw WebSocket API uses Run and its lower product limits; Pod Access uses this
+// method with its independently configured browser-session limits.
+func (service *Service) RunWithLimits(ctx context.Context, session Session, peer agentprotocol.PodPortForwardPeer,
+	maxClientBytes, maxPodBytes uint64) (Result, error) {
 	if service == nil || service.requester == nil {
 		return Result{}, ErrAgentUnsupported
 	}
-	if ctx == nil || peer == nil || !validation.IsUUID(session.ID) {
+	if ctx == nil || peer == nil || !validation.IsUUID(session.ID) || maxClientBytes == 0 || maxPodBytes == 0 ||
+		maxClientBytes > agentprotocol.MaxPodPortForwardBytes || maxPodBytes > agentprotocol.MaxPodPortForwardBytes {
 		return Result{}, ErrInvalidInput
 	}
 	response, exit, err := service.requester.RequestPodPortForward(ctx, session.ClusterID,
 		&agentv1.PodPortForwardRequest{Namespace: session.Namespace, PodName: session.PodName, PodUid: session.PodUID,
-			Port: session.Port, MaxClientBytes: service.config.MaxClientBytes, MaxPodBytes: service.config.MaxPodBytes}, peer)
+			Port: session.Port, MaxClientBytes: maxClientBytes, MaxPodBytes: maxPodBytes}, peer)
 	if err != nil {
 		return Result{}, requestError(ctx, err)
 	}

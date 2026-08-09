@@ -910,14 +910,19 @@ Namespace、Pod UID、单个端口与所选时长。Console 提供 15、30、60 
 查找（幂等重试所需的同一激活地址仅保留到激活票据到期）；URL Token 消费一次后立即从地址栏清除。活跃会话
 周期重验登录 Session 与权限，退出登录或权限收回会取消它持有的全部上游连接。每个 HTTP 上游连接复用现有
 Agent port-forward Stream；`http.Transport` 在单会话内池化 Keep-Alive 连接，并同时受单会话、Server 全局和
-单 Agent 并发上限约束。双向字节上限按整个访问会话累计，不能靠重新建连接绕过；总时长到期、Pod UID 改变、
-权限撤销或 Server 关闭都会关闭连接。审计记录创建、激活、权限撤销、Pod UID、端口和所选时长，不记录 Token、Cookie、
-请求头或流量正文。
+单 Agent 并发上限约束。双向字节上限按整个访问会话累计，不能靠重新建连接绕过；Pod Access 默认每个方向
+1 GiB，并与底层原始 WebSocket Port Forward 默认的 64 MiB 产品预算分开配置。Agent/Server 传输层统一保留
+1 小时、1 GiB 的硬上限，原始接口仍只开放 15 分钟和 64 MiB。达到流量上限、权限撤销、Pod UID 改变或上游
+中断后，Server 会短期保留不含凭证的内存终止原因，使下一次刷新能显示具体原因，而不是统一显示地址失效。
+总时长到期或 Server 关闭同样会关闭连接。审计记录创建、替换、激活、终止原因、Pod UID、端口和所选时长，
+不记录 Token、Cookie、请求头或流量正文。
 
-固定 Access Origin 通过一个 HttpOnly Cookie 选择当前目标，所以同一浏览器配置同时只能激活一个 Pod 入口；
-发现已有入口时，新激活地址先返回冲突说明，不会静默切换目标；操作者关闭旧页面并明确选择替换后才结束旧入口。
-需要并行访问时使用不同浏览器配置或隐私窗口。这个限制换取了根路径代理能力；把会话放回 URL Path 会重新引入
-绝对路径、Cookie Path 和 WebSocket 不兼容问题。
+Server 以 Cluster UUID 与 Pod UID 为键，只允许一个待激活地址或活跃会话；再次创建先返回冲突，Console 展示
+旧地址与现有连接会立即失效的影响，只有操作者二次确认后才原子替换。固定 Access Origin 又通过一个 HttpOnly
+Cookie 选择当前目标，所以同一浏览器配置同时只能激活一个 Pod 入口；激活另一个 Pod 的地址时也会先显示替换
+说明，不会静默切换目标。不同 Pod 需要并行访问时可使用不同浏览器配置或隐私窗口，同一个 Pod 则无论浏览器
+配置如何都只有最新入口有效。这些限制换取根路径代理能力，并避免重复入口持续占用 Agent Stream；把会话放回
+URL Path 会重新引入绝对路径、Cookie Path 和 WebSocket 不兼容问题。
 
 底层原始 WebSocket port-forward API 继续保留给协议客户端：一次性票据升级
 `zke.pod-port-forward.v1` WebSocket，二进制消息承载 TCP 字节。Agent 在传输前重新读取 Pod 核对 UID，通过

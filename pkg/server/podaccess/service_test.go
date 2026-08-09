@@ -67,8 +67,8 @@ type httpForwarder struct {
 
 type webSocketForwarder struct{}
 
-func (webSocketForwarder) Run(ctx context.Context, _ podportforward.Session,
-	peer agentprotocol.PodPortForwardPeer) (podportforward.Result, error) {
+func (webSocketForwarder) RunWithLimits(ctx context.Context, _ podportforward.Session,
+	peer agentprotocol.PodPortForwardPeer, _, _ uint64) (podportforward.Result, error) {
 	var request bytes.Buffer
 	for !strings.Contains(request.String(), "\r\n\r\n") {
 		data, err := peer.Read(ctx)
@@ -124,8 +124,8 @@ func readWebSocketFrame(ctx context.Context, peer agentprotocol.PodPortForwardPe
 	return payload, nil
 }
 
-func (forwarder *httpForwarder) Run(ctx context.Context, _ podportforward.Session,
-	peer agentprotocol.PodPortForwardPeer) (podportforward.Result, error) {
+func (forwarder *httpForwarder) RunWithLimits(ctx context.Context, _ podportforward.Session,
+	peer agentprotocol.PodPortForwardPeer, _, _ uint64) (podportforward.Result, error) {
 	var request bytes.Buffer
 	for !strings.Contains(request.String(), "\r\n\r\n") {
 		data, err := peer.Read(ctx)
@@ -184,6 +184,8 @@ func TestAccessActivationProxyAndCookieIsolation(t *testing.T) {
 	}
 	replacementInput := validCreateInput(time.Now().UTC())
 	replacementInput.IdempotencyKey = "pod-access-test-2"
+	replacementInput.PodName = "other-api-0"
+	replacementInput.PodUID = "other-pod-uid"
 	replacementTicket, err := service.Create(replacementInput)
 	if err != nil {
 		t.Fatal(err)
@@ -409,6 +411,8 @@ func TestCreateAcceptsOnlyConfiguredSessionDurations(t *testing.T) {
 	for index, duration := range []time.Duration{sessionTTL15Minutes, sessionTTL30Minutes, sessionTTL1Hour} {
 		input := validCreateInput(time.Now().UTC())
 		input.IdempotencyKey = fmt.Sprintf("pod-access-duration-%d", index)
+		input.PodName = fmt.Sprintf("api-%d", index)
+		input.PodUID = fmt.Sprintf("pod-uid-%d", index)
 		input.SessionTTL = duration
 		ticket, err := service.Create(input)
 		if err != nil || ticket.SessionTTL != duration {
@@ -426,6 +430,95 @@ func TestCreateAcceptsOnlyConfiguredSessionDurations(t *testing.T) {
 	aboveConfiguredMaximum.SessionTTL = sessionTTL1Hour
 	if _, err := newService(sessionTTL30Minutes).Create(aboveConfiguredMaximum); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("duration above configured maximum error = %v, want invalid input", err)
+	}
+}
+
+func TestCreateRequiresExplicitSamePodReplacementAndEndsOldSession(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service, err := NewService(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&testAuthenticator{allowed: true}, testAuthorizer{}, nil,
+		&httpForwarder{requests: make(chan string, 1)}, Config{
+			Enabled: true, ExternalURL: "http://127.0.0.1:8081", MaxPending: 4, MaxActive: 4,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	first, err := service.Create(validCreateInput(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstURL, _ := url.Parse(first.AccessURL)
+	activationRequest := httptest.NewRequest(http.MethodGet, first.AccessURL, nil)
+	activationRequest.Host = firstURL.Host
+	activationResponse := httptest.NewRecorder()
+	service.ServeHTTP(activationResponse, activationRequest)
+	oldCookie := responseCookie(t, activationResponse.Result(), accessCookieName)
+	oldSession, err := service.resolve(oldCookie.Value, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := validCreateInput(now.Add(time.Second))
+	replacement.IdempotencyKey = "pod-access-replacement"
+	if _, err := service.Create(replacement); !errors.Is(err, ErrTargetReserved) {
+		t.Fatalf("unconfirmed replacement error = %v, want target reserved", err)
+	}
+	if oldSession.ctx.Err() != nil {
+		t.Fatal("old session was closed before replacement was confirmed")
+	}
+	replacement.ReplaceExisting = true
+	if _, err := service.Create(replacement); err != nil {
+		t.Fatal(err)
+	}
+	if oldSession.ctx.Err() == nil {
+		t.Fatal("old session remained open after replacement")
+	}
+	if _, err := service.resolve(oldCookie.Value, now.Add(2*time.Second)); !errors.Is(err, ErrAccessReplaced) {
+		t.Fatalf("old session resolve error = %v, want replaced", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081/", nil)
+	request.Host = firstURL.Host
+	request.AddCookie(oldCookie)
+	response := httptest.NewRecorder()
+	service.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "已被替换") {
+		t.Fatalf("replaced session response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestEndedByteLimitedSessionExplainsTerminalReason(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service, err := NewService(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&testAuthenticator{allowed: true}, testAuthorizer{}, nil,
+		&httpForwarder{requests: make(chan string, 1)}, Config{Enabled: true, ExternalURL: "http://127.0.0.1:8081"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := service.Create(validCreateInput(time.Now().UTC()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activationURL, _ := url.Parse(ticket.AccessURL)
+	activationRequest := httptest.NewRequest(http.MethodGet, ticket.AccessURL, nil)
+	activationRequest.Host = activationURL.Host
+	activationResponse := httptest.NewRecorder()
+	service.ServeHTTP(activationResponse, activationRequest)
+	cookie := responseCookie(t, activationResponse.Result(), accessCookieName)
+	service.deactivateToken(cookie.Value, endByteLimit)
+
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081/", nil)
+	request.Host = activationURL.Host
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	service.ServeHTTP(response, request)
+	if response.Code != http.StatusInsufficientStorage || !strings.Contains(response.Body.String(), "流量上限") {
+		t.Fatalf("byte-limited response = %d %q", response.Code, response.Body.String())
 	}
 }
 

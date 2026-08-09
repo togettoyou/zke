@@ -288,8 +288,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		podportforward.Config{
 			SessionTTL:     cfg.AgentListener.PodPortForwardSessionTTL,
 			MaxPending:     cfg.AgentListener.MaxPendingPodPortForwardSessions,
-			MaxClientBytes: cfg.AgentListener.MaxPodPortForwardClientBytes,
-			MaxPodBytes:    cfg.AgentListener.MaxPodPortForwardPodBytes,
+			MaxClientBytes: cfg.AgentListener.PodPortForwardSessionClientBytes,
+			MaxPodBytes:    cfg.AgentListener.PodPortForwardSessionPodBytes,
 		},
 	)
 	var podAccessService *podaccess.Service
@@ -313,8 +313,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				MaxActive:                cfg.PodAccess.MaxActiveSessions,
 				MaxConnections:           cfg.PodAccess.MaxConnections,
 				MaxConnectionsPerSession: cfg.PodAccess.MaxConnectionsPerSession,
-				MaxClientBytes:           cfg.AgentListener.MaxPodPortForwardClientBytes,
-				MaxPodBytes:              cfg.AgentListener.MaxPodPortForwardPodBytes,
+				MaxClientBytes:           cfg.PodAccess.MaxClientBytes,
+				MaxPodBytes:              cfg.PodAccess.MaxPodBytes,
 			},
 		)
 		if err != nil {
@@ -379,7 +379,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				WriteTimeout:    cfg.AgentListener.WriteTimeout,
 			},
 			PodPortForward: httpapi.PodPortForwardHTTPConfig{
-				MaximumDuration: cfg.AgentListener.PodPortForwardRequestTimeout,
+				MaximumDuration: cfg.AgentListener.PodPortForwardMaximumDuration,
 				WriteTimeout:    cfg.AgentListener.WriteTimeout,
 			},
 			KubernetesEvents: httpapi.KubernetesEventsHTTPConfig{
