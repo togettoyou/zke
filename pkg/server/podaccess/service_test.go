@@ -93,14 +93,42 @@ func (webSocketForwarder) Run(ctx context.Context, _ podportforward.Session,
 	if err := peer.Write(ctx, []byte(response)); err != nil {
 		return podportforward.Result{}, err
 	}
+	if err := writeTestWebSocketText(ctx, peer, []byte("server-ready")); err != nil {
+		return podportforward.Result{}, err
+	}
 	frame, err := readWebSocketFrame(ctx, peer)
 	if err != nil {
 		return podportforward.Result{}, err
 	}
-	if err := peer.Write(ctx, append([]byte{0x81, byte(len(frame))}, frame...)); err != nil {
+	if err := writeTestWebSocketText(ctx, peer, frame); err != nil {
 		return podportforward.Result{}, err
 	}
+	select {
+	case <-ctx.Done():
+		return podportforward.Result{}, ctx.Err()
+	case <-time.After(25 * time.Millisecond):
+	}
+	if err := writeTestWebSocketText(ctx, peer, []byte("server-push")); err != nil {
+		return podportforward.Result{}, err
+	}
+	frame, err = readWebSocketFrame(ctx, peer)
+	if err != nil {
+		return podportforward.Result{}, err
+	}
+	if string(frame) != "done" {
+		return podportforward.Result{}, fmt.Errorf("unexpected final WebSocket frame %q", frame)
+	}
 	return podportforward.Result{}, nil
+}
+
+func writeTestWebSocketText(ctx context.Context, peer agentprotocol.PodPortForwardPeer, payload []byte) error {
+	if len(payload) > 125 {
+		return errors.New("test WebSocket frame is too large")
+	}
+	if err := peer.Write(ctx, append([]byte{0x81, byte(len(payload))}, payload...)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func readWebSocketFrame(ctx context.Context, peer agentprotocol.PodPortForwardPeer) ([]byte, error) {
@@ -406,15 +434,32 @@ func TestPodAccessProxiesWebSocketUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
+	messageType, message, err := connection.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.TextMessage || string(message) != "server-ready" {
+		t.Fatalf("initial server push = type %d %q", messageType, message)
+	}
 	if err := connection.WriteMessage(websocket.TextMessage, []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
-	messageType, message, err := connection.ReadMessage()
+	messageType, message, err = connection.ReadMessage()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if messageType != websocket.TextMessage || string(message) != "hello" {
 		t.Fatalf("WebSocket echo = type %d %q", messageType, message)
+	}
+	messageType, message, err = connection.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.TextMessage || string(message) != "server-push" {
+		t.Fatalf("delayed server push = type %d %q", messageType, message)
+	}
+	if err := connection.WriteMessage(websocket.TextMessage, []byte("done")); err != nil {
+		t.Fatal(err)
 	}
 }
 

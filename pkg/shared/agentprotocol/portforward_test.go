@@ -3,6 +3,7 @@ package agentprotocol
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -91,6 +92,78 @@ func TestRealQUICPodPortForwardRelaysBinaryTrafficAndExit(t *testing.T) {
 	}
 }
 
+func TestRealQUICPodPortForwardKeepsLongLivedBidirectionalTrafficOpen(t *testing.T) {
+	client, server, stop := openStreamTestConnection(t)
+	defer stop()
+	streamServer, err := NewStreamServer(StreamServerConfig{
+		HeaderTimeout: 200 * time.Millisecond,
+		MaxTimeout:    2 * time.Second,
+		Handlers: map[agentv1.StreamKind]StreamHandlerConfig{
+			agentv1.StreamKind_STREAM_KIND_POD_PORT_FORWARD: {
+				MaxConcurrent: 1,
+				Handle: PodPortForwardStreamHandler(1024, 1024, func(
+					_ context.Context,
+					request *agentv1.PodPortForwardRequest,
+				) (*agentv1.PodPortForwardResponse, PodPortForwardConnection, error) {
+					forward, backend := net.Pipe()
+					go func() {
+						defer backend.Close()
+						first := make([]byte, len("client-one"))
+						if _, readErr := io.ReadFull(backend, first); readErr != nil {
+							return
+						}
+						_, _ = backend.Write([]byte("server-one"))
+						time.Sleep(25 * time.Millisecond)
+						_, _ = backend.Write([]byte("server-push"))
+						second := make([]byte, len("client-two"))
+						if _, readErr := io.ReadFull(backend, second); readErr != nil {
+							return
+						}
+						_, _ = backend.Write([]byte("server-two"))
+					}()
+					return &agentv1.PodPortForwardResponse{Result: agentv1.ResultCode_RESULT_CODE_OK,
+						KubernetesStatusCode: 200, PodUid: request.GetPodUid(), Port: request.GetPort()}, forward, nil
+				}),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveContext, cancelServe := context.WithCancel(context.Background())
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- streamServer.Serve(serveContext, server) }()
+	defer func() {
+		cancelServe()
+		_ = client.CloseWithError(0, "test complete")
+		select {
+		case err := <-serveDone:
+			if err != nil {
+				t.Errorf("stop Port Forward Stream Server: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("Port Forward Stream Server did not stop")
+		}
+	}()
+	peer := &streamingPodPortForwardPeer{input: make(chan []byte, 2)}
+	peer.input <- []byte("client-one")
+	peer.input <- []byte("client-two")
+	response, exit, err := DoPodPortForward(context.Background(), client,
+		&agentv1.StreamHeader{ProtocolVersion: ProtocolVersion,
+			Kind:      agentv1.StreamKind_STREAM_KIND_POD_PORT_FORWARD,
+			RequestId: "00000000-0000-4000-8000-000000000082", TimeoutMillis: 1000},
+		&agentv1.PodPortForwardRequest{Namespace: "workloads", PodName: "api-0", PodUid: "pod-uid",
+			Port: 8080, MaxClientBytes: 1024, MaxPodBytes: 1024}, peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK ||
+		exit.GetResult() != agentv1.ResultCode_RESULT_CODE_OK ||
+		string(peer.output()) != "server-oneserver-pushserver-two" {
+		t.Fatalf("response=%+v exit=%+v output=%q", response, exit, peer.output())
+	}
+}
+
 func TestPodPortForwardFramePumpsEnforceDirectionLimits(t *testing.T) {
 	var clientCount atomic.Uint64
 	err := receivePortForwardFrames(context.Background(), messageBuffer(t,
@@ -111,6 +184,34 @@ type testPodPortForwardPeer struct {
 	read    atomic.Bool
 	mutex   sync.Mutex
 	written []byte
+}
+
+type streamingPodPortForwardPeer struct {
+	input   chan []byte
+	mutex   sync.Mutex
+	written []byte
+}
+
+func (peer *streamingPodPortForwardPeer) Read(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case data := <-peer.input:
+		return data, nil
+	}
+}
+
+func (peer *streamingPodPortForwardPeer) Write(_ context.Context, data []byte) error {
+	peer.mutex.Lock()
+	defer peer.mutex.Unlock()
+	peer.written = append(peer.written, data...)
+	return nil
+}
+
+func (peer *streamingPodPortForwardPeer) output() []byte {
+	peer.mutex.Lock()
+	defer peer.mutex.Unlock()
+	return append([]byte(nil), peer.written...)
 }
 
 func (peer *testPodPortForwardPeer) Read(ctx context.Context) ([]byte, error) {
