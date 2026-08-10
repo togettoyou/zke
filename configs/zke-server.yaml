@@ -1,9 +1,9 @@
 http:
-  # HTTP API and Console endpoint. The container image serves the built Console
-  # from this directory; mount another file at /etc/zke/zke-server.yaml to
-  # override only the values that differ from these defaults.
+  # HTTP API and Console endpoint. Local development normally runs the Vite
+  # dev server separately, so the default is empty. Container images set
+  # ZKE_CONSOLE_DIRECTORY to their built Console assets.
   address: 0.0.0.0:8080
-  console_directory: /usr/share/zke/console
+  console_directory: ""
   # Optional native HTTPS. Leave this block omitted for loopback HTTP or when
   # an upstream gateway terminates TLS. These files are independent from the
   # Agent QUIC/mTLS certificates below and must be configured together.
@@ -46,10 +46,9 @@ pod_access:
   max_pod_bytes: 1073741824
 
 database:
-  # ZKE_DATABASE_URL overrides this value. The default matches the PostgreSQL
-  # Service in deploy/kubernetes and the bundled credentials used by the
-  # zke-server-pg quick-start image.
-  url: postgres://zke:zke_change_me@zke-postgres:5432/zke?sslmode=disable
+  # ZKE_DATABASE_URL overrides this value in containers. The default matches
+  # deploy/development/compose.yaml for direct local execution.
+  url: postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable
   connect_timeout: 5s
   migration_timeout: 2m
   # Size the pool against the PostgreSQL connection budget, leaving room for
@@ -83,12 +82,13 @@ auth:
     duration: 15m
   initial_admin:
     # Applied once, only while the users table is empty. The generated password
-    # is written with mode 0600 and is never logged. Persist /var/lib/zke or
-    # mount a pre-created Secret at this path.
+    # is written with mode 0600 and is never logged. Relative paths keep local
+    # runtime state under the ignored data/ directory; containers run from /
+    # and persist the same path as /data.
     enabled: true
     username: admin
     display_name: ZKE Administrator
-    password_file: /var/lib/zke/admin-password
+    password_file: data/admin-password
     auto_generate_password: true
 
 agent_pki:
@@ -111,7 +111,7 @@ agent_pki:
   managed:
     # Mount this directory on a private PV in a deployment. If database PKI
     # state exists but the directory is lost, Server fails closed.
-    directory: /var/lib/zke/pki
+    directory: data/pki
     auto_generate: true
     agent_client_ca_validity: 87600h
     agent_listener_ca_validity: 175200h

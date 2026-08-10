@@ -824,7 +824,8 @@ Gin 实际注册路由，并检查 `operationId` 唯一性。
 
 本地开发环境需要 Go 1.26.4、Docker 与 Docker Compose。Go 命令在仓库根目录执行。
 
-仓库配置以容器部署为默认场景，使用 Server Managed PKI，并把 PKI 与初始管理员密码写入 `/var/lib/zke`。
+仓库配置同时面向本地开发和容器部署，使用 Server Managed PKI，并把 PKI 与初始管理员密码写入相对的 `data/` 目录。
+从仓库根目录运行时数据落在已忽略的 `data/`；容器工作目录为 `/`，同一配置对应唯一持久化目录 `/data`。
 首次正常启动会自动生成 Agent Client CA、Agent Listener CA 和 Agent Listener 身份，不再需要独立的开发 PKI 生成脚本。
 `hack/setup-local-agent-resources.sh` 只负责为宿主机运行的 Agent 初始化 Namespace、Enrollment Secret 和
 Trust Secret。这些 PKI 文件仅用于 Agent QUIC/mTLS，不包含 HTTP TLS 证书：
@@ -835,24 +836,24 @@ Trust Secret。这些 PKI 文件仅用于 Agent QUIC/mTLS，不包含 HTTP TLS �
 
 ```bash
 docker compose -f deploy/development/compose.yaml up -d
-# 仓库 configs 面向容器部署；宿主机开发时先复制一份并调整数据库地址、
-# agent_pki.managed.directory 与 auth.initial_admin.password_file。
-mkdir -p .local
-cp configs/zke-server.yaml .local/zke-server.yaml
-go run ./cmd/zke-server --config .local/zke-server.yaml
+# 默认数据库地址与 development compose 一致；Console 可由 Vite dev server 单独运行。
+go run ./cmd/zke-server --config configs/zke-server.yaml
+# 可选：另一个终端启动 Console，开发服务器会把 API 请求代理到 127.0.0.1:8080。
+corepack pnpm --dir web/console install --frozen-lockfile
+corepack pnpm --dir web/console dev
 # 在另一个终端输入刚创建的 Enrollment Token：
 hack/setup-local-agent-resources.sh
 go run ./cmd/zke-agent --config configs/zke-agent.yaml
 ```
 
-Server 必须先成功启动一次，以便 Managed PKI 生成 `/var/lib/zke/pki/agent-listener-ca.crt`。随后从已有
+Server 必须先成功启动一次，以便 Managed PKI 生成 `data/pki/agent-listener-ca.crt`。随后从已有
 Project 创建 Enrollment，把响应中的一次性 Token 输入 `hack/setup-local-agent-resources.sh`。脚本使用当前
 kubectl context 创建 Namespace、Enrollment Secret 和 Trust Secret，不创建或覆盖 identity Secret；如需避免
 误用其他集群，可显式传入 `--context`。
 
 Server 在迁移完成后检查用户表，只在空表时按 `auth.initial_admin` 创建首个全局管理员；管理员、Global
 `admin` RoleBinding 和审计事件仍在同一事务中创建。仓库配置会生成
-`/var/lib/zke/admin-password`，权限为 `0600`，密码不会写入日志。已有用户时启动过程完全跳过该文件。
+`data/admin-password`，权限为 `0600`，密码不会写入日志。已有用户时启动过程完全跳过该文件。
 部署环境应关闭 `auto_generate_password`，并将 `password_file` 指向由 Kubernetes Secret 或等价机制挂载的
 受保护文件。
 
@@ -861,9 +862,9 @@ Tenant、Project 和 Enrollment 属于正常产品资源，应由管理 API 创�
 目标集群。
 
 `configs/zke-agent.yaml` 使用本机 HTTP `127.0.0.1:8080` 和 QUIC `127.0.0.1:8443`，可以配合当前
-kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernetes Secret，不混入宿主机 `.local`
-凭据路径。从源码运行 Server 时需要按本机环境临时调整数据库地址和 `/var/lib/zke` 数据目录，或使用
-`ZKE_DATABASE_URL` 覆盖数据库连接；这些本地调整不应提交。若开发期间直接修改了尚未提交的 `000001`，现有开发数据库会因
+kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernetes Secret，不写入配置文件。
+默认数据库地址与 `deploy/development/compose.yaml` 一致，特殊环境仍可用 `ZKE_DATABASE_URL`
+覆盖数据库连接。若开发期间直接修改了尚未提交的 `000001`，现有开发数据库会因
 迁移校验和变化而拒绝启动；此时需要明确执行 `docker compose -f deploy/development/compose.yaml down --volumes`
 后重新启动数据库，而不是让应用静默改写已执行迁移。
 
@@ -933,6 +934,7 @@ Server 和 Agent 都先构造可运行的容器部署默认值，再应用 YAML 
 
 - 仓库配置提供容器可启动的默认地址、生产取向的资源边界和明显的占位数据库凭据；共享环境必须通过 Secret、
   环境变量或局部配置挂载替换凭据、公开地址和证书身份。
+- Server 的相对 `data/` 路径在本地保留于仓库根目录，在容器中对应 `/data`；Kubernetes 与 Helm 只持久化该目录。
 - Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；Helm Chart 通过 Secret
   生成并注入 PostgreSQL 密码。
 - 首个管理员密码只从 `auth.initial_admin.password_file` 读取。本地开发可以在空用户库首次启动时生成权限为

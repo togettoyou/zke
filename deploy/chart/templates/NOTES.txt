@@ -4,7 +4,7 @@ Open the Console locally:
   kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "zke.server.fullname" . }} 8080:{{ .Values.server.service.httpPort }} 8081:{{ .Values.server.service.podAccessPort }}
 
 Read the generated initial administrator password:
-  kubectl -n {{ .Release.Namespace }} exec deployment/{{ include "zke.server.fullname" . }} -- cat /var/lib/zke/admin-password
+  kubectl -n {{ .Release.Namespace }} exec deployment/{{ include "zke.server.fullname" . }} -- cat /data/admin-password
 
 Before enrolling a remote Cluster, set server.agentInstall.publicHTTPURL and
 server.agentInstall.publicQUICAddress to endpoints reachable by that Cluster.

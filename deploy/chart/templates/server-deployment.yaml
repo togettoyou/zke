@@ -15,7 +15,10 @@ spec:
   template:
     metadata:
       annotations:
-        {{- toYaml .Values.server.podAnnotations | nindent 8 }}
+        checksum/config: {{ include (print $.Template.BasePath "/server-configmap.yaml") . | sha256sum }}
+        {{- with .Values.server.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       labels:
         {{- include "zke.server.selectorLabels" . | nindent 8 }}
         {{- with .Values.server.podLabels }}
@@ -33,6 +36,7 @@ spec:
         - name: zke-server
           image: "{{ .Values.server.image.repository }}:{{ include "zke.server.imageTag" . }}"
           imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          workingDir: /
           ports:
             - name: http
               containerPort: 8080
@@ -92,7 +96,11 @@ spec:
               drop: ["ALL"]
           volumeMounts:
             - name: data
-              mountPath: /var/lib/zke
+              mountPath: /data
+            - name: config
+              mountPath: /etc/zke/zke-server.yaml
+              subPath: zke-server.yaml
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -103,6 +111,9 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "zke.server.configName" . }}
         - name: tmp
           emptyDir: {}
       {{- with .Values.server.nodeSelector }}

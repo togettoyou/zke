@@ -124,6 +124,31 @@ spec:
     requests:
       storage: 1Gi
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zke-server-config
+  namespace: zke-system
+  labels:
+    app.kubernetes.io/name: zke-server
+    app.kubernetes.io/part-of: zke
+data:
+  zke-server.yaml: |
+    auth:
+      initial_admin:
+        password_file: data/admin-password
+    agent_pki:
+      listener_sans:
+        dns_names:
+          - localhost
+          - zke-server
+          - zke-server.zke-system
+          - zke-server.zke-system.svc
+        ip_addresses:
+          - 127.0.0.1
+      managed:
+        directory: data/pki
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -152,6 +177,7 @@ spec:
         - name: zke-server
           image: ghcr.io/togettoyou/zke-server:latest
           imagePullPolicy: Always
+          workingDir: /
           ports:
             - name: http
               containerPort: 8080
@@ -204,13 +230,20 @@ spec:
               drop: ["ALL"]
           volumeMounts:
             - name: data
-              mountPath: /var/lib/zke
+              mountPath: /data
+            - name: config
+              mountPath: /etc/zke/zke-server.yaml
+              subPath: zke-server.yaml
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: zke-server-data
+        - name: config
+          configMap:
+            name: zke-server-config
         - name: tmp
           emptyDir: {}
 ---

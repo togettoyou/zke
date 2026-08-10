@@ -39,6 +39,7 @@ Agent 使用相同的局部覆盖规则。默认注册地址和 QUIC 地址分�
 | 环境变量 | 对应配置 |
 | --- | --- |
 | `ZKE_DATABASE_URL` | `database.url` |
+| `ZKE_CONSOLE_DIRECTORY` | `http.console_directory` |
 | `ZKE_POD_ACCESS_EXTERNAL_URL` | `pod_access.external_url` |
 | `ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL` | `agent_install.public_http_url` |
 | `ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS` | `agent_install.public_quic_address` |
@@ -58,7 +59,7 @@ docker run -d --name zke \
   -p 8080:8080 \
   -p 8081:8081 \
   -p 8443:8443/udp \
-  -v zke-data:/var/lib/zke \
+  -v zke-data:/data \
   -v zke-postgresql-data:/var/lib/postgresql/data \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
@@ -66,7 +67,7 @@ docker run -d --name zke \
 Console 地址为 <http://127.0.0.1:8080>。首次空库启动会生成管理员密码：
 
 ```bash
-docker exec zke cat /var/lib/zke/admin-password
+docker exec zke cat /data/admin-password
 ```
 
 挂载 Server 配置：
@@ -74,20 +75,20 @@ docker exec zke cat /var/lib/zke/admin-password
 ```bash
 docker run -d --name zke \
   -p 8080:8080 -p 8081:8081 -p 8443:8443/udp \
-  -v zke-data:/var/lib/zke \
+  -v zke-data:/data \
   -v zke-postgresql-data:/var/lib/postgresql/data \
   -v "$(pwd)/configs/zke-server.yaml:/etc/zke/zke-server.yaml:ro" \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
-`zke-server-pg` 使用固定的容器内数据库初始凭据，只用于单机预览；不得把 PostgreSQL 端口暴露到容器外部。删除容器前应确认两个命名卷仍然保留。
+`/data` 是 Server 唯一需要持久化的目录，包含 Managed PKI 和自动生成的初始管理员密码。`zke-server-pg` 使用固定的容器内数据库初始凭据，只用于单机预览；不得把 PostgreSQL 端口暴露到容器外部。删除容器前应确认两个命名卷仍然保留。
 
 ## Kubernetes 清单
 
 静态清单位于 `deploy/kubernetes/zke.yaml`，包含：
 
 - PostgreSQL Secret、Headless Service 与单副本 StatefulSet；
-- ZKE Server PVC、单副本 Deployment 与 Service；
+- ZKE Server 局部配置 ConfigMap、PVC、单副本 Deployment 与 Service；
 - TCP `8080`、TCP `8081` 和 UDP `8443` Service 端口。
 
 清单为了能够直接应用，包含 `zke_change_me` 初始数据库密码。必须在第一次创建 StatefulSet 前替换；数据库初始化后只修改 Secret 不会自动修改 PostgreSQL 内部密码。
@@ -102,10 +103,12 @@ kubectl -n zke-system port-forward service/zke-server 8080:8080 8081:8081
 读取管理员密码：
 
 ```bash
-kubectl -n zke-system exec deployment/zke-server -- cat /var/lib/zke/admin-password
+kubectl -n zke-system exec deployment/zke-server -- cat /data/admin-password
 ```
 
 Service 默认为 `ClusterIP`。外部部署需要根据环境选择 LoadBalancer、Ingress 或 Gateway；其中 `8443` 是 UDP，不能按普通 HTTP Ingress 转发。
+
+`zke-server-config` ConfigMap 只保存部署相关的关键覆盖项：`data` 目录和 Agent Listener SAN。Server 的其他参数继续使用代码默认值；修改 ConfigMap 后需要重启 Deployment。
 
 ## Helm
 
@@ -129,7 +132,8 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
   --create-namespace \
   --set server.agentInstall.publicHTTPURL=https://zke.example.com \
   --set server.agentInstall.publicQUICAddress=zke.example.com:8443 \
-  --set server.podAccessExternalURL=https://pod-access.example.com
+  --set server.podAccessExternalURL=https://pod-access.example.com \
+  --set server.agentPKI.listenerSANs.dnsNames[0]=zke.example.com
 ```
 
-上述域名仅为占位值。HTTP TLS 可以在网关终止，但 Agent QUIC Listener 仍使用自身的 mTLS；公开地址还必须出现在 `agent_pki.listener_sans` 中，因此正式接入远程集群前应挂载经过审核的 Server 配置。
+上述域名仅为占位值。HTTP TLS 可以在网关终止，但 Agent QUIC Listener 仍使用自身的 mTLS；Chart 会把额外的 `server.agentPKI.listenerSANs.dnsNames` 和 `ipAddresses` 写入 Server ConfigMap，并在配置变化时滚动更新 Deployment。

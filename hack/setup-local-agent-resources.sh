@@ -4,7 +4,7 @@ set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 namespace="zke-system"
-listener_ca_file="${repository_root}/.local/development/agent-listener-ca.crt"
+listener_ca_file="${repository_root}/data/pki/agent-listener-ca.crt"
 kube_context=""
 
 usage() {

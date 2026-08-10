@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "zke.server.configName" . }}
+  labels:
+    {{- include "zke.labels" . | nindent 4 }}
+    {{- include "zke.server.selectorLabels" . | nindent 4 }}
+data:
+  zke-server.yaml: |
+    auth:
+      initial_admin:
+        password_file: data/admin-password
+    agent_pki:
+      listener_sans:
+        dns_names:
+          - localhost
+          - {{ include "zke.server.fullname" . }}
+          - {{ include "zke.server.fullname" . }}.{{ .Release.Namespace }}
+          - {{ include "zke.server.fullname" . }}.{{ .Release.Namespace }}.svc
+          {{- range .Values.server.agentPKI.listenerSANs.dnsNames }}
+          - {{ . | quote }}
+          {{- end }}
+        ip_addresses:
+          - 127.0.0.1
+          {{- range .Values.server.agentPKI.listenerSANs.ipAddresses }}
+          - {{ . | quote }}
+          {{- end }}
+      managed:
+        directory: data/pki

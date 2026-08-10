@@ -22,10 +22,13 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 
 FROM alpine:3.22 AS server
 RUN apk add --no-cache ca-certificates tzdata \
-    && install -d /etc/zke /var/lib/zke /usr/share/zke/console
+    && install -d /data /etc/zke /usr/share/zke/console
 COPY --from=server-build /out/zke-server /usr/local/bin/zke-server
 COPY --from=console-build /src/web/console/dist/ /usr/share/zke/console/
 COPY configs/zke-server.yaml /etc/zke/zke-server.yaml
+ENV ZKE_CONSOLE_DIRECTORY=/usr/share/zke/console
+WORKDIR /
+VOLUME ["/data"]
 EXPOSE 8080/tcp 8081/tcp 8443/udp
 ENTRYPOINT ["/usr/local/bin/zke-server"]
 CMD ["--config", "/etc/zke/zke-server.yaml"]
@@ -34,7 +37,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 FROM postgres:17-alpine AS server-pg
 RUN apk add --no-cache ca-certificates tzdata \
-    && install -d /etc/zke /var/lib/zke /usr/share/zke/console
+    && install -d /data /etc/zke /usr/share/zke/console
 COPY --from=server-build /out/zke-server /usr/local/bin/zke-server
 COPY --from=console-build /src/web/console/dist/ /usr/share/zke/console/
 COPY configs/zke-server.yaml /etc/zke/zke-server.yaml
@@ -43,8 +46,10 @@ ENV POSTGRES_DB=zke \
     POSTGRES_USER=zke \
     POSTGRES_PASSWORD=zke_change_me \
     PGDATA=/var/lib/postgresql/data/pgdata \
-    ZKE_DATABASE_URL=postgres://zke:zke_change_me@127.0.0.1:5432/zke?sslmode=disable
-VOLUME ["/var/lib/postgresql/data", "/var/lib/zke"]
+    ZKE_DATABASE_URL=postgres://zke:zke_change_me@127.0.0.1:5432/zke?sslmode=disable \
+    ZKE_CONSOLE_DIRECTORY=/usr/share/zke/console
+WORKDIR /
+VOLUME ["/var/lib/postgresql/data", "/data"]
 EXPOSE 8080/tcp 8081/tcp 8443/udp
 ENTRYPOINT ["/usr/local/bin/zke-server-pg-entrypoint"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \

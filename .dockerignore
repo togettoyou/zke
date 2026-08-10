@@ -1,6 +1,7 @@
 .git
 .github
 .local
+data
 bin
 coverage.*
 web/console/node_modules

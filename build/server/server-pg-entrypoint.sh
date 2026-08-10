@@ -2,7 +2,7 @@
 set -eu
 
 config_file="${ZKE_CONFIG_FILE:-/etc/zke/zke-server.yaml}"
-mkdir -p /var/lib/zke
+mkdir -p /data
 
 /usr/local/bin/docker-entrypoint.sh postgres &
 postgres_pid=$!

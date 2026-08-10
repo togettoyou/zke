@@ -227,7 +227,6 @@ func DefaultConfig() Config {
 	return Config{
 		HTTP: HTTPConfig{
 			Address:           "0.0.0.0:8080",
-			ConsoleDirectory:  "/usr/share/zke/console",
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       15 * time.Second,
 			WriteTimeout:      15 * time.Second,
@@ -251,7 +250,7 @@ func DefaultConfig() Config {
 			MaxPodBytes:              1024 * 1024 * 1024,
 		},
 		Database: DatabaseConfig{
-			URL:              "postgres://zke:zke_change_me@zke-postgres:5432/zke?sslmode=disable",
+			URL:              "postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable",
 			ConnectTimeout:   5 * time.Second,
 			MigrationTimeout: 2 * time.Minute,
 			MaxConnections:   16,
@@ -278,7 +277,7 @@ func DefaultConfig() Config {
 				Enabled:              true,
 				Username:             "admin",
 				DisplayName:          "ZKE Administrator",
-				PasswordFile:         "/var/lib/zke/admin-password",
+				PasswordFile:         "data/admin-password",
 				AutoGeneratePassword: true,
 			},
 		},
@@ -286,7 +285,7 @@ func DefaultConfig() Config {
 			Mode:                           "managed",
 			AgentClientCertificateValidity: 30 * 24 * time.Hour,
 			Managed: ManagedAgentPKIConfig{
-				Directory:                "/var/lib/zke/pki",
+				Directory:                "data/pki",
 				AutoGenerate:             true,
 				AgentClientCAValidity:    10 * 365 * 24 * time.Hour,
 				AgentListenerCAValidity:  20 * 365 * 24 * time.Hour,
@@ -399,6 +398,7 @@ func applyEnvironmentOverrides(cfg *Config) {
 		target *string
 	}{
 		{"ZKE_DATABASE_URL", &cfg.Database.URL},
+		{"ZKE_CONSOLE_DIRECTORY", &cfg.HTTP.ConsoleDirectory},
 		{"ZKE_POD_ACCESS_EXTERNAL_URL", &cfg.PodAccess.ExternalURL},
 		{"ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL", &cfg.AgentInstall.PublicHTTPURL},
 		{"ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS", &cfg.AgentInstall.PublicQUICAddress},

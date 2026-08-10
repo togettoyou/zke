@@ -34,6 +34,11 @@ server:
     publicHTTPURL: ""
     publicQUICAddress: ""
   podAccessExternalURL: ""
+  agentPKI:
+    listenerSANs:
+      # Additional public QUIC names and IPs appended to the in-cluster defaults.
+      dnsNames: []
+      ipAddresses: []
 
 agent:
   image:

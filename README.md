@@ -65,13 +65,14 @@ flowchart TB
 ```bash
 docker run -d --name zke \
   -p 8080:8080 -p 8081:8081 -p 8443:8443/udp \
+  -v zke-data:/data \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
 打开 <http://127.0.0.1:8080>，并读取自动生成的初始管理员密码：
 
 ```bash
-docker exec zke cat /var/lib/zke/admin-password
+docker exec zke cat /data/admin-password
 ```
 
 ### Kubernetes

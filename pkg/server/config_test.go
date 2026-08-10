@@ -362,6 +362,7 @@ func TestRepositoryServerConfigMatchesDefaults(t *testing.T) {
 
 func TestLoadConfigEnvironmentOverrides(t *testing.T) {
 	t.Setenv("ZKE_DATABASE_URL", "postgres://environment-value")
+	t.Setenv("ZKE_CONSOLE_DIRECTORY", "/srv/zke/console")
 	t.Setenv("ZKE_POD_ACCESS_EXTERNAL_URL", "http://localhost:18081")
 	t.Setenv("ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL", "https://zke.example.com")
 	t.Setenv("ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS", "zke.example.com:8443")
@@ -376,6 +377,7 @@ func TestLoadConfigEnvironmentOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Database.URL != "postgres://environment-value" ||
+		cfg.HTTP.ConsoleDirectory != "/srv/zke/console" ||
 		cfg.PodAccess.ExternalURL != "http://localhost:18081" ||
 		cfg.AgentInstall.PublicHTTPURL != "https://zke.example.com" ||
 		cfg.AgentInstall.PublicQUICAddress != "zke.example.com:8443" ||
@@ -416,10 +418,13 @@ agent_pki:
 		t.Fatalf("listener SAN override was not applied: %+v", cfg.AgentPKI.Managed.ListenerSANs)
 	}
 	if cfg.HTTP.Address != "0.0.0.0:8080" ||
+		cfg.HTTP.ConsoleDirectory != "" ||
+		cfg.Database.URL != "postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable" ||
 		cfg.Database.ConnectTimeout != 5*time.Second ||
 		cfg.Auth.InitialAdmin.Username != "admin" ||
+		cfg.Auth.InitialAdmin.PasswordFile != "data/admin-password" ||
 		cfg.AgentPKI.Mode != "managed" ||
-		cfg.AgentPKI.Managed.Directory != "/var/lib/zke/pki" ||
+		cfg.AgentPKI.Managed.Directory != "data/pki" ||
 		cfg.AgentListener.Address != "0.0.0.0:8443" ||
 		cfg.LogLevel != "info" {
 		t.Fatalf("partial Server config did not retain deployment defaults: %+v", cfg)
