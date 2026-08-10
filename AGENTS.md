@@ -17,9 +17,12 @@ rot。此时应对最近几次回复和改动保持怀疑，重新读取本文�
 
 ## 项目定位
 
-ZKE（Z Kubernetes Engine）是构建在 Kubernetes 之上的 AI 原生 Kubernetes 管理与算力平台。
+ZKE（Z Kubernetes Engine）是面向私有网络与混合云环境的 Kubernetes 多集群管理平台。
 
-ZKE 当前处于早期设计与开发阶段：
+ZKE 通过 Server + Agent 连接分散在数据中心、私有云和公有云中的 Kubernetes 集群，为平台团队提供统一的资源管理、
+权限控制、安全操作与审计入口。多集群可观测性、AI 运维与排障助手（Copilot）属于后续规划能力。
+
+ZKE 当前处于开发预览阶段：
 
 - 部分模块尚未实现；
 - 产品范围和技术选型仍可能调整；

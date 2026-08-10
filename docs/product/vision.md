@@ -1,14 +1,18 @@
 # 产品愿景与设计原则
 
-ZKE（Z Kubernetes Engine）是一款构建在 Kubernetes 之上的云原生管理平台，面向多集群管理、容器服务与统一可观测性场景。
+ZKE（Z Kubernetes Engine）是面向私有网络与混合云环境的 Kubernetes 多集群管理平台。
 
-ZKE 不是 Linux 发行版，也不是 Kubernetes 的替代品。它是构建在 Kubernetes 之上的 Kubernetes 管理与算力平台。
+ZKE 通过 Server + Agent 连接分散在数据中心、私有云和公有云中的 Kubernetes 集群，为平台团队提供统一的资源管理、权限控制、安全操作与审计入口。
+
+ZKE 不是 Linux 发行版，不是 Kubernetes 的替代品，也不负责托管 Kubernetes 控制面。实际工作负载始终运行在明确的目标 Kubernetes 集群中。
+
+当前产品重点是多集群接入、安全治理和单集群容器资源管理。多集群可观测性、AI 运维与排障助手（Copilot）属于后续规划能力。
 
 ## 设计原则
 
 1. **以 Kubernetes 为统一基础设施底座**：工作负载最终运行在具体 Kubernetes 集群中。
 2. **Server + Agent 管理多集群**：Agent 主动连接 Server，适应私有网络、混合云、多云和边缘环境。
-3. **领域能力分层**：将容器与可观测性能力组织在同一平台内。
+3. **领域能力分层**：将集群接入、容器服务、安全审计组织为清晰的能力边界，并逐步扩展多集群可观测性和 AI 运维与排障能力。
 4. **全局查看、定域执行**：跨集群汇总信息，实际操作必须落到明确的集群与资源。
 5. **默认受控与可审计**：敏感操作需要验证权限、确认目标、评估影响并记录审计日志。
 
@@ -16,7 +20,8 @@ ZKE 不是 Linux 发行版，也不是 Kubernetes 的替代品。它是构建在
 
 ## 适用场景
 
-- 企业多 Kubernetes 集群统一管理
-- 私有云和混合云 Kubernetes 管理
-- Kubernetes 容器服务与资源管理
-- Kubernetes 可观测性
+- 数据中心、私有云和公有云中的多 Kubernetes 集群统一管理
+- 具有独立网络边界的私有云与混合云 Kubernetes 环境
+- Kubernetes 资源、工作负载与敏感运维操作的统一入口
+- 统一权限边界与审计要求下的平台工程和 SRE 协作
+- 多集群可观测性，以及规划中的 AI 运维与排障助手（Copilot）

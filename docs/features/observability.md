@@ -1,6 +1,6 @@
-# 可观测性平台
+# 可观测性平台（规划）
 
-可观测性平台是多集群应用，用户进入时无需先选择集群。初步计划集成 VictoriaMetrics、VictoriaLogs 和 Grafana。
+可观测性平台是规划中的多集群应用，用户进入时无需先选择集群。初步计划集成 VictoriaMetrics、VictoriaLogs 和 Grafana，具体技术方案仍需后续设计与验证。
 
 规划能力包括：
 
@@ -19,4 +19,3 @@
 - `tenant_id`
 
 可观测性平台默认提供用户权限范围内的全局视图，同时允许按集群和 Namespace 缩小范围。
-

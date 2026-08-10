@@ -1,26 +1,27 @@
 # ZKE
 
-> **ZKE（Z Kubernetes Engine）— AI-native Kubernetes Management & Compute Platform**
+> **ZKE（Z Kubernetes Engine）**
 >
-> AI 原生 Kubernetes 管理与算力平台
+> 面向私有网络与混合云环境的 Kubernetes 多集群管理平台
 
-![Development Status](https://img.shields.io/badge/status-early%20development-orange)
+![Development Status](https://img.shields.io/badge/status-development%20preview-orange)
 
-ZKE 是一款构建在 Kubernetes 之上的云原生管理平台，面向多集群管理、容器服务与统一可观测性场景。
+ZKE 通过 Server + Agent 连接分散在数据中心、私有云和公有云中的 Kubernetes 集群，为平台团队提供统一的资源管理、权限控制、安全操作与审计入口。
 
 > [!IMPORTANT]
-> ZKE 当前处于早期设计与开发阶段。部分模块尚未实现，产品范围与技术选型仍可能调整，当前版本不适用于生产环境。
+> ZKE 当前处于开发预览阶段。平台基础与容器服务主要链路已经实现，多集群可观测性和 AI 运维与排障助手（Copilot）仍在规划中；产品范围与技术选型仍可能调整，当前版本不适用于生产环境。
 
 ## 核心能力
 
-| 能力 | 产品目标 |
-| --- | --- |
-| 多集群管理 | 统一接入、分组、标记和查看多个 Kubernetes 集群及其 Agent 状态 |
-| 容器服务 | 在选定集群中管理节点、Namespace、工作负载、网络、配置和存储资源 |
-| 可观测性 | 汇总多集群指标、日志和事件，提供查询、告警、仪表盘与资源对比 |
-| 安全与审计 | 使用租户、项目和 RBAC 限定资源范围，记录用户发起的敏感操作 |
+| 能力方向 | 产品目标 | 当前状态 |
+| --- | --- | --- |
+| 多集群管理 | 统一接入和查看多个 Kubernetes 集群及其 Agent 状态 | 主要链路已实现 |
+| 容器服务 | 在选定集群中管理节点、Namespace、工作负载、网络、配置和存储资源 | 主要链路已实现 |
+| 安全与审计 | 使用租户、项目和 RBAC 限定资源范围，保护敏感操作并记录审计日志 | 主要链路已实现 |
+| 多集群可观测性 | 汇总指标、日志和事件，提供查询、告警、仪表盘与资源对比 | 规划中 |
+| AI 运维与排障助手（Copilot） | 结合资源状态、事件、日志和指标辅助分析故障、解释风险并提供处理建议 | 规划中 |
 
-以上均为产品规划，具体能力将随开发进度分阶段交付。
+“主要链路已实现”不代表已经具备生产可用性或水平扩展能力，具体范围以 [Roadmap](docs/roadmap.md) 和功能文档为准。
 
 ## 设计原则
 
@@ -35,7 +36,7 @@ ZKE 是一款构建在 Kubernetes 之上的云原生管理平台，面向多集�
 
 ## 系统架构
 
-ZKE 采用 Server + Agent 架构。每个接入的 Kubernetes 集群部署一个 ZKE Agent，由 Agent 主动连接 ZKE Server，不要求 Server 直接访问 Kubernetes API Server。
+ZKE 采用 Server + Agent 架构。每个接入的 Kubernetes 集群部署一个 ZKE Agent，由 Agent 主动连接 ZKE Server。
 
 ```mermaid
 flowchart TB
@@ -44,41 +45,47 @@ flowchart TB
     Server <--> AgentB["ZKE Agent B"]
     AgentA <--> ClusterA["Kubernetes Cluster A"]
     AgentB <--> ClusterB["Kubernetes Cluster B"]
-    Server --> Services["可观测性"]
+    Server -.-> Observability["多集群可观测性（规划）"]
+    Server -.-> Copilot["AI 运维与排障助手（规划）"]
 ```
 
-这一连接模型计划适用于私有网络、混合云、多云、边缘集群，以及无法由 Server 主动访问的 Kubernetes 集群。
+这一连接模型面向私有网络、混合云、多云和边缘集群。
 
 - [系统架构](docs/architecture/overview.md)
 - [Server + Agent 架构](docs/architecture/server-agent.md)
 - [应用作用域与资源模型](docs/architecture/resource-model.md)
 - [安全与权限](docs/security/authorization.md)
 
-## 功能领域
+## 快速安装
 
-| 领域 | 作用域 | 说明 | 详细文档 |
-| --- | --- | --- | --- |
-| 集群接入管理 | 多集群 | 以 Cluster 聚合接入状态、连接身份和诊断信息 | [查看](docs/features/agent-management.md) |
-| 容器服务 | 单集群 | 管理当前集群的 Kubernetes 资源 | [查看](docs/features/container-service.md) |
-| 终端 | 单集群 | 在当前角色权限边界内使用临时浏览器 CloudShell 与标准 `kubectl` | [查看](docs/features/terminal.md) |
-| 可观测性平台 | 多集群 | 汇总指标、日志、事件与告警 | [查看](docs/features/observability.md) |
+面向公开预览的快速安装流程正在准备中。完成实现和验证后，这里将提供以下部署方式及对应文档：
 
-跨集群查询必须遵守租户、项目和 RBAC 权限边界。全局视图不代表全局操作权限。
+| 部署方式 | 状态 |
+| --- | --- |
+| Docker | 准备中 |
+| Kubernetes | 准备中 |
+| Helm | 准备中 |
+
+## 产品预览
+
+> 产品截图正在准备中，首次公开预览前将在这里补充控制台首页、集群管理、容器服务、安全审计和 Copilot 等界面预览。
 
 ## 适用场景
 
-- 企业多 Kubernetes 集群统一管理
-- 私有云和混合云 Kubernetes 管理
-- Kubernetes 容器服务与资源管理
-- Kubernetes 可观测性
+- 数据中心、私有云和公有云中的多 Kubernetes 集群统一管理
+- 具有独立网络边界的私有云与混合云 Kubernetes 环境
+- Kubernetes 资源、工作负载与敏感运维操作的统一入口
+- 统一权限边界与审计要求下的平台工程和 SRE 协作
+- 规划中的多集群可观测性和 AI 运维与排障助手（Copilot）
 
 ## Roadmap
 
-当前规划分为三个阶段：
+当前规划分为四个阶段：
 
 1. 平台基础
 2. 容器服务
 3. 可观测性
+4. AI 运维与排障助手（Copilot）
 
 [查看完整 Roadmap](docs/roadmap.md)
 
