@@ -48,8 +48,8 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 写入 YAML 或宿主机文件。完整身份存在后，Agent 不再读取注册 Token；Secret 可以保留以简化 Pod 重建，也可以
 由外部生命周期策略清理。
 
-当前仓库还没有提供 Helm Chart，但 Server 已能生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC
-清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
+当前仓库已经提供 ZKE Server 与 PostgreSQL 的 Kubernetes 清单和 Helm Chart；目标集群中的 Agent 仍由 Server
+生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
 `get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`update`、`patch` 以及
 Namespace 的 `get`、`list`、`create`、`update`、`delete`、Pod 的 `get`、`list`、`update`、`delete` 以及 `pods/log` 的
 `get`、`pods/exec`、`pods/portforward` 与 `pods/eviction` 的 `create` 权限，并授予五类工作负载、Service、Ingress 与 Gateway 主资源的完整 CRUD，

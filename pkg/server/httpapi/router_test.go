@@ -8,6 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,6 +132,54 @@ func TestRoutingErrorsUseUniformEnvelope(t *testing.T) {
 				body.Data.ErrorCode != testCase.errorCode ||
 				body.Data.RequestID == "" {
 				t.Fatalf("unexpected routing error envelope: %+v", body)
+			}
+		})
+	}
+}
+
+func TestConsoleStaticFilesAndSPAFallback(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	assets := filepath.Join(directory, "assets")
+	if err := os.MkdirAll(assets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "index.html"), []byte("<main>ZKE Console</main>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assets, "app-123.js"), []byte("console.log('zke')"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	router := New(discardLogger(), Dependencies{}, Config{ConsoleDirectory: directory})
+	testCases := []struct {
+		name         string
+		path         string
+		status       int
+		contains     string
+		cacheControl string
+	}{
+		{name: "entrypoint", path: "/", status: http.StatusOK, contains: "ZKE Console", cacheControl: "no-cache"},
+		{name: "client route", path: "/clusters/example", status: http.StatusOK, contains: "ZKE Console", cacheControl: "no-cache"},
+		{name: "immutable asset", path: "/assets/app-123.js", status: http.StatusOK, contains: "console.log", cacheControl: "public, max-age=31536000, immutable"},
+		{name: "missing asset", path: "/assets/missing.js", status: http.StatusNotFound, contains: "not_found"},
+		{name: "unknown API", path: "/api/v1/missing", status: http.StatusNotFound, contains: "not_found"},
+		{name: "unknown Agent API", path: "/agent-api/v1/missing", status: http.StatusNotFound, contains: "not_found"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, testCase.path, nil)
+			router.ServeHTTP(response, request)
+			if response.Code != testCase.status {
+				t.Fatalf("status = %d, want %d: %s", response.Code, testCase.status, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), testCase.contains) {
+				t.Fatalf("body = %q, want substring %q", response.Body.String(), testCase.contains)
+			}
+			if testCase.cacheControl != "" && response.Header().Get("Cache-Control") != testCase.cacheControl {
+				t.Fatalf("Cache-Control = %q, want %q", response.Header().Get("Cache-Control"), testCase.cacheControl)
 			}
 		})
 	}

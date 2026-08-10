@@ -1,0 +1,8 @@
+.git
+.github
+.local
+bin
+coverage.*
+web/console/node_modules
+web/console/dist
+*.log

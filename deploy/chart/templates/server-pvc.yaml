@@ -1,0 +1,18 @@
+{{- if .Values.server.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "zke.server.fullname" . }}-data
+  labels:
+    {{- include "zke.labels" . | nindent 4 }}
+    {{- include "zke.server.selectorLabels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.server.persistence.accessModes | nindent 4 }}
+  {{- if .Values.server.persistence.storageClass }}
+  storageClassName: {{ .Values.server.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.server.persistence.size }}
+{{- end }}

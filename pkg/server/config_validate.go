@@ -223,6 +223,7 @@ func (cfg Config) validateHTTP() error {
 		return errors.New("HTTP TLS requires secure session cookies")
 	}
 	if err := validateUnpaddedPaths([]requiredPath{
+		{cfg.HTTP.ConsoleDirectory, "Console directory"},
 		{cfg.HTTP.TLS.CertificateFile, "HTTP TLS certificate file"},
 		{cfg.HTTP.TLS.PrivateKeyFile, "HTTP TLS private key file"},
 	}); err != nil {

@@ -52,6 +52,7 @@ type Dependencies struct {
 }
 
 type Config struct {
+	ConsoleDirectory   string
 	Authentication     AuthenticationConfig
 	AgentEnrollment    AgentEnrollmentHTTPConfig
 	ClusterTerminal    ClusterTerminalHTTPConfig
@@ -129,7 +130,11 @@ func New(
 		httpmiddleware.RequestLogger(logger),
 		httpmiddleware.CrossOriginProtection(),
 	)
+	console := newConsoleHandler(config.ConsoleDirectory)
 	router.NoRoute(func(c *gin.Context) {
+		if console.serve(c) {
+			return
+		}
 		writeError(c, http.StatusNotFound, "not_found", "route not found")
 	})
 	router.NoMethod(func(c *gin.Context) {

@@ -1,0 +1,245 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zke-system
+  labels:
+    app.kubernetes.io/part-of: zke
+---
+# This credential makes the manifest directly runnable. Replace it before
+# exposing ZKE outside a disposable evaluation environment.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zke-postgresql
+  namespace: zke-system
+  labels:
+    app.kubernetes.io/part-of: zke
+type: Opaque
+stringData:
+  password: zke_change_me
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zke-postgresql
+  namespace: zke-system
+  labels:
+    app.kubernetes.io/name: zke-postgresql
+    app.kubernetes.io/part-of: zke
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: zke-postgresql
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zke-postgresql
+  namespace: zke-system
+  labels:
+    app.kubernetes.io/name: zke-postgresql
+    app.kubernetes.io/part-of: zke
+spec:
+  serviceName: zke-postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zke-postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zke-postgresql
+        app.kubernetes.io/part-of: zke
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgresql
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: zke
+            - name: POSTGRES_USER
+              value: zke
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zke-postgresql
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "zke", "-d", "zke"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "zke", "-d", "zke"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zke-server-data
+  namespace: zke-system
+  labels:
+    app.kubernetes.io/name: zke-server
+    app.kubernetes.io/part-of: zke
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zke-server
+  namespace: zke-system
+  labels:
+    app.kubernetes.io/name: zke-server
+    app.kubernetes.io/part-of: zke
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zke-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zke-server
+        app.kubernetes.io/part-of: zke
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: zke-server
+          image: ghcr.io/togettoyou/zke-server:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: pod-access
+              containerPort: 8081
+              protocol: TCP
+            - name: agent-quic
+              containerPort: 8443
+              protocol: UDP
+          env:
+            - name: ZKE_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zke-postgresql
+                  key: password
+            - name: ZKE_DATABASE_URL
+              value: postgres://zke:$(ZKE_DATABASE_PASSWORD)@zke-postgresql:5432/zke?sslmode=disable
+            - name: ZKE_AGENT_IMAGE
+              value: ghcr.io/togettoyou/zke-agent:latest
+            - name: ZKE_CLUSTER_TERMINAL_IMAGE
+              value: ghcr.io/togettoyou/zke-agent:latest
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/zke
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: zke-server-data
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zke-server
+  namespace: zke-system
+  labels:
+    app.kubernetes.io/name: zke-server
+    app.kubernetes.io/part-of: zke
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: zke-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: pod-access
+      port: 8081
+      targetPort: pod-access
+      protocol: TCP
+    - name: agent-quic
+      port: 8443
+      targetPort: agent-quic
+      protocol: UDP

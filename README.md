@@ -58,13 +58,42 @@ flowchart TB
 
 ## 快速安装
 
-面向公开预览的快速安装流程正在准备中。完成实现和验证后，这里将提供以下部署方式及对应文档：
+### Docker
 
-| 部署方式 | 状态 |
-| --- | --- |
-| Docker | 准备中 |
-| Kubernetes | 准备中 |
-| Helm | 准备中 |
+带 PostgreSQL 的一体镜像适合本地快速预览：
+
+```bash
+docker run -d --name zke \
+  -p 8080:8080 -p 8081:8081 -p 8443:8443/udp \
+  ghcr.io/togettoyou/zke-server-pg:latest
+```
+
+打开 <http://127.0.0.1:8080>，并读取自动生成的初始管理员密码：
+
+```bash
+docker exec zke cat /var/lib/zke/admin-password
+```
+
+### Kubernetes
+
+标准部署使用 `ghcr.io/togettoyou/zke-server:latest` 和独立 PostgreSQL StatefulSet。用于共享或外部可访问环境前，先替换清单中的默认数据库密码。
+
+```bash
+kubectl apply -f deploy/kubernetes/zke.yaml
+kubectl -n zke-system port-forward service/zke-server 8080:8080 8081:8081
+```
+
+### Helm
+
+`main` 分支的 OCI Chart 使用 `0.0.0-latest` 版本；Git Tag 使用对应的语义化版本：
+
+```bash
+helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
+  --version 0.0.0-latest \
+  --namespace zke-system --create-namespace
+```
+
+[查看完整部署、持久化、配置覆盖与外部入口说明](docs/deployment.md)
 
 ## 产品预览
 

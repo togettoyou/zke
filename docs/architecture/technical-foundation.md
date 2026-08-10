@@ -658,7 +658,8 @@ Content-Type: application/json
 `X-CSRF-Token`。登录接口也使用标准库 Origin 与 Fetch Metadata 保护。
 
 Console 与管理 API 采用同源部署模型。生产环境由同一 Origin 提供 Console 静态资源和 `/api`、`/agent-install`
-入口；本地前端开发服务器必须通过同源代理转发 `/api`、`/healthz` 和 `/readyz` 到 ZKE Server。Server 不提供
+入口；容器镜像将 Console 构建产物放入 `http.console_directory`，由 ZKE Server 直接提供静态文件和 SPA 路由
+回退。本地前端开发服务器必须通过同源代理转发 `/api`、`/healthz` 和 `/readyz` 到 ZKE Server。Server 不提供
 宽松 CORS，也不支持浏览器从任意 Origin 携带 Session Cookie 直接调用 API。
 
 `GET /api/v1/auth/me` 除用户和 Session 过期时间外，还返回当前用户的 `capabilities`。每项能力包含 RoleBinding
@@ -823,8 +824,8 @@ Gin 实际注册路由，并检查 `operationId` 唯一性。
 
 本地开发环境需要 Go 1.26.4、Docker 与 Docker Compose。Go 命令在仓库根目录执行。
 
-本地配置使用 Server Managed PKI。首次正常启动会在被 Git 忽略的 `.local/development` 自动生成 Agent
-Client CA、Agent Listener CA 和 Agent Listener 身份，不再需要独立的开发 PKI 生成脚本。
+仓库配置以容器部署为默认场景，使用 Server Managed PKI，并把 PKI 与初始管理员密码写入 `/var/lib/zke`。
+首次正常启动会自动生成 Agent Client CA、Agent Listener CA 和 Agent Listener 身份，不再需要独立的开发 PKI 生成脚本。
 `hack/setup-local-agent-resources.sh` 只负责为宿主机运行的 Agent 初始化 Namespace、Enrollment Secret 和
 Trust Secret。这些 PKI 文件仅用于 Agent QUIC/mTLS，不包含 HTTP TLS 证书：
 
@@ -834,20 +835,24 @@ Trust Secret。这些 PKI 文件仅用于 Agent QUIC/mTLS，不包含 HTTP TLS �
 
 ```bash
 docker compose -f deploy/development/compose.yaml up -d
-go run ./cmd/zke-server --config configs/zke-server.yaml
+# 仓库 configs 面向容器部署；宿主机开发时先复制一份并调整数据库地址、
+# agent_pki.managed.directory 与 auth.initial_admin.password_file。
+mkdir -p .local
+cp configs/zke-server.yaml .local/zke-server.yaml
+go run ./cmd/zke-server --config .local/zke-server.yaml
 # 在另一个终端输入刚创建的 Enrollment Token：
 hack/setup-local-agent-resources.sh
 go run ./cmd/zke-agent --config configs/zke-agent.yaml
 ```
 
-Server 必须先成功启动一次，以便 Managed PKI 生成 `.local/development/agent-listener-ca.crt`。随后从已有
+Server 必须先成功启动一次，以便 Managed PKI 生成 `/var/lib/zke/pki/agent-listener-ca.crt`。随后从已有
 Project 创建 Enrollment，把响应中的一次性 Token 输入 `hack/setup-local-agent-resources.sh`。脚本使用当前
 kubectl context 创建 Namespace、Enrollment Secret 和 Trust Secret，不创建或覆盖 identity Secret；如需避免
 误用其他集群，可显式传入 `--context`。
 
 Server 在迁移完成后检查用户表，只在空表时按 `auth.initial_admin` 创建首个全局管理员；管理员、Global
-`admin` RoleBinding 和审计事件仍在同一事务中创建。仓库的本地配置会生成
-`.local/development/admin-password`，权限为 `0600`，密码不会写入日志。已有用户时启动过程完全跳过该文件。
+`admin` RoleBinding 和审计事件仍在同一事务中创建。仓库配置会生成
+`/var/lib/zke/admin-password`，权限为 `0600`，密码不会写入日志。已有用户时启动过程完全跳过该文件。
 部署环境应关闭 `auto_generate_password`，并将 `password_file` 指向由 Kubernetes Secret 或等价机制挂载的
 受保护文件。
 
@@ -857,12 +862,13 @@ Tenant、Project 和 Enrollment 属于正常产品资源，应由管理 API 创�
 
 `configs/zke-agent.yaml` 使用本机 HTTP `127.0.0.1:8080` 和 QUIC `127.0.0.1:8443`，可以配合当前
 kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernetes Secret，不混入宿主机 `.local`
-凭据路径。若开发期间直接修改了尚未提交的 `000001`，现有开发数据库会因
+凭据路径。从源码运行 Server 时需要按本机环境临时调整数据库地址和 `/var/lib/zke` 数据目录，或使用
+`ZKE_DATABASE_URL` 覆盖数据库连接；这些本地调整不应提交。若开发期间直接修改了尚未提交的 `000001`，现有开发数据库会因
 迁移校验和变化而拒绝启动；此时需要明确执行 `docker compose -f deploy/development/compose.yaml down --volumes`
 后重新启动数据库，而不是让应用静默改写已执行迁移。
 
-本地 Server 配置还启用了独立 Pod Access Listener：Console/API 使用 `127.0.0.1:8080`，Pod HTTP 访问使用
-`127.0.0.1:8081`。部署时通过 `pod_access.external_url` 填写浏览器真正访问的第二 Origin；可以在
+Server 配置还启用了独立 Pod Access Listener：Console/API 使用 TCP `8080`，Pod HTTP 访问使用 TCP `8081`。
+部署时通过 `pod_access.external_url` 填写浏览器真正访问的第二 Origin；可以在
 `pod_access.tls` 配置原生证书，也可以让云入口终止 HTTPS 后转发到 Listener 的 HTTP 地址。生产或远程入口的
 `external_url` 不接受明文 HTTP；云入口必须保留该 External URL 的原始 Host 头。`pod_access.session_ttl`
 是允许用户选择的会话最大时长，Server 硬限制为一小时；仓库配置使用一小时，以开放 15、30、60 分钟三个档位。
@@ -891,7 +897,8 @@ Secret 中的 Listener CA 专门用于 QUIC/mTLS 长连接。特殊部署可用 
 两类地址和信任根相互独立，不应隐式派生或混用。配置文件不保存私钥与 Token 正文。
 
 Server 可按配置生成完整的 Agent 安装 Manifest，包括 Token/Trust Secret、ConfigMap、ServiceAccount、
-Role/RoleBinding 和 Deployment；当前仍未提供 Helm Chart。资源包不创建 Service、PVC 或 identity Secret。
+Role/RoleBinding 和 Deployment。仓库的 Helm Chart 用于部署 ZKE Server 与 PostgreSQL，不替代这份按目标
+Cluster 和一次性 Enrollment 动态生成的 Agent 资源包；资源包不创建 Service、PVC 或 identity Secret。
 
 `agent_pki.mode: managed` 时，Server 从持久目录加载或首次生成 Agent Client CA、Agent Listener CA 和
 Listener 身份。初始化由 PostgreSQL advisory lock 串行化，数据库保存证书指纹；已有数据库状态但文件丢失、
@@ -915,16 +922,18 @@ CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一�
 
 ## 11. 配置与敏感信息
 
-Phase 1 工程骨架为 Server 和 Agent 各维护一份本地 YAML 配置。除 `--config` 指定文件路径外，进程配置全部
-来自 YAML，不支持环境变量或单项命令行覆盖。部署配置与 Secret 注入计划在 Chart 实现时单独定义。
+Server 和 Agent 各维护一份仓库 YAML 配置，并作为容器内默认配置。`--config` 可以替换完整文件；Server 还允许
+通过部署环境变量覆盖数据库 URL、Pod Access 外部地址、Agent 安装公开地址、Agent 镜像和 Cluster Terminal 镜像，
+以便 Kubernetes Secret 与 Helm values 注入部署身份。其他配置仍只来自 YAML。
 
 Server 配置结构体与 YAML 文件一一对应：加载时先构造带默认值的配置，再把 YAML 直接解码进去，未出现的键
 保留默认值，未知键直接报错。因此新增一个配置项只需在结构体上加一个带 `yaml` 标签的字段。`agent_listener.tls`
 与 Agent 身份 CA 路径属于派生值，由 `agent_pki` 的 managed/external 模式推导，不能在配置文件中直接指定。
 
-- 仓库内配置只包含明显的本地开发值，不得复用于共享或生产环境。
-- Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；未来由 Chart 管理的
-  Secret 注入。
+- 仓库配置提供容器可启动的默认地址、生产取向的资源边界和明显的占位数据库凭据；共享环境必须通过 Secret 或
+  完整配置挂载替换凭据、公开地址和证书身份。
+- Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；Helm Chart 通过 Secret
+  生成并注入 PostgreSQL 密码。
 - 首个管理员密码只从 `auth.initial_admin.password_file` 读取。本地开发可以在空用户库首次启动时生成权限为
   `0600` 的随机密码文件；部署环境应挂载预置 Secret 并关闭自动生成。密码正文不得写入日志。
 - Managed PKI 私钥只保存在权限受限的持久目录；只在全新数据库状态和空目录组合下首次生成。已有数据库状态时

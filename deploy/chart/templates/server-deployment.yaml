@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zke.server.fullname" . }}
+  labels:
+    {{- include "zke.labels" . | nindent 4 }}
+    {{- include "zke.server.selectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.server.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "zke.server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- toYaml .Values.server.podAnnotations | nindent 8 }}
+      labels:
+        {{- include "zke.server.selectorLabels" . | nindent 8 }}
+        {{- with .Values.server.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: zke-server
+          image: "{{ .Values.server.image.repository }}:{{ include "zke.server.imageTag" . }}"
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: pod-access
+              containerPort: 8081
+              protocol: TCP
+            - name: agent-quic
+              containerPort: 8443
+              protocol: UDP
+          env:
+            - name: ZKE_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "zke.postgresql.fullname" . }}
+                  key: password
+            - name: ZKE_DATABASE_URL
+              value: "postgres://{{ .Values.postgresql.auth.username }}:$(ZKE_DATABASE_PASSWORD)@{{ include "zke.postgresql.fullname" . }}:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+            - name: ZKE_AGENT_IMAGE
+              value: "{{ .Values.agent.image.repository }}:{{ include "zke.agent.imageTag" . }}"
+            - name: ZKE_CLUSTER_TERMINAL_IMAGE
+              value: "{{ .Values.agent.image.repository }}:{{ include "zke.agent.imageTag" . }}"
+            {{- with .Values.server.agentInstall.publicHTTPURL }}
+            - name: ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.server.agentInstall.publicQUICAddress }}
+            - name: ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.server.podAccessExternalURL }}
+            - name: ZKE_POD_ACCESS_EXTERNAL_URL
+              value: {{ . | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/zke
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          {{- if .Values.server.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "zke.server.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

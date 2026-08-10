@@ -8,6 +8,10 @@
 
 - [产品愿景与设计原则](product/vision.md)
 
+## 部署
+
+- [Docker、Kubernetes 与 Helm 部署](deployment.md)
+
 ## 架构
 
 - [系统架构](architecture/overview.md)

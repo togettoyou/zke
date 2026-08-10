@@ -14,6 +14,7 @@ func TestLoadConfigYAML(t *testing.T) {
 	content := []byte(`
 http:
   address: 127.0.0.1:9000
+  console_directory: /srv/zke/console
   tls:
     certificate_file: /run/secrets/http.crt
     private_key_file: /run/secrets/http.key
@@ -121,6 +122,9 @@ log_level: warn
 
 	if cfg.HTTP.Address != "127.0.0.1:9000" {
 		t.Fatalf("HTTP address = %q, want YAML value", cfg.HTTP.Address)
+	}
+	if cfg.HTTP.ConsoleDirectory != "/srv/zke/console" {
+		t.Fatalf("Console directory = %q, want YAML value", cfg.HTTP.ConsoleDirectory)
 	}
 	if cfg.HTTP.TLS.CertificateFile != "/run/secrets/http.crt" ||
 		cfg.HTTP.TLS.PrivateKeyFile != "/run/secrets/http.key" {
@@ -328,6 +332,31 @@ func TestRepositoryServerConfigLoads(t *testing.T) {
 		filepath.Join("..", "..", "configs", "zke-server.yaml"),
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadConfigEnvironmentOverrides(t *testing.T) {
+	t.Setenv("ZKE_DATABASE_URL", "postgres://environment-value")
+	t.Setenv("ZKE_POD_ACCESS_EXTERNAL_URL", "http://localhost:18081")
+	t.Setenv("ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL", "https://zke.example.com")
+	t.Setenv("ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS", "zke.example.com:8443")
+	t.Setenv("ZKE_AGENT_IMAGE", "ghcr.io/togettoyou/zke-agent:test")
+	t.Setenv("ZKE_CLUSTER_TERMINAL_IMAGE", "ghcr.io/togettoyou/zke-agent:test")
+
+	cfg, err := LoadConfig([]string{
+		"--config",
+		filepath.Join("..", "..", "configs", "zke-server.yaml"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.URL != "postgres://environment-value" ||
+		cfg.PodAccess.ExternalURL != "http://localhost:18081" ||
+		cfg.AgentInstall.PublicHTTPURL != "https://zke.example.com" ||
+		cfg.AgentInstall.PublicQUICAddress != "zke.example.com:8443" ||
+		cfg.AgentInstall.Image != "ghcr.io/togettoyou/zke-agent:test" ||
+		cfg.ClusterTerminal.Image != "ghcr.io/togettoyou/zke-agent:test" {
+		t.Fatalf("environment overrides were not applied: %+v", cfg)
 	}
 }
 

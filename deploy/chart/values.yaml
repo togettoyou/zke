@@ -1,0 +1,66 @@
+nameOverride: ""
+fullnameOverride: ""
+
+server:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/togettoyou/zke-server
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    annotations: {}
+    httpPort: 8080
+    podAccessPort: 8081
+    agentQUICPort: 8443
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  agentInstall:
+    publicHTTPURL: ""
+    publicQUICAddress: ""
+  podAccessExternalURL: ""
+
+agent:
+  image:
+    repository: ghcr.io/togettoyou/zke-agent
+    tag: ""
+
+postgresql:
+  image:
+    repository: postgres
+    tag: 17-alpine
+    pullPolicy: IfNotPresent
+  auth:
+    database: zke
+    username: zke
+    # Empty generates a random password and reuses it on upgrades.
+    password: ""
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+imagePullSecrets: []

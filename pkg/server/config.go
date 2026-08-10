@@ -36,6 +36,7 @@ type Config struct {
 
 type HTTPConfig struct {
 	Address           string            `yaml:"address"`
+	ConsoleDirectory  string            `yaml:"console_directory"`
 	TLS               TLSIdentityConfig `yaml:"tls"`
 	ReadHeaderTimeout time.Duration     `yaml:"read_header_timeout"`
 	ReadTimeout       time.Duration     `yaml:"read_timeout"`
@@ -332,12 +333,36 @@ func LoadConfig(args []string) (Config, error) {
 	if err := decodeConfigFile(&cfg, configPath); err != nil {
 		return Config{}, err
 	}
+	applyEnvironmentOverrides(&cfg)
 	cfg.resolveDerivedIdentity()
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+// applyEnvironmentOverrides keeps the checked-in configuration usable as the
+// single container default while allowing an orchestrator to inject values
+// that are deployment identities or credentials. Mounting a complete config
+// file remains supported; these explicitly set variables take precedence.
+func applyEnvironmentOverrides(cfg *Config) {
+	overrides := []struct {
+		name   string
+		target *string
+	}{
+		{"ZKE_DATABASE_URL", &cfg.Database.URL},
+		{"ZKE_POD_ACCESS_EXTERNAL_URL", &cfg.PodAccess.ExternalURL},
+		{"ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL", &cfg.AgentInstall.PublicHTTPURL},
+		{"ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS", &cfg.AgentInstall.PublicQUICAddress},
+		{"ZKE_AGENT_IMAGE", &cfg.AgentInstall.Image},
+		{"ZKE_CLUSTER_TERMINAL_IMAGE", &cfg.ClusterTerminal.Image},
+	}
+	for _, override := range overrides {
+		if value, exists := os.LookupEnv(override.name); exists {
+			*override.target = value
+		}
+	}
 }
 
 func decodeConfigFile(cfg *Config, path string) error {

@@ -52,6 +52,9 @@ const maxManifestDocuments = 64
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	runContext, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
+	if err := validateConsoleDirectory(cfg.HTTP.ConsoleDirectory); err != nil {
+		return err
+	}
 
 	databaseContext, cancelDatabase := context.WithTimeout(ctx, cfg.Database.ConnectTimeout)
 	database, err := store.Open(databaseContext, store.PoolConfig{
@@ -355,6 +358,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			AccessManagementService:   accessManagementService,
 		},
 		httpapi.Config{
+			ConsoleDirectory: cfg.HTTP.ConsoleDirectory,
 			Authentication: httpapi.AuthenticationConfig{
 				CookieSecure:          cfg.Auth.CookieSecure,
 				OperationTimeout:      cfg.Auth.OperationTimeout,

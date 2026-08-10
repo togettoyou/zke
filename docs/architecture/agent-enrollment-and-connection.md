@@ -1,8 +1,8 @@
 # Agent 注册与连接
 
 本文说明当前 ZKE Agent 从首次注册到建立 QUIC/mTLS 长连接的完整流程、相关凭据和证书的职责，以及各步骤的必要性。
-内容以仓库现有实现为准；Phase 2 业务 Stream 传输内核及 Node List/Detail 的 Kubernetes Resource Handler
-已经实现，容器服务 Web 界面和 Helm Chart 尚未实现。
+内容以仓库现有实现为准；Phase 2 业务 Stream 传输内核、容器服务 Web 界面、ZKE Server 部署清单与 Helm Chart
+已经实现。Agent 首次安装仍由 Server 动态生成 Kubernetes Manifest。
 
 ## 1. 总体模型
 
@@ -530,8 +530,8 @@ Server 也会按当前客户端证书的 `NotAfter` 安排连接关闭，避免�
 
 ## 9. 当前缺口和后续改进
 
-1. **Helm 与升级管理**：当前由 Server 动态生成基础 Kubernetes Manifest，尚无 Helm Chart、镜像升级和版本
-   兼容编排。
+1. **Agent 升级管理**：ZKE Server 已提供部署用 Helm Chart；目标集群中的 Agent 当前仍由 Server 动态生成
+   Kubernetes Manifest，尚无 Agent 专用 Helm 升级和版本兼容编排。
 2. **在线 CA 私钥保护**：Managed 模式把两个 CA 私钥保存在 Server PV；需要更强隔离时应使用 external 模式接入
    受控的离线流程、KMS 或 HSM。项目不强制引入独立签发服务。
 3. **过期后的自动恢复**：正常续期已实现，但 Agent 离线至证书过期后仍需通过 Cluster 重新接入流程恢复。

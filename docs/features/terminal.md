@@ -46,11 +46,10 @@ Agent ClusterRole/ClusterRoleBinding 不会进入终端可更新或删除的对�
 
 ## 配置与镜像
 
-Server 的 `cluster_terminal.image` 为空时，终端会话创建保持禁用。仓库提供
-`build/terminal/Dockerfile`，从 Kubernetes 官方 `registry.k8s.io/kubectl:v1.35.0` 镜像复制 kubectl，并使用
-Alpine 提供交互式 Shell、基础工具和默认启用的 kubectl Bash Tab 补全。CI 首次成功发布前
-`cluster_terminal.image` 仍需保持为空或由部署方填写实际
-可拉取的镜像地址。`cluster_terminal.session_ttl` 可配置为 1 分钟至 1 小时，默认 15 分钟。
+Server 的 `cluster_terminal.image` 为空时，终端会话创建保持禁用。`build/agent/Dockerfile` 构建的
+`ghcr.io/togettoyou/zke-agent` 同时包含 Agent 二进制、kubectl、交互式 Shell、基础工具和默认启用的 kubectl
+Bash Tab 补全。Agent Deployment 使用镜像默认入口运行 `zke-agent`；Cluster Terminal Pod 会覆盖入口命令并直接
+启动 Shell，因此两种能力共用一个镜像。`cluster_terminal.session_ttl` 可配置为 1 分钟至 1 小时，默认 15 分钟。
 
 首次使用某个节点时可能需要拉取终端镜像。终端创建使用 `agent_listener.resource_request_timeout` 的独立请求预算
 （默认 2 分钟），不会被普通 API 的 10 秒操作超时或 Console 的 30 秒通用请求超时提前中断；Agent 等待 Pod
@@ -61,10 +60,9 @@ Pod 与 RBAC，避免请求完成与窗口关闭同时发生时留下临时资�
 连接建立后，Server 使用标准 WebSocket Ping/Pong 检查浏览器是否仍持有会话；该控制帧不进入容器，因此切换 App
 不会触发 2 分钟空闲回收。关闭窗口仍会关闭 WebSocket，并立即清理终端 Pod 与临时授权。
 
-`Terminal image` GitHub Actions 工作流只在 `build/terminal/Dockerfile` 变更时触发：Pull Request 构建
-`linux/amd64`、`linux/arm64` 两个平台但不推送，合入 `main` 后发布 `ghcr.io/togettoyou/zke-terminal:latest`
-和不可变的 `sha-<commit>` 标签。首次发布后仍需在 GitHub Packages 中确认镜像的公开可见性，再将选定标签写入
-`cluster_terminal.image`。
+统一镜像工作流为 Pull Request 构建 `linux/amd64`、`linux/arm64` 两个平台但不推送；合入 `main` 后发布
+`ghcr.io/togettoyou/zke-agent:latest`，Git Tag 则发布对应标签。Server 默认把同一 Agent 镜像用于
+`agent_install.image` 和 `cluster_terminal.image`。
 
 ## 当前边界
 
