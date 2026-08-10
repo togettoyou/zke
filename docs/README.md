@@ -22,10 +22,7 @@
 - [集群接入管理](features/agent-management.md)
 - [容器服务](features/container-service.md)
 - [终端](features/terminal.md)
-- [作业平台](features/job-platform.md)
-- [算力平台](features/compute-platform.md)
 - [可观测性平台](features/observability.md)
-- [ZKE Copilot](features/copilot.md)
 
 ## 安全
 

@@ -33,7 +33,6 @@ Phase 2 不在单条 Stream 上实现请求多路复用。QUIC 已经提供 Stre
 
 第一阶段不包括：
 
-- 跨集群自动调度；
 - 向浏览器直接开放任意 Kubernetes Verb、原始路径或透明代理接口；
 - 将 Control Stream 作为业务请求队列；
 - 在连接级建立统一的请求响应路由表；

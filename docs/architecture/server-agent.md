@@ -15,8 +15,6 @@ ZKE Server 是平台统一控制端，规划负责：
 - 操作任务下发；
 - 数据存储；
 - 审计日志；
-- AI 分析与任务编排；
-- 模型 API Gateway；
 - 多集群资源汇总。
 
 ## ZKE Agent
@@ -31,7 +29,6 @@ ZKE Server 是平台统一控制端，规划负责：
 - 按明确 Cluster/Namespace 获取 Kubernetes Event 快照与实时 Watch；
 - 建立 Web Terminal 会话；
 - 建立单 Pod、单 TCP 端口的受限 Port Forward 会话；
-- 执行作业和模型服务相关操作；
 - 收集或转发指标、日志和事件；
 - 返回操作结果。
 

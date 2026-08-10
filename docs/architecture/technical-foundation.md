@@ -6,8 +6,8 @@
 
 ## 1. 目标
 
-技术基础需要优先验证 ZKE 最核心的 Server + Agent 架构，并为后续认证、RBAC、容器服务、可观测性和
-ZKE Copilot 提供稳定边界。
+技术基础需要优先验证 ZKE 最核心的 Server + Agent 架构，并为后续认证、RBAC、容器服务和可观测性
+提供稳定边界。
 
 首个纵向闭环定义为：
 
@@ -1028,10 +1028,7 @@ Token、证书、Secret 或完整敏感请求正文。
 - 细粒度 RBAC 策略实现库和策略存储格式；
 - Kubernetes 资源任务协议；
 - Web Terminal 会话录制与回放；
-- Volcano 与 Kueue 选型；
-- VictoriaMetrics、VictoriaLogs 和 Grafana 的具体集成方式；
-- 跨集群自动调度与多集群模型部署；
-- ZKE Copilot 的模型、工具和执行编排实现。
+- VictoriaMetrics、VictoriaLogs 和 Grafana 的具体集成方式。
 
 ## 参考资料
 
