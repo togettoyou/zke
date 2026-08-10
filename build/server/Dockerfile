@@ -22,13 +22,10 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 
 FROM alpine:3.22 AS server
 RUN apk add --no-cache ca-certificates tzdata \
-    && addgroup -S -g 1000 zke \
-    && adduser -S -D -H -u 1000 -G zke zke \
-    && install -d -o zke -g zke /etc/zke /var/lib/zke /usr/share/zke/console
+    && install -d /etc/zke /var/lib/zke /usr/share/zke/console
 COPY --from=server-build /out/zke-server /usr/local/bin/zke-server
 COPY --from=console-build /src/web/console/dist/ /usr/share/zke/console/
 COPY configs/zke-server.yaml /etc/zke/zke-server.yaml
-USER 1000:1000
 EXPOSE 8080/tcp 8081/tcp 8443/udp
 ENTRYPOINT ["/usr/local/bin/zke-server"]
 CMD ["--config", "/etc/zke/zke-server.yaml"]
@@ -36,10 +33,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8080/readyz >/dev/null || exit 1
 
 FROM postgres:17-alpine AS server-pg
-RUN apk add --no-cache ca-certificates su-exec tzdata \
-    && addgroup -S -g 1000 zke \
-    && adduser -S -D -H -u 1000 -G zke zke \
-    && install -d -o zke -g zke /etc/zke /var/lib/zke /usr/share/zke/console
+RUN apk add --no-cache ca-certificates tzdata \
+    && install -d /etc/zke /var/lib/zke /usr/share/zke/console
 COPY --from=server-build /out/zke-server /usr/local/bin/zke-server
 COPY --from=console-build /src/web/console/dist/ /usr/share/zke/console/
 COPY configs/zke-server.yaml /etc/zke/zke-server.yaml

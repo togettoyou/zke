@@ -3,7 +3,6 @@ set -eu
 
 config_file="${ZKE_CONFIG_FILE:-/etc/zke/zke-server.yaml}"
 mkdir -p /var/lib/zke
-chown -R zke:zke /var/lib/zke
 
 /usr/local/bin/docker-entrypoint.sh postgres &
 postgres_pid=$!
@@ -35,7 +34,7 @@ until pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2
     sleep 1
 done
 
-su-exec zke:zke /usr/local/bin/zke-server --config "$config_file" &
+/usr/local/bin/zke-server --config "$config_file" &
 server_pid=$!
 
 while kill -0 "$postgres_pid" 2>/dev/null && kill -0 "$server_pid" 2>/dev/null; do
