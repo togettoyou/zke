@@ -3,6 +3,8 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -335,6 +337,29 @@ func TestRepositoryServerConfigLoads(t *testing.T) {
 	}
 }
 
+func TestRepositoryServerConfigMatchesDefaults(t *testing.T) {
+	t.Parallel()
+
+	emptyPath := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(emptyPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := LoadConfig([]string{"--config", emptyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := LoadConfig([]string{
+		"--config",
+		filepath.Join("..", "..", "configs", "zke-server.yaml"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(defaults, repository) {
+		t.Fatalf("Server code defaults differ from configs/zke-server.yaml\ndefaults: %+v\nrepository: %+v", defaults, repository)
+	}
+}
+
 func TestLoadConfigEnvironmentOverrides(t *testing.T) {
 	t.Setenv("ZKE_DATABASE_URL", "postgres://environment-value")
 	t.Setenv("ZKE_POD_ACCESS_EXTERNAL_URL", "http://localhost:18081")
@@ -357,6 +382,47 @@ func TestLoadConfigEnvironmentOverrides(t *testing.T) {
 		cfg.AgentInstall.Image != "ghcr.io/togettoyou/zke-agent:test" ||
 		cfg.ClusterTerminal.Image != "ghcr.io/togettoyou/zke-agent:test" {
 		t.Fatalf("environment overrides were not applied: %+v", cfg)
+	}
+}
+
+func TestLoadConfigAppliesPartialListenerSANOverride(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	content := []byte(`
+agent_pki:
+  listener_sans:
+    dns_names:
+      - localhost
+      - zke.example.com
+    ip_addresses:
+      - 127.0.0.1
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig([]string{"--config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(
+		cfg.AgentPKI.Managed.ListenerSANs.DNSNames,
+		[]string{"localhost", "zke.example.com"},
+	) || !slices.Equal(
+		cfg.AgentPKI.Managed.ListenerSANs.IPAddresses,
+		[]string{"127.0.0.1"},
+	) {
+		t.Fatalf("listener SAN override was not applied: %+v", cfg.AgentPKI.Managed.ListenerSANs)
+	}
+	if cfg.HTTP.Address != "0.0.0.0:8080" ||
+		cfg.Database.ConnectTimeout != 5*time.Second ||
+		cfg.Auth.InitialAdmin.Username != "admin" ||
+		cfg.AgentPKI.Mode != "managed" ||
+		cfg.AgentPKI.Managed.Directory != "/var/lib/zke/pki" ||
+		cfg.AgentListener.Address != "0.0.0.0:8443" ||
+		cfg.LogLevel != "info" {
+		t.Fatalf("partial Server config did not retain deployment defaults: %+v", cfg)
 	}
 }
 

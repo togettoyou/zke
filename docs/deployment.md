@@ -20,7 +20,21 @@ Server 和 Agent 镜像分别内置仓库中的：
 - `/etc/zke/zke-server.yaml`
 - `/etc/zke/zke-agent.yaml`
 
-可以把完整配置文件挂载到相同路径进行替换。Server 还支持以下部署时环境变量，显式设置的环境变量优先于 YAML：
+挂载到相同路径的 YAML 是局部覆盖文件：Server 和 Agent 都先加载代码内置默认值，再只覆盖文件中出现的字段；嵌套对象也按字段合并，列表则整体替换。未知字段会导致启动失败。例如只调整 Managed PKI Listener SAN 时，Server 配置只需包含：
+
+```yaml
+agent_pki:
+  listener_sans:
+    dns_names:
+      - localhost
+      - zke-server
+      - zke-server.zke-system
+      - zke-server.zke-system.svc
+    ip_addresses:
+      - 127.0.0.1
+```
+
+Agent 使用相同的局部覆盖规则。默认注册地址和 QUIC 地址分别是 `http://127.0.0.1:8080` 与 `127.0.0.1:8443`，远程部署只需覆盖这两个字段及实际需要调整的其他字段。Server 还支持以下部署时环境变量，显式设置的环境变量优先于 YAML：
 
 | 环境变量 | 对应配置 |
 | --- | --- |
@@ -55,7 +69,7 @@ Console 地址为 <http://127.0.0.1:8080>。首次空库启动会生成管理员
 docker exec zke cat /var/lib/zke/admin-password
 ```
 
-替换完整 Server 配置：
+挂载 Server 配置：
 
 ```bash
 docker run -d --name zke \
@@ -118,4 +132,4 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
   --set server.podAccessExternalURL=https://pod-access.example.com
 ```
 
-上述域名仅为占位值。HTTP TLS 可以在网关终止，但 Agent QUIC Listener 仍使用自身的 mTLS；公开地址还必须出现在 `agent_pki.managed.listener_sans` 中，因此正式接入远程集群前应挂载经过审核的完整 Server 配置。
+上述域名仅为占位值。HTTP TLS 可以在网关终止，但 Agent QUIC Listener 仍使用自身的 mTLS；公开地址还必须出现在 `agent_pki.listener_sans` 中，因此正式接入远程集群前应挂载经过审核的 Server 配置。

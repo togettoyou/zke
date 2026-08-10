@@ -123,25 +123,20 @@ type fileConfig struct {
 	LogLevel string `yaml:"log_level"`
 }
 
-func LoadConfig(args []string) (Config, error) {
-	configPath, err := findConfigPath(args)
-	if err != nil {
-		return Config{}, err
-	}
-	if configPath == "" {
-		return Config{}, errors.New("--config is required")
-	}
-
-	cfg := Config{
+// DefaultConfig reports the configuration used when the file omits a key.
+func DefaultConfig() Config {
+	return Config{
 		IdentityNamespace:      defaultIdentityNamespace,
 		IdentitySecretName:     defaultIdentitySecretName,
 		CertificateRenewBefore: 7 * 24 * time.Hour,
 		Registration: RegistrationConfig{
+			ServerURL:            "http://127.0.0.1:8080",
 			Timeout:              10 * time.Second,
 			RetryInitialInterval: time.Second,
 			RetryMaxInterval:     15 * time.Second,
 		},
 		Connection: ConnectionConfig{
+			ServerAddress:                     "127.0.0.1:8443",
 			ConnectTimeout:                    10 * time.Second,
 			RetryInitialInterval:              time.Second,
 			RetryMaxInterval:                  30 * time.Second,
@@ -168,6 +163,18 @@ func LoadConfig(args []string) (Config, error) {
 		},
 		LogLevel: defaultLogLevel,
 	}
+}
+
+func LoadConfig(args []string) (Config, error) {
+	configPath, err := findConfigPath(args)
+	if err != nil {
+		return Config{}, err
+	}
+	if configPath == "" {
+		return Config{}, errors.New("--config is required")
+	}
+
+	cfg := DefaultConfig()
 	if err := applyFile(&cfg, configPath); err != nil {
 		return Config{}, err
 	}
@@ -188,7 +195,9 @@ func applyFile(cfg *Config, path string) error {
 	var raw fileConfig
 	decoder := yaml.NewDecoder(file)
 	decoder.KnownFields(true)
-	if err := decoder.Decode(&raw); err != nil {
+	if err := decoder.Decode(&raw); errors.Is(err, io.EOF) {
+		return nil
+	} else if err != nil {
 		return fmt.Errorf("decode config file %q: %w", path, err)
 	}
 	var extra any

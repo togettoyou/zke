@@ -1,7 +1,7 @@
 http:
   # HTTP API and Console endpoint. The container image serves the built Console
   # from this directory; mount another file at /etc/zke/zke-server.yaml to
-  # replace this complete configuration.
+  # override only the values that differ from these defaults.
   address: 0.0.0.0:8080
   console_directory: /usr/share/zke/console
   # Optional native HTTPS. Leave this block omitted for loopback HTTP or when
@@ -98,6 +98,16 @@ agent_pki:
   # Lifetime of Agent client certificates issued at enrollment and renewal.
   agent_client_certificate_validity: 720h
 
+  # Replace with exact public QUIC names/IPs; never inferred from bind.
+  listener_sans:
+    dns_names:
+      - localhost
+      - zke-server
+      - zke-server.zke-system
+      - zke-server.zke-system.svc
+    ip_addresses:
+      - 127.0.0.1
+
   managed:
     # Mount this directory on a private PV in a deployment. If database PKI
     # state exists but the directory is lost, Server fails closed.
@@ -108,16 +118,6 @@ agent_pki:
     agent_listener_certificate_validity: 87600h
     # Listener leaf renewal happens at Server startup. CAs never auto-rotate.
     agent_listener_renew_before: 8760h
-    # Replace with exact public QUIC names/IPs; never inferred from bind.
-    listener_sans:
-      dns_names:
-        - localhost
-        - zke-server
-        - zke-server.zke-system
-        - zke-server.zke-system.svc
-      ip_addresses:
-        - 127.0.0.1
-
   # Used only with mode: external. Server loads these files but never generates
   # or renews them. The Agent Listener CA private key stays outside Server.
   # external:

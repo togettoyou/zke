@@ -922,16 +922,17 @@ CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一�
 
 ## 11. 配置与敏感信息
 
-Server 和 Agent 各维护一份仓库 YAML 配置，并作为容器内默认配置。`--config` 可以替换完整文件；Server 还允许
+Server 和 Agent 各维护一份仓库 YAML 配置，并作为容器内默认配置。`--config` 文件只需包含待覆盖字段；Server 还允许
 通过部署环境变量覆盖数据库 URL、Pod Access 外部地址、Agent 安装公开地址、Agent 镜像和 Cluster Terminal 镜像，
 以便 Kubernetes Secret 与 Helm values 注入部署身份。其他配置仍只来自 YAML。
 
-Server 配置结构体与 YAML 文件一一对应：加载时先构造带默认值的配置，再把 YAML 直接解码进去，未出现的键
-保留默认值，未知键直接报错。因此新增一个配置项只需在结构体上加一个带 `yaml` 标签的字段。`agent_listener.tls`
+Server 和 Agent 都先构造可运行的容器部署默认值，再应用 YAML 中出现的字段。嵌套对象按字段合并，列表整体替换，
+未出现的键保留默认值，未知键直接报错。新增配置项时必须同步维护字段映射、默认值和仓库 YAML。
+`agent_listener.tls`
 与 Agent 身份 CA 路径属于派生值，由 `agent_pki` 的 managed/external 模式推导，不能在配置文件中直接指定。
 
-- 仓库配置提供容器可启动的默认地址、生产取向的资源边界和明显的占位数据库凭据；共享环境必须通过 Secret 或
-  完整配置挂载替换凭据、公开地址和证书身份。
+- 仓库配置提供容器可启动的默认地址、生产取向的资源边界和明显的占位数据库凭据；共享环境必须通过 Secret、
+  环境变量或局部配置挂载替换凭据、公开地址和证书身份。
 - Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；Helm Chart 通过 Secret
   生成并注入 PostgreSQL 密码。
 - 首个管理员密码只从 `auth.initial_admin.password_file` 读取。本地开发可以在空用户库首次启动时生成权限为

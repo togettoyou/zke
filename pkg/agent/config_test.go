@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -192,10 +193,8 @@ func TestLoadConfigUsesDeploymentDefaults(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "agent.yaml")
 	content := []byte(`
-registration:
-  server_url: https://api.example.invalid:8443
 connection:
-  server_address: agent.example.invalid:9443
+  max_resource_body_bytes: 16777216
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
@@ -209,13 +208,15 @@ connection:
 		cfg.IdentitySecretName != defaultIdentitySecretName ||
 		cfg.CertificateRenewBefore != 7*24*time.Hour ||
 		cfg.Registration.Timeout != 10*time.Second ||
+		cfg.Registration.ServerURL != "http://127.0.0.1:8080" ||
 		cfg.Registration.RetryInitialInterval != time.Second ||
 		cfg.Registration.RetryMaxInterval != 15*time.Second ||
-		cfg.Connection.ServerAddress != "agent.example.invalid:9443" ||
+		cfg.Connection.ServerAddress != "127.0.0.1:8443" ||
 		cfg.Connection.CACertificateFile != "" ||
 		cfg.Connection.ConnectTimeout != 10*time.Second ||
 		cfg.Connection.RetryInitialInterval != time.Second ||
 		cfg.Connection.RetryMaxInterval != 30*time.Second ||
+		cfg.Connection.MaxResourceBodyBytes != 16777216 ||
 		cfg.LogLevel != defaultLogLevel {
 		t.Fatalf("unexpected Agent deployment defaults: %+v", cfg)
 	}
@@ -261,6 +262,29 @@ func TestRepositoryAgentConfigLoads(t *testing.T) {
 		filepath.Join("..", "..", "configs", "zke-agent.yaml"),
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRepositoryAgentConfigMatchesDefaults(t *testing.T) {
+	t.Parallel()
+
+	emptyPath := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(emptyPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := LoadConfig([]string{"--config", emptyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := LoadConfig([]string{
+		"--config",
+		filepath.Join("..", "..", "configs", "zke-agent.yaml"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(defaults, repository) {
+		t.Fatalf("Agent code defaults differ from configs/zke-agent.yaml\ndefaults: %+v\nrepository: %+v", defaults, repository)
 	}
 }
 

@@ -12,9 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config mirrors the YAML configuration file one-to-one. Decoding happens
-// directly into a value pre-populated with defaults, so a field is added in a
-// single place and an absent key simply keeps its default.
+// Config models the YAML configuration file. Decoding happens directly into a
+// value pre-populated with defaults, so an absent key keeps its default.
 type Config struct {
 	HTTP               HTTPConfig               `yaml:"http"`
 	PodAccess          PodAccessConfig          `yaml:"pod_access"`
@@ -126,10 +125,14 @@ type AgentIdentityConfig struct {
 }
 
 type AgentPKIConfig struct {
-	Mode                           string                 `yaml:"mode"`
-	AgentClientCertificateValidity time.Duration          `yaml:"agent_client_certificate_validity"`
-	Managed                        ManagedAgentPKIConfig  `yaml:"managed"`
-	External                       ExternalAgentPKIConfig `yaml:"external"`
+	Mode                           string        `yaml:"mode"`
+	AgentClientCertificateValidity time.Duration `yaml:"agent_client_certificate_validity"`
+	// ListenerSANs is the preferred short form for overriding the managed
+	// listener certificate SANs. Managed.ListenerSANs remains accepted for
+	// compatibility with existing configuration files.
+	ListenerSANs *ListenerSANsConfig    `yaml:"listener_sans"`
+	Managed      ManagedAgentPKIConfig  `yaml:"managed"`
+	External     ExternalAgentPKIConfig `yaml:"external"`
 }
 
 type ManagedAgentPKIConfig struct {
@@ -222,8 +225,18 @@ type AgentListenerConfig struct {
 // DefaultConfig reports the configuration used when the file omits a key.
 func DefaultConfig() Config {
 	return Config{
+		HTTP: HTTPConfig{
+			Address:           "0.0.0.0:8080",
+			ConsoleDirectory:  "/usr/share/zke/console",
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		},
 		PodAccess: PodAccessConfig{
-			Address:                  "127.0.0.1:8081",
+			Enabled:                  true,
+			Address:                  "0.0.0.0:8081",
+			ExternalURL:              "http://127.0.0.1:8081",
 			ReadHeaderTimeout:        5 * time.Second,
 			IdleTimeout:              60 * time.Second,
 			ActivationTTL:            30 * time.Second,
@@ -238,17 +251,20 @@ func DefaultConfig() Config {
 			MaxPodBytes:              1024 * 1024 * 1024,
 		},
 		Database: DatabaseConfig{
-			MaxConnections:  16,
-			MinConnections:  2,
-			MaxConnLifetime: time.Hour,
-			MaxConnIdleTime: 30 * time.Minute,
+			URL:              "postgres://zke:zke_change_me@zke-postgres:5432/zke?sslmode=disable",
+			ConnectTimeout:   5 * time.Second,
+			MigrationTimeout: 2 * time.Minute,
+			MaxConnections:   16,
+			MinConnections:   2,
+			MaxConnLifetime:  time.Hour,
+			MaxConnIdleTime:  30 * time.Minute,
 		},
 		Auth: AuthConfig{
 			SessionIdleTimeout:          30 * time.Minute,
 			SessionAbsoluteTimeout:      8 * time.Hour,
 			OperationTimeout:            10 * time.Second,
 			MaxConcurrentPasswordChecks: 4,
-			CookieSecure:                true,
+			CookieSecure:                false,
 			LoginRateLimit: LoginRateLimitConfig{
 				Window:                time.Minute,
 				MaxAttemptsPerAccount: 5,
@@ -258,16 +274,33 @@ func DefaultConfig() Config {
 				MaxFailedAttempts: 5,
 				Duration:          15 * time.Minute,
 			},
+			InitialAdmin: InitialAdminConfig{
+				Enabled:              true,
+				Username:             "admin",
+				DisplayName:          "ZKE Administrator",
+				PasswordFile:         "/var/lib/zke/admin-password",
+				AutoGeneratePassword: true,
+			},
 		},
 		AgentPKI: AgentPKIConfig{
-			Mode:                           "external",
+			Mode:                           "managed",
 			AgentClientCertificateValidity: 30 * 24 * time.Hour,
 			Managed: ManagedAgentPKIConfig{
+				Directory:                "/var/lib/zke/pki",
 				AutoGenerate:             true,
 				AgentClientCAValidity:    10 * 365 * 24 * time.Hour,
 				AgentListenerCAValidity:  20 * 365 * 24 * time.Hour,
 				AgentListenerValidity:    10 * 365 * 24 * time.Hour,
 				AgentListenerRenewBefore: 365 * 24 * time.Hour,
+				ListenerSANs: ListenerSANsConfig{
+					DNSNames: []string{
+						"localhost",
+						"zke-server",
+						"zke-server.zke-system",
+						"zke-server.zke-system.svc",
+					},
+					IPAddresses: []string{"127.0.0.1"},
+				},
 			},
 		},
 		AgentEnrollment: AgentEnrollmentConfig{
@@ -278,11 +311,19 @@ func DefaultConfig() Config {
 			},
 		},
 		AgentInstall: AgentInstallConfig{
-			Namespace:       "zke-system",
-			ImagePullPolicy: "IfNotPresent",
+			Enabled:           true,
+			PublicHTTPURL:     "http://127.0.0.1:8080",
+			PublicQUICAddress: "127.0.0.1:8443",
+			Image:             "ghcr.io/togettoyou/zke-agent:latest",
+			Namespace:         "zke-system",
+			ImagePullPolicy:   "IfNotPresent",
 		},
-		ClusterTerminal: ClusterTerminalConfig{SessionTTL: 15 * time.Minute},
+		ClusterTerminal: ClusterTerminalConfig{
+			Image:      "ghcr.io/togettoyou/zke-agent:latest",
+			SessionTTL: 15 * time.Minute,
+		},
 		AgentListener: AgentListenerConfig{
+			Address:                     "0.0.0.0:8443",
 			HandshakeTimeout:            10 * time.Second,
 			HeartbeatInterval:           10 * time.Second,
 			HeartbeatTimeout:            30 * time.Second,
@@ -314,9 +355,11 @@ func DefaultConfig() Config {
 			MaxResourceWatchRequests:    512,
 		},
 		CertificateMonitor: CertificateMonitorConfig{
-			WarningBefore: 30 * 24 * time.Hour,
+			WarningBefore: 7 * 24 * time.Hour,
 			CheckInterval: time.Hour,
 		},
+		ShutdownTimeout: 10 * time.Second,
+		LogLevel:        "info",
 	}
 }
 
@@ -333,6 +376,10 @@ func LoadConfig(args []string) (Config, error) {
 	if err := decodeConfigFile(&cfg, configPath); err != nil {
 		return Config{}, err
 	}
+	if cfg.AgentPKI.ListenerSANs != nil {
+		cfg.AgentPKI.Managed.ListenerSANs = *cfg.AgentPKI.ListenerSANs
+		cfg.AgentPKI.ListenerSANs = nil
+	}
 	applyEnvironmentOverrides(&cfg)
 	cfg.resolveDerivedIdentity()
 	if err := cfg.Validate(); err != nil {
@@ -344,8 +391,8 @@ func LoadConfig(args []string) (Config, error) {
 
 // applyEnvironmentOverrides keeps the checked-in configuration usable as the
 // single container default while allowing an orchestrator to inject values
-// that are deployment identities or credentials. Mounting a complete config
-// file remains supported; these explicitly set variables take precedence.
+// that are deployment identities or credentials. Partial and complete config
+// files are supported; these explicitly set variables take precedence.
 func applyEnvironmentOverrides(cfg *Config) {
 	overrides := []struct {
 		name   string
@@ -374,7 +421,9 @@ func decodeConfigFile(cfg *Config, path string) error {
 
 	decoder := yaml.NewDecoder(file)
 	decoder.KnownFields(true)
-	if err := decoder.Decode(cfg); err != nil {
+	if err := decoder.Decode(cfg); errors.Is(err, io.EOF) {
+		return nil
+	} else if err != nil {
 		return fmt.Errorf("decode config file %q: %w", path, err)
 	}
 	if err := ensureYAMLEOF(decoder); err != nil {
