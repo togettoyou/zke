@@ -1,6 +1,7 @@
 import { CircleDot, LayoutGrid, LogOut, Moon, Settings, Sun, UserRound } from "lucide-react";
 
 import type { StreamState } from "@/api/events";
+import { ZkeMark } from "@/components/brand/zke-mark";
 import { OpenSourceLink } from "@/components/common/open-source-link";
 import { StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,12 +74,7 @@ export function TopBar({
         className="zke-topbar pointer-events-none absolute inset-x-0 top-0 -z-10 h-16"
       />
 
-      <span
-        aria-hidden
-        className="bg-primary text-primary-foreground grid size-6 shrink-0 place-items-center rounded-[8px] text-[11px] font-bold"
-      >
-        Z
-      </span>
+      <ZkeMark className="size-6 rounded-[8px]" />
 
       <ScopeSelector scope={scope} onChange={setScope} />
 

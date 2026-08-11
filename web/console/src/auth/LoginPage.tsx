@@ -3,6 +3,7 @@ import { Loader2, Moon, Sun } from "lucide-react";
 
 import { useLogin } from "@/api/queries/auth";
 import { errorMessage, errorRequestId, isApiError } from "@/api/errors";
+import { ZkeMark } from "@/components/brand/zke-mark";
 import { OpenSourceLink } from "@/components/common/open-source-link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -467,9 +468,7 @@ function TopologyCompact() {
 function Brandmark() {
   return (
     <div className="flex items-center gap-3">
-      <span className="bg-primary text-primary-foreground grid size-10 place-items-center rounded-[13px] text-base font-semibold">
-        Z
-      </span>
+      <ZkeMark className="size-10 rounded-[13px]" />
       <span className="min-w-0">
         <span className="text-foreground block text-sm leading-tight font-semibold">
           ZKE Console

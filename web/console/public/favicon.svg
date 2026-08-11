@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The ZKE mark, kept in step with src/components/brand/zke-mark.tsx.
+
+  Standalone rather than generated from the component: a favicon is fetched
+  before any script runs, so it cannot read the theme variables and carries the
+  literal app-blue pair from theme.css instead. The tile brings its own ground,
+  which is what lets one file sit on both a light and a dark tab strip.
+
+  The corner is squarer than the in-app tile (14 against 19 on the same grid):
+  at 16px the app radius rounds the silhouette off into a blob, and a mark in a
+  tab strip is recognised by its outline before anything inside it is legible.
+
+  Note for editors: this is XML, so a comment may not contain a double hyphen.
+  Naming a CSS custom property here breaks the whole file, and a favicon that
+  fails to parse fails silently in the tab.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ZKE">
+  <title>ZKE</title>
+  <defs>
+    <linearGradient id="zke-mark" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#5878f7" />
+      <stop offset="1" stop-color="#3b5bdb" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#zke-mark)" />
+  <path
+    d="M19 20H45L19 44"
+    fill="none"
+    stroke="#fff"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <g fill="#fff">
+    <rect x="15.5" y="40.5" width="8.87" height="7" rx="2.6" />
+    <rect x="27.57" y="40.5" width="8.87" height="7" rx="2.6" />
+    <rect x="39.63" y="40.5" width="8.87" height="7" rx="2.6" />
+  </g>
+</svg>
