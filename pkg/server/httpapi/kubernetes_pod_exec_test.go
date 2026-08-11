@@ -201,6 +201,16 @@ func TestPodExecSameOriginUsesConfiguredPublicHTTPSchemeBehindTLSProxy(t *testin
 	}
 }
 
+func TestPodExecSameOriginAllowsDirectHTTPIP(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "http://10.0.0.8:8080/terminal", nil)
+	request.Header.Set("Origin", "http://10.0.0.8:8080")
+	if !podExecSameOrigin(request, "http://127.0.0.1:8080") {
+		t.Fatal("same-origin direct HTTP request by IP was rejected")
+	}
+}
+
 type fakePodExecHTTPService struct {
 	createInput  podexec.CreateInput
 	consumeInput podexec.ConsumeInput

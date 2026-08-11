@@ -202,7 +202,7 @@ Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Se
 该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、可选 VerticalPodAutoscaler/KEDA ScaledObject、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass、ServiceAccount、四类 RBAC 资源、Pod Logs 和 Kubernetes Event 当前后端能力。
 其中 `apiextensions.k8s.io/v1 customresourcedefinitions` 只授予 `get` 与 `list`，仅用于在 Discovery 目录中
 标记哪些资源来自 CRD，不包含定义或修改 CRD 的能力。Node、Namespace 和 Pod 的 `update` 用于完整 YAML 管理，Pod Logs 只增加 `pods/log` 的 `get`，Pod Exec
-只增加 `pods/exec` 的 `create`，Pod Port Forward 只增加 `pods/portforward` 的 `create`，Node Drain 只增加
+只增加 `pods/exec` 的 `get/create`，Pod Port Forward 只增加 `pods/portforward` 的 `get/create`，Node Drain 只增加
 `pods/eviction` 的 `create`，Event 只增加
 `events` 的 `get/list/watch`。Eviction 仍需专用协议位、精确 GVR/Subresource 与 Pod UID precondition；Agent 的通用
 Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限；需要读取或变更更多内置资源、CRD 或 CR 时，安装方

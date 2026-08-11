@@ -529,7 +529,7 @@ Web Terminal 使用独立的 `cluster.pod.exec`，不复用 `cluster.read` 或 K
 必须通过 CSRF、幂等键和显式确认；WebSocket 必须同源并使用固定子协议，票据绑定用户、登录 Session、Cluster、
 Namespace、Pod UID 和容器且只能消费一次。长会话周期重新验证 Session 与权限，设置空闲/总时长、输入/输出
 字节和并发上限。Agent 只使用固定 Shell 选择逻辑（优先 bash，回退 `/bin/sh`），默认 ServiceAccount 仅增加
-`pods/exec` 的 `create`。审计记录票据创建、会话目标与结果，默认不记录终端输入输出。
+`pods/exec` 的 `get/create`，分别用于 WebSocket 与 SPDY。审计记录票据创建、会话目标与结果，默认不记录终端输入输出。
 
 独立终端 App 使用另一项 `cluster.terminal.exec`，可通过现有自定义角色分配。该权限只允许创建终端会话，不等于
 Kubernetes 资源权限。Server 在目标 Cluster 上逐项计算当前登录用户实际持有的 `cluster.*` 权限，Agent 将其按
@@ -553,7 +553,7 @@ Pod 端口访问使用另一项默认仅授予 admin 的 `cluster.pod.port_forwa
 `cluster.pod.exec` 或通用资源写权限而获得。浏览器 Pod Access 激活地址必须通过 CSRF、
 幂等键和显式确认，并绑定用户、登录 Session、Cluster、Namespace、Pod UID、单个远端端口与用户从 15、30、
 60 分钟中选择的时长，只能消费一次；所选时长不得超过 Server 配置的一小时硬上限，并进入幂等指纹与审计目标；
-长连接或活跃访问会话周期重新验证 Session 和该权限。Agent ServiceAccount 只增加 `pods/portforward` 的 `create`，
+长连接或活跃访问会话周期重新验证 Session 和该权限。Agent ServiceAccount 只增加 `pods/portforward` 的 `get/create`，
 Agent 在连接前再次核对 Pod UID，且只在回环地址建立临时桥接。
 
 Server 以 Cluster UUID 与 Pod UID 唯一定域待激活和活跃入口。已存在入口时普通创建返回冲突，只有显式携带

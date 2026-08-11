@@ -292,16 +292,17 @@ func renderManifest(
 				APIGroups: []string{""},
 				// Interactive terminals are isolated in Pod Exec, which fixes the
 				// shell selection (bash, then /bin/sh) and validates Pod UID and
-				// container identity.
+				// container identity. WebSocket uses GET and SPDY fallback uses POST.
 				Resources: []string{"pods/exec"},
-				Verbs:     []string{"create"},
+				Verbs:     []string{"get", "create"},
 			},
 			{
 				APIGroups: []string{""},
 				// Port Forward has a dedicated Agent Stream and never opens a
-				// listener beyond the Agent's loopback interface.
+				// listener beyond the Agent's loopback interface. WebSocket uses
+				// GET and SPDY fallback uses POST.
 				Resources: []string{"pods/portforward"},
-				Verbs:     []string{"create"},
+				Verbs:     []string{"get", "create"},
 			},
 			{
 				APIGroups: []string{""},

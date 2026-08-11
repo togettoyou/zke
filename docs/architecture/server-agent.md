@@ -52,7 +52,7 @@ Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollm
 生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
 `get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`update`、`patch` 以及
 Namespace 的 `get`、`list`、`create`、`update`、`delete`、Pod 的 `get`、`list`、`update`、`delete` 以及 `pods/log` 的
-`get`、`pods/exec`、`pods/portforward` 与 `pods/eviction` 的 `create` 权限，并授予五类工作负载、Service、Ingress 与 Gateway 主资源的完整 CRUD，
+`get`、`pods/exec` 与 `pods/portforward` 的 `get/create`、`pods/eviction` 的 `create` 权限，并授予五类工作负载、Service、Ingress 与 Gateway 主资源的完整 CRUD，
 以及 ConfigMap、存储、HorizontalPodAutoscaler、ServiceAccount 和四类 Kubernetes RBAC 主资源的
 `get`、`list`、`create`、`update`、`delete`；RBAC 不包含 `escalate`、`bind` 或 `impersonate`，Secret 主资源不在该 ClusterRole 中；
 Eviction 只由 Node Drain 的专用权限与 Agent 精确 allowlist 使用，通用资源接口仍拒绝 Subresource。

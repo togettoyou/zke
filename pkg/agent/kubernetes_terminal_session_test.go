@@ -130,6 +130,12 @@ func TestTerminalReadIncludesWatchForKubectlWaits(t *testing.T) {
 	assertTerminalVerbs(t, clusterScoped, "", "namespaces", []string{"get", "list", "watch"})
 }
 
+func TestTerminalStreamingSubresourcesSupportWebSocketAndSPDY(t *testing.T) {
+	rules := terminalPolicyRules([]string{"cluster.pod.exec", "cluster.pod.port_forward"})
+	assertTerminalVerbs(t, rules, "", "pods/exec", []string{"get", "create"})
+	assertTerminalVerbs(t, rules, "", "pods/portforward", []string{"get", "create"})
+}
+
 func TestTerminalDeadlineIsReportedAsTimeout(t *testing.T) {
 	response := kubernetesTerminalSessionFailure(&agentv1.TerminalSessionResponse{}, context.DeadlineExceeded)
 	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_TIMEOUT || response.GetReason() != "Timeout" {

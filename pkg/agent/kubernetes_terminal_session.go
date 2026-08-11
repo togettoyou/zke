@@ -384,10 +384,10 @@ func terminalNamespacePolicyRules(permissions []string, protectedPermission stri
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}})
 	}
 	if protectedManage && held["cluster.pod.exec"] {
-		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"create"}})
+		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"get", "create"}})
 	}
 	if protectedManage && held["cluster.pod.port_forward"] {
-		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/portforward"}, Verbs: []string{"create"}})
+		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/portforward"}, Verbs: []string{"get", "create"}})
 	}
 	secretVerbs := make([]string, 0, 7)
 	if protectedManage && held["cluster.secret.read"] {

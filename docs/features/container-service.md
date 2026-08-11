@@ -161,7 +161,7 @@
   Secret 的同五个动词（不含 `watch`；Agent 只在专用 Secret 接口的
   请求上、且目标不是自身命名空间时才会执行），`apiextensions.k8s.io/v1 customresourcedefinitions` 的只读
   `get`、`list`（仅用于判定哪些资源来自 CRD，不含定义或修改 CRD 的能力），并单独授予 `pods/log` 的 `get`
-  和 `pods/exec`、`pods/eviction` 的 `create`；后者只能经专用 Drain 接口与 Agent 的精确 allowlist 使用，
+  和 `pods/exec` 的 `get/create`、`pods/eviction` 的 `create`；后者只能经专用 Drain 接口与 Agent 的精确 allowlist 使用，
   其他资源也需安装方显式增加最小 RBAC。
 
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table

@@ -197,8 +197,8 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"namespaces"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/log"}, []string{"get"})
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/exec"}, []string{"create"})
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/portforward"}, []string{"create"})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/exec"}, []string{"get", "create"})
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/portforward"}, []string{"get", "create"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/eviction"}, []string{"create"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"events"}, []string{"get", "list", "watch"})
 	// Secrets include watch so the Agent may delegate the terminal's read-only
