@@ -1,6 +1,7 @@
 import { CircleDot, LayoutGrid, LogOut, Moon, Settings, Sun, UserRound } from "lucide-react";
 
 import type { StreamState } from "@/api/events";
+import { OpenSourceLink } from "@/components/common/open-source-link";
 import { StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -99,6 +100,8 @@ export function TopBar({
             {stream.label}
           </span>
         </HintTooltip>
+
+        <OpenSourceLink />
 
         <Button
           size="icon-sm"

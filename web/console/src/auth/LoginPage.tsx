@@ -3,6 +3,7 @@ import { Loader2, Moon, Sun } from "lucide-react";
 
 import { useLogin } from "@/api/queries/auth";
 import { errorMessage, errorRequestId, isApiError } from "@/api/errors";
+import { OpenSourceLink } from "@/components/common/open-source-link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -222,15 +223,18 @@ export function LoginPage({ onAuthenticated }: { onAuthenticated: () => void }) 
       {/* Last in the document, positioned back to the corner. It is a preference
           control, not a step in signing in, so it belongs after the form in tab
           order — otherwise shift-tabbing off the username field lands on it. */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="text-subtle-foreground absolute top-5 right-5 z-20"
-        onClick={toggleTheme}
-        aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
-      >
-        {theme === "dark" ? <Sun /> : <Moon />}
-      </Button>
+      <div className="absolute top-5 right-5 z-20 flex items-center gap-1">
+        <OpenSourceLink size="icon" className="text-subtle-foreground" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-subtle-foreground"
+          onClick={toggleTheme}
+          aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
+        >
+          {theme === "dark" ? <Sun /> : <Moon />}
+        </Button>
+      </div>
     </div>
   );
 }
