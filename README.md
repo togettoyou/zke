@@ -6,6 +6,13 @@
 
 ![Development Status](https://img.shields.io/badge/status-development%20preview-orange)
 
+> [!TIP]
+> **在线体验：** [打开 ZKE 体验环境](https://fbcupchhlacp.sealosbja.site/)
+>
+> 用户名：`view`　密码：`LECQkqcp2tQ5Yh8`
+>
+> 体验环境仅用于功能预览，数据可能随时重置。
+
 ZKE 通过 Server + Agent 连接分散在数据中心、私有云和公有云中的 Kubernetes 集群，为平台团队提供统一的资源管理、权限控制、安全操作与审计入口。
 
 > [!IMPORTANT]
@@ -98,7 +105,13 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
 
 ## 产品预览
 
-> 产品截图正在准备中，首次公开预览前将在这里补充控制台首页、集群管理、容器服务、安全审计和 Copilot 等界面预览。
+| 集群终端 | 工作负载诊断 |
+| --- | --- |
+| ![在指定集群中打开终端](docs/images/product-preview/cluster-terminal.png) | ![诊断工作负载异常并查看关联事件](docs/images/product-preview/workload-diagnostics.png) |
+| **Pod 日志** | **Pod 临时访问** |
+| ![实时查看 Pod 日志](docs/images/product-preview/pod-logs.png) | ![为 Pod 创建一次性临时访问地址](docs/images/product-preview/pod-access.png) |
+| **角色权限** | **工作负载安全更新** |
+| ![按角色配置集群操作权限](docs/images/product-preview/role-permissions.png) | ![通过 DryRun 差异确认更新 Deployment](docs/images/product-preview/deployment-update-confirmation.png) |
 
 ## 适用场景
 
