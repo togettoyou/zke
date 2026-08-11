@@ -77,7 +77,7 @@ export type PermissionChecker = {
    *
    * Asked about the role and not about permissions: the Server reserves granting
    * and removing this role to the people who already hold it, so a custom role
-   * carrying all 28 permissions is still not a global administrator. Answering
+   * carrying all permissions is still not a global administrator. Answering
    * by permissions would have the Console offer actions the Server refuses.
    */
   isGlobalAdmin: boolean;

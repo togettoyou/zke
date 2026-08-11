@@ -6,7 +6,7 @@ import { useChangePassword, useHealth } from "@/api/queries/auth";
 import { errorMessage, errorRequestId } from "@/api/errors";
 import { AppShell, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
-import { describeCapability } from "@/auth/capabilities";
+import { describeCapability, GLOBAL_SCOPE } from "@/auth/capabilities";
 import { useSessionContext } from "@/auth/session-context";
 import { AbsoluteTime, IdentifierLabel } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
@@ -28,14 +28,18 @@ const NAV: AppNavItem[] = [
 
 export function SettingsApp(_props: AppComponentProps) {
   const [section, setSection] = useState("identity");
+  const { permissions } = useSessionContext();
+  const canChangePassword = permissions.can("user.password.change", GLOBAL_SCOPE);
+  const nav = canChangePassword ? NAV : NAV.filter((item) => item.id !== "password");
+  const activeSection = section === "password" && !canChangePassword ? "identity" : section;
 
   return (
-    <AppShell nav={NAV} activeId={section} onNavigate={setSection}>
+    <AppShell nav={nav} activeId={activeSection} onNavigate={setSection}>
       <div className="mx-auto grid max-w-2xl gap-7">
-        {section === "identity" ? <IdentitySection /> : null}
-        {section === "password" ? <PasswordSection /> : null}
-        {section === "desktop" ? <DesktopSection /> : null}
-        {section === "system" ? <SystemSection /> : null}
+        {activeSection === "identity" ? <IdentitySection /> : null}
+        {activeSection === "password" ? <PasswordSection /> : null}
+        {activeSection === "desktop" ? <DesktopSection /> : null}
+        {activeSection === "system" ? <SystemSection /> : null}
       </div>
     </AppShell>
   );

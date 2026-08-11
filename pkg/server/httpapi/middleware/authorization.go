@@ -489,7 +489,9 @@ func permissionTargetType(permission rbac.Permission) string {
 		rbac.PermissionClusterEnrollmentRead,
 		rbac.PermissionClusterEnrollmentRevoke:
 		return auditaction.TargetEnrollment
-	case rbac.PermissionUserRead, rbac.PermissionUserManage:
+	case rbac.PermissionUserRead,
+		rbac.PermissionUserManage,
+		rbac.PermissionUserPasswordChange:
 		return auditaction.TargetUser
 	case rbac.PermissionRBACRead, rbac.PermissionRBACManage:
 		return auditaction.TargetRoleBinding

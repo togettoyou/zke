@@ -35,6 +35,7 @@ const (
 	PermissionClusterConnectionRevoke           Permission = "cluster.connection.revoke"
 	PermissionUserRead                          Permission = "user.read"
 	PermissionUserManage                        Permission = "user.manage"
+	PermissionUserPasswordChange                Permission = "user.password.change"
 	PermissionRBACRead                          Permission = "rbac.read"
 	PermissionRBACManage                        Permission = "rbac.manage"
 	PermissionAuditRead                         Permission = "audit.read"

@@ -158,6 +158,7 @@ const (
 	DeniedClusterSecretManage               = "cluster.secret.manage"
 	DeniedUserRead                          = "user.read"
 	DeniedUserManage                        = "user.manage"
+	DeniedUserPasswordChange                = "user.password.change"
 	DeniedRBACRead                          = "rbac.read"
 	DeniedRBACManage                        = "rbac.manage"
 	DeniedAuditRead                         = "audit.read"
@@ -338,6 +339,7 @@ var actions = []Action{
 	{DeniedClusterEnrollmentRead, GroupDenied},
 	{DeniedUserRead, GroupDenied},
 	{DeniedUserManage, GroupDenied},
+	{DeniedUserPasswordChange, GroupDenied},
 	{DeniedRBACRead, GroupDenied},
 	{DeniedRBACManage, GroupDenied},
 	{DeniedAuditRead, GroupDenied},

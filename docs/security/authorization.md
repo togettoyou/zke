@@ -36,8 +36,8 @@ Cookie 属性、Synchronizer CSRF Token、应用层操作超时和 Go 标准库�
 Session 创建与成功审计在同一事务中完成；登录成功、失败、限流拒绝与注销均写入不包含凭证明文的审计事件。
 
 `me` API 返回按 RoleBinding 作用域展开的权限能力，供 Console 展示当前用户可执行的操作；该信息只用于界面
-能力发现，不能替代服务端授权。当前用户自助改密要求有效 Session、CSRF、当前密码、新密码和显式确认；成功后
-撤销该用户全部 Session、写入 `auth.password.change` 审计并要求重新登录。
+能力发现，不能替代服务端授权。当前用户自助改密要求 Global `user.password.change` 权限、有效 Session、CSRF、
+当前密码、新密码和显式确认；成功后撤销该用户全部 Session、写入 `auth.password.change` 审计并要求重新登录。
 
 RBAC 基础已经实现固定权限词表、可由操作者定义的角色、Global/Tenant/Project RoleBinding 继承规则、默认拒绝、
 Project/Cluster 归属解析和 HTTP 授权 middleware。Tenant 绑定只向下覆盖同一 Tenant，Project 绑定只覆盖目标
@@ -207,7 +207,7 @@ RoleBinding，而重置全局管理员的密码再以其身份登录，拿到的
 
 | 权限                       | 下限   | 原因                                                                              |
 | -------------------------- | ------ | --------------------------------------------------------------------------------- |
-| `user.read`、`user.manage` | Global | 用户是全局对象，不属于任何租户                                                    |
+| `user.read`、`user.manage`、`user.password.change` | Global | 用户身份是全局对象，不属于任何租户                                      |
 | `rbac.read`、`rbac.manage` | Global | 角色是全局对象，见上文提权天花板                                                  |
 | `tenant.create`            | Global | 创建租户时还没有可供限定的租户                                                    |
 | `tenant.manage`            | Global | 删除租户会级联移除其下全部项目、集群与凭证，**有意不交给租户自己的管理员**        |
@@ -223,8 +223,8 @@ Cluster（经所属 Project 解析，因此等同 Project 作用域），`tenant
 **只有整个角色都由该作用域无法行使的权限组成时，绑定才会被拒绝**，返回 `400 role_unreachable_at_scope` 并列出
 权限名——那样的绑定不授予任何权限，读起来却像一次授权，除了「写错了」没有别的解释。
 
-混合角色不拒绝，这条界线是刻意的。内置 `admin` 绑到某个租户是一次真实且有用的授予：28 项里有 22 项在该租户内
-生效，绑到项目则是 21 项。拒绝它等于让唯一表示「这里的全部权限」的角色无法用于任何作用域绑定，迫使每个部署手工
+混合角色不拒绝，这条界线是刻意的。内置 `admin` 绑到某个租户或项目仍是一条真实且有用的部分授予。拒绝它等于让
+唯一表示「这里的全部权限」的角色无法用于任何作用域绑定，迫使每个部署手工
 复制一份租户版 `admin`。问题从来不是授予是部分的，而是缺失的那部分不可见——所以修在它坏掉的地方：`me` 的作用域
 能力列表不再包含该作用域行使不了的权限，权限字典为每一项返回 `minimum_scope`（`global`/`tenant`/`project`），
 Console 在角色编辑器里标注「仅全局生效」或「仅全局和租户生效」，并在新建绑定时按本次选定的作用域列出不会授予的
@@ -237,7 +237,8 @@ Console 在角色编辑器里标注「仅全局生效」或「仅全局和租户
 
 ### 访问管理接口
 
-当前固定权限还包括 `user.read`、`user.manage`、`rbac.read`、`rbac.manage` 和 `audit.read`。用户、角色与
+当前固定权限还包括 `user.read`、`user.manage`、`user.password.change`、`rbac.read`、`rbac.manage` 和
+`audit.read`。`user.password.change` 只允许调用者修改自己的密码，不授予查看用户或重置他人密码的能力。用户、角色与
 RoleBinding 管理入口都要求 Global 作用域的对应权限；创建的 RoleBinding 仍可绑定 Global、Tenant 或 Project
 作用域（受上文「只在 Global 生效的权限」约束）。Server 提供用户列表、详情、创建、修改显示名称、启用/禁用、删除、解锁和管理员密码重置 API，角色列表、
 详情、创建、修改和删除 API，权限字典 API，以及 RoleBinding 列表、详情、幂等创建和删除 API。

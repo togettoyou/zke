@@ -46,7 +46,12 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	)
 	authenticatedAuthRoutes.POST(
 		"/password",
+		handlers.requestTimeout,
+		handlers.roleBindingCache,
 		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(
+			rbac.PermissionUserPasswordChange,
+		),
 		handlers.auth.changePassword,
 	)
 

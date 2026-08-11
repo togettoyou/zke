@@ -185,6 +185,21 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 	if deniedAudit.Code != http.StatusForbidden {
 		t.Fatalf("unbound audit status = %d: %s", deniedAudit.Code, deniedAudit.Body)
 	}
+	deniedPasswordChange := accessAPIRequest(
+		router,
+		http.MethodPost,
+		"/api/v1/auth/password",
+		`{"current_password":"`+userPassword+`","new_password":"a replacement managed user password","confirm":true}`,
+		userLogin,
+	)
+	if deniedPasswordChange.Code != http.StatusForbidden {
+		t.Fatalf(
+			"unbound password change status = %d: %s",
+			deniedPasswordChange.Code,
+			deniedPasswordChange.Body,
+		)
+	}
+	assertErrorCode(t, deniedPasswordChange, "forbidden")
 
 	createdBinding := accessAPIRequest(
 		router,

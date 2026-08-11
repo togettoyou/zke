@@ -29,7 +29,6 @@ var publicRoutes = map[string]string{
 var serviceAuthorizedRoutes = map[string]string{
 	"GET /api/v1/auth/me":                     "reports the caller's own identity and capabilities",
 	"POST /api/v1/auth/logout":                "ends the caller's own session",
-	"POST /api/v1/auth/password":              "changes the caller's own password",
 	"GET /api/v1/audit-events":                "audit.read visibility is resolved and pushed into the query",
 	"GET /api/v1/audit-events/actions":        "the closed action vocabulary the Server writes; describes the system's shape, holds no tenant data",
 	"GET /api/v1/events":                      "cluster.read visibility is resolved before the stream opens and re-checked while it runs",

@@ -144,6 +144,9 @@ paths:
     post:
       tags: [Authentication]
       operationId: changeCurrentUserPassword
+      description: >-
+        修改当前登录用户自己的密码。要求调用者在 Global 作用域持有
+        `user.password.change` 权限；成功后撤销该用户的全部 Session。
       security:
         - sessionCookie: []
       parameters:
@@ -7398,6 +7401,7 @@ components:
               - cluster.connection.revoke
               - user.read
               - user.manage
+              - user.password.change
               - rbac.read
               - rbac.manage
               - audit.read

@@ -41,13 +41,14 @@ import (
 // be scoped to, the same way creating a Tenant has no Tenant — but a Tenant is
 // exactly what it can be scoped to, so unlike `tenant.create` it is not global.
 var permissionScopeFloors = map[Permission]scopeType{
-	PermissionTenantCreate:  scopeGlobal,
-	PermissionTenantManage:  scopeGlobal,
-	PermissionUserRead:      scopeGlobal,
-	PermissionUserManage:    scopeGlobal,
-	PermissionRBACRead:      scopeGlobal,
-	PermissionRBACManage:    scopeGlobal,
-	PermissionProjectCreate: scopeTenant,
+	PermissionTenantCreate:       scopeGlobal,
+	PermissionTenantManage:       scopeGlobal,
+	PermissionUserRead:           scopeGlobal,
+	PermissionUserManage:         scopeGlobal,
+	PermissionUserPasswordChange: scopeGlobal,
+	PermissionRBACRead:           scopeGlobal,
+	PermissionRBACManage:         scopeGlobal,
+	PermissionProjectCreate:      scopeTenant,
 }
 
 // MinimumScope reports the narrowest binding scope that can exercise a
@@ -119,6 +120,7 @@ var allPermissions = []Permission{
 	PermissionClusterConnectionRevoke,
 	PermissionUserRead,
 	PermissionUserManage,
+	PermissionUserPasswordChange,
 	PermissionRBACRead,
 	PermissionRBACManage,
 	PermissionAuditRead,

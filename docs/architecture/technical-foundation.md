@@ -159,7 +159,7 @@ Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.man
 `project.read`、`project.manage`、
 `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke`、`cluster.read`、
 `cluster.manage`、`cluster.resource.create`、`cluster.resource.update`、`cluster.resource.delete`、
-`cluster.pod.logs.read`、`cluster.connection.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage`
+`cluster.pod.logs.read`、`cluster.connection.revoke`、`user.read`、`user.manage`、`user.password.change`、`rbac.read`、`rbac.manage`
 和 `audit.read`。
 角色是权限的命名集合，由 `role_bindings.role` 外键引用，可由操作者创建、修改和删除。内置角色 `admin` 与
 `viewer` 由 Server 定义、不可编辑，且只定义在代码中：Schema 不播种角色，两者在每次启动时由 Server 对账写入，
@@ -186,7 +186,7 @@ Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.man
   `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke`、`cluster.read`、
   `cluster.manage`、`cluster.resource.create`、`cluster.resource.update`、`cluster.resource.delete`、
   `cluster.rbac.read`、`cluster.rbac.manage`、
-  `cluster.pod.logs.read`、`cluster.connection.revoke`、`user.read`、`user.manage`、`rbac.read`、`rbac.manage`
+  `cluster.pod.logs.read`、`cluster.connection.revoke`、`user.read`、`user.manage`、`user.password.change`、`rbac.read`、`rbac.manage`
   和 `audit.read`；权限词表固定在代码中，角色则由操作者组合，内置 `admin` 拥有全部权限、`viewer` 只拥有
   Tenant、Project 和 Cluster 读取权限。
 - RoleBinding 支持 Global、Tenant 和 Project 作用域；Global 绑定向下覆盖全部作用域，Tenant 绑定覆盖对应
@@ -478,6 +478,7 @@ Phase 1 API 权限映射：
 | 读取 Kubernetes Event 快照或实时流   | `cluster.event.read`                                                                |
 | 撤销 Cluster 当前连接                | `cluster.connection.revoke`                                                         |
 | 查看和管理用户                       | `user.read`、`user.manage`（Global）                                                |
+| 修改当前用户自己的密码               | `user.password.change`（Global）                                                    |
 | 查看和管理 RoleBinding               | `rbac.read`、`rbac.manage`（Global）                                                |
 | 查询审计事件                         | `audit.read`（按 RoleBinding 作用域过滤）                                           |
 
@@ -665,8 +666,8 @@ Console 与管理 API 采用同源部署模型。生产环境由同一 Origin �
 `GET /api/v1/auth/me` 除用户和 Session 过期时间外，还返回当前用户的 `capabilities`。每项能力包含 RoleBinding
 作用域以及该角色在该作用域授予的权限，Console 应据此控制操作入口，但服务端仍会对每次请求重新授权。
 
-当前用户可以通过 `POST /api/v1/auth/password` 提交当前密码、新密码和显式确认来自助改密。成功后 Server
-撤销该用户的全部 Session 并清除当前认证 Cookie，用户必须使用新密码重新登录。
+持有 Global `user.password.change` 权限的当前用户可以通过 `POST /api/v1/auth/password` 提交当前密码、新密码和
+显式确认来自助改密。成功后 Server 撤销该用户的全部 Session 并清除当前认证 Cookie，用户必须使用新密码重新登录。
 
 全部列表接口使用同一套 offset 分页，包括审计事件查询。用户、RoleBinding、Tenant、Project、Cluster、
 Enrollment 和 Audit Event 列表支持 `limit` 与 `offset`；除审计事件外还支持 `q`，资源列表另外支持

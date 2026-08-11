@@ -182,6 +182,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   "cluster.connection.revoke": "断开 Agent 连接",
   "user.read": "查看用户",
   "user.manage": "管理用户",
+  "user.password.change": "修改自己的密码",
   "rbac.read": "查看角色与绑定",
   "rbac.manage": "管理角色与绑定",
   "audit.read": "查看审计事件",
