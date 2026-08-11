@@ -207,13 +207,15 @@ func parseKubernetesManifestQuery(
 
 func manifestGrant(grant httpmiddleware.ManifestGrant) kubernetesresource.ManifestGrant {
 	return kubernetesresource.ManifestGrant{
-		ResourceCreate:  grant.ResourceCreate,
-		ResourceUpdate:  grant.ResourceUpdate,
-		ResourceDelete:  grant.ResourceDelete,
-		NamespaceManage: grant.NamespaceManage,
-		SecretRead:      grant.SecretRead,
-		SecretManage:    grant.SecretManage,
-		RBACManage:      grant.RBACManage,
+		ResourceCreate:        grant.ResourceCreate,
+		ResourceUpdate:        grant.ResourceUpdate,
+		ResourceDelete:        grant.ResourceDelete,
+		NamespaceManage:       grant.NamespaceManage,
+		SecretRead:            grant.SecretRead,
+		SecretManage:          grant.SecretManage,
+		RBACManage:            grant.RBACManage,
+		SystemNamespaceManage: grant.SystemNamespaceManage,
+		AgentNamespaceManage:  grant.AgentNamespaceManage,
 	}
 }
 
@@ -239,6 +241,10 @@ func manifestRequirementPermission(
 		return string(rbac.PermissionClusterSecretManage)
 	case kubernetesresource.ManifestRequirementRBACManage:
 		return string(rbac.PermissionClusterRBACManage)
+	case kubernetesresource.ManifestRequirementSystemNamespaceManage:
+		return string(rbac.PermissionClusterSystemNamespaceManage)
+	case kubernetesresource.ManifestRequirementAgentNamespaceManage:
+		return string(rbac.PermissionClusterAgentNamespaceManage)
 	default:
 		return ""
 	}

@@ -55,7 +55,7 @@
   `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets/{secret_name}`：
   固定管理 `core/v1 Secret`；读取要求 `cluster.secret.read`，写入要求 `cluster.secret.manage`，
   两者都不由 `cluster.read` 或 `cluster.resource.*` 蕴含；列表只返回键名、大小、类型和元数据，
-  取值仅由单对象详情返回；属于 ZKE 安装本身的 Secret 既不列出也不可读写；
+  取值仅由单对象详情返回；ZKE 标记的 Secret 也由独立权限控制，不再按对象永久禁用；
 - `GET`、`POST /api/v1/clusters/{cluster_id}/storage/{storage_resource}` 和对应单对象
   `GET`、`PUT`、`DELETE`：固定管理集群级 `persistentvolumes` 或 `storageclasses`；
 - `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/persistentvolumeclaims` 和对应
@@ -138,8 +138,8 @@
 - Agent 使用 Kubernetes dynamic client，只接受 Discovery 声明且作用域、Verb 匹配的主资源 CRUD；
   Discovery 策略缓存有 TTL 和条目上限，Secret 和 Subresource 明确拒绝；Kubernetes 授权资源只能使用专用
   `/authorization` API，不能借通用 Resource/YAML API 绕过专用权限；Secret 与授权五类各有独立的 YAML
-  路由，见下文，它们不放宽通用接口的拒绝，而是挂在各自的权限上；Namespace 的读取与更新照常走通用接口，
-  但 Create、Delete 与 Patch 被排除——它们属于 `cluster.namespace.manage`，见下文；
+  路由，见下文，它们不放宽通用接口的拒绝，而是挂在各自的权限上；Namespace 的读写也可走通用接口，但写操作
+  按实际目标改用普通、系统或 Agent Namespace 独立权限，见下文；
 - 支持 DryRun、JSON Patch、JSON Merge Patch、Strategic Merge Patch、Server-Side Apply、
   删除传播策略和 UID/resourceVersion 前置条件；Apply 默认 `force=false`；
 - YAML 更新仅接受不超过 4 MiB 的 `application/yaml` 单文档，不接受 Alias、Anchor、重复字段或
@@ -503,9 +503,9 @@ Secret 有独立的类型化接口，不借用 ConfigMap 路由，也不经过�
 拒绝保持原样。Secret 的 YAML 是另一对独立路由
 `GET`、`PUT /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets/{secret_name}/yaml`，
 读要求 `cluster.secret.read`，写要求 `cluster.secret.manage`、CSRF 和幂等键。它复用 YAML 服务的单文档解析与
-身份核对，但走的是 Secret 服务自己的资源访问——那是进程内唯一会设置 `secret_access` 的地方——因此平台对象过滤
-与 Agent 的两条判定原样生效。写入前另有一层校验：拒绝改变 `type`、拒绝写入已 immutable 的对象、拒绝给对象添上
-`app.kubernetes.io/managed-by=zke-server`（那会把它从这个 API 里摘出去）。
+身份核对，但走的是 Secret 服务自己的资源访问——那是进程内唯一会设置 `secret_access` 的地方——因此 Agent 的
+`secret_access` 判定原样生效。写入前另有一层校验：拒绝改变 `type`、拒绝写入已 immutable 的对象、拒绝给普通对象
+添上 `app.kubernetes.io/managed-by=zke-server`。
 
 Console 配置管理页面列出所选命名空间的 ConfigMap，展示键名、总大小和 immutable 标记——列表接口不返回配置
 正文，页面也不去逐个补齐，否则等于把整个命名空间的配置搬进浏览器。内容只在详情页按对象读取：文本值按原样以
@@ -533,25 +533,26 @@ Secret 管理与 ConfigMap 放在同一个「配置管理」分区的两个标�
   唯一会在请求上设置 `secret_access` 的地方，而该字段在 Go 中不可导出，包外无法设置。Secret 的 YAML 路由不是
   例外：它拿到的访问器只接受 `core/v1 Secret`，其余 GVR 一律返回无效输入，因此它不是一个恰好指向 Secret 的
   通用访问器。
-- **Agent 二次判定**：Agent 只在请求带 `secret_access` 时才动 Secret，并且拒绝任何指向自己所在命名空间的
-  Secret 请求——那里放着 Agent 的身份私钥、注册令牌和它据以信任 Server 的证书，读到它们等于冒充这个 Agent。
-  这两条在 Agent 侧检查，而不是信任 Server 的说法。旧版本 Agent 不认识该字段，会继续拒绝，因此 Server 先于
-  Agent 升级时该能力表现为不可用，而不是绕过。Agent 自身命名空间那条拒绝带有独立的 reason，Server 据此返回
-  `403 agent_namespace_forbidden` 而不是 `502 cluster_api_forbidden`：那是 ZKE 的固定规则，既不该被客户端重试，
-  也不该读成「给 Agent 补 Kubernetes 权限就能解决」。
-- **平台对象过滤**：带 `app.kubernetes.io/managed-by=zke-server` 的 Secret 不出现在列表中，按名称读取、更新和
-  删除都返回 `403 secret_managed_by_platform`——这与权限不足是两回事，调用者可能持有全部 Secret 权限，那个对象
-  依然不属于它管理的范围。
+- **Agent 二次判定**：Agent 只在请求带 `secret_access` 时才动 Secret。Agent 自身命名空间不再按名称永久拒绝；
+  Server 要求调用者同时持有 `cluster.agent_namespace.manage` 与对应的 Secret 专用权限。这样被明确授权的管理员可以
+  执行恢复操作，而普通 `cluster.resource.*` 角色仍不能进入该命名空间。升级前已部署的旧 Agent 可能继续返回兼容
+  错误 `agent_namespace_forbidden`，升级后由权限判定接管。
+- **平台对象标记**：`app.kubernetes.io/managed-by=zke-server` 继续标识对象来源，但不再形成永久拒绝。Agent Namespace
+  中的这类 Secret 只有在同时持有 Agent Namespace 与 Secret 专用权限时才可读写；普通对象不能冒用该标记。
 
 安装清单为 Agent ServiceAccount 增加了 Secret 的 `get`、`list`、`create`、`update`、`delete`，没有 `watch`，
 也没有 Subresource。这个授权是该能力得以存在的前提，而不是它的授权边界——边界是上面四条。
 
-这四条约束的是 **Secret 接口**，不是 Secret 里的字节。持有 `cluster.resource.create` 的人可以创建一个挂载了某个
+这四条约束的是 **Secret 接口**，不是 Secret 里的字节。在普通业务命名空间，持有 `cluster.resource.create` 的人可以创建一个挂载了某个
 Secret 的 Deployment 或 Job，再用 `cluster.pod.logs.read` 或 `cluster.pod.exec` 把内容读出来，全程不经过
 `cluster.secret.*`。这不是 ZKE 的缺陷，而是 Kubernetes 本身的权限等价关系——`kubectl` 同样如此——但它意味着
 不授予 `cluster.secret.read` 并不等于该用户读不到 Secret。真正把两者分开，需要同时限制工作负载创建权限；
 在设计角色时应当把 `cluster.resource.create` 与 `cluster.pod.exec`、`cluster.pod.logs.read` 的组合视为等同于
 该 Namespace 的 Secret 读取权限。
+
+`kube-*` 和 Agent 命名空间是例外：创建工作负载分别要求 `cluster.system_namespace.manage` 或
+`cluster.agent_namespace.manage`，Pod Exec 还要同时持有 `cluster.pod.exec`，因此通用资源权限不能通过挂载工作负载
+绕过这两条命名空间边界。
 
 这条等价关系不靠人记住：角色编辑器在选中 `cluster.resource.create` 与两项 Pod 权限之一、却未选中
 `cluster.secret.read` 时直接说明它。不拒绝这种组合——那是运行工作负载并排查它的日常形态，本身完全正当——要修的
@@ -841,9 +842,9 @@ ServiceAccount Token，也不能改写 `roleRef`，API Server 还会拒绝其他
 
 指向 `zke-agent` 的绑定始终被拒绝，创建和给已有绑定追加主体都算——后者一度是缺口：Kubernetes 在这里不会拦，
 因为执行者就是 Agent 自己、目标角色恰好是它自己的权限集；`managed-by` 标签也不会，因为新建的绑定不带该标签。
-带 `app.kubernetes.io/managed-by=zke-server` 的 Agent ServiceAccount、
-Role、ClusterRole 和绑定禁止通过该 API 更新或删除，YAML 路由同样只允许读取；任何对象也不能通过提交把这个标签
-加到自己身上——那会把它从这套 API 中摘出去。
+带 `app.kubernetes.io/managed-by=zke-server` 的 Agent ServiceAccount、Role 和 RoleBinding 不再永久禁用；这些
+命名空间级对象在同时持有 `cluster.rbac.manage` 与 Agent Namespace 权限时可以更新或删除。普通对象仍不能通过提交
+冒用该标签。ZKE 管理的 ClusterRole、ClusterRoleBinding 没有 Namespace 可供独立权限定域，仍保留对象级保护。
 
 Console 授权管理页面按 ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding 五个标签页组织，
 作用域与后端一致：前三类中的 ServiceAccount 和 Role 以及 RoleBinding 按命名空间定域，ClusterRole 与

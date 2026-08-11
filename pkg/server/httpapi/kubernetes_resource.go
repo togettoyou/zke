@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -145,29 +144,10 @@ func (handler *kubernetesResourceHandler) discover(c *gin.Context) {
 		}) {
 			continue
 		}
-		// The verbs describe what this endpoint offers for the type, not what the
-		// Cluster supports — `supportedVerbs` already narrows them to the ones
-		// the generic path implements. Namespaces are the one type where the two
-		// differ: creating and deleting one answers to `cluster.namespace.manage`
-		// and goes through the typed API, so reporting those verbs here would put
-		// a delete button in the resource browser that is refused every time.
-		if resource.Group == "" && resource.Resource == "namespaces" {
-			resource.Verbs = withoutVerbs(resource.Verbs, "create", "delete", "patch")
-		}
 		filtered = append(filtered, resource)
 	}
 	result.Resources = filtered
 	writeSuccess(c, http.StatusOK, result)
-}
-
-func withoutVerbs(verbs []string, removed ...string) []string {
-	result := make([]string, 0, len(verbs))
-	for _, verb := range verbs {
-		if !slices.Contains(removed, verb) {
-			result = append(result, verb)
-		}
-	}
-	return result
 }
 
 func (handler *kubernetesResourceHandler) list(c *gin.Context) {
@@ -663,29 +643,10 @@ func parseGenericResourceIdentityQuery(
 	return genericResourceIdentity(query)
 }
 
-// The identity for the writes that can bring an object into existence or remove
-// it: Create, Patch — server-side Apply creates what is absent — and Delete.
-//
-// Namespaces are refused here and nowhere else on this path. Reading them is
-// `cluster.read` like any other object, and updating an existing one is an
-// ordinary `cluster.resource.update`; it is creating and deleting that answers
-// to `cluster.namespace.manage` and therefore to the typed Namespace API. The
-// resource layer refuses the same three verbs behind a flag no caller outside
-// that package can set, so this is the second statement of one rule, kept next
-// to the endpoint it is about.
 func parseGenericResourceMutationIdentityQuery(
 	query url.Values,
 ) (kubernetesresource.ResourceIdentity, string, error) {
-	resource, namespace, err := parseGenericResourceIdentityQuery(query)
-	if err != nil {
-		return kubernetesresource.ResourceIdentity{}, "", err
-	}
-	if resource.Group == "" && resource.Resource == "namespaces" {
-		return kubernetesresource.ResourceIdentity{}, "", errors.New(
-			"creating and deleting Kubernetes Namespaces requires the dedicated API",
-		)
-	}
-	return resource, namespace, nil
+	return parseGenericResourceIdentityQuery(query)
 }
 
 func genericResourceIdentity(
@@ -766,10 +727,7 @@ func kubernetesResourceErrorMappings() []errorMapping {
 		// repeating it — by a client retry or by granting the Agent more — will
 		// not change that.
 		{kubernetesresource.ErrResourceNotEnabled, http.StatusForbidden, "resource_not_enabled", "requested Kubernetes resource is not enabled for the Cluster Agent"},
-		{kubernetesresource.ErrAgentNamespaceForbidden, http.StatusForbidden, "agent_namespace_forbidden", "Secrets of the Namespace the Cluster Agent runs in are not accessible"},
-		// Produced by the Secret service and reachable from every handler that
-		// reads a Secret, including the YAML one.
-		{kubernetesresource.ErrSecretManagedByPlatform, http.StatusForbidden, "secret_managed_by_platform", "Secret is managed by ZKE and cannot be read or changed here"},
+		{kubernetesresource.ErrAgentNamespaceForbidden, http.StatusForbidden, "agent_namespace_forbidden", "connected Agent still enforces the legacy Agent Namespace Secret boundary"},
 		// 403 rather than 400: the rule is well formed, and the same rule from a
 		// caller holding the Secret permission would be written. What is missing
 		// is the permission being handed out, not the shape of the request.
@@ -778,7 +736,7 @@ func kubernetesResourceErrorMappings() []errorMapping {
 		{kubernetesresource.ErrResponseTooLarge, http.StatusBadGateway, "agent_response_too_large", "Agent response exceeded the configured limit"},
 		{kubernetesresource.ErrIdempotencyConflict, http.StatusConflict, "idempotency_conflict", "idempotency key was already used for another Kubernetes resource request"},
 		{kubernetesresource.ErrUpstreamConflict, http.StatusConflict, "cluster_api_conflict", "Kubernetes resource changed during the request"},
-		{kubernetesresource.ErrManagedResource, http.StatusConflict, "managed_resource", "ZKE-managed authorization resources cannot be changed through this API"},
+		{kubernetesresource.ErrManagedResource, http.StatusConflict, "managed_resource", "cluster-scoped ZKE-managed authorization resources cannot be changed through this API"},
 		{kubernetesresource.ErrInvalidResponse, http.StatusBadGateway, "invalid_agent_response", "Agent returned an invalid resource response"},
 		{kubernetesresource.ErrUpstreamFailure, http.StatusBadGateway, "cluster_api_error", "Kubernetes resource query failed"},
 	}

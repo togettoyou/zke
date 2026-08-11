@@ -130,6 +130,40 @@ func TestClassifyDrainPodRequiresBothExplicitDataLossChoices(t *testing.T) {
 	}
 }
 
+func TestClassifyDrainPodRequiresProtectedNamespaceGrant(t *testing.T) {
+	t.Parallel()
+	controller := true
+	service := &Service{agentNamespace: "zke-system"}
+
+	for _, testCase := range []struct {
+		name      string
+		namespace string
+		input     DrainNodeInput
+		reason    string
+	}{
+		{name: "Kubernetes system", namespace: "kube-system", reason: "SystemNamespacePermissionRequired"},
+		{name: "Agent", namespace: "zke-system", reason: "AgentNamespacePermissionRequired"},
+		{name: "Kubernetes system granted", namespace: "kube-system", input: DrainNodeInput{SystemNamespaceManage: true}},
+		{name: "Agent granted", namespace: "zke-system", input: DrainNodeInput{AgentNamespaceManage: true}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			pod := drainTestPod("controller-pod")
+			pod.Namespace = testCase.namespace
+			pod.OwnerReferences = []metav1.OwnerReference{{Kind: "ReplicaSet", Controller: &controller}}
+			result := service.classifyDrainPod(&pod, testCase.input)
+			if testCase.reason != "" {
+				if result.Decision != DrainPodBlock || result.Reason != testCase.reason {
+					t.Fatalf("classifyDrainPod() = %+v", result)
+				}
+				return
+			}
+			if result.Decision != DrainPodEvict {
+				t.Fatalf("granted Pod was not evictable: %+v", result)
+			}
+		})
+	}
+}
+
 func drainTestPod(name string) corev1.Pod {
 	return corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name + "-uid")},

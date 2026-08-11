@@ -26,6 +26,7 @@ import { SecretForm } from "./SecretForm";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
+import { canUseProtectedNamespace } from "./namespace-permissions";
 
 const PAGE_SIZE = 50;
 
@@ -58,8 +59,11 @@ export function SecretSection({
   tabs,
 }: SecretSectionProps) {
   const { permissions } = useSessionContext();
+  const projectScope = { type: "project" as const, tenantId, projectId };
+  const protectedAccess = canUseProtectedNamespace(permissions, namespace, projectScope);
+  const canRead = protectedAccess && permissions.can("cluster.secret.read", projectScope);
   const pager = useContinuePagination(`${clusterId}/${namespace}`);
-  const list = useSecrets(clusterId, namespace, {
+  const list = useSecrets(canRead ? clusterId : null, namespace, {
     limit: PAGE_SIZE,
     ...(pager.token ? { continue: pager.token } : {}),
   });
@@ -73,11 +77,10 @@ export function SecretSection({
   const deleteApplyKey = useSubmissionKey(deleteTarget !== null);
   const remove = useDeleteSecret();
 
-  const projectScope = { type: "project" as const, tenantId, projectId };
   // Managing a credential is one permission, not three: `cluster.secret.manage`
   // covers create, update and delete, and neither it nor `cluster.secret.read`
   // is implied by the general `cluster.resource.*` permissions.
-  const canManage = permissions.can("cluster.secret.manage", projectScope);
+  const canManage = permissions.can("cluster.secret.manage", projectScope) && protectedAccess;
   const canCreate = canManage;
   const canUpdate = canManage;
   const canDelete = canManage;
@@ -90,7 +93,7 @@ export function SecretSection({
       setDeletePreviewed(false);
       remove.reset();
     },
-    [remove],
+    [remove, setDeleteTarget, setDeletePreviewed],
   );
 
   const columns = useMemo<ColumnDef<KubernetesSecretSummary, unknown>[]>(
@@ -181,7 +184,7 @@ export function SecretSection({
         ),
       },
     ],
-    [canUpdate, canDelete, openDelete],
+    [canUpdate, canDelete, openDelete, setEditingName],
   );
 
   // The confirmation lives outside the branch that picks a view. It is opened
@@ -301,6 +304,17 @@ export function SecretSection({
   }
 
   const nextToken = list.data?.continue_token ?? "";
+
+  if (!canRead) {
+    return (
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        {tabs}
+        <Alert tone="warning">
+          查看该命名空间的 Secret 需要 Secret 读取权限及对应的独立命名空间权限。
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">

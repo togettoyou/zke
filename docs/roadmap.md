@@ -40,9 +40,11 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
       API，概览不跨命名空间聚合事件）
 - [x] 节点列表/详情、调度开关与 PDB 感知 Drain（独立权限、Node/Pod UID 前置条件、完整 Pod 清单、
       无控制器与 emptyDir 显式接受、精确 pods/eviction allowlist、DryRun、幂等、审计和 Console 闭环）
-- [x] Namespace List/Detail/Create/Delete、DryRun、确认、权限、审计与 Console 闭环（创建与删除使用独立的
-      `cluster.namespace.manage`，通用 Resource 接口相应排除 Namespace 的 Create/Delete/Patch，读取与 Update
-      不受影响）
+- [x] Namespace List/Detail/Create/Delete、DryRun、确认、权限、审计与 Console 闭环（普通 Namespace 创建、更新、
+      删除使用独立的 `cluster.namespace.manage`，通用 Resource 接口按实际目标执行同一权限判定）
+- [x] 系统命名空间权限隔离（`kube-*` 与 `default` Namespace 生命周期使用
+      `cluster.system_namespace.manage`，Agent Namespace 使用 `cluster.agent_namespace.manage`；类型化接口、通用
+      Resource/YAML、清单、Node Drain 与 Console 一致判定，Secret/RBAC/Pod 敏感能力仍叠加原专用权限）
 - [x] 工作负载类型化创建、List/Detail、伸缩、滚动重启、CronJob 暂停/恢复、删除，以及 Console
       列表/详情、Namespace 作用域选择器、类型化更新表单、容器端口、完整 Node/Pod 亲和与反亲和、拓扑分布约束，
       以及全部变更的 DryRun、UID/resourceVersion、确认、幂等和审计闭环
@@ -91,8 +93,8 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
       Metrics Server/Adapter、VPA 与 KEDA 控制器仍由集群自行安装）
 - [x] 资源对象浏览器（基于通用 Discovery 与通用 Resource 接口的资源树与对象列表，目录逐条标记 CRD 来源并在
       无法判定时明确报告，支持「仅显示 CRD」筛选、跨命名空间查询、YAML 查看与编辑，以及带 UID/resourceVersion
-      前置条件、DryRun 与确认的删除；Secret、Event 与 Kubernetes 授权资源仍被排除在该入口之外，Namespace 可浏览
-      和编辑但不能在此创建或删除）
+      前置条件、DryRun 与确认的删除；Secret、Event 与 Kubernetes 授权资源仍被排除在该入口之外，Namespace 写入
+      使用独立权限）
 - [x] YAML 清单批量应用与删除（等价 `kubectl apply -f` / `delete -f` 的多文档清单接口：文件上传或手动输入、
       Server-Side Apply 固定 field manager、按集群 Discovery 解析 Kind→GVR、逐文档权限判定并在任一文档不被覆盖时
       整份拒绝且不写入、DryRun 逐条预检、apply 顺序执行与 delete 反序执行、首错停止并报告成功/失败/未执行、
@@ -114,7 +116,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。所有条目
       可下钻到对应列表并停在对应标签页；概览仍不按状态筛选目标列表，按 Namespace 定域的列表进入后只显示当前
       命名空间）
 - [x] 独立终端 App 基础闭环（按目标 Cluster 在 Agent Namespace 创建临时 Terminal Pod、会话专属 ServiceAccount，
-      并通过各业务 Namespace 的 RoleBinding 投影 Secret、RBAC、资源和 Pod Subresource 权限，独立
+      并通过按普通、`kube-*`、Agent Namespace 分类的 RoleBinding 投影 Secret、RBAC、资源和 Pod Subresource 权限，独立
       `cluster.terminal.exec`、显式确认、一次性 WebSocket 票据、权限重验、会话清理与过期资源回收；任意 CRD
       自动授权、逐条 Kubernetes Audit 汇聚及额外 CLI 工具仍未纳入）
 

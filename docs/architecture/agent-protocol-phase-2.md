@@ -818,7 +818,8 @@ streaming protocol 执行；仅在旧 API Server 或 HTTPS 代理无法完成 We
 
 独立终端 App 不使用 Agent ServiceAccount 运行 `kubectl`。Server 将当前用户在目标 Cluster 已持有的
 `cluster.*` 权限快照发送给 Agent；Agent 将 Pod 与 ServiceAccount 固定创建在 Agent Namespace，并通过一个
-命名空间级 ClusterRole 和各现有业务 Namespace 中的 RoleBinding 投射权限，明确排除 Agent Namespace。集群级
+普通、`kube-*` 与 Agent 三类命名空间级 ClusterRole 和各现有 Namespace 中的 RoleBinding 投射权限，受保护
+Namespace 的写入要求对应独立权限。集群级
 资源另用受限 ClusterRole，不使用通配符，也不接受浏览器直接提交 Kubernetes PolicyRule。
 `cluster.terminal.exec` 只控制入口，不隐含 Secret、RBAC 或通用资源权限。会话连接周期重验入口权限和快照中的
 全部权限，撤权后关闭连接并清理临时资源。

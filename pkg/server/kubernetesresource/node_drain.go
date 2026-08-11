@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/validation"
@@ -24,15 +25,17 @@ const nodeDrainPodLimit int64 = 500
 var ErrDrainInventoryTruncated = errors.New("node Pod inventory exceeded the drain safety limit")
 
 type DrainNodeInput struct {
-	ClusterID          string
-	NodeName           string
-	NodeUID            string
-	DryRun             bool
-	Confirm            bool
-	ForceUnmanaged     bool
-	DeleteEmptyDirData bool
-	GracePeriodSeconds *int64
-	IdempotencyKey     string
+	ClusterID             string
+	NodeName              string
+	NodeUID               string
+	DryRun                bool
+	Confirm               bool
+	ForceUnmanaged        bool
+	DeleteEmptyDirData    bool
+	GracePeriodSeconds    *int64
+	IdempotencyKey        string
+	SystemNamespaceManage bool
+	AgentNamespaceManage  bool
 }
 
 type DrainPodDecision string
@@ -117,7 +120,7 @@ func (service *Service) DrainNode(ctx context.Context, input DrainNodeInput) (Dr
 			pod.Name == "" || pod.Namespace == "" || pod.UID == "" || pod.Spec.NodeName != input.NodeName {
 			return DrainNodeResult{}, ErrInvalidResponse
 		}
-		decision := classifyDrainPod(&pod, input)
+		decision := service.classifyDrainPod(&pod, input)
 		if decision.Decision == DrainPodBlock {
 			result.Blocked = true
 		}
@@ -178,6 +181,10 @@ func (service *Service) DrainNode(ctx context.Context, input DrainNodeInput) (Dr
 }
 
 func classifyDrainPod(pod *corev1.Pod, input DrainNodeInput) DrainPod {
+	return (&Service{agentNamespace: "zke-system"}).classifyDrainPod(pod, input)
+}
+
+func (service *Service) classifyDrainPod(pod *corev1.Pod, input DrainNodeInput) DrainPod {
 	result := DrainPod{Namespace: pod.Namespace, Name: pod.Name, UID: string(pod.UID)}
 	if pod.DeletionTimestamp != nil {
 		result.Decision, result.Result, result.Reason = DrainPodSkip, DrainPodSkipped, "Terminating"
@@ -192,6 +199,16 @@ func classifyDrainPod(pod *corev1.Pod, input DrainNodeInput) DrainPod {
 			result.Decision, result.Result, result.Reason = DrainPodSkip, DrainPodSkipped, "DaemonSetPod"
 			return result
 		}
+	}
+	if pod.Namespace == service.agentNamespace && !input.AgentNamespaceManage {
+		result.Decision, result.Result, result.Reason = DrainPodBlock, DrainPodBlocked, "AgentNamespacePermissionRequired"
+		result.Message = "Pod eviction requires cluster.agent_namespace.manage"
+		return result
+	}
+	if strings.HasPrefix(pod.Namespace, "kube-") && !input.SystemNamespaceManage {
+		result.Decision, result.Result, result.Reason = DrainPodBlock, DrainPodBlocked, "SystemNamespacePermissionRequired"
+		result.Message = "Pod eviction requires cluster.system_namespace.manage"
+		return result
 	}
 	controlled := false
 	for _, owner := range pod.OwnerReferences {

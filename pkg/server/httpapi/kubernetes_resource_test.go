@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"slices"
+	"reflect"
 	"testing"
 	"time"
 
@@ -263,10 +263,9 @@ func TestDiscoveryOmitsAuthorizationResources(t *testing.T) {
 	}
 }
 
-// The catalog drives which actions the resource browser offers, so it must not
-// advertise the two verbs this endpoint refuses for Namespaces. Reporting them
-// would put a delete button on screen that is refused on every click.
-func TestDiscoveryNarrowsNamespaceVerbs(t *testing.T) {
+// The generic route exposes Namespace verbs; authorization selects the ordinary,
+// system, or Agent Namespace permission from the concrete target.
+func TestDiscoveryKeepsNamespaceVerbs(t *testing.T) {
 	t.Parallel()
 
 	router := genericResourceHandlerTestRouter(&fakeGenericKubernetesResourceService{
@@ -297,44 +296,20 @@ func TestDiscoveryNarrowsNamespaceVerbs(t *testing.T) {
 		t.Fatalf("catalog = %+v, want the Namespace type", catalog.Resources)
 	}
 
-	verbs := catalog.Resources[0].Verbs
-	for _, refused := range []string{"create", "delete", "patch"} {
-		if slices.Contains(verbs, refused) {
-			t.Errorf("catalog offers %q on Namespaces, which this endpoint refuses", refused)
-		}
-	}
-	// Reading and updating stay: the browser lists Namespaces and its YAML editor
-	// updates them, both of which this endpoint still serves.
-	for _, kept := range []string{"get", "list", "update"} {
-		if !slices.Contains(verbs, kept) {
-			t.Errorf("catalog dropped %q on Namespaces, which this endpoint serves", kept)
-		}
+	if got, want := catalog.Resources[0].Verbs, []string{"get", "list", "create", "update", "patch", "delete"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Namespace verbs = %v, want %v", got, want)
 	}
 }
 
-// Creating and deleting a Namespace answers to `cluster.namespace.manage`, so
-// the generic path — which is authorized by `cluster.resource.*` — must not
-// offer either. Update stays open: changing an existing Namespace's metadata
-// neither creates a scope nor destroys what is in one, and the YAML editor is
-// built on it. Patch is closed because server-side Apply creates what is absent.
-func TestGenericMutationIdentityRejectsNamespaceCreateAndDelete(t *testing.T) {
+// Namespace mutations use the same generic parser; route authorization enforces
+// the dedicated Namespace permission before the handler is entered.
+func TestGenericMutationIdentityAcceptsNamespace(t *testing.T) {
 	t.Parallel()
 
 	namespaces := url.Values{"version": {"v1"}, "resource": {"namespaces"}}
-	if _, _, err := parseGenericResourceMutationIdentityQuery(namespaces); err == nil {
-		t.Error("generic mutation identity accepted core/v1 namespaces")
-	}
-	// The read and update parser is the one the browser and the YAML editor use.
-	if _, _, err := parseGenericResourceIdentityQuery(namespaces); err != nil {
-		t.Errorf("generic identity refused core/v1 namespaces for read and update: %v", err)
-	}
-	// A resource merely named `namespaces` in some other group is a custom
-	// resource like any other, and the exclusion is about the core one.
-	custom := url.Values{
-		"group": {"example.io"}, "version": {"v1"}, "resource": {"namespaces"},
-	}
-	if _, _, err := parseGenericResourceMutationIdentityQuery(custom); err != nil {
-		t.Errorf("generic mutation identity refused example.io/v1 namespaces: %v", err)
+	resource, namespace, err := parseGenericResourceMutationIdentityQuery(namespaces)
+	if err != nil || namespace != "" || resource != (kubernetesresource.ResourceIdentity{Version: "v1", Resource: "namespaces"}) {
+		t.Fatalf("identity = %+v namespace=%q err=%v", resource, namespace, err)
 	}
 }
 

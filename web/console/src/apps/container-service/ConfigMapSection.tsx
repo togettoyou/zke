@@ -23,6 +23,7 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 import { ConfigMapForm } from "./ConfigMapForm";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
+import { namespaceMutationPermission } from "./namespace-permissions";
 import { YamlEditorView } from "./YamlEditorView";
 
 const PAGE_SIZE = 50;
@@ -72,9 +73,18 @@ export function ConfigMapSection({
   const remove = useDeleteConfigMap();
 
   const projectScope = { type: "project" as const, tenantId, projectId };
-  const canCreate = permissions.can("cluster.resource.create", projectScope);
-  const canUpdate = permissions.can("cluster.resource.update", projectScope);
-  const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const canCreate = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.create"),
+    projectScope,
+  );
+  const canUpdate = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.update"),
+    projectScope,
+  );
+  const canDelete = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.delete"),
+    projectScope,
+  );
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.

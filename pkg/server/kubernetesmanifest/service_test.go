@@ -845,14 +845,16 @@ func (access *fakeAccess) DeleteResource(
 func (access *fakeAccess) RequirementForApply(
 	resource kubernetesresource.ResourceIdentity,
 	creating bool,
+	targets ...kubernetesresource.ManifestTarget,
 ) (kubernetesresource.ManifestRequirement, bool, error) {
 	return kubernetesresource.NewManifestAccess(nil, access.grant).
-		RequirementForApply(resource, creating)
+		RequirementForApply(resource, creating, targets...)
 }
 
 func (access *fakeAccess) RequirementForDelete(
 	resource kubernetesresource.ResourceIdentity,
+	targets ...kubernetesresource.ManifestTarget,
 ) (kubernetesresource.ManifestRequirement, bool, error) {
 	return kubernetesresource.NewManifestAccess(nil, access.grant).
-		RequirementForDelete(resource)
+		RequirementForDelete(resource, targets...)
 }

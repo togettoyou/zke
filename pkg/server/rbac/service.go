@@ -107,6 +107,8 @@ var allPermissions = []Permission{
 	PermissionClusterEventRead,
 	PermissionClusterManage,
 	PermissionClusterNamespaceManage,
+	PermissionClusterSystemNamespaceManage,
+	PermissionClusterAgentNamespaceManage,
 	PermissionClusterResourceCreate,
 	PermissionClusterResourceUpdate,
 	PermissionClusterResourceDelete,

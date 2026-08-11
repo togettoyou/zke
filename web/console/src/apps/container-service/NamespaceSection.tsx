@@ -39,6 +39,7 @@ import { NamespaceQuotaView } from "./NamespaceQuotaView";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
+import { namespaceLifecyclePermission, namespaceMutationPermission } from "./namespace-permissions";
 
 const PAGE_SIZE = 50;
 
@@ -74,7 +75,10 @@ export function NamespaceSection({
   const deleteApplyKey = useSubmissionKey(deleteTarget !== null);
   const remove = useDeleteNamespace();
 
-  const projectScope = { type: "project" as const, tenantId, projectId };
+  const projectScope = useMemo(
+    () => ({ type: "project" as const, tenantId, projectId }),
+    [tenantId, projectId],
+  );
   // Creating and deleting a Namespace is its own permission: it adds or removes
   // the scope every other Kubernetes permission is exercised in, and deleting
   // one takes everything inside it. The three general ones below still gate what
@@ -82,9 +86,15 @@ export function NamespaceSection({
   // LimitRange — and the YAML editor, which updates an existing Namespace
   // without being able to create or destroy one.
   const canManageNamespace = permissions.can("cluster.namespace.manage", projectScope);
-  const canCreate = permissions.can("cluster.resource.create", projectScope);
-  const canUpdate = permissions.can("cluster.resource.update", projectScope);
-  const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const canCreateNamespace =
+    canManageNamespace ||
+    permissions.can("cluster.system_namespace.manage", projectScope) ||
+    permissions.can("cluster.agent_namespace.manage", projectScope);
+  const canManageLifecycle = useCallback(
+    (name: string) => permissions.can(namespaceLifecyclePermission(name), projectScope),
+    [permissions, projectScope],
+  );
+  const canCreateTarget = canManageLifecycle(createName.trim());
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -163,14 +173,14 @@ export function NamespaceSection({
             >
               <SlidersHorizontal />
             </Button>
-            {canManageNamespace ? (
+            {canManageLifecycle(row.original.name) ? (
               <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
         ),
       },
     ],
-    [canManageNamespace, openDelete],
+    [canManageLifecycle, openDelete],
   );
 
   const nextToken = namespaces.data?.continue_token ?? "";
@@ -182,7 +192,7 @@ export function NamespaceSection({
           identity={{ clusterId, version: "v1", resource: "namespaces", name: yamlName }}
           clusterName={clusterName}
           kindLabel="Namespace"
-          canUpdate={canUpdate}
+          canUpdate={permissions.can(namespaceLifecyclePermission(yamlName), projectScope)}
           onBack={() => setYamlName(null)}
         />
       ) : quotaName ? (
@@ -190,16 +200,25 @@ export function NamespaceSection({
           clusterId={clusterId}
           clusterName={clusterName}
           namespace={quotaName}
-          canCreate={canCreate}
-          canUpdate={canUpdate}
-          canDelete={canDelete}
+          canCreate={permissions.can(
+            namespaceMutationPermission(quotaName, "cluster.resource.create"),
+            projectScope,
+          )}
+          canUpdate={permissions.can(
+            namespaceMutationPermission(quotaName, "cluster.resource.update"),
+            projectScope,
+          )}
+          canDelete={permissions.can(
+            namespaceMutationPermission(quotaName, "cluster.resource.delete"),
+            projectScope,
+          )}
           onBack={() => setQuotaName(null)}
         />
       ) : detailName ? (
         <NamespaceDetailView
           clusterId={clusterId}
           name={detailName}
-          canDelete={canManageNamespace}
+          canDelete={canManageLifecycle(detailName)}
           onOpenQuota={() => setQuotaName(detailName)}
           onOpenYaml={() => setYamlName(detailName)}
           onDelete={openDelete}
@@ -215,7 +234,7 @@ export function NamespaceSection({
               isFetching={namespaces.isFetching}
               onRefresh={() => void namespaces.refetch()}
             />
-            {canManageNamespace ? (
+            {canCreateNamespace ? (
               <Button
                 variant="primary"
                 size="sm"
@@ -279,6 +298,11 @@ export function NamespaceSection({
               {errorMessage(create.error)}
             </Alert>
           ) : null}
+          {createName.trim() && !canCreateTarget ? (
+            <Alert tone="warning" className="mt-3">
+              当前角色没有创建该类命名空间所需的独立权限。
+            </Alert>
+          ) : null}
           <DialogFooter>
             <Button
               variant="ghost"
@@ -289,7 +313,7 @@ export function NamespaceSection({
             </Button>
             <Button
               variant="primary"
-              disabled={!createName.trim() || create.isPending}
+              disabled={!createName.trim() || !canCreateTarget || create.isPending}
               onClick={() => {
                 void create
                   .mutateAsync({

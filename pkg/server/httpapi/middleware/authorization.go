@@ -1,10 +1,14 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +20,7 @@ import (
 
 type AuthorizationConfig struct {
 	OperationTimeout time.Duration
+	AgentNamespace   string
 }
 
 type Authorization struct {
@@ -97,18 +102,176 @@ func (authorization *Authorization) RequireCluster(
 	permission rbac.Permission,
 	clusterParameter string,
 ) gin.HandlerFunc {
-	return authorization.require(permission, "cluster", clusterParameter, func(
-		ctx context.Context,
-		userID string,
-		c *gin.Context,
-	) (rbac.ResolvedScope, error) {
-		return authorization.service.AuthorizeCluster(
-			ctx,
-			userID,
-			permission,
-			c.Param(clusterParameter),
-		)
-	})
+	return func(c *gin.Context) {
+		effective := authorization.effectiveClusterPermission(c, permission)
+		authorization.require(effective, "cluster", clusterParameter, func(
+			ctx context.Context,
+			userID string,
+			c *gin.Context,
+		) (rbac.ResolvedScope, error) {
+			return authorization.service.AuthorizeCluster(
+				ctx,
+				userID,
+				effective,
+				c.Param(clusterParameter),
+			)
+		})(c)
+	}
+}
+
+// effectiveClusterPermission keeps ordinary resource powers out of the two
+// namespaces that host Kubernetes control-plane add-ons and the ZKE Agent.
+// Family-specific permissions such as Secret and RBAC remain unchanged and are
+// combined with the namespace permission by RequireProtectedNamespaceAccess.
+func (authorization *Authorization) effectiveClusterPermission(
+	c *gin.Context,
+	permission rbac.Permission,
+) rbac.Permission {
+	protected := authorization.protectedNamespacePermission(c)
+	switch permission {
+	case rbac.PermissionClusterNamespaceManage,
+		rbac.PermissionClusterResourceCreate,
+		rbac.PermissionClusterResourceUpdate,
+		rbac.PermissionClusterResourceDelete:
+		if protected != "" {
+			return protected
+		}
+		if isNamespaceObjectMutation(c) {
+			return rbac.PermissionClusterNamespaceManage
+		}
+		return permission
+	default:
+		return permission
+	}
+}
+
+func isNamespaceObjectMutation(c *gin.Context) bool {
+	return c.Request.Method != http.MethodGet &&
+		strings.Contains(c.FullPath(), "/kubernetes/resources") &&
+		c.Query("group") == "" && c.Query("version") == "v1" &&
+		c.Query("resource") == "namespaces"
+}
+
+// RequireProtectedNamespaceAccess adds the namespace boundary to sensitive
+// families whose own permission must remain in force (Secrets, Kubernetes RBAC,
+// Pod exec and port-forward). General resource and Namespace lifecycle routes
+// are switched to the namespace permission directly by RequireCluster.
+func (authorization *Authorization) RequireProtectedNamespaceAccess(
+	clusterParameter string,
+) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		permission := authorization.protectedNamespacePermission(c)
+		if permission == "" || !protectedNamespaceRequestNeedsAdditionalGate(c) {
+			c.Next()
+			return
+		}
+		authorization.require(permission, "cluster", clusterParameter, func(
+			ctx context.Context,
+			userID string,
+			c *gin.Context,
+		) (rbac.ResolvedScope, error) {
+			return authorization.service.AuthorizeCluster(
+				ctx,
+				userID,
+				permission,
+				c.Param(clusterParameter),
+			)
+		})(c)
+	}
+}
+
+func (authorization *Authorization) protectedNamespacePermission(c *gin.Context) rbac.Permission {
+	namespace := c.Param("namespace_name")
+	namespaceObjectTarget := false
+	if namespace == "" {
+		namespace = c.Query("namespace")
+	}
+	// Generic Namespace writes are cluster-scoped, so their target name is the
+	// resource path segment rather than the namespace query parameter.
+	if namespace == "" && c.Param("resource_name") != "" &&
+		c.Query("group") == "" && c.Query("version") == "v1" &&
+		c.Query("resource") == "namespaces" {
+		namespace = c.Param("resource_name")
+		namespaceObjectTarget = true
+	}
+	if namespace == "" && c.Request.Method == http.MethodPost &&
+		(c.FullPath() == "/api/v1/clusters/:cluster_id/namespaces" ||
+			(c.FullPath() == "/api/v1/clusters/:cluster_id/kubernetes/resources" &&
+				c.Query("group") == "" && c.Query("version") == "v1" &&
+				c.Query("resource") == "namespaces")) {
+		namespace = namespaceCreateTarget(c)
+		namespaceObjectTarget = true
+	}
+	if namespace == "" {
+		return ""
+	}
+	agentNamespace := authorization.config.AgentNamespace
+	if agentNamespace == "" {
+		agentNamespace = "zke-system"
+	}
+	if namespace == agentNamespace {
+		return rbac.PermissionClusterAgentNamespaceManage
+	}
+	if strings.HasPrefix(namespace, "kube-") ||
+		(namespace == "default" && (namespaceObjectTarget || isNamespaceLifecycleRoute(c) ||
+			(c.Request.Method == http.MethodPost &&
+				c.FullPath() == "/api/v1/clusters/:cluster_id/namespaces"))) {
+		return rbac.PermissionClusterSystemNamespaceManage
+	}
+	return ""
+}
+
+const namespaceCreateTargetContextKey = "zke.namespace_create_target"
+
+func namespaceCreateTarget(c *gin.Context) string {
+	if cached, exists := c.Get(namespaceCreateTargetContextKey); exists {
+		value, _ := cached.(string)
+		return value
+	}
+	if c.Request.Body == nil {
+		c.Set(namespaceCreateTargetContextKey, "")
+		return ""
+	}
+	// The Namespace create handler has the same 64 KiB ceiling. Restore the body
+	// exactly so this authorization look-ahead is invisible to normal decoding.
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64*1024+1))
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || len(body) > 64*1024 {
+		c.Set(namespaceCreateTargetContextKey, "")
+		return ""
+	}
+	var request struct {
+		Name     string `json:"name"`
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		request.Name = ""
+	}
+	if request.Name == "" {
+		request.Name = request.Metadata.Name
+	}
+	c.Set(namespaceCreateTargetContextKey, request.Name)
+	return request.Name
+}
+
+func isNamespaceLifecycleRoute(c *gin.Context) bool {
+	return c.FullPath() == "/api/v1/clusters/:cluster_id/namespaces/:namespace_name" &&
+		c.Request.Method != http.MethodGet
+}
+
+func protectedNamespaceRequestNeedsAdditionalGate(c *gin.Context) bool {
+	path := c.FullPath()
+	if c.Request.Method != http.MethodGet {
+		return strings.Contains(path, "/secrets") ||
+			strings.Contains(path, "/authorization") ||
+			strings.Contains(path, "/terminal-sessions") ||
+			strings.Contains(path, "/access-sessions")
+	}
+	// Reading a Secret retains cluster.secret.read and additionally requires the
+	// protected namespace grant. Other reads remain ordinary cluster.read.
+	return strings.Contains(path, "/secrets") || strings.Contains(path, "/terminal-sessions")
 }
 
 func (authorization *Authorization) require(
@@ -315,6 +478,8 @@ func permissionTargetType(permission rbac.Permission) string {
 		rbac.PermissionClusterConnectionRevoke:
 		return auditaction.TargetCluster
 	case rbac.PermissionClusterNamespaceManage,
+		rbac.PermissionClusterSystemNamespaceManage,
+		rbac.PermissionClusterAgentNamespaceManage,
 		rbac.PermissionClusterNodeDrain,
 		rbac.PermissionClusterResourceCreate,
 		rbac.PermissionClusterResourceUpdate,

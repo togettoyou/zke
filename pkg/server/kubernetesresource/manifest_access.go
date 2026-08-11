@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -37,13 +38,15 @@ var ErrManifestResourceRefused = errors.New("Kubernetes resource cannot be writt
 // middleware.SecretGrant uses them: this package must not depend on
 // `pkg/server/rbac`, and the names belong to the layer that reads them.
 type ManifestGrant struct {
-	ResourceCreate  bool
-	ResourceUpdate  bool
-	ResourceDelete  bool
-	NamespaceManage bool
-	SecretRead      bool
-	SecretManage    bool
-	RBACManage      bool
+	ResourceCreate        bool
+	ResourceUpdate        bool
+	ResourceDelete        bool
+	NamespaceManage       bool
+	SecretRead            bool
+	SecretManage          bool
+	RBACManage            bool
+	SystemNamespaceManage bool
+	AgentNamespaceManage  bool
 }
 
 // ManifestFamily names which set of rules a document answers to. It mirrors the
@@ -69,13 +72,20 @@ const (
 type ManifestRequirement string
 
 const (
-	ManifestRequirementResourceCreate  ManifestRequirement = "resource_create"
-	ManifestRequirementResourceUpdate  ManifestRequirement = "resource_update"
-	ManifestRequirementResourceDelete  ManifestRequirement = "resource_delete"
-	ManifestRequirementNamespaceManage ManifestRequirement = "namespace_manage"
-	ManifestRequirementSecretManage    ManifestRequirement = "secret_manage"
-	ManifestRequirementRBACManage      ManifestRequirement = "rbac_manage"
+	ManifestRequirementResourceCreate        ManifestRequirement = "resource_create"
+	ManifestRequirementResourceUpdate        ManifestRequirement = "resource_update"
+	ManifestRequirementResourceDelete        ManifestRequirement = "resource_delete"
+	ManifestRequirementNamespaceManage       ManifestRequirement = "namespace_manage"
+	ManifestRequirementSecretManage          ManifestRequirement = "secret_manage"
+	ManifestRequirementRBACManage            ManifestRequirement = "rbac_manage"
+	ManifestRequirementSystemNamespaceManage ManifestRequirement = "system_namespace_manage"
+	ManifestRequirementAgentNamespaceManage  ManifestRequirement = "agent_namespace_manage"
 )
+
+type ManifestTarget struct {
+	Namespace string
+	Name      string
+}
 
 // ManifestFamilyFor answers which family a resource belongs to.
 //
@@ -101,13 +111,10 @@ func ManifestFamilyFor(resource ResourceIdentity) ManifestFamily {
 // ManifestAccess applies and deletes manifest documents under one resolved
 // grant.
 //
-// It exists because `secretAccess` and `namespaceAccess` are unexported: a
-// manifest service living outside this package cannot set them, which is exactly
-// the invariant that keeps Secrets and Namespace lifecycle behind their own
-// permissions. This type is the one place those flags are opened, and it opens
-// them only for a document whose family the grant already covers — so the
-// boundary is not widened, it is reached through the same decision the typed
-// APIs make at their routes.
+// It exists because `secretAccess` is unexported: a manifest service living
+// outside this package cannot set it. This type opens that flag only after the
+// matching Secret grant is checked. Namespace permissions are resolved from
+// the manifest target before a mutation reaches the generic resource service.
 type ManifestAccess struct {
 	service *Service
 	grant   ManifestGrant
@@ -130,8 +137,24 @@ func NewManifestAccess(service *Service, grant ManifestGrant) *ManifestAccess {
 func (access *ManifestAccess) RequirementForApply(
 	resource ResourceIdentity,
 	creating bool,
+	targets ...ManifestTarget,
 ) (ManifestRequirement, bool, error) {
-	switch ManifestFamilyFor(resource) {
+	family := ManifestFamilyFor(resource)
+	if requirement, allowed, protected := access.protectedNamespaceRequirement(resource, targets); protected {
+		if family == ManifestFamilyRefused {
+			return "", false, ErrManifestResourceRefused
+		}
+		if !allowed {
+			return requirement, false, nil
+		}
+		// The protected Namespace permission replaces ordinary resource and
+		// Namespace lifecycle permissions. Sensitive resource families retain
+		// their own permission as an additional boundary.
+		if family != ManifestFamilySecret && family != ManifestFamilyAuthorization {
+			return requirement, true, nil
+		}
+	}
+	switch family {
 	case ManifestFamilyRefused:
 		return "", false, ErrManifestResourceRefused
 	case ManifestFamilySecret:
@@ -139,10 +162,8 @@ func (access *ManifestAccess) RequirementForApply(
 	case ManifestFamilyAuthorization:
 		return ManifestRequirementRBACManage, access.grant.RBACManage, nil
 	case ManifestFamilyNamespace:
-		// Applying a Namespace is `cluster.namespace.manage` whether or not it
-		// exists. Apply creates the object when it is absent, and a rule that
-		// asked for the weaker permission whenever the object happened to be
-		// there would be a rule an operator could satisfy by applying twice.
+		// Applying an ordinary Namespace is `cluster.namespace.manage` whether or
+		// not it exists. Protected targets returned above use their own permission.
 		return ManifestRequirementNamespaceManage, access.grant.NamespaceManage, nil
 	default:
 		if creating {
@@ -156,8 +177,21 @@ func (access *ManifestAccess) RequirementForApply(
 // to and whether the grant covers it.
 func (access *ManifestAccess) RequirementForDelete(
 	resource ResourceIdentity,
+	targets ...ManifestTarget,
 ) (ManifestRequirement, bool, error) {
-	switch ManifestFamilyFor(resource) {
+	family := ManifestFamilyFor(resource)
+	if requirement, allowed, protected := access.protectedNamespaceRequirement(resource, targets); protected {
+		if family == ManifestFamilyRefused {
+			return "", false, ErrManifestResourceRefused
+		}
+		if !allowed {
+			return requirement, false, nil
+		}
+		if family != ManifestFamilySecret && family != ManifestFamilyAuthorization {
+			return requirement, true, nil
+		}
+	}
+	switch family {
 	case ManifestFamilyRefused:
 		return "", false, ErrManifestResourceRefused
 	case ManifestFamilySecret:
@@ -169,6 +203,32 @@ func (access *ManifestAccess) RequirementForDelete(
 	default:
 		return ManifestRequirementResourceDelete, access.grant.ResourceDelete, nil
 	}
+}
+
+func (access *ManifestAccess) protectedNamespaceRequirement(
+	resource ResourceIdentity,
+	targets []ManifestTarget,
+) (ManifestRequirement, bool, bool) {
+	if len(targets) == 0 {
+		return "", false, false
+	}
+	target := targets[0]
+	namespace := target.Namespace
+	if resource.Group == "" && resource.Version == "v1" && resource.Resource == "namespaces" {
+		namespace = target.Name
+	}
+	agentNamespace := "zke-system"
+	if access.service != nil && access.service.agentNamespace != "" {
+		agentNamespace = access.service.agentNamespace
+	}
+	if namespace == agentNamespace {
+		return ManifestRequirementAgentNamespaceManage, access.grant.AgentNamespaceManage, true
+	}
+	if strings.HasPrefix(namespace, "kube-") ||
+		(resource.Group == "" && resource.Resource == "namespaces" && namespace == "default") {
+		return ManifestRequirementSystemNamespaceManage, access.grant.SystemNamespaceManage, true
+	}
+	return "", false, false
 }
 
 // DiscoverResources reports the Cluster's API catalog for manifest resolution.
@@ -308,6 +368,9 @@ func (access *ManifestAccess) GetResource(
 	if family == ManifestFamilyRefused {
 		return nil, ErrManifestResourceRefused
 	}
+	if _, allowed, protected := access.protectedNamespaceRequirement(input.Resource, []ManifestTarget{{Namespace: input.Namespace, Name: input.Name}}); protected && !allowed {
+		return nil, ErrManifestForbidden
+	}
 	// Reading a Secret's contents is `cluster.secret.read`, and it is a separate
 	// question from writing one: a caller holding only `cluster.secret.manage`
 	// still needs the live object to be compared against, so either permission
@@ -360,6 +423,7 @@ func (access *ManifestAccess) ApplyResource(
 	_, allowed, err := access.RequirementForApply(
 		input.Resource,
 		input.Current == nil,
+		ManifestTarget{Namespace: input.Namespace, Name: input.Name},
 	)
 	if err != nil {
 		return nil, err
@@ -386,10 +450,9 @@ func (access *ManifestAccess) ApplyResource(
 			FieldManager: input.FieldManager,
 			Force:        input.Force,
 		},
-		Confirm:         input.Confirm,
-		IdempotencyKey:  input.IdempotencyKey,
-		secretAccess:    family == ManifestFamilySecret,
-		namespaceAccess: family == ManifestFamilyNamespace,
+		Confirm:        input.Confirm,
+		IdempotencyKey: input.IdempotencyKey,
+		secretAccess:   family == ManifestFamilySecret,
 	})
 }
 
@@ -417,7 +480,7 @@ func (access *ManifestAccess) DeleteResource(
 		return ErrAgentUnsupported
 	}
 	family := ManifestFamilyFor(input.Resource)
-	_, allowed, err := access.RequirementForDelete(input.Resource)
+	_, allowed, err := access.RequirementForDelete(input.Resource, ManifestTarget{Namespace: input.Namespace, Name: input.Name})
 	if err != nil {
 		return err
 	}
@@ -447,9 +510,8 @@ func (access *ManifestAccess) DeleteResource(
 			UID:             uid,
 			ResourceVersion: resourceVersion,
 		},
-		IdempotencyKey:  input.IdempotencyKey,
-		secretAccess:    family == ManifestFamilySecret,
-		namespaceAccess: family == ManifestFamilyNamespace,
+		IdempotencyKey: input.IdempotencyKey,
+		secretAccess:   family == ManifestFamilySecret,
 	})
 }
 
@@ -471,20 +533,18 @@ func (access *ManifestAccess) guardApply(
 		if err != nil {
 			return ErrInvalidInput
 		}
-		if platformManagedLabels(wanted.Labels) {
-			return ErrPlatformLabelClaimed
-		}
 		if current == nil {
+			if platformManagedLabels(wanted.Labels) {
+				return ErrPlatformLabelClaimed
+			}
 			return nil
 		}
 		live, err := secretFromObject(current)
 		if err != nil {
 			return ErrInvalidResponse
 		}
-		// ZKE's own Secrets are not readable or writable through any operator
-		// API, and a manifest is no exception.
-		if platformManagedLabels(live.Labels) {
-			return ErrSecretManagedByPlatform
+		if platformManagedLabels(wanted.Labels) && !platformManagedLabels(live.Labels) {
+			return ErrPlatformLabelClaimed
 		}
 		// The grant is not passed on: this guard is about a Secret object, not
 		// about a PolicyRule handing Secret access to somebody else, and the
@@ -509,23 +569,11 @@ func (access *ManifestAccess) guardDelete(
 	family ManifestFamily,
 	current map[string]any,
 ) error {
-	switch family {
-	case ManifestFamilySecret:
-		live, err := secretFromObject(current)
-		if err != nil {
-			return ErrInvalidResponse
-		}
-		if platformManagedLabels(live.Labels) {
-			return ErrSecretManagedByPlatform
-		}
-		return nil
-	case ManifestFamilyAuthorization:
+	if family == ManifestFamilyAuthorization {
 		live := &unstructured.Unstructured{Object: current}
-		if managedAuthorizationLabels(live.GetLabels()) {
+		if live.GetNamespace() == "" && managedAuthorizationLabels(live.GetLabels()) {
 			return ErrManagedResource
 		}
-		return nil
-	default:
-		return nil
 	}
+	return nil
 }

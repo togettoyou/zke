@@ -23,6 +23,8 @@ const (
 	PermissionClusterEventRead                  Permission = "cluster.event.read"
 	PermissionClusterManage                     Permission = "cluster.manage"
 	PermissionClusterNamespaceManage            Permission = "cluster.namespace.manage"
+	PermissionClusterSystemNamespaceManage      Permission = "cluster.system_namespace.manage"
+	PermissionClusterAgentNamespaceManage       Permission = "cluster.agent_namespace.manage"
 	PermissionClusterResourceCreate             Permission = "cluster.resource.create"
 	PermissionClusterResourceUpdate             Permission = "cluster.resource.update"
 	PermissionClusterResourceDelete             Permission = "cluster.resource.delete"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -77,6 +78,8 @@ func createKubernetesTerminalSession(
 ) (*agentv1.TerminalSessionResponse, error) {
 	name := terminalResourceName(request.GetSessionId())
 	namespacedRoleName := name + "-namespaced"
+	systemRoleName := namespacedRoleName + "-system"
+	agentRoleName := namespacedRoleName + "-agent"
 	expiresAt := time.Now().UTC().Add(time.Duration(request.GetTtlSeconds()) * time.Second)
 	labels := map[string]string{
 		"app.kubernetes.io/name":       "zke-terminal",
@@ -91,7 +94,6 @@ func createKubernetesTerminalSession(
 	if err != nil {
 		return kubernetesTerminalSessionFailure(response, err), nil
 	}
-	businessNamespaces := terminalBusinessNamespaceNames(namespaces.Items, request.GetNamespace())
 	clusterPolicyRules := terminalClusterPolicyRules(request.GetPermissions())
 	if terminalHasPermission(request.GetPermissions(), "cluster.rbac.manage") {
 		clusterRoles, listErr := client.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
@@ -110,14 +112,20 @@ func createKubernetesTerminalSession(
 		ObjectMeta:                   metav1.ObjectMeta{Name: name, Namespace: request.GetNamespace(), Labels: labels, Annotations: annotations},
 		AutomountServiceAccountToken: terminalPointer(true),
 	}
-	namespacedRole := &rbacv1.ClusterRole{
+	namespacedRoles := []*rbacv1.ClusterRole{{
 		ObjectMeta: metav1.ObjectMeta{Name: namespacedRoleName, Labels: labels, Annotations: annotations},
 		Rules:      terminalPolicyRules(request.GetPermissions()),
-	}
+	}, {
+		ObjectMeta: metav1.ObjectMeta{Name: systemRoleName, Labels: labels, Annotations: annotations},
+		Rules:      terminalProtectedPolicyRules(request.GetPermissions(), "cluster.system_namespace.manage"),
+	}, {
+		ObjectMeta: metav1.ObjectMeta{Name: agentRoleName, Labels: labels, Annotations: annotations},
+		Rules:      terminalProtectedPolicyRules(request.GetPermissions(), "cluster.agent_namespace.manage"),
+	}}
 	clusterName := name + "-cluster"
 	clusterRole := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: clusterName, Labels: labels, Annotations: annotations},
 		Rules: append(clusterPolicyRules,
-			terminalNamespaceLifecyclePolicyRules(request.GetPermissions(), businessNamespaces)...)}
+			terminalNamespaceLifecyclePolicyRules(request.GetPermissions(), namespaces.Items, request.GetNamespace())...)}
 	clusterRoleBinding := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Labels: labels, Annotations: annotations},
 		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: request.GetNamespace()}},
@@ -165,8 +173,10 @@ func createKubernetesTerminalSession(
 	if _, err := client.CoreV1().ServiceAccounts(request.GetNamespace()).Create(ctx, serviceAccount, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return kubernetesTerminalSessionFailure(response, err), nil
 	}
-	if _, err := client.RbacV1().ClusterRoles().Create(ctx, namespacedRole, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return kubernetesTerminalSessionFailure(response, err), nil
+	for _, namespacedRole := range namespacedRoles {
+		if _, err := client.RbacV1().ClusterRoles().Create(ctx, namespacedRole, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return kubernetesTerminalSessionFailure(response, err), nil
+		}
 	}
 	for _, roleBinding := range roleBindings {
 		if _, err := client.RbacV1().RoleBindings(roleBinding.Namespace).Create(ctx, roleBinding, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -220,44 +230,63 @@ func terminalNamespaceRoleBindings(
 ) []*rbacv1.RoleBinding {
 	bindings := make([]*rbacv1.RoleBinding, 0, len(namespaces))
 	for _, namespace := range namespaces {
-		if namespace.Name == terminalNamespace || namespace.Status.Phase == corev1.NamespaceTerminating {
+		if namespace.Status.Phase == corev1.NamespaceTerminating {
 			continue
+		}
+		targetRoleName := roleName
+		if namespace.Name == terminalNamespace {
+			targetRoleName += "-agent"
+		} else if strings.HasPrefix(namespace.Name, "kube-") {
+			targetRoleName += "-system"
 		}
 		bindings = append(bindings, &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{Name: serviceAccountName, Namespace: namespace.Name, Labels: labels, Annotations: annotations},
 			Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: serviceAccountName, Namespace: terminalNamespace}},
-			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: roleName},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: targetRoleName},
 		})
 	}
 	return bindings
 }
 
-func terminalBusinessNamespaceNames(namespaces []corev1.Namespace, terminalNamespace string) []string {
-	names := make([]string, 0, len(namespaces))
-	for _, namespace := range namespaces {
-		if namespace.Name != terminalNamespace {
-			names = append(names, namespace.Name)
-		}
-	}
-	return names
-}
-
-func terminalNamespaceLifecyclePolicyRules(permissions, namespaceNames []string) []rbacv1.PolicyRule {
+func terminalNamespaceLifecyclePolicyRules(
+	permissions []string,
+	namespaces []corev1.Namespace,
+	agentNamespace string,
+) []rbacv1.PolicyRule {
 	held := make(map[string]bool, len(permissions))
 	for _, permission := range permissions {
 		held[permission] = true
 	}
-	rules := make([]rbacv1.PolicyRule, 0, 3)
-	if held["cluster.resource.update"] && len(namespaceNames) > 0 {
-		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"namespaces"},
-			ResourceNames: namespaceNames, Verbs: []string{"update", "patch"}})
-	}
-	if held["cluster.namespace.manage"] {
-		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"create"}})
-		if len(namespaceNames) > 0 {
-			rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"namespaces"},
-				ResourceNames: namespaceNames, Verbs: []string{"delete"}})
+	ordinary, system, agent := make([]string, 0, len(namespaces)), make([]string, 0, 5), make([]string, 0, 1)
+	for _, namespace := range namespaces {
+		switch {
+		case namespace.Name == agentNamespace:
+			agent = append(agent, namespace.Name)
+		case namespace.Name == "default" || strings.HasPrefix(namespace.Name, "kube-"):
+			system = append(system, namespace.Name)
+		default:
+			ordinary = append(ordinary, namespace.Name)
 		}
+	}
+	rules := make([]rbacv1.PolicyRule, 0, 4)
+	for _, item := range []struct {
+		permission string
+		names      []string
+	}{
+		{"cluster.namespace.manage", ordinary},
+		{"cluster.system_namespace.manage", system},
+		{"cluster.agent_namespace.manage", agent},
+	} {
+		if held[item.permission] && len(item.names) > 0 {
+			rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"namespaces"},
+				ResourceNames: item.names, Verbs: []string{"update", "patch", "delete"}})
+		}
+	}
+	// Kubernetes RBAC cannot restrict Namespace create by object name. Grant it
+	// only when the session holds all three Namespace classes, so no name can
+	// cross a permission boundary after the request reaches the API Server.
+	if held["cluster.namespace.manage"] && held["cluster.system_namespace.manage"] && held["cluster.agent_namespace.manage"] {
+		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"create"}})
 	}
 	return rules
 }
@@ -304,21 +333,31 @@ func terminalHasPermission(permissions []string, want string) bool {
 }
 
 func terminalPolicyRules(permissions []string) []rbacv1.PolicyRule {
+	return terminalNamespacePolicyRules(permissions, "")
+}
+
+func terminalProtectedPolicyRules(permissions []string, protectedPermission string) []rbacv1.PolicyRule {
+	return terminalNamespacePolicyRules(permissions, protectedPermission)
+}
+
+func terminalNamespacePolicyRules(permissions []string, protectedPermission string) []rbacv1.PolicyRule {
 	held := make(map[string]bool, len(permissions))
 	for _, permission := range permissions {
 		held[permission] = true
 	}
+	protected := protectedPermission != ""
+	protectedManage := !protected || held[protectedPermission]
 	verbs := make([]string, 0, 7)
 	if held["cluster.read"] {
 		verbs = append(verbs, "get", "list", "watch")
 	}
-	if held["cluster.resource.create"] {
+	if protectedManage && (protected || held["cluster.resource.create"]) {
 		verbs = append(verbs, "create")
 	}
-	if held["cluster.resource.update"] {
+	if protectedManage && (protected || held["cluster.resource.update"]) {
 		verbs = append(verbs, "update", "patch")
 	}
-	if held["cluster.resource.delete"] {
+	if protectedManage && (protected || held["cluster.resource.delete"]) {
 		verbs = append(verbs, "delete")
 	}
 	rules := make([]rbacv1.PolicyRule, 0, 12)
@@ -344,17 +383,17 @@ func terminalPolicyRules(permissions []string) []rbacv1.PolicyRule {
 	if held["cluster.pod.logs.read"] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}})
 	}
-	if held["cluster.pod.exec"] {
+	if protectedManage && held["cluster.pod.exec"] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"create"}})
 	}
-	if held["cluster.pod.port_forward"] {
+	if protectedManage && held["cluster.pod.port_forward"] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/portforward"}, Verbs: []string{"create"}})
 	}
 	secretVerbs := make([]string, 0, 7)
-	if held["cluster.secret.read"] {
+	if protectedManage && held["cluster.secret.read"] {
 		secretVerbs = append(secretVerbs, "get", "list", "watch")
 	}
-	if held["cluster.secret.manage"] {
+	if protectedManage && held["cluster.secret.manage"] {
 		secretVerbs = append(secretVerbs, "create", "update", "patch", "delete")
 	}
 	if len(secretVerbs) > 0 {
@@ -364,7 +403,7 @@ func terminalPolicyRules(permissions []string) []rbacv1.PolicyRule {
 	if held["cluster.rbac.read"] {
 		rbacVerbs = append(rbacVerbs, "get", "list", "watch")
 	}
-	if held["cluster.rbac.manage"] {
+	if protectedManage && held["cluster.rbac.manage"] {
 		rbacVerbs = append(rbacVerbs, "create", "update", "delete")
 	}
 	if len(rbacVerbs) > 0 {
@@ -444,7 +483,8 @@ func deleteKubernetesTerminalSession(ctx context.Context, client kubernetes.Inte
 		cleanupErrors = append(cleanupErrors, err)
 	} else {
 		for _, binding := range bindings.Items {
-			if binding.Name != name || binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != name+"-namespaced" {
+			if binding.Name != name || binding.RoleRef.Kind != "ClusterRole" ||
+				!slices.Contains([]string{name + "-namespaced", name + "-namespaced-system", name + "-namespaced-agent"}, binding.RoleRef.Name) {
 				continue
 			}
 			if err := client.RbacV1().RoleBindings(binding.Namespace).Delete(ctx, binding.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
@@ -452,7 +492,7 @@ func deleteKubernetesTerminalSession(ctx context.Context, client kubernetes.Inte
 			}
 		}
 	}
-	for _, clusterRoleName := range []string{name + "-cluster", name + "-namespaced"} {
+	for _, clusterRoleName := range []string{name + "-cluster", name + "-namespaced", name + "-namespaced-system", name + "-namespaced-agent"} {
 		if err := client.RbacV1().ClusterRoles().Delete(ctx, clusterRoleName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			cleanupErrors = append(cleanupErrors, err)
 		}

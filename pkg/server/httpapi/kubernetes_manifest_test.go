@@ -31,6 +31,8 @@ func TestManifestRequirementsAreAllPublishedAsPermissions(t *testing.T) {
 		kubernetesresource.ManifestRequirementNamespaceManage,
 		kubernetesresource.ManifestRequirementSecretManage,
 		kubernetesresource.ManifestRequirementRBACManage,
+		kubernetesresource.ManifestRequirementSystemNamespaceManage,
+		kubernetesresource.ManifestRequirementAgentNamespaceManage,
 	}
 	seen := make(map[string]kubernetesresource.ManifestRequirement, len(requirements))
 	for _, requirement := range requirements {
@@ -330,7 +332,6 @@ func TestManifestDocumentErrorsReuseTheSharedCodes(t *testing.T) {
 		{kubernetesmanifest.ErrDocumentInvalid, "invalid_document"},
 		{kubernetesresource.ErrUpstreamRejected, "cluster_api_rejected"},
 		{kubernetesresource.ErrIdempotencyConflict, "idempotency_conflict"},
-		{kubernetesresource.ErrSecretManagedByPlatform, "secret_managed_by_platform"},
 	}
 	for _, testCase := range testCases {
 		code, message := manifestDocumentError(testCase.err)

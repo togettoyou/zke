@@ -36,6 +36,7 @@ import { PodAccessView } from "./PodAccessView";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
+import { canUseProtectedNamespace, namespaceMutationPermission } from "./namespace-permissions";
 
 /**
  * The terminal is loaded on demand.
@@ -101,13 +102,20 @@ export function PodSection({
   const remove = useDeletePod();
 
   const projectScope = { type: "project" as const, tenantId, projectId };
-  const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const canDelete = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.delete"),
+    projectScope,
+  );
   // Reading logs is its own permission rather than part of reading the Cluster:
   // log bodies carry whatever the application decided to print.
   const canReadLogs = permissions.can("cluster.pod.logs.read", projectScope);
-  const canUpdate = permissions.can("cluster.resource.update", projectScope);
+  const canUpdate = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.update"),
+    projectScope,
+  );
   // Opening a shell is its own permission, granted to admin only by default.
-  const canExec = permissions.can("cluster.pod.exec", projectScope);
+  const protectedAccess = canUseProtectedNamespace(permissions, namespace, projectScope);
+  const canExec = protectedAccess && permissions.can("cluster.pod.exec", projectScope);
   const canCreateTerminalRecording = permissions.can(
     "cluster.pod.terminal_recording.create",
     projectScope,
@@ -116,7 +124,7 @@ export function PodSection({
     "cluster.pod.terminal_recording.read",
     projectScope,
   );
-  const canPodAccess = permissions.can("cluster.pod.port_forward", projectScope);
+  const canPodAccess = protectedAccess && permissions.can("cluster.pod.port_forward", projectScope);
   // The diagnosis embeds the Pod's Events, so the Server requires the Event
   // permission alongside `cluster.read`. Offered only to callers holding both:
   // a button that can only produce a 403 is worse than no button.

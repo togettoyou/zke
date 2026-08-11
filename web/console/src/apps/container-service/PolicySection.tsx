@@ -41,6 +41,7 @@ import { PolicyForm } from "./PolicyForm";
 import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
+import { namespaceMutationPermission } from "./namespace-permissions";
 import { YamlEditorView } from "./YamlEditorView";
 
 const PAGE_SIZE = 50;
@@ -96,9 +97,19 @@ export function PolicySection({
   useEffect(() => onNamespaceScopeChange(namespaced), [namespaced, onNamespaceScopeChange]);
 
   const projectScope = { type: "project" as const, tenantId, projectId };
-  const canCreate = permissions.can("cluster.resource.create", projectScope);
-  const canUpdate = permissions.can("cluster.resource.update", projectScope);
-  const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const mutationNamespace = namespaced ? namespace : "";
+  const canCreate = permissions.can(
+    namespaceMutationPermission(mutationNamespace, "cluster.resource.create"),
+    projectScope,
+  );
+  const canUpdate = permissions.can(
+    namespaceMutationPermission(mutationNamespace, "cluster.resource.update"),
+    projectScope,
+  );
+  const canDelete = permissions.can(
+    namespaceMutationPermission(mutationNamespace, "cluster.resource.delete"),
+    projectScope,
+  );
   const canDescribe =
     supportsPolicyDescribe(resource) && permissions.can("cluster.event.read", projectScope);
 

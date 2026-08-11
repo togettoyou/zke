@@ -246,6 +246,7 @@ func TestManifestApplyGuardsKeepTheFamilyRules(t *testing.T) {
 				"app.kubernetes.io/managed-by": "zke-server",
 			},
 		},
+		"type": "Opaque",
 	}
 	plainSecret := map[string]any{
 		"apiVersion": "v1",
@@ -254,14 +255,13 @@ func TestManifestApplyGuardsKeepTheFamilyRules(t *testing.T) {
 		"type":       "Opaque",
 	}
 
-	// An object may not award itself ZKE's own label: doing so would make the
-	// typed API treat it as the platform's and refuse to touch it again.
+	// An object may not award itself ZKE's ownership label.
 	if err := access.guardApply(ManifestFamilySecret, nil, platformLabelled); !errors.Is(err, ErrPlatformLabelClaimed) {
 		t.Fatalf("claiming the platform label = %v, want ErrPlatformLabelClaimed", err)
 	}
-	// ZKE's own Secrets are not writable through any operator API.
-	if err := access.guardApply(ManifestFamilySecret, platformLabelled, plainSecret); !errors.Is(err, ErrSecretManagedByPlatform) {
-		t.Fatalf("writing a ZKE Secret = %v, want ErrSecretManagedByPlatform", err)
+	// An existing ZKE-labelled Secret remains writable after authorization.
+	if err := access.guardApply(ManifestFamilySecret, platformLabelled, plainSecret); err != nil {
+		t.Fatalf("writing a ZKE Secret = %v", err)
 	}
 	// `type` is fixed at creation, and the manifest path says so rather than
 	// letting the rejection arrive as a message about a field nobody touched.
@@ -361,9 +361,8 @@ func TestManifestAuthorizationGuardAllowsCreatingABinding(t *testing.T) {
 	}
 }
 
-// ZKE's own authorization objects are protected from the manifest path exactly
-// as they are from the typed one.
-func TestManifestDeleteGuardProtectsPlatformObjects(t *testing.T) {
+// Managed labels are informational after the independent permissions pass.
+func TestManifestDeleteGuardKeepsClusterScopedManagedBoundary(t *testing.T) {
 	t.Parallel()
 
 	access := NewManifestAccess(nil, ManifestGrant{
@@ -380,8 +379,20 @@ func TestManifestDeleteGuardProtectsPlatformObjects(t *testing.T) {
 	if err := access.guardDelete(ManifestFamilyAuthorization, managed); !errors.Is(err, ErrManagedResource) {
 		t.Fatalf("deleting a ZKE ClusterRole = %v, want ErrManagedResource", err)
 	}
-	if err := access.guardDelete(ManifestFamilySecret, managed); !errors.Is(err, ErrSecretManagedByPlatform) {
-		t.Fatalf("deleting a ZKE Secret = %v, want ErrSecretManagedByPlatform", err)
+	managedNamespaced := map[string]any{
+		"metadata": map[string]any{
+			"name":      "zke-agent",
+			"namespace": "zke-system",
+			"labels": map[string]any{
+				"app.kubernetes.io/managed-by": "zke-server",
+			},
+		},
+	}
+	if err := access.guardDelete(ManifestFamilyAuthorization, managedNamespaced); err != nil {
+		t.Fatalf("deleting a namespaced ZKE Role = %v", err)
+	}
+	if err := access.guardDelete(ManifestFamilySecret, managed); err != nil {
+		t.Fatalf("deleting a ZKE Secret = %v", err)
 	}
 }
 

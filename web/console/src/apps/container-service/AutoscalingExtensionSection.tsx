@@ -43,6 +43,7 @@ import { AutoscalingExtensionForm } from "./AutoscalingExtensionForm";
 import { useDiagnosticNavigation } from "./diagnostic-navigation-context";
 import { DescribeView } from "./DescribeView";
 import type { ClusterSectionProps } from "./types";
+import { namespaceMutationPermission } from "./namespace-permissions";
 import { YamlEditorView } from "./YamlEditorView";
 
 type Props = ClusterSectionProps & { namespace: string; tabs?: ReactNode };
@@ -75,9 +76,18 @@ function ExtensionSection({
   const [deletePreviewed, setDeletePreviewed] = useState(false);
   const { permissions } = useSessionContext();
   const scope = { type: "project" as const, tenantId, projectId };
-  const canCreate = permissions.can("cluster.resource.create", scope);
-  const canUpdate = permissions.can("cluster.resource.update", scope);
-  const canDelete = permissions.can("cluster.resource.delete", scope);
+  const canCreate = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.create"),
+    scope,
+  );
+  const canUpdate = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.update"),
+    scope,
+  );
+  const canDelete = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.delete"),
+    scope,
+  );
   const canDescribe = permissions.can("cluster.event.read", scope);
 
   const vpaList = useVerticalPodAutoscalers(kind === "vpa" ? clusterId : null, namespace, {

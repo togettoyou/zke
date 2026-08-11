@@ -140,9 +140,6 @@ func (service *Service) CreateNamespace(
 		Options:        MutationOptions{DryRun: input.DryRun},
 		Confirm:        input.Confirm,
 		IdempotencyKey: input.IdempotencyKey,
-		// This service is the door `cluster.namespace.manage` guards; the generic
-		// path refuses the same write without this flag.
-		namespaceAccess: true,
 	})
 	if err != nil {
 		return NamespaceDetail{}, err
@@ -179,7 +176,6 @@ func (service *Service) DeleteNamespace(
 		},
 		IdempotencyKey: input.IdempotencyKey,
 		// See CreateNamespace.
-		namespaceAccess: true,
 	})
 }
 

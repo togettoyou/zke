@@ -155,7 +155,7 @@ func TestAuthorizationDetailDoesNotExposeServiceAccountSecretNames(t *testing.T)
 	}
 }
 
-func TestDeleteAuthorizationResourceProtectsZKEManagedObjects(t *testing.T) {
+func TestDeleteAuthorizationResourceProtectsClusterScopedZKEManagedObjects(t *testing.T) {
 	t.Parallel()
 
 	role := &rbacv1.ClusterRole{
@@ -170,7 +170,7 @@ func TestDeleteAuthorizationResourceProtectsZKEManagedObjects(t *testing.T) {
 			return writeKubernetesObject(t, responseBody, role), nil
 		},
 		mutate: func(context.Context, string, *agentv1.ResourceRequest, io.Reader, io.Writer, string) (*agentv1.ResourceResponse, error) {
-			t.Fatal("managed resource reached mutation transport")
+			t.Fatal("managed cluster resource reached mutation transport")
 			return nil, nil
 		},
 	}

@@ -137,45 +137,76 @@ func TestTerminalDeadlineIsReportedAsTimeout(t *testing.T) {
 	}
 }
 
-func TestTerminalNamespaceRoleBindingsExcludeAgentAndTerminatingNamespaces(t *testing.T) {
+func TestTerminalNamespaceRoleBindingsSelectProtectedRoles(t *testing.T) {
 	namespaces := []corev1.Namespace{
 		{ObjectMeta: metav1.ObjectMeta{Name: "default"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "zke-system"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "deleting"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceTerminating}},
 	}
 	bindings := terminalNamespaceRoleBindings(namespaces, "zke-system", "terminal-sa", "terminal-role", nil, nil)
-	if len(bindings) != 1 || bindings[0].Namespace != "default" {
-		t.Fatalf("role bindings = %+v, want only default Namespace", bindings)
+	if len(bindings) != 3 {
+		t.Fatalf("role bindings = %+v, want three active Namespaces", bindings)
 	}
-	binding := bindings[0]
-	if len(binding.Subjects) != 1 || binding.Subjects[0].Namespace != "zke-system" ||
-		binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != "terminal-role" {
-		t.Fatalf("unexpected RoleBinding = %+v", binding)
+	wantRoles := map[string]string{
+		"default":     "terminal-role",
+		"kube-system": "terminal-role-system",
+		"zke-system":  "terminal-role-agent",
+	}
+	for _, binding := range bindings {
+		if len(binding.Subjects) != 1 || binding.Subjects[0].Namespace != "zke-system" ||
+			binding.RoleRef.Kind != "ClusterRole" || binding.RoleRef.Name != wantRoles[binding.Namespace] {
+			t.Fatalf("unexpected RoleBinding = %+v", binding)
+		}
 	}
 }
 
-func TestTerminalNamespaceLifecycleRulesProtectAgentNamespace(t *testing.T) {
-	names := terminalBusinessNamespaceNames([]corev1.Namespace{
+func TestTerminalNamespaceLifecycleRulesUseIndependentPermissions(t *testing.T) {
+	namespaces := []corev1.Namespace{
 		{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "zke-system"}},
-	}, "zke-system")
-	if !slices.Equal(names, []string{"default", "team-a"}) {
-		t.Fatalf("business Namespace names = %v", names)
 	}
 	rules := terminalNamespaceLifecyclePolicyRules(
-		[]string{"cluster.resource.update", "cluster.namespace.manage"}, names,
+		[]string{"cluster.namespace.manage", "cluster.system_namespace.manage", "cluster.agent_namespace.manage"},
+		namespaces,
+		"zke-system",
 	)
-	for _, rule := range rules {
-		if slices.Contains(rule.ResourceNames, "zke-system") {
-			t.Fatalf("Agent Namespace leaked into terminal lifecycle rule: %+v", rule)
-		}
-		if slices.Contains(rule.Verbs, "delete") || slices.Contains(rule.Verbs, "update") || slices.Contains(rule.Verbs, "patch") {
-			if !slices.Equal(rule.ResourceNames, names) {
-				t.Fatalf("restricted lifecycle rule ResourceNames = %v, want %v", rule.ResourceNames, names)
-			}
-		}
+	if len(rules) != 4 || !slices.Equal(rules[0].ResourceNames, []string{"team-a"}) ||
+		!slices.Equal(rules[1].ResourceNames, []string{"default", "kube-system"}) ||
+		!slices.Equal(rules[2].ResourceNames, []string{"zke-system"}) ||
+		!slices.Equal(rules[3].Verbs, []string{"create"}) {
+		t.Fatalf("lifecycle rules = %+v", rules)
 	}
+
+	ordinaryOnly := terminalNamespaceLifecyclePolicyRules(
+		[]string{"cluster.namespace.manage"}, namespaces, "zke-system",
+	)
+	if len(ordinaryOnly) != 1 || !slices.Equal(ordinaryOnly[0].ResourceNames, []string{"team-a"}) || slices.Contains(ordinaryOnly[0].Verbs, "create") {
+		t.Fatalf("ordinary lifecycle rules = %+v", ordinaryOnly)
+	}
+}
+
+func TestTerminalProtectedPolicyReplacesGenericMutationAndStacksSensitivePermissions(t *testing.T) {
+	ordinary := terminalProtectedPolicyRules(
+		[]string{"cluster.read", "cluster.resource.create", "cluster.resource.update", "cluster.resource.delete"},
+		"cluster.system_namespace.manage",
+	)
+	assertTerminalVerbs(t, ordinary, "", "pods", []string{"get", "list", "watch"})
+
+	protected := terminalProtectedPolicyRules(
+		[]string{"cluster.system_namespace.manage"},
+		"cluster.system_namespace.manage",
+	)
+	assertTerminalVerbs(t, protected, "", "pods", []string{"create", "update", "patch", "delete"})
+	assertTerminalVerbs(t, protected, "", "secrets", nil)
+
+	sensitive := terminalProtectedPolicyRules(
+		[]string{"cluster.system_namespace.manage", "cluster.secret.read", "cluster.secret.manage"},
+		"cluster.system_namespace.manage",
+	)
+	assertTerminalVerbs(t, sensitive, "", "secrets", []string{"get", "list", "watch", "create", "update", "patch", "delete"})
 }
 
 func assertTerminalVerbs(t *testing.T, rules []rbacv1.PolicyRule, group, resource string, want []string) {

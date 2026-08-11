@@ -404,20 +404,16 @@ var (
 		reason:  "ResourceNotAllowed",
 		message: "requested Kubernetes resource is not enabled for this Agent",
 	}
-	refusalAgentNamespace = &resourceRefusal{
-		reason:  "AgentNamespaceForbidden",
-		message: "Secrets of the Agent's own Namespace are never readable through ZKE",
-	}
 )
 
 // refuseKubernetesResourceRequest is deliberately narrower than arbitrary
 // Kubernetes API access. Phase 2 permits CRUD only on primary resources, with
-// Secrets reachable solely through the Server's dedicated Secret API and never
-// in this Agent's own namespace; Discovery and the Agent ServiceAccount RBAC
-// remain the resource-specific authorization boundaries.
+// Secrets reachable solely through the Server's dedicated Secret API;
+// Discovery and the Agent ServiceAccount RBAC remain the resource-specific
+// authorization boundaries. Namespace permissions are resolved by the Server.
 func refuseKubernetesResourceRequest(
 	request *agentv1.ResourceRequest,
-	identityNamespace string,
+	_ string,
 ) *resourceRefusal {
 	resource := request.GetResource()
 	if resource == nil ||
@@ -433,7 +429,7 @@ func refuseKubernetesResourceRequest(
 	if request.GetSubresource() != "" {
 		return refusalNotEnabled
 	}
-	return refuseKubernetesResource(request, identityNamespace)
+	return refuseKubernetesResource(request)
 }
 
 func isPodEvictionRequest(request *agentv1.ResourceRequest) bool {
@@ -481,7 +477,7 @@ func hiddenFromKubernetesCatalog(group string, resource string) bool {
 // Secret API sets: it is checked here rather than trusted from the Server
 // alone, which keeps the generic resource and YAML APIs unable to reach a
 // Secret no matter what they send.
-func refuseKubernetesResource(request *agentv1.ResourceRequest, identityNamespace string) *resourceRefusal {
+func refuseKubernetesResource(request *agentv1.ResourceRequest) *resourceRefusal {
 	resource := request.GetResource()
 	group, name := resource.GetGroup(), resource.GetResource()
 	if group != "" {
@@ -495,16 +491,6 @@ func refuseKubernetesResource(request *agentv1.ResourceRequest, identityNamespac
 			resource.GetVersion() != "v1" ||
 			request.GetNamespace() == "" {
 			return refusalNotEnabled
-		}
-		// Never this Agent's own namespace, whatever the Server asks and
-		// whatever the ServiceAccount is allowed. That namespace holds the
-		// Agent's identity key, its enrollment token and the certificates it
-		// trusts the Server by; reading them is impersonating this Agent, and
-		// no Console page has any business doing it. A list is refused rather
-		// than filtered, because a Secret list of one namespace is a request
-		// for that namespace.
-		if request.GetNamespace() == identityNamespace {
-			return refusalAgentNamespace
 		}
 		return nil
 	default:

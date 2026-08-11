@@ -268,6 +268,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxBufferedResponseBytes: int64(
 				cfg.AgentListener.MaxBufferedResourceBytes,
 			),
+			AgentNamespace: cfg.AgentInstall.Namespace,
 		},
 	)
 	clusterOverviewService := clusteroverview.NewService(
@@ -359,6 +360,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		},
 		httpapi.Config{
 			ConsoleDirectory: cfg.HTTP.ConsoleDirectory,
+			AgentNamespace:   cfg.AgentInstall.Namespace,
 			Authentication: httpapi.AuthenticationConfig{
 				CookieSecure:          cfg.Auth.CookieSecure,
 				OperationTimeout:      cfg.Auth.OperationTimeout,

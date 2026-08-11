@@ -147,6 +147,8 @@ const (
 	DeniedClusterEventRead                  = "cluster.event.read"
 	DeniedClusterManage                     = "cluster.manage"
 	DeniedClusterNamespaceManage            = "cluster.namespace.manage"
+	DeniedClusterSystemNamespaceManage      = "cluster.system_namespace.manage"
+	DeniedClusterAgentNamespaceManage       = "cluster.agent_namespace.manage"
 	DeniedClusterResourceCreate             = "cluster.resource.create"
 	DeniedClusterResourceUpdate             = "cluster.resource.update"
 	DeniedClusterResourceDelete             = "cluster.resource.delete"
@@ -324,6 +326,8 @@ var actions = []Action{
 	{DeniedClusterEventRead, GroupDenied},
 	{DeniedClusterManage, GroupDenied},
 	{DeniedClusterNamespaceManage, GroupDenied},
+	{DeniedClusterSystemNamespaceManage, GroupDenied},
+	{DeniedClusterAgentNamespaceManage, GroupDenied},
 	{DeniedClusterResourceCreate, GroupDenied},
 	{DeniedClusterResourceUpdate, GroupDenied},
 	{DeniedClusterResourceDelete, GroupDenied},

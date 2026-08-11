@@ -77,13 +77,6 @@ func TestKubernetesSecretHandlerReportsPlatformRefusalsAsForbidden(t *testing.T)
 			path:   "/namespaces/zke-system/secrets",
 			code:   "agent_namespace_forbidden",
 		},
-		{
-			name:   "reading one of ZKE's own Secrets",
-			err:    kubernetesresource.ErrSecretManagedByPlatform,
-			method: http.MethodGet,
-			path:   "/namespaces/default/secrets/zke-agent-identity",
-			code:   "secret_managed_by_platform",
-		},
 	}
 	for _, testCase := range testCases {
 		testCase := testCase

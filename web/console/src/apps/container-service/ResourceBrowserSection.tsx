@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useIsFetching, useQueryClient } from "@tanstack/react-query";
 import {
@@ -50,6 +50,7 @@ import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
+import { namespaceLifecyclePermission, namespaceMutationPermission } from "./namespace-permissions";
 
 const PAGE_SIZE = 50;
 /** The Namespace picker reads one page at the endpoint's maximum. */
@@ -82,9 +83,10 @@ export function ResourceBrowserSection({
   const [typeQuery, setTypeQuery] = useState("");
   const [selected, setSelected] = useState<KubernetesResourceType | null>(null);
 
-  const projectScope = { type: "project" as const, tenantId, projectId };
-  const canUpdate = permissions.can("cluster.resource.update", projectScope);
-  const canDelete = permissions.can("cluster.resource.delete", projectScope);
+  const projectScope = useMemo(
+    () => ({ type: "project" as const, tenantId, projectId }),
+    [tenantId, projectId],
+  );
   // Describe carries the object's Events, which are their own permission.
   const canDescribe = permissions.can("cluster.event.read", projectScope);
 
@@ -158,8 +160,8 @@ export function ResourceBrowserSection({
             clusterId={clusterId}
             clusterName={clusterName}
             type={active}
-            canUpdate={canUpdate}
-            canDelete={canDelete}
+            tenantId={tenantId}
+            projectId={projectId}
             canDescribe={canDescribe}
           />
         ) : (
@@ -383,17 +385,18 @@ function ResourceObjectPanel({
   clusterId,
   clusterName,
   type,
-  canUpdate,
-  canDelete,
+  tenantId,
+  projectId,
   canDescribe,
 }: {
   clusterId: string;
   clusterName: string;
   type: KubernetesResourceType;
-  canUpdate: boolean;
-  canDelete: boolean;
+  tenantId: string | null;
+  projectId: string | null;
   canDescribe: boolean;
 }) {
+  const { permissions } = useSessionContext();
   const identity: GenericResourceIdentity = {
     group: type.group,
     version: type.version,
@@ -410,6 +413,18 @@ function ResourceObjectPanel({
   const remove = useDeleteGenericResource();
 
   const scopedNamespace = type.namespaced && namespace !== ALL_NAMESPACES ? namespace : "";
+  const projectScope = useMemo(
+    () => ({ type: "project" as const, tenantId, projectId }),
+    [tenantId, projectId],
+  );
+  const canDeleteNamespace = useCallback(
+    (targetNamespace: string) =>
+      permissions.can(
+        namespaceMutationPermission(targetNamespace, "cluster.resource.delete"),
+        projectScope,
+      ),
+    [permissions, projectScope],
+  );
   const pager = useContinuePagination(`${clusterId}/${typeKey(type)}/${scopedNamespace}`);
   const list = useGenericResources(clusterId, identity, scopedNamespace, {
     limit: PAGE_SIZE,
@@ -418,7 +433,7 @@ function ResourceObjectPanel({
   const namespaces = useNamespaces(type.namespaced ? clusterId : null, { limit: NAMESPACE_LIMIT });
 
   const listable = type.verbs.includes("list");
-  const deletable = canDelete && type.verbs.includes("delete");
+  const deletable = type.verbs.includes("delete");
   // The YAML editor reads through the same generic route, so it needs the verbs
   // that route uses.
   const readable = type.verbs.includes("get");
@@ -503,7 +518,9 @@ function ResourceObjectPanel({
               <FileCode />
             </Button>
           ) : null}
-          {deletable && row.original.metadata?.uid ? (
+          {deletable &&
+          row.original.metadata?.uid &&
+          canDeleteNamespace(row.original.metadata?.namespace ?? "") ? (
             <RowDeleteAction
               name={row.original.metadata?.name ?? ""}
               onDelete={() => {
@@ -517,7 +534,7 @@ function ResourceObjectPanel({
       ),
     });
     return base;
-  }, [type.namespaced, readable, describable, deletable, remove]);
+  }, [type.namespaced, readable, describable, deletable, remove, canDeleteNamespace]);
 
   if (describeTarget) {
     return (
@@ -533,6 +550,10 @@ function ResourceObjectPanel({
 
   if (yamlTarget) {
     const targetNamespace = yamlTarget.metadata?.namespace ?? "";
+    const permissionNamespace =
+      type.group === "" && type.version === "v1" && type.resource === "namespaces"
+        ? (yamlTarget.metadata?.name ?? "")
+        : targetNamespace;
     return (
       <YamlEditorView
         identity={{
@@ -545,7 +566,14 @@ function ResourceObjectPanel({
         }}
         clusterName={clusterName}
         kindLabel={type.kind}
-        canUpdate={canUpdate && type.verbs.includes("update")}
+        canUpdate={
+          permissions.can(
+            type.group === "" && type.version === "v1" && type.resource === "namespaces"
+              ? namespaceLifecyclePermission(permissionNamespace)
+              : namespaceMutationPermission(permissionNamespace, "cluster.resource.update"),
+            projectScope,
+          ) && type.verbs.includes("update")
+        }
         onBack={() => setYamlTarget(null)}
       />
     );

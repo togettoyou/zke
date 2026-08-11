@@ -186,9 +186,11 @@ type ResourceAccess interface {
 	RequirementForApply(
 		kubernetesresource.ResourceIdentity,
 		bool,
+		...kubernetesresource.ManifestTarget,
 	) (kubernetesresource.ManifestRequirement, bool, error)
 	RequirementForDelete(
 		kubernetesresource.ResourceIdentity,
+		...kubernetesresource.ManifestTarget,
 	) (kubernetesresource.ManifestRequirement, bool, error)
 }
 
@@ -398,7 +400,7 @@ func (service *Service) planApply(
 	entry *plannedDocument,
 ) {
 	createRequirement, createAllowed, err := access.RequirementForApply(
-		entry.resource, true,
+		entry.resource, true, kubernetesresource.ManifestTarget{Namespace: entry.document.Namespace, Name: entry.document.Name},
 	)
 	if err != nil {
 		entry.document.Status = StatusInvalid
@@ -406,7 +408,7 @@ func (service *Service) planApply(
 		return
 	}
 	updateRequirement, updateAllowed, _ := access.RequirementForApply(
-		entry.resource, false,
+		entry.resource, false, kubernetesresource.ManifestTarget{Namespace: entry.document.Namespace, Name: entry.document.Name},
 	)
 	// A family whose creating and changing collapse into one permission is decided
 	// without reading the Cluster. Two reasons, and the second is the binding one:
@@ -476,7 +478,7 @@ func (service *Service) planDelete(
 	input Input,
 	entry *plannedDocument,
 ) {
-	requirement, allowed, err := access.RequirementForDelete(entry.resource)
+	requirement, allowed, err := access.RequirementForDelete(entry.resource, kubernetesresource.ManifestTarget{Namespace: entry.document.Namespace, Name: entry.document.Name})
 	if err != nil {
 		entry.document.Status = StatusInvalid
 		entry.document.Err = err

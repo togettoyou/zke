@@ -170,6 +170,8 @@ const PERMISSION_LABELS: Record<string, string> = {
   "cluster.event.read": "查看集群事件",
   "cluster.manage": "管理集群",
   "cluster.namespace.manage": "创建和删除 Kubernetes 命名空间",
+  "cluster.system_namespace.manage": "管理 Kubernetes 系统命名空间",
+  "cluster.agent_namespace.manage": "管理 ZKE Agent 命名空间",
   "cluster.resource.create": "创建 Kubernetes 资源",
   "cluster.resource.update": "修改 Kubernetes 资源",
   "cluster.resource.delete": "删除 Kubernetes 资源",
@@ -206,6 +208,8 @@ const PERMISSION_WARNINGS: Record<string, string> = {
   "cluster.pod.port_forward": "可访问 Pod 内部监听端口",
   "cluster.node.drain": "可排空节点并驱逐 Pod",
   "cluster.namespace.manage": "删除命名空间会连同其中的全部对象一起移除",
+  "cluster.system_namespace.manage": "可增删改 default 生命周期及 kube-* 命名空间内的资源",
+  "cluster.agent_namespace.manage": "可增删改 Agent 所在命名空间，错误操作可能导致 Agent 离线",
   "rbac.manage": "可创建角色并授予自己已持有的权限",
 };
 
@@ -220,6 +224,11 @@ const PERMISSION_WARNINGS: Record<string, string> = {
  * access, and it is not.
  */
 const SECRET_REACHING_PERMISSIONS = ["cluster.pod.logs.read", "cluster.pod.exec"];
+const WORKLOAD_CREATE_PERMISSIONS = [
+  "cluster.resource.create",
+  "cluster.system_namespace.manage",
+  "cluster.agent_namespace.manage",
+];
 
 /**
  * How a permission's scope floor reads on a badge.
@@ -1249,7 +1258,7 @@ function RoleEditorDialog({
     selected.includes(permission),
   );
   const reachesSecretsIndirectly =
-    selected.includes("cluster.resource.create") &&
+    WORKLOAD_CREATE_PERMISSIONS.some((permission) => selected.includes(permission)) &&
     secretReachingSelected.length > 0 &&
     !selected.includes("cluster.secret.read");
 

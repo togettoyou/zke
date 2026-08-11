@@ -34,6 +34,7 @@ import { AuthorizationForm } from "./AuthorizationForm";
 import { YamlEditorView } from "./YamlEditorView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
+import { canUseProtectedNamespace } from "./namespace-permissions";
 import {
   AUTHORIZATION_TYPES,
   authorizationKindLabel,
@@ -88,11 +89,14 @@ export function AuthorizationSection({
 
   useEffect(() => onNamespaceScopeChange(namespaced), [namespaced, onNamespaceScopeChange]);
 
-  const canManage = permissions.can("cluster.rbac.manage", {
+  const projectScope = {
     type: "project",
     tenantId,
     projectId,
-  });
+  } as const;
+  const canManage =
+    permissions.can("cluster.rbac.manage", projectScope) &&
+    (!namespaced || canUseProtectedNamespace(permissions, namespace, projectScope));
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -138,7 +142,7 @@ export function AuthorizationSection({
         header: "",
         size: 88,
         cell: ({ row }) => {
-          const locked = lockReason(row.original);
+          const locked = lockReason(row.original, namespaced);
           return (
             <div className="flex justify-end gap-0.5" onClick={(event) => event.stopPropagation()}>
               {canManage ? (
@@ -159,8 +163,8 @@ export function AuthorizationSection({
               {canManage && row.original.uid ? (
                 <RowDeleteAction
                   name={row.original.name}
-                  hint={row.original.managed_by_zke ? PROTECTED_HINT : "删除"}
-                  disabled={row.original.managed_by_zke}
+                  hint={!namespaced && row.original.managed_by_zke ? PROTECTED_HINT : "删除"}
+                  disabled={!namespaced && row.original.managed_by_zke}
                   onDelete={() => openDelete(row.original)}
                 />
               ) : null}
@@ -169,7 +173,7 @@ export function AuthorizationSection({
         },
       },
     ],
-    [resource, canManage, openDelete],
+    [resource, namespaced, canManage, openDelete],
   );
 
   // The dialogs live outside the branch that picks a view. They are opened from
@@ -246,11 +250,9 @@ export function AuthorizationSection({
         clusterName={clusterName}
         kindLabel={authorizationKindLabel(resource)}
         canUpdate={canManage}
-        // Only ZKE's own objects are read-only here. An aggregated ClusterRole
-        // is not: the typed form refuses it because it cannot express an
-        // `aggregationRule`, and a document can — which is the case for having
-        // this view at all.
-        readOnlyReason={yamlTarget.managed_by_zke ? `${PROTECTED_HINT}。` : undefined}
+        readOnlyReason={
+          !namespaced && yamlTarget.managed_by_zke ? `${PROTECTED_HINT}。` : undefined
+        }
         impacts={[
           "整份文档会替换集群中的现有对象，未在文档中出现的字段将被移除。",
           "服务端会核对文档内的 UID 与 resourceVersion；期间对象若已变化，本次更新会被拒绝而不是覆盖。",
@@ -368,11 +370,14 @@ export function AuthorizationSection({
   );
 }
 
-const PROTECTED_HINT = "ZKE Agent 自身的授权对象受保护，不能在此修改或删除";
+const PROTECTED_HINT = "ZKE 管理的集群级授权对象受保护，不能在此修改或删除";
 
 /** Why an object cannot be edited through the typed form, if it cannot. */
-function lockReason(item: KubernetesAuthorizationResourceSummary): string | null {
-  if (item.managed_by_zke) {
+function lockReason(
+  item: KubernetesAuthorizationResourceSummary,
+  namespaced: boolean,
+): string | null {
+  if (!namespaced && item.managed_by_zke) {
     return PROTECTED_HINT;
   }
   if (item.aggregated) {
@@ -506,7 +511,8 @@ function AuthorizationDetailView({
 }) {
   const detail = useAuthorizationResource(clusterId, namespace, resource, name);
   const item = detail.data;
-  const locked = item ? lockReason(item) : null;
+  const namespaced = isNamespacedAuthorization(resource);
+  const locked = item ? lockReason(item, namespaced) : null;
 
   return (
     <div className="grid gap-3">
@@ -532,8 +538,8 @@ function AuthorizationDetailView({
             {canManage && item?.uid ? (
               <DetailDeleteAction
                 name={name}
-                hint={item.managed_by_zke ? PROTECTED_HINT : undefined}
-                disabled={item.managed_by_zke}
+                hint={!namespaced && item.managed_by_zke ? PROTECTED_HINT : undefined}
+                disabled={!namespaced && item.managed_by_zke}
                 onDelete={() => onDelete(item)}
               />
             ) : null}

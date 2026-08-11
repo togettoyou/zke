@@ -946,11 +946,10 @@ func TestKubernetesResourceDiscoveryWithoutCustomResourceAccess(t *testing.T) {
 // The Agent's own refusal, which is not the Server's.
 //
 // A Secret is reachable only when the Server's dedicated Secret API asked for
-// it, and never in the namespace holding this Agent's identity key, enrollment
-// token and the certificates it trusts the Server by. Both rules are checked
-// here rather than assumed of the Server, because a Server that had been made
-// to ask is exactly the case they exist for.
-func TestSecretRequestsAreRefusedWithoutTheFlagOrInTheAgentNamespace(t *testing.T) {
+// it. Namespace authorization is resolved by the Server before it sets this
+// family-specific flag; the Agent no longer hard-codes its own Namespace as an
+// absolute refusal, so explicitly authorized recovery remains possible.
+func TestSecretRequestsRequireTheDedicatedFlag(t *testing.T) {
 	t.Parallel()
 
 	secret := func(namespace string, access bool) *agentv1.ResourceRequest {
@@ -967,11 +966,8 @@ func TestSecretRequestsAreRefusedWithoutTheFlagOrInTheAgentNamespace(t *testing.
 	if refuseKubernetesResourceRequest(secret("default", false), "zke-system") != refusalNotEnabled {
 		t.Fatal("a Secret request without the Secret API flag was allowed")
 	}
-	// Refused for a reason of its own: this one is a boundary of ZKE's, and an
-	// operator told only that "the Agent is not allowed" would go and widen the
-	// Agent's ClusterRole, which will never make it readable.
-	if refuseKubernetesResourceRequest(secret("zke-system", true), "zke-system") != refusalAgentNamespace {
-		t.Fatal("a Secret request in the Agent's own namespace was not refused as such")
+	if refuseKubernetesResourceRequest(secret("zke-system", true), "zke-system") != nil {
+		t.Fatal("the dedicated Secret API was refused in the Agent namespace")
 	}
 	if refuseKubernetesResourceRequest(secret("default", true), "zke-system") != nil {
 		t.Fatal("a Secret request from the Secret API was refused")

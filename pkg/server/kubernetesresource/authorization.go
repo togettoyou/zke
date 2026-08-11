@@ -291,7 +291,7 @@ func (service *Service) UpdateAuthorizationResource(ctx context.Context, input U
 	if string(current.GetUID()) != input.UID || current.GetResourceVersion() != input.ResourceVersion {
 		return AuthorizationResourceDetail{}, ErrUpstreamConflict
 	}
-	if managedAuthorizationLabels(current.GetLabels()) {
+	if current.GetNamespace() == "" && managedAuthorizationLabels(current.GetLabels()) {
 		return AuthorizationResourceDetail{}, ErrManagedResource
 	}
 	updated, err := updateAuthorizationResourceObject(existing, input)
@@ -321,7 +321,7 @@ func (service *Service) DeleteAuthorizationResource(ctx context.Context, input D
 	if string(current.GetUID()) != input.UID || current.GetResourceVersion() != input.ResourceVersion {
 		return ErrUpstreamConflict
 	}
-	if managedAuthorizationLabels(current.GetLabels()) {
+	if current.GetNamespace() == "" && managedAuthorizationLabels(current.GetLabels()) {
 		return ErrManagedResource
 	}
 	return service.DeleteResource(ctx, DeleteResourceInput{
@@ -353,14 +353,14 @@ func AuthorizationManifestGuard(
 	grant SecretRuleGrant,
 ) error {
 	live := &unstructured.Unstructured{Object: current}
-	if managedAuthorizationLabels(live.GetLabels()) {
+	if live.GetNamespace() == "" && managedAuthorizationLabels(live.GetLabels()) {
 		return ErrManagedResource
 	}
 	wanted := &unstructured.Unstructured{Object: submitted}
 	// Awarding an object ZKE's own label would make the typed API treat it as
 	// the platform's and refuse to touch it again — a lock anyone could fit to
 	// someone else's Role, and one no ZKE page offers a way to remove.
-	if managedAuthorizationLabels(wanted.GetLabels()) {
+	if managedAuthorizationLabels(wanted.GetLabels()) && !managedAuthorizationLabels(live.GetLabels()) {
 		return ErrPlatformLabelClaimed
 	}
 	resource, exists := authorizationResourceForKind(wanted.GetKind())

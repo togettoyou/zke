@@ -22,13 +22,15 @@ import (
 // rather than the resource layer's own type, so this package keeps depending on
 // nothing but authorization.
 type ManifestGrant struct {
-	ResourceCreate  bool
-	ResourceUpdate  bool
-	ResourceDelete  bool
-	NamespaceManage bool
-	SecretRead      bool
-	SecretManage    bool
-	RBACManage      bool
+	ResourceCreate        bool
+	ResourceUpdate        bool
+	ResourceDelete        bool
+	NamespaceManage       bool
+	SecretRead            bool
+	SecretManage          bool
+	RBACManage            bool
+	SystemNamespaceManage bool
+	AgentNamespaceManage  bool
 }
 
 const manifestGrantContextKey = "zke.manifest_grant"
@@ -60,13 +62,15 @@ func (authorization *Authorization) ResolveClusterManifestGrant(
 			)
 		}
 		c.Set(manifestGrantContextKey, ManifestGrant{
-			ResourceCreate:  holds(rbac.PermissionClusterResourceCreate),
-			ResourceUpdate:  holds(rbac.PermissionClusterResourceUpdate),
-			ResourceDelete:  holds(rbac.PermissionClusterResourceDelete),
-			NamespaceManage: holds(rbac.PermissionClusterNamespaceManage),
-			SecretRead:      holds(rbac.PermissionClusterSecretRead),
-			SecretManage:    holds(rbac.PermissionClusterSecretManage),
-			RBACManage:      holds(rbac.PermissionClusterRBACManage),
+			ResourceCreate:        holds(rbac.PermissionClusterResourceCreate),
+			ResourceUpdate:        holds(rbac.PermissionClusterResourceUpdate),
+			ResourceDelete:        holds(rbac.PermissionClusterResourceDelete),
+			NamespaceManage:       holds(rbac.PermissionClusterNamespaceManage),
+			SecretRead:            holds(rbac.PermissionClusterSecretRead),
+			SecretManage:          holds(rbac.PermissionClusterSecretManage),
+			RBACManage:            holds(rbac.PermissionClusterRBACManage),
+			SystemNamespaceManage: holds(rbac.PermissionClusterSystemNamespaceManage),
+			AgentNamespaceManage:  holds(rbac.PermissionClusterAgentNamespaceManage),
 		})
 		c.Next()
 	}

@@ -92,8 +92,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // ServiceAccount was granted — which is why each names the thing it is about
   // instead of falling back to the general "没有权限".
   resource_not_enabled: "ZKE 不通过该接口管理这类资源",
-  agent_namespace_forbidden: "ZKE Agent 所在命名空间的 Secret 不开放读写",
-  secret_managed_by_platform: "该 Secret 属于 ZKE 安装本身，不可读写",
+  agent_namespace_forbidden: "当前 Agent 仍使用旧的命名空间硬保护，请升级 Agent 后改用独立权限控制",
   global_admin_required: "只有全局管理员可以操作全局管理员的账号与成员资格",
   // Both are about what the caller is handing out rather than what it may do
   // itself, so neither can fall back to the general "没有权限".

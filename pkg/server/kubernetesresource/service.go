@@ -52,7 +52,7 @@ var (
 	// ServiceAccount was granted, so they are neither retried nor answered by
 	// widening a ClusterRole.
 	ErrResourceNotEnabled      = errors.New("Kubernetes resource is not enabled for the Agent")
-	ErrAgentNamespaceForbidden = errors.New("Agent Namespace Secrets are not accessible")
+	ErrAgentNamespaceForbidden = errors.New("connected Agent enforces the legacy Agent Namespace Secret boundary")
 	ErrClusterUnavailable      = errors.New("Kubernetes API is unavailable")
 	ErrClusterTimeout          = errors.New("Kubernetes API request timed out")
 	ErrResponseTooLarge        = errors.New("Kubernetes API response is too large")
@@ -61,7 +61,7 @@ var (
 	ErrUpstreamConflict        = errors.New("Kubernetes API resource conflict")
 	ErrUpstreamRejected        = errors.New("Kubernetes rejected the submitted resource")
 	ErrConfigMapImmutable      = errors.New("Kubernetes ConfigMap is immutable")
-	ErrManagedResource         = errors.New("Kubernetes resource is managed by ZKE")
+	ErrManagedResource         = errors.New("cluster-scoped Kubernetes resource is managed by ZKE")
 	ErrUpstreamFailure         = errors.New("Kubernetes API request failed")
 	ErrInvalidResponse         = errors.New("invalid Agent resource response")
 )
@@ -95,12 +95,14 @@ type MutationResourceRequester interface {
 type Service struct {
 	requester      ResourceRequester
 	responseBudget *semaphore.Weighted
+	agentNamespace string
 	trendMutex     sync.Mutex
 	hpaTrends      map[string][]HPAMetricTrendPoint
 }
 
 type Config struct {
 	MaxBufferedResponseBytes int64
+	AgentNamespace           string
 }
 
 // responseBuffer holds one Agent response while it is decoded, drawing its
@@ -197,9 +199,13 @@ func NewService(requester ResourceRequester, configs ...Config) *Service {
 	if config.MaxBufferedResponseBytes <= 0 {
 		config.MaxBufferedResponseBytes = defaultMaxBufferedResponseBytes
 	}
+	if config.AgentNamespace == "" {
+		config.AgentNamespace = "zke-system"
+	}
 	return &Service{
 		requester:      requester,
 		responseBudget: semaphore.NewWeighted(config.MaxBufferedResponseBytes),
+		agentNamespace: config.AgentNamespace,
 		hpaTrends:      make(map[string][]HPAMetricTrendPoint),
 	}
 }

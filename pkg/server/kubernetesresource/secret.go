@@ -22,28 +22,18 @@ import (
 // name. It is reachable only through this service, which is the only thing in
 // the process that sets `secretAccess` on a request; the generic resource and
 // YAML APIs refuse Secrets outright, and the Agent refuses them again unless
-// that flag is set and the namespace is not its own.
+// that flag is set. Protected Namespace access is checked by the Server.
 //
 // What travels: the list returns key names and sizes and never a value, so
 // browsing a namespace does not move its credentials into a browser. The detail
 // returns values as Kubernetes stores them — standard Base64 — for the one page
 // that asked for one object by name.
-//
-// What does not travel: ZKE's own Secrets. They are the platform's credentials
-// rather than the operator's workload configuration, and an API that returned
-// them would be an API for reading the Agent's enrollment token.
-
 const (
 	maxSecretSize        = corev1.MaxSecretSize
 	maxSecretAnnotations = 256 * 1024
 	managedByLabel       = "app.kubernetes.io/managed-by"
 	managedByServer      = "zke-server"
 )
-
-// ErrSecretManagedByPlatform reports a Secret this API will not act on. It is
-// distinct from a permission error: the caller may hold every Secret permission
-// there is, and this object is still not theirs to read.
-var ErrSecretManagedByPlatform = errors.New("secret is managed by ZKE")
 
 // ErrSecretImmutable reports a change to a Secret Kubernetes has been told to
 // keep as it is.
@@ -146,10 +136,9 @@ func SecretResourceIdentity() ResourceIdentity {
 //
 // `secretAccess` stays unexported, and this is not a way to set it: the two
 // methods below accept nothing but a Secret, and they route through the same
-// reads the typed API uses, so ZKE's own Secrets are refused here exactly as
-// they are there. What the YAML API gets is the ability to read and replace one
-// Secret by name — not a general resource accessor that happens to be pointed
-// at Secrets.
+// reads the typed API uses. What the YAML API gets is the ability to read and
+// replace one Secret by name — not a general resource accessor that happens to
+// be pointed at Secrets.
 type SecretYAMLAccess struct {
 	service *Service
 }
@@ -211,7 +200,7 @@ func SecretManifestGuard(
 	if err != nil {
 		return ErrInvalidInput
 	}
-	if platformManagedLabels(wanted.Labels) {
+	if platformManagedLabels(wanted.Labels) && !platformManagedLabels(live.Labels) {
 		return ErrPlatformLabelClaimed
 	}
 	if live.Immutable != nil && *live.Immutable {
@@ -259,13 +248,6 @@ func (service *Service) ListSecrets(ctx context.Context, input ListSecretsInput)
 		detail, err := secretDetail(item, input.Namespace, "")
 		if err != nil {
 			return SecretPage{}, err
-		}
-		// Dropped from the page rather than refused: a namespace holding one of
-		// ZKE's own Secrets is still a namespace whose other Secrets an operator
-		// may list. The page can therefore be shorter than the requested limit,
-		// which continuation already allows for.
-		if platformManagedLabels(detail.Labels) {
-			continue
 		}
 		result.Secrets = append(result.Secrets, detail.SecretSummary)
 	}
@@ -350,8 +332,8 @@ func (service *Service) DeleteSecret(ctx context.Context, input DeleteSecretInpu
 	if !validSecretMutationIdentity(input.Namespace, input.Name, input.UID, input.ResourceVersion) {
 		return ErrInvalidInput
 	}
-	// Read before deleting, so one of ZKE's own Secrets is refused rather than
-	// removed by a caller who knew its name.
+	// Read before deleting to verify the current object and surface lookup errors
+	// before the mutation is attempted.
 	if _, err := service.getSecretObject(
 		ctx, input.ClusterID, input.Namespace, input.Name,
 	); err != nil {
@@ -386,10 +368,6 @@ func (service *Service) getSecretObject(
 	})
 	if err != nil {
 		return nil, err
-	}
-	current := &unstructured.Unstructured{Object: object}
-	if platformManagedLabels(current.GetLabels()) {
-		return nil, ErrSecretManagedByPlatform
 	}
 	return object, nil
 }

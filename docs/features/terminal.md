@@ -9,12 +9,12 @@ Namespace 为 `default`。
 
 - 一个不可提权、无宿主机挂载并带 CPU/内存上限的 Terminal Pod；
 - 一个自动挂载 projected ServiceAccount Token 的专属 ServiceAccount；
-- 一个承载命名空间级权限的 ClusterRole，以及每个现有业务 Namespace 中指向它的 RoleBinding；
+- 三个分别承载普通、`kube-*` 与 Agent Namespace 权限的 ClusterRole，以及每个现有 Namespace 中指向对应角色的 RoleBinding；
 - 一组仅包含已授权集群级资源的 ClusterRole 与 ClusterRoleBinding。
 
-不会在 Agent Namespace 中创建上述业务 RoleBinding，因此终端不能借助命名空间级权限读取其中的 Secret、Pod 或
-其他 Agent 资源。Namespace 生命周期权限也按会话建立时的业务 Namespace 名单限制更新与删除目标，排除 Agent
-Namespace。
+普通资源权限只投射到普通 Namespace；`kube-*` 与 Agent Namespace 分别要求
+`cluster.system_namespace.manage`、`cluster.agent_namespace.manage` 才投射写权限。Secret、Kubernetes RBAC、Pod Exec
+和端口转发在受保护命名空间仍叠加各自的专用权限；普通资源读取继续由 `cluster.read` 控制。
 
 浏览器仍通过 Server 和目标 Cluster Agent 的 `pod-exec.v1` QUIC Stream 接入 Terminal Pod。会话关闭、达到最长
 时长或权限重验失败后，Agent 删除上述资源；Agent 内的清理任务也会回收 Server 异常退出后遗留的过期会话。
@@ -28,13 +28,18 @@ Kubernetes RBAC：
 | ZKE 权限                                                                | 终端中的 Kubernetes 能力                                          |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `cluster.read`                                                          | 已支持主资源的 `get`、`list`、`watch`                             |
-| `cluster.resource.create/update/delete`                                 | 对应主资源的创建、更新/Patch、删除                                |
-| `cluster.secret.read`                                                   | 现有业务 Namespace 中 Secret 的 `get`、`list`、`watch`            |
-| `cluster.secret.manage`                                                 | 现有业务 Namespace 中 Secret 的创建、更新/Patch、删除；不隐含读取 |
+| `cluster.resource.create/update/delete`                                 | 普通 Namespace 中对应主资源的创建、更新/Patch、删除               |
+| `cluster.system_namespace.manage`                                       | `kube-*` 中普通资源增删改及系统 Namespace 生命周期                 |
+| `cluster.agent_namespace.manage`                                        | Agent Namespace 中普通资源增删改及 Agent Namespace 生命周期       |
+| `cluster.secret.read`                                                   | Secret 的 `get`、`list`、`watch`；受保护空间叠加对应权限           |
+| `cluster.secret.manage`                                                 | Secret 增删改；受保护空间叠加对应权限，且不隐含读取                |
 | `cluster.rbac.read/manage`                                              | ServiceAccount、Role/RoleBinding 及集群级授权对象的对应操作       |
 | `cluster.event.read`                                                    | Event 的 `get`、`list`、`watch`                                   |
 | `cluster.pod.logs.read`、`cluster.pod.exec`、`cluster.pod.port_forward` | 对应 Pod Subresource                                              |
-| `cluster.namespace.manage`                                              | Namespace 创建，以及会话建立时已存在的非 Agent Namespace 删除     |
+| `cluster.namespace.manage`                                              | 会话建立时已存在的普通 Namespace 更新、Patch、删除                 |
+
+Kubernetes RBAC 无法按待创建对象的名称限制 `namespaces/create`。因此终端只有在会话同时持有普通、系统和 Agent 三类
+Namespace 权限时才投射 Namespace 创建；只持有其中一类时仍可通过 Server 的类型化或通用 Resource 接口按目标名称创建。
 
 会话保存创建时的权限快照并周期重新验证。快照中的任何权限被撤销都会终止会话并清理临时授权；会话期间新授予的
 权限不会自动进入已有 Role，需要重新打开终端。会话建立后新建的 Namespace 也不会自动出现 RoleBinding，重新打开
@@ -66,7 +71,7 @@ Pod 与 RBAC，避免请求完成与窗口关闭同时发生时留下临时资�
 
 ## 当前边界
 
-- Namespace 级权限覆盖会话建立时已经存在的全部业务 Namespace，但明确排除 Agent Namespace；新建 Namespace
+- Namespace 级权限覆盖会话建立时已经存在的 Namespace，并按普通、`kube-*` 与 Agent 三类分别投射；新建 Namespace
   后需要重新打开会话才能获得其中的资源权限。
 - 默认权限映射覆盖 ZKE 当前已经管理的内置资源和可选扩展。任意新 CRD 不会因 Discovery 自动获得写权限，需先
   扩展 Agent 安装 RBAC 和终端映射，避免通配符在未来新增资源时静默扩大权限。

@@ -28,6 +28,7 @@ import { formatAbsolute } from "@/lib/time";
 
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
+import { namespaceMutationPermission } from "./namespace-permissions";
 import { WorkloadActions } from "./WorkloadActions";
 import { WorkloadCreateView } from "./WorkloadCreateView";
 import { DescribeView } from "./DescribeView";
@@ -96,9 +97,18 @@ export function WorkloadSection({
   const projectScope = { type: "project" as const, tenantId, projectId };
   // Scaling, restarting and suspending are all patches of the object, so they
   // are updates rather than workload-specific permissions.
-  const canUpdate = permissions.can("cluster.resource.update", projectScope);
-  const canDelete = permissions.can("cluster.resource.delete", projectScope);
-  const canCreate = permissions.can("cluster.resource.create", projectScope);
+  const canUpdate = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.update"),
+    projectScope,
+  );
+  const canDelete = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.delete"),
+    projectScope,
+  );
+  const canCreate = permissions.can(
+    namespaceMutationPermission(namespace, "cluster.resource.create"),
+    projectScope,
+  );
   // Describe carries the Events of the workload and of everything under it,
   // which is `cluster.event.read` rather than `cluster.read`. The Server
   // requires both, so an operator without it is not offered the button.

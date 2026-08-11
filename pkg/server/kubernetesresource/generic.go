@@ -74,10 +74,6 @@ type CreateResourceInput struct {
 	IdempotencyKey string
 	// See ListResourcesInput.secretAccess.
 	secretAccess bool
-	// Unexported for the same reason: bringing a Namespace into existence or
-	// removing one answers to `cluster.namespace.manage`, and the typed Namespace
-	// service is the only caller that sets this.
-	namespaceAccess bool
 }
 
 type UpdateResourceInput struct {
@@ -108,11 +104,6 @@ type PatchResourceInput struct {
 	// server-side Apply is how a Secret is written from a manifest, and without
 	// this the resource layer refuses it exactly as it refuses the generic path.
 	secretAccess bool
-	// See CreateResourceInput.namespaceAccess. Set only by the manifest access,
-	// and only for a document that already answered to
-	// `cluster.namespace.manage` — Apply creates the object when it is absent,
-	// which is the half of Patch `deniedNamespaceWrite` exists to refuse.
-	namespaceAccess bool
 }
 
 type DeletePreconditions struct {
@@ -133,8 +124,6 @@ type DeleteResourceInput struct {
 	IdempotencyKey     string
 	// See ListResourcesInput.secretAccess.
 	secretAccess bool
-	// See CreateResourceInput.namespaceAccess.
-	namespaceAccess bool
 }
 
 type ResourcePage struct {
@@ -339,9 +328,6 @@ func (service *Service) CreateResource(
 	ctx context.Context,
 	input CreateResourceInput,
 ) (map[string]any, error) {
-	if deniedNamespaceWrite(input.Resource, input.namespaceAccess) {
-		return nil, ErrInvalidInput
-	}
 	object, err := validatedMutationObject(
 		input.ClusterID,
 		input.Resource,
@@ -429,9 +415,6 @@ func (service *Service) PatchResource(
 	ctx context.Context,
 	input PatchResourceInput,
 ) (map[string]any, error) {
-	if deniedNamespaceWrite(input.Resource, input.namespaceAccess) {
-		return nil, ErrInvalidInput
-	}
 	if err := validateMutationBase(
 		input.ClusterID,
 		input.Resource,
@@ -506,7 +489,6 @@ func (service *Service) DeleteResource(
 	if !validation.IsUUID(input.ClusterID) ||
 		!validResourceIdentity(input.Resource) ||
 		deniedResource(input.Resource, input.secretAccess) ||
-		deniedNamespaceWrite(input.Resource, input.namespaceAccess) ||
 		!validNamespace(input.Namespace) ||
 		!validPathSegment(input.Name) ||
 		(!input.DryRun && !input.Confirm) ||
@@ -891,26 +873,6 @@ func deniedResource(resource ResourceIdentity, secretAccess bool) bool {
 		return false
 	}
 	return sensitiveResource(resource.Group, resource.Resource)
-}
-
-// Refuses a generic write that would create or destroy a Namespace.
-//
-// `cluster.namespace.manage` guards the typed Namespace routes, and a permission
-// only guards what has no other door: the generic path would otherwise create
-// and delete Namespaces under `cluster.resource.create` and
-// `cluster.resource.delete`, which is the split this permission exists to make.
-// Reads are untouched, and so is Update — changing an existing Namespace's
-// metadata neither creates a scope nor destroys what is in one, and refusing it
-// would take away the Namespace YAML editor for no gain. Patch is refused
-// because server-side Apply creates the object when it is absent, which is the
-// half of Patch this rule is about.
-//
-// `namespaceAccess` cannot be set from outside this package, so the typed
-// service is the only way through.
-func deniedNamespaceWrite(resource ResourceIdentity, namespaceAccess bool) bool {
-	return !namespaceAccess &&
-		resource.Group == "" &&
-		resource.Resource == "namespaces"
 }
 
 func supportedVerbs(verbs []string) []string {

@@ -125,10 +125,7 @@ func TestSecretRequestsAskForSecretAccess(t *testing.T) {
 	}
 }
 
-// ZKE's own Secrets hold the Agent's enrollment token and the certificates it
-// trusts the Server by. They are not workload configuration and this API does
-// not hand them out.
-func TestPlatformSecretsAreNeitherListedNorReadable(t *testing.T) {
+func TestPlatformSecretsUseTheSameSecretServiceAfterAuthorization(t *testing.T) {
 	t.Parallel()
 
 	requester := &fakeResourceRequester{
@@ -140,9 +137,11 @@ func TestPlatformSecretsAreNeitherListedNorReadable(t *testing.T) {
 			}
 			return writeKubernetesObject(t, responseBody, platformSecret()), nil
 		},
-		mutate: func(context.Context, string, *agentv1.ResourceRequest, io.Reader, io.Writer, string) (*agentv1.ResourceResponse, error) {
-			t.Fatal("a platform Secret reached the mutation transport")
-			return nil, nil
+		mutate: func(_ context.Context, _ string, request *agentv1.ResourceRequest, _ io.Reader, responseBody io.Writer, _ string) (*agentv1.ResourceResponse, error) {
+			if request.GetVerb() == agentv1.ResourceVerb_RESOURCE_VERB_DELETE {
+				return &agentv1.ResourceResponse{Result: agentv1.ResultCode_RESULT_CODE_OK, KubernetesStatusCode: http.StatusOK}, nil
+			}
+			return writeKubernetesObject(t, responseBody, platformSecret()), nil
 		},
 	}
 	service := NewService(requester)
@@ -154,30 +153,28 @@ func TestPlatformSecretsAreNeitherListedNorReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range page.Secrets {
-		if secret.Name == "zke-agent-enrollment" {
-			t.Fatalf("platform Secret appeared in the page: %+v", page.Secrets)
-		}
+	if len(page.Secrets) != 2 || page.Secrets[0].Name != "zke-agent-enrollment" {
+		t.Fatalf("platform Secret was not returned: %+v", page.Secrets)
 	}
 
 	if _, err := service.GetSecret(
 		ctx, testClusterID, "zke-system", "zke-agent-enrollment",
-	); !errors.Is(err, ErrSecretManagedByPlatform) {
-		t.Fatalf("get error = %v, want managed by platform", err)
+	); err != nil {
+		t.Fatalf("get error = %v", err)
 	}
 	if _, err := service.UpdateSecret(ctx, UpdateSecretInput{
 		ClusterID: testClusterID, Namespace: "zke-system", Name: "zke-agent-enrollment",
 		UID: "platform-uid", ResourceVersion: "3", Data: map[string]string{},
 		Confirm: true, IdempotencyKey: "secret-update-0002",
-	}); !errors.Is(err, ErrSecretManagedByPlatform) {
-		t.Fatalf("update error = %v, want managed by platform", err)
+	}); err != nil {
+		t.Fatalf("update error = %v", err)
 	}
 	if err := service.DeleteSecret(ctx, DeleteSecretInput{
 		ClusterID: testClusterID, Namespace: "zke-system", Name: "zke-agent-enrollment",
 		UID: "platform-uid", ResourceVersion: "3",
 		Confirm: true, IdempotencyKey: "secret-delete-0002",
-	}); !errors.Is(err, ErrSecretManagedByPlatform) {
-		t.Fatalf("delete error = %v, want managed by platform", err)
+	}); err != nil {
+		t.Fatalf("delete error = %v", err)
 	}
 }
 
@@ -246,11 +243,10 @@ func TestCreateSecretRejectsPlatformLabelAndTokenType(t *testing.T) {
 // Secrets.
 //
 // It reaches a Secret because it goes through the same read the typed API uses,
-// which is also what keeps ZKE's own Secrets out of it. Anything that is not a
-// Secret is refused outright: this access exists to serve one endpoint, and an
+// Anything that is not a Secret is refused outright: this access exists to serve one endpoint, and an
 // accessor that would fetch a Deployment if asked is one that has to be trusted
 // rather than one that cannot be misused.
-func TestSecretYAMLAccessStaysOnSecretsAndRefusesTheseOfZKE(t *testing.T) {
+func TestSecretYAMLAccessStaysOnSecrets(t *testing.T) {
 	t.Parallel()
 
 	requester := &fakeResourceRequester{
@@ -278,8 +274,8 @@ func TestSecretYAMLAccessStaysOnSecretsAndRefusesTheseOfZKE(t *testing.T) {
 	if _, err := access.GetResource(ctx, GetResourceInput{
 		ClusterID: testClusterID, Resource: SecretResourceIdentity(),
 		Namespace: "zke-system", Name: "zke-agent-enrollment",
-	}); !errors.Is(err, ErrSecretManagedByPlatform) {
-		t.Fatalf("platform Secret error = %v, want managed by platform", err)
+	}); err != nil {
+		t.Fatalf("platform Secret error = %v", err)
 	}
 
 	if _, err := access.GetResource(ctx, GetResourceInput{

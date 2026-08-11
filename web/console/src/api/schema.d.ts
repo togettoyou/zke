@@ -692,9 +692,11 @@ export interface paths {
          * @description 在目标 Cluster 创建 Namespace。dry_run=true 时执行 Kubernetes 服务端
          *     DryRun；实际创建必须显式 confirm=true。
          *
-         *     要求 `cluster.namespace.manage`，不由 `cluster.resource.create` 蕴含：
+         *     普通名称要求 `cluster.namespace.manage`，`default` 与 `kube-*` 改用
+         *     `cluster.system_namespace.manage`，Agent Namespace 改用
+         *     `cluster.agent_namespace.manage`；均不由 `cluster.resource.create` 蕴含：
          *     创建一个 Namespace 新增的是其余 Kubernetes 权限得以行使的作用域本身。
-         *     通用 Resource 接口相应拒绝 `core/v1 namespaces` 的 Create 与 Patch。
+         *     通用 Resource 接口按目标名称执行相同权限判定。
          */
         post: operations["createKubernetesNamespace"];
         delete?: never;
@@ -718,9 +720,11 @@ export interface paths {
          * @description 删除目标 Cluster 中的 Namespace。dry_run=true 时执行 Kubernetes 服务端
          *     DryRun；实际删除必须显式 confirm=true。
          *
-         *     要求 `cluster.namespace.manage`，不由 `cluster.resource.delete` 蕴含：
+         *     普通名称要求 `cluster.namespace.manage`，`default` 与 `kube-*` 改用
+         *     `cluster.system_namespace.manage`，Agent Namespace 改用
+         *     `cluster.agent_namespace.manage`；均不由 `cluster.resource.delete` 蕴含：
          *     删除一个 Namespace 会连同其中的全部对象一起移除。通用 Resource 接口
-         *     相应拒绝 `core/v1 namespaces` 的 Delete。
+         *     按目标名称执行相同权限判定。
          */
         delete: operations["deleteKubernetesNamespace"];
         options?: never;
@@ -1763,9 +1767,8 @@ export interface paths {
         };
         /**
          * @description 在明确的 Cluster 和 Namespace 中分页查询 Secret。列表只返回键名、内容大小、类型和
-         *     元数据，不返回任何取值；取值仅由单对象详情接口返回。属于 ZKE 安装本身的 Secret
-         *     （带 app.kubernetes.io/managed-by=zke-server 标签）不会出现在列表中，因此一页可能
-         *     少于 limit 条。要求 cluster.secret.read。
+         *     元数据，不返回任何取值；取值仅由单对象详情接口返回。要求 cluster.secret.read；
+         *     受保护命名空间还要求对应的独立命名空间权限。
          */
         get: operations["listKubernetesSecrets"];
         put?: never;
@@ -1813,10 +1816,10 @@ export interface paths {
         };
         /**
          * @description 读取一个 Secret 的完整 YAML，要求 `cluster.secret.read`。文档包含该 Secret 的
-         *     全部取值（Kubernetes 存储的 Base64），暴露面大于按键遮蔽的详情接口。属于 ZKE
-         *     安装本身的 Secret 返回 403 `secret_managed_by_platform`；Agent 自身所在
-         *     Namespace 的 Secret 返回 403 `agent_namespace_forbidden`。通用 Resource 与
-         *     YAML 接口对 `core/v1 Secret` 的拒绝保持不变。
+         *     全部取值（Kubernetes 存储的 Base64），暴露面大于按键遮蔽的详情接口。Agent 自身所在
+         *     Namespace 还要求 `cluster.agent_namespace.manage`；升级前部署的旧 Agent 可能
+         *     继续返回兼容错误 `agent_namespace_forbidden`。通用 Resource 与 YAML 接口对
+         *     `core/v1 Secret` 的拒绝保持不变。
          */
         get: operations["getKubernetesSecretYAML"];
         /**
@@ -2033,6 +2036,11 @@ export interface paths {
          *     `cluster.namespace.manage`，其余资源按新建或更新分别需要
          *     `cluster.resource.create` 或 `cluster.resource.update`。只要有一个文档不被
          *     当前身份的权限覆盖，整份清单被拒绝且不写入任何对象，返回 403。
+         *
+         *     `kube-*`（以及 `default` Namespace 本身）的普通资源写入改用
+         *     `cluster.system_namespace.manage`，Agent Namespace 的普通资源写入改用
+         *     `cluster.agent_namespace.manage`；Secret 与 Kubernetes RBAC 文档在对应
+         *     命名空间权限之外仍要求上述家族专用权限。
          *
          *     dry_run=true 时逐文档解析、探测存在性、判定权限并调用 Kubernetes DryRun，
          *     无需 confirm，且始终返回逐文档结果；实际写入必须提供 confirm=true。
@@ -2253,7 +2261,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */

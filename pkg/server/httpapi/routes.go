@@ -336,6 +336,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.requestTimeout,
 		handlers.roleBindingCache,
 		handlers.authMiddleware.RequireAuthentication,
+		handlers.authorizationMiddleware.RequireProtectedNamespaceAccess("cluster_id"),
 	)
 	clusterRoutes.GET(
 		"/:cluster_id",
@@ -384,6 +385,7 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			rbac.PermissionClusterNodeDrain,
 			"cluster_id",
 		),
+		handlers.authorizationMiddleware.ResolveClusterProtectedNamespaceGrant("cluster_id"),
 		handlers.kubernetesNode.drain,
 	)
 	clusterRoutes.GET(
@@ -422,12 +424,9 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesMetrics.pods,
 	)
-	// Creating and deleting a Namespace is its own permission. Every other
-	// `cluster.resource.*` write acts on one object; deleting a Namespace takes
-	// everything inside it, and creating one adds a scope the rest of the
-	// permissions then apply to. Reading Namespaces stays on `cluster.read` —
-	// nothing about listing them is destructive — and so does editing an
-	// existing one's metadata, which neither creates nor destroys anything.
+	// Namespace writes use their own permission family. Reading remains on
+	// `cluster.read`; ordinary, Kubernetes system, and Agent Namespace mutations
+	// are selected from the concrete target by the authorization middleware.
 	clusterRoutes.POST(
 		"/:cluster_id/namespaces",
 		handlers.authMiddleware.RequireCSRF,
@@ -560,7 +559,10 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	// Pod terminal WebSockets have their own group so the short request timeout
 	// does not terminate an active, bounded and periodically revalidated shell.
 	podExecRoutes := apiV1.Group("/clusters")
-	podExecRoutes.Use(handlers.authMiddleware.RequireAuthentication)
+	podExecRoutes.Use(
+		handlers.authMiddleware.RequireAuthentication,
+		handlers.authorizationMiddleware.RequireProtectedNamespaceAccess("cluster_id"),
+	)
 	podExecRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/terminal-sessions/:session_id",
 		handlers.authorizationMiddleware.RequireCluster(
