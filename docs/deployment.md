@@ -46,7 +46,7 @@ Agent 使用相同的局部覆盖规则。默认注册地址和 QUIC 地址分�
 | `ZKE_AGENT_IMAGE` | `agent_install.image` |
 | `ZKE_CLUSTER_TERMINAL_IMAGE` | `cluster_terminal.image` |
 
-默认 HTTP/API 与 Pod Access Listener 分别使用 TCP `8080` 和 `8081`，不在进程内启用 HTTP TLS；Agent Listener 使用 UDP `8443` 和独立的 QUIC/mTLS 身份。共享环境应由网关为 `8080`、`8081` 提供 HTTPS，并为 `8443/UDP` 提供可达入口。
+默认 HTTP/API 与 Pod Access Listener 分别使用 TCP `8080` 和 `8081`，不在进程内启用 HTTP TLS；Agent Listener 使用 UDP `8443` 和独立的 QUIC/mTLS 身份。共享环境应由网关为 `8080`、`8081` 提供 HTTPS，并为 `8443/UDP` 提供可达入口。网关在 `8080` 前终止 HTTPS 时，必须保留原始 `Host`，并把 `agent_install.public_http_url` 配置为 Console/API 的 HTTPS 公网入口，例如 `https://zke.example.com`。Pod 与集群终端的 WebSocket 同源检查使用该配置确定公网协议，同时继续要求 `Origin` 与请求 `Host` 完全一致，不直接信任客户端可伪造的 `X-Forwarded-Proto`。
 
 Agent 安装功能默认开启，但 `agent_install.public_http_url`、`agent_install.public_quic_address` 和 Managed PKI Listener SAN 必须与目标集群实际可达的入口一致。默认回环地址只适用于本机预览，不能直接用于远程集群接入。
 

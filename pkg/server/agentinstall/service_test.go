@@ -156,10 +156,13 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 		t.Fatal("manifest has no ZKE Agent ClusterRole")
 	}
 
-	workloadVerbs := []string{"get", "list", "create", "update", "patch", "delete"}
+	workloadVerbs := []string{"get", "list", "watch", "create", "update", "patch", "delete"}
 	assertPolicyRule(t, clusterRole.Rules, "apps", []string{
 		"deployments", "statefulsets", "daemonsets",
 	}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "apps", []string{
+		"replicasets", "controllerrevisions",
+	}, []string{"get", "list", "watch"})
 	assertPolicyRule(t, clusterRole.Rules, "batch", []string{
 		"jobs", "cronjobs",
 	}, workloadVerbs)
@@ -181,7 +184,7 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "scheduling.k8s.io", []string{"priorityclasses"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "apiextensions.k8s.io", []string{
 		"customresourcedefinitions",
-	}, []string{"get", "list"})
+	}, []string{"get", "list", "watch"})
 	assertPolicyRule(t, clusterRole.Rules, "metrics.k8s.io", []string{
 		"nodes", "pods",
 	}, []string{"get", "list"})
@@ -189,7 +192,7 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "gateway.networking.k8s.io",
 		[]string{"gateways", "httproutes", "grpcroutes", "tlsroutes", "tcproutes", "udproutes"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"nodes"}, []string{
-		"get", "list", "update", "patch",
+		"get", "list", "watch", "update", "patch",
 	})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"namespaces"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods"}, workloadVerbs)
@@ -198,11 +201,10 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/portforward"}, []string{"create"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"pods/eviction"}, []string{"create"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"events"}, []string{"get", "list", "watch"})
-	// Secrets are granted, but only the five verbs the typed Secret API uses:
-	// no `watch`, no `deletecollection`, and no Subresource. What keeps the
-	// grant from becoming general Secret access is the Agent itself, which
-	// refuses a Secret request that does not come from that API and any request
-	// touching its own namespace.
+	// Secrets include watch so the Agent may delegate the terminal's read-only
+	// watch without `escalate`; no `deletecollection` or Subresource is granted.
+	// The Agent still refuses a Secret request that does not come from its typed
+	// API and any request touching its own namespace.
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"secrets"}, workloadVerbs)
 	for _, rule := range clusterRole.Rules {
 		for _, resource := range rule.Resources {

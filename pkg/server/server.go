@@ -384,6 +384,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			PodExec: httpapi.PodExecHTTPConfig{
 				MaximumDuration: cfg.AgentListener.PodExecRequestTimeout,
 				WriteTimeout:    cfg.AgentListener.WriteTimeout,
+				PublicHTTPURL:   cfg.AgentInstall.PublicHTTPURL,
 			},
 			KubernetesEvents: httpapi.KubernetesEventsHTTPConfig{
 				SnapshotTimeout:       cfg.Auth.OperationTimeout,

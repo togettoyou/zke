@@ -58,12 +58,15 @@ func TestKubernetesPodExecCreateBindsIdentityTargetAndConfirmation(t *testing.T)
 	}
 }
 
-func TestKubernetesPodExecWebSocketUsesProtocolFrames(t *testing.T) {
+func TestKubernetesPodExecWebSocketUsesProtocolFramesBehindTLSProxy(t *testing.T) {
 	service := &fakePodExecHTTPService{session: testHTTPSession()}
 	handler := newKubernetesPodExecHandler(
 		slog.New(slog.NewTextHandler(io.Discard, nil)), service, nil, nil, nil,
 		time.Second,
-		PodExecHTTPConfig{MaximumDuration: time.Second, RevalidateInterval: time.Second},
+		PodExecHTTPConfig{
+			MaximumDuration: time.Second, RevalidateInterval: time.Second,
+			PublicHTTPURL: "https://agent.example.com",
+		},
 	)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -84,7 +87,8 @@ func TestKubernetesPodExecWebSocketUsesProtocolFrames(t *testing.T) {
 	webSocketURL := "ws" + strings.TrimPrefix(server.URL, "http") +
 		"/api/v1/clusters/00000000-0000-4000-8000-000000000003/namespaces/workloads/pods/api-0/terminal-sessions/00000000-0000-4000-8000-000000000010"
 	dialer := websocket.Dialer{Subprotocols: []string{podExecWebSocketProtocol}}
-	connection, response, err := dialer.Dial(webSocketURL, http.Header{"Origin": []string{server.URL}})
+	externalOrigin := "https" + strings.TrimPrefix(server.URL, "http")
+	connection, response, err := dialer.Dial(webSocketURL, http.Header{"Origin": []string{externalOrigin}})
 	if response != nil {
 		defer response.Body.Close()
 	}
@@ -171,9 +175,29 @@ func TestPodExecSameOriginRequiresExactHost(t *testing.T) {
 	} {
 		request := httptest.NewRequest(http.MethodGet, "https://zke.example.com/terminal", nil)
 		request.Header.Set("Origin", test.origin)
-		if got := podExecSameOrigin(request); got != test.valid {
+		if got := podExecSameOrigin(request, ""); got != test.valid {
 			t.Fatalf("origin %q valid=%t, want %t", test.origin, got, test.valid)
 		}
+	}
+}
+
+func TestPodExecSameOriginUsesConfiguredPublicHTTPSchemeBehindTLSProxy(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "http://zke-server:8080/terminal", nil)
+	request.Host = "zke.example.com"
+	request.Header.Set("Origin", "https://zke.example.com")
+	request.Header.Set("X-Forwarded-Proto", "https")
+
+	if podExecSameOrigin(request, "") {
+		t.Fatal("untrusted X-Forwarded-Proto changed the request origin")
+	}
+	if !podExecSameOrigin(request, "https://agent.example.com") {
+		t.Fatal("configured public HTTPS scheme was rejected behind an HTTP proxy")
+	}
+	request.Header.Set("Origin", "https://other.example.com")
+	if podExecSameOrigin(request, "https://agent.example.com") {
+		t.Fatal("mismatched request Host and Origin were accepted")
 	}
 }
 

@@ -38,6 +38,9 @@ type PodExecHTTPConfig struct {
 	IdleTimeout        time.Duration
 	RevalidateInterval time.Duration
 	WriteTimeout       time.Duration
+	// PublicHTTPURL supplies the browser-facing scheme after TLS termination.
+	// The request Host remains authoritative for the same-origin host check.
+	PublicHTTPURL string
 }
 
 type podExecService interface {
@@ -122,7 +125,9 @@ func newKubernetesPodExecHandler(
 			ReadBufferSize:   4096,
 			WriteBufferSize:  4096,
 			Subprotocols:     []string{podExecWebSocketProtocol},
-			CheckOrigin:      podExecSameOrigin,
+			CheckOrigin: func(request *http.Request) bool {
+				return podExecSameOrigin(request, config.PublicHTTPURL)
+			},
 		},
 	}
 }
@@ -199,7 +204,7 @@ func (handler *kubernetesPodExecHandler) connectSession(
 ) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)
-	if !podExecSameOrigin(c.Request) {
+	if !podExecSameOrigin(c.Request, handler.config.PublicHTTPURL) {
 		writeError(c, http.StatusForbidden, "cross_origin_forbidden", "cross-origin request forbidden")
 		return
 	}
@@ -537,21 +542,35 @@ func podExecTarget(c *gin.Context, podUID string, container string) string {
 	)
 }
 
-func podExecSameOrigin(request *http.Request) bool {
+func podExecSameOrigin(request *http.Request, publicHTTPURL string) bool {
 	if request == nil {
 		return false
 	}
-	origin := request.Header.Get("Origin")
-	parsed, err := url.Parse(origin)
-	if err != nil || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" ||
-		parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	parsed, valid := parseHTTPOrigin(request.Header.Get("Origin"))
+	if !valid {
 		return false
 	}
 	expectedScheme := "http"
 	if request.TLS != nil {
 		expectedScheme = "https"
+	} else if publicHTTPURL != "" {
+		external, valid := parseHTTPOrigin(publicHTTPURL)
+		if !valid {
+			return false
+		}
+		expectedScheme = external.Scheme
 	}
 	return parsed.Scheme == expectedScheme && strings.EqualFold(parsed.Host, request.Host)
+}
+
+func parseHTTPOrigin(value string) (*url.URL, bool) {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.User != nil || parsed.Host == "" ||
+		(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" ||
+		parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, false
+	}
+	return parsed, true
 }
 
 // podExecAuditResult says how a terminal session ended, in the audit's

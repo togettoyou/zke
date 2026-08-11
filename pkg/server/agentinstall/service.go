@@ -255,6 +255,9 @@ func renderManifest(
 			Name:   ServiceAccountName,
 			Labels: labels,
 		},
+		// Readable resources include watch because temporary Cluster terminal
+		// roles delegate that verb. Kubernetes rejects such role creation unless
+		// the Agent already holds every delegated permission.
 		Rules: []rbacv1.PolicyRule{
 			{
 				APIGroups: []string{"metrics.k8s.io"},
@@ -266,17 +269,17 @@ func renderManifest(
 				Resources: []string{"nodes"},
 				// `patch` covers marking a Node schedulable or unschedulable;
 				// `update` is the full-object YAML management path.
-				Verbs: []string{"get", "list", "update", "patch"},
+				Verbs: []string{"get", "list", "watch", "update", "patch"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"namespaces"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"pods"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
@@ -322,7 +325,7 @@ func renderManifest(
 					"statefulsets",
 					"daemonsets",
 				},
-				Verbs: []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				// Read-only, and only so a workload's revision history can be
@@ -333,22 +336,22 @@ func renderManifest(
 				// prune a revision — that stays the controllers' job.
 				APIGroups: []string{"apps"},
 				Resources: []string{"replicasets", "controllerrevisions"},
-				Verbs:     []string{"get", "list"},
+				Verbs:     []string{"get", "list", "watch"},
 			},
 			{
 				APIGroups: []string{"batch"},
 				Resources: []string{"jobs", "cronjobs"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"services"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"configmaps"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
@@ -359,49 +362,49 @@ func renderManifest(
 				// certificates it trusts the Server by live. This grant is what
 				// makes that API possible; it is not what authorizes it.
 				Resources: []string{"secrets"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"persistentvolumes", "persistentvolumeclaims"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"storage.k8s.io"},
 				Resources: []string{"storageclasses"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"autoscaling"},
 				Resources: []string{"horizontalpodautoscalers"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"autoscaling.k8s.io"},
 				Resources: []string{"verticalpodautoscalers"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"keda.sh"},
 				Resources: []string{"scaledobjects"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{""},
 				// The two Namespace-level constraints: how much may be consumed,
 				// and what a container's limits default to.
 				Resources: []string{"resourcequotas", "limitranges"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"policy"},
 				Resources: []string{"poddisruptionbudgets"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"scheduling.k8s.io"},
 				Resources: []string{"priorityclasses"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				// Read-only, and only to answer which discovered resources come
@@ -410,12 +413,12 @@ func renderManifest(
 				// Defining or changing CRDs is not a capability the Agent has.
 				APIGroups: []string{"apiextensions.k8s.io"},
 				Resources: []string{"customresourcedefinitions"},
-				Verbs:     []string{"get", "list"},
+				Verbs:     []string{"get", "list", "watch"},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"serviceaccounts"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				// Deliberately omit escalate, bind and impersonate. Kubernetes
@@ -423,12 +426,12 @@ func renderManifest(
 				// existing permission ceiling.
 				APIGroups: []string{"rbac.authorization.k8s.io"},
 				Resources: []string{"roles", "clusterroles", "rolebindings", "clusterrolebindings"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"networking.k8s.io"},
 				Resources: []string{"ingresses", "networkpolicies"},
-				Verbs:     []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				// Gateway API is optional. Kubernetes accepts this RBAC rule even
@@ -437,7 +440,7 @@ func renderManifest(
 				Resources: []string{
 					"gateways", "httproutes", "grpcroutes", "tlsroutes", "tcproutes", "udproutes",
 				},
-				Verbs: []string{"get", "list", "create", "update", "patch", "delete"},
+				Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 		},
 	}
