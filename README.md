@@ -1,69 +1,49 @@
 # ZKE
 
-> **ZKE（Z Kubernetes Engine）**
->
-> 面向私有网络与混合云环境的 Kubernetes 多集群管理平台
+> **macOS 风格的 Kubernetes 多集群控制台**
 
-![Development Status](https://img.shields.io/badge/status-development%20preview-orange)
+**像使用桌面应用一样，管理分散在数据中心、私有云、公有云和边缘环境中的 Kubernetes 集群。**
 
-> [!TIP]
-> **在线体验：** [打开 ZKE 体验环境](https://fbcupchhlacp.sealosbja.site/)
->
-> 用户名：`view`　密码：`LECQkqcp2tQ5Yh8`
->
-> 体验环境仅用于功能预览，数据可能随时重置。
+ZKE（Z Kubernetes Engine）通过 Server + Agent 架构连接多个 Kubernetes 集群。Agent 使用 QUIC/mTLS 主动连接 Server，无需 ZKE Server 直接访问各集群的 Kubernetes API Server；平台团队可以在统一入口中管理资源与工作负载，并实施权限控制、安全操作和审计。
 
-ZKE 通过 Server + Agent 连接分散在数据中心、私有云和公有云中的 Kubernetes 集群，为平台团队提供统一的资源管理、权限控制、安全操作与审计入口。
+**在线体验：** [打开 ZKE 体验环境](https://fbcupchhlacp.sealosbja.site/)
 
-> [!IMPORTANT]
-> ZKE 当前处于开发预览阶段。平台基础与容器服务主要链路已经实现，多集群可观测性和 AI 运维与排障助手（Copilot）仍在规划中；产品范围与技术选型仍可能调整，当前版本不适用于生产环境。
+> 账号：`view`　密码：`LECQkqcp2tQ5Yh8`　（体验数据可能随时重置）
 
-## 核心能力
+[部署指南](docs/deployment.md) · [完整文档](docs/README.md) · [Roadmap](docs/roadmap.md)
 
-| 能力方向 | 产品目标 | 当前状态 |
-| --- | --- | --- |
-| 多集群管理 | 统一接入和查看多个 Kubernetes 集群及其 Agent 状态 | 主要链路已实现 |
-| 容器服务 | 在选定集群中管理节点、Namespace、工作负载、网络、配置和存储资源 | 主要链路已实现 |
-| 安全与审计 | 使用租户、项目和 RBAC 限定资源范围，保护敏感操作并记录审计日志 | 主要链路已实现 |
-| 多集群可观测性 | 汇总指标、日志和事件，提供查询、告警、仪表盘与资源对比 | 规划中 |
-| AI 运维与排障助手（Copilot） | 结合资源状态、事件、日志和指标辅助分析故障、解释风险并提供处理建议 | 规划中 |
+![在 ZKE 桌面中管理集群并打开终端](docs/images/product-preview/cluster-terminal.png)
 
-“主要链路已实现”不代表已经具备生产可用性或水平扩展能力，具体范围以 [Roadmap](docs/roadmap.md) 和功能文档为准。
+## 为什么选择 ZKE
 
-## 设计原则
-
-- 以 Kubernetes 为统一基础设施底座，工作负载最终运行在具体 Kubernetes 集群中。
-- 通过 Server + Agent 管理多集群，由 Agent 主动连接 Server。
-- 全局查看资源，在明确的目标集群中执行操作。
-- 敏感操作必须验证权限、确认目标并记录审计日志。
+- **桌面式交互：** 以窗口、Dock 和应用分区组织管理能力，在同一工作空间中切换集群管理、容器服务、终端与安全审计。
+- **适应私有网络：** Agent 通过 QUIC/mTLS 主动连接 Server，适合具有独立网络边界的数据中心、私有云、混合云和边缘集群。
+- **多集群不混淆：** 提供全局视图，但所有查询和操作都携带明确的 Cluster、Namespace 与资源身份，避免跨集群误操作。
+- **敏感操作受控：** 使用 Tenant、Project 和 RBAC 限定权限范围，并通过 DryRun、差异确认、幂等保护与审计降低变更风险。
 
 > **全局观察，按集群执行。**
 
-[了解产品愿景与完整设计原则](docs/product/vision.md)
+## 当前能力
 
-## 系统架构
+| 能力 | 已实现的主要链路 |
+| --- | --- |
+| 多集群接入 | 集群注册、Agent 状态、证书续期、撤销与重新接入 |
+| 资源与工作负载 | Node、Namespace、Pod、Deployment、StatefulSet、DaemonSet、Job、CronJob，以及服务、路由、配置、存储、自动伸缩和策略管理 |
+| 日常运维 | Pod 日志、Web Terminal、临时访问、事件追踪、资源用量、工作负载诊断和版本回滚 |
+| Kubernetes 原生资源 | Discovery、CRD 资源浏览、YAML 编辑及多文档清单应用与删除 |
+| 权限与安全 | Tenant、Project、RBAC、敏感操作确认、DryRun 差异、并发身份保护和审计日志 |
 
-ZKE 采用 Server + Agent 架构。每个接入的 Kubernetes 集群部署一个 ZKE Agent，由 Agent 主动连接 ZKE Server。
+各项能力的具体边界和已知限制以 [Roadmap](docs/roadmap.md) 与功能文档为准。
 
-```mermaid
-flowchart TB
-    User["用户或平台客户端"] --> Server["ZKE Server"]
-    Server <--> AgentA["ZKE Agent A"]
-    Server <--> AgentB["ZKE Agent B"]
-    AgentA <--> ClusterA["Kubernetes Cluster A"]
-    AgentB <--> ClusterB["Kubernetes Cluster B"]
-    Server -.-> Observability["多集群可观测性（规划）"]
-    Server -.-> Copilot["AI 运维与排障助手（规划）"]
-```
+## 产品一览
 
-这一连接模型面向私有网络、混合云、多云和边缘集群。
+| 工作负载诊断 | 安全更新确认 |
+| --- | --- |
+| ![关联对象与 Kubernetes 事件诊断](docs/images/product-preview/workload-diagnostics.png) | ![通过 DryRun 差异确认更新 Deployment](docs/images/product-preview/deployment-update-confirmation.png) |
+| **Pod 实时日志** | **Pod 临时访问** |
+| ![实时查看 Pod 日志](docs/images/product-preview/pod-logs.png) | ![为 Pod 创建一次性临时访问地址](docs/images/product-preview/pod-access.png) |
 
-- [系统架构](docs/architecture/overview.md)
-- [Server + Agent 架构](docs/architecture/server-agent.md)
-- [应用作用域与资源模型](docs/architecture/resource-model.md)
-- [安全与权限](docs/security/authorization.md)
-
-## 快速安装
+## 快速开始
 
 ### Docker
 
@@ -76,7 +56,7 @@ docker run -d --name zke \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
-打开 <http://127.0.0.1:8080>，并读取自动生成的初始管理员密码：
+打开 <http://127.0.0.1:8080>，读取自动生成的初始管理员密码：
 
 ```bash
 docker exec zke cat /data/admin-password
@@ -84,7 +64,7 @@ docker exec zke cat /data/admin-password
 
 ### Kubernetes
 
-标准部署使用 `ghcr.io/togettoyou/zke-server:latest` 和独立 PostgreSQL StatefulSet。用于共享或外部可访问环境前，先替换清单中的默认数据库密码。
+标准部署使用 ZKE Server 和独立的 PostgreSQL StatefulSet。用于共享或外部可访问环境前，请先替换清单中的默认数据库密码。
 
 ```bash
 kubectl apply -f deploy/kubernetes/zke.yaml
@@ -93,7 +73,7 @@ kubectl -n zke-system port-forward service/zke-server 8080:8080 8081:8081
 
 ### Helm
 
-`main` 分支的 OCI Chart 使用 `0.0.0-latest` 版本；Git Tag 使用对应的语义化版本：
+`main` 分支的 OCI Chart 使用 `0.0.0-latest`；Git Tag 使用对应的语义化版本：
 
 ```bash
 helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
@@ -101,37 +81,34 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
   --namespace zke-system --create-namespace
 ```
 
-[查看完整部署、持久化、配置覆盖与外部入口说明](docs/deployment.md)
+远程集群接入还需要配置可达的 HTTP 注册地址与 QUIC/UDP 入口，详见[部署指南](docs/deployment.md)。
 
-## 产品预览
+## 架构
 
-| 集群终端 | 工作负载诊断 |
-| --- | --- |
-| ![在指定集群中打开终端](docs/images/product-preview/cluster-terminal.png) | ![诊断工作负载异常并查看关联事件](docs/images/product-preview/workload-diagnostics.png) |
-| **Pod 日志** | **Pod 临时访问** |
-| ![实时查看 Pod 日志](docs/images/product-preview/pod-logs.png) | ![为 Pod 创建一次性临时访问地址](docs/images/product-preview/pod-access.png) |
-| **角色权限** | **工作负载安全更新** |
-| ![按角色配置集群操作权限](docs/images/product-preview/role-permissions.png) | ![通过 DryRun 差异确认更新 Deployment](docs/images/product-preview/deployment-update-confirmation.png) |
+每个接入集群部署一个 ZKE Agent。Agent 主动建立 QUIC/mTLS 长连接，ZKE Server 通过对应连接将查询和操作定域到目标集群。
 
-## 适用场景
+```mermaid
+flowchart LR
+    User["平台用户"] -->|"HTTP / WebSocket"| Server["ZKE Server"]
+    AgentA["ZKE Agent A"] -->|"主动连接 · QUIC/mTLS"| Server
+    AgentB["ZKE Agent B"] -->|"主动连接 · QUIC/mTLS"| Server
+    AgentA <--> ClusterA["Kubernetes Cluster A"]
+    AgentB <--> ClusterB["Kubernetes Cluster B"]
+```
 
-- 数据中心、私有云和公有云中的多 Kubernetes 集群统一管理
-- 具有独立网络边界的私有云与混合云 Kubernetes 环境
-- Kubernetes 资源、工作负载与敏感运维操作的统一入口
-- 统一权限边界与审计要求下的平台工程和 SRE 协作
-- 规划中的多集群可观测性和 AI 运维与排障助手（Copilot）
+- [系统架构](docs/architecture/overview.md)
+- [Server + Agent 架构](docs/architecture/server-agent.md)
+- [Agent 注册与 QUIC/mTLS 连接](docs/architecture/agent-enrollment-and-connection.md)
+- [资源作用域与权限模型](docs/architecture/resource-model.md)
 
 ## Roadmap
 
-当前规划分为四个阶段：
+- **已实现主要链路：** 平台基础、集群接入与容器服务。
+- **规划中：** 多集群可观测性，包括指标、日志、告警和资源对比。
+- **规划中：** AI 运维与排障助手（Copilot），用于结合资源状态、事件、日志和指标辅助分析问题。
 
-1. 平台基础
-2. 容器服务
-3. 可观测性
-4. AI 运维与排障助手（Copilot）
-
-[查看完整 Roadmap](docs/roadmap.md)
+规划不代表发布时间或交付承诺，详情请查看[完整 Roadmap](docs/roadmap.md)。
 
 ## 文档
 
-完整的产品、架构、功能与安全文档请查看 [ZKE 文档导航](docs/README.md)。
+产品、架构、功能、安全设计与开发规划统一收录在 [ZKE 文档导航](docs/README.md) 中。
