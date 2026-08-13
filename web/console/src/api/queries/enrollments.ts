@@ -34,7 +34,12 @@ export function useClusterEnrollments(projectId: string | null, params: Enrollme
 export function useCreateClusterEnrollment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { projectId: string; clusterName: string; endpointProfileId: string; idempotencyKey: string }) =>
+    mutationFn: async (input: {
+      projectId: string;
+      clusterName: string;
+      endpointProfileId: string;
+      idempotencyKey: string;
+    }) =>
       unwrap(
         await api.POST("/api/v1/projects/{project_id}/cluster-enrollments", {
           params: {
@@ -76,7 +81,12 @@ export function useRevokeClusterEnrollment() {
 export function useCreateClusterInstallation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { projectId: string; clusterName: string; endpointProfileId: string; idempotencyKey: string }) =>
+    mutationFn: async (input: {
+      projectId: string;
+      clusterName: string;
+      endpointProfileId: string;
+      idempotencyKey: string;
+    }) =>
       unwrap(
         await api.POST("/api/v1/projects/{project_id}/cluster-installations", {
           params: {
