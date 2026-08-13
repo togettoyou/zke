@@ -37,6 +37,7 @@ func TestAgentEnrollmentStateMachineIsAtomicAndIdempotent(t *testing.T) {
 			ExpiresAt:       now.Add(15 * time.Minute),
 			RequestID:       "request-create-agent-enrollment",
 			IdempotencyKey:  "create-agent-enrollment-0001",
+			Snapshot:        testEnrollmentSnapshot(),
 		},
 	)
 	if err != nil {
@@ -242,6 +243,7 @@ WHERE id = $1
 			TokenDigest: reenrollmentDigest[:], ExpiresAt: now.Add(20 * time.Minute),
 			RequestID:      "request-create-cluster-reenrollment",
 			IdempotencyKey: "create-cluster-reenrollment-0001",
+			Snapshot:       testEnrollmentSnapshot(),
 		},
 	)
 	if err != nil {
@@ -374,6 +376,7 @@ func TestAgentEnrollmentRejectsExpiredTokenAndRollsBackFailedCompletion(t *testi
 			ExpiresAt:       now.Add(-time.Minute),
 			RequestID:       "request-create-expired-enrollment",
 			IdempotencyKey:  "create-expired-enrollment-0001",
+			Snapshot:        testEnrollmentSnapshot(),
 		},
 	)
 	if err != nil {
@@ -430,6 +433,7 @@ WHERE action = 'cluster.enroll'
 			ExpiresAt:       now.Add(15 * time.Minute),
 			RequestID:       "request-create-second-rollback",
 			IdempotencyKey:  "create-second-rollback-0001",
+			Snapshot:        testEnrollmentSnapshot(),
 		},
 	)
 	if err != nil {
@@ -523,6 +527,7 @@ func createCompletedEnrollmentForSerial(
 			ExpiresAt:       now.Add(15 * time.Minute),
 			RequestID:       "request-" + createKey,
 			IdempotencyKey:  createKey,
+			Snapshot:        testEnrollmentSnapshot(),
 		},
 	)
 	if err != nil {

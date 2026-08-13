@@ -22,6 +22,7 @@ tags:
   - name: Clusters
   - name: Agent Protocol
   - name: Audit
+  - name: Platform
   - name: Events
 paths:
   /healthz:
@@ -6283,6 +6284,162 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/platform/settings:
+    get:
+      tags: [Platform]
+      operationId: getPlatformSettings
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: 平台设置与 Agent 接入端点预设
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [settings, agent_endpoint_profiles]
+                        properties:
+                          settings: { $ref: "#/components/schemas/PlatformSettings" }
+                          agent_endpoint_profiles:
+                            type: array
+                            items: { $ref: "#/components/schemas/AgentEndpointProfile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      tags: [Platform]
+      operationId: updatePlatformSettings
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlatformSettingsUpdate" }
+      responses:
+        "200":
+          description: 已更新的平台设置
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/PlatformSettings" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/platform/agent-endpoint-profiles:
+    post:
+      tags: [Platform]
+      operationId: createAgentEndpointProfile
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentEndpointProfileWrite" }
+      responses:
+        "201":
+          description: 已创建的 Agent 接入端点预设
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AgentEndpointProfile" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/platform/agent-endpoint-profiles/{profile_id}:
+    parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/UUID" }
+    put:
+      tags: [Platform]
+      operationId: updateAgentEndpointProfile
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AgentEndpointProfileWrite"
+                - type: object
+                  required: [expected_revision]
+                  properties:
+                    expected_revision: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: 已更新的 Agent 接入端点预设
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AgentEndpointProfile" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [Platform]
+      operationId: deleteAgentEndpointProfile
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      responses:
+        "204": { description: 已删除 }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/projects/{project_id}/agent-endpoint-profiles:
+    get:
+      tags: [Clusters]
+      operationId: listReadyAgentEndpointProfiles
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/ProjectID" }]
+      responses:
+        "200":
+          description: 当前可用于创建接入的端点预设
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [default_endpoint_profile_id, agent_endpoint_profiles]
+                        properties:
+                          default_endpoint_profile_id: { $ref: "#/components/schemas/UUID" }
+                          agent_endpoint_profiles:
+                            type: array
+                            items: { $ref: "#/components/schemas/AgentEndpointProfile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/projects/{project_id}/cluster-enrollments:
     get:
       tags: [Clusters]
@@ -6352,6 +6509,8 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 253
+                endpoint_profile_id:
+                  $ref: "#/components/schemas/UUID"
       responses:
         "201":
           description: 一次性注册凭证
@@ -6452,6 +6611,8 @@ paths:
               properties:
                 cluster_name:
                   type: string
+                endpoint_profile_id:
+                  $ref: "#/components/schemas/UUID"
       responses:
         "201":
           description: 安装命令
@@ -6491,7 +6652,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Confirmation"
+              $ref: "#/components/schemas/ReenrollmentRequest"
       responses:
         "200":
           description: Cluster 当前接入身份已撤销
@@ -6526,7 +6687,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Confirmation"
+              $ref: "#/components/schemas/ReenrollmentRequest"
       responses:
         "201":
           description: 原 Cluster 的新一次性接入凭证
@@ -7591,6 +7752,15 @@ components:
       properties:
         confirm:
           const: true
+    ReenrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        confirm:
+          const: true
+        endpoint_profile_id:
+          $ref: "#/components/schemas/UUID"
     UpdateScopedResourceRequest:
       type: object
       additionalProperties: false
@@ -13601,10 +13771,57 @@ components:
               type: string
             system_uuid:
               type: string
+    AgentEndpointProfile:
+      type: object
+      additionalProperties: false
+      required: [id, name, registration_url, quic_address, registration_ca_certificate_pem, enabled, status, revision, created_at, updated_at]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        registration_url: { type: string, format: uri }
+        quic_address: { type: string }
+        registration_ca_certificate_pem: { type: string }
+        enabled: { type: boolean }
+        status: { type: string, enum: [ready, disabled, unavailable] }
+        revision: { type: integer, minimum: 1 }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+    AgentEndpointProfileWrite:
+      type: object
+      additionalProperties: false
+      required: [name, registration_url, quic_address, registration_ca_certificate_pem, enabled]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        registration_url: { type: string, format: uri }
+        quic_address: { type: string }
+        registration_ca_certificate_pem: { type: string }
+        enabled: { type: boolean }
+    PlatformSettings:
+      type: object
+      additionalProperties: false
+      required: [default_endpoint_profile_id, agent_image, agent_namespace, agent_image_pull_policy, cluster_terminal_image, revision, updated_at]
+      properties:
+        default_endpoint_profile_id: { $ref: "#/components/schemas/UUID" }
+        agent_image: { type: string }
+        agent_namespace: { type: string }
+        agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        cluster_terminal_image: { type: string }
+        revision: { type: integer, minimum: 1 }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+    PlatformSettingsUpdate:
+      type: object
+      additionalProperties: false
+      required: [agent_image, agent_namespace, agent_image_pull_policy, cluster_terminal_image, expected_revision]
+      properties:
+        agent_image: { type: string }
+        agent_namespace: { type: string }
+        agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        cluster_terminal_image: { type: string }
+        expected_revision: { type: integer, minimum: 1 }
     ClusterEnrollment:
       type: object
       additionalProperties: false
-      required: [id, cluster_name, token, expires_at]
+      required: [id, cluster_name, token, expires_at, endpoint_profile_id]
       properties:
         id:
           $ref: "#/components/schemas/UUID"
@@ -13616,6 +13833,8 @@ components:
           type: string
         expires_at:
           $ref: "#/components/schemas/Timestamp"
+        endpoint_profile_id:
+          $ref: "#/components/schemas/UUID"
     ClusterEnrollmentRecord:
       type: object
       additionalProperties: false
@@ -13628,6 +13847,8 @@ components:
         - status
         - expires_at
         - created_at
+        - endpoint_profile_id
+        - endpoint_profile_revision
       properties:
         id:
           $ref: "#/components/schemas/UUID"
@@ -13652,6 +13873,11 @@ components:
           $ref: "#/components/schemas/Timestamp"
         created_at:
           $ref: "#/components/schemas/Timestamp"
+        endpoint_profile_id:
+          $ref: "#/components/schemas/UUID"
+        endpoint_profile_revision:
+          type: integer
+          minimum: 1
     ClusterInstallation:
       type: object
       additionalProperties: false
@@ -13659,8 +13885,9 @@ components:
         - id
         - cluster_name
         - expires_at
-        - manifest_url
-        - install_command
+        - manifest_path
+        - token
+        - endpoint_profile_id
       properties:
         id:
           $ref: "#/components/schemas/UUID"
@@ -13668,11 +13895,12 @@ components:
           type: string
         expires_at:
           $ref: "#/components/schemas/Timestamp"
-        manifest_url:
+        manifest_path:
           type: string
-          format: uri
-        install_command:
+        token:
           type: string
+        endpoint_profile_id:
+          $ref: "#/components/schemas/UUID"
     ClusterConnectionRevocation:
       type: object
       additionalProperties: false
@@ -13802,6 +14030,7 @@ components:
               tenant,
               project,
               cluster,
+              platform,
               kubernetes_resource,
               denied,
             ]
@@ -13828,6 +14057,8 @@ components:
         - enrollment
         - audit_event
         - kubernetes_resource
+        - platform_settings
+        - agent_endpoint_profile
     AuditEventPage:
       type: object
       additionalProperties: false

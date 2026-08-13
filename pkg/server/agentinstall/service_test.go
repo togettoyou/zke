@@ -22,7 +22,7 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 	t.Parallel()
 
 	manifest, err := renderManifest(
-		Config{
+		manifestConfig{
 			PublicHTTPURL:                "https://zke.example.com",
 			PublicQUICAddress:            "zke.example.com:8443",
 			Image:                        "registry.example.com/zke-agent:test",
@@ -99,19 +99,11 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 	}
 }
 
-func TestShellQuoteProtectsInstallCommandValues(t *testing.T) {
-	t.Parallel()
-
-	if quoted := shellQuote("a'b"); quoted != `'a'"'"'b'` {
-		t.Fatalf("shellQuote() = %q", quoted)
-	}
-}
-
 func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	t.Parallel()
 
 	manifest, err := renderManifest(
-		Config{
+		manifestConfig{
 			PublicHTTPURL:            "https://zke.example.com",
 			PublicQUICAddress:        "zke.example.com:8443",
 			Image:                    "registry.example.com/zke-agent:test",

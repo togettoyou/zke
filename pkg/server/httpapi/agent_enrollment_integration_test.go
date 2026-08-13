@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
@@ -18,6 +16,17 @@ import (
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 )
+
+type staticEnrollmentConfigurationResolver struct{}
+
+func (staticEnrollmentConfigurationResolver) ResolveEnrollmentSnapshot(context.Context, string) (store.EnrollmentConfigurationSnapshot, error) {
+	return store.EnrollmentConfigurationSnapshot{
+		EndpointProfileID: "00000000-0000-0000-0000-000000000010", EndpointProfileRevision: 1,
+		RegistrationURL: "https://zke.example.com", QUICAddress: "zke.example.com:8443",
+		AgentImage: "registry.example.com/zke-agent:test", AgentNamespace: "zke-system",
+		AgentImagePullPolicy: "IfNotPresent",
+	}, nil
+}
 
 func TestCreateAgentEnrollmentHTTPFlow(t *testing.T) {
 	databaseURL := requireHTTPTestDatabaseURL(t)
@@ -71,17 +80,11 @@ RETURNING id::text
 
 	enrollmentService := enrollment.NewService(
 		store.NewEnrollmentStore(pool),
-		enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL},
+		enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL, ConfigurationResolver: staticEnrollmentConfigurationResolver{}},
 	)
 	installationService := agentinstall.NewService(
 		enrollmentService,
 		agentinstall.Config{
-			Enabled:                  true,
-			PublicHTTPURL:            "https://zke.example.com",
-			PublicQUICAddress:        "zke.example.com:8443",
-			Image:                    "registry.example.com/zke-agent:test",
-			Namespace:                "zke-system",
-			ImagePullPolicy:          corev1.PullIfNotPresent,
 			ListenerCACertificatePEM: []byte("test-listener-ca"),
 		},
 	)
@@ -333,17 +336,10 @@ WHERE action = 'cluster.enrollment.create'
 		t.Fatal(err)
 	}
 	assertUTC8Time(t, "installation expires_at", installationBody.ExpiresAt)
-	const bearerPrefix = "Authorization: Bearer "
-	bearerStart := strings.Index(installationBody.InstallCommand, bearerPrefix)
-	if bearerStart < 0 {
-		t.Fatalf("install command is missing Bearer header: %s", installationBody.InstallCommand)
+	installationToken := installationBody.Token
+	if installationToken == "" || installationBody.ManifestPath != "/agent-install/v1/manifest" {
+		t.Fatalf("unexpected installation response: %+v", installationBody)
 	}
-	tokenStart := bearerStart + len(bearerPrefix)
-	tokenEnd := strings.Index(installationBody.InstallCommand[tokenStart:], "'")
-	if tokenEnd < 0 {
-		t.Fatalf("install command has an invalid Bearer header: %s", installationBody.InstallCommand)
-	}
-	installationToken := installationBody.InstallCommand[tokenStart : tokenStart+tokenEnd]
 	manifestResponse := httptest.NewRecorder()
 	manifestRequest := httptest.NewRequest(
 		http.MethodGet,

@@ -15,7 +15,6 @@ func TestGenerateAndValidateManagedMaterial(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	config := Config{
 		Directory:                directory,
-		AutoGenerate:             true,
 		AgentClientCAValidity:    10 * 365 * 24 * time.Hour,
 		AgentListenerCAValidity:  20 * 365 * 24 * time.Hour,
 		AgentListenerValidity:    10 * 365 * 24 * time.Hour,
@@ -26,7 +25,7 @@ func TestGenerateAndValidateManagedMaterial(t *testing.T) {
 	if err := generateAll(paths, config, now); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := loadAndValidate(paths, config, now)
+	loaded, err := loadAndValidate(paths, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +60,6 @@ func TestRenewListenerKeepsPrivateKey(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	config := Config{
 		Directory:                directory,
-		AutoGenerate:             true,
 		AgentClientCAValidity:    10 * 365 * 24 * time.Hour,
 		AgentListenerCAValidity:  20 * 365 * 24 * time.Hour,
 		AgentListenerValidity:    10 * 365 * 24 * time.Hour,
@@ -75,7 +73,7 @@ func TestRenewListenerKeepsPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := loadAndValidate(paths, config, now)
+	loaded, err := loadAndValidate(paths, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,5 +86,54 @@ func TestRenewListenerKeepsPrivateKey(t *testing.T) {
 	}
 	if string(before) != string(after) {
 		t.Fatal("Agent Listener renewal changed the private key")
+	}
+}
+
+func TestRenewListenerAddsConfiguredSAN(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	paths := managedPaths(directory)
+	now := time.Now().UTC().Truncate(time.Second)
+	config := Config{
+		Directory:             directory,
+		AgentClientCAValidity: 10 * 365 * 24 * time.Hour, AgentListenerCAValidity: 20 * 365 * 24 * time.Hour,
+		AgentListenerValidity: 10 * 365 * 24 * time.Hour, AgentListenerRenewBefore: 365 * 24 * time.Hour,
+		ListenerDNSNames: []string{"localhost"},
+	}
+	if err := generateAll(paths, config, now); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadAndValidate(paths, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ListenerDNSNames = append(config.ListenerDNSNames, "host.docker.internal")
+	if listenerMatchesConfig(loaded.listenerCertificate, config) {
+		t.Fatal("original Listener certificate unexpectedly covers the new SAN")
+	}
+	if err := renewListener(paths, config, loaded, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := loadAndValidate(paths, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !listenerMatchesConfig(renewed.listenerCertificate, config) {
+		t.Fatal("renewed Listener certificate does not cover configured SANs")
+	}
+	config.ListenerDNSNames = []string{"localhost"}
+	if listenerMatchesConfig(renewed.listenerCertificate, config) {
+		t.Fatal("Listener certificate with a superseded SAN unexpectedly matched configuration")
+	}
+	if err := renewListener(paths, config, renewed, now.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	cleaned, err := loadAndValidate(paths, now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !listenerMatchesConfig(cleaned.listenerCertificate, config) ||
+		len(cleaned.listenerCertificate.DNSNames) != 1 {
+		t.Fatalf("superseded Listener SAN was not removed: %v", cleaned.listenerCertificate.DNSNames)
 	}
 }

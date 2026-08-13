@@ -2116,6 +2116,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/platform/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPlatformSettings"];
+        put: operations["updatePlatformSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/platform/agent-endpoint-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createAgentEndpointProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/platform/agent-endpoint-profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateAgentEndpointProfile"];
+        post?: never;
+        delete: operations["deleteAgentEndpointProfile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/agent-endpoint-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listReadyAgentEndpointProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/cluster-enrollments": {
         parameters: {
             query?: never;
@@ -2336,6 +2402,11 @@ export interface components {
         Confirmation: {
             /** @constant */
             confirm: true;
+        };
+        ReenrollmentRequest: {
+            /** @constant */
+            confirm: true;
+            endpoint_profile_id?: components["schemas"]["UUID"];
         };
         UpdateScopedResourceRequest: {
             name: string;
@@ -5463,12 +5534,53 @@ export interface components {
             machine_id: string;
             system_uuid: string;
         };
+        AgentEndpointProfile: {
+            id: components["schemas"]["UUID"];
+            name: string;
+            /** Format: uri */
+            registration_url: string;
+            quic_address: string;
+            registration_ca_certificate_pem: string;
+            enabled: boolean;
+            /** @enum {string} */
+            status: "ready" | "disabled" | "unavailable";
+            revision: number;
+            created_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+        };
+        AgentEndpointProfileWrite: {
+            name: string;
+            /** Format: uri */
+            registration_url: string;
+            quic_address: string;
+            registration_ca_certificate_pem: string;
+            enabled: boolean;
+        };
+        PlatformSettings: {
+            default_endpoint_profile_id: components["schemas"]["UUID"];
+            agent_image: string;
+            agent_namespace: string;
+            /** @enum {string} */
+            agent_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            cluster_terminal_image: string;
+            revision: number;
+            updated_at: components["schemas"]["Timestamp"];
+        };
+        PlatformSettingsUpdate: {
+            agent_image: string;
+            agent_namespace: string;
+            /** @enum {string} */
+            agent_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            cluster_terminal_image: string;
+            expected_revision: number;
+        };
         ClusterEnrollment: {
             id: components["schemas"]["UUID"];
             cluster_id?: components["schemas"]["UUID"];
             cluster_name: string;
             token: string;
             expires_at: components["schemas"]["Timestamp"];
+            endpoint_profile_id: components["schemas"]["UUID"];
         };
         ClusterEnrollmentRecord: {
             id: components["schemas"]["UUID"];
@@ -5483,14 +5595,16 @@ export interface components {
             consumed_at?: components["schemas"]["Timestamp"];
             revoked_at?: components["schemas"]["Timestamp"];
             created_at: components["schemas"]["Timestamp"];
+            endpoint_profile_id: components["schemas"]["UUID"];
+            endpoint_profile_revision: number;
         };
         ClusterInstallation: {
             id: components["schemas"]["UUID"];
             cluster_name: string;
             expires_at: components["schemas"]["Timestamp"];
-            /** Format: uri */
-            manifest_url: string;
-            install_command: string;
+            manifest_path: string;
+            token: string;
+            endpoint_profile_id: components["schemas"]["UUID"];
         };
         ClusterConnectionRevocation: {
             cluster_id: components["schemas"]["UUID"];
@@ -5548,13 +5662,13 @@ export interface components {
              * @description 所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与 `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。 `denied` 组是鉴权拒绝时记录的权限名，其事件的 `result` 恒为 `denied`。
              * @enum {string}
              */
-            group: "auth" | "user" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "kubernetes_resource" | "denied";
+            group: "auth" | "user" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "platform" | "kubernetes_resource" | "denied";
         };
         /**
          * @description 写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是 服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的 `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
          * @enum {string}
          */
-        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource";
+        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile";
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
             pagination: components["schemas"]["Pagination"];
@@ -11580,6 +11694,189 @@ export interface operations {
             504: components["responses"]["Timeout"];
         };
     };
+    getPlatformSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 平台设置与 Agent 接入端点预设 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            settings: components["schemas"]["PlatformSettings"];
+                            agent_endpoint_profiles: components["schemas"]["AgentEndpointProfile"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    updatePlatformSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description 已更新的平台设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["PlatformSettings"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    createAgentEndpointProfile: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentEndpointProfileWrite"];
+            };
+        };
+        responses: {
+            /** @description 已创建的 Agent 接入端点预设 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AgentEndpointProfile"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    updateAgentEndpointProfile: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                profile_id: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentEndpointProfileWrite"] & {
+                    expected_revision: number;
+                };
+            };
+        };
+        responses: {
+            /** @description 已更新的 Agent 接入端点预设 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AgentEndpointProfile"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteAgentEndpointProfile: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                profile_id: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listReadyAgentEndpointProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前可用于创建接入的端点预设 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            default_endpoint_profile_id: components["schemas"]["UUID"];
+                            agent_endpoint_profiles: components["schemas"]["AgentEndpointProfile"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     listClusterEnrollments: {
         parameters: {
             query?: {
@@ -11631,6 +11928,7 @@ export interface operations {
             content: {
                 "application/json": {
                     cluster_name: string;
+                    endpoint_profile_id?: components["schemas"]["UUID"];
                 };
             };
         };
@@ -11729,6 +12027,7 @@ export interface operations {
             content: {
                 "application/json": {
                     cluster_name: string;
+                    endpoint_profile_id?: components["schemas"]["UUID"];
                 };
             };
         };
@@ -11765,7 +12064,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Confirmation"];
+                "application/json": components["schemas"]["ReenrollmentRequest"];
             };
         };
         responses: {
@@ -11799,7 +12098,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Confirmation"];
+                "application/json": components["schemas"]["ReenrollmentRequest"];
             };
         };
         responses: {

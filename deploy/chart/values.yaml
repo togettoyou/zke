@@ -1,5 +1,6 @@
 nameOverride: ""
 fullnameOverride: ""
+clusterDomain: cluster.local
 
 server:
   replicaCount: 1
@@ -30,20 +31,12 @@ server:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  podAccessExternalURL: ""
   agentInstall:
+    # Leave both empty to use this release's in-cluster Service FQDN. Configure
+    # both when Agents connect through an address outside this Kubernetes cluster.
     publicHTTPURL: ""
     publicQUICAddress: ""
-  podAccessExternalURL: ""
-  agentPKI:
-    listenerSANs:
-      # Additional public QUIC names and IPs appended to the in-cluster defaults.
-      dnsNames: []
-      ipAddresses: []
-
-agent:
-  image:
-    repository: ghcr.io/togettoyou/zke-agent
-    tag: ""
 
 postgresql:
   image:

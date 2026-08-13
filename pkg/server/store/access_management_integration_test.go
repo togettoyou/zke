@@ -64,10 +64,15 @@ VALUES ($1, $2, 'Deletion History Project', 'active')
 	batch.Queue(`
 INSERT INTO enrollments (
     id, tenant_id, project_id, cluster_name, token_digest,
-    created_by_user_id, idempotency_key, expires_at
+    created_by_user_id, idempotency_key, expires_at,
+    endpoint_profile_id, endpoint_profile_revision, registration_url,
+    quic_address, registration_ca_certificate_pem,
+    agent_image, agent_namespace, agent_image_pull_policy
 ) VALUES (
     $1, $2, $3, 'history-cluster', decode(repeat('33', 32), 'hex'),
-    $4, 'history-enrollment-key', $5
+    $4, 'history-enrollment-key', $5,
+    '00000000-0000-0000-0000-000000000010', 1, 'http://127.0.0.1:8080',
+    '127.0.0.1:8443', '', 'zke-agent:test', 'zke-system', 'IfNotPresent'
 )
 `, enrollmentID, tenantID, projectID, userID, now.Add(time.Hour))
 	batch.Queue(`

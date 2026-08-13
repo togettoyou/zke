@@ -30,7 +30,15 @@ SELECT
     enrollment.project_id::text,
     COALESCE(enrollment.cluster_id::text, ''),
     enrollment.cluster_name,
-    enrollment.expires_at
+    enrollment.expires_at,
+    enrollment.endpoint_profile_id::text,
+    enrollment.endpoint_profile_revision,
+    enrollment.registration_url,
+    enrollment.quic_address,
+    enrollment.registration_ca_certificate_pem,
+    enrollment.agent_image,
+    enrollment.agent_namespace,
+    enrollment.agent_image_pull_policy
 FROM enrollments AS enrollment
 JOIN tenants AS tenant ON tenant.id = enrollment.tenant_id
 JOIN projects AS project
@@ -60,6 +68,14 @@ WHERE enrollment.token_digest = $1
 		&enrollment.ClusterID,
 		&enrollment.ClusterName,
 		&enrollment.ExpiresAt,
+		&enrollment.Snapshot.EndpointProfileID,
+		&enrollment.Snapshot.EndpointProfileRevision,
+		&enrollment.Snapshot.RegistrationURL,
+		&enrollment.Snapshot.QUICAddress,
+		&enrollment.Snapshot.RegistrationCACertificatePEM,
+		&enrollment.Snapshot.AgentImage,
+		&enrollment.Snapshot.AgentNamespace,
+		&enrollment.Snapshot.AgentImagePullPolicy,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActiveEnrollment{}, ErrEnrollmentTokenRejected
@@ -84,6 +100,15 @@ func (store *EnrollmentStore) CreateEnrollment(
 	}
 	if len(input.TokenDigest) != sha256.Size {
 		return Enrollment{}, errors.New("enrollment token digest must use SHA-256")
+	}
+	if strings.TrimSpace(input.Snapshot.EndpointProfileID) == "" ||
+		input.Snapshot.EndpointProfileRevision <= 0 ||
+		strings.TrimSpace(input.Snapshot.RegistrationURL) == "" ||
+		strings.TrimSpace(input.Snapshot.QUICAddress) == "" ||
+		strings.TrimSpace(input.Snapshot.AgentImage) == "" ||
+		strings.TrimSpace(input.Snapshot.AgentNamespace) == "" ||
+		strings.TrimSpace(input.Snapshot.AgentImagePullPolicy) == "" {
+		return Enrollment{}, errors.New("enrollment configuration snapshot is required")
 	}
 
 	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -139,7 +164,15 @@ INSERT INTO enrollments (
     token_digest,
     created_by_user_id,
     idempotency_key,
-    expires_at
+    expires_at,
+    endpoint_profile_id,
+    endpoint_profile_revision,
+    registration_url,
+    quic_address,
+    registration_ca_certificate_pem,
+    agent_image,
+    agent_namespace,
+    agent_image_pull_policy
 )
 SELECT
     gen_random_uuid(),
@@ -150,7 +183,15 @@ SELECT
     $5,
     users.id,
     $6,
-    $7
+    $7,
+    $8::uuid,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13,
+    $14,
+    $15
 FROM projects AS project
 JOIN tenants AS tenant ON tenant.id = project.tenant_id
 JOIN users ON users.id = $2
@@ -202,7 +243,9 @@ RETURNING
     cluster_name,
     created_by_user_id::text,
     expires_at,
-    created_at
+    created_at,
+    endpoint_profile_id::text,
+    endpoint_profile_revision
 `,
 		input.ProjectID,
 		input.CreatedByUserID,
@@ -211,6 +254,14 @@ RETURNING
 		input.TokenDigest,
 		input.IdempotencyKey,
 		input.ExpiresAt,
+		input.Snapshot.EndpointProfileID,
+		input.Snapshot.EndpointProfileRevision,
+		input.Snapshot.RegistrationURL,
+		input.Snapshot.QUICAddress,
+		input.Snapshot.RegistrationCACertificatePEM,
+		input.Snapshot.AgentImage,
+		input.Snapshot.AgentNamespace,
+		input.Snapshot.AgentImagePullPolicy,
 	).Scan(
 		&created.ID,
 		&created.TenantID,
@@ -220,6 +271,8 @@ RETURNING
 		&created.CreatedByUserID,
 		&created.ExpiresAt,
 		&created.CreatedAt,
+		&created.EndpointProfileID,
+		&created.EndpointProfileRevision,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var conflict bool

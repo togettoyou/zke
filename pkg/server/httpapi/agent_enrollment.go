@@ -12,6 +12,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/server/platformsettings"
 )
 
 const idempotencyKeyHeaderName = "Idempotency-Key"
@@ -26,32 +27,44 @@ var enrollmentErrors = []errorMapping{
 	{enrollment.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid Cluster enrollment request"},
 	{enrollment.ErrNotFound, http.StatusNotFound, "not_found", "Cluster enrollment not found"},
 	{enrollment.ErrStateConflict, http.StatusConflict, "resource_state_conflict", "Cluster enrollment state conflicts with the request"},
+	{platformsettings.ErrInvalidInput, http.StatusBadRequest, "invalid_endpoint_profile", "invalid Agent endpoint profile"},
+	{platformsettings.ErrNotFound, http.StatusNotFound, "endpoint_profile_not_found", "Agent endpoint profile not found"},
+	{platformsettings.ErrEndpointUnready, http.StatusConflict, "endpoint_profile_unready", "Agent endpoint profile is not ready"},
 }
 
 type createEnrollmentResponse struct {
-	ID          string    `json:"id"`
-	ClusterID   string    `json:"cluster_id,omitempty"`
-	ClusterName string    `json:"cluster_name"`
-	Token       string    `json:"token"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	ID                string    `json:"id"`
+	ClusterID         string    `json:"cluster_id,omitempty"`
+	ClusterName       string    `json:"cluster_name"`
+	Token             string    `json:"token"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	EndpointProfileID string    `json:"endpoint_profile_id"`
 }
 
 type createEnrollmentRequest struct {
-	ClusterName string `json:"cluster_name"`
+	ClusterName       string `json:"cluster_name"`
+	EndpointProfileID string `json:"endpoint_profile_id"`
+}
+
+type reenrollmentRequest struct {
+	Confirm           bool   `json:"confirm"`
+	EndpointProfileID string `json:"endpoint_profile_id"`
 }
 
 type enrollmentResponse struct {
-	ID              string     `json:"id"`
-	TenantID        string     `json:"tenant_id"`
-	ProjectID       string     `json:"project_id"`
-	ClusterID       string     `json:"cluster_id,omitempty"`
-	ClusterName     string     `json:"cluster_name"`
-	CreatedByUserID string     `json:"created_by_user_id"`
-	Status          string     `json:"status"`
-	ExpiresAt       time.Time  `json:"expires_at"`
-	ConsumedAt      *time.Time `json:"consumed_at,omitempty"`
-	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID                      string     `json:"id"`
+	TenantID                string     `json:"tenant_id"`
+	ProjectID               string     `json:"project_id"`
+	ClusterID               string     `json:"cluster_id,omitempty"`
+	ClusterName             string     `json:"cluster_name"`
+	CreatedByUserID         string     `json:"created_by_user_id"`
+	Status                  string     `json:"status"`
+	ExpiresAt               time.Time  `json:"expires_at"`
+	ConsumedAt              *time.Time `json:"consumed_at,omitempty"`
+	RevokedAt               *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	EndpointProfileID       string     `json:"endpoint_profile_id"`
+	EndpointProfileRevision int64      `json:"endpoint_profile_revision"`
 }
 
 func newEnrollmentHandler(
@@ -88,12 +101,13 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 	result, err := handler.service.Create(
 		operationContext,
 		enrollment.CreateInput{
-			ProjectID:      c.Param("project_id"),
-			ClusterName:    request.ClusterName,
-			UserID:         identity.User.ID,
-			RequestID:      httpmiddleware.RequestID(c),
-			IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
-			Now:            time.Now().UTC(),
+			ProjectID:         c.Param("project_id"),
+			ClusterName:       request.ClusterName,
+			UserID:            identity.User.ID,
+			RequestID:         httpmiddleware.RequestID(c),
+			IdempotencyKey:    c.GetHeader(idempotencyKeyHeaderName),
+			Now:               time.Now().UTC(),
+			EndpointProfileID: request.EndpointProfileID,
 		},
 	)
 	cancelOperation()
@@ -161,11 +175,12 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 	}
 
 	writeSuccess(c, http.StatusCreated, createEnrollmentResponse{
-		ID:          result.ID,
-		ClusterID:   result.ClusterID,
-		ClusterName: result.ClusterName,
-		Token:       result.Token,
-		ExpiresAt:   responseTime(result.ExpiresAt),
+		ID:                result.ID,
+		ClusterID:         result.ClusterID,
+		ClusterName:       result.ClusterName,
+		Token:             result.Token,
+		ExpiresAt:         responseTime(result.ExpiresAt),
+		EndpointProfileID: result.EndpointProfileID,
 	})
 }
 
@@ -245,7 +260,7 @@ func (handler *enrollmentHandler) revoke(c *gin.Context) {
 func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	identity, _ := httpmiddleware.Identity(c)
-	var request confirmRequest
+	var request reenrollmentRequest
 	if err := decodeJSONRequest(
 		c, &request, maxCreateAgentEnrollmentRequestBytes,
 	); err != nil || !request.Confirm {
@@ -260,6 +275,7 @@ func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 		ClusterID: c.Param("cluster_id"), UserID: identity.User.ID,
 		RequestID:      httpmiddleware.RequestID(c),
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName), Now: time.Now().UTC(),
+		EndpointProfileID: request.EndpointProfileID,
 	})
 	cancel()
 	if err != nil {
@@ -273,6 +289,7 @@ func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 	writeSuccess(c, http.StatusCreated, createEnrollmentResponse{
 		ID: result.ID, ClusterID: result.ClusterID, ClusterName: result.ClusterName,
 		Token: result.Token, ExpiresAt: responseTime(result.ExpiresAt),
+		EndpointProfileID: result.EndpointProfileID,
 	})
 }
 
@@ -290,9 +307,11 @@ func responseEnrollment(item enrollment.Enrollment) enrollmentResponse {
 		ClusterID: item.ClusterID, ClusterName: item.ClusterName,
 		CreatedByUserID: item.CreatedByUserID,
 		Status:          item.Status, ExpiresAt: responseTime(item.ExpiresAt),
-		ConsumedAt: responseTimePointer(item.ConsumedAt),
-		RevokedAt:  responseTimePointer(item.RevokedAt),
-		CreatedAt:  responseTime(item.CreatedAt),
+		ConsumedAt:              responseTimePointer(item.ConsumedAt),
+		RevokedAt:               responseTimePointer(item.RevokedAt),
+		CreatedAt:               responseTime(item.CreatedAt),
+		EndpointProfileID:       item.EndpointProfileID,
+		EndpointProfileRevision: item.EndpointProfileRevision,
 	}
 }
 

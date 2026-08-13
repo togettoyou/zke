@@ -227,6 +227,25 @@ func (service *Service) AuthorizeGlobal(
 	return service.authorize(ctx, userID, permission, globalScope())
 }
 
+// IsGlobalAdministrator deliberately checks the builtin admin role at Global
+// scope rather than inferring it from a permission set. Platform settings are
+// deployment-wide authority and are not delegable through a custom role.
+func (service *Service) IsGlobalAdministrator(ctx context.Context, userID string) (bool, error) {
+	if !validation.IsUUID(userID) {
+		return false, ErrDenied
+	}
+	bindings, err := service.listRoleBindings(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	for _, binding := range bindings {
+		if binding.ScopeType == string(scopeGlobal) && binding.Role == RoleAdmin {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (service *Service) AuthorizeTenant(
 	ctx context.Context,
 	userID string,

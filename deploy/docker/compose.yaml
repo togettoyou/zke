@@ -1,0 +1,57 @@
+name: zke
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zke
+      POSTGRES_USER: zke
+      POSTGRES_PASSWORD: ${ZKE_POSTGRES_PASSWORD:?Set ZKE_POSTGRES_PASSWORD in deploy/docker/.env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zke -d zke"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    ports:
+      - "127.0.0.1:${ZKE_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - zke-postgresql-data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  server:
+    image: ${ZKE_SERVER_IMAGE:-ghcr.io/togettoyou/zke-server:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ZKE_DATABASE_URL: postgres://zke:${ZKE_POSTGRES_PASSWORD:?Set ZKE_POSTGRES_PASSWORD in deploy/docker/.env}@postgres:5432/zke?sslmode=disable
+      ZKE_POD_ACCESS_EXTERNAL_URL: ${ZKE_POD_ACCESS_EXTERNAL_URL:-http://127.0.0.1:8081}
+      ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL: ${ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL:-}
+      ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS: ${ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS:-}
+    ports:
+      - "${ZKE_HTTP_PORT:-8080}:8080"
+      - "${ZKE_POD_ACCESS_PORT:-8081}:8081"
+      - "${ZKE_AGENT_QUIC_PORT:-8443}:8443/udp"
+    volumes:
+      - zke-data:/data
+    networks:
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+networks:
+  backend:
+
+volumes:
+  zke-data:
+  zke-postgresql-data:

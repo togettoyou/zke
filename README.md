@@ -47,7 +47,7 @@ ZKE（Z Kubernetes Engine）通过 Server + Agent 架构连接多个 Kubernetes 
 
 ### Docker
 
-带 PostgreSQL 的一体镜像适合本地快速预览：
+一条命令启动 ZKE 与内置 PostgreSQL：
 
 ```bash
 docker run -d --name zke \
@@ -57,16 +57,16 @@ docker run -d --name zke \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
-打开 <http://127.0.0.1:8080>。首次进入时，Console 会引导设置全局管理员用户名和密码。
-
-### Kubernetes
-
-标准部署使用 ZKE Server 和独立的 PostgreSQL StatefulSet。用于共享或外部可访问环境前，请先替换清单中的默认数据库密码。
+需要独立维护 Server 与 PostgreSQL 时使用 Docker Compose：
 
 ```bash
-kubectl apply -f deploy/kubernetes/zke.yaml
-kubectl -n zke-system port-forward service/zke-server 8080:8080 8081:8081
+cd deploy/docker
+cp .env.example .env
+# 修改 .env 中的数据库密码
+docker compose up -d
 ```
+
+打开 <http://127.0.0.1:8080>。首次进入时，Console 会引导设置全局管理员用户名和密码。
 
 ### Helm
 

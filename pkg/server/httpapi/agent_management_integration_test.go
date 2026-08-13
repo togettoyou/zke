@@ -241,7 +241,7 @@ VALUES (
 			),
 			EnrollmentService: enrollment.NewService(
 				store.NewEnrollmentStore(pool),
-				enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL},
+				enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL, ConfigurationResolver: staticEnrollmentConfigurationResolver{}},
 			),
 		},
 		Config{Authentication: defaultAuthenticationTestConfig()},

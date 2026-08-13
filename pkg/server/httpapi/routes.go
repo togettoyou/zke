@@ -46,6 +46,19 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authMiddleware.RequireCSRF,
 		handlers.auth.logout,
 	)
+
+	platformRoutes := apiV1.Group("/platform")
+	platformRoutes.Use(
+		handlers.requestTimeout,
+		handlers.roleBindingCache,
+		handlers.authMiddleware.RequireAuthentication,
+		handlers.authorizationMiddleware.RequireGlobalAdministrator,
+	)
+	platformRoutes.GET("/settings", handlers.platformSettings.get)
+	platformRoutes.PUT("/settings", handlers.authMiddleware.RequireCSRF, handlers.platformSettings.updateSettings)
+	platformRoutes.POST("/agent-endpoint-profiles", handlers.authMiddleware.RequireCSRF, handlers.platformSettings.createProfile)
+	platformRoutes.PUT("/agent-endpoint-profiles/:profile_id", handlers.authMiddleware.RequireCSRF, handlers.platformSettings.updateProfile)
+	platformRoutes.DELETE("/agent-endpoint-profiles/:profile_id", handlers.authMiddleware.RequireCSRF, handlers.platformSettings.deleteProfile)
 	authenticatedAuthRoutes.POST(
 		"/password",
 		handlers.requestTimeout,
@@ -268,6 +281,14 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"project_id",
 		),
 		handlers.enrollment.create,
+	)
+	projectRoutes.GET(
+		"/:project_id/agent-endpoint-profiles",
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionClusterEnrollmentCreate,
+			"project_id",
+		),
+		handlers.platformSettings.listReady,
 	)
 	projectRoutes.GET(
 		"/:project_id/cluster-enrollments",

@@ -65,7 +65,6 @@ func TestEnsurePinsManagedPKIAndRejectsLostPV(t *testing.T) {
 	directory := t.TempDir()
 	config := Config{
 		Directory:                directory,
-		AutoGenerate:             true,
 		AgentClientCAValidity:    10 * 365 * 24 * time.Hour,
 		AgentListenerCAValidity:  20 * 365 * 24 * time.Hour,
 		AgentListenerValidity:    10 * 365 * 24 * time.Hour,
@@ -83,6 +82,34 @@ func TestEnsurePinsManagedPKIAndRejectsLostPV(t *testing.T) {
 	if first.State.AgentClientCAFingerprint !=
 		second.State.AgentClientCAFingerprint {
 		t.Fatal("repeated Ensure changed the Agent Client CA")
+	}
+	config.ListenerDNSNames = append(config.ListenerDNSNames, "host.docker.internal")
+	third, err := Ensure(ctx, pool, config, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.State.AgentListenerCAFingerprint != second.State.AgentListenerCAFingerprint {
+		t.Fatal("adding a Listener SAN changed the Agent Listener CA")
+	}
+	if third.State.AgentListenerCertificateFingerprint ==
+		second.State.AgentListenerCertificateFingerprint {
+		t.Fatal("adding a Listener SAN did not reissue the Agent Listener certificate")
+	}
+	config.ListenerDNSNames = []string{"localhost"}
+	fourth, err := Ensure(ctx, pool, config, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fourth.State.AgentListenerCertificateFingerprint ==
+		third.State.AgentListenerCertificateFingerprint {
+		t.Fatal("removing a Listener SAN did not reissue the Agent Listener certificate")
+	}
+	loaded, err := loadAndValidate(third, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !listenerMatchesConfig(loaded.listenerCertificate, config) {
+		t.Fatal("reissued Agent Listener certificate does not exactly match configured SANs")
 	}
 	for _, name := range allFileNames {
 		if err := os.Remove(directory + string(os.PathSeparator) + name); err != nil {

@@ -13,8 +13,6 @@ import (
 	"sync"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-
 	"github.com/togettoyou/zke/pkg/server/accessmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
@@ -28,6 +26,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/pki"
+	"github.com/togettoyou/zke/pkg/server/platformsettings"
 	"github.com/togettoyou/zke/pkg/server/podaccess"
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
@@ -48,6 +47,13 @@ import (
 // single application sits well inside it — and a file larger than this is one
 // that belongs in a pipeline rather than in a console form.
 const maxManifestDocuments = 64
+
+const (
+	loopbackEndpointProfileID     = "00000000-0000-0000-0000-000000000010"
+	desktopEndpointProfileID      = "00000000-0000-0000-0000-000000000011"
+	deploymentDefaultEndpointID   = "00000000-0000-0000-0000-000000000012"
+	deploymentDefaultEndpointName = "部署配置默认端点"
+)
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	runContext, cancelRun := context.WithCancel(ctx)
@@ -80,39 +86,74 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		slog.Int64("current_version", migrationResult.CurrentVersion),
 		slog.Int("applied_count", len(migrationResult.AppliedVersions)),
 	)
-	agentListenerCACertificateFile :=
-		cfg.AgentPKI.External.AgentListenerCA.CertificateFile
-	if cfg.AgentPKI.Mode == "managed" {
-		managed := cfg.AgentPKI.Managed
-		managedFiles, err := pki.Ensure(
-			ctx,
-			database,
-			pki.Config{
-				Directory:                managed.Directory,
-				AutoGenerate:             managed.AutoGenerate,
-				AgentClientCAValidity:    managed.AgentClientCAValidity,
-				AgentListenerCAValidity:  managed.AgentListenerCAValidity,
-				AgentListenerValidity:    managed.AgentListenerValidity,
-				AgentListenerRenewBefore: managed.AgentListenerRenewBefore,
-				ListenerDNSNames:         managed.ListenerSANs.DNSNames,
-				ListenerIPAddresses:      managed.ListenerSANs.IPAddresses,
-			},
-			time.Now().UTC(),
-		)
-		if err != nil {
-			return fmt.Errorf("prepare managed Server PKI: %w", err)
-		}
-		cfg.AgentIdentity.CACertificateFile =
-			managedFiles.AgentClientCACertificate
-		cfg.AgentIdentity.CAPrivateKeyFile =
-			managedFiles.AgentClientCAPrivateKey
-		cfg.AgentListener.TLS.CertificateFile =
-			managedFiles.AgentListenerCertificate
-		cfg.AgentListener.TLS.PrivateKeyFile =
-			managedFiles.AgentListenerPrivateKey
-		agentListenerCACertificateFile =
-			managedFiles.AgentListenerCACertificate
-		logServerPKIExpiry(logger, managedFiles.State, cfg.CertificateMonitor.WarningBefore)
+	platformSettingsStore := store.NewPlatformSettingsStore(database)
+	publicHTTPURL, publicQUICAddress := cfg.AgentInstall.EffectiveEndpoint()
+	defaultEndpoint, err := platformSettingsStore.ReconcileDefaultEndpoint(ctx, store.ReconcileDefaultEndpointParams{
+		ReservedID: deploymentDefaultEndpointID, ReservedName: deploymentDefaultEndpointName,
+		PresetProfileIDs: []string{loopbackEndpointProfileID, desktopEndpointProfileID},
+		RegistrationURL:  publicHTTPURL, QUICAddress: publicQUICAddress, Now: time.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("reconcile platform default Agent endpoint: %w", err)
+	}
+	logger.Info("platform default Agent endpoint ready",
+		slog.String("profile_id", defaultEndpoint.ID),
+		slog.String("registration_url", defaultEndpoint.RegistrationURL),
+		slog.String("quic_address", defaultEndpoint.QUICAddress),
+	)
+	listenerDNSNames, listenerIPAddresses, err := platformsettings.DesiredListenerSANs(ctx, platformSettingsStore)
+	if err != nil {
+		return fmt.Errorf("load Agent endpoint SANs: %w", err)
+	}
+	pkiSettings := cfg.AgentPKI
+	managedPKIConfig := pki.Config{
+		Directory:                pkiSettings.Directory,
+		AgentClientCAValidity:    pkiSettings.AgentClientCAValidity,
+		AgentListenerCAValidity:  pkiSettings.AgentListenerCAValidity,
+		AgentListenerValidity:    pkiSettings.AgentListenerValidity,
+		AgentListenerRenewBefore: pkiSettings.AgentListenerRenewBefore,
+		ListenerDNSNames:         listenerDNSNames, ListenerIPAddresses: listenerIPAddresses,
+	}
+	managedFiles, err := pki.Ensure(
+		ctx,
+		database,
+		managedPKIConfig,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("prepare managed Server PKI: %w", err)
+	}
+	cfg.AgentIdentity.CACertificateFile = managedFiles.AgentClientCACertificate
+	cfg.AgentIdentity.CAPrivateKeyFile = managedFiles.AgentClientCAPrivateKey
+	cfg.AgentListener.TLS.CertificateFile = managedFiles.AgentListenerCertificate
+	cfg.AgentListener.TLS.PrivateKeyFile = managedFiles.AgentListenerPrivateKey
+	listenerCertificateReloader, err := agentconn.NewTLSCertificateReloader(
+		managedFiles.AgentListenerCertificate,
+		managedFiles.AgentListenerPrivateKey,
+	)
+	if err != nil {
+		return err
+	}
+	logServerPKIExpiry(logger, managedFiles.State, cfg.CertificateMonitor.WarningBefore)
+	platformSettingsService := platformsettings.NewService(
+		platformSettingsStore,
+		managedFiles.AgentListenerCertificate,
+		func(ctx context.Context, dnsNames, ipAddresses []string, now time.Time) error {
+			reconcileConfig := managedPKIConfig
+			reconcileConfig.ListenerDNSNames = dnsNames
+			reconcileConfig.ListenerIPAddresses = ipAddresses
+			if _, err := pki.Ensure(ctx, database, reconcileConfig, now); err != nil {
+				return fmt.Errorf("reconcile Agent Listener certificate: %w", err)
+			}
+			if err := listenerCertificateReloader.Reload(); err != nil {
+				return fmt.Errorf("activate Agent Listener certificate: %w", err)
+			}
+			return nil
+		},
+	)
+	currentPlatformSettings, _, err := platformSettingsService.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("load platform settings: %w", err)
 	}
 	// Before anything can authorize. `admin` means "every permission the Server defines", so
 	// a release that adds one widens that row here — leaving it to the migration
@@ -152,39 +193,19 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	enrollmentService := enrollment.NewService(
 		store.NewEnrollmentStore(database),
 		enrollment.ServiceConfig{
-			TokenTTL:          enrollment.DefaultTokenTTL,
-			CertificateSigner: certificateSigner,
+			TokenTTL:              enrollment.DefaultTokenTTL,
+			CertificateSigner:     certificateSigner,
+			ConfigurationResolver: platformSettingsService,
 		},
 	)
-	var listenerCACertificate []byte
-	var registrationCACertificate []byte
-	if cfg.AgentInstall.Enabled {
-		listenerCACertificate, err = pki.CertificatePEM(
-			agentListenerCACertificateFile,
-		)
-		if err != nil {
-			return fmt.Errorf("read Agent installation Listener CA: %w", err)
-		}
-		if strings.TrimSpace(cfg.AgentInstall.RegistrationCACertificateFile) != "" {
-			registrationCACertificate, err = pki.CertificatePEM(
-				cfg.AgentInstall.RegistrationCACertificateFile,
-			)
-			if err != nil {
-				return fmt.Errorf("read Agent installation registration CA: %w", err)
-			}
-		}
+	listenerCACertificate, err := pki.CertificatePEM(managedFiles.AgentListenerCACertificate)
+	if err != nil {
+		return fmt.Errorf("read Agent installation Listener CA: %w", err)
 	}
 	agentInstallationService := agentinstall.NewService(
 		enrollmentService,
 		agentinstall.Config{
-			Enabled:                      cfg.AgentInstall.Enabled,
-			PublicHTTPURL:                cfg.AgentInstall.PublicHTTPURL,
-			PublicQUICAddress:            cfg.AgentInstall.PublicQUICAddress,
-			Image:                        cfg.AgentInstall.Image,
-			Namespace:                    cfg.AgentInstall.Namespace,
-			ImagePullPolicy:              agentInstallPullPolicy(cfg.AgentInstall.ImagePullPolicy),
-			ListenerCACertificatePEM:     listenerCACertificate,
-			RegistrationCACertificatePEM: registrationCACertificate,
+			ListenerCACertificatePEM: listenerCACertificate,
 		},
 	)
 	agentConnectionStore := store.NewAgentConnectionStore(database)
@@ -193,6 +214,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			Address:                      cfg.AgentListener.Address,
 			TLSCertificateFile:           cfg.AgentListener.TLS.CertificateFile,
 			TLSPrivateKeyFile:            cfg.AgentListener.TLS.PrivateKeyFile,
+			TLSCertificateReloader:       listenerCertificateReloader,
 			ClientCACertificateFile:      cfg.AgentIdentity.CACertificateFile,
 			HandshakeTimeout:             cfg.AgentListener.HandshakeTimeout,
 			HeartbeatInterval:            cfg.AgentListener.HeartbeatInterval,
@@ -253,7 +275,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxBufferedResponseBytes: int64(
 				cfg.AgentListener.MaxBufferedResourceBytes,
 			),
-			AgentNamespace: cfg.AgentInstall.Namespace,
+			AgentNamespace: currentPlatformSettings.AgentNamespace,
 		},
 	)
 	clusterOverviewService := clusteroverview.NewService(
@@ -276,7 +298,18 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	clusterTerminalService := clusterterminal.NewService(
 		agentConnectionManager,
 		podExecService,
-		clusterterminal.Config{Image: cfg.ClusterTerminal.Image, Namespace: cfg.AgentInstall.Namespace, TTL: cfg.ClusterTerminal.SessionTTL},
+		clusterterminal.Config{
+			TTL: cfg.ClusterTerminal.SessionTTL,
+			ResolveRuntime: func(ctx context.Context) (clusterterminal.RuntimeConfig, error) {
+				settings, _, err := platformSettingsService.Get(ctx)
+				if err != nil {
+					return clusterterminal.RuntimeConfig{}, err
+				}
+				return clusterterminal.RuntimeConfig{
+					Image: settings.ClusterTerminalImage, Namespace: settings.AgentNamespace,
+				}, nil
+			},
+		},
 	)
 	podPortForwardService := podportforward.NewService(agentConnectionManager)
 	var podAccessService *podaccess.Service
@@ -322,6 +355,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxConcurrentPasswordHashes: cfg.Auth.MaxConcurrentPasswordChecks,
 		},
 	).WithPermissionAuthority(rbacService)
+	defaultInstallationSnapshot, err := platformSettingsService.ResolveEnrollmentSnapshot(ctx, "")
+	if err != nil {
+		return fmt.Errorf("resolve default Agent endpoint: %w", err)
+	}
 	handler := httpapi.New(
 		logger,
 		httpapi.Dependencies{
@@ -342,10 +379,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			ResourceWatchService:      resourceWatchService,
 			ResourceManagementService: resourceManagementService,
 			AccessManagementService:   accessManagementService,
+			PlatformSettingsService:   platformSettingsService,
 		},
 		httpapi.Config{
 			ConsoleDirectory: cfg.HTTP.ConsoleDirectory,
-			AgentNamespace:   cfg.AgentInstall.Namespace,
+			AgentNamespace:   currentPlatformSettings.AgentNamespace,
 			Authentication: httpapi.AuthenticationConfig{
 				CookieSecure:          cfg.Auth.CookieSecure,
 				OperationTimeout:      cfg.Auth.OperationTimeout,
@@ -369,7 +407,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			PodExec: httpapi.PodExecHTTPConfig{
 				MaximumDuration: cfg.AgentListener.PodExecRequestTimeout,
 				WriteTimeout:    cfg.AgentListener.WriteTimeout,
-				PublicHTTPURL:   cfg.AgentInstall.PublicHTTPURL,
+				PublicHTTPURL:   defaultInstallationSnapshot.RegistrationURL,
 			},
 			KubernetesEvents: httpapi.KubernetesEventsHTTPConfig{
 				SnapshotTimeout:       cfg.Auth.OperationTimeout,
@@ -515,10 +553,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		logger.Info("server stopped")
 	}
 	return errors.Join(runError, shutdownError)
-}
-
-func agentInstallPullPolicy(value string) corev1.PullPolicy {
-	return corev1.PullPolicy(value)
 }
 
 func logServerPKIExpiry(

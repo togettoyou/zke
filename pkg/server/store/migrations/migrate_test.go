@@ -282,6 +282,28 @@ WHERE table_schema = current_schema()
 		t.Fatalf("user_sessions.csrf_token_digest nullable = %q, want NO", csrfColumnNullable)
 	}
 
+	var presetName, registrationURL, quicAddress string
+	err = pool.QueryRow(ctx, `
+SELECT profile.name, profile.registration_url, profile.quic_address
+FROM platform_settings AS settings
+JOIN agent_endpoint_profiles AS profile
+  ON profile.id = settings.default_endpoint_profile_id
+WHERE settings.singleton = true
+`).Scan(&presetName, &registrationURL, &quicAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if presetName != "本机回环预览" ||
+		registrationURL != "http://127.0.0.1:8080" ||
+		quicAddress != "127.0.0.1:8443" {
+		t.Fatalf(
+			"default local endpoint = %q, %q, %q",
+			presetName,
+			registrationURL,
+			quicAddress,
+		)
+	}
+
 	testScopeAndAuditConstraints(t, ctx, pool)
 	testRequiredIndexes(t, ctx, pool)
 }

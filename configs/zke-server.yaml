@@ -19,8 +19,8 @@ http:
 # It is a second listener in the same Server process and never exposes ZKE API
 # routes. Keep disabled until external_url is reachable by the operator's
 # browser. Native TLS is optional; an upstream gateway may terminate HTTPS and
-# forward plain HTTP to this listener. Direct external HTTP is accepted only on
-# loopback for local development because activation URLs are bearer credentials.
+# forward plain HTTP to this listener. HTTP and HTTPS external URLs are both
+# supported; choose HTTPS when transport confidentiality is required.
 # A gateway in front of this listener must preserve the external Host header.
 pod_access:
   enabled: true
@@ -46,8 +46,8 @@ pod_access:
   max_pod_bytes: 1073741824
 
 database:
-  # ZKE_DATABASE_URL overrides this value in containers. The default matches
-  # deploy/development/compose.yaml for direct local execution.
+  # ZKE_DATABASE_URL overrides this value in containers. The default is intended
+  # for a directly started local development database.
   url: postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable
   connect_timeout: 5s
   migration_timeout: 2m
@@ -67,8 +67,8 @@ auth:
   operation_timeout: 10s
   # Each password check uses the Argon2id memory setting (currently 64 MiB).
   max_concurrent_password_checks: 4
-  # Controls the browser session cookie's Secure attribute. Keep false only for
-  # loopback HTTP; set true for HTTPS, whether TLS ends here or at a gateway.
+  # Controls the browser session cookie's Secure attribute. Set true when the
+  # browser-facing endpoint uses HTTPS, whether TLS ends here or at a gateway.
   cookie_secure: false
   login_rate_limit:
     window: 1m
@@ -81,44 +81,27 @@ auth:
     max_failed_attempts: 5
     duration: 15m
 agent_pki:
-  # "managed" lets Server create and renew its Agent-side PKI. "external"
-  # loads a complete certificate set supplied by the deployment.
-  mode: managed
+  # Server owns the Agent-side CA and Listener identity. Public QUIC names are
+  # derived from enabled endpoint profiles stored in PostgreSQL.
   # Lifetime of Agent client certificates issued at enrollment and renewal.
   agent_client_certificate_validity: 720h
 
-  # Replace with exact public QUIC names/IPs; never inferred from bind.
-  listener_sans:
-    dns_names:
-      - localhost
-      - zke-server
-      - zke-server.zke-system
-      - zke-server.zke-system.svc
-    ip_addresses:
-      - 127.0.0.1
+  # Mount this directory on a private PV in a deployment. If database PKI
+  # state exists but the directory is lost, Server fails closed.
+  directory: data/pki
+  agent_client_ca_validity: 87600h
+  agent_listener_ca_validity: 175200h
+  agent_listener_certificate_validity: 87600h
+  # Listener leaf renewal happens automatically. CAs never auto-rotate.
+  agent_listener_renew_before: 8760h
 
-  managed:
-    # Mount this directory on a private PV in a deployment. If database PKI
-    # state exists but the directory is lost, Server fails closed.
-    directory: data/pki
-    auto_generate: true
-    agent_client_ca_validity: 87600h
-    agent_listener_ca_validity: 175200h
-    agent_listener_certificate_validity: 87600h
-    # Listener leaf renewal happens at Server startup. CAs never auto-rotate.
-    agent_listener_renew_before: 8760h
-  # Used only with mode: external. Server loads these files but never generates
-  # or renews them. The Agent Listener CA private key stays outside Server.
-  # external:
-  #   agent_client_ca:
-  #     certificate_file: /var/run/secrets/zke-agent-pki/agent-client-ca.crt
-  #     private_key_file: /var/run/secrets/zke-agent-pki/agent-client-ca.key
-  #   agent_listener_ca:
-  #     certificate_file: /var/run/secrets/zke-agent-pki/agent-listener-ca.crt
-  #   agent_listener:
-  #     certificate_file: /var/run/secrets/zke-agent-pki/agent-listener.crt
-  #     private_key_file: /var/run/secrets/zke-agent-pki/agent-listener.key
-
+# Default endpoint embedded into new Agent enrollment credentials. Configure
+# both values together. Leaving both empty uses the local loopback preset.
+# Environment variables ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL and
+# ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS take precedence over these values.
+agent_install:
+  public_http_url: ""
+  public_quic_address: ""
 agent_enrollment:
   # Controls the one-time HTTP(S) bootstrap operation.
   operation_timeout: 10s
@@ -126,24 +109,7 @@ agent_enrollment:
     window: 1m
     max_attempts_per_source: 30
 
-agent_install:
-  # Enabled by default so the installation workflow is available immediately.
-  # For a remote target Cluster, replace the public endpoints with addresses
-  # reachable by both the operator and Agent. The corresponding ZKE_AGENT_*
-  # environment variables can override these deployment-specific values.
-  enabled: true
-  public_http_url: http://127.0.0.1:8080
-  public_quic_address: 127.0.0.1:8443
-  image: ghcr.io/togettoyou/zke-agent:latest
-  namespace: zke-system
-  image_pull_policy: IfNotPresent
-  # Set only when the HTTPS registration endpoint uses a private CA.
-  # registration_ca_certificate_file: /var/run/secrets/zke-http/ca.crt
-
-# The Agent image also contains the shell and kubectl tools used by the
-# standalone Cluster Terminal App.
 cluster_terminal:
-  image: ghcr.io/togettoyou/zke-agent:latest
   session_ttl: 15m
 
 agent_listener:

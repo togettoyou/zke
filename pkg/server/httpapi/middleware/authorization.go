@@ -60,6 +60,51 @@ func (authorization *Authorization) RequireGlobal(
 	})
 }
 
+func (authorization *Authorization) RequireGlobalAdministrator(c *gin.Context) {
+	identity, exists := Identity(c)
+	if !exists {
+		writeError(c, http.StatusUnauthorized, "unauthenticated", "authentication required")
+		c.Abort()
+		return
+	}
+	operationContext, cancel := context.WithTimeout(c.Request.Context(), authorization.config.OperationTimeout)
+	allowed, err := authorization.service.IsGlobalAdministrator(operationContext, identity.User.ID)
+	cancel()
+	if err != nil {
+		authorization.logger.Error("authorize global administrator",
+			slog.String("request_id", RequestID(c)), slog.String("user_id", identity.User.ID),
+			slog.String("error", err.Error()))
+		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
+		c.Abort()
+		return
+	}
+	if !allowed {
+		authorization.recordGlobalAdministratorDenied(c, identity.User.ID)
+		writeError(c, http.StatusForbidden, "global_admin_required", "global administrator required")
+		c.Abort()
+		return
+	}
+	c.Next()
+}
+
+func (authorization *Authorization) recordGlobalAdministratorDenied(c *gin.Context, userID string) {
+	if authorization.auditService == nil {
+		return
+	}
+	auditContext, cancel := auditctx.Detach(c.Request.Context(), authorization.config.OperationTimeout)
+	defer cancel()
+	if err := authorization.auditService.RecordGlobalEvent(auditContext, audit.GlobalEventInput{
+		ActorUserID: userID,
+		Action:      auditaction.PlatformSettingsManage,
+		TargetType:  auditaction.TargetPlatformSettings,
+		Result:      "denied",
+		RequestID:   RequestID(c),
+	}); err != nil {
+		authorization.logger.Error("record global administrator denial",
+			slog.String("request_id", RequestID(c)), slog.String("user_id", userID), slog.String("error", err.Error()))
+	}
+}
+
 func (authorization *Authorization) RequireTenant(
 	permission rbac.Permission,
 	tenantParameter string,

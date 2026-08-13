@@ -43,7 +43,3 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "zke.server.imageTag" -}}
 {{- default .Chart.AppVersion .Values.server.image.tag -}}
 {{- end -}}
-
-{{- define "zke.agent.imageTag" -}}
-{{- default .Chart.AppVersion .Values.agent.image.tag -}}
-{{- end -}}

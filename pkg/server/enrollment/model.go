@@ -3,6 +3,8 @@ package enrollment
 import (
 	"errors"
 	"time"
+
+	"github.com/togettoyou/zke/pkg/server/store"
 )
 
 const DefaultTokenTTL = 15 * time.Minute
@@ -26,35 +28,40 @@ var (
 )
 
 type CreateInput struct {
-	ProjectID      string
-	ClusterID      string
-	ClusterName    string
-	UserID         string
-	RequestID      string
-	IdempotencyKey string
-	Now            time.Time
+	ProjectID         string
+	ClusterID         string
+	ClusterName       string
+	UserID            string
+	RequestID         string
+	IdempotencyKey    string
+	Now               time.Time
+	EndpointProfileID string
 }
 
 type CreateResult struct {
-	ID          string
-	ClusterID   string
-	ClusterName string
-	Token       string
-	ExpiresAt   time.Time
+	ID                      string
+	ClusterID               string
+	ClusterName             string
+	Token                   string
+	ExpiresAt               time.Time
+	EndpointProfileID       string
+	EndpointProfileRevision int64
 }
 
 type Enrollment struct {
-	ID              string
-	TenantID        string
-	ProjectID       string
-	ClusterID       string
-	ClusterName     string
-	CreatedByUserID string
-	Status          string
-	ExpiresAt       time.Time
-	ConsumedAt      *time.Time
-	RevokedAt       *time.Time
-	CreatedAt       time.Time
+	ID                      string
+	TenantID                string
+	ProjectID               string
+	ClusterID               string
+	ClusterName             string
+	CreatedByUserID         string
+	Status                  string
+	ExpiresAt               time.Time
+	ConsumedAt              *time.Time
+	RevokedAt               *time.Time
+	CreatedAt               time.Time
+	EndpointProfileID       string
+	EndpointProfileRevision int64
 }
 
 type RevokeInput struct {
@@ -67,11 +74,12 @@ type RevokeInput struct {
 }
 
 type ReenrollInput struct {
-	ClusterID      string
-	UserID         string
-	RequestID      string
-	IdempotencyKey string
-	Now            time.Time
+	ClusterID         string
+	UserID            string
+	RequestID         string
+	IdempotencyKey    string
+	Now               time.Time
+	EndpointProfileID string
 }
 
 type ManifestEnrollment struct {
@@ -80,6 +88,7 @@ type ManifestEnrollment struct {
 	ProjectID   string
 	ClusterName string
 	ExpiresAt   time.Time
+	Snapshot    store.EnrollmentConfigurationSnapshot
 }
 
 type AttemptStatus string

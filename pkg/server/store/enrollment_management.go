@@ -63,7 +63,8 @@ func (store *EnrollmentStore) ListEnrollments(
 		`
 SELECT id::text, tenant_id::text, project_id::text,
     COALESCE(cluster_id::text, ''), cluster_name,
-    created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at
+    created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at,
+    endpoint_profile_id::text, endpoint_profile_revision
 `+enrollmentFilterSQL+`
 ORDER BY created_at DESC, id
 LIMIT $5 OFFSET $6
@@ -85,7 +86,8 @@ func (store *EnrollmentStore) GetEnrollment(
 	item, err := scanManagedEnrollment(store.pool.QueryRow(ctx, `
 SELECT id::text, tenant_id::text, project_id::text,
     COALESCE(cluster_id::text, ''), cluster_name,
-    created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at
+    created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at,
+    endpoint_profile_id::text, endpoint_profile_revision
 FROM enrollments
 WHERE project_id = $1 AND id = $2
 `, projectID, enrollmentID))
@@ -110,7 +112,8 @@ func (store *EnrollmentStore) RevokeEnrollment(
 	item, err := scanManagedEnrollment(transaction.QueryRow(ctx, `
 SELECT id::text, tenant_id::text, project_id::text,
     COALESCE(cluster_id::text, ''), cluster_name,
-    created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at
+    created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at,
+    endpoint_profile_id::text, endpoint_profile_revision
 FROM enrollments
 WHERE project_id = $1 AND id = $2
 FOR UPDATE
@@ -158,7 +161,8 @@ func scanManagedEnrollment(row rowScanner) (Enrollment, error) {
 		&item.ID, &item.TenantID, &item.ProjectID, &item.ClusterID,
 		&item.ClusterName,
 		&item.CreatedByUserID, &item.ExpiresAt, &item.ConsumedAt,
-		&item.RevokedAt, &item.CreatedAt,
+		&item.RevokedAt, &item.CreatedAt, &item.EndpointProfileID,
+		&item.EndpointProfileRevision,
 	)
 	return item, err
 }

@@ -35,9 +35,15 @@ type PodExecCreator interface {
 }
 
 type Config struct {
+	Image          string
+	Namespace      string
+	TTL            time.Duration
+	ResolveRuntime func(context.Context) (RuntimeConfig, error)
+}
+
+type RuntimeConfig struct {
 	Image     string
 	Namespace string
-	TTL       time.Duration
 }
 
 type CreateInput struct {
@@ -88,7 +94,14 @@ func NewService(requester Requester, podExec PodExecCreator, config Config) *Ser
 }
 
 func (service *Service) Create(ctx context.Context, input CreateInput) (session podexec.Session, createErr error) {
-	if service == nil || service.requester == nil || service.podExec == nil || service.config.Image == "" {
+	if service == nil || service.requester == nil || service.podExec == nil {
+		return podexec.Session{}, ErrUnavailable
+	}
+	runtimeConfig, err := service.runtimeConfig(ctx)
+	if err != nil {
+		return podexec.Session{}, err
+	}
+	if runtimeConfig.Image == "" || runtimeConfig.Namespace == "" {
 		return podexec.Session{}, ErrUnavailable
 	}
 	record, owner, beginErr := service.beginCreate(input)
@@ -105,11 +118,11 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 	}
 	defer func() { service.finishCreate(input, record, session, createErr) }()
 
-	terminalID := deterministicTerminalID(input.UserID, input.ClusterID, service.config.Namespace, input.IdempotencyKey)
+	terminalID := deterministicTerminalID(input.UserID, input.ClusterID, runtimeConfig.Namespace, input.IdempotencyKey)
 	response, requestErr := service.requester.RequestTerminalSession(ctx, input.ClusterID, &agentv1.TerminalSessionRequest{
 		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
-		SessionId: terminalID, UserId: input.UserID, Namespace: service.config.Namespace,
-		Permissions: input.Permissions, TtlSeconds: uint64(service.config.TTL.Seconds()), Image: service.config.Image,
+		SessionId: terminalID, UserId: input.UserID, Namespace: runtimeConfig.Namespace,
+		Permissions: input.Permissions, TtlSeconds: uint64(service.config.TTL.Seconds()), Image: runtimeConfig.Image,
 	}, terminalIdempotencyKey(input.IdempotencyKey, "create"))
 	if requestErr != nil {
 		createErr = terminalRequestError(requestErr)
@@ -145,6 +158,13 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 	service.lifecycles[session.ID] = lifecycle
 	service.mutex.Unlock()
 	return session, nil
+}
+
+func (service *Service) runtimeConfig(ctx context.Context) (RuntimeConfig, error) {
+	if service.config.ResolveRuntime != nil {
+		return service.config.ResolveRuntime(ctx)
+	}
+	return RuntimeConfig{Image: service.config.Image, Namespace: service.config.Namespace}, nil
 }
 
 func (service *Service) beginCreate(input CreateInput) (*idempotencyRecord, bool, error) {

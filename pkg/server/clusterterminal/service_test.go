@@ -93,6 +93,34 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 	}
 }
 
+func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
+	requester := &terminalRequesterFake{}
+	image := "terminal:v1"
+	service := NewService(requester, &podExecCreatorFake{}, Config{
+		TTL: 10 * time.Minute,
+		ResolveRuntime: func(context.Context) (RuntimeConfig, error) {
+			return RuntimeConfig{Image: image, Namespace: "zke-system"}, nil
+		},
+	})
+	create := func(key string, now time.Time) {
+		t.Helper()
+		if _, err := service.Create(context.Background(), CreateInput{
+			UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
+			IdempotencyKey: key, Permissions: []string{"cluster.terminal.exec"},
+			Columns: 120, Rows: 36, Now: now,
+		}); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+	create("first", time.Unix(100, 0))
+	image = "terminal:v2"
+	create("second", time.Unix(101, 0))
+	if len(requester.requests) != 2 || requester.requests[0].GetImage() != "terminal:v1" ||
+		requester.requests[1].GetImage() != "terminal:v2" {
+		t.Fatalf("terminal images = %+v, want v1 then v2", requester.requests)
+	}
+}
+
 func TestDeterministicTerminalIDIsStableAndScopeBound(t *testing.T) {
 	first := deterministicTerminalID("user", "cluster", "namespace", "key")
 	if again := deterministicTerminalID("user", "cluster", "namespace", "key"); again != first {

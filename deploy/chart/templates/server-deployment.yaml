@@ -55,18 +55,6 @@ spec:
                   key: password
             - name: ZKE_DATABASE_URL
               value: "postgres://{{ .Values.postgresql.auth.username }}:$(ZKE_DATABASE_PASSWORD)@{{ include "zke.postgresql.fullname" . }}:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable"
-            - name: ZKE_AGENT_IMAGE
-              value: "{{ .Values.agent.image.repository }}:{{ include "zke.agent.imageTag" . }}"
-            - name: ZKE_CLUSTER_TERMINAL_IMAGE
-              value: "{{ .Values.agent.image.repository }}:{{ include "zke.agent.imageTag" . }}"
-            {{- with .Values.server.agentInstall.publicHTTPURL }}
-            - name: ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.server.agentInstall.publicQUICAddress }}
-            - name: ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS
-              value: {{ . | quote }}
-            {{- end }}
             {{- with .Values.server.podAccessExternalURL }}
             - name: ZKE_POD_ACCESS_EXTERNAL_URL
               value: {{ . | quote }}

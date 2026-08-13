@@ -15,6 +15,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
+	"github.com/togettoyou/zke/pkg/server/platformsettings"
 )
 
 const maxCreateAgentInstallationRequestBytes = 16 * 1024
@@ -26,15 +27,17 @@ type agentInstallationHandler struct {
 }
 
 type createAgentInstallationRequest struct {
-	ClusterName string `json:"cluster_name"`
+	ClusterName       string `json:"cluster_name"`
+	EndpointProfileID string `json:"endpoint_profile_id"`
 }
 
 type createAgentInstallationResponse struct {
-	ID             string    `json:"id"`
-	ClusterName    string    `json:"cluster_name"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	ManifestURL    string    `json:"manifest_url"`
-	InstallCommand string    `json:"install_command"`
+	ID                string    `json:"id"`
+	ClusterName       string    `json:"cluster_name"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	ManifestPath      string    `json:"manifest_path"`
+	Token             string    `json:"token"`
+	EndpointProfileID string    `json:"endpoint_profile_id"`
 }
 
 func newAgentInstallationHandler(
@@ -74,17 +77,25 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	operationContext, cancel := handler.operationContext(c)
 	result, err := handler.service.Create(operationContext, agentinstall.CreateInput{
-		ProjectID:      c.Param("project_id"),
-		ClusterName:    request.ClusterName,
-		UserID:         identity.User.ID,
-		RequestID:      httpmiddleware.RequestID(c),
-		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
-		Now:            time.Now().UTC(),
+		ProjectID:         c.Param("project_id"),
+		ClusterName:       request.ClusterName,
+		EndpointProfileID: request.EndpointProfileID,
+		UserID:            identity.User.ID,
+		RequestID:         httpmiddleware.RequestID(c),
+		IdempotencyKey:    c.GetHeader(idempotencyKeyHeaderName),
+		Now:               time.Now().UTC(),
 	})
 	cancel()
 	switch {
-	case errors.Is(err, agentinstall.ErrDisabled):
-		writeError(c, http.StatusServiceUnavailable, "unavailable", "Cluster installation is disabled")
+	case errors.Is(err, platformsettings.ErrInvalidInput):
+		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_endpoint_profile", "invalid Agent endpoint profile")
+	case errors.Is(err, platformsettings.ErrNotFound):
+		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "failed")
+		writeError(c, http.StatusNotFound, "endpoint_profile_not_found", "Agent endpoint profile not found")
+	case errors.Is(err, platformsettings.ErrEndpointUnready):
+		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "failed")
+		writeError(c, http.StatusConflict, "endpoint_profile_unready", "Agent endpoint profile is not ready")
 	case errors.Is(err, enrollment.ErrInvalidInput):
 		handler.recordInstallationFailure(c, identity.User.ID, request.ClusterName, "failed")
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Cluster installation request")
@@ -115,11 +126,12 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
 	default:
 		writeSuccess(c, http.StatusCreated, createAgentInstallationResponse{
-			ID:             result.ID,
-			ClusterName:    result.ClusterName,
-			ExpiresAt:      responseTime(result.ExpiresAt),
-			ManifestURL:    result.ManifestURL,
-			InstallCommand: result.InstallCommand,
+			ID:                result.ID,
+			ClusterName:       result.ClusterName,
+			ExpiresAt:         responseTime(result.ExpiresAt),
+			ManifestPath:      result.ManifestPath,
+			Token:             result.Token,
+			EndpointProfileID: result.EndpointProfileID,
 		})
 	}
 }
@@ -178,8 +190,6 @@ func (handler *agentInstallationHandler) manifest(c *gin.Context) {
 	)
 	cancel()
 	switch {
-	case errors.Is(err, agentinstall.ErrDisabled):
-		writeError(c, http.StatusServiceUnavailable, "unavailable", "Agent installation is disabled")
 	case errors.Is(err, agentinstall.ErrTokenRejected):
 		c.Header("WWW-Authenticate", `Bearer realm="zke-agent-install"`)
 		writeError(c, http.StatusUnauthorized, "token_rejected", "installation token rejected")

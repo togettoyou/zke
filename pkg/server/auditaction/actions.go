@@ -65,6 +65,12 @@ const (
 	ProjectResume  = "project.resume"
 	ProjectDelete  = "project.delete"
 
+	PlatformSettingsUpdate     = "platform_settings.update"
+	AgentEndpointProfileCreate = "agent_endpoint_profile.create"
+	AgentEndpointProfileUpdate = "agent_endpoint_profile.update"
+	AgentEndpointProfileDelete = "agent_endpoint_profile.delete"
+	PlatformSettingsManage     = "platform.settings.manage"
+
 	ClusterEnroll                        = "cluster.enroll"
 	ClusterUpdate                        = "cluster.update"
 	ClusterSuspend                       = "cluster.suspend"
@@ -176,6 +182,7 @@ const (
 	GroupRoleBinding = "role_binding"
 	GroupTenant      = "tenant"
 	GroupProject     = "project"
+	GroupPlatform    = "platform"
 	GroupCluster     = "cluster"
 	GroupKubernetes  = "kubernetes_resource"
 	// GroupDenied holds the permission names above. They are grouped apart
@@ -195,18 +202,20 @@ const (
 // targets a Cluster; `cluster.enrollment.create` is scoped to a Project and
 // targets an Enrollment.
 const (
-	TargetUser               = "user"
-	TargetSession            = "session"
-	TargetRole               = "role"
-	TargetRoleBinding        = "role_binding"
-	TargetTenant             = "tenant"
-	TargetProject            = "project"
-	TargetCluster            = "cluster"
-	TargetAgent              = "agent"
-	TargetAgentCredential    = "agent_credential"
-	TargetEnrollment         = "enrollment"
-	TargetAuditEvent         = "audit_event"
-	TargetKubernetesResource = "kubernetes_resource"
+	TargetUser                 = "user"
+	TargetSession              = "session"
+	TargetRole                 = "role"
+	TargetRoleBinding          = "role_binding"
+	TargetTenant               = "tenant"
+	TargetProject              = "project"
+	TargetCluster              = "cluster"
+	TargetAgent                = "agent"
+	TargetAgentCredential      = "agent_credential"
+	TargetEnrollment           = "enrollment"
+	TargetAuditEvent           = "audit_event"
+	TargetKubernetesResource   = "kubernetes_resource"
+	TargetPlatformSettings     = "platform_settings"
+	TargetAgentEndpointProfile = "agent_endpoint_profile"
 )
 
 var targetTypes = []string{
@@ -222,6 +231,8 @@ var targetTypes = []string{
 	TargetEnrollment,
 	TargetAuditEvent,
 	TargetKubernetesResource,
+	TargetPlatformSettings,
+	TargetAgentEndpointProfile,
 }
 
 // TargetTypes reports the target type vocabulary in presentation order.
@@ -277,6 +288,12 @@ var actions = []Action{
 	{ProjectSuspend, GroupProject},
 	{ProjectResume, GroupProject},
 	{ProjectDelete, GroupProject},
+
+	{PlatformSettingsUpdate, GroupPlatform},
+	{AgentEndpointProfileCreate, GroupPlatform},
+	{AgentEndpointProfileUpdate, GroupPlatform},
+	{AgentEndpointProfileDelete, GroupPlatform},
+	{PlatformSettingsManage, GroupPlatform},
 
 	{ClusterEnroll, GroupCluster},
 	{ClusterUpdate, GroupCluster},

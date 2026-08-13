@@ -142,13 +142,13 @@ func TestConfigRejectsHTTPServerCA(t *testing.T) {
 	}
 }
 
-func TestConfigRejectsRemoteHTTPRegistrationServer(t *testing.T) {
+func TestConfigAllowsRemoteHTTPRegistrationServer(t *testing.T) {
 	t.Parallel()
 
 	cfg := validAgentConfig()
 	cfg.Registration.ServerURL = "http://192.0.2.1:8080"
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() accepted a remote plaintext registration Server URL")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() rejected a remote HTTP registration Server URL: %v", err)
 	}
 }
 

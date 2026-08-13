@@ -34,14 +34,14 @@ export function useClusterEnrollments(projectId: string | null, params: Enrollme
 export function useCreateClusterEnrollment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { projectId: string; clusterName: string; idempotencyKey: string }) =>
+    mutationFn: async (input: { projectId: string; clusterName: string; endpointProfileId: string; idempotencyKey: string }) =>
       unwrap(
         await api.POST("/api/v1/projects/{project_id}/cluster-enrollments", {
           params: {
             path: { project_id: input.projectId },
             header: idempotentHeaders(input.idempotencyKey),
           },
-          body: { cluster_name: input.clusterName },
+          body: { cluster_name: input.clusterName, endpoint_profile_id: input.endpointProfileId },
         }),
       ),
     onSuccess: async () => {
@@ -70,20 +70,20 @@ export function useRevokeClusterEnrollment() {
 }
 
 /**
- * Produces the one-line install command for a new Cluster. The command embeds a
- * bearer token for the manifest endpoint and is treated as a secret.
+ * Creates a one-time manifest credential. The Console constructs the command
+ * against its current same-origin URL so reverse proxies need no Server config.
  */
 export function useCreateClusterInstallation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { projectId: string; clusterName: string; idempotencyKey: string }) =>
+    mutationFn: async (input: { projectId: string; clusterName: string; endpointProfileId: string; idempotencyKey: string }) =>
       unwrap(
         await api.POST("/api/v1/projects/{project_id}/cluster-installations", {
           params: {
             path: { project_id: input.projectId },
             header: idempotentHeaders(input.idempotencyKey),
           },
-          body: { cluster_name: input.clusterName },
+          body: { cluster_name: input.clusterName, endpoint_profile_id: input.endpointProfileId },
         }),
       ),
     onSuccess: async () => {

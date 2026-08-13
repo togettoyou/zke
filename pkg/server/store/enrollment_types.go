@@ -35,16 +35,18 @@ type ListEnrollmentsParams struct {
 }
 
 type Enrollment struct {
-	ID              string
-	TenantID        string
-	ProjectID       string
-	ClusterID       string
-	ClusterName     string
-	CreatedByUserID string
-	ExpiresAt       time.Time
-	ConsumedAt      *time.Time
-	RevokedAt       *time.Time
-	CreatedAt       time.Time
+	ID                      string
+	TenantID                string
+	ProjectID               string
+	ClusterID               string
+	ClusterName             string
+	CreatedByUserID         string
+	ExpiresAt               time.Time
+	ConsumedAt              *time.Time
+	RevokedAt               *time.Time
+	CreatedAt               time.Time
+	EndpointProfileID       string
+	EndpointProfileRevision int64
 }
 
 type ActiveEnrollment struct {
@@ -54,6 +56,18 @@ type ActiveEnrollment struct {
 	ClusterID   string
 	ClusterName string
 	ExpiresAt   time.Time
+	Snapshot    EnrollmentConfigurationSnapshot
+}
+
+type EnrollmentConfigurationSnapshot struct {
+	EndpointProfileID            string
+	EndpointProfileRevision      int64
+	RegistrationURL              string
+	QUICAddress                  string
+	RegistrationCACertificatePEM string
+	AgentImage                   string
+	AgentNamespace               string
+	AgentImagePullPolicy         string
 }
 
 type CreateEnrollmentParams struct {
@@ -65,6 +79,7 @@ type CreateEnrollmentParams struct {
 	ExpiresAt       time.Time
 	RequestID       string
 	IdempotencyKey  string
+	Snapshot        EnrollmentConfigurationSnapshot
 }
 
 type RevokeEnrollmentParams struct {

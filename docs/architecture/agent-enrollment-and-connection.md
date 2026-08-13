@@ -56,7 +56,7 @@ HTTP 注册和 QUIC 长连接分离是当前明确设计。注册属于尚未建
 
 ### 2.1 Server Managed Agent mTLS PKI
 
-`agent_pki.mode: managed` 时，Server 首次启动会在配置目录生成以下六个文件。该目录在部署中必须挂载到受保护的
+Server 首次启动会在配置目录生成以下六个 PKI 文件。该目录在部署中必须挂载到受保护的
 持久卷：
 
 | 文件                    | 运行时使用者 | 作用                                  | 生命周期                                 |
@@ -64,17 +64,17 @@ HTTP 注册和 QUIC 长连接分离是当前明确设计。注册属于尚未建
 | `agent-client-ca.crt`   | ZKE Server   | 验证 Agent 客户端证书                 | 默认 10 年；CA 到期前人工规划轮换        |
 | `agent-client-ca.key`   | ZKE Server   | 注册和续期时签发 Agent 客户端证书     | 高敏感；CA 轮换时更换                    |
 | `agent-listener-ca.crt` | ZKE Agent    | 验证 QUIC Listener 的服务端证书       | 默认 20 年；CA 到期前人工规划轮换        |
-| `agent-listener-ca.key` | ZKE Server   | 自动签发或续期 Agent Listener 证书    | 高敏感；Managed 模式保存在 PV            |
+| `agent-listener-ca.key` | ZKE Server   | 自动签发或续期 Agent Listener 证书    | 高敏感；保存在受保护 PV                  |
 | `agent-listener.crt`    | ZKE Server   | QUIC Listener 向 Agent 证明服务端身份 | 默认 10 年；启动时进入续期窗口会自动续期 |
 | `agent-listener.key`    | ZKE Server   | QUIC Listener TLS 私钥                | Listener 续期时复用                      |
 
 两条 CA 信任链在密码学上可以合并，但不建议这样做：
 
 - Agent Client CA 私钥需要由当前 Server 在线加载以签发客户端证书；
-- Agent Listener CA 私钥只用于签发 Listener 证书；Managed 模式为了启动时自动续期而在线保存在受保护 PV；
+- Agent Listener CA 私钥只用于签发 Listener 证书，为自动续期而在线保存在受保护 PV；
 - 两者泄露后的影响范围和轮换节奏不同。
 
-Managed 模式以 PostgreSQL advisory lock 串行化多实例初始化，并在数据库保存三张证书的 SHA-256 指纹与过期
+Server 以 PostgreSQL advisory lock 串行化 PKI 初始化，并在数据库保存三张证书的 SHA-256 指纹与过期
 时间。只在“数据库没有 PKI/已注册 Agent 安全状态且目录完全为空”时生成 CA；目录只有部分文件会拒绝启动；
 数据库已有状态但 PV 文件丢失时也会拒绝启动，绝不静默生成新的信任根。文件完整但数据库无 PKI 状态时允许
 导入并登记，便于现有开发 PKI 迁移。私钥权限为 `0600`，目录为 `0700`。
@@ -83,27 +83,11 @@ Managed 模式以 PostgreSQL advisory lock 串行化多实例初始化，并在�
 CA 比叶子证书更长，避免叶子证书声明的有效期晚于签发 CA。Listener 叶子证书可自动续期，但两张 CA 不会自动
 轮换；CA 轮换需要明确的双信任窗口和运维方案。
 
-`agent_pki.mode: external` 仍支持由外部系统提供 Agent Client CA、Listener 身份和 Listener CA。Managed
-模式以自动化换取 Listener CA 私钥在线这一安全代价；需要离线 CA、KMS 或 HSM 时应改用 external 模式。
-
-external 模式的文件集中配置，不再散落到 Enrollment、Listener 或安装配置中：
-
-```yaml
-agent_pki:
-  mode: external
-  agent_client_certificate_validity: 720h
-  external:
-    agent_client_ca:
-      certificate_file: /var/run/secrets/zke-agent-pki/agent-client-ca.crt
-      private_key_file: /var/run/secrets/zke-agent-pki/agent-client-ca.key
-    agent_listener_ca:
-      certificate_file: /var/run/secrets/zke-agent-pki/agent-listener-ca.crt
-    agent_listener:
-      certificate_file: /var/run/secrets/zke-agent-pki/agent-listener.crt
-      private_key_file: /var/run/secrets/zke-agent-pki/agent-listener.key
-```
-
-`agent-listener-ca.key` 不在 external 配置中，因为它只应由外部签发环境持有，Server 不加载。
+CA 与 Listener 私钥保存在受保护的持久目录。启用的 Agent 接入端点由 PostgreSQL 提供 Listener SAN。创建或修改
+启用端点时，Server 在写入端点前先复用 Listener 私钥
+重签叶子证书，再通过内存中的原子引用切换新证书；编辑、停用或删除端点会把不再需要的 SAN 一并移除，数据库写入
+失败时恢复原 SAN 集合。既有 QUIC 连接保留原 TLS 状态，新握手立即使用新证书。CA 不因端点变化而轮换，端点更新
+不需要重启 Server。
 
 ### 2.2 Agent identity Secret
 
@@ -157,10 +141,12 @@ POST /api/v1/projects/{project_id}/cluster-enrollments
 - CSRF Token；
 - `cluster.enrollment.create` Project 权限；
 - 集群显示名称；
+- 一个当前可用的 Agent 接入端点（未指定时使用平台默认端点）；
 - 调用方提供的 `Idempotency-Key`。
 
-Server 校验权限后生成一次性 Token，保存 Token 摘要、Project、集群名称、创建者、有效期和审计记录。创建
-Enrollment 的幂等键用于防止调用方因网络重试而生成多个 Token。
+Server 校验权限后生成一次性 Token，保存 Token 摘要、Project、集群名称、创建者、有效期和审计记录，并把端点
+Revision、注册 URL、QUIC 地址、信任 CA、Agent 镜像、Namespace 与拉取策略复制为不可变快照。平台默认值之后的
+修改不会改变已经签发的 Enrollment。创建 Enrollment 的幂等键用于防止调用方因网络重试而生成多个 Token。
 
 这一阶段的必要性如下：
 
@@ -174,14 +160,14 @@ Enrollment 的幂等键用于防止调用方因网络重试而生成多个 Token
 
 ### 3.1 一键安装 Manifest
 
-启用 `agent_install` 后，管理员可以调用：
+管理员可以调用：
 
 ```text
 POST /api/v1/projects/{project_id}/cluster-installations
 ```
 
-认证、CSRF、Project RBAC、请求幂等和 15 分钟 Token 规则与 Enrollment 创建相同。响应不要求管理员手写 Secret
-或 Deployment，而是返回：
+认证、CSRF、Project RBAC、端点选择、请求幂等和 15 分钟 Token 规则与 Enrollment 创建相同。响应返回 Manifest
+相对路径与只显示一次的 Token；Console 使用当前同源地址生成命令，无需在 Server YAML 中配置公开 HTTP 地址：
 
 ```bash
 curl -fsSL -H 'Authorization: Bearer <Enrollment Token>' \
@@ -316,8 +302,8 @@ Agent 收到注册结果后检查：
 
 ## 5. HTTP TLS
 
-注册阶段的 Agent 尚无客户端证书，因此使用 Bearer Token 而不是 mTLS。生产环境必须使用 HTTPS，但 TLS 可以由
-ZKE Server 原生终止，也可以由上游网关终止。
+注册阶段的 Agent 尚无客户端证书，因此使用 Bearer Token 而不是 mTLS。注册接口支持 HTTP 和 HTTPS；使用 HTTPS
+时，TLS 可以由 ZKE Server 原生终止，也可以由上游网关终止。
 
 ### 5.1 Server 原生 HTTPS
 
@@ -350,8 +336,8 @@ Agent -> HTTPS Gateway -> ZKE Server HTTP Listener
 `registration.ca_certificate_file`，公有 CA 时省略。只要浏览器通过 HTTPS 访问，无论 TLS 在哪里终止，
 `auth.cookie_secure` 都必须设为 `true`。
 
-Server 原生 HTTP TLS 是可选的，但生产注册链路上的 HTTPS 不是可选的。仓库只允许回环地址使用明文 HTTP；包含
-Token 的明文注册请求不得进入不可信网络。
+Server 原生 HTTP TLS 是可选的，代码不限制 HTTP 注册地址的网络范围。注册 Token 通过 Authorization Header
+传输；在不可信网络中需要传输机密性时应使用 HTTPS。
 
 HTTP TLS 身份与 Agent Listener TLS 身份相互独立，不建议复用证书、私钥或 CA。Server 的 Managed Agent PKI
 只生成 Agent Client CA、Agent Listener CA 和 Listener 身份，不生成 HTTP TLS 证书。
@@ -532,7 +518,6 @@ Server 也会按当前客户端证书的 `NotAfter` 安排连接关闭，避免�
 
 1. **Agent 升级管理**：ZKE Server 已提供部署用 Helm Chart；目标集群中的 Agent 当前仍由 Server 动态生成
    Kubernetes Manifest，尚无 Agent 专用 Helm 升级和版本兼容编排。
-2. **在线 CA 私钥保护**：Managed 模式把两个 CA 私钥保存在 Server PV；需要更强隔离时应使用 external 模式接入
-   受控的离线流程、KMS 或 HSM。项目不强制引入独立签发服务。
+2. **在线 CA 私钥保护**：两个 CA 私钥保存在 Server PV；KMS/HSM 或独立签发服务尚未实现。
 3. **过期后的自动恢复**：正常续期已实现，但 Agent 离线至证书过期后仍需通过 Cluster 重新接入流程恢复。
 4. **CA 无中断轮换**：当前连接 CA 使用单一专用信任根，双信任窗口和 Listener/Client CA 自动轮换尚未实现。

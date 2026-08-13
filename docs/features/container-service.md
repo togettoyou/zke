@@ -933,8 +933,8 @@ Base Path。它只代理所选 Pod 端口，不挂载 Console、认证或任何 
 
 Pod Access Listener 与主 HTTP Listener 运行在同一个 Server 进程，可以绑定相同 IP 的另一个端口，也可以由
 云入口映射为第二个固定域名。Listener 的 TLS 可选：配置 `pod_access.tls` 时 Server 原生提供 HTTPS；留空时可由
-上游网关终止 HTTPS 并向 Listener 转发 HTTP。携带 Bearer 激活凭证的外部 URL 必须是 HTTPS，只有回环本地开发
-允许使用 HTTP。相同主机的 Cookie 不按端口隔离，所以 Listener 会删除所有非本访问会话的 Cookie，绝不把
+上游网关终止 HTTPS 并向 Listener 转发 HTTP，也可以直接使用 HTTP external URL。经过不可信网络时应使用 HTTPS
+保护 Bearer 激活凭证和访问 Cookie。相同主机的 Cookie 不按端口隔离，所以 Listener 会删除所有非本访问会话的 Cookie，绝不把
 `zke_session`、CSRF Cookie 或 Pod Access Cookie 发给 Pod；Pod 的 `Set-Cookie` 则按访问会话随机前缀改名，回送
 Pod 前恢复原名并去掉 Domain，避免 Pod 页面覆盖 Console 登录态或与另一条 Pod 会话串用 Cookie。
 

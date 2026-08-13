@@ -10,7 +10,7 @@
 
 ## 部署
 
-- [Docker、Kubernetes 与 Helm 部署](deployment.md)
+- [Docker 与 Helm 部署](deployment.md)
 
 ## 架构
 

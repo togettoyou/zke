@@ -1,3 +1,9 @@
+{{- $publicHTTPURL := .Values.server.agentInstall.publicHTTPURL -}}
+{{- $publicQUICAddress := .Values.server.agentInstall.publicQUICAddress -}}
+{{- if ne (empty $publicHTTPURL) (empty $publicQUICAddress) -}}
+{{- fail "server.agentInstall.publicHTTPURL and server.agentInstall.publicQUICAddress must be configured together" -}}
+{{- end -}}
+{{- $serviceHost := printf "%s.%s.svc.%s" (include "zke.server.fullname" .) .Release.Namespace (trimSuffix "." (default "cluster.local" .Values.clusterDomain)) -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,19 +14,12 @@ metadata:
 data:
   zke-server.yaml: |
     agent_pki:
-      listener_sans:
-        dns_names:
-          - localhost
-          - {{ include "zke.server.fullname" . }}
-          - {{ include "zke.server.fullname" . }}.{{ .Release.Namespace }}
-          - {{ include "zke.server.fullname" . }}.{{ .Release.Namespace }}.svc
-          {{- range .Values.server.agentPKI.listenerSANs.dnsNames }}
-          - {{ . | quote }}
-          {{- end }}
-        ip_addresses:
-          - 127.0.0.1
-          {{- range .Values.server.agentPKI.listenerSANs.ipAddresses }}
-          - {{ . | quote }}
-          {{- end }}
-      managed:
-        directory: data/pki
+      directory: data/pki
+    agent_install:
+      {{- if and (empty $publicHTTPURL) (empty $publicQUICAddress) }}
+      public_http_url: {{ printf "http://%s:%v" $serviceHost .Values.server.service.httpPort | quote }}
+      public_quic_address: {{ printf "%s:%v" $serviceHost .Values.server.service.agentQUICPort | quote }}
+      {{- else }}
+      public_http_url: {{ .Values.server.agentInstall.publicHTTPURL | quote }}
+      public_quic_address: {{ .Values.server.agentInstall.publicQUICAddress | quote }}
+      {{- end }}

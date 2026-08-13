@@ -415,13 +415,8 @@ func (cfg Config) Validate() error {
 				"registration CA certificate file cannot be used with HTTP",
 			)
 		}
-		if !isLoopbackHost(serverURL.Hostname()) {
-			return errors.New(
-				"HTTP registration Server URL is only allowed for a loopback host",
-			)
-		}
 	default:
-		return errors.New("registration Server URL must use HTTPS")
+		return errors.New("registration Server URL must use HTTP or HTTPS")
 	}
 	if serverURL.User != nil {
 		return errors.New("registration Server URL must not contain credentials")
@@ -646,12 +641,4 @@ func (cfg Config) ConnectionServerName() string {
 		return ""
 	}
 	return host
-}
-
-func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }

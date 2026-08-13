@@ -14,21 +14,28 @@ import (
 const maxClusterNameBytes = 253
 
 type Service struct {
-	store             Store
-	tokenTTL          time.Duration
-	certificateSigner *CertificateSigner
+	store                 Store
+	tokenTTL              time.Duration
+	certificateSigner     *CertificateSigner
+	configurationResolver ConfigurationResolver
+}
+
+type ConfigurationResolver interface {
+	ResolveEnrollmentSnapshot(context.Context, string) (store.EnrollmentConfigurationSnapshot, error)
 }
 
 type ServiceConfig struct {
-	TokenTTL          time.Duration
-	CertificateSigner *CertificateSigner
+	TokenTTL              time.Duration
+	CertificateSigner     *CertificateSigner
+	ConfigurationResolver ConfigurationResolver
 }
 
 func NewService(enrollmentStore Store, config ServiceConfig) *Service {
 	return &Service{
-		store:             enrollmentStore,
-		tokenTTL:          config.TokenTTL,
-		certificateSigner: config.CertificateSigner,
+		store:                 enrollmentStore,
+		tokenTTL:              config.TokenTTL,
+		certificateSigner:     config.CertificateSigner,
+		configurationResolver: config.ConfigurationResolver,
 	}
 }
 
@@ -49,6 +56,13 @@ func (service *Service) Create(
 	if service.tokenTTL <= 0 {
 		return CreateResult{}, errors.New("enrollment token TTL must be greater than zero")
 	}
+	if service.configurationResolver == nil {
+		return CreateResult{}, errors.New("enrollment configuration resolver is required")
+	}
+	snapshot, err := service.configurationResolver.ResolveEnrollmentSnapshot(ctx, input.EndpointProfileID)
+	if err != nil {
+		return CreateResult{}, err
+	}
 
 	token, tokenDigest, err := newToken()
 	if err != nil {
@@ -65,6 +79,7 @@ func (service *Service) Create(
 			ExpiresAt:       input.Now.Add(service.tokenTTL),
 			RequestID:       input.RequestID,
 			IdempotencyKey:  input.IdempotencyKey,
+			Snapshot:        snapshot,
 		},
 	)
 	if errors.Is(err, store.ErrEnrollmentCreationDenied) {
@@ -80,11 +95,13 @@ func (service *Service) Create(
 		return CreateResult{}, err
 	}
 	return CreateResult{
-		ID:          storedEnrollment.ID,
-		ClusterID:   storedEnrollment.ClusterID,
-		ClusterName: storedEnrollment.ClusterName,
-		Token:       token,
-		ExpiresAt:   storedEnrollment.ExpiresAt,
+		ID:                      storedEnrollment.ID,
+		ClusterID:               storedEnrollment.ClusterID,
+		ClusterName:             storedEnrollment.ClusterName,
+		Token:                   token,
+		ExpiresAt:               storedEnrollment.ExpiresAt,
+		EndpointProfileID:       storedEnrollment.EndpointProfileID,
+		EndpointProfileRevision: storedEnrollment.EndpointProfileRevision,
 	}, nil
 }
 
@@ -108,7 +125,8 @@ func (service *Service) CreateReenrollment(
 		ProjectID: target.ProjectID, ClusterID: input.ClusterID,
 		ClusterName: target.ClusterName, UserID: input.UserID,
 		RequestID: input.RequestID, IdempotencyKey: input.IdempotencyKey,
-		Now: input.Now,
+		Now:               input.Now,
+		EndpointProfileID: input.EndpointProfileID,
 	})
 	if errors.Is(err, ErrDenied) {
 		return CreateResult{}, ErrStateConflict
@@ -241,6 +259,8 @@ func enrollmentFromStore(item store.Enrollment, now time.Time) Enrollment {
 		CreatedByUserID: item.CreatedByUserID,
 		Status:          status, ExpiresAt: item.ExpiresAt, ConsumedAt: item.ConsumedAt,
 		RevokedAt: item.RevokedAt, CreatedAt: item.CreatedAt,
+		EndpointProfileID:       item.EndpointProfileID,
+		EndpointProfileRevision: item.EndpointProfileRevision,
 	}
 }
 
@@ -273,5 +293,6 @@ func (service *Service) ResolveManifest(
 		ProjectID:   stored.ProjectID,
 		ClusterName: stored.ClusterName,
 		ExpiresAt:   stored.ExpiresAt,
+		Snapshot:    stored.Snapshot,
 	}, nil
 }

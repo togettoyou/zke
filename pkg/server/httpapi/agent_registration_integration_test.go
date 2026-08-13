@@ -79,8 +79,9 @@ RETURNING id::text
 	enrollmentService := enrollment.NewService(
 		store.NewEnrollmentStore(pool),
 		enrollment.ServiceConfig{
-			TokenTTL:          enrollment.DefaultTokenTTL,
-			CertificateSigner: certificateSigner,
+			TokenTTL:              enrollment.DefaultTokenTTL,
+			CertificateSigner:     certificateSigner,
+			ConfigurationResolver: staticEnrollmentConfigurationResolver{},
 		},
 	)
 	created, err := enrollmentService.Create(ctx, enrollment.CreateInput{
@@ -259,7 +260,7 @@ WHERE action = 'cluster.enroll' AND result = 'succeeded'`: &successAuditCount,
 
 	unavailableService := enrollment.NewService(
 		store.NewEnrollmentStore(pool),
-		enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL},
+		enrollment.ServiceConfig{TokenTTL: enrollment.DefaultTokenTTL, ConfigurationResolver: staticEnrollmentConfigurationResolver{}},
 	)
 	unavailableToken, err := unavailableService.Create(ctx, enrollment.CreateInput{
 		ProjectID:      projectID,

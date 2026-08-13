@@ -41,6 +41,7 @@ type Config struct {
 	Address                      string
 	TLSCertificateFile           string
 	TLSPrivateKeyFile            string
+	TLSCertificateReloader       *TLSCertificateReloader
 	ClientCACertificateFile      string
 	HandshakeTimeout             time.Duration
 	HeartbeatInterval            time.Duration
@@ -1804,12 +1805,16 @@ func (manager *Manager) reject(
 }
 
 func loadTLSConfig(config Config) (*tls.Config, error) {
-	certificate, err := tls.LoadX509KeyPair(
-		config.TLSCertificateFile,
-		config.TLSPrivateKeyFile,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("load Agent Listener TLS certificate: %w", err)
+	reloader := config.TLSCertificateReloader
+	if reloader == nil {
+		var err error
+		reloader, err = NewTLSCertificateReloader(
+			config.TLSCertificateFile,
+			config.TLSPrivateKeyFile,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 	clientCAPEM, err := os.ReadFile(config.ClientCACertificateFile)
 	if err != nil {
@@ -1820,11 +1825,11 @@ func loadTLSConfig(config Config) (*tls.Config, error) {
 		return nil, errors.New("Agent client CA certificate PEM is invalid")
 	}
 	return &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{certificate},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    clientCAs,
-		NextProtos:   []string{agentprotocol.ALPN},
+		MinVersion:     tls.VersionTLS13,
+		GetCertificate: reloader.GetCertificate,
+		ClientAuth:     tls.RequireAndVerifyClientCert,
+		ClientCAs:      clientCAs,
+		NextProtos:     []string{agentprotocol.ALPN},
 	}, nil
 }
 

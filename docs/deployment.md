@@ -1,40 +1,39 @@
-# Docker、Kubernetes 与 Helm 部署
+# Docker 与 Helm 部署
 
-ZKE 当前处于开发预览阶段，不适用于生产环境。本页提供可验证的公开预览部署入口；将服务暴露到共享网络前，必须替换默认凭据、配置持久化，并在外部网关终止 HTTP TLS。
+ZKE 提供 Docker Compose 和 Helm 两种部署入口。Docker Compose 使用独立的 Server 与 PostgreSQL 容器，适合需要
+长期运行和独立维护数据库的环境；Helm 用于 Kubernetes。ZKE 当前仍处于开发预览阶段，投入关键环境前应自行完成
+安全、备份、容量和升级验证。
 
-## 镜像与发布规则
+## 配置边界
 
-| 产物 | 地址 | 用途 |
-| --- | --- | --- |
-| ZKE Server | `ghcr.io/togettoyou/zke-server` | Server 与 Console 静态资源 |
-| ZKE Server + PostgreSQL | `ghcr.io/togettoyou/zke-server-pg` | 单容器快速预览 |
-| ZKE Agent | `ghcr.io/togettoyou/zke-agent` | Agent 与 Cluster Terminal 工具环境 |
-| Helm Chart | `oci://ghcr.io/togettoyou/charts/zke` | Server 与 PostgreSQL Kubernetes 部署 |
+容器内置 `/etc/zke/zke-server.yaml`。该文件只负责 Server 启动前必须知道的引导配置：
 
-`main` 分支只发布三个镜像的 `latest` 标签。Git Tag 发布同名镜像标签；Helm OCI Chart 要求标签必须是语义化版本，因此 `main` 发布为 `0.0.0-latest`，Git Tag 发布为去掉可选前缀 `v` 后的语义化版本，Chart 的 `appVersion` 保留对应镜像标签。
+- PostgreSQL 连接与迁移超时；
+- HTTP、Pod Access 与 Agent QUIC Listener 的监听地址；
+- Agent 安装的平台默认注册 URL 与 QUIC 地址；
+- Managed PKI 的持久目录、证书有效期与续期窗口；
+- 认证、请求超时、并发和资源上限。
 
-## 默认配置与覆盖
+以下运行配置保存在 PostgreSQL，只能由全局 `admin` 在 Console 的“设置 → 平台配置”修改：
 
-Server 和 Agent 镜像分别内置仓库中的：
+- Agent 接入端点预设：注册 URL、QUIC 地址、可选注册 HTTPS CA；
+- Agent 镜像、Namespace 与 Image Pull Policy；
+- Cluster Terminal 镜像。
 
-- `/etc/zke/zke-server.yaml`
-- `/etc/zke/zke-agent.yaml`
+平台默认端点由 `agent_install.public_http_url` 与 `agent_install.public_quic_address` 配套提供；两项均为空时使用
+“本机回环预览”。Server 每次启动都按当前有效配置重新同步：从预设切换到自定义地址时创建部署端点，从自定义地址
+切回“本机回环预览”或“Docker Desktop / OrbStack”时删除已被替代的部署端点。Console 只能识别当前平台默认端点，
+不能修改、删除或另设默认值。环境变量优先于 YAML。
 
-挂载到相同路径的 YAML 是局部覆盖文件：Server 和 Agent 都先加载代码内置默认值，再只覆盖文件中出现的字段；嵌套对象也按字段合并，列表则整体替换。未知字段会导致启动失败。例如只调整 Managed PKI Listener SAN 时，Server 配置只需包含：
+Agent Namespace 参与敏感 Secret 与受保护命名空间边界，只能在签发首个 Enrollment 前修改。Cluster Terminal 镜像修改后
+立即用于新会话；Agent 镜像、拉取策略和凭据选中的端点会在新 Enrollment 签发时立即进入其不可变快照。
 
-```yaml
-agent_pki:
-  listener_sans:
-    dns_names:
-      - localhost
-      - zke-server
-      - zke-server.zke-system
-      - zke-server.zke-system.svc
-    ip_addresses:
-      - 127.0.0.1
-```
+Server 从持久目录维护 Agent Client CA、Listener CA 和 Listener 身份。启用端点的 QUIC Host 会进入 Listener 证书
+SAN。保存包含新 Host 的端点时，Server 会复用 Listener 私钥在线重签叶子证书，并原子切换给新的 QUIC 握手；既有
+Agent 连接不受影响，也不会轮换 CA 或要求重启 Server。编辑、停用或删除端点时会同步移除不再需要的 SAN；如果后续
+数据库写入失败，Server 会恢复原证书 SAN。启动时也会再次与当前启用端点精确对齐。
 
-Agent 使用相同的局部覆盖规则。默认注册地址和 QUIC 地址分别是 `http://127.0.0.1:8080` 与 `127.0.0.1:8443`，远程部署只需覆盖这两个字段及实际需要调整的其他字段。Server 还支持以下部署时环境变量，显式设置的环境变量优先于 YAML：
+部署环境变量只覆盖部署引导值：
 
 | 环境变量 | 对应配置 |
 | --- | --- |
@@ -43,16 +42,10 @@ Agent 使用相同的局部覆盖规则。默认注册地址和 QUIC 地址分�
 | `ZKE_POD_ACCESS_EXTERNAL_URL` | `pod_access.external_url` |
 | `ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL` | `agent_install.public_http_url` |
 | `ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS` | `agent_install.public_quic_address` |
-| `ZKE_AGENT_IMAGE` | `agent_install.image` |
-| `ZKE_CLUSTER_TERMINAL_IMAGE` | `cluster_terminal.image` |
 
-默认 HTTP/API 与 Pod Access Listener 分别使用 TCP `8080` 和 `8081`，不在进程内启用 HTTP TLS；Agent Listener 使用 UDP `8443` 和独立的 QUIC/mTLS 身份。共享环境应由网关为 `8080`、`8081` 提供 HTTPS，并为 `8443/UDP` 提供可达入口。
+## Docker 一键启动
 
-Agent 安装功能默认开启，但 `agent_install.public_http_url`、`agent_install.public_quic_address` 和 Managed PKI Listener SAN 必须与目标集群实际可达的入口一致。默认回环地址只适用于本机预览，不能直接用于远程集群接入。
-
-## Docker 快速预览
-
-一体镜像在同一个容器中启动 ZKE Server 和 PostgreSQL：
+一体镜像包含 ZKE Server 与 PostgreSQL，适合用最少步骤完成首次启动：
 
 ```bash
 docker run -d --name zke \
@@ -64,47 +57,47 @@ docker run -d --name zke \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
-Console 地址为 <http://127.0.0.1:8080>。首次进入时，如果系统尚无全局管理员，Console 会显示初始化页面，由部署者设置用户名和密码；Server 不生成或保存初始明文密码。
+打开 <http://127.0.0.1:8080> 并完成首个全局管理员初始化。升级或重建容器时应保留 `zke-data` 与
+`zke-postgresql-data` 两个命名卷。
 
-挂载 Server 配置：
+## Docker Compose 分离部署
 
-```bash
-docker run -d --name zke \
-  -p 8080:8080 -p 8081:8081 -p 8443:8443/udp \
-  -v zke-data:/data \
-  -v zke-postgresql-data:/var/lib/postgresql/data \
-  -v "$(pwd)/configs/zke-server.yaml:/etc/zke/zke-server.yaml:ro" \
-  ghcr.io/togettoyou/zke-server-pg:latest
-```
-
-`/data` 是 Server 唯一需要持久化的目录，包含 Managed PKI。用户、密码摘要、权限和会话保存在 PostgreSQL 中。`zke-server-pg` 使用固定的容器内数据库初始凭据，只用于单机预览；不得把 PostgreSQL 端口暴露到容器外部。删除容器前应确认两个命名卷仍然保留。
-
-## Kubernetes 清单
-
-静态清单位于 `deploy/kubernetes/zke.yaml`，包含：
-
-- PostgreSQL Secret、Headless Service 与单副本 StatefulSet；
-- ZKE Server 局部配置 ConfigMap、PVC、单副本 Deployment 与 Service；
-- TCP `8080`、TCP `8081` 和 UDP `8443` Service 端口。
-
-清单为了能够直接应用，包含 `zke_change_me` 初始数据库密码。必须在第一次创建 StatefulSet 前替换；数据库初始化后只修改 Secret 不会自动修改 PostgreSQL 内部密码。
+需要分别升级、备份和运维 Server 与 PostgreSQL 时，使用仓库提供的 Compose 文件：
 
 ```bash
-kubectl apply -f deploy/kubernetes/zke.yaml
-kubectl -n zke-system rollout status statefulset/zke-postgresql
-kubectl -n zke-system rollout status deployment/zke-server
-kubectl -n zke-system port-forward service/zke-server 8080:8080 8081:8081
+cd deploy/docker
+cp .env.example .env
+# 修改 .env 中的 ZKE_POSTGRES_PASSWORD
+docker compose up -d
 ```
 
-打开转发后的 Console；首次进入时按页面提示设置全局管理员用户名和密码。
+打开 <http://127.0.0.1:8080> 并完成首个全局管理员初始化。Compose 默认发布以下端口：
 
-Service 默认为 `ClusterIP`。外部部署需要根据环境选择 LoadBalancer、Ingress 或 Gateway；其中 `8443` 是 UDP，不能按普通 HTTP Ingress 转发。
+- TCP `8080`：Console 与 API；
+- TCP `8081`：Pod Access；
+- UDP `8443`：Agent QUIC/mTLS。
 
-`zke-server-config` ConfigMap 只保存部署相关的关键覆盖项：Managed PKI 的 `data` 目录和 Agent Listener SAN。Server 的其他参数继续使用代码默认值；修改 ConfigMap 后需要重启 Deployment。
+`zke-data` 保存 Managed PKI，`zke-postgresql-data` 保存数据库。升级容器前应备份数据并保留这两个命名卷。PostgreSQL
+只将端口绑定到宿主机回环地址，供本机维护和开发使用；Compose 网络内的 Server 使用服务名连接数据库。可在 `.env` 中
+覆盖镜像、宿主机端口和 Pod Access 外部地址。
+
+数据库密码会进入 PostgreSQL URL，因此应使用足够长的 URL-safe 随机字符串。HTTP 注册接口与 Pod Access 均支持 HTTP
+或 HTTPS；Agent QUIC 长连接固定使用 TLS 1.3 + mTLS。
+
+查看状态和日志：
+
+```bash
+docker compose ps
+docker compose logs -f server
+```
+
+停止服务不会删除数据卷：
+
+```bash
+docker compose down
+```
 
 ## Helm
-
-安装 `main` 分支对应 Chart：
 
 ```bash
 helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
@@ -113,21 +106,23 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
   --create-namespace
 ```
 
-安装 Git Tag 对应 Chart 时，把 `--version` 改为该 Tag 的语义化版本；例如镜像标签为 `vX.Y.Z` 时，Chart 版本为 `X.Y.Z`，Chart 会自动引用 `vX.Y.Z` 镜像。
-
-Helm 默认生成随机 PostgreSQL 密码，并在升级时读取现有 Secret 继续使用。远程 Agent 接入至少需要提供实际入口：
-
-安装完成后打开 Console；如果尚无全局管理员，首次初始化页面会要求设置用户名和密码。
+Chart 负责 Server、PostgreSQL、监听端口与持久化。两项 Agent 地址均留空时，Chart 使用当前 release 的 Server Service
+FQDN 作为平台默认端点，集群域名由 `clusterDomain` 控制，默认是 `cluster.local`。跨集群接入时，应通过
+`server.agentInstall.publicHTTPURL` 与 `server.agentInstall.publicQUICAddress` 配套提供目标集群可达的入口；其他端点和
+安装默认值在 Console 管理。Pod Access 的浏览器外部地址仍属于部署引导配置，例如：
 
 ```bash
 helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
   --version 0.0.0-latest \
   --namespace zke-system \
   --create-namespace \
-  --set server.agentInstall.publicHTTPURL=https://zke.example.com \
-  --set server.agentInstall.publicQUICAddress=zke.example.com:8443 \
-  --set server.podAccessExternalURL=https://pod-access.example.com \
-  --set server.agentPKI.listenerSANs.dnsNames[0]=zke.example.com
+  --set server.podAccessExternalURL=https://pod-access.example.com
 ```
 
-上述域名仅为占位值。HTTP TLS 可以在网关终止，但 Agent QUIC Listener 仍使用自身的 mTLS；Chart 会把额外的 `server.agentPKI.listenerSANs.dnsNames` 和 `ipAddresses` 写入 Server ConfigMap，并在配置变化时滚动更新 Deployment。
+## 数据与安全
+
+- ZKE Server 当前按单实例运行；Agent 在线连接和部分限流状态在进程内存中。
+- Managed PKI 私钥只能保存在受保护的持久卷；数据库有 PKI 状态而文件丢失时 Server 会失败关闭。
+- Agent Enrollment Token 只返回一次；安装 Manifest 通过 Authorization Header 获取，不能把 Token 放入 URL 或日志。
+- Console/API 的 HTTPS 与 Agent QUIC/mTLS 是两套独立身份。共享环境应在网关终止 Console/API HTTPS，并正确暴露 UDP
+  `8443`。

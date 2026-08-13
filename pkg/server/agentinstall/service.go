@@ -30,12 +30,14 @@ const (
 )
 
 var (
-	ErrDisabled      = errors.New("Agent installation is disabled")
 	ErrTokenRejected = errors.New("Agent installation token rejected")
 )
 
 type Config struct {
-	Enabled                      bool
+	ListenerCACertificatePEM []byte
+}
+
+type manifestConfig struct {
 	PublicHTTPURL                string
 	PublicQUICAddress            string
 	Image                        string
@@ -51,20 +53,22 @@ type Service struct {
 }
 
 type CreateInput struct {
-	ProjectID      string
-	ClusterName    string
-	UserID         string
-	RequestID      string
-	IdempotencyKey string
-	Now            time.Time
+	ProjectID         string
+	ClusterName       string
+	UserID            string
+	RequestID         string
+	IdempotencyKey    string
+	Now               time.Time
+	EndpointProfileID string
 }
 
 type CreateResult struct {
-	ID             string
-	ClusterName    string
-	ExpiresAt      time.Time
-	ManifestURL    string
-	InstallCommand string
+	ID                string
+	ClusterName       string
+	ExpiresAt         time.Time
+	ManifestPath      string
+	Token             string
+	EndpointProfileID string
 }
 
 func NewService(
@@ -78,31 +82,22 @@ func (service *Service) Create(
 	ctx context.Context,
 	input CreateInput,
 ) (CreateResult, error) {
-	if !service.config.Enabled {
-		return CreateResult{}, ErrDisabled
-	}
 	result, err := service.enrollment.Create(ctx, enrollment.CreateInput{
-		ProjectID:      input.ProjectID,
-		ClusterName:    input.ClusterName,
-		UserID:         input.UserID,
-		RequestID:      input.RequestID,
-		IdempotencyKey: input.IdempotencyKey,
-		Now:            input.Now,
+		ProjectID:         input.ProjectID,
+		ClusterName:       input.ClusterName,
+		UserID:            input.UserID,
+		RequestID:         input.RequestID,
+		IdempotencyKey:    input.IdempotencyKey,
+		Now:               input.Now,
+		EndpointProfileID: input.EndpointProfileID,
 	})
 	if err != nil {
 		return CreateResult{}, err
 	}
-	manifestURL := strings.TrimRight(service.config.PublicHTTPURL, "/") +
-		"/agent-install/v1/manifest"
-	command := "curl -fsSL -H " +
-		shellQuote("Authorization: Bearer "+result.Token) +
-		" " + shellQuote(manifestURL) + " | kubectl apply -f -"
 	return CreateResult{
-		ID:             result.ID,
-		ClusterName:    result.ClusterName,
-		ExpiresAt:      result.ExpiresAt,
-		ManifestURL:    manifestURL,
-		InstallCommand: command,
+		ID: result.ID, ClusterName: result.ClusterName, ExpiresAt: result.ExpiresAt,
+		ManifestPath: "/agent-install/v1/manifest", Token: result.Token,
+		EndpointProfileID: result.EndpointProfileID,
 	}, nil
 }
 
@@ -111,9 +106,6 @@ func (service *Service) Manifest(
 	token string,
 	now time.Time,
 ) ([]byte, error) {
-	if !service.config.Enabled {
-		return nil, ErrDisabled
-	}
 	active, err := service.enrollment.ResolveManifest(ctx, token, now)
 	if errors.Is(err, enrollment.ErrTokenRejected) {
 		return nil, ErrTokenRejected
@@ -121,11 +113,20 @@ func (service *Service) Manifest(
 	if err != nil {
 		return nil, err
 	}
-	return renderManifest(service.config, active, token)
+	snapshot := active.Snapshot
+	return renderManifest(manifestConfig{
+		PublicHTTPURL:                snapshot.RegistrationURL,
+		PublicQUICAddress:            snapshot.QUICAddress,
+		Image:                        snapshot.AgentImage,
+		Namespace:                    snapshot.AgentNamespace,
+		ImagePullPolicy:              corev1.PullPolicy(snapshot.AgentImagePullPolicy),
+		ListenerCACertificatePEM:     service.config.ListenerCACertificatePEM,
+		RegistrationCACertificatePEM: []byte(snapshot.RegistrationCACertificatePEM),
+	}, active, token)
 }
 
 func renderManifest(
-	config Config,
+	config manifestConfig,
 	active enrollment.ManifestEnrollment,
 	token string,
 ) ([]byte, error) {
@@ -548,7 +549,7 @@ func renderManifest(
 	return output.Bytes(), nil
 }
 
-func renderAgentConfig(config Config) (string, error) {
+func renderAgentConfig(config manifestConfig) (string, error) {
 	type identityConfig struct {
 		Namespace   string `yaml:"namespace"`
 		SecretName  string `yaml:"secret_name"`
@@ -596,10 +597,6 @@ func renderAgentConfig(config Config) (string, error) {
 		return "", fmt.Errorf("encode Agent configuration: %w", err)
 	}
 	return string(output), nil
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func pointer[T any](value T) *T {

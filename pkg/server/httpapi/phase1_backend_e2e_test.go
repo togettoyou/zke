@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-
 	"github.com/togettoyou/zke/pkg/server/accessmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
@@ -85,19 +83,14 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 	enrollmentService := enrollment.NewService(
 		store.NewEnrollmentStore(pool),
 		enrollment.ServiceConfig{
-			TokenTTL:          enrollment.DefaultTokenTTL,
-			CertificateSigner: certificateSigner,
+			TokenTTL:              enrollment.DefaultTokenTTL,
+			CertificateSigner:     certificateSigner,
+			ConfigurationResolver: staticEnrollmentConfigurationResolver{},
 		},
 	)
 	installationService := agentinstall.NewService(
 		enrollmentService,
 		agentinstall.Config{
-			Enabled:                  true,
-			PublicHTTPURL:            "https://zke.example.com",
-			PublicQUICAddress:        "zke.example.com:8443",
-			Image:                    "registry.example.com/zke-agent:test",
-			Namespace:                "zke-system",
-			ImagePullPolicy:          corev1.PullIfNotPresent,
 			ListenerCACertificatePEM: caCertificatePEM,
 		},
 	)
@@ -273,10 +266,10 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 	)
 	var installationBody createAgentInstallationResponse
 	decodePhase1Response(t, installation, &installationBody)
-	installationToken := phase1InstallationToken(
-		t,
-		installationBody.InstallCommand,
-	)
+	installationToken := installationBody.Token
+	if installationToken == "" {
+		t.Fatal("installation token is empty")
+	}
 	manifest := httptest.NewRecorder()
 	manifestRequest := httptest.NewRequest(
 		http.MethodGet,

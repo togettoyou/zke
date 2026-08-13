@@ -35,6 +35,7 @@ func TestCreateEnrollmentStoresDigestAndAuditAtomically(t *testing.T) {
 			ExpiresAt:       expiresAt,
 			RequestID:       "request-create-enrollment",
 			IdempotencyKey:  "01234567-89ab-cdef-0123-456789abcdef",
+			Snapshot:        testEnrollmentSnapshot(),
 		},
 	)
 	if err != nil {
@@ -104,6 +105,7 @@ WHERE target_id = $1
 			ExpiresAt:       expiresAt,
 			RequestID:       "request-retry-enrollment",
 			IdempotencyKey:  "01234567-89ab-cdef-0123-456789abcdef",
+			Snapshot:        testEnrollmentSnapshot(),
 		},
 	)
 	if !errors.Is(err, store.ErrEnrollmentIdempotencyConflict) {
@@ -154,6 +156,7 @@ WHERE action = 'cluster.enrollment.create'
 			ExpiresAt:       expiresAt,
 			RequestID:       "request-suspended-project",
 			IdempotencyKey:  "fedcba98-7654-3210-fedc-ba9876543210",
+			Snapshot:        testEnrollmentSnapshot(),
 		},
 	)
 	if !errors.Is(err, store.ErrEnrollmentCreationDenied) {
@@ -213,6 +216,7 @@ VALUES ($1, $2, $3, 'PROD-A', 'pending')
 			ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 			RequestID:       "request-" + key,
 			IdempotencyKey:  key,
+			Snapshot:        testEnrollmentSnapshot(),
 		})
 		return err
 	}

@@ -583,8 +583,8 @@ Cookie 摘要对应的终止原因，不保存 Token 或流量正文。
 前删除 ZKE Session、CSRF 与其他非当前访问会话 Cookie，返回浏览器的 Pod Cookie 使用会话级命名空间并移除
 Domain。即使 Access Listener 与 API 使用同一 IP 的不同端口——Cookie 本身并不按端口隔离——Pod 也拿不到
 平台登录凭证，不能通过 `Set-Cookie` 覆盖它。`Clear-Site-Data`、HSTS、Alt-Svc 等会改变共享 Host 状态的响应头
-同样由 Listener 删除，只能由部署入口设置。外部访问地址必须使用 HTTPS；仅本地回环开发允许明文 HTTP，
-Listener 原生 TLS 可由受信上游网关的 TLS 终止替代。双向流量正文、Token、Cookie、Authorization 和响应头不
+同样由 Listener 删除，只能由部署入口设置。外部访问地址支持 HTTP 与 HTTPS，Listener 原生 TLS 也可由受信上游
+网关的 TLS 终止替代；经过不可信网络时应使用 HTTPS 保护激活 Token 与访问 Cookie。双向流量正文、Token、Cookie、Authorization 和响应头不
 进入日志、审计或 AI 上下文；审计只记录创建者、目标 Cluster/Namespace/Pod UID、端口、时长与会话结果。
 
 Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Resource 接口会拒绝并从 Discovery 中

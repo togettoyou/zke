@@ -21,6 +21,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
+	"github.com/togettoyou/zke/pkg/server/platformsettings"
 	"github.com/togettoyou/zke/pkg/server/podaccess"
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
@@ -49,6 +50,7 @@ type Dependencies struct {
 	ResourceWatchService      *resourcewatch.Service
 	ResourceManagementService *resourcemanagement.Service
 	AccessManagementService   *accessmanagement.Service
+	PlatformSettingsService   *platformsettings.Service
 }
 
 type Config struct {
@@ -103,6 +105,7 @@ type handlers struct {
 	resourceManagement      *resourceManagementHandler
 	accessManagement        *accessManagementHandler
 	auditQuery              *auditQueryHandler
+	platformSettings        *platformSettingsHandler
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
 	requestTimeout          gin.HandlerFunc
@@ -396,6 +399,12 @@ func New(
 		),
 		auditQuery: newAuditQueryHandler(
 			logger,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		platformSettings: newPlatformSettingsHandler(
+			logger,
+			dependencies.PlatformSettingsService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

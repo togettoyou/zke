@@ -65,6 +65,7 @@ export function isForbidden(error: unknown): boolean {
  * one permission at a time to find out which one.
  */
 const DETAILED_ERROR_PREFIXES: Record<string, string> = {
+  invalid_endpoint_profile_input: "端点配置无效：",
   cluster_api_rejected: "Kubernetes 拒绝了该配置：",
   permission_escalation: "本次修改新增了当前账号未持有的权限，无法保存：",
   permission_revocation:

@@ -44,6 +44,7 @@ VALUES ($1, $2, $3, 'enrollment-lock-cluster', 'active')
 		ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 		RequestID:       "request-create-enrollment-lock",
 		IdempotencyKey:  "create-enrollment-lock-0001",
+		Snapshot:        testEnrollmentSnapshot(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +145,7 @@ VALUES ($1, $2, $3, 'delete-lock-cluster', 'active')
 			ExpiresAt:       time.Now().UTC().Add(15 * time.Minute),
 			RequestID:       "request-create-delete-lock",
 			IdempotencyKey:  "create-delete-lock-0001",
+			Snapshot:        testEnrollmentSnapshot(),
 		},
 	)
 	if err != nil {

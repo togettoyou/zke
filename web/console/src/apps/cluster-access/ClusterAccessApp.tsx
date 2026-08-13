@@ -17,8 +17,10 @@ import {
   useCreateClusterInstallation,
   useRevokeClusterEnrollment,
 } from "@/api/queries/enrollments";
+import { useReadyAgentEndpointProfiles } from "@/api/queries/platform-settings";
 import {
   DEFAULT_PAGE_SIZE,
+  type AgentEndpointProfile,
   type ClusterAggregate,
   type ClusterEnrollmentRecord,
   type ScopeSelection,
@@ -56,6 +58,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 import { formatDuration } from "@/lib/time";
@@ -65,6 +74,49 @@ const NAV: AppNavItem[] = [
   { id: "enrollments", label: "接入凭证", icon: KeyRound },
   { id: "detail", label: "集群详情", icon: ServerCog },
 ];
+
+function EndpointProfileField({
+  profiles,
+  defaultProfileId,
+  value,
+  onChange,
+}: {
+  profiles: AgentEndpointProfile[];
+  defaultProfileId: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <Label>接入端点</Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger>
+          <SelectValue placeholder="选择 Agent 可访问的 Server 入口" />
+        </SelectTrigger>
+        <SelectContent>
+          {profiles.map((profile) => (
+            <SelectItem key={profile.id} value={profile.id}>
+              {profile.name} · {profile.quic_address}
+              {profile.id === defaultProfileId ? "（平台默认）" : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <FieldHint className="leading-relaxed">
+        默认使用平台端点；仅当目标集群需要通过其他地址访问 Server 时更改。签发时会校验并固化配置。
+      </FieldHint>
+    </div>
+  );
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function installationCommand(manifestPath: string, token: string): string {
+  const manifestURL = new URL(manifestPath, window.location.origin).toString();
+  return `curl -fsSL -H ${shellQuote(`Authorization: Bearer ${token}`)} ${shellQuote(manifestURL)} | kubectl apply -f -`;
+}
 
 export function ClusterAccessApp(_props: AppComponentProps) {
   const scope = useScopeStore((state) => state.scope);
@@ -602,6 +654,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   // which both dialogs present as the credential's own name, because that is
   // what it stays after the Cluster it creates is renamed.
   const [clusterName, setClusterName] = useState("");
+  const [endpointProfileId, setEndpointProfileId] = useState("");
   const [tokenResult, setTokenResult] = useState<{ token: string; expiresAt: string } | null>(null);
   const [installResult, setInstallResult] = useState<{
     command: string;
@@ -611,9 +664,12 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   const [revokeTarget, setRevokeTarget] = useState<ClusterEnrollmentRecord | null>(null);
 
   const query = useClusterEnrollments(scope.projectId, { limit: DEFAULT_PAGE_SIZE, offset });
+  const endpointProfiles = useReadyAgentEndpointProfiles(scope.projectId);
   const createEnrollment = useCreateClusterEnrollment();
   const createInstallation = useCreateClusterInstallation();
   const revokeEnrollment = useRevokeClusterEnrollment();
+  const resolvedEndpointProfileId =
+    endpointProfileId || endpointProfiles.data?.default_endpoint_profile_id || "";
 
   const projectScope = {
     type: "project" as const,
@@ -714,6 +770,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   onClick={() => {
                     clearActionErrors();
                     setClusterName("");
+                    setEndpointProfileId("");
                     setInstallOpen(true);
                   }}
                 >
@@ -725,6 +782,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   onClick={() => {
                     clearActionErrors();
                     setClusterName("");
+                    setEndpointProfileId("");
                     setCreateOpen(true);
                   }}
                 >
@@ -755,19 +813,26 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
           <DialogHeader>
             <DialogTitle>创建一次性接入凭证</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-1.5">
-            <Label htmlFor="enrollment-name">凭证名称</Label>
-            <Input
-              id="enrollment-name"
-              value={clusterName}
-              maxLength={253}
-              autoFocus
-              onChange={(event) => setClusterName(event.target.value)}
+          <div className="grid gap-4">
+            <div className="grid gap-1.5">
+              <Label htmlFor="enrollment-name">凭证名称</Label>
+              <Input
+                id="enrollment-name"
+                value={clusterName}
+                maxLength={253}
+                autoFocus
+                onChange={(event) => setClusterName(event.target.value)}
+              />
+              <FieldHint className="leading-relaxed">
+                用于标识本次凭证；首次注册时作为集群初始名称，之后可以重命名。未使用的凭证会占用该名称。
+              </FieldHint>
+            </div>
+            <EndpointProfileField
+              profiles={endpointProfiles.data?.agent_endpoint_profiles ?? []}
+              defaultProfileId={endpointProfiles.data?.default_endpoint_profile_id ?? ""}
+              value={resolvedEndpointProfileId}
+              onChange={setEndpointProfileId}
             />
-            <FieldHint>
-              名称在签发时绑定到本凭证，之后不再变化；Agent
-              注册成功时以该名称创建集群，集群可以随时重命名。凭证未使用前会占用同名集群名称。
-            </FieldHint>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>
@@ -775,12 +840,17 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
             </Button>
             <Button
               variant="primary"
-              disabled={createEnrollment.isPending || clusterName.trim().length === 0}
+              disabled={
+                createEnrollment.isPending ||
+                clusterName.trim().length === 0 ||
+                !resolvedEndpointProfileId
+              }
               onClick={async () => {
                 try {
                   const result = await createEnrollment.mutateAsync({
                     projectId: scope.projectId as string,
                     clusterName: clusterName.trim(),
+                    endpointProfileId: resolvedEndpointProfileId,
                     idempotencyKey: enrollmentKey,
                   });
                   setCreateOpen(false);
@@ -801,19 +871,26 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
           <DialogHeader>
             <DialogTitle>生成一键安装命令</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-1.5">
-            <Label htmlFor="installation-name">凭证名称</Label>
-            <Input
-              id="installation-name"
-              value={clusterName}
-              maxLength={253}
-              autoFocus
-              onChange={(event) => setClusterName(event.target.value)}
+          <div className="grid gap-4">
+            <div className="grid gap-1.5">
+              <Label htmlFor="installation-name">凭证名称</Label>
+              <Input
+                id="installation-name"
+                value={clusterName}
+                maxLength={253}
+                autoFocus
+                onChange={(event) => setClusterName(event.target.value)}
+              />
+              <FieldHint className="leading-relaxed">
+                首次注册时作为集群初始名称，之后可以重命名。安装命令包含一次性凭证，必须按机密信息处理。
+              </FieldHint>
+            </div>
+            <EndpointProfileField
+              profiles={endpointProfiles.data?.agent_endpoint_profiles ?? []}
+              defaultProfileId={endpointProfiles.data?.default_endpoint_profile_id ?? ""}
+              value={resolvedEndpointProfileId}
+              onChange={setEndpointProfileId}
             />
-            <FieldHint>
-              名称在签发时绑定到本凭证；Agent
-              注册成功时以该名称创建集群，集群可以随时重命名。安装命令中包含一次性安装凭证，等同于接入凭证，必须按机密信息处理。
-            </FieldHint>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setInstallOpen(false)}>
@@ -821,18 +898,23 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
             </Button>
             <Button
               variant="primary"
-              disabled={createInstallation.isPending || clusterName.trim().length === 0}
+              disabled={
+                createInstallation.isPending ||
+                clusterName.trim().length === 0 ||
+                !resolvedEndpointProfileId
+              }
               onClick={async () => {
                 try {
                   const result = await createInstallation.mutateAsync({
                     projectId: scope.projectId as string,
                     clusterName: clusterName.trim(),
+                    endpointProfileId: resolvedEndpointProfileId,
                     idempotencyKey: installationKey,
                   });
                   setInstallOpen(false);
                   setInstallResult({
-                    command: result.install_command,
-                    manifestUrl: result.manifest_url,
+                    command: installationCommand(result.manifest_path, result.token),
+                    manifestUrl: new URL(result.manifest_path, window.location.origin).toString(),
                     expiresAt: result.expires_at,
                   });
                 } catch (error) {

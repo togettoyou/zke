@@ -214,9 +214,8 @@ RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Clus
 ### 5.2 连接行为
 
 - Agent 分别配置注册 Server URL 与 QUIC Connection 地址，不从其中一个端点隐式推导另一个端点。
-- Agent 在生产环境通过 HTTPS 地址注册；TLS 可以由 ZKE Server 原生终止，也可以由上游网关终止。仓库中的本地
-  配置只允许对回环地址使用明文 HTTP。完成注册后，Agent 使用 `quic-go` 和 mTLS 主动连接独立的 Agent
-  Listener UDP 地址。
+- Agent 注册地址支持 HTTP 或 HTTPS；使用 HTTPS 时，TLS 可以由 ZKE Server 原生终止，也可以由上游网关终止。
+  完成注册后，Agent 使用 `quic-go` 和 mTLS 主动连接独立的 Agent Listener UDP 地址。
 - Agent 和 Server 都持续接受对方创建的新逻辑 Stream；每个独立请求或流式会话使用独立 Stream。
 - Hello 和心跳使用专用 Control Stream，与业务请求和数据分离。
 - 断线重连使用有上限的指数退避和随机抖动，避免大量 Agent 同时重连。
@@ -573,7 +572,7 @@ Enrollment 和 Audit Event 列表支持 `limit` 与 `offset`；除审计事件�
 
 ### 8.2 Agent 注册 API
 
-Agent 初次注册通过 Gin HTTP Listener。生产环境必须提供 HTTPS，可由 ZKE Server 原生终止 TLS，也可由上游
+Agent 初次注册通过 Gin HTTP Listener。该 Listener 支持 HTTP，也可由 ZKE Server 原生提供 HTTPS，或由上游
 网关终止 TLS：
 
 ```text
@@ -604,8 +603,8 @@ Content-Type: application/json
 `409 idempotency_conflict`。接口按直接网络来源限流。
 
 `http.tls.certificate_file` 与 `http.tls.private_key_file` 同时配置时，ZKE Server 原生提供 HTTPS；两项都省略
-时提供 HTTP，适用于回环开发或由 Ingress/网关终止 TLS 的部署。不得把包含注册 Token、Session Cookie 或 CSRF
-Token 的明文 HTTP 直接暴露到不可信网络。注册完成后的 Agent 长连接是独立的 QUIC/UDP Listener，始终使用
+时提供 HTTP，不限制监听地址或注册 URL 的网络范围。包含注册 Token、Session Cookie 或 CSRF Token 的 HTTP
+流量若经过不可信网络，应由部署方启用 HTTPS。注册完成后的 Agent 长连接是独立的 QUIC/UDP Listener，始终使用
 TLS 1.3 和 mTLS，不经过 HTTP 网关，也不复用 HTTP TLS 身份。
 
 ## 9. 最小数据模型
@@ -713,9 +712,13 @@ Trust Secret。这些 PKI 文件仅用于 Agent QUIC/mTLS，不包含 HTTP TLS �
 - Agent Listener 服务端证书：10 年。
 
 ```bash
-docker compose -f deploy/development/compose.yaml up -d
-# 默认数据库地址与 development compose 一致；Console 可由 Vite dev server 单独运行。
-go run ./cmd/zke-server --config configs/zke-server.yaml
+cd deploy/docker
+cp .env.example .env
+# 设置 .env 中的数据库密码后，仅启动本地开发所需的 PostgreSQL。
+docker compose up -d postgres
+cd ../..
+ZKE_DATABASE_URL='postgres://zke:<URL-safe-password>@127.0.0.1:5432/zke?sslmode=disable' \
+  go run ./cmd/zke-server --config configs/zke-server.yaml
 # 可选：另一个终端启动 Console，开发服务器会把 API 请求代理到 127.0.0.1:8080。
 corepack pnpm --dir web/console install --frozen-lockfile
 corepack pnpm --dir web/console dev
@@ -731,20 +734,20 @@ kubectl context 创建 Namespace、Enrollment Secret 和 Trust Secret，不创�
 
 Server 启动时不创建默认账号。Console 先通过 `GET /api/v1/setup` 检查是否存在 Global `admin` 绑定；缺失时显示初始化页面，并通过 `POST /api/v1/setup` 提交用户选择的用户名和密码。创建用户、Global `admin` RoleBinding 和审计事件在同一事务中完成；事务内 advisory lock 保证并发初始化只能成功一次。初始化接口成功后建立浏览器 Session；已有全局管理员时写接口返回冲突。
 
-Tenant、Project 和 Enrollment 属于正常产品资源，应由管理 API 创建，不由本地脚本写数据库。启用
-`agent_install` 后，安装 API 可返回 `curl | kubectl apply` 命令，将 Agent、Secret 和最小 RBAC 一次部署到
+Tenant、Project 和 Enrollment 属于正常产品资源，应由管理 API 创建，不由本地脚本写数据库。安装 API 可返回
+Manifest 路径和一次性 Token，Console 生成 `curl | kubectl apply` 命令，将 Agent、Secret 和最小 RBAC 一次部署到
 目标集群。
 
 `configs/zke-agent.yaml` 使用本机 HTTP `127.0.0.1:8080` 和 QUIC `127.0.0.1:8443`，可以配合当前
 kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernetes Secret，不写入配置文件。
-默认数据库地址与 `deploy/development/compose.yaml` 一致，特殊环境仍可用 `ZKE_DATABASE_URL`
-覆盖数据库连接。若迁移文件校验和变化，Server 会拒绝启动；应恢复原迁移并新增前向迁移。本地一次性开发数据库
+默认数据库地址用于直接连接本地开发数据库，其他环境可用 `ZKE_DATABASE_URL` 覆盖数据库连接。若迁移文件校验和变化，
+Server 会拒绝启动；应恢复原迁移并新增前向迁移。本地一次性开发数据库
 可以明确删除 Compose Volume 后重建，不能用这种方式处理共享环境。
 
 Server 配置还启用了独立 Pod Access Listener：Console/API 使用 TCP `8080`，Pod HTTP 访问使用 TCP `8081`。
 部署时通过 `pod_access.external_url` 填写浏览器真正访问的第二 Origin；可以在
-`pod_access.tls` 配置原生证书，也可以让云入口终止 HTTPS 后转发到 Listener 的 HTTP 地址。生产或远程入口的
-`external_url` 不接受明文 HTTP；云入口必须保留该 External URL 的原始 Host 头。`pod_access.session_ttl`
+`pod_access.tls` 配置原生证书，也可以直接使用 HTTP，或让云入口终止 HTTPS 后转发到 Listener 的 HTTP 地址。
+`external_url` 同时接受 HTTP 与 HTTPS；云入口必须保留该 External URL 的原始 Host 头。`pod_access.session_ttl`
 是允许用户选择的会话最大时长，Server 硬限制为一小时；仓库配置使用一小时，以开放 15、30、60 分钟三个档位。
 `pod_access.max_client_bytes` 与 `max_pod_bytes` 是整个浏览器访问会话的累计预算，仓库默认各 1 GiB；
 `max_connections_per_agent` 限制单个 Agent 同时承载的上游连接。Agent 的 `max_pod_access_*` 配置提供对应的
@@ -774,10 +777,10 @@ Server 可按配置生成完整的 Agent 安装 Manifest，包括 Token/Trust Se
 Role/RoleBinding 和 Deployment。仓库的 Helm Chart 用于部署 ZKE Server 与 PostgreSQL，不替代这份按目标
 Cluster 和一次性 Enrollment 动态生成的 Agent 资源包；资源包不创建 Service、PVC 或 identity Secret。
 
-`agent_pki.mode: managed` 时，Server 从持久目录加载或首次生成 Agent Client CA、Agent Listener CA 和
+Server 从持久目录加载或首次生成 Agent Client CA、Agent Listener CA 和
 Listener 身份。初始化由 PostgreSQL advisory lock 串行化，数据库保存证书指纹；已有数据库状态但文件丢失、
-目录只有部分文件或指纹冲突时拒绝启动。Listener 叶子在启动时自动续期，CA 不自动轮换。external 模式所需的
-Agent Client CA、Agent Listener CA 和 Listener 身份文件全部集中在 `agent_pki.external`。
+目录只有部分文件或指纹冲突时拒绝启动。Listener 叶子会自动续期；端点变更时根据数据库中启用端点的 QUIC Host
+在线精确同步 SAN 并热切换，数据库变更失败时恢复原 SAN 集合，CA 不自动轮换。
 `agent_listener.address` 不得与 `http.address` 使用相同端口。
 
 客户端证书默认有效 30 天，可通过 `agent_pki.agent_client_certificate_validity` 调整。Agent 默认在到期前 7 天进入自动
@@ -796,23 +799,27 @@ CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一�
 
 ## 11. 配置与敏感信息
 
-Server 和 Agent 各维护一份仓库 YAML 配置，并作为容器内默认配置。`--config` 文件只需包含待覆盖字段；Server 还允许
-通过部署环境变量覆盖数据库 URL、Pod Access 外部地址、Agent 安装公开地址、Agent 镜像和 Cluster Terminal 镜像，
-以便 Kubernetes Secret 与 Helm values 注入部署身份。其他配置仍只来自 YAML。
+Server 和 Agent 各维护一份仓库 YAML 配置，并作为容器内默认配置。`--config` 文件只需包含待覆盖字段。Server YAML
+只保存数据库、监听器、超时、限流、资源边界、PKI 生命周期和 Agent 安装平台默认端点等启动及系统调优项。其他 Agent
+接入端点、Agent 镜像、Namespace、拉取策略和 Cluster Terminal 镜像保存在 PostgreSQL，由全局管理员通过 Console 的
+“设置 → 平台配置”管理。平台默认端点由 YAML 或优先级更高的环境变量在 Server 启动时同步，Console 不允许修改、删除
+或重新指定；两项地址均未配置时使用本机回环预设，只配置其中一项时 Server 拒绝启动。切换到内置预设时，Server 会
+删除已被替代的部署端点，避免旧地址继续出现在端点列表和 Listener SAN 来源中。
+Agent Namespace 在首个 Enrollment 签发后不可修改，避免既有 Agent Secret 保护边界与新安装快照分叉；Cluster
+Terminal 镜像在创建新会话时从平台设置读取，修改后无需重启 Server。
 
 Server 和 Agent 都先构造可运行的容器部署默认值，再应用 YAML 中出现的字段。嵌套对象按字段合并，列表整体替换，
 未出现的键保留默认值，未知键直接报错。新增配置项时必须同步维护字段映射、默认值和仓库 YAML。
-`agent_listener.tls`
-与 Agent 身份 CA 路径属于派生值，由 `agent_pki` 的 managed/external 模式推导，不能在配置文件中直接指定。
+`agent_listener.tls` 与 Agent 身份 CA 路径属于 Managed PKI 派生值，不能在配置文件中直接指定。
 
-- 仓库配置提供容器可启动的默认地址、生产取向的资源边界和明显的占位数据库凭据；共享环境必须通过 Secret、
-  环境变量或局部配置挂载替换凭据、公开地址和证书身份。
+- 仓库配置提供容器可启动的默认地址、资源边界和明显的占位数据库凭据；共享环境必须通过 Secret、环境变量或
+  局部配置挂载替换数据库凭据和部署入口参数。
 - Server 的相对 `data/` 路径在本地保留于仓库根目录，在容器中对应 `/data`；Kubernetes 与 Helm 只持久化该目录。
 - Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；Helm Chart 通过 Secret
   生成并注入 PostgreSQL 密码。
 - 首个管理员密码只由同源 Console 初始化页面提交；Server 仅保存 Argon2id 摘要，不生成明文密码文件，也不把密码正文写入日志、审计或错误。
-- Managed PKI 私钥只保存在权限受限的持久目录；只在全新数据库状态和空目录组合下首次生成。已有数据库状态时
-  缺失 PV 会失败关闭。external 模式的私钥只通过受保护文件或部署 Secret 提供。
+- Server PKI 私钥只保存在权限受限的持久目录；只在全新数据库状态和空目录组合下首次生成。已有数据库状态时
+  缺失 PV 会失败关闭。
 - 可选的 HTTP TLS 私钥同样只通过受保护文件或部署 Secret 提供；它属于浏览器/API HTTPS 身份，不属于 Agent
   QUIC/mTLS Managed PKI。
 - Agent 一次性注册 Token 只通过独立 Secret 读取。Agent 自行创建身份 Secret；ServiceAccount 需要 Namespace
@@ -828,7 +835,7 @@ Server 和 Agent 都先构造可运行的容器部署默认值，再应用 YAML 
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - HTTP 注册 URL、QUIC Connection 地址、超时、心跳和重试参数需要上下限校验。
 - 认证配置包含操作超时、会话空闲与绝对超时、Argon2id 最大并发校验数、Cookie `Secure` 开关、账户和来源
-  登录限流；仓库中的 `cookie_secure: false` 仅用于本地明文 HTTP 开发。只要浏览器通过 HTTPS 访问，无论 TLS
+  登录限流。浏览器通过 HTTPS 访问时，无论 TLS
   由 ZKE Server 还是网关终止，都必须设为 `true`。
 - 启动时对缺失、冲突和不安全配置快速失败，并返回可定位但不泄密的错误。
 

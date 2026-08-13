@@ -45,7 +45,6 @@ var allFileNames = []string{
 
 type Config struct {
 	Directory                string
-	AutoGenerate             bool
 	AgentClientCAValidity    time.Duration
 	AgentListenerCAValidity  time.Duration
 	AgentListenerValidity    time.Duration
@@ -124,15 +123,12 @@ func Ensure(
 				"managed Server PKI files and fingerprints are absent but Agent security state already exists; provide the original PKI files instead of generating new CAs",
 			)
 		}
-		if !config.AutoGenerate {
-			return Files{}, errors.New("managed Server PKI files are absent and automatic generation is disabled")
-		}
 		if err := generateAll(paths, config, now); err != nil {
 			return Files{}, err
 		}
 	}
 
-	loaded, err := loadAndValidate(paths, config, now)
+	loaded, err := loadAndValidate(paths, now)
 	if err != nil {
 		return Files{}, err
 	}
@@ -150,11 +146,12 @@ func Ensure(
 		)
 	}
 
-	if !loaded.listenerCertificate.NotAfter.After(now.Add(config.AgentListenerRenewBefore)) {
+	if !loaded.listenerCertificate.NotAfter.After(now.Add(config.AgentListenerRenewBefore)) ||
+		!listenerMatchesConfig(loaded.listenerCertificate, config) {
 		if err := renewListener(paths, config, loaded, now); err != nil {
 			return Files{}, err
 		}
-		loaded, err = loadAndValidate(paths, config, now)
+		loaded, err = loadAndValidate(paths, now)
 		if err != nil {
 			return Files{}, err
 		}
@@ -375,7 +372,7 @@ func newListenerCertificate(
 		nil
 }
 
-func loadAndValidate(paths Files, config Config, now time.Time) (material, error) {
+func loadAndValidate(paths Files, now time.Time) (material, error) {
 	clientCA, clientKey, err := loadCA(
 		paths.AgentClientCACertificate,
 		paths.AgentClientCAPrivateKey,
@@ -410,23 +407,6 @@ func loadAndValidate(paths Files, config Config, now time.Time) (material, error
 	) {
 		return material{}, errors.New("Agent Listener certificate is not valid for Server authentication")
 	}
-	for _, dnsName := range config.ListenerDNSNames {
-		if !slices.Contains(listenerCertificate.DNSNames, dnsName) {
-			return material{}, fmt.Errorf("Agent Listener certificate is missing configured DNS SAN %q", dnsName)
-		}
-	}
-	for _, address := range config.ListenerIPAddresses {
-		found := false
-		for _, certificateIP := range listenerCertificate.IPAddresses {
-			if certificateIP.Equal(net.ParseIP(address)) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return material{}, fmt.Errorf("Agent Listener certificate is missing configured IP SAN %q", address)
-		}
-	}
 	return material{
 		clientCACertificate:   clientCA,
 		clientCAPrivateKey:    clientKey,
@@ -435,6 +415,25 @@ func loadAndValidate(paths Files, config Config, now time.Time) (material, error
 		listenerCertificate:   listenerCertificate,
 		listenerPrivateKey:    listenerKey,
 	}, nil
+}
+
+func listenerMatchesConfig(certificate *x509.Certificate, config Config) bool {
+	if len(certificate.DNSNames) != len(config.ListenerDNSNames) ||
+		len(certificate.IPAddresses) != len(config.ListenerIPAddresses) {
+		return false
+	}
+	for _, dnsName := range config.ListenerDNSNames {
+		if !slices.Contains(certificate.DNSNames, dnsName) {
+			return false
+		}
+	}
+	for _, address := range config.ListenerIPAddresses {
+		wanted := net.ParseIP(address)
+		if wanted == nil || !slices.ContainsFunc(certificate.IPAddresses, wanted.Equal) {
+			return false
+		}
+	}
+	return true
 }
 
 func loadCA(

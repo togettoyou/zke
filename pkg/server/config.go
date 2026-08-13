@@ -20,17 +20,29 @@ type Config struct {
 	Database           DatabaseConfig           `yaml:"database"`
 	Auth               AuthConfig               `yaml:"auth"`
 	AgentPKI           AgentPKIConfig           `yaml:"agent_pki"`
-	AgentEnrollment    AgentEnrollmentConfig    `yaml:"agent_enrollment"`
 	AgentInstall       AgentInstallConfig       `yaml:"agent_install"`
+	AgentEnrollment    AgentEnrollmentConfig    `yaml:"agent_enrollment"`
 	ClusterTerminal    ClusterTerminalConfig    `yaml:"cluster_terminal"`
 	AgentListener      AgentListenerConfig      `yaml:"agent_listener"`
 	CertificateMonitor CertificateMonitorConfig `yaml:"certificate_monitor"`
 	ShutdownTimeout    time.Duration            `yaml:"shutdown_timeout"`
 	LogLevel           string                   `yaml:"log_level"`
 
-	// AgentIdentity is derived from agent_pki once the PKI mode is known and
-	// is never read from the configuration file.
+	// AgentIdentity is derived after the Server PKI material is prepared and is
+	// never read from the configuration file.
 	AgentIdentity AgentIdentityConfig `yaml:"-"`
+}
+
+type AgentInstallConfig struct {
+	PublicHTTPURL     string `yaml:"public_http_url"`
+	PublicQUICAddress string `yaml:"public_quic_address"`
+}
+
+func (config AgentInstallConfig) EffectiveEndpoint() (string, string) {
+	if strings.TrimSpace(config.PublicHTTPURL) == "" && strings.TrimSpace(config.PublicQUICAddress) == "" {
+		return "http://127.0.0.1:8080", "127.0.0.1:8443"
+	}
+	return config.PublicHTTPURL, config.PublicQUICAddress
 }
 
 type HTTPConfig struct {
@@ -71,10 +83,6 @@ type TLSIdentityConfig struct {
 	PrivateKeyFile  string `yaml:"private_key_file"`
 }
 
-type CACertificateConfig struct {
-	CertificateFile string `yaml:"certificate_file"`
-}
-
 type DatabaseConfig struct {
 	URL              string        `yaml:"url"`
 	ConnectTimeout   time.Duration `yaml:"connect_timeout"`
@@ -107,8 +115,7 @@ type AccountLockoutConfig struct {
 }
 
 // AgentIdentityConfig is derived from AgentPKIConfig rather than configured
-// directly, so that a deployment cannot mix a managed PKI with hand-written
-// CA paths.
+// directly, keeping certificate paths owned by the Server PKI lifecycle.
 type AgentIdentityConfig struct {
 	CACertificateFile string
 	CAPrivateKeyFile  string
@@ -116,35 +123,12 @@ type AgentIdentityConfig struct {
 }
 
 type AgentPKIConfig struct {
-	Mode                           string        `yaml:"mode"`
 	AgentClientCertificateValidity time.Duration `yaml:"agent_client_certificate_validity"`
-	// ListenerSANs is the preferred short form for overriding the managed
-	// listener certificate SANs. Managed.ListenerSANs remains accepted for
-	// compatibility with existing configuration files.
-	ListenerSANs *ListenerSANsConfig    `yaml:"listener_sans"`
-	Managed      ManagedAgentPKIConfig  `yaml:"managed"`
-	External     ExternalAgentPKIConfig `yaml:"external"`
-}
-
-type ManagedAgentPKIConfig struct {
-	Directory                string             `yaml:"directory"`
-	AutoGenerate             bool               `yaml:"auto_generate"`
-	AgentClientCAValidity    time.Duration      `yaml:"agent_client_ca_validity"`
-	AgentListenerCAValidity  time.Duration      `yaml:"agent_listener_ca_validity"`
-	AgentListenerValidity    time.Duration      `yaml:"agent_listener_certificate_validity"`
-	AgentListenerRenewBefore time.Duration      `yaml:"agent_listener_renew_before"`
-	ListenerSANs             ListenerSANsConfig `yaml:"listener_sans"`
-}
-
-type ListenerSANsConfig struct {
-	DNSNames    []string `yaml:"dns_names"`
-	IPAddresses []string `yaml:"ip_addresses"`
-}
-
-type ExternalAgentPKIConfig struct {
-	AgentClientCA   TLSIdentityConfig   `yaml:"agent_client_ca"`
-	AgentListenerCA CACertificateConfig `yaml:"agent_listener_ca"`
-	AgentListener   TLSIdentityConfig   `yaml:"agent_listener"`
+	Directory                      string        `yaml:"directory"`
+	AgentClientCAValidity          time.Duration `yaml:"agent_client_ca_validity"`
+	AgentListenerCAValidity        time.Duration `yaml:"agent_listener_ca_validity"`
+	AgentListenerValidity          time.Duration `yaml:"agent_listener_certificate_validity"`
+	AgentListenerRenewBefore       time.Duration `yaml:"agent_listener_renew_before"`
 }
 
 type AgentEnrollmentConfig struct {
@@ -157,18 +141,7 @@ type AgentEnrollmentRateLimitConfig struct {
 	MaxAttemptsPerSource int           `yaml:"max_attempts_per_source"`
 }
 
-type AgentInstallConfig struct {
-	Enabled                       bool   `yaml:"enabled"`
-	PublicHTTPURL                 string `yaml:"public_http_url"`
-	PublicQUICAddress             string `yaml:"public_quic_address"`
-	Image                         string `yaml:"image"`
-	Namespace                     string `yaml:"namespace"`
-	ImagePullPolicy               string `yaml:"image_pull_policy"`
-	RegistrationCACertificateFile string `yaml:"registration_ca_certificate_file"`
-}
-
 type ClusterTerminalConfig struct {
-	Image      string        `yaml:"image"`
 	SessionTTL time.Duration `yaml:"session_ttl"`
 }
 
@@ -266,25 +239,12 @@ func DefaultConfig() Config {
 			},
 		},
 		AgentPKI: AgentPKIConfig{
-			Mode:                           "managed",
 			AgentClientCertificateValidity: 30 * 24 * time.Hour,
-			Managed: ManagedAgentPKIConfig{
-				Directory:                "data/pki",
-				AutoGenerate:             true,
-				AgentClientCAValidity:    10 * 365 * 24 * time.Hour,
-				AgentListenerCAValidity:  20 * 365 * 24 * time.Hour,
-				AgentListenerValidity:    10 * 365 * 24 * time.Hour,
-				AgentListenerRenewBefore: 365 * 24 * time.Hour,
-				ListenerSANs: ListenerSANsConfig{
-					DNSNames: []string{
-						"localhost",
-						"zke-server",
-						"zke-server.zke-system",
-						"zke-server.zke-system.svc",
-					},
-					IPAddresses: []string{"127.0.0.1"},
-				},
-			},
+			Directory:                      "data/pki",
+			AgentClientCAValidity:          10 * 365 * 24 * time.Hour,
+			AgentListenerCAValidity:        20 * 365 * 24 * time.Hour,
+			AgentListenerValidity:          10 * 365 * 24 * time.Hour,
+			AgentListenerRenewBefore:       365 * 24 * time.Hour,
 		},
 		AgentEnrollment: AgentEnrollmentConfig{
 			OperationTimeout: 10 * time.Second,
@@ -293,16 +253,7 @@ func DefaultConfig() Config {
 				MaxAttemptsPerSource: 30,
 			},
 		},
-		AgentInstall: AgentInstallConfig{
-			Enabled:           true,
-			PublicHTTPURL:     "http://127.0.0.1:8080",
-			PublicQUICAddress: "127.0.0.1:8443",
-			Image:             "ghcr.io/togettoyou/zke-agent:latest",
-			Namespace:         "zke-system",
-			ImagePullPolicy:   "IfNotPresent",
-		},
 		ClusterTerminal: ClusterTerminalConfig{
-			Image:      "ghcr.io/togettoyou/zke-agent:latest",
 			SessionTTL: 15 * time.Minute,
 		},
 		AgentListener: AgentListenerConfig{
@@ -359,10 +310,6 @@ func LoadConfig(args []string) (Config, error) {
 	if err := decodeConfigFile(&cfg, configPath); err != nil {
 		return Config{}, err
 	}
-	if cfg.AgentPKI.ListenerSANs != nil {
-		cfg.AgentPKI.Managed.ListenerSANs = *cfg.AgentPKI.ListenerSANs
-		cfg.AgentPKI.ListenerSANs = nil
-	}
 	applyEnvironmentOverrides(&cfg)
 	cfg.resolveDerivedIdentity()
 	if err := cfg.Validate(); err != nil {
@@ -386,8 +333,6 @@ func applyEnvironmentOverrides(cfg *Config) {
 		{"ZKE_POD_ACCESS_EXTERNAL_URL", &cfg.PodAccess.ExternalURL},
 		{"ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL", &cfg.AgentInstall.PublicHTTPURL},
 		{"ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS", &cfg.AgentInstall.PublicQUICAddress},
-		{"ZKE_AGENT_IMAGE", &cfg.AgentInstall.Image},
-		{"ZKE_CLUSTER_TERMINAL_IMAGE", &cfg.ClusterTerminal.Image},
 	}
 	for _, override := range overrides {
 		if value, exists := os.LookupEnv(override.name); exists {
@@ -416,21 +361,10 @@ func decodeConfigFile(cfg *Config, path string) error {
 	return nil
 }
 
-// resolveDerivedIdentity fills in the certificate paths the rest of the Server
-// consumes, choosing between the managed and external PKI layouts.
+// resolveDerivedIdentity fills the non-path identity setting. Server PKI paths
+// are resolved after the database-backed endpoint SANs are loaded at startup.
 func (cfg *Config) resolveDerivedIdentity() {
 	cfg.AgentIdentity.CertificateTTL = cfg.AgentPKI.AgentClientCertificateValidity
-	if cfg.AgentPKI.Mode != "external" {
-		return
-	}
-	cfg.AgentIdentity.CACertificateFile =
-		cfg.AgentPKI.External.AgentClientCA.CertificateFile
-	cfg.AgentIdentity.CAPrivateKeyFile =
-		cfg.AgentPKI.External.AgentClientCA.PrivateKeyFile
-	cfg.AgentListener.TLS.CertificateFile =
-		cfg.AgentPKI.External.AgentListener.CertificateFile
-	cfg.AgentListener.TLS.PrivateKeyFile =
-		cfg.AgentPKI.External.AgentListener.PrivateKeyFile
 }
 
 func findConfigPath(args []string) (string, error) {

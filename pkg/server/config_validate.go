@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
-
-	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -104,8 +103,8 @@ func (cfg Config) Validate() error {
 		cfg.validateDatabase,
 		cfg.validateAuth,
 		cfg.validateAgentPKI,
-		cfg.validateAgentEnrollment,
 		cfg.validateAgentInstall,
+		cfg.validateAgentEnrollment,
 		cfg.validateClusterTerminal,
 		cfg.validateAgentListener,
 		cfg.validateCertificateMonitor,
@@ -119,14 +118,36 @@ func (cfg Config) Validate() error {
 	return nil
 }
 
-func (cfg Config) validateClusterTerminal() error {
-	if cfg.ClusterTerminal.Image == "" {
+func (cfg Config) validateAgentInstall() error {
+	httpURL := strings.TrimSpace(cfg.AgentInstall.PublicHTTPURL)
+	quicAddress := strings.TrimSpace(cfg.AgentInstall.PublicQUICAddress)
+	if httpURL == "" && quicAddress == "" {
 		return nil
 	}
-	if strings.TrimSpace(cfg.ClusterTerminal.Image) != cfg.ClusterTerminal.Image ||
-		strings.ContainsAny(cfg.ClusterTerminal.Image, " \t\r\n") {
-		return errors.New("Cluster terminal image is invalid")
+	if httpURL == "" || quicAddress == "" {
+		return errors.New("agent_install public HTTP URL and public QUIC address must be configured together")
 	}
+	if httpURL != cfg.AgentInstall.PublicHTTPURL || quicAddress != cfg.AgentInstall.PublicQUICAddress {
+		return errors.New("agent_install public endpoint values must not contain surrounding whitespace")
+	}
+	parsed, err := url.Parse(httpURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Path != "" && parsed.Path != "/") {
+		return errors.New("agent_install public HTTP URL must be an HTTP(S) origin without credentials, path, query, or fragment")
+	}
+	host, port, err := net.SplitHostPort(quicAddress)
+	if err != nil || strings.TrimSpace(host) == "" {
+		return errors.New("agent_install public QUIC address must use host:port")
+	}
+	parsedPort, parseErr := strconv.Atoi(port)
+	if parseErr != nil || parsedPort < 1 || parsedPort > 65535 {
+		return errors.New("agent_install public QUIC address must contain a valid port")
+	}
+	return nil
+}
+
+func (cfg Config) validateClusterTerminal() error {
 	if cfg.ClusterTerminal.SessionTTL < time.Minute || cfg.ClusterTerminal.SessionTTL > time.Hour {
 		return errors.New("Cluster terminal session TTL must be between 1 minute and 1 hour")
 	}
@@ -149,9 +170,6 @@ func (cfg Config) validatePodAccess() error {
 		externalURL.User != nil || externalURL.RawQuery != "" || externalURL.Fragment != "" ||
 		(externalURL.Path != "" && externalURL.Path != "/") {
 		return errors.New("enabled Pod Access external URL must be an HTTP(S) origin without credentials, path, query, or fragment")
-	}
-	if externalURL.Scheme == "http" && !isLoopbackAddress(externalURL.Hostname()) {
-		return errors.New("Pod Access external URL requires HTTPS except for loopback development")
 	}
 	certificateConfigured := strings.TrimSpace(cfg.PodAccess.TLS.CertificateFile) != ""
 	privateKeyConfigured := strings.TrimSpace(cfg.PodAccess.TLS.PrivateKeyFile) != ""
@@ -307,57 +325,24 @@ func (cfg Config) validateAgentPKI() error {
 	}); err != nil {
 		return err
 	}
-	switch cfg.AgentPKI.Mode {
-	case "managed":
-		return cfg.validateManagedAgentPKI()
-	case "external":
-		return cfg.validateExternalAgentPKI()
-	default:
-		return errors.New("agent_pki.mode must be managed or external")
-	}
+	return cfg.validateAgentPKILifecycle()
 }
 
-func (cfg Config) validateManagedAgentPKI() error {
-	managed := cfg.AgentPKI.Managed
+func (cfg Config) validateAgentPKILifecycle() error {
+	pkiSettings := cfg.AgentPKI
 	if err := validateRequiredPaths([]requiredPath{
-		{managed.Directory, "managed Agent PKI directory"},
+		{pkiSettings.Directory, "Agent PKI directory"},
 	}); err != nil {
 		return err
-	}
-	if len(managed.ListenerSANs.DNSNames) == 0 &&
-		len(managed.ListenerSANs.IPAddresses) == 0 {
-		return errors.New(
-			"managed Agent Listener certificate requires at least one explicit DNS or IP SAN",
-		)
-	}
-	for _, address := range managed.ListenerSANs.IPAddresses {
-		if net.ParseIP(address) == nil {
-			return fmt.Errorf("managed Agent Listener IP SAN %q is invalid", address)
-		}
-	}
-	for _, dnsName := range managed.ListenerSANs.DNSNames {
-		var validationErrors []string
-		if strings.HasPrefix(dnsName, "*.") {
-			validationErrors = k8svalidation.IsWildcardDNS1123Subdomain(dnsName)
-		} else {
-			validationErrors = k8svalidation.IsDNS1123Subdomain(dnsName)
-		}
-		if len(validationErrors) != 0 {
-			return fmt.Errorf(
-				"managed Agent Listener DNS SAN %q is invalid: %s",
-				dnsName,
-				strings.Join(validationErrors, "; "),
-			)
-		}
 	}
 	for _, item := range []struct {
 		value time.Duration
 		name  string
 	}{
-		{managed.AgentClientCAValidity, "Agent Client CA validity"},
-		{managed.AgentListenerCAValidity, "Agent Listener CA validity"},
-		{managed.AgentListenerValidity, "Agent Listener certificate validity"},
-		{managed.AgentListenerRenewBefore, "Agent Listener renewal window"},
+		{pkiSettings.AgentClientCAValidity, "Agent Client CA validity"},
+		{pkiSettings.AgentListenerCAValidity, "Agent Listener CA validity"},
+		{pkiSettings.AgentListenerValidity, "Agent Listener certificate validity"},
+		{pkiSettings.AgentListenerRenewBefore, "Agent Listener renewal window"},
 	} {
 		if item.value <= 0 || item.value > maxAgentPKIValidity {
 			return fmt.Errorf(
@@ -367,37 +352,13 @@ func (cfg Config) validateManagedAgentPKI() error {
 			)
 		}
 	}
-	if managed.AgentListenerValidity >= managed.AgentListenerCAValidity {
+	if pkiSettings.AgentListenerValidity >= pkiSettings.AgentListenerCAValidity {
 		return errors.New("Agent Listener certificate validity must be below its CA validity")
 	}
-	if managed.AgentListenerRenewBefore >= managed.AgentListenerValidity {
+	if pkiSettings.AgentListenerRenewBefore >= pkiSettings.AgentListenerValidity {
 		return errors.New("Agent Listener renewal window must be below its certificate validity")
 	}
 	return nil
-}
-
-// validateExternalAgentPKI checks the resolved paths rather than the raw
-// agent_pki.external block, because those are what the Server actually loads.
-func (cfg Config) validateExternalAgentPKI() error {
-	certificateConfigured :=
-		strings.TrimSpace(cfg.AgentIdentity.CACertificateFile) != ""
-	privateKeyConfigured :=
-		strings.TrimSpace(cfg.AgentIdentity.CAPrivateKeyFile) != ""
-	if certificateConfigured != privateKeyConfigured {
-		return errors.New(
-			"Agent Client CA certificate and private key files must be configured together",
-		)
-	}
-	return validateRequiredPaths([]requiredPath{
-		{cfg.AgentListener.TLS.CertificateFile, "Agent Listener TLS certificate file"},
-		{cfg.AgentListener.TLS.PrivateKeyFile, "Agent Listener TLS private key file"},
-		{cfg.AgentIdentity.CACertificateFile, "Agent Client CA certificate file"},
-		{cfg.AgentIdentity.CAPrivateKeyFile, "Agent Client CA private key file"},
-		{
-			cfg.AgentPKI.External.AgentListenerCA.CertificateFile,
-			"Agent Listener CA certificate file",
-		},
-	})
 }
 
 func (cfg Config) validateAgentEnrollment() error {
@@ -423,64 +384,6 @@ func (cfg Config) validateAgentEnrollment() error {
 		)
 	}
 	return nil
-}
-
-func (cfg Config) validateAgentInstall() error {
-	if !cfg.AgentInstall.Enabled {
-		return nil
-	}
-	publicURL, err := url.Parse(cfg.AgentInstall.PublicHTTPURL)
-	if err != nil || publicURL.Host == "" ||
-		(publicURL.Scheme != "https" && publicURL.Scheme != "http") ||
-		publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "" ||
-		(publicURL.Path != "" && publicURL.Path != "/") {
-		return errors.New(
-			"enabled Agent installation public HTTP URL must be an HTTP(S) origin without credentials, query, or fragment",
-		)
-	}
-	if publicURL.Scheme == "http" && !isLoopbackAddress(publicURL.Hostname()) {
-		return errors.New(
-			"enabled Agent installation requires HTTPS except for loopback development",
-		)
-	}
-	if publicURL.Scheme == "http" &&
-		strings.TrimSpace(cfg.AgentInstall.RegistrationCACertificateFile) != "" {
-		return errors.New("Agent installation registration CA cannot be used with HTTP")
-	}
-	host, _, err := net.SplitHostPort(cfg.AgentInstall.PublicQUICAddress)
-	if err != nil || strings.TrimSpace(host) == "" {
-		return errors.New(
-			"enabled Agent installation public QUIC address must include a host and port",
-		)
-	}
-	if err := validateRequiredPaths([]requiredPath{
-		{cfg.AgentInstall.Image, "Agent installation image"},
-		{cfg.AgentInstall.Namespace, "Agent installation namespace"},
-		{cfg.AgentInstall.ImagePullPolicy, "Agent image pull policy"},
-	}); err != nil {
-		return err
-	}
-	switch cfg.AgentInstall.ImagePullPolicy {
-	case "Always", "IfNotPresent", "Never":
-	default:
-		return errors.New("Agent image pull policy must be Always, IfNotPresent, or Never")
-	}
-	if len(k8svalidation.IsDNS1123Label(cfg.AgentInstall.Namespace)) != 0 {
-		return errors.New("Agent installation namespace must be a valid Kubernetes DNS label")
-	}
-	if strings.ContainsAny(cfg.AgentInstall.Image, " \t\r\n") {
-		return errors.New("Agent installation image must not contain whitespace")
-	}
-	return validateUnpaddedPaths([]requiredPath{
-		{
-			cfg.AgentPKI.External.AgentListenerCA.CertificateFile,
-			"external Agent Listener CA certificate file",
-		},
-		{
-			cfg.AgentInstall.RegistrationCACertificateFile,
-			"Agent installation registration CA certificate file",
-		},
-	})
 }
 
 func (cfg Config) validateAgentListener() error {
@@ -694,9 +597,4 @@ func (cfg Config) validateCrossSection() error {
 		}
 	}
 	return nil
-}
-
-func isLoopbackAddress(host string) bool {
-	return strings.EqualFold(host, "localhost") ||
-		(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())
 }

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"testing"
 	"time"
 )
@@ -61,17 +60,8 @@ auth:
     max_failed_attempts: 7
     duration: 20m
 agent_pki:
-  mode: external
   agent_client_certificate_validity: 48h
-  external:
-    agent_client_ca:
-      certificate_file: /run/secrets/agent-client-ca.crt
-      private_key_file: /run/secrets/agent-client-ca.key
-    agent_listener_ca:
-      certificate_file: /run/secrets/agent-listener-ca.crt
-    agent_listener:
-      certificate_file: /run/secrets/agent-listener.crt
-      private_key_file: /run/secrets/agent-listener.key
+  directory: /var/lib/zke/pki
 agent_enrollment:
   operation_timeout: 9s
   rate_limit:
@@ -176,9 +166,8 @@ log_level: warn
 		cfg.Auth.AccountLockout.Duration != 20*time.Minute {
 		t.Fatalf("unexpected account lockout config: %+v", cfg.Auth.AccountLockout)
 	}
-	if cfg.AgentIdentity.CACertificateFile != "/run/secrets/agent-client-ca.crt" ||
-		cfg.AgentIdentity.CAPrivateKeyFile != "/run/secrets/agent-client-ca.key" ||
-		cfg.AgentIdentity.CertificateTTL != 48*time.Hour {
+	if cfg.AgentIdentity.CertificateTTL != 48*time.Hour ||
+		cfg.AgentPKI.Directory != "/var/lib/zke/pki" {
 		t.Fatalf("unexpected Agent identity config: %+v", cfg.AgentIdentity)
 	}
 	if cfg.AgentEnrollment.OperationTimeout != 9*time.Second ||
@@ -187,8 +176,6 @@ log_level: warn
 		t.Fatalf("unexpected Agent enrollment config: %+v", cfg.AgentEnrollment)
 	}
 	if cfg.AgentListener.Address != "127.0.0.1:9443" ||
-		cfg.AgentListener.TLS.CertificateFile != "/run/secrets/agent-listener.crt" ||
-		cfg.AgentListener.TLS.PrivateKeyFile != "/run/secrets/agent-listener.key" ||
 		cfg.AgentListener.HandshakeTimeout != 8*time.Second ||
 		cfg.AgentListener.HeartbeatInterval != 12*time.Second ||
 		cfg.AgentListener.HeartbeatTimeout != 36*time.Second ||
@@ -244,11 +231,6 @@ log_level: warn
 	if err := invalidPodExecConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted global Pod Exec concurrency below the per-Agent limit")
 	}
-	partialCAConfig := cfg
-	partialCAConfig.AgentIdentity.CAPrivateKeyFile = ""
-	if err := partialCAConfig.Validate(); err == nil {
-		t.Fatal("Validate() accepted an Agent identity CA certificate without its private key")
-	}
 	partialHTTPTLSConfig := cfg
 	partialHTTPTLSConfig.HTTP.TLS.PrivateKeyFile = ""
 	if err := partialHTTPTLSConfig.Validate(); err == nil {
@@ -272,8 +254,8 @@ log_level: warn
 	insecurePodAccessConfig := cfg
 	insecurePodAccessConfig.PodAccess.TLS = TLSIdentityConfig{}
 	insecurePodAccessConfig.PodAccess.ExternalURL = "http://access.example.com:10443"
-	if err := insecurePodAccessConfig.Validate(); err == nil {
-		t.Fatal("Validate() accepted a non-loopback HTTP Pod Access URL")
+	if err := insecurePodAccessConfig.Validate(); err != nil {
+		t.Fatalf("Validate() rejected an HTTP Pod Access URL: %v", err)
 	}
 	partialPodAccessTLSConfig := cfg
 	partialPodAccessTLSConfig.PodAccess.TLS.PrivateKeyFile = ""
@@ -344,8 +326,6 @@ func TestLoadConfigEnvironmentOverrides(t *testing.T) {
 	t.Setenv("ZKE_POD_ACCESS_EXTERNAL_URL", "http://localhost:18081")
 	t.Setenv("ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL", "https://zke.example.com")
 	t.Setenv("ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS", "zke.example.com:8443")
-	t.Setenv("ZKE_AGENT_IMAGE", "ghcr.io/togettoyou/zke-agent:test")
-	t.Setenv("ZKE_CLUSTER_TERMINAL_IMAGE", "ghcr.io/togettoyou/zke-agent:test")
 
 	cfg, err := LoadConfig([]string{
 		"--config",
@@ -358,56 +338,27 @@ func TestLoadConfigEnvironmentOverrides(t *testing.T) {
 		cfg.HTTP.ConsoleDirectory != "/srv/zke/console" ||
 		cfg.PodAccess.ExternalURL != "http://localhost:18081" ||
 		cfg.AgentInstall.PublicHTTPURL != "https://zke.example.com" ||
-		cfg.AgentInstall.PublicQUICAddress != "zke.example.com:8443" ||
-		cfg.AgentInstall.Image != "ghcr.io/togettoyou/zke-agent:test" ||
-		cfg.ClusterTerminal.Image != "ghcr.io/togettoyou/zke-agent:test" {
+		cfg.AgentInstall.PublicQUICAddress != "zke.example.com:8443" {
 		t.Fatalf("environment overrides were not applied: %+v", cfg)
 	}
 }
 
-func TestLoadConfigAppliesPartialListenerSANOverride(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join(t.TempDir(), "server.yaml")
-	content := []byte(`
-agent_pki:
-  listener_sans:
-    dns_names:
-      - localhost
-      - zke.example.com
-    ip_addresses:
-      - 127.0.0.1
-`)
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := LoadConfig([]string{"--config", path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(
-		cfg.AgentPKI.Managed.ListenerSANs.DNSNames,
-		[]string{"localhost", "zke.example.com"},
-	) || !slices.Equal(
-		cfg.AgentPKI.Managed.ListenerSANs.IPAddresses,
-		[]string{"127.0.0.1"},
-	) {
-		t.Fatalf("listener SAN override was not applied: %+v", cfg.AgentPKI.Managed.ListenerSANs)
-	}
-	if cfg.HTTP.Address != "0.0.0.0:8080" ||
-		cfg.HTTP.ConsoleDirectory != "" ||
-		cfg.Database.URL != "postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable" ||
-		cfg.Database.ConnectTimeout != 5*time.Second ||
-		cfg.AgentPKI.Mode != "managed" ||
-		cfg.AgentPKI.Managed.Directory != "data/pki" ||
-		cfg.AgentListener.Address != "0.0.0.0:8443" ||
-		cfg.LogLevel != "info" {
-		t.Fatalf("partial Server config did not retain deployment defaults: %+v", cfg)
+func TestAgentInstallEndpointDefaultsToLoopback(t *testing.T) {
+	httpURL, quicAddress := (AgentInstallConfig{}).EffectiveEndpoint()
+	if httpURL != "http://127.0.0.1:8080" || quicAddress != "127.0.0.1:8443" {
+		t.Fatalf("effective endpoint = %q, %q", httpURL, quicAddress)
 	}
 }
 
-func TestLoadConfigManagedPKIAndAgentInstall(t *testing.T) {
+func TestAgentInstallEndpointMustBeConfiguredAsAPair(t *testing.T) {
+	config := DefaultConfig()
+	config.AgentInstall.PublicHTTPURL = "https://zke.example.com"
+	if err := config.Validate(); err == nil {
+		t.Fatal("Validate() accepted an incomplete Agent install endpoint")
+	}
+}
+
+func TestLoadConfigManagedPKI(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "managed-server.yaml")
@@ -433,30 +384,17 @@ auth:
     max_attempts_per_account: 5
     max_attempts_per_source: 20
 agent_pki:
-  mode: managed
   agent_client_certificate_validity: 720h
-  managed:
-    directory: /var/lib/zke/pki
-    auto_generate: true
-    agent_client_ca_validity: 87600h
-    agent_listener_ca_validity: 175200h
-    agent_listener_certificate_validity: 87600h
-    agent_listener_renew_before: 8760h
-    listener_sans:
-      dns_names: [zke.example.com]
-      ip_addresses: [127.0.0.1]
+  directory: /var/lib/zke/pki
+  agent_client_ca_validity: 87600h
+  agent_listener_ca_validity: 175200h
+  agent_listener_certificate_validity: 87600h
+  agent_listener_renew_before: 8760h
 agent_enrollment:
   operation_timeout: 10s
   rate_limit:
     window: 1m
     max_attempts_per_source: 30
-agent_install:
-  enabled: true
-  public_http_url: https://zke.example.com
-  public_quic_address: zke.example.com:8443
-  image: registry.example.com/zke-agent:test
-  namespace: zke-system
-  image_pull_policy: IfNotPresent
 agent_listener:
   address: 127.0.0.1:8443
   handshake_timeout: 10s
@@ -477,16 +415,8 @@ log_level: info
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AgentPKI.Mode != "managed" ||
-		cfg.AgentPKI.Managed.Directory != "/var/lib/zke/pki" ||
-		!cfg.AgentPKI.Managed.AutoGenerate ||
-		len(cfg.AgentPKI.Managed.ListenerSANs.DNSNames) != 1 {
+	if cfg.AgentPKI.Directory != "/var/lib/zke/pki" {
 		t.Fatalf("unexpected managed Agent PKI config: %+v", cfg.AgentPKI)
-	}
-	if !cfg.AgentInstall.Enabled ||
-		cfg.AgentInstall.PublicHTTPURL != "https://zke.example.com" ||
-		cfg.AgentInstall.Image != "registry.example.com/zke-agent:test" {
-		t.Fatalf("unexpected Agent installation config: %+v", cfg.AgentInstall)
 	}
 }
 
