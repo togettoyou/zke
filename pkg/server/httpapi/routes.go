@@ -33,6 +33,8 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	router.GET("/readyz", handlers.health.ready)
 
 	apiV1 := router.Group("/api/v1")
+	apiV1.GET("/setup", handlers.setup.status)
+	apiV1.POST("/setup", handlers.setup.initialize)
 	authRoutes := apiV1.Group("/auth")
 	authRoutes.POST("/login", handlers.auth.login)
 

@@ -24,10 +24,10 @@ func TestAccessManagementHTTPFlow(t *testing.T) {
 	applyMigrations(t, ctx, pool)
 
 	adminPassword := []byte("a sufficiently long access administrator passphrase")
-	admin, err := auth.CreateInitialAdmin(
+	admin, err := auth.CreateFirstGlobalAdministrator(
 		ctx,
 		store.NewAuthStore(pool),
-		auth.InitialAdminInput{
+		auth.FirstGlobalAdministratorInput{
 			Username:    "access-admin",
 			DisplayName: "Access Administrator",
 			Password:    adminPassword,

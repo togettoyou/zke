@@ -36,6 +36,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 仅报告当前是否缺少 Global 作用域的内置 `admin` 角色绑定。 */
+        get: operations["getSetupStatus"];
+        put?: never;
+        /** @description 仅在系统不存在 Global 作用域的内置 `admin` 角色绑定时创建首位全局管理员。 并发请求由数据库事务串行化；成功后同时建立浏览器 Session。 */
+        post: operations["initializeGlobalAdministrator"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -133,6 +151,8 @@ export interface paths {
         /**
          * @description 永久删除用户记录、该用户的全部 Session 和 RoleBinding，不可恢复，用户名随之释放。
          *     Enrollment、资源创建幂等记录和审计事件保留原用户 ID；审计事件同时保留删除时的用户名。
+         *     调用者必须在 Global 作用域覆盖目标账号绑定角色携带的全部权限，否则返回
+         *     `403 target_authority_exceeded`。
          */
         delete: operations["deleteUser"];
         options?: never;
@@ -150,6 +170,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
+        /** @description 启用或禁用用户。调用者必须在 Global 作用域覆盖目标账号绑定角色携带的全部权限， 否则返回 `403 target_authority_exceeded`。 */
         put: operations["setUserStatus"];
         post?: never;
         delete?: never;
@@ -169,6 +190,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description 解锁用户。调用者必须在 Global 作用域覆盖目标账号绑定角色携带的全部权限， 否则返回 `403 target_authority_exceeded`。 */
         post: operations["unlockUser"];
         delete?: never;
         options?: never;
@@ -187,6 +209,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description 重置用户密码并撤销其全部 Session。调用者必须在 Global 作用域覆盖目标账号绑定角色 携带的全部权限，否则返回 `403 target_authority_exceeded`；重置自己的密码除外。 */
         post: operations["resetUserPassword"];
         delete?: never;
         options?: never;
@@ -2240,6 +2263,14 @@ export interface components {
         };
         Health: {
             [key: string]: unknown;
+        };
+        SetupStatus: {
+            required: boolean;
+        };
+        SetupRequest: {
+            username: string;
+            /** Format: password */
+            password: string;
         };
         LoginRequest: {
             username: string;
@@ -6025,6 +6056,60 @@ export interface operations {
                 };
             };
             503: components["responses"]["Unavailable"];
+        };
+    };
+    getSetupStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 初始化状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["SetupStatus"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    initializeGlobalAdministrator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupRequest"];
+            };
+        };
+        responses: {
+            /** @description 全局管理员已创建；Session 和 CSRF Token 通过 Cookie 返回 */
+            201: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["Authentication"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     login: {

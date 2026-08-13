@@ -93,7 +93,6 @@ type AuthConfig struct {
 	CookieSecure                bool                 `yaml:"cookie_secure"`
 	LoginRateLimit              LoginRateLimitConfig `yaml:"login_rate_limit"`
 	AccountLockout              AccountLockoutConfig `yaml:"account_lockout"`
-	InitialAdmin                InitialAdminConfig   `yaml:"initial_admin"`
 }
 
 type LoginRateLimitConfig struct {
@@ -105,14 +104,6 @@ type LoginRateLimitConfig struct {
 type AccountLockoutConfig struct {
 	MaxFailedAttempts int           `yaml:"max_failed_attempts"`
 	Duration          time.Duration `yaml:"duration"`
-}
-
-type InitialAdminConfig struct {
-	Enabled              bool   `yaml:"enabled"`
-	Username             string `yaml:"username"`
-	DisplayName          string `yaml:"display_name"`
-	PasswordFile         string `yaml:"password_file"`
-	AutoGeneratePassword bool   `yaml:"auto_generate_password"`
 }
 
 // AgentIdentityConfig is derived from AgentPKIConfig rather than configured
@@ -272,13 +263,6 @@ func DefaultConfig() Config {
 			AccountLockout: AccountLockoutConfig{
 				MaxFailedAttempts: 5,
 				Duration:          15 * time.Minute,
-			},
-			InitialAdmin: InitialAdminConfig{
-				Enabled:              true,
-				Username:             "admin",
-				DisplayName:          "ZKE Administrator",
-				PasswordFile:         "data/admin-password",
-				AutoGeneratePassword: true,
 			},
 		},
 		AgentPKI: AgentPKIConfig{

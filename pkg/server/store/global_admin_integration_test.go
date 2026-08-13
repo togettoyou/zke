@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -532,5 +534,162 @@ func TestNonAdministratorsAreNotProtectedByTheAdminGuard(t *testing.T) {
 		Now:         time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("DeleteUser(plain user) error = %v, want nil", err)
+	}
+}
+
+func TestUserAdministrationCannotBypassThePermissionCeiling(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool := globalAdminPool(t, ctx)
+	accessStore := store.NewAccessManagementStore(pool)
+	now := time.Now().UTC()
+
+	// The actor keeps user.manage but no longer holds the target's
+	// super-operator permissions. User lifecycle endpoints must not become a
+	// shorter way to seize or revoke that stronger identity.
+	if _, err := pool.Exec(ctx, `
+INSERT INTO roles (id, name, display_name, builtin, permissions)
+VALUES (
+    '74000000-0000-4000-8000-000000000110', 'user-helpdesk', '用户支持', false,
+    ARRAY['user.manage']
+)
+`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES
+    ('74000000-0000-4000-8000-000000000111', $1, 'user-helpdesk', 'global'),
+    ('74000000-0000-4000-8000-000000000112', $2, 'super-operator', 'global')
+`, customAdminUserID, plainUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		"DELETE FROM role_bindings WHERE subject_id = $1 AND role = 'super-operator'",
+		customAdminUserID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	assertRefused := func(operation string, err error) {
+		t.Helper()
+		if !errors.Is(err, store.ErrTargetAuthorityExceeded) {
+			t.Fatalf("%s error = %v, want ErrTargetAuthorityExceeded", operation, err)
+		}
+	}
+
+	_, err := accessStore.ResetUserPassword(ctx, store.ResetManagedUserPasswordParams{
+		UserID: plainUserID, PasswordHash: "seized", ActorUserID: customAdminUserID,
+		RequestID: "74000000-0000-4000-8000-000000000113", Now: now,
+	})
+	assertRefused("ResetUserPassword", err)
+
+	_, err = accessStore.SetUserStatus(ctx, store.SetManagedUserStatusParams{
+		UserID: plainUserID, Status: "disabled", ActorUserID: customAdminUserID,
+		RequestID: "74000000-0000-4000-8000-000000000114", Now: now,
+	})
+	assertRefused("SetUserStatus(disable)", err)
+
+	_, err = accessStore.DeleteUser(ctx, store.DeleteManagedUserParams{
+		UserID: plainUserID, ActorUserID: customAdminUserID,
+		RequestID: "74000000-0000-4000-8000-000000000115", Now: now,
+	})
+	assertRefused("DeleteUser", err)
+
+	if _, err := pool.Exec(ctx, `
+UPDATE users
+SET status = 'locked', locked_at = $2::timestamptz,
+    lock_expires_at = $2::timestamptz + interval '15 minutes'
+WHERE id = $1
+`, plainUserID, now); err != nil {
+		t.Fatal(err)
+	}
+	_, err = accessStore.UnlockUser(ctx, store.UnlockManagedUserParams{
+		UserID: plainUserID, ActorUserID: customAdminUserID,
+		RequestID: "74000000-0000-4000-8000-000000000116", Now: now,
+	})
+	assertRefused("UnlockUser", err)
+
+	if _, err := pool.Exec(ctx, `
+UPDATE users
+SET status = 'disabled', locked_at = NULL, lock_expires_at = NULL
+WHERE id = $1
+`, plainUserID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = accessStore.SetUserStatus(ctx, store.SetManagedUserStatusParams{
+		UserID: plainUserID, Status: "active", ActorUserID: customAdminUserID,
+		RequestID: "74000000-0000-4000-8000-000000000117", Now: now,
+	})
+	assertRefused("SetUserStatus(enable)", err)
+
+	var passwordHash string
+	var status string
+	if err := pool.QueryRow(ctx,
+		"SELECT password_hash, status FROM users WHERE id = $1", plainUserID,
+	).Scan(&passwordHash, &status); err != nil {
+		t.Fatal(err)
+	}
+	if passwordHash != "not-used" || status != "disabled" {
+		t.Fatalf("refused operations changed target: password_hash=%q status=%q", passwordHash, status)
+	}
+}
+
+func TestConcurrentLoginFailuresPreserveAnActiveGlobalAdministrator(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool := globalAdminPool(t, ctx)
+	authStore := store.NewAuthStore(pool)
+	now := time.Now().UTC()
+
+	if _, err := pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES ('74000000-0000-4000-8000-000000000120', $1, 'admin', 'global')
+`, customAdminUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		"UPDATE users SET failed_login_count = 4 WHERE id IN ($1, $2)",
+		customAdminUserID, builtinAdminUserID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var wait sync.WaitGroup
+	errorsByUser := make(chan error, 2)
+	for index, userID := range []string{builtinAdminUserID, customAdminUserID} {
+		wait.Add(1)
+		go func(index int, userID string) {
+			defer wait.Done()
+			errorsByUser <- authStore.RecordLoginFailure(ctx, store.RecordLoginFailureParams{
+				UserID:       &userID,
+				RequestID:    fmt.Sprintf("74000000-0000-4000-8000-%012d", 121+index),
+				Now:          now,
+				MaxFailures:  5,
+				LockDuration: 15 * time.Minute,
+			})
+		}(index, userID)
+	}
+	wait.Wait()
+	close(errorsByUser)
+	for err := range errorsByUser {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var activeAdministrators int
+	if err := pool.QueryRow(ctx, `
+SELECT count(DISTINCT users.id)
+FROM users
+JOIN role_bindings ON role_bindings.subject_id = users.id
+WHERE users.status = 'active'
+  AND role_bindings.role = 'admin'
+  AND role_bindings.scope_type = 'global'
+`).Scan(&activeAdministrators); err != nil {
+		t.Fatal(err)
+	}
+	if activeAdministrators != 1 {
+		t.Fatalf("active global administrators = %d, want 1", activeAdministrators)
 	}
 }

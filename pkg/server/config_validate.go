@@ -294,14 +294,7 @@ func (cfg Config) validateAuth() error {
 		cfg.Auth.AccountLockout.MaxFailedAttempts > 100 {
 		return errors.New("account lock failed attempt limit must be between 1 and 100")
 	}
-	if !cfg.Auth.InitialAdmin.Enabled {
-		return nil
-	}
-	return validateRequiredPaths([]requiredPath{
-		{cfg.Auth.InitialAdmin.Username, "initial administrator username"},
-		{cfg.Auth.InitialAdmin.DisplayName, "initial administrator display name"},
-		{cfg.Auth.InitialAdmin.PasswordFile, "initial administrator password file"},
-	})
+	return nil
 }
 
 func (cfg Config) validateAgentPKI() error {

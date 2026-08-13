@@ -26,7 +26,7 @@ func TestResourceManagementHTTPFlow(t *testing.T) {
 	applyMigrations(t, ctx, pool)
 
 	password := []byte("a sufficiently long resource administrator passphrase")
-	admin, err := auth.CreateInitialAdmin(ctx, store.NewAuthStore(pool), auth.InitialAdminInput{
+	admin, err := auth.CreateFirstGlobalAdministrator(ctx, store.NewAuthStore(pool), auth.FirstGlobalAdministratorInput{
 		Username:    "resource-admin",
 		DisplayName: "Resource Administrator",
 		Password:    password,

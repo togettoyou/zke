@@ -108,6 +108,36 @@ func (store *AuthStore) RecordLoginFailure(
 		var status string
 		var newlyLocked bool
 		var lockWithheld bool
+		var currentStatus string
+		var currentFailures int
+		var currentLockExpiresAt *time.Time
+		err = transaction.QueryRow(ctx, `
+SELECT status, failed_login_count, lock_expires_at
+FROM users
+WHERE id = $1
+FOR UPDATE
+`, *input.UserID).Scan(
+			&currentStatus, &currentFailures, &currentLockExpiresAt,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			targetID = nil
+		} else if err != nil {
+			return fmt.Errorf("lock user for login failure: %w", err)
+		} else if loginFailureMayLock(
+			currentStatus,
+			currentFailures,
+			currentLockExpiresAt,
+			input.Now,
+			input.MaxFailures,
+		) {
+			// Only the threshold-crossing attempt joins the global administrator
+			// invariant. Ordinary failures remain independent, while every write
+			// that can remove an active administrator is serialized before the
+			// count below is evaluated.
+			if err := lockGlobalAdministratorInvariant(ctx, transaction); err != nil {
+				return err
+			}
+		}
 		// `lockable` is the last-global-administrator carve-out.
 		//
 		// Account lockout is a denial-of-service primitive pointed at a known
@@ -125,11 +155,10 @@ func (store *AuthStore) RecordLoginFailure(
 		// removing one costs, so it is refused on the same grounds and asks the
 		// same question: who holds the builtin `admin` role at global scope.
 		//
-		// Evaluated as a CTE inside the same statement, so the decision and the
-		// write cannot be separated by a concurrent binding change. No advisory
-		// lock: this runs on every failed login, which is precisely when an
-		// attack is in progress, and serialising the whole failure path behind
-		// one lock would hand over a second denial of service.
+		// Evaluated as a CTE inside the same statement after the target row is
+		// locked. An attempt that can cross the threshold also holds the same
+		// advisory lock as delete, disable and unbind, so two different
+		// administrators cannot both observe that the other one still remains.
 		//
 		// What is NOT withheld: the failure still counts, the audit event is
 		// still written, and the per-account rate limit still admits at most
@@ -271,4 +300,21 @@ VALUES (
 		return fmt.Errorf("commit login failure transaction: %w", err)
 	}
 	return nil
+}
+
+func loginFailureMayLock(
+	status string,
+	failedLoginCount int,
+	lockExpiresAt *time.Time,
+	now time.Time,
+	maxFailures int,
+) bool {
+	if status == "disabled" ||
+		(status == "locked" && lockExpiresAt != nil && lockExpiresAt.After(now)) {
+		return false
+	}
+	if status == "locked" && lockExpiresAt != nil && !lockExpiresAt.After(now) {
+		return 1 >= maxFailures
+	}
+	return failedLoginCount+1 >= maxFailures
 }

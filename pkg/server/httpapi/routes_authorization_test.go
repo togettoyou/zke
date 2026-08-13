@@ -17,6 +17,8 @@ import (
 var publicRoutes = map[string]string{
 	"GET /healthz":                   "liveness probe, returns no data",
 	"GET /readyz":                    "readiness probe, returns no data",
+	"GET /api/v1/setup":              "reports only whether a global administrator must be configured",
+	"POST /api/v1/setup":             "creates the first global administrator only while none exists; source limited and transactionally guarded",
 	"POST /api/v1/auth/login":        "establishes the session; rate limited per account and source",
 	"POST /agent-api/v1/enroll":      "authenticated by a one-time enrollment token; rate limited per source",
 	"GET /agent-install/v1/manifest": "authenticated by an installation token; rate limited per source",

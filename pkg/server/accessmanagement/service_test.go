@@ -273,6 +273,25 @@ func TestDeleteUserReachesTheStoreForAnotherAccount(t *testing.T) {
 	}
 }
 
+func TestUserMutationMapsTargetAuthorityRefusal(t *testing.T) {
+	t.Parallel()
+	fake := &fakeStore{err: store.ErrTargetAuthorityExceeded}
+
+	_, err := newTestService(fake).DeleteUser(
+		context.Background(),
+		DeleteUserInput{
+			UserID:      testUserID,
+			Confirm:     true,
+			ActorUserID: testActorID,
+			RequestID:   testRequestID,
+			Now:         time.Now().UTC(),
+		},
+	)
+	if !errors.Is(err, ErrTargetAuthorityExceeded) {
+		t.Fatalf("DeleteUser() error = %v, want ErrTargetAuthorityExceeded", err)
+	}
+}
+
 // Every destructive operation requires explicit confirmation, and an
 // unconfirmed request must never reach persistence.
 func TestUnconfirmedDestructiveOperationsAreRefused(t *testing.T) {

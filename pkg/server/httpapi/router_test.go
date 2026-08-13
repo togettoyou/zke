@@ -243,6 +243,8 @@ func TestRoutesAreRegisteredCentrally(t *testing.T) {
 	for _, expected := range []string{
 		"GET /healthz",
 		"GET /readyz",
+		"GET /api/v1/setup",
+		"POST /api/v1/setup",
 		"POST /api/v1/auth/login",
 		"GET /api/v1/auth/me",
 		"POST /api/v1/auth/logout",

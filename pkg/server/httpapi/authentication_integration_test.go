@@ -19,6 +19,85 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store"
 )
 
+func TestSetupCreatesConfiguredGlobalAdministrator(t *testing.T) {
+	databaseURL := requireHTTPTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool := openHTTPTestDatabase(t, ctx, databaseURL)
+	applyMigrations(t, ctx, pool)
+	// Setup is based on the absence of a global administrator, not on an empty
+	// users table. This row models an imported or partially recovered database.
+	passwordHash, err := auth.HashPassword(
+		[]byte("an unrelated sufficiently long passphrase"),
+		auth.DefaultPasswordParams(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO users (id, username_normalized, display_name, password_hash, status, password_changed_at)
+VALUES (gen_random_uuid(), 'existing-user', 'Existing User', $1, 'active', now())
+`, passwordHash); err != nil {
+		t.Fatal(err)
+	}
+
+	authService := auth.NewService(store.NewAuthStore(pool), auth.ServiceConfig{
+		SessionIdleTimeout: 30 * time.Minute, SessionAbsoluteTimeout: 8 * time.Hour,
+		MaxConcurrentPasswordChecks: 1,
+	})
+	router := New(discardLogger(), Dependencies{
+		ReadinessCheck: pool.Ping, AuthService: authService,
+		RBACService: rbac.NewService(store.NewRBACStore(pool)),
+	}, Config{Authentication: defaultAuthenticationTestConfig()})
+
+	statusResponse := httptest.NewRecorder()
+	router.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/setup", nil))
+	if statusResponse.Code != http.StatusOK {
+		t.Fatalf("setup status = %d: %s", statusResponse.Code, statusResponse.Body)
+	}
+	var status setupStatusResponse
+	if err := decodeSuccessResponse(statusResponse, &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.Required {
+		t.Fatal("setup was not required without a global administrator")
+	}
+
+	const password = "a manually chosen administrator password"
+	initializeResponse := httptest.NewRecorder()
+	initializeRequest := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(
+		`{"username":"Platform Owner","password":"`+password+`"}`,
+	))
+	initializeRequest.RemoteAddr = "192.0.2.80:1234"
+	router.ServeHTTP(initializeResponse, initializeRequest)
+	if initializeResponse.Code != http.StatusCreated {
+		t.Fatalf("setup initialization = %d: %s", initializeResponse.Code, initializeResponse.Body)
+	}
+	findCookie(t, initializeResponse.Result().Cookies(), sessionCookieName)
+	findCookie(t, initializeResponse.Result().Cookies(), csrfCookieName)
+
+	statusResponse = httptest.NewRecorder()
+	router.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/setup", nil))
+	if err := decodeSuccessResponse(statusResponse, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Required {
+		t.Fatal("setup remained required after creating the global administrator")
+	}
+
+	secondResponse := httptest.NewRecorder()
+	secondRequest := httptest.NewRequest(http.MethodPost, "/api/v1/setup", strings.NewReader(
+		`{"username":"another-owner","password":"another sufficiently long administrator password"}`,
+	))
+	secondRequest.RemoteAddr = "192.0.2.81:1234"
+	router.ServeHTTP(secondResponse, secondRequest)
+	if secondResponse.Code != http.StatusConflict {
+		t.Fatalf("second setup = %d, want 409: %s", secondResponse.Code, secondResponse.Body)
+	}
+	assertErrorCode(t, secondResponse, "setup_completed")
+}
+
 func TestAuthenticationHTTPFlow(t *testing.T) {
 	databaseURL := requireHTTPTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -29,7 +108,7 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 
 	authStore := store.NewAuthStore(pool)
 	password := "a sufficiently long admin passphrase"
-	if _, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+	if _, err := auth.CreateFirstGlobalAdministrator(ctx, authStore, auth.FirstGlobalAdministratorInput{
 		Username:    "admin",
 		DisplayName: "ZKE Administrator",
 		Password:    []byte(password),
@@ -163,7 +242,7 @@ func TestCurrentUserPasswordChange(t *testing.T) {
 	authStore := store.NewAuthStore(pool)
 	const oldPassword = "a sufficiently long original password"
 	const newPassword = "a sufficiently long replacement password"
-	if _, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+	if _, err := auth.CreateFirstGlobalAdministrator(ctx, authStore, auth.FirstGlobalAdministratorInput{
 		Username: "password-admin", DisplayName: "Password Administrator",
 		Password: []byte(oldPassword),
 	}); err != nil {
@@ -305,7 +384,7 @@ func TestLoginRateLimitAuditsDenialOnce(t *testing.T) {
 	applyMigrations(t, ctx, pool)
 
 	authStore := store.NewAuthStore(pool)
-	if _, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+	if _, err := auth.CreateFirstGlobalAdministrator(ctx, authStore, auth.FirstGlobalAdministratorInput{
 		Username:    "admin",
 		DisplayName: "ZKE Administrator",
 		Password:    []byte("a sufficiently long admin passphrase"),

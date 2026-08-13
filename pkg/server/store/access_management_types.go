@@ -40,9 +40,14 @@ var (
 	// strip every custom role on the platform of authority it could never obtain.
 	ErrRoleGrantForbidden  = errors.New("role adds permissions the actor does not hold")
 	ErrRoleRevokeForbidden = errors.New("role removes permissions the actor does not hold")
-	ErrRoleNotFound        = errors.New("role not found")
-	ErrRoleConflict        = errors.New("role name already exists")
-	ErrRoleBuiltin         = errors.New("builtin role cannot be changed")
+	// User administration must not become a shorter route around the role
+	// permission ceiling. Resetting, disabling, unlocking, re-enabling or
+	// deleting an account whose authority exceeds the actor's is refused before
+	// any account or binding state is changed.
+	ErrTargetAuthorityExceeded = errors.New("target user holds permissions the actor does not hold")
+	ErrRoleNotFound            = errors.New("role not found")
+	ErrRoleConflict            = errors.New("role name already exists")
+	ErrRoleBuiltin             = errors.New("builtin role cannot be changed")
 	// Reported instead of removing a role somebody still holds. The database
 	// refuses it too — `role_bindings.role` is a foreign key — and this is that
 	// refusal named, so the API can say which of the two conflicts happened.

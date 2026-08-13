@@ -11,43 +11,51 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auditaction"
 )
 
-const initialAdminLockID int64 = 0x5a4b4541555448
+const globalAdministratorSetupLockID int64 = 0x5a4b4541555448
 
-func (store *AuthStore) HasUsers(ctx context.Context) (bool, error) {
+func (store *AuthStore) HasGlobalAdministrator(ctx context.Context) (bool, error) {
 	var exists bool
 	if err := store.pool.QueryRow(
 		ctx,
-		"SELECT EXISTS (SELECT 1 FROM users)",
+		`SELECT EXISTS (
+    SELECT 1
+    FROM role_bindings
+    WHERE role = 'admin' AND scope_type = 'global'
+)`,
 	).Scan(&exists); err != nil {
-		return false, errors.New("check existing users")
+		return false, errors.New("check global administrator")
 	}
 	return exists, nil
 }
 
-func (store *AuthStore) CreateInitialAdmin(ctx context.Context, input InitialAdmin) (User, error) {
+func (store *AuthStore) CreateFirstGlobalAdministrator(ctx context.Context, input FirstGlobalAdministrator) (User, error) {
 	if strings.TrimSpace(input.UsernameNormalized) == "" ||
 		strings.TrimSpace(input.DisplayName) == "" ||
 		input.PasswordHash == "" ||
 		strings.TrimSpace(input.RequestID) == "" {
-		return User{}, errors.New("initial administrator fields are required")
+		return User{}, errors.New("global administrator setup fields are required")
 	}
 
 	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
-		return User{}, errors.New("begin initial administrator transaction")
+		return User{}, errors.New("begin global administrator setup transaction")
 	}
 	defer rollbackTransaction(transaction)
 
-	if _, err := transaction.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", initialAdminLockID); err != nil {
-		return User{}, errors.New("lock initial administrator creation")
+	if _, err := transaction.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", globalAdministratorSetupLockID); err != nil {
+		return User{}, errors.New("lock global administrator setup")
 	}
 
-	var userExists bool
-	if err := transaction.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM users)").Scan(&userExists); err != nil {
-		return User{}, errors.New("check existing users")
+	var administratorExists bool
+	if err := transaction.QueryRow(ctx, `SELECT EXISTS (
+    SELECT 1
+    FROM role_bindings
+    WHERE role = 'admin' AND scope_type = 'global'
+)`).Scan(&administratorExists); err != nil {
+		return User{}, errors.New("check global administrator")
 	}
-	if userExists {
-		return User{}, ErrInitialAdminExists
+	if administratorExists {
+		return User{}, ErrGlobalAdministratorExists
 	}
 
 	var user User
@@ -61,6 +69,7 @@ INSERT INTO users (
     password_changed_at
 )
 VALUES (gen_random_uuid(), $1, $2, $3, 'active', now())
+ON CONFLICT (username_normalized) DO NOTHING
 RETURNING
     id::text,
     username_normalized,
@@ -90,15 +99,18 @@ RETURNING
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrGlobalAdministratorUsernameUnavailable
+	}
 	if err != nil {
-		return User{}, fmt.Errorf("insert initial administrator: %w", err)
+		return User{}, fmt.Errorf("insert global administrator: %w", err)
 	}
 
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO role_bindings (id, subject_id, role, scope_type)
 VALUES (gen_random_uuid(), $1, 'admin', 'global')
 `, user.ID); err != nil {
-		return User{}, fmt.Errorf("grant initial administrator role: %w", err)
+		return User{}, fmt.Errorf("grant global administrator role: %w", err)
 	}
 
 	if _, err := transaction.Exec(ctx, `
@@ -124,13 +136,13 @@ VALUES (
     'succeeded',
     $4
 )
-`, user.ID, auditaction.AuthInitialAdminCreate, auditaction.TargetUser,
+`, user.ID, auditaction.AuthAdministratorSetup, auditaction.TargetUser,
 		input.RequestID); err != nil {
-		return User{}, fmt.Errorf("audit initial administrator creation: %w", err)
+		return User{}, fmt.Errorf("audit global administrator setup: %w", err)
 	}
 
 	if err := transaction.Commit(ctx); err != nil {
-		return User{}, errors.New("commit initial administrator transaction")
+		return User{}, errors.New("commit global administrator setup transaction")
 	}
 	return user, nil
 }

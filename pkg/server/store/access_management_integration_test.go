@@ -42,6 +42,10 @@ INSERT INTO role_bindings (id, subject_id, role, scope_type)
 VALUES ($1, $2, 'viewer', 'global')
 `, bindingID, userID)
 	batch.Queue(`
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES ('72000000-0000-4000-8000-00000000000a', $1, 'admin', 'global')
+`, actorID)
+	batch.Queue(`
 INSERT INTO user_sessions (
     id, user_id, token_digest, csrf_token_digest, idle_expires_at, expires_at
 ) VALUES (

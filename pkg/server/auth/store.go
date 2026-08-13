@@ -9,8 +9,8 @@ import (
 
 // Store is the persistence surface authentication needs.
 type Store interface {
-	HasUsers(ctx context.Context) (bool, error)
-	CreateInitialAdmin(ctx context.Context, input store.InitialAdmin) (store.User, error)
+	HasGlobalAdministrator(ctx context.Context) (bool, error)
+	CreateFirstGlobalAdministrator(ctx context.Context, input store.FirstGlobalAdministrator) (store.User, error)
 	FindUserByUsername(ctx context.Context, usernameNormalized string) (store.User, error)
 	FindUserByID(ctx context.Context, userID string) (store.User, error)
 	CompleteLogin(ctx context.Context, input store.CompleteLoginParams) (store.Session, error)

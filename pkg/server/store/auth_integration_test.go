@@ -32,7 +32,7 @@ func TestInitialAdminAndSessionStore(t *testing.T) {
 
 	authStore := store.NewAuthStore(pool)
 	password := []byte("a sufficiently long admin passphrase")
-	user, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+	user, err := auth.CreateFirstGlobalAdministrator(ctx, authStore, auth.FirstGlobalAdministratorInput{
 		Username:    "  Ａdmin  ",
 		DisplayName: "ZKE Administrator",
 		Password:    password,
@@ -65,13 +65,13 @@ func TestInitialAdminAndSessionStore(t *testing.T) {
 		t.Fatal("new administrator password hash unexpectedly needs an upgrade")
 	}
 
-	_, err = auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+	_, err = auth.CreateFirstGlobalAdministrator(ctx, authStore, auth.FirstGlobalAdministratorInput{
 		Username:    "second-admin",
 		DisplayName: "Second Administrator",
 		Password:    []byte("another sufficiently long passphrase"),
 	})
-	if !errors.Is(err, store.ErrInitialAdminExists) {
-		t.Fatalf("second initial administrator error = %v, want ErrInitialAdminExists", err)
+	if !errors.Is(err, auth.ErrSetupAlreadyCompleted) {
+		t.Fatalf("second global administrator setup error = %v, want ErrSetupAlreadyCompleted", err)
 	}
 
 	var role, scopeType, auditAction, auditActorID string
@@ -92,7 +92,7 @@ WHERE target_id = $1
 `, user.ID).Scan(&auditAction, &auditActorID); err != nil {
 		t.Fatal(err)
 	}
-	if auditAction != "auth.initial_admin.create" || auditActorID != user.ID {
+	if auditAction != "auth.administrator.setup" || auditActorID != user.ID {
 		t.Fatalf("initial audit = %s/%s", auditAction, auditActorID)
 	}
 

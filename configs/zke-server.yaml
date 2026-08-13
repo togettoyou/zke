@@ -80,17 +80,6 @@ auth:
   account_lockout:
     max_failed_attempts: 5
     duration: 15m
-  initial_admin:
-    # Applied once, only while the users table is empty. The generated password
-    # is written with mode 0600 and is never logged. Relative paths keep local
-    # runtime state under the ignored data/ directory; containers run from /
-    # and persist the same path as /data.
-    enabled: true
-    username: admin
-    display_name: ZKE Administrator
-    password_file: data/admin-password
-    auto_generate_password: true
-
 agent_pki:
   # "managed" lets Server create and renew its Agent-side PKI. "external"
   # loads a complete certificate set supplied by the deployment.

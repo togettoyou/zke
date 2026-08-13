@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -153,6 +154,9 @@ func (store *AccessManagementStore) DeleteUser(
 		return ManagedUser{}, fmt.Errorf("begin managed user deletion: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	if err := lockAuthorizationMutation(ctx, transaction); err != nil {
+		return ManagedUser{}, err
+	}
 	item, err := scanManagedUser(transaction.QueryRow(ctx, `
 SELECT
     id::text, username_normalized, display_name, status,
@@ -195,6 +199,11 @@ FOR UPDATE
 	}
 	rows.Close()
 	if err := ensureNotLastGlobalAdmin(ctx, transaction, input.ActorUserID, input.UserID); err != nil {
+		return ManagedUser{}, err
+	}
+	if err := ensureTargetAuthorityWithinActor(
+		ctx, transaction, input.ActorUserID, input.UserID,
+	); err != nil {
 		return ManagedUser{}, err
 	}
 	// Audit before removing the target so fill_audit_event_names can snapshot
@@ -285,6 +294,9 @@ func (store *AccessManagementStore) SetUserStatus(
 		return ManagedUser{}, fmt.Errorf("begin managed user status update: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	if err := lockAuthorizationMutation(ctx, transaction); err != nil {
+		return ManagedUser{}, err
+	}
 	var currentStatus string
 	if err := transaction.QueryRow(
 		ctx,
@@ -300,6 +312,13 @@ func (store *AccessManagementStore) SetUserStatus(
 	}
 	if currentStatus == "active" && input.Status == "disabled" {
 		if err := ensureNotLastGlobalAdmin(ctx, transaction, input.ActorUserID, input.UserID); err != nil {
+			return ManagedUser{}, err
+		}
+	}
+	if currentStatus != input.Status {
+		if err := ensureTargetAuthorityWithinActor(
+			ctx, transaction, input.ActorUserID, input.UserID,
+		); err != nil {
 			return ManagedUser{}, err
 		}
 	}
@@ -346,6 +365,9 @@ func (store *AccessManagementStore) UnlockUser(
 		return ManagedUser{}, fmt.Errorf("begin managed user unlock: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	if err := lockAuthorizationMutation(ctx, transaction); err != nil {
+		return ManagedUser{}, err
+	}
 	var status string
 	if err := transaction.QueryRow(
 		ctx,
@@ -362,6 +384,11 @@ func (store *AccessManagementStore) UnlockUser(
 	// per-account rate limit still applies either way; this is the barrier it
 	// sits behind, not a replacement for it.
 	if err := ensureGlobalAdminTargetAllowed(
+		ctx, transaction, input.ActorUserID, input.UserID,
+	); err != nil {
+		return ManagedUser{}, err
+	}
+	if err := ensureTargetAuthorityWithinActor(
 		ctx, transaction, input.ActorUserID, input.UserID,
 	); err != nil {
 		return ManagedUser{}, err
@@ -407,6 +434,9 @@ func (store *AccessManagementStore) ResetUserPassword(
 		return ManagedUser{}, fmt.Errorf("begin managed password reset: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	if err := lockAuthorizationMutation(ctx, transaction); err != nil {
+		return ManagedUser{}, err
+	}
 	var status string
 	if err := transaction.QueryRow(
 		ctx,
@@ -420,6 +450,11 @@ func (store *AccessManagementStore) ResetUserPassword(
 	// Before the state check, not after: who may act on this account is settled
 	// ahead of what state the account happens to be in.
 	if err := ensureGlobalAdminTargetAllowed(
+		ctx, transaction, input.ActorUserID, input.UserID,
+	); err != nil {
+		return ManagedUser{}, err
+	}
+	if err := ensureTargetAuthorityWithinActor(
 		ctx, transaction, input.ActorUserID, input.UserID,
 	); err != nil {
 		return ManagedUser{}, err
@@ -545,12 +580,32 @@ func (store *AccessManagementStore) CreateRoleBinding(
 		return ManagedRoleBinding{}, false, fmt.Errorf("begin role binding creation: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	if err := lockAuthorizationMutation(ctx, transaction); err != nil {
+		return ManagedRoleBinding{}, false, err
+	}
 	// Membership of the group that guards the account of last resort is granted
 	// from inside it. Checked before the insert, in the same transaction, so a
 	// concurrent removal of the actor's own binding cannot slip between them.
 	if err := ensureGlobalAdminGrantAllowed(
 		ctx, transaction, input.ActorUserID, input.Role, input.ScopeType,
 	); err != nil {
+		return ManagedRoleBinding{}, false, err
+	}
+	var rolePermissions []string
+	if err := transaction.QueryRow(
+		ctx,
+		"SELECT permissions FROM roles WHERE name = $1 FOR SHARE",
+		input.Role,
+	).Scan(&rolePermissions); errors.Is(err, pgx.ErrNoRows) {
+		return ManagedRoleBinding{}, false, ErrRoleNotFound
+	} else if err != nil {
+		return ManagedRoleBinding{}, false, fmt.Errorf("lock role for binding creation: %w", err)
+	}
+	actorPermissions, err := readActorGlobalPermissions(ctx, transaction, input.ActorUserID)
+	if err != nil {
+		return ManagedRoleBinding{}, false, err
+	}
+	if err := ensureActorMayGrant(rolePermissions, actorPermissions); err != nil {
 		return ManagedRoleBinding{}, false, err
 	}
 	// Wrapped in a CTE because RETURNING can only see the inserted row, and the
@@ -645,6 +700,9 @@ func (store *AccessManagementStore) DeleteRoleBinding(
 		return ManagedRoleBinding{}, fmt.Errorf("begin role binding deletion: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	if err := lockAuthorizationMutation(ctx, transaction); err != nil {
+		return ManagedRoleBinding{}, err
+	}
 	// `FOR UPDATE OF role_bindings`, not a bare `FOR UPDATE`: only the binding
 	// row is being changed, and PostgreSQL refuses to lock the nullable side of
 	// an outer join at all.
@@ -982,6 +1040,60 @@ func lockGlobalAdministratorInvariant(
 		int64(0x5a4b4541444d494e),
 	); err != nil {
 		return fmt.Errorf("lock global administrator invariant: %w", err)
+	}
+	return nil
+}
+
+// Serializes authorization changes whose permission-ceiling decision must stay
+// true until commit. These operations are administrative and rare; one lock is
+// deliberately preferred over a collection of row-lock orders that can miss a
+// role update affecting many subjects or deadlock while trying to cover them.
+func lockAuthorizationMutation(
+	ctx context.Context,
+	transaction pgx.Tx,
+) error {
+	if _, err := transaction.Exec(
+		ctx,
+		"SELECT pg_advisory_xact_lock($1)",
+		int64(0x5a4b45415554484f),
+	); err != nil {
+		return fmt.Errorf("lock authorization mutation: %w", err)
+	}
+	return nil
+}
+
+// Refuses using account administration as a shortcut around the role ceiling.
+// The actor must hold globally every permission carried by any role binding on
+// the target account. Account state is intentionally ignored: disabling or
+// locking an account must not turn a privileged identity into an unprotected
+// ordinary target, and re-enabling one restores the same authority.
+func ensureTargetAuthorityWithinActor(
+	ctx context.Context,
+	transaction pgx.Tx,
+	actorUserID string,
+	targetUserID string,
+) error {
+	if actorUserID == targetUserID {
+		return nil
+	}
+	held, err := readActorGlobalPermissions(ctx, transaction, actorUserID)
+	if err != nil {
+		return err
+	}
+	var target []string
+	if err := transaction.QueryRow(ctx, `
+SELECT coalesce(array_agg(DISTINCT permission), ARRAY[]::text[])
+FROM role_bindings
+JOIN roles ON roles.name = role_bindings.role
+CROSS JOIN LATERAL unnest(roles.permissions) AS permission
+WHERE role_bindings.subject_id = $1
+`, targetUserID).Scan(&target); err != nil {
+		return fmt.Errorf("read target user permissions: %w", err)
+	}
+	for _, permission := range target {
+		if !slices.Contains(held, permission) {
+			return ErrTargetAuthorityExceeded
+		}
 	}
 	return nil
 }

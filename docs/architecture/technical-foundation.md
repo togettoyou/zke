@@ -150,7 +150,7 @@ Server 二进制并按连续版本顺序执行；执行器使用 PostgreSQL advi
 - Session Token 只通过 `HttpOnly`、`Secure`、`SameSite` Cookie 传输，不写入 `localStorage`；
 - 会话具有空闲超时、绝对超时、主动注销、管理员撤销和权限变更后轮换机制；
 - 变更请求使用 Server 端 Synchronizer Token 防护 CSRF，并使用 Go 标准库跨源保护作为纵深防御；
-- Server 启动时只在用户表为空时创建首个管理员，密码从安全文件读取；
+- Console 在检测到系统没有 Global `admin` 绑定时显示首次初始化页面，由用户设置管理员用户名和密码；
 - 管理员通过一次性、短有效期重置流程协助账户恢复。
 
 权限词表由 Server 定义，并通过 `GET /api/v1/permissions` 发布；角色是权限的命名集合，可由操作者创建、修改和
@@ -165,7 +165,7 @@ Server 二进制并按连续版本顺序执行；执行器使用 PostgreSQL advi
 - 默认参数为每次校验总计 64 MiB 内存、3 次迭代和 4 路并行，部署前仍需在目标资源上完成基准测试；
 - 密码校验使用全局并发信号量，默认最多同时执行 4 次，按当前参数将 Argon2id 校验内存峰值约束在 256 MiB；
 - 单因素认证的新密码至少包含 15 个字符，支持 Unicode、空格和最长 1024 字节，不要求固定字符组合；
-- 首个管理员、Global `admin` RoleBinding 和审计事件在同一事务中创建，并使用 advisory lock 防止并发重复初始化；
+- 首个管理员、Global `admin` RoleBinding 和审计事件由公开初始化接口在同一事务中创建，并使用 advisory lock 防止多实例或多浏览器并发重复初始化；
 - Session 与 CSRF Token 分别使用独立的 256 位安全随机值，数据库只保存 SHA-256 摘要；
 - `POST /api/v1/auth/login`、`POST /api/v1/auth/logout` 与 `GET /api/v1/auth/me` 已实现统一认证错误、Session Cookie、CSRF 校验和安全错误响应；
 - 登录按规范化账户和直接网络来源执行有界内存限流，同一限流窗口只写入一次拒绝审计，避免审计写放大；
@@ -702,7 +702,7 @@ Gin 实际注册路由，并检查 `operationId` 唯一性。
 
 本地开发环境需要 Go 1.26.4、Docker 与 Docker Compose。Go 命令在仓库根目录执行。
 
-仓库配置同时面向本地开发和容器部署，使用 Server Managed PKI，并把 PKI 与初始管理员密码写入相对的 `data/` 目录。
+仓库配置同时面向本地开发和容器部署，使用 Server Managed PKI，并把 PKI 写入相对的 `data/` 目录。
 从仓库根目录运行时数据落在已忽略的 `data/`；容器工作目录为 `/`，同一配置对应唯一持久化目录 `/data`。
 首次正常启动会自动生成 Agent Client CA、Agent Listener CA 和 Agent Listener 身份，不再需要独立的开发 PKI 生成脚本。
 `hack/setup-local-agent-resources.sh` 只负责为宿主机运行的 Agent 初始化 Namespace、Enrollment Secret 和
@@ -729,11 +729,7 @@ Project 创建 Enrollment，把响应中的一次性 Token 输入 `hack/setup-lo
 kubectl context 创建 Namespace、Enrollment Secret 和 Trust Secret，不创建或覆盖 identity Secret；如需避免
 误用其他集群，可显式传入 `--context`。
 
-Server 在迁移完成后检查用户表，只在空表时按 `auth.initial_admin` 创建首个全局管理员；管理员、Global
-`admin` RoleBinding 和审计事件仍在同一事务中创建。仓库配置会生成
-`data/admin-password`，权限为 `0600`，密码不会写入日志。已有用户时启动过程完全跳过该文件。
-部署环境应关闭 `auto_generate_password`，并将 `password_file` 指向由 Kubernetes Secret 或等价机制挂载的
-受保护文件。
+Server 启动时不创建默认账号。Console 先通过 `GET /api/v1/setup` 检查是否存在 Global `admin` 绑定；缺失时显示初始化页面，并通过 `POST /api/v1/setup` 提交用户选择的用户名和密码。创建用户、Global `admin` RoleBinding 和审计事件在同一事务中完成；事务内 advisory lock 保证并发初始化只能成功一次。初始化接口成功后建立浏览器 Session；已有全局管理员时写接口返回冲突。
 
 Tenant、Project 和 Enrollment 属于正常产品资源，应由管理 API 创建，不由本地脚本写数据库。启用
 `agent_install` 后，安装 API 可返回 `curl | kubectl apply` 命令，将 Agent、Secret 和最小 RBAC 一次部署到
@@ -814,8 +810,7 @@ Server 和 Agent 都先构造可运行的容器部署默认值，再应用 YAML 
 - Server 的相对 `data/` 路径在本地保留于仓库根目录，在容器中对应 `/data`；Kubernetes 与 Helm 只持久化该目录。
 - Token、证书私钥、会话与 CSRF 密钥、可选密码 Pepper 和真实数据库密码不进入仓库；Helm Chart 通过 Secret
   生成并注入 PostgreSQL 密码。
-- 首个管理员密码只从 `auth.initial_admin.password_file` 读取。本地开发可以在空用户库首次启动时生成权限为
-  `0600` 的随机密码文件；部署环境应挂载预置 Secret 并关闭自动生成。密码正文不得写入日志。
+- 首个管理员密码只由同源 Console 初始化页面提交；Server 仅保存 Argon2id 摘要，不生成明文密码文件，也不把密码正文写入日志、审计或错误。
 - Managed PKI 私钥只保存在权限受限的持久目录；只在全新数据库状态和空目录组合下首次生成。已有数据库状态时
   缺失 PV 会失败关闭。external 模式的私钥只通过受保护文件或部署 Secret 提供。
 - 可选的 HTTP TLS 私钥同样只通过受保护文件或部署 Secret 提供；它属于浏览器/API HTTPS 身份，不属于 Agent

@@ -12,6 +12,7 @@ type RoleBindingListParams = ListParams & { role?: string; scope_type?: string }
  * and mutations can invalidate exactly what changed.
  */
 export const queryKeys = {
+  setup: () => ["setup"] as const,
   session: () => ["session"] as const,
   health: () => ["health"] as const,
 

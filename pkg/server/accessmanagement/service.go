@@ -53,6 +53,9 @@ var (
 	ErrRoleUnreachableAtScope = errors.New(
 		"role only carries permissions the binding scope cannot exercise",
 	)
+	ErrTargetAuthorityExceeded = errors.New(
+		"target user holds permissions the actor does not hold",
+	)
 )
 
 type Config struct {
@@ -62,9 +65,9 @@ type Config struct {
 type Service struct {
 	store          Store
 	passwordHashes chan struct{}
-	// Supplied by WithPermissionAuthority. Role writes refuse to proceed
-	// without it, because it is what keeps `rbac.manage` from being a way to
-	// grant yourself every other permission.
+	// Used for an early, user-facing ceiling refusal. The PostgreSQL store
+	// repeats the decision in the write transaction; this preflight is not the
+	// security boundary because permissions may change before the write starts.
 	permissions PermissionAuthority
 }
 
@@ -511,8 +514,12 @@ func (service *Service) CreateRoleBinding(
 	switch {
 	case errors.Is(err, store.ErrAccessUserNotFound):
 		return CreateRoleBindingResult{}, ErrNotFound
+	case errors.Is(err, store.ErrRoleNotFound):
+		return CreateRoleBindingResult{}, ErrNotFound
 	case errors.Is(err, store.ErrGlobalAdminRequired):
 		return CreateRoleBindingResult{}, ErrGlobalAdminRequired
+	case errors.Is(err, store.ErrRoleGrantForbidden):
+		return CreateRoleBindingResult{}, detailedOrSentinel(err, ErrPermissionEscalation)
 	case errors.Is(err, store.ErrRoleBindingConflict),
 		errors.Is(err, store.ErrAccessStateConflict):
 		return CreateRoleBindingResult{}, ErrConflict
@@ -762,6 +769,8 @@ func mapUserMutation(item store.ManagedUser, now time.Time, err error) (User, er
 		return User{}, ErrLastAdmin
 	case errors.Is(err, store.ErrGlobalAdminRequired):
 		return User{}, ErrGlobalAdminRequired
+	case errors.Is(err, store.ErrTargetAuthorityExceeded):
+		return User{}, ErrTargetAuthorityExceeded
 	case err != nil:
 		return User{}, err
 	default:

@@ -64,11 +64,7 @@ docker run -d --name zke \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
-Console 地址为 <http://127.0.0.1:8080>。首次空库启动会生成管理员密码：
-
-```bash
-docker exec zke cat /data/admin-password
-```
+Console 地址为 <http://127.0.0.1:8080>。首次进入时，如果系统尚无全局管理员，Console 会显示初始化页面，由部署者设置用户名和密码；Server 不生成或保存初始明文密码。
 
 挂载 Server 配置：
 
@@ -81,7 +77,7 @@ docker run -d --name zke \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
-`/data` 是 Server 唯一需要持久化的目录，包含 Managed PKI 和自动生成的初始管理员密码。`zke-server-pg` 使用固定的容器内数据库初始凭据，只用于单机预览；不得把 PostgreSQL 端口暴露到容器外部。删除容器前应确认两个命名卷仍然保留。
+`/data` 是 Server 唯一需要持久化的目录，包含 Managed PKI。用户、密码摘要、权限和会话保存在 PostgreSQL 中。`zke-server-pg` 使用固定的容器内数据库初始凭据，只用于单机预览；不得把 PostgreSQL 端口暴露到容器外部。删除容器前应确认两个命名卷仍然保留。
 
 ## Kubernetes 清单
 
@@ -100,15 +96,11 @@ kubectl -n zke-system rollout status deployment/zke-server
 kubectl -n zke-system port-forward service/zke-server 8080:8080 8081:8081
 ```
 
-读取管理员密码：
-
-```bash
-kubectl -n zke-system exec deployment/zke-server -- cat /data/admin-password
-```
+打开转发后的 Console；首次进入时按页面提示设置全局管理员用户名和密码。
 
 Service 默认为 `ClusterIP`。外部部署需要根据环境选择 LoadBalancer、Ingress 或 Gateway；其中 `8443` 是 UDP，不能按普通 HTTP Ingress 转发。
 
-`zke-server-config` ConfigMap 只保存部署相关的关键覆盖项：`data` 目录和 Agent Listener SAN。Server 的其他参数继续使用代码默认值；修改 ConfigMap 后需要重启 Deployment。
+`zke-server-config` ConfigMap 只保存部署相关的关键覆盖项：Managed PKI 的 `data` 目录和 Agent Listener SAN。Server 的其他参数继续使用代码默认值；修改 ConfigMap 后需要重启 Deployment。
 
 ## Helm
 
@@ -124,6 +116,8 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
 安装 Git Tag 对应 Chart 时，把 `--version` 改为该 Tag 的语义化版本；例如镜像标签为 `vX.Y.Z` 时，Chart 版本为 `X.Y.Z`，Chart 会自动引用 `vX.Y.Z` 镜像。
 
 Helm 默认生成随机 PostgreSQL 密码，并在升级时读取现有 Secret 继续使用。远程 Agent 接入至少需要提供实际入口：
+
+安装完成后打开 Console；如果尚无全局管理员，首次初始化页面会要求设置用户名和密码。
 
 ```bash
 helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \

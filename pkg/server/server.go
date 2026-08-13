@@ -114,8 +114,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			managedFiles.AgentListenerCACertificate
 		logServerPKIExpiry(logger, managedFiles.State, cfg.CertificateMonitor.WarningBefore)
 	}
-	// Before anything can authorize, and before the initial administrator is
-	// bound to `admin`. `admin` means "every permission the Server defines", so
+	// Before anything can authorize. `admin` means "every permission the Server defines", so
 	// a release that adds one widens that row here — leaving it to the migration
 	// that created the row would mean the new permission reached nobody, and a
 	// permission granted to nobody reads exactly like a denial.
@@ -133,20 +132,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return fmt.Errorf("reconcile builtin roles: %w", err)
 	}
 	authStore := store.NewAuthStore(database)
-	adminContext, cancelAdmin := context.WithTimeout(
-		ctx,
-		cfg.Auth.OperationTimeout,
-	)
-	err = bootstrapInitialAdmin(
-		adminContext,
-		authStore,
-		cfg.Auth.InitialAdmin,
-		logger,
-	)
-	cancelAdmin()
-	if err != nil {
-		return fmt.Errorf("bootstrap initial administrator: %w", err)
-	}
 	certificateSigner, err := loadAgentCertificateSigner(cfg.AgentIdentity)
 	if err != nil {
 		return err

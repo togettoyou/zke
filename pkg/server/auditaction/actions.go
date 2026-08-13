@@ -33,7 +33,7 @@ const (
 	AuthAccountLock         = "auth.account.lock"
 	AuthAccountLockWithheld = "auth.account.lock_withheld"
 	AuthAccountAutoUnlock   = "auth.account.auto_unlock"
-	AuthInitialAdminCreate  = "auth.initial_admin.create"
+	AuthAdministratorSetup  = "auth.administrator.setup"
 
 	UserCreate        = "user.create"
 	UserUpdate        = "user.update"
@@ -250,7 +250,7 @@ var actions = []Action{
 	{AuthAccountLock, GroupAuth},
 	{AuthAccountLockWithheld, GroupAuth},
 	{AuthAccountAutoUnlock, GroupAuth},
-	{AuthInitialAdminCreate, GroupAuth},
+	{AuthAdministratorSetup, GroupAuth},
 
 	{UserCreate, GroupUser},
 	{UserUpdate, GroupUser},

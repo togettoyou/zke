@@ -44,6 +44,7 @@ var accessManagementErrors = []errorMapping{
 	// reason and both have to say so rather than falling through to a 500.
 	{accessmanagement.ErrPermissionEscalation, http.StatusForbidden, "permission_escalation", "role grants permissions the caller does not hold"},
 	{accessmanagement.ErrPermissionRevocation, http.StatusForbidden, "permission_revocation", "the change revokes permissions the caller does not hold"},
+	{accessmanagement.ErrTargetAuthorityExceeded, http.StatusForbidden, "target_authority_exceeded", "the target user holds permissions the caller does not hold"},
 	{accessmanagement.ErrConflict, http.StatusConflict, "resource_conflict", "access management state conflicts with the request"},
 }
 

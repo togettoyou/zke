@@ -57,11 +57,7 @@ docker run -d --name zke \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
-打开 <http://127.0.0.1:8080>，读取自动生成的初始管理员密码：
-
-```bash
-docker exec zke cat /data/admin-password
-```
+打开 <http://127.0.0.1:8080>。首次进入时，Console 会引导设置全局管理员用户名和密码。
 
 ### Kubernetes
 

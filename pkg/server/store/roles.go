@@ -63,7 +63,7 @@ WHERE ($1 = '' OR ($1 = 'true') = roles.builtin)
 // which is a statement about the permission list rather than a list of its own,
 // and a copy of it in SQL would go stale the first time a permission was added.
 // So the rows are inserted here, at startup, before anything can authorize
-// against them and before the initial administrator is bound to one.
+// against them and before the setup API binds the first administrator to one.
 //
 // Only builtin rows are touched, and only by name. An operator's role is never
 // rewritten from here, and a name collision cannot happen because the API
@@ -201,6 +201,16 @@ func (store *AccessManagementStore) CreateRole(
 		return ManagedRole{}, fmt.Errorf("begin role creation: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	if err := lockAuthorizationMutation(ctx, transaction); err != nil {
+		return ManagedRole{}, err
+	}
+	actorPermissions, err := readActorGlobalPermissions(ctx, transaction, input.ActorUserID)
+	if err != nil {
+		return ManagedRole{}, err
+	}
+	if err := ensureActorMayGrant(input.Permissions, actorPermissions); err != nil {
+		return ManagedRole{}, err
+	}
 	item, err := scanManagedRole(transaction.QueryRow(ctx, `
 WITH created AS (
     INSERT INTO roles (
@@ -253,6 +263,9 @@ func (store *AccessManagementStore) UpdateRole(
 		return ManagedRole{}, fmt.Errorf("begin role update: %w", err)
 	}
 	defer rollbackTransaction(transaction)
+	if err := lockAuthorizationMutation(ctx, transaction); err != nil {
+		return ManagedRole{}, err
+	}
 	// Captured before the write, because the write is what may remove one.
 	actorPermissions, err := readActorGlobalPermissions(ctx, transaction, input.ActorUserID)
 	if err != nil {
@@ -442,6 +455,24 @@ func ensureActorMayChange(current []string, submitted []string, held []string) e
 	return nil
 }
 
+// The create-shaped half of the permission ceiling. With no current set every
+// submitted permission is an addition, so each one must already be held by the
+// actor at global scope. Kept in the store transaction so a concurrent role or
+// binding change cannot invalidate a service-layer preflight before commit.
+func ensureActorMayGrant(granted []string, held []string) error {
+	beyond := make([]string, 0, len(granted))
+	for _, permission := range granted {
+		if !slices.Contains(held, permission) {
+			beyond = append(beyond, permission)
+		}
+	}
+	if len(beyond) == 0 {
+		return nil
+	}
+	slices.Sort(beyond)
+	return &roleChangeError{target: ErrRoleGrantForbidden, permissions: beyond}
+}
+
 // Refuses revoking a binding whose role grants more than the actor holds.
 //
 // The binding-shaped half of ensureActorMayChange. That one compares a role's
@@ -460,7 +491,7 @@ func ensureActorMayRevokeRole(
 	}
 	var granted []string
 	if err := transaction.QueryRow(
-		ctx, "SELECT permissions FROM roles WHERE name = $1", role,
+		ctx, "SELECT permissions FROM roles WHERE name = $1 FOR SHARE", role,
 	).Scan(&granted); err != nil {
 		return fmt.Errorf("read revoked role permissions: %w", err)
 	}

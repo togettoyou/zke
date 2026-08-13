@@ -60,12 +60,6 @@ auth:
   account_lockout:
     max_failed_attempts: 7
     duration: 20m
-  initial_admin:
-    enabled: true
-    username: admin
-    display_name: ZKE Administrator
-    password_file: /run/secrets/zke-admin/password
-    auto_generate_password: false
 agent_pki:
   mode: external
   agent_client_certificate_validity: 48h
@@ -182,17 +176,6 @@ log_level: warn
 		cfg.Auth.AccountLockout.Duration != 20*time.Minute {
 		t.Fatalf("unexpected account lockout config: %+v", cfg.Auth.AccountLockout)
 	}
-	if !cfg.Auth.InitialAdmin.Enabled ||
-		cfg.Auth.InitialAdmin.Username != "admin" ||
-		cfg.Auth.InitialAdmin.DisplayName != "ZKE Administrator" ||
-		cfg.Auth.InitialAdmin.PasswordFile !=
-			"/run/secrets/zke-admin/password" ||
-		cfg.Auth.InitialAdmin.AutoGeneratePassword {
-		t.Fatalf(
-			"unexpected initial administrator config: %+v",
-			cfg.Auth.InitialAdmin,
-		)
-	}
 	if cfg.AgentIdentity.CACertificateFile != "/run/secrets/agent-client-ca.crt" ||
 		cfg.AgentIdentity.CAPrivateKeyFile != "/run/secrets/agent-client-ca.key" ||
 		cfg.AgentIdentity.CertificateTTL != 48*time.Hour {
@@ -275,11 +258,6 @@ log_level: warn
 	insecureHTTPTLSConfig.Auth.CookieSecure = false
 	if err := insecureHTTPTLSConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted HTTP TLS with insecure session cookies")
-	}
-	missingInitialAdminPassword := cfg
-	missingInitialAdminPassword.Auth.InitialAdmin.PasswordFile = ""
-	if err := missingInitialAdminPassword.Validate(); err == nil {
-		t.Fatal("Validate() accepted an initial administrator without a password file")
 	}
 	sharedListenerConfig := cfg
 	sharedListenerConfig.AgentListener.Address = "localhost:9000"
@@ -421,8 +399,6 @@ agent_pki:
 		cfg.HTTP.ConsoleDirectory != "" ||
 		cfg.Database.URL != "postgres://zke_dev:zke_local_development_only@127.0.0.1:5432/zke?sslmode=disable" ||
 		cfg.Database.ConnectTimeout != 5*time.Second ||
-		cfg.Auth.InitialAdmin.Username != "admin" ||
-		cfg.Auth.InitialAdmin.PasswordFile != "data/admin-password" ||
 		cfg.AgentPKI.Mode != "managed" ||
 		cfg.AgentPKI.Managed.Directory != "data/pki" ||
 		cfg.AgentListener.Address != "0.0.0.0:8443" ||

@@ -7,9 +7,6 @@ metadata:
     {{- include "zke.server.selectorLabels" . | nindent 4 }}
 data:
   zke-server.yaml: |
-    auth:
-      initial_admin:
-        password_file: data/admin-password
     agent_pki:
       listener_sans:
         dns_names:

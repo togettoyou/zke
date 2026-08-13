@@ -8,10 +8,11 @@ import (
 )
 
 var (
-	ErrInitialAdminExists = errors.New("initial administrator already exists")
-	ErrCredentialsChanged = errors.New("user credentials changed")
-	ErrUserNotFound       = errors.New("user not found")
-	ErrSessionNotFound    = errors.New("session not found")
+	ErrGlobalAdministratorExists              = errors.New("global administrator already exists")
+	ErrGlobalAdministratorUsernameUnavailable = errors.New("global administrator username is unavailable")
+	ErrCredentialsChanged                     = errors.New("user credentials changed")
+	ErrUserNotFound                           = errors.New("user not found")
+	ErrSessionNotFound                        = errors.New("session not found")
 )
 
 type AuthStore struct {
@@ -32,7 +33,7 @@ type User struct {
 	UpdatedAt          time.Time
 }
 
-type InitialAdmin struct {
+type FirstGlobalAdministrator struct {
 	UsernameNormalized string
 	DisplayName        string
 	PasswordHash       string

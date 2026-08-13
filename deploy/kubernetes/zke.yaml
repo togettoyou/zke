@@ -134,9 +134,6 @@ metadata:
     app.kubernetes.io/part-of: zke
 data:
   zke-server.yaml: |
-    auth:
-      initial_admin:
-        password_file: data/admin-password
     agent_pki:
       listener_sans:
         dns_names:

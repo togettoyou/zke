@@ -4,6 +4,42 @@ import { api, csrfHeaders, unwrap, unwrapEmpty } from "../client";
 import { queryKeys } from "../query-keys";
 import type { CurrentSession } from "../types";
 
+export function useSetupStatus() {
+  return useQuery({
+    queryKey: queryKeys.setup(),
+    queryFn: async () => unwrap(await api.GET("/api/v1/setup", {})),
+    retry: false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useInitializeAdministrator() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { username: string; password: string }) =>
+      unwrap(
+        await api.POST("/api/v1/setup", {
+          body: { username: input.username, password: input.password },
+        }),
+        { ignoreUnauthenticated: true },
+      ),
+    onSuccess: async () => {
+      // Keep the setup page mounted until `/auth/me` has observed the Session
+      // cookie. Otherwise changing setup to false first briefly exposes the
+      // login form between the successful submission and the session refetch.
+      await queryClient.invalidateQueries({ queryKey: queryKeys.session() });
+      queryClient.setQueryData(queryKeys.setup(), { required: false });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.setup() });
+    },
+    onError: async () => {
+      // Another browser or Server instance may have won the initialization
+      // race. Re-read the authoritative state so this page can yield to login.
+      await queryClient.invalidateQueries({ queryKey: queryKeys.setup() });
+    },
+  });
+}
+
 export function useSession(enabled = true): UseQueryResult<CurrentSession | null> {
   return useQuery({
     queryKey: queryKeys.session(),

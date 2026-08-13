@@ -57,7 +57,7 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 
 	authStore := store.NewAuthStore(pool)
 	const adminPassword = "a sufficiently long Phase 1 administrator password"
-	admin, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+	admin, err := auth.CreateFirstGlobalAdministrator(ctx, authStore, auth.FirstGlobalAdministratorInput{
 		Username:    "phase1-admin",
 		DisplayName: "Phase 1 Administrator",
 		Password:    []byte(adminPassword),
@@ -821,7 +821,7 @@ WHERE action = $1 AND target_id = $2
 		)
 	}
 	if admin.ID == "" {
-		t.Fatal("initial administrator was not created")
+		t.Fatal("first global administrator was not created")
 	}
 }
 

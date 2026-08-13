@@ -46,7 +46,7 @@ VALUES ('73000000-0000-4000-8000-000000000005', $1, 'admin', 'global')
 }
 
 // The migration seeds the two builtin roles, and role_bindings references them.
-// Both halves matter: without the rows, the initial administrator cannot be
+// Both halves matter: without the rows, the first global administrator cannot be
 // bound at all; without the foreign key, a binding could name a role that does
 // not exist and authorization would silently grant nothing.
 func TestBuiltinRolesAreSeededAndReferenced(t *testing.T) {
@@ -70,6 +70,75 @@ INSERT INTO role_bindings (id, subject_id, role, scope_type)
 VALUES ($1, $2, 'does-not-exist', 'global')
 `, roleBindID, roleSubject); err == nil {
 		t.Fatal("a binding naming an unknown role was accepted")
+	}
+}
+
+func TestRoleCreationAndBindingEnforceTheCeilingInTheWriteTransaction(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool := roleTestPool(t, ctx)
+	accessStore := store.NewAccessManagementStore(pool)
+	now := time.Now().UTC()
+
+	if _, err := accessStore.CreateRole(ctx, store.CreateManagedRoleParams{
+		ID:          customRoleID,
+		Name:        "high-authority",
+		DisplayName: "高权限",
+		Permissions: []string{"tenant.create"},
+		ActorUserID: roleActorID,
+		RequestID:   "73000000-0000-4000-8000-000000000120",
+		Now:         now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := accessStore.CreateRole(ctx, store.CreateManagedRoleParams{
+		ID:          "73000000-0000-4000-8000-000000000121",
+		Name:        "role-manager",
+		DisplayName: "角色管理员",
+		Permissions: []string{"rbac.manage"},
+		ActorUserID: roleActorID,
+		RequestID:   "73000000-0000-4000-8000-000000000122",
+		Now:         now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO role_bindings (id, subject_id, role, scope_type)
+VALUES ('73000000-0000-4000-8000-000000000123', $1, 'role-manager', 'global')
+`, roleActorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		"DELETE FROM role_bindings WHERE subject_id = $1 AND role = 'admin'",
+		roleActorID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := accessStore.CreateRole(ctx, store.CreateManagedRoleParams{
+		ID:          "73000000-0000-4000-8000-000000000124",
+		Name:        "forbidden-role",
+		DisplayName: "越权角色",
+		Permissions: []string{"tenant.create"},
+		ActorUserID: roleActorID,
+		RequestID:   "73000000-0000-4000-8000-000000000125",
+		Now:         now,
+	})
+	if !errors.Is(err, store.ErrRoleGrantForbidden) {
+		t.Fatalf("CreateRole() error = %v, want ErrRoleGrantForbidden", err)
+	}
+
+	_, _, err = accessStore.CreateRoleBinding(ctx, store.CreateManagedRoleBindingParams{
+		ID:          roleBindID,
+		SubjectID:   roleSubject,
+		Role:        "high-authority",
+		ScopeType:   "global",
+		ActorUserID: roleActorID,
+		RequestID:   "73000000-0000-4000-8000-000000000126",
+		Now:         now,
+	})
+	if !errors.Is(err, store.ErrRoleGrantForbidden) {
+		t.Fatalf("CreateRoleBinding() error = %v, want ErrRoleGrantForbidden", err)
 	}
 }
 

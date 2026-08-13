@@ -190,6 +190,18 @@ func validatePhaseOneFrontendContract(
 	t.Helper()
 	assertSchemaReference(
 		t,
+		successDataSchema(t, operationAt(t, paths, "/api/v1/setup", "get"), "200"),
+		nil,
+		"#/components/schemas/SetupStatus",
+	)
+	assertSchemaReference(
+		t,
+		operationAt(t, paths, "/api/v1/setup", "post"),
+		[]string{"requestBody", "content", "application/json", "schema"},
+		"#/components/schemas/SetupRequest",
+	)
+	assertSchemaReference(
+		t,
 		successDataSchema(
 			t,
 			operationAt(t, paths, "/api/v1/auth/me", "get"),

@@ -65,6 +65,7 @@ type Config struct {
 
 type handlers struct {
 	health                  *healthHandler
+	setup                   *setupHandler
 	auth                    *authHandler
 	enrollment              *enrollmentHandler
 	agentRegistration       *agentRegistrationHandler
@@ -181,14 +182,16 @@ func New(
 			kubernetesresource.SecretManifestGuard,
 		)
 	}
+	authRoutesHandler := newAuthHandler(
+		logger,
+		dependencies.AuthService,
+		dependencies.RBACService,
+		config.Authentication,
+	)
 	routeHandlers := handlers{
 		health: newHealthHandler(logger, dependencies.ReadinessCheck),
-		auth: newAuthHandler(
-			logger,
-			dependencies.AuthService,
-			dependencies.RBACService,
-			config.Authentication,
-		),
+		setup:  newSetupHandler(logger, dependencies.AuthService, authRoutesHandler, config.Authentication),
+		auth:   authRoutesHandler,
 		enrollment: newEnrollmentHandler(
 			logger,
 			dependencies.EnrollmentService,

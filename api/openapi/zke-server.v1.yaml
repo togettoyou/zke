@@ -14,6 +14,7 @@ servers:
     description: Console 与 API 使用同源入口；本地开发通过前端代理转发
 tags:
   - name: Health
+  - name: Setup
   - name: Authentication
   - name: Users
   - name: RBAC
@@ -59,6 +60,63 @@ paths:
                         $ref: "#/components/schemas/Health"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/setup:
+    get:
+      tags: [Setup]
+      operationId: getSetupStatus
+      description: 仅报告当前是否缺少 Global 作用域的内置 `admin` 角色绑定。
+      responses:
+        "200":
+          description: 初始化状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SetupStatus"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Setup]
+      operationId: initializeGlobalAdministrator
+      description: >-
+        仅在系统不存在 Global 作用域的内置 `admin` 角色绑定时创建首位全局管理员。
+        并发请求由数据库事务串行化；成功后同时建立浏览器 Session。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupRequest"
+      responses:
+        "201":
+          description: 全局管理员已创建；Session 和 CSRF Token 通过 Cookie 返回
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Authentication"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/auth/login:
     post:
       tags: [Authentication]
@@ -321,6 +379,8 @@ paths:
       description: |
         永久删除用户记录、该用户的全部 Session 和 RoleBinding，不可恢复，用户名随之释放。
         Enrollment、资源创建幂等记录和审计事件保留原用户 ID；审计事件同时保留删除时的用户名。
+        调用者必须在 Global 作用域覆盖目标账号绑定角色携带的全部权限，否则返回
+        `403 target_authority_exceeded`。
       security:
         - sessionCookie: []
       parameters:
@@ -358,6 +418,9 @@ paths:
     put:
       tags: [Users]
       operationId: setUserStatus
+      description: >-
+        启用或禁用用户。调用者必须在 Global 作用域覆盖目标账号绑定角色携带的全部权限，
+        否则返回 `403 target_authority_exceeded`。
       security:
         - sessionCookie: []
       parameters:
@@ -395,6 +458,9 @@ paths:
     post:
       tags: [Users]
       operationId: unlockUser
+      description: >-
+        解锁用户。调用者必须在 Global 作用域覆盖目标账号绑定角色携带的全部权限，
+        否则返回 `403 target_authority_exceeded`。
       security:
         - sessionCookie: []
       parameters:
@@ -432,6 +498,9 @@ paths:
     post:
       tags: [Users]
       operationId: resetUserPassword
+      description: >-
+        重置用户密码并撤销其全部 Session。调用者必须在 Global 作用域覆盖目标账号绑定角色
+        携带的全部权限，否则返回 `403 target_authority_exceeded`；重置自己的密码除外。
       security:
         - sessionCookie: []
       parameters:
@@ -7315,6 +7384,27 @@ components:
     Health:
       type: object
       additionalProperties: true
+    SetupStatus:
+      type: object
+      additionalProperties: false
+      required: [required]
+      properties:
+        required:
+          type: boolean
+    SetupRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          format: password
+          minLength: 15
+          maxLength: 1024
     LoginRequest:
       type: object
       additionalProperties: false

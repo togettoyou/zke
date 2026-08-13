@@ -100,7 +100,7 @@ func TestAgentManagementHTTPFlow(t *testing.T) {
 
 	authStore := store.NewAuthStore(pool)
 	password := []byte("a sufficiently long Agent administrator passphrase")
-	admin, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+	admin, err := auth.CreateFirstGlobalAdministrator(ctx, authStore, auth.FirstGlobalAdministratorInput{
 		Username:    "agent-admin",
 		DisplayName: "Agent Administrator",
 		Password:    password,

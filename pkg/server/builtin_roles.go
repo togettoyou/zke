@@ -28,8 +28,8 @@ type builtinRoleStore interface {
 // would be granted to nobody — indistinguishable, from the outside, from a
 // permission that denies everyone.
 //
-// Runs before the initial administrator is bootstrapped, because that step binds
-// a user to `admin` and the foreign key requires the row.
+// Runs before the setup API can create the first administrator, because that
+// transaction binds a user to `admin` and the foreign key requires the row.
 func reconcileBuiltinRoles(
 	ctx context.Context,
 	roleStore builtinRoleStore,

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,16 +19,77 @@ const (
 	maximumDisplayNameCharacters = 200
 )
 
-type InitialAdminInput struct {
+var (
+	ErrSetupAlreadyCompleted    = errors.New("a global administrator already exists")
+	ErrSetupUsernameUnavailable = errors.New("setup username is unavailable")
+	ErrInvalidSetupUsername     = errors.New("setup username is invalid")
+)
+
+type FirstGlobalAdministratorInput struct {
 	Username    string
 	DisplayName string
 	Password    []byte
 }
 
-func CreateInitialAdmin(
+type AdministratorSetupInput struct {
+	Username  string
+	Password  []byte
+	RequestID string
+}
+
+func (service *Service) SetupRequired(ctx context.Context) (bool, error) {
+	hasAdministrator, err := service.store.HasGlobalAdministrator(ctx)
+	if err != nil {
+		return false, err
+	}
+	return !hasAdministrator, nil
+}
+
+func (service *Service) SetupAdministrator(
+	ctx context.Context,
+	input AdministratorSetupInput,
+) (User, error) {
+	if strings.TrimSpace(input.RequestID) == "" {
+		return User{}, errors.New("setup request ID is required")
+	}
+	required, err := service.SetupRequired(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	if !required {
+		return User{}, ErrSetupAlreadyCompleted
+	}
+	username, err := NormalizeUsername(input.Username)
+	if err != nil {
+		return User{}, fmt.Errorf("%w: %v", ErrInvalidSetupUsername, err)
+	}
+	displayName, err := normalizeDisplayName(input.Username)
+	if err != nil {
+		return User{}, fmt.Errorf("%w: %v", ErrInvalidSetupUsername, err)
+	}
+	if err := ValidateNewPassword(input.Password); err != nil {
+		return User{}, ErrInvalidNewPassword
+	}
+	passwordHash, err := service.hashPassword(
+		ctx,
+		input.Password,
+		service.passwordParams,
+	)
+	if err != nil {
+		return User{}, err
+	}
+	return createFirstGlobalAdministrator(ctx, service.store, store.FirstGlobalAdministrator{
+		UsernameNormalized: username,
+		DisplayName:        displayName,
+		PasswordHash:       passwordHash,
+		RequestID:          input.RequestID,
+	})
+}
+
+func CreateFirstGlobalAdministrator(
 	ctx context.Context,
 	authStore *store.AuthStore,
-	input InitialAdminInput,
+	input FirstGlobalAdministratorInput,
 ) (User, error) {
 	username, err := NormalizeUsername(input.Username)
 	if err != nil {
@@ -50,12 +112,26 @@ func CreateInitialAdmin(
 		return User{}, err
 	}
 
-	user, err := authStore.CreateInitialAdmin(ctx, store.InitialAdmin{
+	return createFirstGlobalAdministrator(ctx, authStore, store.FirstGlobalAdministrator{
 		UsernameNormalized: username,
 		DisplayName:        displayName,
 		PasswordHash:       passwordHash,
 		RequestID:          requestID,
 	})
+}
+
+func createFirstGlobalAdministrator(
+	ctx context.Context,
+	authStore Store,
+	input store.FirstGlobalAdministrator,
+) (User, error) {
+	user, err := authStore.CreateFirstGlobalAdministrator(ctx, input)
+	if errors.Is(err, store.ErrGlobalAdministratorExists) {
+		return User{}, ErrSetupAlreadyCompleted
+	}
+	if errors.Is(err, store.ErrGlobalAdministratorUsernameUnavailable) {
+		return User{}, ErrSetupUsernameUnavailable
+	}
 	if err != nil {
 		return User{}, err
 	}

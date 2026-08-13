@@ -29,7 +29,7 @@ func TestCreateAgentEnrollmentHTTPFlow(t *testing.T) {
 
 	authStore := store.NewAuthStore(pool)
 	password := []byte("a sufficiently long enrollment admin passphrase")
-	admin, err := auth.CreateInitialAdmin(ctx, authStore, auth.InitialAdminInput{
+	admin, err := auth.CreateFirstGlobalAdministrator(ctx, authStore, auth.FirstGlobalAdministratorInput{
 		Username:    "enrollment-admin",
 		DisplayName: "Enrollment Administrator",
 		Password:    password,
