@@ -2,11 +2,15 @@ name: Images and Helm chart
 
 on:
   pull_request:
+    paths-ignore:
+      - "**/*.md"
   push:
     branches:
       - main
     tags:
       - "*"
+    paths-ignore:
+      - "**/*.md"
 
 permissions:
   contents: read

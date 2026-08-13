@@ -53,6 +53,7 @@ ZKE（Z Kubernetes Engine）通过 Server + Agent 架构连接多个 Kubernetes 
 docker run -d --name zke \
   -p 8080:8080 -p 8081:8081 -p 8443:8443/udp \
   -v zke-data:/data \
+  -v zke-postgresql-data:/var/lib/postgresql/data \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 

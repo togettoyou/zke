@@ -129,7 +129,7 @@
   单个主资源的完整 YAML；读取要求 `cluster.read`，更新要求 `cluster.resource.update`、CSRF 和幂等键；
 - `POST /api/v1/clusters/{cluster_id}/kubernetes/manifests/apply` 与 `.../manifests/delete`：以多文档 YAML
   清单批量应用或删除对象，等价于 `kubectl apply -f` 与 `kubectl delete -f`；正文为 `application/yaml`，
-  最大 4 MiB 且文档数量有上限，要求 CSRF 与幂等键，`dry_run=true` 只规划与预检、实际执行要求 `confirm=true`；
+  最大 4 MiB 且文档数量有上限，要求 CSRF 与幂等键；`dry_run=true` 仅执行预检，实际执行要求 `confirm=true`；
   所需权限由正文逐文档判定而不是由路由决定，见下文；
 - 只读接口要求 Session 和目标 Cluster 的 `cluster.read` 权限，每个请求通过独立 QUIC Resource Stream
   交给该 Cluster 的 Agent；
@@ -1262,10 +1262,3 @@ OR、组内标签与字段条件标为 AND；Pod 亲和与反亲和分别编辑 
 仓库包含默认跳过的本地真实集群 E2E。设置 `ZKE_LIVE_KUBERNETES_E2E=1` 后，它使用当前 kubeconfig，通过
 真实 QUIC Stream 验证 Namespace、ConfigMap、Deployment、CRD 和自定义资源的 CRUD、四类 Patch、DryRun、
 冲突与幂等重放，并使用随机名称和精确清理避免污染日常集群。
-
-后续规划能力包括：
-
-- 创建工作负载时联动创建 Service 与 HorizontalPodAutoscaler（需要先定义多对象写入的部分成功与回滚语义）；
-- 面向具体资源的表单化创建、更新和删除体验。
-
-产品体验将参考成熟 Kubernetes 管理平台的通用实践，但不会以与任何现有平台完全相同为目标。

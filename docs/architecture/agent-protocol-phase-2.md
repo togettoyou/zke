@@ -1,14 +1,10 @@
 # Phase 2 Server–Agent 协议设计
 
 本文定义 ZKE Phase 2 容器服务使用的 Server–Agent 业务协议，包括 QUIC Stream 模型、通用 Kubernetes
-资源请求、取消语义、并发与背压、安全边界以及分阶段交付要求。
+资源请求、取消语义、并发与背压、安全边界以及当前实现约束。
 
-> 本文是 Phase 2 的设计基线。当前代码已经实现版本化 Stream/Resource Protobuf、通用有界分帧、双方
-> accept 循环、Resource Stream 往返、能力协商、原生 Stream reset 取消和并发限制，并已接入 Node
-> List/Detail 以及受控通用 Discovery/List/Get 的 Kubernetes dynamic client、Server HTTP API 和真实 QUIC
-> 闭环；通用主资源 Create/Update/Patch/Delete、DryRun、写能力协商、幂等重放、响应内存预算和真实集群 E2E
-> 已实现。类型化 Namespace CRUD 及 Console 集群选择、预检和确认闭环也已完成。
-> Pod Logs、Resource Watch 和 Pod Exec 已通过各自独立的 Stream 实现；通用 Subresource 仍被拒绝。
+> 状态：已实现。当前协议包含 Resource、Resource Watch、Pod Logs、Pod Exec、Pod Port Forward 和独立终端会话
+> Stream；各类型保持独立并发、取消、超时、正文上限和能力协商。通用 Subresource 仍被拒绝。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
 [Agent 注册与连接](agent-enrollment-and-connection.md)。系统级技术约束参见
@@ -31,13 +27,10 @@ Phase 2 不在单条 Stream 上实现请求多路复用。QUIC 已经提供 Stre
 
 ## 2. 非目标
 
-第一阶段不包括：
-
 - 向浏览器直接开放任意 Kubernetes Verb、原始路径或透明代理接口；
 - 将 Control Stream 作为业务请求队列；
 - 在连接级建立统一的请求响应路由表；
 - 默认压缩所有业务流量；
-- 在首个里程碑开放资源变更、Secret 内容、Pod 日志或 Web Terminal。
 
 ## 3. 协议分层
 
@@ -72,19 +65,19 @@ Stream。
 
 ## 4. Stream 类型
 
-Phase 2 使用或规划以下业务 Stream：
+Phase 2 使用以下业务 Stream：
 
 | Stream 类型      | 发起方 | 生命周期 | 用途                                                 |
 | ---------------- | ------ | -------- | ---------------------------------------------------- |
-| `RESOURCE`       | Server | 短请求   | List、Get 及后续资源变更                             |
+| `RESOURCE`       | Server | 短请求   | Discovery、List、Get 与主资源变更                    |
 | `RESOURCE_WATCH` | Server | 长请求   | Kubernetes 资源 Watch                                |
 | `POD_LOGS`       | Server | 长请求   | Pod 日志读取与 Follow                                |
 | `POD_EXEC`       | Server | 长会话   | Web Terminal 的 stdin、stdout、stderr 和终端尺寸变更 |
 | `POD_PORT_FORWARD` | Server | 长会话 | 单个 Pod TCP 端口的双向原始字节转发                 |
 | `TERMINAL_SESSION` | Server | 短请求 | 创建或清理独立终端 App 的会话 Pod 与临时 RBAC       |
 
-Agent 主动上报事件或数据时，应使用独立的 Agent 发起 Stream 类型；不得复用 Server 发起的 Resource Stream。
-这类上报不属于 Phase 2 第一阶段。
+未来若增加 Agent 主动上报，必须定义独立的 Agent 发起 Stream 类型，不得复用 Server 发起的 Resource Stream。
+当前协议尚未定义这类上报。
 
 同一条 Stream 内允许出现该业务自身需要的多种消息，例如 Pod Exec 的 stdin、stdout、stderr 和 resize。此时
 可以定义仅属于 `POD_EXEC` 的类型化帧，但这些帧仍属于同一个终端会话，不代表在 Stream 内复用多个请求。
@@ -100,6 +93,7 @@ api/agent/v1/
 ├── resource.proto
 ├── logs.proto
 ├── exec.proto
+├── portforward.proto
 ├── terminal.proto
 └── watch.proto
 ```
@@ -115,6 +109,7 @@ package zke.agent.v1;
 - `resource.proto`：通用 Kubernetes 资源请求与响应；
 - `logs.proto`：Pod 日志请求及流式数据；
 - `exec.proto`：Pod Exec 会话消息；
+- `portforward.proto`：Pod 单端口双向转发消息；
 - `terminal.proto`：独立终端 App 的短生命周期 Pod 与权限快照消息；
 - `watch.proto`：资源 Watch 请求及事件。
 
@@ -140,6 +135,7 @@ enum StreamKind {
   STREAM_KIND_RESOURCE_WATCH = 11;
   STREAM_KIND_POD_LOGS = 20;
   STREAM_KIND_POD_EXEC = 21;
+  STREAM_KIND_POD_PORT_FORWARD = 22;
   STREAM_KIND_TERMINAL_SESSION = 30;
 }
 ```
@@ -150,7 +146,7 @@ enum StreamKind {
 - `kind`：决定后续消息的唯一解析器；
 - `request_id`：随机 128 位标识，用于日志、指标和审计关联，不参与响应路由；
 - `timeout_millis`：请求方给出的相对超时，接收方必须按本地上限截断；
-- `idempotency_key`：仅用于后续创建或变更操作；只读请求必须为空。
+- `idempotency_key`：用于创建或变更操作；只读请求必须为空。
 
 `StreamHeader` 不携带 `cluster_id`。mTLS 身份、`ClientHello` 和 Server Connection Registry 已将 Connection
 绑定到唯一 Cluster。Agent 必须使用该可信绑定确定目标集群，不能接受业务请求覆盖 Cluster 身份。
@@ -169,6 +165,7 @@ resource-write.v1
 resource-watch.v1
 pod-logs.v1
 pod-exec.v1
+pod-port-forward.v1
 terminal-session.v1
 ```
 
@@ -261,8 +258,8 @@ message ListOptions {
 - `PATCH` 必须声明受支持的 `patch_type`；
 - 所有字符串、选择器、分页参数和正文大小均执行本地上限校验。
 
-Phase 2 第一里程碑只允许 `DISCOVER`、`LIST` 和 `GET`。第二里程碑在独立
-`resource-write.v1` 能力协商后开放主资源 `CREATE`、`UPDATE`、`PATCH` 和 `DELETE`。
+当前 `resource.v1` 支持 `DISCOVER`、`LIST` 和 `GET`；双方同时声明 `resource-write.v1` 后开放主资源
+`CREATE`、`UPDATE`、`PATCH` 和 `DELETE`。
 
 ### 6.3 写选项与安全边界
 
@@ -339,7 +336,7 @@ Server 通过 `DISCOVER` 获取目标 Cluster 当前 API Discovery 目录。Agen
 
 - 目录使用 GVR 作为后续请求身份，不使用 Kind 反推 Resource；
 - 返回所有 Kubernetes Discovery 可见且至少支持一个已知 CRUD Verb 的主资源；
-- Subresource 不加入第一阶段目录；
+- Subresource 不进入 Discovery 目录；
 - Secret 等明确禁止的敏感资源不出现在目录中；
 - Aggregated API 部分不可用时可以返回 `partial=true` 的可用目录；
 - 目录只表示 API Server 暴露的资源，不表示当前 Agent ServiceAccount 一定拥有访问权限；
@@ -564,17 +561,14 @@ QUIC 提供 Stream 级多路复用和流控，但同一 Connection 上的 Stream
 
 | 配置位置                                     | 被限制的方向   | Phase 2 中包含的 Stream             |
 | -------------------------------------------- | -------------- | ----------------------------------- |
-| Server `agent_listener.max_incoming_streams` | Agent → Server | Control，以及未来 Agent 主动上报    |
-| Agent `connection.max_incoming_streams`      | Server → Agent | Resource、Watch、Pod Logs、Pod Exec |
+| Server `agent_listener.max_incoming_streams` | Agent → Server | Control，以及未来 Agent 主动上报                           |
+| Agent `connection.max_incoming_streams`      | Server → Agent | Resource、Watch、Pod Logs、Pod Exec、Port Forward、Terminal |
 
 Control Stream 由 Agent 创建并在 Connection 生命周期内持续存在，因此占用 Server incoming 额度中的一个。
 Control Stream 不占用 Agent incoming 额度。当前协议不接受 QUIC 单向 Stream。
 
-两端的配置都必须纳入 Phase 2 容量设计，但不要求使用相同数值：
-
-- Agent 侧直接承载全部 Server 发起的业务 Stream，当前 `16` 对完整 Phase 2 偏小；
-- Server 侧在第一里程碑只接收一条 Control Stream，当前 `16` 可以暂时保留；
-- 未来增加 Agent 主动上报 Stream 时，再根据上报并发和预留额度提高 Server 侧数值。
+两端的配置不要求使用相同数值。仓库默认 Agent incoming 总额度为 128，Server incoming 总额度为 16；各业务类型
+另有独立应用层额度。若未来增加 Agent 主动上报，需要重新核算 Server 侧总额度和预留。
 
 QUIC 只知道 Stream 数量，读取 `StreamHeader` 前不知道 `StreamKind`。因此每条新 Stream 会先占用一个
 `max_incoming_streams` 名额，随后接收方才能检查应用层分类额度。
@@ -603,7 +597,7 @@ Server 和 Agent 还需要同时设置：
 Agent 侧各业务类型的最坏情况并发与预留额度必须满足：
 
 ```text
-Resource + Resource Watch + Pod Logs + Pod Exec + 预留额度
+Resource + Resource Watch + Pod Logs + Pod Exec + Pod Port Forward + Terminal Session + 预留额度
 ≤ Agent connection.max_incoming_streams
 ```
 
@@ -614,34 +608,12 @@ Server 侧必须满足：
 ≤ Server agent_listener.max_incoming_streams
 ```
 
-Pod Logs、Watch 或 Pod Exec 不得耗尽全部 Stream，导致 Resource 请求无法执行。超过应用层额度的请求应尽快
+长连接与终端会话不得耗尽全部 Stream，导致 Resource 请求无法执行。超过应用层额度的请求应尽快
 返回 `RESOURCE_EXHAUSTED` 并重置当前 Stream，不进入无界应用层队列。
 
-Phase 2 混合负载测试可以使用以下数值作为验证基线：
-
-| 接收端 | QUIC incoming 总额度 | 应用层额度                                              |
-| ------ | -------------------: | ------------------------------------------------------- |
-| Agent  |                  128 | Resource 64、Watch 16、Pod Logs 24、Pod Exec 8、预留 16 |
-| Server |                   16 | Control 1，其余为未来 Agent 主动上报及预留              |
-
-这些数值不是生产承诺，也不表示为每条 Connection 预先创建处理任务或分配正文内存。QUIC 额度只允许
-最多打开这些 Stream，内存和 Kubernetes API 压力仍由实际打开数量及应用层额度决定。
-
-单个 Agent 的额度不能替代 Server 实例总量保护。例如 1024 条 Agent Connection 分别允许 128 条
-Server 发起 Stream 时，理论上可以形成 131072 条业务 Stream，因此必须同时设置 Server 实例级和 Cluster
-级限制。
-
-初始额度只能作为压测参数，不作为未经验证的生产默认值。最终配置必须根据以下混合负载确定：
-
-- 多个小型 Resource 请求；
-- 大型列表响应；
-- 持续 Pod Logs；
-- 慢速客户端和慢速 Kubernetes API；
-- Watch 和终端长连接；
-- 多 Agent 并发与重连。
-
-Phase 2 第一里程碑落地时，优先调整 Agent 侧 transport 上限并实现 Resource、Cluster 和 Server 实例级应用
-额度。Server 侧 transport 上限可以保留 Phase 1 数值，直到协议引入 Agent 主动业务 Stream。
+仓库默认额度记录在 `configs/zke-server.yaml` 与 `configs/zke-agent.yaml`，它们是资源保护配置，不是性能或
+生产容量承诺。调整时必须同时验证小型请求、大列表、日志与 Watch、交互式会话、慢客户端、多 Agent 并发和重连；
+还要保留 Server 实例级与 Cluster 级限制，避免单 Agent 额度被连接数量放大。
 
 ### 8.2 内存和正文
 
@@ -670,7 +642,7 @@ Phase 2 第一里程碑落地时，优先调整 Agent 侧 transport 上限并实
 
 ### 8.4 压缩
 
-Phase 2 第一里程碑不默认启用应用层压缩。压缩只有在真实负载基准证明收益后才加入能力协商，并遵守：
+当前不默认启用应用层压缩。压缩只有在真实负载基准证明收益后才加入能力协商，并遵守：
 
 - 压缩算法按 Stream 协商，不使用单方面布尔开关；
 - Table、JSON 或文本日志可以单独评估；
@@ -748,87 +720,24 @@ Server 必须把面向用户的错误区分为认证失败、无权限、目标�
 
 当前仓库已固定 Protobuf 生成工具，并在 CI 中执行 lint、生成结果一致性和 breaking-change 检查。
 
-## 11. 分阶段实施
+## 11. 当前实现
 
-### 11.1 传输内核
+当前协议已实现以下业务链路：
 
-- 增加 `stream.proto` 和 `resource.proto`；
-- 实现通用有界 Protobuf 编解码，不限制为 `ControlFrame`；
-- Server 和 Agent 实现双向 `AcceptStream` 循环；
-- 实现业务 Stream 打开、分发、正常关闭和原生 reset 取消；
-- 增加能力协商、结构化错误和分类型并发限制；
-- 使用真实 QUIC 连接完成集成测试，暂不访问 Kubernetes API。
+- `RESOURCE`：Discovery、通用主资源 CRUD、DryRun、Node、Namespace、工作负载、Pod、网络、配置、存储、
+  自动伸缩、策略、Kubernetes 授权和多文档清单；
+- `RESOURCE_WATCH`：Kubernetes Event 快照、Follow、恢复和取消；
+- `POD_LOGS`：有界快照、Follow、取消和正文内终止原因；
+- `POD_EXEC`：Pod Web Terminal，以及独立终端 App 的终端数据；
+- `POD_PORT_FORWARD`：Pod Access 的单端口双向转发；
+- `TERMINAL_SESSION`：独立终端 App 的临时 Pod、ServiceAccount 与 RBAC 生命周期。
 
-上述传输内核已经实现。生产 Agent 已接入 dynamic client，并声明 `resource.v1`、
-`resource-discovery.v1` 与 `resource-write.v1`；旧 Agent 未声明相应能力时，Server 不会向其发起对应请求。
-真实 QUIC 测试已覆盖慢流与小请求并发、Control 心跳隔离、取消、
-QUIC incoming 上限、Resource 类型额度、异常首帧、正文限制、单 Stream 故障隔离、断连资源回收，以及
-Node dynamic client 的 List/Detail 往返。
+所有请求都绑定目标 Cluster；命名空间级请求继续携带 Namespace 和资源身份。通用 Resource Stream 不开放任意
+Subresource、Secret、Event 或 Kubernetes 授权对象的旁路，敏感能力使用专用协议和权限。能力协商、并发额度、
+正文上限、超时、取消、幂等和审计边界均已接入 Server 与 Agent。
 
-### 11.2 只读资源闭环
-
-- Node List/Detail 与受控通用 Discovery/List/Get 已实现；
-- Server 类型化 HTTP API、通用 Discovery/List/Get API 和权限；
-- Agent 动态客户端；
-- 真实 QUIC 已覆盖 CRD 资源发现、List 和 Get；
-- Node 列表当前使用完整对象表示、Kubernetes continuation token 分页和类型化精简响应；Table 表示尚未实现；
-- Console 已实现项目内在线集群选择以及 Namespace List/Detail 页面；
-- Deployment、StatefulSet、DaemonSet、Job 和 CronJob 已实现按 Cluster、Namespace 和资源类型定域的
-  类型化 List/Detail 投影；类型化后端支持创建、伸缩、滚动重启、CronJob 暂停/恢复和删除，底层复用通用
-  Create/Patch/Delete；Console 已实现类型化创建和其他变更操作的 DryRun、影响展示与确认闭环。
-- Pod 已实现显式 Cluster/Namespace 定域的类型化 List/Detail 投影和带 UID 前置条件的删除后端；Console
-  已完成列表、详情和删除确认闭环；Pod Logs 已实现有界快照、实时 Follow，以及固定 Pod UID、容器选择、
-  取消、下载和有界浏览器缓冲的 Console 闭环；Pod Exec 与 xterm.js Console 闭环已实现；Eviction 只由
-  PDB 感知的 Node Drain 使用，普通 Pod 删除仍走 DELETE。
-- Service、Ingress 和 Gateway 已实现固定 GVR、显式 Cluster/Namespace 定域的类型化
-  List/Detail/Create/Update/Delete 后端；Gateway 操作会先确认目标集群已安装 Gateway API v1，Console 和
-  HTTPRoute 等 Route 类型尚未实现。
-
-### 11.3 更多只读资源
-
-- 通用资源浏览器通过 Discovery 目录读取已授权的内置资源和 CR，无需逐资源增加后端接口；
-- 配置和存储资源的类型化产品投影，以及服务与路由 Console、Gateway API Route 类型化管理。
-
-### 11.4 资源变更
-
-- Create、Update、四类 Patch、Delete 和 DryRun 已实现；
-- 细粒度 RBAC、显式确认、审计、有界幂等重放和能力协商已实现；
-- 冲突检测、Update `resourceVersion` 以及 Delete UID/resourceVersion 前置条件已实现；
-- 完整 YAML 读取与更新后端已复用通用 Get/Update Stream 实现，包含严格单文档解析、DryRun、
-  URL/对象身份核对和 UID/resourceVersion 防误改；
-- Namespace 类型化 Create/Delete，以及工作负载创建、伸缩、滚动重启、CronJob 暂停/恢复和删除的表单、
-  DryRun 预检、影响展示与二次确认已经实现；Pod 类型化删除与 Console DryRun、影响展示和二次确认也已复用
-  相同安全链路；YAML Console 编辑器和其他资源的类型化创建/编辑表单仍待实现。
-
-### 11.5 流式能力
-
-- [已实现] Resource Watch；
-- [已实现] Pod Logs 有界快照与实时 Follow；
-- [已实现] Pod Exec 与 Web Terminal 后端及 xterm.js Console 入口。
-- [已实现] Pod Access 使用独立 Port Forward Stream 与固定 Origin HTTP/SSE/WebSocket 代理。
-- [已实现] 独立终端 App 使用 `TERMINAL_SESSION` 创建短生命周期 Pod、ServiceAccount 和临时 RBAC，再复用
-  `POD_EXEC` 传输终端数据。
-
-Pod Exec 使用独立 `pod-exec.v1` 能力和 `POD_EXEC` Stream 处理 stdin、stdout/stderr、resize 与 exit；Server
-HTTP 侧先创建一次性票据，再升级同源 WebSocket。Agent 校验 Pod UID/容器后优先通过 Kubernetes WebSocket
-streaming protocol 执行；仅在旧 API Server 或 HTTPS 代理无法完成 WebSocket Upgrade 时按 client-go/kubectl
-语义回退 SPDY。
-固定 Shell 选择逻辑优先 bash 并回退 `/bin/sh`。会话有输入/输出、空闲、总时长和并发上限，周期重验权限，
-审计不记录终端输入输出。
-
-独立终端 App 不使用 Agent ServiceAccount 运行 `kubectl`。Server 将当前用户在目标 Cluster 已持有的
-`cluster.*` 权限快照发送给 Agent；Agent 将 Pod 与 ServiceAccount 固定创建在 Agent Namespace，并通过一个
-普通、`kube-*` 与 Agent 三类命名空间级 ClusterRole 和各现有 Namespace 中的 RoleBinding 投射权限，受保护
-Namespace 的写入要求对应独立权限。集群级
-资源另用受限 ClusterRole，不使用通配符，也不接受浏览器直接提交 Kubernetes PolicyRule。
-`cluster.terminal.exec` 只控制入口，不隐含 Secret、RBAC 或通用资源权限。会话连接周期重验入口权限和快照中的
-全部权限，撤权后关闭连接并清理临时资源。
-
-Pod Access 的上游连接使用独立 `pod-port-forward.v1` 能力和 `POD_PORT_FORWARD` Stream，首帧固定 Namespace、Pod
-名称、UID、单个端口和双向字节上限。Agent 复核 UID 后使用 client-go port-forward，并只在回环随机端口建立
-进程内 TCP 桥接。Pod Access 激活地址一次性且与登录身份及完整资源路径绑定；会话周期重验
-`cluster.pod.port_forward`，流量正文不记录。协议硬上限为一小时、每方向 1 GiB；Pod Access 在 Server 端按整个
-浏览器会话累计执行相同的每方向 1 GiB 预算。
+当前保留的协议边界是：不在单条 Stream 内复用多个逻辑请求，不通过 Control Stream 承载业务任务，不默认压缩所有
+业务流量，也不向浏览器开放 Kubernetes 原始路径或任意 Verb。
 
 ## 12. 验证与验收
 
@@ -850,17 +759,3 @@ Pod Access 的上游连接使用独立 `pod-port-forward.v1` 能力和 `POD_PORT
 
 性能指标必须先记录基线，再根据实际数据设置回归阈值。文档不预设未经验证的吞吐量、延迟或
 内存承诺。
-
-## 13. Phase 2 第一里程碑完成标准
-
-第一里程碑仅在以下条件全部满足后完成：
-
-- Server 可以通过独立 Resource Stream 向目标 Cluster 的 Agent 发起只读请求；
-- 每个请求使用独立 QUIC 双向 Stream；
-- Agent 接受、校验并定域执行请求；
-- 取消、超时和断连能及时释放对应资源；
-- 并发限制、正文限制和 Deadline 生效；
-- 旧 Agent 不声明能力时不会收到业务 Stream；
-- Server HTTP API 完成 Project/Cluster 权限检查；
-- 真实 QUIC 并发、取消、慢消费者和资源回收测试通过；
-- OpenAPI、容器服务文档和 Roadmap 按实际实现状态同步更新。

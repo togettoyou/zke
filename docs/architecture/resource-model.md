@@ -12,17 +12,15 @@
 
 ## 资源层次
 
-ZKE 使用以下资源层次组织资源归属；当前已实现 Global、Tenant、Project、Cluster 和单集群 Namespace
-管理，Cluster Group 仍在规划中：
+ZKE 使用以下层次组织当前资源归属：
 
 ```text
 Global
 └── Tenant
     └── Project
-        └── Cluster Group
-            └── Cluster
-                └── Namespace
-                    └── Workload or Service
+        └── Cluster
+            └── Namespace
+                └── Workload or Service
 ```
 
 不同用户只能查看和操作其权限范围内的资源。所有跨集群查询均需遵守租户、项目和 RBAC 权限边界。

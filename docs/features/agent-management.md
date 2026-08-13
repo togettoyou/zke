@@ -59,7 +59,7 @@ Agent 私钥不会发送给 Server。
 Cluster 删除使用 `cluster.manage`，会真正移除 Cluster 及其内部 Agent、Credential 和绑定的 Enrollment，
 不可恢复，也不可重新接入。
 
-Tenant、Project、User 和 RoleBinding 的 Phase 1 管理生命周期也已实现。Tenant 与 Project 停用只更新自身
+Tenant、Project、User 和 RoleBinding 的管理生命周期也已实现。Tenant 与 Project 停用只更新自身
 `status`，立即断开作用域内的 Agent，但保留 Enrollment、Agent 身份和 Credential，恢复后 Agent 自动重连；
 删除则真正移除其下所有资源，审计事件仍保留删除时的名称快照。
 
@@ -68,7 +68,7 @@ Tenant、Project、User 和 RoleBinding 的 Phase 1 管理生命周期也已实�
 - 连接快照不写数据库，Server 重启后离线断开详情会丢失；
 - 多 Server 实例尚未汇总全局连接视图和任务路由；
 - Agent 离线直至证书过期后，需要执行 Cluster 重新接入；
-- Agent 专用 Helm 升级、日志、配置与连接诊断仍属于后续规划；
+- 当前不提供 Agent 专用 Helm 升级、日志、配置与连接诊断；
 - 项目仍处于开发预览阶段，不适用于生产环境。
 
 集群显示名称只用于识别且允许修改，不承担唯一身份语义；`cluster_id` 是跨接口、权限和内部身份绑定使用的稳定

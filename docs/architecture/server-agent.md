@@ -1,122 +1,78 @@
 # Server + Agent 架构
 
-Agent 首次注册、identity Secret、证书信任链和 QUIC/mTLS 长连接的逐步说明参见
-[Agent 注册与连接](agent-enrollment-and-connection.md)。
+ZKE Server 是统一管理面，每个接入的 Kubernetes 集群部署一个 ZKE Agent。Agent 主动连接 Server，Server 不需要
+直接访问目标集群的 Kubernetes API Server。
 
-## ZKE Server
+## 职责边界
 
-ZKE Server 是平台统一控制端，规划负责：
+ZKE Server 负责：
 
-- 用户认证；
-- RBAC 权限控制；
-- 多租户与项目管理；
-- Agent 连接管理；
-- 集群元数据管理；
-- 操作任务下发；
-- 数据存储；
-- 审计日志；
-- 多集群资源汇总。
+- 用户认证、Tenant、Project 与 RBAC；
+- Cluster、Agent 连接身份和接入凭证管理；
+- HTTP API、Console、敏感操作确认、幂等与审计；
+- 将资源请求定域到目标 Cluster 的当前 Agent；
+- PostgreSQL 主数据与 Managed Agent PKI。
 
-## ZKE Agent
+ZKE Agent 负责：
 
-每个接入的 Kubernetes 集群部署一个 ZKE Agent。Agent 规划负责：
+- 注册、身份 Secret、QUIC/mTLS 连接、心跳、重连和客户端证书续期；
+- 使用目标集群内的 Kubernetes 身份执行资源查询和操作；
+- 承载 Resource、Event Watch、Pod Logs、Pod Exec、Pod Port Forward 与独立终端会话 Stream；
+- 在本地再次校验请求类型、资源身份、正文上限和允许的 Subresource。
 
-- 主动连接 ZKE Server；
-- 上报 Agent 版本、健康状态和集群状态；
-- 查询 Kubernetes 资源；
-- 执行经过授权的集群操作；
-- 获取 Pod 日志；
-- 按明确 Cluster/Namespace 获取 Kubernetes Event 快照与实时 Watch；
-- 建立 Web Terminal 会话；
-- 建立单 Pod、单 TCP 端口的受限 Port Forward 会话；
-- 收集或转发指标、日志和事件；
-- 返回操作结果。
+多集群指标、日志和告警采集仍在规划中，不属于当前 Agent 数据面。
 
-## 当前实现边界
+## 连接与请求模型
 
-当前已完成 Server 注册凭证创建、Agent 注册 HTTP API，以及 Agent 首次注册与身份 Secret 持久化。Agent 在集群
-内生成私钥，Server 只接收 CSR；注册结果中的证书身份显式绑定 Tenant、Project、Cluster 和 Agent。Agent 先
-持久化私钥、CSR 和幂等键再发出网络请求，因此请求结果不确定或 Pod 重启时仍能使用同一注册尝试恢复结果。
+```mermaid
+sequenceDiagram
+    participant User as Console / API Client
+    participant Server as ZKE Server
+    participant Agent as Target Cluster Agent
+    participant K8s as Kubernetes API Server
 
-身份存储使用固定名称 Kubernetes Secret。Agent 通过 client-go 按配置的 `identity.namespace` 和
-`identity.secret_name` 查找它；不存在时直接创建并写入待注册私钥、CSR 和幂等键，存在时读取或更新。部署清单
-不再需要预创建空 Secret。ServiceAccount 至少需要所在 Namespace 的 Secret `create` 权限，以及身份 Secret 的
-`get`、`update` 权限。
+    Agent->>Server: 主动建立 QUIC / mTLS Connection
+    User->>Server: 携带 Session 与目标 Cluster 的请求
+    Server->>Server: 认证、授权、目标与输入校验
+    Server->>Agent: 独立业务 Stream
+    Agent->>K8s: 使用 Agent 或会话专属 Kubernetes 身份执行
+    K8s-->>Agent: 结果或流式数据
+    Agent-->>Server: 有界响应
+    Server-->>User: API 响应，并记录审计
+```
 
-一次性注册 Token 的来源不同：Server 创建 Enrollment 后只返回一次 Token，运维系统负责把它写入独立的临时
-Kubernetes Secret。Agent 通过 client-go 读取固定名称 `zke-agent-enrollment` 的 `token` Key，不把 Token
-写入 YAML 或宿主机文件。完整身份存在后，Agent 不再读取注册 Token；Secret 可以保留以简化 Pod 重建，也可以
-由外部生命周期策略清理。
+一条 Agent Connection 只绑定一个内部 Agent 身份和一个稳定的 `cluster_id`。管理 API 不暴露内部
+`agent_id`；重新接入复用原 `cluster_id` 并创建新的内部连接身份。所有查询和操作都必须保留目标 Cluster；
+命名空间级操作还必须保留 Namespace、资源名称及适用的 UID/`resourceVersion` 前置条件。
 
-当前仓库已经提供 ZKE Server 与 PostgreSQL 的 Kubernetes 清单和 Helm Chart；目标集群中的 Agent 仍由 Server
-生成 Kubernetes Deployment、Secret、ConfigMap 和最小 RBAC 清单。ServiceAccount 可以在所在 Namespace 创建 Secret，对 Enrollment、Trust 和 identity Secret 具有定域的
-`get` 权限，并且只能更新 identity Secret；独立 ClusterRole 授予 Node 的 `get`、`list`、`update`、`patch` 以及
-Namespace 的 `get`、`list`、`create`、`update`、`delete`、Pod 的 `get`、`list`、`update`、`delete` 以及 `pods/log` 的
-`get`、`pods/exec` 与 `pods/portforward` 的 `get/create`、`pods/eviction` 的 `create` 权限，并授予五类工作负载、Service、Ingress 与 Gateway 主资源的完整 CRUD，
-以及 ConfigMap、存储、HorizontalPodAutoscaler、ServiceAccount 和四类 Kubernetes RBAC 主资源的
-`get`、`list`、`create`、`update`、`delete`；RBAC 不包含 `escalate`、`bind` 或 `impersonate`，Secret 主资源不在该 ClusterRole 中；
-Eviction 只由 Node Drain 的专用权限与 Agent 精确 allowlist 使用，通用资源接口仍拒绝 Subresource。
-ZKE Server 的 HTTP Listener 可选原生 TLS：同时配置 `http.tls.certificate_file` 与
-`http.tls.private_key_file` 时提供 HTTPS；省略时提供 HTTP。本地明文开发只绑定回环地址，生产环境必须使用
-原生 HTTPS 或由上游网关终止 TLS。
-注册后的 QUIC/mTLS 主动连接、证书身份与 `ClientHello` 交叉校验、`ServerHello`、心跳确认、有界重连和
-`last_seen_at` 限频持久化已经实现。Agent 会在证书进入配置的续期窗口后，通过已认证的 Control Stream 自动
-续期并使用新证书重连；凭据或 Agent 身份被撤销时，PostgreSQL 通知会让所有 Server 实例关闭匹配的现有连接
-并拒绝当前身份重连。Tenant、Project 或 Cluster 停用同样会立即断连，但 Agent 保持重试，恢复后复用原身份。
-HTTP API 使用 `http.address` 的 TCP Listener；QUIC 使用独立
-`agent_listener.address` 的 UDP Listener，两者必须分别配置。管理面把 Cluster 和其中的 Agent 视为一个
-聚合资源：Server 按 Project 查询 Cluster，并在 `connection` 字段中返回内部连接身份的生命周期、健康、版本、
-最后心跳、证书有效期和当前 Server 实例内存中的 `online`/`offline` 状态；管理 API 不暴露内部 Agent ID。
-Server 也已提供以 Cluster ID 为目标且需要显式确认的连接撤销和重新接入 API。当前连接快照只代表处理请求的
-Server 实例，重启后不保留离线历史；多实例全局连接视图和跨实例任务路由仍未实现。
+业务请求各占用独立 QUIC 双向 Stream。Control Stream 只承载 Hello、心跳、证书续期和连接排空，不承载资源任务。
+Secret、Kubernetes Event、Pod Logs、Exec、Port Forward 和 Kubernetes RBAC 不通过宽泛的通用接口旁路各自的
+专用权限与协议边界。
 
-Phase 2 已实现单 Server 实例内的业务 Stream 传输内核，包括双方 accept 循环、Resource Stream、能力协商、
-单 Stream 取消和并发限制。Agent dynamic client 与 Server 类型化 API 已完成 Node List/Detail；Discovery 和
-受控通用 CRUD API 已完成任意已授权内置主资源及 CRD 资源的真实 QUIC 闭环，包含 DryRun、四类 Patch、
-删除前置条件、写能力协商和有界幂等重放。类型化 Namespace List/Detail/Create/Delete 与 Console
-集群选择、DryRun/确认闭环已经实现；Deployment、StatefulSet、DaemonSet、Job 和 CronJob 已提供显式
-Cluster/Namespace 定域的类型化 List/Detail API。默认 Agent RBAC 已覆盖 Namespace、Pod 和这五类工作负载；
-类型化 Pod 后端提供显式 Cluster/Namespace 定域的 List/Detail，以及带 UID
-前置条件、DryRun、确认、幂等和审计的删除。类型化工作负载后端还提供 Deployment/StatefulSet 伸缩、
-五类工作负载创建、Deployment/StatefulSet/DaemonSet 滚动重启、CronJob 暂停/恢复以及五类工作负载删除，
-并复用通用变更链路。
-Service、Ingress 和 Gateway 已提供固定 GVR、显式 Cluster/Namespace 定域的类型化
-List/Detail/Create/Update/Delete 后端，并复用通用 Resource Stream、DryRun、确认、幂等、审计和并发身份保护。
-Gateway API v1 未安装时会返回可区分的能力缺失错误；ZKE 不安装 CRD、GatewayClass 或 Controller。
-其他资源仍由安装方按实际管理范围显式扩展最小 RBAC。工作负载 Console 已实现列表、详情、类型化创建和上述
-类型化变更的 DryRun、影响展示与确认闭环；Pod Console 已实现列表、详情和删除的 DryRun、影响展示与确认闭环；
-Pod Logs 后端已通过专用权限和独立 QUIC Stream 实现有界快照与实时 Follow；Kubernetes Event Watch 和 Pod
-Exec 也已分别通过独立协议实现。Pod Exec 使用一次性同源 WebSocket 票据、权限重验和有界 QUIC 会话；Agent 到
-Kubernetes API Server 优先使用 WebSocket streaming protocol，仅为旧 API Server 或不兼容 HTTPS 代理保留
-SPDY 回退。Shell 固定优先 bash 并回退 `/bin/sh`，Console 已提供终端入口。Pod Access 通过独立权限和有界
-Port Forward QUIC Stream 实现；Agent 使用回环随机端口桥接 Kubernetes port-forward，Server 通过独立 Origin
-提供 HTTP 反向代理，支持普通 HTTP、SSE 和
-WebSocket；同一 Cluster/Pod UID 只保留一个入口，替换需要显式确认。跨 Server 实例的长会话任务路由仍未实现。
+## 身份与最小权限
 
-当前 Server 同时提供经过 Session 与 Cluster 权限过滤的 Cluster 状态 SSE。连接建立、健康变化、生命周期撤销和断开会触发
-`cluster.status` 事件；该事件流只负责管理面状态通知，不是 Server–Agent 业务 Stream，也不包含
-Kubernetes 资源查询。
+Agent 首次注册使用短期一次性 Enrollment Token，在集群内生成私钥和 CSR；Server 只接收 CSR。注册后，Agent 将
+客户端证书和私钥保存在固定 identity Secret 中，并使用 mTLS 长连接。HTTP 注册入口与 QUIC Listener 地址、TLS
+身份和信任根分别配置。
 
-Agent 为固定的 Enrollment、Trust 和 identity Secret 名称以及注册重试参数和日志级别提供默认值。Agent 默认
-使用 Pod 内的 InCluster Kubernetes 配置；本地开发或特殊环境可以显式设置
-`kubeconfig_file`，未设置时回退到 `KUBECONFIG` 或 `~/.kube/config`。显式文件始终优先于环境自动识别。
-`registration.server_url`、Enrollment Secret 与可选的 `registration.ca_certificate_file` 用于 HTTP(S)
-注册；`connection.server_address` 与 Trust Secret 中的 Listener CA 用于 QUIC/mTLS 长连接。特殊部署可以
-用 CA 文件覆盖 Trust Secret。两类端点独立配置，信任根也不混用；它们都与 Kubernetes API 使用的 CA 无关。
+Server 生成的 Agent 安装 Manifest 包含 Deployment、ConfigMap、Secret、ServiceAccount 和最小 RBAC。Agent 的
+Kubernetes 权限决定它最终可以访问的资源；Server 授权不能越过这层限制。独立终端 App 不复用 Agent
+ServiceAccount，而是为每个会话创建短生命周期的 ServiceAccount 和按当前用户权限投影的 RBAC。
 
-Agent mTLS 使用两条独立信任链：`agent-client-ca` 签发并验证 Agent 客户端身份，`agent-listener-ca` 签发
-Agent Listener 服务端证书。Managed PKI 模式在受保护的 Server PV 中保存两套 CA 与 Listener 身份，Server
-首次启动自动生成，并在 Listener 叶子证书进入续期窗口时复用原私钥续期；数据库保存证书指纹，PV 丢失时拒绝
-静默重建 CA。需要离线 Listener CA 或外部密钥管理时可以使用 external 模式。
+## 当前部署边界
 
-## 连接模型
+ZKE Server 当前只支持单副本部署。连接快照、状态事件扇出和部分限流状态保存在进程内；同时运行多个 Server
+副本会产生不一致的在线状态，且尚无跨实例业务 Stream 路由。Server 重启后，Agent 会自动重连，但内存中的离线
+断开详情不会保留。
 
-Agent 必须主动连接 Server，不要求 Server 直接访问 Kubernetes API Server。这一连接模型计划适用于：
+Managed PKI 将 Agent Client CA、Listener CA 和 Listener 身份保存在 Server 持久目录；目录缺失或与数据库指纹
+不一致时拒绝启动。客户端证书和 Listener 叶子证书支持自动续期，CA 双信任窗口与无中断自动轮换尚未实现。
 
-- 私有网络；
-- 混合云；
-- 多云；
-- 边缘集群；
-- 无法由 Server 主动访问的 Kubernetes 集群。
+## 延伸阅读
 
-集群操作由目标集群中的 Agent 执行。Server 负责认证、授权、目标确认、任务下发与审计，不应绕过 Agent 直接执行未受控操作。
+- [Agent 注册与连接](agent-enrollment-and-connection.md)
+- [Phase 2 Server–Agent 协议设计](agent-protocol-phase-2.md)
+- [集群接入管理](../features/agent-management.md)
+- [容器服务](../features/container-service.md)
+- [终端](../features/terminal.md)
+- [安全与权限](../security/authorization.md)

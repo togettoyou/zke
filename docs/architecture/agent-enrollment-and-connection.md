@@ -536,6 +536,3 @@ Server 也会按当前客户端证书的 `NotAfter` 安排连接关闭，避免�
    受控的离线流程、KMS 或 HSM。项目不强制引入独立签发服务。
 3. **过期后的自动恢复**：正常续期已实现，但 Agent 离线至证书过期后仍需通过 Cluster 重新接入流程恢复。
 4. **CA 无中断轮换**：当前连接 CA 使用单一专用信任根，双信任窗口和 Listener/Client CA 自动轮换尚未实现。
-5. **Web 界面**：`GET /api/v1/projects/{project_id}/clusters` 已在 `connection` 中返回当前凭据序列号、过期
-   时间、剩余秒数以及 `valid`、`expiring`、`expired`、`revoked` 状态，并以首次成功连接记录的 active serial
-   解决续期重叠期选择；Web 展示尚未实现。Server 还会周期扫描并输出结构化到期告警。

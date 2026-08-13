@@ -2,14 +2,13 @@
 
 > 状态：已确定。
 >
-> 本文定义 ZKE Phase 1 已确认的技术基线与首个可运行闭环。
+> 本文记录 ZKE 当前实现采用的技术基线与核心运行闭环。
 
 ## 1. 目标
 
-技术基础需要优先验证 ZKE 最核心的 Server + Agent 架构，并为后续认证、RBAC、容器服务和可观测性
-提供稳定边界。
+技术基础围绕 Server + Agent 架构，为认证、RBAC、容器服务和后续可观测性提供稳定边界。
 
-首个纵向闭环定义为：
+核心运行闭环包括：
 
 1. 已授权用户为指定 Tenant 和 Project 创建一次性 Agent 注册凭证；
 2. ZKE Agent 从 Kubernetes 集群主动连接 ZKE Server；
@@ -74,13 +73,14 @@ httpapi/middleware
 httpapi/response  Handler 与 middleware 共用的稳定 HTTP 错误响应
 agentconn        QUIC 连接、Stream、心跳和请求分发
 auth             用户认证和会话业务流程
-rbac             固定权限、角色矩阵和 Global/Tenant/Project 作用域授权
+rbac             固定权限词表、内置与自定义角色、Global/Tenant/Project 作用域授权
 resourcemanagement
                  Tenant/Project 创建、可见范围列表和 Cluster 查询业务流程
 enrollment       一次性 Agent 注册凭证创建业务流程
 store            PostgreSQL 数据访问
 audit            审计事件
-observability    Server 专属指标、追踪和日志字段
+kubernetesresource
+                 Kubernetes 资源类型化服务与通用访问边界
 ```
 
 每个 HTTP 业务模块由具体 Handler 调用对应的具体 Service，Service 再调用具体 Store。Handler 不直接访问
@@ -125,7 +125,7 @@ Engine、装配全局中间件和构造 Handler；具体 Handler 文件不得自
 
 开发与部署环境统一使用 PostgreSQL。
 
-使用显式 SQL、`pgx` 和生成式类型安全查询工具；具体工具和版本在工程初始化时确定。数据库迁移要求：
+数据访问使用显式 SQL 和 `pgx`。数据库迁移要求：
 
 - 随代码版本化并进入评审；
 - 同时定义升级和失败处理方式；
@@ -135,13 +135,11 @@ Engine、装配全局中间件和构造 Handler；具体 Handler 文件不得自
 当前迁移实现位于 `pkg/server/store/migrations`，由 ZKE Server 在开始监听 HTTP 请求前自动执行。迁移文件嵌入
 Server 二进制并按连续版本顺序执行；执行器使用 PostgreSQL advisory lock 串行化迁移，每个版本在独立事务中应用，
 并保存名称和 SHA-256 校验和。多个 Server 同时启动时只有持有锁的实例执行迁移，其余实例等待并复核结果。迁移失败或
-超过配置的迁移超时时，Server 启动失败。当前尚处于开发阶段，Phase 1 基线结构统一维护在
-`000001_phase1_foundation.sql`，修改后需要重建已应用旧校验值的开发数据库；进入共享环境或发布阶段后，已经
-应用的迁移文件不得修改，结构调整必须新增更高版本的前向迁移。
+超过配置的迁移超时时，Server 启动失败。仓库中的已提交迁移文件不得修改；结构调整必须新增更高版本的前向迁移。
 
 ### 4.3 用户认证与会话
 
-Phase 1 使用 ZKE 内置本地用户认证：
+当前使用 ZKE 内置本地用户认证：
 
 - 用户名在规范化后唯一；登录失败使用统一错误，避免泄露账户是否存在；
 - 密码只保存 Argon2id 摘要，并为每个密码生成独立随机 Salt；
@@ -155,14 +153,9 @@ Phase 1 使用 ZKE 内置本地用户认证：
 - Server 启动时只在用户表为空时创建首个管理员，密码从安全文件读取；
 - 管理员通过一次性、短有效期重置流程协助账户恢复。
 
-Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.manage`、`project.create`、
-`project.read`、`project.manage`、
-`cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke`、`cluster.read`、
-`cluster.manage`、`cluster.resource.create`、`cluster.resource.update`、`cluster.resource.delete`、
-`cluster.pod.logs.read`、`cluster.connection.revoke`、`user.read`、`user.manage`、`user.password.change`、`rbac.read`、`rbac.manage`
-和 `audit.read`。
-角色是权限的命名集合，由 `role_bindings.role` 外键引用，可由操作者创建、修改和删除。内置角色 `admin` 与
-`viewer` 由 Server 定义、不可编辑，且只定义在代码中：Schema 不播种角色，两者在每次启动时由 Server 对账写入，
+权限词表由 Server 定义，并通过 `GET /api/v1/permissions` 发布；角色是权限的命名集合，可由操作者创建、修改和
+删除。内置角色 `admin` 与
+`viewer` 由 Server 定义且不可编辑；Schema 不播种角色，两者在每次启动时由 Server 对账写入，
 `admin` 包含全部权限，`viewer` 只包含 Tenant、Project 与 Cluster 读取权限。首个管理员拥有 Global `admin` 角色。角色的权限集不得超出调用者在 Global 已持有的
 权限，创建角色、修改角色和创建绑定三条路径都执行该检查，详见[安全与权限](../security/authorization.md)。
 
@@ -181,14 +174,8 @@ Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.man
 - 有效会话查询会原子续期空闲时间且不超过绝对过期时间，用户禁用、会话撤销、超时或密码变更会使会话失效；
 - Session Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，CSRF Token 通过 `SameSite=Strict` Cookie 交付并要求 `X-CSRF-Token` 请求头；两者在 TLS 部署中必须启用 `Secure`；
 - Go 标准库跨源保护会在业务 Handler 之前拒绝非安全的跨源浏览器请求。
-- RBAC 使用固定权限 `tenant.create`、`tenant.read`、`tenant.manage`、`project.create`、`project.read`、
-  `project.manage`、
-  `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke`、`cluster.read`、
-  `cluster.manage`、`cluster.resource.create`、`cluster.resource.update`、`cluster.resource.delete`、
-  `cluster.rbac.read`、`cluster.rbac.manage`、
-  `cluster.pod.logs.read`、`cluster.connection.revoke`、`user.read`、`user.manage`、`user.password.change`、`rbac.read`、`rbac.manage`
-  和 `audit.read`；权限词表固定在代码中，角色则由操作者组合，内置 `admin` 拥有全部权限、`viewer` 只拥有
-  Tenant、Project 和 Cluster 读取权限。
+- RBAC 权限词表固定在代码中，角色由操作者组合；内置 `admin` 拥有全部权限，`viewer` 只拥有 Tenant、
+  Project 和 Cluster 读取权限。
 - RoleBinding 支持 Global、Tenant 和 Project 作用域；Global 绑定向下覆盖全部作用域，Tenant 绑定覆盖对应
   Tenant 及其 Project，Project 绑定只覆盖目标 Project。未命中有效绑定时默认拒绝。
 - RBAC Service、PostgreSQL Store 和 HTTP 授权 middleware 已实现；Project middleware 会根据 `project_id`
@@ -201,7 +188,7 @@ Phase 1 使用固定权限标识：`tenant.create`、`tenant.read`、`tenant.man
 删除用户会在同一事务中永久移除用户记录、全部 Session 和 RoleBinding；Enrollment 与资源创建幂等记录保留
 历史用户 ID，删除审计保留用户 ID 和用户名快照。
 RBAC 已接入 Tenant/Project/Cluster 生命周期、Cluster 聚合查询、Cluster 注册凭证管理、安装 Manifest、连接撤销和
-审计查询；Phase 1 认证与 RBAC 后端闭环不再依赖直接写数据库。
+审计查询；认证与 RBAC 后端闭环不依赖直接写数据库。
 登录来源当前使用直接 TCP 对端地址；部署可信反向代理前需要补充显式的代理信任配置。
 
 ## 5. Agent 技术基线
@@ -320,7 +307,7 @@ UDP
 
 - QUIC 内建 TLS 1.3；Agent 验证 Server 证书，Server 验证 Agent 客户端证书。
 - TLS ALPN 固定为 `zke-agent/1`。
-- Phase 1 不使用 QUIC 0-RTT，应用消息在 mTLS 握手完成后发送。
+- 当前不使用 QUIC 0-RTT，应用消息在 mTLS 握手完成后发送。
 - 管理 HTTP Listener 与 Agent QUIC Listener 分离；Agent Listener 需要 UDP 入口。
 - Agent 始终作为连接发起方，但双方都可以创建双向 Stream。
 
@@ -461,119 +448,9 @@ Cluster 关系。
 HTTP JSON 响应中的时间统一使用 RFC 3339 和固定 `UTC+8` 偏移（`+08:00`）。PostgreSQL 继续使用
 `timestamptz` 保存绝对时间，HTTP Cookie 的 `Expires` 继续遵循协议使用 GMT，不把展示时区写入存储或协议字段。
 
-Phase 1 API 权限映射：
-
-| API                                  | 权限                                                                                |
-| ------------------------------------ | ----------------------------------------------------------------------------------- |
-| 创建/查看/管理 Tenant                | `tenant.create`、`tenant.read`、`tenant.manage`（管理权限为 Global）                |
-| 创建/查看/管理 Project               | `project.create`、`project.read`、`project.manage`                                  |
-| 创建/查看/撤销 Cluster 接入凭证      | `cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` |
-| 查看 Cluster                         | `cluster.read`                                                                      |
-| 管理 Cluster                         | `cluster.manage`                                                                    |
-| 创建 Kubernetes 主资源               | `cluster.resource.create`                                                           |
-| 更新或 Patch Kubernetes 主资源       | `cluster.resource.update`                                                           |
-| 删除 Kubernetes 主资源               | `cluster.resource.delete`                                                           |
-| 查看和管理目标集群的 Kubernetes RBAC | `cluster.rbac.read`、`cluster.rbac.manage`                                          |
-| 读取 Pod 日志快照或实时流            | `cluster.pod.logs.read`                                                             |
-| 读取 Kubernetes Event 快照或实时流   | `cluster.event.read`                                                                |
-| 撤销 Cluster 当前连接                | `cluster.connection.revoke`                                                         |
-| 查看和管理用户                       | `user.read`、`user.manage`（Global）                                                |
-| 修改当前用户自己的密码               | `user.password.change`（Global）                                                    |
-| 查看和管理 RoleBinding               | `rbac.read`、`rbac.manage`（Global）                                                |
-| 查询审计事件                         | `audit.read`（按 RoleBinding 作用域过滤）                                           |
-
-`/api/v1/events` 根据订阅者已有的读取权限和作用域过滤事件。
-
-当前已实现的管理端点包括：
-
-```text
-POST /api/v1/auth/login
-POST /api/v1/auth/logout
-GET  /api/v1/auth/me
-GET  /api/v1/users
-POST /api/v1/users
-GET  /api/v1/users/{user_id}
-PUT  /api/v1/users/{user_id}
-DELETE /api/v1/users/{user_id}
-PUT  /api/v1/users/{user_id}/status
-POST /api/v1/users/{user_id}/unlock
-POST /api/v1/users/{user_id}/password-reset
-GET  /api/v1/role-bindings
-POST /api/v1/role-bindings
-GET  /api/v1/role-bindings/{role_binding_id}
-DELETE /api/v1/role-bindings/{role_binding_id}
-GET  /api/v1/audit-events
-GET  /api/v1/audit-events/actions
-GET  /api/v1/events
-GET  /api/v1/tenants
-POST /api/v1/tenants
-GET  /api/v1/tenants/{tenant_id}
-PUT  /api/v1/tenants/{tenant_id}
-DELETE /api/v1/tenants/{tenant_id}
-GET  /api/v1/tenants/{tenant_id}/projects
-POST /api/v1/tenants/{tenant_id}/projects
-GET  /api/v1/projects/{project_id}
-PUT  /api/v1/projects/{project_id}
-DELETE /api/v1/projects/{project_id}
-GET  /api/v1/projects/{project_id}/clusters
-GET  /api/v1/clusters/{cluster_id}
-GET  /api/v1/clusters/{cluster_id}/overview
-GET  /api/v1/clusters/{cluster_id}/nodes
-GET  /api/v1/clusters/{cluster_id}/nodes/{node_name}
-GET  /api/v1/clusters/{cluster_id}/kubernetes/resource-types
-GET  /api/v1/clusters/{cluster_id}/kubernetes/resources
-POST /api/v1/clusters/{cluster_id}/kubernetes/resources
-GET  /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}
-PUT  /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}
-PATCH /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}
-DELETE /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}
-POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}
-PUT  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}
-DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}
-GET  /api/v1/clusters/{cluster_id}/storage/{storage_resource}
-POST /api/v1/clusters/{cluster_id}/storage/{storage_resource}
-GET  /api/v1/clusters/{cluster_id}/storage/{storage_resource}/{storage_name}
-PUT  /api/v1/clusters/{cluster_id}/storage/{storage_resource}/{storage_name}
-DELETE /api/v1/clusters/{cluster_id}/storage/{storage_resource}/{storage_name}
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}
-POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}
-PUT  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}
-DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers
-POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}
-PUT  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}
-DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}
-GET  /api/v1/clusters/{cluster_id}/policies/{policy_resource}
-POST /api/v1/clusters/{cluster_id}/policies/{policy_resource}
-GET  /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}
-PUT  /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}
-DELETE /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}
-POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}
-PUT  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}
-DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps
-POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps
-GET  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps/{config_map_name}
-PUT  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps/{config_map_name}
-DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps/{config_map_name}
-PUT  /api/v1/clusters/{cluster_id}
-DELETE /api/v1/clusters/{cluster_id}
-POST /api/v1/clusters/{cluster_id}/connection/revoke
-POST /api/v1/clusters/{cluster_id}/connection/reenroll
-GET  /api/v1/projects/{project_id}/cluster-enrollments
-POST /api/v1/projects/{project_id}/cluster-enrollments
-GET  /api/v1/projects/{project_id}/cluster-enrollments/{enrollment_id}
-DELETE /api/v1/projects/{project_id}/cluster-enrollments/{enrollment_id}
-POST /api/v1/projects/{project_id}/cluster-installations
-GET  /agent-install/v1/manifest
-```
+具体路由、请求结构和响应结构以 [Server OpenAPI 3.1 契约](../../api/openapi/zke-server.v1.yaml)为准；
+权限语义、作用域下限与敏感资源的叠加授权以[安全与权限](../security/authorization.md)为准。这里不重复维护端点清单，
+避免与代码和契约产生多份事实来源。
 
 SSE 发送 `ready`、`cluster.status`、`close` 和注释心跳。Agent 连接建立、健康变化、生命周期撤销和断开触发
 Cluster 聚合状态事件。订阅建立时解析一次调用方的 `cluster.read` 可见性，事件按该可见性在内存中过滤；心跳
@@ -762,7 +639,7 @@ Agent 激活、心跳与证书续期都要求 Tenant、Project、Cluster 全部�
 管理 API、RBAC 和审计使用稳定 `cluster_id`。内部 Agent ID 只用于连接协议、Credential 归属和历史追踪；
 Cluster 名称可修改。重新接入保持 `cluster_id` 不变，并创建新的内部 Agent 身份。
 
-连接状态由 Server 内存和 `agentconn` 维护，数据库保存限频的 `last_seen_at`、生命周期与健康状态。Phase 1
+连接状态由 Server 内存和 `agentconn` 维护，数据库保存限频的 `last_seen_at`、生命周期与健康状态。当前
 状态 API 会把当前 Server 实例的连接快照与数据库记录合并，返回 `online`/`offline`、Connection ID、连接与
 心跳时间、最近断开时间和原因。离线历史只在内存中按 `agent_listener.max_remembered_disconnects` 保留最近若干
 条，超出后淘汰最旧记录；Server 重启后全部丢失。并发连接数由 `agent_listener.max_concurrent_agents` 限制，
@@ -779,7 +656,7 @@ Server，而是按指数退避重连。监听中断期间撤销并不会丢失�
 Server 实例对外提供服务。
 
 多副本如果在后续阶段重新提上日程，需要成套补充 Agent 连接所有权、跨实例任务路由和共享限流设计；在那之前
-不应在代码中引入"未来会有多副本"的抽象。Phase 1 不包含 Cluster Group。
+不应在代码中引入“未来会有多副本”的抽象。
 
 ## 10. 仓库结构
 
@@ -809,7 +686,7 @@ Server 实例对外提供服务。
   这些接口的唯一实现在 `pkg/server/store`。
 - HTTP 处理器共用 `pkg/server/httpapi` 的 `baseHandler`，统一操作超时、错误到状态码的映射和失败审计写入，
   各资源只声明自己领域错误的映射表。
-- Protobuf、OpenAPI 和数据库代码生成工具必须固定版本并提供单一生成命令。
+- Protobuf 与 OpenAPI 代码生成工具必须固定版本并提供单一生成命令。
 - 生成文件是否入库在工程初始化时统一决定，生成产物通过统一命令更新。
 
 Agent Protobuf 使用 `go.mod` 的 `tool` 指令固定 `protoc-gen-go`，生成命令为：
@@ -865,9 +742,8 @@ Tenant、Project 和 Enrollment 属于正常产品资源，应由管理 API 创�
 `configs/zke-agent.yaml` 使用本机 HTTP `127.0.0.1:8080` 和 QUIC `127.0.0.1:8443`，可以配合当前
 kubeconfig 直接运行 Agent。Token、Listener CA 和身份均来自 Kubernetes Secret，不写入配置文件。
 默认数据库地址与 `deploy/development/compose.yaml` 一致，特殊环境仍可用 `ZKE_DATABASE_URL`
-覆盖数据库连接。若开发期间直接修改了尚未提交的 `000001`，现有开发数据库会因
-迁移校验和变化而拒绝启动；此时需要明确执行 `docker compose -f deploy/development/compose.yaml down --volumes`
-后重新启动数据库，而不是让应用静默改写已执行迁移。
+覆盖数据库连接。若迁移文件校验和变化，Server 会拒绝启动；应恢复原迁移并新增前向迁移。本地一次性开发数据库
+可以明确删除 Compose Volume 后重建，不能用这种方式处理共享环境。
 
 Server 配置还启用了独立 Pod Access Listener：Console/API 使用 TCP `8080`，Pod HTTP 访问使用 TCP `8081`。
 部署时通过 `pod_access.external_url` 填写浏览器真正访问的第二 Origin；可以在
@@ -1016,32 +892,13 @@ Token、证书、Secret 或完整敏感请求正文。
 - 日志和审计输出经过敏感信息扫描；
 - Protobuf breaking-change 和 OpenAPI 兼容性检查进入 CI。
 
-## 14. 首个里程碑完成标准
+## 14. 当前限制
 
-只有同时满足以下条件，Agent 接入闭环才算完成：
-
-- 可以在本地开发环境启动 PostgreSQL、Server 和 Agent；
-- 已认证且有权限的用户可以创建短期一次性注册凭证；
-- Agent 能完成注册并使用注册后身份建立 QUIC/mTLS 长连接；
-- Agent 能更新身份 Secret，并在证书到期前完成轮换；
-- 状态 API 能在正确 Tenant 和 Project 边界内返回 Cluster、Agent 版本、在线状态和最后心跳；
-- Agent 停止后在规定阈值内变为离线，重启后恢复同一身份；
-- 无权限、无效、过期、重复使用和已撤销凭证路径均经过测试；
-- 关键操作具有审计记录，日志中不包含凭证明文；
-- 相关协议、API、本地开发和部署文档同步更新。
-
-## 15. 暂不确定的事项
-
-以下事项后续单独设计：
-
-- 支持的 Kubernetes 版本与发行版范围，需要通过测试矩阵单独定义；
-- 跨请求的 RoleBinding 缓存及其失效机制：当前只在单个请求内做备忘，跨请求缓存需要先确定授权撤销的
-  传播路径，避免出现已撤销权限继续生效的窗口；
-- 列表搜索的索引方案：当前按名称和 ID 的子串匹配无法利用索引，规模增长后需要评估 pg_trgm 等方案；
-- 细粒度 RBAC 策略实现库和策略存储格式；
-- Kubernetes 资源任务协议；
-- Web Terminal 会话录制与回放；
-- VictoriaMetrics、VictoriaLogs 和 Grafana 的具体集成方式。
+- ZKE Server 仅支持单副本部署；多副本需要先解决 Agent 连接所有权、跨实例任务路由和共享限流。
+- 尚未定义受支持的 Kubernetes 版本与发行版矩阵。
+- 登录来源使用直接 TCP 对端地址，尚未提供可信反向代理来源配置。
+- Agent Client CA 与 Listener CA 尚不支持双信任窗口和无中断自动轮换。
+- 多集群指标、日志与告警平台仍处于规划阶段。
 
 ## 参考资料
 
