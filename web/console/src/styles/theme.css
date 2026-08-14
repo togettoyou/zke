@@ -61,6 +61,8 @@
   --app-emerald-to: #0ca678;
   --app-amber-from: #ffb454;
   --app-amber-to: #f08c00;
+  --app-rose-from: #fb7185;
+  --app-rose-to: #e11d48;
   --app-slate-from: #475569;
   --app-slate-to: #1e293b;
 
@@ -72,6 +74,7 @@
   --app-violet-glow: rgb(112 72 232 / 0.42);
   --app-emerald-glow: rgb(12 166 120 / 0.4);
   --app-amber-glow: rgb(240 140 0 / 0.42);
+  --app-rose-glow: rgb(225 29 72 / 0.42);
   --app-slate-glow: rgb(30 41 59 / 0.42);
   --tile-highlight: rgb(255 255 255 / 0.9);
 

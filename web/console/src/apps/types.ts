@@ -25,7 +25,7 @@ export type AppComponentProps = {
  * application is saturated, an unlit tile says "not yet" before any caption
  * under it does.
  */
-export type AppAccent = "blue" | "cyan" | "violet" | "emerald" | "amber" | "slate";
+export type AppAccent = "blue" | "cyan" | "violet" | "emerald" | "amber" | "rose" | "slate";
 
 export type AppManifest = {
   id: string;
@@ -35,6 +35,17 @@ export type AppManifest = {
   accent?: AppAccent;
   /** Entry is shown when the user holds any of these permissions anywhere. */
   requiredPermissions: Permission[];
+  /**
+   * Entry is shown only to a global administrator.
+   *
+   * Asked as a role rather than through `requiredPermissions` because the
+   * Server guards these routes with `RequireGlobalAdministrator`, and the
+   * Server reserves that role to the people who already hold it — a custom role
+   * carrying every permission is still not a global administrator. Gating by
+   * permission would put an application on the desktop whose every request the
+   * Server refuses.
+   */
+  requiresGlobalAdmin?: boolean;
   availability: AppAvailability;
   defaultSize: { width: number; height: number };
   entry: LazyExoticComponent<ComponentType<AppComponentProps>>;

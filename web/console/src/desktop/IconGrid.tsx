@@ -28,6 +28,9 @@ export const IconGrid = memo(function IconGrid({ onOpen }: { onOpen: (appId: str
   const { permissions } = useSessionContext();
 
   const visible = APP_MANIFESTS.filter((manifest) => {
+    if (manifest.requiresGlobalAdmin && !permissions.isGlobalAdmin) {
+      return false;
+    }
     if (manifest.availability.state === "planned" || manifest.requiredPermissions.length === 0) {
       return true;
     }

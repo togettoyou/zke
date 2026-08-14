@@ -6,6 +6,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   SquareTerminal,
 } from "lucide-react";
 
@@ -22,6 +23,9 @@ const AccessAuditApp = lazy(async () => ({
 }));
 const SettingsApp = lazy(async () => ({
   default: (await import("./settings/SettingsApp")).SettingsApp,
+}));
+const PlatformApp = lazy(async () => ({
+  default: (await import("./platform/PlatformApp")).PlatformApp,
 }));
 const ContainerServiceApp = lazy(async () => ({
   default: (await import("./container-service/ContainerServiceApp")).ContainerServiceApp,
@@ -74,6 +78,20 @@ export const APP_MANIFESTS: AppManifest[] = [
     availability: { state: "available" },
     defaultSize: { width: 1_060, height: 640 },
     entry: AccessAuditApp,
+  },
+  {
+    id: "platform",
+    title: "平台配置",
+    description: "Agent 接入端点、镜像与集群终端的部署级默认值",
+    icon: SlidersHorizontal,
+    accent: "rose",
+    // Guarded by role rather than permission: the Server puts every /platform
+    // route behind RequireGlobalAdministrator.
+    requiredPermissions: [],
+    requiresGlobalAdmin: true,
+    availability: { state: "available" },
+    defaultSize: { width: 860, height: 640 },
+    entry: PlatformApp,
   },
   {
     id: "settings",
