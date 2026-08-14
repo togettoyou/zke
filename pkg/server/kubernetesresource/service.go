@@ -50,18 +50,18 @@ var (
 	// are permanent boundaries of ZKE rather than gaps in what the Agent's
 	// ServiceAccount was granted, so they are neither retried nor answered by
 	// widening a ClusterRole.
-	ErrResourceNotEnabled      = errors.New("Kubernetes resource is not enabled for the Agent")
-	ErrClusterUnavailable      = errors.New("Kubernetes API is unavailable")
-	ErrClusterTimeout          = errors.New("Kubernetes API request timed out")
-	ErrResponseTooLarge        = errors.New("Kubernetes API response is too large")
-	ErrResponseBudget          = errors.New("Server response buffer budget is exhausted")
-	ErrIdempotencyConflict     = errors.New("Kubernetes resource idempotency conflict")
-	ErrUpstreamConflict        = errors.New("Kubernetes API resource conflict")
-	ErrUpstreamRejected        = errors.New("Kubernetes rejected the submitted resource")
-	ErrConfigMapImmutable      = errors.New("Kubernetes ConfigMap is immutable")
-	ErrManagedResource         = errors.New("cluster-scoped Kubernetes resource is managed by ZKE")
-	ErrUpstreamFailure         = errors.New("Kubernetes API request failed")
-	ErrInvalidResponse         = errors.New("invalid Agent resource response")
+	ErrResourceNotEnabled  = errors.New("Kubernetes resource is not enabled for the Agent")
+	ErrClusterUnavailable  = errors.New("Kubernetes API is unavailable")
+	ErrClusterTimeout      = errors.New("Kubernetes API request timed out")
+	ErrResponseTooLarge    = errors.New("Kubernetes API response is too large")
+	ErrResponseBudget      = errors.New("Server response buffer budget is exhausted")
+	ErrIdempotencyConflict = errors.New("Kubernetes resource idempotency conflict")
+	ErrUpstreamConflict    = errors.New("Kubernetes API resource conflict")
+	ErrUpstreamRejected    = errors.New("Kubernetes rejected the submitted resource")
+	ErrConfigMapImmutable  = errors.New("Kubernetes ConfigMap is immutable")
+	ErrManagedResource     = errors.New("cluster-scoped Kubernetes resource is managed by ZKE")
+	ErrUpstreamFailure     = errors.New("Kubernetes API request failed")
+	ErrInvalidResponse     = errors.New("invalid Agent resource response")
 )
 
 var nodeResource = &agentv1.GroupVersionResource{
