@@ -78,7 +78,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
+import { CREDENTIAL_MANAGER_IGNORE, Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -777,6 +777,7 @@ function CreateUserDialog({
             <Input
               id="new-username"
               autoComplete="off"
+              {...CREDENTIAL_MANAGER_IGNORE}
               value={username}
               onChange={(event) => setUsername(event.target.value)}
             />
@@ -796,6 +797,7 @@ function CreateUserDialog({
               id="new-user-password"
               type="password"
               autoComplete="new-password"
+              {...CREDENTIAL_MANAGER_IGNORE}
               value={password}
               aria-invalid={tooShort}
               onChange={(event) => setPassword(event.target.value)}
@@ -948,6 +950,7 @@ function ResetPasswordDialog({
           id="reset-password"
           type="password"
           autoComplete="new-password"
+          {...CREDENTIAL_MANAGER_IGNORE}
           value={password}
           aria-invalid={password.length > 0 && password.length < 15}
           onChange={(event) => setPassword(event.target.value)}

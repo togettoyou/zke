@@ -61,7 +61,18 @@ export function LoginPage({ onAuthenticated }: { onAuthenticated: () => void }) 
     }
     try {
       await login.mutateAsync({ username: username.trim(), password });
-      setPassword("");
+      /*
+       * The password is deliberately left in the field.
+       *
+       * This view is replaced by the desktop on the next render, so the state
+       * goes with it either way and blanking it first buys no secrecy. What it
+       * does cost is the save prompt: a password manager reads the form after it
+       * decides a submission happened, and an emptied field gives it a
+       * credential it cannot complete. The capture then stays pending and is
+       * offered again at every later DOM change it mistakes for a page
+       * transition — of which a desktop of windows opening and closing produces
+       * a great many.
+       */
       onAuthenticated();
     } catch {
       // Rendered from `login.error`; nothing is logged, the password is kept

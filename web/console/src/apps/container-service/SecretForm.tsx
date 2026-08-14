@@ -9,7 +9,7 @@ import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
-import { Input, Textarea } from "@/components/ui/input";
+import { CREDENTIAL_MANAGER_IGNORE, Input, Textarea } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -1082,6 +1082,7 @@ function RegistryList({
                   value={row.username}
                   autoComplete="off"
                   spellCheck={false}
+                  {...CREDENTIAL_MANAGER_IGNORE}
                   onChange={(event) => update(index, { username: event.target.value })}
                 />
               </div>
@@ -1092,6 +1093,7 @@ function RegistryList({
                   value={row.password}
                   autoComplete="off"
                   spellCheck={false}
+                  {...CREDENTIAL_MANAGER_IGNORE}
                   onChange={(event) => update(index, { password: event.target.value })}
                 />
               </div>

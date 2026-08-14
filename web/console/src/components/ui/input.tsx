@@ -9,6 +9,27 @@ export function Input({ className, type, ...props }: React.ComponentProps<"input
   return <input type={type} className={cn(FIELD_BASE, "h-9 px-2.5", className)} {...props} />;
 }
 
+/**
+ * Spread onto a credential field that is not the operator's own.
+ *
+ * A password manager decides a form was submitted partly by watching its fields
+ * leave the DOM, and this Console never navigates: closing a window or a dialog
+ * removes a whole subtree at once, which reads as exactly that. Left unmarked, a
+ * field holding somebody else's password — an initial password being handed out,
+ * a reset, a registry credential — makes the extension offer to save that
+ * password into the operator's vault as if it were their login here.
+ *
+ * `autoComplete="off"` does not cover this: the major extensions ignore it by
+ * design, because sites used it to break password managers on purpose. Each
+ * vendor reads its own attribute instead, so all four are carried.
+ */
+export const CREDENTIAL_MANAGER_IGNORE = {
+  "data-1p-ignore": "",
+  "data-lpignore": "true",
+  "data-bwignore": "",
+  "data-form-type": "other",
+} as const;
+
 export function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
   return (
     <textarea

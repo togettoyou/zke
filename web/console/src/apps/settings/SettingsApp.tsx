@@ -189,14 +189,16 @@ function PasswordSection() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (mismatch || tooShort || !currentPassword || !newPassword) {
+    if (done || mismatch || tooShort || !currentPassword || !newPassword) {
       return;
     }
     try {
       await changePassword.mutateAsync({ currentPassword, newPassword });
-      setCurrentPassword("");
-      setNewPassword("");
-      setRepeated("");
+      // Both passwords stay in their fields, for the reason given on the sign-in
+      // form: this is the operator's own credential, the section is about to be
+      // replaced by the login view, and a password manager that finds the fields
+      // emptied cannot finish updating the item it holds for this site — it goes
+      // on asking instead.
       setDone(true);
       toast.success("密码已修改，请使用新密码重新登录");
       // The Server revoked every session for this user, including this one.
@@ -271,7 +273,7 @@ function PasswordSection() {
           type="submit"
           variant="primary"
           className="mt-1 justify-self-start px-5"
-          disabled={changePassword.isPending || mismatch || tooShort}
+          disabled={changePassword.isPending || done || mismatch || tooShort}
         >
           {changePassword.isPending ? "提交中…" : "修改密码"}
         </Button>
