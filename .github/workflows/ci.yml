@@ -7,11 +7,17 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "*"
     paths-ignore:
       - "**/*.md"
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   go:
@@ -93,3 +99,14 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+
+  release:
+    name: Release
+    needs:
+      - go
+      - race
+      - console
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/release.yml
