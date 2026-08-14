@@ -315,9 +315,6 @@ http:
   tls:
     certificate_file: /var/run/secrets/zke-http/tls.crt
     private_key_file: /var/run/secrets/zke-http/tls.key
-
-auth:
-  cookie_secure: true
 ```
 
 Agent 使用公有 CA 时只需要 HTTPS URL；使用私有 CA 时额外配置：
@@ -335,8 +332,8 @@ Agent -> HTTPS Gateway -> ZKE Server HTTP Listener
 ```
 
 此时 Server 可以省略 `http.tls`，Agent 验证的是网关证书。私有网关 CA 配置在
-`registration.ca_certificate_file`，公有 CA 时省略。只要浏览器通过 HTTPS 访问，无论 TLS 在哪里终止，
-`auth.cookie_secure` 都必须设为 `true`。
+`registration.ca_certificate_file`，公有 CA 时省略。浏览器会话 Cookie 的 `Secure` 属性不需要配置：Server
+按请求判断，原生 TLS 直接成立，网关终止 TLS 时取 `X-Forwarded-Proto`，因此网关必须转发该请求头。
 
 Server 原生 HTTP TLS 是可选的，代码不限制 HTTP 注册地址的网络范围。注册 Token 通过 Authorization Header
 传输；在不可信网络中需要传输机密性时应使用 HTTPS。

@@ -67,9 +67,8 @@ auth:
   operation_timeout: 10s
   # Each password check uses the Argon2id memory setting (currently 64 MiB).
   max_concurrent_password_checks: 4
-  # Controls the browser session cookie's Secure attribute. Set true when the
-  # browser-facing endpoint uses HTTPS, whether TLS ends here or at a gateway.
-  cookie_secure: false
+  # The session cookie's Secure attribute is not configured here. It follows each
+  # request: native TLS, or X-Forwarded-Proto from a gateway that terminated it.
   login_rate_limit:
     window: 1m
     max_attempts_per_account: 5

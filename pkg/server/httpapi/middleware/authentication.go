@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,7 +23,6 @@ const (
 )
 
 type AuthenticationConfig struct {
-	CookieSecure     bool
 	OperationTimeout time.Duration
 }
 
@@ -60,7 +60,7 @@ func (authMiddleware *Authentication) RequireAuthentication(c *gin.Context) {
 	)
 	cancelOperation()
 	if errors.Is(err, auth.ErrUnauthenticated) {
-		ClearAuthenticationCookies(c, authMiddleware.config.CookieSecure)
+		ClearAuthenticationCookies(c)
 		writeError(c, http.StatusUnauthorized, "unauthenticated", "authentication required")
 		c.Abort()
 		return
@@ -108,8 +108,32 @@ func SessionToken(c *gin.Context) (string, bool) {
 	return token, valid && token != ""
 }
 
-func ClearAuthenticationCookies(c *gin.Context, cookieSecure bool) {
+// RequestIsHTTPS reports whether the browser reached this Server over HTTPS. It
+// decides the Secure attribute of the session cookies, which is why it is not a
+// deployment setting: an operator who terminates TLS at a gateway has no reason
+// to also remember a boolean here, and the one who forgets it silently loses the
+// attribute -- nothing breaks over HTTPS without Secure, so the mistake is
+// invisible until the session cookie leaves over plaintext.
+//
+// Native TLS is authoritative. Otherwise the request arrived from a gateway that
+// terminated TLS and forwarded plain HTTP, and X-Forwarded-Proto is the only
+// remaining signal. Trusting it cannot downgrade anyone: forging the header adds
+// Secure to the forger's own session, and removing it requires control over the
+// victim's request headers, which already implies control over their browser. A
+// gateway that forwards neither TLS nor the header leaves cookies without Secure.
+func RequestIsHTTPS(request *http.Request) bool {
+	if request.TLS != nil {
+		return true
+	}
+	// Each proxy in a chain appends to the header, so the browser-facing scheme
+	// is the first entry.
+	clientFacing, _, _ := strings.Cut(request.Header.Get("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(clientFacing), "https")
+}
+
+func ClearAuthenticationCookies(c *gin.Context) {
 	expired := time.Unix(1, 0).UTC()
+	secure := RequestIsHTTPS(c.Request)
 	for _, cookie := range []*http.Cookie{
 		{
 			Name:     SessionCookieName,
@@ -117,7 +141,7 @@ func ClearAuthenticationCookies(c *gin.Context, cookieSecure bool) {
 			Expires:  expired,
 			MaxAge:   -1,
 			HttpOnly: true,
-			Secure:   cookieSecure,
+			Secure:   secure,
 			SameSite: http.SameSiteLaxMode,
 		},
 		{
@@ -126,7 +150,7 @@ func ClearAuthenticationCookies(c *gin.Context, cookieSecure bool) {
 			Expires:  expired,
 			MaxAge:   -1,
 			HttpOnly: false,
-			Secure:   cookieSecure,
+			Secure:   secure,
 			SameSite: http.SameSiteStrictMode,
 		},
 	} {

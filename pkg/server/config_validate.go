@@ -229,9 +229,6 @@ func (cfg Config) validateHTTP() error {
 			"HTTP TLS certificate and private key files must be configured together",
 		)
 	}
-	if certificateConfigured && !cfg.Auth.CookieSecure {
-		return errors.New("HTTP TLS requires secure session cookies")
-	}
 	if err := validateUnpaddedPaths([]requiredPath{
 		{cfg.HTTP.ConsoleDirectory, "Console directory"},
 		{cfg.HTTP.TLS.CertificateFile, "HTTP TLS certificate file"},

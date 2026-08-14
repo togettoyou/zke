@@ -393,7 +393,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		httpapi.Config{
 			ConsoleDirectory: cfg.HTTP.ConsoleDirectory,
 			Authentication: httpapi.AuthenticationConfig{
-				CookieSecure:          cfg.Auth.CookieSecure,
 				OperationTimeout:      cfg.Auth.OperationTimeout,
 				LoginRateLimitWindow:  cfg.Auth.LoginRateLimit.Window,
 				MaxAttemptsPerAccount: cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount,

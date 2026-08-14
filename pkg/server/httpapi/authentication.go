@@ -24,7 +24,6 @@ const (
 )
 
 type AuthenticationConfig struct {
-	CookieSecure          bool
 	OperationTimeout      time.Duration
 	LoginRateLimitWindow  time.Duration
 	MaxAttemptsPerAccount int
@@ -243,12 +242,12 @@ func (handler *authHandler) changePassword(c *gin.Context) {
 	case errors.Is(err, auth.ErrPasswordUnchanged):
 		writeError(c, http.StatusBadRequest, "password_unchanged", "new password must differ from current password")
 	case errors.Is(err, auth.ErrUnauthenticated):
-		httpmiddleware.ClearAuthenticationCookies(c, handler.config.CookieSecure)
+		httpmiddleware.ClearAuthenticationCookies(c)
 		writeError(c, http.StatusUnauthorized, "unauthenticated", "authentication required")
 	case err != nil:
 		handler.serviceError(c, "change current user password", err)
 	default:
-		httpmiddleware.ClearAuthenticationCookies(c, handler.config.CookieSecure)
+		httpmiddleware.ClearAuthenticationCookies(c)
 		writeSuccess(c, http.StatusOK, nil)
 	}
 }
@@ -269,7 +268,7 @@ func (handler *authHandler) logout(c *gin.Context) {
 		return
 	}
 
-	httpmiddleware.ClearAuthenticationCookies(c, handler.config.CookieSecure)
+	httpmiddleware.ClearAuthenticationCookies(c)
 	writeSuccess(c, http.StatusOK, nil)
 }
 
@@ -278,6 +277,7 @@ func (handler *authHandler) setAuthenticationCookies(
 	result auth.LoginResult,
 ) {
 	maxAge := max(1, int(math.Ceil(time.Until(result.ExpiresAt).Seconds())))
+	secure := httpmiddleware.RequestIsHTTPS(c.Request)
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    result.SessionToken,
@@ -285,7 +285,7 @@ func (handler *authHandler) setAuthenticationCookies(
 		Expires:  result.ExpiresAt,
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		Secure:   handler.config.CookieSecure,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(c.Writer, &http.Cookie{
@@ -295,7 +295,7 @@ func (handler *authHandler) setAuthenticationCookies(
 		Expires:  result.ExpiresAt,
 		MaxAge:   maxAge,
 		HttpOnly: false,
-		Secure:   handler.config.CookieSecure,
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 	})
 }

@@ -411,7 +411,6 @@ func New(
 			logger,
 			dependencies.AuthService,
 			httpmiddleware.AuthenticationConfig{
-				CookieSecure:     config.Authentication.CookieSecure,
 				OperationTimeout: config.Authentication.OperationTimeout,
 			},
 		),

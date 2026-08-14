@@ -1,12 +1,36 @@
-ZKE has been installed.
+{{- $serviceHost := printf "%s.%s.svc.%s" (include "zke.server.fullname" .) .Release.Namespace (trimSuffix "." (default "cluster.local" .Values.clusterDomain)) -}}
+ZKE has been installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
 
-Open the Console locally:
-  kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "zke.server.fullname" . }} 8080:{{ .Values.server.service.httpPort }} 8081:{{ .Values.server.service.podAccessPort }}
+1. Wait for the Server to become ready:
 
-Open the Console and follow the first-run page to choose the global
-administrator username and password.
+     kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "zke.server.fullname" . }}
 
-The platform default Agent endpoint uses this release's in-cluster Service.
-Before enrolling a remote Cluster, configure both
-server.agentInstall.publicHTTPURL and server.agentInstall.publicQUICAddress,
-or create a reachable Agent endpoint in Console for that enrollment.
+2. Open the Console. With the default ClusterIP Service, forward the ports:
+
+     kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "zke.server.fullname" . }} 8080:{{ .Values.server.service.httpPort }} 8081:{{ .Values.server.service.podAccessPort }}
+
+   Browse to http://127.0.0.1:8080 and follow the first-run page to choose the
+   global administrator username and password.
+
+3. Create a Tenant and a Project, then enroll a Cluster.
+
+Agent endpoint for new enrollments:
+{{- if and (empty .Values.server.agentInstall.publicHTTPURL) (empty .Values.server.agentInstall.publicQUICAddress) }}
+
+  HTTP registration: http://{{ $serviceHost }}:{{ .Values.server.service.httpPort }}
+  QUIC:              {{ $serviceHost }}:{{ .Values.server.service.agentQUICPort }}
+
+  This Service address is only reachable from this cluster. To enroll any other
+  cluster, expose the Server externally -- including UDP {{ .Values.server.service.agentQUICPort }}, which an HTTP
+  Ingress does not handle -- and set both server.agentInstall.publicHTTPURL and
+  server.agentInstall.publicQUICAddress, or add a reachable endpoint in Console.
+{{- else }}
+
+  HTTP registration: {{ .Values.server.agentInstall.publicHTTPURL }}
+  QUIC:              {{ .Values.server.agentInstall.publicQUICAddress }}
+
+  Verify that target clusters can reach both, and that UDP {{ .Values.server.service.agentQUICPort }} is open on every
+  firewall, security group and load balancer in front of the Server.
+{{- end }}
+
+Deployment guide: https://github.com/togettoyou/zke/blob/main/docs/deployment.md

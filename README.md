@@ -45,9 +45,13 @@ ZKE（Z Kubernetes Engine）通过 Server + Agent 架构连接多个 Kubernetes 
 
 ## 快速开始
 
-### Docker
+ZKE Server 是单个二进制，内置 Console 静态资源，只依赖一个 PostgreSQL 数据库和一个持久目录。
+四种方式任选其一，全部使用同一组端口：TCP `8080` 是 Console 与 API，TCP `8081` 是 Pod Access，
+UDP `8443` 接收 Agent 的 QUIC/mTLS 连接。
 
-一条命令启动 ZKE 与内置 PostgreSQL：
+### Docker：一条命令启动（内置 PostgreSQL）
+
+`zke-server-pg` 镜像同时包含 ZKE Server 与 PostgreSQL，无需任何前置准备：
 
 ```bash
 docker run -d --name zke \
@@ -57,16 +61,31 @@ docker run -d --name zke \
   ghcr.io/togettoyou/zke-server-pg:latest
 ```
 
-需要独立维护 Server 与 PostgreSQL 时使用 Docker Compose：
+### Docker：连接已有 PostgreSQL
+
+已经有数据库时改用只包含 Server 的 `zke-server` 镜像，用 `-e ZKE_DATABASE_URL` 指定连接串。
+Server 启动时自动执行数据库迁移：
+
+```bash
+docker run -d --name zke \
+  -p 8080:8080 -p 8081:8081 -p 8443:8443/udp \
+  -v zke-data:/data \
+  -e ZKE_DATABASE_URL="postgres://zke:<password>@db.example.com:5432/zke?sslmode=disable" \
+  ghcr.io/togettoyou/zke-server:latest
+```
+
+两种方式都必须保留 `zke-data`：它保存 Server Managed PKI，丢失后已接入的 Agent 无法继续连接。
+
+### Docker Compose
+
+需要分别升级、备份和运维 Server 与 PostgreSQL 时，使用仓库提供的 Compose 文件：
 
 ```bash
 cd deploy/docker
 cp .env.example .env
-# 修改 .env 中的数据库密码
+# 把 .env 中的 ZKE_POSTGRES_PASSWORD 换成随机密码，例如 openssl rand -hex 24
 docker compose up -d
 ```
-
-打开 <http://127.0.0.1:8080>。首次进入时，Console 会引导设置全局管理员用户名和密码。
 
 ### Helm
 
@@ -78,7 +97,17 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
   --namespace zke-system --create-namespace
 ```
 
-远程集群接入还需要配置可达的 HTTP 注册地址与 QUIC/UDP 入口，详见[部署指南](docs/deployment.md)。
+### 接入第一个集群
+
+打开 <http://127.0.0.1:8080>，Console 会引导设置第一个全局管理员的用户名和密码。随后：
+
+1. 在「组织与资源」中创建 Tenant 和 Project；
+2. 在「集群接入管理」中创建接入凭证，填写凭证名称、选择接入端点并指定 Agent Namespace；
+3. 复制生成的 `curl | kubectl apply` 命令，在目标集群执行，即可部署 ZKE Agent。
+
+Agent 需要能访问 Server 的 HTTP 注册地址和 QUIC/UDP 地址。本机 Docker Desktop / OrbStack 集群可直接使用内置
+端点预设；跨主机或跨网络接入时，先在「平台配置」中添加目标集群可达的接入端点。完整步骤、外部数据库准备、
+升级与备份见[部署指南](docs/deployment.md)。
 
 ## 架构
 

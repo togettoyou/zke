@@ -51,7 +51,6 @@ auth:
   session_absolute_timeout: 12h
   operation_timeout: 12s
   max_concurrent_password_checks: 3
-  cookie_secure: true
   login_rate_limit:
     window: 2m
     max_attempts_per_account: 6
@@ -155,9 +154,6 @@ log_level: warn
 			cfg.Auth.MaxConcurrentPasswordChecks,
 		)
 	}
-	if !cfg.Auth.CookieSecure {
-		t.Fatal("cookie secure = false, want YAML value true")
-	}
 	if cfg.Auth.LoginRateLimit.MaxAttemptsPerAccount != 6 {
 		t.Fatalf(
 			"account attempt limit = %d, want YAML value",
@@ -242,11 +238,6 @@ log_level: warn
 	partialHTTPTLSConfig.HTTP.TLS.PrivateKeyFile = ""
 	if err := partialHTTPTLSConfig.Validate(); err == nil {
 		t.Fatal("Validate() accepted an HTTP TLS certificate without its private key")
-	}
-	insecureHTTPTLSConfig := cfg
-	insecureHTTPTLSConfig.Auth.CookieSecure = false
-	if err := insecureHTTPTLSConfig.Validate(); err == nil {
-		t.Fatal("Validate() accepted HTTP TLS with insecure session cookies")
 	}
 	sharedListenerConfig := cfg
 	sharedListenerConfig.AgentListener.Address = "localhost:9000"
@@ -385,7 +376,6 @@ auth:
   session_absolute_timeout: 8h
   operation_timeout: 10s
   max_concurrent_password_checks: 4
-  cookie_secure: false
   login_rate_limit:
     window: 1m
     max_attempts_per_account: 5
@@ -471,7 +461,6 @@ func TestConfigRejectsUnboundedTimeout(t *testing.T) {
 			SessionAbsoluteTimeout:      8 * time.Hour,
 			OperationTimeout:            10 * time.Second,
 			MaxConcurrentPasswordChecks: 4,
-			CookieSecure:                true,
 			LoginRateLimit: LoginRateLimitConfig{
 				Window:                time.Minute,
 				MaxAttemptsPerAccount: 5,
@@ -532,7 +521,6 @@ func TestConfigRejectsSessionIdleAboveAbsoluteTimeout(t *testing.T) {
 			SessionAbsoluteTimeout:      8 * time.Hour,
 			OperationTimeout:            10 * time.Second,
 			MaxConcurrentPasswordChecks: 4,
-			CookieSecure:                true,
 			LoginRateLimit: LoginRateLimitConfig{
 				Window:                time.Minute,
 				MaxAttemptsPerAccount: 5,
@@ -593,7 +581,6 @@ func TestConfigRejectsOperationTimeoutAtOrAboveWriteTimeout(t *testing.T) {
 			SessionAbsoluteTimeout:      8 * time.Hour,
 			OperationTimeout:            10 * time.Second,
 			MaxConcurrentPasswordChecks: 4,
-			CookieSecure:                true,
 			LoginRateLimit: LoginRateLimitConfig{
 				Window:                time.Minute,
 				MaxAttemptsPerAccount: 5,

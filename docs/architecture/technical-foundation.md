@@ -180,7 +180,7 @@ Pod 终端录像由自身的 `expires_at` 控制，在读写路径上顺带回�
 - 登录成功、失败、限流拒绝和注销会写入安全审计；密码凭证版本校验、可选摘要参数升级、Session 和成功审计在同一事务中完成，避免并发改密后继续签发会话或恢复旧密码；
 - 认证数据库操作使用有界应用层超时，默认 10 秒；超时返回稳定的 `timeout` 错误，不依赖 HTTP 写超时取消数据库工作；
 - 有效会话查询会原子续期空闲时间且不超过绝对过期时间，用户禁用、会话撤销、超时或密码变更会使会话失效；
-- Session Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，CSRF Token 通过 `SameSite=Strict` Cookie 交付并要求 `X-CSRF-Token` 请求头；两者在 TLS 部署中必须启用 `Secure`；
+- Session Cookie 使用 `HttpOnly` 和 `SameSite=Lax`，CSRF Token 通过 `SameSite=Strict` Cookie 交付并要求 `X-CSRF-Token` 请求头；两者的 `Secure` 属性按请求推导，原生 TLS 或网关的 `X-Forwarded-Proto: https` 都会置位，没有对应配置项；
 - Go 标准库跨源保护会在业务 Handler 之前拒绝非安全的跨源浏览器请求。
 - RBAC 权限词表固定在代码中，角色由操作者组合；内置 `admin` 拥有全部权限，`viewer` 只拥有 Tenant、
   Project 和 Cluster 读取权限。
@@ -851,9 +851,8 @@ Server 和 Agent 都先构造可运行的容器部署默认值，再应用 YAML 
   拒绝策略。
 - 敏感值不得出现在命令行参数、日志、指标标签、错误正文或诊断包中。
 - HTTP 注册 URL、QUIC Connection 地址、超时、心跳和重试参数需要上下限校验。
-- 认证配置包含操作超时、会话空闲与绝对超时、Argon2id 最大并发校验数、Cookie `Secure` 开关、账户和来源
-  登录限流。浏览器通过 HTTPS 访问时，无论 TLS
-  由 ZKE Server 还是网关终止，都必须设为 `true`。
+- 认证配置包含操作超时、会话空闲与绝对超时、Argon2id 最大并发校验数、账户和来源登录限流。Cookie 的
+  `Secure` 属性不属于配置，由每个请求的传输方式决定。
 - 启动时对缺失、冲突和不安全配置快速失败，并返回可定位但不泄密的错误。
 
 ## 12. 可观测性与审计

@@ -18,14 +18,13 @@ func TestLoginSetsProtectedAuthenticationCookies(t *testing.T) {
 	t.Parallel()
 
 	expiresAt := time.Now().UTC().Add(8 * time.Hour)
-	handler := newAuthHandler(
-		discardLogger(),
-		nil,
-		nil,
-		AuthenticationConfig{CookieSecure: true},
-	)
+	handler := newAuthHandler(discardLogger(), nil, nil, AuthenticationConfig{})
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	// A gateway that terminated TLS forwards plain HTTP, so the forwarded scheme
+	// is the only signal left for the Secure attribute.
+	context.Request.Header.Set("X-Forwarded-Proto", "https")
 	handler.setAuthenticationCookies(context, auth.LoginResult{
 		User: auth.User{
 			ID:          "user-1",
@@ -56,6 +55,31 @@ func TestLoginSetsProtectedAuthenticationCookies(t *testing.T) {
 	if csrfCookie.HttpOnly || !csrfCookie.Secure ||
 		csrfCookie.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("CSRF cookie attributes = %#v", csrfCookie)
+	}
+}
+
+// A browser drops a Secure cookie that arrives over plain HTTP, so deriving the
+// attribute unconditionally would break every loopback and LAN deployment: the
+// login would succeed and the next request would arrive unauthenticated.
+func TestLoginOmitsSecureCookiesOverPlainHTTP(t *testing.T) {
+	t.Parallel()
+
+	handler := newAuthHandler(discardLogger(), nil, nil, AuthenticationConfig{})
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	handler.setAuthenticationCookies(context, auth.LoginResult{
+		User:         auth.User{ID: "user-1", Username: "admin", DisplayName: "Administrator"},
+		SessionID:    "session-1",
+		SessionToken: "session-token",
+		CSRFToken:    "csrf-token",
+		ExpiresAt:    time.Now().UTC().Add(8 * time.Hour),
+	})
+
+	cookies := response.Result().Cookies()
+	if findCookie(t, cookies, sessionCookieName).Secure ||
+		findCookie(t, cookies, csrfCookieName).Secure {
+		t.Fatal("session cookies carried Secure over plain HTTP")
 	}
 }
 
@@ -138,7 +162,6 @@ func contextDeadlineExceeded() error {
 
 func defaultAuthenticationTestConfig() AuthenticationConfig {
 	return AuthenticationConfig{
-		CookieSecure:          true,
 		OperationTimeout:      5 * time.Second,
 		LoginRateLimitWindow:  time.Minute,
 		MaxAttemptsPerAccount: 5,

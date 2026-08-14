@@ -115,7 +115,6 @@ type AuthConfig struct {
 	SessionAbsoluteTimeout      time.Duration        `yaml:"session_absolute_timeout"`
 	OperationTimeout            time.Duration        `yaml:"operation_timeout"`
 	MaxConcurrentPasswordChecks int                  `yaml:"max_concurrent_password_checks"`
-	CookieSecure                bool                 `yaml:"cookie_secure"`
 	LoginRateLimit              LoginRateLimitConfig `yaml:"login_rate_limit"`
 	AccountLockout              AccountLockoutConfig `yaml:"account_lockout"`
 }
@@ -251,7 +250,6 @@ func DefaultConfig() Config {
 			SessionAbsoluteTimeout:      8 * time.Hour,
 			OperationTimeout:            10 * time.Second,
 			MaxConcurrentPasswordChecks: 4,
-			CookieSecure:                false,
 			LoginRateLimit: LoginRateLimitConfig{
 				Window:                time.Minute,
 				MaxAttemptsPerAccount: 5,

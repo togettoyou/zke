@@ -10,7 +10,7 @@
 
 ## 部署
 
-- [Docker 与 Helm 部署](deployment.md)
+- [部署指南](deployment.md)：Docker、Docker Compose、Helm 与第一个集群接入
 
 ## 架构
 
