@@ -17,7 +17,7 @@ type Store interface {
 	FindActiveSession(ctx context.Context, tokenDigest []byte, now time.Time, idleTimeout time.Duration) (store.AuthenticatedSession, error)
 	RevokeAuthenticatedSession(ctx context.Context, sessionID string, userID string, revokedAt time.Time, requestID string) error
 	ChangeOwnPassword(ctx context.Context, input store.ChangeOwnPasswordParams) error
-	RecordLoginAudit(ctx context.Context, targetUserID *string, result string, requestID string) error
+	RecordLoginAudit(ctx context.Context, targetUserID *string, result string, requestID string, actorIP string) error
 	RecordLoginFailure(ctx context.Context, input store.RecordLoginFailureParams) error
-	RecordPasswordChangeAudit(ctx context.Context, userID string, result string, requestID string, now time.Time) error
+	RecordPasswordChangeAudit(ctx context.Context, userID string, result string, requestID string, actorIP string, now time.Time) error
 }

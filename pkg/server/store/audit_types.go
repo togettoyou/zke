@@ -11,6 +11,13 @@ type AuditStore struct {
 	pool *pgxpool.Pool
 }
 
+// ActorIP and Detail appear on every event input and are optional on all of
+// them. ActorIP is the client address when the event came from an HTTP request
+// a user drove, empty otherwise. Detail carries the structured reason behind
+// `Result` -- which permission a denial wanted, what a failure was -- as short
+// stable keys. It is typed as a string map rather than `any` on purpose: the
+// column is retained far longer than what it describes, and a shape that cannot
+// nest is a shape nobody can drop a request body into.
 type ProjectAuditEvent struct {
 	ActorUserID string
 	ProjectID   string
@@ -21,6 +28,8 @@ type ProjectAuditEvent struct {
 	TargetName  string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 type TenantAuditEvent struct {
@@ -33,6 +42,8 @@ type TenantAuditEvent struct {
 	TargetName  string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 type GlobalAuditEvent struct {
@@ -43,6 +54,8 @@ type GlobalAuditEvent struct {
 	TargetName  string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 type ClusterAuditEvent struct {
@@ -55,6 +68,8 @@ type ClusterAuditEvent struct {
 	TargetName  string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 type AgentAuditEvent struct {
@@ -63,6 +78,8 @@ type AgentAuditEvent struct {
 	Action      string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 // AuditRecord carries an id and a name for each subject. The ids are what to
@@ -87,6 +104,8 @@ type AuditRecord struct {
 	TargetName    string
 	Result        string
 	RequestID     string
+	ActorIP       string
+	Detail        map[string]string
 	CreatedAt     time.Time
 }
 

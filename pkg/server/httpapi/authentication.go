@@ -118,6 +118,7 @@ func (handler *authHandler) login(c *gin.Context) {
 			if err := handler.service.RecordLoginDenied(
 				operationContext,
 				httpmiddleware.RequestID(c),
+				c.ClientIP(),
 			); err != nil {
 				cancelOperation()
 				handler.serviceError(c, "record rate-limited login audit", err)
@@ -144,6 +145,7 @@ func (handler *authHandler) login(c *gin.Context) {
 		Username:  input.Username,
 		Password:  password,
 		RequestID: httpmiddleware.RequestID(c),
+		ActorIP:   c.ClientIP(),
 		Now:       time.Now().UTC(),
 	})
 	cancelOperation()
@@ -229,7 +231,8 @@ func (handler *authHandler) changePassword(c *gin.Context) {
 	err := handler.service.ChangePassword(operationContext, auth.ChangePasswordInput{
 		Identity: identity, CurrentPassword: currentPassword,
 		NewPassword: newPassword, RequestID: httpmiddleware.RequestID(c),
-		Now: time.Now().UTC(),
+		ActorIP: c.ClientIP(),
+		Now:     time.Now().UTC(),
 	})
 	cancelOperation()
 	switch {

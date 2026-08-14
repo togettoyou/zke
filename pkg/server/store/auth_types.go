@@ -67,12 +67,18 @@ type CompleteLoginParams struct {
 	ReplacementPasswordHash   string
 	Session                   CreateSessionParams
 	RequestID                 string
+	ActorIP                   string
 	Now                       time.Time
 }
 
+// ActorIP is the client address the attempt came from. It matters more on this
+// path than anywhere else in ZKE: a failed login and an account lock are the
+// events an operator investigates precisely to find out where they came from,
+// and the answer exists nowhere else once the request is over.
 type RecordLoginFailureParams struct {
 	UserID       *string
 	RequestID    string
+	ActorIP      string
 	Now          time.Time
 	MaxFailures  int
 	LockDuration time.Duration

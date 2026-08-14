@@ -156,6 +156,10 @@ type auditedOperation struct {
 	TargetID    string
 	TargetName  string
 	Result      string
+	// Detail is the structured reason for Result, as short stable keys. The
+	// client address is not here: recordOperation reads it from the request,
+	// so no call site has to remember to pass it.
+	Detail map[string]string
 }
 
 type failedOperation = auditedOperation
@@ -192,6 +196,7 @@ func (handler baseHandler) recordOperation(
 	if targetID == "" {
 		targetID = c.Param(operation.TargetType + "_id")
 	}
+	actorIP := c.ClientIP()
 	var err error
 	switch operation.Scope {
 	case auditScopeTenant:
@@ -204,6 +209,8 @@ func (handler baseHandler) recordOperation(
 			TargetName:  operation.TargetName,
 			Result:      result,
 			RequestID:   requestID,
+			ActorIP:     actorIP,
+			Detail:      operation.Detail,
 		})
 	case auditScopeProject:
 		err = handler.auditService.RecordProjectEvent(ctx, audit.ProjectEventInput{
@@ -215,6 +222,8 @@ func (handler baseHandler) recordOperation(
 			TargetName:  operation.TargetName,
 			Result:      result,
 			RequestID:   requestID,
+			ActorIP:     actorIP,
+			Detail:      operation.Detail,
 		})
 	case auditScopeCluster:
 		err = handler.auditService.RecordClusterEvent(ctx, audit.ClusterEventInput{
@@ -226,6 +235,8 @@ func (handler baseHandler) recordOperation(
 			TargetName:  operation.TargetName,
 			Result:      result,
 			RequestID:   requestID,
+			ActorIP:     actorIP,
+			Detail:      operation.Detail,
 		})
 	default:
 		err = handler.auditService.RecordGlobalEvent(ctx, audit.GlobalEventInput{
@@ -236,6 +247,8 @@ func (handler baseHandler) recordOperation(
 			TargetName:  operation.TargetName,
 			Result:      result,
 			RequestID:   requestID,
+			ActorIP:     actorIP,
+			Detail:      operation.Detail,
 		})
 	}
 	if err == nil {

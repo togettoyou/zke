@@ -146,14 +146,14 @@ WHERE id = $1
 		if _, err := transaction.Exec(ctx, `
 INSERT INTO audit_events (
     id, actor_type, scope_type, action, target_type, target_id,
-    result, request_id, created_at
+    result, request_id, created_at, actor_ip
 )
 VALUES (
     gen_random_uuid(), 'system', 'global', $1,
-    $2, $3, 'succeeded', $4, $5
+    $2, $3, 'succeeded', $4, $5, $6::inet
 )
 `, auditaction.AuthAccountAutoUnlock, auditaction.TargetUser, input.UserID,
-			input.RequestID, loginTime); err != nil {
+			input.RequestID, loginTime, auditActorIP(input.ActorIP)); err != nil {
 			return Session{}, fmt.Errorf("audit expired account lock recovery: %w", err)
 		}
 	}
@@ -172,7 +172,8 @@ INSERT INTO audit_events (
     target_type,
     target_id,
     result,
-    request_id
+    request_id,
+    actor_ip
 )
 VALUES (
     gen_random_uuid(),
@@ -183,10 +184,11 @@ VALUES (
     $3,
     $4,
     'succeeded',
-    $5
+    $5,
+    $6::inet
 )
 `, input.UserID, auditaction.AuthLogin, auditaction.TargetSession, session.ID,
-		input.RequestID); err != nil {
+		input.RequestID, auditActorIP(input.ActorIP)); err != nil {
 		return Session{}, fmt.Errorf("audit authenticated session creation: %w", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {

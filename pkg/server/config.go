@@ -23,12 +23,31 @@ type Config struct {
 	AgentInstall    AgentInstallConfig    `yaml:"agent_install"`
 	AgentEnrollment AgentEnrollmentConfig `yaml:"agent_enrollment"`
 	AgentListener   AgentListenerConfig   `yaml:"agent_listener"`
+	Retention       RetentionConfig       `yaml:"retention"`
 	ShutdownTimeout time.Duration         `yaml:"shutdown_timeout"`
 	LogLevel        string                `yaml:"log_level"`
 
 	// AgentIdentity is derived after the Server PKI material is prepared and is
 	// never read from the configuration file.
 	AgentIdentity AgentIdentityConfig `yaml:"-"`
+}
+
+// RetentionConfig bounds the tables that would otherwise only ever grow:
+// sessions, enrollments and their attempts, and superseded Agent credentials.
+// Each duration is how long a row is kept after it stopped mattering, counted
+// from its own end -- expiry, revocation or consumption.
+//
+// The defaults are conservative because the cost of keeping a finished row too
+// long is disk, and the cost of deleting one too early is an unanswerable
+// support question. `audit_events` is not covered here; see RetentionStore.
+type RetentionConfig struct {
+	// SweepInterval is how often the sweep runs. Nothing depends on it being
+	// prompt -- the rows are already unusable -- so it is a background chore,
+	// not a deadline.
+	SweepInterval time.Duration `yaml:"sweep_interval"`
+	Sessions      time.Duration `yaml:"sessions"`
+	Enrollments   time.Duration `yaml:"enrollments"`
+	Credentials   time.Duration `yaml:"credentials"`
 }
 
 type AgentInstallConfig struct {
@@ -254,6 +273,12 @@ func DefaultConfig() Config {
 				WarnBefore:    7 * 24 * time.Hour,
 				CheckInterval: time.Hour,
 			},
+		},
+		Retention: RetentionConfig{
+			SweepInterval: time.Hour,
+			Sessions:      24 * time.Hour,
+			Enrollments:   30 * 24 * time.Hour,
+			Credentials:   30 * 24 * time.Hour,
 		},
 		AgentEnrollment: AgentEnrollmentConfig{
 			OperationTimeout: 10 * time.Second,

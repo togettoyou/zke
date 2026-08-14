@@ -445,6 +445,16 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			cfg.AgentPKI.Monitor,
 		)
 	}()
+	backgroundTasks.Add(1)
+	go func() {
+		defer backgroundTasks.Done()
+		sweepRetainedRecords(
+			runContext,
+			logger,
+			store.NewRetentionStore(database),
+			cfg.Retention,
+		)
+	}()
 	httpServer := &http.Server{
 		Addr:              cfg.HTTP.Address,
 		Handler:           handler,
@@ -630,6 +640,65 @@ func monitorAgentCertificates(
 			return
 		case <-ticker.C:
 			check()
+		}
+	}
+}
+
+// sweepRetainedRecords reclaims finished rows on an interval.
+//
+// It runs once at startup rather than waiting out the first interval: a Server
+// that is restarted more often than the interval would otherwise never sweep at
+// all, which is the deployment most likely to be accumulating rows.
+//
+// A failing sweep is logged and the loop continues. Nothing downstream depends
+// on it having run -- the rows it removes are already unusable -- so a database
+// that is briefly unavailable should not end the task for the process lifetime.
+func sweepRetainedRecords(
+	ctx context.Context,
+	logger *slog.Logger,
+	retentionStore *store.RetentionStore,
+	config RetentionConfig,
+) {
+	sweep := func() {
+		operationContext, cancel := context.WithTimeout(ctx, min(config.SweepInterval, time.Minute))
+		defer cancel()
+		result, err := retentionStore.Sweep(
+			operationContext,
+			store.RetentionPolicy{
+				Sessions:    config.Sessions,
+				Enrollments: config.Enrollments,
+				Credentials: config.Credentials,
+			},
+			time.Now().UTC(),
+		)
+		if err != nil {
+			if ctx.Err() == nil {
+				logger.Error("sweep retained records", slog.String("error", err.Error()))
+			}
+			return
+		}
+		total := result.Sessions + result.Enrollments +
+			result.EnrollmentAttempts + result.Credentials
+		if total == 0 {
+			return
+		}
+		logger.Info(
+			"swept retained records",
+			slog.Int64("user_sessions", result.Sessions),
+			slog.Int64("enrollments", result.Enrollments),
+			slog.Int64("enrollment_attempts", result.EnrollmentAttempts),
+			slog.Int64("agent_credentials", result.Credentials),
+		)
+	}
+	sweep()
+	ticker := time.NewTicker(config.SweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep()
 		}
 	}
 }

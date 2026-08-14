@@ -119,6 +119,19 @@ agent_install:
   public_http_url: ""
   public_quic_address: ""
 
+# Reclaims rows whose purpose has ended. Each duration below is counted from the
+# moment the row finished -- a session expiring or being revoked, an enrollment
+# being consumed, revoked or lapsing, a credential being revoked or expiring --
+# not from when it was created.
+#
+# Audit events are not swept: how long they must be kept is a compliance
+# decision, so they are retained until an operator removes them deliberately.
+retention:
+  sweep_interval: 1h
+  sessions: 24h
+  enrollments: 720h
+  credentials: 720h
+
 agent_enrollment:
   # Controls the one-time HTTP(S) bootstrap operation.
   operation_timeout: 10s

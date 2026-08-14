@@ -17,6 +17,7 @@ func (store *AuthStore) RecordLoginAudit(
 	targetUserID *string,
 	result string,
 	requestID string,
+	actorIP string,
 ) error {
 	if result != "failed" && result != "denied" {
 		return errors.New("login audit result must be failed or denied")
@@ -38,7 +39,8 @@ INSERT INTO audit_events (
     target_type,
     target_id,
     result,
-    request_id
+    request_id,
+    actor_ip
 )
 VALUES (
     gen_random_uuid(),
@@ -48,10 +50,11 @@ VALUES (
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6::inet
 )
 `, auditaction.AuthLogin, auditaction.TargetUser, targetID, result,
-		requestID); err != nil {
+		requestID, auditActorIP(actorIP)); err != nil {
 		return fmt.Errorf("record login audit: %w", err)
 	}
 	return nil
@@ -62,6 +65,7 @@ func (store *AuthStore) RecordPasswordChangeAudit(
 	userID string,
 	result string,
 	requestID string,
+	actorIP string,
 	now time.Time,
 ) error {
 	if strings.TrimSpace(userID) == "" ||
@@ -73,14 +77,14 @@ func (store *AuthStore) RecordPasswordChangeAudit(
 	if _, err := store.pool.Exec(ctx, `
 INSERT INTO audit_events (
     id, actor_type, actor_user_id, scope_type, action, target_type,
-    target_id, result, request_id, created_at
+    target_id, result, request_id, created_at, actor_ip
 )
 VALUES (
     gen_random_uuid(), 'user', $1, 'global', $2,
-    $3, $1, $4, $5, $6
+    $3, $1, $4, $5, $6, $7::inet
 )
 `, userID, auditaction.AuthPasswordChange, auditaction.TargetUser, result,
-		requestID, now); err != nil {
+		requestID, now, auditActorIP(actorIP)); err != nil {
 		return fmt.Errorf("record password change audit: %w", err)
 	}
 	return nil
@@ -247,14 +251,14 @@ WHERE user_id = $1
 			if _, err := transaction.Exec(ctx, `
 INSERT INTO audit_events (
     id, actor_type, scope_type, action, target_type, target_id,
-    result, request_id, created_at
+    result, request_id, created_at, actor_ip
 )
 VALUES (
     gen_random_uuid(), 'system', 'global', $1,
-    $2, $3, 'succeeded', $4, $5
+    $2, $3, 'succeeded', $4, $5, $6::inet
 )
 `, auditaction.AuthAccountLock, auditaction.TargetUser, *input.UserID,
-				input.RequestID, input.Now); err != nil {
+				input.RequestID, input.Now, auditActorIP(input.ActorIP)); err != nil {
 				return fmt.Errorf("audit persistent account lock: %w", err)
 			}
 		}
@@ -271,14 +275,14 @@ VALUES (
 			if _, err := transaction.Exec(ctx, `
 INSERT INTO audit_events (
     id, actor_type, scope_type, action, target_type, target_id,
-    result, request_id, created_at
+    result, request_id, created_at, actor_ip
 )
 VALUES (
     gen_random_uuid(), 'system', 'global', $1,
-    $2, $3, 'succeeded', $4, $5
+    $2, $3, 'succeeded', $4, $5, $6::inet
 )
 `, auditaction.AuthAccountLockWithheld, auditaction.TargetUser, *input.UserID,
-				input.RequestID, input.Now); err != nil {
+				input.RequestID, input.Now, auditActorIP(input.ActorIP)); err != nil {
 				return fmt.Errorf("audit withheld account lock: %w", err)
 			}
 		}
@@ -286,14 +290,14 @@ VALUES (
 	if _, err := transaction.Exec(ctx, `
 INSERT INTO audit_events (
     id, actor_type, scope_type, action, target_type, target_id,
-    result, request_id, created_at
+    result, request_id, created_at, actor_ip
 )
 VALUES (
     gen_random_uuid(), 'system', 'global', $1, $2,
-    $3, 'failed', $4, $5
+    $3, 'failed', $4, $5, $6::inet
 )
 `, auditaction.AuthLogin, auditaction.TargetUser, targetID, input.RequestID,
-		input.Now); err != nil {
+		input.Now, auditActorIP(input.ActorIP)); err != nil {
 		return fmt.Errorf("audit login failure: %w", err)
 	}
 	if err := transaction.Commit(ctx); err != nil {

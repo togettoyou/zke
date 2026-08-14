@@ -44,12 +44,16 @@ VALUES ($3, $1, $2, 'cluster', 'active')`,
 		projectID,
 		clusterID,
 	)
+	// The Agent is inserted without its active credential serial and adopts it
+	// only after the credential exists, which is the order the connection
+	// handshake uses and the only order the foreign key between the two tables
+	// permits -- they reference each other.
 	batch.Queue(
 		`INSERT INTO agents (
     id, tenant_id, project_id, cluster_id, version, protocol_version,
-    lifecycle_status, health_status, active_credential_serial
+    lifecycle_status, health_status
 ) VALUES (
-    $4, $1, $2, $3, 'development', 'v1', 'active', 'healthy', '42'
+    $4, $1, $2, $3, 'development', 'v1', 'active', 'healthy'
 )`,
 		tenantID,
 		projectID,
@@ -69,6 +73,10 @@ VALUES ($3, $1, $2, 'cluster', 'active')`,
 		agentID,
 		credentialID,
 		expiresAt,
+	)
+	batch.Queue(
+		"UPDATE agents SET active_credential_serial = '42' WHERE id = $1",
+		agentID,
 	)
 	batch.Queue(
 		`INSERT INTO users (

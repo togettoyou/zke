@@ -2,6 +2,21 @@ CREATE TABLE pod_terminal_recordings (
     id uuid PRIMARY KEY,
     actor_user_id uuid NOT NULL,
     cluster_id uuid NOT NULL,
+    -- The scope the Cluster sat in when the session ran, and the name it
+    -- carried, resolved by the trigger below rather than supplied by the
+    -- caller.
+    --
+    -- A recording is written from a cluster-scoped route -- `/clusters/:cluster_id/...`
+    -- -- so the Tenant and Project are nowhere in the request; only the database
+    -- knows them. Without them a recording survives its Cluster as an
+    -- unresolvable UUID: it cannot be answered for by Project, and the rows
+    -- that outlive a deleted Cluster are exactly the ones an investigation
+    -- wants. Nullable for the same reason `audit_events` keeps them nullable --
+    -- a recording written after its Cluster is gone records what could be known
+    -- at that moment.
+    tenant_id uuid,
+    project_id uuid,
+    cluster_name text,
     namespace text NOT NULL CHECK (
         namespace = btrim(namespace) AND octet_length(namespace) BETWEEN 1 AND 253
     ),
@@ -37,3 +52,41 @@ CREATE INDEX pod_terminal_recordings_target_idx
     ON pod_terminal_recordings (cluster_id, namespace, pod_name, started_at DESC, id DESC);
 CREATE INDEX pod_terminal_recordings_expiry_idx
     ON pod_terminal_recordings (expires_at);
+
+-- The scope snapshot is filled here rather than at the call site, for the same
+-- reason `fill_audit_event_names` exists: it makes the snapshot a property of
+-- the table instead of something a writer has to remember. There is one writer
+-- today, and this is what keeps a second one from silently producing rows with
+-- no scope.
+--
+-- Only a Cluster that still resolves produces values, and an explicitly
+-- supplied value is never overwritten.
+CREATE FUNCTION fill_pod_terminal_recording_scope()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    resolved record;
+BEGIN
+    IF NEW.tenant_id IS NULL OR NEW.project_id IS NULL OR NEW.cluster_name IS NULL THEN
+        SELECT cluster.tenant_id, cluster.project_id, cluster.name
+        INTO resolved
+        FROM clusters AS cluster
+        WHERE cluster.id = NEW.cluster_id;
+        -- Guarded on FOUND rather than assigning straight into NEW: an
+        -- unmatched SELECT INTO leaves its targets null, which would erase a
+        -- value the caller did supply.
+        IF FOUND THEN
+            NEW.tenant_id := COALESCE(NEW.tenant_id, resolved.tenant_id);
+            NEW.project_id := COALESCE(NEW.project_id, resolved.project_id);
+            NEW.cluster_name := COALESCE(NEW.cluster_name, resolved.name);
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER pod_terminal_recordings_fill_scope
+BEFORE INSERT ON pod_terminal_recordings
+FOR EACH ROW
+EXECUTE FUNCTION fill_pod_terminal_recording_scope();

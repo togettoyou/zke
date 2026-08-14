@@ -48,7 +48,10 @@ type LoginInput struct {
 	Username  string
 	Password  []byte
 	RequestID string
-	Now       time.Time
+	// ActorIP is the client address the attempt came from, recorded on the
+	// login audit event whether it succeeds, fails or locks the account.
+	ActorIP string
+	Now     time.Time
 }
 
 type ChangePasswordInput struct {
@@ -56,6 +59,7 @@ type ChangePasswordInput struct {
 	CurrentPassword []byte
 	NewPassword     []byte
 	RequestID       string
+	ActorIP         string
 	Now             time.Time
 }
 
@@ -81,7 +85,7 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 		return LoginResult{}, errors.New("login request ID and time are required")
 	}
 	if len(input.Password) > MaximumPasswordBytes {
-		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.Now)
+		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.ActorIP, input.Now)
 	}
 
 	username, err := NormalizeUsername(input.Username)
@@ -89,7 +93,7 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 		if err := service.verifyDummyPassword(ctx, input.Password); err != nil {
 			return LoginResult{}, err
 		}
-		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.Now)
+		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.ActorIP, input.Now)
 	}
 
 	user, err := service.store.FindUserByUsername(ctx, username)
@@ -97,7 +101,7 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 		if err := service.verifyDummyPassword(ctx, input.Password); err != nil {
 			return LoginResult{}, err
 		}
-		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.Now)
+		return LoginResult{}, service.rejectLogin(ctx, nil, input.RequestID, input.ActorIP, input.Now)
 	}
 	if err != nil {
 		return LoginResult{}, err
@@ -111,7 +115,7 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 		user.LockExpiresAt != nil &&
 		user.LockExpiresAt.After(input.Now)
 	if !matches || user.Status == "disabled" || lockActive {
-		return LoginResult{}, service.rejectLogin(ctx, &user.ID, input.RequestID, input.Now)
+		return LoginResult{}, service.rejectLogin(ctx, &user.ID, input.RequestID, input.ActorIP, input.Now)
 	}
 	var replacementPasswordHash string
 	if needsRehash {
@@ -150,11 +154,12 @@ func (service *Service) Login(ctx context.Context, input LoginInput) (LoginResul
 				ExpiresAt:       input.Now.Add(service.config.SessionAbsoluteTimeout),
 			},
 			RequestID: input.RequestID,
+			ActorIP:   input.ActorIP,
 			Now:       input.Now,
 		},
 	)
 	if errors.Is(err, store.ErrCredentialsChanged) {
-		return LoginResult{}, service.rejectLogin(ctx, &user.ID, input.RequestID, input.Now)
+		return LoginResult{}, service.rejectLogin(ctx, &user.ID, input.RequestID, input.ActorIP, input.Now)
 	}
 	if err != nil {
 		return LoginResult{}, err
@@ -321,6 +326,7 @@ func (service *Service) rejectPasswordChange(
 		input.Identity.User.ID,
 		result,
 		input.RequestID,
+		input.ActorIP,
 		input.Now,
 	); err != nil {
 		return err
@@ -332,10 +338,14 @@ func (service *Service) CSRFTokenMatches(identity Identity, token string) bool {
 	return CSRFTokenMatches(token, identity.csrfTokenDigest)
 }
 
-func (service *Service) RecordLoginDenied(ctx context.Context, requestID string) error {
+func (service *Service) RecordLoginDenied(
+	ctx context.Context,
+	requestID string,
+	actorIP string,
+) error {
 	ctx, cancel := auditctx.Detach(ctx, securityWriteTimeout)
 	defer cancel()
-	return service.store.RecordLoginAudit(ctx, nil, "denied", requestID)
+	return service.store.RecordLoginAudit(ctx, nil, "denied", requestID, actorIP)
 }
 
 func CSRFTokenMatches(token string, expectedDigest []byte) bool {
@@ -350,6 +360,7 @@ func (service *Service) rejectLogin(
 	ctx context.Context,
 	targetUserID *string,
 	requestID string,
+	actorIP string,
 	now time.Time,
 ) error {
 	// Detached: this write is both the audit record and the persistent lockout
@@ -361,6 +372,7 @@ func (service *Service) rejectLogin(
 	if err := service.store.RecordLoginFailure(ctx, store.RecordLoginFailureParams{
 		UserID:       targetUserID,
 		RequestID:    requestID,
+		ActorIP:      actorIP,
 		Now:          now,
 		MaxFailures:  service.config.MaxFailedLoginAttempts,
 		LockDuration: service.config.AccountLockDuration,

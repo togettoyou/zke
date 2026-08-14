@@ -51,6 +51,7 @@ import type { AppComponentProps } from "@/apps/types";
 import { BUILTIN_ADMIN_ROLE, roleLabel } from "@/auth/capabilities";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
+import { DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { errorMessage } from "@/api/errors";
 import { notifyFailure } from "@/components/common/notify";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
@@ -65,6 +66,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -2004,6 +2006,10 @@ function CreateRoleBindingDialog({
 function AuditSection() {
   const [filters, setFilters] = useState<AuditFilters>({});
   const [offset, setOffset] = useState(0);
+  // The row the operator opened. Held as the event itself rather than its id:
+  // the audit trail is append-only and paged, so there is nothing to re-fetch a
+  // single event by, and the row already carries everything the detail shows.
+  const [openedEvent, setOpenedEvent] = useState<AuditEvent | null>(null);
 
   const query = useAuditEvents({ limit: DEFAULT_PAGE_SIZE, offset, ...filters });
   const actions = useAuditActions();
@@ -2140,6 +2146,11 @@ function AuditSection() {
         error={query.error}
         onRetry={() => void query.refetch()}
         rowKey={(row) => row.id}
+        // The table shows what an operator scans by; the row opens what they
+        // investigate with. Client address and the structured reason behind a
+        // denial only matter once a row has been singled out, and neither
+        // survives being squeezed into a column.
+        onRowClick={setOpenedEvent}
         emptyTitle="没有匹配的审计事件"
         emptyDescription="调整筛选条件，或确认当前账号的 audit.read 可见范围。"
         pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
@@ -2256,7 +2267,118 @@ function AuditSection() {
           </>
         }
       />
+      <AuditEventDialog event={openedEvent} onClose={() => setOpenedEvent(null)} />
     </div>
+  );
+}
+
+/**
+ * One audit event in full.
+ *
+ * A dialog rather than the full-page detail the Kubernetes sections use: those
+ * open an object an operator then works on, while this is a record being read in
+ * the middle of scanning a filtered, paged list. Replacing the page would cost
+ * that position to show ten read-only fields.
+ *
+ * What it adds over the row is what the row has no honest space for — the client
+ * address, the reason behind the result, and the scope in all three levels
+ * rather than only the innermost one the 作用域 column can fit.
+ */
+function AuditEventDialog({ event, onClose }: { event: AuditEvent | null; onClose: () => void }) {
+  return (
+    <Dialog open={Boolean(event)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="w-[min(560px,calc(100vw-2rem))]">
+        {event ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="zke-mono break-all">{event.action}</DialogTitle>
+              <DialogDescription>
+                {event.target_type}
+                {event.target_name ? ` · ${event.target_name}` : ""}
+              </DialogDescription>
+            </DialogHeader>
+            <dl className="min-w-0">
+              <DetailRow label="时间" value={<AbsoluteTime value={event.created_at} />} />
+              <DetailRow
+                label="结果"
+                value={<StatusBadge kind="auditResult" value={event.result} />}
+              />
+              <DetailRow
+                label="发起者"
+                value={
+                  <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <StatusBadge kind="actor" value={event.actor_type} />
+                    {event.actor_user_name ? <span>{event.actor_user_name}</span> : null}
+                    {event.actor_user_id ? <IdentifierLabel value={event.actor_user_id} /> : null}
+                    {event.actor_agent_id ? <IdentifierLabel value={event.actor_agent_id} /> : null}
+                  </span>
+                }
+              />
+              {/*
+               * Always shown, even when empty, unlike 原因 below. An absent
+               * address is a fact about the event — system and Agent actors have
+               * none — and an investigator looking for where a failed login came
+               * from needs to see that it was not recorded, not be left
+               * wondering whether the view dropped it.
+               */}
+              <DetailRow
+                label="来源地址"
+                value={
+                  event.actor_ip ? (
+                    <span className="zke-mono">{event.actor_ip}</span>
+                  ) : (
+                    <span className="text-subtle-foreground">—</span>
+                  )
+                }
+              />
+              <DetailRow label="作用域" value={event.scope_type} />
+              {event.tenant_id || event.tenant_name ? (
+                <DetailRow
+                  label="租户"
+                  value={<ScopeValue name={event.tenant_name} id={event.tenant_id} />}
+                />
+              ) : null}
+              {event.project_id || event.project_name ? (
+                <DetailRow
+                  label="项目"
+                  value={<ScopeValue name={event.project_name} id={event.project_id} />}
+                />
+              ) : null}
+              {event.cluster_id || event.cluster_name ? (
+                <DetailRow
+                  label="集群"
+                  value={<ScopeValue name={event.cluster_name} id={event.cluster_id} />}
+                />
+              ) : null}
+              {event.target_id ? (
+                <DetailRow label="目标 ID" value={<IdentifierLabel value={event.target_id} />} />
+              ) : null}
+              {/*
+               * Only when there is one. Most events carry no structured reason —
+               * it is written on denials and on the failures that have something
+               * to say — so a permanently empty row here would be noise on every
+               * event that does not need it.
+               */}
+              {event.detail && Object.keys(event.detail).length > 0 ? (
+                <DetailRow label="原因" value={<DetailKeyValues entries={event.detail} />} />
+              ) : null}
+              <DetailRow label="请求 ID" value={<IdentifierLabel value={event.request_id} />} />
+              <DetailRow label="事件 ID" value={<IdentifierLabel value={event.id} />} />
+            </dl>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** A scope level: the name recorded with the event, and the id beneath it. */
+function ScopeValue({ name, id }: { name?: string; id?: string }) {
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+      {name ? <span>{name}</span> : null}
+      {id ? <IdentifierLabel value={id} /> : null}
+    </span>
   );
 }
 

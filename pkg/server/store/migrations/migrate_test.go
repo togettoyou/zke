@@ -131,7 +131,6 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"active_credential_serial text",
 		"failed_login_count integer NOT NULL DEFAULT 0",
 		"CONSTRAINT users_lock_shape",
-		"CREATE INDEX users_status_idx",
 	} {
 		if !strings.Contains(available[0].sql, required) {
 			t.Errorf("foundation migration is missing %q", required)
@@ -475,8 +474,11 @@ WHERE schemaname = current_schema()
 
 	for _, required := range []string{
 		"role_bindings_scope_idx",
-		"clusters_project_scope_idx",
-		"agents_project_scope_idx",
+		// The Cluster and Agent scope lookups have no index of their own: they
+		// ride the leading columns of the composite uniqueness constraints, so
+		// these are the names that must survive for the lookup to stay indexed.
+		"clusters_tenant_id_project_id_id_key",
+		"agents_tenant_id_project_id_cluster_id_id_key",
 		"enrollments_active_expiry_idx",
 		"audit_events_scope_time_idx",
 		"audit_events_request_id_idx",

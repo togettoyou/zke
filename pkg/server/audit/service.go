@@ -39,6 +39,8 @@ type Event struct {
 	TargetName    string
 	Result        string
 	RequestID     string
+	ActorIP       string
+	Detail        map[string]string
 	CreatedAt     time.Time
 }
 
@@ -62,6 +64,10 @@ type QueryResult struct {
 
 var ErrInvalidQuery = errors.New("invalid audit query")
 
+// ActorIP and Detail are optional on every event input. ActorIP is the client
+// address of the request behind the event; Detail is the structured reason for
+// its Result, as short stable keys. See the store event types for what may and
+// may not be put in Detail.
 type ProjectEventInput struct {
 	ActorUserID string
 	ProjectID   string
@@ -72,6 +78,8 @@ type ProjectEventInput struct {
 	TargetName  string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 type GlobalEventInput struct {
@@ -82,6 +90,8 @@ type GlobalEventInput struct {
 	TargetName  string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 type TenantEventInput struct {
@@ -94,6 +104,8 @@ type TenantEventInput struct {
 	TargetName  string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 type AgentEventInput struct {
@@ -102,6 +114,8 @@ type AgentEventInput struct {
 	Action      string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 type ClusterEventInput struct {
@@ -114,6 +128,8 @@ type ClusterEventInput struct {
 	TargetName  string
 	Result      string
 	RequestID   string
+	ActorIP     string
+	Detail      map[string]string
 }
 
 // NewService requires the authorization service rather than accepting it
@@ -211,6 +227,8 @@ func eventFromStore(item store.AuditRecord) Event {
 		TargetName:    item.TargetName,
 		Result:        item.Result,
 		RequestID:     item.RequestID,
+		ActorIP:       item.ActorIP,
+		Detail:        item.Detail,
 		CreatedAt:     item.CreatedAt,
 	}
 }
@@ -235,6 +253,8 @@ func (service *Service) RecordGlobalEvent(
 		TargetName:  input.TargetName,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
+		ActorIP:     input.ActorIP,
+		Detail:      input.Detail,
 	})
 }
 
@@ -261,6 +281,8 @@ func (service *Service) RecordTenantEvent(
 			TargetName:  input.TargetName,
 			Result:      input.Result,
 			RequestID:   input.RequestID,
+			ActorIP:     input.ActorIP,
+			Detail:      input.Detail,
 		})
 	}
 	return service.RecordGlobalEvent(ctx, GlobalEventInput{
@@ -271,6 +293,8 @@ func (service *Service) RecordTenantEvent(
 		TargetName:  input.TargetName,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
+		ActorIP:     input.ActorIP,
+		Detail:      input.Detail,
 	})
 }
 
@@ -304,6 +328,8 @@ func (service *Service) RecordProjectEvent(
 			TargetName:  input.TargetName,
 			Result:      input.Result,
 			RequestID:   input.RequestID,
+			ActorIP:     input.ActorIP,
+			Detail:      input.Detail,
 		})
 	}
 	return service.store.RecordGlobalEvent(ctx, store.GlobalAuditEvent{
@@ -314,6 +340,8 @@ func (service *Service) RecordProjectEvent(
 		TargetName:  input.TargetName,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
+		ActorIP:     input.ActorIP,
+		Detail:      input.Detail,
 	})
 }
 
@@ -349,6 +377,8 @@ func (service *Service) RecordClusterEvent(
 			TargetName:  input.TargetName,
 			Result:      input.Result,
 			RequestID:   input.RequestID,
+			ActorIP:     input.ActorIP,
+			Detail:      input.Detail,
 		})
 	}
 	return service.RecordGlobalEvent(ctx, GlobalEventInput{
@@ -359,6 +389,8 @@ func (service *Service) RecordClusterEvent(
 		TargetName:  input.TargetName,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
+		ActorIP:     input.ActorIP,
+		Detail:      input.Detail,
 	})
 }
 
@@ -379,6 +411,8 @@ func (service *Service) RecordAgentEvent(
 		Action:      input.Action,
 		Result:      input.Result,
 		RequestID:   input.RequestID,
+		ActorIP:     input.ActorIP,
+		Detail:      input.Detail,
 	})
 }
 

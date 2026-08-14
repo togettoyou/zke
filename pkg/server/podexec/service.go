@@ -117,9 +117,16 @@ type RecordingFrame struct {
 }
 
 type Recording struct {
-	ID             string           `json:"id"`
-	UserID         string           `json:"user_id"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	// TenantID, ProjectID and ClusterName are resolved by the database on
+	// insert, not supplied here: a recording is created from a cluster-scoped
+	// route that never sees them. They are read back so a recording stays
+	// answerable for by scope once its Cluster is gone.
+	TenantID       string           `json:"tenant_id,omitempty"`
+	ProjectID      string           `json:"project_id,omitempty"`
 	ClusterID      string           `json:"cluster_id"`
+	ClusterName    string           `json:"cluster_name,omitempty"`
 	Namespace      string           `json:"namespace"`
 	PodName        string           `json:"pod_name"`
 	PodUID         string           `json:"pod_uid"`

@@ -106,6 +106,7 @@ func (cfg Config) Validate() error {
 		cfg.validateAgentInstall,
 		cfg.validateAgentEnrollment,
 		cfg.validateAgentListener,
+		cfg.validateRetention,
 		cfg.validateProcess,
 		cfg.validateCrossSection,
 	} {
@@ -369,6 +370,32 @@ func (cfg Config) validateAgentPKIMonitor() error {
 		return errors.New(
 			"Agent PKI expiry check interval must be greater than zero and not exceed 24 hours",
 		)
+	}
+	return nil
+}
+
+// validateRetention rejects a sweep that would delete rows that are still in
+// use. A zero or negative grace deletes a session at the instant it expires and
+// a credential at the instant it is superseded, which is exactly when someone
+// is most likely to be asking about it; a zero interval would spin.
+func (cfg Config) validateRetention() error {
+	retention := cfg.Retention
+	if retention.SweepInterval <= 0 || retention.SweepInterval > 24*time.Hour {
+		return errors.New(
+			"retention sweep interval must be greater than zero and not exceed 24 hours",
+		)
+	}
+	for _, window := range []struct {
+		value time.Duration
+		name  string
+	}{
+		{retention.Sessions, "session"},
+		{retention.Enrollments, "enrollment"},
+		{retention.Credentials, "Agent credential"},
+	} {
+		if window.value <= 0 {
+			return fmt.Errorf("%s retention must be greater than zero", window.name)
+		}
 	}
 	return nil
 }

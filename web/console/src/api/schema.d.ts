@@ -5387,7 +5387,13 @@ export interface components {
         KubernetesPodTerminalRecording: {
             id: components["schemas"]["UUID"];
             user_id: components["schemas"]["UUID"];
+            /** @description 会话运行时集群所属租户。集群已删除且录像晚于删除写入时缺省。 */
+            tenant_id?: components["schemas"]["UUID"];
+            /** @description 会话运行时集群所属项目。缺省条件同 tenant_id。 */
+            project_id?: components["schemas"]["UUID"];
             cluster_id: components["schemas"]["UUID"];
+            /** @description 会话运行时的集群名称快照，用于集群删除后仍可读。 */
+            cluster_name?: string;
             namespace: string;
             pod_name: string;
             pod_uid: string;
@@ -5663,6 +5669,12 @@ export interface components {
             /** @enum {string} */
             result: "succeeded" | "failed" | "denied";
             request_id: string;
+            /** @description 发起请求的客户端地址。仅在事件来自用户驱动的 HTTP 请求时记录； system 与 agent 发起者、以及在存储事务内写入的事件为空。 */
+            actor_ip?: string;
+            /** @description `result` 的结构化原因，键为稳定标识符。例如授权拒绝会记录 `scope_type`， 以及在实际校验的权限与路由声明的权限不一致时记录 `requested_permission`。 不承载请求或响应正文、凭证与 Kubernetes 对象内容。 */
+            detail?: {
+                [key: string]: string;
+            };
             created_at: components["schemas"]["Timestamp"];
         };
         AuditAction: {

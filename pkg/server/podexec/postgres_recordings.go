@@ -59,7 +59,9 @@ func (store *PostgresRecordingStore) ListRecordings(
 	}
 	_ = store.deleteExpired(ctx)
 	rows, err := store.pool.Query(ctx, `
-SELECT id::text, actor_user_id::text, cluster_id::text, namespace, pod_name,
+SELECT id::text, actor_user_id::text, COALESCE(tenant_id::text, ''),
+       COALESCE(project_id::text, ''), cluster_id::text,
+       COALESCE(cluster_name, ''), namespace, pod_name,
        pod_uid, container, columns, rows, started_at, ended_at, expires_at,
        result, exit_code, output_bytes, recording_bytes, truncated
 FROM pod_terminal_recordings
@@ -92,7 +94,9 @@ func (store *PostgresRecordingStore) GetRecording(
 	id string,
 ) (Recording, error) {
 	row := store.pool.QueryRow(ctx, `
-SELECT id::text, actor_user_id::text, cluster_id::text, namespace, pod_name,
+SELECT id::text, actor_user_id::text, COALESCE(tenant_id::text, ''),
+       COALESCE(project_id::text, ''), cluster_id::text,
+       COALESCE(cluster_name, ''), namespace, pod_name,
        pod_uid, container, columns, rows, started_at, ended_at, expires_at,
        result, exit_code, output_bytes, recording_bytes, truncated, frames
 FROM pod_terminal_recordings
@@ -116,7 +120,8 @@ type recordingScanner interface {
 func scanRecording(scanner recordingScanner, withFrames bool) (Recording, error) {
 	item := Recording{}
 	targets := []any{
-		&item.ID, &item.UserID, &item.ClusterID, &item.Namespace, &item.PodName,
+		&item.ID, &item.UserID, &item.TenantID, &item.ProjectID, &item.ClusterID,
+		&item.ClusterName, &item.Namespace, &item.PodName,
 		&item.PodUID, &item.Container, &item.Columns, &item.Rows, &item.StartedAt,
 		&item.EndedAt, &item.ExpiresAt, &item.Result, &item.ExitCode,
 		&item.OutputBytes, &item.RecordingBytes, &item.Truncated,

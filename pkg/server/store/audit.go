@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -65,6 +67,8 @@ SELECT
     COALESCE(target_name, ''),
     result,
     request_id,
+    COALESCE(host(actor_ip), ''),
+    detail,
     created_at
 `+auditFilterSQL+`
 ORDER BY created_at DESC, id DESC
@@ -91,6 +95,7 @@ LIMIT $12 OFFSET $13
 
 func scanAuditRecord(rows pgx.Rows) (AuditRecord, error) {
 	var item AuditRecord
+	var detail []byte
 	err := rows.Scan(
 		&item.ID,
 		&item.ActorType,
@@ -110,9 +115,15 @@ func scanAuditRecord(rows pgx.Rows) (AuditRecord, error) {
 		&item.TargetName,
 		&item.Result,
 		&item.RequestID,
+		&item.ActorIP,
+		&detail,
 		&item.CreatedAt,
 	)
-	return item, err
+	if err != nil {
+		return AuditRecord{}, err
+	}
+	item.Detail = decodeAuditDetail(detail)
+	return item, nil
 }
 
 func (store *AuditStore) RecordTenantEvent(
@@ -135,19 +146,22 @@ WITH tenant_scope AS (
 )
 INSERT INTO audit_events (
     id, actor_type, actor_user_id, scope_type, tenant_id, tenant_name,
-    action, target_type, target_id, target_name, result, request_id
+    action, target_type, target_id, target_name, result, request_id,
+    actor_ip, detail
 )
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'tenant',
     tenant_scope.tenant_id,
     COALESCE(NULLIF($3, ''), tenant_scope.tenant_name),
-    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9
+    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9,
+    $10::inet, $11::jsonb
 FROM tenant_scope
 UNION ALL
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'global',
     NULL::uuid, NULLIF($3, ''),
-    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9
+    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9,
+    $10::inet, $11::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM tenant_scope)
 `,
 		input.ActorUserID,
@@ -159,6 +173,8 @@ WHERE NOT EXISTS (SELECT 1 FROM tenant_scope)
 		input.TargetName,
 		input.Result,
 		input.RequestID,
+		auditActorIP(input.ActorIP),
+		auditDetail(input.Detail),
 	); err != nil {
 		return fmt.Errorf("record tenant audit event: %w", err)
 	}
@@ -197,7 +213,9 @@ INSERT INTO audit_events (
     target_id,
     target_name,
     result,
-    request_id
+    request_id,
+    actor_ip,
+    detail
 )
 SELECT
     gen_random_uuid(),
@@ -212,7 +230,9 @@ SELECT
     NULLIF($6, '')::uuid,
     NULLIF($7, ''),
     $8,
-    $9
+    $9,
+    $10::inet,
+    $11::jsonb
 FROM project_scope
 UNION ALL
 SELECT
@@ -228,7 +248,9 @@ SELECT
     NULLIF($6, '')::uuid,
     NULLIF($7, ''),
     $8,
-    $9
+    $9,
+    $10::inet,
+    $11::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM project_scope)
 `,
 		input.ActorUserID,
@@ -240,6 +262,8 @@ WHERE NOT EXISTS (SELECT 1 FROM project_scope)
 		input.TargetName,
 		input.Result,
 		input.RequestID,
+		auditActorIP(input.ActorIP),
+		auditDetail(input.Detail),
 	); err != nil {
 		return fmt.Errorf("record project audit event: %w", err)
 	}
@@ -269,7 +293,9 @@ INSERT INTO audit_events (
     target_id,
     target_name,
     result,
-    request_id
+    request_id,
+    actor_ip,
+    detail
 )
 VALUES (
     gen_random_uuid(),
@@ -281,7 +307,9 @@ VALUES (
     NULLIF($4, '')::uuid,
     NULLIF($5, ''),
     $6,
-    $7
+    $7,
+    $8::inet,
+    $9::jsonb
 )
 `,
 		input.ActorUserID,
@@ -291,6 +319,8 @@ VALUES (
 		input.TargetName,
 		input.Result,
 		input.RequestID,
+		auditActorIP(input.ActorIP),
+		auditDetail(input.Detail),
 	); err != nil {
 		return fmt.Errorf("record global audit event: %w", err)
 	}
@@ -326,7 +356,9 @@ INSERT INTO audit_events (
     target_type,
     target_id,
     result,
-    request_id
+    request_id,
+    actor_ip,
+    detail
 )
 SELECT
     gen_random_uuid(),
@@ -340,7 +372,9 @@ SELECT
     $4,
     agent_scope.agent_id,
     $5,
-    $6
+    $6,
+    $7::inet,
+    $8::jsonb
 FROM agent_scope
 UNION ALL
 SELECT
@@ -355,7 +389,9 @@ SELECT
     $4,
     $2::uuid,
     $5,
-    $6
+    $6,
+    $7::inet,
+    $8::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM agent_scope)
 `,
 		input.ActorUserID,
@@ -364,6 +400,8 @@ WHERE NOT EXISTS (SELECT 1 FROM agent_scope)
 		auditaction.TargetAgent,
 		input.Result,
 		input.RequestID,
+		auditActorIP(input.ActorIP),
+		auditDetail(input.Detail),
 	); err != nil {
 		return fmt.Errorf("record Agent audit event: %w", err)
 	}
@@ -391,21 +429,23 @@ WITH cluster_scope AS (
 INSERT INTO audit_events (
     id, actor_type, actor_user_id, scope_type, tenant_id, project_id,
     cluster_id, cluster_name, action, target_type, target_id, target_name,
-    result, request_id
+    result, request_id, actor_ip, detail
 )
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'cluster',
     cluster_scope.tenant_id, cluster_scope.project_id,
     cluster_scope.cluster_id,
     COALESCE(NULLIF($3, ''), cluster_scope.cluster_name),
-    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9
+    $4, $5, NULLIF($6, '')::uuid, NULLIF($7, ''), $8, $9,
+    $10::inet, $11::jsonb
 FROM cluster_scope
 UNION ALL
 SELECT
     gen_random_uuid(), 'user', $1::uuid, 'global',
     NULL::uuid, NULL::uuid, NULL::uuid,
     NULLIF($3, ''), $4, $5, NULLIF($6, '')::uuid,
-    NULLIF($7, ''), $8, $9
+    NULLIF($7, ''), $8, $9,
+    $10::inet, $11::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM cluster_scope)
 `,
 		input.ActorUserID,
@@ -417,6 +457,8 @@ WHERE NOT EXISTS (SELECT 1 FROM cluster_scope)
 		input.TargetName,
 		input.Result,
 		input.RequestID,
+		auditActorIP(input.ActorIP),
+		auditDetail(input.Detail),
 	); err != nil {
 		return fmt.Errorf("record cluster audit event: %w", err)
 	}
@@ -425,4 +467,58 @@ WHERE NOT EXISTS (SELECT 1 FROM cluster_scope)
 
 func validClusterAuditResult(result string) bool {
 	return result == "succeeded" || result == "failed" || result == "denied"
+}
+
+// auditActorIP normalizes a client address for the `inet` column.
+//
+// An address PostgreSQL would reject is dropped rather than allowed to fail the
+// statement: the address arrives from a proxy header that ZKE does not control,
+// and losing one field of an audit row is a far smaller loss than losing the row
+// that records what happened. A host:port pair is reduced to the host, because
+// that is the form gin hands back on some listeners.
+func auditActorIP(value string) *string {
+	address := strings.TrimSpace(value)
+	if address == "" {
+		return nil
+	}
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		address = host
+	}
+	parsed := net.ParseIP(address)
+	if parsed == nil {
+		return nil
+	}
+	normalized := parsed.String()
+	return &normalized
+}
+
+// auditDetail encodes the structured reason for an event, or nil when there is
+// none. An absent reason stays NULL rather than becoming `{}`, so "nothing was
+// recorded" and "nothing to record" stay distinguishable in the trail.
+func auditDetail(detail map[string]string) []byte {
+	if len(detail) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+// decodeAuditDetail reads the column back, tolerating anything that is not a
+// flat object. Audit reads must not fail because one historical row holds a
+// shape the current code does not expect.
+func decodeAuditDetail(raw []byte) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	detail := make(map[string]string)
+	if err := json.Unmarshal(raw, &detail); err != nil {
+		return nil
+	}
+	if len(detail) == 0 {
+		return nil
+	}
+	return detail
 }

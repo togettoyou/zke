@@ -27,7 +27,12 @@ CREATE TABLE tenants (
 -- No `id` tiebreaker column: with lower(name) unique the ordering is already
 -- total, so a second index column would never be reached.
 CREATE UNIQUE INDEX tenants_name_unique_idx ON tenants (lower(name));
-CREATE INDEX tenants_status_idx ON tenants (status);
+
+-- `status` is deliberately not indexed, here or on any other table that has the
+-- column. It holds two or three distinct values, and every query that filters on
+-- it also pins the row by primary key -- `WHERE id = $1 AND status = 'active'`
+-- is the shape used throughout the store. The primary key answers those; a
+-- status index would never be selected and would only cost writes.
 
 CREATE TABLE projects (
     id uuid PRIMARY KEY,
@@ -42,7 +47,10 @@ CREATE TABLE projects (
     UNIQUE (tenant_id, id)
 );
 
-CREATE INDEX projects_tenant_id_idx ON projects (tenant_id);
+-- No standalone (tenant_id) index: `UNIQUE (tenant_id, id)` above already
+-- starts with that column, and a B-tree serves a leading-column lookup from the
+-- composite index. A separate one would only add write cost.
+--
 -- Project names are unique inside their Tenant, compared without case, and the
 -- same index orders the listing.
 --
@@ -56,7 +64,6 @@ CREATE INDEX projects_tenant_id_idx ON projects (tenant_id);
 -- name.
 CREATE UNIQUE INDEX projects_tenant_name_unique_idx
     ON projects (tenant_id, lower(name));
-CREATE INDEX projects_status_idx ON projects (status);
 
 CREATE TABLE users (
     id uuid PRIMARY KEY,
@@ -180,7 +187,6 @@ CREATE INDEX role_bindings_created_at_idx ON role_bindings (created_at, id);
 -- Supports the foreign key check on write, the "is this role still bound"
 -- question the role delete path asks, and the role filter on the binding listing.
 CREATE INDEX role_bindings_role_idx ON role_bindings (role);
-CREATE INDEX users_status_idx ON users (status);
 
 CREATE TABLE clusters (
     id uuid PRIMARY KEY,
@@ -206,8 +212,12 @@ CREATE TABLE clusters (
     UNIQUE (tenant_id, project_id, id)
 );
 
-CREATE INDEX clusters_project_scope_idx ON clusters (tenant_id, project_id);
--- Clusters are listed by name inside a project.
+-- The scope lookup is served by `UNIQUE (tenant_id, project_id, id)` above,
+-- whose leading columns are exactly the scope pair.
+--
+-- Clusters are listed by name inside a project. This index is not redundant
+-- with the unique one below: the listing orders by `name`, the uniqueness is on
+-- `lower(name)`, and only the former can drive the ordering.
 CREATE INDEX clusters_project_name_idx ON clusters (project_id, name, id);
 -- Cluster names are unique inside their Project, compared without case.
 --
@@ -215,7 +225,6 @@ CREATE INDEX clusters_project_name_idx ON clusters (project_id, name, id);
 -- releases its name by disappearing rather than by being excluded here.
 CREATE UNIQUE INDEX clusters_project_name_unique_idx
     ON clusters (project_id, lower(name));
-CREATE INDEX clusters_status_idx ON clusters (status);
 
 CREATE TABLE agents (
     id uuid PRIMARY KEY,
@@ -226,6 +235,8 @@ CREATE TABLE agents (
     protocol_version text NOT NULL CHECK (length(btrim(protocol_version)) > 0),
     lifecycle_status text NOT NULL CHECK (lifecycle_status IN ('pending', 'active', 'revoked')),
     health_status text NOT NULL CHECK (health_status IN ('unknown', 'healthy', 'degraded')),
+    -- The serial of the credential this Agent is currently connected with. The
+    -- foreign key is declared further down, once agent_credentials exists.
     active_credential_serial text,
     last_seen_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -236,8 +247,8 @@ CREATE TABLE agents (
     UNIQUE (tenant_id, project_id, cluster_id, id)
 );
 
-CREATE INDEX agents_project_scope_idx ON agents (tenant_id, project_id);
-
+-- The scope lookup is served by `UNIQUE (tenant_id, project_id, cluster_id, id)`
+-- above, whose leading columns are the scope pair.
 CREATE UNIQUE INDEX agents_active_cluster_unique
     ON agents (cluster_id)
     WHERE lifecycle_status <> 'revoked';
@@ -259,7 +270,29 @@ CREATE TABLE agent_credentials (
         REFERENCES agents (tenant_id, project_id, cluster_id, id)
 );
 
+-- `agents.active_credential_serial` is a pointer into this table, so the
+-- database enforces that it points at a credential that exists rather than
+-- leaving it to whoever remembers to update both rows. Two connection paths
+-- write it -- the handshake that adopts a new credential and the rotation that
+-- revokes the old ones -- and a stale serial there is invisible: it does not
+-- break a query, it just quietly makes the "current credential" reporting lie.
+--
+-- ON DELETE SET NULL rather than the default: Cluster, Project and Tenant
+-- deletion all remove credentials before the Agents that reference them
+-- (`resource_lifecycle.go`), and that order is correct -- credentials are the
+-- leaf. Rejecting the delete would force the order to invert; clearing the
+-- pointer lets it stand, and the Agent row is deleted moments later anyway.
+ALTER TABLE agents
+    ADD CONSTRAINT agents_active_credential_serial_fk
+    FOREIGN KEY (active_credential_serial)
+    REFERENCES agent_credentials (serial)
+    ON DELETE SET NULL;
+
 CREATE INDEX agent_credentials_agent_id_idx ON agent_credentials (agent_id);
+-- Supports the ON DELETE SET NULL scan above: without it every credential
+-- deletion sequentially scans `agents` looking for referencing rows.
+CREATE INDEX agents_active_credential_serial_idx
+    ON agents (active_credential_serial);
 CREATE INDEX agent_credentials_active_expiry_idx
     ON agent_credentials (expires_at)
     WHERE revoked_at IS NULL;
@@ -302,10 +335,13 @@ CREATE TABLE agent_endpoint_profiles (
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT agent_endpoint_profiles_name_format CHECK (
         name = btrim(name) AND octet_length(name) BETWEEN 1 AND 128
-    ),
-    CONSTRAINT agent_endpoint_profiles_name_unique UNIQUE (name)
+    )
 );
 
+-- Only the case-insensitive uniqueness is declared. A plain `UNIQUE (name)`
+-- alongside it would be a second index enforcing a strictly weaker rule: two
+-- names that differ only in case are already rejected here, so nothing could
+-- ever violate the case-sensitive constraint without violating this one first.
 CREATE UNIQUE INDEX agent_endpoint_profiles_name_case_insensitive_unique
     ON agent_endpoint_profiles (lower(name));
 
@@ -623,6 +659,29 @@ CREATE TABLE audit_events (
     target_name text,
     result text NOT NULL CHECK (result IN ('succeeded', 'failed', 'denied')),
     request_id text NOT NULL CHECK (length(btrim(request_id)) > 0),
+    -- Where the request came from, for the events where that is knowable and
+    -- worth knowing: anything a user drove over HTTP. It stays null for
+    -- 'system' and 'agent' actors, which have no client address in any
+    -- meaningful sense, and for events written inside a store transaction that
+    -- never saw the request.
+    --
+    -- `inet` rather than text so a malformed address is rejected at write time
+    -- and so the column can be compared and ordered as an address later.
+    actor_ip inet,
+    -- Why, when the what is not enough on its own.
+    --
+    -- `result` distinguishes succeeded, failed and denied, but a bare 'denied'
+    -- cannot answer the first question anybody asks of it -- denied for want of
+    -- which permission? -- and a bare 'failed' cannot say what failed. This
+    -- holds that answer as a small object: the required permission on a denial,
+    -- and whatever else identifies the decision at other call sites.
+    --
+    -- It is deliberately not a free-text message and must never carry request
+    -- or response bodies, tokens, credentials or Kubernetes object contents.
+    -- The audit trail is retained far longer than the data it describes, and
+    -- anything put here inherits that lifetime. Keys are stable identifiers,
+    -- values are short.
+    detail jsonb CHECK (detail IS NULL OR jsonb_typeof(detail) = 'object'),
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT audit_events_scope_shape CHECK (
         (scope_type = 'global'
@@ -718,6 +777,22 @@ BEFORE INSERT ON audit_events
 FOR EACH ROW
 EXECUTE FUNCTION fill_audit_event_names();
 
+-- ZKE records idempotency in two shapes, and which one applies is decided by
+-- one question: can the created object hold the key itself?
+--
+-- When it can, the key lives on the object as an `idempotency_key` column --
+-- `enrollments` and `enrollment_attempts` do this, because a replayed request
+-- wants the enrollment row back and the row is already the record of the
+-- request. When it cannot, a ledger table like this one holds the key beside a
+-- reference to what the request produced. Tenants and Projects take that route:
+-- their names are user-visible and unique, and an `idempotency_key` column on
+-- them would put a caller's retry token into the object every operator reads.
+--
+-- A ledger is per resource type rather than one shared table because the
+-- reference is a real foreign key -- `tenant_id` below, `(tenant_id,
+-- project_id)` in project_creation_requests -- and a single polymorphic table
+-- could not have one. Adding a third creatable resource means adding a third
+-- ledger, which is the deliberate cost of keeping that integrity.
 CREATE TABLE tenant_creation_requests (
     id uuid PRIMARY KEY,
     -- Idempotency history keeps the actor UUID after physical user deletion.

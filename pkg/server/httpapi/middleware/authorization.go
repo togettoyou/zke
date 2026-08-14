@@ -98,6 +98,8 @@ func (authorization *Authorization) recordGlobalAdministratorDenied(c *gin.Conte
 		TargetType:  auditaction.TargetPlatformSettings,
 		Result:      "denied",
 		RequestID:   RequestID(c),
+		ActorIP:     c.ClientIP(),
+		Detail:      map[string]string{"scope_type": "global"},
 	}); err != nil {
 		authorization.logger.Error("record global administrator denial",
 			slog.String("request_id", RequestID(c)), slog.String("user_id", userID), slog.String("error", err.Error()))
@@ -353,7 +355,14 @@ func (authorization *Authorization) require(
 			return
 		}
 		if errors.Is(err, rbac.ErrDenied) {
-			authorization.recordDenied(c, identity.User.ID, checkedPermission, scopeType, scopeParameter)
+			authorization.recordDenied(
+				c,
+				identity.User.ID,
+				checkedPermission,
+				permission,
+				scopeType,
+				scopeParameter,
+			)
 			authorization.logger.Warn(
 				"HTTP authorization denied",
 				authorization.logAttributes(
@@ -403,15 +412,27 @@ func (authorization *Authorization) require(
 	}
 }
 
+// recordDenied writes the refusal. `permission` is the one actually checked and
+// becomes the event's action; `requested` is the one the route declared, which
+// can differ because effectiveClusterPermission substitutes a stricter
+// permission inside protected namespaces. Only the checked one would otherwise
+// survive, and a reader would see a denial for a permission the caller never
+// asked for -- so the requested one is recorded alongside it when they diverge.
 func (authorization *Authorization) recordDenied(
 	c *gin.Context,
 	userID string,
 	permission rbac.Permission,
+	requested rbac.Permission,
 	scopeType string,
 	scopeParameter string,
 ) {
 	if authorization.auditService == nil {
 		return
+	}
+	actorIP := c.ClientIP()
+	detail := map[string]string{"scope_type": scopeType}
+	if requested != "" && requested != permission {
+		detail["requested_permission"] = string(requested)
 	}
 	// Detached from the request: a denial must be recorded even when the caller
 	// hangs up before the write lands, or the party being audited decides which
@@ -434,6 +455,8 @@ func (authorization *Authorization) recordDenied(
 				TargetID:    targetID,
 				Result:      "denied",
 				RequestID:   RequestID(c),
+				ActorIP:     actorIP,
+				Detail:      detail,
 			},
 		)
 	case "tenant":
@@ -447,6 +470,8 @@ func (authorization *Authorization) recordDenied(
 				TargetID:    targetID,
 				Result:      "denied",
 				RequestID:   RequestID(c),
+				ActorIP:     actorIP,
+				Detail:      detail,
 			},
 		)
 	case "project":
@@ -460,6 +485,8 @@ func (authorization *Authorization) recordDenied(
 				TargetID:    targetID,
 				Result:      "denied",
 				RequestID:   RequestID(c),
+				ActorIP:     actorIP,
+				Detail:      detail,
 			},
 		)
 	case "cluster":
@@ -473,6 +500,8 @@ func (authorization *Authorization) recordDenied(
 				TargetID:    targetID,
 				Result:      "denied",
 				RequestID:   RequestID(c),
+				ActorIP:     actorIP,
+				Detail:      detail,
 			},
 		)
 	case "agent":
@@ -484,6 +513,8 @@ func (authorization *Authorization) recordDenied(
 				Action:      string(permission),
 				Result:      "denied",
 				RequestID:   RequestID(c),
+				ActorIP:     actorIP,
+				Detail:      detail,
 			},
 		)
 	}

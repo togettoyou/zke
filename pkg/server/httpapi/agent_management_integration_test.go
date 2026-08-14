@@ -160,11 +160,11 @@ RETURNING id::text
 	if err := pool.QueryRow(ctx, `
 INSERT INTO agents (
     id, tenant_id, project_id, cluster_id, version, protocol_version,
-    lifecycle_status, health_status, active_credential_serial, last_seen_at
+    lifecycle_status, health_status, last_seen_at
 )
 VALUES (
     gen_random_uuid(), $1, $2, $3, 'development', 'v1', 'active',
-    'healthy', '42', now()
+    'healthy', now()
 )
 RETURNING id::text
 `, tenantID, projectID, clusterID).Scan(&agentID); err != nil {
@@ -181,6 +181,14 @@ VALUES (
     'certificate', $5
 )
 `, tenantID, projectID, clusterID, agentID, certificateExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	// Adopted after the credential exists: the two tables reference each other,
+	// so this is the order the handshake uses and the only one the foreign key
+	// permits.
+	if _, err := pool.Exec(ctx,
+		"UPDATE agents SET active_credential_serial = '42' WHERE id = $1", agentID,
+	); err != nil {
 		t.Fatal(err)
 	}
 
