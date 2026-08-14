@@ -26,6 +26,10 @@ Agent 主动连接 ZKE Server，不要求 Server 直接访问 Kubernetes API Ser
 - `POST /api/v1/projects/{project_id}/cluster-installations` 生成一键安装命令；
 - `GET /agent-install/v1/manifest` 使用 Bearer Token 获取 Kubernetes Manifest。
 
+Console 将“创建凭证”和“一键安装命令”合并为一个创建入口。创建成功后，用户可在同一结果窗口中选择复制完整的
+`curl | kubectl apply` 命令，或仅复制 Enrollment Token 用于自定义部署流程；两种方式使用同一枚一次性凭证，
+不会因为切换复制内容而重复创建 Enrollment。
+
 创建接口要求 Session、CSRF、`cluster.enrollment.create` 权限和 16 至 128 字符的
 `Idempotency-Key`。Token 明文只返回一次，数据库只保存 SHA-256 摘要；凭证与 Project、集群显示名称绑定。
 查询和撤销分别要求 `cluster.enrollment.read` 与 `cluster.enrollment.revoke`。已消费凭证不可撤销。

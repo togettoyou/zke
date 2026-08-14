@@ -13,7 +13,6 @@ import {
 } from "@/api/queries/clusters";
 import {
   useClusterEnrollments,
-  useCreateClusterEnrollment,
   useCreateClusterInstallation,
   useRevokeClusterEnrollment,
 } from "@/api/queries/enrollments";
@@ -408,7 +407,7 @@ function ClusterSection({
           rowKey={(row) => row.id}
           onRowClick={onSelect}
           emptyTitle="该项目还没有集群"
-          emptyDescription="可在「接入凭证」中创建一次性凭证或一键安装命令，让集群中的 ZKE Agent 主动接入。"
+          emptyDescription="可在「接入凭证」中创建一次性凭证，并选择复制安装命令或凭证，让集群中的 ZKE Agent 主动接入。"
           toolbar={
             <Input
               className="max-w-56"
@@ -647,18 +646,17 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   const { permissions } = useSessionContext();
   const [offset, setOffset] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
-  const [installOpen, setInstallOpen] = useState(false);
-  const enrollmentKey = useSubmissionKey(createOpen);
-  const installationKey = useSubmissionKey(installOpen);
+  const creationKey = useSubmissionKey(createOpen);
   // Named for the wire field it becomes — the enrollment's `cluster_name` —
-  // which both dialogs present as the credential's own name, because that is
+  // which the dialog presents as the credential's own name, because that is
   // what it stays after the Cluster it creates is renamed.
   const [clusterName, setClusterName] = useState("");
   const [agentNamespace, setAgentNamespace] = useState("zke-system");
   const [endpointProfileId, setEndpointProfileId] = useState("");
-  const [tokenResult, setTokenResult] = useState<{ token: string; expiresAt: string } | null>(null);
-  const [installResult, setInstallResult] = useState<{
+  const [resultMode, setResultMode] = useState<"command" | "token">("command");
+  const [credentialResult, setCredentialResult] = useState<{
     command: string;
+    token: string;
     manifestUrl: string;
     expiresAt: string;
   } | null>(null);
@@ -666,7 +664,6 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
 
   const query = useClusterEnrollments(scope.projectId, { limit: DEFAULT_PAGE_SIZE, offset });
   const endpointProfiles = useReadyAgentEndpointProfiles(scope.projectId);
-  const createEnrollment = useCreateClusterEnrollment();
   const createInstallation = useCreateClusterInstallation();
   const revokeEnrollment = useRevokeClusterEnrollment();
   const resolvedEndpointProfileId =
@@ -682,10 +679,9 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
 
   // See the cluster section above.
   const clearActionErrors = useCallback(() => {
-    createEnrollment.reset();
     createInstallation.reset();
     revokeEnrollment.reset();
-  }, [createEnrollment, createInstallation, revokeEnrollment]);
+  }, [createInstallation, revokeEnrollment]);
 
   const columns = useMemo<ColumnDef<ClusterEnrollmentRecord, unknown>[]>(
     () => [
@@ -764,35 +760,20 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
           description="一次性凭证由集群内的 ZKE Agent 使用，Agent 主动连接 Server 完成注册；名称在签发时固定，集群之后可以单独重命名"
           actions={
             canCreate ? (
-              <>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => {
-                    clearActionErrors();
-                    setClusterName("");
-                    setAgentNamespace("zke-system");
-                    setEndpointProfileId("");
-                    setInstallOpen(true);
-                  }}
-                >
-                  一键安装命令
-                </Button>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={() => {
-                    clearActionErrors();
-                    setClusterName("");
-                    setAgentNamespace("zke-system");
-                    setEndpointProfileId("");
-                    setCreateOpen(true);
-                  }}
-                >
-                  <KeyRound />
-                  创建凭证
-                </Button>
-              </>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  clearActionErrors();
+                  setClusterName("");
+                  setAgentNamespace("zke-system");
+                  setEndpointProfileId("");
+                  setCreateOpen(true);
+                }}
+              >
+                <KeyRound />
+                创建接入凭证
+              </Button>
             ) : null
           }
         />
@@ -814,7 +795,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>创建一次性接入凭证</DialogTitle>
+            <DialogTitle>创建接入凭证</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4">
             <div className="grid gap-1.5">
@@ -845,82 +826,16 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                 pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
                 onChange={(event) => setAgentNamespace(event.target.value)}
               />
-              <FieldHint>该值属于目标集群，完成首次注册后固定。</FieldHint>
+              <FieldHint className="leading-relaxed">
+                该值属于目标集群，完成首次注册后固定；一键安装清单会在此 Namespace 部署 Agent。
+              </FieldHint>
             </div>
+            <FieldHint className="leading-relaxed">
+              创建后可选择复制一键安装命令，或仅复制 Enrollment Token 用于自定义部署流程。
+            </FieldHint>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              disabled={
-                createEnrollment.isPending ||
-                clusterName.trim().length === 0 ||
-                !resolvedEndpointProfileId ||
-                agentNamespace.trim().length === 0
-              }
-              onClick={async () => {
-                try {
-                  const result = await createEnrollment.mutateAsync({
-                    projectId: scope.projectId as string,
-                    clusterName: clusterName.trim(),
-                    endpointProfileId: resolvedEndpointProfileId,
-                    agentNamespace: agentNamespace.trim(),
-                    idempotencyKey: enrollmentKey,
-                  });
-                  setCreateOpen(false);
-                  setTokenResult({ token: result.token, expiresAt: result.expires_at });
-                } catch (error) {
-                  notifyFailure("创建接入凭证失败", error);
-                }
-              }}
-            >
-              {createEnrollment.isPending ? "创建中…" : "创建"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={installOpen} onOpenChange={setInstallOpen}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>生成一键安装命令</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid gap-1.5">
-              <Label htmlFor="installation-name">凭证名称</Label>
-              <Input
-                id="installation-name"
-                value={clusterName}
-                maxLength={253}
-                autoFocus
-                onChange={(event) => setClusterName(event.target.value)}
-              />
-              <FieldHint className="leading-relaxed">
-                首次注册时作为集群初始名称，之后可以重命名。安装命令包含一次性凭证，必须按机密信息处理。
-              </FieldHint>
-            </div>
-            <EndpointProfileField
-              profiles={endpointProfiles.data?.agent_endpoint_profiles ?? []}
-              defaultProfileId={endpointProfiles.data?.default_endpoint_profile_id ?? ""}
-              value={resolvedEndpointProfileId}
-              onChange={setEndpointProfileId}
-            />
-            <div className="grid gap-1.5">
-              <Label htmlFor="installation-agent-namespace">Agent Namespace</Label>
-              <Input
-                id="installation-agent-namespace"
-                value={agentNamespace}
-                maxLength={63}
-                pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
-                onChange={(event) => setAgentNamespace(event.target.value)}
-              />
-              <FieldHint>安装清单会在该 Namespace 中部署 ZKE Agent。</FieldHint>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setInstallOpen(false)}>
               取消
             </Button>
             <Button
@@ -938,68 +853,69 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                     clusterName: clusterName.trim(),
                     endpointProfileId: resolvedEndpointProfileId,
                     agentNamespace: agentNamespace.trim(),
-                    idempotencyKey: installationKey,
+                    idempotencyKey: creationKey,
                   });
-                  setInstallOpen(false);
-                  setInstallResult({
+                  setCreateOpen(false);
+                  setResultMode("command");
+                  setCredentialResult({
                     command: installationCommand(result.manifest_path, result.token),
+                    token: result.token,
                     manifestUrl: new URL(result.manifest_path, window.location.origin).toString(),
                     expiresAt: result.expires_at,
                   });
                 } catch (error) {
-                  notifyFailure("生成安装命令失败", error);
+                  notifyFailure("创建接入凭证失败", error);
                 }
               }}
             >
-              {createInstallation.isPending ? "生成中…" : "生成"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={Boolean(tokenResult)} onOpenChange={(open) => !open && setTokenResult(null)}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>一次性接入凭证</DialogTitle>
-          </DialogHeader>
-          {tokenResult ? (
-            <SecretReveal
-              label="Enrollment Token"
-              value={tokenResult.token}
-              hint={`有效期至 ${tokenResult.expiresAt}。`}
-            />
-          ) : null}
-          <DialogFooter>
-            <Button variant="primary" onClick={() => setTokenResult(null)}>
-              我已安全保存
+              {createInstallation.isPending ? "创建中…" : "创建"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog
-        open={Boolean(installResult)}
-        onOpenChange={(open) => !open && setInstallResult(null)}
+        open={Boolean(credentialResult)}
+        onOpenChange={(open) => !open && setCredentialResult(null)}
       >
         <DialogContent aria-describedby={undefined} className="w-[min(720px,calc(100vw-2rem))]">
           <DialogHeader>
-            <DialogTitle>一键安装命令</DialogTitle>
+            <DialogTitle>接入凭证已创建</DialogTitle>
           </DialogHeader>
-          {installResult ? (
-            <div className="grid gap-3">
+          {credentialResult ? (
+            <div className="grid gap-4">
+              <div className="grid gap-1.5">
+                <Label htmlFor="credential-output">复制内容</Label>
+                <Select
+                  value={resultMode}
+                  onValueChange={(value) => setResultMode(value as "command" | "token")}
+                >
+                  <SelectTrigger id="credential-output">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="command">一键安装命令（curl）</SelectItem>
+                    <SelectItem value="token">仅复制 Enrollment Token</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FieldHint>根据部署方式选择需要复制的内容，两者使用同一枚一次性凭证。</FieldHint>
+              </div>
               <SecretReveal
-                label="在目标集群执行"
-                value={installResult.command}
-                hint={`凭证有效期至 ${installResult.expiresAt}。`}
+                key={resultMode}
+                label={resultMode === "command" ? "在目标集群执行" : "Enrollment Token"}
+                value={resultMode === "command" ? credentialResult.command : credentialResult.token}
+                hint={`有效期至 ${credentialResult.expiresAt}。`}
               />
-              <p className="text-subtle-foreground text-xs">
-                Manifest 地址：
-                <span className="zke-mono break-all"> {installResult.manifestUrl}</span>
-              </p>
+              {resultMode === "command" ? (
+                <p className="text-subtle-foreground text-xs">
+                  Manifest 地址：
+                  <span className="zke-mono break-all"> {credentialResult.manifestUrl}</span>
+                </p>
+              ) : null}
             </div>
           ) : null}
           <DialogFooter>
-            <Button variant="primary" onClick={() => setInstallResult(null)}>
+            <Button variant="primary" onClick={() => setCredentialResult(null)}>
               我已安全保存
             </Button>
           </DialogFooter>
