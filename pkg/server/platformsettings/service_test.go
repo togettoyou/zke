@@ -73,7 +73,7 @@ func (memory *memoryStore) GetSettings(context.Context) (store.PlatformSettings,
 	return memory.settings, nil
 }
 func (memory *memoryStore) UpdateSettings(_ context.Context, input store.UpdatePlatformSettingsParams) (store.PlatformSettings, error) {
-	memory.settings = store.PlatformSettings{DefaultEndpointProfileID: memory.settings.DefaultEndpointProfileID, AgentImage: input.AgentImage, AgentImagePullPolicy: input.AgentImagePullPolicy, ClusterTerminalImage: input.ClusterTerminalImage, ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy, Revision: input.ExpectedRevision + 1, UpdatedAt: input.Now}
+	memory.settings = store.PlatformSettings{DefaultEndpointProfileID: memory.settings.DefaultEndpointProfileID, AgentImage: input.AgentImage, AgentImagePullPolicy: input.AgentImagePullPolicy, ClusterTerminalImage: input.ClusterTerminalImage, ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy, ClusterTerminalSessionTTL: input.ClusterTerminalSessionTTL, Revision: input.ExpectedRevision + 1, UpdatedAt: input.Now}
 	return memory.settings, nil
 }
 
@@ -82,13 +82,36 @@ func TestPlatformSettingsKeepAgentAndTerminalPullPoliciesIndependent(t *testing.
 	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), SettingsInput{
 		AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "Never",
 		ClusterTerminalImage: "registry.example.com/zke-terminal:v2", ClusterTerminalImagePullPolicy: "Always",
-		ExpectedRevision: 1, ActorUserID: testUserID, Now: time.Now().UTC(),
+		ClusterTerminalSessionTTL: 15 * time.Minute,
+		ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if updated.AgentImagePullPolicy != "Never" || updated.ClusterTerminalImagePullPolicy != "Always" {
 		t.Fatalf("pull policies = Agent %q, Terminal %q", updated.AgentImagePullPolicy, updated.ClusterTerminalImagePullPolicy)
+	}
+}
+
+// The lifetime the Server previously clamped silently is now an explicit
+// rejection, so a bad value cannot look accepted and then behave differently.
+func TestPlatformSettingsRejectSessionTTLOutsideAllowedRange(t *testing.T) {
+	for _, ttl := range []time.Duration{
+		0,
+		30 * time.Second,
+		2 * time.Hour,
+		90*time.Second + 500*time.Millisecond,
+	} {
+		memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
+		_, err := NewService(memory, "", nil).UpdateSettings(context.Background(), SettingsInput{
+			AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "IfNotPresent",
+			ClusterTerminalImage: "registry.example.com/zke-terminal:v1", ClusterTerminalImagePullPolicy: "IfNotPresent",
+			ClusterTerminalSessionTTL: ttl,
+			ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
+		})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("UpdateSettings(%s) error = %v, want ErrInvalidInput", ttl, err)
+		}
 	}
 }
 

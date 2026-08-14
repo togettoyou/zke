@@ -53,6 +53,7 @@ export function useUpdatePlatformSettings() {
             agent_image_pull_policy: input.agent_image_pull_policy,
             cluster_terminal_image: input.cluster_terminal_image,
             cluster_terminal_image_pull_policy: input.cluster_terminal_image_pull_policy,
+            cluster_terminal_session_ttl_seconds: input.cluster_terminal_session_ttl_seconds,
             expected_revision: input.revision,
           },
         }),

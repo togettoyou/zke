@@ -90,6 +90,7 @@ type Settings struct {
 	AgentImagePullPolicy           string
 	ClusterTerminalImage           string
 	ClusterTerminalImagePullPolicy string
+	ClusterTerminalSessionTTL      time.Duration
 	Revision                       int64
 	UpdatedAt                      time.Time
 }
@@ -111,6 +112,7 @@ type SettingsInput struct {
 	AgentImagePullPolicy           string
 	ClusterTerminalImage           string
 	ClusterTerminalImagePullPolicy string
+	ClusterTerminalSessionTTL      time.Duration
 	ExpectedRevision               int64
 	ActorUserID                    string
 	Now                            time.Time
@@ -310,7 +312,8 @@ func (service *Service) UpdateSettings(ctx context.Context, input SettingsInput)
 		!validAgentImage(input.AgentImage) ||
 		!validAgentImage(input.ClusterTerminalImage) ||
 		!allowedPullPolicy(input.AgentImagePullPolicy) ||
-		!allowedPullPolicy(input.ClusterTerminalImagePullPolicy) {
+		!allowedPullPolicy(input.ClusterTerminalImagePullPolicy) ||
+		!allowedTerminalSessionTTL(input.ClusterTerminalSessionTTL) {
 		return Settings{}, ErrInvalidInput
 	}
 	service.profileMutation.Lock()
@@ -320,6 +323,7 @@ func (service *Service) UpdateSettings(ctx context.Context, input SettingsInput)
 		AgentImagePullPolicy: input.AgentImagePullPolicy, ExpectedRevision: input.ExpectedRevision,
 		ClusterTerminalImage:           strings.TrimSpace(input.ClusterTerminalImage),
 		ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy,
+		ClusterTerminalSessionTTL:      input.ClusterTerminalSessionTTL,
 		ActorUserID:                    input.ActorUserID, Now: input.Now,
 	})
 	if errors.Is(err, store.ErrPlatformSettingsConflict) {
@@ -574,6 +578,13 @@ func allowedPullPolicy(value string) bool {
 	return value == "Always" || value == "IfNotPresent" || value == "Never"
 }
 
+// allowedTerminalSessionTTL mirrors the database CHECK constraint. A whole
+// number of seconds is required because the column stores seconds and the
+// Agent's TerminalSessionRequest carries seconds.
+func allowedTerminalSessionTTL(value time.Duration) bool {
+	return value >= time.Minute && value <= time.Hour && value%time.Second == 0
+}
+
 func settingsFromStore(item store.PlatformSettings) Settings {
 	return Settings{
 		DefaultEndpointProfileID: item.DefaultEndpointProfileID,
@@ -581,6 +592,7 @@ func settingsFromStore(item store.PlatformSettings) Settings {
 		AgentImagePullPolicy:     item.AgentImagePullPolicy, Revision: item.Revision,
 		ClusterTerminalImage:           item.ClusterTerminalImage,
 		ClusterTerminalImagePullPolicy: item.ClusterTerminalImagePullPolicy,
+		ClusterTerminalSessionTTL:      item.ClusterTerminalSessionTTL,
 		UpdatedAt:                      item.UpdatedAt,
 	}
 }

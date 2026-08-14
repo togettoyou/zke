@@ -108,10 +108,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	pkiSettings := cfg.AgentPKI
 	managedPKIConfig := pki.Config{
 		Directory:                pkiSettings.Directory,
-		AgentClientCAValidity:    pkiSettings.AgentClientCAValidity,
-		AgentListenerCAValidity:  pkiSettings.AgentListenerCAValidity,
-		AgentListenerValidity:    pkiSettings.AgentListenerValidity,
-		AgentListenerRenewBefore: pkiSettings.AgentListenerRenewBefore,
+		AgentClientCAValidity:    pkiSettings.ClientCAValidity,
+		AgentListenerCAValidity:  pkiSettings.ListenerCAValidity,
+		AgentListenerValidity:    pkiSettings.ListenerValidity,
+		AgentListenerRenewBefore: pkiSettings.ListenerRenewBefore,
 		ListenerDNSNames:         listenerDNSNames, ListenerIPAddresses: listenerIPAddresses,
 	}
 	managedFiles, err := pki.Ensure(
@@ -134,7 +134,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	logServerPKIExpiry(logger, managedFiles.State, cfg.CertificateMonitor.WarningBefore)
+	logServerPKIExpiry(logger, managedFiles.State, cfg.AgentPKI.Monitor.WarnBefore)
 	platformSettingsService := platformsettings.NewService(
 		platformSettingsStore,
 		managedFiles.AgentListenerCertificate,
@@ -263,7 +263,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		agentStatusStore,
 		agentConnectionManager,
 		agentConnectionManager,
-		cfg.CertificateMonitor.WarningBefore,
+		cfg.AgentPKI.Monitor.WarnBefore,
 	)
 	kubernetesResourceService := kubernetesresource.NewService(
 		agentConnectionManager,
@@ -294,7 +294,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		agentConnectionManager,
 		podExecService,
 		clusterterminal.Config{
-			TTL: cfg.ClusterTerminal.SessionTTL,
 			ResolveRuntime: func(ctx context.Context, clusterID string) (clusterterminal.RuntimeConfig, error) {
 				settings, _, err := platformSettingsService.Get(ctx)
 				if err != nil {
@@ -306,7 +305,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				}
 				return clusterterminal.RuntimeConfig{
 					Image: settings.ClusterTerminalImage, ImagePullPolicy: settings.ClusterTerminalImagePullPolicy,
-					Namespace: clusterScope.AgentNamespace,
+					Namespace: clusterScope.AgentNamespace, TTL: settings.ClusterTerminalSessionTTL,
 				}, nil
 			},
 		},
@@ -443,7 +442,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			runContext,
 			logger,
 			agentStatusStore,
-			cfg.CertificateMonitor,
+			cfg.AgentPKI.Monitor,
 		)
 	}()
 	httpServer := &http.Server{
@@ -594,7 +593,7 @@ func monitorAgentCertificates(
 	ctx context.Context,
 	logger *slog.Logger,
 	agentStore *store.AgentStatusStore,
-	config CertificateMonitorConfig,
+	config AgentPKIMonitorConfig,
 ) {
 	check := func() {
 		now := time.Now().UTC()
@@ -602,7 +601,7 @@ func monitorAgentCertificates(
 		defer cancel()
 		certificates, err := agentStore.ListExpiringAgentCertificates(
 			operationContext,
-			now.Add(config.WarningBefore),
+			now.Add(config.WarnBefore),
 		)
 		if err != nil {
 			if ctx.Err() == nil {

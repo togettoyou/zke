@@ -80,20 +80,36 @@ auth:
   account_lockout:
     max_failed_attempts: 5
     duration: 15m
-agent_pki:
-  # Server owns the Agent-side CA and Listener identity. Public QUIC names are
-  # derived from enabled endpoint profiles stored in PostgreSQL.
-  # Lifetime of Agent client certificates issued at enrollment and renewal.
-  agent_client_certificate_validity: 720h
 
+agent_pki:
+  # Server owns every certificate below: the two CAs, its own Listener identity,
+  # and the client certificates Agents receive. The HTTP and Pod Access TLS
+  # files above come from outside the Server and are not part of this lifecycle.
+  #
   # Mount this directory on a private PV in a deployment. If database PKI
   # state exists but the directory is lost, Server fails closed.
   directory: data/pki
-  agent_client_ca_validity: 87600h
-  agent_listener_ca_validity: 175200h
-  agent_listener_certificate_validity: 87600h
+
+  # Agent Client CA signs the certificates Agents present on QUIC/mTLS,
+  # issued at enrollment and renewal.
+  client_ca_validity: 87600h
+  client_certificate_validity: 720h
+
+  # Agent Listener CA signs this Server's own QUIC identity. Public QUIC names
+  # are derived from enabled endpoint profiles stored in PostgreSQL.
   # Listener leaf renewal happens automatically. CAs never auto-rotate.
-  agent_listener_renew_before: 8760h
+  listener_ca_validity: 175200h
+  listener_certificate_validity: 87600h
+  listener_renew_before: 8760h
+
+  # Expiry surveillance over the certificates issued above. It drives the Agent
+  # status API's expiring state and periodic structured warnings. Agent-side
+  # renewal normally happens earlier (identity.renew_before, seven days by
+  # default). warn_before must stay below client_certificate_validity, or every
+  # Agent reports expiring from the moment its certificate is issued.
+  monitor:
+    warn_before: 168h
+    check_interval: 1h
 
 # Default endpoint embedded into new Agent enrollment credentials. Configure
 # both values together. Leaving both empty uses the local loopback preset.
@@ -102,15 +118,13 @@ agent_pki:
 agent_install:
   public_http_url: ""
   public_quic_address: ""
+
 agent_enrollment:
   # Controls the one-time HTTP(S) bootstrap operation.
   operation_timeout: 10s
   rate_limit:
     window: 1m
     max_attempts_per_source: 30
-
-cluster_terminal:
-  session_ttl: 15m
 
 agent_listener:
   # Dedicated QUIC/UDP endpoint for persistent Agent mTLS connections.
@@ -159,12 +173,6 @@ agent_listener:
   # How many disconnected Agents keep a last-known status in memory, so that
   # Cluster churn cannot grow the Server heap without bound.
   max_remembered_disconnects: 4096
-
-certificate_monitor:
-  # Drives the Agent status API's expiring state and periodic structured
-  # warnings. Agent renewal normally happens earlier (seven days by default).
-  warning_before: 168h
-  check_interval: 1h
 
 shutdown_timeout: 10s
 log_level: info

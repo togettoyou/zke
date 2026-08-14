@@ -60,8 +60,10 @@ auth:
     max_failed_attempts: 7
     duration: 20m
 agent_pki:
-  agent_client_certificate_validity: 48h
+  client_certificate_validity: 48h
   directory: /var/lib/zke/pki
+  monitor:
+    warn_before: 12h
 agent_enrollment:
   operation_timeout: 9s
   rate_limit:
@@ -169,6 +171,11 @@ log_level: warn
 	if cfg.AgentIdentity.CertificateTTL != 48*time.Hour ||
 		cfg.AgentPKI.Directory != "/var/lib/zke/pki" {
 		t.Fatalf("unexpected Agent identity config: %+v", cfg.AgentIdentity)
+	}
+	// A nested block set in the file must not discard the sibling defaults.
+	if cfg.AgentPKI.Monitor.WarnBefore != 12*time.Hour ||
+		cfg.AgentPKI.Monitor.CheckInterval != time.Hour {
+		t.Fatalf("unexpected Agent PKI monitor config: %+v", cfg.AgentPKI.Monitor)
 	}
 	if cfg.AgentEnrollment.OperationTimeout != 9*time.Second ||
 		cfg.AgentEnrollment.RateLimit.Window != 3*time.Minute ||
@@ -384,12 +391,15 @@ auth:
     max_attempts_per_account: 5
     max_attempts_per_source: 20
 agent_pki:
-  agent_client_certificate_validity: 720h
   directory: /var/lib/zke/pki
-  agent_client_ca_validity: 87600h
-  agent_listener_ca_validity: 175200h
-  agent_listener_certificate_validity: 87600h
-  agent_listener_renew_before: 8760h
+  client_ca_validity: 87600h
+  client_certificate_validity: 720h
+  listener_ca_validity: 175200h
+  listener_certificate_validity: 87600h
+  listener_renew_before: 8760h
+  monitor:
+    warn_before: 168h
+    check_interval: 1h
 agent_enrollment:
   operation_timeout: 10s
   rate_limit:
@@ -402,9 +412,6 @@ agent_listener:
   heartbeat_timeout: 30s
   last_seen_write_interval: 1m
   operation_timeout: 10s
-certificate_monitor:
-  warning_before: 720h
-  check_interval: 1h
 shutdown_timeout: 10s
 log_level: info
 `)
@@ -417,6 +424,29 @@ log_level: info
 	}
 	if cfg.AgentPKI.Directory != "/var/lib/zke/pki" {
 		t.Fatalf("unexpected managed Agent PKI config: %+v", cfg.AgentPKI)
+	}
+}
+
+// A warning window a Client certificate can never outlive would report every
+// Agent as expiring from the moment its certificate is issued.
+func TestConfigRejectsExpiryWarningAtOrAboveClientCertificateValidity(t *testing.T) {
+	t.Parallel()
+
+	defaults := DefaultConfig()
+	for _, warnBefore := range []time.Duration{
+		defaults.AgentPKI.ClientCertificateValidity,
+		defaults.AgentPKI.ClientCertificateValidity + time.Hour,
+	} {
+		cfg := DefaultConfig()
+		cfg.AgentPKI.Monitor.WarnBefore = warnBefore
+		cfg.resolveDerivedIdentity()
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf(
+				"Validate() accepted a %s warning window against a %s Client certificate validity",
+				warnBefore,
+				cfg.AgentPKI.ClientCertificateValidity,
+			)
+		}
 	}
 }
 

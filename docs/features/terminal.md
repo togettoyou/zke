@@ -52,11 +52,13 @@ Agent ClusterRole/ClusterRoleBinding 不会进入终端可更新或删除的对�
 
 ## 配置与镜像
 
-Cluster Terminal 镜像及其独立的 Image Pull Policy 由全局管理员在“设置 → 平台配置”管理，修改后立即用于新建会话。
+Cluster Terminal 镜像及其独立的 Image Pull Policy 由全局管理员在“平台配置 → 镜像”管理，修改后立即用于新建会话。
 `build/agent/Dockerfile` 构建的
 `ghcr.io/togettoyou/zke-agent` 同时包含 Agent 二进制、kubectl、交互式 Shell、基础工具和默认启用的 kubectl
 Bash Tab 补全。Agent Deployment 使用镜像默认入口运行 `zke-agent`；Cluster Terminal Pod 会覆盖入口命令并直接
-启动 Shell，因此两种能力默认共用一个镜像。`cluster_terminal.session_ttl` 可配置为 1 分钟至 1 小时，默认 15 分钟。
+启动 Shell，因此两种能力默认共用一个镜像。会话存续时长同样属于平台配置，由全局管理员在“平台配置 → 集群终端”
+设置，可选 1 分钟至 1 小时，默认 15 分钟；它随镜像在同一次读取中解析，修改后立即用于新建会话，已经建立的会话
+不受影响。
 
 首次使用某个节点时可能需要拉取终端镜像。终端创建使用 `agent_listener.resource_request_timeout` 的独立请求预算
 （默认 2 分钟），不会被普通 API 的 10 秒操作超时或 Console 的 30 秒通用请求超时提前中断；Agent 等待 Pod

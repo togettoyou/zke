@@ -38,6 +38,7 @@ type PlatformSettings struct {
 	AgentImagePullPolicy           string
 	ClusterTerminalImage           string
 	ClusterTerminalImagePullPolicy string
+	ClusterTerminalSessionTTL      time.Duration
 	Revision                       int64
 	UpdatedByUserID                string
 	UpdatedAt                      time.Time
@@ -71,6 +72,7 @@ type UpdatePlatformSettingsParams struct {
 	AgentImagePullPolicy           string
 	ClusterTerminalImage           string
 	ClusterTerminalImagePullPolicy string
+	ClusterTerminalSessionTTL      time.Duration
 	ExpectedRevision               int64
 	ActorUserID                    string
 	Now                            time.Time

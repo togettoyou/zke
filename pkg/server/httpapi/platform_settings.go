@@ -33,7 +33,10 @@ type platformSettingsRequest struct {
 	AgentImagePullPolicy           string `json:"agent_image_pull_policy"`
 	ClusterTerminalImage           string `json:"cluster_terminal_image"`
 	ClusterTerminalImagePullPolicy string `json:"cluster_terminal_image_pull_policy"`
-	ExpectedRevision               int64  `json:"expected_revision"`
+	// Seconds rather than a duration string: the wire format stays a plain
+	// number the Console can bind to a numeric input without parsing.
+	ClusterTerminalSessionTTLSeconds int64 `json:"cluster_terminal_session_ttl_seconds"`
+	ExpectedRevision                 int64 `json:"expected_revision"`
 }
 
 func newPlatformSettingsHandler(logger *slog.Logger, service *platformsettings.Service, auditService *audit.Service, timeout time.Duration) *platformSettingsHandler {
@@ -132,6 +135,7 @@ func (handler *platformSettingsHandler) updateSettings(c *gin.Context) {
 		AgentImage: request.AgentImage, AgentImagePullPolicy: request.AgentImagePullPolicy,
 		ClusterTerminalImage: request.ClusterTerminalImage, ExpectedRevision: request.ExpectedRevision,
 		ClusterTerminalImagePullPolicy: request.ClusterTerminalImagePullPolicy,
+		ClusterTerminalSessionTTL:      terminalSessionTTL(request.ClusterTerminalSessionTTLSeconds),
 		ActorUserID:                    identity.User.ID, Now: time.Now().UTC(),
 	})
 	cancel()
@@ -141,6 +145,17 @@ func (handler *platformSettingsHandler) updateSettings(c *gin.Context) {
 	}
 	handler.auditSettings(c, identity.User.ID, "succeeded")
 	writeSuccess(c, http.StatusOK, settingsResponse(result))
+}
+
+// terminalSessionTTL converts requested seconds into a duration without
+// letting an absurd number wrap around: multiplying an unbounded int64 by
+// time.Second overflows into an arbitrary duration that could land inside the
+// accepted range. Out-of-range input becomes zero, which the service rejects.
+func terminalSessionTTL(seconds int64) time.Duration {
+	if seconds <= 0 || seconds > int64(time.Hour/time.Second) {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func (handler *platformSettingsHandler) respondPlatformError(c *gin.Context, operation string, err error) bool {
@@ -184,5 +199,5 @@ func profilesResponse(profiles []platformsettings.Profile) []gin.H {
 }
 
 func settingsResponse(settings platformsettings.Settings) gin.H {
-	return gin.H{"default_endpoint_profile_id": settings.DefaultEndpointProfileID, "agent_image": settings.AgentImage, "agent_image_pull_policy": settings.AgentImagePullPolicy, "cluster_terminal_image": settings.ClusterTerminalImage, "cluster_terminal_image_pull_policy": settings.ClusterTerminalImagePullPolicy, "revision": settings.Revision, "updated_at": responseTime(settings.UpdatedAt)}
+	return gin.H{"default_endpoint_profile_id": settings.DefaultEndpointProfileID, "agent_image": settings.AgentImage, "agent_image_pull_policy": settings.AgentImagePullPolicy, "cluster_terminal_image": settings.ClusterTerminalImage, "cluster_terminal_image_pull_policy": settings.ClusterTerminalImagePullPolicy, "cluster_terminal_session_ttl_seconds": int64(settings.ClusterTerminalSessionTTL / time.Second), "revision": settings.Revision, "updated_at": responseTime(settings.UpdatedAt)}
 }

@@ -13810,24 +13810,30 @@ components:
     PlatformSettings:
       type: object
       additionalProperties: false
-      required: [default_endpoint_profile_id, agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, revision, updated_at]
+      required: [default_endpoint_profile_id, agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, cluster_terminal_session_ttl_seconds, revision, updated_at]
       properties:
         default_endpoint_profile_id: { $ref: "#/components/schemas/UUID" }
         agent_image: { type: string }
         agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
         cluster_terminal_image: { type: string }
         cluster_terminal_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        cluster_terminal_session_ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          description: Cluster Terminal Pod 存续时长，创建新会话时读取，无需重启 Server。
         revision: { type: integer, minimum: 1 }
         updated_at: { $ref: "#/components/schemas/Timestamp" }
     PlatformSettingsUpdate:
       type: object
       additionalProperties: false
-      required: [agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, expected_revision]
+      required: [agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, cluster_terminal_session_ttl_seconds, expected_revision]
       properties:
         agent_image: { type: string }
         agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
         cluster_terminal_image: { type: string }
         cluster_terminal_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        cluster_terminal_session_ttl_seconds: { type: integer, minimum: 60, maximum: 3600 }
         expected_revision: { type: integer, minimum: 1 }
     ClusterEnrollment:
       type: object

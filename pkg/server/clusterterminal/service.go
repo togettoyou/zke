@@ -35,14 +35,18 @@ type PodExecCreator interface {
 }
 
 type Config struct {
-	TTL            time.Duration
 	ResolveRuntime func(context.Context, string) (RuntimeConfig, error)
 }
 
+// RuntimeConfig is resolved once per session creation. Image, pull policy and
+// TTL come from the platform settings row, so an operator's change applies to
+// the next session without restarting the Server; Namespace comes from the
+// Cluster scope.
 type RuntimeConfig struct {
 	Image           string
 	ImagePullPolicy string
 	Namespace       string
+	TTL             time.Duration
 }
 
 type CreateInput struct {
@@ -80,9 +84,6 @@ type Service struct {
 }
 
 func NewService(requester Requester, podExec PodExecCreator, config Config) *Service {
-	if config.TTL <= 0 || config.TTL > time.Hour {
-		config.TTL = 15 * time.Minute
-	}
 	return &Service{
 		requester: requester, podExec: podExec, config: config,
 		lifecycles: make(map[string]Lifecycle), idempotency: make(map[string]*idempotencyRecord),
@@ -97,7 +98,8 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 	if err != nil {
 		return podexec.Session{}, err
 	}
-	if runtimeConfig.Image == "" || runtimeConfig.ImagePullPolicy == "" || runtimeConfig.Namespace == "" {
+	if runtimeConfig.Image == "" || runtimeConfig.ImagePullPolicy == "" ||
+		runtimeConfig.Namespace == "" || runtimeConfig.TTL <= 0 {
 		return podexec.Session{}, ErrUnavailable
 	}
 	record, owner, beginErr := service.beginCreate(input)
@@ -112,13 +114,13 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 			return record.session, record.err
 		}
 	}
-	defer func() { service.finishCreate(input, record, session, createErr) }()
+	defer func() { service.finishCreate(input, record, runtimeConfig.TTL, session, createErr) }()
 
 	terminalID := deterministicTerminalID(input.UserID, input.ClusterID, runtimeConfig.Namespace, input.IdempotencyKey)
 	response, requestErr := service.requester.RequestTerminalSession(ctx, input.ClusterID, &agentv1.TerminalSessionRequest{
 		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
 		SessionId: terminalID, UserId: input.UserID, Namespace: runtimeConfig.Namespace,
-		Permissions: input.Permissions, TtlSeconds: uint64(service.config.TTL.Seconds()), Image: runtimeConfig.Image,
+		Permissions: input.Permissions, TtlSeconds: uint64(runtimeConfig.TTL.Seconds()), Image: runtimeConfig.Image,
 		ImagePullPolicy: runtimeConfig.ImagePullPolicy,
 	}, terminalIdempotencyKey(input.IdempotencyKey, "create"))
 	if requestErr != nil {
@@ -187,12 +189,16 @@ func (service *Service) beginCreate(input CreateInput) (*idempotencyRecord, bool
 	return record, true, nil
 }
 
-func (service *Service) finishCreate(input CreateInput, record *idempotencyRecord, session podexec.Session, err error) {
+// finishCreate takes the TTL that this session was created with rather than
+// reading it back from the platform settings: the idempotency window must
+// match the lifetime the Agent was actually told to enforce, even if an
+// operator changes the setting midway through the creation.
+func (service *Service) finishCreate(input CreateInput, record *idempotencyRecord, ttl time.Duration, session podexec.Session, err error) {
 	key := input.UserID + "\x00" + input.IdempotencyKey
 	service.mutex.Lock()
 	record.session, record.err = session, err
 	if err == nil {
-		record.expiresAt = input.Now.Add(service.config.TTL)
+		record.expiresAt = input.Now.Add(ttl)
 	}
 	if err != nil && service.idempotency[key] == record {
 		delete(service.idempotency, key)

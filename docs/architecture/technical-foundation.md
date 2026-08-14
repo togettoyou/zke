@@ -783,8 +783,13 @@ Listener 身份。初始化由 PostgreSQL advisory lock 串行化，数据库保
 在线精确同步 SAN 并热切换，数据库变更失败时恢复原 SAN 集合，CA 不自动轮换。
 `agent_listener.address` 不得与 `http.address` 使用相同端口。
 
-客户端证书默认有效 30 天，可通过 `agent_pki.agent_client_certificate_validity` 调整。Agent 默认在到期前 7 天进入自动
+客户端证书默认有效 30 天，可通过 `agent_pki.client_certificate_validity` 调整。Agent 默认在到期前 7 天进入自动
 续期窗口，可通过 `identity.renew_before` 调整；若 Agent 离线直到旧证书过期，仍需重新 Enrollment。
+
+`agent_pki.monitor` 是对上述由 Server 自行签发的证书（两个 CA、Listener 身份、Agent 客户端证书）的到期巡检，
+驱动 Agent 状态 API 的 `expiring` 状态与周期结构化告警。`http.tls` 与 `pod_access.tls` 由外部提供，不在该生命周期内，
+也不被巡检。`monitor.warn_before` 必须低于 `client_certificate_validity`，否则每张证书自签发起即处于 `expiring`，
+告警退化为噪音；该约束在配置校验阶段拒绝启动。
 
 构建与检查：
 
@@ -801,13 +806,16 @@ CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一�
 
 Server 和 Agent 各维护一份仓库 YAML 配置，并作为容器内默认配置。`--config` 文件只需包含待覆盖字段。Server YAML
 只保存数据库、监听器、超时、限流、资源边界、PKI 生命周期和 Agent 安装平台默认端点等启动及系统调优项。其他 Agent
-接入端点、Agent 镜像与拉取策略、Cluster Terminal 镜像与独立拉取策略保存在 PostgreSQL，由全局管理员通过 Console 的
-“设置 → 平台配置”管理。平台默认端点由 YAML 或优先级更高的环境变量在 Server 启动时同步，Console 不允许修改、删除
+接入端点、Agent 镜像与拉取策略、Cluster Terminal 镜像与独立拉取策略、Cluster Terminal 会话存续时长保存在
+PostgreSQL，由全局管理员通过 Console 的“平台配置”应用管理；该应用按全局管理员角色而非权限授权，与服务端
+`/api/v1/platform` 路由的 `RequireGlobalAdministrator` 一致，下设“端点”“镜像”“集群终端”三个菜单。
+平台默认端点由 YAML 或优先级更高的环境变量在 Server 启动时同步，Console 不允许修改、删除
 或重新指定；两项地址均未配置时使用本机回环预设，只配置其中一项时 Server 拒绝启动。切换到内置预设时，Server 会
 删除已被替代的部署端点，避免旧地址继续出现在端点列表和 Listener SAN 来源中。
 Agent Namespace 由调用者为每个 Cluster 的首次 Enrollment 或安装清单指定，首次注册时写入 Cluster，重新接入时复用；
 Server 处理该 Cluster 的受保护命名空间、Node Drain 和 Cluster Terminal 请求时都从 Cluster 作用域解析。Cluster Terminal
-镜像与拉取策略在创建新会话时从平台设置读取，修改后无需重启 Server。
+镜像、拉取策略与会话存续时长在创建新会话时从平台设置一次读取，修改后无需重启 Server；存续时长限定为 1 分钟至
+1 小时，超出范围的取值在保存时被拒绝而不是静默夹取。
 
 Server 和 Agent 都先构造可运行的容器部署默认值，再应用 YAML 中出现的字段。嵌套对象按字段合并，列表整体替换，
 未出现的键保留默认值，未知键直接报错。新增配置项时必须同步维护字段映射、默认值和仓库 YAML。

@@ -336,6 +336,10 @@ CREATE TABLE platform_settings (
     agent_image_pull_policy text NOT NULL,
     cluster_terminal_image text NOT NULL,
     cluster_terminal_image_pull_policy text NOT NULL,
+    -- Cluster Terminal session lifetime is platform policy rather than a
+    -- deployment parameter: the Server reads it per session creation, so a
+    -- change takes effect without a restart.
+    cluster_terminal_session_ttl_seconds integer NOT NULL,
     revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
     updated_by_user_id uuid,
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -351,6 +355,9 @@ CREATE TABLE platform_settings (
     ),
     CONSTRAINT platform_settings_terminal_pull_policy CHECK (
         cluster_terminal_image_pull_policy IN ('Always', 'IfNotPresent', 'Never')
+    ),
+    CONSTRAINT platform_settings_terminal_session_ttl CHECK (
+        cluster_terminal_session_ttl_seconds BETWEEN 60 AND 3600
     )
 );
 
@@ -359,13 +366,15 @@ INSERT INTO platform_settings (
     agent_image,
     agent_image_pull_policy,
     cluster_terminal_image,
-    cluster_terminal_image_pull_policy
+    cluster_terminal_image_pull_policy,
+    cluster_terminal_session_ttl_seconds
 ) VALUES (
     '00000000-0000-0000-0000-000000000010',
     'ghcr.io/togettoyou/zke-agent:latest',
     'IfNotPresent',
     'ghcr.io/togettoyou/zke-agent:latest',
-    'IfNotPresent'
+    'IfNotPresent',
+    900
 );
 
 CREATE FUNCTION notify_agent_credential_revocation()

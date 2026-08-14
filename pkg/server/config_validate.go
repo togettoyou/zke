@@ -105,9 +105,7 @@ func (cfg Config) Validate() error {
 		cfg.validateAgentPKI,
 		cfg.validateAgentInstall,
 		cfg.validateAgentEnrollment,
-		cfg.validateClusterTerminal,
 		cfg.validateAgentListener,
-		cfg.validateCertificateMonitor,
 		cfg.validateProcess,
 		cfg.validateCrossSection,
 	} {
@@ -143,13 +141,6 @@ func (cfg Config) validateAgentInstall() error {
 	parsedPort, parseErr := strconv.Atoi(port)
 	if parseErr != nil || parsedPort < 1 || parsedPort > 65535 {
 		return errors.New("agent_install public QUIC address must contain a valid port")
-	}
-	return nil
-}
-
-func (cfg Config) validateClusterTerminal() error {
-	if cfg.ClusterTerminal.SessionTTL < time.Minute || cfg.ClusterTerminal.SessionTTL > time.Hour {
-		return errors.New("Cluster terminal session TTL must be between 1 minute and 1 hour")
 	}
 	return nil
 }
@@ -339,10 +330,10 @@ func (cfg Config) validateAgentPKILifecycle() error {
 		value time.Duration
 		name  string
 	}{
-		{pkiSettings.AgentClientCAValidity, "Agent Client CA validity"},
-		{pkiSettings.AgentListenerCAValidity, "Agent Listener CA validity"},
-		{pkiSettings.AgentListenerValidity, "Agent Listener certificate validity"},
-		{pkiSettings.AgentListenerRenewBefore, "Agent Listener renewal window"},
+		{pkiSettings.ClientCAValidity, "Agent Client CA validity"},
+		{pkiSettings.ListenerCAValidity, "Agent Listener CA validity"},
+		{pkiSettings.ListenerValidity, "Agent Listener certificate validity"},
+		{pkiSettings.ListenerRenewBefore, "Agent Listener renewal window"},
 	} {
 		if item.value <= 0 || item.value > maxAgentPKIValidity {
 			return fmt.Errorf(
@@ -352,11 +343,32 @@ func (cfg Config) validateAgentPKILifecycle() error {
 			)
 		}
 	}
-	if pkiSettings.AgentListenerValidity >= pkiSettings.AgentListenerCAValidity {
+	if pkiSettings.ListenerValidity >= pkiSettings.ListenerCAValidity {
 		return errors.New("Agent Listener certificate validity must be below its CA validity")
 	}
-	if pkiSettings.AgentListenerRenewBefore >= pkiSettings.AgentListenerValidity {
+	if pkiSettings.ListenerRenewBefore >= pkiSettings.ListenerValidity {
 		return errors.New("Agent Listener renewal window must be below its certificate validity")
+	}
+	return cfg.validateAgentPKIMonitor()
+}
+
+// validateAgentPKIMonitor rejects a warning window that a Client certificate
+// can never outlive, which would otherwise report every Agent as expiring from
+// the moment its certificate is issued and turn the warnings into noise.
+func (cfg Config) validateAgentPKIMonitor() error {
+	monitor := cfg.AgentPKI.Monitor
+	if monitor.WarnBefore <= 0 {
+		return errors.New("Agent PKI expiry warning window must be greater than zero")
+	}
+	if monitor.WarnBefore >= cfg.AgentPKI.ClientCertificateValidity {
+		return errors.New(
+			"Agent PKI expiry warning window must be below Agent Client certificate validity",
+		)
+	}
+	if monitor.CheckInterval <= 0 || monitor.CheckInterval > 24*time.Hour {
+		return errors.New(
+			"Agent PKI expiry check interval must be greater than zero and not exceed 24 hours",
+		)
 	}
 	return nil
 }
@@ -537,19 +549,6 @@ func (cfg Config) validateAgentListener() error {
 		return fmt.Errorf(
 			"Server Resource Watch request limit must be between the per-connection limit and %d",
 			maxResourceWatchRequests,
-		)
-	}
-	return nil
-}
-
-func (cfg Config) validateCertificateMonitor() error {
-	if cfg.CertificateMonitor.WarningBefore <= 0 {
-		return errors.New("certificate warning window must be greater than zero")
-	}
-	if cfg.CertificateMonitor.CheckInterval <= 0 ||
-		cfg.CertificateMonitor.CheckInterval > 24*time.Hour {
-		return errors.New(
-			"certificate monitor interval must be greater than zero and not exceed 24 hours",
 		)
 	}
 	return nil

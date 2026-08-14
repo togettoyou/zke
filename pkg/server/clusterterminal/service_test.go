@@ -41,9 +41,13 @@ type podExecCreatorFake struct {
 	input podexec.CreateInput
 }
 
+const testTerminalTTL = 10 * time.Minute
+
 func fixedTerminalRuntime(image, imagePullPolicy, namespace string) func(context.Context, string) (RuntimeConfig, error) {
 	return func(context.Context, string) (RuntimeConfig, error) {
-		return RuntimeConfig{Image: image, ImagePullPolicy: imagePullPolicy, Namespace: namespace}, nil
+		return RuntimeConfig{
+			Image: image, ImagePullPolicy: imagePullPolicy, Namespace: namespace, TTL: testTerminalTTL,
+		}, nil
 	}
 }
 
@@ -59,7 +63,6 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 	requester := &terminalRequesterFake{}
 	podExec := &podExecCreatorFake{}
 	service := NewService(requester, podExec, Config{
-		TTL:            10 * time.Minute,
 		ResolveRuntime: fixedTerminalRuntime("terminal:test", "Never", "cluster-agent"),
 	})
 	wantPermissions := []string{"cluster.read", "cluster.terminal.exec"}
@@ -108,10 +111,12 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
 	requester := &terminalRequesterFake{}
 	image, imagePullPolicy := "terminal:v1", "IfNotPresent"
+	ttl := 5 * time.Minute
 	service := NewService(requester, &podExecCreatorFake{}, Config{
-		TTL: 10 * time.Minute,
 		ResolveRuntime: func(context.Context, string) (RuntimeConfig, error) {
-			return RuntimeConfig{Image: image, ImagePullPolicy: imagePullPolicy, Namespace: "zke-system"}, nil
+			return RuntimeConfig{
+				Image: image, ImagePullPolicy: imagePullPolicy, Namespace: "zke-system", TTL: ttl,
+			}, nil
 		},
 	})
 	create := func(key string, now time.Time) {
@@ -127,11 +132,36 @@ func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
 	create("first", time.Unix(100, 0))
 	image = "terminal:v2"
 	imagePullPolicy = "Always"
+	ttl = 20 * time.Minute
 	create("second", time.Unix(101, 0))
 	if len(requester.requests) != 2 || requester.requests[0].GetImage() != "terminal:v1" ||
 		requester.requests[0].GetImagePullPolicy() != "IfNotPresent" ||
 		requester.requests[1].GetImage() != "terminal:v2" || requester.requests[1].GetImagePullPolicy() != "Always" {
 		t.Fatalf("terminal runtime settings = %+v, want v1/IfNotPresent then v2/Always", requester.requests)
+	}
+	// The session lifetime is platform settings state now, so a change between
+	// two sessions must reach the Agent without restarting the Server.
+	if requester.requests[0].GetTtlSeconds() != 300 || requester.requests[1].GetTtlSeconds() != 1200 {
+		t.Fatalf("terminal TTLs = %ds then %ds, want 300 then 1200",
+			requester.requests[0].GetTtlSeconds(), requester.requests[1].GetTtlSeconds())
+	}
+}
+
+// A platform settings row that somehow carries no lifetime must fail the
+// session rather than fall back to a silent built-in default.
+func TestCreateRejectsRuntimeWithoutSessionTTL(t *testing.T) {
+	service := NewService(&terminalRequesterFake{}, &podExecCreatorFake{}, Config{
+		ResolveRuntime: func(context.Context, string) (RuntimeConfig, error) {
+			return RuntimeConfig{Image: "terminal:test", ImagePullPolicy: "Never", Namespace: "zke-system"}, nil
+		},
+	})
+	_, err := service.Create(context.Background(), CreateInput{
+		UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
+		IdempotencyKey: "request-key", Permissions: []string{"cluster.terminal.exec"},
+		Columns: 120, Rows: 36, Now: time.Unix(100, 0),
+	})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Create() error = %v, want ErrUnavailable", err)
 	}
 }
 
@@ -169,7 +199,6 @@ func TestCreateCancellationCleansAgentResourcesWithDetachedContext(t *testing.T)
 	}
 	podExec := &podExecCreatorFake{}
 	service := NewService(requester, podExec, Config{
-		TTL:            10 * time.Minute,
 		ResolveRuntime: fixedTerminalRuntime("terminal:test", "IfNotPresent", "cluster-agent"),
 	})
 
@@ -193,7 +222,6 @@ func TestCreateCancellationCleansAgentResourcesWithDetachedContext(t *testing.T)
 func TestCreateRejectsIdempotencyKeyReuseWithDifferentInputBeforeAgentRequest(t *testing.T) {
 	requester := &terminalRequesterFake{}
 	service := NewService(requester, &podExecCreatorFake{}, Config{
-		TTL:            10 * time.Minute,
 		ResolveRuntime: fixedTerminalRuntime("terminal:test", "IfNotPresent", "cluster-agent"),
 	})
 	input := CreateInput{UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",

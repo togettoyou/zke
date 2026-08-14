@@ -5566,6 +5566,8 @@ export interface components {
             cluster_terminal_image: string;
             /** @enum {string} */
             cluster_terminal_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            /** @description Cluster Terminal Pod 存续时长，创建新会话时读取，无需重启 Server。 */
+            cluster_terminal_session_ttl_seconds: number;
             revision: number;
             updated_at: components["schemas"]["Timestamp"];
         };
@@ -5576,6 +5578,7 @@ export interface components {
             cluster_terminal_image: string;
             /** @enum {string} */
             cluster_terminal_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            cluster_terminal_session_ttl_seconds: number;
             expected_revision: number;
         };
         ClusterEnrollment: {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -190,6 +191,7 @@ func (store *PlatformSettingsStore) GetSettings(
 	ctx context.Context,
 ) (PlatformSettings, error) {
 	var settings PlatformSettings
+	var terminalSessionTTLSeconds int32
 	err := store.pool.QueryRow(ctx, `
 SELECT
     default_endpoint_profile_id::text,
@@ -197,6 +199,7 @@ SELECT
     agent_image_pull_policy,
     cluster_terminal_image,
     cluster_terminal_image_pull_policy,
+    cluster_terminal_session_ttl_seconds,
     revision,
     COALESCE(updated_by_user_id::text, ''),
     updated_at
@@ -207,6 +210,7 @@ WHERE singleton = true`).Scan(
 		&settings.AgentImagePullPolicy,
 		&settings.ClusterTerminalImage,
 		&settings.ClusterTerminalImagePullPolicy,
+		&terminalSessionTTLSeconds,
 		&settings.Revision,
 		&settings.UpdatedByUserID,
 		&settings.UpdatedAt,
@@ -214,6 +218,7 @@ WHERE singleton = true`).Scan(
 	if err != nil {
 		return PlatformSettings{}, fmt.Errorf("get platform settings: %w", err)
 	}
+	settings.ClusterTerminalSessionTTL = time.Duration(terminalSessionTTLSeconds) * time.Second
 	return settings, nil
 }
 
@@ -304,23 +309,26 @@ func (store *PlatformSettingsStore) UpdateSettings(
 	input UpdatePlatformSettingsParams,
 ) (PlatformSettings, error) {
 	var settings PlatformSettings
+	var terminalSessionTTLSeconds int32
 	err := store.pool.QueryRow(ctx, `
 UPDATE platform_settings
 SET agent_image = $1,
     agent_image_pull_policy = $2,
     cluster_terminal_image = $3,
     cluster_terminal_image_pull_policy = $4,
+    cluster_terminal_session_ttl_seconds = $5,
     revision = revision + 1,
-    updated_by_user_id = $5,
-    updated_at = $6
+    updated_by_user_id = $6,
+    updated_at = $7
 WHERE singleton = true
-  AND revision = $7
+  AND revision = $8
 RETURNING
     default_endpoint_profile_id::text,
     agent_image,
     agent_image_pull_policy,
     cluster_terminal_image,
     cluster_terminal_image_pull_policy,
+    cluster_terminal_session_ttl_seconds,
     revision,
     COALESCE(updated_by_user_id::text, ''),
     updated_at`,
@@ -328,6 +336,7 @@ RETURNING
 		input.AgentImagePullPolicy,
 		input.ClusterTerminalImage,
 		input.ClusterTerminalImagePullPolicy,
+		int32(input.ClusterTerminalSessionTTL/time.Second),
 		input.ActorUserID,
 		input.Now,
 		input.ExpectedRevision,
@@ -337,6 +346,7 @@ RETURNING
 		&settings.AgentImagePullPolicy,
 		&settings.ClusterTerminalImage,
 		&settings.ClusterTerminalImagePullPolicy,
+		&terminalSessionTTLSeconds,
 		&settings.Revision,
 		&settings.UpdatedByUserID,
 		&settings.UpdatedAt,
@@ -347,6 +357,7 @@ RETURNING
 	if err != nil {
 		return PlatformSettings{}, fmt.Errorf("update platform settings: %w", err)
 	}
+	settings.ClusterTerminalSessionTTL = time.Duration(terminalSessionTTLSeconds) * time.Second
 	return settings, nil
 }
 

@@ -15,18 +15,16 @@ import (
 // Config models the YAML configuration file. Decoding happens directly into a
 // value pre-populated with defaults, so an absent key keeps its default.
 type Config struct {
-	HTTP               HTTPConfig               `yaml:"http"`
-	PodAccess          PodAccessConfig          `yaml:"pod_access"`
-	Database           DatabaseConfig           `yaml:"database"`
-	Auth               AuthConfig               `yaml:"auth"`
-	AgentPKI           AgentPKIConfig           `yaml:"agent_pki"`
-	AgentInstall       AgentInstallConfig       `yaml:"agent_install"`
-	AgentEnrollment    AgentEnrollmentConfig    `yaml:"agent_enrollment"`
-	ClusterTerminal    ClusterTerminalConfig    `yaml:"cluster_terminal"`
-	AgentListener      AgentListenerConfig      `yaml:"agent_listener"`
-	CertificateMonitor CertificateMonitorConfig `yaml:"certificate_monitor"`
-	ShutdownTimeout    time.Duration            `yaml:"shutdown_timeout"`
-	LogLevel           string                   `yaml:"log_level"`
+	HTTP            HTTPConfig            `yaml:"http"`
+	PodAccess       PodAccessConfig       `yaml:"pod_access"`
+	Database        DatabaseConfig        `yaml:"database"`
+	Auth            AuthConfig            `yaml:"auth"`
+	AgentPKI        AgentPKIConfig        `yaml:"agent_pki"`
+	AgentInstall    AgentInstallConfig    `yaml:"agent_install"`
+	AgentEnrollment AgentEnrollmentConfig `yaml:"agent_enrollment"`
+	AgentListener   AgentListenerConfig   `yaml:"agent_listener"`
+	ShutdownTimeout time.Duration         `yaml:"shutdown_timeout"`
+	LogLevel        string                `yaml:"log_level"`
 
 	// AgentIdentity is derived after the Server PKI material is prepared and is
 	// never read from the configuration file.
@@ -122,13 +120,29 @@ type AgentIdentityConfig struct {
 	CertificateTTL    time.Duration
 }
 
+// AgentPKIConfig owns every certificate the Server itself issues: the two CAs,
+// the Listener identity presented on QUIC, and the client certificates Agents
+// receive at enrollment. Fields are ordered storage, Client chain, Listener
+// chain, then the expiry surveillance over all of them. Certificates supplied
+// from outside the Server, such as http.tls and pod_access.tls, are not part of
+// this lifecycle and are not monitored here.
 type AgentPKIConfig struct {
-	AgentClientCertificateValidity time.Duration `yaml:"agent_client_certificate_validity"`
-	Directory                      string        `yaml:"directory"`
-	AgentClientCAValidity          time.Duration `yaml:"agent_client_ca_validity"`
-	AgentListenerCAValidity        time.Duration `yaml:"agent_listener_ca_validity"`
-	AgentListenerValidity          time.Duration `yaml:"agent_listener_certificate_validity"`
-	AgentListenerRenewBefore       time.Duration `yaml:"agent_listener_renew_before"`
+	Directory                 string                `yaml:"directory"`
+	ClientCAValidity          time.Duration         `yaml:"client_ca_validity"`
+	ClientCertificateValidity time.Duration         `yaml:"client_certificate_validity"`
+	ListenerCAValidity        time.Duration         `yaml:"listener_ca_validity"`
+	ListenerValidity          time.Duration         `yaml:"listener_certificate_validity"`
+	ListenerRenewBefore       time.Duration         `yaml:"listener_renew_before"`
+	Monitor                   AgentPKIMonitorConfig `yaml:"monitor"`
+}
+
+// AgentPKIMonitorConfig drives the Agent status API's expiring state and the
+// periodic structured expiry warnings. WarnBefore must stay below
+// ClientCertificateValidity, otherwise every Agent reports expiring from the
+// moment its certificate is issued.
+type AgentPKIMonitorConfig struct {
+	WarnBefore    time.Duration `yaml:"warn_before"`
+	CheckInterval time.Duration `yaml:"check_interval"`
 }
 
 type AgentEnrollmentConfig struct {
@@ -139,15 +153,6 @@ type AgentEnrollmentConfig struct {
 type AgentEnrollmentRateLimitConfig struct {
 	Window               time.Duration `yaml:"window"`
 	MaxAttemptsPerSource int           `yaml:"max_attempts_per_source"`
-}
-
-type ClusterTerminalConfig struct {
-	SessionTTL time.Duration `yaml:"session_ttl"`
-}
-
-type CertificateMonitorConfig struct {
-	WarningBefore time.Duration `yaml:"warning_before"`
-	CheckInterval time.Duration `yaml:"check_interval"`
 }
 
 type AgentListenerConfig struct {
@@ -239,12 +244,16 @@ func DefaultConfig() Config {
 			},
 		},
 		AgentPKI: AgentPKIConfig{
-			AgentClientCertificateValidity: 30 * 24 * time.Hour,
-			Directory:                      "data/pki",
-			AgentClientCAValidity:          10 * 365 * 24 * time.Hour,
-			AgentListenerCAValidity:        20 * 365 * 24 * time.Hour,
-			AgentListenerValidity:          10 * 365 * 24 * time.Hour,
-			AgentListenerRenewBefore:       365 * 24 * time.Hour,
+			Directory:                 "data/pki",
+			ClientCAValidity:          10 * 365 * 24 * time.Hour,
+			ClientCertificateValidity: 30 * 24 * time.Hour,
+			ListenerCAValidity:        20 * 365 * 24 * time.Hour,
+			ListenerValidity:          10 * 365 * 24 * time.Hour,
+			ListenerRenewBefore:       365 * 24 * time.Hour,
+			Monitor: AgentPKIMonitorConfig{
+				WarnBefore:    7 * 24 * time.Hour,
+				CheckInterval: time.Hour,
+			},
 		},
 		AgentEnrollment: AgentEnrollmentConfig{
 			OperationTimeout: 10 * time.Second,
@@ -252,9 +261,6 @@ func DefaultConfig() Config {
 				Window:               time.Minute,
 				MaxAttemptsPerSource: 30,
 			},
-		},
-		ClusterTerminal: ClusterTerminalConfig{
-			SessionTTL: 15 * time.Minute,
 		},
 		AgentListener: AgentListenerConfig{
 			Address:                     "0.0.0.0:8443",
@@ -287,10 +293,6 @@ func DefaultConfig() Config {
 			ResourceWatchRequestTimeout: 30 * time.Minute,
 			MaxResourceWatchStreams:     16,
 			MaxResourceWatchRequests:    512,
-		},
-		CertificateMonitor: CertificateMonitorConfig{
-			WarningBefore: 7 * 24 * time.Hour,
-			CheckInterval: time.Hour,
 		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",
@@ -364,7 +366,7 @@ func decodeConfigFile(cfg *Config, path string) error {
 // resolveDerivedIdentity fills the non-path identity setting. Server PKI paths
 // are resolved after the database-backed endpoint SANs are loaded at startup.
 func (cfg *Config) resolveDerivedIdentity() {
-	cfg.AgentIdentity.CertificateTTL = cfg.AgentPKI.AgentClientCertificateValidity
+	cfg.AgentIdentity.CertificateTTL = cfg.AgentPKI.ClientCertificateValidity
 }
 
 func findConfigPath(args []string) (string, error) {

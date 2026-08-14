@@ -14,11 +14,11 @@ ZKE 提供 Docker Compose 和 Helm 两种部署入口。Docker Compose 使用独
 - Managed PKI 的持久目录、证书有效期与续期窗口；
 - 认证、请求超时、并发和资源上限。
 
-以下运行配置保存在 PostgreSQL，只能由全局 `admin` 在 Console 的“设置 → 平台配置”修改：
+以下运行配置保存在 PostgreSQL，只能由全局 `admin` 在 Console 的“平台配置”应用修改：
 
-- Agent 接入端点预设：注册 URL、QUIC 地址、可选注册 HTTPS CA；
-- Agent 镜像与 Image Pull Policy；
-- Cluster Terminal 镜像与独立的 Image Pull Policy。
+- 端点 —— Agent 接入端点预设：注册 URL、QUIC 地址、可选注册 HTTPS CA；
+- 镜像 —— Agent 镜像与 Image Pull Policy、Cluster Terminal 镜像与独立的 Image Pull Policy；
+- 集群终端 —— Cluster Terminal 会话存续时长，可选 1 分钟至 1 小时，默认 15 分钟。
 
 平台默认端点由 `agent_install.public_http_url` 与 `agent_install.public_quic_address` 配套提供；两项均为空时使用
 “本机回环预览”。Server 每次启动都按当前有效配置重新同步：从预设切换到自定义地址时创建部署端点，从自定义地址
@@ -26,8 +26,9 @@ ZKE 提供 Docker Compose 和 Helm 两种部署入口。Docker Compose 使用独
 不能修改、删除或另设默认值。环境变量优先于 YAML。
 
 Agent Namespace 在创建每个 Cluster 的首个 Enrollment 或安装清单时单独指定，并在注册后固化到该 Cluster；重新接入
-继续使用 Cluster 已保存的值。它参与敏感 Secret 与受保护命名空间边界。Cluster Terminal 镜像与拉取策略修改后立即
-用于新会话；Agent 镜像、拉取策略、Namespace 和凭据选中的端点会在新 Enrollment 签发时进入其不可变快照。
+继续使用 Cluster 已保存的值。它参与敏感 Secret 与受保护命名空间边界。Cluster Terminal 镜像、拉取策略与会话存续
+时长修改后立即用于新会话；Agent 镜像、拉取策略、Namespace 和凭据选中的端点会在新 Enrollment 签发时进入其不可变
+快照。
 
 Server 从持久目录维护 Agent Client CA、Listener CA 和 Listener 身份。启用端点的 QUIC Host 会进入 Listener 证书
 SAN。保存包含新 Host 的端点时，Server 会复用 Listener 私钥在线重签叶子证书，并原子切换给新的 QUIC 握手；既有
