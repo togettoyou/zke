@@ -359,8 +359,22 @@
   --ease-reveal: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-reveal: 420ms;
 
-  /* One radius scale, so a control never sits inside a container with a tighter
-     corner than its own. */
+  /*
+   * One radius scale, so a control never sits inside a container with a tighter
+   * corner than its own.
+   *
+   * `inline` is the step below a control and exists for exactly one thing: the
+   * focus halo of a bare word acting as a button — a chip's label, a breadcrumb
+   * — which has no border of its own and would otherwise have to borrow a
+   * control's corner at half a control's height.
+   *
+   * Application icon tiles are deliberately not on this scale. Their corner is a
+   * proportion of the tile — 31.25% of the side, so a 64px launcher tile, a 40px
+   * Dock tile and a 24px brandmark are the same shape at three sizes — and a
+   * fixed radius would make the small ones read as squares and the large ones as
+   * pills.
+   */
+  --radius-inline: 4px;
   --radius-control: 7px;
   --radius-panel: 10px;
   --radius-window: 12px;
@@ -778,6 +792,172 @@
      never left transparent by a dropped or interrupted animation. */
   .zke-rise {
     animation: zke-rise 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /*
+   * Overlay motion, and the reason it is one place rather than five.
+   *
+   * Every transient surface in the Console — a dialog, a menu, a select, a
+   * popover, a tooltip — used to appear and disappear on the same frame it was
+   * asked for. Instant is not fast: with nothing between "not there" and
+   * "there", the eye has no way to tell that the panel came *from* the control
+   * that was clicked, and a list that pops into existence over a table reads as
+   * the page having been replaced. The distances are tiny on purpose — 4px and
+   * a hair of scale — because the job is to say where the thing came from, not
+   * to perform.
+   *
+   * Driven off Radix's own `data-state`, which is also what keeps the exit:
+   * Radix holds a closing node mounted exactly as long as a CSS animation is
+   * running on it, so the closed rule is what buys the fade out. Entry carries
+   * the project's lift curve and leaves linearly — arriving is the part worth
+   * easing, and a leaving panel that decelerates only feels slow to dismiss.
+   *
+   * `transform` rather than `translate` throughout: the dialog is centred with
+   * Tailwind's translate utilities, which in v4 write the `translate` property,
+   * and an animation on the same property would fight the centring for the
+   * length of every open.
+   */
+  .zke-overlay-motion[data-state="open"] {
+    animation: zke-fade-in 140ms var(--ease-lift) both;
+  }
+
+  .zke-overlay-motion[data-state="closed"] {
+    animation: zke-fade-out 110ms linear both;
+  }
+
+  .zke-dialog-motion[data-state="open"] {
+    animation: zke-dialog-in 170ms var(--ease-lift) both;
+  }
+
+  .zke-dialog-motion[data-state="closed"] {
+    animation: zke-dialog-out 110ms linear both;
+  }
+
+  /*
+   * Anchored surfaces travel the 4px back towards whichever side Radix decided
+   * to place them on, so the panel reads as unfolding out of its trigger. The
+   * bottom keyframe is the default, and stands in for the frame before placement
+   * has been resolved.
+   *
+   * Three open states rather than one, and the two extra ones are not
+   * decoration: a Tooltip never reports `open`. Radix distinguishes a tooltip
+   * that waited out its delay from one that opened instantly because the pointer
+   * came from another tooltip — `delayed-open` and `instant-open` — so a rule
+   * matching only `open` animates every popper in the product except the one
+   * that appears most often.
+   */
+  .zke-pop-motion[data-state="open"],
+  .zke-pop-motion[data-state="delayed-open"],
+  .zke-pop-motion[data-state="instant-open"] {
+    animation: zke-pop-in-bottom 130ms var(--ease-lift) both;
+  }
+
+  .zke-pop-motion[data-state="closed"] {
+    animation: zke-fade-out 90ms linear both;
+  }
+
+  .zke-pop-motion[data-side="top"]:not([data-state="closed"]) {
+    animation-name: zke-pop-in-top;
+  }
+
+  .zke-pop-motion[data-side="left"]:not([data-state="closed"]) {
+    animation-name: zke-pop-in-left;
+  }
+
+  .zke-pop-motion[data-side="right"]:not([data-state="closed"]) {
+    animation-name: zke-pop-in-right;
+  }
+}
+
+@keyframes zke-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes zke-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes zke-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes zke-dialog-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes zke-pop-in-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes zke-pop-in-top {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes zke-pop-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes zke-pop-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(-4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
   }
 }
 

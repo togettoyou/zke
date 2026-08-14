@@ -49,7 +49,7 @@ export function SelectContent({
       <SelectPrimitive.Content
         position={position}
         className={cn(
-          "border-border bg-surface shadow-e3 rounded-panel z-1100 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden border",
+          "zke-pop-motion border-border bg-surface shadow-e3 rounded-panel z-1100 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden border",
           className,
         )}
         {...props}

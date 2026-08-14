@@ -820,7 +820,7 @@ function GatewayRouteRuleDetails({
 }) {
   const advanced = advancedFieldNames(rule.source, ["name", "matches", "backendRefs"]);
   return (
-    <div className="border-border/70 bg-surface-muted/30 grid gap-2 rounded-md border p-3">
+    <div className="border-border/70 bg-surface-muted/30 rounded-control grid gap-2 border p-3">
       <DetailRow label={`规则 ${index + 1}`} value={rule.name || "未命名"} />
       {resource === "httproutes" ? (
         <DetailRow

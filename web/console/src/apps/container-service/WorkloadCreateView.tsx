@@ -361,7 +361,7 @@ export function WorkloadCreateView({
                   >
                     <button
                       type="button"
-                      className="zke-focus rounded-sm"
+                      className="zke-focus rounded-inline"
                       title={problems.get(item.id)}
                       onClick={() => setActiveContainer(index)}
                     >
@@ -375,7 +375,7 @@ export function WorkloadCreateView({
                       <button
                         type="button"
                         aria-label={`移除容器 ${item.name}`}
-                        className="zke-focus text-subtle-foreground hover:text-danger rounded-sm"
+                        className="zke-focus text-subtle-foreground hover:text-danger rounded-inline"
                         onClick={() => {
                           patch({
                             containers: draft.containers.filter(

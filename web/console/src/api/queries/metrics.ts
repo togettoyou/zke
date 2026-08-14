@@ -3,7 +3,22 @@ import { useQuery } from "@tanstack/react-query";
 import { api, unwrap } from "../client";
 import { queryKeys } from "../query-keys";
 
-export function useNodeMetrics(clusterId: string | null) {
+/**
+ * How often resource usage is re-read while the view holding it is on screen.
+ *
+ * `live` is the caller's answer to "is anyone looking": passing `false` holds
+ * the poll without disturbing what is already cached, which is what a minimized
+ * window wants. Every request here is executed by a Cluster's Agent, so a poll
+ * nobody can see is work asked of real infrastructure for nothing.
+ */
+const USAGE_POLL_MS = 30_000;
+
+export type PollOptions = {
+  /** Defaults to polling, so a caller that has no opinion behaves as before. */
+  live?: boolean;
+};
+
+export function useNodeMetrics(clusterId: string | null, { live = true }: PollOptions = {}) {
   return useQuery({
     queryKey: queryKeys.nodeMetrics(clusterId ?? ""),
     queryFn: async ({ signal }) =>
@@ -14,11 +29,15 @@ export function useNodeMetrics(clusterId: string | null) {
         }),
       ),
     enabled: Boolean(clusterId),
-    refetchInterval: 30_000,
+    refetchInterval: live && USAGE_POLL_MS,
   });
 }
 
-export function usePodMetrics(clusterId: string | null, namespace: string | null) {
+export function usePodMetrics(
+  clusterId: string | null,
+  namespace: string | null,
+  { live = true }: PollOptions = {},
+) {
   return useQuery({
     queryKey: queryKeys.podMetrics(clusterId ?? "", namespace ?? ""),
     queryFn: async ({ signal }) =>
@@ -34,6 +53,6 @@ export function usePodMetrics(clusterId: string | null, namespace: string | null
         }),
       ),
     enabled: Boolean(clusterId && namespace),
-    refetchInterval: 30_000,
+    refetchInterval: live && USAGE_POLL_MS,
   });
 }

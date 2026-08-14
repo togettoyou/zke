@@ -16,10 +16,10 @@ export function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & { showClose?: boolean }) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-1000 bg-black/35 backdrop-blur-[1px]" />
+      <DialogPrimitive.Overlay className="zke-overlay-motion fixed inset-0 z-1000 bg-black/35 backdrop-blur-[1px]" />
       <DialogPrimitive.Content
         className={cn(
-          "fixed top-1/2 left-1/2 z-1001 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2",
+          "zke-dialog-motion fixed top-1/2 left-1/2 z-1001 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2",
           "rounded-window border-border bg-surface shadow-window-focused border p-6",
           "max-h-[calc(100vh-4rem)] overflow-y-auto",
           className,

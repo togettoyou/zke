@@ -5,13 +5,13 @@ import { errorCode, errorMessage } from "@/api/errors";
 import { useCreatePodAccessSession } from "@/api/queries/pod-access";
 import { usePod } from "@/api/queries/pods";
 import { PageHeader } from "@/apps/AppShell";
+import { SecretReveal } from "@/components/common/secret-reveal";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
-import { CopyButton } from "@/components/common/status";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
-import { Input, NumericInput } from "@/components/ui/input";
+import { NumericInput } from "@/components/ui/input";
 import { FieldError, Label } from "@/components/ui/label";
-import { Alert } from "@/components/ui/misc";
+import { Alert, CardTitle } from "@/components/ui/misc";
 import {
   Select,
   SelectContent,
@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSubmissionKey } from "@/lib/use-submission-key";
+import { formatAbsolute } from "@/lib/time";
 
 export function PodAccessView({
   clusterId,
@@ -38,13 +39,17 @@ export function PodAccessView({
 }) {
   const detail = usePod(clusterId, namespace, podName);
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="grid gap-3">
       <PageHeader title={`${podName} · Pod 访问`} onBack={onBack} />
       {detail.error ? (
         <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
       ) : detail.isLoading || !detail.data ? (
         <LoadingState />
       ) : detail.data.uid !== podUid ? (
+        // Danger rather than the warning its sibling views use, and the
+        // difference is the point: everywhere else a stale UID means the page is
+        // describing an object that no longer exists, here it would mean opening
+        // a port on a Pod nobody asked for.
         <Alert tone="danger">
           该 Pod 已被同名重新创建，本次入口绑定的 UID 已失效。请返回列表重新打开。
         </Alert>
@@ -111,7 +116,17 @@ function PodAccessForm({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-5 pb-5">
+    /*
+     * No padding and no scroll region of its own.
+     *
+     * The shell's work area already provides both — `p-4` and `overflow-auto` —
+     * and this view was adding `px-5 pb-5` on top of them, which is why it was
+     * the one page in 容器服务 whose content started 36px from the window edge
+     * while every other page started at 16px. The extra `overflow-auto` also put
+     * a second scrollbar inset from the window edge instead of on it. A short
+     * form has nothing to scroll independently of the page it is on.
+     */
+    <div className="grid gap-4">
       <Alert tone="info">
         创建一个位于独立 Pod Access 地址的临时入口。浏览器对该地址的根路径、静态资源、流式响应和
         WebSocket 请求会转发到 Pod；ZKE API 和登录 Cookie 不会转发。该能力仅适用于 HTTP 服务，不支持
@@ -177,38 +192,45 @@ function PodAccessForm({
       ) : null}
 
       {ticket ? (
-        <section className="border-border bg-surface-muted rounded-panel grid gap-3 border p-4">
+        <section className="border-border bg-surface rounded-panel grid gap-3 border p-4">
           <div>
-            <h3 className="text-sm font-semibold">一次性激活地址</h3>
+            <CardTitle>一次性激活地址</CardTitle>
             <p className="text-subtle-foreground mt-1 text-xs">
-              地址需在 {new Date(ticket.activation_expires_at).toLocaleTimeString()}{" "}
+              地址需在 {formatAbsolute(ticket.activation_expires_at)}{" "}
               前首次打开；激活后访问会话最长持续{" "}
-              {formatSessionDuration(ticket.session_expires_in_seconds)}
-              。地址等同临时凭证，请勿分享。
+              {formatSessionDuration(ticket.session_expires_in_seconds)}。
             </p>
           </div>
-          <Input
-            readOnly
+
+          {/*
+           * Masked, like every other one-time credential the product hands out.
+           *
+           * The copy under it already said the address is equivalent to a
+           * temporary credential, and it was then printed in the clear in a
+           * read-only field — on a page an operator is as likely to be screen
+           * sharing as not. Masking costs nothing here because neither of the
+           * two things anyone does with it needs the value on screen: 复制 puts
+           * it on the clipboard and 打开 navigates to it.
+           */}
+          <SecretReveal
+            label="Pod 访问地址"
             value={ticket.access_url}
-            className="zke-mono"
-            aria-label="Pod 访问地址"
+            actions={
+              <Button size="sm" variant="secondary" asChild>
+                <a href={ticket.access_url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink />
+                  新窗口打开
+                </a>
+              </Button>
+            }
+            warning={
+              <>
+                该地址绑定当前登录会话，等同临时凭证，请勿分享。激活地址只能使用一次；打开后请保留新窗口，再次打开同一地址会提示失效，需要在这里重新创建。同一个
+                Pod 同时只保留一个待激活地址或访问会话，再次创建时会先要求明确替换。不同 Pod
+                需要在同一浏览器中切换入口时，激活页也会要求确认。
+              </>
+            }
           />
-          <div className="flex flex-wrap gap-2">
-            <CopyButton value={ticket.access_url} label="复制地址" />
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => window.open(ticket.access_url, "_blank", "noopener,noreferrer")}
-            >
-              <ExternalLink />
-              新窗口打开
-            </Button>
-          </div>
-          <Alert tone="warning">
-            激活地址只能使用一次。打开后请保留新窗口；再次打开同一地址会提示失效，需要在这里重新创建。
-            同一个 Pod 同时只保留一个待激活地址或访问会话；再次创建时会先要求明确替换。不同 Pod
-            需要在同一浏览器中切换入口时，激活页也会要求确认。
-          </Alert>
         </section>
       ) : null}
 

@@ -19,7 +19,7 @@ export function PopoverContent({
         align={align}
         sideOffset={sideOffset}
         className={cn(
-          "border-border bg-surface shadow-e3 rounded-panel z-1100 w-72 border p-3 outline-none",
+          "zke-pop-motion border-border bg-surface shadow-e3 rounded-panel z-1100 w-72 border p-3 outline-none",
           className,
         )}
         {...props}

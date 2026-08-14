@@ -15,6 +15,7 @@ import { errorMessage } from "@/api/errors";
 import { AppShell, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
+import { notifyFailure } from "@/components/common/notify";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -90,7 +91,7 @@ export function PlatformApp(_props: AppComponentProps) {
       setDraft(await updateSettings.mutateAsync(next));
       toast.success("平台配置已保存");
     } catch (error) {
-      toast.error(errorMessage(error));
+      notifyFailure("保存平台配置失败", error);
     }
   }
 
@@ -465,7 +466,7 @@ function EndpointsSection({
                   setProfileTarget(undefined);
                   toast.success("端点已保存");
                 } catch (error) {
-                  toast.error(errorMessage(error));
+                  notifyFailure("保存 Agent 接入端点失败", error);
                 }
               }}
             >

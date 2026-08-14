@@ -502,7 +502,7 @@ function TerminalSession({
       </div>
 
       {showRecordings ? (
-        <div className="border-border bg-muted/30 mb-3 max-h-44 overflow-auto rounded-lg border p-2">
+        <div className="border-border bg-surface-muted rounded-panel mb-3 max-h-44 overflow-auto border p-2">
           {recordings.isLoading ? (
             <span className="text-subtle-foreground text-xs">正在读取会话记录…</span>
           ) : recordings.error ? (
@@ -512,7 +512,7 @@ function TerminalSession({
               {recordings.data.map((item) => (
                 <div
                   key={item.id}
-                  className="border-border bg-background flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs"
+                  className="border-border bg-surface rounded-control flex flex-wrap items-center gap-2 border px-3 py-2 text-xs"
                 >
                   <span className="font-medium">{item.container}</span>
                   <span className="text-subtle-foreground">{formatAbsolute(item.started_at)}</span>

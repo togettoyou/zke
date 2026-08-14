@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Loader2, Moon, Sun } from "lucide-react";
 
 import { useInitializeAdministrator } from "@/api/queries/auth";
@@ -11,6 +11,20 @@ import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
 import { useThemeStore } from "@/theme/theme-store";
 
+/**
+ * First run: the same view as sign-in, asking a different question.
+ *
+ * It deliberately carries no card of its own. Setup and login are the two halves
+ * of one unauthenticated surface — an operator sees this screen once and the
+ * next one forever — and floating the form on a raised, blurred panel here while
+ * sign-in sat directly on the field made them read as two products. The form
+ * rests on the same themed field, behind the same key light, drafting field and
+ * grain, and is held by space rather than by a border.
+ *
+ * The topology is not repeated. Sign-in explains what ZKE is to somebody about
+ * to use it; this page is a single administrative act with three fields, and a
+ * drawing beside it would only make the act look longer than it is.
+ */
 export function SetupPage() {
   const initialize = useInitializeAdministrator();
   const theme = useThemeStore((state) => state.theme);
@@ -19,12 +33,29 @@ export function SetupPage() {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [localFailure, setLocalFailure] = useState("");
+  const passwordField = useRef<HTMLInputElement>(null);
+  const confirmationField = useRef<HTMLInputElement>(null);
 
   const failure = localFailure || (initialize.error ? errorMessage(initialize.error) : "");
+  const mismatched = localFailure !== "";
 
+  /**
+   * A rejected attempt describes what was typed, so it stops describing anything
+   * the moment any field is edited.
+   *
+   * Guarded, exactly as sign-in guards it. `reset()` sets mutation state
+   * unconditionally, so calling it from three `onChange` handlers dispatched a
+   * React Query state update — and a re-render of the whole view — on every
+   * keystroke of a username and two 15-character passwords, in the overwhelming
+   * case where there was no failure to clear.
+   */
   function clearFailure(): void {
-    setLocalFailure("");
-    initialize.reset();
+    if (localFailure) {
+      setLocalFailure("");
+    }
+    if (initialize.error) {
+      initialize.reset();
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -35,6 +66,11 @@ export function SetupPage() {
     }
     if (password !== confirmation) {
       setLocalFailure("两次输入的密码不一致。");
+      // The mismatch is the one failure the operator can fix without retyping
+      // everything, so the caret is put where the fix goes. Both fields are
+      // masked; a message alone leaves them comparing two rows of dots.
+      confirmationField.current?.focus();
+      confirmationField.current?.select();
       return;
     }
     try {
@@ -42,6 +78,9 @@ export function SetupPage() {
     } catch {
       setPassword("");
       setConfirmation("");
+      // A refused attempt clears both passwords, so the form is back to where
+      // the next one starts and the caret should be there too.
+      passwordField.current?.focus();
     }
   }
 
@@ -51,13 +90,17 @@ export function SetupPage() {
       <div aria-hidden className="zke-auth-dots pointer-events-none absolute inset-0" />
       <div aria-hidden className="zke-grain pointer-events-none absolute inset-0" />
 
-      <main className="relative z-10 mx-auto flex min-h-full w-full max-w-[560px] items-center px-6 py-12">
-        <section className="zke-rise bg-surface/90 border-border w-full rounded-2xl border p-7 shadow-2xl backdrop-blur-sm sm:p-10">
+      <main className="relative z-10 flex min-h-full w-full items-center px-6 py-12">
+        {/* The same measure the sign-in form is set to, so the two views hold
+            their text in a column of one width. */}
+        <section className="zke-rise mx-auto w-full max-w-[336px]">
           <header className="flex items-center gap-3">
-            <ZkeMark className="size-11 rounded-[13px]" />
-            <span>
-              <span className="text-foreground block text-sm font-semibold">ZKE Console</span>
-              <span className="text-subtle-foreground block text-[11.5px] tracking-wide">
+            <ZkeMark className="size-10 rounded-[13px]" />
+            <span className="min-w-0">
+              <span className="text-foreground block text-sm leading-tight font-semibold">
+                ZKE Console
+              </span>
+              <span className="text-subtle-foreground block text-[11px] leading-tight tracking-wide">
                 首次初始化
               </span>
             </span>
@@ -89,7 +132,7 @@ export function SetupPage() {
                   setUsername(event.target.value);
                   clearFailure();
                 }}
-                className="bg-background h-10 px-3"
+                className="bg-surface h-10 px-3"
               />
             </div>
 
@@ -98,22 +141,35 @@ export function SetupPage() {
                 密码
               </Label>
               <Input
+                ref={passwordField}
                 id="setup-password"
                 name="password"
                 type="password"
                 autoComplete="new-password"
                 required
                 minLength={15}
+                aria-invalid={mismatched || undefined}
                 value={password}
                 onChange={(event) => {
                   setPassword(event.target.value);
                   clearFailure();
                 }}
-                className="bg-background h-10 px-3"
+                className="bg-surface h-10 px-3"
               />
-              <p className="text-subtle-foreground text-[11.5px]">
-                至少 15 个字符，最长 1024 字节。
-              </p>
+              {/*
+               * The one rule the person typing has to satisfy, stated the way
+               * every other password field in the Console states it.
+               *
+               * The Server also refuses a password over 1024 *bytes*, and this
+               * was the only screen in the product that said so. Two different
+               * units in one sentence is the smaller problem; the larger one is
+               * that the ceiling is a bound on what gets fed to Argon2, not
+               * advice — it is around 340 Chinese characters, and nobody
+               * choosing a password is anywhere near it. It stays documented in
+               * `docs/architecture/technical-foundation.md`, and the Server's
+               * refusal says so plainly if anyone ever manages to hit it.
+               */}
+              <p className="text-subtle-foreground text-[11px]">至少 15 个字符。</p>
             </div>
 
             <div className="grid gap-2">
@@ -124,18 +180,20 @@ export function SetupPage() {
                 确认密码
               </Label>
               <Input
+                ref={confirmationField}
                 id="setup-password-confirmation"
                 name="password-confirmation"
                 type="password"
                 autoComplete="new-password"
                 required
                 minLength={15}
+                aria-invalid={mismatched || undefined}
                 value={confirmation}
                 onChange={(event) => {
                   setConfirmation(event.target.value);
                   clearFailure();
                 }}
-                className="bg-background h-10 px-3"
+                className="bg-surface h-10 px-3"
               />
             </div>
 

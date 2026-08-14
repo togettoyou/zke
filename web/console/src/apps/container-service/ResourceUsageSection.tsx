@@ -7,6 +7,7 @@ import { DataTable } from "@/components/common/data-table";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { Alert } from "@/components/ui/misc";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useWindowVisible } from "@/desktop/window-visibility";
 import { formatAbsolute } from "@/lib/time";
 
 type MetricsTab = "nodes" | "pods";
@@ -34,8 +35,11 @@ export function ResourceUsageSection({
 }: ResourceUsageSectionProps) {
   const [tab, setTab] = useState<MetricsTab>("nodes");
   const podTab = tab === "pods";
-  const nodes = useNodeMetrics(podTab ? null : clusterId);
-  const pods = usePodMetrics(podTab ? clusterId : null, podTab ? namespace : null);
+  // Usage is a live reading, and a live reading of a minimized window is a
+  // request per Agent every 30 seconds for a number nobody can see.
+  const live = useWindowVisible();
+  const nodes = useNodeMetrics(podTab ? null : clusterId, { live });
+  const pods = usePodMetrics(podTab ? clusterId : null, podTab ? namespace : null, { live });
   const query = podTab ? pods : nodes;
   const snapshot = query.data;
 

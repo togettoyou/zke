@@ -1,11 +1,11 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
 
 import { isApiError } from "@/api/errors";
 import { App } from "@/App";
 import { SessionProvider } from "@/auth/SessionProvider";
+import { AppToaster } from "@/components/common/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 import "@/styles/theme.css";
@@ -53,7 +53,7 @@ createRoot(container).render(
       <SessionProvider>
         <TooltipProvider delayDuration={300}>
           <App />
-          <Toaster position="bottom-right" richColors closeButton />
+          <AppToaster />
         </TooltipProvider>
       </SessionProvider>
     </QueryClientProvider>

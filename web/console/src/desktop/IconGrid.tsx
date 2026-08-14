@@ -93,7 +93,7 @@ function AppIcon({ manifest, onOpen }: { manifest: AppManifest; onOpen: () => vo
             these captions is a wall of small grey type, and the unlit face has
             already said the thing that matters. */}
         {planned ? (
-          <span className="text-subtle-foreground text-[10.5px] leading-4">规划中</span>
+          <span className="text-subtle-foreground text-[11px] leading-4">规划中</span>
         ) : null}
       </span>
     </button>

@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 
 import { revealTranslation, snapRect, type ResizeEdge } from "./geometry";
 import { useWindowInteraction } from "./useWindowInteraction";
+import { WindowVisibilityContext } from "./window-visibility";
 import { useWindowStore, type WindowInstance } from "./window-store";
 
 const RESIZE_HANDLES: Array<{ edge: ResizeEdge; className: string }> = [
@@ -281,7 +282,18 @@ export const Window = memo(function Window({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-hidden">{content}</div>
+        {/*
+         * The provider sits outside the memoized element on purpose. `content`
+         * is the same reference from one render to the next, so parking or
+         * restoring the window does not reconcile the application — only the
+         * handful of hooks that actually read this value are woken, which is
+         * exactly the set that has a poll to pause.
+         */}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <WindowVisibilityContext.Provider value={!parked}>
+            {content}
+          </WindowVisibilityContext.Provider>
+        </div>
 
         {!stacked && instance.mode !== "maximized"
           ? RESIZE_HANDLES.map((handle) => (

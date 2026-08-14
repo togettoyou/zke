@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Eye, EyeOff, ShieldAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,8 @@ import { cn } from "@/lib/cn";
 import { CopyButton } from "./status";
 
 /**
- * One-time display of a credential (enrollment token, install command).
+ * One-time display of a credential (enrollment token, install command, Pod
+ * access address).
  *
  * The value is masked until explicitly revealed, is never written to storage,
  * the URL or logs, and the surrounding copy states that it cannot be retrieved
@@ -18,11 +19,24 @@ export function SecretReveal({
   value,
   label,
   hint,
+  warning,
+  actions,
   className,
 }: {
   value: string;
   label: string;
   hint?: string;
+  /**
+   * Replaces the default advice for a credential whose handling rules differ.
+   *
+   * The default tells the reader to pass the value on through a safe channel,
+   * which is right for an enrollment token — somebody else installs the Agent —
+   * and exactly wrong for a Pod access address, which is bound to the creator's
+   * own session and must not be passed to anyone.
+   */
+  warning?: ReactNode;
+  /** Extra controls beside 显示 and 复制, for values that can also be acted on. */
+  actions?: ReactNode;
   className?: string;
 }) {
   const [revealed, setRevealed] = useState(false);
@@ -42,6 +56,7 @@ export function SecretReveal({
             {revealed ? "隐藏" : "显示"}
           </Button>
           <CopyButton value={value} />
+          {actions}
         </div>
       </div>
 
@@ -58,7 +73,11 @@ export function SecretReveal({
       <Alert tone="warning" className="flex items-start gap-2">
         <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
         <span>
-          该凭证只显示一次，关闭后无法再次获取。请通过安全渠道传递，不要写入聊天记录、工单或代码仓库。
+          {warning ?? (
+            <>
+              该凭证只显示一次，关闭后无法再次获取。请通过安全渠道传递，不要写入聊天记录、工单或代码仓库。
+            </>
+          )}
           {hint ? ` ${hint}` : ""}
         </span>
       </Alert>

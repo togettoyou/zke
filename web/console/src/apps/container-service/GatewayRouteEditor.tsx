@@ -117,7 +117,7 @@ function ParentRow({
   update: (patch: Partial<RouteParentDraft>) => void;
 }) {
   return (
-    <div className="border-border/60 grid gap-2 rounded-md border p-2">
+    <div className="border-border/60 rounded-control grid gap-2 border p-2">
       <div className="grid gap-2 md:grid-cols-3">
         <ReferenceInput
           value={parent.group}
@@ -184,7 +184,7 @@ function RouteRule({
   update: (patch: Partial<GatewayRouteRuleDraft>) => void;
 }) {
   return (
-    <div className="border-border/70 bg-surface-muted/30 grid gap-3 rounded-md border p-3">
+    <div className="border-border/70 bg-surface-muted/30 rounded-control grid gap-3 border p-3">
       <div className="grid gap-1.5">
         <Label>规则 {index + 1}</Label>
         <Input
@@ -265,7 +265,7 @@ function HTTPMatchRow({
 }) {
   const prefix = `规则 ${ruleIndex + 1} HTTP 匹配 ${matchIndex + 1}`;
   return (
-    <div className="border-border/60 grid gap-2 rounded-md border p-2">
+    <div className="border-border/60 rounded-control grid gap-2 border p-2">
       <div className="grid gap-2 md:grid-cols-[10rem_1fr_10rem]">
         <Select value={match.pathType} onValueChange={(pathType) => update({ pathType })}>
           <SelectTrigger aria-label={`${prefix} 路径类型`}>
@@ -332,7 +332,7 @@ function GRPCMatchRow({
 }) {
   const prefix = `规则 ${ruleIndex + 1} gRPC 匹配 ${matchIndex + 1}`;
   return (
-    <div className="border-border/60 grid gap-2 rounded-md border p-2">
+    <div className="border-border/60 rounded-control grid gap-2 border p-2">
       <div className="grid gap-2 md:grid-cols-[12rem_1fr_1fr]">
         <Select value={match.methodType} onValueChange={(methodType) => update({ methodType })}>
           <SelectTrigger aria-label={`${prefix} 方法类型`}>
@@ -386,7 +386,7 @@ function BackendRow({
 }) {
   const prefix = `规则 ${ruleIndex + 1} 后端 ${backendIndex + 1}`;
   return (
-    <div className="border-border/60 grid gap-2 rounded-md border p-2">
+    <div className="border-border/60 rounded-control grid gap-2 border p-2">
       <div className="grid gap-2 md:grid-cols-3">
         <ReferenceInput
           value={backend.group}

@@ -628,7 +628,7 @@ function QuantityBounds({
   examples: string;
 }) {
   return (
-    <div className="bg-surface-muted/45 grid gap-2 rounded-md p-3">
+    <div className="bg-surface-muted/45 rounded-control grid gap-2 p-3">
       <span className="text-foreground text-xs font-medium">{label} 边界</span>
       <div className="grid gap-2 sm:grid-cols-2">
         <Field label="最小值" hint={examples}>

@@ -46,7 +46,7 @@ import {
   type ScopeType,
   type UserStatus,
 } from "@/api/types";
-import { AppShell, SectionTitle, type AppNavItem } from "@/apps/AppShell";
+import { AppShell, PageHeader, SectionTitle, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
 import { BUILTIN_ADMIN_ROLE, roleLabel } from "@/auth/capabilities";
 import { useSessionContext } from "@/auth/session-context";
@@ -78,7 +78,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
-import { Alert } from "@/components/ui/misc";
+import { Alert, Checkbox } from "@/components/ui/misc";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/cn";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
@@ -858,31 +858,35 @@ function RenameUserDialog({
         <DialogHeader>
           <DialogTitle>修改显示名</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-1.5">
-          <Label htmlFor="user-display-name">显示名</Label>
-          <Input
-            id="user-display-name"
-            value={value}
-            maxLength={253}
-            onChange={(event) => setValue(event.target.value)}
-          />
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
-            取消
-          </Button>
-          <Button
-            variant="primary"
-            disabled={pending || value.trim().length === 0}
-            onClick={() => {
-              void onSubmit(value.trim()).catch((error: unknown) =>
-                notifyFailure("修改失败", error),
-              );
-            }}
-          >
-            确认
-          </Button>
-        </DialogFooter>
+        {/* A form, so Enter submits — see the note on 组织与资源's name dialog. */}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (pending || value.trim().length === 0) {
+              return;
+            }
+            void onSubmit(value.trim()).catch((error: unknown) => notifyFailure("修改失败", error));
+          }}
+        >
+          <div className="grid gap-1.5">
+            <Label htmlFor="user-display-name">显示名</Label>
+            <Input
+              id="user-display-name"
+              value={value}
+              maxLength={253}
+              autoFocus
+              onChange={(event) => setValue(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>
+              取消
+            </Button>
+            <Button type="submit" variant="primary" disabled={pending || value.trim().length === 0}>
+              确认
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -957,8 +961,15 @@ function RoleSection() {
   const canManage = permissions.can("rbac.manage", GLOBAL);
 
   const [offset, setOffset] = useState(0);
-  const [editorTarget, setEditorTarget] = useState<Role | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  /*
+   * The open editor, or nothing. `role: null` is a role being created.
+   *
+   * One piece of state rather than the two — a create flag and an edit target —
+   * this used to carry: they described the same view and could both be set, and
+   * the editor is not a dialog any more but the whole work area, which can only
+   * ever show one thing.
+   */
+  const [editor, setEditor] = useState<{ role: Role | null } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
 
   const query = useRoles({ limit: DEFAULT_PAGE_SIZE, offset });
@@ -1022,7 +1033,7 @@ function RoleSection() {
               variant="ghost"
               onClick={() => {
                 clearActionErrors();
-                setEditorTarget(row.original);
+                setEditor({ role: row.original });
               }}
             >
               {canManage && !row.original.builtin ? "编辑" : "查看"}
@@ -1047,6 +1058,53 @@ function RoleSection() {
     [canManage, clearActionErrors],
   );
 
+  /*
+   * The editor replaces the list rather than floating over it.
+   *
+   * A role is three fields and the entire permission catalogue — thirty-odd rows
+   * with their own descriptions and scope floors — and it was being asked for
+   * inside a 520px dialog that scrolled. Nothing about it is a confirmation, and
+   * nothing about it is short. Every other editor in this Console that writes a
+   * whole object opens as a page with a header, a way back and its own actions;
+   * this one now does too, and gets the width the catalogue always needed.
+   *
+   * Keyed on the target, so opening a different role builds a fresh form instead
+   * of reconciling the previous role's selection into it.
+   */
+  if (editor) {
+    const role = editor.role;
+    return (
+      <RoleEditorView
+        key={role?.id ?? "new"}
+        role={role}
+        readOnly={!canManage || Boolean(role?.builtin)}
+        pending={role ? updateRole.isPending : createRole.isPending}
+        error={role ? updateRole.error : createRole.error}
+        onClose={() => setEditor(null)}
+        onSubmit={async (input) => {
+          if (role) {
+            await updateRole.mutateAsync({
+              roleId: role.id,
+              displayName: input.displayName,
+              description: input.description,
+              permissions: input.permissions,
+            });
+            toast.success("角色已更新");
+          } else {
+            await createRole.mutateAsync({
+              name: input.name,
+              displayName: input.displayName,
+              description: input.description,
+              permissions: input.permissions,
+            });
+            toast.success("角色已创建");
+          }
+          setEditor(null);
+        }}
+      />
+    );
+  }
+
   return (
     <>
       <div className="flex h-full min-h-0 flex-col">
@@ -1060,7 +1118,7 @@ function RoleSection() {
                 variant="primary"
                 onClick={() => {
                   clearActionErrors();
-                  setCreateOpen(true);
+                  setEditor({ role: null });
                 }}
               >
                 <ShieldHalf />
@@ -1082,46 +1140,6 @@ function RoleSection() {
           pagination={{ value: query.data?.pagination, onOffsetChange: setOffset }}
         />
       </div>
-
-      <RoleEditorDialog
-        open={createOpen}
-        role={null}
-        pending={createRole.isPending}
-        error={createRole.error}
-        onClose={() => setCreateOpen(false)}
-        onSubmit={async (input) => {
-          await createRole.mutateAsync({
-            name: input.name,
-            displayName: input.displayName,
-            description: input.description,
-            permissions: input.permissions,
-          });
-          toast.success("角色已创建");
-          setCreateOpen(false);
-        }}
-      />
-
-      <RoleEditorDialog
-        open={Boolean(editorTarget)}
-        role={editorTarget}
-        readOnly={!canManage || Boolean(editorTarget?.builtin)}
-        pending={updateRole.isPending}
-        error={updateRole.error}
-        onClose={() => setEditorTarget(null)}
-        onSubmit={async (input) => {
-          if (!editorTarget) {
-            return;
-          }
-          await updateRole.mutateAsync({
-            roleId: editorTarget.id,
-            displayName: input.displayName,
-            description: input.description,
-            permissions: input.permissions,
-          });
-          toast.success("角色已更新");
-          setEditorTarget(null);
-        }}
-      />
 
       <SensitiveActionDialog
         open={Boolean(deleteTarget)}
@@ -1160,7 +1178,7 @@ function RoleSection() {
 }
 
 /*
- * One dialog for creating, editing and viewing a role.
+ * One page for creating, editing and viewing a role.
  *
  * The three differ in two details — whether the name is editable and whether
  * anything is — and splitting them into separate components meant the permission
@@ -1168,9 +1186,12 @@ function RoleSection() {
  * role opens here read-only rather than not opening at all: what `admin` grants
  * is exactly the question an operator asks before deciding they need a narrower
  * role.
+ *
+ * Mounted only while open and keyed on the role, so the form's state is simply
+ * its initial state — the reset-on-reopen bookkeeping this used to carry existed
+ * only because a dialog stays mounted between openings.
  */
-function RoleEditorDialog({
-  open,
+function RoleEditorView({
   role,
   readOnly = false,
   pending,
@@ -1178,7 +1199,6 @@ function RoleEditorDialog({
   onClose,
   onSubmit,
 }: {
-  open: boolean;
   role: Role | null;
   readOnly?: boolean;
   pending: boolean;
@@ -1191,32 +1211,13 @@ function RoleEditorDialog({
     permissions: string[];
   }) => Promise<void>;
 }) {
-  const [name, setName] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [description, setDescription] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
-  const [wasOpen, setWasOpen] = useState(open);
-  const [loadedRoleId, setLoadedRoleId] = useState<string | null>(null);
+  const [name, setName] = useState(role?.name ?? "");
+  const [displayName, setDisplayName] = useState(role?.display_name ?? "");
+  const [description, setDescription] = useState(role?.description ?? "");
+  const [selected, setSelected] = useState<string[]>(role?.permissions ?? []);
 
-  const permissionsQuery = usePermissions(open);
+  const permissionsQuery = usePermissions(true);
   const catalog = permissionsQuery.data?.permissions ?? [];
-
-  // Reset during render rather than in an effect, so the previous role's
-  // permissions are never visible for a frame after the dialog reopens.
-  if (wasOpen !== open) {
-    setWasOpen(open);
-    if (!open) {
-      setLoadedRoleId(null);
-    }
-  }
-  const targetId = open ? (role?.id ?? "new") : null;
-  if (targetId !== null && targetId !== loadedRoleId) {
-    setLoadedRoleId(targetId);
-    setName(role?.name ?? "");
-    setDisplayName(role?.display_name ?? "");
-    setDescription(role?.description ?? "");
-    setSelected(role?.permissions ?? []);
-  }
 
   const editing = Boolean(role);
   const toggle = (permission: string) => {
@@ -1263,159 +1264,144 @@ function RoleEditorDialog({
     secretReachingSelected.length > 0 &&
     !selected.includes("cluster.secret.read");
 
+  const submit = () => {
+    void onSubmit({
+      name: name.trim(),
+      displayName: displayName.trim(),
+      description: description.trim(),
+      permissions: selected,
+    });
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+    <>
       {/*
-       * The permission catalog is long enough to outgrow any viewport, so the
-       * dialog is a column that scrolls in one place: the header names what is
-       * open and the footer keeps 关闭 reachable, both without scrolling. The
-       * list itself is deliberately not a second scroll region — nesting one
-       * inside a scrolling dialog is how a wheel over the list stops moving
-       * the page it is sitting on.
+       * The way out and the way to save both live in the page header, which is
+       * the row that does not scroll. The catalogue below is long, and an
+       * operator who has read to the bottom of it is exactly the one most likely
+       * to want 保存 — pinning it to the foot of a scrolling column, as the
+       * dialog did, is what put it out of reach at the moment it was wanted.
        */}
-      <DialogContent
-        aria-describedby={undefined}
-        className="flex max-w-2xl flex-col overflow-hidden"
-      >
-        <DialogHeader className="shrink-0">
-          <DialogTitle>{readOnly ? "角色详情" : editing ? "编辑角色" : "新建角色"}</DialogTitle>
-        </DialogHeader>
-        <div className="grid min-h-0 flex-1 auto-rows-min gap-3 overflow-y-auto">
-          {readOnly && role?.builtin ? (
-            <Alert tone="info">内置角色由 Server 定义，不可修改或删除。</Alert>
-          ) : null}
+      <PageHeader
+        title={readOnly ? "角色详情" : editing ? `编辑角色 · ${role?.display_name}` : "新建角色"}
+        onBack={onClose}
+        backDisabled={pending}
+        actions={
+          readOnly ? null : (
+            <Button size="sm" variant="primary" disabled={!valid || pending} onClick={submit}>
+              {pending ? "保存中…" : "保存"}
+            </Button>
+          )
+        }
+      />
 
-          {/*
-           * items-start, because only one of the two columns carries a hint:
-           * a stretched cell hands its spare height to the gaps between label
-           * and input, and the two inputs stop lining up.
-           */}
-          <div className="grid grid-cols-2 items-start gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="role-name">标识</Label>
-              <Input
-                id="role-name"
-                value={name}
-                disabled={editing || readOnly}
-                placeholder="release-engineer"
-                onChange={(event) => setName(event.target.value)}
-              />
-              <FieldHint>
-                {editing
-                  ? "标识创建后不可修改：绑定与审计记录都以它指代该角色。"
-                  : "小写字母、数字和连字符。创建后不可修改。"}
-              </FieldHint>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="role-display-name">名称</Label>
-              <Input
-                id="role-display-name"
-                value={displayName}
-                disabled={readOnly}
-                placeholder="发布工程师"
-                onChange={(event) => setDisplayName(event.target.value)}
-              />
-            </div>
-          </div>
+      {/*
+       * One measure for the whole form. The fields are short and the catalogue
+       * rows are a label plus a sentence; run to the full width of a maximized
+       * window they become a line of text a metre long with a checkbox at the
+       * far end, which is unreadable in a different way than the 520px dialog
+       * was.
+       */}
+      <div className="grid max-w-4xl gap-3">
+        {readOnly && role?.builtin ? (
+          <Alert tone="info">内置角色由 Server 定义，不可修改或删除。</Alert>
+        ) : null}
 
+        {/*
+         * items-start, because only one of the two columns carries a hint:
+         * a stretched cell hands its spare height to the gaps between label
+         * and input, and the two inputs stop lining up.
+         */}
+        <div className="grid grid-cols-2 items-start gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="role-description">说明</Label>
+            <Label htmlFor="role-name">标识</Label>
             <Input
-              id="role-description"
-              value={description}
-              disabled={readOnly}
-              placeholder="这个角色是给谁用的"
-              onChange={(event) => setDescription(event.target.value)}
+              id="role-name"
+              value={name}
+              disabled={editing || readOnly}
+              placeholder="release-engineer"
+              onChange={(event) => setName(event.target.value)}
             />
-          </div>
-
-          <div className="grid gap-1.5">
-            <Label>权限（已选 {selected.length} 项）</Label>
-            {permissionsQuery.isLoading ? (
-              <span className="text-muted-foreground text-[13px]">正在加载权限字典…</span>
-            ) : (
-              <div className="border-border rounded-control border">
-                {catalog.map((permission) => (
-                  <PermissionRow
-                    key={permission.name}
-                    permission={permission}
-                    checked={selected.includes(permission.name)}
-                    disabled={!movable(permission)}
-                    onToggle={() => toggle(permission.name)}
-                  />
-                ))}
-              </div>
-            )}
             <FieldHint>
-              只能改动自己在全局已持有的权限。
-              {frozenCount > 0
-                ? `该角色另有 ${frozenCount} 项权限当前账号未持有，它们保持原样，既不能移除也不能新增。`
-                : null}
+              {editing
+                ? "标识创建后不可修改：绑定与审计记录都以它指代该角色。"
+                : "小写字母、数字和连字符。创建后不可修改。"}
             </FieldHint>
           </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="role-display-name">名称</Label>
+            <Input
+              id="role-display-name"
+              value={displayName}
+              disabled={readOnly}
+              placeholder="发布工程师"
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+          </div>
+        </div>
 
-          {reachesSecretsIndirectly ? (
-            <Alert tone="info">
-              该角色未包含「查看 Kubernetes Secret」，但仍可间接读到 Secret 取值：持有「创建
-              Kubernetes 资源」即可创建挂载任意 Secret 的工作负载，再用「
-              {secretReachingSelected.map((permission) => permissionLabel(permission)).join("」「")}
-              」把内容取出来。这是 Kubernetes 自身的权限等价关系，`kubectl` 同样如此。要真正隔离
-              Secret，需要一并收紧工作负载创建权限。
-            </Alert>
-          ) : null}
+        <div className="grid gap-1.5">
+          <Label htmlFor="role-description">说明</Label>
+          <Input
+            id="role-description"
+            value={description}
+            disabled={readOnly}
+            placeholder="这个角色是给谁用的"
+            onChange={(event) => setDescription(event.target.value)}
+          />
         </div>
 
         {/*
-         * Everything about whether the save works sits here, outside the scroll
-         * region and directly above the button that produced it.
-         *
-         * Both used to be the last things inside the scrolling column, below a
-         * permission list nearly thirty rows tall, while the button is in the
-         * fixed footer. Clicking 保存 and being refused therefore rendered the
-         * reason somewhere the operator was not looking and had no reason to
-         * scroll to, and the refusal read as nothing happening at all. A message
-         * that answers a click has to be reachable from where the click was.
-         *
-         * The note about Secret reach stays inside the list above: it describes
-         * the selection rather than the outcome of pressing a button, and lifting
-         * every alert out here would spend the dialog's fixed height on things
-         * nobody is waiting for.
-         */}
-        {/*
          * The Server's own message is shown rather than a fixed one: the
-         * refusals here are specific and actionable — which permission
-         * exceeded the caller's ceiling, that the role is builtin, that it is
-         * still bound — and replacing them with "保存失败" would throw away
-         * the only part worth reading.
+         * refusals here are specific and actionable — which permission exceeded
+         * the caller's ceiling, that the role is builtin, that it is still bound
+         * — and replacing them with "保存失败" would throw away the only part
+         * worth reading.
+         *
+         * It sits above the catalogue rather than below it. 保存 is in the page
+         * header now, so the answer to pressing it belongs at the top of the
+         * page the header sits over — at the bottom it would be thirty rows away
+         * from the button that produced it, which is how a refusal comes to read
+         * as nothing having happened.
          */}
-        {error ? (
-          <Alert tone="danger" className="shrink-0">
-            {errorMessage(error)}
+        {error ? <Alert tone="danger">{errorMessage(error)}</Alert> : null}
+
+        <div className="grid gap-1.5">
+          <Label>权限（已选 {selected.length} 项）</Label>
+          {permissionsQuery.isLoading ? (
+            <span className="text-muted-foreground text-[13px]">正在加载权限字典…</span>
+          ) : (
+            <div className="border-border rounded-panel overflow-hidden border">
+              {catalog.map((permission) => (
+                <PermissionRow
+                  key={permission.name}
+                  permission={permission}
+                  checked={selected.includes(permission.name)}
+                  disabled={!movable(permission)}
+                  onToggle={() => toggle(permission.name)}
+                />
+              ))}
+            </div>
+          )}
+          <FieldHint>
+            只能改动自己在全局已持有的权限。
+            {frozenCount > 0
+              ? `该角色另有 ${frozenCount} 项权限当前账号未持有，它们保持原样，既不能移除也不能新增。`
+              : null}
+          </FieldHint>
+        </div>
+
+        {reachesSecretsIndirectly ? (
+          <Alert tone="info">
+            该角色未包含「查看 Kubernetes Secret」，但仍可间接读到 Secret 取值：持有「创建
+            Kubernetes 资源」即可创建挂载任意 Secret 的工作负载，再用「
+            {secretReachingSelected.map((permission) => permissionLabel(permission)).join("」「")}
+            」把内容取出来。这是 Kubernetes 自身的权限等价关系，`kubectl` 同样如此。要真正隔离
+            Secret，需要一并收紧工作负载创建权限。
           </Alert>
         ) : null}
-        <DialogFooter className="shrink-0">
-          <Button variant="secondary" onClick={onClose}>
-            {readOnly ? "关闭" : "取消"}
-          </Button>
-          {readOnly ? null : (
-            <Button
-              variant="primary"
-              disabled={!valid || pending}
-              onClick={() => {
-                void onSubmit({
-                  name: name.trim(),
-                  displayName: displayName.trim(),
-                  description: description.trim(),
-                  permissions: selected,
-                });
-              }}
-            >
-              {pending ? "保存中…" : "保存"}
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </>
   );
 }
 
@@ -1432,18 +1418,23 @@ function PermissionRow({
 }) {
   const warning = PERMISSION_WARNINGS[permission.name];
   return (
+    /*
+     * The Console's own checkbox, not the browser's. A native control in the
+     * middle of a themed form is the one element on the page that does not
+     * follow the theme — it stays the operating system's blue in a dark window,
+     * and its box is a different size and corner from every other box around it.
+     */
     <label
       className={cn(
-        "border-border flex cursor-pointer items-start gap-3 border-b px-3 py-2 last:border-b-0",
-        disabled && "cursor-not-allowed opacity-60",
+        "border-border flex cursor-pointer items-start gap-3 border-b px-3 py-2 transition-colors last:border-b-0",
+        disabled ? "cursor-not-allowed opacity-60" : "hover:bg-surface-muted/60",
       )}
     >
-      <input
-        type="checkbox"
-        className="mt-1"
+      <Checkbox
+        className="mt-0.5"
         checked={checked}
         disabled={disabled}
-        onChange={onToggle}
+        onCheckedChange={onToggle}
       />
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="flex flex-wrap items-center gap-2">
@@ -2386,7 +2377,7 @@ function RecordPicker({
                     onSelect(option);
                     setOpen(false);
                   }}
-                  className="zke-focus hover:bg-surface-muted flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors"
+                  className="zke-focus hover:bg-surface-muted rounded-control flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors"
                 >
                   <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
                     {option.label}

@@ -91,7 +91,7 @@ export function TopBar({
         >
           {/* A step up from `subtle`: the bar no longer lifts the ground under
               it, so the faintest ink in it now stands on the wallpaper itself. */}
-          <span className="text-muted-foreground mr-1 hidden items-center gap-1.5 text-[11.5px] sm:inline-flex">
+          <span className="text-muted-foreground mr-1 hidden items-center gap-1.5 text-[11px] sm:inline-flex">
             <StatusDot tone={stream.tone} />
             {stream.label}
           </span>
@@ -110,7 +110,7 @@ export function TopBar({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-1.5 px-2 text-[12.5px]">
+            <Button variant="ghost" size="sm" className="gap-1.5 px-2 text-xs">
               <UserRound className="text-subtle-foreground" />
               <span className="max-w-32 truncate">{session?.user.display_name ?? "未登录"}</span>
             </Button>

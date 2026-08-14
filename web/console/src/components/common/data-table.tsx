@@ -4,9 +4,10 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import type { Pagination } from "@/api/types";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
 
-import { EmptyState, ErrorState, LoadingState } from "./state";
+import { EmptyState, ErrorState } from "./state";
 
 export type DataTableProps<TData> = {
   columns: ColumnDef<TData, unknown>[];
@@ -89,7 +90,7 @@ export function DataTable<TData>({
         {error ? (
           <ErrorState error={error} onRetry={onRetry} />
         ) : isLoading ? (
-          <LoadingState />
+          <TableSkeleton columns={columns.length} />
         ) : (data?.length ?? 0) === 0 ? (
           <EmptyState title={emptyTitle} description={emptyDescription} action={emptyAction} />
         ) : (
@@ -110,7 +111,7 @@ export function DataTable<TData>({
                       // just prises the characters apart, and a header like
                       // 「Agent 版本」 ends up with the treatment applied to half
                       // of itself.
-                      className="border-border text-muted-foreground border-b px-3 py-2 text-left text-[12px] font-medium whitespace-nowrap"
+                      className="border-border text-muted-foreground border-b px-3 py-2 text-left text-xs font-medium whitespace-nowrap"
                       style={
                         header.column.columnDef.size
                           ? { width: header.column.columnDef.size }
@@ -180,6 +181,47 @@ export function DataTable<TData>({
           onNext={() => continuePagination.onNext(continuePagination.nextToken)}
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * What a table looks like while it is being fetched.
+ *
+ * Not a spinner, and the difference is the whole point. A centred spinner is a
+ * short box; the rows that replace it are a tall one, so every list in the
+ * product jumped the moment its data arrived — the toolbar above stayed put and
+ * everything below it moved, including whatever the pointer happened to be over.
+ * Rows of the right height in the right number leave the layout alone: the fill
+ * simply resolves into text.
+ *
+ * The bars are deliberately uneven in width. A column of identical rectangles
+ * reads as a loading graphic; staggered ones read as the shape of the content
+ * that is coming, which is what a placeholder is for.
+ */
+const SKELETON_ROWS = 8;
+const SKELETON_WIDTHS = ["72%", "48%", "62%", "38%", "56%"];
+
+function TableSkeleton({ columns }: { columns: number }) {
+  return (
+    <div className="p-3" role="status" aria-label="加载中…" aria-busy>
+      <div className="grid gap-4">
+        {Array.from({ length: SKELETON_ROWS }, (_, row) => (
+          <div
+            key={row}
+            className="grid items-center gap-3"
+            style={{ gridTemplateColumns: `repeat(${Math.max(1, columns)}, minmax(0, 1fr))` }}
+          >
+            {Array.from({ length: Math.max(1, columns) }, (_, column) => (
+              <Skeleton
+                key={column}
+                className="h-3"
+                style={{ width: SKELETON_WIDTHS[(row + column) % SKELETON_WIDTHS.length] }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

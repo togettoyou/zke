@@ -297,7 +297,7 @@ function ResourceTypeTree({
                   <button
                     type="button"
                     aria-expanded={groupOpen}
-                    className="hover:bg-surface-muted rounded-control flex w-full items-center gap-1.5 px-1 py-1.5 text-left text-[13px]"
+                    className="zke-focus hover:bg-surface-muted rounded-control flex w-full items-center gap-1.5 px-1 py-1.5 text-left text-[13px]"
                     onClick={() => toggle(group.group)}
                   >
                     {groupOpen ? (
@@ -324,7 +324,7 @@ function ResourceTypeTree({
                             <button
                               type="button"
                               aria-expanded={versionOpen}
-                              className="hover:bg-surface-muted rounded-control text-muted-foreground flex w-full items-center gap-1.5 px-1 py-1 text-left text-xs"
+                              className="zke-focus hover:bg-surface-muted rounded-control text-muted-foreground flex w-full items-center gap-1.5 px-1 py-1 text-left text-xs"
                               onClick={() => toggle(versionKey)}
                             >
                               {versionOpen ? (
@@ -349,7 +349,7 @@ function ResourceTypeTree({
                                       key={typeKey(type)}
                                       type="button"
                                       className={cn(
-                                        "rounded-control flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[13px]",
+                                        "zke-focus rounded-control flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[13px]",
                                         isSelected
                                           ? "bg-primary-surface text-primary"
                                           : "text-muted-foreground hover:bg-surface-muted",

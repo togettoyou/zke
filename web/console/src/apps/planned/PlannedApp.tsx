@@ -38,7 +38,7 @@ export function PlannedApp({ manifest }: AppComponentProps) {
       </Alert>
 
       <section>
-        <h4 className="text-subtle-foreground mb-1 text-[11.5px] font-medium">规划中的能力</h4>
+        <h4 className="text-subtle-foreground mb-1 text-[11px] font-medium">规划中的能力</h4>
         {/* An itemised list, not four filled boxes. Boxing each line gives every
             one of them the weight of a control, on a screen whose whole point is
             that there is nothing here to operate yet. */}

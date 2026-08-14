@@ -1512,7 +1512,11 @@ function FindingCard({
               <button
                 key={`${item.kind}-${item.name}`}
                 type="button"
-                className="border-border/60 hover:bg-surface-muted focus-visible:ring-accent rounded-full border px-2 py-0.5 transition-colors focus-visible:ring-2 focus-visible:outline-none"
+                // `zke-focus`, like every other control: this used to draw its
+                // own ring off `ring-accent`, which is not a token this theme
+                // defines — so the rule generated nothing and the only thing
+                // left was `outline-none`, i.e. no keyboard focus at all.
+                className="zke-focus border-border/60 hover:bg-surface-muted rounded-full border px-2 py-0.5 transition-colors"
                 onClick={() => onFocusEvidence(item.kind, item.name)}
               >
                 {evidenceLabel(item.kind)} · {item.name}

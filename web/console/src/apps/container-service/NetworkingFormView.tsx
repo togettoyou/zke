@@ -574,7 +574,7 @@ function IngressFields({
           addLabel="添加规则"
           create={emptyRule}
           render={(rule, ruleIndex, updateRule) => (
-            <div className="border-border/60 grid gap-2 rounded-md border p-2">
+            <div className="border-border/60 rounded-control grid gap-2 border p-2">
               <Input
                 value={rule.host}
                 aria-label={`规则 ${ruleIndex + 1} 主机`}
@@ -736,7 +736,7 @@ function ListenerRow({
 }) {
   const tlsCapable = listener.protocol === "HTTPS" || listener.protocol === "TLS";
   return (
-    <div className="border-border/60 grid gap-2 rounded-md border p-2">
+    <div className="border-border/60 rounded-control grid gap-2 border p-2">
       <div className="grid grid-cols-[1fr_1fr_6rem_7rem] gap-2">
         <Input
           value={listener.name}

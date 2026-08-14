@@ -131,10 +131,10 @@ export const ScopeSelector = memo(function ScopeSelector({
 
           {projectLabel ? (
             <span className="flex min-w-0 flex-col">
-              <span className="text-subtle-foreground truncate text-[10.5px] leading-tight">
+              <span className="text-subtle-foreground truncate text-[11px] leading-tight">
                 {tenantLabel}
               </span>
-              <span className="text-foreground truncate text-[12.5px] leading-tight font-medium">
+              <span className="text-foreground truncate text-xs leading-tight font-medium">
                 {projectLabel}
               </span>
             </span>
@@ -158,7 +158,7 @@ export const ScopeSelector = memo(function ScopeSelector({
                   setDrilled(null);
                   setFilter("");
                 }}
-                className="zke-focus text-subtle-foreground hover:text-foreground -ml-1 flex shrink-0 items-center gap-0.5 rounded-md px-1 py-0.5 text-[11px] transition-colors"
+                className="zke-focus text-subtle-foreground hover:text-foreground rounded-control -ml-1 flex shrink-0 items-center gap-0.5 px-1 py-0.5 text-[11px] transition-colors"
               >
                 <ChevronLeft className="size-3.5" aria-hidden />
                 租户
@@ -299,7 +299,7 @@ function ScopeOption({
         role="option"
         aria-selected={selected}
         onClick={onSelect}
-        className="zke-focus hover:bg-surface-muted flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors"
+        className="zke-focus hover:bg-surface-muted rounded-control flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors"
       >
         <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">{label}</span>
         {selected ? <Check className="text-primary size-3.5 shrink-0" aria-hidden /> : null}

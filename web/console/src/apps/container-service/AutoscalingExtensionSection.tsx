@@ -715,7 +715,7 @@ function ExtensionDetail({
                   </span>
                   <DetailKeyValues entries={trigger.metadata ?? {}} />
                   {(trigger.redacted_metadata_keys ?? []).length > 0 ? (
-                    <span className="text-warning-foreground text-xs">
+                    <span className="text-warning text-xs">
                       已脱敏：{(trigger.redacted_metadata_keys ?? []).join("、")}
                     </span>
                   ) : null}

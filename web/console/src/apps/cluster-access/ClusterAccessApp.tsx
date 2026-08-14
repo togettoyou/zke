@@ -425,45 +425,52 @@ function ClusterSection({
           <DialogHeader>
             <DialogTitle>重命名集群</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-1.5">
-            <Label htmlFor="cluster-name">名称</Label>
-            <Input
-              id="cluster-name"
-              value={renameValue}
-              maxLength={253}
-              onChange={(event) => setRenameValue(event.target.value)}
-            />
-            <FieldHint>名称仅用于展示，集群身份始终由 cluster_id 决定。</FieldHint>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRenameTarget(null)}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              disabled={updateCluster.isPending || renameValue.trim().length === 0}
-              onClick={async () => {
-                if (!renameTarget) {
-                  return;
-                }
-                try {
-                  await updateCluster.mutateAsync({
-                    clusterId: renameTarget.id,
-                    name: renameValue.trim(),
-                    // A rename must not move the Cluster in or out of
-                    // suspension, so it restates whichever it already is.
-                    status: renameTarget.status === "suspended" ? "suspended" : "active",
-                  });
-                  toast.success("集群已重命名");
-                  setRenameTarget(null);
-                } catch (error) {
-                  notifyFailure("重命名集群失败", error);
-                }
-              }}
-            >
-              确认
-            </Button>
-          </DialogFooter>
+          {/* A form, so Enter submits — see the note on 组织与资源's name dialog. */}
+          <form
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!renameTarget || updateCluster.isPending || renameValue.trim().length === 0) {
+                return;
+              }
+              try {
+                await updateCluster.mutateAsync({
+                  clusterId: renameTarget.id,
+                  name: renameValue.trim(),
+                  // A rename must not move the Cluster in or out of
+                  // suspension, so it restates whichever it already is.
+                  status: renameTarget.status === "suspended" ? "suspended" : "active",
+                });
+                toast.success("集群已重命名");
+                setRenameTarget(null);
+              } catch (error) {
+                notifyFailure("重命名集群失败", error);
+              }
+            }}
+          >
+            <div className="grid gap-1.5">
+              <Label htmlFor="cluster-name">名称</Label>
+              <Input
+                id="cluster-name"
+                value={renameValue}
+                maxLength={253}
+                autoFocus
+                onChange={(event) => setRenameValue(event.target.value)}
+              />
+              <FieldHint>名称仅用于展示，集群身份始终由 cluster_id 决定。</FieldHint>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setRenameTarget(null)}>
+                取消
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={updateCluster.isPending || renameValue.trim().length === 0}
+              >
+                确认
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

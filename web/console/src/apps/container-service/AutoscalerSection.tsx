@@ -31,6 +31,7 @@ import { RelativeTime } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useWindowVisible } from "@/desktop/window-visibility";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
@@ -635,7 +636,11 @@ function AutoscalerTrendCard({
   namespace: string;
   name: string;
 }) {
-  const trend = useAutoscalerMetricTrend(clusterId, namespace, name);
+  // Same reason as 资源用量: a 15-second poll behind a minimized window is work
+  // asked of the Cluster's Agent for a chart that is not on screen.
+  const trend = useAutoscalerMetricTrend(clusterId, namespace, name, {
+    live: useWindowVisible(),
+  });
   const points = trend.data?.points ?? [];
   const values = points.flatMap((point) => [point.current_replicas, point.desired_replicas]);
   const maximum = Math.max(1, ...values);
@@ -659,14 +664,14 @@ function AutoscalerTrendCard({
           <div className="grid gap-3">
             <div className="flex items-center gap-4 text-xs">
               <span className="text-primary">— 当前副本</span>
-              <span className="text-warning-foreground">— 期望副本</span>
+              <span className="text-warning">— 期望副本</span>
               <span className="text-muted-foreground ml-auto">
                 最近 1 小时 · 15 秒刷新 · Server 运行时窗口
               </span>
             </div>
             <svg
               viewBox="0 0 100 32"
-              className="bg-muted/30 h-28 w-full rounded"
+              className="bg-surface-muted rounded-control h-28 w-full"
               preserveAspectRatio="none"
               role="img"
               aria-label="HPA 当前和期望副本趋势"
@@ -684,7 +689,7 @@ function AutoscalerTrendCard({
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.2"
-                className="text-warning-foreground"
+                className="text-warning"
                 vectorEffect="non-scaling-stroke"
               />
             </svg>

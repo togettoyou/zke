@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, idempotentHeaders, unwrap } from "../client";
 import { queryKeys, queryKeyPrefixes } from "../query-keys";
+import type { PollOptions } from "./metrics";
 import type {
   KubernetesHPADetail,
   KubernetesHPAMetricTrend,
@@ -96,10 +97,14 @@ export function useAutoscaler(
   });
 }
 
+/** See {@link PollOptions}: the trend only refreshes while it is on screen. */
+const TREND_POLL_MS = 15_000;
+
 export function useAutoscalerMetricTrend(
   clusterId: string | null,
   namespace: string | null,
   name: string | null,
+  { live = true }: PollOptions = {},
 ) {
   return useQuery({
     queryKey: queryKeys.autoscalerMetricTrend(clusterId ?? "", namespace ?? "", name ?? ""),
@@ -117,7 +122,7 @@ export function useAutoscalerMetricTrend(
         }),
       ) as KubernetesHPAMetricTrend,
     enabled: Boolean(clusterId && namespace && name),
-    refetchInterval: 15_000,
+    refetchInterval: live && TREND_POLL_MS,
   });
 }
 

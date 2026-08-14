@@ -689,7 +689,7 @@ function RulesEditor({
   idPrefix: string;
 }) {
   return (
-    <div className="border-border/60 grid gap-2 rounded-md border p-2">
+    <div className="border-border/60 rounded-control grid gap-2 border p-2">
       <label className="flex items-center gap-2 text-[13px]">
         <Checkbox
           checked={rules.enabled}

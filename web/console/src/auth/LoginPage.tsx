@@ -213,7 +213,7 @@ export function LoginPage({ onAuthenticated }: { onAuthenticated: () => void }) 
                 </Button>
               </form>
 
-              <p className="text-subtle-foreground mt-7 text-[11.5px] leading-relaxed">
+              <p className="text-subtle-foreground mt-7 text-[11px] leading-relaxed">
                 连续登录失败会触发账号锁定与来源限流；锁定到期后自动恢复，也可由全局管理员解锁。
               </p>
             </div>
@@ -473,7 +473,7 @@ function Brandmark() {
         <span className="text-foreground block text-sm leading-tight font-semibold">
           ZKE Console
         </span>
-        <span className="text-subtle-foreground block text-[11.5px] leading-tight tracking-wide">
+        <span className="text-subtle-foreground block text-[11px] leading-tight tracking-wide">
           Z Kubernetes Engine
         </span>
       </span>

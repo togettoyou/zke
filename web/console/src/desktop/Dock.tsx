@@ -111,7 +111,7 @@ export const Dock = memo(function Dock({
                    * face is the shape now, and a plate under it would be a second
                    * shape saying the same thing.
                    */
-                  className="zke-focus group flex size-12 flex-col items-center justify-center gap-1 rounded-[14px]"
+                  className="zke-focus group flex size-12 flex-col items-center justify-center gap-1 rounded-[15px]"
                   onClick={() => {
                     if (minimized) {
                       restoreWindow(instance.id);
@@ -130,7 +130,7 @@ export const Dock = memo(function Dock({
                       and where it is running does not have an icon. */}
                   <span
                     className={cn(
-                      "grid size-10 place-items-center rounded-[12px]",
+                      "grid size-10 place-items-center rounded-[13px]",
                       appFaceClass(manifest),
                       appHoverClass(manifest),
                       // Put away, not gone: dimmed rather than removed, which is

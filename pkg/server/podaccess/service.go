@@ -41,7 +41,33 @@ const (
 	sessionTTL15Minutes    = 15 * time.Minute
 	sessionTTL30Minutes    = 30 * time.Minute
 	sessionTTL1Hour        = time.Hour
-	podAccessPageStart     = `<!doctype html>
+	// The Pod Access status pages.
+	//
+	// Inlined into the binary, and that part is not laziness: these pages are
+	// served from the Pod Access listener, whose whole purpose is to be a
+	// different origin from the Console — see `setPodAccessPageHeaders`, whose CSP
+	// is `default-src 'none'` with only inline styles allowed. There is no
+	// stylesheet, font or image they are permitted to fetch, from the Console or
+	// from anywhere else, so everything they need has to travel in the document.
+	//
+	// What they must not be is a second design system, which is what they were.
+	// Every value below is now the Console's own, copied from
+	// `web/console/src/styles/theme.css`: the same palette in both themes, the
+	// same radius scale, the same type scale, the same focus halo, the same mark.
+	// An operator arrives here from a Console window; a page wearing a different
+	// blue, different corners and a different logo reads as somebody else's
+	// service having intercepted the request, which on a proxy endpoint is
+	// precisely the wrong thing to suggest.
+	//
+	// The duplication is real and deliberate — the alternative is letting the
+	// isolated origin depend on the Console's build output. Anything changed in
+	// `theme.css`'s `:root` or `[data-theme="dark"]` blocks has to be mirrored
+	// here by hand.
+	//
+	// Dark follows `prefers-color-scheme` rather than the Console's `data-theme`
+	// switch, and cannot do otherwise: the Console's theme choice lives in
+	// `localStorage` on a different origin, which this page has no way to read.
+	podAccessPageStart = `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -50,20 +76,63 @@ const (
 <style>
 :root {
   color-scheme: light;
-  --page: #f4f6fb;
-  --glow: rgba(79, 70, 229, .16);
-  --card: rgba(255, 255, 255, .92);
-  --border: #e1e6f0;
-  --text: #182033;
-  --muted: #68738a;
-  --soft: #f7f8fc;
-  --primary: #5262e5;
-  --primary-hover: #4453cf;
-  --warning: #b86c0f;
-  --warning-soft: #fff5dc;
-  --danger: #c24432;
-  --danger-soft: #fff0ed;
-  --shadow: 0 24px 64px rgba(29, 39, 69, .13);
+  --desktop-from: #f4f6f9;
+  --desktop-to: #e3e9f1;
+  --auth-glow-key: rgb(59 91 219 / 0.1);
+  --auth-glow-fill: rgb(255 255 255 / 0.85);
+  --surface: #ffffff;
+  --surface-muted: #f5f7fa;
+  --foreground: #101821;
+  --muted-foreground: #57616f;
+  --subtle-foreground: #78828f;
+  --border: #dfe4ec;
+  --primary: #3b5bdb;
+  --primary-hover: #33499e;
+  --primary-foreground: #ffffff;
+  --warning: #8a5406;
+  --danger: #ad2118;
+  --info: #1a5a9e;
+  --info-surface: #e6eff9;
+  --ring: #3b5bdb;
+  --ring-soft: rgb(59 91 219 / 0.16);
+  --elevation-1: 0 1px 2px rgb(24 33 56 / 0.05);
+  --elevation-3:
+    0 1px 2px rgb(24 33 56 / 0.06), 0 6px 16px -4px rgb(24 33 56 / 0.12),
+    0 12px 28px -12px rgb(24 33 56 / 0.14);
+  /* Identical in both themes, exactly as the mark is in the Console. */
+  --app-blue-from: #5878f7;
+  --app-blue-to: #3b5bdb;
+  --radius-control: 7px;
+  --radius-panel: 10px;
+  --radius-window: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --desktop-from: #0f141b;
+    --desktop-to: #1a2331;
+    --auth-glow-key: rgb(124 148 244 / 0.14);
+    --auth-glow-fill: rgb(124 148 244 / 0.05);
+    --surface: #161d27;
+    --surface-muted: #1b2431;
+    --foreground: #e8edf4;
+    --muted-foreground: #a3aebd;
+    --subtle-foreground: #8794a5;
+    --border: #2b3543;
+    --primary: #7f97f5;
+    --primary-hover: #9db0f8;
+    --primary-foreground: #0c111c;
+    --warning: #f2c264;
+    --danger: #ff9086;
+    --info: #86baf7;
+    --info-surface: #12293f;
+    --ring: #7f97f5;
+    --ring-soft: rgb(127 151 245 / 0.26);
+    --elevation-1: 0 1px 2px rgb(0 0 0 / 0.3);
+    --elevation-3:
+      0 1px 2px rgb(0 0 0 / 0.35), 0 6px 16px -4px rgb(0 0 0 / 0.45),
+      0 12px 28px -12px rgb(0 0 0 / 0.5);
+  }
 }
 * { box-sizing: border-box; }
 body {
@@ -73,82 +142,122 @@ body {
   display: grid;
   place-items: center;
   padding: 24px;
-  color: var(--text);
+  color: var(--foreground);
+  /* The Console's sign-in field: two soft sources over the desktop ramp. */
   background:
-    radial-gradient(circle at 15% 12%, var(--glow), transparent 28rem),
-    radial-gradient(circle at 88% 86%, rgba(43, 184, 196, .09), transparent 26rem),
-    var(--page);
-  font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    radial-gradient(64rem 48rem at 24% 16%, var(--auth-glow-key), transparent 62%),
+    radial-gradient(50rem 42rem at 78% 54%, var(--auth-glow-fill), transparent 66%),
+    linear-gradient(to bottom right, var(--desktop-from), var(--desktop-to));
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
 }
+/*
+ * Sign-in puts its form straight onto the field with no card. This one keeps a
+ * bounded surface, and the reason is the origin: the address in the bar belongs
+ * to a proxy in front of somebody's Pod, so the page has to read unmistakably as
+ * a ZKE system surface rather than as something the Pod returned. A defined edge
+ * is what says that. It is the Console's own surface, at dialog measure — no
+ * backdrop blur, which over a smooth gradient buys a compositing layer and
+ * returns very nearly the same image.
+ */
 .status-card {
-  width: min(100%, 640px);
-  overflow: hidden;
-  padding: 38px;
+  width: min(100%, 520px);
+  padding: 24px;
   border: 1px solid var(--border);
-  border-radius: 24px;
-  background: var(--card);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(16px);
+  border-radius: var(--radius-window);
+  background: var(--surface);
+  box-shadow: var(--elevation-3);
 }
-.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; color: var(--muted); font-weight: 650; }
-.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: white; background: linear-gradient(145deg, #6978ef, #4351ce); }
-.brand-mark svg { width: 18px; height: 18px; }
-.status-icon { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 20px; border-radius: 17px; }
-.status-icon svg { width: 30px; height: 30px; }
-.status-icon.warning { color: var(--warning); background: var(--warning-soft); }
-.status-icon.danger { color: var(--danger); background: var(--danger-soft); }
-h1 { margin: 0 0 10px; font-size: clamp(25px, 4vw, 32px); line-height: 1.25; letter-spacing: -.02em; }
-.lead { margin: 0; color: var(--muted); font-size: 16px; }
-.notice { display: grid; grid-template-columns: auto 1fr; gap: 12px; margin: 24px 0; padding: 16px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--soft); }
-.notice svg { width: 19px; height: 19px; margin-top: 3px; color: var(--primary); }
-.notice strong { display: block; margin-bottom: 2px; }
-.notice p { margin: 0; color: var(--muted); }
-.actions { display: flex; align-items: center; gap: 16px; margin-top: 26px; }
+.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+.brand span:last-child { color: var(--foreground); font-size: 14px; font-weight: 600; }
+.brand-mark {
+  display: block;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  /* 31.25% of the tile, the ratio every application face uses. */
+  border-radius: 9px;
+  color: #ffffff;
+  background: linear-gradient(to bottom, var(--app-blue-from), var(--app-blue-to));
+}
+.brand-mark svg { display: block; width: 100%; height: 100%; }
+/*
+ * No tinted plate under the glyph. The Console draws its empty and error states
+ * as a bare 24px icon in the semantic colour, and a badge here was the largest
+ * thing on a page whose job is to be read, not looked at.
+ */
+.status-icon { display: block; width: 24px; height: 24px; margin-bottom: 12px; }
+.status-icon svg { display: block; width: 100%; height: 100%; }
+.status-icon.warning { color: var(--warning); }
+.status-icon.danger { color: var(--danger); }
+h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; line-height: 1.25; letter-spacing: -.01em; }
+.lead { margin: 0; color: var(--muted-foreground); font-size: 13px; }
+/* The Console's Alert, info tone. */
+.notice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  margin: 20px 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--info) 35%, transparent);
+  border-radius: var(--radius-control);
+  background: var(--info-surface);
+  color: var(--info);
+  font-size: 13px;
+}
+.notice svg { width: 16px; height: 16px; margin-top: 3px; }
+.notice strong { display: block; margin-bottom: 2px; font-weight: 600; }
+.notice p { margin: 0; }
+.actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+/* The Console's primary Button, at the height sign-in gives its submit. */
 .primary-button {
   appearance: none;
-  border: 0;
-  border-radius: 11px;
-  padding: 12px 20px;
-  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--primary-foreground);
   background: var(--primary);
-  box-shadow: 0 8px 18px rgba(82, 98, 229, .24);
+  box-shadow: var(--elevation-1);
   font: inherit;
-  font-weight: 650;
+  font-weight: 500;
   cursor: pointer;
-  transition: transform .15s ease, background .15s ease, box-shadow .15s ease;
+  outline: none;
+  transition: background-color .15s, border-color .15s, box-shadow .15s, transform .15s;
 }
-.primary-button:hover { transform: translateY(-1px); background: var(--primary-hover); box-shadow: 0 10px 22px rgba(82, 98, 229, .3); }
-.primary-button:focus-visible { outline: 3px solid rgba(82, 98, 229, .28); outline-offset: 3px; }
-.alternative { color: var(--muted); font-size: 14px; }
-.footnote { margin: 24px 0 0; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+.primary-button:hover { background: var(--primary-hover); }
+/* The Console's press, and the Console's halo — a tight ring against the edge
+   rather than a detached outline. */
+.primary-button:active { transform: scale(.98); }
+.primary-button:focus-visible { border-color: var(--ring); box-shadow: 0 0 0 3px var(--ring-soft); }
+.alternative { color: var(--muted-foreground); font-size: 13px; }
+.footnote {
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--subtle-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
 @media (max-width: 560px) {
   body { padding: 14px; }
-  .status-card { padding: 26px 22px; border-radius: 19px; }
-  .brand { margin-bottom: 22px; }
+  .status-card { padding: 20px; }
+  .brand { margin-bottom: 20px; }
   .actions { align-items: stretch; flex-direction: column; }
   .primary-button { width: 100%; }
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --page: #101522;
-    --glow: rgba(91, 104, 230, .2);
-    --card: rgba(25, 32, 49, .94);
-    --border: #303a51;
-    --text: #edf1fa;
-    --muted: #aab3c6;
-    --soft: #20283a;
-    --primary: #7180f0;
-    --primary-hover: #8190fa;
-    --warning: #f1b75d;
-    --warning-soft: rgba(184, 108, 15, .17);
-    --danger: #f08b7b;
-    --danger-soft: rgba(194, 68, 50, .17);
-    --shadow: 0 24px 70px rgba(0, 0, 0, .3);
-  }
-}
 </style>`
-	podAccessBrand = `<div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 5 7v10l7 4 7-4V7l-7-4Z"/><path d="m5 7 7 4 7-4M12 11v10"/></svg></span><span>ZKE Pod Access</span></div>`
+	// The product's own mark, drawn exactly as `components/brand/zke-mark.tsx`
+	// draws it: a Z whose base is cut into three segments — one plane to observe
+	// from, execution split across clusters — as white ink on a blue tile. The
+	// cube this used to show is not the ZKE mark and appears nowhere else.
+	podAccessBrand = `<div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 64 64" focusable="false"><path d="M19 20H45L19 44" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><g fill="currentColor"><rect x="15.5" y="40.5" width="8.87" height="7" rx="2.6"/><rect x="27.57" y="40.5" width="8.87" height="7" rx="2.6"/><rect x="39.63" y="40.5" width="8.87" height="7" rx="2.6"/></g></svg></span><span>ZKE Pod Access</span></div>`
 )
 
 var (

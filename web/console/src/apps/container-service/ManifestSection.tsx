@@ -18,7 +18,7 @@ import { DataTable } from "@/components/common/data-table";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { YamlEditor } from "@/components/common/yaml-editor";
 import { Button } from "@/components/ui/button";
-import { Alert } from "@/components/ui/misc";
+import { Alert, Checkbox } from "@/components/ui/misc";
 import {
   Select,
   SelectContent,
@@ -316,12 +316,11 @@ export function ManifestSection({ clusterId, clusterName }: ManifestSectionProps
 
         <div className="ml-auto flex items-center gap-2">
           {operation === "apply" ? (
-            <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
+            <label className="text-muted-foreground flex items-center gap-2 text-xs">
+              <Checkbox
                 checked={force}
-                onChange={(event) => {
-                  setForce(event.target.checked);
+                onCheckedChange={(next) => {
+                  setForce(next === true);
                   reset();
                 }}
               />
@@ -538,7 +537,7 @@ function manifestColumns(): ColumnDef<ManifestDocument, unknown>[] {
       header: "说明",
       cell: ({ row }) =>
         row.original.error_message ? (
-          <span className="text-danger text-[12px]">{row.original.error_message}</span>
+          <span className="text-danger text-xs">{row.original.error_message}</span>
         ) : (
           <span className="text-subtle-foreground">—</span>
         ),

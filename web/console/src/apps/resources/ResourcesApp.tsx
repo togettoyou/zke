@@ -797,44 +797,58 @@ function NameDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-1.5">
-          <Label htmlFor="resource-name">名称</Label>
-          <Input
-            id="resource-name"
-            value={name}
-            maxLength={253}
-            autoFocus
-            onChange={(event) => setName(event.target.value)}
-          />
-        </div>
+        {/*
+         * A real form, so Enter submits.
+         *
+         * This asks for one word. Typing it and reaching for the return key is
+         * what everybody does with a one-field prompt, and a `<div>` with a
+         * button beside it swallows that keystroke silently — which reads as the
+         * dialog being stuck rather than as the wrong key having been pressed.
+         * The submit button is `type="submit"` and the cancel is explicitly
+         * `type="button"`, since inside a form the default is the opposite.
+         */}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (pending || name.trim().length === 0) {
+              return;
+            }
+            // The rejection is already surfaced through `error`; swallowing it
+            // here only stops an unhandled promise rejection.
+            void onSubmit(name.trim(), idempotencyKey).catch(() => undefined);
+          }}
+        >
+          <div className="grid gap-1.5">
+            <Label htmlFor="resource-name">名称</Label>
+            <Input
+              id="resource-name"
+              value={name}
+              maxLength={253}
+              autoFocus
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
 
-        {error ? (
-          <Alert tone="danger" className="mt-3">
-            {errorMessage(error)}
-            {errorRequestId(error) ? (
-              <span className="zke-mono mt-1 block text-xs opacity-80">
-                请求 ID：{errorRequestId(error)}
-              </span>
-            ) : null}
-          </Alert>
-        ) : null}
+          {error ? (
+            <Alert tone="danger" className="mt-3">
+              {errorMessage(error)}
+              {errorRequestId(error) ? (
+                <span className="zke-mono mt-1 block text-xs opacity-80">
+                  请求 ID：{errorRequestId(error)}
+                </span>
+              ) : null}
+            </Alert>
+          ) : null}
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
-            取消
-          </Button>
-          <Button
-            variant="primary"
-            disabled={pending || name.trim().length === 0}
-            onClick={() => {
-              // The rejection is already surfaced through `error`; swallowing it
-              // here only stops an unhandled promise rejection.
-              void onSubmit(name.trim(), idempotencyKey).catch(() => undefined);
-            }}
-          >
-            {pending ? "提交中…" : "确认"}
-          </Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>
+              取消
+            </Button>
+            <Button type="submit" variant="primary" disabled={pending || name.trim().length === 0}>
+              {pending ? "提交中…" : "确认"}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

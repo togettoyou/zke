@@ -448,7 +448,7 @@ function StatTile({
         {label}
         {open ? <ArrowUpRight className="size-3 shrink-0" aria-hidden /> : null}
       </span>
-      <span className="zke-tnum text-foreground mt-1 block text-2xl font-semibold tracking-tight">
+      <span className="zke-tnum text-foreground mt-1 block text-[22px] font-semibold tracking-tight">
         {value}
       </span>
       {detail ? (

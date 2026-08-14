@@ -619,7 +619,7 @@ function RuleRows({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="border-border/60 grid gap-2 rounded-md border p-2">
+          <div className="border-border/60 rounded-control grid gap-2 border p-2">
             <div className="grid gap-2 sm:grid-cols-2">
               <Input
                 value={row.verbs}
