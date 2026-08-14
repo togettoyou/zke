@@ -38,6 +38,7 @@ export function useCreateClusterEnrollment() {
       projectId: string;
       clusterName: string;
       endpointProfileId: string;
+      agentNamespace: string;
       idempotencyKey: string;
     }) =>
       unwrap(
@@ -46,7 +47,11 @@ export function useCreateClusterEnrollment() {
             path: { project_id: input.projectId },
             header: idempotentHeaders(input.idempotencyKey),
           },
-          body: { cluster_name: input.clusterName, endpoint_profile_id: input.endpointProfileId },
+          body: {
+            cluster_name: input.clusterName,
+            endpoint_profile_id: input.endpointProfileId,
+            agent_namespace: input.agentNamespace,
+          },
         }),
       ),
     onSuccess: async () => {
@@ -85,6 +90,7 @@ export function useCreateClusterInstallation() {
       projectId: string;
       clusterName: string;
       endpointProfileId: string;
+      agentNamespace: string;
       idempotencyKey: string;
     }) =>
       unwrap(
@@ -93,7 +99,11 @@ export function useCreateClusterInstallation() {
             path: { project_id: input.projectId },
             header: idempotentHeaders(input.idempotencyKey),
           },
-          body: { cluster_name: input.clusterName, endpoint_profile_id: input.endpointProfileId },
+          body: {
+            cluster_name: input.clusterName,
+            endpoint_profile_id: input.endpointProfileId,
+            agent_namespace: input.agentNamespace,
+          },
         }),
       ),
     onSuccess: async () => {

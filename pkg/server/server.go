@@ -151,10 +151,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			return nil
 		},
 	)
-	currentPlatformSettings, _, err := platformSettingsService.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("load platform settings: %w", err)
-	}
 	// Before anything can authorize. `admin` means "every permission the Server defines", so
 	// a release that adds one widens that row here — leaving it to the migration
 	// that created the row would mean the new permission reached nobody, and a
@@ -275,7 +271,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxBufferedResponseBytes: int64(
 				cfg.AgentListener.MaxBufferedResourceBytes,
 			),
-			AgentNamespace: currentPlatformSettings.AgentNamespace,
 		},
 	)
 	clusterOverviewService := clusteroverview.NewService(
@@ -300,13 +295,18 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		podExecService,
 		clusterterminal.Config{
 			TTL: cfg.ClusterTerminal.SessionTTL,
-			ResolveRuntime: func(ctx context.Context) (clusterterminal.RuntimeConfig, error) {
+			ResolveRuntime: func(ctx context.Context, clusterID string) (clusterterminal.RuntimeConfig, error) {
 				settings, _, err := platformSettingsService.Get(ctx)
 				if err != nil {
 					return clusterterminal.RuntimeConfig{}, err
 				}
+				clusterScope, err := rbacService.ResolveClusterScope(ctx, clusterID)
+				if err != nil {
+					return clusterterminal.RuntimeConfig{}, err
+				}
 				return clusterterminal.RuntimeConfig{
-					Image: settings.ClusterTerminalImage, Namespace: settings.AgentNamespace,
+					Image: settings.ClusterTerminalImage, ImagePullPolicy: settings.ClusterTerminalImagePullPolicy,
+					Namespace: clusterScope.AgentNamespace,
 				}, nil
 			},
 		},
@@ -355,9 +355,19 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MaxConcurrentPasswordHashes: cfg.Auth.MaxConcurrentPasswordChecks,
 		},
 	).WithPermissionAuthority(rbacService)
-	defaultInstallationSnapshot, err := platformSettingsService.ResolveEnrollmentSnapshot(ctx, "")
+	defaultEndpointProfileID, readyEndpointProfiles, err := platformSettingsService.ListReadyProfiles(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve default Agent endpoint: %w", err)
+	}
+	var defaultRegistrationURL string
+	for _, profile := range readyEndpointProfiles {
+		if profile.ID == defaultEndpointProfileID {
+			defaultRegistrationURL = profile.RegistrationURL
+			break
+		}
+	}
+	if defaultRegistrationURL == "" {
+		return fmt.Errorf("resolve default Agent endpoint: default profile is not ready")
 	}
 	handler := httpapi.New(
 		logger,
@@ -383,7 +393,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		},
 		httpapi.Config{
 			ConsoleDirectory: cfg.HTTP.ConsoleDirectory,
-			AgentNamespace:   currentPlatformSettings.AgentNamespace,
 			Authentication: httpapi.AuthenticationConfig{
 				CookieSecure:          cfg.Auth.CookieSecure,
 				OperationTimeout:      cfg.Auth.OperationTimeout,
@@ -407,7 +416,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			PodExec: httpapi.PodExecHTTPConfig{
 				MaximumDuration: cfg.AgentListener.PodExecRequestTimeout,
 				WriteTimeout:    cfg.AgentListener.WriteTimeout,
-				PublicHTTPURL:   defaultInstallationSnapshot.RegistrationURL,
+				PublicHTTPURL:   defaultRegistrationURL,
 			},
 			KubernetesEvents: httpapi.KubernetesEventsHTTPConfig{
 				SnapshotTimeout:       cfg.Auth.OperationTimeout,

@@ -438,6 +438,7 @@ func scanCluster(row rowScanner) (ClusterResource, error) {
 		&item.TenantID,
 		&item.ProjectID,
 		&item.Name,
+		&item.AgentNamespace,
 		&item.Status,
 		&item.LastSeenAt,
 		&item.CreatedAt,

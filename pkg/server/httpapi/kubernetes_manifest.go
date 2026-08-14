@@ -116,9 +116,10 @@ func (handler *kubernetesManifestHandler) run(
 	// The grant the middleware resolved, handed to the resource layer as the one
 	// thing that decides which families this request may touch. Built per request
 	// and never cached: it is the caller's permissions, not the Cluster's.
+	resolvedScope, _ := httpmiddleware.ResolvedScope(c)
 	access := kubernetesresource.NewManifestAccess(
 		handler.resources,
-		manifestGrant(httpmiddleware.ClusterManifestGrant(c)),
+		manifestGrant(httpmiddleware.ClusterManifestGrant(c), resolvedScope.AgentNamespace),
 	)
 
 	ctx, cancel := context.WithTimeout(
@@ -205,8 +206,9 @@ func parseKubernetesManifestQuery(
 	}, nil
 }
 
-func manifestGrant(grant httpmiddleware.ManifestGrant) kubernetesresource.ManifestGrant {
+func manifestGrant(grant httpmiddleware.ManifestGrant, agentNamespace string) kubernetesresource.ManifestGrant {
 	return kubernetesresource.ManifestGrant{
+		AgentNamespace:        agentNamespace,
 		ResourceCreate:        grant.ResourceCreate,
 		ResourceUpdate:        grant.ResourceUpdate,
 		ResourceDelete:        grant.ResourceDelete,

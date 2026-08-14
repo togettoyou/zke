@@ -29,6 +29,7 @@ type agentInstallationHandler struct {
 type createAgentInstallationRequest struct {
 	ClusterName       string `json:"cluster_name"`
 	EndpointProfileID string `json:"endpoint_profile_id"`
+	AgentNamespace    string `json:"agent_namespace"`
 }
 
 type createAgentInstallationResponse struct {
@@ -38,6 +39,7 @@ type createAgentInstallationResponse struct {
 	ManifestPath      string    `json:"manifest_path"`
 	Token             string    `json:"token"`
 	EndpointProfileID string    `json:"endpoint_profile_id"`
+	AgentNamespace    string    `json:"agent_namespace"`
 }
 
 func newAgentInstallationHandler(
@@ -80,6 +82,7 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 		ProjectID:         c.Param("project_id"),
 		ClusterName:       request.ClusterName,
 		EndpointProfileID: request.EndpointProfileID,
+		AgentNamespace:    request.AgentNamespace,
 		UserID:            identity.User.ID,
 		RequestID:         httpmiddleware.RequestID(c),
 		IdempotencyKey:    c.GetHeader(idempotencyKeyHeaderName),
@@ -132,6 +135,7 @@ func (handler *agentInstallationHandler) create(c *gin.Context) {
 			ManifestPath:      result.ManifestPath,
 			Token:             result.Token,
 			EndpointProfileID: result.EndpointProfileID,
+			AgentNamespace:    result.AgentNamespace,
 		})
 	}
 }

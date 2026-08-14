@@ -727,7 +727,6 @@ func kubernetesResourceErrorMappings() []errorMapping {
 		// repeating it — by a client retry or by granting the Agent more — will
 		// not change that.
 		{kubernetesresource.ErrResourceNotEnabled, http.StatusForbidden, "resource_not_enabled", "requested Kubernetes resource is not enabled for the Cluster Agent"},
-		{kubernetesresource.ErrAgentNamespaceForbidden, http.StatusForbidden, "agent_namespace_forbidden", "connected Agent still enforces the legacy Agent Namespace Secret boundary"},
 		// 403 rather than 400: the rule is well formed, and the same rule from a
 		// caller holding the Secret permission would be written. What is missing
 		// is the permission being handed out, not the shape of the request.

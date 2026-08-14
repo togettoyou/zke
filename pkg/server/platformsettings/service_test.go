@@ -23,10 +23,9 @@ const testUserID = "11111111-1111-4111-8111-111111111111"
 const testProfileID = "22222222-2222-4222-8222-222222222222"
 
 type memoryStore struct {
-	settings       store.PlatformSettings
-	profiles       map[string]store.AgentEndpointProfile
-	hasEnrollments bool
-	updateErr      error
+	settings  store.PlatformSettings
+	profiles  map[string]store.AgentEndpointProfile
+	updateErr error
 }
 
 func (memory *memoryStore) ListEndpointProfiles(context.Context) ([]store.AgentEndpointProfile, error) {
@@ -73,12 +72,24 @@ func (memory *memoryStore) DeleteEndpointProfile(_ context.Context, id string) e
 func (memory *memoryStore) GetSettings(context.Context) (store.PlatformSettings, error) {
 	return memory.settings, nil
 }
-func (memory *memoryStore) HasEnrollments(context.Context) (bool, error) {
-	return memory.hasEnrollments, nil
-}
 func (memory *memoryStore) UpdateSettings(_ context.Context, input store.UpdatePlatformSettingsParams) (store.PlatformSettings, error) {
-	memory.settings = store.PlatformSettings{DefaultEndpointProfileID: memory.settings.DefaultEndpointProfileID, AgentImage: input.AgentImage, AgentNamespace: input.AgentNamespace, AgentImagePullPolicy: input.AgentImagePullPolicy, ClusterTerminalImage: input.ClusterTerminalImage, Revision: input.ExpectedRevision + 1, UpdatedAt: input.Now}
+	memory.settings = store.PlatformSettings{DefaultEndpointProfileID: memory.settings.DefaultEndpointProfileID, AgentImage: input.AgentImage, AgentImagePullPolicy: input.AgentImagePullPolicy, ClusterTerminalImage: input.ClusterTerminalImage, ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy, Revision: input.ExpectedRevision + 1, UpdatedAt: input.Now}
 	return memory.settings, nil
+}
+
+func TestPlatformSettingsKeepAgentAndTerminalPullPoliciesIndependent(t *testing.T) {
+	memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
+	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), SettingsInput{
+		AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "Never",
+		ClusterTerminalImage: "registry.example.com/zke-terminal:v2", ClusterTerminalImagePullPolicy: "Always",
+		ExpectedRevision: 1, ActorUserID: testUserID, Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.AgentImagePullPolicy != "Never" || updated.ClusterTerminalImagePullPolicy != "Always" {
+		t.Fatalf("pull policies = Agent %q, Terminal %q", updated.AgentImagePullPolicy, updated.ClusterTerminalImagePullPolicy)
+	}
 }
 
 func TestHTTPRegistrationEndpointDoesNotRequireLocalOptIn(t *testing.T) {
@@ -139,12 +150,12 @@ func TestInvalidEndpointExplainsTheRejectedField(t *testing.T) {
 
 func TestResolveEnrollmentSnapshotCopiesProfileAndDefaults(t *testing.T) {
 	certificateFile := listenerCertificate(t, []string{"zke.example.com"})
-	memory := &memoryStore{profiles: map[string]store.AgentEndpointProfile{testProfileID: {ID: testProfileID, Name: "Public", RegistrationURL: "https://zke.example.com", QUICAddress: "zke.example.com:8443", Enabled: true, Revision: 3}}, settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, AgentImage: "registry.example.com/zke-agent:v1", AgentNamespace: "zke-system", AgentImagePullPolicy: "IfNotPresent", Revision: 1}}
-	snapshot, err := NewService(memory, certificateFile, nil).ResolveEnrollmentSnapshot(context.Background(), "")
+	memory := &memoryStore{profiles: map[string]store.AgentEndpointProfile{testProfileID: {ID: testProfileID, Name: "Public", RegistrationURL: "https://zke.example.com", QUICAddress: "zke.example.com:8443", Enabled: true, Revision: 3}}, settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "IfNotPresent", Revision: 1}}
+	snapshot, err := NewService(memory, certificateFile, nil).ResolveEnrollmentSnapshot(context.Background(), "", "custom-system")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.EndpointProfileRevision != 3 || snapshot.RegistrationURL != "https://zke.example.com" || snapshot.AgentImage != "registry.example.com/zke-agent:v1" {
+	if snapshot.EndpointProfileRevision != 3 || snapshot.RegistrationURL != "https://zke.example.com" || snapshot.AgentImage != "registry.example.com/zke-agent:v1" || snapshot.AgentNamespace != "custom-system" {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
 }

@@ -60,6 +60,7 @@ type CreateInput struct {
 	IdempotencyKey    string
 	Now               time.Time
 	EndpointProfileID string
+	AgentNamespace    string
 }
 
 type CreateResult struct {
@@ -69,6 +70,7 @@ type CreateResult struct {
 	ManifestPath      string
 	Token             string
 	EndpointProfileID string
+	AgentNamespace    string
 }
 
 func NewService(
@@ -90,6 +92,7 @@ func (service *Service) Create(
 		IdempotencyKey:    input.IdempotencyKey,
 		Now:               input.Now,
 		EndpointProfileID: input.EndpointProfileID,
+		AgentNamespace:    input.AgentNamespace,
 	})
 	if err != nil {
 		return CreateResult{}, err
@@ -98,6 +101,7 @@ func (service *Service) Create(
 		ID: result.ID, ClusterName: result.ClusterName, ExpiresAt: result.ExpiresAt,
 		ManifestPath: "/agent-install/v1/manifest", Token: result.Token,
 		EndpointProfileID: result.EndpointProfileID,
+		AgentNamespace:    result.AgentNamespace,
 	}, nil
 }
 

@@ -88,10 +88,10 @@ func (store *RBACStore) FindClusterAuthorizationScope(
 ) (ClusterAuthorizationScope, error) {
 	var scope ClusterAuthorizationScope
 	err := store.pool.QueryRow(ctx, `
-SELECT tenant_id::text, project_id::text
+SELECT tenant_id::text, project_id::text, agent_namespace
 FROM clusters
 WHERE id = $1
-`, clusterID).Scan(&scope.TenantID, &scope.ProjectID)
+`, clusterID).Scan(&scope.TenantID, &scope.ProjectID, &scope.AgentNamespace)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClusterAuthorizationScope{}, ErrClusterNotFound
 	}

@@ -1841,8 +1841,7 @@ export interface paths {
         /**
          * @description 读取一个 Secret 的完整 YAML，要求 `cluster.secret.read`。文档包含该 Secret 的
          *     全部取值（Kubernetes 存储的 Base64），暴露面大于按键遮蔽的详情接口。Agent 自身所在
-         *     Namespace 还要求 `cluster.agent_namespace.manage`；升级前部署的旧 Agent 可能
-         *     继续返回兼容错误 `agent_namespace_forbidden`。通用 Resource 与 YAML 接口对
+         *     Namespace 还要求 `cluster.agent_namespace.manage`。通用 Resource 与 YAML 接口对
          *     `core/v1 Secret` 的拒绝保持不变。
          */
         get: operations["getKubernetesSecretYAML"];
@@ -2195,6 +2194,7 @@ export interface paths {
          * @description 首次接入时 `cluster_name` 在其 Project 内必须唯一（忽略大小写），被占用时返回
          *     409 `cluster_name_conflict`。名称在签发凭证时校验一次，在 Agent 完成注册、
          *     实际创建 Cluster 时再次由唯一约束保证——两者之间名称仍可能被占用。
+         *     `agent_namespace` 在首次注册时固化到 Cluster，后续重新接入继续使用该值。
          */
         post: operations["createClusterEnrollment"];
         delete?: never;
@@ -2308,6 +2308,7 @@ export interface components {
     schemas: {
         /** Format: uuid */
         UUID: string;
+        AgentNamespace: string;
         /**
          * Format: date-time
          * @example 2026-07-26T14:30:00+08:00
@@ -2523,6 +2524,7 @@ export interface components {
         Cluster: components["schemas"]["ResourceBase"] & {
             tenant_id: components["schemas"]["UUID"];
             project_id: components["schemas"]["UUID"];
+            agent_namespace: components["schemas"]["AgentNamespace"];
             last_seen_at?: components["schemas"]["Timestamp"];
         };
         ClusterConnection: {
@@ -5559,19 +5561,21 @@ export interface components {
         PlatformSettings: {
             default_endpoint_profile_id: components["schemas"]["UUID"];
             agent_image: string;
-            agent_namespace: string;
             /** @enum {string} */
             agent_image_pull_policy: "Always" | "IfNotPresent" | "Never";
             cluster_terminal_image: string;
+            /** @enum {string} */
+            cluster_terminal_image_pull_policy: "Always" | "IfNotPresent" | "Never";
             revision: number;
             updated_at: components["schemas"]["Timestamp"];
         };
         PlatformSettingsUpdate: {
             agent_image: string;
-            agent_namespace: string;
             /** @enum {string} */
             agent_image_pull_policy: "Always" | "IfNotPresent" | "Never";
             cluster_terminal_image: string;
+            /** @enum {string} */
+            cluster_terminal_image_pull_policy: "Always" | "IfNotPresent" | "Never";
             expected_revision: number;
         };
         ClusterEnrollment: {
@@ -5581,6 +5585,7 @@ export interface components {
             token: string;
             expires_at: components["schemas"]["Timestamp"];
             endpoint_profile_id: components["schemas"]["UUID"];
+            agent_namespace: components["schemas"]["AgentNamespace"];
         };
         ClusterEnrollmentRecord: {
             id: components["schemas"]["UUID"];
@@ -5597,6 +5602,7 @@ export interface components {
             created_at: components["schemas"]["Timestamp"];
             endpoint_profile_id: components["schemas"]["UUID"];
             endpoint_profile_revision: number;
+            agent_namespace: components["schemas"]["AgentNamespace"];
         };
         ClusterInstallation: {
             id: components["schemas"]["UUID"];
@@ -5605,6 +5611,7 @@ export interface components {
             manifest_path: string;
             token: string;
             endpoint_profile_id: components["schemas"]["UUID"];
+            agent_namespace: components["schemas"]["AgentNamespace"];
         };
         ClusterConnectionRevocation: {
             cluster_id: components["schemas"]["UUID"];
@@ -11929,6 +11936,7 @@ export interface operations {
                 "application/json": {
                     cluster_name: string;
                     endpoint_profile_id?: components["schemas"]["UUID"];
+                    agent_namespace: components["schemas"]["AgentNamespace"];
                 };
             };
         };
@@ -12028,6 +12036,7 @@ export interface operations {
                 "application/json": {
                     cluster_name: string;
                     endpoint_profile_id?: components["schemas"]["UUID"];
+                    agent_namespace: components["schemas"]["AgentNamespace"];
                 };
             };
         };

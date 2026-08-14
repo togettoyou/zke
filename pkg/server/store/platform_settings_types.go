@@ -33,14 +33,14 @@ type AgentEndpointProfile struct {
 }
 
 type PlatformSettings struct {
-	DefaultEndpointProfileID string
-	AgentImage               string
-	AgentNamespace           string
-	AgentImagePullPolicy     string
-	ClusterTerminalImage     string
-	Revision                 int64
-	UpdatedByUserID          string
-	UpdatedAt                time.Time
+	DefaultEndpointProfileID       string
+	AgentImage                     string
+	AgentImagePullPolicy           string
+	ClusterTerminalImage           string
+	ClusterTerminalImagePullPolicy string
+	Revision                       int64
+	UpdatedByUserID                string
+	UpdatedAt                      time.Time
 }
 
 type CreateAgentEndpointProfileParams struct {
@@ -67,13 +67,13 @@ type UpdateAgentEndpointProfileParams struct {
 }
 
 type UpdatePlatformSettingsParams struct {
-	AgentImage           string
-	AgentNamespace       string
-	AgentImagePullPolicy string
-	ClusterTerminalImage string
-	ExpectedRevision     int64
-	ActorUserID          string
-	Now                  time.Time
+	AgentImage                     string
+	AgentImagePullPolicy           string
+	ClusterTerminalImage           string
+	ClusterTerminalImagePullPolicy string
+	ExpectedRevision               int64
+	ActorUserID                    string
+	Now                            time.Time
 }
 
 type ReconcileDefaultEndpointParams struct {

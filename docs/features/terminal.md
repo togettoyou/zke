@@ -2,7 +2,8 @@
 
 终端是独立的单集群 App，为 Kubernetes 熟练用户提供浏览器内的临时 CloudShell。用户选择目标 Cluster 后显式
 确认创建会话；终端镜像内运行标准 `kubectl`，请求直接使用会话专属 ServiceAccount 访问目标 Kubernetes API
-Server。终端 Pod 与 ServiceAccount 固定创建在 Agent Namespace（默认 `zke-system`），Shell 的默认 kubectl
+Server。终端 Pod 与 ServiceAccount 固定创建在目标 Cluster 保存的 Agent Namespace（首次接入界面默认 `zke-system`），
+Shell 的默认 kubectl
 Namespace 为 `default`。
 
 该能力不复用 ZKE Agent ServiceAccount。每个会话由目标 Cluster Agent 创建以下短生命周期资源：
@@ -51,7 +52,8 @@ Agent ClusterRole/ClusterRoleBinding 不会进入终端可更新或删除的对�
 
 ## 配置与镜像
 
-Cluster Terminal 镜像由全局管理员在“设置 → 平台配置”管理。`build/agent/Dockerfile` 构建的
+Cluster Terminal 镜像及其独立的 Image Pull Policy 由全局管理员在“设置 → 平台配置”管理，修改后立即用于新建会话。
+`build/agent/Dockerfile` 构建的
 `ghcr.io/togettoyou/zke-agent` 同时包含 Agent 二进制、kubectl、交互式 Shell、基础工具和默认启用的 kubectl
 Bash Tab 补全。Agent Deployment 使用镜像默认入口运行 `zke-agent`；Cluster Terminal Pod 会覆盖入口命令并直接
 启动 Shell，因此两种能力默认共用一个镜像。`cluster_terminal.session_ttl` 可配置为 1 分钟至 1 小时，默认 15 分钟。

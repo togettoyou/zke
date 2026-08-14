@@ -47,6 +47,7 @@ type Enrollment struct {
 	CreatedAt               time.Time
 	EndpointProfileID       string
 	EndpointProfileRevision int64
+	AgentNamespace          string
 }
 
 type ActiveEnrollment struct {
@@ -91,8 +92,9 @@ type RevokeEnrollmentParams struct {
 }
 
 type ClusterEnrollmentTarget struct {
-	ProjectID   string
-	ClusterName string
+	ProjectID      string
+	ClusterName    string
+	AgentNamespace string
 }
 
 type EnrollmentAttemptStatus string

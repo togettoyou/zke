@@ -151,8 +151,8 @@ RETURNING id::text
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `
-INSERT INTO clusters (id, tenant_id, project_id, name, status)
-VALUES (gen_random_uuid(), $1, $2, 'Agent Cluster', 'active')
+INSERT INTO clusters (id, tenant_id, project_id, name, agent_namespace, status)
+VALUES (gen_random_uuid(), $1, $2, 'Agent Cluster', 'agent-management', 'active')
 RETURNING id::text
 `, tenantID, projectID).Scan(&clusterID); err != nil {
 		t.Fatal(err)
@@ -273,6 +273,7 @@ VALUES (
 		t.Fatal(err)
 	}
 	if len(listed.Clusters) != 1 ||
+		listed.Clusters[0].AgentNamespace != "agent-management" ||
 		listed.Clusters[0].Connection.Status != "online" ||
 		listed.Clusters[0].Connection.ConnectionID != "connection-1" ||
 		listed.Clusters[0].Connection.ConnectedAt == nil ||
@@ -473,7 +474,8 @@ VALUES (
 	}
 	if reenrollmentBody.ID == "" || reenrollmentBody.Token == "" ||
 		reenrollmentBody.ClusterID != clusterID ||
-		reenrollmentBody.ClusterName != "Agent Cluster" {
+		reenrollmentBody.ClusterName != "Agent Cluster" ||
+		reenrollmentBody.AgentNamespace != "agent-management" {
 		t.Fatalf("unexpected reenrollment response: %+v", reenrollmentBody)
 	}
 	var reenrollmentClusterID string

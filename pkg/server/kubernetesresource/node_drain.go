@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const nodeDrainPodLimit int64 = 500
@@ -36,6 +37,7 @@ type DrainNodeInput struct {
 	IdempotencyKey        string
 	SystemNamespaceManage bool
 	AgentNamespaceManage  bool
+	AgentNamespace        string
 }
 
 type DrainPodDecision string
@@ -84,6 +86,7 @@ func (service *Service) DrainNode(ctx context.Context, input DrainNodeInput) (Dr
 		input.NodeUID == "" || len(input.NodeUID) > 128 ||
 		(!input.DryRun && !input.Confirm) ||
 		!validIdempotencyKey(input.IdempotencyKey) ||
+		len(k8svalidation.IsDNS1123Label(strings.TrimSpace(input.AgentNamespace))) != 0 ||
 		(input.GracePeriodSeconds != nil && *input.GracePeriodSeconds < 0) {
 		return DrainNodeResult{}, ErrInvalidInput
 	}
@@ -181,10 +184,14 @@ func (service *Service) DrainNode(ctx context.Context, input DrainNodeInput) (Dr
 }
 
 func classifyDrainPod(pod *corev1.Pod, input DrainNodeInput) DrainPod {
-	return (&Service{agentNamespace: "zke-system"}).classifyDrainPod(pod, input)
+	return classifyDrainPodForNamespace(pod, input)
 }
 
 func (service *Service) classifyDrainPod(pod *corev1.Pod, input DrainNodeInput) DrainPod {
+	return classifyDrainPodForNamespace(pod, input)
+}
+
+func classifyDrainPodForNamespace(pod *corev1.Pod, input DrainNodeInput) DrainPod {
 	result := DrainPod{Namespace: pod.Namespace, Name: pod.Name, UID: string(pod.UID)}
 	if pod.DeletionTimestamp != nil {
 		result.Decision, result.Result, result.Reason = DrainPodSkip, DrainPodSkipped, "Terminating"
@@ -200,7 +207,7 @@ func (service *Service) classifyDrainPod(pod *corev1.Pod, input DrainNodeInput) 
 			return result
 		}
 	}
-	if pod.Namespace == service.agentNamespace && !input.AgentNamespaceManage {
+	if input.AgentNamespace != "" && pod.Namespace == input.AgentNamespace && !input.AgentNamespaceManage {
 		result.Decision, result.Result, result.Reason = DrainPodBlock, DrainPodBlocked, "AgentNamespacePermissionRequired"
 		result.Message = "Pod eviction requires cluster.agent_namespace.manage"
 		return result

@@ -194,9 +194,9 @@ func (store *PlatformSettingsStore) GetSettings(
 SELECT
     default_endpoint_profile_id::text,
     agent_image,
-    agent_namespace,
     agent_image_pull_policy,
     cluster_terminal_image,
+    cluster_terminal_image_pull_policy,
     revision,
     COALESCE(updated_by_user_id::text, ''),
     updated_at
@@ -204,9 +204,9 @@ FROM platform_settings
 WHERE singleton = true`).Scan(
 		&settings.DefaultEndpointProfileID,
 		&settings.AgentImage,
-		&settings.AgentNamespace,
 		&settings.AgentImagePullPolicy,
 		&settings.ClusterTerminalImage,
+		&settings.ClusterTerminalImagePullPolicy,
 		&settings.Revision,
 		&settings.UpdatedByUserID,
 		&settings.UpdatedAt,
@@ -299,14 +299,6 @@ WHERE id = $1`, profileID))
 	return profile, nil
 }
 
-func (store *PlatformSettingsStore) HasEnrollments(ctx context.Context) (bool, error) {
-	var exists bool
-	if err := store.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM enrollments)").Scan(&exists); err != nil {
-		return false, fmt.Errorf("check enrollment existence: %w", err)
-	}
-	return exists, nil
-}
-
 func (store *PlatformSettingsStore) UpdateSettings(
 	ctx context.Context,
 	input UpdatePlatformSettingsParams,
@@ -315,9 +307,9 @@ func (store *PlatformSettingsStore) UpdateSettings(
 	err := store.pool.QueryRow(ctx, `
 UPDATE platform_settings
 SET agent_image = $1,
-    agent_namespace = $2,
-    agent_image_pull_policy = $3,
-    cluster_terminal_image = $4,
+    agent_image_pull_policy = $2,
+    cluster_terminal_image = $3,
+    cluster_terminal_image_pull_policy = $4,
     revision = revision + 1,
     updated_by_user_id = $5,
     updated_at = $6
@@ -326,25 +318,25 @@ WHERE singleton = true
 RETURNING
     default_endpoint_profile_id::text,
     agent_image,
-    agent_namespace,
     agent_image_pull_policy,
     cluster_terminal_image,
+    cluster_terminal_image_pull_policy,
     revision,
     COALESCE(updated_by_user_id::text, ''),
     updated_at`,
 		input.AgentImage,
-		input.AgentNamespace,
 		input.AgentImagePullPolicy,
 		input.ClusterTerminalImage,
+		input.ClusterTerminalImagePullPolicy,
 		input.ActorUserID,
 		input.Now,
 		input.ExpectedRevision,
 	).Scan(
 		&settings.DefaultEndpointProfileID,
 		&settings.AgentImage,
-		&settings.AgentNamespace,
 		&settings.AgentImagePullPolicy,
 		&settings.ClusterTerminalImage,
+		&settings.ClusterTerminalImagePullPolicy,
 		&settings.Revision,
 		&settings.UpdatedByUserID,
 		&settings.UpdatedAt,

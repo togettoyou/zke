@@ -38,6 +38,7 @@ type Agent struct {
 	ProjectID                   string
 	ClusterID                   string
 	ClusterName                 string
+	AgentNamespace              string
 	ClusterStatus               string
 	ClusterCreatedAt            time.Time
 	ClusterUpdatedAt            time.Time
@@ -196,6 +197,7 @@ func (service *Service) buildAgents(
 			ProjectID:                   item.ProjectID,
 			ClusterID:                   item.ClusterID,
 			ClusterName:                 item.ClusterName,
+			AgentNamespace:              item.AgentNamespace,
 			ClusterStatus:               item.ClusterStatus,
 			ClusterCreatedAt:            item.ClusterCreatedAt,
 			ClusterUpdatedAt:            item.ClusterUpdatedAt,

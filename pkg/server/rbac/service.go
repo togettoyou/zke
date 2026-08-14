@@ -292,6 +292,17 @@ func (service *Service) AuthorizeCluster(
 	if !validation.IsUUID(clusterID) {
 		return ResolvedScope{}, ErrInvalidScope
 	}
+	resolved, err := service.ResolveClusterScope(ctx, clusterID)
+	if err != nil {
+		return ResolvedScope{}, err
+	}
+	return resolved, service.AuthorizeResolvedCluster(ctx, userID, permission, resolved)
+}
+
+func (service *Service) ResolveClusterScope(ctx context.Context, clusterID string) (ResolvedScope, error) {
+	if !validation.IsUUID(clusterID) {
+		return ResolvedScope{}, ErrInvalidScope
+	}
 	clusterScope, err := service.store.FindClusterAuthorizationScope(ctx, clusterID)
 	if errors.Is(err, store.ErrClusterNotFound) {
 		return ResolvedScope{}, ErrDenied
@@ -300,15 +311,21 @@ func (service *Service) AuthorizeCluster(
 		return ResolvedScope{}, err
 	}
 	resolved := ResolvedScope{
-		TenantID:  clusterScope.TenantID,
-		ProjectID: clusterScope.ProjectID,
+		TenantID:       clusterScope.TenantID,
+		ProjectID:      clusterScope.ProjectID,
+		AgentNamespace: clusterScope.AgentNamespace,
 	}
-	return resolved, service.authorizeValidated(
-		ctx,
-		userID,
-		permission,
-		projectScope(clusterScope.TenantID, clusterScope.ProjectID),
-	)
+	return resolved, nil
+}
+
+func (service *Service) AuthorizeResolvedCluster(ctx context.Context, userID string, permission Permission, resolved ResolvedScope) error {
+	if err := validateSubjectPermission(userID, permission); err != nil {
+		return err
+	}
+	if !validation.IsUUID(resolved.TenantID) || !validation.IsUUID(resolved.ProjectID) || resolved.AgentNamespace == "" {
+		return ErrInvalidScope
+	}
+	return service.authorizeValidated(ctx, userID, permission, projectScope(resolved.TenantID, resolved.ProjectID))
 }
 
 func (service *Service) authorize(

@@ -29,9 +29,9 @@ func setResolvedScope(c *gin.Context, scope rbac.ResolvedScope) {
 	c.Set(resolvedScopeKey, scope)
 }
 
-// ResolvedScope reports the Tenant and Project the authorization middleware
-// resolved this request's target to, if the route authorized a scoped
-// permission.
+// ResolvedScope reports the Tenant, Project and per-Cluster runtime scope the
+// authorization middleware resolved this request's target to, if the route
+// authorized a scoped permission.
 func ResolvedScope(c *gin.Context) (rbac.ResolvedScope, bool) {
 	value, exists := c.Get(resolvedScopeKey)
 	if !exists {

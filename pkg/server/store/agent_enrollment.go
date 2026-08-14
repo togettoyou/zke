@@ -17,17 +17,18 @@ import (
 )
 
 type lockedEnrollment struct {
-	ID            string
-	TenantID      string
-	ProjectID     string
-	ClusterID     string
-	ClusterName   string
-	TenantStatus  string
-	ProjectStatus string
-	ClusterStatus string
-	ExpiresAt     time.Time
-	ConsumedAt    *time.Time
-	RevokedAt     *time.Time
+	ID             string
+	TenantID       string
+	ProjectID      string
+	ClusterID      string
+	ClusterName    string
+	AgentNamespace string
+	TenantStatus   string
+	ProjectStatus  string
+	ClusterStatus  string
+	ExpiresAt      time.Time
+	ConsumedAt     *time.Time
+	RevokedAt      *time.Time
 }
 
 type enrollmentLockScope struct {
@@ -278,14 +279,16 @@ INSERT INTO clusters (
     tenant_id,
     project_id,
     name,
+    agent_namespace,
     status
 )
-VALUES ($1, $2, $3, $4, 'pending')
+VALUES ($1, $2, $3, $4, $5, 'pending')
 `,
 			result.ClusterID,
 			enrollment.TenantID,
 			enrollment.ProjectID,
 			enrollment.ClusterName,
+			enrollment.AgentNamespace,
 		)
 		// The name was chosen when the enrollment was issued, which may have been
 		// long before this Agent turned up; another Cluster can have taken it in
@@ -445,6 +448,7 @@ SELECT
     enrollment.project_id::text,
     COALESCE(enrollment.cluster_id::text, ''),
     enrollment.cluster_name,
+    enrollment.agent_namespace,
     tenant.status,
     project.status,
     enrollment.expires_at,
@@ -492,6 +496,7 @@ SELECT
     enrollment.project_id::text,
     COALESCE(enrollment.cluster_id::text, ''),
     enrollment.cluster_name,
+    enrollment.agent_namespace,
     tenant.status,
     project.status,
     enrollment.expires_at,
@@ -590,6 +595,7 @@ func scanLockedEnrollment(row pgx.Row) (lockedEnrollment, error) {
 		&enrollment.ProjectID,
 		&enrollment.ClusterID,
 		&enrollment.ClusterName,
+		&enrollment.AgentNamespace,
 		&enrollment.TenantStatus,
 		&enrollment.ProjectStatus,
 		&enrollment.ExpiresAt,

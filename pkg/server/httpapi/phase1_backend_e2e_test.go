@@ -253,7 +253,7 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/v1/projects/"+project.ID+"/cluster-installations",
-		`{"cluster_name":"Phase 1 Installation Preview"}`,
+		`{"cluster_name":"Phase 1 Installation Preview","agent_namespace":"phase1-installation"}`,
 		sessionCookie,
 		csrfCookie.Value,
 		"phase1-installation-create-0001",
@@ -283,7 +283,7 @@ func TestPhase1BackendEndToEnd(t *testing.T) {
 	enrollmentPath := "/api/v1/projects/" + project.ID + "/cluster-enrollments"
 	createdEnrollment := phase1APIRequest(
 		router, http.MethodPost, enrollmentPath,
-		`{"cluster_name":"Phase 1 Cluster"}`,
+		`{"cluster_name":"Phase 1 Cluster","agent_namespace":"phase1-agent"}`,
 		sessionCookie, csrfCookie.Value, "phase1-enrollment-create-0001",
 	)
 	requirePhase1Status(

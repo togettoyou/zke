@@ -312,7 +312,7 @@ WHERE cluster.id = $1
   AND tenant.status = 'active'
   AND EXISTS (SELECT 1 FROM users WHERE id = $3 AND status = 'active')
 RETURNING cluster.id::text, cluster.tenant_id::text, cluster.project_id::text,
-    cluster.name, cluster.status, cluster.last_seen_at,
+    cluster.name, cluster.agent_namespace, cluster.status, cluster.last_seen_at,
     cluster.created_at, cluster.updated_at
 `, params.ClusterID, params.Name, params.ActorUserID, params.Now, params.Status))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -382,7 +382,7 @@ func (store *ResourceManagementStore) DeleteCluster(
 	}
 	defer rollbackTransaction(transaction)
 	item, err := scanCluster(transaction.QueryRow(ctx, `
-SELECT id::text, tenant_id::text, project_id::text, name, status,
+SELECT id::text, tenant_id::text, project_id::text, name, agent_namespace, status,
     last_seen_at, created_at, updated_at
 FROM clusters
 WHERE id = $1

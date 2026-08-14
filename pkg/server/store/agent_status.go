@@ -30,6 +30,7 @@ type ProjectAgentCertificate struct {
 	ProjectID            string
 	ClusterID            string
 	ClusterName          string
+	AgentNamespace       string
 	ClusterStatus        string
 	ClusterCreatedAt     time.Time
 	ClusterUpdatedAt     time.Time
@@ -101,6 +102,7 @@ SELECT
     agent.project_id::text,
     agent.cluster_id::text,
     cluster.name,
+    cluster.agent_namespace,
     cluster.status,
     cluster.created_at,
     cluster.updated_at,
@@ -133,6 +135,7 @@ func scanProjectAgentCertificate(
 		&item.ProjectID,
 		&item.ClusterID,
 		&item.ClusterName,
+		&item.AgentNamespace,
 		&item.ClusterStatus,
 		&item.ClusterCreatedAt,
 		&item.ClusterUpdatedAt,
@@ -160,6 +163,7 @@ SELECT
     agent.project_id::text,
     agent.cluster_id::text,
     cluster.name,
+    cluster.agent_namespace,
     cluster.status,
     cluster.created_at,
     cluster.updated_at,
@@ -204,6 +208,7 @@ WHERE agent.cluster_id = $1
 		&item.ProjectID,
 		&item.ClusterID,
 		&item.ClusterName,
+		&item.AgentNamespace,
 		&item.ClusterStatus,
 		&item.ClusterCreatedAt,
 		&item.ClusterUpdatedAt,
@@ -236,6 +241,7 @@ SELECT
     credential.project_id::text,
     credential.cluster_id::text,
     cluster.name,
+    cluster.agent_namespace,
     cluster.status,
     cluster.created_at,
     cluster.updated_at,
@@ -276,6 +282,7 @@ ORDER BY credential.expires_at
 			&item.ProjectID,
 			&item.ClusterID,
 			&item.ClusterName,
+			&item.AgentNamespace,
 			&item.ClusterStatus,
 			&item.ClusterCreatedAt,
 			&item.ClusterUpdatedAt,

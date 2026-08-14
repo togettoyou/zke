@@ -654,6 +654,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   // which both dialogs present as the credential's own name, because that is
   // what it stays after the Cluster it creates is renamed.
   const [clusterName, setClusterName] = useState("");
+  const [agentNamespace, setAgentNamespace] = useState("zke-system");
   const [endpointProfileId, setEndpointProfileId] = useState("");
   const [tokenResult, setTokenResult] = useState<{ token: string; expiresAt: string } | null>(null);
   const [installResult, setInstallResult] = useState<{
@@ -770,6 +771,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   onClick={() => {
                     clearActionErrors();
                     setClusterName("");
+                    setAgentNamespace("zke-system");
                     setEndpointProfileId("");
                     setInstallOpen(true);
                   }}
@@ -782,6 +784,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                   onClick={() => {
                     clearActionErrors();
                     setClusterName("");
+                    setAgentNamespace("zke-system");
                     setEndpointProfileId("");
                     setCreateOpen(true);
                   }}
@@ -833,6 +836,17 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
               value={resolvedEndpointProfileId}
               onChange={setEndpointProfileId}
             />
+            <div className="grid gap-1.5">
+              <Label htmlFor="enrollment-agent-namespace">Agent Namespace</Label>
+              <Input
+                id="enrollment-agent-namespace"
+                value={agentNamespace}
+                maxLength={63}
+                pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
+                onChange={(event) => setAgentNamespace(event.target.value)}
+              />
+              <FieldHint>该值属于目标集群，完成首次注册后固定。</FieldHint>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>
@@ -843,7 +857,8 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
               disabled={
                 createEnrollment.isPending ||
                 clusterName.trim().length === 0 ||
-                !resolvedEndpointProfileId
+                !resolvedEndpointProfileId ||
+                agentNamespace.trim().length === 0
               }
               onClick={async () => {
                 try {
@@ -851,6 +866,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                     projectId: scope.projectId as string,
                     clusterName: clusterName.trim(),
                     endpointProfileId: resolvedEndpointProfileId,
+                    agentNamespace: agentNamespace.trim(),
                     idempotencyKey: enrollmentKey,
                   });
                   setCreateOpen(false);
@@ -891,6 +907,17 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
               value={resolvedEndpointProfileId}
               onChange={setEndpointProfileId}
             />
+            <div className="grid gap-1.5">
+              <Label htmlFor="installation-agent-namespace">Agent Namespace</Label>
+              <Input
+                id="installation-agent-namespace"
+                value={agentNamespace}
+                maxLength={63}
+                pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
+                onChange={(event) => setAgentNamespace(event.target.value)}
+              />
+              <FieldHint>安装清单会在该 Namespace 中部署 ZKE Agent。</FieldHint>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setInstallOpen(false)}>
@@ -901,7 +928,8 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
               disabled={
                 createInstallation.isPending ||
                 clusterName.trim().length === 0 ||
-                !resolvedEndpointProfileId
+                !resolvedEndpointProfileId ||
+                agentNamespace.trim().length === 0
               }
               onClick={async () => {
                 try {
@@ -909,6 +937,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                     projectId: scope.projectId as string,
                     clusterName: clusterName.trim(),
                     endpointProfileId: resolvedEndpointProfileId,
+                    agentNamespace: agentNamespace.trim(),
                     idempotencyKey: installationKey,
                   });
                   setInstallOpen(false);

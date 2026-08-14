@@ -20,7 +20,6 @@ import (
 
 type AuthorizationConfig struct {
 	OperationTimeout time.Duration
-	AgentNamespace   string
 }
 
 type Authorization struct {
@@ -51,8 +50,8 @@ func (authorization *Authorization) RequireGlobal(
 		ctx context.Context,
 		userID string,
 		_ *gin.Context,
-	) (rbac.ResolvedScope, error) {
-		return rbac.ResolvedScope{}, authorization.service.AuthorizeGlobal(
+	) (rbac.ResolvedScope, rbac.Permission, error) {
+		return rbac.ResolvedScope{}, permission, authorization.service.AuthorizeGlobal(
 			ctx,
 			userID,
 			permission,
@@ -113,9 +112,9 @@ func (authorization *Authorization) RequireTenant(
 		ctx context.Context,
 		userID string,
 		c *gin.Context,
-	) (rbac.ResolvedScope, error) {
+	) (rbac.ResolvedScope, rbac.Permission, error) {
 		tenantID := c.Param(tenantParameter)
-		return rbac.ResolvedScope{TenantID: tenantID},
+		return rbac.ResolvedScope{TenantID: tenantID}, permission,
 			authorization.service.AuthorizeTenant(
 				ctx,
 				userID,
@@ -133,13 +132,14 @@ func (authorization *Authorization) RequireProject(
 		ctx context.Context,
 		userID string,
 		c *gin.Context,
-	) (rbac.ResolvedScope, error) {
-		return authorization.service.AuthorizeProject(
+	) (rbac.ResolvedScope, rbac.Permission, error) {
+		resolved, err := authorization.service.AuthorizeProject(
 			ctx,
 			userID,
 			permission,
 			c.Param(projectParameter),
 		)
+		return resolved, permission, err
 	})
 }
 
@@ -148,18 +148,21 @@ func (authorization *Authorization) RequireCluster(
 	clusterParameter string,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		effective := authorization.effectiveClusterPermission(c, permission)
-		authorization.require(effective, "cluster", clusterParameter, func(
+		authorization.require(permission, "cluster", clusterParameter, func(
 			ctx context.Context,
 			userID string,
 			c *gin.Context,
-		) (rbac.ResolvedScope, error) {
-			return authorization.service.AuthorizeCluster(
-				ctx,
-				userID,
-				effective,
-				c.Param(clusterParameter),
-			)
+		) (rbac.ResolvedScope, rbac.Permission, error) {
+			resolved, exists := ResolvedScope(c)
+			if !exists {
+				var err error
+				resolved, err = authorization.service.ResolveClusterScope(ctx, c.Param(clusterParameter))
+				if err != nil {
+					return resolved, permission, err
+				}
+			}
+			effective := authorization.effectiveClusterPermission(c, permission, resolved.AgentNamespace)
+			return resolved, effective, authorization.service.AuthorizeResolvedCluster(ctx, userID, effective, resolved)
 		})(c)
 	}
 }
@@ -171,8 +174,9 @@ func (authorization *Authorization) RequireCluster(
 func (authorization *Authorization) effectiveClusterPermission(
 	c *gin.Context,
 	permission rbac.Permission,
+	agentNamespace string,
 ) rbac.Permission {
-	protected := authorization.protectedNamespacePermission(c)
+	protected := authorization.protectedNamespacePermission(c, agentNamespace)
 	switch permission {
 	case rbac.PermissionClusterNamespaceManage,
 		rbac.PermissionClusterResourceCreate,
@@ -205,27 +209,29 @@ func (authorization *Authorization) RequireProtectedNamespaceAccess(
 	clusterParameter string,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		permission := authorization.protectedNamespacePermission(c)
-		if permission == "" || !protectedNamespaceRequestNeedsAdditionalGate(c) {
+		if !protectedNamespaceRequestNeedsAdditionalGate(c) {
 			c.Next()
 			return
 		}
-		authorization.require(permission, "cluster", clusterParameter, func(
+		authorization.require(rbac.PermissionClusterRead, "cluster", clusterParameter, func(
 			ctx context.Context,
 			userID string,
 			c *gin.Context,
-		) (rbac.ResolvedScope, error) {
-			return authorization.service.AuthorizeCluster(
-				ctx,
-				userID,
-				permission,
-				c.Param(clusterParameter),
-			)
+		) (rbac.ResolvedScope, rbac.Permission, error) {
+			resolved, err := authorization.service.ResolveClusterScope(ctx, c.Param(clusterParameter))
+			if err != nil {
+				return resolved, rbac.PermissionClusterRead, err
+			}
+			permission := authorization.protectedNamespacePermission(c, resolved.AgentNamespace)
+			if permission == "" {
+				return resolved, "", nil
+			}
+			return resolved, permission, authorization.service.AuthorizeResolvedCluster(ctx, userID, permission, resolved)
 		})(c)
 	}
 }
 
-func (authorization *Authorization) protectedNamespacePermission(c *gin.Context) rbac.Permission {
+func (authorization *Authorization) protectedNamespacePermission(c *gin.Context, agentNamespace string) rbac.Permission {
 	namespace := c.Param("namespace_name")
 	namespaceObjectTarget := false
 	if namespace == "" {
@@ -250,11 +256,7 @@ func (authorization *Authorization) protectedNamespacePermission(c *gin.Context)
 	if namespace == "" {
 		return ""
 	}
-	agentNamespace := authorization.config.AgentNamespace
-	if agentNamespace == "" {
-		agentNamespace = "zke-system"
-	}
-	if namespace == agentNamespace {
+	if agentNamespace != "" && namespace == agentNamespace {
 		return rbac.PermissionClusterAgentNamespaceManage
 	}
 	if strings.HasPrefix(namespace, "kube-") ||
@@ -323,7 +325,7 @@ func (authorization *Authorization) require(
 	permission rbac.Permission,
 	scopeType string,
 	scopeParameter string,
-	check func(context.Context, string, *gin.Context) (rbac.ResolvedScope, error),
+	check func(context.Context, string, *gin.Context) (rbac.ResolvedScope, rbac.Permission, error),
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		identity, exists := Identity(c)
@@ -337,8 +339,11 @@ func (authorization *Authorization) require(
 			c.Request.Context(),
 			authorization.config.OperationTimeout,
 		)
-		resolved, err := check(operationContext, identity.User.ID, c)
+		resolved, checkedPermission, err := check(operationContext, identity.User.ID, c)
 		cancelOperation()
+		if checkedPermission == "" {
+			checkedPermission = permission
+		}
 		if err == nil {
 			// The check already resolved which Tenant and Project own the
 			// target. Keeping it means logs and audit records downstream carry
@@ -348,13 +353,13 @@ func (authorization *Authorization) require(
 			return
 		}
 		if errors.Is(err, rbac.ErrDenied) {
-			authorization.recordDenied(c, identity.User.ID, permission, scopeType, scopeParameter)
+			authorization.recordDenied(c, identity.User.ID, checkedPermission, scopeType, scopeParameter)
 			authorization.logger.Warn(
 				"HTTP authorization denied",
 				authorization.logAttributes(
 					c,
 					identity.User.ID,
-					permission,
+					checkedPermission,
 					scopeType,
 					scopeParameter,
 				)...,
@@ -374,7 +379,7 @@ func (authorization *Authorization) require(
 				authorization.logAttributes(
 					c,
 					identity.User.ID,
-					permission,
+					checkedPermission,
 					scopeType,
 					scopeParameter,
 				)...,
@@ -387,7 +392,7 @@ func (authorization *Authorization) require(
 		attributes := authorization.logAttributes(
 			c,
 			identity.User.ID,
-			permission,
+			checkedPermission,
 			scopeType,
 			scopeParameter,
 		)

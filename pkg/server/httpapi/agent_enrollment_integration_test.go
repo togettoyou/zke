@@ -19,11 +19,11 @@ import (
 
 type staticEnrollmentConfigurationResolver struct{}
 
-func (staticEnrollmentConfigurationResolver) ResolveEnrollmentSnapshot(context.Context, string) (store.EnrollmentConfigurationSnapshot, error) {
+func (staticEnrollmentConfigurationResolver) ResolveEnrollmentSnapshot(_ context.Context, _ string, agentNamespace string) (store.EnrollmentConfigurationSnapshot, error) {
 	return store.EnrollmentConfigurationSnapshot{
 		EndpointProfileID: "00000000-0000-0000-0000-000000000010", EndpointProfileRevision: 1,
 		RegistrationURL: "https://zke.example.com", QUICAddress: "zke.example.com:8443",
-		AgentImage: "registry.example.com/zke-agent:test", AgentNamespace: "zke-system",
+		AgentImage: "registry.example.com/zke-agent:test", AgentNamespace: agentNamespace,
 		AgentImagePullPolicy: "IfNotPresent",
 	}, nil
 }
@@ -102,7 +102,7 @@ RETURNING id::text
 		Config{Authentication: defaultAuthenticationTestConfig()},
 	)
 	path := "/api/v1/projects/" + projectID + "/cluster-enrollments"
-	requestBody := `{"cluster_name":"integration-cluster"}`
+	requestBody := `{"cluster_name":"integration-cluster","agent_namespace":"integration-agent"}`
 
 	missingCSRFResponse := httptest.NewRecorder()
 	missingCSRFRequest := httptest.NewRequest(http.MethodPost, path, nil)
@@ -185,6 +185,7 @@ WHERE action = 'cluster.enrollment.create'
 	}
 	if body.ID == "" ||
 		body.ClusterName != "integration-cluster" ||
+		body.AgentNamespace != "integration-agent" ||
 		body.Token == "" ||
 		body.ExpiresAt.IsZero() {
 		t.Fatalf("incomplete enrollment response: %+v", body)
@@ -193,9 +194,9 @@ WHERE action = 'cluster.enrollment.create'
 
 	expectedDigest := sha256.Sum256([]byte(body.Token))
 	var storedDigest []byte
-	var storedClusterName string
+	var storedClusterName, storedAgentNamespace string
 	if err := pool.QueryRow(ctx, `
-SELECT token_digest, cluster_name
+SELECT token_digest, cluster_name, agent_namespace
 FROM enrollments
 WHERE id = $1
   AND tenant_id = $2
@@ -204,6 +205,7 @@ WHERE id = $1
 `, body.ID, tenantID, projectID, admin.ID).Scan(
 		&storedDigest,
 		&storedClusterName,
+		&storedAgentNamespace,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -212,6 +214,9 @@ WHERE id = $1
 	}
 	if storedClusterName != "integration-cluster" {
 		t.Fatalf("stored cluster name = %q, want integration-cluster", storedClusterName)
+	}
+	if storedAgentNamespace != "integration-agent" {
+		t.Fatalf("stored Agent Namespace = %q, want integration-agent", storedAgentNamespace)
 	}
 
 	var auditCount int
@@ -308,7 +313,7 @@ WHERE action = 'cluster.enrollment.create'
 	installationRequest := httptest.NewRequest(
 		http.MethodPost,
 		installationPath,
-		strings.NewReader(`{"cluster_name":"installed-cluster"}`),
+		strings.NewReader(`{"cluster_name":"installed-cluster","agent_namespace":"installed-agent"}`),
 	)
 	installationRequest.AddCookie(&http.Cookie{
 		Name:  sessionCookieName,
@@ -337,7 +342,9 @@ WHERE action = 'cluster.enrollment.create'
 	}
 	assertUTC8Time(t, "installation expires_at", installationBody.ExpiresAt)
 	installationToken := installationBody.Token
-	if installationToken == "" || installationBody.ManifestPath != "/agent-install/v1/manifest" {
+	if installationToken == "" ||
+		installationBody.ManifestPath != "/agent-install/v1/manifest" ||
+		installationBody.AgentNamespace != "installed-agent" {
 		t.Fatalf("unexpected installation response: %+v", installationBody)
 	}
 	manifestResponse := httptest.NewRecorder()
@@ -427,7 +434,7 @@ WHERE action = 'cluster.enrollment.create'
 	suspendedRequest := httptest.NewRequest(
 		http.MethodPost,
 		path,
-		strings.NewReader(`{"cluster_name":"suspended-cluster"}`),
+		strings.NewReader(`{"cluster_name":"suspended-cluster","agent_namespace":"suspended-agent"}`),
 	)
 	suspendedRequest.AddCookie(&http.Cookie{
 		Name:  sessionCookieName,

@@ -219,6 +219,7 @@ WHERE project.id = $1
       $3 = ''
       OR (
           cluster.id IS NOT NULL
+          AND cluster.agent_namespace = $14
           AND cluster.status <> 'suspended'
           AND NOT EXISTS (
               SELECT 1 FROM agents
@@ -245,7 +246,8 @@ RETURNING
     expires_at,
     created_at,
     endpoint_profile_id::text,
-    endpoint_profile_revision
+    endpoint_profile_revision,
+    agent_namespace
 `,
 		input.ProjectID,
 		input.CreatedByUserID,
@@ -273,6 +275,7 @@ RETURNING
 		&created.CreatedAt,
 		&created.EndpointProfileID,
 		&created.EndpointProfileRevision,
+		&created.AgentNamespace,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var conflict bool

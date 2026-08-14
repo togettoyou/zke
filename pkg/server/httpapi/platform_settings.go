@@ -29,11 +29,11 @@ type endpointProfileRequest struct {
 }
 
 type platformSettingsRequest struct {
-	AgentImage           string `json:"agent_image"`
-	AgentNamespace       string `json:"agent_namespace"`
-	AgentImagePullPolicy string `json:"agent_image_pull_policy"`
-	ClusterTerminalImage string `json:"cluster_terminal_image"`
-	ExpectedRevision     int64  `json:"expected_revision"`
+	AgentImage                     string `json:"agent_image"`
+	AgentImagePullPolicy           string `json:"agent_image_pull_policy"`
+	ClusterTerminalImage           string `json:"cluster_terminal_image"`
+	ClusterTerminalImagePullPolicy string `json:"cluster_terminal_image_pull_policy"`
+	ExpectedRevision               int64  `json:"expected_revision"`
 }
 
 func newPlatformSettingsHandler(logger *slog.Logger, service *platformsettings.Service, auditService *audit.Service, timeout time.Duration) *platformSettingsHandler {
@@ -129,9 +129,10 @@ func (handler *platformSettingsHandler) updateSettings(c *gin.Context) {
 	}
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.UpdateSettings(ctx, platformsettings.SettingsInput{
-		AgentImage: request.AgentImage, AgentNamespace: request.AgentNamespace, AgentImagePullPolicy: request.AgentImagePullPolicy,
+		AgentImage: request.AgentImage, AgentImagePullPolicy: request.AgentImagePullPolicy,
 		ClusterTerminalImage: request.ClusterTerminalImage, ExpectedRevision: request.ExpectedRevision,
-		ActorUserID: identity.User.ID, Now: time.Now().UTC(),
+		ClusterTerminalImagePullPolicy: request.ClusterTerminalImagePullPolicy,
+		ActorUserID:                    identity.User.ID, Now: time.Now().UTC(),
 	})
 	cancel()
 	if handler.respondPlatformError(c, "update platform settings", err) {
@@ -183,5 +184,5 @@ func profilesResponse(profiles []platformsettings.Profile) []gin.H {
 }
 
 func settingsResponse(settings platformsettings.Settings) gin.H {
-	return gin.H{"default_endpoint_profile_id": settings.DefaultEndpointProfileID, "agent_image": settings.AgentImage, "agent_namespace": settings.AgentNamespace, "agent_image_pull_policy": settings.AgentImagePullPolicy, "cluster_terminal_image": settings.ClusterTerminalImage, "revision": settings.Revision, "updated_at": responseTime(settings.UpdatedAt)}
+	return gin.H{"default_endpoint_profile_id": settings.DefaultEndpointProfileID, "agent_image": settings.AgentImage, "agent_image_pull_policy": settings.AgentImagePullPolicy, "cluster_terminal_image": settings.ClusterTerminalImage, "cluster_terminal_image_pull_policy": settings.ClusterTerminalImagePullPolicy, "revision": settings.Revision, "updated_at": responseTime(settings.UpdatedAt)}
 }

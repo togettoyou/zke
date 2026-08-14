@@ -20,8 +20,9 @@ type RoleBinding struct {
 }
 
 type ClusterAuthorizationScope struct {
-	TenantID  string
-	ProjectID string
+	TenantID       string
+	ProjectID      string
+	AgentNamespace string
 }
 
 func NewRBACStore(pool *pgxpool.Pool) *RBACStore {

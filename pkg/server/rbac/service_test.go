@@ -276,8 +276,9 @@ func (stub bindingStub) FindClusterAuthorizationScope(
 	_ string,
 ) (store.ClusterAuthorizationScope, error) {
 	return store.ClusterAuthorizationScope{
-		TenantID:  testTenantID,
-		ProjectID: testProjectID,
+		TenantID:       testTenantID,
+		ProjectID:      testProjectID,
+		AgentNamespace: "zke-system",
 	}, nil
 }
 

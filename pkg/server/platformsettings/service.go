@@ -61,7 +61,6 @@ type Store interface {
 	UpdateEndpointProfile(context.Context, store.UpdateAgentEndpointProfileParams) (store.AgentEndpointProfile, error)
 	DeleteEndpointProfile(context.Context, string) error
 	GetSettings(context.Context) (store.PlatformSettings, error)
-	HasEnrollments(context.Context) (bool, error)
 	UpdateSettings(context.Context, store.UpdatePlatformSettingsParams) (store.PlatformSettings, error)
 }
 
@@ -86,13 +85,13 @@ type Profile struct {
 }
 
 type Settings struct {
-	DefaultEndpointProfileID string
-	AgentImage               string
-	AgentNamespace           string
-	AgentImagePullPolicy     string
-	ClusterTerminalImage     string
-	Revision                 int64
-	UpdatedAt                time.Time
+	DefaultEndpointProfileID       string
+	AgentImage                     string
+	AgentImagePullPolicy           string
+	ClusterTerminalImage           string
+	ClusterTerminalImagePullPolicy string
+	Revision                       int64
+	UpdatedAt                      time.Time
 }
 
 type ProfileInput struct {
@@ -108,13 +107,13 @@ type ProfileInput struct {
 }
 
 type SettingsInput struct {
-	AgentImage           string
-	AgentNamespace       string
-	AgentImagePullPolicy string
-	ClusterTerminalImage string
-	ExpectedRevision     int64
-	ActorUserID          string
-	Now                  time.Time
+	AgentImage                     string
+	AgentImagePullPolicy           string
+	ClusterTerminalImage           string
+	ClusterTerminalImagePullPolicy string
+	ExpectedRevision               int64
+	ActorUserID                    string
+	Now                            time.Time
 }
 
 type Snapshot = store.EnrollmentConfigurationSnapshot
@@ -310,30 +309,18 @@ func (service *Service) UpdateSettings(ctx context.Context, input SettingsInput)
 	if !validation.IsUUID(input.ActorUserID) || input.ExpectedRevision <= 0 || input.Now.IsZero() ||
 		!validAgentImage(input.AgentImage) ||
 		!validAgentImage(input.ClusterTerminalImage) ||
-		len(k8svalidation.IsDNS1123Label(strings.TrimSpace(input.AgentNamespace))) != 0 ||
-		!allowedPullPolicy(input.AgentImagePullPolicy) {
+		!allowedPullPolicy(input.AgentImagePullPolicy) ||
+		!allowedPullPolicy(input.ClusterTerminalImagePullPolicy) {
 		return Settings{}, ErrInvalidInput
 	}
 	service.profileMutation.Lock()
 	defer service.profileMutation.Unlock()
-	current, err := service.store.GetSettings(ctx)
-	if err != nil {
-		return Settings{}, err
-	}
-	if strings.TrimSpace(input.AgentNamespace) != current.AgentNamespace {
-		hasEnrollments, checkErr := service.store.HasEnrollments(ctx)
-		if checkErr != nil {
-			return Settings{}, checkErr
-		}
-		if hasEnrollments {
-			return Settings{}, ErrInUse
-		}
-	}
 	updated, err := service.store.UpdateSettings(ctx, store.UpdatePlatformSettingsParams{
-		AgentImage: strings.TrimSpace(input.AgentImage), AgentNamespace: strings.TrimSpace(input.AgentNamespace),
+		AgentImage:           strings.TrimSpace(input.AgentImage),
 		AgentImagePullPolicy: input.AgentImagePullPolicy, ExpectedRevision: input.ExpectedRevision,
-		ClusterTerminalImage: strings.TrimSpace(input.ClusterTerminalImage),
-		ActorUserID:          input.ActorUserID, Now: input.Now,
+		ClusterTerminalImage:           strings.TrimSpace(input.ClusterTerminalImage),
+		ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy,
+		ActorUserID:                    input.ActorUserID, Now: input.Now,
 	})
 	if errors.Is(err, store.ErrPlatformSettingsConflict) {
 		return Settings{}, ErrConflict
@@ -344,7 +331,10 @@ func (service *Service) UpdateSettings(ctx context.Context, input SettingsInput)
 	return settingsFromStore(updated), nil
 }
 
-func (service *Service) ResolveEnrollmentSnapshot(ctx context.Context, profileID string) (Snapshot, error) {
+func (service *Service) ResolveEnrollmentSnapshot(ctx context.Context, profileID, agentNamespace string) (Snapshot, error) {
+	if len(k8svalidation.IsDNS1123Label(strings.TrimSpace(agentNamespace))) != 0 {
+		return Snapshot{}, ErrInvalidInput
+	}
 	settings, err := service.store.GetSettings(ctx)
 	if err != nil {
 		return Snapshot{}, err
@@ -370,7 +360,7 @@ func (service *Service) ResolveEnrollmentSnapshot(ctx context.Context, profileID
 		EndpointProfileID: profile.ID, EndpointProfileRevision: profile.Revision,
 		RegistrationURL: profile.RegistrationURL, QUICAddress: profile.QUICAddress,
 		RegistrationCACertificatePEM: profile.RegistrationCACertificatePEM,
-		AgentImage:                   settings.AgentImage, AgentNamespace: settings.AgentNamespace,
+		AgentImage:                   settings.AgentImage, AgentNamespace: strings.TrimSpace(agentNamespace),
 		AgentImagePullPolicy: settings.AgentImagePullPolicy,
 	}, nil
 }
@@ -587,10 +577,11 @@ func allowedPullPolicy(value string) bool {
 func settingsFromStore(item store.PlatformSettings) Settings {
 	return Settings{
 		DefaultEndpointProfileID: item.DefaultEndpointProfileID,
-		AgentImage:               item.AgentImage, AgentNamespace: item.AgentNamespace,
-		AgentImagePullPolicy: item.AgentImagePullPolicy, Revision: item.Revision,
-		ClusterTerminalImage: item.ClusterTerminalImage,
-		UpdatedAt:            item.UpdatedAt,
+		AgentImage:               item.AgentImage,
+		AgentImagePullPolicy:     item.AgentImagePullPolicy, Revision: item.Revision,
+		ClusterTerminalImage:           item.ClusterTerminalImage,
+		ClusterTerminalImagePullPolicy: item.ClusterTerminalImagePullPolicy,
+		UpdatedAt:                      item.UpdatedAt,
 	}
 }
 

@@ -214,7 +214,7 @@ func TestAuthorizeAppliesScopeBoundaries(t *testing.T) {
 				bindings:     testCase.bindings,
 				projectOwner: map[string]string{testProjectID: testTenantID},
 				clusterScope: map[string]store.ClusterAuthorizationScope{
-					testClusterID: {TenantID: testTenantID, ProjectID: testProjectID},
+					testClusterID: {TenantID: testTenantID, ProjectID: testProjectID, AgentNamespace: "zke-system"},
 				},
 			})
 			err := testCase.authorize(service)

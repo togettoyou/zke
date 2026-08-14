@@ -35,15 +35,14 @@ type PodExecCreator interface {
 }
 
 type Config struct {
-	Image          string
-	Namespace      string
 	TTL            time.Duration
-	ResolveRuntime func(context.Context) (RuntimeConfig, error)
+	ResolveRuntime func(context.Context, string) (RuntimeConfig, error)
 }
 
 type RuntimeConfig struct {
-	Image     string
-	Namespace string
+	Image           string
+	ImagePullPolicy string
+	Namespace       string
 }
 
 type CreateInput struct {
@@ -84,9 +83,6 @@ func NewService(requester Requester, podExec PodExecCreator, config Config) *Ser
 	if config.TTL <= 0 || config.TTL > time.Hour {
 		config.TTL = 15 * time.Minute
 	}
-	if config.Namespace == "" {
-		config.Namespace = "zke-system"
-	}
 	return &Service{
 		requester: requester, podExec: podExec, config: config,
 		lifecycles: make(map[string]Lifecycle), idempotency: make(map[string]*idempotencyRecord),
@@ -97,11 +93,11 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 	if service == nil || service.requester == nil || service.podExec == nil {
 		return podexec.Session{}, ErrUnavailable
 	}
-	runtimeConfig, err := service.runtimeConfig(ctx)
+	runtimeConfig, err := service.runtimeConfig(ctx, input.ClusterID)
 	if err != nil {
 		return podexec.Session{}, err
 	}
-	if runtimeConfig.Image == "" || runtimeConfig.Namespace == "" {
+	if runtimeConfig.Image == "" || runtimeConfig.ImagePullPolicy == "" || runtimeConfig.Namespace == "" {
 		return podexec.Session{}, ErrUnavailable
 	}
 	record, owner, beginErr := service.beginCreate(input)
@@ -123,6 +119,7 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
 		SessionId: terminalID, UserId: input.UserID, Namespace: runtimeConfig.Namespace,
 		Permissions: input.Permissions, TtlSeconds: uint64(service.config.TTL.Seconds()), Image: runtimeConfig.Image,
+		ImagePullPolicy: runtimeConfig.ImagePullPolicy,
 	}, terminalIdempotencyKey(input.IdempotencyKey, "create"))
 	if requestErr != nil {
 		createErr = terminalRequestError(requestErr)
@@ -160,11 +157,11 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 	return session, nil
 }
 
-func (service *Service) runtimeConfig(ctx context.Context) (RuntimeConfig, error) {
-	if service.config.ResolveRuntime != nil {
-		return service.config.ResolveRuntime(ctx)
+func (service *Service) runtimeConfig(ctx context.Context, clusterID string) (RuntimeConfig, error) {
+	if service.config.ResolveRuntime == nil {
+		return RuntimeConfig{}, ErrUnavailable
 	}
-	return RuntimeConfig{Image: service.config.Image, Namespace: service.config.Namespace}, nil
+	return service.config.ResolveRuntime(ctx, clusterID)
 }
 
 func (service *Service) beginCreate(input CreateInput) (*idempotencyRecord, bool, error) {

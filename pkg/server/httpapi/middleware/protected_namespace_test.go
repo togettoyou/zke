@@ -12,7 +12,7 @@ import (
 
 func TestProtectedNamespacePermission(t *testing.T) {
 	t.Parallel()
-	authorization := &Authorization{config: AuthorizationConfig{AgentNamespace: "zke-system"}}
+	authorization := &Authorization{}
 
 	tests := []struct {
 		name       string
@@ -39,7 +39,7 @@ func TestProtectedNamespacePermission(t *testing.T) {
 			router := gin.New()
 			var got rbac.Permission
 			router.Handle(testCase.method, testCase.route, func(c *gin.Context) {
-				got = authorization.protectedNamespacePermission(c)
+				got = authorization.protectedNamespacePermission(c, "zke-system")
 			})
 			path := testCase.path
 			if testCase.query != "" {
@@ -55,29 +55,29 @@ func TestProtectedNamespacePermission(t *testing.T) {
 
 func TestEffectiveClusterPermissionReplacesGenericMutationOnly(t *testing.T) {
 	t.Parallel()
-	authorization := &Authorization{config: AuthorizationConfig{AgentNamespace: "zke-system"}}
+	authorization := &Authorization{}
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPut, "/", nil)
 	c.Params = gin.Params{{Key: "namespace_name", Value: "zke-system"}}
 
-	if got := authorization.effectiveClusterPermission(c, rbac.PermissionClusterResourceUpdate); got != rbac.PermissionClusterAgentNamespaceManage {
+	if got := authorization.effectiveClusterPermission(c, rbac.PermissionClusterResourceUpdate, "zke-system"); got != rbac.PermissionClusterAgentNamespaceManage {
 		t.Fatalf("resource permission = %q", got)
 	}
-	if got := authorization.effectiveClusterPermission(c, rbac.PermissionClusterRBACManage); got != rbac.PermissionClusterRBACManage {
+	if got := authorization.effectiveClusterPermission(c, rbac.PermissionClusterRBACManage, "zke-system"); got != rbac.PermissionClusterRBACManage {
 		t.Fatalf("RBAC permission = %q", got)
 	}
 }
 
 func TestEffectiveClusterPermissionUsesNamespaceLifecycleGrantForOrdinaryNamespace(t *testing.T) {
 	t.Parallel()
-	authorization := &Authorization{config: AuthorizationConfig{AgentNamespace: "zke-system"}}
+	authorization := &Authorization{}
 	recorder := httptest.NewRecorder()
 	router := gin.New()
 	var got rbac.Permission
 	router.PUT(
 		"/api/v1/clusters/:cluster_id/kubernetes/resources/:resource_name",
 		func(c *gin.Context) {
-			got = authorization.effectiveClusterPermission(c, rbac.PermissionClusterResourceUpdate)
+			got = authorization.effectiveClusterPermission(c, rbac.PermissionClusterResourceUpdate, "zke-system")
 		},
 	)
 	router.ServeHTTP(recorder, httptest.NewRequest(

@@ -190,6 +190,11 @@ CREATE TABLE clusters (
         name = btrim(name)
         AND octet_length(name) BETWEEN 1 AND 253
     ),
+    agent_namespace text NOT NULL DEFAULT 'zke-system' CHECK (
+        agent_namespace = btrim(agent_namespace)
+        AND octet_length(agent_namespace) BETWEEN 1 AND 63
+        AND agent_namespace ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+    ),
     -- 'revoked' is gone: a Cluster that is finished is deleted, and one that
     -- is merely frozen is suspended and can come back.
     status text NOT NULL CHECK (status IN ('pending', 'active', 'suspended')),
@@ -282,6 +287,86 @@ CREATE UNIQUE INDEX agent_credentials_agent_csr_unique
         agent_id,
         csr_fingerprint
     );
+
+CREATE TABLE agent_endpoint_profiles (
+    id uuid PRIMARY KEY,
+    name text NOT NULL,
+    registration_url text NOT NULL,
+    quic_address text NOT NULL,
+    registration_ca_certificate_pem text NOT NULL DEFAULT '',
+    enabled boolean NOT NULL DEFAULT true,
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_by_user_id uuid,
+    updated_by_user_id uuid,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT agent_endpoint_profiles_name_format CHECK (
+        name = btrim(name) AND octet_length(name) BETWEEN 1 AND 128
+    ),
+    CONSTRAINT agent_endpoint_profiles_name_unique UNIQUE (name)
+);
+
+CREATE UNIQUE INDEX agent_endpoint_profiles_name_case_insensitive_unique
+    ON agent_endpoint_profiles (lower(name));
+
+INSERT INTO agent_endpoint_profiles (
+    id,
+    name,
+    registration_url,
+    quic_address,
+    enabled
+) VALUES (
+    '00000000-0000-0000-0000-000000000010',
+    '本机回环预览',
+    'http://127.0.0.1:8080',
+    '127.0.0.1:8443',
+    true
+), (
+    '00000000-0000-0000-0000-000000000011',
+    'Docker Desktop / OrbStack',
+    'http://host.docker.internal:8080',
+    'host.docker.internal:8443',
+    true
+);
+
+CREATE TABLE platform_settings (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    default_endpoint_profile_id uuid NOT NULL REFERENCES agent_endpoint_profiles (id),
+    agent_image text NOT NULL,
+    agent_image_pull_policy text NOT NULL,
+    cluster_terminal_image text NOT NULL,
+    cluster_terminal_image_pull_policy text NOT NULL,
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+    updated_by_user_id uuid,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT platform_settings_agent_image_format CHECK (
+        agent_image = btrim(agent_image) AND octet_length(agent_image) BETWEEN 1 AND 512
+    ),
+    CONSTRAINT platform_settings_terminal_image_format CHECK (
+        cluster_terminal_image = btrim(cluster_terminal_image)
+        AND octet_length(cluster_terminal_image) BETWEEN 1 AND 512
+    ),
+    CONSTRAINT platform_settings_agent_pull_policy CHECK (
+        agent_image_pull_policy IN ('Always', 'IfNotPresent', 'Never')
+    ),
+    CONSTRAINT platform_settings_terminal_pull_policy CHECK (
+        cluster_terminal_image_pull_policy IN ('Always', 'IfNotPresent', 'Never')
+    )
+);
+
+INSERT INTO platform_settings (
+    default_endpoint_profile_id,
+    agent_image,
+    agent_image_pull_policy,
+    cluster_terminal_image,
+    cluster_terminal_image_pull_policy
+) VALUES (
+    '00000000-0000-0000-0000-000000000010',
+    'ghcr.io/togettoyou/zke-agent:latest',
+    'IfNotPresent',
+    'ghcr.io/togettoyou/zke-agent:latest',
+    'IfNotPresent'
+);
 
 CREATE FUNCTION notify_agent_credential_revocation()
 RETURNS trigger
@@ -431,6 +516,16 @@ CREATE TABLE enrollments (
     created_by_user_id uuid NOT NULL,
     idempotency_key text NOT NULL,
     expires_at timestamptz NOT NULL,
+    endpoint_profile_id uuid NOT NULL,
+    endpoint_profile_revision bigint NOT NULL CHECK (endpoint_profile_revision > 0),
+    registration_url text NOT NULL,
+    quic_address text NOT NULL,
+    registration_ca_certificate_pem text NOT NULL,
+    agent_image text NOT NULL,
+    agent_namespace text NOT NULL,
+    agent_image_pull_policy text NOT NULL CHECK (
+        agent_image_pull_policy IN ('Always', 'IfNotPresent', 'Never')
+    ),
     consumed_at timestamptz,
     revoked_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),

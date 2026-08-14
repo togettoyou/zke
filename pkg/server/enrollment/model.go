@@ -36,6 +36,7 @@ type CreateInput struct {
 	IdempotencyKey    string
 	Now               time.Time
 	EndpointProfileID string
+	AgentNamespace    string
 }
 
 type CreateResult struct {
@@ -46,6 +47,7 @@ type CreateResult struct {
 	ExpiresAt               time.Time
 	EndpointProfileID       string
 	EndpointProfileRevision int64
+	AgentNamespace          string
 }
 
 type Enrollment struct {
@@ -62,6 +64,7 @@ type Enrollment struct {
 	CreatedAt               time.Time
 	EndpointProfileID       string
 	EndpointProfileRevision int64
+	AgentNamespace          string
 }
 
 type RevokeInput struct {

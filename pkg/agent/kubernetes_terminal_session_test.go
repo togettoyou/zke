@@ -9,8 +9,39 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
+
+func TestTerminalPodUsesRequestedImagePullPolicy(t *testing.T) {
+	namespace := "zke-system"
+	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
+	client.PrependReactor("get", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: action.(k8stesting.GetAction).GetName(), Namespace: namespace, UID: "pod-uid"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		}, nil
+	})
+	request := &agentv1.TerminalSessionRequest{
+		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
+		SessionId: "11111111-1111-4111-8111-111111111111",
+		UserId:    "22222222-2222-4222-8222-222222222222", Namespace: namespace,
+		Permissions: []string{"cluster.terminal.exec"}, TtlSeconds: 60,
+		Image: "registry.example.com/zke-terminal:v1", ImagePullPolicy: "Never",
+	}
+	response, err := createKubernetesTerminalSession(context.Background(), client, request, &agentv1.TerminalSessionResponse{})
+	if err != nil || response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+		t.Fatalf("create terminal session response = %+v, error = %v", response, err)
+	}
+	pods, err := client.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(pods.Items) != 1 {
+		t.Fatalf("terminal Pods = %+v, error = %v", pods, err)
+	}
+	if got := pods.Items[0].Spec.Containers[0].ImagePullPolicy; got != corev1.PullNever {
+		t.Fatalf("image pull policy = %q, want %q", got, corev1.PullNever)
+	}
+}
 
 func TestTerminalPolicyKeepsSecretAndRBACPermissionsIndependent(t *testing.T) {
 	tests := []struct {

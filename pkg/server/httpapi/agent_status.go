@@ -42,14 +42,15 @@ type clusterConnectionResponse struct {
 }
 
 type agentStatusResponse struct {
-	ID         string                    `json:"id"`
-	TenantID   string                    `json:"tenant_id"`
-	ProjectID  string                    `json:"project_id"`
-	Name       string                    `json:"name"`
-	Status     string                    `json:"status"`
-	CreatedAt  time.Time                 `json:"created_at"`
-	UpdatedAt  time.Time                 `json:"updated_at"`
-	Connection clusterConnectionResponse `json:"connection"`
+	ID             string                    `json:"id"`
+	TenantID       string                    `json:"tenant_id"`
+	ProjectID      string                    `json:"project_id"`
+	Name           string                    `json:"name"`
+	AgentNamespace string                    `json:"agent_namespace"`
+	Status         string                    `json:"status"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	UpdatedAt      time.Time                 `json:"updated_at"`
+	Connection     clusterConnectionResponse `json:"connection"`
 }
 
 func newAgentStatusHandler(
@@ -121,13 +122,14 @@ func (handler *agentStatusHandler) getCluster(c *gin.Context) {
 
 func responseAgentStatus(item agentstatus.Agent) agentStatusResponse {
 	return agentStatusResponse{
-		ID:        item.ClusterID,
-		TenantID:  item.TenantID,
-		ProjectID: item.ProjectID,
-		Name:      item.ClusterName,
-		Status:    item.ClusterStatus,
-		CreatedAt: responseTime(item.ClusterCreatedAt),
-		UpdatedAt: responseTime(item.ClusterUpdatedAt),
+		ID:             item.ClusterID,
+		TenantID:       item.TenantID,
+		ProjectID:      item.ProjectID,
+		Name:           item.ClusterName,
+		AgentNamespace: item.AgentNamespace,
+		Status:         item.ClusterStatus,
+		CreatedAt:      responseTime(item.ClusterCreatedAt),
+		UpdatedAt:      responseTime(item.ClusterUpdatedAt),
 		Connection: clusterConnectionResponse{
 			Status:                      item.ConnectionStatus,
 			LifecycleStatus:             item.LifecycleStatus,

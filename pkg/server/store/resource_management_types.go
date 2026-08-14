@@ -71,14 +71,15 @@ type ProjectResource struct {
 }
 
 type ClusterResource struct {
-	ID         string
-	TenantID   string
-	ProjectID  string
-	Name       string
-	Status     string
-	LastSeenAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID             string
+	TenantID       string
+	ProjectID      string
+	Name           string
+	AgentNamespace string
+	Status         string
+	LastSeenAt     *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type CreateTenantParams struct {

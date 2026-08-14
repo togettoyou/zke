@@ -55,7 +55,6 @@ type Dependencies struct {
 
 type Config struct {
 	ConsoleDirectory   string
-	AgentNamespace     string
 	Authentication     AuthenticationConfig
 	AgentEnrollment    AgentEnrollmentHTTPConfig
 	ClusterTerminal    ClusterTerminalHTTPConfig
@@ -422,7 +421,6 @@ func New(
 			dependencies.AuditService,
 			httpmiddleware.AuthorizationConfig{
 				OperationTimeout: config.Authentication.OperationTimeout,
-				AgentNamespace:   config.AgentNamespace,
 			},
 		),
 		requestTimeout: httpmiddleware.RequestTimeout(

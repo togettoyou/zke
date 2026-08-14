@@ -50,9 +50,9 @@ export function useUpdatePlatformSettings() {
           params: { header: csrfHeaders() },
           body: {
             agent_image: input.agent_image,
-            agent_namespace: input.agent_namespace,
             agent_image_pull_policy: input.agent_image_pull_policy,
             cluster_terminal_image: input.cluster_terminal_image,
+            cluster_terminal_image_pull_policy: input.cluster_terminal_image_pull_policy,
             expected_revision: input.revision,
           },
         }),

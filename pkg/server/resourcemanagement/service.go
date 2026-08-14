@@ -54,14 +54,15 @@ type Project struct {
 }
 
 type Cluster struct {
-	ID         string
-	TenantID   string
-	ProjectID  string
-	Name       string
-	Status     string
-	LastSeenAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID             string
+	TenantID       string
+	ProjectID      string
+	Name           string
+	AgentNamespace string
+	Status         string
+	LastSeenAt     *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // ListTenantsInput selects one page of visible tenants.
@@ -623,13 +624,14 @@ func projectFromStore(item store.ProjectResource) Project {
 
 func clusterFromStore(item store.ClusterResource) Cluster {
 	return Cluster{
-		ID:         item.ID,
-		TenantID:   item.TenantID,
-		ProjectID:  item.ProjectID,
-		Name:       item.Name,
-		Status:     item.Status,
-		LastSeenAt: item.LastSeenAt,
-		CreatedAt:  item.CreatedAt,
-		UpdatedAt:  item.UpdatedAt,
+		ID:             item.ID,
+		TenantID:       item.TenantID,
+		ProjectID:      item.ProjectID,
+		Name:           item.Name,
+		AgentNamespace: item.AgentNamespace,
+		Status:         item.Status,
+		LastSeenAt:     item.LastSeenAt,
+		CreatedAt:      item.CreatedAt,
+		UpdatedAt:      item.UpdatedAt,
 	}
 }

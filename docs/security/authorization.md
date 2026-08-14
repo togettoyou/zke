@@ -324,7 +324,7 @@ DryRun 使用独立的 `.dry_run` 审计动作，不会与实际写入混记。
 普通 `cluster.resource.create/update/delete` 与 `cluster.namespace.manage` 不能单独修改系统命名空间。目标为
 `kube-*` 时，资源增删改和 Namespace 生命周期改用 `cluster.system_namespace.manage`；`default` 内的普通资源仍按
 通用资源权限管理，但创建、修改或删除 `default` Namespace 本身同样使用系统命名空间权限。目标为 Server 配置的
-Agent Namespace（默认 `zke-system`）时，资源和 Namespace 的增删改改用
+目标 Cluster 保存的 Agent Namespace（首次接入界面默认 `zke-system`）时，资源和 Namespace 的增删改改用
 `cluster.agent_namespace.manage`。两项权限均可在 Global、Tenant 或 Project 作用域授予，内置 `admin` 由权限词表
 自动获得，其他角色不会因持有通用资源权限而自动获得。
 
@@ -396,8 +396,7 @@ Resource 与 YAML API 对 Secret 的拒绝保持不变，专用 Secret 服务是
 命名空间不再按名称永久拒绝，而由 `cluster.agent_namespace.manage` 与 Secret 专用权限共同控制；这允许被明确授权的
 恢复操作，同时避免普通资源角色接触 Agent 凭证。`app.kubernetes.io/managed-by=zke-server` 仅作为来源标记；调用者
 持有 Agent Namespace 与 Secret 两项权限后可读写这类对象，但不能给普通对象新加该标记。列表不返回任何取值，详情
-返回的取值默认在界面上遮蔽。升级前已经部署、仍带旧硬拒绝行为的 Agent 可能继续返回兼容错误
-`agent_namespace_forbidden`，升级 Agent 后改由上述权限判定。
+返回的取值默认在界面上遮蔽。
 
 Secret 的**读取**同样写入审计，这是它与 ConfigMap 的区别所在：一次成功的读取本身就是全部暴露，权限可以收回，
 已经交出去的凭证收不回来，事后唯一还能回答的问题就是谁在什么时候取走了它。列表与单对象读取记为两个不同的

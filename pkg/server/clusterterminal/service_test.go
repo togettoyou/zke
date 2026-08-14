@@ -41,6 +41,12 @@ type podExecCreatorFake struct {
 	input podexec.CreateInput
 }
 
+func fixedTerminalRuntime(image, imagePullPolicy, namespace string) func(context.Context, string) (RuntimeConfig, error) {
+	return func(context.Context, string) (RuntimeConfig, error) {
+		return RuntimeConfig{Image: image, ImagePullPolicy: imagePullPolicy, Namespace: namespace}, nil
+	}
+}
+
 func (fake *podExecCreatorFake) Create(input podexec.CreateInput) (podexec.Session, error) {
 	fake.input = input
 	return podexec.Session{
@@ -52,7 +58,10 @@ func (fake *podExecCreatorFake) Create(input podexec.CreateInput) (podexec.Sessi
 func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 	requester := &terminalRequesterFake{}
 	podExec := &podExecCreatorFake{}
-	service := NewService(requester, podExec, Config{Image: "terminal:test", Namespace: "zke-system", TTL: 10 * time.Minute})
+	service := NewService(requester, podExec, Config{
+		TTL:            10 * time.Minute,
+		ResolveRuntime: fixedTerminalRuntime("terminal:test", "Never", "cluster-agent"),
+	})
 	wantPermissions := []string{"cluster.read", "cluster.terminal.exec"}
 
 	session, err := service.Create(context.Background(), CreateInput{
@@ -69,8 +78,11 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 	if !slices.Equal(request.GetPermissions(), wantPermissions) {
 		t.Fatalf("permissions = %v, want %v", request.GetPermissions(), wantPermissions)
 	}
-	if request.GetNamespace() != "zke-system" || podExec.input.Namespace != "zke-system" {
-		t.Fatalf("terminal namespace request=%q exec=%q, want zke-system", request.GetNamespace(), podExec.input.Namespace)
+	if request.GetNamespace() != "cluster-agent" || podExec.input.Namespace != "cluster-agent" {
+		t.Fatalf("terminal namespace request=%q exec=%q, want cluster-agent", request.GetNamespace(), podExec.input.Namespace)
+	}
+	if request.GetImagePullPolicy() != "Never" {
+		t.Fatalf("image pull policy = %q, want Never", request.GetImagePullPolicy())
 	}
 	if slices.Contains(request.GetPermissions(), "cluster.secret.read") || slices.Contains(request.GetPermissions(), "cluster.secret.manage") {
 		t.Fatalf("Secret permission was added to snapshot: %v", request.GetPermissions())
@@ -95,11 +107,11 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 
 func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
 	requester := &terminalRequesterFake{}
-	image := "terminal:v1"
+	image, imagePullPolicy := "terminal:v1", "IfNotPresent"
 	service := NewService(requester, &podExecCreatorFake{}, Config{
 		TTL: 10 * time.Minute,
-		ResolveRuntime: func(context.Context) (RuntimeConfig, error) {
-			return RuntimeConfig{Image: image, Namespace: "zke-system"}, nil
+		ResolveRuntime: func(context.Context, string) (RuntimeConfig, error) {
+			return RuntimeConfig{Image: image, ImagePullPolicy: imagePullPolicy, Namespace: "zke-system"}, nil
 		},
 	})
 	create := func(key string, now time.Time) {
@@ -114,10 +126,12 @@ func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
 	}
 	create("first", time.Unix(100, 0))
 	image = "terminal:v2"
+	imagePullPolicy = "Always"
 	create("second", time.Unix(101, 0))
 	if len(requester.requests) != 2 || requester.requests[0].GetImage() != "terminal:v1" ||
-		requester.requests[1].GetImage() != "terminal:v2" {
-		t.Fatalf("terminal images = %+v, want v1 then v2", requester.requests)
+		requester.requests[0].GetImagePullPolicy() != "IfNotPresent" ||
+		requester.requests[1].GetImage() != "terminal:v2" || requester.requests[1].GetImagePullPolicy() != "Always" {
+		t.Fatalf("terminal runtime settings = %+v, want v1/IfNotPresent then v2/Always", requester.requests)
 	}
 }
 
@@ -154,7 +168,10 @@ func TestCreateCancellationCleansAgentResourcesWithDetachedContext(t *testing.T)
 		}
 	}
 	podExec := &podExecCreatorFake{}
-	service := NewService(requester, podExec, Config{Image: "terminal:test", TTL: 10 * time.Minute})
+	service := NewService(requester, podExec, Config{
+		TTL:            10 * time.Minute,
+		ResolveRuntime: fixedTerminalRuntime("terminal:test", "IfNotPresent", "cluster-agent"),
+	})
 
 	_, err := service.Create(ctx, CreateInput{
 		UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
@@ -175,7 +192,10 @@ func TestCreateCancellationCleansAgentResourcesWithDetachedContext(t *testing.T)
 
 func TestCreateRejectsIdempotencyKeyReuseWithDifferentInputBeforeAgentRequest(t *testing.T) {
 	requester := &terminalRequesterFake{}
-	service := NewService(requester, &podExecCreatorFake{}, Config{Image: "terminal:test", TTL: 10 * time.Minute})
+	service := NewService(requester, &podExecCreatorFake{}, Config{
+		TTL:            10 * time.Minute,
+		ResolveRuntime: fixedTerminalRuntime("terminal:test", "IfNotPresent", "cluster-agent"),
+	})
 	input := CreateInput{UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
 		IdempotencyKey: "request-key", Permissions: []string{"cluster.terminal.exec"}, Columns: 120, Rows: 36, Now: time.Unix(100, 0)}
 	if _, err := service.Create(context.Background(), input); err != nil {

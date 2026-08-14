@@ -60,8 +60,9 @@ type scope struct {
 // check already paid for — for logging, auditing or a follow-up query —
 // instead of resolving the same ownership a second time.
 type ResolvedScope struct {
-	TenantID  string
-	ProjectID string
+	TenantID       string
+	ProjectID      string
+	AgentNamespace string
 }
 
 type Visibility struct {

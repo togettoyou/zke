@@ -133,7 +133,7 @@ func TestClassifyDrainPodRequiresBothExplicitDataLossChoices(t *testing.T) {
 func TestClassifyDrainPodRequiresProtectedNamespaceGrant(t *testing.T) {
 	t.Parallel()
 	controller := true
-	service := &Service{agentNamespace: "zke-system"}
+	service := &Service{}
 
 	for _, testCase := range []struct {
 		name      string
@@ -150,6 +150,7 @@ func TestClassifyDrainPodRequiresProtectedNamespaceGrant(t *testing.T) {
 			pod := drainTestPod("controller-pod")
 			pod.Namespace = testCase.namespace
 			pod.OwnerReferences = []metav1.OwnerReference{{Kind: "ReplicaSet", Controller: &controller}}
+			testCase.input.AgentNamespace = "zke-system"
 			result := service.classifyDrainPod(&pod, testCase.input)
 			if testCase.reason != "" {
 				if result.Decision != DrainPodBlock || result.Reason != testCase.reason {

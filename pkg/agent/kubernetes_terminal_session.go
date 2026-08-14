@@ -143,7 +143,7 @@ func createKubernetesTerminalSession(
 				FSGroup: &groupID, FSGroupChangePolicy: &fsGroupPolicy,
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 			Containers: []corev1.Container{{
-				Name: terminalContainerName, Image: request.GetImage(), ImagePullPolicy: corev1.PullIfNotPresent,
+				Name: terminalContainerName, Image: request.GetImage(), ImagePullPolicy: corev1.PullPolicy(request.GetImagePullPolicy()),
 				Command:    []string{"/bin/sh", "-c", terminalKeepaliveCommand},
 				WorkingDir: "/workspace", Env: []corev1.EnvVar{{Name: "HOME", Value: "/workspace"},
 					{Name: "KUBECONFIG", Value: "/workspace/.kube/config"}},

@@ -69,14 +69,15 @@ type projectResponse struct {
 }
 
 type clusterResponse struct {
-	ID         string     `json:"id"`
-	TenantID   string     `json:"tenant_id"`
-	ProjectID  string     `json:"project_id"`
-	Name       string     `json:"name"`
-	Status     string     `json:"status"`
-	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID             string     `json:"id"`
+	TenantID       string     `json:"tenant_id"`
+	ProjectID      string     `json:"project_id"`
+	Name           string     `json:"name"`
+	AgentNamespace string     `json:"agent_namespace"`
+	Status         string     `json:"status"`
+	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 func newResourceManagementHandler(
@@ -480,13 +481,14 @@ func responseProject(
 
 func responseCluster(item resourcemanagement.Cluster) clusterResponse {
 	return clusterResponse{
-		ID:         item.ID,
-		TenantID:   item.TenantID,
-		ProjectID:  item.ProjectID,
-		Name:       item.Name,
-		Status:     item.Status,
-		LastSeenAt: responseTimePointer(item.LastSeenAt),
-		CreatedAt:  responseTime(item.CreatedAt),
-		UpdatedAt:  responseTime(item.UpdatedAt),
+		ID:             item.ID,
+		TenantID:       item.TenantID,
+		ProjectID:      item.ProjectID,
+		Name:           item.Name,
+		AgentNamespace: item.AgentNamespace,
+		Status:         item.Status,
+		LastSeenAt:     responseTimePointer(item.LastSeenAt),
+		CreatedAt:      responseTime(item.CreatedAt),
+		UpdatedAt:      responseTime(item.UpdatedAt),
 	}
 }

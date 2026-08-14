@@ -535,8 +535,7 @@ Secret 管理与 ConfigMap 放在同一个「配置管理」分区的两个标�
   通用访问器。
 - **Agent 二次判定**：Agent 只在请求带 `secret_access` 时才动 Secret。Agent 自身命名空间不再按名称永久拒绝；
   Server 要求调用者同时持有 `cluster.agent_namespace.manage` 与对应的 Secret 专用权限。这样被明确授权的管理员可以
-  执行恢复操作，而普通 `cluster.resource.*` 角色仍不能进入该命名空间。升级前已部署的旧 Agent 可能继续返回兼容
-  错误 `agent_namespace_forbidden`，升级后由权限判定接管。
+  执行恢复操作，而普通 `cluster.resource.*` 角色仍不能进入该命名空间。
 - **平台对象标记**：`app.kubernetes.io/managed-by=zke-server` 继续标识对象来源，但不再形成永久拒绝。Agent Namespace
   中的这类 Secret 只有在同时持有 Agent Namespace 与 Secret 专用权限时才可读写；普通对象不能冒用该标记。
 

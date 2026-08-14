@@ -5268,8 +5268,7 @@ paths:
       description: |
         读取一个 Secret 的完整 YAML，要求 `cluster.secret.read`。文档包含该 Secret 的
         全部取值（Kubernetes 存储的 Base64），暴露面大于按键遮蔽的详情接口。Agent 自身所在
-        Namespace 还要求 `cluster.agent_namespace.manage`；升级前部署的旧 Agent 可能
-        继续返回兼容错误 `agent_namespace_forbidden`。通用 Resource 与 YAML 接口对
+        Namespace 还要求 `cluster.agent_namespace.manage`。通用 Resource 与 YAML 接口对
         `core/v1 Secret` 的拒绝保持不变。
       security:
         - sessionCookie: []
@@ -6490,6 +6489,7 @@ paths:
         首次接入时 `cluster_name` 在其 Project 内必须唯一（忽略大小写），被占用时返回
         409 `cluster_name_conflict`。名称在签发凭证时校验一次，在 Agent 完成注册、
         实际创建 Cluster 时再次由唯一约束保证——两者之间名称仍可能被占用。
+        `agent_namespace` 在首次注册时固化到 Cluster，后续重新接入继续使用该值。
       security:
         - sessionCookie: []
       parameters:
@@ -6503,7 +6503,7 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [cluster_name]
+              required: [cluster_name, agent_namespace]
               properties:
                 cluster_name:
                   type: string
@@ -6511,6 +6511,8 @@ paths:
                   maxLength: 253
                 endpoint_profile_id:
                   $ref: "#/components/schemas/UUID"
+                agent_namespace:
+                  $ref: "#/components/schemas/AgentNamespace"
       responses:
         "201":
           description: 一次性注册凭证
@@ -6607,12 +6609,14 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [cluster_name]
+              required: [cluster_name, agent_namespace]
               properties:
                 cluster_name:
                   type: string
                 endpoint_profile_id:
                   $ref: "#/components/schemas/UUID"
+                agent_namespace:
+                  $ref: "#/components/schemas/AgentNamespace"
       responses:
         "201":
           description: 安装命令
@@ -7503,6 +7507,11 @@ components:
     UUID:
       type: string
       format: uuid
+    AgentNamespace:
+      type: string
+      minLength: 1
+      maxLength: 63
+      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
     Timestamp:
       type: string
       format: date-time
@@ -8020,12 +8029,14 @@ components:
       allOf:
         - $ref: "#/components/schemas/ResourceBase"
         - type: object
-          required: [tenant_id, project_id]
+          required: [tenant_id, project_id, agent_namespace]
           properties:
             tenant_id:
               $ref: "#/components/schemas/UUID"
             project_id:
               $ref: "#/components/schemas/UUID"
+            agent_namespace:
+              $ref: "#/components/schemas/AgentNamespace"
             last_seen_at:
               $ref: "#/components/schemas/Timestamp"
     ClusterConnection:
@@ -13799,29 +13810,29 @@ components:
     PlatformSettings:
       type: object
       additionalProperties: false
-      required: [default_endpoint_profile_id, agent_image, agent_namespace, agent_image_pull_policy, cluster_terminal_image, revision, updated_at]
+      required: [default_endpoint_profile_id, agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, revision, updated_at]
       properties:
         default_endpoint_profile_id: { $ref: "#/components/schemas/UUID" }
         agent_image: { type: string }
-        agent_namespace: { type: string }
         agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
         cluster_terminal_image: { type: string }
+        cluster_terminal_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
         revision: { type: integer, minimum: 1 }
         updated_at: { $ref: "#/components/schemas/Timestamp" }
     PlatformSettingsUpdate:
       type: object
       additionalProperties: false
-      required: [agent_image, agent_namespace, agent_image_pull_policy, cluster_terminal_image, expected_revision]
+      required: [agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, expected_revision]
       properties:
         agent_image: { type: string }
-        agent_namespace: { type: string }
         agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
         cluster_terminal_image: { type: string }
+        cluster_terminal_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
         expected_revision: { type: integer, minimum: 1 }
     ClusterEnrollment:
       type: object
       additionalProperties: false
-      required: [id, cluster_name, token, expires_at, endpoint_profile_id]
+      required: [id, cluster_name, token, expires_at, endpoint_profile_id, agent_namespace]
       properties:
         id:
           $ref: "#/components/schemas/UUID"
@@ -13835,6 +13846,8 @@ components:
           $ref: "#/components/schemas/Timestamp"
         endpoint_profile_id:
           $ref: "#/components/schemas/UUID"
+        agent_namespace:
+          $ref: "#/components/schemas/AgentNamespace"
     ClusterEnrollmentRecord:
       type: object
       additionalProperties: false
@@ -13849,6 +13862,7 @@ components:
         - created_at
         - endpoint_profile_id
         - endpoint_profile_revision
+        - agent_namespace
       properties:
         id:
           $ref: "#/components/schemas/UUID"
@@ -13878,6 +13892,8 @@ components:
         endpoint_profile_revision:
           type: integer
           minimum: 1
+        agent_namespace:
+          $ref: "#/components/schemas/AgentNamespace"
     ClusterInstallation:
       type: object
       additionalProperties: false
@@ -13888,6 +13904,7 @@ components:
         - manifest_path
         - token
         - endpoint_profile_id
+        - agent_namespace
       properties:
         id:
           $ref: "#/components/schemas/UUID"
@@ -13901,6 +13918,8 @@ components:
           type: string
         endpoint_profile_id:
           $ref: "#/components/schemas/UUID"
+        agent_namespace:
+          $ref: "#/components/schemas/AgentNamespace"
     ClusterConnectionRevocation:
       type: object
       additionalProperties: false

@@ -20,6 +20,7 @@ message TerminalSessionRequest {
   repeated string permissions = 5;
   uint64 ttl_seconds = 6;
   string image = 7;
+  string image_pull_policy = 8;
 }
 
 message TerminalSessionResponse {

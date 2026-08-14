@@ -38,6 +38,7 @@ var ErrManifestResourceRefused = errors.New("Kubernetes resource cannot be writt
 // middleware.SecretGrant uses them: this package must not depend on
 // `pkg/server/rbac`, and the names belong to the layer that reads them.
 type ManifestGrant struct {
+	AgentNamespace        string
 	ResourceCreate        bool
 	ResourceUpdate        bool
 	ResourceDelete        bool
@@ -217,11 +218,7 @@ func (access *ManifestAccess) protectedNamespaceRequirement(
 	if resource.Group == "" && resource.Version == "v1" && resource.Resource == "namespaces" {
 		namespace = target.Name
 	}
-	agentNamespace := "zke-system"
-	if access.service != nil && access.service.agentNamespace != "" {
-		agentNamespace = access.service.agentNamespace
-	}
-	if namespace == agentNamespace {
+	if access.grant.AgentNamespace != "" && namespace == access.grant.AgentNamespace {
 		return ManifestRequirementAgentNamespaceManage, access.grant.AgentNamespaceManage, true
 	}
 	if strings.HasPrefix(namespace, "kube-") ||

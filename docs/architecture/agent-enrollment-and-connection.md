@@ -141,12 +141,14 @@ POST /api/v1/projects/{project_id}/cluster-enrollments
 - CSRF Token；
 - `cluster.enrollment.create` Project 权限；
 - 集群显示名称；
+- 该 Cluster 使用的 Agent Namespace；
 - 一个当前可用的 Agent 接入端点（未指定时使用平台默认端点）；
 - 调用方提供的 `Idempotency-Key`。
 
 Server 校验权限后生成一次性 Token，保存 Token 摘要、Project、集群名称、创建者、有效期和审计记录，并把端点
-Revision、注册 URL、QUIC 地址、信任 CA、Agent 镜像、Namespace 与拉取策略复制为不可变快照。平台默认值之后的
-修改不会改变已经签发的 Enrollment。创建 Enrollment 的幂等键用于防止调用方因网络重试而生成多个 Token。
+Revision、注册 URL、QUIC 地址、信任 CA、Agent 镜像、Namespace 与拉取策略复制为不可变快照。首次注册会把
+Namespace 写入 Cluster；重新接入不接受新的 Namespace，而是复用 Cluster 已保存的值。平台默认值之后的修改不会改变
+已经签发的 Enrollment。创建 Enrollment 的幂等键用于防止调用方因网络重试而生成多个 Token。
 
 这一阶段的必要性如下：
 

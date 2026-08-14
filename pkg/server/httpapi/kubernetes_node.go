@@ -139,6 +139,7 @@ func (handler *kubernetesNodeHandler) drain(c *gin.Context) {
 	}
 	ctx, cancel := handler.operationContext(c)
 	protectedGrant := httpmiddleware.ClusterProtectedNamespaceGrant(c)
+	resolvedScope, _ := httpmiddleware.ResolvedScope(c)
 	result, err := handler.service.DrainNode(ctx, kubernetesresource.DrainNodeInput{
 		ClusterID:             c.Param("cluster_id"),
 		NodeName:              c.Param("node_name"),
@@ -151,6 +152,7 @@ func (handler *kubernetesNodeHandler) drain(c *gin.Context) {
 		IdempotencyKey:        c.GetHeader(idempotencyKeyHeaderName),
 		SystemNamespaceManage: protectedGrant.System,
 		AgentNamespaceManage:  protectedGrant.Agent,
+		AgentNamespace:        resolvedScope.AgentNamespace,
 	})
 	cancel()
 	if err != nil {

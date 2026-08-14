@@ -39,11 +39,13 @@ type createEnrollmentResponse struct {
 	Token             string    `json:"token"`
 	ExpiresAt         time.Time `json:"expires_at"`
 	EndpointProfileID string    `json:"endpoint_profile_id"`
+	AgentNamespace    string    `json:"agent_namespace"`
 }
 
 type createEnrollmentRequest struct {
 	ClusterName       string `json:"cluster_name"`
 	EndpointProfileID string `json:"endpoint_profile_id"`
+	AgentNamespace    string `json:"agent_namespace"`
 }
 
 type reenrollmentRequest struct {
@@ -65,6 +67,7 @@ type enrollmentResponse struct {
 	CreatedAt               time.Time  `json:"created_at"`
 	EndpointProfileID       string     `json:"endpoint_profile_id"`
 	EndpointProfileRevision int64      `json:"endpoint_profile_revision"`
+	AgentNamespace          string     `json:"agent_namespace"`
 }
 
 func newEnrollmentHandler(
@@ -108,6 +111,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 			IdempotencyKey:    c.GetHeader(idempotencyKeyHeaderName),
 			Now:               time.Now().UTC(),
 			EndpointProfileID: request.EndpointProfileID,
+			AgentNamespace:    request.AgentNamespace,
 		},
 	)
 	cancelOperation()
@@ -181,6 +185,7 @@ func (handler *enrollmentHandler) create(c *gin.Context) {
 		Token:             result.Token,
 		ExpiresAt:         responseTime(result.ExpiresAt),
 		EndpointProfileID: result.EndpointProfileID,
+		AgentNamespace:    result.AgentNamespace,
 	})
 }
 
@@ -290,6 +295,7 @@ func (handler *enrollmentHandler) reenroll(c *gin.Context) {
 		ID: result.ID, ClusterID: result.ClusterID, ClusterName: result.ClusterName,
 		Token: result.Token, ExpiresAt: responseTime(result.ExpiresAt),
 		EndpointProfileID: result.EndpointProfileID,
+		AgentNamespace:    result.AgentNamespace,
 	})
 }
 
@@ -312,6 +318,7 @@ func responseEnrollment(item enrollment.Enrollment) enrollmentResponse {
 		CreatedAt:               responseTime(item.CreatedAt),
 		EndpointProfileID:       item.EndpointProfileID,
 		EndpointProfileRevision: item.EndpointProfileRevision,
+		AgentNamespace:          item.AgentNamespace,
 	}
 }
 

@@ -71,16 +71,17 @@ func (TerminalSessionAction) EnumDescriptor() ([]byte, []int) {
 }
 
 type TerminalSessionRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Action        TerminalSessionAction  `protobuf:"varint,1,opt,name=action,proto3,enum=zke.agent.v1.TerminalSessionAction" json:"action,omitempty"`
-	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	UserId        string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Namespace     string                 `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	Permissions   []string               `protobuf:"bytes,5,rep,name=permissions,proto3" json:"permissions,omitempty"`
-	TtlSeconds    uint64                 `protobuf:"varint,6,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
-	Image         string                 `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Action          TerminalSessionAction  `protobuf:"varint,1,opt,name=action,proto3,enum=zke.agent.v1.TerminalSessionAction" json:"action,omitempty"`
+	SessionId       string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	UserId          string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Namespace       string                 `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Permissions     []string               `protobuf:"bytes,5,rep,name=permissions,proto3" json:"permissions,omitempty"`
+	TtlSeconds      uint64                 `protobuf:"varint,6,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	Image           string                 `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
+	ImagePullPolicy string                 `protobuf:"bytes,8,opt,name=image_pull_policy,json=imagePullPolicy,proto3" json:"image_pull_policy,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *TerminalSessionRequest) Reset() {
@@ -158,6 +159,13 @@ func (x *TerminalSessionRequest) GetTtlSeconds() uint64 {
 func (x *TerminalSessionRequest) GetImage() string {
 	if x != nil {
 		return x.Image
+	}
+	return ""
+}
+
+func (x *TerminalSessionRequest) GetImagePullPolicy() string {
+	if x != nil {
+		return x.ImagePullPolicy
 	}
 	return ""
 }
@@ -282,7 +290,7 @@ var File_api_agent_v1_terminal_proto protoreflect.FileDescriptor
 
 const file_api_agent_v1_terminal_proto_rawDesc = "" +
 	"\n" +
-	"\x1bapi/agent/v1/terminal.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\x84\x02\n" +
+	"\x1bapi/agent/v1/terminal.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\xb0\x02\n" +
 	"\x16TerminalSessionRequest\x12;\n" +
 	"\x06action\x18\x01 \x01(\x0e2#.zke.agent.v1.TerminalSessionActionR\x06action\x12\x1d\n" +
 	"\n" +
@@ -292,7 +300,8 @@ const file_api_agent_v1_terminal_proto_rawDesc = "" +
 	"\vpermissions\x18\x05 \x03(\tR\vpermissions\x12\x1f\n" +
 	"\vttl_seconds\x18\x06 \x01(\x04R\n" +
 	"ttlSeconds\x12\x14\n" +
-	"\x05image\x18\a \x01(\tR\x05image\"\xea\x02\n" +
+	"\x05image\x18\a \x01(\tR\x05image\x12*\n" +
+	"\x11image_pull_policy\x18\b \x01(\tR\x0fimagePullPolicy\"\xea\x02\n" +
 	"\x17TerminalSessionResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\rR\x14kubernetesStatusCode\x12\x16\n" +

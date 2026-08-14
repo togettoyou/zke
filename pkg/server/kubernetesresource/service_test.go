@@ -218,15 +218,6 @@ func TestServiceMapsTransportAndKubernetesFailures(t *testing.T) {
 			want: ErrResourceNotEnabled,
 		},
 		{
-			name: "Agent refused its own Namespace",
-			response: &agentv1.ResourceResponse{
-				Result:               agentv1.ResultCode_RESULT_CODE_FORBIDDEN,
-				KubernetesStatusCode: http.StatusForbidden,
-				Reason:               agentNamespaceForbiddenReason,
-			},
-			want: ErrAgentNamespaceForbidden,
-		},
-		{
 			name: "oversized response",
 			response: &agentv1.ResourceResponse{
 				Result:               agentv1.ResultCode_RESULT_CODE_RESOURCE_EXHAUSTED,

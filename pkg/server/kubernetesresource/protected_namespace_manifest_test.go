@@ -7,13 +7,19 @@ func TestManifestProtectedNamespacesRequireIndependentGrants(t *testing.T) {
 	configMap := ResourceIdentity{Version: "v1", Resource: "configmaps"}
 	target := ManifestTarget{Namespace: "zke-system", Name: "agent-config"}
 
-	ordinary := NewManifestAccess(NewService(nil), ManifestGrant{ResourceUpdate: true})
+	ordinary := NewManifestAccess(NewService(nil), ManifestGrant{
+		AgentNamespace: "zke-system",
+		ResourceUpdate: true,
+	})
 	requirement, allowed, err := ordinary.RequirementForApply(configMap, false, target)
 	if err != nil || allowed || requirement != ManifestRequirementAgentNamespaceManage {
 		t.Fatalf("ordinary grant requirement=%q allowed=%v err=%v", requirement, allowed, err)
 	}
 
-	protected := NewManifestAccess(NewService(nil), ManifestGrant{AgentNamespaceManage: true})
+	protected := NewManifestAccess(NewService(nil), ManifestGrant{
+		AgentNamespace:       "zke-system",
+		AgentNamespaceManage: true,
+	})
 	requirement, allowed, err = protected.RequirementForApply(configMap, false, target)
 	if err != nil || !allowed || requirement != ManifestRequirementAgentNamespaceManage {
 		t.Fatalf("protected grant requirement=%q allowed=%v err=%v", requirement, allowed, err)

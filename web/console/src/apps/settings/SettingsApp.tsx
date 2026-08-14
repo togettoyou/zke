@@ -505,40 +505,28 @@ function PlatformSection() {
               }
             />
           </div>
-          <div className="grid items-start gap-3 sm:grid-cols-2">
-            <div className="grid content-start gap-1.5">
-              <Label>Agent Namespace</Label>
-              <Input
-                value={settings.agent_namespace}
-                onChange={(event) =>
-                  setSettingsDraft({ ...settings, agent_namespace: event.target.value })
-                }
-              />
-              <FieldHint>仅可在签发首个接入凭证前修改。</FieldHint>
-            </div>
-            <div className="grid content-start gap-1.5">
-              <Label>拉取策略</Label>
-              <Select
-                value={settings.agent_image_pull_policy}
-                onValueChange={(value) =>
-                  setSettingsDraft({
-                    ...settings,
-                    agent_image_pull_policy: value as PlatformSettings["agent_image_pull_policy"],
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {["Always", "IfNotPresent", "Never"].map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {value}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid content-start gap-1.5">
+            <Label>Agent 拉取策略</Label>
+            <Select
+              value={settings.agent_image_pull_policy}
+              onValueChange={(value) =>
+                setSettingsDraft({
+                  ...settings,
+                  agent_image_pull_policy: value as PlatformSettings["agent_image_pull_policy"],
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {["Always", "IfNotPresent", "Never"].map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid gap-1.5">
             <Label>Cluster Terminal 镜像</Label>
@@ -548,7 +536,31 @@ function PlatformSection() {
                 setSettingsDraft({ ...settings, cluster_terminal_image: event.target.value })
               }
             />
-            <FieldHint>修改后立即用于新建终端会话。</FieldHint>
+          </div>
+          <div className="grid content-start gap-1.5">
+            <Label>Cluster Terminal 拉取策略</Label>
+            <Select
+              value={settings.cluster_terminal_image_pull_policy}
+              onValueChange={(value) =>
+                setSettingsDraft({
+                  ...settings,
+                  cluster_terminal_image_pull_policy:
+                    value as PlatformSettings["cluster_terminal_image_pull_policy"],
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {["Always", "IfNotPresent", "Never"].map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FieldHint>镜像与拉取策略修改后立即用于新建终端会话。</FieldHint>
           </div>
           <Button
             variant="primary"

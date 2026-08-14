@@ -16,10 +16,10 @@ func (store *EnrollmentStore) GetClusterEnrollmentTarget(
 ) (ClusterEnrollmentTarget, error) {
 	var result ClusterEnrollmentTarget
 	err := store.pool.QueryRow(ctx, `
-SELECT project_id::text, name
+SELECT project_id::text, name, agent_namespace
 FROM clusters
 WHERE id = $1 AND status <> 'suspended'
-`, clusterID).Scan(&result.ProjectID, &result.ClusterName)
+`, clusterID).Scan(&result.ProjectID, &result.ClusterName, &result.AgentNamespace)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClusterEnrollmentTarget{}, ErrClusterNotFound
 	}
@@ -64,7 +64,7 @@ func (store *EnrollmentStore) ListEnrollments(
 SELECT id::text, tenant_id::text, project_id::text,
     COALESCE(cluster_id::text, ''), cluster_name,
     created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at,
-    endpoint_profile_id::text, endpoint_profile_revision
+    endpoint_profile_id::text, endpoint_profile_revision, agent_namespace
 `+enrollmentFilterSQL+`
 ORDER BY created_at DESC, id
 LIMIT $5 OFFSET $6
@@ -87,7 +87,7 @@ func (store *EnrollmentStore) GetEnrollment(
 SELECT id::text, tenant_id::text, project_id::text,
     COALESCE(cluster_id::text, ''), cluster_name,
     created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at,
-    endpoint_profile_id::text, endpoint_profile_revision
+    endpoint_profile_id::text, endpoint_profile_revision, agent_namespace
 FROM enrollments
 WHERE project_id = $1 AND id = $2
 `, projectID, enrollmentID))
@@ -113,7 +113,7 @@ func (store *EnrollmentStore) RevokeEnrollment(
 SELECT id::text, tenant_id::text, project_id::text,
     COALESCE(cluster_id::text, ''), cluster_name,
     created_by_user_id::text, expires_at, consumed_at, revoked_at, created_at,
-    endpoint_profile_id::text, endpoint_profile_revision
+    endpoint_profile_id::text, endpoint_profile_revision, agent_namespace
 FROM enrollments
 WHERE project_id = $1 AND id = $2
 FOR UPDATE
@@ -162,7 +162,7 @@ func scanManagedEnrollment(row rowScanner) (Enrollment, error) {
 		&item.ClusterName,
 		&item.CreatedByUserID, &item.ExpiresAt, &item.ConsumedAt,
 		&item.RevokedAt, &item.CreatedAt, &item.EndpointProfileID,
-		&item.EndpointProfileRevision,
+		&item.EndpointProfileRevision, &item.AgentNamespace,
 	)
 	return item, err
 }

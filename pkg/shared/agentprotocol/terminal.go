@@ -100,7 +100,8 @@ func validateTerminalSessionRequest(header *agentv1.StreamHeader, request *agent
 			request.GetTtlSeconds() > MaxTerminalSessionTTLSeconds ||
 			len(request.GetPermissions()) == 0 || len(request.GetPermissions()) > MaxTerminalPermissions ||
 			len(request.GetImage()) == 0 || len(request.GetImage()) > 512 ||
-			request.GetImage() != strings.TrimSpace(request.GetImage()) || strings.ContainsAny(request.GetImage(), " \t\r\n") {
+			request.GetImage() != strings.TrimSpace(request.GetImage()) || strings.ContainsAny(request.GetImage(), " \t\r\n") ||
+			!validTerminalImagePullPolicy(request.GetImagePullPolicy()) {
 			return ErrStreamProtocol
 		}
 		permissions := append([]string(nil), request.GetPermissions()...)
@@ -114,13 +115,18 @@ func validateTerminalSessionRequest(header *agentv1.StreamHeader, request *agent
 			}
 		}
 	case agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_DELETE:
-		if request.GetTtlSeconds() != 0 || len(request.GetPermissions()) != 0 || request.GetImage() != "" {
+		if request.GetTtlSeconds() != 0 || len(request.GetPermissions()) != 0 || request.GetImage() != "" ||
+			request.GetImagePullPolicy() != "" {
 			return ErrStreamProtocol
 		}
 	default:
 		return ErrStreamProtocol
 	}
 	return nil
+}
+
+func validTerminalImagePullPolicy(value string) bool {
+	return value == "Always" || value == "IfNotPresent" || value == "Never"
 }
 
 func validateTerminalSessionResponse(response *agentv1.TerminalSessionResponse, request *agentv1.TerminalSessionRequest) error {

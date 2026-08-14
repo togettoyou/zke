@@ -87,6 +87,7 @@ RETURNING id::text
 	created, err := enrollmentService.Create(ctx, enrollment.CreateInput{
 		ProjectID:      projectID,
 		ClusterName:    "integration-cluster",
+		AgentNamespace: "integration-agent",
 		UserID:         userID,
 		RequestID:      "request-create-registration-token",
 		IdempotencyKey: "create-registration-token-0001",
@@ -246,16 +247,19 @@ WHERE action = 'cluster.enroll' AND result = 'succeeded'`: &successAuditCount,
 			successAuditCount,
 		)
 	}
-	var storedClusterName string
+	var storedClusterName, storedAgentNamespace string
 	if err := pool.QueryRow(
 		ctx,
-		"SELECT name FROM clusters WHERE id = $1",
+		"SELECT name, agent_namespace FROM clusters WHERE id = $1",
 		result.ClusterID,
-	).Scan(&storedClusterName); err != nil {
+	).Scan(&storedClusterName, &storedAgentNamespace); err != nil {
 		t.Fatal(err)
 	}
 	if storedClusterName != "integration-cluster" {
 		t.Fatalf("registered cluster name = %q, want integration-cluster", storedClusterName)
+	}
+	if storedAgentNamespace != "integration-agent" {
+		t.Fatalf("registered Agent Namespace = %q, want integration-agent", storedAgentNamespace)
 	}
 
 	unavailableService := enrollment.NewService(
@@ -265,6 +269,7 @@ WHERE action = 'cluster.enroll' AND result = 'succeeded'`: &successAuditCount,
 	unavailableToken, err := unavailableService.Create(ctx, enrollment.CreateInput{
 		ProjectID:      projectID,
 		ClusterName:    "unavailable-integration-cluster",
+		AgentNamespace: "unavailable-agent",
 		UserID:         userID,
 		RequestID:      "request-create-unavailable-registration-token",
 		IdempotencyKey: "create-unavailable-registration-token-0001",

@@ -30,10 +30,14 @@ Agent 主动连接 ZKE Server，不要求 Server 直接访问 Kubernetes API Ser
 `Idempotency-Key`。Token 明文只返回一次，数据库只保存 SHA-256 摘要；凭证与 Project、集群显示名称绑定。
 查询和撤销分别要求 `cluster.enrollment.read` 与 `cluster.enrollment.revoke`。已消费凭证不可撤销。
 
+首次接入还必须指定符合 Kubernetes DNS Label 规则的 Agent Namespace。该值进入 Enrollment 快照，并在 Agent 首次注册时
+写入 Cluster；同一 Cluster 重新接入时继续使用已保存的 Namespace，不允许借重新接入改变它。Server 后续按目标 Cluster
+解析受保护命名空间权限、Node Drain 与 Cluster Terminal 的 Namespace，不使用平台级全局值。
+
 ### 首次注册和主动连接
 
 `POST /agent-api/v1/enroll` 是内部 Agent 注册端点。Agent 在集群内生成 ECDSA P-256 私钥和 CSR，Server 从
-Enrollment 读取作用域和集群名称，原子创建 Cluster、内部 Agent 身份、Credential、幂等结果和审计记录。
+Enrollment 读取作用域、集群名称和 Agent Namespace，原子创建 Cluster、内部 Agent 身份、Credential、幂等结果和审计记录。
 Agent 私钥不会发送给 Server。
 
 完成注册后，Agent 使用 QUIC/mTLS 主动连接 Server，执行 Hello、心跳、断线重连和证书自动续期。首次有效连接

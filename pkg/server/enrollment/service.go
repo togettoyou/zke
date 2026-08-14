@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
+
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/pagination"
 	"github.com/togettoyou/zke/pkg/shared/validation"
@@ -21,7 +23,7 @@ type Service struct {
 }
 
 type ConfigurationResolver interface {
-	ResolveEnrollmentSnapshot(context.Context, string) (store.EnrollmentConfigurationSnapshot, error)
+	ResolveEnrollmentSnapshot(context.Context, string, string) (store.EnrollmentConfigurationSnapshot, error)
 }
 
 type ServiceConfig struct {
@@ -48,6 +50,7 @@ func (service *Service) Create(
 		(!newCluster && !validation.IsUUID(input.ClusterID)) ||
 		!validation.IsUUID(input.UserID) ||
 		!validBoundedValue(input.ClusterName, maxClusterNameBytes) ||
+		len(k8svalidation.IsDNS1123Label(strings.TrimSpace(input.AgentNamespace))) != 0 ||
 		strings.TrimSpace(input.RequestID) == "" ||
 		!validation.IsIdempotencyKey(input.IdempotencyKey) ||
 		input.Now.IsZero() {
@@ -59,7 +62,7 @@ func (service *Service) Create(
 	if service.configurationResolver == nil {
 		return CreateResult{}, errors.New("enrollment configuration resolver is required")
 	}
-	snapshot, err := service.configurationResolver.ResolveEnrollmentSnapshot(ctx, input.EndpointProfileID)
+	snapshot, err := service.configurationResolver.ResolveEnrollmentSnapshot(ctx, input.EndpointProfileID, input.AgentNamespace)
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -102,6 +105,7 @@ func (service *Service) Create(
 		ExpiresAt:               storedEnrollment.ExpiresAt,
 		EndpointProfileID:       storedEnrollment.EndpointProfileID,
 		EndpointProfileRevision: storedEnrollment.EndpointProfileRevision,
+		AgentNamespace:          storedEnrollment.AgentNamespace,
 	}, nil
 }
 
@@ -124,7 +128,8 @@ func (service *Service) CreateReenrollment(
 	result, err := service.Create(ctx, CreateInput{
 		ProjectID: target.ProjectID, ClusterID: input.ClusterID,
 		ClusterName: target.ClusterName, UserID: input.UserID,
-		RequestID: input.RequestID, IdempotencyKey: input.IdempotencyKey,
+		AgentNamespace: target.AgentNamespace,
+		RequestID:      input.RequestID, IdempotencyKey: input.IdempotencyKey,
 		Now:               input.Now,
 		EndpointProfileID: input.EndpointProfileID,
 	})
@@ -261,6 +266,7 @@ func enrollmentFromStore(item store.Enrollment, now time.Time) Enrollment {
 		RevokedAt: item.RevokedAt, CreatedAt: item.CreatedAt,
 		EndpointProfileID:       item.EndpointProfileID,
 		EndpointProfileRevision: item.EndpointProfileRevision,
+		AgentNamespace:          item.AgentNamespace,
 	}
 }
 
