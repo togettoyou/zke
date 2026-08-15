@@ -1,6 +1,14 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-alpine AS console-build
+# Both builder stages are pinned to the machine doing the building rather than
+# to the image's target architecture. Nothing they produce is architecture-bound
+# in a way that needs emulation: the Console bundle is static files, and Go
+# cross-compiles from one host with CGO disabled. Under the default (target)
+# platform a linux/arm64 build runs `pnpm install`, `vite build` and the Go
+# compiler through QEMU, which costs more than every other step of this file put
+# together. Pinning also makes these stages byte-identical across target
+# platforms, so a two-architecture build runs them once instead of twice.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS console-build
 WORKDIR /src/web/console
 RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
 COPY web/console/package.json web/console/pnpm-lock.yaml ./
@@ -8,7 +16,7 @@ RUN pnpm install --frozen-lockfile
 COPY web/console/ ./
 RUN pnpm build
 
-FROM golang:1.26.4-alpine AS server-build
+FROM --platform=$BUILDPLATFORM golang:1.26.4-alpine AS server-build
 ARG TARGETOS=linux
 ARG TARGETARCH
 WORKDIR /src
@@ -17,8 +25,18 @@ RUN go mod download
 COPY api/ ./api/
 COPY cmd/ ./cmd/
 COPY pkg/ ./pkg/
+# Declared next to the only command that reads it. The version changes on every
+# commit, and a build argument participates in the cache key of the commands
+# that use it — keeping it below the module download leaves that layer alone.
+#
+# The build context excludes `.git`, so the caller supplies the version:
+#   docker build --build-arg VERSION="$(git describe --tags --always --dirty)" ...
+# An unstamped image still runs; it just reports "development".
+ARG VERSION=development
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/zke-server ./cmd/zke-server
+    go build -trimpath \
+    -ldflags="-s -w -X github.com/togettoyou/zke/pkg/shared/buildinfo.version=${VERSION}" \
+    -o /out/zke-server ./cmd/zke-server
 
 FROM alpine:3.22 AS server
 RUN apk add --no-cache ca-certificates tzdata \

@@ -807,6 +807,18 @@ go test ./...
 go vet ./...
 ```
 
+版本号在链接期注入 `pkg/shared/buildinfo`。`make build-server`、`make build-agent` 和两个 Dockerfile 使用同一个
+取值规则：`git describe --tags --always --dirty`，构建正好落在 Git Tag 上时得到该 Tag，否则得到 commit 前缀。
+镜像构建上下文不包含 `.git`，版本改由 `--build-arg VERSION=` 传入，未传入时为 `development`。
+
+两个 Dockerfile 的 Console 与 Go 构建阶段固定在 `$BUILDPLATFORM`：Console 产物与架构无关，Go 在 `CGO_ENABLED=0`
+下交叉编译，因此多平台镜像不需要在 QEMU 中重跑 `pnpm install`、`vite build` 和 Go 编译，这些阶段在所有目标架构
+之间共享一次构建。只有必须匹配目标架构的部分（运行时基础镜像、`registry.k8s.io/kubectl` 二进制）仍按目标平台解析。
+
+Agent 在 ClientHello 中上报自身版本，Server 记录后通过 Cluster 的 `connection.version` 返回；Server 自身版本通过
+`/api/v1/auth/me` 的 `server_version` 返回。两者只用于展示与排障：版本不同不改变握手、能力协商、证书或任何连接
+行为，Console 仅在集群列表和集群详情中标出不一致。
+
 数据库迁移集成测试使用 `ZKE_TEST_DATABASE_URL` 指向专用 PostgreSQL，并在随机临时 Schema 中验证后自动清理；
 CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一约束和索引测试。
 

@@ -320,6 +320,7 @@ function DesktopSection() {
 
 function SystemSection() {
   const health = useHealth();
+  const { session } = useSessionContext();
 
   const status = health.isLoading
     ? { tone: "neutral" as const, label: "检查中" }
@@ -329,7 +330,7 @@ function SystemSection() {
 
   return (
     <>
-      <Group title="系统状态" hint="来自 ZKE Server 的就绪检查">
+      <Group title="系统状态" hint="来自 ZKE Server 的就绪检查与构建信息">
         <Row label="Server 就绪状态">
           {/* A dot and a word rather than a filled pill: this is one reading on
               an otherwise quiet list, and a badge would be the loudest thing on
@@ -337,6 +338,14 @@ function SystemSection() {
           <span className="text-foreground flex items-center gap-1.5 text-[13px]">
             <StatusDot tone={status.tone} />
             {status.label}
+          </span>
+        </Row>
+        <Row label="Server 版本">
+          {/* A width cap rather than free flow: the row's value side does not
+              shrink, so an unstamped build's Go VCS pseudo-version would push
+              the label off the card instead of wrapping under itself. */}
+          <span className="zke-mono text-foreground max-w-56 text-right text-[13px] break-all">
+            {session?.server_version || "—"}
           </span>
         </Row>
       </Group>

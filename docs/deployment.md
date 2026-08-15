@@ -219,6 +219,9 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
   --version 0.0.0-latest --namespace zke-system
 ```
 
+Server 升级后，已接入集群里的 Agent 仍运行原有版本，Console 的集群列表和集群详情会标出与 Server 版本不一致的
+Agent。该提示只用于发现没有跟上的集群：版本不同不影响连接和任何功能，Server 与 Agent 仍按原有协议通信。
+
 备份要同时覆盖数据库（`pg_dump` 或卷快照）和 `/data` 中的 Managed PKI，并且是同一时刻的一致快照；只恢复其中
 一个会导致 Server 失败关闭或 Agent 证书链失效。`docker rm` 与 `helm uninstall` 都不会删除数据卷，确认不再需要
 后手动删除对应的 volume 或 PVC。

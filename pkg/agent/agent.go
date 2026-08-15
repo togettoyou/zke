@@ -11,10 +11,9 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/url"
-	"runtime/debug"
-	"strings"
 	"time"
 
+	"github.com/togettoyou/zke/pkg/shared/buildinfo"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -28,7 +27,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	kubernetesConfig.UserAgent = "zke-agent/" + agentVersion()
+	kubernetesConfig.UserAgent = "zke-agent/" + buildinfo.Version()
 	if kubernetesConfig.Timeout == 0 ||
 		kubernetesConfig.Timeout > cfg.Connection.MaxResourceRequestTimeout {
 		kubernetesConfig.Timeout = cfg.Connection.MaxResourceRequestTimeout
@@ -55,7 +54,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return err
 	}
 	var identity LocalIdentity
-	version := agentVersion()
+	version := buildinfo.Version()
 	if state.Identity != nil {
 		identity = *state.Identity
 	} else {
@@ -233,16 +232,4 @@ func retryDelay(
 	delay := max(interval, retryAfter)
 	jitter := 1 + rand.Float64()*0.2
 	return min(time.Duration(float64(delay)*jitter), maximum)
-}
-
-func agentVersion() string {
-	buildInfo, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "development"
-	}
-	version := strings.TrimSpace(buildInfo.Main.Version)
-	if version == "" || version == "(devel)" || len(version) > 128 {
-		return "development"
-	}
-	return version
 }

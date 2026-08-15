@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/togettoyou/zke/pkg/agent"
+	"github.com/togettoyou/zke/pkg/shared/buildinfo"
 	"github.com/togettoyou/zke/pkg/shared/logging"
 )
 
@@ -37,6 +38,7 @@ func run() error {
 	defer stop()
 
 	logger.Info("agent configuration loaded",
+		slog.String("version", buildinfo.Version()),
 		slog.String("registration_server", cfg.Registration.ServerURL),
 		slog.String("connection_server", cfg.Connection.ServerAddress),
 	)

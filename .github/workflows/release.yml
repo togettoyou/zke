@@ -8,32 +8,114 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
+  # A Pull Request build proves the Dockerfiles still build and is never
+  # published. The second architecture doubles that proof's cost and adds
+  # nothing to it, so it is reserved for the builds that become images someone
+  # can pull. Same for the attestations below: there is no artefact to attest.
+  PLATFORMS: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+  PROVENANCE: ${{ github.event_name == 'push' && 'mode=max' || 'false' }}
+  SBOM: ${{ github.event_name == 'push' }}
 
 jobs:
-  images:
-    name: ${{ matrix.name }} image
+  # The two Server images are one job rather than two matrix entries because
+  # they are the same build: `server` and `server-pg` differ only in their final
+  # stage, on top of an identical Console bundle and Go binary. As parallel jobs
+  # each paid for both from scratch — a matrix fans out before either has
+  # anything to share, so the GitHub Actions cache cannot pass stages between
+  # them within a run. Built in sequence on one builder, the second target
+  # starts from the first one's stages.
+  server-images:
+    name: Server images
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Server
-            image: togettoyou/zke-server
-            file: build/server/Dockerfile
-            target: server
-          - name: Server with PostgreSQL
-            image: togettoyou/zke-server-pg
-            file: build/server/Dockerfile
-            target: server-pg
-          - name: Agent
-            image: togettoyou/zke-agent
-            file: build/agent/Dockerfile
-            target: agent
+    steps:
+      # Full history with tags: the stamped version comes from `git describe`,
+      # which reports the abbreviated commit on a shallow clone with no tags
+      # even when the build is a tagged release.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve build version
+        id: version
+        run: echo "version=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate Server image metadata
+        id: meta-server
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/togettoyou/zke-server
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=ref,event=pr
+      - name: Build and optionally publish Server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/server/Dockerfile
+          target: server
+          platforms: ${{ env.PLATFORMS }}
+          push: ${{ github.event_name == 'push' }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.meta-server.outputs.tags }}
+          labels: ${{ steps.meta-server.outputs.labels }}
+          # One scope for both images: they share every stage that costs
+          # anything, so caching them apart stored the same layers twice and
+          # restored them twice.
+          cache-from: type=gha,scope=zke-server-images
+          cache-to: type=gha,mode=max,scope=zke-server-images
+          provenance: ${{ env.PROVENANCE }}
+          sbom: ${{ env.SBOM }}
+      - name: Generate Server with PostgreSQL image metadata
+        id: meta-server-pg
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/togettoyou/zke-server-pg
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=ref,event=pr
+      - name: Build and optionally publish Server with PostgreSQL image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/server/Dockerfile
+          target: server-pg
+          platforms: ${{ env.PLATFORMS }}
+          push: ${{ github.event_name == 'push' }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: ${{ steps.meta-server-pg.outputs.tags }}
+          labels: ${{ steps.meta-server-pg.outputs.labels }}
+          cache-from: type=gha,scope=zke-server-images
+          cache-to: type=gha,mode=max,scope=zke-server-images
+          provenance: ${{ env.PROVENANCE }}
+          sbom: ${{ env.SBOM }}
+
+  agent-image:
+    name: Agent image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve build version
+        id: version
+        run: echo "version=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GitHub Container Registry
@@ -47,7 +129,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/togettoyou/zke-agent
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
@@ -56,21 +138,25 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.file }}
-          target: ${{ matrix.target }}
-          platforms: linux/amd64,linux/arm64
+          file: build/agent/Dockerfile
+          target: agent
+          platforms: ${{ env.PLATFORMS }}
           push: ${{ github.event_name == 'push' }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-          provenance: mode=max
-          sbom: true
+          cache-from: type=gha,scope=zke-agent
+          cache-to: type=gha,mode=max,scope=zke-agent
+          provenance: ${{ env.PROVENANCE }}
+          sbom: ${{ env.SBOM }}
 
   helm:
     name: Helm chart
     runs-on: ubuntu-latest
-    needs: images
+    needs:
+      - server-images
+      - agent-image
     permissions:
       contents: read
       packages: write

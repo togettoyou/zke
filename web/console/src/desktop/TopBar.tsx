@@ -1,4 +1,4 @@
-import { CircleDot, LayoutGrid, LogOut, Moon, Settings, Sun, UserRound } from "lucide-react";
+import { CircleDot, LayoutGrid, LogOut, Moon, Settings, Sun, Tag, UserRound } from "lucide-react";
 
 import type { StreamState } from "@/api/events";
 import { ZkeMark } from "@/components/brand/zke-mark";
@@ -136,6 +136,26 @@ export function TopBar({
             <DropdownMenuItem disabled>
               <CircleDot />
               会话到期：{session ? formatRelative(session.expires_at) : "—"}
+            </DropdownMenuItem>
+            {/* Sits with 会话到期 rather than in the bar itself: the bar carries
+                controls and one ambient status, and a build string pinned to it
+                would be a permanent fixture nobody reads twice. Here it is one
+                click from anywhere, which is what a version number is for.
+
+                Stacked and wrapped rather than truncated with a tooltip on
+                hover: a disabled menu item carries `pointer-events: none`, so
+                neither a Tooltip nor a native `title` would ever fire on it, and
+                an ellipsis with no way to see the rest is worse than two lines.
+                An unstamped build reports Go's VCS pseudo-version, which is long
+                enough that this is the normal case rather than the edge one. */}
+            <DropdownMenuItem disabled className="items-start">
+              <Tag className="mt-0.5" />
+              <span className="grid min-w-0 gap-0.5">
+                Server 版本
+                <span className="zke-mono text-subtle-foreground text-[11px] break-all">
+                  {session?.server_version || "—"}
+                </span>
+              </span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

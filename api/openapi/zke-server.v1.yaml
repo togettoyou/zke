@@ -7598,12 +7598,21 @@ components:
     CurrentSession:
       type: object
       additionalProperties: false
-      required: [user, expires_at, capabilities]
+      required: [user, expires_at, server_version, capabilities]
       properties:
         user:
           $ref: "#/components/schemas/UserIdentity"
         expires_at:
           $ref: "#/components/schemas/Timestamp"
+        server_version:
+          type: string
+          maxLength: 128
+          description: >-
+            运行中的 ZKE Server 构建版本。打 tag 的构建为该 tag，否则为 commit 前缀。
+            仅用于展示与排障，不参与任何协议协商。
+          examples:
+            - "v0.3.1"
+            - "ad5797d"
         capabilities:
           type: array
           items:
@@ -8062,6 +8071,14 @@ components:
           type: string
         version:
           type: string
+          maxLength: 128
+          description: >-
+            该集群 Agent 在建立连接时上报的构建版本，取值规则与
+            `CurrentSession.server_version` 相同。与 Server 版本不一致不影响连接，
+            控制台仅据此提示。
+          examples:
+            - "v0.3.1"
+            - "ad5797d"
         protocol_version:
           type: string
         last_seen_at:

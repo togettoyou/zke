@@ -2351,6 +2351,12 @@ export interface components {
         CurrentSession: {
             user: components["schemas"]["UserIdentity"];
             expires_at: components["schemas"]["Timestamp"];
+            /**
+             * @description 运行中的 ZKE Server 构建版本。打 tag 的构建为该 tag，否则为 commit 前缀。 仅用于展示与排障，不参与任何协议协商。
+             * @example v0.3.1
+             * @example ad5797d
+             */
+            server_version: string;
             capabilities: components["schemas"]["Capability"][];
         };
         Capability: {
@@ -2532,6 +2538,11 @@ export interface components {
             status: "online" | "offline";
             lifecycle_status: string;
             health_status: string;
+            /**
+             * @description 该集群 Agent 在建立连接时上报的构建版本，取值规则与 `CurrentSession.server_version` 相同。与 Server 版本不一致不影响连接， 控制台仅据此提示。
+             * @example v0.3.1
+             * @example ad5797d
+             */
             version: string;
             protocol_version: string;
             last_seen_at?: components["schemas"]["Timestamp"];

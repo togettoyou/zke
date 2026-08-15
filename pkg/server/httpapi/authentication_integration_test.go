@@ -17,6 +17,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/buildinfo"
 )
 
 func TestSetupCreatesConfiguredGlobalAdministrator(t *testing.T) {
@@ -184,6 +185,15 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 		meBody.Capabilities[0].ScopeType != "global" ||
 		len(meBody.Capabilities[0].Permissions) == 0 {
 		t.Fatalf("unexpected current capabilities: %+v", meBody.Capabilities)
+	}
+	// The Console compares this against the version each Agent reported. An
+	// empty value would not fail anything — it would quietly turn the
+	// comparison off and never mark a stale Agent again.
+	if meBody.ServerVersion != buildinfo.Version() {
+		t.Fatalf("current session server_version = %q, want %q",
+			meBody.ServerVersion,
+			buildinfo.Version(),
+		)
 	}
 
 	missingCSRFResponse := httptest.NewRecorder()

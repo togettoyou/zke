@@ -62,6 +62,10 @@ Agent 私钥不会发送给 Server。
 连接信息嵌套在 Cluster 的 `connection` 字段中，包括生命周期、健康状态、Agent/协议版本、证书状态、
 `online`/`offline` 状态、Connection ID、最近心跳和断开原因。外部响应不返回内部 `agent_id`。
 
+`connection.version` 是 Agent 在建立连接时上报的构建版本，Server 自身版本通过 `/api/v1/auth/me` 的
+`server_version` 返回。Console 在集群列表和集群详情中把两者并列，字符串不相等时标出提示。这只是展示：
+版本不一致不影响握手、能力、证书和任何连接行为，Server 与 Agent 仍按原有协议通信。
+
 连接撤销要求 `cluster.connection.revoke` 和显式 `{"confirm":true}`；它不会删除 Cluster。重新接入仅允许在
 当前连接身份已撤销后执行，要求 `cluster.enrollment.create`、确认和幂等键，并始终复用原 `cluster_id`。
 Cluster 删除使用 `cluster.manage`，会真正移除 Cluster 及其内部 Agent、Credential 和绑定的 Enrollment，

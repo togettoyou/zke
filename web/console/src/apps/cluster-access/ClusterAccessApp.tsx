@@ -1,6 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { KeyRound, MoreHorizontal, RefreshCw, Server, ServerCog } from "lucide-react";
+import {
+  KeyRound,
+  MoreHorizontal,
+  RefreshCw,
+  Server,
+  ServerCog,
+  TriangleAlert,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -64,6 +71,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { HintTooltip } from "@/components/ui/tooltip";
+import { cn } from "@/lib/cn";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 import { formatDuration } from "@/lib/time";
@@ -115,6 +124,59 @@ function shellQuote(value: string): string {
 function installationCommand(manifestPath: string, token: string): string {
   const manifestURL = new URL(manifestPath, window.location.origin).toString();
   return `curl -fsSL -H ${shellQuote(`Authorization: Bearer ${token}`)} ${shellQuote(manifestURL)} | kubectl apply -f -`;
+}
+
+/**
+ * The build version an Agent reported when it connected.
+ *
+ * A version that differs from the Server's is marked, not treated as a fault:
+ * the two speak the same connection protocol whatever their build strings say,
+ * and nothing about the connection, its capabilities or its permissions changes
+ * when they disagree. It is still worth surfacing, because a rolling upgrade
+ * that stalled halfway looks exactly like a healthy fleet in every other column
+ * of this table.
+ *
+ * An Agent that reported no version, and a Console that has no Server version
+ * to compare against, are both unknowns rather than disagreements.
+ */
+function AgentVersionValue({ version, className }: { version: string; className?: string }) {
+  const { session } = useSessionContext();
+  const serverVersion = session?.server_version ?? "";
+  const mismatched = version !== "" && serverVersion !== "" && version !== serverVersion;
+
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      {/* The mismatch colour overrides whatever the caller passed, so the two
+          places this appears keep their own resting weight.
+
+          `title` because an unstamped build reports Go's VCS pseudo-version —
+          `v0.0.0-20260815120000-ad5797d` — which no column in this table is wide
+          enough for. Truncating without it would hide the only part that
+          identifies the build. */}
+      <span
+        title={version || undefined}
+        className={cn("zke-mono text-xs", className, mismatched && "text-warning")}
+      >
+        {version || "—"}
+      </span>
+      {mismatched ? (
+        <HintTooltip
+          label={`Agent 版本 ${version} 与 Server 版本 ${serverVersion} 不一致。连接与功能不受影响，建议在下次维护窗口对齐版本。`}
+        >
+          {/* A span rather than the icon itself carries the tooltip: the mark is
+              decorative, and the sentence beside it is what a screen reader has
+              to reach — a hover-only tooltip would leave it with the version
+              string alone and no hint that anything is off. */}
+          <span className="flex shrink-0 items-center">
+            <TriangleAlert className="text-warning size-3.5" aria-hidden />
+            <span className="sr-only">
+              与 Server 版本 {serverVersion} 不一致，连接与功能不受影响
+            </span>
+          </span>
+        </HintTooltip>
+      ) : null}
+    </span>
+  );
 }
 
 export function ClusterAccessApp(_props: AppComponentProps) {
@@ -266,11 +328,12 @@ function ClusterSection({
       },
       {
         header: "Agent 版本",
-        size: 120,
+        size: 140,
         cell: ({ row }) => (
-          <span className="zke-mono text-muted-foreground text-xs">
-            {row.original.connection.version || "—"}
-          </span>
+          <AgentVersionValue
+            version={row.original.connection.version}
+            className="text-muted-foreground truncate"
+          />
         ),
       },
       {
@@ -970,6 +1033,8 @@ function ClusterDetailSection({
   onBack: () => void;
 }) {
   const query = useCluster(clusterId);
+  const { session } = useSessionContext();
+  const serverVersion = session?.server_version ?? "";
 
   if (!clusterId) {
     return (
@@ -1031,7 +1096,16 @@ function ClusterDetailSection({
           />
           <DetailRow
             label="Agent 版本"
-            value={<span className="zke-mono text-xs">{connection.version || "—"}</span>}
+            /* The card has room the table column does not, so the version wraps
+               in full here rather than ending in an ellipsis. */
+            value={<AgentVersionValue version={connection.version} className="break-all" />}
+          />
+          {/* The Server's own version sits directly under the Agent's so a
+              disagreement reads off the page as two strings rather than only as
+              a warning mark. */}
+          <DetailRow
+            label="Server 版本"
+            value={<span className="zke-mono text-xs break-all">{serverVersion || "—"}</span>}
           />
           <DetailRow
             label="协议版本"

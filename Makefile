@@ -6,6 +6,16 @@
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 
+# Version stamped into zke-server and zke-agent.
+#
+# `git describe` covers both cases with one command: on a tagged commit it
+# prints the tag, otherwise the abbreviated commit (plus how far past the last
+# tag it is, when there is one). Override VERSION where no Git history is
+# available — the container builds do exactly that, since the image context
+# excludes `.git`.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo development)
+GO_LDFLAGS := -X github.com/togettoyou/zke/pkg/shared/buildinfo.version=$(VERSION)
+
 # Integration tests are skipped unless a throwaway PostgreSQL is pointed at.
 # Set it explicitly rather than defaulting to a URL that might be a real
 # database.
@@ -58,7 +68,20 @@ test-integration:
 
 .PHONY: build
 build:
-	$(GO) build ./...
+	$(GO) build -ldflags="$(GO_LDFLAGS)" ./...
+
+# Release-shaped binaries, stamped the same way the images are.
+.PHONY: build-server
+build-server:
+	$(GO) build -trimpath -ldflags="-s -w $(GO_LDFLAGS)" -o bin/zke-server ./cmd/zke-server
+
+.PHONY: build-agent
+build-agent:
+	$(GO) build -trimpath -ldflags="-s -w $(GO_LDFLAGS)" -o bin/zke-agent ./cmd/zke-agent
+
+.PHONY: version
+version:
+	@echo $(VERSION)
 
 .PHONY: generate-agent-protocol
 generate-agent-protocol:

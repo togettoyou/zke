@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/togettoyou/zke/pkg/server"
+	"github.com/togettoyou/zke/pkg/shared/buildinfo"
 	"github.com/togettoyou/zke/pkg/shared/logging"
 )
 
@@ -35,6 +36,10 @@ func run(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	logger.Info("server configuration loaded",
+		slog.String("version", buildinfo.Version()),
+	)
 
 	return server.Run(ctx, cfg, logger)
 }

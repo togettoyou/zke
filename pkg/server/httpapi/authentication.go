@@ -14,6 +14,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/rbac"
+	"github.com/togettoyou/zke/pkg/shared/buildinfo"
 )
 
 const (
@@ -63,9 +64,13 @@ type capabilityResponse struct {
 }
 
 type currentSessionResponse struct {
-	User         userResponse         `json:"user"`
-	ExpiresAt    time.Time            `json:"expires_at"`
-	Capabilities []capabilityResponse `json:"capabilities"`
+	User      userResponse `json:"user"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	// Rides on the session rather than on a public endpoint of its own: the
+	// Console needs the Server version to compare against each Agent's, and an
+	// unauthenticated caller has no reason to learn which build is deployed.
+	ServerVersion string               `json:"server_version"`
+	Capabilities  []capabilityResponse `json:"capabilities"`
 }
 
 type changePasswordRequest struct {
@@ -197,9 +202,10 @@ func (handler *authHandler) me(c *gin.Context) {
 		}
 	}
 	writeSuccess(c, http.StatusOK, currentSessionResponse{
-		User:         responseUser(identity.User),
-		ExpiresAt:    responseTime(identity.ExpiresAt),
-		Capabilities: capabilities,
+		User:          responseUser(identity.User),
+		ExpiresAt:     responseTime(identity.ExpiresAt),
+		ServerVersion: buildinfo.Version(),
+		Capabilities:  capabilities,
 	})
 }
 

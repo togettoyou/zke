@@ -69,9 +69,9 @@ Pod 与 RBAC，避免请求完成与窗口关闭同时发生时留下临时资�
 连接建立后，Server 使用标准 WebSocket Ping/Pong 检查浏览器是否仍持有会话；该控制帧不进入容器，因此切换 App
 不会触发 2 分钟空闲回收。关闭窗口仍会关闭 WebSocket，并立即清理终端 Pod 与临时授权。
 
-统一镜像工作流为 Pull Request 构建 `linux/amd64`、`linux/arm64` 两个平台但不推送；合入 `main` 后发布
-`ghcr.io/togettoyou/zke-agent:latest`，Git Tag 则发布对应标签。Server 默认把同一 Agent 镜像用于
-平台配置中的 Agent 镜像和 Cluster Terminal 镜像。
+统一镜像工作流为 Pull Request 只构建 `linux/amd64` 且不推送，用于验证 Dockerfile 仍可构建；合入 `main` 或推送
+Git Tag 时构建 `linux/amd64`、`linux/arm64` 两个平台并发布 `ghcr.io/togettoyou/zke-agent:latest` 或对应标签。
+Server 默认把同一 Agent 镜像用于平台配置中的 Agent 镜像和 Cluster Terminal 镜像。
 
 ## 当前边界
 
