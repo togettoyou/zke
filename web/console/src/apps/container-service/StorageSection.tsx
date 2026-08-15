@@ -73,6 +73,7 @@ type StorageSectionProps = ClusterSectionProps & {
 export function StorageSection({
   clusterId,
   clusterName,
+  agentNamespace,
   namespace,
   tenantId,
   projectId,
@@ -105,15 +106,24 @@ export function StorageSection({
   const projectScope = { type: "project" as const, tenantId, projectId };
   const mutationNamespace = namespaced ? namespace : "";
   const canCreate = permissions.can(
-    namespaceMutationPermission(mutationNamespace, "cluster.resource.create"),
+    namespaceMutationPermission(
+      { namespace: mutationNamespace, agentNamespace },
+      "cluster.resource.create",
+    ),
     projectScope,
   );
   const canUpdate = permissions.can(
-    namespaceMutationPermission(mutationNamespace, "cluster.resource.update"),
+    namespaceMutationPermission(
+      { namespace: mutationNamespace, agentNamespace },
+      "cluster.resource.update",
+    ),
     projectScope,
   );
   const canDelete = permissions.can(
-    namespaceMutationPermission(mutationNamespace, "cluster.resource.delete"),
+    namespaceMutationPermission(
+      { namespace: mutationNamespace, agentNamespace },
+      "cluster.resource.delete",
+    ),
     projectScope,
   );
   const canDescribe =

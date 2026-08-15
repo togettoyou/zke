@@ -53,6 +53,7 @@ type SecretSectionProps = ClusterSectionProps & {
 export function SecretSection({
   clusterId,
   clusterName,
+  agentNamespace,
   namespace,
   tenantId,
   projectId,
@@ -60,7 +61,11 @@ export function SecretSection({
 }: SecretSectionProps) {
   const { permissions } = useSessionContext();
   const projectScope = { type: "project" as const, tenantId, projectId };
-  const protectedAccess = canUseProtectedNamespace(permissions, namespace, projectScope);
+  const protectedAccess = canUseProtectedNamespace(
+    permissions,
+    { namespace, agentNamespace },
+    projectScope,
+  );
   const canRead = protectedAccess && permissions.can("cluster.secret.read", projectScope);
   const pager = useContinuePagination(`${clusterId}/${namespace}`);
   const list = useSecrets(canRead ? clusterId : null, namespace, {

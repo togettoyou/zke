@@ -83,6 +83,7 @@ export function AutoscalerSection(props: AutoscalerSectionProps) {
 function HorizontalPodAutoscalerSection({
   clusterId,
   clusterName,
+  agentNamespace,
   namespace,
   tenantId,
   projectId,
@@ -107,15 +108,15 @@ function HorizontalPodAutoscalerSection({
 
   const projectScope = { type: "project" as const, tenantId, projectId };
   const canCreate = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.create"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.create"),
     projectScope,
   );
   const canUpdate = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.update"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.update"),
     projectScope,
   );
   const canDelete = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.delete"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.delete"),
     projectScope,
   );
   const canDescribe = permissions.can("cluster.event.read", projectScope);

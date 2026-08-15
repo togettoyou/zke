@@ -63,6 +63,7 @@ function ExtensionSection({
   kind,
   clusterId,
   clusterName,
+  agentNamespace,
   namespace,
   tenantId,
   projectId,
@@ -77,15 +78,15 @@ function ExtensionSection({
   const { permissions } = useSessionContext();
   const scope = { type: "project" as const, tenantId, projectId };
   const canCreate = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.create"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.create"),
     scope,
   );
   const canUpdate = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.update"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.update"),
     scope,
   );
   const canDelete = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.delete"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.delete"),
     scope,
   );
   const canDescribe = permissions.can("cluster.event.read", scope);

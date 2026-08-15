@@ -48,7 +48,13 @@ export function TerminalApp({ windowId }: Pick<AppComponentProps, "windowId">) {
   const clusterId = online.some((item) => item.id === selectedCluster)
     ? selectedCluster
     : (online[0]?.id ?? "");
-  const clusterName = online.find((item) => item.id === clusterId)?.name ?? clusterId;
+  const selected = online.find((item) => item.id === clusterId);
+  const clusterName = selected?.name ?? clusterId;
+  // The Server creates the terminal Pod in the target Cluster's own Agent
+  // Namespace, fixed there when its Agent enrolled. The confirmation names it,
+  // so it is read from the Cluster rather than assumed: a dialog that states the
+  // wrong target is worse than one that states none.
+  const agentNamespace = selected?.agent_namespace ?? "";
   if (!scope.projectId) return <ScopeRequired />;
 
   return (
@@ -84,6 +90,7 @@ export function TerminalApp({ windowId }: Pick<AppComponentProps, "windowId">) {
           key={clusterId}
           clusterId={clusterId}
           clusterName={clusterName}
+          agentNamespace={agentNamespace}
           active={active}
         />
       ) : (
@@ -96,10 +103,12 @@ export function TerminalApp({ windowId }: Pick<AppComponentProps, "windowId">) {
 function ClusterTerminalPanel({
   clusterId,
   clusterName,
+  agentNamespace,
   active,
 }: {
   clusterId: string;
   clusterName: string;
+  agentNamespace: string;
   active: boolean;
 }) {
   const [state, setState] = useState<ConnectionState>("idle");
@@ -318,11 +327,14 @@ function ClusterTerminalPanel({
         open={confirming}
         onOpenChange={setConfirming}
         title="打开集群终端"
-        description="ZKE 将在 zke-system 创建短生命周期终端 Pod，并按当前角色向业务命名空间投射 Kubernetes RBAC。"
-        scopeLines={[{ label: "集群", name: clusterName, id: clusterId }]}
+        description={`ZKE 将在 ${agentNamespace} 创建短生命周期终端 Pod，并按当前角色向业务命名空间投射 Kubernetes RBAC。`}
+        scopeLines={[
+          { label: "集群", name: clusterName, id: clusterId },
+          { label: "Agent 命名空间", name: agentNamespace },
+        ]}
         impacts={[
           "kubectl 可访问现有业务命名空间，但只能执行当前角色对应的操作；未持有 Secret 权限时无法读取 Secret。",
-          "zke-system 不授予业务资源访问权；会话不使用 Agent ServiceAccount，结束或超时后清理临时资源。",
+          `${agentNamespace} 不授予业务资源访问权；会话不使用 Agent ServiceAccount，结束或超时后清理临时资源。`,
           "终端命令可能直接修改集群资源，请确认目标集群。",
         ]}
         confirmLabel="打开终端"

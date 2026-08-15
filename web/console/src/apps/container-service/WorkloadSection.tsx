@@ -63,6 +63,7 @@ type WorkloadSectionProps = ClusterSectionProps & {
 export function WorkloadSection({
   clusterId,
   clusterName,
+  agentNamespace,
   namespace,
   tenantId,
   projectId,
@@ -98,15 +99,15 @@ export function WorkloadSection({
   // Scaling, restarting and suspending are all patches of the object, so they
   // are updates rather than workload-specific permissions.
   const canUpdate = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.update"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.update"),
     projectScope,
   );
   const canDelete = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.delete"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.delete"),
     projectScope,
   );
   const canCreate = permissions.can(
-    namespaceMutationPermission(namespace, "cluster.resource.create"),
+    namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.create"),
     projectScope,
   );
   // Describe carries the Events of the workload and of everything under it,

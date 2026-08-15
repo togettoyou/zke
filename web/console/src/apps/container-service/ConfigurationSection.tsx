@@ -35,6 +35,7 @@ type ConfigurationSectionProps = ClusterSectionProps & {
 export function ConfigurationSection({
   clusterId,
   clusterName,
+  agentNamespace,
   namespace,
   tenantId,
   projectId,
@@ -47,7 +48,7 @@ export function ConfigurationSection({
   });
   const [tab, setTab] = useState<"configmaps" | "secrets">("configmaps");
 
-  const shared = { clusterId, clusterName, namespace, tenantId, projectId };
+  const shared = { clusterId, clusterName, agentNamespace, namespace, tenantId, projectId };
 
   // Without the Secret permission there is one thing to show, and a strip with
   // a single tab is a control that cannot do anything.

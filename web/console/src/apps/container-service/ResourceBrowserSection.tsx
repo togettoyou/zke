@@ -73,6 +73,7 @@ const ALL_NAMESPACES = "__all__";
 export function ResourceBrowserSection({
   clusterId,
   clusterName,
+  agentNamespace,
   tenantId,
   projectId,
 }: ClusterSectionProps) {
@@ -159,6 +160,7 @@ export function ResourceBrowserSection({
             key={typeKey(active)}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             type={active}
             tenantId={tenantId}
             projectId={projectId}
@@ -384,6 +386,7 @@ function ResourceTypeTree({
 function ResourceObjectPanel({
   clusterId,
   clusterName,
+  agentNamespace,
   type,
   tenantId,
   projectId,
@@ -391,6 +394,7 @@ function ResourceObjectPanel({
 }: {
   clusterId: string;
   clusterName: string;
+  agentNamespace: string;
   type: KubernetesResourceType;
   tenantId: string | null;
   projectId: string | null;
@@ -420,10 +424,13 @@ function ResourceObjectPanel({
   const canDeleteNamespace = useCallback(
     (targetNamespace: string) =>
       permissions.can(
-        namespaceMutationPermission(targetNamespace, "cluster.resource.delete"),
+        namespaceMutationPermission(
+          { namespace: targetNamespace, agentNamespace },
+          "cluster.resource.delete",
+        ),
         projectScope,
       ),
-    [permissions, projectScope],
+    [permissions, projectScope, agentNamespace],
   );
   const pager = useContinuePagination(`${clusterId}/${typeKey(type)}/${scopedNamespace}`);
   const list = useGenericResources(clusterId, identity, scopedNamespace, {
@@ -569,8 +576,11 @@ function ResourceObjectPanel({
         canUpdate={
           permissions.can(
             type.group === "" && type.version === "v1" && type.resource === "namespaces"
-              ? namespaceLifecyclePermission(permissionNamespace)
-              : namespaceMutationPermission(permissionNamespace, "cluster.resource.update"),
+              ? namespaceLifecyclePermission({ namespace: permissionNamespace, agentNamespace })
+              : namespaceMutationPermission(
+                  { namespace: permissionNamespace, agentNamespace },
+                  "cluster.resource.update",
+                ),
             projectScope,
           ) && type.verbs.includes("update")
         }

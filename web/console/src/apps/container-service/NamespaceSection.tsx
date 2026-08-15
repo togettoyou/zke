@@ -46,6 +46,7 @@ const PAGE_SIZE = 50;
 export function NamespaceSection({
   clusterId,
   clusterName,
+  agentNamespace,
   tenantId,
   projectId,
 }: ClusterSectionProps) {
@@ -91,8 +92,12 @@ export function NamespaceSection({
     permissions.can("cluster.system_namespace.manage", projectScope) ||
     permissions.can("cluster.agent_namespace.manage", projectScope);
   const canManageLifecycle = useCallback(
-    (name: string) => permissions.can(namespaceLifecyclePermission(name), projectScope),
-    [permissions, projectScope],
+    (name: string) =>
+      permissions.can(
+        namespaceLifecyclePermission({ namespace: name, agentNamespace }),
+        projectScope,
+      ),
+    [permissions, projectScope, agentNamespace],
   );
   const canCreateTarget = canManageLifecycle(createName.trim());
 
@@ -192,7 +197,10 @@ export function NamespaceSection({
           identity={{ clusterId, version: "v1", resource: "namespaces", name: yamlName }}
           clusterName={clusterName}
           kindLabel="Namespace"
-          canUpdate={permissions.can(namespaceLifecyclePermission(yamlName), projectScope)}
+          canUpdate={permissions.can(
+            namespaceLifecyclePermission({ namespace: yamlName, agentNamespace }),
+            projectScope,
+          )}
           onBack={() => setYamlName(null)}
         />
       ) : quotaName ? (
@@ -201,15 +209,24 @@ export function NamespaceSection({
           clusterName={clusterName}
           namespace={quotaName}
           canCreate={permissions.can(
-            namespaceMutationPermission(quotaName, "cluster.resource.create"),
+            namespaceMutationPermission(
+              { namespace: quotaName, agentNamespace },
+              "cluster.resource.create",
+            ),
             projectScope,
           )}
           canUpdate={permissions.can(
-            namespaceMutationPermission(quotaName, "cluster.resource.update"),
+            namespaceMutationPermission(
+              { namespace: quotaName, agentNamespace },
+              "cluster.resource.update",
+            ),
             projectScope,
           )}
           canDelete={permissions.can(
-            namespaceMutationPermission(quotaName, "cluster.resource.delete"),
+            namespaceMutationPermission(
+              { namespace: quotaName, agentNamespace },
+              "cluster.resource.delete",
+            ),
             projectScope,
           )}
           onBack={() => setQuotaName(null)}

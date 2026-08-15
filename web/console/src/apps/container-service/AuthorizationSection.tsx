@@ -62,6 +62,7 @@ type AuthorizationSectionProps = ClusterSectionProps & {
 export function AuthorizationSection({
   clusterId,
   clusterName,
+  agentNamespace,
   namespace,
   tenantId,
   projectId,
@@ -96,7 +97,8 @@ export function AuthorizationSection({
   } as const;
   const canManage =
     permissions.can("cluster.rbac.manage", projectScope) &&
-    (!namespaced || canUseProtectedNamespace(permissions, namespace, projectScope));
+    (!namespaced ||
+      canUseProtectedNamespace(permissions, { namespace, agentNamespace }, projectScope));
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.

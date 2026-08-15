@@ -192,8 +192,14 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
   const clusterId = onlineClusters.some((cluster) => cluster.id === stored)
     ? (stored as string)
     : (onlineClusters[0]?.id ?? "");
-  const clusterName =
-    projectClusters.find((cluster) => cluster.id === clusterId)?.name ?? clusterId;
+  const selectedCluster = projectClusters.find((cluster) => cluster.id === clusterId);
+  const clusterName = selectedCluster?.name ?? clusterId;
+  // Which Namespace hosts the Agent is decided per Cluster at enrollment, so it
+  // is read from the selected Cluster rather than assumed. An empty value while
+  // the list is still loading protects nothing, which is the safe direction: the
+  // sections are not rendered until the list resolves, and the Server refuses a
+  // request into the Agent Namespace regardless of what the Console offered.
+  const agentNamespace = selectedCluster?.agent_namespace ?? "";
 
   // Reading Events is its own permission rather than part of reading the
   // Cluster, so the rail hides the category a caller cannot open at all. The
@@ -437,6 +443,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
           />
@@ -445,6 +452,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
           />
@@ -468,6 +476,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
@@ -485,6 +494,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
           />
@@ -495,6 +505,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
@@ -505,6 +516,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
@@ -514,6 +526,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
@@ -525,6 +538,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
@@ -534,6 +548,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
@@ -543,6 +558,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
@@ -553,6 +569,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={clusterId}
             clusterId={clusterId}
             clusterName={clusterName}
+            agentNamespace={agentNamespace}
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
