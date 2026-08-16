@@ -7,10 +7,10 @@ import { cn } from "@/lib/cn";
  * one plane to observe from, execution split across clusters. It is the
  * product's first principle drawn as a letter.
  *
- * The segments are a large-size detail, not a load-bearing one. Below roughly
- * 20px they fuse into a solid bar and the mark falls back to a plain Z — the
- * meaning is lost, the letter is not, which is the only failure mode a mark is
- * allowed at tab size.
+ * The split is a large-size detail, not a load-bearing one. Around 16px the
+ * dots shrink to specks and the mark falls back to a plain Z — the meaning is
+ * lost, the letter is not, which is the only failure mode a mark is allowed in
+ * a tab strip.
  *
  * Built the way an application face is built — a tinted tile carrying a white
  * glyph, see `appFaceClass` — so the product's own identity speaks the same
@@ -44,12 +44,15 @@ export function ZkeMark({ className }: { className?: string }) {
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        {/* The base. Three segments spanning exactly the top bar's rendered
-            width, so the letter stays square however the eye measures it. */}
+        {/* The base. Three units of the same 7 wide, evenly spaced across the
+            top bar's rendered width (15.5 to 48.5), so the letter stays square
+            however the eye measures it. The first unit is the diagonal's own
+            round cap: a rounded rect drawn under it has squarer corners than
+            the cap it overlaps, which ends the tail in a lumpy wedge rather
+            than a foot. */}
         <g fill="currentColor">
-          <rect x="15.5" y="40.5" width="8.87" height="7" rx="2.6" />
-          <rect x="27.57" y="40.5" width="8.87" height="7" rx="2.6" />
-          <rect x="39.63" y="40.5" width="8.87" height="7" rx="2.6" />
+          <circle cx="32" cy="44" r="3.5" />
+          <circle cx="45" cy="44" r="3.5" />
         </g>
       </svg>
     </span>

@@ -11,6 +11,11 @@
   at 16px the app radius rounds the silhouette off into a blob, and a mark in a
   tab strip is recognised by its outline before anything inside it is legible.
 
+  The base is three units of the same 7 wide: the diagonal's own round cap and
+  two dots, evenly spaced across the top bar's rendered width (15.5 to 48.5).
+  Do not put a rounded rect back under the cap. Its corners are squarer than
+  the cap they overlap, so the tail ends in a lumpy wedge instead of a foot.
+
   Note for editors: this is XML, so a comment may not contain a double hyphen.
   Naming a CSS custom property here breaks the whole file, and a favicon that
   fails to parse fails silently in the tab.
@@ -33,8 +38,7 @@
     stroke-linejoin="round"
   />
   <g fill="#fff">
-    <rect x="15.5" y="40.5" width="8.87" height="7" rx="2.6" />
-    <rect x="27.57" y="40.5" width="8.87" height="7" rx="2.6" />
-    <rect x="39.63" y="40.5" width="8.87" height="7" rx="2.6" />
+    <circle cx="32" cy="44" r="3.5" />
+    <circle cx="45" cy="44" r="3.5" />
   </g>
 </svg>
