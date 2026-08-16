@@ -1,0 +1,170 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 500" width="1000" height="500" role="img" aria-labelledby="zke-arch-title zke-arch-desc">
+  <title id="zke-arch-title">ZKE 架构图</title>
+  <desc id="zke-arch-desc">平台用户经 HTTP/WebSocket 访问 ZKE Server；每个 Kubernetes 集群内的 ZKE Agent 主动建立 QUIC/mTLS 出向连接，在集群内定域执行 Kubernetes API 操作；集群内 vmagent 抓取指标后经 Agent 回传，Server 摄取后写入 VictoriaMetrics；日志采集与 VictoriaLogs 链路尚在规划中。</desc>
+
+  <style>
+    svg { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif; }
+    .bg     { fill: #ffffff; }
+    .panel  { fill: #f6f8fa; stroke: #d8dee4; stroke-width: 1; }
+    .panel-dash { fill: none; stroke: #d8dee4; stroke-width: 1; stroke-dasharray: 5 4; }
+    .card   { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+    .card-a { fill: #ffffff; stroke: #3b6fd4; stroke-width: 1.4; }
+    .card-c { fill: #ffffff; stroke: #1f7a5c; stroke-width: 1.4; }
+    .card-p { fill: none; stroke: #8250df; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .chip   { fill: #eef2f8; stroke: none; }
+    .ink    { fill: #1f2328; }
+    .muted  { fill: #57606a; }
+    .plan   { fill: #8250df; }
+    .accent { fill: #3b6fd4; }
+    .green  { fill: #1f7a5c; }
+    .line   { fill: none; stroke: #6e7781; stroke-width: 1.6; }
+    .line-p { fill: none; stroke: #8250df; stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .mk     { fill: #6e7781; }
+    .mk-p   { fill: #8250df; }
+    .t-h    { font-size: 14px; font-weight: 600; }
+    .t-n    { font-size: 12.5px; font-weight: 600; }
+    .t-s    { font-size: 10.5px; }
+    .t-c    { font-size: 11px; }
+    .t-e    { font-size: 10px; }
+    @media (prefers-color-scheme: dark) {
+      .bg     { fill: #0d1117; }
+      .panel  { fill: #161b22; stroke: #30363d; }
+      .panel-dash { stroke: #30363d; }
+      .card   { fill: #1c2128; stroke: #3d444d; }
+      .card-a { fill: #1c2128; stroke: #6f9bf0; }
+      .card-c { fill: #1c2128; stroke: #3fb98f; }
+      .card-p { stroke: #a371f7; }
+      .chip   { fill: #22272e; }
+      .ink    { fill: #e6edf3; }
+      .muted  { fill: #9198a1; }
+      .plan   { fill: #a371f7; }
+      .accent { fill: #6f9bf0; }
+      .green  { fill: #3fb98f; }
+      .line   { stroke: #8b949e; }
+      .line-p { stroke: #a371f7; }
+      .mk     { fill: #8b949e; }
+      .mk-p   { fill: #a371f7; }
+    }
+  </style>
+
+  <defs>
+    <marker id="a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="mk" d="M0 0 L8 4 L0 8 Z"/>
+    </marker>
+    <marker id="ap" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="mk-p" d="M0 0 L8 4 L0 8 Z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1000" height="500"/>
+
+  <!-- 平台用户 -->
+  <rect class="card" x="150" y="16" width="200" height="52" rx="8"/>
+  <text class="t-n ink" x="250" y="38" text-anchor="middle">平台用户 · ZKE Console</text>
+  <text class="t-s muted" x="250" y="56" text-anchor="middle">统一入口 · 一次登录</text>
+
+  <!-- Server 侧 -->
+  <rect class="panel" x="20" y="88" width="420" height="320" rx="12"/>
+  <text class="t-s muted" x="36" y="112">ZKE Server 侧（控制面）</text>
+
+  <path class="line" marker-end="url(#a)" d="M250 70 V124"/>
+  <text class="t-e muted" x="258" y="102">HTTP / WebSocket</text>
+
+  <rect class="card-a" x="44" y="128" width="372" height="150" rx="9"/>
+  <text class="t-h accent" x="58" y="152">ZKE Server</text>
+  <text class="t-s muted" x="402" y="152" text-anchor="end">单二进制 · 内置 Console</text>
+
+  <rect class="chip" x="58" y="162" width="344" height="28" rx="6"/>
+  <text class="t-c ink" x="70" y="181">管理 API · WebSocket（终端 / Pod 日志）</text>
+
+  <rect class="chip" x="58" y="194" width="344" height="28" rx="6"/>
+  <text class="t-c ink" x="70" y="213">摄取网关：按 mTLS 身份强制写入 zke_cluster_id</text>
+
+  <rect class="chip" x="58" y="226" width="344" height="28" rx="6"/>
+  <text class="t-c ink" x="70" y="245">具名查询目录（不开放自由 PromQL）</text>
+
+  <path class="line" marker-end="url(#a)" d="M101 280 V308"/>
+  <path class="line" marker-end="url(#a)" d="M230 280 V308"/>
+  <path class="line-p" marker-end="url(#ap)" d="M359 280 V308"/>
+  <text class="t-e muted" x="238" y="300">写入 / 受限查询</text>
+
+  <rect class="card" x="44" y="312" width="114" height="76" rx="8"/>
+  <text class="t-n ink" x="101" y="340" text-anchor="middle">PostgreSQL</text>
+  <text class="t-s muted" x="101" y="358" text-anchor="middle">平台数据 · 审计</text>
+  <text class="t-s muted" x="101" y="373" text-anchor="middle">会话 · 幂等</text>
+
+  <rect class="card" x="173" y="312" width="114" height="76" rx="8"/>
+  <text class="t-n ink" x="230" y="340" text-anchor="middle">VictoriaMetrics</text>
+  <text class="t-s muted" x="230" y="358" text-anchor="middle">多集群指标</text>
+  <text class="t-s muted" x="230" y="373" text-anchor="middle">集中存储</text>
+
+  <rect class="card-p" x="302" y="312" width="114" height="76" rx="8"/>
+  <text class="t-n plan" x="359" y="340" text-anchor="middle">VictoriaLogs</text>
+  <text class="t-s muted" x="359" y="358" text-anchor="middle">日志存储</text>
+  <text class="t-s plan" x="359" y="373" text-anchor="middle">规划中</text>
+
+  <!-- Cluster A -->
+  <rect class="panel" x="570" y="16" width="410" height="374" rx="12"/>
+  <text class="t-s muted" x="590" y="42">Kubernetes Cluster A（每个接入集群）</text>
+
+  <rect class="card-c" x="590" y="54" width="173" height="84" rx="8"/>
+  <text class="t-n green" x="676" y="80" text-anchor="middle">ZKE Agent</text>
+  <text class="t-s muted" x="676" y="99" text-anchor="middle">主动出向 QUIC/mTLS</text>
+  <text class="t-s muted" x="676" y="115" text-anchor="middle">集群内摄取端点 :8429</text>
+
+  <rect class="card" x="787" y="54" width="173" height="84" rx="8"/>
+  <text class="t-n ink" x="873" y="80" text-anchor="middle">Kubernetes API Server</text>
+  <text class="t-s muted" x="873" y="99" text-anchor="middle">工作负载 · 节点 · 事件</text>
+  <text class="t-s muted" x="873" y="115" text-anchor="middle">由 Agent 定域执行</text>
+
+  <path class="line" marker-start="url(#a)" marker-end="url(#a)" d="M766 96 H784"/>
+
+  <rect class="card" x="590" y="176" width="173" height="76" rx="8"/>
+  <text class="t-n ink" x="676" y="202" text-anchor="middle">vmagent</text>
+  <text class="t-s muted" x="676" y="221" text-anchor="middle">指标采集（Agent 安装）</text>
+  <text class="t-s muted" x="676" y="237" text-anchor="middle">relabel · 磁盘缓冲</text>
+
+  <rect class="card-p" x="787" y="176" width="173" height="76" rx="8"/>
+  <text class="t-n plan" x="873" y="202" text-anchor="middle">日志采集</text>
+  <text class="t-s muted" x="873" y="221" text-anchor="middle">复用同一条回传通道</text>
+  <text class="t-s plan" x="873" y="237" text-anchor="middle">规划中</text>
+
+  <rect class="card" x="590" y="290" width="173" height="76" rx="8"/>
+  <text class="t-n ink" x="676" y="312" text-anchor="middle">采集目标</text>
+  <text class="t-s muted" x="676" y="330" text-anchor="middle">kubelet / cAdvisor</text>
+  <text class="t-s muted" x="676" y="345" text-anchor="middle">kube-state-metrics</text>
+  <text class="t-s muted" x="676" y="360" text-anchor="middle">node-exporter</text>
+
+  <rect class="card-p" x="787" y="290" width="173" height="76" rx="8"/>
+  <text class="t-n plan" x="873" y="316" text-anchor="middle">容器与平台日志</text>
+  <text class="t-s muted" x="873" y="335" text-anchor="middle">Pod stdout / stderr</text>
+  <text class="t-s muted" x="873" y="351" text-anchor="middle">集群组件日志</text>
+
+  <path class="line" marker-end="url(#a)" d="M676 288 V256"/>
+  <text class="t-e muted" x="684" y="274">scrape</text>
+  <path class="line-p" marker-end="url(#ap)" d="M873 288 V256"/>
+
+  <path class="line" marker-end="url(#a)" d="M620 174 V142"/>
+  <text class="t-e muted" x="628" y="158">remote write</text>
+  <path class="line-p" marker-end="url(#ap)" d="M830 174 V166 H660 V142"/>
+
+  <!-- Cluster B … N -->
+  <rect class="panel-dash" x="570" y="410" width="410" height="68" rx="12"/>
+  <text class="t-n ink" x="590" y="438">Kubernetes Cluster B … N</text>
+  <text class="t-s muted" x="590" y="458">同样部署 ZKE Agent 与 vmagent，各自建立出向连接</text>
+
+  <!-- Agent -> Server -->
+  <path class="line" marker-end="url(#a)" d="M590 96 H555 V196 H420"/>
+  <text class="t-e ink" x="496" y="160" text-anchor="middle">主动出向 · QUIC / mTLS</text>
+  <text class="t-e muted" x="496" y="176" text-anchor="middle">控制流 + 指标摄取</text>
+
+  <path class="line" marker-end="url(#a)" d="M570 444 H540 V252 H420"/>
+  <text class="t-e muted" x="530" y="340" text-anchor="end">同样的出向连接</text>
+
+  <!-- 图例 -->
+  <path class="line" d="M24 432 H48"/>
+  <text class="t-e muted" x="56" y="436">已实现</text>
+  <path class="line-p" d="M120 432 H144"/>
+  <text class="t-e muted" x="152" y="436">规划中（日志链路）</text>
+  <text class="t-e muted" x="24" y="462">Server 不直接访问任何集群的 Kubernetes API Server，操作始终经目标集群 Agent 定域执行。</text>
+</svg>

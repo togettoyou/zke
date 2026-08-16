@@ -19,11 +19,11 @@ ZKE（Z Kubernetes Engine）通过 Server + Agent 架构连接分散在数据中
 Kubernetes 集群。Agent 使用 QUIC/mTLS 主动连接 Server，ZKE Server 无需直接访问任何集群的 Kubernetes
 API Server；平台团队可以在统一入口中管理资源与工作负载，并实施权限控制、安全操作和审计。
 
+![ZKE 桌面预览](docs/images/product-preview/desktop-overview.gif)
+
 > **在线体验：** <https://fbcupchhlacp.sealosbja.site/>
 >
 > 用户名 `view` / 密码 `LECQkqcp2tQ5Yh8`（只读账号，体验数据可能随时重置）
-
-![ZKE 桌面预览](docs/images/product-preview/desktop-overview.gif)
 
 ## 为什么选择 ZKE
 
@@ -37,22 +37,6 @@ API Server；平台团队可以在统一入口中管理资源与工作负载，�
   覆盖敏感操作。
 
 > **全局观察，按集群执行。**
-
-## 当前能力
-
-| 能力 | 已实现的主要链路 |
-| --- | --- |
-| 多集群接入 | 集群注册、Agent 状态、证书续期、撤销与重新接入 |
-| 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob |
-| 集群资源 | Node、Namespace、Pod、服务与路由、配置、存储、自动伸缩、策略 |
-| 日常运维 | Pod 日志、Web Terminal、临时访问、事件追踪、资源用量 |
-| 诊断与回滚 | 工作负载诊断、关联对象分析、版本回滚 |
-| 原生资源 | Discovery、CRD 资源浏览、YAML 编辑、多文档清单应用与删除 |
-| 多集群指标 | 集群内采集、经 Agent 回传、跨集群 CPU/内存与节点用量视图（默认启用） |
-| 权限模型 | Tenant、Project、RBAC 与细粒度操作权限 |
-| 安全与审计 | 敏感操作确认、DryRun 差异、并发身份保护、审计日志 |
-
-各项能力的具体边界和已知限制以 [Roadmap](docs/roadmap.md) 与功能文档为准。
 
 ## 产品一览
 
@@ -103,18 +87,29 @@ Agent 需要能访问 Server 的 HTTP 注册地址和 QUIC/UDP 地址。本机 D
 连接已有 PostgreSQL、Docker Compose、Helm 等其他部署方式，以及完整的配置、升级与备份说明见
 [部署指南](docs/deployment.md)。
 
+## 当前能力
+
+| 能力 | 已实现的主要链路 |
+| --- | --- |
+| 多集群接入 | 集群注册、Agent 状态、证书续期、撤销与重新接入 |
+| 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob |
+| 集群资源 | Node、Namespace、Pod、服务与路由、配置、存储、自动伸缩、策略 |
+| 日常运维 | Pod 日志、Web Terminal、临时访问、事件追踪、资源用量 |
+| 诊断与回滚 | 工作负载诊断、关联对象分析、版本回滚 |
+| 原生资源 | Discovery、CRD 资源浏览、YAML 编辑、多文档清单应用与删除 |
+| 多集群指标 | 集群内采集、经 Agent 回传、跨集群 CPU/内存与节点用量视图（默认启用） |
+| 权限模型 | Tenant、Project、RBAC 与细粒度操作权限 |
+| 安全与审计 | 敏感操作确认、DryRun 差异、并发身份保护、审计日志 |
+
+各项能力的具体边界和已知限制以 [Roadmap](docs/roadmap.md) 与功能文档为准。
+
 ## 架构
 
 每个接入集群部署一个 ZKE Agent。Agent 主动建立 QUIC/mTLS 长连接，ZKE Server 通过对应连接将查询和操作定域到目标集群。
+多集群指标复用同一条出向连接：集群内 vmagent 抓取后经 Agent 回传，Server 摄取时按连接身份写入 `zke_cluster_id`
+再存入 VictoriaMetrics。日志采集与 VictoriaLogs 仍在规划中，图中以虚线标注。
 
-```mermaid
-flowchart LR
-    User["平台用户"] -->|"HTTP / WebSocket"| Server["ZKE Server"]
-    AgentA["ZKE Agent A"] -->|"主动连接 · QUIC/mTLS"| Server
-    AgentB["ZKE Agent B"] -->|"主动连接 · QUIC/mTLS"| Server
-    AgentA <--> ClusterA["Kubernetes Cluster A"]
-    AgentB <--> ClusterB["Kubernetes Cluster B"]
-```
+![ZKE 架构：平台用户经 Server，Agent 从各集群主动出向连接，vmagent 采集指标经 Agent 回传至 VictoriaMetrics，日志链路规划中](docs/images/architecture.svg)
 
 - [系统架构](docs/architecture/overview.md)
 - [Server + Agent 架构](docs/architecture/server-agent.md)

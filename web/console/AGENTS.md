@@ -96,17 +96,17 @@ Dock 和品牌位是同一形状。
 
 ## 复用而不是重写
 
-| 需求 | 用这个 |
-| --- | --- |
-| 按钮 | `ui/button` 的 `Button`，不要裸 `<button>`（纯文字链接式点击除外，且必须挂 `zke-focus`） |
-| 勾选框 / 开关 | `Checkbox`、`Switch`，**绝不用原生 `<input type="checkbox">`**——它是页面上唯一不跟随主题的元素 |
-| 输入 / 下拉 | `Input`、`Textarea`、`NumericInput`；`Select` 系列，不要原生 `<select>` |
-| 表格 | `common/data-table` 的 `DataTable`，自带加载骨架、错误态、空态和两种分页 |
-| 加载 / 空 / 错误 | `common/state` 的 `LoadingState`、`EmptyState`、`ErrorState` |
-| 失败提示 | `common/notify` 的 `notifyFailure(动作, error)`，它带上服务端原因和请求 ID；不要裸 `toast.error()` |
-| 详情行 / 状态标记 | `common/detail`；`common/status` 的 `StatusBadge`、`RelativeTime`、`IdentifierLabel` |
-| 删除入口 | `common/delete-action` |
-| 密钥展示 | `common/secret-reveal` 的 `SecretReveal`。**任何一次性凭证都要走它**——Enrollment Token、安装命令、Pod 访问地址一律遮蔽后显示，不要用只读 `Input` 明文摆出来 |
+| 需求              | 用这个                                                                                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 按钮              | `ui/button` 的 `Button`，不要裸 `<button>`（纯文字链接式点击除外，且必须挂 `zke-focus`）                                                                    |
+| 勾选框 / 开关     | `Checkbox`、`Switch`，**绝不用原生 `<input type="checkbox">`**——它是页面上唯一不跟随主题的元素                                                              |
+| 输入 / 下拉       | `Input`、`Textarea`、`NumericInput`；`Select` 系列，不要原生 `<select>`                                                                                     |
+| 表格              | `common/data-table` 的 `DataTable`，自带加载骨架、错误态、空态和两种分页                                                                                    |
+| 加载 / 空 / 错误  | `common/state` 的 `LoadingState`、`EmptyState`、`ErrorState`                                                                                                |
+| 失败提示          | `common/notify` 的 `notifyFailure(动作, error)`，它带上服务端原因和请求 ID；不要裸 `toast.error()`                                                          |
+| 详情行 / 状态标记 | `common/detail`；`common/status` 的 `StatusBadge`、`RelativeTime`、`IdentifierLabel`                                                                        |
+| 删除入口          | `common/delete-action`                                                                                                                                      |
+| 密钥展示          | `common/secret-reveal` 的 `SecretReveal`。**任何一次性凭证都要走它**——Enrollment Token、安装命令、Pod 访问地址一律遮蔽后显示，不要用只读 `Input` 明文摆出来 |
 
 ## 数据、作用域与权限
 
