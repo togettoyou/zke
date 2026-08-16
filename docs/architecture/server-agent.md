@@ -18,9 +18,10 @@ ZKE Agent 负责：
 - 注册、身份 Secret、QUIC/mTLS 连接、心跳、重连和客户端证书续期；
 - 使用目标集群内的 Kubernetes 身份执行资源查询和操作；
 - 承载 Resource、Event Watch、Pod Logs、Pod Exec、Pod Port Forward 与独立终端会话 Stream；
+- 在集群内暴露指标摄取端点，安装或卸载集群内采集组件，并把采集到的指标批次经 Metrics Ingest Stream 回传；
 - 在本地再次校验请求类型、资源身份、正文上限和允许的 Subresource。
 
-多集群指标、日志和告警采集仍在规划中，不属于当前 Agent 数据面。
+指标是当前唯一已实现的可观测性数据面；多集群日志和告警仍在规划中。
 
 ## 连接与请求模型
 

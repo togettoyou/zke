@@ -792,8 +792,9 @@ Secret 中的 Listener CA 专门用于 QUIC/mTLS 长连接。特殊部署可用 
 两类地址和信任根相互独立，不应隐式派生或混用。配置文件不保存私钥与 Token 正文。
 
 Server 可按配置生成完整的 Agent 安装 Manifest，包括 Token/Trust Secret、ConfigMap、ServiceAccount、
-Role/RoleBinding 和 Deployment。仓库的 Helm Chart 用于部署 ZKE Server 与 PostgreSQL，不替代这份按目标
-Cluster 和一次性 Enrollment 动态生成的 Agent 资源包；资源包不创建 Service、PVC 或 identity Secret。
+Role/RoleBinding、Deployment 和指标摄取端点的 ClusterIP Service。仓库的 Helm Chart 用于部署 ZKE Server 与
+PostgreSQL，不替代这份按目标 Cluster 和一次性 Enrollment 动态生成的 Agent 资源包；资源包不创建 PVC 或
+identity Secret。
 
 Server 从持久目录加载或首次生成 Agent Client CA、Agent Listener CA 和
 Listener 身份。初始化由 PostgreSQL advisory lock 串行化，数据库保存证书指纹；已有数据库状态但文件丢失、
@@ -836,9 +837,10 @@ CI 环境必须提供该变量，不能跳过迁移、作用域约束、唯一�
 
 Server 和 Agent 各维护一份仓库 YAML 配置，并作为容器内默认配置。`--config` 文件只需包含待覆盖字段。Server YAML
 只保存数据库、监听器、超时、限流、资源边界、PKI 生命周期和 Agent 安装平台默认端点等启动及系统调优项。其他 Agent
-接入端点、Agent 镜像与拉取策略、Cluster Terminal 镜像与独立拉取策略、Cluster Terminal 会话存续时长保存在
+接入端点、Agent 镜像与拉取策略、Cluster Terminal 镜像与独立拉取策略、Cluster Terminal 会话存续时长、指标采集
+组件的镜像、拉取策略与资源请求/限制保存在
 PostgreSQL，由全局管理员通过 Console 的“平台配置”应用管理；该应用按全局管理员角色而非权限授权，与服务端
-`/api/v1/platform` 路由的 `RequireGlobalAdministrator` 一致，下设“端点”“镜像”“集群终端”三个菜单。
+`/api/v1/platform` 路由的 `RequireGlobalAdministrator` 一致，下设“端点”“镜像”“集群终端”“指标采集”四个菜单。
 平台默认端点由 YAML 或优先级更高的环境变量在 Server 启动时同步，Console 不允许修改、删除
 或重新指定；两项地址均未配置时使用本机回环预设，只配置其中一项时 Server 拒绝启动。切换到内置预设时，Server 会
 删除已被替代的部署端点，避免旧地址继续出现在端点列表和 Listener SAN 来源中。
@@ -938,7 +940,7 @@ Token、证书、Secret 或完整敏感请求正文。
 - 尚未定义受支持的 Kubernetes 版本与发行版矩阵。
 - 登录来源使用直接 TCP 对端地址，尚未提供可信反向代理来源配置。
 - Agent Client CA 与 Listener CA 尚不支持双信任窗口和无中断自动轮换。
-- 多集群指标、日志与告警平台仍处于规划阶段。
+- 可观测性只实现了多集群指标；每集群的样本速率与基数上限、日志与告警仍处于规划阶段。
 
 ## 参考资料
 

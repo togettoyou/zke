@@ -23,11 +23,7 @@ API Server；平台团队可以在统一入口中管理资源与工作负载，�
 >
 > 用户名 `view` / 密码 `LECQkqcp2tQ5Yh8`（只读账号，体验数据可能随时重置）
 
-<!-- TODO(hero)：用 10-15 秒的桌面交互动图替换下面这张静态截图，
-     建议内容为「打开 Dock → 进入集群管理 → 拉出终端窗口」，
-     文件放到 docs/images/product-preview/desktop-overview.gif -->
-
-![在 ZKE 桌面中管理集群并打开终端](docs/images/product-preview/cluster-terminal.png)
+![ZKE 桌面预览](docs/images/product-preview/desktop-overview.gif)
 
 ## 为什么选择 ZKE
 
@@ -75,7 +71,7 @@ API Server；平台团队可以在统一入口中管理资源与工作负载，�
 ## 快速开始
 
 ZKE Server 是单个二进制，内置 Console 静态资源，依赖 PostgreSQL、一个持久目录，以及启用多集群指标时的
-VictoriaMetrics。最快的方式是使用把三者打包在一起的 `zke-server-all` 镜像，无需任何前置准备：
+VictoriaMetrics。把三者打包在一起的 `zke-server-all` 镜像可以一条命令启动，无需任何前置准备：
 
 ```bash
 docker run -d --name zke \
@@ -89,51 +85,11 @@ docker run -d --name zke \
 启动后打开 <http://127.0.0.1:8080>，Console 会引导设置第一个全局管理员的用户名和密码。
 
 > **端口：** TCP `8080` 是 Console 与 API，TCP `8081` 是 Pod Access，UDP `8443` 接收 Agent 的 QUIC/mTLS 连接。
-> 所有部署方式使用同一组端口。
 >
 > **数据：** 请务必保留 `zke-data`，它保存 Server Managed PKI，丢失后已接入的 Agent 无法继续连接。
 >
 > **指标：** 多集群指标默认启用，接入集群后在「可观测性 → 采集接入」中安装采集组件即可看到曲线。
 > 用 `-e ZKE_OBSERVABILITY_METRICS_ENABLED=false` 关闭。
-
-<details>
-<summary><b>其他部署方式：已有 PostgreSQL、Docker Compose、Helm</b></summary>
-
-### Docker：连接已有 PostgreSQL
-
-已经有数据库时改用只包含 Server 的 `zke-server` 镜像，用 `-e ZKE_DATABASE_URL` 指定连接串。
-Server 启动时自动执行数据库迁移：
-
-```bash
-docker run -d --name zke \
-  -p 8080:8080 -p 8081:8081 -p 8443:8443/udp \
-  -v zke-data:/data \
-  -e ZKE_DATABASE_URL="postgres://zke:<password>@db.example.com:5432/zke?sslmode=disable" \
-  ghcr.io/togettoyou/zke-server:latest
-```
-
-### Docker Compose
-
-需要分别升级、备份和运维 Server、PostgreSQL 与指标存储时，使用仓库提供的 Compose 文件：
-
-```bash
-cd deploy/docker
-cp .env.example .env
-# 把 .env 中的 ZKE_POSTGRES_PASSWORD 换成随机密码，例如 openssl rand -hex 24
-docker compose up -d
-```
-
-### Helm
-
-`main` 分支的 OCI Chart 使用 `0.0.0-latest`；Git Tag 使用对应的语义化版本：
-
-```bash
-helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
-  --version 0.0.0-latest \
-  --namespace zke-system --create-namespace
-```
-
-</details>
 
 ### 接入第一个集群
 
@@ -142,8 +98,10 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
 3. 复制生成的 `curl | kubectl apply` 命令，在目标集群执行，即可部署 ZKE Agent。
 
 Agent 需要能访问 Server 的 HTTP 注册地址和 QUIC/UDP 地址。本机 Docker Desktop / OrbStack 集群可直接使用内置
-端点预设；跨主机或跨网络接入时，先在「平台配置」中添加目标集群可达的接入端点。完整步骤、外部数据库准备、
-升级与备份见[部署指南](docs/deployment.md)。
+端点预设；跨主机或跨网络接入时，先在「平台配置」中添加目标集群可达的接入端点。
+
+连接已有 PostgreSQL、Docker Compose、Helm 等其他部署方式，以及完整的配置、升级与备份说明见
+[部署指南](docs/deployment.md)。
 
 ## 架构
 

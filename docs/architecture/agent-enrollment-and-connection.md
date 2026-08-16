@@ -1,8 +1,8 @@
 # Agent 注册与连接
 
 本文说明当前 ZKE Agent 从首次注册到建立 QUIC/mTLS 长连接的完整流程、相关凭据和证书的职责，以及各步骤的必要性。
-内容以仓库现有实现为准；Phase 2 业务 Stream 传输内核、容器服务 Web 界面、ZKE Server 部署清单与 Helm Chart
-已经实现。Agent 首次安装仍由 Server 动态生成 Kubernetes Manifest。
+内容以仓库现有实现为准。Agent 首次安装由 Server 按目标 Cluster 和一次性 Enrollment 动态生成 Kubernetes
+Manifest。
 
 ## 1. 总体模型
 
@@ -180,41 +180,29 @@ Manifest 下载端点是 `GET /agent-install/v1/manifest`。Token 放在 Authori
 常见的 URL、访问日志和代理查询参数记录；端点只接受仍未消费、未撤销、未过期且作用域有效的 Enrollment。
 
 生成资源包括 Namespace、Enrollment Secret、包含 Listener CA（以及可选 Registration CA）的 Trust Secret、
-Agent ConfigMap、ServiceAccount、最小 Role/RoleBinding、Node、Namespace、Pod、Pod Logs、Kubernetes Event、工作负载、服务路由、ConfigMap、存储、自动伸缩与 Kubernetes 授权管理
-ClusterRole/ClusterRoleBinding 和单副本
-Deployment。不会创建 Kubernetes Service，
-因为 Agent 只主动出站连接；不会创建 PVC，因为长期身份由 `zke-agent-identity` Secret 持久化；也不会预创建
-或 `apply` 该 identity Secret，避免覆盖 Agent 已签发的身份。Enrollment Secret 默认保留；Agent 通过
-Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个 Secret。
+Agent ConfigMap、ServiceAccount、最小 Role/RoleBinding、覆盖当前后端能力的 ClusterRole/ClusterRoleBinding、
+单副本 Deployment，以及指标摄取端点使用的 ClusterIP Service。该 Service 只面向集群内的采集组件，因此没有
+Ingress、NodePort 或外部名称，并且无条件安装——后续启用指标只需要 Server 配置加 Console 中的一次操作，不必
+让每个集群重新应用一遍清单。Agent 与 Server 之间仍然只有主动出站连接。不会创建 PVC，因为长期身份由
+`zke-agent-identity` Secret 持久化；也不会预创建或 `apply` 该 identity Secret，避免覆盖 Agent 已签发的身份。
+Enrollment Secret 默认保留；Agent 通过 Kubernetes API 读取 Enrollment/Trust Secret，Deployment 不挂载这两个
+Secret。
 
-该默认 ClusterRole 满足 Node、Namespace、Pod、五类工作负载、Service、Ingress、Gateway、ConfigMap、PV、PVC、StorageClass、HorizontalPodAutoscaler、可选 VerticalPodAutoscaler/KEDA ScaledObject、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass、ServiceAccount、四类 RBAC 资源、Pod Logs 和 Kubernetes Event 当前后端能力。
-其中 `apiextensions.k8s.io/v1 customresourcedefinitions` 只授予 `get` 与 `list`，仅用于在 Discovery 目录中
-标记哪些资源来自 CRD，不包含定义或修改 CRD 的能力。Node、Namespace 和 Pod 的 `update` 用于完整 YAML 管理，Pod Logs 只增加 `pods/log` 的 `get`，Pod Exec
-只增加 `pods/exec` 的 `get/create`，Pod Port Forward 只增加 `pods/portforward` 的 `get/create`，Node Drain 只增加
-`pods/eviction` 的 `create`，Event 只增加
-`events` 的 `get/list/watch`。Eviction 仍需专用协议位、精确 GVR/Subresource 与 Pod UID precondition；Agent 的通用
-Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限；需要读取或变更更多内置资源、CRD 或 CR 时，安装方
-必须为同一 ServiceAccount 增加明确的最小 RBAC。
-不得为了使用通用接口直接绑定 `cluster-admin`。
+该默认 ClusterRole 覆盖当前后端已实现的资源：Node、Namespace、Pod、五类工作负载、Service、Ingress、
+Gateway、ConfigMap、Secret、PV、PVC、StorageClass、HorizontalPodAutoscaler、可选的 VerticalPodAutoscaler 与
+KEDA ScaledObject、五类策略对象、ServiceAccount 与四类 Kubernetes RBAC 资源。几项刻意收窄的授权：
+`apiextensions.k8s.io/v1 customresourcedefinitions` 只有 `get`、`list`，仅用于在 Discovery 目录中标记哪些资源
+来自 CRD；Pod Logs 只增加 `pods/log` 的 `get`，Pod Exec 只增加 `pods/exec` 的 `get/create`，Pod Port Forward
+只增加 `pods/portforward` 的 `get/create`，Node Drain 只增加 `pods/eviction` 的 `create`，Event 只增加
+`events` 的 `get/list/watch`，`nodes/metrics` 只有 `get` 且 Agent 自己从不抓取 kubelet——持有它只是因为
+Kubernetes 拒绝创建一个包含创建者本身没有的权限的 ClusterRole，而采集组件的角色正是这一条。RBAC 规则不包含
+`escalate`、`bind` 或 `impersonate`。Eviction 仍需专用协议位、精确 GVR/Subresource 与 Pod UID precondition；
+Agent 的通用 Discovery/CRUD 能力不会自动扩大其他 Kubernetes 权限。
 
-在 Kubernetes 授权管理后端上线前使用旧清单接入的集群不会自动获得新增权限；管理员需要增加
-`core/v1 serviceaccounts` 与 `rbac.authorization.k8s.io/v1 roles,clusterroles,rolebindings,clusterrolebindings`
-的 `get`、`list`、`create`、`update`、`delete`，且不应增加 `escalate`、`bind` 或 `impersonate`。在自动伸缩后端上线前使用旧清单接入的集群需要为同一 ClusterRole 增加
-`autoscaling/v2 horizontalpodautoscalers` 的 `get`、`list`、`create`、`update`、`delete`。在 VPA/KEDA 扩展
-上线前生成清单的集群，如需使用对应可选控制器，还需分别增加
-`autoscaling.k8s.io/v1 verticalpodautoscalers` 与 `keda.sh/v1alpha1 scaledobjects` 的
-`get`、`list`、`create`、`update`、`delete`；不使用这些控制器的集群无需安装 CRD，也无需额外授权。该规则不包含
-TriggerAuthentication 或 Secret 读取，KEDA 控制器使用自己的 ServiceAccount 解析认证引用。在存储后端上线前
-接入的集群还需增加
-`core/v1 persistentvolumes,persistentvolumeclaims` 与 `storage.k8s.io/v1 storageclasses` 的
-`get`、`list`、`create`、`update`、`delete`。在 ConfigMap 后端上线前接入的集群还需增加
-`core/v1 configmaps` 的相同权限。在策略管理后端上线前接入的集群需要增加
-`core/v1 resourcequotas,limitranges`、`policy/v1 poddisruptionbudgets`、
-`scheduling.k8s.io/v1 priorityclasses` 的 `get`、`list`、`create`、`update`、`delete`，并把
-`networking.k8s.io` 规则从 `ingresses` 扩展为 `ingresses,networkpolicies`。在资源对象浏览器上线前接入的集群
-还需增加 `apiextensions.k8s.io/v1 customresourcedefinitions` 的 `get`、`list`；缺少该权限时集群仍可正常浏览
-资源，只是无法判定哪些资源来自 CRD。更早的清单还需把 Node、Namespace 和
-Pod 的规则更新为包含 `update`；两种情况都无需扩大到通配资源或绑定 `cluster-admin`。
+安装清单每次由 Server 按当前能力生成，因此用较早版本清单接入的集群不会自动获得后续新增能力所需的权限，表现为
+对应功能返回权限错误。补齐方式是照当前版本生成的 `zke-agent` ClusterRole 更新该集群中的同名对象；需要读取或
+变更清单之外的内置资源、CRD 或 CR 时，同样由安装方为该 ServiceAccount 增加明确的最小 RBAC。任何情况下都不得
+为了省事绑定 `cluster-admin` 或扩大到通配资源。
 
 ## 4. Agent 首次注册
 

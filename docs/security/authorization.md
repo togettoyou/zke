@@ -1,6 +1,6 @@
 # 安全与权限
 
-ZKE 的安全模型仍在设计中，当前遵循以下原则：
+ZKE 的安全模型遵循以下原则：
 
 - **最小权限**：用户、服务与 Agent 只获得完成任务所需的权限。
 - **作用域明确**：所有查询和操作均关联租户、项目、集群及必要的 Namespace。
@@ -302,19 +302,20 @@ RoleBinding 是不可变授权关系，修改通过删除后重新创建完成�
 额外写入一条 `auth.account.lock_withheld` 审计事件，每轮攻击一次。代价是该账户的口令必须足够强——它在限流
 速率下可被持续尝试，因此最小口令长度要求同样适用于它。
 
-RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚合查询。固定资源权限包括
-`tenant.create`、`tenant.read`、`tenant.manage`、`project.create`、`project.read`、`project.manage`、
-`cluster.read`、`cluster.manage`、
-`cluster.enrollment.create`、`cluster.enrollment.read`、`cluster.enrollment.revoke` 和
-`cluster.connection.revoke`，以及通用 Kubernetes 写操作使用的 `cluster.resource.create`、
-`cluster.resource.update` 和 `cluster.resource.delete`，以及读取 Pod 日志使用的专用
-`cluster.pod.logs.read`、Web Terminal 使用的 `cluster.pod.exec`、终端输出录制使用的
-`cluster.pod.terminal_recording.create` 与 `cluster.pod.terminal_recording.read`，以及读取 Kubernetes Event 使用的
-`cluster.event.read`，以及目标集群 Kubernetes RBAC 使用的 `cluster.rbac.read`、`cluster.rbac.manage`，
-以及读写 Kubernetes Secret 使用的 `cluster.secret.read`、`cluster.secret.manage`，以及创建和删除
-Kubernetes Namespace 使用的 `cluster.namespace.manage`，以及独立终端 App 的入口权限
-`cluster.terminal.exec`，以及系统命名空间与 Agent 命名空间写操作使用的
-`cluster.system_namespace.manage`、`cluster.agent_namespace.manage`。
+RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚合查询。权限词表固定在 Server 代码中
+（`pkg/server/rbac`）并由 `GET /api/v1/permissions` 发布，当前分为以下几族，具体语义见本文各节：
+
+| 族 | 权限 |
+| --- | --- |
+| 组织与资源 | `tenant.create/read/manage`、`project.create/read/manage`、`cluster.read`、`cluster.manage` |
+| 集群接入 | `cluster.enrollment.create/read/revoke`、`cluster.connection.revoke` |
+| Kubernetes 资源 | `cluster.resource.create/update/delete` |
+| 命名空间 | `cluster.namespace.manage`、`cluster.system_namespace.manage`、`cluster.agent_namespace.manage` |
+| 敏感资源 | `cluster.secret.read/manage`、`cluster.rbac.read/manage`、`cluster.event.read` |
+| 节点与 Pod 操作 | `cluster.node.drain`、`cluster.pod.logs.read`、`cluster.pod.exec`、`cluster.pod.port_forward`、`cluster.pod.terminal_recording.create/read`、`cluster.terminal.exec` |
+| 可观测性 | `cluster.metrics.read`、`cluster.metrics.manage` |
+| 平台管理 | `user.read/manage`、`user.password.change`、`rbac.read/manage`、`audit.read` |
+
 所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。
@@ -333,8 +334,8 @@ DryRun 使用独立的 `.dry_run` 审计动作，不会与实际写入混记。
 
 普通 `cluster.resource.create/update/delete` 与 `cluster.namespace.manage` 不能单独修改系统命名空间。目标为
 `kube-*` 时，资源增删改和 Namespace 生命周期改用 `cluster.system_namespace.manage`；`default` 内的普通资源仍按
-通用资源权限管理，但创建、修改或删除 `default` Namespace 本身同样使用系统命名空间权限。目标为 Server 配置的
-目标 Cluster 保存的 Agent Namespace（首次接入界面默认 `zke-system`）时，资源和 Namespace 的增删改改用
+通用资源权限管理，但创建、修改或删除 `default` Namespace 本身同样使用系统命名空间权限。目标为该 Cluster
+保存的 Agent Namespace（首次接入界面默认 `zke-system`）时，资源和 Namespace 的增删改改用
 `cluster.agent_namespace.manage`。两项权限均可在 Global、Tenant 或 Project 作用域授予，内置 `admin` 由权限词表
 自动获得，其他角色不会因持有通用资源权限而自动获得。
 

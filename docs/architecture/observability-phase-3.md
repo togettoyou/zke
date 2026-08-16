@@ -7,16 +7,15 @@
 > 对应能力）、Agent 摄取端点与转发、Agent 侧采集组件安装与卸载、Server 摄取网关与作用域改写、存储写入、
 > 固定查询目录、权限词、审计事件，以及 Console 的「可观测性」应用都已落地。
 >
-> 已验证（三项都可复跑）：
+> 已验证，两项都可复跑：
 >
 > - 摄取网关与查询目录对着真实的 VictoriaMetrics v1.149.0 跑通——写入的样本可查回，集群侧伪造的
 >   `zke_cluster_id` 被替换为连接身份，六个具名查询都能在真实存储上执行
 >   （`ZKE_TEST_METRICS_STORAGE_URL=http://127.0.0.1:8428 go test ./pkg/server/metricsingest ./pkg/server/metricsquery`）；
 > - Agent 在真实集群中安装采集组件：Deployment 被 API Server 接受、vmagent 启动并就绪，卸载后包括凭证在内
 >   的对象全部消失（`ZKE_LIVE_KUBERNETES_E2E=1 go test ./pkg/agent -run LiveMetricsCollector`）。这一步抓出了
->   替身客户端抓不到的缺陷：vmagent 不接受 Kubernetes 的 `512Mi` 写法，缓冲上限必须换算成字节；
-> - Agent 的 ClusterRole 必须持有 `nodes/metrics` 才能授予它：缺少该权限时 Kubernetes 以
->   `attempting to grant RBAC permissions not currently held` 拒绝创建采集组件的 ClusterRole。
+>   替身客户端抓不到的两件事：vmagent 不接受 Kubernetes 的 `512Mi` 写法，缓冲上限必须换算成字节；Agent 的
+>   ClusterRole 必须自己持有 `nodes/metrics` 才能把它授予采集组件。
 >
 > 尚未验证：完整链路（真实集群里的 vmagent → Agent 摄取端点 → Server → 存储 → Console）没有在同一次运行中
 > 端到端跑过——上面的集群内安装是在 Agent 运行于集群外的条件下做的，此时摄取 Service 没有 Endpoint。

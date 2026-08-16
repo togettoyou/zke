@@ -2,167 +2,53 @@
 
 容器服务是单集群应用。用户进入应用时需要先选择一个 Kubernetes 集群，进入后所有页面和操作均作用于当前集群。
 
-当前已完成 Node、Pod、Service、Ingress、Gateway、ConfigMap、PersistentVolume、PersistentVolumeClaim、StorageClass、HorizontalPodAutoscaler，以及可选的 VerticalPodAutoscaler 与 KEDA ScaledObject、
-五类策略对象与 Kubernetes RBAC
-类型化接口、Namespace 管理闭环、五类工作负载类型化后端管理和通用主资源 CRUD 底座：
+## 已实现的能力
 
-- `GET /api/v1/clusters/{cluster_id}/overview`：聚合 Node、Namespace、Pod、PersistentVolume、
-  PersistentVolumeClaim 和五类工作负载的状态计数，Node 的 kubelet 版本分布，以及 Node 容量/可分配量、
-  非终态 Pod 请求量与卷容量总量；
-- `GET /api/v1/clusters/{cluster_id}/nodes`：支持 `limit`、Kubernetes continuation token、Label Selector 和
-  Field Selector；
-- `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}`：返回 Node 状态、容量、地址、标签、污点、条件和
-  Node System Info；
-- `GET /api/v1/clusters/{cluster_id}/metrics/nodes` 和
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/metrics/pods`：通过目标 Cluster Agent 读取
-  `metrics.k8s.io/v1beta1`，分别提供与 `kubectl top node`、`kubectl top pod` 同口径的 Node 以及明确
-  Namespace 内 Pod 的实时 CPU/内存用量；Pod 数值为各容器用量之和；
-- `GET /api/v1/clusters/{cluster_id}/namespaces` 和
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}`：返回 Namespace 列表与详情；
-- `POST /api/v1/clusters/{cluster_id}/namespaces` 和
-  `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}`：执行带 DryRun、确认、幂等键与
-  UID/resourceVersion 删除前置条件的 Namespace 创建和删除；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}` 和
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
-  按明确 Cluster、Namespace 和工作负载类型查询 Deployment、StatefulSet、DaemonSet、Job 或 CronJob 的稳定
-  摘要与详情；列表支持 Kubernetes continuation token、Label Selector 和 Field Selector；
-- `POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}`：使用稳定的
-  容器模板和类型专属字段创建上述五类工作负载，支持 DryRun、显式确认、幂等和审计；
-- `PUT /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
-  用与创建同形的类型化表单更新上述五类工作负载。请求携带的字段替换对象上的对应部分，表单未建模的字段由
-  Server 从当前对象保留；强制要求 UID 与 resourceVersion 前置条件；
-- 工作负载详情作用域下的 `scale`、`restart`、`suspend` 和 `resume` 动作：分别支持
-  Deployment/StatefulSet 伸缩，Deployment/StatefulSet/DaemonSet 滚动重启，以及 CronJob 暂停和恢复；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/revisions`：
-  返回 Deployment、StatefulSet 或 DaemonSet 记录的历史 Pod 模板，按修订号从新到旧排列，
-  并标记哪一条就是当前运行的模板；Job 与 CronJob 返回 `400 workload_revisions_unsupported`；
-- `POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/rollback`：
-  把上述三类工作负载回滚到指定修订记录的 Pod 模板，强制要求 UID 与 resourceVersion 前置条件，
-  目标修订就是当前模板时返回 `409 workload_revision_unchanged`；
-- `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}`：
-  删除上述五类工作负载，并强制要求 UID 删除前置条件；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}` 和
-  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}`：
-  按明确 Cluster、Namespace 和 `services`、`ingresses` 或 `gateways` 类型管理 Service、Ingress 与 Gateway；
-  列表支持 Kubernetes continuation token、Label Selector 和 Field Selector，写操作沿用 DryRun、确认、幂等、
-  UID/resourceVersion 前置条件与审计链路；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps` 和
-  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps/{config_map_name}`：
-  固定管理 `core/v1 ConfigMap`；列表仅返回键名和大小统计，详情返回完整 `data` 与标准 Base64
-  `binary_data`，写操作包含 1 MiB 内容校验、immutable 保护、DryRun、确认、幂等、UID/resourceVersion
-  并发保护与审计；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets` 和
-  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/secrets/{secret_name}`：
-  固定管理 `core/v1 Secret`；读取要求 `cluster.secret.read`，写入要求 `cluster.secret.manage`，
-  两者都不由 `cluster.read` 或 `cluster.resource.*` 蕴含；列表只返回键名、大小、类型和元数据，
-  取值仅由单对象详情返回；ZKE 标记的 Secret 也由独立权限控制，不再按对象永久禁用；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/storage/{storage_resource}` 和对应单对象
-  `GET`、`PUT`、`DELETE`：固定管理集群级 `persistentvolumes` 或 `storageclasses`；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/persistentvolumeclaims` 和对应
-  单对象 `GET`、`PUT`、`DELETE`：固定在明确 Namespace 管理 PVC；三类存储资源列表均支持 Kubernetes
-  continuation token 和 Selector，写操作沿用 DryRun、确认、幂等、UID/resourceVersion 与审计；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers` 和
-  对应单对象 `GET`、`PUT`、`DELETE`：固定管理 `autoscaling/v2 HorizontalPodAutoscaler`；类型化创建和更新
-  只接受同一 Namespace 中的 Deployment/StatefulSet，以及 Resource/ContainerResource 指标和伸缩行为；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/metrics-trend`：
-  从 HPA status 采样当前指标和副本数，返回 Server 进程内最近一小时、最多 240 点的轻量趋势；每个 HPA 至少间隔
-  5 秒采样，Console 每 15 秒刷新，Server 重启会清空这段运行时历史；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/verticalpodautoscalers` 与
-  对应单对象 `GET`、`PUT`、`DELETE`：类型化管理可选的 `autoscaling.k8s.io/v1 VerticalPodAutoscaler`，支持
-  Deployment、StatefulSet、DaemonSet 目标、明确的更新模式、容器资源边界、建议值和 Condition；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/scaledobjects` 与对应
-  单对象 `GET`、`PUT`、`DELETE`：类型化管理可选的 `keda.sh/v1alpha1 ScaledObject`，支持 Deployment、
-  StatefulSet 目标、副本区间、轮询/冷却时间、触发器、认证引用和控制器状态；VPA/KEDA CRD 未安装时列表以
-  `available=false` 返回，不把可选组件缺失显示成容器服务故障；
-- 集群级 `/authorization/{authorization_resource}` 与命名空间级
-  `/namespaces/{namespace_name}/authorization/{authorization_resource}` 提供 ServiceAccount、Role、ClusterRole、
-  RoleBinding、ClusterRoleBinding 的类型化 List/Detail/Create/Update/Delete；读取和写入分别要求独立的
-  `cluster.rbac.read` 与 `cluster.rbac.manage`；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods` 和
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：按明确 Cluster 和
-  Namespace 返回 Pod 稳定摘要与详情，列表支持 Kubernetes continuation token、Label Selector 和
-  Field Selector；
-- `DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}`：删除明确作用域内的
-  Pod，强制要求 UID 前置条件，并支持 DryRun、显式确认、幂等、删除传播策略和审计；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe`、
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/describe`、
-  `GET /api/v1/clusters/{cluster_id}/nodes/{node_name}/describe`、
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/networking/{network_resource}/{network_name}/describe`、
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/storage/{storage_resource}/{storage_name}/describe`、
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/autoscaling/horizontalpodautoscalers/{hpa_name}/describe`、
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}/describe`
-  和 `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/describe`：在一次请求内返回对象、
-  只属于该对象的 Kubernetes Event 快照，以及由两者共同支持的诊断结论；工作负载还会沿 owner 链返回它拥有的
-  控制器、Pod、Pod 模板引用的 PVC 及各自的结论，Node 还会返回已分配的非终止 Pod 与 requests 汇总，Service
-  会返回 EndpointSlice 端点统计和 selector 匹配的后端 Pod，Ingress 会返回所引用 Service、端口与端点状态，HPA
-  会返回控制器 Condition 与已知类型化伸缩目标的状态，ResourceQuota 与 PodDisruptionBudget 会返回额度或中断
-  保护状态；这些接口
-  都要求同时持有 `cluster.read` 与
-  `cluster.event.read`，Event 读取写入与 Event 流一致的审计记录；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/logs`：要求当前 Pod UID、
-  明确容器和专用 `cluster.pod.logs.read` 权限，支持默认最近 200 行的有界快照以及 `follow=true` 实时流；
-- `POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions`：要求当前
-  Pod UID、明确容器、`cluster.pod.exec`、CSRF、幂等键和显式确认，创建与用户及登录 Session 绑定的一次性票据；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-sessions/{session_id}`：
-  通过同源 `zke.pod-exec.v1` WebSocket 传输 stdin、stdout、stderr、resize 和 exit 帧；
-- `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings` 与
-  `GET /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/terminal-recordings/{recording_id}`：
-  使用独立 `cluster.pod.terminal_recording.read` 权限列出和读取显式选择录制的终端输出；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}` 与
-  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/policies/{policy_resource}/{policy_name}`：
-  ResourceQuota、LimitRange、NetworkPolicy 和 PodDisruptionBudget 的类型化 CRUD；
-- `GET`、`POST /api/v1/clusters/{cluster_id}/policies/{policy_resource}` 与
-  `GET`、`PUT`、`DELETE /api/v1/clusters/{cluster_id}/policies/{policy_resource}/{policy_name}`：
-  集群级 PriorityClass 的类型化 CRUD，命名空间级与集群级互相拒绝对方的作用域；
-- `GET /api/v1/clusters/{cluster_id}/kubernetes/resource-types`：返回目标 Cluster 当前 Discovery 可见的
-  内置资源和 CRD 资源目录，并逐条标记该资源是否由 CustomResourceDefinition 提供；Kubernetes Discovery
-  本身不携带这一事实，Agent 需要另外读取 CRD 列表，读不到时目录用 `custom_resources_known=false`
-  说明该判定不可用，而不是把所有资源当成内置资源；
-- `GET /api/v1/clusters/{cluster_id}/kubernetes/resources`：按 GVR、Namespace、Selector 和 Kubernetes
-  continuation token 查询任意已授权主资源；
-- `GET /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}`：按 GVR、Namespace 和名称读取
-  完整对象；
-- `POST /api/v1/clusters/{cluster_id}/kubernetes/resources`：创建具名主资源；
-- `PUT`、`PATCH`、`DELETE /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}`：
-  更新、四类 Patch 或删除具名主资源；
-- `GET`、`PUT /api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}/yaml`：读取或更新
-  单个主资源的完整 YAML；读取要求 `cluster.read`，更新要求 `cluster.resource.update`、CSRF 和幂等键；
-- `POST /api/v1/clusters/{cluster_id}/kubernetes/manifests/apply` 与 `.../manifests/delete`：以多文档 YAML
-  清单批量应用或删除对象，等价于 `kubectl apply -f` 与 `kubectl delete -f`；正文为 `application/yaml`，
-  最大 4 MiB 且文档数量有上限，要求 CSRF 与幂等键；`dry_run=true` 仅执行预检，实际执行要求 `confirm=true`；
-  所需权限由正文逐文档判定而不是由路由决定，见下文；
-- 只读接口要求 Session 和目标 Cluster 的 `cluster.read` 权限，每个请求通过独立 QUIC Resource Stream
-  交给该 Cluster 的 Agent；
-- 写接口另外要求 CSRF、`cluster.resource.create`、`cluster.resource.update` 或
-  `cluster.resource.delete`、16 至 128 字符幂等键，以及实际变更的显式确认；
-- Agent 使用 Kubernetes dynamic client，只接受 Discovery 声明且作用域、Verb 匹配的主资源 CRUD；
-  Discovery 策略缓存有 TTL 和条目上限，Secret 和 Subresource 明确拒绝；Kubernetes 授权资源只能使用专用
-  `/authorization` API，不能借通用 Resource/YAML API 绕过专用权限；Secret 与授权五类各有独立的 YAML
-  路由，见下文，它们不放宽通用接口的拒绝，而是挂在各自的权限上；Namespace 的读写也可走通用接口，但写操作
-  按实际目标改用普通、系统或 Agent Namespace 独立权限，见下文；
-- 支持 DryRun、JSON Patch、JSON Merge Patch、Strategic Merge Patch、Server-Side Apply、
-  删除传播策略和 UID/resourceVersion 前置条件；Apply 默认 `force=false`；
-- YAML 更新仅接受不超过 4 MiB 的 `application/yaml` 单文档，不接受 Alias、Anchor、重复字段或
-  YAML-only 类型；Server 在更新前核对 URL/GVR/Namespace 与 `apiVersion`、`kind`、名称、UID 和
-  `resourceVersion`，DryRun 无需确认，实际写入要求 `confirm=true`。成功响应仍为 `application/yaml`，
-  错误使用统一 JSON 信封；审计不记录 YAML 正文；
+具体路由、请求与响应结构以 [Server OpenAPI 3.1 契约](../../api/openapi/zke-server.v1.yaml)为准，本文不重复
+维护端点清单；权限语义见[安全与权限](../security/authorization.md)。
+
+| 能力 | 当前范围 |
+| --- | --- |
+| 集群概览 | Node、Namespace、Pod、PV、PVC 与五类工作负载的状态计数、kubelet 版本分布、容量与 requests 汇总 |
+| 节点 | List/Detail、停止与恢复调度、Drain、诊断 |
+| 命名空间 | List/Detail/Create/Delete 与配额管理 |
+| 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob 的类型化 CRUD、伸缩、滚动重启、CronJob 暂停与恢复、修订历史与回滚 |
+| Pod | List/Detail/Delete、日志、Web Terminal 与输出录制、Pod Access、诊断 |
+| 资源用量 | 经 Agent 读取 `metrics.k8s.io/v1beta1` 的 Node 与 Pod 实时用量 |
+| 服务与路由 | Service、Ingress、Gateway 与五种 Gateway API Route |
+| 配置管理 | ConfigMap 与 Secret，Secret 使用独立权限和专用路由 |
+| 存储 | PersistentVolume、PersistentVolumeClaim、StorageClass |
+| 自动伸缩 | HorizontalPodAutoscaler，以及可选的 VerticalPodAutoscaler 与 KEDA ScaledObject |
+| 策略管理 | ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass |
+| 授权管理 | ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding，使用独立的 `cluster.rbac.*` |
+| 资源对象浏览器 | Discovery 目录与任意已授权主资源的 List/Get/YAML/Delete |
+| YAML 清单 | 多文档清单的 DryRun、逐文档判权、Server-Side Apply 与删除 |
+| 事件 | 按 Namespace 的 Event 快照与实时 Follow，使用独立的 `cluster.event.read` |
+
+统一的执行边界：
+
+- 只读接口要求 Session 和目标 Cluster 的 `cluster.read`，每个请求通过独立 QUIC Resource Stream 交给该 Cluster
+  的 Agent；
+- 写接口另外要求 CSRF、`cluster.resource.create/update/delete` 或对应资源家族的专用权限、16 至 128 字符幂等键，
+  以及实际变更的显式确认；类型化接口固定 GVR、Namespace 与 Verb，不接受调用方覆盖；
+- 支持 DryRun、JSON Patch、JSON Merge Patch、Strategic Merge Patch、Server-Side Apply、删除传播策略和
+  UID/resourceVersion 前置条件；Apply 默认 `force=false`；
+- Agent 使用 Kubernetes dynamic client，只接受 Discovery 声明且作用域、Verb 匹配的主资源 CRUD；Discovery 策略
+  缓存有 TTL 和条目上限。Secret、Kubernetes Event 与五类 Kubernetes 授权资源不经通用 Resource/YAML 入口，各有
+  自己的路由和权限；Namespace 的写操作按实际目标改用普通、系统或 Agent Namespace 独立权限；
+- YAML 更新只接受不超过 4 MiB 的 `application/yaml` 单文档，不接受 Alias、Anchor、重复字段或 YAML-only 类型；
+  Server 在更新前核对 URL/GVR/Namespace 与 `apiVersion`、`kind`、名称、UID 和 `resourceVersion`。成功响应仍为
+  `application/yaml`，错误使用统一 JSON 信封；审计不记录 YAML 正文；
 - Agent 使用跨 QUIC 重连存活的有界重放缓存抑制同一幂等键重复执行，同键不同请求返回冲突；只有可能改变集群
   状态的结果会占用幂等键：DryRun 与 Kubernetes 以 4xx 拒绝的写入都没有落地，因此不占用，被拒绝后改正内容
   再次提交是一次新请求而不是冲突；5xx、超时和取消这些 Agent 无法判定结果的失败仍然占用该键，那正是重放缓存
   存在的场合；
-- 安装 Manifest 为 Agent ServiceAccount 增加 `metrics.k8s.io` NodeMetrics/PodMetrics 的只读 `get`、`list`，
-  Core Node 的 `get`、`list`、`update`、`patch`，Namespace 的
-  `get`、`list`、`create`、`update`、`delete`，Pod 的 `get`、`list`、`update`、`delete`，以及 Deployment、StatefulSet、
-  DaemonSet、Job、CronJob、Service、Ingress 和 Gateway 的完整主资源 CRUD 权限，以及 ConfigMap、PV、PVC、
-  StorageClass、HorizontalPodAutoscaler、ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、
-  PriorityClass、ServiceAccount 及四类 Kubernetes RBAC 资源的
-  `get`、`list`、`create`、`update`、`delete`，`apps/v1 replicasets` 与 `apps/v1 controllerrevisions` 的只读
-  `get`、`list`（工作负载修订历史的来源；回滚写回的是工作负载本身，不需要创建、修改或清理修订对象），
-  Secret 的同五个动词（不含 `watch`；Agent 只在专用 Secret 接口的
-  请求上、且目标不是自身命名空间时才会执行），`apiextensions.k8s.io/v1 customresourcedefinitions` 的只读
-  `get`、`list`（仅用于判定哪些资源来自 CRD，不含定义或修改 CRD 的能力），并单独授予 `pods/log` 的 `get`
-  和 `pods/exec` 的 `get/create`、`pods/eviction` 的 `create`；后者只能经专用 Drain 接口与 Agent 的精确 allowlist 使用，
-  其他资源也需安装方显式增加最小 RBAC。
+- Agent ServiceAccount 的最小 RBAC 由安装清单生成，覆盖上表中的资源；管理清单之外的内置资源、CRD 或 CR 需要
+  安装方显式扩展该 ServiceAccount，详见[Agent 注册与连接](../architecture/agent-enrollment-and-connection.md)。
+
+## 后端与 Console 行为
+
+下面按资源类别记录各能力的边界、取舍与界面约定。
 
 Node 列表当前通过 Resource Stream 传输完整 Kubernetes 对象，再由 Server 转换成稳定的精简响应；Table
 表示尚未实现。
