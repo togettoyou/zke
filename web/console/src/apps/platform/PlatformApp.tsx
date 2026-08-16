@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Container, Network, Plus, SquareTerminal } from "lucide-react";
+import { Activity, Container, Network, Plus, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -41,6 +41,11 @@ const NAV: AppNavItem[] = [
   { id: "endpoints", label: "端点", icon: Network },
   { id: "images", label: "镜像", icon: Container },
   { id: "cluster-terminal", label: "集群终端", icon: SquareTerminal },
+  // Its own section rather than two more fields under 镜像: the collector is a
+  // workload ZKE installs into somebody else's Cluster, so what it may take
+  // from that Cluster is the decision being made here, and an image field is
+  // only one part of it.
+  { id: "metrics-collection", label: "指标采集", icon: Activity },
 ];
 
 const PULL_POLICIES = ["Always", "IfNotPresent", "Never"] as const;
@@ -116,6 +121,9 @@ export function PlatformApp(_props: AppComponentProps) {
             {section === "cluster-terminal" ? (
               <ClusterTerminalSection settings={settings} onChange={setDraft} />
             ) : null}
+            {section === "metrics-collection" ? (
+              <MetricsCollectionSection settings={settings} onChange={setDraft} />
+            ) : null}
             {section === "endpoints" ? null : (
               <SaveRow pending={updateSettings.isPending} onSave={() => save(settings)} />
             )}
@@ -127,12 +135,13 @@ export function PlatformApp(_props: AppComponentProps) {
 }
 
 /**
- * One save button, shown on both settings sections.
+ * One save button, shown on every settings section.
  *
- * Images and the Cluster Terminal lifetime are columns of a single row guarded
- * by one revision, so a save from either section writes both. Saying so under
- * the button keeps that from being a surprise: an operator who edited an image
- * and then switched sections has not left the edit behind.
+ * Images, the Cluster Terminal lifetime and the collector's budget are columns
+ * of a single row guarded by one revision, so a save from any section writes
+ * all of them. Saying so under the button keeps that from being a surprise: an
+ * operator who edited an image and then switched sections has not left the edit
+ * behind.
  */
 function SaveRow({ pending, onSave }: { pending: boolean; onSave: () => void }) {
   return (
@@ -140,7 +149,7 @@ function SaveRow({ pending, onSave }: { pending: boolean; onSave: () => void }) 
       <Button variant="primary" className="justify-self-start" disabled={pending} onClick={onSave}>
         {pending ? "保存中…" : "保存平台配置"}
       </Button>
-      <FieldHint>镜像与集群终端属于同一份平台配置，保存会一并写入两处的改动。</FieldHint>
+      <FieldHint>镜像、集群终端与指标采集属于同一份平台配置，保存会一并写入各处的改动。</FieldHint>
     </div>
   );
 }
@@ -157,7 +166,7 @@ function ImagesSection({
       <h3 className="text-foreground mb-1 text-[13px] font-semibold">镜像与拉取策略</h3>
       <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
         Agent 镜像在创建接入凭证时复制为不可变快照，后续修改不影响已签发的凭证。Cluster Terminal
-        镜像在创建新会话时读取，修改后立即对下一个会话生效。
+        镜像在创建新会话时读取，修改后立即对下一个会话生效。指标采集组件的镜像在「指标采集」中配置。
       </p>
       <div className="grid gap-3">
         <div className="grid gap-1.5">
@@ -188,6 +197,124 @@ function ImagesSection({
         />
       </div>
     </section>
+  );
+}
+
+/**
+ * What the metrics collector is, and how much of a Cluster it may take.
+ *
+ * The budget is here rather than in the Server's configuration file for the
+ * same reason the image is: collection is enabled per Cluster long after the
+ * Server started, and the Clusters are not all the same size.
+ *
+ * An empty field is a real answer — Kubernetes has no spelling for "no limit"
+ * other than leaving the entry off the container — so nothing here fills a
+ * blank back in on the operator's behalf.
+ */
+function MetricsCollectionSection({
+  settings,
+  onChange,
+}: {
+  settings: PlatformSettings;
+  onChange: (next: PlatformSettings) => void;
+}) {
+  return (
+    <section>
+      <h3 className="text-foreground mb-1 text-[13px] font-semibold">指标采集组件</h3>
+      <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
+        采集组件由目标集群的 Agent 装进它自己的 Agent Namespace。这里的取值在安装时读取，
+        修改后对下一次安装生效；已安装的集群需要在「可观测性 → 采集接入」中重新安装才会更换。
+      </p>
+      <div className="grid gap-3">
+        <div className="grid gap-1.5">
+          <Label htmlFor="metrics-collector-image">镜像</Label>
+          <Input
+            id="metrics-collector-image"
+            value={settings.metrics_collector_image}
+            onChange={(event) =>
+              onChange({ ...settings, metrics_collector_image: event.target.value })
+            }
+          />
+        </div>
+        <PullPolicySelect
+          label="拉取策略"
+          value={settings.metrics_collector_image_pull_policy}
+          onChange={(value) =>
+            onChange({ ...settings, metrics_collector_image_pull_policy: value })
+          }
+        />
+        <div className="grid gap-1.5">
+          <h4 className="text-foreground mt-2 text-[13px] font-semibold">资源请求与限制</h4>
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            Kubernetes 数量，例如 <code className="zke-mono">500m</code>、
+            <code className="zke-mono">512Mi</code>。留空表示不在容器上设置该项：限制留空意味着
+            采集组件只受目标 Namespace 自身的 LimitRange 约束。
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <QuantityField
+            id="metrics-collector-cpu-request"
+            label="CPU 请求"
+            placeholder="50m"
+            value={settings.metrics_collector_cpu_request}
+            onChange={(value) => onChange({ ...settings, metrics_collector_cpu_request: value })}
+          />
+          <QuantityField
+            id="metrics-collector-cpu-limit"
+            label="CPU 限制"
+            placeholder="500m"
+            value={settings.metrics_collector_cpu_limit}
+            onChange={(value) => onChange({ ...settings, metrics_collector_cpu_limit: value })}
+          />
+          <QuantityField
+            id="metrics-collector-memory-request"
+            label="内存请求"
+            placeholder="128Mi"
+            value={settings.metrics_collector_memory_request}
+            onChange={(value) => onChange({ ...settings, metrics_collector_memory_request: value })}
+          />
+          <QuantityField
+            id="metrics-collector-memory-limit"
+            label="内存限制"
+            placeholder="512Mi"
+            value={settings.metrics_collector_memory_limit}
+            onChange={(value) => onChange({ ...settings, metrics_collector_memory_limit: value })}
+          />
+        </div>
+        <FieldHint>
+          限制不能低于对应的请求；采集组件的磁盘缓冲区大小仍由 Server 配置文件中的
+          <code className="zke-mono"> observability.metrics.collector_buffer_size </code>
+          决定。
+        </FieldHint>
+      </div>
+    </section>
+  );
+}
+
+function QuantityField({
+  id,
+  label,
+  placeholder,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid content-start gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        className="zke-mono"
+        placeholder={placeholder}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
   );
 }
 

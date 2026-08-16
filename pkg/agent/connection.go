@@ -190,6 +190,12 @@ func runConnection(
 	if services.terminalSessionHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityTerminalSessionV1)
 	}
+	if services.metricsForwarder != nil {
+		capabilities = append(capabilities, agentprotocol.CapabilityMetricsIngestV1)
+	}
+	if services.metricsCollectorHandler != nil {
+		capabilities = append(capabilities, agentprotocol.CapabilityMetricsCollectorV1)
+	}
 	if err := agentprotocol.WriteFrame(controlStream, &agentv1.ControlFrame{
 		ProtocolVersion: agentprotocol.ProtocolVersion,
 		Message: &agentv1.ControlFrame_ClientHello{
@@ -257,6 +263,19 @@ func runConnection(
 		serverSupportsCapability(serverHello, agentprotocol.CapabilityTerminalSessionV1)
 	if !terminalSessionSupported {
 		services.terminalSessionHandler = nil
+	}
+	metricsCollectorSupported := services.metricsCollectorHandler != nil &&
+		serverSupportsCapability(serverHello, agentprotocol.CapabilityMetricsCollectorV1)
+	if !metricsCollectorSupported {
+		services.metricsCollectorHandler = nil
+	}
+	// A Server that does not accept metrics leaves the forwarder detached, so
+	// the collector is told immediately that there is nowhere to send data
+	// rather than having each batch refused on an open Stream.
+	if services.metricsForwarder != nil &&
+		serverSupportsCapability(serverHello, agentprotocol.CapabilityMetricsIngestV1) {
+		services.metricsForwarder.attach(connection)
+		defer services.metricsForwarder.detach()
 	}
 	businessServer, err := newBusinessStreamServer(
 		cfg,

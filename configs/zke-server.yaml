@@ -186,5 +186,59 @@ agent_listener:
   # Cluster churn cannot grow the Server heap without bound.
   max_remembered_disconnects: 4096
 
+# Multi-cluster metrics. A Server with them disabled never offers metrics
+# ingest to an Agent, so a Cluster learns at handshake time that there is
+# nowhere to send data. Enabling them needs a VictoriaMetrics the Server can
+# reach; only the Server talks to it, it is never proxied to a browser.
+observability:
+  metrics:
+    # On by default, matching the deployments that ship storage beside the
+    # Server: the all-in-one image, Docker Compose and the Helm Chart. Each
+    # points the two URLs below at its own storage. A deployment with none must
+    # set this to false rather than leave it aimed at an address nothing
+    # answers on.
+    enabled: true
+    storage_write_url: http://127.0.0.1:8428/api/v1/write
+    storage_write_timeout: 30s
+    # Query base on the same backend. Separate from the write endpoint because
+    # some deployments put the two behind different addresses.
+    storage_query_url: http://127.0.0.1:8428/prometheus
+    storage_query_timeout: 30s
+    # A query covering more Clusters than this is refused rather than narrowed,
+    # so nobody reads a partial view as a complete one.
+    max_query_clusters: 200
+    max_query_points: 1500
+    max_query_series: 500
+    max_query_range: 168h
+    min_query_step: 15s
+    # One long-lived Stream per collecting Agent, opened by the Agent.
+    ingest_session_timeout: 30m
+    max_batch_bytes: 4194304
+    max_ingest_streams: 512
+    # Decompressed size is checked from the snappy header before a buffer that
+    # large is allocated. It must not be below max_batch_bytes.
+    max_decompressed_batch_bytes: 33554432
+    max_series_per_batch: 50000
+    max_samples_per_batch: 200000
+    max_labels_per_series: 64
+    max_label_name_bytes: 128
+    max_label_value_bytes: 1024
+    # Samples outside this window are refused: future timestamps corrupt range
+    # queries, and very old ones may fall outside the retention window anyway.
+    max_sample_age: 24h
+    max_sample_future: 10m
+    # The collector image, its pull policy and its CPU and memory requests and
+    # limits are platform settings, not configuration file entries: collection
+    # is enabled per Cluster long after the Server started, so changing them
+    # must not need a restart. They are managed in the Console under
+    # 平台配置 → 指标采集.
+    #
+    # Disk the collector may use to buffer while the Agent is unreachable. This
+    # is the only durable buffer in the pipeline.
+    collector_buffer_size: 1Gi
+    scrape_interval: 30s
+    # The port the kubelet serves /metrics/resource on.
+    kubelet_metrics_port: 10250
+
 shutdown_timeout: 10s
 log_level: info

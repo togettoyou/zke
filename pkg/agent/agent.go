@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/togettoyou/zke/pkg/shared/buildinfo"
@@ -97,6 +98,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		slog.Time("certificate_expires_at", identity.CertificateExpiresAt),
 	)
 	go runTerminalSessionJanitor(ctx, kubernetesClient, cfg.IdentityNamespace, logger)
+	metricsForwarder := startMetricsIngest(ctx, cfg, kubernetesClient, logger)
 	startupID, err := identifier.NewUUID()
 	if err != nil {
 		return fmt.Errorf("generate Agent startup identifier: %w", err)
@@ -121,10 +123,64 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			podPortForwardHandler:  newKubernetesPodPortForwardHandler(kubernetesClient, kubernetesConfig),
 			resourceWatchHandler:   newKubernetesResourceWatchHandler(kubernetesClient),
 			terminalSessionHandler: newKubernetesTerminalSessionHandler(kubernetesClient, cfg.IdentityNamespace),
+			metricsForwarder:       metricsForwarder,
+			metricsCollectorHandler: newKubernetesMetricsCollectorHandler(
+				kubernetesClient,
+				collectorPlacement{
+					Namespace:     cfg.IdentityNamespace,
+					AdvertisedURL: cfg.MetricsIngest.AdvertisedURL,
+					// The variable every Pod gets and nothing else does. It is
+					// what client-go itself reads to decide the same question.
+					InCluster: os.Getenv("KUBERNETES_SERVICE_HOST") != "",
+				},
+			),
 		},
 	)
 	logger.Info("agent stopped")
 	return err
+}
+
+// startMetricsIngest brings up the collector endpoint.
+//
+// It runs whether or not a collector is installed. Before an install there is
+// no credential, so the endpoint authorizes nobody; after one, the credential
+// appears in the Secret the Agent itself wrote, and the refresh below picks it
+// up without a restart. A missing Secret is therefore the normal starting
+// state rather than a fault.
+func startMetricsIngest(
+	ctx context.Context,
+	cfg Config,
+	kubernetesClient kubernetes.Interface,
+	logger *slog.Logger,
+) *metricsIngestForwarder {
+	tokens := newMetricsIngestTokens(kubernetesClient, cfg.IdentityNamespace)
+	if err := tokens.refresh(ctx); err != nil {
+		logger.Debug(
+			"Agent metrics ingest credential is not present yet",
+			slog.String("error", err.Error()),
+		)
+	}
+	forwarder := newMetricsIngestForwarder(cfg.MetricsIngest, tokens, logger)
+	go runMetricsIngestTokenRefresh(
+		ctx,
+		tokens,
+		cfg.MetricsIngest.TokenRefreshInterval,
+		logger,
+	)
+	go func() {
+		if err := runMetricsIngestEndpoint(
+			ctx,
+			cfg.MetricsIngest,
+			forwarder,
+			logger,
+		); err != nil && ctx.Err() == nil {
+			logger.Error(
+				"Agent metrics ingest endpoint stopped",
+				slog.String("error", err.Error()),
+			)
+		}
+	}()
+	return forwarder
 }
 
 func enrollWithRetry(

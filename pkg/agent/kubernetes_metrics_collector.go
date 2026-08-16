@@ -1,0 +1,891 @@
+package agent
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+
+	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
+	"github.com/togettoyou/zke/pkg/shared/observability"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+)
+
+const (
+	ingestTokenBytes = 32
+	// What the collector container asked for before its resources became a
+	// platform setting. Kept as the fallback for a Server that names none of
+	// them, so an older Server still installs the collector it used to.
+	legacyCollectorCPURequest    = "50m"
+	legacyCollectorMemoryRequest = "128Mi"
+)
+
+// newKubernetesMetricsCollectorHandler installs, removes and reports on the
+// in-cluster metrics collector.
+//
+// The Agent does this rather than the Server writing objects through the
+// generic resource path, for the same reason terminal sessions work this way:
+// the object set is fixed, so the side that has to live with the result is the
+// one that decides its shape. It also keeps the ingest credential inside the
+// Cluster — the Agent issues it and the Agent verifies it, and it is never
+// carried over the wire or stored by the Server.
+// collectorPlacement is what the Agent knows about how a collector can reach
+// it: where it runs, and the address it can be reached on from inside the
+// Cluster.
+type collectorPlacement struct {
+	Namespace string
+	// AdvertisedURL overrides the in-cluster Service. Empty is the normal case.
+	AdvertisedURL string
+	// InCluster reports whether this Agent runs as a Pod. An Agent that does
+	// not has no Endpoint behind its Service, so the Service address would send
+	// the collector nowhere.
+	InCluster bool
+}
+
+func newKubernetesMetricsCollectorHandler(
+	client kubernetes.Interface,
+	placement collectorPlacement,
+) agentprotocol.MetricsCollectorHandler {
+	namespace := placement.Namespace
+	return func(
+		ctx context.Context,
+		request *agentv1.MetricsCollectorRequest,
+	) (*agentv1.MetricsCollectorResponse, error) {
+		if client == nil {
+			return collectorFailure(
+				agentv1.ResultCode_RESULT_CODE_UNAVAILABLE,
+				http.StatusServiceUnavailable,
+				"KubernetesClientUnavailable",
+				"Kubernetes client is unavailable",
+			), nil
+		}
+		// Checked again here rather than trusting the Stream layer: this is the
+		// last point before the Agent writes to its own Cluster.
+		if err := agentprotocol.ValidateMetricsCollectorRequest(request); err != nil {
+			return collectorFailure(
+				agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT,
+				http.StatusBadRequest,
+				"CollectorRequestInvalid",
+				"metrics collector request is invalid",
+			), nil
+		}
+		switch request.GetAction() {
+		case agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_STATUS:
+			return collectorStatus(ctx, client, namespace)
+		case agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_INSTALL:
+			ingestURL, err := placement.ingestURL()
+			if err != nil {
+				// Refused rather than installed: a collector pointed at an
+				// address nothing answers on retries forever and reports
+				// nothing, which looks like a working install until somebody
+				// reads its logs.
+				return collectorFailure(
+					agentv1.ResultCode_RESULT_CODE_UNAVAILABLE,
+					http.StatusServiceUnavailable,
+					"CollectorIngestAddressUnknown",
+					"this Agent does not run in the Cluster; set metrics_ingest.advertised_url to an address the Cluster can reach it on",
+				), nil
+			}
+			return installMetricsCollector(ctx, client, namespace, ingestURL, request)
+		case agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_UNINSTALL:
+			return uninstallMetricsCollector(ctx, client, namespace)
+		default:
+			return collectorFailure(
+				agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT,
+				http.StatusBadRequest,
+				"CollectorActionUnsupported",
+				"metrics collector action is not supported",
+			), nil
+		}
+	}
+}
+
+func collectorStatus(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace string,
+) (*agentv1.MetricsCollectorResponse, error) {
+	state := &agentv1.MetricsCollectorState{Namespace: namespace}
+	deployment, err := client.AppsV1().Deployments(namespace).Get(
+		ctx,
+		observability.CollectorName,
+		metav1.GetOptions{},
+	)
+	switch {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		return collectorKubernetesFailure("read metrics collector Deployment", err), nil
+	default:
+		// An object with our name that we do not own is reported as
+		// "not installed by ZKE": claiming it would let an install overwrite
+		// something the Cluster's own operators put there.
+		if managedByAgent(deployment.Labels) {
+			state.Installed = true
+			state.Image = collectorImageOf(deployment)
+			if deployment.Spec.Replicas != nil {
+				state.DesiredReplicas = *deployment.Spec.Replicas
+			}
+			state.ReadyReplicas = min(
+				deployment.Status.ReadyReplicas,
+				state.DesiredReplicas,
+			)
+		}
+	}
+	secret, err := client.CoreV1().Secrets(namespace).Get(
+		ctx,
+		observability.IngestSecretName,
+		metav1.GetOptions{},
+	)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return collectorKubernetesFailure("read metrics ingest Secret", err), nil
+	}
+	state.CredentialReady = err == nil &&
+		len(secret.Data[observability.IngestTokenKey]) >= minMetricsIngestTokenLength
+	return &agentv1.MetricsCollectorResponse{
+		Result: agentv1.ResultCode_RESULT_CODE_OK,
+		State:  state,
+	}, nil
+}
+
+// ingestURL reports where the collector should send batches, or an error when
+// this Agent cannot say.
+func (placement collectorPlacement) ingestURL() (string, error) {
+	if advertised := strings.TrimSpace(placement.AdvertisedURL); advertised != "" {
+		return strings.TrimRight(advertised, "/") + observability.IngestWritePath, nil
+	}
+	if !placement.InCluster {
+		return "", errors.New("Agent is not running in the Cluster")
+	}
+	return fmt.Sprintf(
+		"http://%s.%s.svc:%d%s",
+		observability.IngestServiceName,
+		placement.Namespace,
+		observability.IngestPort,
+		observability.IngestWritePath,
+	), nil
+}
+
+func installMetricsCollector(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace string,
+	ingestURL string,
+	request *agentv1.MetricsCollectorRequest,
+) (*agentv1.MetricsCollectorResponse, error) {
+	if err := ensureIngestSecret(ctx, client, namespace); err != nil {
+		return collectorKubernetesFailure("ensure metrics ingest Secret", err), nil
+	}
+	labels := observability.CollectorLabels()
+
+	serviceAccount := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      observability.CollectorName,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		AutomountServiceAccountToken: pointerTo(true),
+	}
+	if err := applyCollectorObject(
+		ctx,
+		"ServiceAccount",
+		func() (map[string]string, error) {
+			existing, err := client.CoreV1().ServiceAccounts(namespace).Get(
+				ctx, serviceAccount.Name, metav1.GetOptions{},
+			)
+			if err != nil {
+				return nil, err
+			}
+			return existing.Labels, nil
+		},
+		func() error {
+			_, err := client.CoreV1().ServiceAccounts(namespace).Create(
+				ctx, serviceAccount, metav1.CreateOptions{},
+			)
+			return err
+		},
+		func() error {
+			_, err := client.CoreV1().ServiceAccounts(namespace).Update(
+				ctx, serviceAccount, metav1.UpdateOptions{},
+			)
+			return err
+		},
+	); err != nil {
+		return collectorApplyFailure("ServiceAccount", err), nil
+	}
+
+	clusterRole := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: observability.CollectorName, Labels: labels},
+		Rules: []rbacv1.PolicyRule{
+			{
+				// Discovery only: which nodes exist and how to reach them.
+				APIGroups: []string{""},
+				Resources: []string{"nodes"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				// The metrics endpoints themselves. Narrower than nodes/proxy,
+				// which would open every kubelet path rather than these two.
+				APIGroups: []string{""},
+				Resources: []string{"nodes/metrics"},
+				Verbs:     []string{"get"},
+			},
+		},
+	}
+	if err := applyCollectorObject(
+		ctx,
+		"ClusterRole",
+		func() (map[string]string, error) {
+			existing, err := client.RbacV1().ClusterRoles().Get(
+				ctx, clusterRole.Name, metav1.GetOptions{},
+			)
+			if err != nil {
+				return nil, err
+			}
+			return existing.Labels, nil
+		},
+		func() error {
+			_, err := client.RbacV1().ClusterRoles().Create(
+				ctx, clusterRole, metav1.CreateOptions{},
+			)
+			return err
+		},
+		func() error {
+			_, err := client.RbacV1().ClusterRoles().Update(
+				ctx, clusterRole, metav1.UpdateOptions{},
+			)
+			return err
+		},
+	); err != nil {
+		return collectorApplyFailure("ClusterRole", err), nil
+	}
+
+	binding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: observability.CollectorName, Labels: labels},
+		Subjects: []rbacv1.Subject{{
+			Kind:      "ServiceAccount",
+			Name:      observability.CollectorName,
+			Namespace: namespace,
+		}},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     observability.CollectorName,
+		},
+	}
+	if err := applyCollectorObject(
+		ctx,
+		"ClusterRoleBinding",
+		func() (map[string]string, error) {
+			existing, err := client.RbacV1().ClusterRoleBindings().Get(
+				ctx, binding.Name, metav1.GetOptions{},
+			)
+			if err != nil {
+				return nil, err
+			}
+			return existing.Labels, nil
+		},
+		func() error {
+			_, err := client.RbacV1().ClusterRoleBindings().Create(
+				ctx, binding, metav1.CreateOptions{},
+			)
+			return err
+		},
+		func() error {
+			// RoleRef is immutable, so a binding that already points elsewhere
+			// is replaced rather than updated.
+			if err := client.RbacV1().ClusterRoleBindings().Delete(
+				ctx, binding.Name, metav1.DeleteOptions{},
+			); err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
+			_, err := client.RbacV1().ClusterRoleBindings().Create(
+				ctx, binding, metav1.CreateOptions{},
+			)
+			return err
+		},
+	); err != nil {
+		return collectorApplyFailure("ClusterRoleBinding", err), nil
+	}
+
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      observability.CollectorConfigMapName,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Data: map[string]string{
+			observability.CollectorConfigKey: renderCollectorScrapeConfig(request),
+		},
+	}
+	if err := applyCollectorObject(
+		ctx,
+		"ConfigMap",
+		func() (map[string]string, error) {
+			existing, err := client.CoreV1().ConfigMaps(namespace).Get(
+				ctx, configMap.Name, metav1.GetOptions{},
+			)
+			if err != nil {
+				return nil, err
+			}
+			return existing.Labels, nil
+		},
+		func() error {
+			_, err := client.CoreV1().ConfigMaps(namespace).Create(
+				ctx, configMap, metav1.CreateOptions{},
+			)
+			return err
+		},
+		func() error {
+			_, err := client.CoreV1().ConfigMaps(namespace).Update(
+				ctx, configMap, metav1.UpdateOptions{},
+			)
+			return err
+		},
+	); err != nil {
+		return collectorApplyFailure("ConfigMap", err), nil
+	}
+
+	deployment, err := renderCollectorDeployment(namespace, ingestURL, labels, request)
+	if err != nil {
+		return collectorFailure(
+			agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT,
+			http.StatusBadRequest,
+			"CollectorConfigurationInvalid",
+			"metrics collector configuration is invalid",
+		), nil
+	}
+	if err := applyCollectorObject(
+		ctx,
+		"Deployment",
+		func() (map[string]string, error) {
+			existing, err := client.AppsV1().Deployments(namespace).Get(
+				ctx, deployment.Name, metav1.GetOptions{},
+			)
+			if err != nil {
+				return nil, err
+			}
+			return existing.Labels, nil
+		},
+		func() error {
+			_, err := client.AppsV1().Deployments(namespace).Create(
+				ctx, deployment, metav1.CreateOptions{},
+			)
+			return err
+		},
+		func() error {
+			_, err := client.AppsV1().Deployments(namespace).Update(
+				ctx, deployment, metav1.UpdateOptions{},
+			)
+			return err
+		},
+	); err != nil {
+		return collectorApplyFailure("Deployment", err), nil
+	}
+	return collectorStatus(ctx, client, namespace)
+}
+
+func uninstallMetricsCollector(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace string,
+) (*agentv1.MetricsCollectorResponse, error) {
+	// Reverse of the install order: the workload first, so nothing keeps
+	// running against permissions that are about to disappear. The credential
+	// goes last and does go: leaving it behind would keep a usable token in the
+	// Cluster for a collector that no longer exists.
+	deletions := []struct {
+		kind   string
+		labels func() (map[string]string, error)
+		delete func() error
+	}{
+		{
+			kind: "Deployment",
+			labels: func() (map[string]string, error) {
+				existing, err := client.AppsV1().Deployments(namespace).Get(
+					ctx, observability.CollectorName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.AppsV1().Deployments(namespace).Delete(
+					ctx, observability.CollectorName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "ConfigMap",
+			labels: func() (map[string]string, error) {
+				existing, err := client.CoreV1().ConfigMaps(namespace).Get(
+					ctx, observability.CollectorConfigMapName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.CoreV1().ConfigMaps(namespace).Delete(
+					ctx, observability.CollectorConfigMapName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "ClusterRoleBinding",
+			labels: func() (map[string]string, error) {
+				existing, err := client.RbacV1().ClusterRoleBindings().Get(
+					ctx, observability.CollectorName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.RbacV1().ClusterRoleBindings().Delete(
+					ctx, observability.CollectorName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "ClusterRole",
+			labels: func() (map[string]string, error) {
+				existing, err := client.RbacV1().ClusterRoles().Get(
+					ctx, observability.CollectorName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.RbacV1().ClusterRoles().Delete(
+					ctx, observability.CollectorName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "ServiceAccount",
+			labels: func() (map[string]string, error) {
+				existing, err := client.CoreV1().ServiceAccounts(namespace).Get(
+					ctx, observability.CollectorName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.CoreV1().ServiceAccounts(namespace).Delete(
+					ctx, observability.CollectorName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "Secret",
+			labels: func() (map[string]string, error) {
+				existing, err := client.CoreV1().Secrets(namespace).Get(
+					ctx, observability.IngestSecretName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.CoreV1().Secrets(namespace).Delete(
+					ctx, observability.IngestSecretName, metav1.DeleteOptions{},
+				)
+			},
+		},
+	}
+	for _, deletion := range deletions {
+		labels, err := deletion.labels()
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return collectorKubernetesFailure("read "+deletion.kind, err), nil
+		}
+		if !managedByAgent(labels) {
+			// Someone else's object under our name. Refusing beats deleting
+			// something this Agent never created.
+			return collectorFailure(
+				agentv1.ResultCode_RESULT_CODE_CONFLICT,
+				http.StatusConflict,
+				"CollectorObjectNotManaged",
+				"an existing "+deletion.kind+" with the collector name is not managed by ZKE",
+			), nil
+		}
+		if err := deletion.delete(); err != nil && !apierrors.IsNotFound(err) {
+			return collectorKubernetesFailure("delete "+deletion.kind, err), nil
+		}
+	}
+	return collectorStatus(ctx, client, namespace)
+}
+
+// ensureIngestSecret creates the credential if it is missing and leaves an
+// existing one alone. Installing twice must not invalidate the token a running
+// collector already mounted.
+func ensureIngestSecret(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace string,
+) error {
+	existing, err := client.CoreV1().Secrets(namespace).Get(
+		ctx,
+		observability.IngestSecretName,
+		metav1.GetOptions{},
+	)
+	if err == nil {
+		if !managedByAgent(existing.Labels) {
+			return errors.New("existing metrics ingest Secret is not managed by ZKE")
+		}
+		if len(existing.Data[observability.IngestTokenKey]) >= minMetricsIngestTokenLength {
+			return nil
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	value := make([]byte, ingestTokenBytes)
+	if _, err := rand.Read(value); err != nil {
+		return errors.New("generate metrics ingest token")
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      observability.IngestSecretName,
+			Namespace: namespace,
+			Labels:    observability.CollectorLabels(),
+		},
+		Type: corev1.SecretTypeOpaque,
+		// Data rather than StringData: the value is already a byte slice here,
+		// and StringData would be converted by the API server, leaving the
+		// object this Agent just wrote different from the one it reads back.
+		Data: map[string][]byte{
+			observability.IngestTokenKey: []byte(
+				base64.RawURLEncoding.EncodeToString(value),
+			),
+		},
+	}
+	if apierrors.IsNotFound(err) {
+		_, createErr := client.CoreV1().Secrets(namespace).Create(
+			ctx, secret, metav1.CreateOptions{},
+		)
+		return createErr
+	}
+	_, updateErr := client.CoreV1().Secrets(namespace).Update(
+		ctx, secret, metav1.UpdateOptions{},
+	)
+	return updateErr
+}
+
+// applyCollectorObject creates the object or updates the one already there,
+// refusing any object that carries the collector's name without its ownership
+// label.
+func applyCollectorObject(
+	_ context.Context,
+	kind string,
+	labels func() (map[string]string, error),
+	create func() error,
+	update func() error,
+) error {
+	current, err := labels()
+	if apierrors.IsNotFound(err) {
+		if createErr := create(); createErr != nil && !apierrors.IsAlreadyExists(createErr) {
+			return createErr
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !managedByAgent(current) {
+		return fmt.Errorf(
+			"existing %s with the collector name is not managed by ZKE",
+			kind,
+		)
+	}
+	return update()
+}
+
+func renderCollectorDeployment(
+	namespace string,
+	ingestURL string,
+	labels map[string]string,
+	request *agentv1.MetricsCollectorRequest,
+) (*appsv1.Deployment, error) {
+	bufferSize, err := resource.ParseQuantity(request.GetBufferSize())
+	if err != nil {
+		return nil, err
+	}
+	resources, err := collectorResources(request)
+	if err != nil {
+		return nil, err
+	}
+	replicas := int32(1)
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      observability.CollectorName,
+			Namespace: namespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			// Two collectors would scrape and forward the same series twice.
+			// Recreate keeps that from happening during a rollout.
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RecreateDeploymentStrategyType,
+			},
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{
+				"app.kubernetes.io/name": observability.CollectorName,
+			}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					ServiceAccountName:           observability.CollectorName,
+					AutomountServiceAccountToken: pointerTo(true),
+					Containers: []corev1.Container{{
+						Name:            observability.CollectorContainerName,
+						Image:           request.GetImage(),
+						ImagePullPolicy: corev1.PullPolicy(request.GetImagePullPolicy()),
+						Args: []string{
+							"-promscrape.config=/etc/zke-metrics/" + observability.CollectorConfigKey,
+							"-remoteWrite.url=" + ingestURL,
+							"-remoteWrite.bearerTokenFile=/etc/zke-metrics-credentials/" +
+								observability.IngestTokenKey,
+							"-remoteWrite.tmpDataPath=/buffer",
+							// Plain bytes rather than the configured string: the
+							// buffer size is a Kubernetes quantity because it is
+							// also the volume's size limit, and vmagent does not
+							// parse that spelling — it rejected "512Mi" outright.
+							// Converting here keeps one value in configuration.
+							"-remoteWrite.maxDiskUsagePerURL=" +
+								strconv.FormatInt(bufferSize.Value(), 10),
+						},
+						SecurityContext: &corev1.SecurityContext{
+							AllowPrivilegeEscalation: pointerTo(false),
+							ReadOnlyRootFilesystem:   pointerTo(true),
+							Capabilities: &corev1.Capabilities{
+								Drop: []corev1.Capability{"ALL"},
+							},
+						},
+						Resources: resources,
+						VolumeMounts: []corev1.VolumeMount{
+							{Name: "config", MountPath: "/etc/zke-metrics", ReadOnly: true},
+							{
+								Name:      "credentials",
+								MountPath: "/etc/zke-metrics-credentials",
+								ReadOnly:  true,
+							},
+							{Name: "buffer", MountPath: "/buffer"},
+						},
+					}},
+					Volumes: []corev1.Volume{
+						{
+							Name: "config",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: observability.CollectorConfigMapName,
+									},
+								},
+							},
+						},
+						{
+							Name: "credentials",
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: observability.IngestSecretName,
+								},
+							},
+						},
+						{
+							// An emptyDir, not a PersistentVolume: the buffer
+							// covers a Server or Agent outage, not the loss of
+							// the collector Pod. Requiring a volume would make
+							// collection depend on dynamic provisioning.
+							Name: "buffer",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									SizeLimit: &bufferSize,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}, nil
+}
+
+// collectorResources turns the Server's quantities into the container's
+// resource block.
+//
+// An empty entry is dropped rather than parsed: Kubernetes has no spelling for
+// "no limit" other than the absence of the key. When the Server names none of
+// the four the legacy requests are used instead — that is what a Server too old
+// to know these fields is asking for, and it must not silently become an
+// unbounded collector in somebody's Cluster.
+func collectorResources(
+	request *agentv1.MetricsCollectorRequest,
+) (corev1.ResourceRequirements, error) {
+	if request.GetCpuRequest() == "" && request.GetMemoryRequest() == "" &&
+		request.GetCpuLimit() == "" && request.GetMemoryLimit() == "" {
+		return corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(legacyCollectorCPURequest),
+				corev1.ResourceMemory: resource.MustParse(legacyCollectorMemoryRequest),
+			},
+		}, nil
+	}
+	requests := corev1.ResourceList{}
+	limits := corev1.ResourceList{}
+	type entry struct {
+		list  corev1.ResourceList
+		name  corev1.ResourceName
+		value string
+	}
+	for _, item := range []entry{
+		{requests, corev1.ResourceCPU, request.GetCpuRequest()},
+		{requests, corev1.ResourceMemory, request.GetMemoryRequest()},
+		{limits, corev1.ResourceCPU, request.GetCpuLimit()},
+		{limits, corev1.ResourceMemory, request.GetMemoryLimit()},
+	} {
+		if item.value == "" {
+			continue
+		}
+		quantity, err := resource.ParseQuantity(item.value)
+		if err != nil {
+			return corev1.ResourceRequirements{}, err
+		}
+		item.list[item.name] = quantity
+	}
+	requirements := corev1.ResourceRequirements{}
+	if len(requests) != 0 {
+		requirements.Requests = requests
+	}
+	if len(limits) != 0 {
+		requirements.Limits = limits
+	}
+	return requirements, nil
+}
+
+// renderCollectorScrapeConfig covers the kubelet resource endpoint only. That
+// is what the metrics views read, and every additional target multiplies the
+// cardinality one Cluster sends.
+func renderCollectorScrapeConfig(request *agentv1.MetricsCollectorRequest) string {
+	return fmt.Sprintf(`global:
+  scrape_interval: %s
+scrape_configs:
+  - job_name: kubelet-resource
+    scheme: https
+    metrics_path: /metrics/resource
+    honor_timestamps: true
+    tls_config:
+      # The kubelet serving certificate is usually signed by a CA the
+      # ServiceAccount bundle does not contain. The connection stays inside the
+      # Cluster and carries only the ServiceAccount token.
+      insecure_skip_verify: true
+    authorization:
+      type: Bearer
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
+      - source_labels: [__meta_kubernetes_node_address_InternalIP]
+        target_label: __address__
+        replacement: $1:%d
+      # Scope labels come from the Server, which derives them from this Agent's
+      # connection identity. Anything with the prefix would be dropped there, so
+      # none is sent.
+      - regex: ^zke_.*$
+        action: labeldrop
+`, request.GetScrapeInterval(), request.GetKubeletMetricsPort())
+}
+
+func managedByAgent(labels map[string]string) bool {
+	return labels[observability.ManagedByLabel] == observability.ManagedByAgent
+}
+
+func collectorImageOf(deployment *appsv1.Deployment) string {
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == observability.CollectorContainerName {
+			return container.Image
+		}
+	}
+	return ""
+}
+
+func collectorFailure(
+	code agentv1.ResultCode,
+	status int32,
+	reason string,
+	message string,
+) *agentv1.MetricsCollectorResponse {
+	return &agentv1.MetricsCollectorResponse{
+		Result:               code,
+		KubernetesStatusCode: status,
+		Reason:               reason,
+		Message:              message,
+	}
+}
+
+func collectorApplyFailure(kind string, err error) *agentv1.MetricsCollectorResponse {
+	if strings.Contains(err.Error(), "not managed by ZKE") {
+		return collectorFailure(
+			agentv1.ResultCode_RESULT_CODE_CONFLICT,
+			http.StatusConflict,
+			"CollectorObjectNotManaged",
+			"an existing "+kind+" with the collector name is not managed by ZKE",
+		)
+	}
+	return collectorKubernetesFailure("apply "+kind, err)
+}
+
+// collectorKubernetesFailure maps a Kubernetes error without quoting it: the
+// message can name objects and fields outside this operation, and it travels to
+// a browser.
+func collectorKubernetesFailure(
+	operation string,
+	err error,
+) *agentv1.MetricsCollectorResponse {
+	status := int32(http.StatusInternalServerError)
+	code := agentv1.ResultCode_RESULT_CODE_INTERNAL
+	reason := "CollectorOperationFailed"
+	var statusError *apierrors.StatusError
+	if errors.As(err, &statusError) {
+		status = statusError.ErrStatus.Code
+		reason = string(statusError.ErrStatus.Reason)
+		switch {
+		case apierrors.IsForbidden(err):
+			code = agentv1.ResultCode_RESULT_CODE_FORBIDDEN
+		case apierrors.IsConflict(err), apierrors.IsAlreadyExists(err):
+			code = agentv1.ResultCode_RESULT_CODE_CONFLICT
+		case apierrors.IsNotFound(err):
+			code = agentv1.ResultCode_RESULT_CODE_NOT_FOUND
+		}
+	}
+	if reason == "" {
+		reason = "CollectorOperationFailed"
+	}
+	return collectorFailure(code, status, reason, "could not "+operation)
+}
+
+func pointerTo[T any](value T) *T {
+	return &value
+}

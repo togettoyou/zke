@@ -40,6 +40,45 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-postgresql" (include "zke.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "zke.metrics.selectorLabels" -}}
+app.kubernetes.io/name: zke-victoriametrics
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "zke.metrics.fullname" -}}
+{{- printf "%s-victoriametrics" (include "zke.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- /*
+Whether this release runs the metrics storage itself: whenever metrics are on
+and no external endpoint is named. Naming one turns the bundled storage off.
+*/ -}}
+{{- define "zke.metrics.bundled" -}}
+{{- if and .Values.server.metrics.enabled (empty .Values.server.metrics.storageWriteURL) -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{- define "zke.metrics.serviceHost" -}}
+{{- printf "%s.%s.svc.%s" (include "zke.metrics.fullname" .) .Release.Namespace (trimSuffix "." (default "cluster.local" .Values.clusterDomain)) -}}
+{{- end -}}
+
+{{- define "zke.metrics.writeURL" -}}
+{{- if .Values.server.metrics.storageWriteURL -}}
+{{- .Values.server.metrics.storageWriteURL -}}
+{{- else -}}
+{{- printf "http://%s:8428/api/v1/write" (include "zke.metrics.serviceHost" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "zke.metrics.queryURL" -}}
+{{- if .Values.server.metrics.storageQueryURL -}}
+{{- .Values.server.metrics.storageQueryURL -}}
+{{- else -}}
+{{- printf "http://%s:8428/prometheus" (include "zke.metrics.serviceHost" .) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "zke.server.imageTag" -}}
 {{- default .Chart.AppVersion .Values.server.image.tag -}}
 {{- end -}}

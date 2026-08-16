@@ -324,6 +324,8 @@ func TestLoadConfigEnvironmentOverrides(t *testing.T) {
 	t.Setenv("ZKE_POD_ACCESS_EXTERNAL_URL", "http://localhost:18081")
 	t.Setenv("ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL", "https://zke.example.com")
 	t.Setenv("ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS", "zke.example.com:8443")
+	t.Setenv("ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL", "http://vm.example.com:8428/api/v1/write")
+	t.Setenv("ZKE_OBSERVABILITY_METRICS_STORAGE_QUERY_URL", "http://vm.example.com:8428/prometheus")
 
 	cfg, err := LoadConfig([]string{
 		"--config",
@@ -336,9 +338,51 @@ func TestLoadConfigEnvironmentOverrides(t *testing.T) {
 		cfg.HTTP.ConsoleDirectory != "/srv/zke/console" ||
 		cfg.PodAccess.ExternalURL != "http://localhost:18081" ||
 		cfg.AgentInstall.PublicHTTPURL != "https://zke.example.com" ||
-		cfg.AgentInstall.PublicQUICAddress != "zke.example.com:8443" {
+		cfg.AgentInstall.PublicQUICAddress != "zke.example.com:8443" ||
+		cfg.Observability.Metrics.StorageWriteURL != "http://vm.example.com:8428/api/v1/write" ||
+		cfg.Observability.Metrics.StorageQueryURL != "http://vm.example.com:8428/prometheus" {
 		t.Fatalf("environment overrides were not applied: %+v", cfg)
 	}
+}
+
+// The metrics switch is the one override that is not a string. A deployment
+// without storage has to be able to turn it off, and one that misspells the
+// value has to hear about it rather than keep running with metrics on.
+func TestMetricsEnabledEnvironmentOverride(t *testing.T) {
+	repositoryConfig := filepath.Join("..", "..", "configs", "zke-server.yaml")
+
+	t.Run("disables", func(t *testing.T) {
+		t.Setenv("ZKE_OBSERVABILITY_METRICS_ENABLED", "false")
+		cfg, err := LoadConfig([]string{"--config", repositoryConfig})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Observability.Metrics.Enabled {
+			t.Fatal("metrics stayed enabled")
+		}
+	})
+
+	// Compose defines every variable in its environment block, so an operator
+	// who left one blank must not have the configuration file's value erased.
+	t.Run("an empty value leaves the file alone", func(t *testing.T) {
+		t.Setenv("ZKE_OBSERVABILITY_METRICS_ENABLED", "")
+		t.Setenv("ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL", "")
+		cfg, err := LoadConfig([]string{"--config", repositoryConfig})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.Observability.Metrics.Enabled ||
+			cfg.Observability.Metrics.StorageWriteURL == "" {
+			t.Fatalf("an empty environment value overrode the file: %+v", cfg.Observability.Metrics)
+		}
+	})
+
+	t.Run("rejects a value that is not a boolean", func(t *testing.T) {
+		t.Setenv("ZKE_OBSERVABILITY_METRICS_ENABLED", "yes")
+		if _, err := LoadConfig([]string{"--config", repositoryConfig}); err == nil {
+			t.Fatal("a non-boolean value was accepted")
+		}
+	})
 }
 
 func TestAgentInstallEndpointDefaultsToLoopback(t *testing.T) {

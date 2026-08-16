@@ -71,4 +71,52 @@ connection:
   max_resource_watch_stream_timeout: 30m
   max_concurrent_resource_watch_streams: 16
 
+# Collector-facing endpoint for metrics.
+#
+# There is no on/off switch: whether metrics flow is the Server's decision. It
+# advertises the ingest capability only when it has storage, and the collector
+# is installed into this Cluster only when an operator asks for it. Until then
+# no credential exists and the endpoint authorizes nobody.
+#
+# The endpoint accepts Prometheus remote write from a collector running in the
+# same Cluster and forwards it over the existing QUIC connection, so no new
+# outbound path is needed. It authenticates with the token in the
+# zke-agent-metrics-ingest Secret, which the Agent itself generates when it
+# installs the collector; that token only keeps foreign writers out and never
+# decides which Cluster the data belongs to, which the Server determines from
+# the Agent mTLS identity.
+metrics_ingest:
+  # Reachable inside the Cluster through a ClusterIP Service only.
+  address: 0.0.0.0:8429
+  # Where the in-cluster collector is told to send data. Empty means "the
+  # ClusterIP Service in front of this Agent", which is right whenever the Agent
+  # runs as a Pod.
+  #
+  # It is not right for this file's main use: an Agent started on your machine
+  # has no Pod, therefore no Endpoint behind that Service, and a collector
+  # pointed at it would retry forever. Give the Cluster an address it can
+  # actually reach the host on — Docker Desktop and OrbStack both provide this
+  # name — through the environment rather than by editing this file, which has
+  # to keep describing an Agent that runs in a Pod:
+  #
+  #   ZKE_METRICS_INGEST_ADVERTISED_URL=http://host.docker.internal:8429
+  #
+  # Without either, the Agent refuses to install a collector rather than
+  # deploying one that reports nothing.
+  # advertised_url: ""
+  max_batch_bytes: 4194304
+  # Payloads held in memory at once. Beyond this the collector is told to
+  # retry, which it can do because it owns the durable buffer.
+  max_concurrent_batches: 4
+  # Lifetime of one ingest Stream. It is reopened on the next batch, so this is
+  # a cap rather than an idle timeout, and the Server caps it again.
+  session_timeout: 30m
+  token_refresh_interval: 1m
+  unavailable_retry_after: 15s
+  read_header_timeout: 5s
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 60s
+  shutdown_timeout: 5s
+
 log_level: info

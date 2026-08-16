@@ -18,6 +18,10 @@ type connectionServices struct {
 	podPortForwardHandler  agentprotocol.PodPortForwardHandler
 	resourceWatchHandler   agentprotocol.ResourceWatchHandler
 	terminalSessionHandler agentprotocol.TerminalSessionHandler
+	// metricsForwarder is not a Stream handler: metrics travel on a Stream
+	// this Agent opens, so it holds the Connection rather than serving one.
+	metricsForwarder        *metricsIngestForwarder
+	metricsCollectorHandler agentprotocol.MetricsCollectorHandler
 }
 
 func newBusinessStreamServer(
@@ -84,6 +88,19 @@ func newBusinessStreamServer(
 				MaxConcurrent: cfg.Connection.MaxConcurrentResourceWatchStreams,
 				MaxTimeout:    cfg.Connection.MaxResourceWatchStreamTimeout,
 				Handle:        agentprotocol.ResourceWatchStreamHandler(services.resourceWatchHandler),
+			}
+	}
+	if services.metricsCollectorHandler != nil {
+		handlers[agentv1.StreamKind_STREAM_KIND_METRICS_COLLECTOR] =
+			agentprotocol.StreamHandlerConfig{
+				// Installing or removing the collector is a handful of
+				// Kubernetes writes; one at a time is enough, and it keeps two
+				// concurrent installs from racing over the same objects.
+				MaxConcurrent: 1,
+				MaxTimeout:    cfg.Connection.MaxResourceRequestTimeout,
+				Handle: agentprotocol.MetricsCollectorStreamHandler(
+					services.metricsCollectorHandler,
+				),
 			}
 	}
 	if services.terminalSessionHandler != nil {

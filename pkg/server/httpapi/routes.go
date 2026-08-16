@@ -222,6 +222,26 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.agentStatus.events,
 	)
 
+	// Metrics are a multi-cluster application: there is no cluster_id in the
+	// path, so no RequireCluster gate here. The query service resolves the
+	// caller's visibility for cluster.metrics.read and builds the scope filter
+	// from it, which keeps that boundary in one place instead of splitting it
+	// between middleware and the query.
+	observabilityRoutes := apiV1.Group("/observability")
+	observabilityRoutes.Use(
+		handlers.requestTimeout,
+		handlers.roleBindingCache,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	observabilityRoutes.GET(
+		"/metrics/queries",
+		handlers.observabilityMetrics.catalog,
+	)
+	observabilityRoutes.GET(
+		"/metrics/query",
+		handlers.observabilityMetrics.query,
+	)
+
 	tenantRoutes := apiV1.Group("/tenants")
 	tenantRoutes.Use(
 		handlers.requestTimeout,
@@ -381,6 +401,35 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.clusterOverview.get,
+	)
+	// One permission covers installing and removing the collector; reading
+	// metrics is a different one, so an operator who may look at charts cannot
+	// change what runs in a Cluster.
+	clusterRoutes.GET(
+		"/:cluster_id/metrics-collector",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterMetricsManage,
+			"cluster_id",
+		),
+		handlers.metricsCollector.status,
+	)
+	clusterRoutes.POST(
+		"/:cluster_id/metrics-collector",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterMetricsManage,
+			"cluster_id",
+		),
+		handlers.metricsCollector.install,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/metrics-collector",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterMetricsManage,
+			"cluster_id",
+		),
+		handlers.metricsCollector.uninstall,
 	)
 	clusterRoutes.GET(
 		"/:cluster_id/nodes",

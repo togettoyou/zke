@@ -32,6 +32,17 @@ export const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     not_ready: { label: "未就绪", tone: "danger" },
     unknown: { label: "未知", tone: "neutral" },
   },
+  // Whether a Cluster is collecting metrics, read from that Cluster through its
+  // Agent. The three unreadable values stay apart because they are acted on
+  // differently: an offline Agent is waited out, a refusal is not.
+  metrics_collector: {
+    running: { label: "运行中", tone: "success" },
+    starting: { label: "启动中", tone: "warning" },
+    not_installed: { label: "未安装", tone: "neutral" },
+    agent_unavailable: { label: "Agent 未连接", tone: "warning" },
+    forbidden: { label: "无权限查看", tone: "neutral" },
+    unreadable: { label: "状态不可用", tone: "danger" },
+  },
   // `spec.unschedulable`. Named for what it does to the scheduler rather than
   // for kubectl's cordon, which means nothing to an operator reading a table.
   scheduling: {

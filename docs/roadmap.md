@@ -30,13 +30,17 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。已勾选条
 
 ## Phase 3：可观测性
 
-- [ ] VictoriaMetrics 集成
-- [ ] VictoriaLogs 集成
-- [ ] Grafana 集成
-- [ ] 多集群指标
-- [ ] 多集群日志
-- [ ] 告警中心
+数据通路与安全边界见 [Phase 3 可观测性架构设计](architecture/observability-phase-3.md)。指标、日志与告警
+按切片推进，后一项依赖前一项就绪。已勾选的两项尚未对着真实的采集器与存储后端跑通端到端。
+
+- [x] 指标端到端最小链路：采集清单生成、Agent 摄取端点、Metrics Ingest Stream、Server 摄取网关与作用域改写、VictoriaMetrics 写入
+- [x] 多集群指标查询：固定查询目录、权限过滤、集群与节点用量视图、Console 自建图表
+- [ ] 指标深化：节点、Namespace 与工作负载维度，数据空洞与限流状态呈现
 - [ ] 集群标签体系
+- [ ] VictoriaLogs 集成与多集群日志
+- [ ] 告警中心
+
+可视化由 Console 自建，不集成 Grafana，也不提供通用仪表盘编辑器。
 
 ## Phase 4：AI 运维与排障助手（Copilot）
 

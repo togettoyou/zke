@@ -725,6 +725,9 @@ cp .env.example .env
 # 设置 .env 中的数据库密码后，仅启动本地开发所需的 PostgreSQL。
 docker compose up -d postgres
 cd ../..
+# 仓库配置默认开启多集群指标并指向本机 8428；不需要指标时把 observability.metrics.enabled 改为 false。
+docker run -d --name zke-victoriametrics -p 8428:8428 -v zke-vm-data:/victoria-metrics-data \
+  victoriametrics/victoria-metrics:v1.149.0 -retentionPeriod=1
 ZKE_DATABASE_URL='postgres://zke:<URL-safe-password>@127.0.0.1:5432/zke?sslmode=disable' \
   go run ./cmd/zke-server --config configs/zke-server.yaml
 # 可选：另一个终端启动 Console，开发服务器会把 API 请求代理到 127.0.0.1:8080。
@@ -732,8 +735,15 @@ corepack pnpm --dir web/console install --frozen-lockfile
 corepack pnpm --dir web/console dev
 # 在另一个终端输入刚创建的 Enrollment Token：
 hack/setup-local-agent-resources.sh
-go run ./cmd/zke-agent --config configs/zke-agent.yaml
+ZKE_METRICS_INGEST_ADVERTISED_URL=http://host.docker.internal:8429 \
+  go run ./cmd/zke-agent --config configs/zke-agent.yaml
 ```
+
+Agent 那个环境变量是宿主机运行专有的。采集组件跑在集群里，默认按 Agent 的 ClusterIP Service 地址回写，而
+宿主机上的 Agent 没有 Pod，也就没有 Service 背后的 Endpoint，写入只会一直重试。它给出集群能访问到宿主机的
+地址（Docker Desktop 与 OrbStack 都提供这个名字），用环境变量而不是修改 `configs/zke-agent.yaml`——那份文件
+要继续描述在 Pod 中运行的 Agent。对应配置项是 `metrics_ingest.advertised_url`，环境变量优先；两者都没有且
+Agent 不在集群内时，安装采集组件会被拒绝并说明原因，而不是装一个报不出数据的采集组件。
 
 Server 必须先成功启动一次，以便 Managed PKI 生成 `data/pki/agent-listener-ca.crt`。随后从已有
 Project 创建 Enrollment，把响应中的一次性 Token 输入 `hack/setup-local-agent-resources.sh`。脚本使用当前

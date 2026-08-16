@@ -18,6 +18,7 @@
 | 表单校验   | Zod 4 + react-hook-form                                       |
 | 通知       | Sonner，经 `components/common/toaster.tsx` 适配               |
 | 终端       | xterm.js                                                      |
+| 图表       | uPlot（已选定，随 Phase 3 可观测性视图引入，尚未加入依赖）    |
 | API 类型   | `openapi-typescript` 从 `api/openapi/zke-server.v1.yaml` 生成 |
 
 常用命令（在 `web/console/` 下执行）：

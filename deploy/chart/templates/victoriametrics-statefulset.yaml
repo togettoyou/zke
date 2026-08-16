@@ -1,0 +1,111 @@
+{{- /* Checked before either branch: only one of the two set would send writes
+       and queries to different places, one of which is not deployed. */ -}}
+{{- if ne (empty .Values.server.metrics.storageWriteURL) (empty .Values.server.metrics.storageQueryURL) -}}
+{{- fail "server.metrics.storageWriteURL and server.metrics.storageQueryURL must be configured together" -}}
+{{- end -}}
+{{- if include "zke.metrics.bundled" . }}
+# Metrics storage, part of the release so that a default install has a pipeline
+# that works end to end rather than one whose every write fails.
+#
+# A StatefulSet for the same reason PostgreSQL is one — it owns a volume whose
+# identity has to survive a rollout — and a single replica, because this is
+# single-node VictoriaMetrics. Pointing server.metrics.storageWriteURL and
+# storageQueryURL at your own installation removes these objects.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "zke.metrics.fullname" . }}
+  labels:
+    {{- include "zke.labels" . | nindent 4 }}
+    {{- include "zke.metrics.selectorLabels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "zke.metrics.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "zke.metrics.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "zke.metrics.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: victoriametrics
+          image: "{{ .Values.metrics.image.repository }}:{{ .Values.metrics.image.tag }}"
+          imagePullPolicy: {{ .Values.metrics.image.pullPolicy }}
+          args:
+            - -storageDataPath=/victoria-metrics-data
+            - -httpListenAddr=:8428
+            - -retentionPeriod={{ .Values.metrics.retentionPeriod }}
+            {{- with .Values.metrics.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8428
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.metrics.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /victoria-metrics-data
+      {{- if not .Values.metrics.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+      {{- with .Values.metrics.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metrics.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metrics.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.metrics.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          {{- toYaml .Values.metrics.persistence.accessModes | nindent 10 }}
+        {{- if .Values.metrics.persistence.storageClass }}
+        storageClassName: {{ .Values.metrics.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.metrics.persistence.size }}
+  {{- end }}
+{{- end }}

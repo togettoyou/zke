@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 )
 
 const (
@@ -106,6 +108,7 @@ func (cfg Config) Validate() error {
 		cfg.validateAgentInstall,
 		cfg.validateAgentEnrollment,
 		cfg.validateAgentListener,
+		cfg.validateObservability,
 		cfg.validateRetention,
 		cfg.validateProcess,
 		cfg.validateCrossSection,
@@ -113,6 +116,126 @@ func (cfg Config) Validate() error {
 		if err := validate(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateObservability only applies when metrics are enabled. A Server that
+// was never asked to store metrics must not fail to start over a block nobody
+// filled in.
+func (cfg Config) validateObservability() error {
+	metrics := cfg.Observability.Metrics
+	if !metrics.Enabled {
+		return nil
+	}
+	writeURL := strings.TrimSpace(metrics.StorageWriteURL)
+	if writeURL == "" {
+		return errors.New(
+			"observability metrics storage write URL is required when metrics are enabled",
+		)
+	}
+	if writeURL != metrics.StorageWriteURL {
+		return errors.New(
+			"observability metrics storage write URL must not contain surrounding whitespace",
+		)
+	}
+	parsed, err := url.Parse(writeURL)
+	if err != nil || parsed.Host == "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		parsed.User != nil {
+		return errors.New(
+			"observability metrics storage write URL must be an HTTP(S) URL without credentials",
+		)
+	}
+	queryURL := strings.TrimSpace(metrics.StorageQueryURL)
+	if queryURL == "" {
+		return errors.New(
+			"observability metrics storage query URL is required when metrics are enabled",
+		)
+	}
+	parsedQuery, err := url.Parse(queryURL)
+	if err != nil || queryURL != metrics.StorageQueryURL ||
+		parsedQuery.Host == "" ||
+		(parsedQuery.Scheme != "http" && parsedQuery.Scheme != "https") ||
+		parsedQuery.User != nil {
+		return errors.New(
+			"observability metrics storage query URL must be an HTTP(S) URL without credentials",
+		)
+	}
+	if metrics.MaxBatchBytes < 1 ||
+		metrics.MaxBatchBytes > agentprotocol.MaxMetricsBatchBytesCeiling {
+		return fmt.Errorf(
+			"observability metrics maximum batch bytes must be between 1 and %d",
+			agentprotocol.MaxMetricsBatchBytesCeiling,
+		)
+	}
+	if uint64(metrics.MaxDecompressedBytes) < metrics.MaxBatchBytes {
+		return errors.New(
+			"observability metrics decompressed batch limit must not be below the compressed limit",
+		)
+	}
+	for _, item := range []struct {
+		value int
+		name  string
+	}{
+		{metrics.MaxIngestStreams, "maximum ingest streams"},
+		{metrics.MaxQueryClusters, "maximum query clusters"},
+		{metrics.MaxQueryPoints, "maximum query points"},
+		{metrics.MaxQuerySeries, "maximum query series"},
+		{metrics.KubeletMetricsPort, "kubelet metrics port"},
+		{metrics.MaxSeriesPerBatch, "maximum series per batch"},
+		{metrics.MaxSamplesPerBatch, "maximum samples per batch"},
+		{metrics.MaxLabelsPerSeries, "maximum labels per series"},
+		{metrics.MaxLabelNameBytes, "maximum label name bytes"},
+		{metrics.MaxLabelValueBytes, "maximum label value bytes"},
+	} {
+		if item.value < 1 {
+			return fmt.Errorf("observability metrics %s must be positive", item.name)
+		}
+	}
+	for _, item := range []struct {
+		value time.Duration
+		max   time.Duration
+		name  string
+	}{
+		{metrics.StorageWriteTimeout, 5 * time.Minute, "storage write timeout"},
+		{metrics.StorageQueryTimeout, 5 * time.Minute, "storage query timeout"},
+		{metrics.MaxQueryRange, 90 * 24 * time.Hour, "maximum query range"},
+		{metrics.MinQueryStep, time.Hour, "minimum query step"},
+		{metrics.ScrapeInterval, time.Hour, "collector scrape interval"},
+		{metrics.IngestSessionTimeout, time.Hour, "ingest session timeout"},
+		{metrics.MaxSampleAge, 30 * 24 * time.Hour, "maximum sample age"},
+		{metrics.MaxSampleFuture, time.Hour, "maximum sample future skew"},
+	} {
+		if item.value <= 0 {
+			return fmt.Errorf(
+				"observability metrics %s must be greater than zero",
+				item.name,
+			)
+		}
+		if item.value > item.max {
+			return fmt.Errorf(
+				"observability metrics %s must not exceed %s",
+				item.name,
+				item.max,
+			)
+		}
+	}
+	if metrics.KubeletMetricsPort > 65535 {
+		return errors.New("observability metrics kubelet metrics port must be a valid port")
+	}
+	if metrics.ScrapeInterval%time.Second != 0 {
+		return errors.New("observability metrics collector scrape interval must be whole seconds")
+	}
+	if strings.TrimSpace(metrics.CollectorBufferSize) == "" {
+		return errors.New("observability metrics collector buffer size is required")
+	}
+	// The ingest Stream is accepted by the same dispatcher as every other
+	// business Stream, and its header must arrive within the handshake budget.
+	if cfg.AgentListener.HandshakeTimeout > metrics.IngestSessionTimeout {
+		return errors.New(
+			"Agent Listener handshake timeout must not exceed the metrics ingest session timeout",
+		)
 	}
 	return nil
 }

@@ -562,6 +562,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/observability/metrics/queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出本 Server 提供的具名指标查询。Console 只能调用这些查询，不能提交
+         *     PromQL：作用域过滤是查询模板的一部分，而不是对用户输入的事后改写。
+         *
+         *     该目录描述系统能力，不包含任何集群数据，因此只要求已认证会话。
+         */
+        get: operations["listObservabilityMetricsQueries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/observability/metrics/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 执行一个具名指标查询。可观测性是多集群应用，路径中没有 cluster_id：Server
+         *     解析调用者在 `cluster.metrics.read` 上的可见范围，展开成一组 `cluster_id`
+         *     并作为强制过滤注入查询模板，调用方参数无法覆盖。
+         *
+         *     省略 `cluster_ids` 表示“当前权限范围内的全部集群”。显式给出的集群若有任何
+         *     一个超出可见范围，整个请求返回 403，而不是静默缩小范围并把部分结果当作全部。
+         *
+         *     缺失采样点在响应中显式为 `null`，不做插值：数据空洞是采集中断的证据，补齐会
+         *     把中断显示成平线。时间戳为秒级 Unix 时间，数值已按 `unit` 换算。
+         */
+        get: operations["runObservabilityMetricsQuery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/metrics-collector": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 报告目标集群中采集组件的当前状态。答案来自集群本身而不是 Server 的记录：
+         *     重要的是那里现在跑着什么，Server 侧的标记会在有人手工删除 Deployment 后失真。
+         *
+         *     采集组件安装在该集群的 Agent Namespace 内，由 Agent 自身创建与删除，
+         *     摄取凭证也由 Agent 生成，从不经过 Server。要求 `cluster.metrics.manage`；
+         *     读取指标是另一个权限，只能看图表的人无法改变集群里运行的东西。
+         */
+        get: operations["getClusterMetricsCollector"];
+        put?: never;
+        /**
+         * @description 在目标集群中安装采集组件。Server 只下发配置（镜像、抓取间隔、缓冲上限），
+         *     对象由 Agent 按固定形状创建，因此这条接口不能用来在 Agent Namespace 里运行
+         *     任意工作负载。
+         *
+         *     镜像与拉取策略取自平台配置。重复安装是幂等的：已存在的摄取凭证不会被替换，
+         *     运行中的采集组件不会因此丢失连接。同名但不由 ZKE 管理的对象会被拒绝而不是接管。
+         */
+        post: operations["installClusterMetricsCollector"];
+        /**
+         * @description 从目标集群中移除采集组件及其摄取凭证。删除顺序与安装相反，凭证最后删除：
+         *     不留下一个没有采集组件仍然可用的令牌。同名但不由 ZKE 管理的对象会被拒绝。
+         */
+        delete: operations["uninstallClusterMetricsCollector"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/nodes": {
         parameters: {
             query?: never;
@@ -2366,7 +2451,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "audit.read")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -4851,6 +4936,66 @@ export interface components {
             /** Format: int64 */
             non_terminal_pods: number;
         };
+        MetricsQueryCatalog: {
+            queries: {
+                name: string;
+                title: string;
+                /** @enum {string} */
+                kind: "range" | "instant";
+                /** @enum {string} */
+                unit: "millicores" | "bytes" | "count" | "ratio";
+                /** @description 除集群身份外，该查询返回的序列标签。 */
+                dimensions: string[];
+                requires_namespace: boolean;
+                supports_top: boolean;
+            }[];
+        };
+        MetricsQueryResult: {
+            query: string;
+            title: string;
+            /** @enum {string} */
+            kind: "range" | "instant";
+            /** @enum {string} */
+            unit: "millicores" | "bytes" | "count" | "ratio";
+            /** Format: date-time */
+            start: string;
+            /** Format: date-time */
+            end: string;
+            /** @description 瞬时查询为 0。 */
+            step_seconds: number;
+            /** @description 本次查询实际覆盖的集群，用于区分“无数据”和“不在范围内”。 */
+            cluster_ids: components["schemas"]["UUID"][];
+            /** @description 序列数超过上限而被截断。 */
+            truncated: boolean;
+            series: {
+                cluster_id: components["schemas"]["UUID"];
+                /** @description 展示属性，由 Server 按当前归属补齐；数据身份始终是 cluster_id。 */
+                cluster_name: string;
+                labels: {
+                    [key: string]: string;
+                };
+                /**
+                 * @description `[unix_seconds, value]` 数组，`value` 为 `null` 表示该步长没有采样。
+                 *     客户端必须按断点绘制，不得跨空洞连线。
+                 */
+                points: (number | null)[][];
+            }[];
+        };
+        MetricsCollectorState: {
+            cluster_id: components["schemas"]["UUID"];
+            /** @description 集群中存在由 ZKE 管理的采集组件。同名但不由 ZKE 管理的对象报告为未安装。 */
+            installed: boolean;
+            /** @description 采集组件所在的 Namespace，与该集群 Agent 的 Namespace 相同。 */
+            namespace: string;
+            /** @description 当前运行的镜像；未安装时为空。 */
+            image: string;
+            /** @description 按当前平台配置安装时会使用的镜像，便于发现集群运行的是旧版本。 */
+            desired_image: string;
+            desired_replicas: number;
+            ready_replicas: number;
+            /** @description Agent 持有可供采集组件使用的摄取凭证。只报告事实，不返回凭证本身。 */
+            credential_ready: boolean;
+        };
         KubernetesClusterOverview: {
             generated_at: components["schemas"]["Timestamp"];
             partial: boolean;
@@ -5583,6 +5728,18 @@ export interface components {
             cluster_terminal_image: string;
             /** @enum {string} */
             cluster_terminal_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            /** @description 启用指标采集时部署到目标集群的采集组件镜像。 */
+            metrics_collector_image: string;
+            /** @enum {string} */
+            metrics_collector_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            /**
+             * @description 采集组件容器的 Kubernetes 数量，例如 `50m`。空字符串表示不在容器上设置该项——
+             *     Kubernetes 没有别的方式表达「不限制」。
+             */
+            metrics_collector_cpu_request: string;
+            metrics_collector_memory_request: string;
+            metrics_collector_cpu_limit: string;
+            metrics_collector_memory_limit: string;
             /** @description Cluster Terminal Pod 存续时长，创建新会话时读取，无需重启 Server。 */
             cluster_terminal_session_ttl_seconds: number;
             revision: number;
@@ -5595,6 +5752,13 @@ export interface components {
             cluster_terminal_image: string;
             /** @enum {string} */
             cluster_terminal_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            metrics_collector_image: string;
+            /** @enum {string} */
+            metrics_collector_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            metrics_collector_cpu_request: string;
+            metrics_collector_memory_request: string;
+            metrics_collector_cpu_limit: string;
+            metrics_collector_memory_limit: string;
             cluster_terminal_session_ttl_seconds: number;
             expected_revision: number;
         };
@@ -6023,6 +6187,15 @@ export interface components {
         };
         /** @description 幂等、生命周期或安全不变量冲突 */
         Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 请求本身合法，但目标当前状态无法完成该操作 */
+        UnprocessableEntity: {
             headers: {
                 [name: string]: unknown;
             };
@@ -7529,6 +7702,160 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listObservabilityMetricsQueries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 可用的指标查询目录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsQueryCatalog"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    runObservabilityMetricsQuery: {
+        parameters: {
+            query: {
+                name: string;
+                /** @description 逗号分隔的 Cluster ID；省略表示权限范围内的全部集群。 */
+                cluster_ids?: string;
+                namespace?: string;
+                start?: string;
+                end?: string;
+                step_seconds?: number;
+                top?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 查询结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsQueryResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getClusterMetricsCollector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 采集组件状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsCollectorState"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    installClusterMetricsCollector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 安装后的采集组件状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsCollectorState"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    uninstallClusterMetricsCollector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 移除后的采集组件状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsCollectorState"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];
         };

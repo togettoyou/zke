@@ -25,8 +25,10 @@ flowchart TB
 - 集群查询和操作通过目标 Cluster 的 Agent 定域执行，结果保留 Cluster、Namespace 和资源身份。
 - 平台主数据、会话、角色绑定、幂等记录和审计事件保存在 PostgreSQL。
 
-多集群指标、日志和告警平台仍在规划中；VictoriaMetrics、VictoriaLogs 与 Grafana 尚未接入，具体数据路径也尚未
-确定。
+多集群指标的第一条链路已实现，一体镜像、Compose 与 Helm 都自带存储并默认启用：集群内 vmagent 采集，经该
+集群 Agent 已有的 QUIC 连接回传，Server 在摄取时按连接身份强制写入 `zke_cluster_id` 后存入 VictoriaMetrics，
+查询只经 Server 的具名查询目录，可视化由 Console 自建，不集成 Grafana。日志、告警与集群标签体系仍在规划中。
+详见 [Phase 3 可观测性架构设计](observability-phase-3.md)。
 
 ## 延伸阅读
 

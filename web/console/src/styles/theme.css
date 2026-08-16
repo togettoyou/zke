@@ -65,6 +65,8 @@
   --app-rose-to: #e11d48;
   --app-slate-from: #475569;
   --app-slate-to: #1e293b;
+  --app-steel-from: #6d9fc0;
+  --app-steel-to: #2f6690;
 
   /* What an icon does under the pointer: its own colour blooms beneath it. The
      hue is the application's, so the response is the application's too — a
@@ -76,6 +78,7 @@
   --app-amber-glow: rgb(240 140 0 / 0.42);
   --app-rose-glow: rgb(225 29 72 / 0.42);
   --app-slate-glow: rgb(30 41 59 / 0.42);
+  --app-steel-glow: rgb(47 102 144 / 0.42);
   --tile-highlight: rgb(255 255 255 / 0.9);
 
   /* Ink for the sign-in dot field. The desktop deliberately does not share it:

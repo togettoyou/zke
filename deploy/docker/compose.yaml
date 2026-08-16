@@ -21,17 +21,44 @@ services:
     networks:
       - backend
 
+  # Metrics storage, part of the stack so that `docker compose up` produces a
+  # deployment where 可观测性 works rather than one whose every write fails.
+  # Not published to the host: it has no authentication of its own.
+  victoriametrics:
+    image: ${ZKE_METRICS_IMAGE:-victoriametrics/victoria-metrics:v1.149.0}
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/victoria-metrics-data
+      - -retentionPeriod=${ZKE_METRICS_RETENTION_PERIOD:-1}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8428/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - zke-metrics-data:/victoria-metrics-data
+    networks:
+      - backend
+
   server:
     image: ${ZKE_SERVER_IMAGE:-ghcr.io/togettoyou/zke-server:latest}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      victoriametrics:
+        condition: service_healthy
     environment:
       ZKE_DATABASE_URL: postgres://zke:${ZKE_POSTGRES_PASSWORD:?Set ZKE_POSTGRES_PASSWORD in deploy/docker/.env}@postgres:5432/zke?sslmode=disable
       ZKE_POD_ACCESS_EXTERNAL_URL: ${ZKE_POD_ACCESS_EXTERNAL_URL:-http://127.0.0.1:8081}
       ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL: ${ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL:-}
       ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS: ${ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS:-}
+      # On, and pointed at the storage above. Setting this to false leaves that
+      # container running but unused; remove the service too.
+      ZKE_OBSERVABILITY_METRICS_ENABLED: ${ZKE_OBSERVABILITY_METRICS_ENABLED:-true}
+      ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL: ${ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL:-http://victoriametrics:8428/api/v1/write}
+      ZKE_OBSERVABILITY_METRICS_STORAGE_QUERY_URL: ${ZKE_OBSERVABILITY_METRICS_STORAGE_QUERY_URL:-http://victoriametrics:8428/prometheus}
     ports:
       - "${ZKE_HTTP_PORT:-8080}:8080"
       - "${ZKE_POD_ACCESS_PORT:-8081}:8081"
@@ -55,3 +82,4 @@ networks:
 volumes:
   zke-data:
   zke-postgresql-data:
+  zke-metrics-data:

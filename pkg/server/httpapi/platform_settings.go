@@ -33,6 +33,18 @@ type platformSettingsRequest struct {
 	AgentImagePullPolicy           string `json:"agent_image_pull_policy"`
 	ClusterTerminalImage           string `json:"cluster_terminal_image"`
 	ClusterTerminalImagePullPolicy string `json:"cluster_terminal_image_pull_policy"`
+	// The collector image lives here rather than in the Server configuration
+	// file: collection is enabled per Cluster long after the Server started, so
+	// changing which image a Cluster pulls must not require a restart.
+	MetricsCollectorImage           string `json:"metrics_collector_image"`
+	MetricsCollectorImagePullPolicy string `json:"metrics_collector_image_pull_policy"`
+	// Kubernetes quantities. An empty string is not a missing field: it means
+	// the entry is left off the collector container, which is the only way to
+	// say "no limit" in Kubernetes.
+	MetricsCollectorCPURequest    string `json:"metrics_collector_cpu_request"`
+	MetricsCollectorMemoryRequest string `json:"metrics_collector_memory_request"`
+	MetricsCollectorCPULimit      string `json:"metrics_collector_cpu_limit"`
+	MetricsCollectorMemoryLimit   string `json:"metrics_collector_memory_limit"`
 	// Seconds rather than a duration string: the wire format stays a plain
 	// number the Console can bind to a numeric input without parsing.
 	ClusterTerminalSessionTTLSeconds int64 `json:"cluster_terminal_session_ttl_seconds"`
@@ -134,9 +146,15 @@ func (handler *platformSettingsHandler) updateSettings(c *gin.Context) {
 	result, err := handler.service.UpdateSettings(ctx, platformsettings.SettingsInput{
 		AgentImage: request.AgentImage, AgentImagePullPolicy: request.AgentImagePullPolicy,
 		ClusterTerminalImage: request.ClusterTerminalImage, ExpectedRevision: request.ExpectedRevision,
-		ClusterTerminalImagePullPolicy: request.ClusterTerminalImagePullPolicy,
-		ClusterTerminalSessionTTL:      terminalSessionTTL(request.ClusterTerminalSessionTTLSeconds),
-		ActorUserID:                    identity.User.ID, Now: time.Now().UTC(),
+		ClusterTerminalImagePullPolicy:  request.ClusterTerminalImagePullPolicy,
+		MetricsCollectorImage:           request.MetricsCollectorImage,
+		MetricsCollectorImagePullPolicy: request.MetricsCollectorImagePullPolicy,
+		MetricsCollectorCPURequest:      request.MetricsCollectorCPURequest,
+		MetricsCollectorMemoryRequest:   request.MetricsCollectorMemoryRequest,
+		MetricsCollectorCPULimit:        request.MetricsCollectorCPULimit,
+		MetricsCollectorMemoryLimit:     request.MetricsCollectorMemoryLimit,
+		ClusterTerminalSessionTTL:       terminalSessionTTL(request.ClusterTerminalSessionTTLSeconds),
+		ActorUserID:                     identity.User.ID, Now: time.Now().UTC(),
 	})
 	cancel()
 	if handler.respondPlatformError(c, "update platform settings", err) {
@@ -160,7 +178,10 @@ func terminalSessionTTL(seconds int64) time.Duration {
 
 func (handler *platformSettingsHandler) respondPlatformError(c *gin.Context, operation string, err error) bool {
 	return handler.respondError(c, operation, err,
-		errorMapping{platformsettings.ErrInvalidInput, http.StatusBadRequest, "invalid_request", "invalid platform settings request"},
+		// Its own code rather than the general invalid_request: the service says
+		// which value it refused and why, and a Console that maps the general
+		// code to a fixed sentence would drop that account.
+		errorMapping{platformsettings.ErrInvalidInput, http.StatusBadRequest, "invalid_platform_settings_input", "invalid platform settings request"},
 		errorMapping{platformsettings.ErrNotFound, http.StatusNotFound, "not_found", "Agent endpoint profile not found"},
 		errorMapping{platformsettings.ErrConflict, http.StatusConflict, "revision_conflict", "settings were changed by another request"},
 		errorMapping{platformsettings.ErrInUse, http.StatusConflict, "profile_in_use", "Agent endpoint profile is the current default"},
@@ -199,5 +220,5 @@ func profilesResponse(profiles []platformsettings.Profile) []gin.H {
 }
 
 func settingsResponse(settings platformsettings.Settings) gin.H {
-	return gin.H{"default_endpoint_profile_id": settings.DefaultEndpointProfileID, "agent_image": settings.AgentImage, "agent_image_pull_policy": settings.AgentImagePullPolicy, "cluster_terminal_image": settings.ClusterTerminalImage, "cluster_terminal_image_pull_policy": settings.ClusterTerminalImagePullPolicy, "cluster_terminal_session_ttl_seconds": int64(settings.ClusterTerminalSessionTTL / time.Second), "revision": settings.Revision, "updated_at": responseTime(settings.UpdatedAt)}
+	return gin.H{"default_endpoint_profile_id": settings.DefaultEndpointProfileID, "agent_image": settings.AgentImage, "agent_image_pull_policy": settings.AgentImagePullPolicy, "cluster_terminal_image": settings.ClusterTerminalImage, "cluster_terminal_image_pull_policy": settings.ClusterTerminalImagePullPolicy, "metrics_collector_image": settings.MetricsCollectorImage, "metrics_collector_image_pull_policy": settings.MetricsCollectorImagePullPolicy, "metrics_collector_cpu_request": settings.MetricsCollectorCPURequest, "metrics_collector_memory_request": settings.MetricsCollectorMemoryRequest, "metrics_collector_cpu_limit": settings.MetricsCollectorCPULimit, "metrics_collector_memory_limit": settings.MetricsCollectorMemoryLimit, "cluster_terminal_session_ttl_seconds": int64(settings.ClusterTerminalSessionTTL / time.Second), "revision": settings.Revision, "updated_at": responseTime(settings.UpdatedAt)}
 }

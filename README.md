@@ -52,6 +52,7 @@ API Server；平台团队可以在统一入口中管理资源与工作负载，�
 | 日常运维 | Pod 日志、Web Terminal、临时访问、事件追踪、资源用量 |
 | 诊断与回滚 | 工作负载诊断、关联对象分析、版本回滚 |
 | 原生资源 | Discovery、CRD 资源浏览、YAML 编辑、多文档清单应用与删除 |
+| 多集群指标 | 集群内采集、经 Agent 回传、跨集群 CPU/内存与节点用量视图（默认启用） |
 | 权限模型 | Tenant、Project、RBAC 与细粒度操作权限 |
 | 安全与审计 | 敏感操作确认、DryRun 差异、并发身份保护、审计日志 |
 
@@ -73,15 +74,16 @@ API Server；平台团队可以在统一入口中管理资源与工作负载，�
 
 ## 快速开始
 
-ZKE Server 是单个二进制，内置 Console 静态资源，只依赖一个 PostgreSQL 数据库和一个持久目录。
-最快的方式是使用同时打包了 PostgreSQL 的 `zke-server-pg` 镜像，无需任何前置准备：
+ZKE Server 是单个二进制，内置 Console 静态资源，依赖 PostgreSQL、一个持久目录，以及启用多集群指标时的
+VictoriaMetrics。最快的方式是使用把三者打包在一起的 `zke-server-all` 镜像，无需任何前置准备：
 
 ```bash
 docker run -d --name zke \
   -p 8080:8080 -p 8081:8081 -p 8443:8443/udp \
   -v zke-data:/data \
   -v zke-postgresql-data:/var/lib/postgresql/data \
-  ghcr.io/togettoyou/zke-server-pg:latest
+  -v zke-metrics-data:/var/lib/victoria-metrics \
+  ghcr.io/togettoyou/zke-server-all:latest
 ```
 
 启动后打开 <http://127.0.0.1:8080>，Console 会引导设置第一个全局管理员的用户名和密码。
@@ -90,6 +92,9 @@ docker run -d --name zke \
 > 所有部署方式使用同一组端口。
 >
 > **数据：** 请务必保留 `zke-data`，它保存 Server Managed PKI，丢失后已接入的 Agent 无法继续连接。
+>
+> **指标：** 多集群指标默认启用，接入集群后在「可观测性 → 采集接入」中安装采集组件即可看到曲线。
+> 用 `-e ZKE_OBSERVABILITY_METRICS_ENABLED=false` 关闭。
 
 <details>
 <summary><b>其他部署方式：已有 PostgreSQL、Docker Compose、Helm</b></summary>
@@ -109,7 +114,7 @@ docker run -d --name zke \
 
 ### Docker Compose
 
-需要分别升级、备份和运维 Server 与 PostgreSQL 时，使用仓库提供的 Compose 文件：
+需要分别升级、备份和运维 Server、PostgreSQL 与指标存储时，使用仓库提供的 Compose 文件：
 
 ```bash
 cd deploy/docker
@@ -160,8 +165,8 @@ flowchart LR
 
 ## Roadmap
 
-- **已实现主要链路：** 平台基础、集群接入与容器服务。
-- **规划中：** 多集群可观测性，包括指标、日志、告警和资源对比。
+- **已实现主要链路：** 平台基础、集群接入、容器服务，以及多集群指标的第一条链路。
+- **规划中：** 可观测性的其余部分，包括日志、告警、集群标签体系与资源对比。
 - **规划中：** AI 运维与排障助手（Copilot），用于结合资源状态、事件、日志和指标辅助分析问题。
 
 规划不代表发布时间或交付承诺。完整规划见 [Roadmap](docs/roadmap.md)；产品、架构、功能与安全设计统一收录在

@@ -1,0 +1,20 @@
+{{- if include "zke.metrics.bundled" . }}
+# ClusterIP and nothing else: the metrics storage has no authentication of its
+# own, and only this release's Server is meant to reach it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zke.metrics.fullname" . }}
+  labels:
+    {{- include "zke.labels" . | nindent 4 }}
+    {{- include "zke.metrics.selectorLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "zke.metrics.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8428
+      targetPort: http
+      protocol: TCP
+{{- end }}

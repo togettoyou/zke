@@ -254,6 +254,23 @@ unknown_field: true
 	}
 }
 
+// The value that makes a host-run Agent usable comes from the environment, so
+// the checked-in sample can keep describing an Agent that runs in a Pod.
+func TestEnvironmentOverridesTheAdvertisedIngestURL(t *testing.T) {
+	t.Setenv("ZKE_METRICS_INGEST_ADVERTISED_URL", "http://host.docker.internal:8429")
+
+	cfg, err := LoadConfig([]string{
+		"--config",
+		filepath.Join("..", "..", "configs", "zke-agent.yaml"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetricsIngest.AdvertisedURL != "http://host.docker.internal:8429" {
+		t.Fatalf("advertised URL = %q", cfg.MetricsIngest.AdvertisedURL)
+	}
+}
+
 func TestRepositoryAgentConfigLoads(t *testing.T) {
 	t.Parallel()
 
@@ -289,7 +306,11 @@ func TestRepositoryAgentConfigMatchesDefaults(t *testing.T) {
 }
 
 func validAgentConfig() Config {
+	// Metrics ingest has no on/off switch, so a hand-built configuration has to
+	// carry it the way a loaded one does.
+	metricsIngest := DefaultConfig().MetricsIngest
 	return Config{
+		MetricsIngest:          metricsIngest,
 		IdentityNamespace:      "zke-system",
 		IdentitySecretName:     "zke-agent-identity",
 		CertificateRenewBefore: 7 * 24 * time.Hour,

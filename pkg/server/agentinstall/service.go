@@ -16,8 +16,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/togettoyou/zke/pkg/server/enrollment"
+	"github.com/togettoyou/zke/pkg/shared/observability"
 )
 
 const (
@@ -222,14 +224,24 @@ func renderManifest(
 					EnrollmentSecretName,
 					TrustSecretName,
 					IdentitySecretName,
+					// Named even when collection is off: the Agent only reads
+					// it while ingest is enabled, and naming it here keeps
+					// enabling collection from requiring an RBAC change.
+					observability.IngestSecretName,
 				},
 				Verbs: []string{"get"},
 			},
 			{
-				APIGroups:     []string{""},
-				Resources:     []string{"secrets"},
-				ResourceNames: []string{IdentitySecretName},
-				Verbs:         []string{"update"},
+				APIGroups: []string{""},
+				Resources: []string{"secrets"},
+				ResourceNames: []string{
+					IdentitySecretName,
+					// The ingest credential is written when the collector is
+					// installed and removed when it is uninstalled, both by the
+					// Agent itself, so it never leaves the Cluster.
+					observability.IngestSecretName,
+				},
+				Verbs: []string{"update", "delete"},
 			},
 		},
 	}
@@ -427,6 +439,15 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
+				// Held so the Agent can grant it. Kubernetes refuses to create a
+				// ClusterRole carrying a permission its creator does not have,
+				// and the metrics collector's role is exactly this rule. The
+				// Agent never scrapes a kubelet itself.
+				APIGroups: []string{""},
+				Resources: []string{"nodes/metrics"},
+				Verbs:     []string{"get"},
+			},
+			{
 				// Deliberately omit escalate, bind and impersonate. Kubernetes
 				// admission keeps delegated authorization within the Agent's
 				// existing permission ceiling.
@@ -497,6 +518,11 @@ func renderManifest(
 						Image:           config.Image,
 						ImagePullPolicy: config.ImagePullPolicy,
 						Args:            []string{"--config", "/etc/zke-agent/zke-agent.yaml"},
+						Ports: []corev1.ContainerPort{{
+							Name:          observability.IngestPortName,
+							ContainerPort: observability.IngestPort,
+							Protocol:      corev1.ProtocolTCP,
+						}},
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: pointer(false),
 							ReadOnlyRootFilesystem:   pointer(true),
@@ -535,6 +561,31 @@ func renderManifest(
 		clusterRoleBinding,
 		deployment,
 	}
+	// A ClusterIP Service, and deliberately nothing else: the endpoint is for a
+	// collector running in this Cluster, so it needs no Ingress, no node port
+	// and no external name.
+	//
+	// It is installed unconditionally. Enabling metrics later is then a Server
+	// setting plus one action in the Console, rather than something that also
+	// requires every Cluster to re-apply its Agent manifest.
+	objects = append(objects, &corev1.Service{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      observability.IngestServiceName,
+			Namespace: config.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: map[string]string{"app.kubernetes.io/name": "zke-agent"},
+			Ports: []corev1.ServicePort{{
+				Name:       observability.IngestPortName,
+				Port:       observability.IngestPort,
+				TargetPort: intstr.FromString(observability.IngestPortName),
+				Protocol:   corev1.ProtocolTCP,
+			}},
+		},
+	})
 	serializer := json.NewSerializerWithOptions(
 		json.DefaultMetaFactory,
 		nil,
@@ -571,11 +622,18 @@ func renderAgentConfig(config manifestConfig) (string, error) {
 		RetryInitialInterval string `yaml:"retry_initial_interval"`
 		RetryMaxInterval     string `yaml:"retry_max_interval"`
 	}
+	type metricsIngestConfig struct {
+		Address string `yaml:"address"`
+	}
 	type agentConfig struct {
-		Identity     identityConfig     `yaml:"identity"`
-		Registration registrationConfig `yaml:"registration"`
-		Connection   connectionConfig   `yaml:"connection"`
-		LogLevel     string             `yaml:"log_level"`
+		Identity      identityConfig       `yaml:"identity"`
+		Registration  registrationConfig   `yaml:"registration"`
+		Connection    connectionConfig     `yaml:"connection"`
+		MetricsIngest *metricsIngestConfig `yaml:"metrics_ingest,omitempty"`
+		LogLevel      string               `yaml:"log_level"`
+	}
+	metricsIngest := &metricsIngestConfig{
+		Address: fmt.Sprintf("0.0.0.0:%d", observability.IngestPort),
 	}
 	output, err := yaml.Marshal(agentConfig{
 		Identity: identityConfig{
@@ -595,7 +653,8 @@ func renderAgentConfig(config manifestConfig) (string, error) {
 			RetryInitialInterval: "1s",
 			RetryMaxInterval:     "30s",
 		},
-		LogLevel: "info",
+		MetricsIngest: metricsIngest,
+		LogLevel:      "info",
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode Agent configuration: %w", err)

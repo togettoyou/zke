@@ -1,17 +1,20 @@
 # 部署指南
 
-ZKE Server 是单个 Go 二进制，内置 Console 静态资源，只依赖一个 PostgreSQL 数据库和一个持久目录。
+ZKE Server 是单个 Go 二进制，内置 Console 静态资源，依赖 PostgreSQL、一个持久目录，以及启用多集群指标时的
+VictoriaMetrics。
 
 ZKE 当前处于开发预览阶段，投入关键环境前应自行完成安全、备份、容量和升级验证。
 
 ## 选择部署方式
 
-| 方式 | 适用场景 | 数据库 |
-| --- | --- | --- |
-| [Docker 一体镜像](#方式一-docker-一体镜像) | 快速体验、单机部署 | 镜像内置 |
-| [Docker 连接已有 PostgreSQL](#方式二-docker-连接已有-postgresql) | 已有数据库，独立备份与运维 | 自备 |
-| [Docker Compose](#方式三-docker-compose) | 单机运行，但分开升级 Server 与数据库 | Compose 内的容器 |
-| [Helm](#方式四-helm) | 部署到 Kubernetes | Chart 内的 StatefulSet |
+| 方式 | 适用场景 | 数据库 | 指标存储 |
+| --- | --- | --- | --- |
+| [Docker 一体镜像](#方式一-docker-一体镜像) | 快速体验、单机部署 | 镜像内置 | 镜像内置 |
+| [Docker 连接已有 PostgreSQL](#方式二-docker-连接已有-postgresql) | 已有数据库，独立备份与运维 | 自备 | 自备或关闭 |
+| [Docker Compose](#方式三-docker-compose) | 单机运行，但分开升级各组件 | Compose 内的容器 | Compose 内的容器 |
+| [Helm](#方式四-helm) | 部署到 Kubernetes | Chart 内的 StatefulSet | Chart 内的 StatefulSet |
+
+除方式二外，多集群指标默认启用并自带存储，接入集群后在「可观测性 → 采集接入」中安装采集组件即可。
 
 启动之后的使用过程相同：打开 Console，创建全局管理员，然后[接入第一个集群](#接入第一个集群)。
 
@@ -27,15 +30,16 @@ ZKE 当前处于开发预览阶段，投入关键环境前应自行完成安全�
 
 | 镜像 | 内容 |
 | --- | --- |
-| `ghcr.io/togettoyou/zke-server-pg` | Server + PostgreSQL 一体镜像 |
+| `ghcr.io/togettoyou/zke-server-all` | Server + PostgreSQL + 指标存储一体镜像 |
 | `ghcr.io/togettoyou/zke-server` | 仅 Server |
 | `ghcr.io/togettoyou/zke-agent` | Agent，由集群安装清单引用，不需要手动运行 |
 
 `main` 分支推送 `latest`，Git Tag 推送同名版本 Tag；Helm Chart 发布在 `oci://ghcr.io/togettoyou/charts/zke`，
 分别对应 `0.0.0-latest` 与去掉 `v` 前缀的语义化版本。
 
-持久化目录有两个：`/data` 保存 Server Managed PKI，所有方式都需要；`/var/lib/postgresql/data` 保存数据库。
-`/data` 丢失但数据库仍有 PKI 状态时，Server 会失败关闭而不是重新签发 CA，因此升级和重建容器时必须保留该卷。
+持久化目录有三个：`/data` 保存 Server Managed PKI，所有方式都需要；`/var/lib/postgresql/data` 保存数据库；
+`/var/lib/victoria-metrics` 保存一体镜像中的指标样本。`/data` 丢失但数据库仍有 PKI 状态时，Server 会失败
+关闭而不是重新签发 CA，因此升级和重建容器时必须保留该卷。
 
 ## 方式一 Docker 一体镜像
 
@@ -46,8 +50,11 @@ docker run -d --name zke \
   -p 8443:8443/udp \
   -v zke-data:/data \
   -v zke-postgresql-data:/var/lib/postgresql/data \
-  ghcr.io/togettoyou/zke-server-pg:latest
+  -v zke-metrics-data:/var/lib/victoria-metrics \
+  ghcr.io/togettoyou/zke-server-all:latest
 ```
+
+容器内依次启动 PostgreSQL、VictoriaMetrics 和 ZKE Server，任何一个退出都会结束整个容器。
 
 容器内的 PostgreSQL 使用镜像默认账号和密码，`5432` 不对外发布，只在容器内可达。要把它接入共享网络或发布该
 端口时，先改掉默认密码——密码只在数据卷首次初始化时生效，因此两项必须在第一次启动时一起给出：
@@ -57,6 +64,15 @@ docker run -d --name zke \
 -e POSTGRES_PASSWORD='<password>'
 -e ZKE_DATABASE_URL='postgres://zke:<password>@127.0.0.1:5432/zke?sslmode=disable'
 ```
+
+指标存储是单节点 VictoriaMetrics，只监听容器内的 `127.0.0.1:8428`。可调整项：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `ZKE_OBSERVABILITY_METRICS_ENABLED` | `true` | 设为 `false` 时不启动指标存储，Server 也不向 Agent 提供摄取能力 |
+| `ZKE_METRICS_RETENTION_PERIOD` | `1` | 保留期，不带单位时以月计；也接受 `1d`、`12w`、`1y` |
+| `ZKE_METRICS_STORAGE_DATA_PATH` | `/var/lib/victoria-metrics` | 样本存放目录 |
+| `ZKE_METRICS_LISTEN_ADDRESS` | `127.0.0.1:8428` | 改为 `0.0.0.0:8428` 并发布端口后可用 Grafana 等直接查询。该端点没有认证 |
 
 查看启动日志：`docker logs -f zke`。
 
@@ -77,9 +93,12 @@ docker run -d --name zke \
 数据库和账号需要提前建好，账号要有在该库内建表的权限；Server 在开始监听 HTTP 之前自动执行迁移。密码会进入
 URL，应使用 URL-safe 的随机字符串。仓库的镜像、Compose 与 Chart 都使用 PostgreSQL 17。
 
+这个镜像不带指标存储，而内置配置默认开启指标并指向 `127.0.0.1:8428`。因此必须二选一：把存储地址指向可达的
+VictoriaMetrics，或者关闭指标，取值见[启用多集群指标](#启用多集群指标)。
+
 ## 方式三 Docker Compose
 
-Compose 文件位于 `deploy/docker/`，Server 与 PostgreSQL 是两个独立容器：
+Compose 文件位于 `deploy/docker/`，Server、PostgreSQL 与指标存储是三个独立容器：
 
 ```bash
 cd deploy/docker
@@ -88,8 +107,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
-`.env` 可覆盖镜像、宿主机端口、Pod Access 外部地址和 Agent 默认接入端点，取值见 `.env.example`。PostgreSQL 只把
-端口绑定到宿主机回环地址；Compose 网络内的 Server 通过服务名连接数据库。
+`.env` 可覆盖镜像、宿主机端口、Pod Access 外部地址、Agent 默认接入端点和指标存储，取值见 `.env.example`。
+多集群指标默认启用；PostgreSQL 只绑定宿主机回环地址，指标存储不发布到宿主机。
 
 `docker compose logs -f server` 查看日志，`docker compose down` 停止服务且不删除数据卷。
 
@@ -102,8 +121,8 @@ helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
   --create-namespace
 ```
 
-Chart 负责 Server、PostgreSQL、监听端口与持久化，可配置项见 `deploy/chart/values.yaml`。默认 Service 类型是
-`ClusterIP`，本机验证可以直接端口转发：
+Chart 负责 Server、PostgreSQL、指标存储、监听端口与持久化，可配置项见 `deploy/chart/values.yaml`。默认
+Service 类型是 `ClusterIP`，本机验证可以直接端口转发：
 
 ```bash
 kubectl -n zke-system port-forward service/zke-server 8080:8080 8081:8081
@@ -182,6 +201,9 @@ ZKE 的配置分两层：Server 启动前必须确定的引导配置，和启动
 | `ZKE_POD_ACCESS_EXTERNAL_URL` | `pod_access.external_url` | 浏览器访问 Pod Access 的外部地址 |
 | `ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL` | `agent_install.public_http_url` | 平台默认端点的 HTTP 注册地址 |
 | `ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS` | `agent_install.public_quic_address` | 平台默认端点的 QUIC 地址 |
+| `ZKE_OBSERVABILITY_METRICS_ENABLED` | `observability.metrics.enabled` | 是否启用多集群指标，布尔值 |
+| `ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL` | `observability.metrics.storage_write_url` | 指标存储的 remote write 端点 |
+| `ZKE_OBSERVABILITY_METRICS_STORAGE_QUERY_URL` | `observability.metrics.storage_query_url` | 指标存储的查询根路径 |
 
 要改其余字段（例如启用原生 HTTPS、调整会话超时），挂载一份自定义 YAML 覆盖容器内的
 `/etc/zke/zke-server.yaml`，例如 `-v "$(pwd)/zke-server.yaml:/etc/zke/zke-server.yaml:ro"`。未出现在文件中的键
@@ -191,16 +213,51 @@ ZKE 的配置分两层：Server 启动前必须确定的引导配置，和启动
 平台默认端点由 `agent_install` 的两项配套提供；均为空时使用「本机回环预览」。Server 每次启动都按当前有效配置
 重新同步部署端点，Console 不能修改、删除或另设平台默认端点。
 
+### 启用多集群指标
+
+一体镜像、Docker Compose 与 Helm 都自带单节点 VictoriaMetrics 并默认启用指标，不需要额外准备；只包含
+Server 的镜像不带存储。
+
+改用已有的 VictoriaMetrics，或关闭指标：
+
+```bash
+# docker run：指向自己的存储
+-e ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL='http://victoriametrics.example.internal:8428/api/v1/write'
+-e ZKE_OBSERVABILITY_METRICS_STORAGE_QUERY_URL='http://victoriametrics.example.internal:8428/prometheus'
+# 或者关闭：
+-e ZKE_OBSERVABILITY_METRICS_ENABLED=false
+```
+
+Compose 在 `.env` 中设置同名变量；Helm 使用 `server.metrics.enabled`、`server.metrics.storageWriteURL` 与
+`server.metrics.storageQueryURL`，后两项必须同时提供。给出外部地址后 Chart 不再部署自带存储，自带存储的
+镜像、保留期与容量在 `metrics.*` 下调整。ZKE 不管理外部存储的生命周期、容量与保留期。
+
+关闭时 Server 不向 Agent 提供摄取能力，集群侧不部署任何采集组件，Console 的「可观测性」会直接说明本部署
+未启用指标存储。
+
+启用后在「可观测性 → 采集接入」的集群列表中逐个安装或卸载，需要 `cluster.metrics.manage`；查看指标是另一个
+权限 `cluster.metrics.read`。采集组件由该集群的 Agent 安装到自己的 Agent Namespace，摄取凭证也由 Agent 在
+集群内生成，不经过 Server。
+
+采集组件的镜像、拉取策略与资源请求/限制在「平台配置 → 指标采集」中管理，默认
+`victoriametrics/vmagent:v1.149.0`，请求 `50m` / `128Mi`，限制 `500m` / `512Mi`；留空表示不设置该项。
+修改后对下一次安装生效，已安装的集群会在采集接入列表中提示可以更新。
+
+采集数据经该集群 Agent 已有的 QUIC 连接回传，不需要为指标开通新的网络路径，也不需要重新应用 Agent 清单。
+存储不可用时只影响指标查询。
+
 ### 平台配置
 
 以下配置保存在 PostgreSQL，只能由全局 `admin` 在 Console 的「平台配置」应用修改，不需要重启：
 
 - 端点 —— Agent 接入端点预设：注册 URL、QUIC 地址、可选注册 HTTPS CA；
-- 镜像 —— Agent 镜像与 Image Pull Policy、Cluster Terminal 镜像与独立的 Image Pull Policy；
-- 集群终端 —— Cluster Terminal 会话存续时长，可选 1 分钟至 1 小时，默认 15 分钟。
+- 镜像 —— Agent 镜像与 Cluster Terminal 镜像，各自独立的 Image Pull Policy；
+- 集群终端 —— Cluster Terminal 会话存续时长，可选 1 分钟至 1 小时，默认 15 分钟；
+- 指标采集 —— 采集组件镜像与 Image Pull Policy，以及它的 CPU / 内存请求与限制。
 
-生效时机不同：Cluster Terminal 的镜像、拉取策略与会话时长立即用于新会话；Agent 镜像、拉取策略、Namespace 和
-凭证选中的端点在新 Enrollment 签发时进入不可变快照，已签发的凭证和已接入的集群不受影响。
+生效时机不同：Cluster Terminal 的镜像、拉取策略与会话时长立即用于新会话；采集组件的取值在下一次安装时
+读取；Agent 镜像、拉取策略、Namespace 和凭证选中的端点在新 Enrollment 签发时进入不可变快照，已签发的凭证
+和已接入的集群不受影响。
 
 ## 升级、备份与卸载
 
@@ -209,7 +266,7 @@ ZKE 的配置分两层：Server 启动前必须确定的引导配置，和启动
 
 ```bash
 # Docker：拉取新镜像后用原来的命令重建容器，保持相同的卷名
-docker pull ghcr.io/togettoyou/zke-server-pg:latest && docker rm -f zke
+docker pull ghcr.io/togettoyou/zke-server-all:latest && docker rm -f zke
 
 # Docker Compose
 cd deploy/docker && docker compose pull && docker compose up -d
@@ -223,8 +280,8 @@ Server 升级后，已接入集群里的 Agent 仍运行原有版本，Console �
 Agent。该提示只用于发现没有跟上的集群：版本不同不影响连接和任何功能，Server 与 Agent 仍按原有协议通信。
 
 备份要同时覆盖数据库（`pg_dump` 或卷快照）和 `/data` 中的 Managed PKI，并且是同一时刻的一致快照；只恢复其中
-一个会导致 Server 失败关闭或 Agent 证书链失效。`docker rm` 与 `helm uninstall` 都不会删除数据卷，确认不再需要
-后手动删除对应的 volume 或 PVC。
+一个会导致 Server 失败关闭或 Agent 证书链失效。指标样本不在此列，丢失只影响历史曲线。`docker rm` 与
+`helm uninstall` 都不会删除数据卷，确认不再需要后手动删除对应的 volume 或 PVC。
 
 ## 数据与安全
 

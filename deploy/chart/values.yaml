@@ -37,6 +37,43 @@ server:
     # both when Agents connect through an address outside this Kubernetes cluster.
     publicHTTPURL: ""
     publicQUICAddress: ""
+  metrics:
+    # On by default; the Chart deploys the storage (see the metrics section
+    # below), so nothing has to be stood up first.
+    enabled: true
+    # Leave both empty to use this release's own storage. Set both to point the
+    # Server at a VictoriaMetrics you already run, which also stops the Chart
+    # from deploying one. Configure them together or rendering fails: only one
+    # of the two would split writes and queries.
+    storageWriteURL: ""
+    storageQueryURL: ""
+
+# Metrics storage, deployed only when server.metrics.enabled is true and no
+# external endpoint is named. Single-node VictoriaMetrics, pinned to the same
+# release series as the default collector image.
+metrics:
+  image:
+    repository: victoriametrics/victoria-metrics
+    tag: v1.149.0
+    pullPolicy: IfNotPresent
+  # Months unless a unit is given; 1d, 12w and 1y are all accepted.
+  retentionPeriod: "1"
+  extraArgs: []
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 postgresql:
   image:

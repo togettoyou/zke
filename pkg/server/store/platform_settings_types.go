@@ -33,15 +33,21 @@ type AgentEndpointProfile struct {
 }
 
 type PlatformSettings struct {
-	DefaultEndpointProfileID       string
-	AgentImage                     string
-	AgentImagePullPolicy           string
-	ClusterTerminalImage           string
-	ClusterTerminalImagePullPolicy string
-	ClusterTerminalSessionTTL      time.Duration
-	Revision                       int64
-	UpdatedByUserID                string
-	UpdatedAt                      time.Time
+	DefaultEndpointProfileID        string
+	AgentImage                      string
+	AgentImagePullPolicy            string
+	ClusterTerminalImage            string
+	ClusterTerminalImagePullPolicy  string
+	MetricsCollectorImage           string
+	MetricsCollectorImagePullPolicy string
+	MetricsCollectorCPURequest      string
+	MetricsCollectorMemoryRequest   string
+	MetricsCollectorCPULimit        string
+	MetricsCollectorMemoryLimit     string
+	ClusterTerminalSessionTTL       time.Duration
+	Revision                        int64
+	UpdatedByUserID                 string
+	UpdatedAt                       time.Time
 }
 
 type CreateAgentEndpointProfileParams struct {
@@ -68,14 +74,20 @@ type UpdateAgentEndpointProfileParams struct {
 }
 
 type UpdatePlatformSettingsParams struct {
-	AgentImage                     string
-	AgentImagePullPolicy           string
-	ClusterTerminalImage           string
-	ClusterTerminalImagePullPolicy string
-	ClusterTerminalSessionTTL      time.Duration
-	ExpectedRevision               int64
-	ActorUserID                    string
-	Now                            time.Time
+	AgentImage                      string
+	AgentImagePullPolicy            string
+	ClusterTerminalImage            string
+	ClusterTerminalImagePullPolicy  string
+	MetricsCollectorImage           string
+	MetricsCollectorImagePullPolicy string
+	MetricsCollectorCPURequest      string
+	MetricsCollectorMemoryRequest   string
+	MetricsCollectorCPULimit        string
+	MetricsCollectorMemoryLimit     string
+	ClusterTerminalSessionTTL       time.Duration
+	ExpectedRevision                int64
+	ActorUserID                     string
+	Now                             time.Time
 }
 
 type ReconcileDefaultEndpointParams struct {

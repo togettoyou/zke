@@ -73,6 +73,18 @@ type Config struct {
 	ResourceWatchRequestTimeout  time.Duration
 	MaxResourceWatchStreams      int
 	MaxResourceWatchRequests     int
+	// Metrics Ingest is the one business Stream the Agent opens. Its budgets
+	// are separate from every Server-initiated kind so that a Cluster shipping
+	// metrics cannot consume the allowance that resource requests, logs and
+	// terminals draw on.
+	MetricsIngestTimeout    time.Duration
+	MaxMetricsBatchBytes    uint64
+	MaxMetricsIngestStreams int
+	// MetricsSink receives accepted batches. Leaving it nil disables ingest
+	// entirely: the Server then never advertises the capability, so a
+	// collecting Agent learns there is nowhere to send data instead of opening
+	// a Stream that would be refused batch by batch.
+	MetricsSink MetricsSink
 	// MaxRememberedDisconnects bounds how many disconnected Agents keep a
 	// last-known status in memory, so Cluster churn cannot grow the Server
 	// heap without limit.
@@ -100,6 +112,7 @@ type Manager struct {
 	podExecAdmissions        chan struct{}
 	podPortForwardAdmissions chan struct{}
 	resourceWatchAdmissions  chan struct{}
+	metricsIngestAdmissions  chan struct{}
 
 	mutex                sync.Mutex
 	connections          map[string]*session
@@ -108,6 +121,30 @@ type Manager struct {
 	disconnectOrder      []string
 	subscribers          map[uint64]chan ConnectionEvent
 	nextSubscriberID     uint64
+}
+
+// MetricsScope is the identity the Server binds to every accepted batch. It is
+// derived from the mTLS connection and the Server's own records, never from
+// the payload or anything the Agent declares: whoever administers a Cluster
+// controls what its collector sends, but must not be able to write data under
+// another Cluster's identity.
+type MetricsScope struct {
+	TenantID  string
+	ProjectID string
+	ClusterID string
+	AgentID   string
+}
+
+// MetricsSink consumes exactly one batch payload, bounded to size bytes. The
+// verdict is a value rather than an error because rejection is a normal
+// outcome that travels back to the collector.
+type MetricsSink interface {
+	IngestMetrics(
+		ctx context.Context,
+		scope MetricsScope,
+		payload io.Reader,
+		size uint64,
+	) agentprotocol.MetricsIngestResult
 }
 
 type managedConnection interface {
@@ -197,6 +234,11 @@ const (
 	defaultResourceWatchRequestTimeout  = 30 * time.Minute
 	defaultMaxResourceWatchStreams      = 16
 	defaultMaxResourceWatchRequests     = 512
+	defaultMetricsIngestTimeout         = agentprotocol.DefaultMetricsIngestTimeout
+	defaultMaxMetricsBatchBytes         = agentprotocol.DefaultMaxMetricsBatchBytes
+	// One long-lived Stream per collecting Agent, so this bounds how many
+	// Clusters may ship metrics at once rather than how bursty one of them is.
+	defaultMaxMetricsIngestStreams = 512
 
 	// Bounds for re-establishing the revocation watch after the listening
 	// PostgreSQL connection drops. The ceiling is kept well under the
@@ -213,19 +255,20 @@ type certificateIdentity struct {
 }
 
 var (
-	ErrAgentNotConnected                = errors.New("target Cluster Agent is not connected")
-	ErrResourceCapabilityMissing        = errors.New("target Cluster Agent does not support Resource Streams")
-	ErrResourceRequestExhausted         = errors.New("Resource Stream request capacity is exhausted")
-	ErrResourceVerbUnsupported          = errors.New("Resource Stream verb is not implemented")
-	ErrPodLogsCapabilityMissing         = errors.New("target Cluster Agent does not support Pod Logs Streams")
-	ErrPodLogsRequestExhausted          = errors.New("Pod Logs Stream request capacity is exhausted")
-	ErrPodExecCapabilityMissing         = errors.New("target Cluster Agent does not support Pod Exec Streams")
-	ErrPodExecRequestExhausted          = errors.New("Pod Exec Stream request capacity is exhausted")
-	ErrPodPortForwardCapabilityMissing  = errors.New("target Cluster Agent does not support Pod Port Forward Streams")
-	ErrPodPortForwardRequestExhausted   = errors.New("Pod Port Forward Stream request capacity is exhausted")
-	ErrResourceWatchCapabilityMissing   = errors.New("target Cluster Agent does not support Resource Watch Streams")
-	ErrResourceWatchRequestExhausted    = errors.New("Resource Watch Stream request capacity is exhausted")
-	ErrTerminalSessionCapabilityMissing = errors.New("target Cluster Agent does not support Terminal Session Streams")
+	ErrAgentNotConnected                 = errors.New("target Cluster Agent is not connected")
+	ErrResourceCapabilityMissing         = errors.New("target Cluster Agent does not support Resource Streams")
+	ErrResourceRequestExhausted          = errors.New("Resource Stream request capacity is exhausted")
+	ErrResourceVerbUnsupported           = errors.New("Resource Stream verb is not implemented")
+	ErrPodLogsCapabilityMissing          = errors.New("target Cluster Agent does not support Pod Logs Streams")
+	ErrPodLogsRequestExhausted           = errors.New("Pod Logs Stream request capacity is exhausted")
+	ErrPodExecCapabilityMissing          = errors.New("target Cluster Agent does not support Pod Exec Streams")
+	ErrPodExecRequestExhausted           = errors.New("Pod Exec Stream request capacity is exhausted")
+	ErrPodPortForwardCapabilityMissing   = errors.New("target Cluster Agent does not support Pod Port Forward Streams")
+	ErrPodPortForwardRequestExhausted    = errors.New("Pod Port Forward Stream request capacity is exhausted")
+	ErrResourceWatchCapabilityMissing    = errors.New("target Cluster Agent does not support Resource Watch Streams")
+	ErrResourceWatchRequestExhausted     = errors.New("Resource Watch Stream request capacity is exhausted")
+	ErrTerminalSessionCapabilityMissing  = errors.New("target Cluster Agent does not support Terminal Session Streams")
+	ErrMetricsCollectorCapabilityMissing = errors.New("target Cluster Agent does not support metrics collector management")
 )
 
 func New(
@@ -304,14 +347,70 @@ func New(
 	if config.MaxResourceWatchRequests <= 0 {
 		config.MaxResourceWatchRequests = defaultMaxResourceWatchRequests
 	}
-	streamServer, err := agentprotocol.NewStreamServer(
+	if config.MetricsIngestTimeout <= 0 {
+		config.MetricsIngestTimeout = defaultMetricsIngestTimeout
+	}
+	if config.MaxMetricsBatchBytes == 0 {
+		config.MaxMetricsBatchBytes = defaultMaxMetricsBatchBytes
+	}
+	if config.MaxMetricsBatchBytes > agentprotocol.MaxMetricsBatchBytesCeiling {
+		return nil, fmt.Errorf(
+			"metrics batch limit exceeds the protocol ceiling of %d bytes",
+			agentprotocol.MaxMetricsBatchBytesCeiling,
+		)
+	}
+	if config.MaxMetricsIngestStreams <= 0 {
+		config.MaxMetricsIngestStreams = defaultMaxMetricsIngestStreams
+	}
+	manager := &Manager{
+		config:     config,
+		logger:     logger,
+		store:      connectionStore,
+		renewal:    renewalService,
+		tls:        tlsConfig,
+		admissions: make(chan struct{}, max(1, config.MaxConcurrentAgents)),
+		resourceAdmissions: make(
+			chan struct{},
+			config.MaxResourceRequests,
+		),
+		podLogsAdmissions:        make(chan struct{}, config.MaxPodLogsRequests),
+		podExecAdmissions:        make(chan struct{}, config.MaxPodExecRequests),
+		podPortForwardAdmissions: make(chan struct{}, config.MaxPodPortForwardRequests),
+		resourceWatchAdmissions:  make(chan struct{}, config.MaxResourceWatchRequests),
+		metricsIngestAdmissions:  make(chan struct{}, config.MaxMetricsIngestStreams),
+		connections:              make(map[string]*session),
+		connectionsByCluster:     make(map[string]*session),
+		lastDisconnected:         make(map[string]ConnectionStatus),
+		subscribers:              make(map[uint64]chan ConnectionEvent),
+	}
+	streamServer, err := manager.newStreamServer(nil)
+	if err != nil {
+		return nil, err
+	}
+	manager.streams = streamServer
+	return manager, nil
+}
+
+// newStreamServer builds the accept-side dispatcher for one Connection.
+// Handlers that need the Connection's identity are bound here, because the
+// shared dispatcher has no way to tell one Agent from another once a Stream
+// reaches a handler. Passing a nil scope produces the dispatcher used before a
+// Connection has an identity, and by Agents that negotiated no ingest.
+func (manager *Manager) newStreamServer(
+	scope *MetricsScope,
+) (*agentprotocol.StreamServer, error) {
+	logger := manager.logger
+	handlers := manager.incomingStreamHandlers(scope)
+	return agentprotocol.NewStreamServer(
 		agentprotocol.StreamServerConfig{
-			HeaderTimeout: config.HandshakeTimeout,
+			HeaderTimeout: manager.config.HandshakeTimeout,
 			MaxTimeout: max(
-				config.ResourceRequestTimeout,
-				config.PodExecRequestTimeout,
-				config.PodPortForwardRequestTimeout,
+				manager.config.ResourceRequestTimeout,
+				manager.config.PodExecRequestTimeout,
+				manager.config.PodPortForwardRequestTimeout,
+				manager.config.MetricsIngestTimeout,
 			),
+			Handlers: handlers,
 			OnError: func(header *agentv1.StreamHeader, err error) {
 				attributes := []any{slog.String("error", err.Error())}
 				if header != nil {
@@ -325,30 +424,66 @@ func New(
 			},
 		},
 	)
-	if err != nil {
-		return nil, err
+}
+
+// incomingStreamHandlers reports what this Server accepts from one Connection.
+// Metrics ingest is the only entry today, and it appears only when both sides
+// can hold up their end: the Agent negotiated the capability (a non-nil scope)
+// and this deployment has somewhere to put the samples.
+func (manager *Manager) incomingStreamHandlers(
+	scope *MetricsScope,
+) map[agentv1.StreamKind]agentprotocol.StreamHandlerConfig {
+	handlers := map[agentv1.StreamKind]agentprotocol.StreamHandlerConfig{}
+	if scope == nil || manager.config.MetricsSink == nil {
+		return handlers
 	}
-	return &Manager{
-		config:     config,
-		logger:     logger,
-		store:      connectionStore,
-		renewal:    renewalService,
-		tls:        tlsConfig,
-		streams:    streamServer,
-		admissions: make(chan struct{}, max(1, config.MaxConcurrentAgents)),
-		resourceAdmissions: make(
-			chan struct{},
-			config.MaxResourceRequests,
-		),
-		podLogsAdmissions:        make(chan struct{}, config.MaxPodLogsRequests),
-		podExecAdmissions:        make(chan struct{}, config.MaxPodExecRequests),
-		podPortForwardAdmissions: make(chan struct{}, config.MaxPodPortForwardRequests),
-		resourceWatchAdmissions:  make(chan struct{}, config.MaxResourceWatchRequests),
-		connections:              make(map[string]*session),
-		connectionsByCluster:     make(map[string]*session),
-		lastDisconnected:         make(map[string]ConnectionStatus),
-		subscribers:              make(map[uint64]chan ConnectionEvent),
-	}, nil
+	handlers[agentv1.StreamKind_STREAM_KIND_METRICS_INGEST] =
+		agentprotocol.StreamHandlerConfig{
+			// One ingest Stream per Connection. A second one is a protocol
+			// violation, not extra capacity.
+			MaxConcurrent: 1,
+			MaxTimeout:    manager.config.MetricsIngestTimeout,
+			Handle:        manager.metricsIngestHandler(*scope),
+		}
+	return handlers
+}
+
+// metricsIngestHandler binds one Connection's scope to the ingest Stream and
+// adds the instance-wide admission the per-Connection dispatcher cannot see.
+func (manager *Manager) metricsIngestHandler(
+	scope MetricsScope,
+) agentprotocol.IncomingStreamHandler {
+	handle := agentprotocol.MetricsIngestStreamHandler(
+		manager.config.MaxMetricsBatchBytes,
+		func(
+			ctx context.Context,
+			batch *agentv1.MetricsIngestBatch,
+			payload io.Reader,
+		) agentprotocol.MetricsIngestResult {
+			return manager.config.MetricsSink.IngestMetrics(
+				ctx,
+				scope,
+				payload,
+				batch.GetPayloadSize(),
+			)
+		},
+	)
+	return func(
+		ctx context.Context,
+		stream *quic.Stream,
+		header *agentv1.StreamHeader,
+	) error {
+		select {
+		case manager.metricsIngestAdmissions <- struct{}{}:
+			defer func() { <-manager.metricsIngestAdmissions }()
+		default:
+			return &agentprotocol.StreamFailure{
+				Code: agentprotocol.StreamErrorResourceExhausted,
+				Err:  agentprotocol.ErrStreamResourceExhausted,
+			}
+		}
+		return handle(ctx, stream, header)
+	}
 }
 
 func (manager *Manager) Run(ctx context.Context) error {
@@ -611,6 +746,42 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityTerminalSessionV1)
 		current.capabilities[agentprotocol.CapabilityTerminalSessionV1] = struct{}{}
 	}
+	// Managing the collector is offered only when this Server has storage: an
+	// installed collector with nowhere to send data is worse than none.
+	if manager.config.MetricsSink != nil &&
+		hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityMetricsCollectorV1) {
+		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityMetricsCollectorV1)
+		current.capabilities[agentprotocol.CapabilityMetricsCollectorV1] = struct{}{}
+	}
+	// Metrics Ingest is only offered when this Server can actually store what
+	// arrives. Advertising it without a sink would invite an Agent to hold a
+	// Stream open and have every batch refused.
+	connectionStreams := manager.streams
+	if manager.config.MetricsSink != nil &&
+		hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityMetricsIngestV1) {
+		scope := MetricsScope{
+			TenantID:  identity.TenantID,
+			ProjectID: identity.ProjectID,
+			ClusterID: identity.ClusterID,
+			AgentID:   identity.AgentID,
+		}
+		scopedStreams, err := manager.newStreamServer(&scope)
+		if err != nil {
+			manager.reject(
+				connection,
+				agentprotocol.CloseInternalError,
+				"metrics ingest dispatcher unavailable",
+				err,
+			)
+			return
+		}
+		connectionStreams = scopedStreams
+		serverCapabilities = append(
+			serverCapabilities,
+			agentprotocol.CapabilityMetricsIngestV1,
+		)
+		current.capabilities[agentprotocol.CapabilityMetricsIngestV1] = struct{}{}
+	}
 	previous := manager.register(current)
 	if previous != nil {
 		previous.startDrain(
@@ -660,7 +831,7 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 	businessDone := make(chan struct{})
 	go func() {
 		defer close(businessDone)
-		err := manager.streams.Serve(businessContext, connection)
+		err := connectionStreams.Serve(businessContext, connection)
 		businessErrors <- err
 		if err != nil && businessContext.Err() == nil {
 			_ = connection.CloseWithError(
@@ -1255,6 +1426,58 @@ func (manager *Manager) RequestTerminalSession(
 		TimeoutMillis:   uint64(max(int64(1), time.Until(deadline).Milliseconds())),
 		IdempotencyKey:  idempotencyKey,
 	}, request)
+}
+
+// RequestMetricsCollector asks one Cluster's Agent to install, remove or
+// describe its metrics collector. The Server sends the desired configuration,
+// never the objects: the Agent owns their shape.
+func (manager *Manager) RequestMetricsCollector(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.MetricsCollectorRequest,
+) (*agentv1.MetricsCollectorResponse, error) {
+	if ctx == nil || !validation.IsUUID(clusterID) || request == nil {
+		return nil, errors.New("metrics collector request is invalid")
+	}
+	manager.mutex.Lock()
+	current := manager.connectionsByCluster[clusterID]
+	manager.mutex.Unlock()
+	if current == nil || current.business == nil || !current.beginBusiness() {
+		return nil, ErrAgentNotConnected
+	}
+	defer current.endBusiness()
+	if _, supported := current.capabilities[agentprotocol.CapabilityMetricsCollectorV1]; !supported {
+		return nil, ErrMetricsCollectorCapabilityMissing
+	}
+	if !tryAcquire(manager.resourceAdmissions) {
+		return nil, ErrResourceRequestExhausted
+	}
+	defer release(manager.resourceAdmissions)
+	if !tryAcquire(current.resourceAdmissions) {
+		return nil, ErrResourceRequestExhausted
+	}
+	defer release(current.resourceAdmissions)
+	requestContext, cancelRequest := context.WithTimeout(
+		ctx,
+		manager.config.ResourceRequestTimeout,
+	)
+	defer cancelRequest()
+	deadline, _ := requestContext.Deadline()
+	requestID, err := streamRequestID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return agentprotocol.DoMetricsCollector(
+		requestContext,
+		current.business,
+		&agentv1.StreamHeader{
+			ProtocolVersion: agentprotocol.ProtocolVersion,
+			Kind:            agentv1.StreamKind_STREAM_KIND_METRICS_COLLECTOR,
+			RequestId:       requestID,
+			TimeoutMillis:   uint64(max(int64(1), time.Until(deadline).Milliseconds())),
+		},
+		request,
+	)
 }
 
 func (manager *Manager) RequestPodLogs(

@@ -33,17 +33,18 @@ const ContainerServiceApp = lazy(async () => ({
 const TerminalApp = lazy(async () => ({
   default: (await import("./terminal/TerminalApp")).TerminalApp,
 }));
-const PlannedApp = lazy(async () => ({
-  default: (await import("./planned/PlannedApp")).PlannedApp,
+const ObservabilityApp = lazy(async () => ({
+  default: (await import("./observability/ObservabilityApp")).ObservabilityApp,
 }));
 
 /**
  * Desktop application catalogue.
  *
- * Phase 1 applications are backed by real Server APIs. Everything else is
- * declared as `planned` with its roadmap phase: the icon exists so the product
- * shape is visible, but the window states plainly that the capability is not
- * implemented yet. No planned application renders fabricated data.
+ * Every application here is backed by real Server APIs. A capability that is
+ * not implemented yet is declared as `planned` with its roadmap phase and
+ * rendered by `planned/PlannedApp`, so the icon can show the product shape
+ * without the window fabricating data; there is no such application at the
+ * moment, which is why nothing imports it.
  */
 export const APP_MANIFESTS: AppManifest[] = [
   {
@@ -128,21 +129,17 @@ export const APP_MANIFESTS: AppManifest[] = [
   {
     id: "observability",
     title: "可观测性",
-    description: "多集群指标、日志、事件与告警",
+    description: "跨集群指标与采集接入",
     icon: Activity,
-    requiredPermissions: [],
-    availability: {
-      state: "planned",
-      phase: 3,
-      plannedCapabilities: [
-        "VictoriaMetrics 与 VictoriaLogs 集成",
-        "多集群指标与日志查询",
-        "告警中心",
-        "集群标签体系",
-      ],
-    },
-    defaultSize: { width: 880, height: 560 },
-    entry: PlannedApp,
+    accent: "steel",
+    // Reading metrics is the application's purpose; installing collection is a
+    // second permission checked inside it. Gating the icon on the read
+    // permission alone keeps an operator who may only look from finding no
+    // application at all.
+    requiredPermissions: ["cluster.metrics.read"],
+    availability: { state: "available" },
+    defaultSize: { width: 1_060, height: 680 },
+    entry: ObservabilityApp,
   },
 ];
 

@@ -1613,6 +1613,235 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/observability/metrics/queries:
+    get:
+      tags: [Resources]
+      operationId: listObservabilityMetricsQueries
+      description: |
+        列出本 Server 提供的具名指标查询。Console 只能调用这些查询，不能提交
+        PromQL：作用域过滤是查询模板的一部分，而不是对用户输入的事后改写。
+
+        该目录描述系统能力，不包含任何集群数据，因此只要求已认证会话。
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: 可用的指标查询目录
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsQueryCatalog"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/observability/metrics/query:
+    get:
+      tags: [Resources]
+      operationId: runObservabilityMetricsQuery
+      description: |
+        执行一个具名指标查询。可观测性是多集群应用，路径中没有 cluster_id：Server
+        解析调用者在 `cluster.metrics.read` 上的可见范围，展开成一组 `cluster_id`
+        并作为强制过滤注入查询模板，调用方参数无法覆盖。
+
+        省略 `cluster_ids` 表示“当前权限范围内的全部集群”。显式给出的集群若有任何
+        一个超出可见范围，整个请求返回 403，而不是静默缩小范围并把部分结果当作全部。
+
+        缺失采样点在响应中显式为 `null`，不做插值：数据空洞是采集中断的证据，补齐会
+        把中断显示成平线。时间戳为秒级 Unix 时间，数值已按 `unit` 换算。
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: cluster_ids
+          in: query
+          description: 逗号分隔的 Cluster ID；省略表示权限范围内的全部集群。
+          schema:
+            type: string
+            maxLength: 8192
+        - name: namespace
+          in: query
+          schema:
+            type: string
+            maxLength: 63
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: step_seconds
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 86400
+        - name: top
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        "200":
+          description: 查询结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsQueryResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/metrics-collector:
+    get:
+      tags: [Resources]
+      operationId: getClusterMetricsCollector
+      description: |
+        报告目标集群中采集组件的当前状态。答案来自集群本身而不是 Server 的记录：
+        重要的是那里现在跑着什么，Server 侧的标记会在有人手工删除 Deployment 后失真。
+
+        采集组件安装在该集群的 Agent Namespace 内，由 Agent 自身创建与删除，
+        摄取凭证也由 Agent 生成，从不经过 Server。要求 `cluster.metrics.manage`；
+        读取指标是另一个权限，只能看图表的人无法改变集群里运行的东西。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: 采集组件状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsCollectorState"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    post:
+      tags: [Resources]
+      operationId: installClusterMetricsCollector
+      description: |
+        在目标集群中安装采集组件。Server 只下发配置（镜像、抓取间隔、缓冲上限），
+        对象由 Agent 按固定形状创建，因此这条接口不能用来在 Agent Namespace 里运行
+        任意工作负载。
+
+        镜像与拉取策略取自平台配置。重复安装是幂等的：已存在的摄取凭证不会被替换，
+        运行中的采集组件不会因此丢失连接。同名但不由 ZKE 管理的对象会被拒绝而不是接管。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: 安装后的采集组件状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsCollectorState"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+    delete:
+      tags: [Resources]
+      operationId: uninstallClusterMetricsCollector
+      description: |
+        从目标集群中移除采集组件及其摄取凭证。删除顺序与安装相反，凭证最后删除：
+        不留下一个没有采集组件仍然可用的令牌。同名但不由 ZKE 管理的对象会被拒绝。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: 移除后的采集组件状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsCollectorState"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/nodes:
     get:
       tags: [Resources]
@@ -7463,6 +7692,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    UnprocessableEntity:
+      description: 请求本身合法，但目标当前状态无法完成该操作
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     PayloadTooLarge:
       description: 请求正文超过允许大小
       content:
@@ -7656,6 +7891,8 @@ components:
               - cluster.pod.port_forward
               - cluster.node.drain
               - cluster.event.read
+              - cluster.metrics.read
+              - cluster.metrics.manage
               - cluster.manage
               - cluster.namespace.manage
               - cluster.system_namespace.manage
@@ -12284,6 +12521,149 @@ components:
           type: integer
           format: int64
           minimum: 0
+    MetricsQueryCatalog:
+      type: object
+      additionalProperties: false
+      required: [queries]
+      properties:
+        queries:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - name
+              - title
+              - kind
+              - unit
+              - dimensions
+              - requires_namespace
+              - supports_top
+            properties:
+              name:
+                type: string
+              title:
+                type: string
+              kind:
+                type: string
+                enum: [range, instant]
+              unit:
+                type: string
+                enum: [millicores, bytes, count, ratio]
+              dimensions:
+                type: array
+                description: 除集群身份外，该查询返回的序列标签。
+                items:
+                  type: string
+              requires_namespace:
+                type: boolean
+              supports_top:
+                type: boolean
+    MetricsQueryResult:
+      type: object
+      additionalProperties: false
+      required:
+        - query
+        - title
+        - kind
+        - unit
+        - start
+        - end
+        - step_seconds
+        - cluster_ids
+        - series
+        - truncated
+      properties:
+        query:
+          type: string
+        title:
+          type: string
+        kind:
+          type: string
+          enum: [range, instant]
+        unit:
+          type: string
+          enum: [millicores, bytes, count, ratio]
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        step_seconds:
+          type: integer
+          description: 瞬时查询为 0。
+        cluster_ids:
+          type: array
+          description: 本次查询实际覆盖的集群，用于区分“无数据”和“不在范围内”。
+          items:
+            $ref: "#/components/schemas/UUID"
+        truncated:
+          type: boolean
+          description: 序列数超过上限而被截断。
+        series:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [cluster_id, cluster_name, labels, points]
+            properties:
+              cluster_id:
+                $ref: "#/components/schemas/UUID"
+              cluster_name:
+                type: string
+                description: 展示属性，由 Server 按当前归属补齐；数据身份始终是 cluster_id。
+              labels:
+                type: object
+                additionalProperties:
+                  type: string
+              points:
+                type: array
+                description: |
+                  `[unix_seconds, value]` 数组，`value` 为 `null` 表示该步长没有采样。
+                  客户端必须按断点绘制，不得跨空洞连线。
+                items:
+                  type: array
+                  minItems: 2
+                  maxItems: 2
+                  items:
+                    oneOf:
+                      - type: number
+                      - type: "null"
+    MetricsCollectorState:
+      type: object
+      additionalProperties: false
+      required:
+        - cluster_id
+        - installed
+        - namespace
+        - image
+        - desired_image
+        - desired_replicas
+        - ready_replicas
+        - credential_ready
+      properties:
+        cluster_id:
+          $ref: "#/components/schemas/UUID"
+        installed:
+          type: boolean
+          description: 集群中存在由 ZKE 管理的采集组件。同名但不由 ZKE 管理的对象报告为未安装。
+        namespace:
+          type: string
+          description: 采集组件所在的 Namespace，与该集群 Agent 的 Namespace 相同。
+        image:
+          type: string
+          description: 当前运行的镜像；未安装时为空。
+        desired_image:
+          type: string
+          description: 按当前平台配置安装时会使用的镜像，便于发现集群运行的是旧版本。
+        desired_replicas:
+          type: integer
+        ready_replicas:
+          type: integer
+        credential_ready:
+          type: boolean
+          description: Agent 持有可供采集组件使用的摄取凭证。只报告事实，不返回凭证本身。
     KubernetesClusterOverview:
       type: object
       additionalProperties: false
@@ -13838,13 +14218,26 @@ components:
     PlatformSettings:
       type: object
       additionalProperties: false
-      required: [default_endpoint_profile_id, agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, cluster_terminal_session_ttl_seconds, revision, updated_at]
+      required: [default_endpoint_profile_id, agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, metrics_collector_image, metrics_collector_image_pull_policy, metrics_collector_cpu_request, metrics_collector_memory_request, metrics_collector_cpu_limit, metrics_collector_memory_limit, cluster_terminal_session_ttl_seconds, revision, updated_at]
       properties:
         default_endpoint_profile_id: { $ref: "#/components/schemas/UUID" }
         agent_image: { type: string }
         agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
         cluster_terminal_image: { type: string }
         cluster_terminal_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        metrics_collector_image:
+          type: string
+          description: 启用指标采集时部署到目标集群的采集组件镜像。
+        metrics_collector_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        metrics_collector_cpu_request:
+          type: string
+          maxLength: 32
+          description: |
+            采集组件容器的 Kubernetes 数量，例如 `50m`。空字符串表示不在容器上设置该项——
+            Kubernetes 没有别的方式表达「不限制」。
+        metrics_collector_memory_request: { type: string, maxLength: 32 }
+        metrics_collector_cpu_limit: { type: string, maxLength: 32 }
+        metrics_collector_memory_limit: { type: string, maxLength: 32 }
         cluster_terminal_session_ttl_seconds:
           type: integer
           minimum: 60
@@ -13855,12 +14248,18 @@ components:
     PlatformSettingsUpdate:
       type: object
       additionalProperties: false
-      required: [agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, cluster_terminal_session_ttl_seconds, expected_revision]
+      required: [agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, metrics_collector_image, metrics_collector_image_pull_policy, metrics_collector_cpu_request, metrics_collector_memory_request, metrics_collector_cpu_limit, metrics_collector_memory_limit, cluster_terminal_session_ttl_seconds, expected_revision]
       properties:
         agent_image: { type: string }
         agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
         cluster_terminal_image: { type: string }
         cluster_terminal_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        metrics_collector_image: { type: string }
+        metrics_collector_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        metrics_collector_cpu_request: { type: string, maxLength: 32 }
+        metrics_collector_memory_request: { type: string, maxLength: 32 }
+        metrics_collector_cpu_limit: { type: string, maxLength: 32 }
+        metrics_collector_memory_limit: { type: string, maxLength: 32 }
         cluster_terminal_session_ttl_seconds: { type: integer, minimum: 60, maximum: 3600 }
         expected_revision: { type: integer, minimum: 1 }
     ClusterEnrollment:

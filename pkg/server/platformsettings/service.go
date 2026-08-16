@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/togettoyou/zke/pkg/server/store"
@@ -45,6 +46,8 @@ const (
 	ProfileStatusReady       = "ready"
 	ProfileStatusDisabled    = "disabled"
 	ProfileStatusUnavailable = "unavailable"
+	// Mirrors the database CHECK constraint on the collector quantity columns.
+	maxCollectorQuantityLength = 32
 )
 
 type ListenerCertificateReconciler func(
@@ -85,14 +88,20 @@ type Profile struct {
 }
 
 type Settings struct {
-	DefaultEndpointProfileID       string
-	AgentImage                     string
-	AgentImagePullPolicy           string
-	ClusterTerminalImage           string
-	ClusterTerminalImagePullPolicy string
-	ClusterTerminalSessionTTL      time.Duration
-	Revision                       int64
-	UpdatedAt                      time.Time
+	DefaultEndpointProfileID        string
+	AgentImage                      string
+	AgentImagePullPolicy            string
+	ClusterTerminalImage            string
+	ClusterTerminalImagePullPolicy  string
+	MetricsCollectorImage           string
+	MetricsCollectorImagePullPolicy string
+	MetricsCollectorCPURequest      string
+	MetricsCollectorMemoryRequest   string
+	MetricsCollectorCPULimit        string
+	MetricsCollectorMemoryLimit     string
+	ClusterTerminalSessionTTL       time.Duration
+	Revision                        int64
+	UpdatedAt                       time.Time
 }
 
 type ProfileInput struct {
@@ -108,14 +117,20 @@ type ProfileInput struct {
 }
 
 type SettingsInput struct {
-	AgentImage                     string
-	AgentImagePullPolicy           string
-	ClusterTerminalImage           string
-	ClusterTerminalImagePullPolicy string
-	ClusterTerminalSessionTTL      time.Duration
-	ExpectedRevision               int64
-	ActorUserID                    string
-	Now                            time.Time
+	AgentImage                      string
+	AgentImagePullPolicy            string
+	ClusterTerminalImage            string
+	ClusterTerminalImagePullPolicy  string
+	MetricsCollectorImage           string
+	MetricsCollectorImagePullPolicy string
+	MetricsCollectorCPURequest      string
+	MetricsCollectorMemoryRequest   string
+	MetricsCollectorCPULimit        string
+	MetricsCollectorMemoryLimit     string
+	ClusterTerminalSessionTTL       time.Duration
+	ExpectedRevision                int64
+	ActorUserID                     string
+	Now                             time.Time
 }
 
 type Snapshot = store.EnrollmentConfigurationSnapshot
@@ -308,23 +323,24 @@ func (service *Service) DeleteProfile(ctx context.Context, id string) error {
 }
 
 func (service *Service) UpdateSettings(ctx context.Context, input SettingsInput) (Settings, error) {
-	if !validation.IsUUID(input.ActorUserID) || input.ExpectedRevision <= 0 || input.Now.IsZero() ||
-		!validAgentImage(input.AgentImage) ||
-		!validAgentImage(input.ClusterTerminalImage) ||
-		!allowedPullPolicy(input.AgentImagePullPolicy) ||
-		!allowedPullPolicy(input.ClusterTerminalImagePullPolicy) ||
-		!allowedTerminalSessionTTL(input.ClusterTerminalSessionTTL) {
-		return Settings{}, ErrInvalidInput
+	if err := validateSettingsInput(input); err != nil {
+		return Settings{}, err
 	}
 	service.profileMutation.Lock()
 	defer service.profileMutation.Unlock()
 	updated, err := service.store.UpdateSettings(ctx, store.UpdatePlatformSettingsParams{
 		AgentImage:           strings.TrimSpace(input.AgentImage),
 		AgentImagePullPolicy: input.AgentImagePullPolicy, ExpectedRevision: input.ExpectedRevision,
-		ClusterTerminalImage:           strings.TrimSpace(input.ClusterTerminalImage),
-		ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy,
-		ClusterTerminalSessionTTL:      input.ClusterTerminalSessionTTL,
-		ActorUserID:                    input.ActorUserID, Now: input.Now,
+		ClusterTerminalImage:            strings.TrimSpace(input.ClusterTerminalImage),
+		ClusterTerminalImagePullPolicy:  input.ClusterTerminalImagePullPolicy,
+		MetricsCollectorImage:           strings.TrimSpace(input.MetricsCollectorImage),
+		MetricsCollectorImagePullPolicy: input.MetricsCollectorImagePullPolicy,
+		MetricsCollectorCPURequest:      strings.TrimSpace(input.MetricsCollectorCPURequest),
+		MetricsCollectorMemoryRequest:   strings.TrimSpace(input.MetricsCollectorMemoryRequest),
+		MetricsCollectorCPULimit:        strings.TrimSpace(input.MetricsCollectorCPULimit),
+		MetricsCollectorMemoryLimit:     strings.TrimSpace(input.MetricsCollectorMemoryLimit),
+		ClusterTerminalSessionTTL:       input.ClusterTerminalSessionTTL,
+		ActorUserID:                     input.ActorUserID, Now: input.Now,
 	})
 	if errors.Is(err, store.ErrPlatformSettingsConflict) {
 		return Settings{}, ErrConflict
@@ -569,6 +585,120 @@ func validCertificatePEM(value string) bool {
 	return err == nil && certificate.IsCA
 }
 
+// validateSettingsInput refuses a settings update and says which value it
+// refused.
+//
+// Every rejection carries its own account rather than one shared "invalid
+// request": this form holds three images, three pull policies, a session
+// lifetime and four quantities, and a single fixed sentence would send the
+// operator back to guess which of them the Server meant.
+func validateSettingsInput(input SettingsInput) error {
+	// Identity and revision are not fields on the form. A caller that gets
+	// them wrong is not an operator making a typo, so they stay undetailed.
+	if !validation.IsUUID(input.ActorUserID) || input.ExpectedRevision <= 0 ||
+		input.Now.IsZero() {
+		return ErrInvalidInput
+	}
+	images := []struct {
+		value string
+		label string
+	}{
+		{input.AgentImage, "Agent 镜像"},
+		{input.ClusterTerminalImage, "Cluster Terminal 镜像"},
+		{input.MetricsCollectorImage, "指标采集组件镜像"},
+	}
+	for _, image := range images {
+		if !validAgentImage(image.value) {
+			return invalidInput(image.label + "不能为空，且不能包含空白字符")
+		}
+	}
+	policies := []struct {
+		value string
+		label string
+	}{
+		{input.AgentImagePullPolicy, "Agent"},
+		{input.ClusterTerminalImagePullPolicy, "Cluster Terminal"},
+		{input.MetricsCollectorImagePullPolicy, "指标采集组件"},
+	}
+	for _, policy := range policies {
+		if !allowedPullPolicy(policy.value) {
+			return invalidInput(
+				policy.label + "的拉取策略必须是 Always、IfNotPresent 或 Never",
+			)
+		}
+	}
+	if !allowedTerminalSessionTTL(input.ClusterTerminalSessionTTL) {
+		return invalidInput("集群终端会话存续时长必须是 1 至 60 分钟的整分钟数")
+	}
+	return validateCollectorResources(input)
+}
+
+// validateCollectorResources checks the four quantities the metrics collector
+// container is installed with.
+//
+// It is worth checking here rather than leaving it to the Agent: the value is
+// saved once and used at every later install, so a typo accepted now becomes a
+// Cluster that refuses to install collection with a Kubernetes error nobody
+// connects back to this form.
+//
+// Empty is accepted and means the entry is left off the container. A limit
+// below its request is refused because Kubernetes would refuse the Pod.
+func validateCollectorResources(input SettingsInput) error {
+	cpuRequest, err := parseCollectorQuantity(
+		input.MetricsCollectorCPURequest, "采集组件的 CPU 请求",
+	)
+	if err != nil {
+		return err
+	}
+	memoryRequest, err := parseCollectorQuantity(
+		input.MetricsCollectorMemoryRequest, "采集组件的内存请求",
+	)
+	if err != nil {
+		return err
+	}
+	cpuLimit, err := parseCollectorQuantity(
+		input.MetricsCollectorCPULimit, "采集组件的 CPU 限制",
+	)
+	if err != nil {
+		return err
+	}
+	memoryLimit, err := parseCollectorQuantity(
+		input.MetricsCollectorMemoryLimit, "采集组件的内存限制",
+	)
+	if err != nil {
+		return err
+	}
+	if cpuRequest != nil && cpuLimit != nil && cpuLimit.Cmp(*cpuRequest) < 0 {
+		return invalidInput("采集组件的 CPU 限制不能低于 CPU 请求")
+	}
+	if memoryRequest != nil && memoryLimit != nil && memoryLimit.Cmp(*memoryRequest) < 0 {
+		return invalidInput("采集组件的内存限制不能低于内存请求")
+	}
+	return nil
+}
+
+// parseCollectorQuantity returns nil for an empty value, which is the way to
+// say "do not set this entry" rather than a missing field.
+func parseCollectorQuantity(value string, label string) (*resource.Quantity, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if len([]byte(value)) > maxCollectorQuantityLength {
+		return nil, invalidInput(label + "过长")
+	}
+	quantity, err := resource.ParseQuantity(value)
+	if err != nil {
+		return nil, invalidInput(
+			label + "不是合法的 Kubernetes 数量，例如 500m 或 512Mi",
+		)
+	}
+	if quantity.Sign() <= 0 {
+		return nil, invalidInput(label + "必须大于 0")
+	}
+	return &quantity, nil
+}
+
 func validAgentImage(value string) bool {
 	value = strings.TrimSpace(value)
 	return value != "" && len([]byte(value)) <= 512 && !strings.ContainsAny(value, "\r\n\t ")
@@ -590,10 +720,16 @@ func settingsFromStore(item store.PlatformSettings) Settings {
 		DefaultEndpointProfileID: item.DefaultEndpointProfileID,
 		AgentImage:               item.AgentImage,
 		AgentImagePullPolicy:     item.AgentImagePullPolicy, Revision: item.Revision,
-		ClusterTerminalImage:           item.ClusterTerminalImage,
-		ClusterTerminalImagePullPolicy: item.ClusterTerminalImagePullPolicy,
-		ClusterTerminalSessionTTL:      item.ClusterTerminalSessionTTL,
-		UpdatedAt:                      item.UpdatedAt,
+		ClusterTerminalImage:            item.ClusterTerminalImage,
+		ClusterTerminalImagePullPolicy:  item.ClusterTerminalImagePullPolicy,
+		MetricsCollectorImage:           item.MetricsCollectorImage,
+		MetricsCollectorImagePullPolicy: item.MetricsCollectorImagePullPolicy,
+		MetricsCollectorCPURequest:      item.MetricsCollectorCPURequest,
+		MetricsCollectorMemoryRequest:   item.MetricsCollectorMemoryRequest,
+		MetricsCollectorCPULimit:        item.MetricsCollectorCPULimit,
+		MetricsCollectorMemoryLimit:     item.MetricsCollectorMemoryLimit,
+		ClusterTerminalSessionTTL:       item.ClusterTerminalSessionTTL,
+		UpdatedAt:                       item.UpdatedAt,
 	}
 }
 

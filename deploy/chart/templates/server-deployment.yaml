@@ -59,6 +59,16 @@ spec:
             - name: ZKE_POD_ACCESS_EXTERNAL_URL
               value: {{ . | quote }}
             {{- end }}
+            - name: ZKE_OBSERVABILITY_METRICS_ENABLED
+              value: {{ .Values.server.metrics.enabled | quote }}
+            {{- if .Values.server.metrics.enabled }}
+            # Always written: with metrics on the Server must be pointed
+            # somewhere real, not at the image's loopback default.
+            - name: ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL
+              value: {{ include "zke.metrics.writeURL" . | quote }}
+            - name: ZKE_OBSERVABILITY_METRICS_STORAGE_QUERY_URL
+              value: {{ include "zke.metrics.queryURL" . | quote }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /readyz

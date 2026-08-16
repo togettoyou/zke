@@ -18,8 +18,8 @@ env:
 
 jobs:
   # The two Server images are one job rather than two matrix entries because
-  # they are the same build: `server` and `server-pg` differ only in their final
-  # stage, on top of an identical Console bundle and Go binary. As parallel jobs
+  # they are the same build: `server` and `server-all` differ only in their
+  # final stage, on top of an identical Console bundle and Go binary. As jobs
   # each paid for both from scratch — a matrix fans out before either has
   # anything to share, so the GitHub Actions cache cannot pass stages between
   # them within a run. Built in sequence on one builder, the second target
@@ -77,27 +77,27 @@ jobs:
           cache-to: type=gha,mode=max,scope=zke-server-images
           provenance: ${{ env.PROVENANCE }}
           sbom: ${{ env.SBOM }}
-      - name: Generate Server with PostgreSQL image metadata
-        id: meta-server-pg
+      - name: Generate all-in-one Server image metadata
+        id: meta-server-all
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/togettoyou/zke-server-pg
+          images: ${{ env.REGISTRY }}/togettoyou/zke-server-all
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
             type=ref,event=pr
-      - name: Build and optionally publish Server with PostgreSQL image
+      - name: Build and optionally publish all-in-one Server image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: build/server/Dockerfile
-          target: server-pg
+          target: server-all
           platforms: ${{ env.PLATFORMS }}
           push: ${{ github.event_name == 'push' }}
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
-          tags: ${{ steps.meta-server-pg.outputs.tags }}
-          labels: ${{ steps.meta-server-pg.outputs.labels }}
+          tags: ${{ steps.meta-server-all.outputs.tags }}
+          labels: ${{ steps.meta-server-all.outputs.labels }}
           cache-from: type=gha,scope=zke-server-images
           cache-to: type=gha,mode=max,scope=zke-server-images
           provenance: ${{ env.PROVENANCE }}

@@ -25,6 +25,9 @@ import (
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
+	"github.com/togettoyou/zke/pkg/server/metricscollector"
+	"github.com/togettoyou/zke/pkg/server/metricsingest"
+	"github.com/togettoyou/zke/pkg/server/metricsquery"
 	"github.com/togettoyou/zke/pkg/server/pki"
 	"github.com/togettoyou/zke/pkg/server/platformsettings"
 	"github.com/togettoyou/zke/pkg/server/podaccess"
@@ -204,7 +207,20 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			ListenerCACertificatePEM: listenerCACertificate,
 		},
 	)
+	metricsQueryService, err := newMetricsQueryService(
+		cfg,
+		rbacService,
+		store.NewMetricsScopeStore(database),
+		logger,
+	)
+	if err != nil {
+		return err
+	}
 	agentConnectionStore := store.NewAgentConnectionStore(database)
+	metricsSink, err := newMetricsSink(cfg, logger)
+	if err != nil {
+		return err
+	}
 	agentConnectionManager, err := agentconn.New(
 		agentconn.Config{
 			Address:                      cfg.AgentListener.Address,
@@ -243,6 +259,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			ResourceWatchRequestTimeout:  cfg.AgentListener.ResourceWatchRequestTimeout,
 			MaxResourceWatchStreams:      cfg.AgentListener.MaxResourceWatchStreams,
 			MaxResourceWatchRequests:     cfg.AgentListener.MaxResourceWatchRequests,
+			MetricsIngestTimeout:         cfg.Observability.Metrics.IngestSessionTimeout,
+			MaxMetricsBatchBytes:         cfg.Observability.Metrics.MaxBatchBytes,
+			MaxMetricsIngestStreams:      cfg.Observability.Metrics.MaxIngestStreams,
+			MetricsSink:                  metricsSink,
 		},
 		logger,
 		agentConnectionStore,
@@ -250,6 +270,14 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			agentConnectionStore,
 			certificateSigner,
 		),
+	)
+	if err != nil {
+		return err
+	}
+	metricsCollectorService, err := newMetricsCollectorService(
+		cfg,
+		agentConnectionManager,
+		platformCollectorSettings{service: platformSettingsService},
 	)
 	if err != nil {
 		return err
@@ -380,6 +408,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			AgentManagementService:    agentManagementService,
 			AgentStatusService:        agentStatusService,
 			ClusterOverviewService:    clusterOverviewService,
+			MetricsCollectorService:   metricsCollectorService,
+			MetricsQueryService:       metricsQueryService,
 			KubernetesResourceService: kubernetesResourceService,
 			PodLogsService:            podLogsService,
 			PodExecService:            podExecService,
@@ -700,6 +730,122 @@ func sweepRetainedRecords(
 			sweep()
 		}
 	}
+}
+
+// platformCollectorSettings reads the collector's image and resource budget at
+// the moment they are needed rather than at startup: they are platform
+// settings, so an operator can change them and the next install must use the
+// new values without a restart.
+type platformCollectorSettings struct {
+	service *platformsettings.Service
+}
+
+func (source platformCollectorSettings) CollectorSettings(
+	ctx context.Context,
+) (metricscollector.CollectorSettings, error) {
+	settings, _, err := source.service.Get(ctx)
+	if err != nil {
+		return metricscollector.CollectorSettings{}, err
+	}
+	return metricscollector.CollectorSettings{
+		Image:           settings.MetricsCollectorImage,
+		ImagePullPolicy: settings.MetricsCollectorImagePullPolicy,
+		CPURequest:      settings.MetricsCollectorCPURequest,
+		MemoryRequest:   settings.MetricsCollectorMemoryRequest,
+		CPULimit:        settings.MetricsCollectorCPULimit,
+		MemoryLimit:     settings.MetricsCollectorMemoryLimit,
+	}, nil
+}
+
+// newMetricsCollectorService builds the install/uninstall path. It is nil when
+// metrics are disabled, and the handler reports that plainly rather than the
+// routes disappearing from a Console built against this Server.
+func newMetricsCollectorService(
+	cfg Config,
+	agents metricscollector.AgentAccess,
+	settings metricscollector.SettingsSource,
+) (*metricscollector.Service, error) {
+	metrics := cfg.Observability.Metrics
+	if !metrics.Enabled {
+		return nil, nil
+	}
+	return metricscollector.NewService(
+		metricscollector.Config{
+			ScrapeInterval:     metrics.ScrapeInterval,
+			BufferSize:         metrics.CollectorBufferSize,
+			KubeletMetricsPort: metrics.KubeletMetricsPort,
+		},
+		agents,
+		settings,
+	)
+}
+
+// newMetricsQueryService builds the read side. Like the sink it is nil when
+// metrics are disabled, and the handler reports that plainly rather than the
+// route disappearing from a Console built against this Server.
+func newMetricsQueryService(
+	cfg Config,
+	rbacService *rbac.Service,
+	clusters *store.MetricsScopeStore,
+	logger *slog.Logger,
+) (*metricsquery.Service, error) {
+	metrics := cfg.Observability.Metrics
+	if !metrics.Enabled {
+		return nil, nil
+	}
+	return metricsquery.NewService(
+		metricsquery.Config{
+			QueryURL:     metrics.StorageQueryURL,
+			QueryTimeout: metrics.StorageQueryTimeout,
+			MaxClusters:  metrics.MaxQueryClusters,
+			MaxPoints:    metrics.MaxQueryPoints,
+			MaxSeries:    metrics.MaxQuerySeries,
+			MaxRange:     metrics.MaxQueryRange,
+			MinStep:      metrics.MinQueryStep,
+		},
+		metricsquery.RBACVisibility{Service: rbacService},
+		clusters,
+		logger,
+	)
+}
+
+// newMetricsSink builds the ingest gateway when metrics are enabled. A nil
+// sink is a meaningful value: the Agent connection manager then never
+// advertises the ingest capability, so a collecting Agent learns at handshake
+// time that this Server stores no metrics.
+func newMetricsSink(
+	cfg Config,
+	logger *slog.Logger,
+) (agentconn.MetricsSink, error) {
+	metrics := cfg.Observability.Metrics
+	if !metrics.Enabled {
+		return nil, nil
+	}
+	gateway, err := metricsingest.New(
+		metricsingest.Config{
+			WriteURL:             metrics.StorageWriteURL,
+			WriteTimeout:         metrics.StorageWriteTimeout,
+			MaxDecompressedBytes: metrics.MaxDecompressedBytes,
+			Limits: metricsingest.Limits{
+				MaxSeriesPerBatch:  metrics.MaxSeriesPerBatch,
+				MaxSamplesPerBatch: metrics.MaxSamplesPerBatch,
+				MaxLabelsPerSeries: metrics.MaxLabelsPerSeries,
+				MaxLabelNameBytes:  metrics.MaxLabelNameBytes,
+				MaxLabelValueBytes: metrics.MaxLabelValueBytes,
+				MaxSampleAge:       metrics.MaxSampleAge,
+				MaxSampleFuture:    metrics.MaxSampleFuture,
+			},
+		},
+		logger,
+	)
+	if err != nil {
+		return nil, err
+	}
+	logger.Info(
+		"metrics ingest enabled",
+		slog.String("storage_write_url", metrics.StorageWriteURL),
+	)
+	return gateway, nil
 }
 
 func shutdownHTTPServer(server *http.Server, timeout time.Duration) error {

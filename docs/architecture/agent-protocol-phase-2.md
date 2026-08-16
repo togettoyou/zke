@@ -5,6 +5,10 @@
 
 > 状态：已实现。当前协议包含 Resource、Resource Watch、Pod Logs、Pod Exec、Pod Port Forward 和独立终端会话
 > Stream；各类型保持独立并发、取消、超时、正文上限和能力协商。通用 Subresource 仍被拒绝。
+>
+> Phase 3 在此基础上新增了两条 Stream：Metrics Ingest（目前唯一由 Agent 发起的业务 Stream）与
+> Metrics Collector（Server 发起的短请求，用于安装、卸载与查询集群内采集组件）。设计见
+> [Phase 3 可观测性架构设计](observability-phase-3.md)；本文只记录它们在协议层的位置。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
 [Agent 注册与连接](agent-enrollment-and-connection.md)。系统级技术约束参见
@@ -75,9 +79,15 @@ Phase 2 使用以下业务 Stream：
 | `POD_EXEC`       | Server | 长会话   | Web Terminal 的 stdin、stdout、stderr 和终端尺寸变更 |
 | `POD_PORT_FORWARD` | Server | 长会话 | 单个 Pod TCP 端口的双向原始字节转发                 |
 | `TERMINAL_SESSION` | Server | 短请求 | 创建或清理独立终端 App 的会话 Pod 与临时 RBAC       |
+| `METRICS_INGEST`   | Agent  | 长会话 | 集群内采集组件的指标批次回传                        |
+| `METRICS_COLLECTOR` | Server | 短请求 | 集群内采集组件的安装、卸载与状态查询               |
 
-未来若增加 Agent 主动上报，必须定义独立的 Agent 发起 Stream 类型，不得复用 Server 发起的 Resource Stream。
-当前协议尚未定义这类上报。
+Agent 主动上报必须使用独立的、由 Agent 发起的 Stream 类型，不得复用 Server 发起的 Resource Stream。
+`METRICS_INGEST`（取值 40，能力 `metrics-ingest.v1`）是第一个这样的类型：Server 侧由同一个
+`AcceptStream` 分发器接收，但处理器绑定该 Connection 的 mTLS 身份，因为数据归属只能由 Server 决定。
+
+`METRICS_COLLECTOR`（取值 41，能力 `metrics-collector.v1`）方向相反，由 Server 发起，与终端会话同类：
+Server 下发配置，Agent 按固定形状在自己的 Namespace 里创建或删除对象。
 
 同一条 Stream 内允许出现该业务自身需要的多种消息，例如 Pod Exec 的 stdin、stdout、stderr 和 resize。此时
 可以定义仅属于 `POD_EXEC` 的类型化帧，但这些帧仍属于同一个终端会话，不代表在 Stream 内复用多个请求。
@@ -137,6 +147,8 @@ enum StreamKind {
   STREAM_KIND_POD_EXEC = 21;
   STREAM_KIND_POD_PORT_FORWARD = 22;
   STREAM_KIND_TERMINAL_SESSION = 30;
+  STREAM_KIND_METRICS_INGEST = 40;
+  STREAM_KIND_METRICS_COLLECTOR = 41;
 }
 ```
 
@@ -167,6 +179,8 @@ pod-logs.v1
 pod-exec.v1
 pod-port-forward.v1
 terminal-session.v1
+metrics-ingest.v1
+metrics-collector.v1
 ```
 
 未声明 `resource.v1` 的旧 Agent 仍可维持 Phase 1 Control Stream，Server 不得向其打开 Resource Stream；
@@ -561,7 +575,7 @@ QUIC 提供 Stream 级多路复用和流控，但同一 Connection 上的 Stream
 
 | 配置位置                                     | 被限制的方向   | Phase 2 中包含的 Stream             |
 | -------------------------------------------- | -------------- | ----------------------------------- |
-| Server `agent_listener.max_incoming_streams` | Agent → Server | Control，以及未来 Agent 主动上报                           |
+| Server `agent_listener.max_incoming_streams` | Agent → Server | Control、Metrics Ingest                                     |
 | Agent `connection.max_incoming_streams`      | Server → Agent | Resource、Watch、Pod Logs、Pod Exec、Port Forward、Terminal |
 
 Control Stream 由 Agent 创建并在 Connection 生命周期内持续存在，因此占用 Server incoming 额度中的一个。
@@ -604,9 +618,12 @@ Resource + Resource Watch + Pod Logs + Pod Exec + Pod Port Forward + Terminal Se
 Server 侧必须满足：
 
 ```text
-1 条 Control Stream + Agent 主动上报并发 + 预留额度
+1 条 Control Stream + 1 条 Metrics Ingest Stream + 预留额度
 ≤ Server agent_listener.max_incoming_streams
 ```
+
+Metrics Ingest 每个 Connection 至多一条，Server 侧另有实例级并发额度
+（`observability.metrics.max_ingest_streams`），因此接入集群数量增长不会挤占 Resource、日志与终端的额度。
 
 长连接与终端会话不得耗尽全部 Stream，导致 Resource 请求无法执行。超过应用层额度的请求应尽快
 返回 `RESOURCE_EXHAUSTED` 并重置当前 Stream，不进入无界应用层队列。
@@ -730,7 +747,11 @@ Server 必须把面向用户的错误区分为认证失败、无权限、目标�
 - `POD_LOGS`：有界快照、Follow、取消和正文内终止原因；
 - `POD_EXEC`：Pod Web Terminal，以及独立终端 App 的终端数据；
 - `POD_PORT_FORWARD`：Pod Access 的单端口双向转发；
-- `TERMINAL_SESSION`：独立终端 App 的临时 Pod、ServiceAccount 与 RBAC 生命周期。
+- `TERMINAL_SESSION`：独立终端 App 的临时 Pod、ServiceAccount 与 RBAC 生命周期；
+- `METRICS_INGEST`：Agent 发起的指标批次回传，逐批确认，正文为原样转发的 snappy 压缩 Prometheus
+  remote write 请求；Agent 不解析正文，作用域标签由 Server 按连接身份强制改写；
+- `METRICS_COLLECTOR`：集群内采集组件的安装、卸载与状态查询。与终端会话同类：Server 只下发配置，
+  Kubernetes 对象由 Agent 按固定形状创建，因此这条路径不能用于在 Agent Namespace 中运行任意工作负载。
 
 所有请求都绑定目标 Cluster；命名空间级请求继续携带 Namespace 和资源身份。通用 Resource Stream 不开放任意
 Subresource、Secret、Event 或 Kubernetes 授权对象的旁路，敏感能力使用专用协议和权限。能力协商、并发额度、

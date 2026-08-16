@@ -6,9 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/togettoyou/zke/pkg/server/metricscollector"
+	"github.com/togettoyou/zke/pkg/server/metricsingest"
+	"github.com/togettoyou/zke/pkg/server/metricsquery"
+	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,6 +28,7 @@ type Config struct {
 	AgentInstall    AgentInstallConfig    `yaml:"agent_install"`
 	AgentEnrollment AgentEnrollmentConfig `yaml:"agent_enrollment"`
 	AgentListener   AgentListenerConfig   `yaml:"agent_listener"`
+	Observability   ObservabilityConfig   `yaml:"observability"`
 	Retention       RetentionConfig       `yaml:"retention"`
 	ShutdownTimeout time.Duration         `yaml:"shutdown_timeout"`
 	LogLevel        string                `yaml:"log_level"`
@@ -48,6 +54,51 @@ type RetentionConfig struct {
 	Sessions      time.Duration `yaml:"sessions"`
 	Enrollments   time.Duration `yaml:"enrollments"`
 	Credentials   time.Duration `yaml:"credentials"`
+}
+
+// ObservabilityConfig is the deployment-level side of the metrics pipeline:
+// where samples are stored and how much one Cluster may send. It is disabled
+// by default, and a Server with it disabled never offers metrics ingest to an
+// Agent at all.
+type ObservabilityConfig struct {
+	Metrics MetricsConfig `yaml:"metrics"`
+}
+
+type MetricsConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// StorageWriteURL is the backend's Prometheus remote write endpoint. Only
+	// the Server talks to it; it is never proxied to a browser.
+	StorageWriteURL string `yaml:"storage_write_url"`
+	// The collector image and its pull policy are platform settings rather than
+	// configuration file entries: collection is enabled per Cluster long after
+	// the Server started, and changing which image a Cluster pulls must not
+	// require a restart.
+	CollectorBufferSize string        `yaml:"collector_buffer_size"`
+	ScrapeInterval      time.Duration `yaml:"scrape_interval"`
+	KubeletMetricsPort  int           `yaml:"kubelet_metrics_port"`
+	StorageWriteTimeout time.Duration `yaml:"storage_write_timeout"`
+	// StorageQueryURL is the same backend's Prometheus-compatible query base.
+	// It is configured separately from the write URL because they are
+	// different paths, and some deployments put them behind different
+	// addresses.
+	StorageQueryURL      string        `yaml:"storage_query_url"`
+	StorageQueryTimeout  time.Duration `yaml:"storage_query_timeout"`
+	MaxQueryClusters     int           `yaml:"max_query_clusters"`
+	MaxQueryPoints       int           `yaml:"max_query_points"`
+	MaxQuerySeries       int           `yaml:"max_query_series"`
+	MaxQueryRange        time.Duration `yaml:"max_query_range"`
+	MinQueryStep         time.Duration `yaml:"min_query_step"`
+	IngestSessionTimeout time.Duration `yaml:"ingest_session_timeout"`
+	MaxBatchBytes        uint64        `yaml:"max_batch_bytes"`
+	MaxIngestStreams     int           `yaml:"max_ingest_streams"`
+	MaxDecompressedBytes int           `yaml:"max_decompressed_batch_bytes"`
+	MaxSeriesPerBatch    int           `yaml:"max_series_per_batch"`
+	MaxSamplesPerBatch   int           `yaml:"max_samples_per_batch"`
+	MaxLabelsPerSeries   int           `yaml:"max_labels_per_series"`
+	MaxLabelNameBytes    int           `yaml:"max_label_name_bytes"`
+	MaxLabelValueBytes   int           `yaml:"max_label_value_bytes"`
+	MaxSampleAge         time.Duration `yaml:"max_sample_age"`
+	MaxSampleFuture      time.Duration `yaml:"max_sample_future"`
 }
 
 type AgentInstallConfig struct {
@@ -317,6 +368,34 @@ func DefaultConfig() Config {
 			MaxResourceWatchStreams:     16,
 			MaxResourceWatchRequests:    512,
 		},
+		Observability: ObservabilityConfig{
+			Metrics: MetricsConfig{
+				Enabled:              true,
+				StorageWriteURL:      "http://127.0.0.1:8428/api/v1/write",
+				StorageQueryURL:      "http://127.0.0.1:8428/prometheus",
+				CollectorBufferSize:  metricscollector.DefaultBufferSize,
+				ScrapeInterval:       metricscollector.DefaultScrapeInterval,
+				KubeletMetricsPort:   metricscollector.DefaultKubeletMetricsPort,
+				StorageWriteTimeout:  metricsingest.DefaultWriteTimeout,
+				StorageQueryTimeout:  metricsquery.DefaultQueryTimeout,
+				MaxQueryClusters:     metricsquery.DefaultMaxClusters,
+				MaxQueryPoints:       metricsquery.DefaultMaxPoints,
+				MaxQuerySeries:       metricsquery.DefaultMaxSeries,
+				MaxQueryRange:        metricsquery.DefaultMaxRange,
+				MinQueryStep:         metricsquery.DefaultMinStep,
+				IngestSessionTimeout: agentprotocol.DefaultMetricsIngestTimeout,
+				MaxBatchBytes:        agentprotocol.DefaultMaxMetricsBatchBytes,
+				MaxIngestStreams:     512,
+				MaxDecompressedBytes: metricsingest.DefaultMaxDecompressedBytes,
+				MaxSeriesPerBatch:    metricsingest.DefaultMaxSeriesPerBatch,
+				MaxSamplesPerBatch:   metricsingest.DefaultMaxSamplesPerBatch,
+				MaxLabelsPerSeries:   metricsingest.DefaultMaxLabelsPerSeries,
+				MaxLabelNameBytes:    metricsingest.DefaultMaxLabelNameBytes,
+				MaxLabelValueBytes:   metricsingest.DefaultMaxLabelValueBytes,
+				MaxSampleAge:         metricsingest.DefaultMaxSampleAge,
+				MaxSampleFuture:      metricsingest.DefaultMaxSampleFuture,
+			},
+		},
 		ShutdownTimeout: 10 * time.Second,
 		LogLevel:        "info",
 	}
@@ -335,7 +414,9 @@ func LoadConfig(args []string) (Config, error) {
 	if err := decodeConfigFile(&cfg, configPath); err != nil {
 		return Config{}, err
 	}
-	applyEnvironmentOverrides(&cfg)
+	if err := applyEnvironmentOverrides(&cfg); err != nil {
+		return Config{}, err
+	}
 	cfg.resolveDerivedIdentity()
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -348,7 +429,7 @@ func LoadConfig(args []string) (Config, error) {
 // single container default while allowing an orchestrator to inject values
 // that are deployment identities or credentials. Partial and complete config
 // files are supported; these explicitly set variables take precedence.
-func applyEnvironmentOverrides(cfg *Config) {
+func applyEnvironmentOverrides(cfg *Config) error {
 	overrides := []struct {
 		name   string
 		target *string
@@ -358,12 +439,46 @@ func applyEnvironmentOverrides(cfg *Config) {
 		{"ZKE_POD_ACCESS_EXTERNAL_URL", &cfg.PodAccess.ExternalURL},
 		{"ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL", &cfg.AgentInstall.PublicHTTPURL},
 		{"ZKE_AGENT_INSTALL_PUBLIC_QUIC_ADDRESS", &cfg.AgentInstall.PublicQUICAddress},
+		// The metrics storage lives outside ZKE and differs per deployment, so
+		// it belongs with the other addresses here. Without these three, the
+		// only way to point a container at real storage — or to turn metrics
+		// off — is to replace the whole configuration file it ships with.
+		{
+			"ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL",
+			&cfg.Observability.Metrics.StorageWriteURL,
+		},
+		{
+			"ZKE_OBSERVABILITY_METRICS_STORAGE_QUERY_URL",
+			&cfg.Observability.Metrics.StorageQueryURL,
+		},
 	}
+	// An empty value counts as unset. Deployment tooling defines these
+	// variables whether or not the operator filled them in — Compose does it
+	// for every entry in its environment block — and an empty string that
+	// erased what the configuration file said would be a surprise nobody asked
+	// for. Every value here already defaults to empty, so nothing is lost by
+	// refusing to set one that way.
 	for _, override := range overrides {
-		if value, exists := os.LookupEnv(override.name); exists {
+		if value := strings.TrimSpace(os.Getenv(override.name)); value != "" {
 			*override.target = value
 		}
 	}
+	// Parsed rather than compared against "true": a deployment that meant to
+	// disable metrics and wrote "yes" must be told, not quietly left running
+	// with them on.
+	if value := strings.TrimSpace(
+		os.Getenv("ZKE_OBSERVABILITY_METRICS_ENABLED"),
+	); value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf(
+				"ZKE_OBSERVABILITY_METRICS_ENABLED must be a boolean: %w",
+				err,
+			)
+		}
+		cfg.Observability.Metrics.Enabled = enabled
+	}
+	return nil
 }
 
 func decodeConfigFile(cfg *Config, path string) error {

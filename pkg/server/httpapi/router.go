@@ -21,6 +21,8 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
+	"github.com/togettoyou/zke/pkg/server/metricscollector"
+	"github.com/togettoyou/zke/pkg/server/metricsquery"
 	"github.com/togettoyou/zke/pkg/server/platformsettings"
 	"github.com/togettoyou/zke/pkg/server/podaccess"
 	"github.com/togettoyou/zke/pkg/server/podexec"
@@ -33,15 +35,20 @@ import (
 type ReadinessCheck func(context.Context) error
 
 type Dependencies struct {
-	ReadinessCheck            ReadinessCheck
-	AuthService               *auth.Service
-	AuditService              *audit.Service
-	RBACService               *rbac.Service
-	EnrollmentService         *enrollment.Service
-	AgentInstallationService  *agentinstall.Service
-	AgentManagementService    *agentmanagement.Service
-	AgentStatusService        *agentstatus.Service
-	ClusterOverviewService    *clusteroverview.Service
+	ReadinessCheck           ReadinessCheck
+	AuthService              *auth.Service
+	AuditService             *audit.Service
+	RBACService              *rbac.Service
+	EnrollmentService        *enrollment.Service
+	AgentInstallationService *agentinstall.Service
+	AgentManagementService   *agentmanagement.Service
+	AgentStatusService       *agentstatus.Service
+	ClusterOverviewService   *clusteroverview.Service
+	// MetricsCollectorService is nil when the deployment stores no metrics.
+	// The handler reports that state rather than the route disappearing, so a
+	// Console built against this Server always gets a meaningful answer.
+	MetricsCollectorService   *metricscollector.Service
+	MetricsQueryService       *metricsquery.Service
 	KubernetesResourceService *kubernetesresource.Service
 	PodLogsService            *podlogs.Service
 	PodExecService            *podexec.Service
@@ -74,6 +81,8 @@ type handlers struct {
 	agentManagement         *agentManagementHandler
 	agentStatus             *agentStatusHandler
 	clusterOverview         *clusterOverviewHandler
+	metricsCollector        *metricsCollectorHandler
+	observabilityMetrics    *observabilityMetricsHandler
 	kubernetesNode          *kubernetesNodeHandler
 	kubernetesMetrics       *kubernetesMetricsHandler
 	kubernetesNamespace     *kubernetesNamespaceHandler
@@ -228,6 +237,17 @@ func New(
 		clusterOverview: newClusterOverviewHandler(
 			logger,
 			dependencies.ClusterOverviewService,
+			config.Authentication.OperationTimeout,
+		),
+		observabilityMetrics: newObservabilityMetricsHandler(
+			logger,
+			metricsQueryServiceOrNil(dependencies.MetricsQueryService),
+			config.Authentication.OperationTimeout,
+		),
+		metricsCollector: newMetricsCollectorHandler(
+			logger,
+			dependencies.AuditService,
+			metricsCollectorServiceOrNil(dependencies.MetricsCollectorService),
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesNode: newKubernetesNodeHandler(

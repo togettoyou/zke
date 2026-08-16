@@ -21,6 +21,8 @@ const (
 	PermissionClusterPodPortForward             Permission = "cluster.pod.port_forward"
 	PermissionClusterNodeDrain                  Permission = "cluster.node.drain"
 	PermissionClusterEventRead                  Permission = "cluster.event.read"
+	PermissionClusterMetricsRead                Permission = "cluster.metrics.read"
+	PermissionClusterMetricsManage              Permission = "cluster.metrics.manage"
 	PermissionClusterManage                     Permission = "cluster.manage"
 	PermissionClusterNamespaceManage            Permission = "cluster.namespace.manage"
 	PermissionClusterSystemNamespaceManage      Permission = "cluster.system_namespace.manage"

@@ -14,6 +14,13 @@ import "@/styles/theme.css";
 // long is a window stuck on a spinner with nothing to show for it.
 const MAX_RETRY_DELAY_MS = 30_000;
 
+/**
+ * Server codes that answer with a 5xx but will answer the same way for as long
+ * as the deployment is configured the way it is. They are states, not failures,
+ * and the view that explains one must not wait for a retry budget first.
+ */
+const TERMINAL_ERROR_CODES = new Set(["metrics_disabled"]);
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -23,6 +30,14 @@ const queryClient = new QueryClient({
         // Authentication, authorization and validation failures are terminal;
         // only transient transport errors are worth retrying.
         if (isApiError(error) && error.status < 500 && error.status !== 429) {
+          return false;
+        }
+        // A 5xx that is a deployment decision rather than a transient failure.
+        // Retrying it spends two more round trips to be told the same thing,
+        // and the view that explains it only appears after the last one — which
+        // is what made opening 可观测性 on a Server without metrics storage sit
+        // on a spinner through three 503s.
+        if (isApiError(error) && TERMINAL_ERROR_CODES.has(error.code)) {
           return false;
         }
         return failureCount < 2;

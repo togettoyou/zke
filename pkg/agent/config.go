@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	"gopkg.in/yaml.v3"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
@@ -30,7 +31,45 @@ type Config struct {
 	CertificateRenewBefore time.Duration
 	Registration           RegistrationConfig
 	Connection             ConnectionConfig
+	MetricsIngest          MetricsIngestConfig
 	LogLevel               string
+}
+
+// MetricsIngestConfig configures the collector-facing endpoint and the Stream
+// that forwards what it receives.
+//
+// There is no on/off switch here. Whether metrics flow is the Server's
+// decision — it advertises the ingest capability only when it has storage, and
+// the collector is installed only when an operator asks for it — so a switch in
+// this file could only disagree with that. The endpoint is always listening and
+// always authenticated; until a collector is installed no credential exists, so
+// it authorizes nobody.
+type MetricsIngestConfig struct {
+	// Address is reachable inside the Cluster only. The endpoint serves
+	// nothing but remote write, and it is never exposed through an Ingress.
+	Address string
+	// AdvertisedURL is the origin the in-cluster collector is told to write to.
+	//
+	// Empty means "the ClusterIP Service in front of this Agent", which is
+	// right whenever the Agent runs as a Pod. It exists for the case where it
+	// does not: an Agent started on a developer's machine has no Pod, so no
+	// Endpoint, and a collector pointed at the Service would retry forever.
+	// Setting it to the address the Cluster can reach the host on — commonly
+	// http://host.docker.internal:8429 — makes that setup work without
+	// pretending the Agent is somewhere it is not.
+	AdvertisedURL        string
+	MaxBatchBytes        uint64
+	MaxConcurrentBatches int
+	// SessionTimeout bounds one ingest Stream. The Stream is reopened on the
+	// next batch, so this is a lifetime cap rather than an idle timeout.
+	SessionTimeout        time.Duration
+	TokenRefreshInterval  time.Duration
+	UnavailableRetryAfter time.Duration
+	ReadHeaderTimeout     time.Duration
+	ReadTimeout           time.Duration
+	WriteTimeout          time.Duration
+	IdleTimeout           time.Duration
+	ShutdownTimeout       time.Duration
 }
 
 type RegistrationConfig struct {
@@ -120,6 +159,20 @@ type fileConfig struct {
 		MaxResourceWatchStreamTimeout     string  `yaml:"max_resource_watch_stream_timeout"`
 		MaxConcurrentResourceWatchStreams *int    `yaml:"max_concurrent_resource_watch_streams"`
 	} `yaml:"connection"`
+	MetricsIngest struct {
+		Address               string  `yaml:"address"`
+		AdvertisedURL         string  `yaml:"advertised_url"`
+		MaxBatchBytes         *uint64 `yaml:"max_batch_bytes"`
+		MaxConcurrentBatches  *int    `yaml:"max_concurrent_batches"`
+		SessionTimeout        string  `yaml:"session_timeout"`
+		TokenRefreshInterval  string  `yaml:"token_refresh_interval"`
+		UnavailableRetryAfter string  `yaml:"unavailable_retry_after"`
+		ReadHeaderTimeout     string  `yaml:"read_header_timeout"`
+		ReadTimeout           string  `yaml:"read_timeout"`
+		WriteTimeout          string  `yaml:"write_timeout"`
+		IdleTimeout           string  `yaml:"idle_timeout"`
+		ShutdownTimeout       string  `yaml:"shutdown_timeout"`
+	} `yaml:"metrics_ingest"`
 	LogLevel string `yaml:"log_level"`
 }
 
@@ -161,6 +214,19 @@ func DefaultConfig() Config {
 			MaxResourceWatchStreamTimeout:     30 * time.Minute,
 			MaxConcurrentResourceWatchStreams: 16,
 		},
+		MetricsIngest: MetricsIngestConfig{
+			Address:               "0.0.0.0:8429",
+			MaxBatchBytes:         agentprotocol.DefaultMaxMetricsBatchBytes,
+			MaxConcurrentBatches:  4,
+			SessionTimeout:        agentprotocol.DefaultMetricsIngestTimeout,
+			TokenRefreshInterval:  time.Minute,
+			UnavailableRetryAfter: 15 * time.Second,
+			ReadHeaderTimeout:     5 * time.Second,
+			ReadTimeout:           30 * time.Second,
+			WriteTimeout:          30 * time.Second,
+			IdleTimeout:           60 * time.Second,
+			ShutdownTimeout:       5 * time.Second,
+		},
 		LogLevel: defaultLogLevel,
 	}
 }
@@ -178,6 +244,7 @@ func LoadConfig(args []string) (Config, error) {
 	if err := applyFile(&cfg, configPath); err != nil {
 		return Config{}, err
 	}
+	applyEnvironmentOverrides(&cfg)
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -376,11 +443,62 @@ func applyFile(cfg *Config, path string) error {
 		cfg.Connection.MaxConcurrentResourceWatchStreams =
 			*raw.Connection.MaxConcurrentResourceWatchStreams
 	}
+	if raw.MetricsIngest.Address != "" {
+		cfg.MetricsIngest.Address = raw.MetricsIngest.Address
+	}
+	if raw.MetricsIngest.AdvertisedURL != "" {
+		cfg.MetricsIngest.AdvertisedURL = raw.MetricsIngest.AdvertisedURL
+	}
+	if raw.MetricsIngest.MaxBatchBytes != nil {
+		cfg.MetricsIngest.MaxBatchBytes = *raw.MetricsIngest.MaxBatchBytes
+	}
+	if raw.MetricsIngest.MaxConcurrentBatches != nil {
+		cfg.MetricsIngest.MaxConcurrentBatches = *raw.MetricsIngest.MaxConcurrentBatches
+	}
+	for _, item := range []struct {
+		target *time.Duration
+		value  string
+		name   string
+	}{
+		{&cfg.MetricsIngest.SessionTimeout, raw.MetricsIngest.SessionTimeout, "metrics_ingest.session_timeout"},
+		{&cfg.MetricsIngest.TokenRefreshInterval, raw.MetricsIngest.TokenRefreshInterval, "metrics_ingest.token_refresh_interval"},
+		{&cfg.MetricsIngest.UnavailableRetryAfter, raw.MetricsIngest.UnavailableRetryAfter, "metrics_ingest.unavailable_retry_after"},
+		{&cfg.MetricsIngest.ReadHeaderTimeout, raw.MetricsIngest.ReadHeaderTimeout, "metrics_ingest.read_header_timeout"},
+		{&cfg.MetricsIngest.ReadTimeout, raw.MetricsIngest.ReadTimeout, "metrics_ingest.read_timeout"},
+		{&cfg.MetricsIngest.WriteTimeout, raw.MetricsIngest.WriteTimeout, "metrics_ingest.write_timeout"},
+		{&cfg.MetricsIngest.IdleTimeout, raw.MetricsIngest.IdleTimeout, "metrics_ingest.idle_timeout"},
+		{&cfg.MetricsIngest.ShutdownTimeout, raw.MetricsIngest.ShutdownTimeout, "metrics_ingest.shutdown_timeout"},
+	} {
+		if err := applyAgentDuration(item.target, item.value, item.name); err != nil {
+			return err
+		}
+	}
 	if raw.LogLevel != "" {
 		cfg.LogLevel = raw.LogLevel
 	}
 
 	return nil
+}
+
+// applyEnvironmentOverrides covers the values that differ per environment and
+// therefore must not be written into a file that is checked in.
+//
+// There is one so far, and it exists for local development: an Agent started on
+// a developer's machine has to tell the in-cluster collector an address that
+// reaches the host, while the same file shipped in this repository has to keep
+// describing what an Agent in a Pod does.
+func applyEnvironmentOverrides(cfg *Config) {
+	overrides := []struct {
+		name   string
+		target *string
+	}{
+		{"ZKE_METRICS_INGEST_ADVERTISED_URL", &cfg.MetricsIngest.AdvertisedURL},
+	}
+	for _, override := range overrides {
+		if value, exists := os.LookupEnv(override.name); exists {
+			*override.target = value
+		}
+	}
 }
 
 func findConfigPath(args []string) (string, error) {
@@ -613,8 +731,75 @@ func (cfg Config) Validate() error {
 			"maximum Pod Access Pod bytes must be between 1 and 1073741824",
 		)
 	}
+	if err := cfg.MetricsIngest.validate(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.LogLevel) == "" {
 		return errors.New("log level is required")
+	}
+	return nil
+}
+
+func (config MetricsIngestConfig) validate() error {
+	host, _, err := net.SplitHostPort(config.Address)
+	if err != nil || strings.TrimSpace(host) != host {
+		return errors.New(
+			"metrics ingest address must include a valid host and port",
+		)
+	}
+	if advertised := strings.TrimSpace(config.AdvertisedURL); advertised != "" {
+		parsed, err := url.Parse(advertised)
+		if err != nil || advertised != config.AdvertisedURL ||
+			parsed.Host == "" ||
+			(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+			parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+			(parsed.Path != "" && parsed.Path != "/") {
+			return errors.New(
+				"metrics ingest advertised URL must be an HTTP(S) origin without credentials, path, query, or fragment",
+			)
+		}
+	}
+	if config.MaxBatchBytes < 1 ||
+		config.MaxBatchBytes > agentprotocol.MaxMetricsBatchBytesCeiling {
+		return fmt.Errorf(
+			"metrics ingest maximum batch bytes must be between 1 and %d",
+			agentprotocol.MaxMetricsBatchBytesCeiling,
+		)
+	}
+	if config.MaxConcurrentBatches < 1 || config.MaxConcurrentBatches > 64 {
+		return errors.New(
+			"metrics ingest maximum concurrent batches must be between 1 and 64",
+		)
+	}
+	for _, item := range []struct {
+		value time.Duration
+		min   time.Duration
+		max   time.Duration
+		name  string
+	}{
+		{config.SessionTimeout, time.Minute, time.Hour, "metrics ingest session timeout"},
+		{config.TokenRefreshInterval, 10 * time.Second, time.Hour, "metrics ingest token refresh interval"},
+		{config.UnavailableRetryAfter, time.Second, 5 * time.Minute, "metrics ingest unavailable retry delay"},
+		{config.ReadHeaderTimeout, time.Second, time.Minute, "metrics ingest read header timeout"},
+		{config.ReadTimeout, time.Second, 5 * time.Minute, "metrics ingest read timeout"},
+		{config.WriteTimeout, time.Second, 5 * time.Minute, "metrics ingest write timeout"},
+		{config.IdleTimeout, time.Second, 10 * time.Minute, "metrics ingest idle timeout"},
+		{config.ShutdownTimeout, time.Second, time.Minute, "metrics ingest shutdown timeout"},
+	} {
+		if item.value < item.min {
+			return fmt.Errorf("%s must be at least %s", item.name, item.min)
+		}
+		if item.value > item.max {
+			return fmt.Errorf("%s must not exceed %s", item.name, item.max)
+		}
+	}
+	// A batch may take the whole read timeout to arrive and then still has to
+	// reach the Server. Sizing the write timeout below the read timeout would
+	// cut off responses to requests the endpoint itself allowed.
+	if config.WriteTimeout < config.ReadTimeout {
+		return errors.New(
+			"metrics ingest write timeout must not be shorter than the read timeout",
+		)
 	}
 	return nil
 }

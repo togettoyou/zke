@@ -29,14 +29,16 @@ var publicRoutes = map[string]string{
 // answer is the set of resources they may see, or the operation acts on the
 // caller's own account and has no scope to authorize against.
 var serviceAuthorizedRoutes = map[string]string{
-	"GET /api/v1/auth/me":                     "reports the caller's own identity and capabilities",
-	"POST /api/v1/auth/logout":                "ends the caller's own session",
-	"GET /api/v1/audit-events":                "audit.read visibility is resolved and pushed into the query",
-	"GET /api/v1/audit-events/actions":        "the closed action vocabulary the Server writes; describes the system's shape, holds no tenant data",
-	"GET /api/v1/events":                      "cluster.read visibility is resolved before the stream opens and re-checked while it runs",
-	"GET /api/v1/tenants":                     "tenant.read visibility is resolved and pushed into the query",
-	"GET /api/v1/tenants/:tenant_id":          "a Project-scoped user must still see the Tenant holding their Project",
-	"GET /api/v1/tenants/:tenant_id/projects": "project.read visibility is resolved and pushed into the query",
+	"GET /api/v1/auth/me":                       "reports the caller's own identity and capabilities",
+	"POST /api/v1/auth/logout":                  "ends the caller's own session",
+	"GET /api/v1/audit-events":                  "audit.read visibility is resolved and pushed into the query",
+	"GET /api/v1/audit-events/actions":          "the closed action vocabulary the Server writes; describes the system's shape, holds no tenant data",
+	"GET /api/v1/events":                        "cluster.read visibility is resolved before the stream opens and re-checked while it runs",
+	"GET /api/v1/tenants":                       "tenant.read visibility is resolved and pushed into the query",
+	"GET /api/v1/tenants/:tenant_id":            "a Project-scoped user must still see the Tenant holding their Project",
+	"GET /api/v1/tenants/:tenant_id/projects":   "project.read visibility is resolved and pushed into the query",
+	"GET /api/v1/observability/metrics/queries": "the closed query vocabulary this Server offers; describes the system's shape, holds no tenant data",
+	"GET /api/v1/observability/metrics/query":   "cluster.metrics.read visibility is resolved and becomes the scope filter the query runs with",
 }
 
 // TestEveryRouteIsAuthorized reads the route table and holds it to the rules

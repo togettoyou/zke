@@ -84,9 +84,19 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 	if count := strings.Count(output, "kind: Secret\n"); count != 2 {
 		t.Fatalf("manifest Secret document count = %d, want enrollment and trust only", count)
 	}
-	if strings.Contains(output, "persistentVolumeClaim") ||
-		strings.Contains(output, "kind: Service\n") {
-		t.Fatal("outbound-only Agent manifest contains a Service or PVC")
+	if strings.Contains(output, "persistentVolumeClaim") {
+		t.Fatal("outbound-only Agent manifest contains a PVC")
+	}
+	// The one Service is the in-Cluster metrics ingest endpoint: it is a
+	// ClusterIP for a collector running beside the Agent, not an inbound path
+	// from outside the Cluster.
+	if count := strings.Count(output, "kind: Service\n"); count != 1 {
+		t.Fatalf("manifest Service document count = %d, want the ingest endpoint only", count)
+	}
+	if strings.Contains(output, "type: NodePort") ||
+		strings.Contains(output, "type: LoadBalancer") ||
+		strings.Contains(output, "kind: Ingress\n") {
+		t.Fatal("Agent manifest exposes an inbound path from outside the Cluster")
 	}
 	if strings.Contains(output, "optional: true") {
 		t.Fatal("retained Enrollment Secret was rendered as optional")
@@ -205,7 +215,11 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 					resource != "pods/log" &&
 					resource != "pods/exec" &&
 					resource != "pods/portforward" &&
-					resource != "pods/eviction") {
+					resource != "pods/eviction" &&
+					// Held only so the Agent may grant it to the metrics
+					// collector: Kubernetes refuses to create a ClusterRole
+					// carrying a permission its creator does not have.
+					resource != "nodes/metrics") {
 				t.Fatalf("ClusterRole grants wildcard or Subresource access: %+v", rule)
 			}
 		}

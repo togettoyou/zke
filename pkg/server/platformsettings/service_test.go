@@ -73,8 +73,22 @@ func (memory *memoryStore) GetSettings(context.Context) (store.PlatformSettings,
 	return memory.settings, nil
 }
 func (memory *memoryStore) UpdateSettings(_ context.Context, input store.UpdatePlatformSettingsParams) (store.PlatformSettings, error) {
-	memory.settings = store.PlatformSettings{DefaultEndpointProfileID: memory.settings.DefaultEndpointProfileID, AgentImage: input.AgentImage, AgentImagePullPolicy: input.AgentImagePullPolicy, ClusterTerminalImage: input.ClusterTerminalImage, ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy, ClusterTerminalSessionTTL: input.ClusterTerminalSessionTTL, Revision: input.ExpectedRevision + 1, UpdatedAt: input.Now}
+	memory.settings = store.PlatformSettings{DefaultEndpointProfileID: memory.settings.DefaultEndpointProfileID, AgentImage: input.AgentImage, AgentImagePullPolicy: input.AgentImagePullPolicy, ClusterTerminalImage: input.ClusterTerminalImage, ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy, MetricsCollectorImage: input.MetricsCollectorImage, MetricsCollectorImagePullPolicy: input.MetricsCollectorImagePullPolicy, MetricsCollectorCPURequest: input.MetricsCollectorCPURequest, MetricsCollectorMemoryRequest: input.MetricsCollectorMemoryRequest, MetricsCollectorCPULimit: input.MetricsCollectorCPULimit, MetricsCollectorMemoryLimit: input.MetricsCollectorMemoryLimit, ClusterTerminalSessionTTL: input.ClusterTerminalSessionTTL, Revision: input.ExpectedRevision + 1, UpdatedAt: input.Now}
 	return memory.settings, nil
+}
+
+// validSettingsInput is a settings update that changes nothing contentious, so
+// a test can vary exactly the field it is about.
+func validSettingsInput() SettingsInput {
+	return SettingsInput{
+		AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "IfNotPresent",
+		ClusterTerminalImage: "registry.example.com/zke-terminal:v1", ClusterTerminalImagePullPolicy: "IfNotPresent",
+		MetricsCollectorImage: "registry.example.com/vmagent:v1", MetricsCollectorImagePullPolicy: "IfNotPresent",
+		MetricsCollectorCPURequest: "50m", MetricsCollectorMemoryRequest: "128Mi",
+		MetricsCollectorCPULimit: "500m", MetricsCollectorMemoryLimit: "512Mi",
+		ClusterTerminalSessionTTL: 15 * time.Minute,
+		ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
+	}
 }
 
 func TestPlatformSettingsKeepAgentAndTerminalPullPoliciesIndependent(t *testing.T) {
@@ -82,6 +96,7 @@ func TestPlatformSettingsKeepAgentAndTerminalPullPoliciesIndependent(t *testing.
 	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), SettingsInput{
 		AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "Never",
 		ClusterTerminalImage: "registry.example.com/zke-terminal:v2", ClusterTerminalImagePullPolicy: "Always",
+		MetricsCollectorImage: "registry.example.com/vmagent:v1", MetricsCollectorImagePullPolicy: "IfNotPresent",
 		ClusterTerminalSessionTTL: 15 * time.Minute,
 		ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
 	})
@@ -106,12 +121,66 @@ func TestPlatformSettingsRejectSessionTTLOutsideAllowedRange(t *testing.T) {
 		_, err := NewService(memory, "", nil).UpdateSettings(context.Background(), SettingsInput{
 			AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "IfNotPresent",
 			ClusterTerminalImage: "registry.example.com/zke-terminal:v1", ClusterTerminalImagePullPolicy: "IfNotPresent",
+			MetricsCollectorImage: "registry.example.com/vmagent:v1", MetricsCollectorImagePullPolicy: "IfNotPresent",
 			ClusterTerminalSessionTTL: ttl,
 			ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
 		})
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("UpdateSettings(%s) error = %v, want ErrInvalidInput", ttl, err)
 		}
+	}
+}
+
+// An empty quantity is a real answer, not a missing field: it is the only way
+// to say "do not set this entry", and something that filled it back in would
+// make the Namespace's own LimitRange impossible to defer to.
+func TestCollectorResourcesKeepEmptyQuantitiesEmpty(t *testing.T) {
+	memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
+	input := validSettingsInput()
+	input.MetricsCollectorCPULimit = ""
+	input.MetricsCollectorMemoryLimit = ""
+	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.MetricsCollectorCPURequest != "50m" ||
+		updated.MetricsCollectorMemoryRequest != "128Mi" {
+		t.Fatalf("requests = %q / %q", updated.MetricsCollectorCPURequest, updated.MetricsCollectorMemoryRequest)
+	}
+	if updated.MetricsCollectorCPULimit != "" || updated.MetricsCollectorMemoryLimit != "" {
+		t.Fatalf("limits = %q / %q", updated.MetricsCollectorCPULimit, updated.MetricsCollectorMemoryLimit)
+	}
+}
+
+// Refused here rather than at install time: the value is saved once and used at
+// every later install, so a typo accepted now becomes a Cluster that refuses
+// collection with a Kubernetes error nobody connects back to this form.
+func TestCollectorResourcesRejectQuantitiesKubernetesWouldRefuse(t *testing.T) {
+	cases := map[string]func(*SettingsInput){
+		"not a quantity": func(input *SettingsInput) { input.MetricsCollectorCPURequest = "half" },
+		"negative":       func(input *SettingsInput) { input.MetricsCollectorMemoryLimit = "-1Gi" },
+		"zero":           func(input *SettingsInput) { input.MetricsCollectorCPULimit = "0" },
+		"limit below request": func(input *SettingsInput) {
+			input.MetricsCollectorMemoryRequest = "1Gi"
+			input.MetricsCollectorMemoryLimit = "512Mi"
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
+			input := validSettingsInput()
+			mutate(&input)
+			_, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("UpdateSettings() error = %v, want ErrInvalidInput", err)
+			}
+			// The operator is looking at four quantity fields; a rejection that
+			// does not say which one is a rejection they have to bisect.
+			var detailed interface{ Detail() string }
+			if !errors.As(err, &detailed) || detailed.Detail() == "" {
+				t.Fatalf("UpdateSettings() error = %v, want a detail naming the refused value", err)
+			}
+		})
 	}
 }
 

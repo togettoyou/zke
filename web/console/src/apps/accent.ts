@@ -5,6 +5,11 @@ import type { AppAccent, AppManifest } from "./types";
 /**
  * A saturated fill and a white glyph, one hue per application.
  *
+ * One per application literally: `blue` is what an application without an
+ * accent falls back to, so it is taken as well. Adding an application means
+ * adding a hue rather than reusing one — two tiles in the same colour are two
+ * tiles an operator has to read the caption of.
+ *
  * Tiles in the same pale tint with the same accent glyph do not read as separate
  * applications — they read as one placeholder repeated, which is the language of
  * a wireframe. Colour is what tells them apart at a glance.
@@ -17,6 +22,7 @@ const ACCENT_FILL: Record<AppAccent, string> = {
   amber: "bg-linear-to-b from-[var(--app-amber-from)] to-[var(--app-amber-to)]",
   rose: "bg-linear-to-b from-[var(--app-rose-from)] to-[var(--app-rose-to)]",
   slate: "bg-linear-to-b from-[var(--app-slate-from)] to-[var(--app-slate-to)]",
+  steel: "bg-linear-to-b from-[var(--app-steel-from)] to-[var(--app-steel-to)]",
 };
 
 /**
@@ -32,6 +38,7 @@ const ACCENT_GLOW: Record<AppAccent, string> = {
   amber: "group-hover:drop-shadow-[0_9px_16px_var(--app-amber-glow)]",
   rose: "group-hover:drop-shadow-[0_9px_16px_var(--app-rose-glow)]",
   slate: "group-hover:drop-shadow-[0_9px_16px_var(--app-slate-glow)]",
+  steel: "group-hover:drop-shadow-[0_9px_16px_var(--app-steel-glow)]",
 };
 
 /**

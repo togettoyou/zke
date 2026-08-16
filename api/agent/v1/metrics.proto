@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+import "api/agent/v1/stream.proto";
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+// Metrics Ingest is the first Agent-initiated business Stream: the Agent is
+// the sender, forwarding payloads its in-cluster collector produced. Every
+// other business Stream is opened by the Server, so this one must not reuse
+// their Stream kinds or their handler paths.
+enum MetricsPayloadEncoding {
+  METRICS_PAYLOAD_ENCODING_UNSPECIFIED = 0;
+  // Snappy-compressed Prometheus remote write request body, forwarded byte
+  // for byte. The Agent never parses or rewrites it; scope identity is
+  // applied by the Server, which is the only side that cannot be modified by
+  // whoever administers the target Cluster.
+  METRICS_PAYLOAD_ENCODING_PROMETHEUS_REMOTE_WRITE_SNAPPY = 1;
+}
+
+message MetricsIngestHello {
+  string collector = 1;
+  MetricsPayloadEncoding payload_encoding = 2;
+}
+
+message MetricsIngestReady {
+  ResultCode result = 1;
+  string reason = 2;
+  string message = 3;
+  // Server-side limits. The Agent must apply the smaller of these and its own
+  // configuration, so that neither side can be pushed past its budget by the
+  // other.
+  uint64 max_batch_bytes = 4;
+  uint32 max_in_flight_batches = 5;
+}
+
+message MetricsIngestBatch {
+  uint64 batch_id = 1;
+  uint64 payload_size = 2;
+}
+
+enum MetricsCollectorAction {
+  METRICS_COLLECTOR_ACTION_UNSPECIFIED = 0;
+  METRICS_COLLECTOR_ACTION_STATUS = 1;
+  METRICS_COLLECTOR_ACTION_INSTALL = 2;
+  METRICS_COLLECTOR_ACTION_UNINSTALL = 3;
+}
+
+// The collector is installed by the Agent inside its own Cluster rather than by
+// the Server writing objects through the generic resource path. Two reasons:
+// the object set is fixed, so the Agent can refuse anything that does not match
+// it, and the ingest credential never has to leave the Cluster — the Agent both
+// issues it and verifies it.
+message MetricsCollectorRequest {
+  MetricsCollectorAction action = 1;
+  string image = 2;
+  string image_pull_policy = 3;
+  string scrape_interval = 4;
+  string buffer_size = 5;
+  uint32 kubelet_metrics_port = 6;
+  // Kubernetes quantities for the collector container, decided by the Server
+  // from platform settings so a Cluster cannot be handed an unbounded
+  // workload by omission. Each may be empty, which drops that entry from the
+  // container instead of sending Kubernetes a value it would reject; an empty
+  // limit means the collector is only bounded by the Namespace's own limits.
+  // An Agent too old to know these fields ignores them and installs as before.
+  string cpu_request = 7;
+  string memory_request = 8;
+  string cpu_limit = 9;
+  string memory_limit = 10;
+}
+
+message MetricsCollectorState {
+  bool installed = 1;
+  string namespace = 2;
+  string image = 3;
+  int32 desired_replicas = 4;
+  int32 ready_replicas = 5;
+  // Whether the Agent holds a credential the collector can present. It is
+  // reported as a fact, never as a value.
+  bool credential_ready = 6;
+}
+
+message MetricsCollectorResponse {
+  ResultCode result = 1;
+  int32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  MetricsCollectorState state = 5;
+}
+
+message MetricsIngestAck {
+  uint64 batch_id = 1;
+  ResultCode result = 2;
+  string reason = 3;
+  string message = 4;
+  // Set with RESULT_CODE_RESOURCE_EXHAUSTED so the Agent can translate the
+  // rejection into a retry hint for its in-cluster collector instead of
+  // dropping the batch.
+  uint64 retry_after_millis = 5;
+}

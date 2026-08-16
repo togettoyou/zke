@@ -187,38 +187,62 @@ WHERE profile.id = $1
 	return ErrEndpointProfileInUse
 }
 
-func (store *PlatformSettingsStore) GetSettings(
-	ctx context.Context,
-) (PlatformSettings, error) {
-	var settings PlatformSettings
-	var terminalSessionTTLSeconds int32
-	err := store.pool.QueryRow(ctx, `
-SELECT
+// platformSettingsColumns is shared by the read and the update so the two can
+// never drift into scanning different shapes into the same struct.
+const platformSettingsColumns = `
     default_endpoint_profile_id::text,
     agent_image,
     agent_image_pull_policy,
     cluster_terminal_image,
     cluster_terminal_image_pull_policy,
+    metrics_collector_image,
+    metrics_collector_image_pull_policy,
+    metrics_collector_cpu_request,
+    metrics_collector_memory_request,
+    metrics_collector_cpu_limit,
+    metrics_collector_memory_limit,
     cluster_terminal_session_ttl_seconds,
     revision,
     COALESCE(updated_by_user_id::text, ''),
-    updated_at
-FROM platform_settings
-WHERE singleton = true`).Scan(
+    updated_at`
+
+func scanPlatformSettings(row pgx.Row) (PlatformSettings, error) {
+	var settings PlatformSettings
+	var terminalSessionTTLSeconds int32
+	err := row.Scan(
 		&settings.DefaultEndpointProfileID,
 		&settings.AgentImage,
 		&settings.AgentImagePullPolicy,
 		&settings.ClusterTerminalImage,
 		&settings.ClusterTerminalImagePullPolicy,
+		&settings.MetricsCollectorImage,
+		&settings.MetricsCollectorImagePullPolicy,
+		&settings.MetricsCollectorCPURequest,
+		&settings.MetricsCollectorMemoryRequest,
+		&settings.MetricsCollectorCPULimit,
+		&settings.MetricsCollectorMemoryLimit,
 		&terminalSessionTTLSeconds,
 		&settings.Revision,
 		&settings.UpdatedByUserID,
 		&settings.UpdatedAt,
 	)
 	if err != nil {
-		return PlatformSettings{}, fmt.Errorf("get platform settings: %w", err)
+		return PlatformSettings{}, err
 	}
 	settings.ClusterTerminalSessionTTL = time.Duration(terminalSessionTTLSeconds) * time.Second
+	return settings, nil
+}
+
+func (store *PlatformSettingsStore) GetSettings(
+	ctx context.Context,
+) (PlatformSettings, error) {
+	settings, err := scanPlatformSettings(store.pool.QueryRow(ctx, `SELECT `+
+		platformSettingsColumns+`
+FROM platform_settings
+WHERE singleton = true`))
+	if err != nil {
+		return PlatformSettings{}, fmt.Errorf("get platform settings: %w", err)
+	}
 	return settings, nil
 }
 
@@ -308,56 +332,46 @@ func (store *PlatformSettingsStore) UpdateSettings(
 	ctx context.Context,
 	input UpdatePlatformSettingsParams,
 ) (PlatformSettings, error) {
-	var settings PlatformSettings
-	var terminalSessionTTLSeconds int32
-	err := store.pool.QueryRow(ctx, `
+	settings, err := scanPlatformSettings(store.pool.QueryRow(ctx, `
 UPDATE platform_settings
 SET agent_image = $1,
     agent_image_pull_policy = $2,
     cluster_terminal_image = $3,
     cluster_terminal_image_pull_policy = $4,
-    cluster_terminal_session_ttl_seconds = $5,
+    metrics_collector_image = $5,
+    metrics_collector_image_pull_policy = $6,
+    metrics_collector_cpu_request = $7,
+    metrics_collector_memory_request = $8,
+    metrics_collector_cpu_limit = $9,
+    metrics_collector_memory_limit = $10,
+    cluster_terminal_session_ttl_seconds = $11,
     revision = revision + 1,
-    updated_by_user_id = $6,
-    updated_at = $7
+    updated_by_user_id = $12,
+    updated_at = $13
 WHERE singleton = true
-  AND revision = $8
-RETURNING
-    default_endpoint_profile_id::text,
-    agent_image,
-    agent_image_pull_policy,
-    cluster_terminal_image,
-    cluster_terminal_image_pull_policy,
-    cluster_terminal_session_ttl_seconds,
-    revision,
-    COALESCE(updated_by_user_id::text, ''),
-    updated_at`,
+  AND revision = $14
+RETURNING`+platformSettingsColumns,
 		input.AgentImage,
 		input.AgentImagePullPolicy,
 		input.ClusterTerminalImage,
 		input.ClusterTerminalImagePullPolicy,
+		input.MetricsCollectorImage,
+		input.MetricsCollectorImagePullPolicy,
+		input.MetricsCollectorCPURequest,
+		input.MetricsCollectorMemoryRequest,
+		input.MetricsCollectorCPULimit,
+		input.MetricsCollectorMemoryLimit,
 		int32(input.ClusterTerminalSessionTTL/time.Second),
 		input.ActorUserID,
 		input.Now,
 		input.ExpectedRevision,
-	).Scan(
-		&settings.DefaultEndpointProfileID,
-		&settings.AgentImage,
-		&settings.AgentImagePullPolicy,
-		&settings.ClusterTerminalImage,
-		&settings.ClusterTerminalImagePullPolicy,
-		&terminalSessionTTLSeconds,
-		&settings.Revision,
-		&settings.UpdatedByUserID,
-		&settings.UpdatedAt,
-	)
+	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PlatformSettings{}, ErrPlatformSettingsConflict
 	}
 	if err != nil {
 		return PlatformSettings{}, fmt.Errorf("update platform settings: %w", err)
 	}
-	settings.ClusterTerminalSessionTTL = time.Duration(terminalSessionTTLSeconds) * time.Second
 	return settings, nil
 }
 

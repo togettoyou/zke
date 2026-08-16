@@ -66,6 +66,10 @@ export function isForbidden(error: unknown): boolean {
  */
 const DETAILED_ERROR_PREFIXES: Record<string, string> = {
   invalid_endpoint_profile_input: "端点配置无效：",
+  // The Server names the value it refused — which quantity, and why. A fixed
+  // sentence here would send the operator back to guess which of six fields it
+  // was about.
+  invalid_platform_settings_input: "平台配置无效：",
   cluster_api_rejected: "Kubernetes 拒绝了该配置：",
   permission_escalation: "本次修改新增了当前账号未持有的权限，无法保存：",
   permission_revocation:

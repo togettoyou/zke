@@ -20,6 +20,9 @@ enum StreamKind {
   STREAM_KIND_POD_EXEC = 21;
   STREAM_KIND_POD_PORT_FORWARD = 22;
   STREAM_KIND_TERMINAL_SESSION = 30;
+  // Opened by the Agent, not the Server.
+  STREAM_KIND_METRICS_INGEST = 40;
+  STREAM_KIND_METRICS_COLLECTOR = 41;
 }
 
 enum ResultCode {

@@ -80,6 +80,8 @@ const (
 	ClusterEnrollmentRevoke              = "cluster.enrollment.revoke"
 	ClusterConnectionRevoke              = "cluster.connection.revoke"
 	ClusterConnectionReenroll            = "cluster.connection.reenroll"
+	ClusterMetricsCollectorInstall       = "cluster.metrics.collector.install"
+	ClusterMetricsCollectorUninstall     = "cluster.metrics.collector.uninstall"
 	KubernetesResourceCreate             = "kubernetes_resource.create"
 	KubernetesResourceUpdate             = "kubernetes_resource.update"
 	KubernetesResourcePatch              = "kubernetes_resource.patch"
@@ -151,6 +153,8 @@ const (
 	DeniedClusterPodPortForward             = "cluster.pod.port_forward"
 	DeniedClusterNodeDrain                  = "cluster.node.drain"
 	DeniedClusterEventRead                  = "cluster.event.read"
+	DeniedClusterMetricsRead                = "cluster.metrics.read"
+	DeniedClusterMetricsManage              = "cluster.metrics.manage"
 	DeniedClusterManage                     = "cluster.manage"
 	DeniedClusterNamespaceManage            = "cluster.namespace.manage"
 	DeniedClusterSystemNamespaceManage      = "cluster.system_namespace.manage"
@@ -304,6 +308,8 @@ var actions = []Action{
 	{ClusterEnrollmentRevoke, GroupCluster},
 	{ClusterConnectionRevoke, GroupCluster},
 	{ClusterConnectionReenroll, GroupCluster},
+	{ClusterMetricsCollectorInstall, GroupCluster},
+	{ClusterMetricsCollectorUninstall, GroupCluster},
 	{AgentCertificateRenew, GroupCluster},
 
 	{KubernetesResourceCreate, GroupKubernetes},
@@ -342,6 +348,8 @@ var actions = []Action{
 	{DeniedClusterPodPortForward, GroupDenied},
 	{DeniedClusterNodeDrain, GroupDenied},
 	{DeniedClusterEventRead, GroupDenied},
+	{DeniedClusterMetricsRead, GroupDenied},
+	{DeniedClusterMetricsManage, GroupDenied},
 	{DeniedClusterManage, GroupDenied},
 	{DeniedClusterNamespaceManage, GroupDenied},
 	{DeniedClusterSystemNamespaceManage, GroupDenied},

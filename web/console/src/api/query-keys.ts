@@ -27,6 +27,12 @@ export const queryKeys = {
     ["clusters", projectId, params] as const,
   cluster: (clusterId: string) => ["cluster", clusterId] as const,
   clusterOverview: (clusterId: string) => ["cluster-overview", clusterId] as const,
+  metricsQueryCatalog: () => ["metrics-query-catalog"] as const,
+  // The parameters are part of the key: two ranges of the same query are two
+  // different answers, and caching them under one key would show yesterday's
+  // window while today's is still loading.
+  metricsQuery: (params: Record<string, unknown>) => ["metrics-query", params] as const,
+  metricsCollector: (clusterId: string) => ["metrics-collector", clusterId] as const,
   nodes: (clusterId: string, params: Record<string, unknown> = {}) =>
     ["nodes", clusterId, params] as const,
   node: (clusterId: string, name: string) => ["node", clusterId, name] as const,

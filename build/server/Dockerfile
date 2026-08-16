@@ -53,23 +53,41 @@ CMD ["--config", "/etc/zke/zke-server.yaml"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8080/readyz >/dev/null || exit 1
 
-FROM postgres:17-alpine AS server-pg
+# Metrics storage for the all-in-one image, copied from the published image
+# rather than built here. Pinned to the same release series as the default
+# collector image, so both halves of the pipeline come from one version.
+FROM victoriametrics/victoria-metrics:v1.149.0 AS metrics-storage
+
+# ZKE Server, its database and its metrics storage in one container, so a first
+# deployment is one `docker run`. Three processes share a restart and a log
+# stream; deployments that outgrow that move to Compose or the Chart.
+FROM postgres:17-alpine AS server-all
 RUN apk add --no-cache ca-certificates tzdata \
-    && install -d /data /etc/zke /usr/share/zke/console
+    && install -d /data /etc/zke /usr/share/zke/console /var/lib/victoria-metrics
 COPY --from=server-build /out/zke-server /usr/local/bin/zke-server
 COPY --from=console-build /src/web/console/dist/ /usr/share/zke/console/
+COPY --from=metrics-storage /victoria-metrics-prod /usr/local/bin/victoria-metrics
 COPY configs/zke-server.yaml /etc/zke/zke-server.yaml
-COPY --chmod=755 build/server/server-pg-entrypoint.sh /usr/local/bin/zke-server-pg-entrypoint
+COPY --chmod=755 build/server/server-all-entrypoint.sh /usr/local/bin/zke-server-all-entrypoint
 ENV POSTGRES_DB=zke \
     POSTGRES_USER=zke \
     POSTGRES_PASSWORD=zke_change_me \
     PGDATA=/var/lib/postgresql/data/pgdata \
     ZKE_DATABASE_URL=postgres://zke:zke_change_me@127.0.0.1:5432/zke?sslmode=disable \
-    ZKE_CONSOLE_DIRECTORY=/usr/share/zke/console
+    ZKE_CONSOLE_DIRECTORY=/usr/share/zke/console \
+    ZKE_OBSERVABILITY_METRICS_ENABLED=true \
+    ZKE_OBSERVABILITY_METRICS_STORAGE_WRITE_URL=http://127.0.0.1:8428/api/v1/write \
+    ZKE_OBSERVABILITY_METRICS_STORAGE_QUERY_URL=http://127.0.0.1:8428/prometheus \
+    ZKE_METRICS_STORAGE_DATA_PATH=/var/lib/victoria-metrics \
+    ZKE_METRICS_RETENTION_PERIOD=1 \
+    ZKE_METRICS_LISTEN_ADDRESS=127.0.0.1:8428
 WORKDIR /
-VOLUME ["/var/lib/postgresql/data", "/data"]
+VOLUME ["/var/lib/postgresql/data", "/data", "/var/lib/victoria-metrics"]
+# 8428 is not exposed: the metrics storage has no authentication of its own.
+# Pointing a dashboard at it means setting ZKE_METRICS_LISTEN_ADDRESS and
+# publishing the port deliberately.
 EXPOSE 8080/tcp 8081/tcp 8443/udp
-ENTRYPOINT ["/usr/local/bin/zke-server-pg-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/zke-server-all-entrypoint"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
     CMD pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null \
     && wget -qO- http://127.0.0.1:8080/readyz >/dev/null || exit 1

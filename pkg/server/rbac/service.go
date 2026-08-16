@@ -106,6 +106,8 @@ var allPermissions = []Permission{
 	PermissionClusterPodPortForward,
 	PermissionClusterNodeDrain,
 	PermissionClusterEventRead,
+	PermissionClusterMetricsRead,
+	PermissionClusterMetricsManage,
 	PermissionClusterManage,
 	PermissionClusterNamespaceManage,
 	PermissionClusterSystemNamespaceManage,
