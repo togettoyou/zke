@@ -53,9 +53,24 @@ type collectorPlacement struct {
 	InCluster bool
 }
 
+// ingestCredentials is the endpoint's view of the accepted tokens, refreshed as
+// soon as an install writes one or an uninstall removes it.
+//
+// Without this the endpoint only learns about a new credential on its next poll,
+// and the collector — which starts pushing seconds after the install — spends up
+// to that whole interval being answered 401, then backs off exponentially on top
+// of it. From the outside a fresh install simply looks broken, and the collector
+// status makes that worse by reporting the credential as ready: it reads the
+// Secret straight from the API server, so it is right while the endpoint is
+// still working from a stale cache.
+type ingestCredentials interface {
+	refresh(context.Context) error
+}
+
 func newKubernetesMetricsCollectorHandler(
 	client kubernetes.Interface,
 	placement collectorPlacement,
+	credentials ingestCredentials,
 ) agentprotocol.MetricsCollectorHandler {
 	namespace := placement.Namespace
 	return func(
@@ -97,9 +112,11 @@ func newKubernetesMetricsCollectorHandler(
 					"this Agent does not run in the Cluster; set metrics_ingest.advertised_url to an address the Cluster can reach it on",
 				), nil
 			}
-			return installMetricsCollector(ctx, client, namespace, ingestURL, request)
+			return installMetricsCollector(
+				ctx, client, namespace, ingestURL, request, credentials,
+			)
 		case agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_UNINSTALL:
-			return uninstallMetricsCollector(ctx, client, namespace)
+			return uninstallMetricsCollector(ctx, client, namespace, credentials)
 		default:
 			return collectorFailure(
 				agentv1.ResultCode_RESULT_CODE_INVALID_ARGUMENT,
@@ -282,9 +299,20 @@ func installMetricsCollector(
 	namespace string,
 	ingestURL string,
 	request *agentv1.MetricsCollectorRequest,
+	credentials ingestCredentials,
 ) (*agentv1.MetricsCollectorResponse, error) {
 	if err := ensureIngestSecret(ctx, client, namespace); err != nil {
 		return collectorKubernetesFailure("ensure metrics ingest Secret", err), nil
+	}
+	// Before the collector exists, so it is never answered 401 by an endpoint
+	// that has not noticed the credential this install just wrote.
+	//
+	// Refused rather than continued when this fails: the read goes to the API
+	// server this install just wrote the Secret through, so a failure here means
+	// the rest of the install is about to fail too, and stopping now leaves less
+	// behind than a collector pointed at an endpoint that will not accept it.
+	if err := refreshIngestCredentials(ctx, credentials); err != nil {
+		return collectorKubernetesFailure("refresh metrics ingest credential", err), nil
 	}
 	labels := observability.CollectorLabels()
 
@@ -523,10 +551,21 @@ func installMetricsCollector(
 	return collectorStatus(ctx, client, namespace)
 }
 
+// refreshIngestCredentials tells the endpoint to re-read the Secret now. A nil
+// cache means this Agent serves no ingest endpoint, which is the case in tests
+// that only exercise the object set.
+func refreshIngestCredentials(ctx context.Context, credentials ingestCredentials) error {
+	if credentials == nil {
+		return nil
+	}
+	return credentials.refresh(ctx)
+}
+
 func uninstallMetricsCollector(
 	ctx context.Context,
 	client kubernetes.Interface,
 	namespace string,
+	credentials ingestCredentials,
 ) (*agentv1.MetricsCollectorResponse, error) {
 	// Reverse of the install order: the workload first, so nothing keeps
 	// running against permissions that are about to disappear. The credential
@@ -784,6 +823,13 @@ func uninstallMetricsCollector(
 		if err := deletion.delete(); err != nil && !apierrors.IsNotFound(err) {
 			return collectorKubernetesFailure("delete "+deletion.kind, err), nil
 		}
+	}
+	// The credential was deleted last so that no usable token outlives the
+	// collector. That only holds if the endpoint stops accepting it too —
+	// otherwise the token is gone from the Cluster while the Agent still honours
+	// its cached copy.
+	if err := refreshIngestCredentials(ctx, credentials); err != nil {
+		return collectorKubernetesFailure("refresh metrics ingest credential", err), nil
 	}
 	return collectorStatus(ctx, client, namespace)
 }

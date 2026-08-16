@@ -80,7 +80,7 @@ func TestLiveMetricsCollectorInstallAndUninstall(t *testing.T) {
 	handler := newKubernetesMetricsCollectorHandler(client, collectorPlacement{
 		Namespace:     namespace,
 		AdvertisedURL: "http://host.docker.internal:8429",
-	})
+	}, newMetricsIngestTokens(client, namespace))
 	response, err := handler(ctx, &agentv1.MetricsCollectorRequest{
 		Action:             agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_INSTALL,
 		Image:              "victoriametrics/vmagent:v1.149.0",

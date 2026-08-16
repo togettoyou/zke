@@ -30,13 +30,24 @@ func installRequest() *agentv1.MetricsCollectorRequest {
 func collectorHandler(client kubernetes.Interface) func(
 	*agentv1.MetricsCollectorRequest,
 ) (*agentv1.MetricsCollectorResponse, error) {
+	handler, _ := collectorHandlerWithCredentials(client)
+	return handler
+}
+
+// collectorHandlerWithCredentials also hands back the token cache the endpoint
+// authorizes against, which is the same object the install path refreshes.
+func collectorHandlerWithCredentials(client kubernetes.Interface) (
+	func(*agentv1.MetricsCollectorRequest) (*agentv1.MetricsCollectorResponse, error),
+	*metricsIngestTokens,
+) {
+	credentials := newMetricsIngestTokens(client, collectorNamespace)
 	handler := newKubernetesMetricsCollectorHandler(client, collectorPlacement{
 		Namespace: collectorNamespace,
 		InCluster: true,
-	})
+	}, credentials)
 	return func(request *agentv1.MetricsCollectorRequest) (*agentv1.MetricsCollectorResponse, error) {
 		return handler(context.Background(), request)
-	}
+	}, credentials
 }
 
 func TestCollectorInstallCreatesEverythingItNeedsAndNothingElse(t *testing.T) {
@@ -424,9 +435,10 @@ func TestCollectorStatusReportsAForeignSecretAsUnusable(t *testing.T) {
 func TestCollectorRefusesToInstallWhenItCannotBeReached(t *testing.T) {
 	t.Parallel()
 
-	outside := newKubernetesMetricsCollectorHandler(fake.NewClientset(), collectorPlacement{
+	outsideClient := fake.NewClientset()
+	outside := newKubernetesMetricsCollectorHandler(outsideClient, collectorPlacement{
 		Namespace: collectorNamespace,
-	})
+	}, newMetricsIngestTokens(outsideClient, collectorNamespace))
 	response, err := outside(context.Background(), installRequest())
 	if err != nil {
 		t.Fatal(err)
@@ -442,7 +454,7 @@ func TestCollectorRefusesToInstallWhenItCannotBeReached(t *testing.T) {
 	advertised := newKubernetesMetricsCollectorHandler(client, collectorPlacement{
 		Namespace:     collectorNamespace,
 		AdvertisedURL: "http://host.docker.internal:8429",
-	})
+	}, newMetricsIngestTokens(client, collectorNamespace))
 	if _, err := advertised(context.Background(), installRequest()); err != nil {
 		t.Fatal(err)
 	}

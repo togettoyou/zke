@@ -18,6 +18,7 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	"github.com/togettoyou/zke/pkg/shared/identifier"
 	"github.com/togettoyou/zke/pkg/shared/observability"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -352,7 +353,20 @@ func (tokens *metricsIngestTokens) refresh(ctx context.Context) error {
 		observability.IngestSecretName,
 		metav1.GetOptions{},
 	)
+	if apierrors.IsNotFound(err) {
+		// The credential is gone, which is an answer rather than a failure: an
+		// uninstall deletes it last precisely so no usable token outlives the
+		// collector. Keeping the cached value would leave the endpoint accepting
+		// a token nothing in the Cluster holds any more.
+		tokens.mutex.Lock()
+		tokens.values = nil
+		tokens.mutex.Unlock()
+		return nil
+	}
 	if err != nil {
+		// Any other failure is the API server being unreachable, not a statement
+		// about the credential. The cache is left alone: dropping it during a
+		// blip would break a collector that is working.
 		return fmt.Errorf("read Agent metrics ingest Secret: %w", err)
 	}
 	var values [][]byte

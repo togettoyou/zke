@@ -98,7 +98,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		slog.Time("certificate_expires_at", identity.CertificateExpiresAt),
 	)
 	go runTerminalSessionJanitor(ctx, kubernetesClient, cfg.IdentityNamespace, logger)
-	metricsForwarder := startMetricsIngest(ctx, cfg, kubernetesClient, logger)
+	metricsForwarder, metricsCredentials := startMetricsIngest(
+		ctx, cfg, kubernetesClient, logger,
+	)
 	startupID, err := identifier.NewUUID()
 	if err != nil {
 		return fmt.Errorf("generate Agent startup identifier: %w", err)
@@ -133,6 +135,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 					// what client-go itself reads to decide the same question.
 					InCluster: os.Getenv("KUBERNETES_SERVICE_HOST") != "",
 				},
+				// The same cache the endpoint authorizes against, so an install
+				// takes effect on the very next write rather than on the next poll.
+				metricsCredentials,
 			),
 		},
 	)
@@ -152,7 +157,7 @@ func startMetricsIngest(
 	cfg Config,
 	kubernetesClient kubernetes.Interface,
 	logger *slog.Logger,
-) *metricsIngestForwarder {
+) (*metricsIngestForwarder, *metricsIngestTokens) {
 	tokens := newMetricsIngestTokens(kubernetesClient, cfg.IdentityNamespace)
 	if err := tokens.refresh(ctx); err != nil {
 		logger.Debug(
@@ -180,7 +185,7 @@ func startMetricsIngest(
 			)
 		}
 	}()
-	return forwarder
+	return forwarder, tokens
 }
 
 func enrollWithRetry(

@@ -388,6 +388,50 @@ func TestBundleUninstallRemovesEveryComponent(t *testing.T) {
 	}
 }
 
+// The collector starts pushing seconds after an install. If the endpoint only
+// learned about the credential on its next poll, every one of those writes
+// would be answered 401 — and vmagent backs off exponentially on top of that,
+// so a working install looks broken for well over a minute. Worse, the collector
+// status reads the Secret straight from the API server, so the Console reports
+// the credential as ready throughout.
+func TestInstallMakesTheCredentialUsableImmediately(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewClientset()
+	handler, credentials := collectorHandlerWithCredentials(client)
+
+	// Nothing is accepted before an install: there is no credential to present.
+	if credentials.authorize("Bearer anything") {
+		t.Fatal("the endpoint authorized a caller before any credential existed")
+	}
+
+	if _, err := handler(bundleRequest()); err != nil {
+		t.Fatal(err)
+	}
+	secret, err := client.CoreV1().Secrets(collectorNamespace).Get(
+		context.Background(), observability.IngestSecretName, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := string(secret.Data[observability.IngestTokenKey])
+	if !credentials.authorize("Bearer " + token) {
+		t.Fatal("the endpoint would answer 401 to the collector this install just configured")
+	}
+
+	// And it stops being accepted with the uninstall that deleted it. The
+	// credential is deleted last so no usable token outlives the collector; that
+	// only holds if the endpoint forgets it too.
+	if _, err := handler(&agentv1.MetricsCollectorRequest{
+		Action: agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_UNINSTALL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if credentials.authorize("Bearer " + token) {
+		t.Fatal("a deleted credential is still accepted by the endpoint")
+	}
+}
+
 // A Cluster may already run its own kube-state-metrics under the same name.
 // Adopting it would let an install overwrite something this Agent never created.
 func TestBundleRefusesTargetsItDoesNotOwn(t *testing.T) {
