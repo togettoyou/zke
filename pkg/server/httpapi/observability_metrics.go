@@ -53,7 +53,9 @@ type metricsQueryDefinitionResponse struct {
 	Unit              string   `json:"unit"`
 	Dimensions        []string `json:"dimensions"`
 	RequiresNamespace bool     `json:"requires_namespace"`
+	SupportsNamespace bool     `json:"supports_namespace"`
 	SupportsTop       bool     `json:"supports_top"`
+	RequiresTop       bool     `json:"requires_top"`
 }
 
 type metricsQueryCatalogResponse struct {
@@ -70,6 +72,16 @@ type metricsQuerySeriesResponse struct {
 	Points [][2]any `json:"points"`
 }
 
+// metricsQueryIssueResponse explains a difference between the scope asked for
+// and the answer returned. Reason is a code the Console maps to words; nothing
+// here carries payload, label values or a backend message.
+type metricsQueryIssueResponse struct {
+	ClusterID   string `json:"cluster_id"`
+	ClusterName string `json:"cluster_name"`
+	Reason      string `json:"reason"`
+	Detail      string `json:"detail"`
+}
+
 type metricsQueryResponse struct {
 	Query       string                       `json:"query"`
 	Title       string                       `json:"title"`
@@ -81,6 +93,8 @@ type metricsQueryResponse struct {
 	ClusterIDs  []string                     `json:"cluster_ids"`
 	Series      []metricsQuerySeriesResponse `json:"series"`
 	Truncated   bool                         `json:"truncated"`
+	Partial     bool                         `json:"partial"`
+	Issues      []metricsQueryIssueResponse  `json:"issues"`
 }
 
 func (handler *observabilityMetricsHandler) catalog(c *gin.Context) {
@@ -108,7 +122,9 @@ func (handler *observabilityMetricsHandler) catalog(c *gin.Context) {
 			Unit:              string(definition.Unit),
 			Dimensions:        dimensions,
 			RequiresNamespace: definition.RequiresNamespace,
+			SupportsNamespace: definition.SupportsNamespace,
 			SupportsTop:       definition.SupportsTop,
+			RequiresTop:       definition.RequiresTop,
 		})
 	}
 	writeSuccess(c, http.StatusOK, metricsQueryCatalogResponse{Queries: queries})
@@ -209,6 +225,15 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 			Points:      points,
 		})
 	}
+	issues := make([]metricsQueryIssueResponse, 0, len(result.Issues))
+	for _, issue := range result.Issues {
+		issues = append(issues, metricsQueryIssueResponse{
+			ClusterID:   issue.ClusterID,
+			ClusterName: issue.ClusterName,
+			Reason:      issue.Reason,
+			Detail:      issue.Detail,
+		})
+	}
 	writeSuccess(c, http.StatusOK, metricsQueryResponse{
 		Query:       result.Query,
 		Title:       result.Title,
@@ -220,6 +245,8 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 		ClusterIDs:  result.ClusterIDs,
 		Series:      series,
 		Truncated:   result.Truncated,
+		Partial:     result.Partial,
+		Issues:      issues,
 	})
 }
 

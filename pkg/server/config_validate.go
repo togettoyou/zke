@@ -188,6 +188,8 @@ func (cfg Config) validateObservability() error {
 		{metrics.MaxLabelsPerSeries, "maximum labels per series"},
 		{metrics.MaxLabelNameBytes, "maximum label name bytes"},
 		{metrics.MaxLabelValueBytes, "maximum label value bytes"},
+		{metrics.MaxSamplesPerSecondPerCluster, "maximum samples per second per cluster"},
+		{metrics.MaxActiveSeriesPerCluster, "maximum active series per cluster"},
 	} {
 		if item.value < 1 {
 			return fmt.Errorf("observability metrics %s must be positive", item.name)
@@ -206,6 +208,8 @@ func (cfg Config) validateObservability() error {
 		{metrics.IngestSessionTimeout, time.Hour, "ingest session timeout"},
 		{metrics.MaxSampleAge, 30 * 24 * time.Hour, "maximum sample age"},
 		{metrics.MaxSampleFuture, time.Hour, "maximum sample future skew"},
+		{metrics.SampleBurstWindow, time.Hour, "sample burst window"},
+		{metrics.ActiveSeriesWindow, 24 * time.Hour, "active series window"},
 	} {
 		if item.value <= 0 {
 			return fmt.Errorf(

@@ -59,6 +59,17 @@ type metricsCollectorStateResponse struct {
 	DesiredReplicas int32  `json:"desired_replicas"`
 	ReadyReplicas   int32  `json:"ready_replicas"`
 	CredentialReady bool   `json:"credential_ready"`
+	// The fields below describe the Server side of the same link: whether this
+	// Server is refusing what the collector sends. Nulls mean the Server has no
+	// budget state for the Cluster, which is not the same as "within budget".
+	Throttled       bool       `json:"throttled"`
+	ThrottleReason  string     `json:"throttle_reason"`
+	ThrottledSince  *time.Time `json:"throttled_since"`
+	LastThrottledAt *time.Time `json:"last_throttled_at"`
+	// ActiveSeries is an estimate from a fixed-size sketch, never an exact
+	// count. Zero max means the Server has nothing to report.
+	ActiveSeries    int `json:"active_series"`
+	MaxActiveSeries int `json:"max_active_series"`
 }
 
 // status reports whether the target Cluster is collecting metrics.
@@ -180,7 +191,22 @@ func (handler *metricsCollectorHandler) respond(
 		DesiredReplicas: state.DesiredReplicas,
 		ReadyReplicas:   state.ReadyReplicas,
 		CredentialReady: state.CredentialReady,
+		Throttled:       state.Throttled,
+		ThrottleReason:  state.ThrottleReason,
+		ThrottledSince:  optionalTime(state.ThrottledSince),
+		LastThrottledAt: optionalTime(state.LastThrottledAt),
+		ActiveSeries:    state.ActiveSeries,
+		MaxActiveSeries: state.MaxActiveSeries,
 	})
+}
+
+// optionalTime keeps a zero time out of the response. Serialising it would
+// present year one as a real moment a Cluster was throttled.
+func optionalTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 func (handler *metricsCollectorHandler) recordCollectorOperation(

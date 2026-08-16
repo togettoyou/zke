@@ -43,6 +43,17 @@ export const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     forbidden: { label: "无权限查看", tone: "neutral" },
     unreadable: { label: "状态不可用", tone: "danger" },
   },
+  // The Server side of the same link. Kept apart from `metrics_collector`
+  // because they answer different questions: one says what runs in the Cluster,
+  // the other says whether this Server is accepting what it sends. A Cluster can
+  // be 运行中 and refused at the same time, and merging them would hide exactly
+  // that case.
+  metrics_ingest: {
+    accepted: { label: "正常接收", tone: "success" },
+    throttled_cardinality: { label: "已限流 · 基数", tone: "danger" },
+    throttled_rate: { label: "已限流 · 速率", tone: "danger" },
+    idle: { label: "尚未上报", tone: "neutral" },
+  },
   // `spec.unschedulable`. Named for what it does to the scheduler rather than
   // for kubectl's cordon, which means nothing to an operator reading a table.
   scheduling: {

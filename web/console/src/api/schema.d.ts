@@ -601,6 +601,9 @@ export interface paths {
          *
          *     缺失采样点在响应中显式为 `null`，不做插值：数据空洞是采集中断的证据，补齐会
          *     把中断显示成平线。时间戳为秒级 Unix 时间，数值已按 `unit` 换算。
+         *
+         *     `namespace` 与 `top` 是否可用由查询目录声明。对不支持的查询传 `namespace`、
+         *     或对 `requires_top` 的查询省略 `top`，都返回 400 而不是忽略该参数。
          */
         get: operations["runObservabilityMetricsQuery"];
         put?: never;
@@ -4947,7 +4950,17 @@ export interface components {
                 /** @description 除集群身份外，该查询返回的序列标签。 */
                 dimensions: string[];
                 requires_namespace: boolean;
+                /**
+                 * @description 该查询可以按 Namespace 收窄。对不支持的查询传 `namespace` 会被拒绝而不是忽略，
+                 *     否则调用方会把集群级数字当成 Namespace 级的读。
+                 */
+                supports_namespace: boolean;
                 supports_top: boolean;
+                /**
+                 * @description 该查询必须给出 `top`。Pod 维度属于这一类：一个集群的 Pod 数量比节点高出几个量级，
+                 *     “全部 Pod”既画不出也没人问，边界写在契约里比交给序列上限截断更清楚。
+                 */
+                requires_top: boolean;
             }[];
         };
         MetricsQueryResult: {
@@ -4967,6 +4980,27 @@ export interface components {
             cluster_ids: components["schemas"]["UUID"][];
             /** @description 序列数超过上限而被截断。 */
             truncated: boolean;
+            /**
+             * @description 返回结果没有覆盖请求的全部范围。`issues` 说明原因。
+             *     读图的人如果分不清真实低谷和被拒绝的批次，会从同一张图得出相反的结论。
+             */
+            partial: boolean;
+            /**
+             * @description 请求范围与返回结果之间的差异。`no_data` 只是说明，不会使结果 `partial`；
+             *     `throttled` 与 `series_truncated` 会。
+             */
+            issues: {
+                /** @description 属于整体而非某个集群的问题为空字符串。 */
+                cluster_id: string;
+                cluster_name: string;
+                /** @enum {string} */
+                reason: "no_data" | "throttled" | "series_truncated";
+                /**
+                 * @description 对 `throttled` 表示触碰的是哪一项预算（`sample_rate` 或 `cardinality`）。
+                 *     不携带正文、标签值或存储后端的消息。
+                 */
+                detail: string;
+            }[];
             series: {
                 cluster_id: components["schemas"]["UUID"];
                 /** @description 展示属性，由 Server 按当前归属补齐；数据身份始终是 cluster_id。 */
@@ -4995,6 +5029,33 @@ export interface components {
             ready_replicas: number;
             /** @description Agent 持有可供采集组件使用的摄取凭证。只报告事实，不返回凭证本身。 */
             credential_ready: boolean;
+            /**
+             * @description Server 当前正在拒绝该集群的摄取批次。被拒绝造成的数据空洞与采集组件故障
+             *     在图上完全一样，所以这里必须如实报告，否则操作者会去重启一个正常工作的采集组件。
+             */
+            throttled: boolean;
+            /**
+             * @description 触碰的预算：`sample_rate` 或 `cardinality`；未限流时为空。
+             * @enum {string}
+             */
+            throttle_reason: "" | "sample_rate" | "cardinality";
+            /**
+             * Format: date-time
+             * @description 本次限流的开始时间；未限流时为 null。
+             */
+            throttled_since: string | null;
+            /**
+             * Format: date-time
+             * @description 最近一次被限流的时间，限流恢复后仍然保留——否则一个已经恢复的空洞就没有解释了。
+             */
+            last_throttled_at: string | null;
+            /**
+             * @description 该集群活跃时间序列的**估算值**，来自固定大小的概率草图，不是精确计数，
+             *     界面必须按近似值呈现。
+             */
+            active_series: number;
+            /** @description 估算值所对照的上限。为 0 表示本 Server 没有该集群的预算信息。 */
+            max_active_series: number;
         };
         KubernetesClusterOverview: {
             generated_at: components["schemas"]["Timestamp"];

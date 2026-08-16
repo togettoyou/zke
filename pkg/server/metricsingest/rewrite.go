@@ -68,6 +68,12 @@ type label struct {
 type batchStats struct {
 	series  int
 	samples int
+	// hashes identify the series this batch carried, so the per-Cluster
+	// cardinality budget can be charged without parsing the payload a second
+	// time. They are only ever fed to a sketch, never compared for equality
+	// across batches, so a collision costs a slightly low estimate and nothing
+	// else.
+	hashes []uint64
 }
 
 // rewriteBatch enforces the limits and replaces the scope identity of every
@@ -240,6 +246,7 @@ func rewriteTimeSeries(
 	if !named {
 		return nil, fmt.Errorf("%w: series has no metric name", ErrPayloadInvalid)
 	}
+	stats.hashes = append(stats.hashes, hashLabels(labels))
 
 	rewritten := make([]byte, 0, len(series)+64)
 	for _, current := range labels {
@@ -255,6 +262,34 @@ func rewriteTimeSeries(
 		rewritten = protowire.AppendBytes(rewritten, encoded)
 	}
 	return append(rewritten, tail...), nil
+}
+
+// hashLabels identifies a series by its whole label set. The labels are already
+// sorted and deduplicated here, so the same series always hashes the same way
+// regardless of the order the collector sent its labels in. Separators are
+// bytes that cannot occur in a label name and are rejected in a value, so
+// {a="b",c="d"} and {ab="", cd=""} cannot collide by construction.
+func hashLabels(labels []label) uint64 {
+	const (
+		offset64 = 14695981039346656037
+		prime64  = 1099511628211
+	)
+	hash := uint64(offset64)
+	write := func(value string) {
+		for index := range len(value) {
+			hash ^= uint64(value[index])
+			hash *= prime64
+		}
+	}
+	for _, current := range labels {
+		write(current.name)
+		hash ^= 0xff
+		hash *= prime64
+		write(current.value)
+		hash ^= 0xfe
+		hash *= prime64
+	}
+	return hash
 }
 
 func parseLabel(encoded []byte, limits Limits) (label, error) {

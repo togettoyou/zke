@@ -44,6 +44,16 @@ type Definition struct {
 	Dimensions        []string
 	RequiresNamespace bool
 	SupportsTop       bool
+	// RequiresTop marks a query whose natural answer is unbounded. Pod level is
+	// the first such dimension: a Cluster has orders of magnitude more Pods than
+	// Nodes, and "every Pod" is neither renderable nor a question anyone asks.
+	// Demanding Top N in the request keeps that bound in the contract instead of
+	// leaving it to whatever the series ceiling happens to cut off.
+	RequiresTop bool
+	// SupportsNamespace marks a query whose expression can carry a Namespace
+	// filter. Asking for one elsewhere is refused rather than ignored, so a
+	// caller never believes it narrowed an answer that it did not.
+	SupportsNamespace bool
 	// build receives an already-validated label matcher and parameters. It
 	// never sees raw client input.
 	build func(matcher string, params buildParams) string
@@ -123,17 +133,68 @@ func catalog() []Definition {
 			Kind:              KindRange,
 			Unit:              UnitMillicores,
 			Dimensions:        []string{"namespace"},
-			RequiresNamespace: false,
 			SupportsTop:       true,
+			SupportsNamespace: true,
 			build: func(matcher string, params buildParams) string {
-				selector := matcher
-				if params.Namespace != "" {
-					selector = fmt.Sprintf(`%s,namespace="%s"`, matcher, params.Namespace)
-				}
 				expression := fmt.Sprintf(
 					`sum by (zke_cluster_id, namespace) (rate(pod_cpu_usage_seconds_total{%s}[%s])) * 1000`,
-					selector,
+					namespaceSelector(matcher, params.Namespace),
 					params.Window,
+				)
+				return topk(expression, params.Top)
+			},
+		},
+		{
+			Name:              "namespace_memory_usage",
+			Title:             "命名空间内存用量",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			Dimensions:        []string{"namespace"},
+			SupportsTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				expression := fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace) (pod_memory_working_set_bytes{%s})`,
+					namespaceSelector(matcher, params.Namespace),
+				)
+				return topk(expression, params.Top)
+			},
+		},
+		{
+			// Pod level comes from the same kubelet endpoint the Cluster and Node
+			// views already read, so it needs no additional scrape target and adds
+			// no cardinality to what a Cluster ships. Only the answer is larger,
+			// which is what RequiresTop bounds.
+			Name:              "pod_cpu_usage",
+			Title:             "Pod CPU 用量",
+			Kind:              KindRange,
+			Unit:              UnitMillicores,
+			Dimensions:        []string{"namespace", "pod"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				expression := fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod) (rate(pod_cpu_usage_seconds_total{%s}[%s])) * 1000`,
+					namespaceSelector(matcher, params.Namespace),
+					params.Window,
+				)
+				return topk(expression, params.Top)
+			},
+		},
+		{
+			Name:              "pod_memory_usage",
+			Title:             "Pod 内存用量",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			Dimensions:        []string{"namespace", "pod"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				expression := fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod) (pod_memory_working_set_bytes{%s})`,
+					namespaceSelector(matcher, params.Namespace),
 				)
 				return topk(expression, params.Top)
 			},
@@ -155,6 +216,16 @@ func catalog() []Definition {
 			},
 		},
 	}
+}
+
+// namespaceSelector narrows a matcher to one Namespace. The value is a
+// validated DNS label by the time it arrives, so it cannot close the selector
+// and open something else.
+func namespaceSelector(matcher string, namespace string) string {
+	if namespace == "" {
+		return matcher
+	}
+	return fmt.Sprintf(`%s,namespace="%s"`, matcher, namespace)
 }
 
 func topk(expression string, top int) string {

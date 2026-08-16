@@ -15,6 +15,7 @@ import (
 	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/server/metricsingest"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
@@ -62,6 +63,16 @@ type SettingsSource interface {
 	CollectorSettings(context.Context) (CollectorSettings, error)
 }
 
+// IngestBudget reports what the Server's own ingest gateway knows about a
+// Cluster. It is consulted here because a Cluster whose batches the Server is
+// refusing looks, from the Console, exactly like a Cluster whose collector has
+// stopped working — and the operator would go and restart a collector that is
+// doing its job. Leaving it nil is allowed and means the Server has no budget
+// state to report.
+type IngestBudget interface {
+	ClusterState(clusterID string) (metricsingest.ClusterState, bool)
+}
+
 type Config struct {
 	ScrapeInterval     time.Duration
 	BufferSize         string
@@ -72,12 +83,14 @@ type Service struct {
 	config   Config
 	agents   AgentAccess
 	settings SettingsSource
+	budget   IngestBudget
 }
 
 func NewService(
 	config Config,
 	agents AgentAccess,
 	settings SettingsSource,
+	budget IngestBudget,
 ) (*Service, error) {
 	if agents == nil || settings == nil {
 		return nil, errors.New("metrics collector dependencies are required")
@@ -94,7 +107,12 @@ func NewService(
 	if config.KubeletMetricsPort <= 0 {
 		config.KubeletMetricsPort = DefaultKubeletMetricsPort
 	}
-	return &Service{config: config, agents: agents, settings: settings}, nil
+	return &Service{
+		config:   config,
+		agents:   agents,
+		settings: settings,
+		budget:   budget,
+	}, nil
 }
 
 // State is what the Console shows: whether a collector is running in the
@@ -111,6 +129,19 @@ type State struct {
 	// an operator can see that a Cluster is running an older collector than the
 	// platform setting currently names.
 	DesiredImage string
+	// Throttled and the fields under it describe the Server side of the same
+	// link: whether this Server is currently refusing what the collector sends,
+	// and why. A refusal is never hidden — a hidden one reads as a broken
+	// Cluster.
+	Throttled       bool
+	ThrottleReason  string
+	ThrottledSince  time.Time
+	LastThrottledAt time.Time
+	// ActiveSeries is an estimate from a fixed-size sketch, so it must be shown
+	// as approximate. Zero with MaxActiveSeries zero means this Server has no
+	// budget state for the Cluster at all.
+	ActiveSeries    int
+	MaxActiveSeries int
 }
 
 func (service *Service) Status(ctx context.Context, clusterID string) (State, error) {
@@ -182,7 +213,7 @@ func (service *Service) exchange(
 	if err != nil {
 		return State{}, err
 	}
-	return State{
+	result := State{
 		ClusterID:       clusterID,
 		Installed:       state.GetInstalled(),
 		Namespace:       state.GetNamespace(),
@@ -191,5 +222,16 @@ func (service *Service) exchange(
 		ReadyReplicas:   state.GetReadyReplicas(),
 		CredentialReady: state.GetCredentialReady(),
 		DesiredImage:    desired.Image,
-	}, nil
+	}
+	if service.budget != nil {
+		if budget, known := service.budget.ClusterState(clusterID); known {
+			result.Throttled = budget.Throttled
+			result.ThrottleReason = budget.Reason
+			result.ThrottledSince = budget.Since
+			result.LastThrottledAt = budget.LastThrottledAt
+			result.ActiveSeries = budget.ActiveSeries
+			result.MaxActiveSeries = budget.MaxActiveSeries
+		}
+	}
+	return result, nil
 }

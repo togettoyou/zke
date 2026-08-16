@@ -3,14 +3,15 @@
 本文定义 ZKE Phase 3 多集群可观测性的数据通路：集群内采集、经 Agent QUIC 连接回传、Server 摄取与作用域
 改写、集中存储，以及面向 Console 的查询、可视化与权限边界。可视化由 ZKE Console 自建，不依赖 Grafana。
 
-> 状态：第一个切片已实现。协议层（`STREAM_KIND_METRICS_INGEST`、`STREAM_KIND_METRICS_COLLECTOR` 与两个
-> 对应能力）、Agent 摄取端点与转发、Agent 侧采集组件安装与卸载、Server 摄取网关与作用域改写、存储写入、
-> 固定查询目录、权限词、审计事件，以及 Console 的「可观测性」应用都已落地。
+> 状态：第一、二个切片已实现（工作负载维度除外，见 §13）。协议层（`STREAM_KIND_METRICS_INGEST`、
+> `STREAM_KIND_METRICS_COLLECTOR` 与两个对应能力）、Agent 摄取端点与转发、Agent 侧采集组件安装与卸载、
+> Server 摄取网关与作用域改写、每集群的速率与基数预算、存储写入、固定查询目录（集群 / 节点 / Namespace /
+> Pod 四个维度的 CPU 与内存，加采集健康度）、权限词、审计事件，以及 Console 的「可观测性」应用都已落地。
 >
 > 已验证，两项都可复跑：
 >
 > - 摄取网关与查询目录对着真实的 VictoriaMetrics v1.149.0 跑通——写入的样本可查回，集群侧伪造的
->   `zke_cluster_id` 被替换为连接身份，六个具名查询都能在真实存储上执行
+>   `zke_cluster_id` 被替换为连接身份，目录中全部九个具名查询都能在真实存储上执行
 >   （`ZKE_TEST_METRICS_STORAGE_URL=http://127.0.0.1:8428 go test ./pkg/server/metricsingest ./pkg/server/metricsquery`）；
 > - Agent 在真实集群中安装采集组件：Deployment 被 API Server 接受、vmagent 启动并就绪，卸载后包括凭证在内
 >   的对象全部消失（`ZKE_LIVE_KUBERNETES_E2E=1 go test ./pkg/agent -run LiveMetricsCollector`）。这一步抓出了
@@ -19,7 +20,9 @@
 >
 > 尚未验证：完整链路（真实集群里的 vmagent → Agent 摄取端点 → Server → 存储 → Console）没有在同一次运行中
 > 端到端跑过——上面的集群内安装是在 Agent 运行于集群外的条件下做的，此时摄取 Service 没有 Endpoint。
-> 容量、保留期与基数限流的实际取值也还没有基线数据。日志、告警与集群标签体系仍是规划（见 §13）。
+> 每集群预算只在单元测试中验证过，没有在真实集群上观察过 vmagent 收到 `RESOURCE_EXHAUSTED` 后的退避与
+> 回灌行为；容量、保留期与预算的实际取值也还没有基线数据，当前默认值是保护性取值。工作负载维度、日志、
+> 告警与集群标签体系仍是规划（见 §13）。
 
 前置阅读：[Server + Agent 架构](server-agent.md)、[Phase 2 Server–Agent 协议设计](agent-protocol-phase-2.md)、
 [应用作用域与资源模型](resource-model.md)、[安全与权限](../security/authorization.md)。
@@ -276,8 +279,29 @@ FIN
 - 样本时间戳窗口：拒绝过于超前的未来时间戳，限制可回填的历史深度；
 - Server 实例级并发摄取批次数。
 
-集群触碰基数上限时，Server 记录结构化告警并在集群的采集状态中显式暴露"已限流"，Console 必须显示这个
-状态；把限流藏起来会让使用者把数据缺口误判为集群故障。
+按批次的限额挡不住"每一批都合法、但每一百毫秒来一批"的集群，也挡不住标签抖动导致序列数无界增长的集群，
+因此每集群的速率与基数上限是独立的一层，作用在批次已经解析完、写入存储之前：
+
+- **样本速率**用令牌桶实现，`max_samples_per_second_per_cluster` 是稳态速率，`sample_burst_window` 是可以
+  一次性花掉的额度。突发额度是为断线重连准备的：vmagent 恢复后会以链路允许的速度回灌磁盘缓冲，按稳态速率
+  拒绝这次回灌会把一次短暂断连变成长时间断连。被拒绝的批次**不扣减令牌**——采集器会重发同一批样本，两次都
+  计费会把一个只是刚好到达上限的集群永久压到上限之下；
+- **活跃序列数**用固定大小的概率草图（linear counting）估算，不维护精确集合：精确集合的内存开销正比于集群
+  的序列数，而这正是这条限制要约束的东西。代价是估算值有误差，因此它在协议、API 和界面上一律标记为近似值，
+  不能当作精确计数使用。窗口轮转时上一窗口的估算值按剩余时间线性衰减并入当前值，避免跨越窗口边界时计数
+  突然归零、放过一个什么都没改的集群；
+- 观察到的序列**无论是否被接受都计入**基数：基数是集群产生了什么的属性，不是 Server 存下了什么的属性。
+  忘掉被拒绝的序列会让一个集群靠"被拒绝"永远停在限额之下。
+
+超限时该批次以 `RESOURCE_EXHAUSTED` 拒绝并携带 retry-after，由 vmagent 退避重试与本地缓冲承担后果。
+retry-after 有上限（当前 1 分钟）：让采集器睡更久只会推迟操作者修复后的恢复。
+
+集群触碰速率或基数上限时，Server 在**进入**该状态时记录一条结构化告警（不是每个被拒批次一条），并在两处
+显式暴露：集群的采集状态中给出是否限流、触碰的是哪一项预算、活跃序列估算值与上限，以及限流恢复后仍然
+保留的最近一次限流时间；指标查询的响应中该集群作为 `throttled` 出现在 `issues` 里并置 `partial=true`。
+把限流藏起来会让使用者把数据缺口误判为集群故障，去重启一个正在正常工作的采集组件。
+
+长期不上报的集群，其预算状态在两个窗口后被清理，短生命周期集群的频繁进出不会让草图无限累积。
 
 ## 8. 存储后端
 
@@ -307,9 +331,24 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 改写缺陷都是跨租户数据泄露；同时自由表达式的执行成本无法预估，单个查询就能拖垮单副本 Server 背后的
 存储。固定目录让作用域过滤成为模板的一部分，而不是对用户输入的事后修补。
 
-已实现的查询目录：`cluster_cpu_usage`、`cluster_memory_usage`、`node_cpu_usage`、`node_memory_usage`、
-`namespace_cpu_usage`、`collection_health`。它们都建立在 kubelet `/metrics/resource` 之上，与生成的抓取
-配置是同一个决定：目录里不应出现集群侧根本没有采集的指标。
+已实现的查询目录：
+
+| 查询 | 维度 | Namespace | Top N |
+| --- | --- | --- | --- |
+| `cluster_cpu_usage` / `cluster_memory_usage` | — | 否 | 否 |
+| `node_cpu_usage` / `node_memory_usage` | `node` | 否 | 可选 |
+| `namespace_cpu_usage` / `namespace_memory_usage` | `namespace` | 可选 | 可选 |
+| `pod_cpu_usage` / `pod_memory_usage` | `namespace`、`pod` | 可选 | **必需** |
+| `collection_health` | — | 否 | 否 |
+
+它们都建立在 kubelet `/metrics/resource` 之上，与生成的抓取配置是同一个决定：目录里不应出现集群侧根本
+没有采集的指标。Pod 维度因此**不需要新增抓取目标**，也不增加集群送出的基数——同一个端点已经在报告
+`pod_cpu_usage_seconds_total` 与 `pod_memory_working_set_bytes`，变大的只是答案。
+
+`RequiresTop` 就是用来约束这个"变大的答案"的：一个集群的 Pod 数量比节点高出几个量级，"全部 Pod"既画不出
+也没人问，把边界写进契约比交给序列上限去截断更清楚——截断产生的是一个看起来完整、实际上少了一半的图。
+同理，对不声明 Namespace 的查询传 `namespace` 是拒绝而不是忽略：静默忽略会让调用方把集群级数字读成
+Namespace 级的。
 
 目录本身是可扩展的，新增查询是一次显式的 Server 变更，需要同时评审它的成本、它的作用域过滤，以及集群侧
 是否真的在采集它依赖的指标。
@@ -364,7 +403,19 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 - 时间戳统一为秒级 Unix 时间，数值统一在 Server 侧换算为响应声明的 `unit`，前端不做单位推断；
 - 缺失样本用 `null` 显式表示，不省略、不前值填充。数据空洞是真实信息，插值会把采集中断显示成平线；
 - `cluster_name` 由 Server 用当前数据库归属补齐，只作展示；`cluster_id` 才是序列身份（见 §7.2）；
-- 部分集群失败时返回 `partial=true` 与不含敏感正文的 `issues`，与集群概览的既有语义保持一致；
+- 返回结果没有覆盖请求的全部范围时置 `partial=true`，并在 `issues` 中说明原因，与集群概览的既有语义保持
+  一致。`issues` 只携带原因码与集群身份，不含正文、标签值或存储后端的消息。三种原因：
+
+  | 原因 | 含义 | 是否 `partial` |
+  | --- | --- | --- |
+  | `no_data` | 范围内的集群没有返回任何序列 | 否 |
+  | `throttled` | Server 正在拒绝该集群的摄取，`detail` 给出 `sample_rate` 或 `cardinality` | 是 |
+  | `series_truncated` | 序列数超过上限被截断 | 是 |
+
+  `no_data` 不使结果 `partial`：采集可能只是还没在那个集群装上，这不是查询的失败，把它标成部分失败会让
+  只在部分集群启用采集的部署里每一张图都挂着警告。它仍然要出现在 `issues` 中——§9.2 要求"集合为空"与
+  "有权限但无数据"可区分，这就是区分它们的地方。Top N 查询不产生 `no_data`：排名跨整个范围进行，没进
+  前 N 的集群只是没进前 N，把它报成"无数据"会让每张 Top N 图都把健康集群列成静默集群；
 - 序列数量与点数有上限，超限时降低 `step_seconds` 或要求缩小范围，而不是返回一个前端渲染不动的响应。
 
 ### 9.4 自建可视化，不依赖 Grafana
@@ -440,7 +491,7 @@ Recharts / ECharts 等通用库（功能远超所需，体积与主题定制成�
 | Agent 在线但未启用采集 | 查询返回"采集未启用"，Console 提供启用入口 |
 | vmagent 未部署或不健康 | 数据停止到达，采集状态按最后接收时间转为陈旧 |
 | 摄取 Token 不匹配 | Agent 返回 401，采集状态显示凭证不匹配，提示重新应用清单 |
-| 集群触碰基数或速率上限 | 部分数据被拒；采集状态显示已限流，不伪装成正常 |
+| 集群触碰基数或速率上限 | 该批次被拒并携带 retry-after；采集状态显示已限流与触碰的预算，查询响应把该集群列为 `throttled` 并置 `partial=true`，不伪装成正常 |
 | 存储不可用 | 摄取拒绝批次、查询报错；集群管理与容器服务不受影响 |
 | 部分集群查询失败 | 返回成功响应并标明受影响集群，与集群概览的 `partial` 语义保持一致 |
 | Server 重启 | 摄取 Stream 随连接重建；缓冲期数据由 vmagent 回灌 |
@@ -454,8 +505,9 @@ Recharts / ECharts 等通用库（功能远超所需，体积与主题定制成�
 - Server `observability.metrics`：`enabled`、`storage_write_url`、`storage_query_url` 与各自的超时、
   `collector_buffer_size`、`scrape_interval`、`kubelet_metrics_port`、`ingest_session_timeout`、
   `max_batch_bytes`、`max_ingest_streams`、`max_decompressed_batch_bytes`、每批的序列与样本上限、
-  标签数量与长度上限、样本时间窗口，以及查询侧的 `max_query_clusters`、`max_query_points`、
-  `max_query_series`、`max_query_range`、`min_query_step`；
+  标签数量与长度上限、样本时间窗口、每集群的 `max_samples_per_second_per_cluster`、`sample_burst_window`、
+  `max_active_series_per_cluster` 与 `active_series_window`，以及查询侧的 `max_query_clusters`、
+  `max_query_points`、`max_query_series`、`max_query_range`、`min_query_step`；
 - Agent `metrics_ingest`：`address`、`max_batch_bytes`、`max_concurrent_batches`、`session_timeout`、
   `token_refresh_interval`、`unavailable_retry_after` 与该 HTTP 端点自身的超时。Agent 侧**没有**开关：
   是否采集由 Server 决定（它是否有存储、是否通告能力），再由操作者决定（是否安装采集组件），Agent 配置
@@ -463,10 +515,9 @@ Recharts / ECharts 等通用库（功能远超所需，体积与主题定制成�
 
 Server 的 `enabled` 为 false 时不校验其余取值，一份没人填写的段落不会让 Server 拒绝启动；仓库示例配置默认
 开启并指向本机 `127.0.0.1:8428`，与其中的数据库地址一样是给本地开发用的。与现有配置一致，这些默认值是
-资源保护配置，不是性能或生产容量承诺。
-
-尚未实现的是每集群的样本速率与基数上限（§7.3 中按 Cluster 计的那两项）：当前只有按批次的结构性限额与
-存储后端回压。
+资源保护配置，不是性能或生产容量承诺；每集群预算的默认值远高于一个只抓 kubelet 资源端点的大集群会产生的
+量级（估算方法见[部署指南 · 指标容量、保留期与摄取预算](../deployment.md#指标容量保留期与摄取预算)），
+因此它们拦截的是失控而不是繁忙。
 
 ## 13. 落地切片
 
@@ -475,8 +526,12 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 1. **指标端到端最小链路**（已实现）：协议与能力协商、Agent 摄取端点与转发、Agent 侧采集组件安装与卸载、
    Server 摄取网关与标签改写、存储写入、六个固定查询、Console 可观测性应用（集群与节点用量图表、采集
    接入的自动探测与一键安装/卸载）、权限词与审计。
-2. **指标深化**：节点与工作负载维度查询、Namespace 维度、Top N、数据空洞与限流状态的完整呈现、
-   图表组件成套化（折线、面积、条形、迷你趋势与状态指示）、容量与保留期的运维文档。
+2. **指标深化**（已实现，工作负载维度除外）：Namespace 与 Pod 维度查询（CPU 与内存各一）、Top N 与
+   Namespace 过滤、每集群摄取预算与限流状态在采集接入与图表两处的完整呈现、查询响应的 `partial` 与
+   `issues`、容量与保留期的运维文档。
+   **工作负载维度（Deployment/StatefulSet 等）不在本切片内**：kubelet 的资源端点只报告 Node、Pod 和
+   容器，把 Pod 归到它的控制器需要 kube-state-metrics 的 `kube_pod_owner`，那是一次显式的抓取目标变更，
+   会成倍放大每个集群送出的基数，属于下面第 3 项之前需要单独决定的事（见 §15）。
 3. **集群标签体系**：为跨集群筛选与分组提供稳定的标签维度，先在查询层落地，不改变存储侧身份标签。
 4. **日志链路**：VictoriaLogs 与日志采集，复用同一条回传通道与作用域改写机制；正文体量、保留期与
    敏感内容过滤需要独立设计。
@@ -504,6 +559,23 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 - Console `typecheck`、`lint` 与生产构建通过，uPlot 对打包体积的影响有记录；
 - `go test -race` 下无数据竞争。
 
+第二个切片额外覆盖：
+
+- 每集群速率预算：超限时该批次被拒且**不到达存储**，被拒批次不扣减令牌，配额补足后同一批次被接受；
+- 每集群基数预算：超限时被拒并进入限流状态；重复上报同一组序列不会让估算值持续增长；两个窗口静默后
+  预算被遗忘，长期不上报的集群不留下草图；
+- 预算按集群隔离：一个集群被限流不影响另一个集群的批次或状态；
+- 限流的可见性：采集状态报告限流与触碰的预算，查询响应把该集群列为 `throttled` 且 `partial=true`，
+  且不会被报成 `no_data`；
+- Top N 查询不把没进前 N 的集群报成 `no_data`；
+- 参数契约：Pod 维度缺 `top` 被拒绝且不到达存储；对不支持 Namespace 的查询传 `namespace` 被拒绝；
+  Namespace 过滤注入后作用域过滤仍然完整。
+
+已执行：上述条目由 `pkg/server/metricsingest` 与 `pkg/server/metricsquery` 的单元测试覆盖（含并发摄取的
+`-race` 用例）；目录中九个查询在真实的 VictoriaMetrics v1.149.0 上执行通过；Console 通过 `typecheck`、
+`lint`、`format:check` 与生产构建。**未执行**：限流没有在真实集群的 vmagent 上验证过退避与回灌行为，
+基数估算的误差也没有对着真实基数分布测过。
+
 性能指标先记录基线再设阈值，不预设未经实测的吞吐、延迟或容量承诺。
 
 ## 15. 开放问题
@@ -511,7 +583,11 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 - VictoriaMetrics 查询接口上强制标签过滤的具体机制（`extra_filters` 等）需在实现前按目标版本实测确认，
   不能仅依据文档描述就作为唯一的隔离手段；模板内注入仍是主要防线。
 - 单副本 Server 同时承担摄取与查询时的资源竞争边界，需要基线数据后再决定是否拆分摄取与查询的额度池。
+- 是否引入 kube-state-metrics 以支持工作负载维度：它是把 Pod 归到控制器的唯一来源，但会成倍放大每个集群
+  送出的基数，且需要决定它缺失时哪些查询降级为"不可用"。加入它必须同时给出新的基数估算与预算默认值。
 - kube-state-metrics 与 node-exporter 缺失时，哪些查询降级为"不可用"、哪些可用替代来源近似，需要逐项确定。
+- 每集群预算的默认值目前是保护性取值而非实测结论；真实部署的基线数据到手后需要重新校准，并决定基数估算
+  的误差是否需要在界面上给出区间而不是单个数字。
 - 采集组件的版本与升级：清单固定版本还是跟随 Server 版本，涉及跨版本兼容与升级节奏。
 - 集群被删除或重新接入后，历史时间序列的保留与清理策略。
 - 查询响应的序列数与点数上限，需要结合真实集群规模、uPlot 的实测渲染耗时和图表可读性确定，而不是先定

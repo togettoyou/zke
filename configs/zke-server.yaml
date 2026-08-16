@@ -227,6 +227,26 @@ observability:
     # queries, and very old ones may fall outside the retention window anyway.
     max_sample_age: 24h
     max_sample_future: 10m
+    # Everything above bounds one batch. The four below bound one Cluster over
+    # time, which is the only thing that stops a single Cluster from filling the
+    # storage every other Cluster shares — batch limits alone do nothing against
+    # a Cluster that sends a legal batch every hundred milliseconds.
+    #
+    # Both are protection limits, not capacity promises: they are set well above
+    # what a large Cluster scraping only the kubelet resource endpoint produces,
+    # so they catch a runaway rather than a busy day. Raise them only with
+    # measured numbers from your own deployment.
+    max_samples_per_second_per_cluster: 50000
+    # How much of that rate a Cluster may spend at once. It exists for
+    # reconnects: vmagent flushes its disk buffer as fast as the link allows,
+    # and refusing that flush at the steady-state rate turns every brief
+    # disconnect into a long one.
+    sample_burst_window: 1m
+    # Active time series per Cluster, measured over the window below. The count
+    # is an estimate from a fixed-size sketch, so tracking a Cluster costs the
+    # same whether it reports a thousand series or a million.
+    max_active_series_per_cluster: 500000
+    active_series_window: 10m
     # The collector image, its pull policy and its CPU and memory requests and
     # limits are platform settings, not configuration file entries: collection
     # is enabled per Cluster long after the Server started, so changing them

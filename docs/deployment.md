@@ -246,6 +246,50 @@ Compose 在 `.env` 中设置同名变量；Helm 使用 `server.metrics.enabled`�
 采集数据经该集群 Agent 已有的 QUIC 连接回传，不需要为指标开通新的网络路径，也不需要重新应用 Agent 清单。
 存储不可用时只影响指标查询。
 
+### 指标容量、保留期与摄取预算
+
+ZKE 没有给出实测的吞吐、延迟或容量承诺。下面是估算方法和可调项，实际取值必须以自己部署中观察到的数字为准。
+
+**一个集群产生多少序列。** 采集组件只抓取 kubelet 的 `/metrics/resource`，抓取目标和 relabel 规则是固定的，
+因此序列数可以直接从集群规模算出来：
+
+```text
+序列数 ≈ 7 × 节点数 + 2 × Pod 数 + 2 × 容器数
+样本速率（每秒） ≈ 序列数 ÷ scrape_interval（默认 30s）
+```
+
+每节点约 7 条 = 2 条节点指标（`node_cpu_usage_seconds_total`、`node_memory_working_set_bytes`）加上约 5 条
+vmagent 自己产生的抓取元信息（`up`、`scrape_duration_seconds` 等，条数随 vmagent 版本略有出入）；Pod 与
+容器各贡献 CPU 和内存两条。例如 100 节点、2000 Pod、3000 容器的集群约 10700 条序列、约 360 样本/秒。
+加入 kube-state-metrics 或 node-exporter 会显著改变这个估算——它们目前不在抓取配置中。
+
+**磁盘。** 每个样本占用多少字节取决于压缩率，属于 VictoriaMetrics 的行为而不是 ZKE 的；请以上游文档的经验
+值做初次规划，并在运行一到两个保留周期后按实际磁盘增长修正。ZKE 不为此提供预估公式。
+
+**保留期。** 自带存储的保留期用 `ZKE_METRICS_RETENTION_PERIOD` 调整（一体镜像与 Compose），Helm 在
+`metrics.*` 下；不带单位时以月计，也接受 `1d`、`12w`、`1y`。外部存储的保留期由部署方自己管理，ZKE 不修改它。
+
+**每集群摄取预算。** Server 对每个集群分别限制样本速率与活跃序列数，防止一个集群占满所有集群共用的存储。
+默认值是保护性的，远高于上面公式给出的正常量级：
+
+| 配置项 | 默认值 | 含义 |
+| --- | --- | --- |
+| `max_samples_per_second_per_cluster` | 50000 | 每集群样本速率上限 |
+| `sample_burst_window` | 1m | 允许一次性花掉的速率额度；断线重连时 vmagent 回灌缓冲需要它 |
+| `max_active_series_per_cluster` | 500000 | 每集群活跃序列上限 |
+| `active_series_window` | 10m | 活跃序列的统计窗口 |
+
+超出预算时 Server 拒绝该批次并返回 `RESOURCE_EXHAUSTED`，vmagent 按自己的退避重试并在本地磁盘缓冲，
+超出 `collector_buffer_size` 的最旧数据由 vmagent 丢弃。被拒绝不会静默发生：
+
+- 「可观测性 → 采集接入」的**摄取预算**列显示该集群当前是否被限流、触碰的是速率还是基数，以及活跃序列的
+  估算值与上限；限流恢复后仍会显示最近一次被限流的时间，否则一个已经恢复的空洞就没有解释了；
+- 「指标总览」中受影响的集群会在图下明确写出空洞由 Server 拒绝造成，而不是采集组件故障；
+- Server 日志在进入限流状态时记录一条结构化告警，携带 `cluster_id` 与原因。
+
+活跃序列数是**估算值**，来自固定大小的概率草图：跟踪一个集群的开销与它上报多少序列无关。界面按近似值呈现，
+不要把它当作精确计数使用。
+
 ### 平台配置
 
 以下配置保存在 PostgreSQL，只能由全局 `admin` 在 Console 的「平台配置」应用修改，不需要重启：

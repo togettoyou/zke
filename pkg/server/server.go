@@ -207,19 +207,31 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			ListenerCACertificatePEM: listenerCACertificate,
 		},
 	)
+	// The ingest gateway comes first because both the read side and the
+	// collector status report what it knows: a Cluster the Server is refusing
+	// must be able to say so on the chart and next to the collector, not only in
+	// the Server's own log.
+	metricsGateway, err := newMetricsGateway(cfg, logger)
+	if err != nil {
+		return err
+	}
 	metricsQueryService, err := newMetricsQueryService(
 		cfg,
 		rbacService,
 		store.NewMetricsScopeStore(database),
+		metricsGateway,
 		logger,
 	)
 	if err != nil {
 		return err
 	}
 	agentConnectionStore := store.NewAgentConnectionStore(database)
-	metricsSink, err := newMetricsSink(cfg, logger)
-	if err != nil {
-		return err
+	// A typed nil pointer in an interface is not nil, and the connection manager
+	// reads a nil sink as "this Server stores no metrics", so the conversion has
+	// to be explicit.
+	var metricsSink agentconn.MetricsSink
+	if metricsGateway != nil {
+		metricsSink = metricsGateway
 	}
 	agentConnectionManager, err := agentconn.New(
 		agentconn.Config{
@@ -278,6 +290,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		cfg,
 		agentConnectionManager,
 		platformCollectorSettings{service: platformSettingsService},
+		metricsGateway,
 	)
 	if err != nil {
 		return err
@@ -764,10 +777,15 @@ func newMetricsCollectorService(
 	cfg Config,
 	agents metricscollector.AgentAccess,
 	settings metricscollector.SettingsSource,
+	gateway *metricsingest.Gateway,
 ) (*metricscollector.Service, error) {
 	metrics := cfg.Observability.Metrics
 	if !metrics.Enabled {
 		return nil, nil
+	}
+	var budget metricscollector.IngestBudget
+	if gateway != nil {
+		budget = gateway
 	}
 	return metricscollector.NewService(
 		metricscollector.Config{
@@ -777,6 +795,7 @@ func newMetricsCollectorService(
 		},
 		agents,
 		settings,
+		budget,
 	)
 }
 
@@ -787,11 +806,16 @@ func newMetricsQueryService(
 	cfg Config,
 	rbacService *rbac.Service,
 	clusters *store.MetricsScopeStore,
+	gateway *metricsingest.Gateway,
 	logger *slog.Logger,
 ) (*metricsquery.Service, error) {
 	metrics := cfg.Observability.Metrics
 	if !metrics.Enabled {
 		return nil, nil
+	}
+	var budget metricsquery.IngestBudget
+	if gateway != nil {
+		budget = gateway
 	}
 	return metricsquery.NewService(
 		metricsquery.Config{
@@ -802,6 +826,7 @@ func newMetricsQueryService(
 			MaxSeries:    metrics.MaxQuerySeries,
 			MaxRange:     metrics.MaxQueryRange,
 			MinStep:      metrics.MinQueryStep,
+			Budget:       budget,
 		},
 		metricsquery.RBACVisibility{Service: rbacService},
 		clusters,
@@ -809,14 +834,14 @@ func newMetricsQueryService(
 	)
 }
 
-// newMetricsSink builds the ingest gateway when metrics are enabled. A nil
-// sink is a meaningful value: the Agent connection manager then never
+// newMetricsGateway builds the ingest gateway when metrics are enabled. A nil
+// gateway is a meaningful value: the Agent connection manager then never
 // advertises the ingest capability, so a collecting Agent learns at handshake
 // time that this Server stores no metrics.
-func newMetricsSink(
+func newMetricsGateway(
 	cfg Config,
 	logger *slog.Logger,
-) (agentconn.MetricsSink, error) {
+) (*metricsingest.Gateway, error) {
 	metrics := cfg.Observability.Metrics
 	if !metrics.Enabled {
 		return nil, nil
@@ -834,6 +859,12 @@ func newMetricsSink(
 				MaxLabelValueBytes: metrics.MaxLabelValueBytes,
 				MaxSampleAge:       metrics.MaxSampleAge,
 				MaxSampleFuture:    metrics.MaxSampleFuture,
+			},
+			ClusterLimits: metricsingest.ClusterLimits{
+				MaxSamplesPerSecond: metrics.MaxSamplesPerSecondPerCluster,
+				SampleBurstWindow:   metrics.SampleBurstWindow,
+				MaxActiveSeries:     metrics.MaxActiveSeriesPerCluster,
+				ActiveSeriesWindow:  metrics.ActiveSeriesWindow,
 			},
 		},
 		logger,

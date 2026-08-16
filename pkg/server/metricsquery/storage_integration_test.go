@@ -47,13 +47,24 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	}
 
 	end := time.Now().UTC().Truncate(time.Minute)
-	for _, name := range []string{
-		"cluster_cpu_usage",
-		"cluster_memory_usage",
-		"node_cpu_usage",
-		"node_memory_usage",
-		"namespace_cpu_usage",
+	// Every range query in the catalogue, so a template that compiles here but
+	// is rejected by the real engine cannot ship. `top` is set where the query
+	// demands it; the rest are asked unbounded, which is how the Console asks
+	// for Cluster totals.
+	for _, testCase := range []struct {
+		name string
+		top  int
+	}{
+		{name: "cluster_cpu_usage"},
+		{name: "cluster_memory_usage"},
+		{name: "node_cpu_usage"},
+		{name: "node_memory_usage"},
+		{name: "namespace_cpu_usage"},
+		{name: "namespace_memory_usage"},
+		{name: "pod_cpu_usage", top: 10},
+		{name: "pod_memory_usage", top: 10},
 	} {
+		name := testCase.name
 		t.Run(name, func(t *testing.T) {
 			result, err := service.Query(context.Background(), Input{
 				UserID: userID,
@@ -61,6 +72,7 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 				Start:  end.Add(-10 * time.Minute),
 				End:    end,
 				Step:   time.Minute,
+				Top:    testCase.top,
 			})
 			if err != nil {
 				t.Fatalf("%s failed against storage: %v", name, err)
@@ -149,6 +161,12 @@ func seedKubeletSamples(t *testing.T, base string, clusterID string) {
 			"pod":                      "probe-pod",
 			metricsingest.ClusterLabel: clusterID,
 		}, float64(50-offset), at)...)
+		body = append(body, series(map[string]string{
+			"__name__":                 "pod_memory_working_set_bytes",
+			"namespace":                "kube-system",
+			"pod":                      "probe-pod",
+			metricsingest.ClusterLabel: clusterID,
+		}, 1<<28, at)...)
 	}
 	response, err := http.Post(
 		base+"/api/v1/write",

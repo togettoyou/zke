@@ -99,6 +99,13 @@ type MetricsConfig struct {
 	MaxLabelValueBytes   int           `yaml:"max_label_value_bytes"`
 	MaxSampleAge         time.Duration `yaml:"max_sample_age"`
 	MaxSampleFuture      time.Duration `yaml:"max_sample_future"`
+	// The limits above bound one batch. These bound one Cluster over time,
+	// which is the only thing that stops a single Cluster from filling the
+	// storage every other Cluster shares.
+	MaxSamplesPerSecondPerCluster int           `yaml:"max_samples_per_second_per_cluster"`
+	SampleBurstWindow             time.Duration `yaml:"sample_burst_window"`
+	MaxActiveSeriesPerCluster     int           `yaml:"max_active_series_per_cluster"`
+	ActiveSeriesWindow            time.Duration `yaml:"active_series_window"`
 }
 
 type AgentInstallConfig struct {
@@ -394,6 +401,11 @@ func DefaultConfig() Config {
 				MaxLabelValueBytes:   metricsingest.DefaultMaxLabelValueBytes,
 				MaxSampleAge:         metricsingest.DefaultMaxSampleAge,
 				MaxSampleFuture:      metricsingest.DefaultMaxSampleFuture,
+
+				MaxSamplesPerSecondPerCluster: metricsingest.DefaultMaxSamplesPerSecond,
+				SampleBurstWindow:             metricsingest.DefaultSampleBurstWindow,
+				MaxActiveSeriesPerCluster:     metricsingest.DefaultMaxActiveSeries,
+				ActiveSeriesWindow:            metricsingest.DefaultActiveSeriesWindow,
 			},
 		},
 		ShutdownTimeout: 10 * time.Second,

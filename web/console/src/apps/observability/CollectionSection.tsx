@@ -19,7 +19,7 @@ import { DataTable } from "@/components/common/data-table";
 import { RowDeleteAction } from "@/components/common/delete-action";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
-import { StatusBadge } from "@/components/common/status";
+import { RelativeTime, StatusBadge } from "@/components/common/status";
 import { Button } from "@/components/ui/button";
 import { useWindowVisible } from "@/desktop/window-visibility";
 import { useScopeStore } from "@/scope/scope-store";
@@ -175,6 +175,36 @@ export function CollectionSection() {
             <span className="text-muted-foreground text-xs">
               {state ? (state.credential_ready ? "已就绪（集群内）" : "未生成") : "—"}
             </span>
+          );
+        },
+      },
+      {
+        // The Server's own verdict on this Cluster's stream. It has to be here:
+        // a gap caused by the Server refusing batches looks identical to a
+        // broken collector, and an operator reading only the collector column
+        // would go and reinstall something that is working.
+        header: "摄取预算",
+        size: 170,
+        cell: ({ row }) => {
+          const state = byCluster.get(row.original.id)?.state;
+          if (!state) {
+            return <span className="text-subtle-foreground text-xs">—</span>;
+          }
+          return (
+            <div className="flex flex-col items-start gap-0.5">
+              <StatusBadge kind="metrics_ingest" value={ingestStatus(state)} />
+              {state.max_active_series > 0 ? (
+                <span className="text-subtle-foreground text-xs">
+                  约 {formatSeriesCount(state.active_series)} /{" "}
+                  {formatSeriesCount(state.max_active_series)} 序列
+                </span>
+              ) : null}
+              {!state.throttled && state.last_throttled_at ? (
+                <span className="text-warning text-xs">
+                  曾于 <RelativeTime value={state.last_throttled_at} /> 被限流
+                </span>
+              ) : null}
+            </div>
           );
         },
       },
@@ -350,6 +380,35 @@ function isOutdated(state: MetricsCollectorState): boolean {
   return Boolean(
     state.installed && state.image && state.desired_image && state.image !== state.desired_image,
   );
+}
+
+/**
+ * Which ingest budget, if any, this Server is currently refusing the Cluster on.
+ *
+ * A Cluster the Server has never heard from is 尚未上报 rather than 正常接收:
+ * saying "accepted" about a stream that has never arrived would report a
+ * misconfigured collector as healthy.
+ */
+function ingestStatus(state: MetricsCollectorState): string {
+  if (state.throttled) {
+    return state.throttle_reason === "cardinality" ? "throttled_cardinality" : "throttled_rate";
+  }
+  return state.max_active_series > 0 ? "accepted" : "idle";
+}
+
+/**
+ * The series count is an estimate from a fixed-size sketch, so it is rounded to
+ * the precision it actually has. Printing 483,912 would claim a count nobody
+ * measured.
+ */
+function formatSeriesCount(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 1_000)}k`;
+  }
+  return String(value);
 }
 
 function installLabel(state: MetricsCollectorState): string {

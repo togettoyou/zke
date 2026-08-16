@@ -46,8 +46,11 @@ type Config struct {
 	WriteTimeout         time.Duration
 	MaxDecompressedBytes int
 	Limits               Limits
-	HTTPClient           *http.Client
-	Now                  func() time.Time
+	// ClusterLimits bound a Cluster over time rather than per batch. They are
+	// separate from Limits because they need state that outlives one batch.
+	ClusterLimits ClusterLimits
+	HTTPClient    *http.Client
+	Now           func() time.Time
 }
 
 // Gateway is the only place a Cluster's samples enter ZKE storage. It owns the
@@ -57,6 +60,7 @@ type Gateway struct {
 	writeTimeout         time.Duration
 	maxDecompressedBytes int
 	limits               Limits
+	clusters             *clusterLimiter
 	client               *http.Client
 	logger               *slog.Logger
 	now                  func() time.Time
@@ -114,10 +118,18 @@ func New(config Config, logger *slog.Logger) (*Gateway, error) {
 		writeTimeout:         config.WriteTimeout,
 		maxDecompressedBytes: config.MaxDecompressedBytes,
 		limits:               limits,
+		clusters:             newClusterLimiter(config.ClusterLimits, now),
 		client:               client,
 		logger:               logger,
 		now:                  now,
 	}, nil
+}
+
+// ClusterState reports what the ingest budget knows about one Cluster. The
+// second return is false when the Cluster has sent nothing this Server
+// remembers, which is not the same as "within budget".
+func (gateway *Gateway) ClusterState(clusterID string) (ClusterState, bool) {
+	return gateway.clusters.state(clusterID)
 }
 
 // IngestMetrics implements agentconn.MetricsSink.
@@ -157,6 +169,32 @@ func (gateway *Gateway) IngestMetrics(
 			slog.String("error", err.Error()),
 		)
 		return failure(err)
+	}
+	// Charged after the batch is understood and before anything is written: the
+	// counts come from the parse, and a Cluster over budget must not reach
+	// storage at all.
+	if reason, retry, entered := gateway.clusters.admit(
+		scope.ClusterID,
+		stats.samples,
+		stats.hashes,
+	); reason != "" {
+		if entered {
+			gateway.logger.Warn(
+				"cluster metrics ingest throttled",
+				slog.String("tenant_id", scope.TenantID),
+				slog.String("project_id", scope.ProjectID),
+				slog.String("cluster_id", scope.ClusterID),
+				slog.String("reason", reason),
+				slog.Int("series", stats.series),
+				slog.Int("samples", stats.samples),
+			)
+		}
+		return result(
+			agentv1.ResultCode_RESULT_CODE_RESOURCE_EXHAUSTED,
+			throttleResultReason(reason),
+			"cluster exceeds its metrics ingest budget",
+			uint64(retry.Milliseconds()),
+		)
 	}
 	if err := gateway.forward(ctx, snappy.Encode(nil, rewritten)); err != nil {
 		var rejection *backendRejection
@@ -311,6 +349,16 @@ func (rejection *backendRejection) result() agentprotocol.MetricsIngestResult {
 			uint64(DefaultRetryAfter.Milliseconds()),
 		)
 	}
+}
+
+// throttleResultReason keeps the wire reason in the CamelCase shape every other
+// result in this package uses, while the Console-facing state keeps the
+// snake_case reason it filters on.
+func throttleResultReason(reason string) string {
+	if reason == ThrottleReasonCardinality {
+		return "ClusterCardinalityExceeded"
+	}
+	return "ClusterSampleRateExceeded"
 }
 
 func failure(err error) agentprotocol.MetricsIngestResult {

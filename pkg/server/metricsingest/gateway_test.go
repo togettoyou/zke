@@ -229,6 +229,75 @@ func TestGatewayRejectsTruncatedPayloads(t *testing.T) {
 	}
 }
 
+func TestGatewayRefusesAClusterOverItsIngestBudgetWithoutForwarding(t *testing.T) {
+	t.Parallel()
+
+	forwards := 0
+	backend := httptest.NewServer(http.HandlerFunc(
+		func(writer http.ResponseWriter, _ *http.Request) {
+			forwards++
+			writer.WriteHeader(http.StatusNoContent)
+		},
+	))
+	defer backend.Close()
+
+	gateway, err := New(
+		Config{
+			WriteURL:             backend.URL + "/api/v1/write",
+			WriteTimeout:         2 * time.Second,
+			MaxDecompressedBytes: 4096,
+			Limits:               testLimits(),
+			// One sample per second with no burst room beyond it: the second
+			// batch in the same instant is over budget.
+			ClusterLimits: ClusterLimits{
+				MaxSamplesPerSecond: 1,
+				SampleBurstWindow:   time.Second,
+				MaxActiveSeries:     1000,
+				ActiveSeriesWindow:  time.Minute,
+			},
+			HTTPClient: backend.Client(),
+			Now:        func() time.Time { return time.Unix(1_755_216_000, 0).UTC() },
+		},
+		slog.New(slog.DiscardHandler),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	batch := testBatch(t, label{name: "__name__", value: "up"})
+	scope := agentconn.MetricsScope{ClusterID: "cls_real"}
+	if outcome := gateway.IngestMetrics(
+		context.Background(),
+		scope,
+		bytes.NewReader(batch),
+		uint64(len(batch)),
+	); outcome.Result != agentv1.ResultCode_RESULT_CODE_OK {
+		t.Fatalf("first batch = %+v", outcome)
+	}
+	outcome := gateway.IngestMetrics(
+		context.Background(),
+		scope,
+		bytes.NewReader(batch),
+		uint64(len(batch)),
+	)
+	if outcome.Result != agentv1.ResultCode_RESULT_CODE_RESOURCE_EXHAUSTED {
+		t.Fatalf("second batch = %+v", outcome)
+	}
+	if outcome.RetryAfterMillis == 0 {
+		t.Fatal("a throttled batch must tell the collector when to come back")
+	}
+	if forwards != 1 {
+		t.Fatalf("forwarded %d batches, want 1: a refused batch reached storage", forwards)
+	}
+	state, known := gateway.ClusterState("cls_real")
+	if !known || !state.Throttled || state.Reason != ThrottleReasonSampleRate {
+		t.Fatalf("state = %+v, known = %v", state, known)
+	}
+	if _, known := gateway.ClusterState("cls_other"); known {
+		t.Fatal("a Cluster that never sent anything has ingest budget state")
+	}
+}
+
 func TestNewRequiresAnAbsoluteStorageURL(t *testing.T) {
 	t.Parallel()
 

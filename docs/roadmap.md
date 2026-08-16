@@ -31,12 +31,14 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。已勾选条
 ## Phase 3：可观测性
 
 数据通路与安全边界见 [Phase 3 可观测性架构设计](architecture/observability-phase-3.md)。指标、日志与告警
-按切片推进，后一项依赖前一项就绪。已勾选的两项分别对着真实的 VictoriaMetrics 和真实集群验证过，但完整链路
-（集群内 vmagent → Agent → Server → 存储 → Console）尚未在同一次运行中端到端跑通。
+按切片推进，后一项依赖前一项就绪。已勾选的项分别对着真实的 VictoriaMetrics 和真实集群验证过，但完整链路
+（集群内 vmagent → Agent → Server → 存储 → Console）尚未在同一次运行中端到端跑通；每集群摄取预算只在
+单元测试中验证过，没有在真实集群的 vmagent 上观察过退避行为。
 
 - [x] 指标端到端最小链路：采集清单生成、Agent 摄取端点、Metrics Ingest Stream、Server 摄取网关与作用域改写、VictoriaMetrics 写入
 - [x] 多集群指标查询：固定查询目录、权限过滤、集群与节点用量视图、Console 自建图表
-- [ ] 指标深化：节点、Namespace 与工作负载维度，数据空洞与限流状态呈现
+- [x] 指标深化：Namespace 与 Pod 维度、Top N 与 Namespace 过滤、每集群摄取预算与限流状态呈现、查询响应的 `partial` 与 `issues`、容量与保留期运维文档
+- [ ] 工作负载维度：需要先决定是否引入 kube-state-metrics 及其对基数的影响
 - [ ] 集群标签体系
 - [ ] VictoriaLogs 集成与多集群日志
 - [ ] 告警中心

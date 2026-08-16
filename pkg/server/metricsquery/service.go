@@ -110,6 +110,18 @@ type Config struct {
 	RateWindow   time.Duration
 	HTTPClient   *http.Client
 	Now          func() time.Time
+	// Budget is the ingest gateway's view of each Cluster. It may be nil, in
+	// which case a query never reports throttling — the read path must keep
+	// working when the write path is not part of this process.
+	Budget IngestBudget
+}
+
+// IngestBudget reports what the ingest gateway knows about a Cluster. The read
+// path consults it so a hole in a chart can say why it is there: samples the
+// Server refused never reached storage, and without this the answer is
+// indistinguishable from a Cluster that was simply idle.
+type IngestBudget interface {
+	ClusterState(clusterID string) (metricsingest.ClusterState, bool)
 }
 
 type Service struct {
@@ -219,6 +231,37 @@ type Result struct {
 	// tell "no data" from "not in scope".
 	ClusterIDs []string
 	Truncated  bool
+	// Partial marks an answer that does not describe the whole requested scope.
+	// Issues says why, per Cluster where the cause is per Cluster. A reader who
+	// cannot tell a real trough from a refused batch will draw the wrong
+	// conclusion from the same picture.
+	Partial bool
+	Issues  []Issue
+}
+
+// Issue reasons. They are codes rather than sentences because each one leads
+// the operator somewhere different, and the Console owns the words.
+const (
+	// IssueNoData marks a Cluster inside the scope that returned nothing. It is
+	// not a failure — collection may simply not be installed there — so it does
+	// not make an answer partial.
+	IssueNoData = "no_data"
+	// IssueThrottled marks a Cluster whose batches this Server is refusing.
+	// Whatever gap the chart shows for it is the Server's doing.
+	IssueThrottled = "throttled"
+	// IssueSeriesTruncated marks an answer cut down to the series ceiling.
+	IssueSeriesTruncated = "series_truncated"
+)
+
+type Issue struct {
+	// ClusterID is empty for an issue that belongs to the answer as a whole
+	// rather than to one Cluster.
+	ClusterID   string
+	ClusterName string
+	Reason      string
+	// Detail narrows the reason — for throttling, which budget was exceeded.
+	// It never carries payload, label values or backend messages.
+	Detail string
 }
 
 func (service *Service) Catalog() []Definition {
@@ -242,6 +285,17 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 	}
 	if input.Top > 0 && !definition.SupportsTop {
 		return Result{}, fmt.Errorf("%w: query does not support top", ErrInvalidInput)
+	}
+	if input.Top <= 0 && definition.RequiresTop {
+		return Result{}, fmt.Errorf("%w: query requires top", ErrInvalidInput)
+	}
+	if input.Namespace != "" && !definition.SupportsNamespace {
+		// Refused rather than ignored: a caller that believes it narrowed the
+		// answer would read a Cluster-wide number as a Namespace one.
+		return Result{}, fmt.Errorf("%w: query does not support namespace", ErrInvalidInput)
+	}
+	if input.Namespace == "" && definition.RequiresNamespace {
+		return Result{}, fmt.Errorf("%w: query requires namespace", ErrInvalidInput)
 	}
 	window, err := service.resolveWindow(definition, &input)
 	if err != nil {
@@ -279,6 +333,7 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 		names[scope.ClusterID] = scope.ClusterName
 	}
 	series, truncated := service.buildSeries(definition, samples, names, input)
+	issues, partial := service.collectIssues(input, scopes, series, truncated)
 	return Result{
 		Query:       definition.Name,
 		Title:       definition.Title,
@@ -290,7 +345,60 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 		Series:      series,
 		ClusterIDs:  clusterIDs,
 		Truncated:   truncated,
+		Partial:     partial,
+		Issues:      issues,
 	}, nil
+}
+
+// collectIssues explains the difference between the scope that was asked for
+// and the answer that came back.
+func (service *Service) collectIssues(
+	input Input,
+	scopes []store.ClusterScope,
+	series []Series,
+	truncated bool,
+) ([]Issue, bool) {
+	answered := make(map[string]struct{}, len(series))
+	for _, item := range series {
+		answered[item.ClusterID] = struct{}{}
+	}
+	issues := make([]Issue, 0, len(scopes))
+	partial := false
+	for _, scope := range scopes {
+		if service.config.Budget != nil {
+			if budget, known := service.config.Budget.ClusterState(
+				scope.ClusterID,
+			); known && budget.Throttled {
+				issues = append(issues, Issue{
+					ClusterID:   scope.ClusterID,
+					ClusterName: scope.ClusterName,
+					Reason:      IssueThrottled,
+					Detail:      budget.Reason,
+				})
+				partial = true
+				continue
+			}
+		}
+		if _, present := answered[scope.ClusterID]; present {
+			continue
+		}
+		// A Top N answer ranks across the whole scope, so a Cluster missing from
+		// it usually just lost the ranking. Calling that "no data" would report
+		// a healthy Cluster as silent on every such chart.
+		if input.Top > 0 {
+			continue
+		}
+		issues = append(issues, Issue{
+			ClusterID:   scope.ClusterID,
+			ClusterName: scope.ClusterName,
+			Reason:      IssueNoData,
+		})
+	}
+	if truncated {
+		issues = append(issues, Issue{Reason: IssueSeriesTruncated})
+		partial = true
+	}
+	return issues, partial
 }
 
 // resolveWindow validates the time parameters and reports the rate window to
