@@ -12,38 +12,49 @@
 :root {
   color-scheme: light;
 
-  --desktop-from: #f4f6f9;
-  --desktop-to: #e3e9f1;
+  --desktop-from: #f9fbfe;
+  --desktop-to: #d7e0ee;
 
   /*
-   * Desktop blooms — barely there, and that is the correction.
+   * Desktop blooms.
    *
-   * "A wallpaper is the most saturated layer in the system" is true of a desktop
-   * OS, where the wallpaper is a photograph and the icons sit on top of it. It is
-   * the wrong model for a console that lives in a browser tab: run at the
-   * strength a photographic wallpaper carries, a CSS gradient field does not read
-   * as rich, it reads as a default phone background, and it drags every neutral
-   * surface in the product towards lavender.
-   *
-   * So the field stays near-neutral and the colour moves to where it means
-   * something — the application icons. Between them they carry four saturated
-   * hues; the desktop's job is to let those read, not to compete with them.
+   * Still well short of a photographic wallpaper — the application icons carry
+   * the product's saturated colour and the field must not compete with them —
+   * but no longer a whisper either. A field tuned down to near-invisibility is
+   * not restraint, it is a flat ramp, and it starves the two frosted surfaces
+   * above it: `backdrop-filter` can only show what is behind it, so a Dock over
+   * an untextured wash reads as a plain translucent plate no matter how much
+   * blur is spent on it.
    *
    * Named by corner rather than by hue, so retuning does not have to rename.
    */
-  --desktop-bloom-nw: rgb(59 91 219 / 0.06);
-  --desktop-bloom-ne: rgb(124 92 220 / 0.05);
-  --desktop-bloom-sw: rgb(46 160 190 / 0.045);
-  --desktop-bloom-se: rgb(70 84 205 / 0.05);
-  /* One warm note, so the field is not uniformly cool — but a whisper of one. */
-  --desktop-bloom-warm: rgb(232 150 120 / 0.04);
-  --desktop-vignette: rgb(24 33 56 / 0.045);
-  /* The polar field: arcs and spokes struck from one point off canvas — the
-     product's own idea, a signal propagating out from a single origin, at
-     wallpaper scale. Spokes run fainter because an angular stripe widens with
-     distance and the whole screen is far field. */
-  --desktop-ring: rgb(24 33 56 / 0.045);
-  --desktop-ray: rgb(24 33 56 / 0.028);
+  --desktop-bloom-nw: rgb(64 104 232 / 0.13);
+  --desktop-bloom-ne: rgb(132 96 226 / 0.1);
+  --desktop-bloom-sw: rgb(40 166 196 / 0.1);
+  /* One warm note, so the field is not uniformly cool. */
+  --desktop-bloom-warm: rgb(238 154 118 / 0.07);
+  /*
+   * The origin: the point off the bottom-right corner every arc and spoke of the
+   * polar field is struck from. Lighting it is what turns that field from a
+   * texture laid over the wallpaper into the wallpaper's own construction — the
+   * signal has a source, and the source is the brightest thing on the screen.
+   * It also sits directly under the Dock's right shoulder, which is what gives
+   * the glass a gradient to bend.
+   */
+  --desktop-origin: rgb(84 120 240 / 0.2);
+  /*
+   * A single broad diagonal sheen across the field, low and wide. One direction
+   * of light over the whole desktop is what reads as a surface catching it;
+   * corner blooms alone read as four separate lamps.
+   */
+  --desktop-sweep: rgb(255 255 255 / 0.2);
+  --desktop-vignette: rgb(24 33 56 / 0.06);
+  /* The polar field: arcs and spokes struck from that origin — the product's own
+     idea, a signal propagating out from a single point, at wallpaper scale.
+     Spokes run fainter because an angular stripe widens with distance and the
+     whole screen is far field. */
+  --desktop-ring: rgb(24 33 56 / 0.05);
+  --desktop-ray: rgb(24 33 56 / 0.03);
 
   /*
    * Application icon fills. One saturated pair per application, identical in
@@ -118,12 +129,63 @@
   --topbar-from: rgb(255 255 255 / 0.26);
   --topbar-to: rgb(255 255 255 / 0.08);
 
-  /* The Dock floats above windows, so it stays more opaque than the top bar —
-     but far less than a solid surface, and with a gentler inner highlight than
-     the icon tiles: the same 0.9 white blows out over a panel this large. */
-  --dock-from: rgb(255 255 255 / 0.58);
-  --dock-to: rgb(255 255 255 / 0.42);
-  --dock-highlight: rgb(255 255 255 / 0.55);
+  /*
+   * The Dock.
+   *
+   * A grey tint over a blur, and every word of that is load-bearing — this is
+   * the platform material measured off the real thing rather than reasoned about
+   * from first principles, and the two attempts that came before it were both
+   * wrong in ways worth writing down.
+   *
+   * The first was a *white* tint. White is the intuitive choice for glass and it
+   * is the wrong one, because a white veil cannot go dark: over a full-bleed
+   * black view — a terminal, a log pane, which is exactly what ends up under a
+   * Dock — it lands in the middle of the scale and the panel becomes a grey
+   * plastic tray with icons in it.
+   *
+   * The second was to fight that with `contrast()` below 1 in the backdrop, on
+   * the theory that frosted glass scatters and therefore compresses what is
+   * behind it towards a mid-tone. It does, but nothing like that much: hold the
+   * platform's own Dock over black and it stays dark, around #3d, and the same
+   * Dock over a pale desktop goes distinctly grey — the material tracks its
+   * backdrop across most of the range instead of clamping to the middle of it.
+   * Compressing it that hard is what produced a panel with the same value no
+   * matter what it stood on, which is the definition of a plate rather than a
+   * pane.
+   *
+   * What actually produces the platform's behaviour is a mid-grey tint at around
+   * 40%: black under it reads ~#41, white ~#da, the pale desktop ~#c4. One
+   * linear mix, no contrast curve, no brightness lift. The blur and the
+   * saturation are the whole of the rest — saturation because a wide blur
+   * averages colour away and a material that does not pick up what it is
+   * standing on is not transmitting anything.
+   *
+   * The edge is one hairline, and it is deliberately weak. Light catching the
+   * near rim hard, wrapping the far rim, gathering in the corners — the whole
+   * lens reading — is a *thick* piece of glass, and drawn at this size it does
+   * not look like a lens, it looks like a moulded plastic bezel. The platform
+   * draws a single ~20% white line and stops.
+   *
+   * Nothing is drawn outside the panel except one tight cast shadow. The
+   * elevation scale's widest layer spreads 28px of soft grey around whatever
+   * wears it, which is right for a menu that appears and goes; on something
+   * permanently parked over moving content it reads as a smudge stuck to the
+   * screen, worst exactly here — a black terminal sliding underneath, its hard
+   * edge crossing the haze.
+   */
+  --dock-from: rgb(160 165 180 / 0.4);
+  --dock-to: rgb(146 152 168 / 0.38);
+  --dock-border: rgb(255 255 255 / 0.24);
+  --dock-highlight: rgb(255 255 255 / 0.22);
+  --dock-cast: 0 1px 2px rgb(24 33 56 / 0.05), 0 8px 20px -8px rgb(24 33 56 / 0.18);
+  /*
+   * The radius is wide enough to dissolve what is behind it and no wider.
+   * `backdrop-filter` clamps its sampling at the element's own edge, so a hard
+   * boundary passing underneath — the edge of a window being dragged — smears
+   * against the rim, and the wider the blur the more of that smear crawls along
+   * the edge as the window moves.
+   */
+  --dock-backdrop: blur(24px) saturate(180%);
 
   --surface: #ffffff;
   --surface-muted: #f5f7fa;
@@ -205,24 +267,53 @@
     0 18px 44px -10px rgb(24 33 56 / 0.2), 0 40px 80px -32px rgb(24 33 56 / 0.28);
 }
 
+/*
+ * Dark.
+ *
+ * Graphite, not black — the correction the whole theme is built around.
+ *
+ * The first version of this palette ran from #0f141b to #1f2937, which is the
+ * value range a phone uses for an OLED night mode: a screen meant to emit as
+ * little light as possible, read at arm's length, in a dark room. A Console is
+ * none of those things. On a desktop display, in a lit room, that range has two
+ * failures that compound. Every surface in the product lands within a few
+ * percent of luminance of every other, so a window, the card inside it and the
+ * table inside that stop being three depths and become one dark field with
+ * hairlines drawn on it; and it puts the interface far below the brightness of
+ * anything beside it on the screen, which is what makes a dark theme feel like
+ * a hole rather than a room with the lights down.
+ *
+ * macOS is the reference precisely because it is not black: its window
+ * backgrounds sit around 18–22% luminance, its raised sheets higher still, and
+ * the separation between them is carried by value rather than by borders. This
+ * palette follows that — every surface is lifted a full step, the steps between
+ * them are widened, and the blue that was in every neutral is pulled back
+ * towards graphite so the accent colours are the only chromatic things in the
+ * frame. It keeps a trace of that blue, because the product's mark is blue and
+ * a perfectly neutral grey beside it reads as slightly green.
+ */
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --desktop-from: #0f141b;
-  --desktop-to: #1a2331;
-  /* Dark tolerates far more chroma before it reads as loud, and needs it: the
-     same blooms at light-theme strength would disappear entirely. */
-  /* Dark carries a little more than light before it reads as a tint at all, but
-     the same rule holds: the icons are the colour, the field is the room. */
-  --desktop-bloom-nw: rgb(96 128 255 / 0.1);
-  --desktop-bloom-ne: rgb(142 100 246 / 0.08);
-  --desktop-bloom-sw: rgb(60 180 200 / 0.07);
-  --desktop-bloom-se: rgb(90 110 240 / 0.08);
-  --desktop-bloom-warm: rgb(245 165 130 / 0.05);
-  --desktop-vignette: rgb(0 0 0 / 0.34);
-  --desktop-ring: rgb(226 234 250 / 0.05);
+  --desktop-from: #1d222b;
+  --desktop-to: #2e3644;
+  /* Dark tolerates more chroma before it reads as loud, and needs it: the same
+     blooms at light-theme strength would disappear entirely. The field is still
+     the room and the icons are still the colour. */
+  --desktop-bloom-nw: rgb(104 136 255 / 0.16);
+  --desktop-bloom-ne: rgb(150 112 250 / 0.13);
+  --desktop-bloom-sw: rgb(56 180 204 / 0.12);
+  --desktop-bloom-warm: rgb(246 168 132 / 0.06);
+  --desktop-origin: rgb(112 142 255 / 0.22);
+  /* A cool sheen rather than white: on a graphite field pure white desaturates
+     the whole diagonal it crosses. */
+  --desktop-sweep: rgb(176 200 255 / 0.055);
+  /* Softer than it was. Against a lifted field a heavy vignette pulls the
+     corners back down to the black this theme is getting away from. */
+  --desktop-vignette: rgb(0 0 0 / 0.26);
+  --desktop-ring: rgb(226 234 250 / 0.055);
   --desktop-ray: rgb(226 234 250 / 0.032);
-  --tile-highlight: rgb(255 255 255 / 0.07);
+  --tile-highlight: rgb(255 255 255 / 0.08);
 
   --surface-dot: rgb(226 234 250 / 0.1);
   --grain: 0.05;
@@ -233,47 +324,62 @@
   --auth-line: rgb(226 234 250 / 0.16);
   --auth-line-strong: rgb(226 234 250 / 0.32);
   --auth-line-soft: rgb(226 234 250 / 0.07);
-  --auth-node: #131a24;
+  --auth-node: #232935;
 
   /* Darkening rather than lightening: on a dark field a white lift reads as a
      panel immediately, where a shade reads as the wallpaper in shadow. */
-  --topbar-from: rgb(8 12 18 / 0.3);
-  --topbar-to: rgb(8 12 18 / 0.1);
+  --topbar-from: rgb(14 18 25 / 0.34);
+  --topbar-to: rgb(14 18 25 / 0.1);
 
-  --dock-from: rgb(34 44 58 / 0.66);
-  --dock-to: rgb(22 29 39 / 0.52);
-  --dock-highlight: rgb(255 255 255 / 0.08);
+  /*
+   * The Dock lifts here where the top bar shades — and that inversion is the
+   * point, not an inconsistency. The bar is a place on the wallpaper; the Dock
+   * is an object floating above the windows, and on a dark desktop the only way
+   * an object reads as glass is by gathering more light than what is behind it,
+   * exactly as the macOS Dock does at night. `brightness()` in the backdrop
+   * does most of that work, so the tint itself can stay thin enough to keep
+   * transmitting the wallpaper's colour.
+   */
+  /* Same construction, one stop darker: the tint is the room's grey rather than
+     the daylight one, so the panel lands near #4d over the wallpaper and near
+     #33 over a black view — lifted off both, tracking both. */
+  --dock-from: rgb(104 110 124 / 0.5);
+  --dock-to: rgb(84 90 104 / 0.46);
+  --dock-border: rgb(255 255 255 / 0.16);
+  --dock-highlight: rgb(255 255 255 / 0.12);
+  --dock-cast: 0 1px 2px rgb(0 0 0 / 0.24), 0 10px 22px -10px rgb(0 0 0 / 0.45);
+  --dock-backdrop: blur(24px) saturate(180%);
 
-  --surface: #161d27;
-  --surface-muted: #1b2431;
-  --surface-raised: #1f2937;
-  --surface-overlay: rgb(22 29 39 / 0.82);
+  --surface: #272d37;
+  --surface-muted: #2f3540;
+  --surface-raised: #363d49;
+  --surface-overlay: rgb(39 45 55 / 0.85);
 
-  --foreground: #e8edf4;
-  --muted-foreground: #a3aebd;
-  --subtle-foreground: #8794a5;
+  --foreground: #eaeef4;
+  --muted-foreground: #adb6c3;
+  --subtle-foreground: #909aa8;
 
-  --border: #2b3543;
-  --border-strong: #3d4a5b;
+  --border: #3b4350;
+  --border-strong: #4d5666;
 
-  --primary: #7f97f5;
-  --primary-hover: #9db0f8;
-  --primary-foreground: #0c111c;
-  --primary-surface: #1e2740;
+  --primary: #8fa4f7;
+  --primary-hover: #a9b8fa;
+  --primary-foreground: #10182b;
+  --primary-surface: #2f3958;
 
-  --success: #5cd693;
-  --success-surface: #12331f;
-  --warning: #f2c264;
-  --warning-surface: #33280e;
-  --danger: #ff9086;
-  --danger-surface: #3b1815;
-  --info: #86baf7;
-  --info-surface: #12293f;
-  --neutral: #a3aebd;
-  --neutral-surface: #222c3a;
+  --success: #64dc9b;
+  --success-surface: #1e4331;
+  --warning: #f5c96f;
+  --warning-surface: #423523;
+  --danger: #ff9a90;
+  --danger-surface: #4a2a28;
+  --info: #8ec1fa;
+  --info-surface: #223c54;
+  --neutral: #adb6c3;
+  --neutral-surface: #343c49;
 
-  --ring: #7f97f5;
-  --ring-soft: rgb(127 151 245 / 0.26);
+  --ring: #8fa4f7;
+  --ring-soft: rgb(143 164 247 / 0.3);
 
   /* Lifted and desaturated for a dark surface: the light theme's values are
      tuned for contrast against white and go muddy here. */
@@ -285,22 +391,28 @@
   --code-meta: #f0c274;
 
   /* Dark surfaces swallow a tint, so the highlight carries more of it. */
-  --selection: rgb(127 151 245 / 0.34);
+  --selection: rgb(143 164 247 / 0.36);
 
-  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.3);
-  --elevation-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  /* Softer than they were, because the surfaces under them are no longer nearly
+     black: a shadow tuned to separate #161d27 from #1f2937 had to be almost
+     opaque to register at all, and at that strength it smears a visible dark
+     halo around every raised thing on a graphite field. The lift between
+     surfaces now carries the separation and the shadow only has to place the
+     object. */
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.24);
+  --elevation-2: 0 1px 2px rgb(0 0 0 / 0.24), 0 2px 6px -2px rgb(0 0 0 / 0.32);
   --elevation-3:
-    0 1px 2px rgb(0 0 0 / 0.35), 0 6px 16px -4px rgb(0 0 0 / 0.45),
-    0 12px 28px -12px rgb(0 0 0 / 0.5);
+    0 1px 2px rgb(0 0 0 / 0.28), 0 6px 16px -4px rgb(0 0 0 / 0.36),
+    0 12px 28px -12px rgb(0 0 0 / 0.42);
 
   /* A hairline highlight stands in for the light border that dark surfaces lose
      against a dark backdrop. */
   --window-shadow:
-    0 0 0 0.5px rgb(255 255 255 / 0.06), 0 2px 6px -2px rgb(0 0 0 / 0.5),
-    0 12px 32px -8px rgb(0 0 0 / 0.55), 0 28px 64px -28px rgb(0 0 0 / 0.65);
+    0 0 0 0.5px rgb(255 255 255 / 0.07), 0 2px 6px -2px rgb(0 0 0 / 0.4),
+    0 12px 32px -8px rgb(0 0 0 / 0.44), 0 28px 64px -28px rgb(0 0 0 / 0.52);
   --window-shadow-focused:
-    0 0 0 0.5px rgb(255 255 255 / 0.1), 0 3px 8px -2px rgb(0 0 0 / 0.55),
-    0 18px 44px -10px rgb(0 0 0 / 0.6), 0 40px 80px -32px rgb(0 0 0 / 0.7);
+    0 0 0 0.5px rgb(255 255 255 / 0.12), 0 3px 8px -2px rgb(0 0 0 / 0.44),
+    0 18px 44px -10px rgb(0 0 0 / 0.5), 0 40px 80px -32px rgb(0 0 0 / 0.58);
 }
 
 @theme inline {
@@ -570,8 +682,27 @@
    * reads as a control rather than as a warning — nothing is wrong, there is
    * just a step missing.
    *
-   * Box-shadow and background only, so the picker's own text stays put; growing
-   * or moving it would drag the neighbouring bar contents with it.
+   * What it may not do is stay quiet. The first version pulsed a 4px halo of
+   * `--ring-soft` behind a small control sitting on frosted glass, in the corner
+   * of a display the operator is not looking at — three of the worst conditions
+   * for a low-contrast cue at once, and the result was a hint you had to already
+   * know about to notice. So the halo is now drawn in two rings: a solid one
+   * hugging the control, which is what actually outlines it against the bar, and
+   * a soft one spreading past it, which is what catches peripheral vision. The
+   * fill goes to `--primary-surface` behind them so the shape reads as filled
+   * rather than merely outlined.
+   *
+   * `scale` is the one geometric change allowed, and it is safe for the reason
+   * padding and width are not: it is a transform, so it is composited and the
+   * neighbouring bar contents never move. Four percent — enough that the eye
+   * registers movement in the corner, small enough that the two lines of text
+   * inside stay readable throughout rather than blurring on every pulse.
+   *
+   * `SCOPE_ATTENTION_MS` in `scope/scope-store.ts` is the pair to the total
+   * duration here: it holds the top bar on screen over a full-screen window for
+   * exactly as long as this runs. Changing the cycle count or the duration
+   * without changing that number leaves the highlight running after the bar has
+   * slid away, or the bar parked on screen after the highlight is over.
    */
   .zke-attention {
     animation: zke-attention 860ms var(--ease-lift) 3;
@@ -597,26 +728,53 @@
   }
 
   /*
-   * The desktop surface: a key light, a fill at the opposite corner in a second
-   * hue, and a vignette drawing the edges in. Windows float on this all day, so
-   * every value here is quieter than the equivalent on sign-in — a backdrop that
-   * is lived in has to survive being looked past.
+   * The desktop surface.
+   *
+   * Composed rather than tinted, and the order below is the composition, since
+   * `background-image` paints the first layer on top: a vignette closing the
+   * edges, the lit origin, three coloured blooms and a warm one, and under all
+   * of them a single diagonal sheen.
+   *
+   * The sheen is the layer that changed the picture. Four corner blooms with
+   * nothing between them read as four lamps pointed at a wall; one broad band of
+   * light crossing the whole field, with the blooms sitting on top of it, reads
+   * as one surface being lit from one side. It goes underneath precisely so the
+   * colour survives it — over the top, a white band desaturates every bloom it
+   * crosses and the wallpaper turns to milk down its middle.
+   *
+   * Windows float on this all day, so every value is still quieter than the
+   * equivalent on sign-in: a backdrop that is lived in has to survive being
+   * looked past. It does now have to be worth blurring, though — the top bar and
+   * the Dock are both glass, and glass over a flat ramp is just a tinted panel.
    */
   .zke-desktop-surface {
     background-image:
-      radial-gradient(118% 96% at 50% 44%, transparent 50%, var(--desktop-vignette) 100%),
+      radial-gradient(122% 100% at 50% 42%, transparent 52%, var(--desktop-vignette) 100%),
+      /* The origin, off the bottom-right corner: the point the polar field is
+         struck from, lit so the field belongs to the wallpaper instead of lying
+         on it. It reaches far enough left to pass under the Dock. */
+        radial-gradient(78rem 52rem at 88% 118%, var(--desktop-origin), transparent 72%),
       /* The two upper blooms are centred well below the top edge. Peaking at the
          edge put the most saturated strip of the whole field directly under the
          frosted top bar, which then read as a different colour at each end. They
          still reach the top — they are 48rem tall — but the bar now crosses their
          shoulder rather than their crown. */
-        radial-gradient(64rem 48rem at 12% 24%, var(--desktop-bloom-nw), transparent 62%),
-      radial-gradient(56rem 44rem at 84% 18%, var(--desktop-bloom-ne), transparent 64%),
-      radial-gradient(58rem 46rem at 4% 96%, var(--desktop-bloom-sw), transparent 64%),
-      radial-gradient(62rem 48rem at 96% 92%, var(--desktop-bloom-se), transparent 62%),
-      /* Centre-right, which is where the field was emptiest: the four corners
-         were lit and the middle was bare gradient. */
-        radial-gradient(54rem 42rem at 64% 54%, var(--desktop-bloom-warm), transparent 66%);
+        radial-gradient(64rem 48rem at 12% 22%, var(--desktop-bloom-nw), transparent 62%),
+      radial-gradient(56rem 44rem at 86% 16%, var(--desktop-bloom-ne), transparent 64%),
+      radial-gradient(60rem 48rem at 2% 92%, var(--desktop-bloom-sw), transparent 64%),
+      /* Centre-right, which is where the field was emptiest: the corners were
+         lit and the middle was bare gradient. */
+        radial-gradient(54rem 42rem at 62% 56%, var(--desktop-bloom-warm), transparent 66%),
+      /* The sheen. Wide and shallow — its shoulders have to fall outside the
+         viewport, or the band gets an edge and the wallpaper acquires a seam
+         running corner to corner. */
+        linear-gradient(
+          152deg,
+          transparent 4%,
+          var(--desktop-sweep) 42%,
+          var(--desktop-sweep) 54%,
+          transparent 88%
+        );
   }
 
   /*
@@ -638,21 +796,25 @@
   .zke-desktop-field {
     background-image:
       repeating-conic-gradient(
-        from 8deg at 92% 122%,
+        from 8deg at 90% 118%,
         transparent 0 5.94deg,
         var(--desktop-ray) 5.94deg 6deg
       ),
       repeating-radial-gradient(
-        circle at 92% 122%,
-        transparent 0 115px,
-        var(--desktop-ring) 115px 116px
+        circle at 90% 118%,
+        transparent 0 123px,
+        var(--desktop-ring) 123px 124px
       );
-    /* Reaches further than it did. Confined to the corner it comes from, the
-       field left the middle and the whole left of the screen with nothing on it
-       but a smooth ramp — the structure has to cross enough of the screen to be
-       structure. It still thins out well before the launcher. */
-    -webkit-mask-image: radial-gradient(152% 142% at 92% 122%, #000 0%, #000 24%, transparent 92%);
-    mask-image: radial-gradient(152% 142% at 92% 122%, #000 0%, #000 24%, transparent 92%);
+    /* Struck from the same point the lit origin sits on, so the glow and the
+       geometry are one construction rather than two things that happen to be in
+       the same corner.
+
+       It reaches most of the way across the screen: confined to its corner, the
+       field left the middle and the whole left with nothing on it but a smooth
+       ramp, and structure has to cross enough of the screen to be structure. It
+       still thins out well before the launcher. */
+    -webkit-mask-image: radial-gradient(152% 142% at 90% 118%, #000 0%, #000 22%, transparent 92%);
+    mask-image: radial-gradient(152% 142% at 90% 118%, #000 0%, #000 22%, transparent 92%);
   }
 
   /* App icon tiles: a hairline inner highlight reads as a raised, glassy face. */
@@ -718,19 +880,31 @@
   }
 
   /*
-   * The Dock and its handle. Frosted rather than filled, so the desktop tints it
-   * instead of a slab of white sitting on the screen. It keeps a real shadow
-   * because unlike the top bar it floats over windows and has to stay legible
-   * against whatever is behind it.
+   * The Dock and its handle.
+   *
+   * Four declarations, and the restraint is the whole of the result: a blur that
+   * dissolves what is behind it, a saturation boost so the panel still picks up
+   * that colour, one grey tint, one hairline, one close shadow.
+   *
+   * Everything a richer version of this adds — a raking specular streak, light
+   * wrapped around every rim, a tint that gathers in the corners, a wide ambient
+   * shadow — describes a thick moulded object, and at 64px tall with an 18px
+   * corner the object it ends up describing is a plastic tray. The material has
+   * to be told by what it transmits, not by ornament laid on top of it.
+   *
+   * `border-color` is set here rather than left to a utility: the rim is part of
+   * the material and follows the theme with the rest of it. `--border` is tuned
+   * to separate two opaque surfaces and reads as a drawn line on glass.
    */
   .zke-dock {
     background-image: linear-gradient(to bottom, var(--dock-from), var(--dock-to));
+    border-color: var(--dock-border);
     /* Prefixed first, standard last — see `.zke-topbar`. */
-    -webkit-backdrop-filter: blur(24px) saturate(170%);
-    backdrop-filter: blur(24px) saturate(170%);
+    -webkit-backdrop-filter: var(--dock-backdrop);
+    backdrop-filter: var(--dock-backdrop);
     box-shadow:
       inset 0 1px 0 var(--dock-highlight),
-      var(--elevation-3);
+      var(--dock-cast);
   }
 
   /*
@@ -997,12 +1171,22 @@
   0%,
   100% {
     background-color: transparent;
-    box-shadow: 0 0 0 0 var(--ring-soft);
+    box-shadow:
+      0 0 0 0 var(--ring),
+      0 0 0 0 var(--ring-soft);
+    transform: scale(1);
   }
 
   40% {
     background-color: var(--primary-surface);
-    box-shadow: 0 0 0 4px var(--ring-soft);
+    /* Inner ring solid, outer ring soft and twice as wide. Both spreads are
+       relative to the same box, so the soft one only shows the 6px past the
+       solid one — which is what makes it read as a glow around an outline
+       rather than as two borders. */
+    box-shadow:
+      0 0 0 2px var(--ring),
+      0 0 0 8px var(--ring-soft);
+    transform: scale(1.04);
   }
 }
 

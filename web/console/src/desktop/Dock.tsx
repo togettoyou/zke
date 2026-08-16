@@ -66,7 +66,11 @@ export const Dock = memo(function Dock({
         aria-expanded={visible}
         aria-label={visible ? "隐藏任务栏" : "显示任务栏"}
         className={cn(
-          "zke-focus zke-dock border-border/60 text-subtle-foreground hover:text-foreground zke-pointer-layer flex h-6 w-16 items-center justify-center rounded-full border transition-[color,opacity] duration-200",
+          // No `border-*` utility: `.zke-dock` owns the rim colour, because on
+          // glass the rim is part of the material rather than a boundary drawn
+          // around it — `--border` is tuned to separate two opaque surfaces and
+          // reads as a drawn line here.
+          "zke-focus zke-dock text-subtle-foreground hover:text-foreground zke-pointer-layer flex h-6 w-16 items-center justify-center rounded-full border transition-[color,opacity] duration-200",
           visible
             ? "opacity-0 group-hover/dock:opacity-100 focus-visible:opacity-100"
             : "opacity-100",
@@ -84,7 +88,7 @@ export const Dock = memo(function Dock({
       {!visible ? null : (
         <nav
           aria-label="运行中的应用"
-          className="zke-dock border-border/60 zke-pointer-layer flex max-w-[calc(100vw-2rem)] items-center gap-1 overflow-x-auto rounded-[18px] border p-2"
+          className="zke-dock zke-pointer-layer flex max-w-[calc(100vw-2rem)] items-center gap-1 overflow-x-auto rounded-[18px] border p-2"
         >
           {items.map((instance) => {
             const manifest = findAppManifest(instance.appId);
