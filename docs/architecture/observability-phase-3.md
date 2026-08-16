@@ -3,26 +3,30 @@
 本文定义 ZKE Phase 3 多集群可观测性的数据通路：集群内采集、经 Agent QUIC 连接回传、Server 摄取与作用域
 改写、集中存储，以及面向 Console 的查询、可视化与权限边界。可视化由 ZKE Console 自建，不依赖 Grafana。
 
-> 状态：第一、二个切片已实现（工作负载维度除外，见 §13）。协议层（`STREAM_KIND_METRICS_INGEST`、
-> `STREAM_KIND_METRICS_COLLECTOR` 与两个对应能力）、Agent 摄取端点与转发、Agent 侧采集组件安装与卸载、
-> Server 摄取网关与作用域改写、每集群的速率与基数预算、存储写入、固定查询目录（集群 / 节点 / Namespace /
-> Pod 四个维度的 CPU 与内存，加采集健康度）、权限词、审计事件，以及 Console 的「可观测性」应用都已落地。
+> 状态：前三个切片已实现（见 §13）。协议层（`STREAM_KIND_METRICS_INGEST`、`STREAM_KIND_METRICS_COLLECTOR`
+> 与两个对应能力）、Agent 摄取端点与转发、Agent 侧**三个采集组件**（vmagent、kube-state-metrics、
+> node-exporter）的一体安装与卸载、Server 摄取网关与作用域改写、每集群的速率与基数预算、存储写入、
+> 25 个固定查询（用量、利用率、申请与限制、工作负载、Pod 重启、节点磁盘与网络，加采集健康度）、权限词、
+> 审计事件，以及 Console 的「可观测性」应用和「平台配置 → 指标采集」都已落地。
 >
 > 已验证，两项都可复跑：
 >
 > - 摄取网关与查询目录对着真实的 VictoriaMetrics v1.149.0 跑通——写入的样本可查回，集群侧伪造的
->   `zke_cluster_id` 被替换为连接身份，目录中全部九个具名查询都能在真实存储上执行
+>   `zke_cluster_id` 被替换为连接身份，目录中全部 25 个具名查询都能在真实存储上执行，其中工作负载的两级
+>   归属（Deployment 而非 ReplicaSet）与利用率的数值都做了断言
 >   （`ZKE_TEST_METRICS_STORAGE_URL=http://127.0.0.1:8428 go test ./pkg/server/metricsingest ./pkg/server/metricsquery`）；
 > - Agent 在真实集群中安装采集组件：Deployment 被 API Server 接受、vmagent 启动并就绪，卸载后包括凭证在内
 >   的对象全部消失（`ZKE_LIVE_KUBERNETES_E2E=1 go test ./pkg/agent -run LiveMetricsCollector`）。这一步抓出了
 >   替身客户端抓不到的两件事：vmagent 不接受 Kubernetes 的 `512Mi` 写法，缓冲上限必须换算成字节；Agent 的
 >   ClusterRole 必须自己持有 `nodes/metrics` 才能把它授予采集组件。
 >
-> 尚未验证：完整链路（真实集群里的 vmagent → Agent 摄取端点 → Server → 存储 → Console）没有在同一次运行中
-> 端到端跑过——上面的集群内安装是在 Agent 运行于集群外的条件下做的，此时摄取 Service 没有 Endpoint。
-> 每集群预算只在单元测试中验证过，没有在真实集群上观察过 vmagent 收到 `RESOURCE_EXHAUSTED` 后的退避与
-> 回灌行为；容量、保留期与预算的实际取值也还没有基线数据，当前默认值是保护性取值。工作负载维度、日志、
-> 告警与集群标签体系仍是规划（见 §13）。
+> 尚未验证：**三个组件没有在真实集群上一起装过**——上面那个 live 测试已经扩到覆盖三者，但本次没有可用集群
+> 运行它，因此 kube-state-metrics 与 node-exporter 的对象是否被真实 API Server 接受、node-exporter 在
+> restricted Namespace 下的实际拒绝路径都还没跑过。完整链路（真实集群里的 vmagent → Agent 摄取端点 →
+> Server → 存储 → Console）也没有在同一次运行中端到端跑过。每集群预算只在单元测试中验证过，没有观察过
+> vmagent 收到 `RESOURCE_EXHAUSTED` 后的退避与回灌行为；容量、保留期与预算的实际取值还没有基线数据，
+> 当前默认值是保护性取值，三目标合计约六倍基数是按固定 allowlist 推算的结果而不是实测值。日志、告警与
+> 集群标签体系仍是规划（见 §13）。
 
 前置阅读：[Server + Agent 架构](server-agent.md)、[Phase 2 Server–Agent 协议设计](agent-protocol-phase-2.md)、
 [应用作用域与资源模型](resource-model.md)、[安全与权限](../security/authorization.md)。
@@ -126,21 +130,49 @@ QUIC 连接转发给 Server。这也让"断线期间数据不丢"由 vmagent 的
   `500m` / `512Mi`——采集组件跑在别人的集群里，它能占多少必须由部署方说了算。四项都可以留空，表示不在容器
   上写这一项，供用 LimitRange 统一管预算的部署使用；Server 不为空值补默认，只有四项**全部**为空时 Agent
   才回落到旧的固定请求，那正是尚未认识这些字段的旧 Server 所要求的形状；
-- kube-state-metrics 与 node-exporter 目前不在抓取配置中：第一个切片只抓 kubelet 的
-  `/metrics/resource`，因为那已经足够支撑集群健康与资源用量视图，而每多一个目标都会成倍放大一个集群
-  送出的基数。加入它们是后续切片里一次显式的抓取配置变更，不是自动发现。
+- 一次安装放进集群的是**三个组件**，一次卸载全部删除（见 §5.3）。它们不是三个开关：没人抓取的导出器是
+  浪费，抓取一个从未安装的目标只会产生持续失败的 job，而一个"装了采集组件但没装 kube-state-metrics"的
+  集群会让四组视图静默为空。作为一体安装意味着这三种状态不可能出现。
 
-### 5.3 默认指标集
+### 5.3 三个采集组件
 
-首个切片只采集足以支撑集群健康与资源用量视图的最小集合：
+| 组件 | 形态 | 提供什么 | 缺了它会怎样 |
+| --- | --- | --- | --- |
+| vmagent | Deployment × 1 | 抓取与回传 | 没有任何指标 |
+| kube-state-metrics | Deployment × 1 | 节点可分配量、Pod 申请/限制、工作负载归属、重启与副本状态 | 利用率、申请量、限制量、工作负载四组视图为空 |
+| node-exporter | DaemonSet（每节点） | 磁盘、文件系统、网络 | 磁盘与网络视图为空 |
 
-- kubelet `/metrics/resource`：Node 与 Pod 的 CPU、内存实际用量；
-- kubelet cAdvisor（可选，默认关闭）：容器级细粒度用量，基数显著更高；
-- kube-state-metrics（存在时）：Node、Namespace、Pod、五类工作负载的状态与副本数；
-- node-exporter（存在时）：节点磁盘、文件系统与网络。
+**kube-state-metrics 是利用率的分母。** kubelet 的资源端点报告"用了多少"，从不报告"有多少"，因此在引入它
+之前，`node_cpu_usage` 说"4 核"而没人知道那个节点是 8 核还是 64 核。容量数据在 ZKE 里本来就有——集群资源
+视图通过 Agent 实时查询 Node 对象——但那是"此刻的容量"，画不进时间序列，也就没法和用量放在同一张图上。
+让 Agent 把 Node 容量合成为指标上报的方案被否决了：那违反 §4 中"回传段不解释指标语义"的分工，Agent 一旦
+开始造指标，Server 侧的作用域改写就不再是唯一防线。
 
-抓取配置中的 relabel 规则负责丢弃高基数标签（例如容器 ID、Pod 模板哈希之外的可变标签），默认抓取间隔
-30 秒。所有默认值都是资源保护配置，不是容量承诺。
+**两侧都收窄，而不是装一个默认的 kube-state-metrics。** `--resources` 限制它 watch 哪些对象，
+`--metric-allowlist` 限制它导出哪些指标族；两份清单与 Server 的查询目录是同一个决定——目录里有而这里没有的
+族返回空且无从解释，这里有而目录里没有的族是纯粹的基数。它只持有 `list` 与 `watch`，且**不包含 Secret 与
+ConfigMap**：一个负责数 Pod 的组件没有理由掌握集群里所有 Secret 的清单。Agent 有能力授予它——正因如此这条
+限制必须写下来而不是默认成立。
+
+安装不需要扩展 Agent 的 ClusterRole：授予 kube-state-metrics 的读取范围是 Agent 自己已持有权限的子集，而
+Kubernetes 拒绝创建包含创建者本身没有的权限的 ClusterRole，这条约束由 API Server 强制而不是靠约定。
+
+**node-exporter 是唯一一个集群可以合法拒绝的组件。** 它的数字来自 `/proc`、`/sys` 和根文件系统，没有不用
+host 命名空间与 hostPath 就能读磁盘和网络的版本；运行在 `baseline` 或 `restricted` Pod Security 级别的
+Namespace 会拒绝它。ZKE **不改写别人 Namespace 的安全等级**——改变一个集群的安全姿态不是一次安装可以顺带
+做的事。因此它的失败不使整个安装失败：其余链路没有它照常工作，拒绝的原因记录在采集组件 ConfigMap 的
+annotation 上（改 annotation 不会重挂配置卷），后续的状态查询仍能读到，Console 如实显示"已被集群拒绝"。
+不这样做的话，被拒绝的组件与"没人装过"在界面上完全一样，操作者会反复重装。
+
+它同时启用 `--collector.disable-defaults` 再逐项打开六个 collector（cpu、meminfo、filesystem、diskstats、
+netdev、loadavg）：默认约四十个 collector 里大部分描述的是没人向 ZKE 提问的硬件，而每一个都会乘以节点数。
+文件系统排除 kubelet 与容器运行时的挂载点，网络排除 veth/cali/cni 等虚拟接口——否则每个节点上每个 Pod 都会
+贡献一组序列。
+
+抓取配置只写这次安装真的放进集群的目标：kubelet 总是有，另外两个按是否安装成功决定。默认抓取间隔 30 秒。
+所有默认值都是资源保护配置，不是容量承诺；三个目标合计的基数估算见
+[部署指南 · 指标容量、保留期与摄取预算](../deployment.md#指标容量保留期与摄取预算)，大约是只抓 kubelet 的
+六倍。
 
 ### 5.4 集群内摄取端点与来源认证
 
@@ -331,19 +363,38 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 改写缺陷都是跨租户数据泄露；同时自由表达式的执行成本无法预估，单个查询就能拖垮单副本 Server 背后的
 存储。固定目录让作用域过滤成为模板的一部分，而不是对用户输入的事后修补。
 
-已实现的查询目录：
+已实现的查询目录（25 个）：
 
-| 查询 | 维度 | Namespace | Top N |
-| --- | --- | --- | --- |
-| `cluster_cpu_usage` / `cluster_memory_usage` | — | 否 | 否 |
-| `node_cpu_usage` / `node_memory_usage` | `node` | 否 | 可选 |
-| `namespace_cpu_usage` / `namespace_memory_usage` | `namespace` | 可选 | 可选 |
-| `pod_cpu_usage` / `pod_memory_usage` | `namespace`、`pod` | 可选 | **必需** |
-| `collection_health` | — | 否 | 否 |
+| 查询 | 维度 | 依赖组件 | Namespace | Top N |
+| --- | --- | --- | --- | --- |
+| `cluster_cpu_usage` / `cluster_memory_usage` | — | kubelet | 否 | 否 |
+| `node_cpu_usage` / `node_memory_usage` | `node` | kubelet | 否 | 可选 |
+| `namespace_cpu_usage` / `namespace_memory_usage` | `namespace` | kubelet | 可选 | 可选 |
+| `pod_cpu_usage` / `pod_memory_usage` | `namespace`、`pod` | kubelet | 可选 | **必需** |
+| `cluster_cpu_utilization` / `cluster_memory_utilization` | — | kube-state-metrics | 否 | 否 |
+| `node_cpu_utilization` / `node_memory_utilization` | `node` | kube-state-metrics | 否 | 可选 |
+| `namespace_cpu_requests` / `namespace_memory_requests` | `namespace` | kube-state-metrics | 可选 | 可选 |
+| `namespace_cpu_limits` / `namespace_memory_limits` | `namespace` | kube-state-metrics | 可选 | 可选 |
+| `workload_cpu_usage` / `workload_memory_usage` | `namespace`、`workload_kind`、`workload` | kube-state-metrics | 可选 | **必需** |
+| `pod_restarts` | `namespace`、`pod` | kube-state-metrics | 可选 | **必需** |
+| `node_filesystem_utilization` | `node`、`mountpoint` | node-exporter | 否 | 可选 |
+| `node_network_receive` / `node_network_transmit` | `node`、`device` | node-exporter | 否 | 可选 |
+| `node_disk_read` / `node_disk_write` | `node`、`device` | node-exporter | 否 | 可选 |
+| `collection_health` | — | kubelet | 否 | 否 |
 
-它们都建立在 kubelet `/metrics/resource` 之上，与生成的抓取配置是同一个决定：目录里不应出现集群侧根本
-没有采集的指标。Pod 维度因此**不需要新增抓取目标**，也不增加集群送出的基数——同一个端点已经在报告
+目录与生成的抓取配置是同一个决定：目录里不应出现集群侧根本没有采集的指标，抓取配置里也不应出现没有查询
+读取的指标族。每个查询声明它依赖哪个组件（`requires_component`），Console 据此在空图上说明"该视图需要
+kube-state-metrics"，而不是让"缺组件"和"集群很闲"呈现为同一张空图。
+
+Pod 维度**不需要新增抓取目标**，也不增加集群送出的基数——kubelet 的同一个端点已经在报告
 `pod_cpu_usage_seconds_total` 与 `pod_memory_working_set_bytes`，变大的只是答案。
+
+**工作负载维度需要两级归属。** Kubernetes 本身就是两级：StatefulSet、DaemonSet 与 Job 直接拥有 Pod，
+名字已经在 `kube_pod_owner` 上；Deployment 不是，它拥有一个 ReplicaSet，后者才拥有 Pod，所以
+`kube_pod_owner` 给出的是 ReplicaSet，必须再经 `kube_replicaset_owner` 找到 Deployment。报告 ReplicaSet
+会让同一个 Deployment 在每次滚动更新后看起来像另一个工作负载。归属向量在 join 之前用 `max by` 收敛：今天
+每个 Pod 恰好只有一条归属序列，但右侧不唯一的 join 在求值时会让整个查询失败而不是给出略微错误的数字，
+而这个模板处理的是本 Server 无法控制的集群送来的数据。
 
 `RequiresTop` 就是用来约束这个"变大的答案"的：一个集群的 Pod 数量比节点高出几个量级，"全部 Pod"既画不出
 也没人问，把边界写进契约比交给序列上限去截断更清楚——截断产生的是一个看起来完整、实际上少了一半的图。
@@ -500,8 +551,9 @@ Recharts / ECharts 等通用库（功能远超所需，体积与主题定制成�
 
 已实现的配置项：
 
-- 平台配置（PostgreSQL，Console 的「平台配置 → 指标采集」，全局管理员）：采集组件镜像、拉取策略，以及
-  它的 CPU / 内存请求与限制；
+- 平台配置（PostgreSQL，Console 的「平台配置 → 指标采集」，全局管理员）：三个组件各自的镜像、拉取策略，
+  以及各自的 CPU / 内存请求与限制。三者一并安装，因此版本也固定在同一页——分散到三处会让一个部署跑着
+  今年的采集组件和去年的导出器；
 - Server `observability.metrics`：`enabled`、`storage_write_url`、`storage_query_url` 与各自的超时、
   `collector_buffer_size`、`scrape_interval`、`kubelet_metrics_port`、`ingest_session_timeout`、
   `max_batch_bytes`、`max_ingest_streams`、`max_decompressed_batch_bytes`、每批的序列与样本上限、
@@ -526,17 +578,17 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 1. **指标端到端最小链路**（已实现）：协议与能力协商、Agent 摄取端点与转发、Agent 侧采集组件安装与卸载、
    Server 摄取网关与标签改写、存储写入、六个固定查询、Console 可观测性应用（集群与节点用量图表、采集
    接入的自动探测与一键安装/卸载）、权限词与审计。
-2. **指标深化**（已实现，工作负载维度除外）：Namespace 与 Pod 维度查询（CPU 与内存各一）、Top N 与
-   Namespace 过滤、每集群摄取预算与限流状态在采集接入与图表两处的完整呈现、查询响应的 `partial` 与
-   `issues`、容量与保留期的运维文档。
-   **工作负载维度（Deployment/StatefulSet 等）不在本切片内**：kubelet 的资源端点只报告 Node、Pod 和
-   容器，把 Pod 归到它的控制器需要 kube-state-metrics 的 `kube_pod_owner`，那是一次显式的抓取目标变更，
-   会成倍放大每个集群送出的基数，属于下面第 3 项之前需要单独决定的事（见 §15）。
-3. **集群标签体系**：为跨集群筛选与分组提供稳定的标签维度，先在查询层落地，不改变存储侧身份标签。
-4. **日志链路**：VictoriaLogs 与日志采集，复用同一条回传通道与作用域改写机制；正文体量、保留期与
+2. **指标深化**（已实现）：Namespace 与 Pod 维度查询、Top N 与 Namespace 过滤、每集群摄取预算与限流状态
+   在采集接入与图表两处的完整呈现、查询响应的 `partial` 与 `issues`、容量与保留期的运维文档。
+3. **抓取目标扩展与深度指标**（已实现）：kube-state-metrics 与 node-exporter 随采集组件一并安装与卸载，
+   三者的镜像、拉取策略与资源预算进入平台配置；利用率（集群与节点）、Namespace 申请量与限制量、工作负载
+   维度（含 Deployment 的两级归属）、Pod 重启，以及节点文件系统、网络与磁盘 IO；查询目录声明依赖组件，
+   Console 在缺少组件时说明而不是呈现空图。
+4. **集群标签体系**：为跨集群筛选与分组提供稳定的标签维度，先在查询层落地，不改变存储侧身份标签。
+5. **日志链路**：VictoriaLogs 与日志采集，复用同一条回传通道与作用域改写机制；正文体量、保留期与
    敏感内容过滤需要独立设计。
-5. **告警**：告警规则、评估位置（Server 侧集中评估与集群侧就地评估的取舍）、告警记录与通知，
-   依赖前四个切片就绪。
+6. **告警**：告警规则、评估位置（Server 侧集中评估与集群侧就地评估的取舍）、告警记录与通知，
+   依赖前五个切片就绪。
 
 每个切片都包含自己的 Console 视图。可视化不是排在链路之后的独立阶段：一条没有视图的采集链路无法验证
 它采到的数据是否正确。
@@ -571,10 +623,30 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 - 参数契约：Pod 维度缺 `top` 被拒绝且不到达存储；对不支持 Namespace 的查询传 `namespace` 被拒绝；
   Namespace 过滤注入后作用域过滤仍然完整。
 
-已执行：上述条目由 `pkg/server/metricsingest` 与 `pkg/server/metricsquery` 的单元测试覆盖（含并发摄取的
-`-race` 用例）；目录中九个查询在真实的 VictoriaMetrics v1.149.0 上执行通过；Console 通过 `typecheck`、
-`lint`、`format:check` 与生产构建。**未执行**：限流没有在真实集群的 vmagent 上验证过退避与回灌行为，
-基数估算的误差也没有对着真实基数分布测过。
+第三个切片额外覆盖：
+
+- 一体安装：三个组件的对象全部创建，状态按组件分别报告；卸载全部删除，包括每个节点上的 DaemonSet；
+- 权限收窄：kube-state-metrics 的 ClusterRole 只有 `list`/`watch`，不含 Secret 与 ConfigMap，没有任何写
+  动词；它的 `--metric-allowlist` 与查询目录一致；
+- node-exporter 的形态：host 网络、容忍所有污点、不挂载 ServiceAccount Token、关闭默认 collector 并排除
+  Kubernetes 自己的挂载点与虚拟网卡；
+- node-exporter 被拒绝时整个安装仍然成功，该组件报告原因，抓取配置不写它的 job，且原因在后续的状态查询中
+  仍然可读；
+- 抓取配置只写这次真的安装了的目标，每个 job 都丢弃 `zke_` 前缀标签；
+- 旧 Server 的请求（不携带组件配置）仍然只安装采集组件，另外两个报告为未安装且**不带**原因；
+- 已有同名但非 ZKE 管理的对象一律拒绝而不是接管；
+- 工作负载归属：Deployment 的 Pod 归到 Deployment 而不是 ReplicaSet；利用率的除法两侧都能通过 join。
+
+已执行：上述条目由 `pkg/server/metricsingest`、`pkg/server/metricsquery` 与 `pkg/agent` 的单元测试覆盖
+（含并发摄取的 `-race` 用例，以及用 reactor 模拟 Pod Security 拒绝的用例）；目录中全部 25 个查询在真实的
+VictoriaMetrics v1.149.0 上执行通过，其中工作负载两级归属与利用率的数值都做了断言；Console 通过
+`typecheck`、`lint`、`format:check` 与生产构建。
+
+**未执行**：三个组件没有在真实集群上一起装过——`ZKE_LIVE_KUBERNETES_E2E=1 go test ./pkg/agent -run
+LiveMetricsCollector` 已经扩到覆盖三者，但本次没有可用集群运行它；因此 kube-state-metrics 与 node-exporter
+的对象是否被真实 API Server 接受、node-exporter 在 restricted Namespace 下的实际拒绝路径，都还没有验证过。
+限流也没有在真实集群的 vmagent 上验证过退避与回灌行为，基数估算的误差没有对着真实基数分布测过，六倍基数
+增长是按固定 allowlist 推算的结果而不是实测值。
 
 性能指标先记录基线再设阈值，不预设未经实测的吞吐、延迟或容量承诺。
 
@@ -583,9 +655,12 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 - VictoriaMetrics 查询接口上强制标签过滤的具体机制（`extra_filters` 等）需在实现前按目标版本实测确认，
   不能仅依据文档描述就作为唯一的隔离手段；模板内注入仍是主要防线。
 - 单副本 Server 同时承担摄取与查询时的资源竞争边界，需要基线数据后再决定是否拆分摄取与查询的额度池。
-- 是否引入 kube-state-metrics 以支持工作负载维度：它是把 Pod 归到控制器的唯一来源，但会成倍放大每个集群
-  送出的基数，且需要决定它缺失时哪些查询降级为"不可用"。加入它必须同时给出新的基数估算与预算默认值。
-- kube-state-metrics 与 node-exporter 缺失时，哪些查询降级为"不可用"、哪些可用替代来源近似，需要逐项确定。
+- node-exporter 在 `baseline` / `restricted` Namespace 下被拒绝时，是否值得提供一个只读 `/proc` 的降级
+  形态（放弃网络与磁盘、保留部分文件系统），还是维持现状——报告拒绝并让部署方自己决定 Namespace 的安全
+  等级。现状的好处是不必解释两套数据口径。
+- 三个组件的版本升级节奏：目前三者的版本各自固定在平台配置里，跨版本的指标名变更（尤其
+  kube-state-metrics 的指标族重命名）会让查询目录静默返回空。是否需要 Server 在启动时校验目录与已安装
+  组件版本的兼容性，需要先有升级实践再决定。
 - 每集群预算的默认值目前是保护性取值而非实测结论；真实部署的基线数据到手后需要重新校准，并决定基数估算
   的误差是否需要在界面上给出区间而不是单个数字。
 - 采集组件的版本与升级：清单固定版本还是跟随 Server 版本，涉及跨版本兼容与升级节奏。

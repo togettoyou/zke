@@ -761,12 +761,30 @@ func (source platformCollectorSettings) CollectorSettings(
 		return metricscollector.CollectorSettings{}, err
 	}
 	return metricscollector.CollectorSettings{
-		Image:           settings.MetricsCollectorImage,
-		ImagePullPolicy: settings.MetricsCollectorImagePullPolicy,
-		CPURequest:      settings.MetricsCollectorCPURequest,
-		MemoryRequest:   settings.MetricsCollectorMemoryRequest,
-		CPULimit:        settings.MetricsCollectorCPULimit,
-		MemoryLimit:     settings.MetricsCollectorMemoryLimit,
+		Collector: metricscollector.ComponentSettings{
+			Image:           settings.MetricsCollectorImage,
+			ImagePullPolicy: settings.MetricsCollectorImagePullPolicy,
+			CPURequest:      settings.MetricsCollectorCPURequest,
+			MemoryRequest:   settings.MetricsCollectorMemoryRequest,
+			CPULimit:        settings.MetricsCollectorCPULimit,
+			MemoryLimit:     settings.MetricsCollectorMemoryLimit,
+		},
+		KubeStateMetrics: metricscollector.ComponentSettings{
+			Image:           settings.KubeStateMetricsImage,
+			ImagePullPolicy: settings.KubeStateMetricsImagePullPolicy,
+			CPURequest:      settings.KubeStateMetricsCPURequest,
+			MemoryRequest:   settings.KubeStateMetricsMemoryRequest,
+			CPULimit:        settings.KubeStateMetricsCPULimit,
+			MemoryLimit:     settings.KubeStateMetricsMemoryLimit,
+		},
+		NodeExporter: metricscollector.ComponentSettings{
+			Image:           settings.NodeExporterImage,
+			ImagePullPolicy: settings.NodeExporterImagePullPolicy,
+			CPURequest:      settings.NodeExporterCPURequest,
+			MemoryRequest:   settings.NodeExporterMemoryRequest,
+			CPULimit:        settings.NodeExporterCPULimit,
+			MemoryLimit:     settings.NodeExporterMemoryLimit,
+		},
 	}, nil
 }
 

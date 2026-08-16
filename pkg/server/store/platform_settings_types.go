@@ -44,6 +44,22 @@ type PlatformSettings struct {
 	MetricsCollectorMemoryRequest   string
 	MetricsCollectorCPULimit        string
 	MetricsCollectorMemoryLimit     string
+	// The two additional scrape targets. Flat like the collector's own fields
+	// because this struct mirrors the table's columns one for one; the shape
+	// the three components share is expressed where they are actually treated
+	// alike, in the collector service that builds the Agent's request.
+	KubeStateMetricsImage           string
+	KubeStateMetricsImagePullPolicy string
+	KubeStateMetricsCPURequest      string
+	KubeStateMetricsMemoryRequest   string
+	KubeStateMetricsCPULimit        string
+	KubeStateMetricsMemoryLimit     string
+	NodeExporterImage               string
+	NodeExporterImagePullPolicy     string
+	NodeExporterCPURequest          string
+	NodeExporterMemoryRequest       string
+	NodeExporterCPULimit            string
+	NodeExporterMemoryLimit         string
 	ClusterTerminalSessionTTL       time.Duration
 	Revision                        int64
 	UpdatedByUserID                 string
@@ -84,6 +100,18 @@ type UpdatePlatformSettingsParams struct {
 	MetricsCollectorMemoryRequest   string
 	MetricsCollectorCPULimit        string
 	MetricsCollectorMemoryLimit     string
+	KubeStateMetricsImage           string
+	KubeStateMetricsImagePullPolicy string
+	KubeStateMetricsCPURequest      string
+	KubeStateMetricsMemoryRequest   string
+	KubeStateMetricsCPULimit        string
+	KubeStateMetricsMemoryLimit     string
+	NodeExporterImage               string
+	NodeExporterImagePullPolicy     string
+	NodeExporterCPURequest          string
+	NodeExporterMemoryRequest       string
+	NodeExporterCPULimit            string
+	NodeExporterMemoryLimit         string
 	ClusterTerminalSessionTTL       time.Duration
 	ExpectedRevision                int64
 	ActorUserID                     string

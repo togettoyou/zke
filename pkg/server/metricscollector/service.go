@@ -16,6 +16,7 @@ import (
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/metricsingest"
+	"github.com/togettoyou/zke/pkg/shared/observability"
 	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
@@ -43,17 +44,31 @@ type AgentAccess interface {
 	) (*agentv1.MetricsCollectorResponse, error)
 }
 
-// CollectorSettings is the part of a collector install an operator owns:
+// ComponentSettings is the part of one installed workload an operator owns:
 // which image runs and how much of the Cluster it may take. Empty quantities
 // are passed through as empty, which the Agent reads as "leave this entry off
 // the container".
-type CollectorSettings struct {
+type ComponentSettings struct {
 	Image           string
 	ImagePullPolicy string
 	CPURequest      string
 	MemoryRequest   string
 	CPULimit        string
 	MemoryLimit     string
+}
+
+// CollectorSettings is the whole bundle an install puts into a Cluster: the
+// collector and the two targets it scrapes.
+//
+// They travel together because they are installed and removed together. A
+// scrape target nobody scrapes is waste, and a scrape configuration naming a
+// target that was never installed only produces failing targets — so the
+// operator turns on collection once and gets a pipeline that is consistent with
+// itself, rather than three switches that can disagree.
+type CollectorSettings struct {
+	Collector        ComponentSettings
+	KubeStateMetrics ComponentSettings
+	NodeExporter     ComponentSettings
 }
 
 // SettingsSource reads the collector settings from platform settings rather
@@ -129,6 +144,10 @@ type State struct {
 	// an operator can see that a Cluster is running an older collector than the
 	// platform setting currently names.
 	DesiredImage string
+	// Components carries the same shape for every workload the install put into
+	// the Cluster, including the collector itself. The flat fields above stay
+	// for the collector because that is what the Console has always read for it.
+	Components []ComponentState
 	// Throttled and the fields under it describe the Server side of the same
 	// link: whether this Server is currently refusing what the collector sends,
 	// and why. A refusal is never hidden — a hidden one reads as a broken
@@ -144,6 +163,23 @@ type State struct {
 	MaxActiveSeries int
 }
 
+// ComponentState is one installed workload as the Cluster reports it.
+type ComponentState struct {
+	Component       string
+	Installed       bool
+	Image           string
+	DesiredImage    string
+	DesiredReplicas int32
+	ReadyReplicas   int32
+	// UnavailableReason is set when the Cluster refused this component rather
+	// than when nobody asked for it. The node metrics exporter needs host
+	// namespaces and host paths, which a Namespace under a restrictive Pod
+	// Security admission level refuses; that refusal is reported here and does
+	// not fail the install, because the rest of the pipeline works without it.
+	UnavailableReason  string
+	UnavailableMessage string
+}
+
 func (service *Service) Status(ctx context.Context, clusterID string) (State, error) {
 	return service.exchange(
 		ctx,
@@ -155,29 +191,92 @@ func (service *Service) Status(ctx context.Context, clusterID string) (State, er
 }
 
 func (service *Service) Install(ctx context.Context, clusterID string) (State, error) {
-	collector, err := service.settings.CollectorSettings(ctx)
+	settings, err := service.settings.CollectorSettings(ctx)
 	if err != nil {
 		return State{}, err
 	}
-	if collector.Image == "" {
-		return State{}, fmt.Errorf("%w: collector image is not configured", ErrInvalidInput)
+	// Every component's image is required. Installing two of three would leave
+	// the collector scraping a target that is not there, which reports as a
+	// broken Cluster rather than as a configuration the operator never filled in.
+	for _, component := range []struct {
+		settings ComponentSettings
+		name     string
+	}{
+		{settings.Collector, "collector"},
+		{settings.KubeStateMetrics, "kube-state-metrics"},
+		{settings.NodeExporter, "node-exporter"},
+	} {
+		if component.settings.Image == "" {
+			return State{}, fmt.Errorf(
+				"%w: %s image is not configured",
+				ErrInvalidInput,
+				component.name,
+			)
+		}
 	}
 	return service.exchange(
 		ctx,
 		clusterID,
 		&agentv1.MetricsCollectorRequest{
 			Action:             agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_INSTALL,
-			Image:              collector.Image,
-			ImagePullPolicy:    collector.ImagePullPolicy,
+			Image:              settings.Collector.Image,
+			ImagePullPolicy:    settings.Collector.ImagePullPolicy,
 			ScrapeInterval:     strconv.Itoa(int(service.config.ScrapeInterval/time.Second)) + "s",
 			BufferSize:         service.config.BufferSize,
 			KubeletMetricsPort: uint32(service.config.KubeletMetricsPort),
-			CpuRequest:         collector.CPURequest,
-			MemoryRequest:      collector.MemoryRequest,
-			CpuLimit:           collector.CPULimit,
-			MemoryLimit:        collector.MemoryLimit,
+			CpuRequest:         settings.Collector.CPURequest,
+			MemoryRequest:      settings.Collector.MemoryRequest,
+			CpuLimit:           settings.Collector.CPULimit,
+			MemoryLimit:        settings.Collector.MemoryLimit,
+			KubeStateMetrics:   componentRequest(settings.KubeStateMetrics),
+			NodeExporter:       componentRequest(settings.NodeExporter),
 		},
 	)
+}
+
+// componentStates pairs what the Cluster reports with what the platform
+// settings currently name, so the Console can show that a Cluster is running an
+// older build than the one an install would deploy now.
+//
+// An Agent too old to report components at all answers with none. It is then
+// reported as the collector alone, which is exactly what such an Agent
+// installed — inventing entries for the other two would show an operator two
+// workloads that are not in their Cluster.
+func componentStates(
+	state *agentv1.MetricsCollectorState,
+	desired CollectorSettings,
+) []ComponentState {
+	desiredImages := map[string]string{
+		observability.ComponentCollector:    desired.Collector.Image,
+		observability.ComponentKubeState:    desired.KubeStateMetrics.Image,
+		observability.ComponentNodeExporter: desired.NodeExporter.Image,
+	}
+	reported := state.GetComponents()
+	components := make([]ComponentState, 0, len(reported))
+	for _, item := range reported {
+		components = append(components, ComponentState{
+			Component:          item.GetComponent(),
+			Installed:          item.GetInstalled(),
+			Image:              item.GetImage(),
+			DesiredImage:       desiredImages[item.GetComponent()],
+			DesiredReplicas:    item.GetDesiredReplicas(),
+			ReadyReplicas:      item.GetReadyReplicas(),
+			UnavailableReason:  item.GetUnavailableReason(),
+			UnavailableMessage: item.GetUnavailableMessage(),
+		})
+	}
+	return components
+}
+
+func componentRequest(settings ComponentSettings) *agentv1.MetricsCollectorComponent {
+	return &agentv1.MetricsCollectorComponent{
+		Image:           settings.Image,
+		ImagePullPolicy: settings.ImagePullPolicy,
+		CpuRequest:      settings.CPURequest,
+		MemoryRequest:   settings.MemoryRequest,
+		CpuLimit:        settings.CPULimit,
+		MemoryLimit:     settings.MemoryLimit,
+	}
 }
 
 func (service *Service) Uninstall(ctx context.Context, clusterID string) (State, error) {
@@ -221,7 +320,8 @@ func (service *Service) exchange(
 		DesiredReplicas: state.GetDesiredReplicas(),
 		ReadyReplicas:   state.GetReadyReplicas(),
 		CredentialReady: state.GetCredentialReady(),
-		DesiredImage:    desired.Image,
+		DesiredImage:    desired.Collector.Image,
+		Components:      componentStates(state, desired),
 	}
 	if service.budget != nil {
 		if budget, known := service.budget.ClusterState(clusterID); known {

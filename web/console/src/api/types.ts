@@ -36,6 +36,7 @@ export type MetricsQueryResult = Schemas["MetricsQueryResult"];
 export type MetricsQuerySeries = MetricsQueryResult["series"][number];
 export type MetricsQueryIssue = MetricsQueryResult["issues"][number];
 export type MetricsCollectorState = Schemas["MetricsCollectorState"];
+export type MetricsComponentState = MetricsCollectorState["components"][number];
 export type KubernetesClusterOverview = Schemas["KubernetesClusterOverview"];
 export type KubernetesClusterOverviewIssue = Schemas["KubernetesClusterOverviewIssue"];
 export type KubernetesOverviewStatusCounts = Schemas["KubernetesOverviewStatusCounts"];

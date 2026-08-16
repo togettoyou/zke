@@ -45,6 +45,22 @@ type platformSettingsRequest struct {
 	MetricsCollectorMemoryRequest string `json:"metrics_collector_memory_request"`
 	MetricsCollectorCPULimit      string `json:"metrics_collector_cpu_limit"`
 	MetricsCollectorMemoryLimit   string `json:"metrics_collector_memory_limit"`
+	// The two additional scrape targets the collector reads. They are installed
+	// and removed with it, so their images belong on the same form — an operator
+	// changing the collector's image and finding two other pinned versions
+	// managed somewhere else would have no way to keep the three in step.
+	KubeStateMetricsImage           string `json:"kube_state_metrics_image"`
+	KubeStateMetricsImagePullPolicy string `json:"kube_state_metrics_image_pull_policy"`
+	KubeStateMetricsCPURequest      string `json:"kube_state_metrics_cpu_request"`
+	KubeStateMetricsMemoryRequest   string `json:"kube_state_metrics_memory_request"`
+	KubeStateMetricsCPULimit        string `json:"kube_state_metrics_cpu_limit"`
+	KubeStateMetricsMemoryLimit     string `json:"kube_state_metrics_memory_limit"`
+	NodeExporterImage               string `json:"node_exporter_image"`
+	NodeExporterImagePullPolicy     string `json:"node_exporter_image_pull_policy"`
+	NodeExporterCPURequest          string `json:"node_exporter_cpu_request"`
+	NodeExporterMemoryRequest       string `json:"node_exporter_memory_request"`
+	NodeExporterCPULimit            string `json:"node_exporter_cpu_limit"`
+	NodeExporterMemoryLimit         string `json:"node_exporter_memory_limit"`
 	// Seconds rather than a duration string: the wire format stays a plain
 	// number the Console can bind to a numeric input without parsing.
 	ClusterTerminalSessionTTLSeconds int64 `json:"cluster_terminal_session_ttl_seconds"`
@@ -153,6 +169,18 @@ func (handler *platformSettingsHandler) updateSettings(c *gin.Context) {
 		MetricsCollectorMemoryRequest:   request.MetricsCollectorMemoryRequest,
 		MetricsCollectorCPULimit:        request.MetricsCollectorCPULimit,
 		MetricsCollectorMemoryLimit:     request.MetricsCollectorMemoryLimit,
+		KubeStateMetricsImage:           request.KubeStateMetricsImage,
+		KubeStateMetricsImagePullPolicy: request.KubeStateMetricsImagePullPolicy,
+		KubeStateMetricsCPURequest:      request.KubeStateMetricsCPURequest,
+		KubeStateMetricsMemoryRequest:   request.KubeStateMetricsMemoryRequest,
+		KubeStateMetricsCPULimit:        request.KubeStateMetricsCPULimit,
+		KubeStateMetricsMemoryLimit:     request.KubeStateMetricsMemoryLimit,
+		NodeExporterImage:               request.NodeExporterImage,
+		NodeExporterImagePullPolicy:     request.NodeExporterImagePullPolicy,
+		NodeExporterCPURequest:          request.NodeExporterCPURequest,
+		NodeExporterMemoryRequest:       request.NodeExporterMemoryRequest,
+		NodeExporterCPULimit:            request.NodeExporterCPULimit,
+		NodeExporterMemoryLimit:         request.NodeExporterMemoryLimit,
 		ClusterTerminalSessionTTL:       terminalSessionTTL(request.ClusterTerminalSessionTTLSeconds),
 		ActorUserID:                     identity.User.ID, Now: time.Now().UTC(),
 	})
@@ -220,5 +248,32 @@ func profilesResponse(profiles []platformsettings.Profile) []gin.H {
 }
 
 func settingsResponse(settings platformsettings.Settings) gin.H {
-	return gin.H{"default_endpoint_profile_id": settings.DefaultEndpointProfileID, "agent_image": settings.AgentImage, "agent_image_pull_policy": settings.AgentImagePullPolicy, "cluster_terminal_image": settings.ClusterTerminalImage, "cluster_terminal_image_pull_policy": settings.ClusterTerminalImagePullPolicy, "metrics_collector_image": settings.MetricsCollectorImage, "metrics_collector_image_pull_policy": settings.MetricsCollectorImagePullPolicy, "metrics_collector_cpu_request": settings.MetricsCollectorCPURequest, "metrics_collector_memory_request": settings.MetricsCollectorMemoryRequest, "metrics_collector_cpu_limit": settings.MetricsCollectorCPULimit, "metrics_collector_memory_limit": settings.MetricsCollectorMemoryLimit, "cluster_terminal_session_ttl_seconds": int64(settings.ClusterTerminalSessionTTL / time.Second), "revision": settings.Revision, "updated_at": responseTime(settings.UpdatedAt)}
+	return gin.H{
+		"default_endpoint_profile_id":          settings.DefaultEndpointProfileID,
+		"agent_image":                          settings.AgentImage,
+		"agent_image_pull_policy":              settings.AgentImagePullPolicy,
+		"cluster_terminal_image":               settings.ClusterTerminalImage,
+		"cluster_terminal_image_pull_policy":   settings.ClusterTerminalImagePullPolicy,
+		"metrics_collector_image":              settings.MetricsCollectorImage,
+		"metrics_collector_image_pull_policy":  settings.MetricsCollectorImagePullPolicy,
+		"metrics_collector_cpu_request":        settings.MetricsCollectorCPURequest,
+		"metrics_collector_memory_request":     settings.MetricsCollectorMemoryRequest,
+		"metrics_collector_cpu_limit":          settings.MetricsCollectorCPULimit,
+		"metrics_collector_memory_limit":       settings.MetricsCollectorMemoryLimit,
+		"kube_state_metrics_image":             settings.KubeStateMetricsImage,
+		"kube_state_metrics_image_pull_policy": settings.KubeStateMetricsImagePullPolicy,
+		"kube_state_metrics_cpu_request":       settings.KubeStateMetricsCPURequest,
+		"kube_state_metrics_memory_request":    settings.KubeStateMetricsMemoryRequest,
+		"kube_state_metrics_cpu_limit":         settings.KubeStateMetricsCPULimit,
+		"kube_state_metrics_memory_limit":      settings.KubeStateMetricsMemoryLimit,
+		"node_exporter_image":                  settings.NodeExporterImage,
+		"node_exporter_image_pull_policy":      settings.NodeExporterImagePullPolicy,
+		"node_exporter_cpu_request":            settings.NodeExporterCPURequest,
+		"node_exporter_memory_request":         settings.NodeExporterMemoryRequest,
+		"node_exporter_cpu_limit":              settings.NodeExporterCPULimit,
+		"node_exporter_memory_limit":           settings.NodeExporterMemoryLimit,
+		"cluster_terminal_session_ttl_seconds": int64(settings.ClusterTerminalSessionTTL / time.Second),
+		"revision":                             settings.Revision,
+		"updated_at":                           responseTime(settings.UpdatedAt),
+	}
 }

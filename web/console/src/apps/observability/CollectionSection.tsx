@@ -12,7 +12,12 @@ import {
   useUninstallMetricsCollector,
 } from "@/api/queries/observability";
 import { queryKeys } from "@/api/query-keys";
-import { DEFAULT_PAGE_SIZE, type ClusterAggregate, type MetricsCollectorState } from "@/api/types";
+import {
+  DEFAULT_PAGE_SIZE,
+  type ClusterAggregate,
+  type MetricsCollectorState,
+  type MetricsComponentState,
+} from "@/api/types";
 import { SectionTitle } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
@@ -147,21 +152,38 @@ export function CollectionSection() {
         },
       },
       {
-        header: "采集组件",
-        size: 300,
+        // All three components, not just the collector. Two of them are the
+        // difference between a usage curve and a usable one — without the object
+        // exporter there is no denominator for any utilisation view, and without
+        // the node exporter there is no disk or network at all — so a row that
+        // showed only the collector would call a half-installed pipeline healthy.
+        header: "组件",
+        size: 320,
         cell: ({ row }) => {
           const state = byCluster.get(row.original.id)?.state;
           if (!state) {
             return <span className="text-subtle-foreground text-xs">—</span>;
           }
+          if (state.components.length === 0) {
+            // An Agent too old to report components installed the collector
+            // alone; showing three rows would name two workloads that are not in
+            // that Cluster.
+            return (
+              <div className="flex flex-col gap-0.5">
+                <span className="zke-mono text-muted-foreground text-xs">
+                  {state.installed ? state.image : state.desired_image}
+                </span>
+                <span className="text-subtle-foreground text-xs">
+                  该集群 Agent 版本不报告组件明细
+                </span>
+              </div>
+            );
+          }
           return (
-            <div className="flex flex-col gap-0.5">
-              <span className="zke-mono text-muted-foreground text-xs">
-                {state.installed ? state.image : state.desired_image}
-              </span>
-              {isOutdated(state) ? (
-                <span className="text-warning text-xs">平台配置已更新为 {state.desired_image}</span>
-              ) : null}
+            <div className="flex flex-col gap-1">
+              {state.components.map((component) => (
+                <ComponentLine key={component.component} component={component} />
+              ))}
             </div>
           );
         },
@@ -259,7 +281,7 @@ export function CollectionSection() {
           sentence an operator needs before installing anything into a Cluster
           they run. */}
       <SectionTitle
-        description="采集组件由每个集群自己的 Agent 安装到其 Agent Namespace，数据经 Agent 已有的连接回传，摄取凭证在集群内生成，不经过 Server。"
+        description="三个采集组件由每个集群自己的 Agent 一并安装到其 Agent Namespace，也一并卸载；数据经 Agent 已有的连接回传，摄取凭证在集群内生成，不经过 Server。"
         actions={
           <RefreshAction
             isFetching={clusters.isFetching || collectors.some((query) => query.isFetching)}
@@ -307,6 +329,7 @@ export function CollectionSection() {
         impacts={
           installState?.installed
             ? [
+                "三个组件按平台配置当前的镜像与资源取值重新应用",
                 "采集组件按 Recreate 策略重建，重建期间该集群暂停上报，曲线会出现一段空洞",
                 "已有的摄取凭证保持不变，不需要重新授权",
                 isOutdated(installState)
@@ -314,9 +337,11 @@ export function CollectionSection() {
                   : "镜像与资源取值按平台配置当前的值重新应用",
               ]
             : [
-                "在该集群的 Agent Namespace 中创建采集组件的 Deployment、ServiceAccount、ClusterRole 与 ClusterRoleBinding",
+                "在该集群的 Agent Namespace 中安装三个组件：采集组件（vmagent）、对象指标导出器（kube-state-metrics）与节点指标导出器（node-exporter），以及它们各自的 ServiceAccount 与 RBAC",
+                "对象指标导出器只读取 Node、Pod、Namespace 与工作负载对象，不包含 Secret",
+                "节点指标导出器以 DaemonSet 运行在每个节点上，需要 host 网络与 hostPath；运行在 baseline 或 restricted Pod Security 级别的 Namespace 会拒绝它，此时其余组件照常安装并在列表中说明原因",
                 "摄取凭证由 Agent 在集群内生成，不经过 Server，也不会出现在浏览器里",
-                "采集组件会在一个采集周期内开始上报，指标随即出现在「指标总览」中",
+                "组件会在一个采集周期内开始上报，指标随即出现在「指标总览」中",
               ]
         }
         confirmLabel={installState?.installed ? "重新安装" : "安装"}
@@ -344,7 +369,7 @@ export function CollectionSection() {
         open={removalTarget !== null}
         onOpenChange={(open) => !open && setRemovalTarget(null)}
         title="卸载指标采集组件"
-        description="将从目标集群删除采集组件、其 RBAC 与摄取凭证。已经写入存储的历史指标不受影响。"
+        description="将从目标集群删除三个采集组件、它们的 RBAC 与摄取凭证。已经写入存储的历史指标不受影响。"
         scopeLines={
           removalTarget ? [{ label: "集群", name: removalTarget.name, id: removalTarget.id }] : []
         }
@@ -353,7 +378,7 @@ export function CollectionSection() {
         confirmLabel="卸载"
         impacts={[
           "该集群停止上报指标，「指标总览」中的曲线会出现空洞",
-          "采集组件的 ServiceAccount、ClusterRole 与 ClusterRoleBinding 一并删除",
+          "三个组件与它们的 ServiceAccount、ClusterRole、ClusterRoleBinding 一并删除，包括每个节点上的 node-exporter",
           "摄取凭证被删除；重新安装会生成新的凭证",
         ]}
         pending={uninstall.isPending}
@@ -372,6 +397,66 @@ export function CollectionSection() {
         }}
       />
     </div>
+  );
+}
+
+const COMPONENT_LABELS: Record<string, string> = {
+  collector: "采集组件",
+  "kube-state-metrics": "对象指标",
+  "node-exporter": "节点指标",
+};
+
+/**
+ * One component of the bundle, with the thing about it an operator has to act on.
+ *
+ * A refused node exporter is the case this row exists for: it is not a failure
+ * of the install and not something waiting to become ready, so it reads as
+ * neither. Saying only "未安装" would leave the operator reinstalling until they
+ * gave up.
+ */
+function ComponentLine({ component }: { component: MetricsComponentState }) {
+  const label = COMPONENT_LABELS[component.component] ?? component.component;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-foreground text-xs">{label}</span>
+        {component.installed ? (
+          <span className="text-subtle-foreground text-xs">
+            {component.ready_replicas}/{component.desired_replicas} 就绪
+          </span>
+        ) : (
+          <span
+            className={
+              component.unavailable_reason
+                ? "text-danger text-xs"
+                : "text-subtle-foreground text-xs"
+            }
+          >
+            {component.unavailable_reason ? "已被集群拒绝" : "未安装"}
+          </span>
+        )}
+      </div>
+      {component.installed && component.image ? (
+        <span className="zke-mono text-subtle-foreground text-[11px]">{component.image}</span>
+      ) : null}
+      {isComponentOutdated(component) ? (
+        <span className="text-warning text-[11px]">平台配置已更新为 {component.desired_image}</span>
+      ) : null}
+      {component.unavailable_message ? (
+        <span className="text-danger text-[11px] leading-relaxed">
+          {component.unavailable_message}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function isComponentOutdated(component: MetricsComponentState): boolean {
+  return Boolean(
+    component.installed &&
+    component.image &&
+    component.desired_image &&
+    component.image !== component.desired_image,
   );
 }
 

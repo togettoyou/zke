@@ -69,6 +69,27 @@ message MetricsCollectorRequest {
   string memory_request = 8;
   string cpu_limit = 9;
   string memory_limit = 10;
+  // The two additional scrape targets. They carry the same shape as the
+  // collector's own fields above, which stay flat so an Agent too old to know
+  // these messages still installs the collector exactly as it used to — it
+  // ignores what it cannot parse and renders a scrape configuration with the
+  // kubelet target alone.
+  //
+  // An empty message means the Server does not want that target installed.
+  MetricsCollectorComponent kube_state_metrics = 11;
+  MetricsCollectorComponent node_exporter = 12;
+}
+
+// MetricsCollectorComponent is what the Server decides about one installed
+// workload. The Agent still owns the object's shape; this only says which image
+// runs it and how much of the Cluster it may take.
+message MetricsCollectorComponent {
+  string image = 1;
+  string image_pull_policy = 2;
+  string cpu_request = 3;
+  string memory_request = 4;
+  string cpu_limit = 5;
+  string memory_limit = 6;
 }
 
 message MetricsCollectorState {
@@ -80,6 +101,27 @@ message MetricsCollectorState {
   // Whether the Agent holds a credential the collector can present. It is
   // reported as a fact, never as a value.
   bool credential_ready = 6;
+  // One entry per component the Agent knows about, including the collector
+  // itself. The three fields above stay for the collector so an older Server
+  // reading this response still sees what it expects.
+  repeated MetricsComponentState components = 7;
+}
+
+message MetricsComponentState {
+  // Component is one of the identifiers in pkg/shared/observability.
+  string component = 1;
+  bool installed = 2;
+  string image = 3;
+  int32 desired_replicas = 4;
+  int32 ready_replicas = 5;
+  // UnavailableReason is set when this component is not installed for a reason
+  // the operator has to act on rather than because nobody asked for it. The
+  // node metrics exporter needs host namespaces and host paths, which a
+  // Namespace running under a restrictive Pod Security admission level refuses;
+  // that refusal must be reported rather than retried forever, and it must not
+  // fail the whole install — the rest of the pipeline works without it.
+  string unavailable_reason = 6;
+  string unavailable_message = 7;
 }
 
 message MetricsCollectorResponse {

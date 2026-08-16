@@ -73,7 +73,34 @@ func (memory *memoryStore) GetSettings(context.Context) (store.PlatformSettings,
 	return memory.settings, nil
 }
 func (memory *memoryStore) UpdateSettings(_ context.Context, input store.UpdatePlatformSettingsParams) (store.PlatformSettings, error) {
-	memory.settings = store.PlatformSettings{DefaultEndpointProfileID: memory.settings.DefaultEndpointProfileID, AgentImage: input.AgentImage, AgentImagePullPolicy: input.AgentImagePullPolicy, ClusterTerminalImage: input.ClusterTerminalImage, ClusterTerminalImagePullPolicy: input.ClusterTerminalImagePullPolicy, MetricsCollectorImage: input.MetricsCollectorImage, MetricsCollectorImagePullPolicy: input.MetricsCollectorImagePullPolicy, MetricsCollectorCPURequest: input.MetricsCollectorCPURequest, MetricsCollectorMemoryRequest: input.MetricsCollectorMemoryRequest, MetricsCollectorCPULimit: input.MetricsCollectorCPULimit, MetricsCollectorMemoryLimit: input.MetricsCollectorMemoryLimit, ClusterTerminalSessionTTL: input.ClusterTerminalSessionTTL, Revision: input.ExpectedRevision + 1, UpdatedAt: input.Now}
+	memory.settings = store.PlatformSettings{
+		DefaultEndpointProfileID:        memory.settings.DefaultEndpointProfileID,
+		AgentImage:                      input.AgentImage,
+		AgentImagePullPolicy:            input.AgentImagePullPolicy,
+		ClusterTerminalImage:            input.ClusterTerminalImage,
+		ClusterTerminalImagePullPolicy:  input.ClusterTerminalImagePullPolicy,
+		MetricsCollectorImage:           input.MetricsCollectorImage,
+		MetricsCollectorImagePullPolicy: input.MetricsCollectorImagePullPolicy,
+		MetricsCollectorCPURequest:      input.MetricsCollectorCPURequest,
+		MetricsCollectorMemoryRequest:   input.MetricsCollectorMemoryRequest,
+		MetricsCollectorCPULimit:        input.MetricsCollectorCPULimit,
+		MetricsCollectorMemoryLimit:     input.MetricsCollectorMemoryLimit,
+		KubeStateMetricsImage:           input.KubeStateMetricsImage,
+		KubeStateMetricsImagePullPolicy: input.KubeStateMetricsImagePullPolicy,
+		KubeStateMetricsCPURequest:      input.KubeStateMetricsCPURequest,
+		KubeStateMetricsMemoryRequest:   input.KubeStateMetricsMemoryRequest,
+		KubeStateMetricsCPULimit:        input.KubeStateMetricsCPULimit,
+		KubeStateMetricsMemoryLimit:     input.KubeStateMetricsMemoryLimit,
+		NodeExporterImage:               input.NodeExporterImage,
+		NodeExporterImagePullPolicy:     input.NodeExporterImagePullPolicy,
+		NodeExporterCPURequest:          input.NodeExporterCPURequest,
+		NodeExporterMemoryRequest:       input.NodeExporterMemoryRequest,
+		NodeExporterCPULimit:            input.NodeExporterCPULimit,
+		NodeExporterMemoryLimit:         input.NodeExporterMemoryLimit,
+		ClusterTerminalSessionTTL:       input.ClusterTerminalSessionTTL,
+		Revision:                        input.ExpectedRevision + 1,
+		UpdatedAt:                       input.Now,
+	}
 	return memory.settings, nil
 }
 
@@ -86,6 +113,14 @@ func validSettingsInput() SettingsInput {
 		MetricsCollectorImage: "registry.example.com/vmagent:v1", MetricsCollectorImagePullPolicy: "IfNotPresent",
 		MetricsCollectorCPURequest: "50m", MetricsCollectorMemoryRequest: "128Mi",
 		MetricsCollectorCPULimit: "500m", MetricsCollectorMemoryLimit: "512Mi",
+		KubeStateMetricsImage:           "registry.example.com/kube-state-metrics:v1",
+		KubeStateMetricsImagePullPolicy: "IfNotPresent",
+		KubeStateMetricsCPURequest:      "20m", KubeStateMetricsMemoryRequest: "128Mi",
+		KubeStateMetricsCPULimit: "500m", KubeStateMetricsMemoryLimit: "512Mi",
+		NodeExporterImage:           "registry.example.com/node-exporter:v1",
+		NodeExporterImagePullPolicy: "IfNotPresent",
+		NodeExporterCPURequest:      "10m", NodeExporterMemoryRequest: "32Mi",
+		NodeExporterCPULimit: "200m", NodeExporterMemoryLimit: "128Mi",
 		ClusterTerminalSessionTTL: 15 * time.Minute,
 		ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
 	}
@@ -93,13 +128,11 @@ func validSettingsInput() SettingsInput {
 
 func TestPlatformSettingsKeepAgentAndTerminalPullPoliciesIndependent(t *testing.T) {
 	memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
-	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), SettingsInput{
-		AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "Never",
-		ClusterTerminalImage: "registry.example.com/zke-terminal:v2", ClusterTerminalImagePullPolicy: "Always",
-		MetricsCollectorImage: "registry.example.com/vmagent:v1", MetricsCollectorImagePullPolicy: "IfNotPresent",
-		ClusterTerminalSessionTTL: 15 * time.Minute,
-		ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
-	})
+	input := validSettingsInput()
+	input.AgentImagePullPolicy = "Never"
+	input.ClusterTerminalImage = "registry.example.com/zke-terminal:v2"
+	input.ClusterTerminalImagePullPolicy = "Always"
+	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,13 +151,9 @@ func TestPlatformSettingsRejectSessionTTLOutsideAllowedRange(t *testing.T) {
 		90*time.Second + 500*time.Millisecond,
 	} {
 		memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
-		_, err := NewService(memory, "", nil).UpdateSettings(context.Background(), SettingsInput{
-			AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "IfNotPresent",
-			ClusterTerminalImage: "registry.example.com/zke-terminal:v1", ClusterTerminalImagePullPolicy: "IfNotPresent",
-			MetricsCollectorImage: "registry.example.com/vmagent:v1", MetricsCollectorImagePullPolicy: "IfNotPresent",
-			ClusterTerminalSessionTTL: ttl,
-			ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
-		})
+		input := validSettingsInput()
+		input.ClusterTerminalSessionTTL = ttl
+		_, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("UpdateSettings(%s) error = %v, want ErrInvalidInput", ttl, err)
 		}

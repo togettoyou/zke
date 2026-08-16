@@ -56,6 +56,7 @@ type metricsQueryDefinitionResponse struct {
 	SupportsNamespace bool     `json:"supports_namespace"`
 	SupportsTop       bool     `json:"supports_top"`
 	RequiresTop       bool     `json:"requires_top"`
+	RequiresComponent string   `json:"requires_component"`
 }
 
 type metricsQueryCatalogResponse struct {
@@ -125,6 +126,7 @@ func (handler *observabilityMetricsHandler) catalog(c *gin.Context) {
 			SupportsNamespace: definition.SupportsNamespace,
 			SupportsTop:       definition.SupportsTop,
 			RequiresTop:       definition.RequiresTop,
+			RequiresComponent: definition.RequiresComponent,
 		})
 	}
 	writeSuccess(c, http.StatusOK, metricsQueryCatalogResponse{Queries: queries})

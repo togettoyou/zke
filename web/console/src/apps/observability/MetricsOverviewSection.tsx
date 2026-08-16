@@ -31,57 +31,327 @@ const RANGES = [
 
 type RangeId = (typeof RANGES)[number]["id"];
 
+type Unit = "millicores" | "bytes" | "bytes_per_second" | "ratio" | "count";
+
+type Panel = {
+  title: string;
+  description?: string;
+  query: string;
+  unit: Unit;
+  /** Series labels besides the Cluster, in display order. */
+  labels: readonly string[];
+  /** The scrape target this panel needs, when it is not the kubelet. */
+  requires?: "kube-state-metrics" | "node-exporter";
+};
+
 /**
- * One dimension at a time, CPU and memory side by side.
+ * What the view shows: a dimension, and an angle on it.
  *
- * Not every chart at once: each panel is a request that a single-instance
- * Server runs against shared storage, and eight standing queries per open
- * window is a cost paid by every other Cluster in the deployment. It is also
- * how the question is actually asked — an operator looks at Nodes, or at Pods,
- * not at both while comparing.
- *
- * `top` is null where the query ranks nothing: Cluster totals are one series per
- * Cluster, and a Top N over them would drop Clusters from a view whose whole
- * point is covering all of them.
+ * Two selects rather than one long list of charts. Each panel is a request that
+ * a single-instance Server runs against storage every Cluster shares, and the
+ * catalogue is large enough now that showing all of it at once would make an
+ * open window a standing load on the whole deployment. It is also how the
+ * question is asked — an operator looks at Namespace requests, or at Node
+ * utilisation, not at twenty charts while comparing.
  */
 const DIMENSIONS = [
   {
     id: "cluster",
     label: "集群",
-    cpu: "cluster_cpu_usage",
-    memory: "cluster_memory_usage",
-    labels: [] as string[],
-    top: null,
-    namespace: false,
+    views: [
+      {
+        id: "usage",
+        label: "用量",
+        top: false,
+        namespace: false,
+        panels: [
+          { title: "CPU 用量", query: "cluster_cpu_usage", unit: "millicores", labels: [] },
+          { title: "内存用量", query: "cluster_memory_usage", unit: "bytes", labels: [] },
+        ],
+      },
+      {
+        id: "utilization",
+        label: "利用率",
+        top: false,
+        namespace: false,
+        panels: [
+          {
+            title: "CPU 利用率",
+            description: "用量占全部节点可分配量的比例。",
+            query: "cluster_cpu_utilization",
+            unit: "ratio",
+            labels: [],
+            requires: "kube-state-metrics",
+          },
+          {
+            title: "内存利用率",
+            query: "cluster_memory_utilization",
+            unit: "ratio",
+            labels: [],
+            requires: "kube-state-metrics",
+          },
+        ],
+      },
+    ],
   },
   {
     id: "node",
     label: "节点",
-    cpu: "node_cpu_usage",
-    memory: "node_memory_usage",
-    labels: ["node"],
-    top: 10,
-    namespace: false,
+    views: [
+      {
+        id: "usage",
+        label: "用量",
+        top: true,
+        namespace: false,
+        panels: [
+          { title: "CPU 用量", query: "node_cpu_usage", unit: "millicores", labels: ["node"] },
+          { title: "内存用量", query: "node_memory_usage", unit: "bytes", labels: ["node"] },
+        ],
+      },
+      {
+        id: "utilization",
+        label: "利用率",
+        top: true,
+        namespace: false,
+        panels: [
+          {
+            title: "CPU 利用率",
+            description: "用量占该节点可分配量的比例。",
+            query: "node_cpu_utilization",
+            unit: "ratio",
+            labels: ["node"],
+            requires: "kube-state-metrics",
+          },
+          {
+            title: "内存利用率",
+            query: "node_memory_utilization",
+            unit: "ratio",
+            labels: ["node"],
+            requires: "kube-state-metrics",
+          },
+        ],
+      },
+    ],
   },
   {
     id: "namespace",
     label: "Namespace",
-    cpu: "namespace_cpu_usage",
-    memory: "namespace_memory_usage",
-    labels: ["namespace"],
-    top: 10,
-    namespace: true,
+    views: [
+      {
+        id: "usage",
+        label: "用量",
+        top: true,
+        namespace: true,
+        panels: [
+          {
+            title: "CPU 用量",
+            query: "namespace_cpu_usage",
+            unit: "millicores",
+            labels: ["namespace"],
+          },
+          {
+            title: "内存用量",
+            query: "namespace_memory_usage",
+            unit: "bytes",
+            labels: ["namespace"],
+          },
+        ],
+      },
+      {
+        id: "requests",
+        label: "申请量",
+        top: true,
+        namespace: true,
+        panels: [
+          {
+            title: "CPU 申请量",
+            description: "调度器为该 Namespace 预留、其他工作负载无法使用的量。",
+            query: "namespace_cpu_requests",
+            unit: "millicores",
+            labels: ["namespace"],
+            requires: "kube-state-metrics",
+          },
+          {
+            title: "内存申请量",
+            query: "namespace_memory_requests",
+            unit: "bytes",
+            labels: ["namespace"],
+            requires: "kube-state-metrics",
+          },
+        ],
+      },
+      {
+        id: "limits",
+        label: "限制量",
+        top: true,
+        namespace: true,
+        panels: [
+          {
+            title: "CPU 限制量",
+            query: "namespace_cpu_limits",
+            unit: "millicores",
+            labels: ["namespace"],
+            requires: "kube-state-metrics",
+          },
+          {
+            title: "内存限制量",
+            query: "namespace_memory_limits",
+            unit: "bytes",
+            labels: ["namespace"],
+            requires: "kube-state-metrics",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "workload",
+    label: "工作负载",
+    views: [
+      {
+        id: "usage",
+        label: "用量",
+        top: true,
+        namespace: true,
+        panels: [
+          {
+            title: "CPU 用量",
+            description:
+              "Pod 用量按拥有它的控制器汇总；Deployment 的 Pod 会归到 Deployment 而不是 ReplicaSet。",
+            query: "workload_cpu_usage",
+            unit: "millicores",
+            labels: ["namespace", "workload_kind", "workload"],
+            requires: "kube-state-metrics",
+          },
+          {
+            title: "内存用量",
+            query: "workload_memory_usage",
+            unit: "bytes",
+            labels: ["namespace", "workload_kind", "workload"],
+            requires: "kube-state-metrics",
+          },
+        ],
+      },
+    ],
   },
   {
     id: "pod",
     label: "Pod",
-    cpu: "pod_cpu_usage",
-    memory: "pod_memory_usage",
-    labels: ["namespace", "pod"],
-    top: 10,
-    namespace: true,
+    views: [
+      {
+        id: "usage",
+        label: "用量",
+        top: true,
+        namespace: true,
+        panels: [
+          {
+            title: "CPU 用量",
+            query: "pod_cpu_usage",
+            unit: "millicores",
+            labels: ["namespace", "pod"],
+          },
+          {
+            title: "内存用量",
+            query: "pod_memory_usage",
+            unit: "bytes",
+            labels: ["namespace", "pod"],
+          },
+        ],
+      },
+      {
+        id: "restarts",
+        label: "重启",
+        top: true,
+        namespace: true,
+        panels: [
+          {
+            title: "重启次数",
+            description: "所选时间范围内新增的容器重启次数，不是计数器的累计值。",
+            query: "pod_restarts",
+            unit: "count",
+            labels: ["namespace", "pod"],
+            requires: "kube-state-metrics",
+          },
+        ],
+      },
+    ],
   },
-] as const;
+  {
+    id: "node-io",
+    label: "磁盘与网络",
+    views: [
+      {
+        id: "filesystem",
+        label: "文件系统",
+        top: true,
+        namespace: false,
+        panels: [
+          {
+            title: "文件系统使用率",
+            query: "node_filesystem_utilization",
+            unit: "ratio",
+            labels: ["node", "mountpoint"],
+            requires: "node-exporter",
+          },
+        ],
+      },
+      {
+        id: "network",
+        label: "网络",
+        top: true,
+        namespace: false,
+        panels: [
+          {
+            title: "网络接收",
+            query: "node_network_receive",
+            unit: "bytes_per_second",
+            labels: ["node", "device"],
+            requires: "node-exporter",
+          },
+          {
+            title: "网络发送",
+            query: "node_network_transmit",
+            unit: "bytes_per_second",
+            labels: ["node", "device"],
+            requires: "node-exporter",
+          },
+        ],
+      },
+      {
+        id: "disk",
+        label: "磁盘 IO",
+        top: true,
+        namespace: false,
+        panels: [
+          {
+            title: "磁盘读取",
+            query: "node_disk_read",
+            unit: "bytes_per_second",
+            labels: ["node", "device"],
+            requires: "node-exporter",
+          },
+          {
+            title: "磁盘写入",
+            query: "node_disk_write",
+            unit: "bytes_per_second",
+            labels: ["node", "device"],
+            requires: "node-exporter",
+          },
+        ],
+      },
+    ],
+  },
+] as const satisfies readonly {
+  id: string;
+  label: string;
+  views: readonly {
+    id: string;
+    label: string;
+    top: boolean;
+    namespace: boolean;
+    panels: readonly Panel[];
+  }[];
+}[];
 
 type DimensionId = (typeof DIMENSIONS)[number]["id"];
 
@@ -89,8 +359,16 @@ const TOP_CHOICES = [5, 10, 20] as const;
 
 const ALL_CLUSTERS = "__all__";
 
-/** What the Server accepts as a Namespace, checked here so a typo does not
- * become a 400 the operator has to read as an error banner. */
+/** Which install a missing component belongs to, in the operator's words. */
+const COMPONENT_LABELS: Record<string, string> = {
+  "kube-state-metrics": "对象指标导出器（kube-state-metrics）",
+  "node-exporter": "节点指标导出器（node-exporter）",
+};
+
+/**
+ * What the Server accepts as a Namespace, checked here so a typo does not
+ * become a 400 the operator has to read as an error banner.
+ */
 const NAMESPACE_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 
 function formatMillicores(value: number): string {
@@ -109,6 +387,21 @@ function formatBytes(value: number): string {
     unit += 1;
   }
   return `${scaled.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatterFor(unit: Unit): (value: number) => string {
+  switch (unit) {
+    case "bytes":
+      return formatBytes;
+    case "bytes_per_second":
+      return (value) => `${formatBytes(value)}/s`;
+    case "ratio":
+      return (value) => `${(value * 100).toFixed(1)}%`;
+    case "count":
+      return (value) => `${Math.round(value)} 次`;
+    default:
+      return formatMillicores;
+  }
 }
 
 function seriesLabel(
@@ -171,41 +464,33 @@ function IssueNotice({ issues }: { issues: MetricsQueryIssue[] }) {
  * One chart panel.
  *
  * Every state the Server can answer with is distinct here. "No data" and "no
- * permission" and "collection is off" lead to completely different actions, so
- * collapsing them into one empty box would leave the reader to guess which one
- * they are looking at.
+ * permission" and "this query needs a component nobody installed" lead to
+ * completely different actions, so collapsing them into one empty box would
+ * leave the reader to guess which one they are looking at.
  */
 function MetricsPanel({
-  title,
-  description,
-  queryName,
+  panel,
   clusterIds,
   namespace,
   range,
-  window,
+  window: chartWindow,
   top,
-  unit,
-  dimensions,
   live,
 }: {
-  title: string;
-  description?: string;
-  queryName: string;
+  panel: Panel;
   clusterIds: string[] | undefined;
   namespace?: string;
   range: (typeof RANGES)[number];
   window: { start: Date; end: Date };
   top?: number;
-  unit: "millicores" | "bytes";
-  dimensions: readonly string[];
   live: boolean;
 }) {
   const query = useMetricsQuery(
     {
-      name: queryName,
+      name: panel.query,
       clusterIds,
-      start: window.start,
-      end: window.end,
+      start: chartWindow.start,
+      end: chartWindow.end,
       stepSeconds: range.stepSeconds,
       ...(namespace ? { namespace } : {}),
       ...(top ? { top } : {}),
@@ -213,7 +498,8 @@ function MetricsPanel({
     { live },
   );
 
-  const formatValue = unit === "bytes" ? formatBytes : formatMillicores;
+  const formatValue = formatterFor(panel.unit);
+  const labels = panel.labels;
   const chart = useMemo(() => {
     const result = query.data;
     if (!result) {
@@ -221,16 +507,16 @@ function MetricsPanel({
     }
     const timestamps = result.series[0]?.points.map((point) => Number(point[0])) ?? [];
     const series: ChartSeries[] = result.series.map((item) => ({
-      id: `${item.cluster_id}:${dimensions.map((dimension) => item.labels[dimension] ?? "").join("/")}`,
-      label: seriesLabel(item, dimensions),
+      id: `${item.cluster_id}:${labels.map((label) => item.labels[label] ?? "").join("/")}`,
+      label: seriesLabel(item, labels),
       values: item.points.map((point) => (point[1] === null ? null : Number(point[1]))),
     }));
     return { timestamps, series };
-  }, [dimensions, query.data]);
+  }, [labels, query.data]);
 
   return (
     <section className="border-border bg-surface rounded-panel border p-4">
-      <SectionTitle title={title} description={description} />
+      <SectionTitle title={panel.title} description={panel.description} />
       {query.isPending ? <LoadingState /> : null}
       {query.error ? (
         <ErrorState
@@ -239,14 +525,7 @@ function MetricsPanel({
         />
       ) : null}
       {!query.isPending && !query.error && chart && chart.series.length === 0 ? (
-        <EmptyState
-          title="暂无指标数据"
-          description={
-            namespace
-              ? `该时间范围内 Namespace ${namespace} 没有采样。请确认名称，或该 Namespace 当前没有运行中的 Pod。`
-              : "该时间范围内没有采样。集群可能尚未启用采集，或采集刚刚开始。"
-          }
-        />
+        <EmptyState title="暂无指标数据" description={emptyDescription(panel, namespace)} />
       ) : null}
       {!query.error && chart && chart.series.length > 0 ? (
         <>
@@ -254,7 +533,7 @@ function MetricsPanel({
             timestamps={chart.timestamps}
             series={chart.series}
             formatValue={formatValue}
-            ariaLabel={title}
+            ariaLabel={panel.title}
           />
           <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
             {chart.series.map((item) => (
@@ -270,11 +549,29 @@ function MetricsPanel({
   );
 }
 
+/**
+ * An empty panel that depends on an exporter says so.
+ *
+ * Otherwise a Cluster that never installed the object exporter and a Cluster
+ * that is genuinely idle produce the same blank chart, and the first one is
+ * fixed by an install the operator would never think to make.
+ */
+function emptyDescription(panel: Panel, namespace: string | undefined): string {
+  if (panel.requires) {
+    return `该视图需要${COMPONENT_LABELS[panel.requires]}。它随采集组件一并安装——若集群已安装采集但这里仍为空，请在「采集接入」中确认该组件的状态。`;
+  }
+  if (namespace) {
+    return `该时间范围内 Namespace ${namespace} 没有采样。请确认名称，或该 Namespace 当前没有运行中的 Pod。`;
+  }
+  return "该时间范围内没有采样。集群可能尚未启用采集，或采集刚刚开始。";
+}
+
 export function MetricsOverviewSection() {
   const live = useWindowVisible();
   const namespaceInputId = useId();
   const [rangeId, setRangeId] = useState<RangeId>("1h");
   const [dimensionId, setDimensionId] = useState<DimensionId>("cluster");
+  const [viewId, setViewId] = useState<string>("usage");
   const [clusterId, setClusterId] = useState<string>(ALL_CLUSTERS);
   const [top, setTop] = useState<number>(10);
   // Draft and applied are separate so a half-typed Namespace never becomes a
@@ -284,6 +581,10 @@ export function MetricsOverviewSection() {
   const [namespace, setNamespace] = useState("");
   const range = RANGES.find((item) => item.id === rangeId) ?? RANGES[0];
   const dimension = DIMENSIONS.find((item) => item.id === dimensionId) ?? DIMENSIONS[0];
+  // Falling back to the dimension's first view rather than clearing the
+  // selection: 用量 exists everywhere, so moving between dimensions keeps
+  // showing the same angle wherever it makes sense.
+  const view = dimension.views.find((item) => item.id === viewId) ?? dimension.views[0];
 
   const namespaceInvalid = namespaceDraft !== "" && !NAMESPACE_PATTERN.test(namespaceDraft);
 
@@ -327,8 +628,8 @@ export function MetricsOverviewSection() {
   const selectedClusters = clusterId === ALL_CLUSTERS ? undefined : [clusterId];
   // A Namespace filter only travels with a query that declares it; sending it
   // elsewhere is refused by the Server rather than ignored, so the value is
-  // dropped here when the dimension changes under it.
-  const appliedNamespace = dimension.namespace ? namespace : "";
+  // dropped here when the view changes under it.
+  const appliedNamespace = view.namespace ? namespace : "";
 
   if (health.isPending || !chartWindow) {
     return <LoadingState />;
@@ -366,7 +667,7 @@ export function MetricsOverviewSection() {
             ))}
           </SelectContent>
         </Select>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {DIMENSIONS.map((item) => (
             <Button
               key={item.id}
@@ -392,7 +693,22 @@ export function MetricsOverviewSection() {
         </div>
       </div>
 
-      {dimension.top !== null ? (
+      {dimension.views.length > 1 ? (
+        <div className="flex flex-wrap gap-1">
+          {dimension.views.map((item) => (
+            <Button
+              key={item.id}
+              variant={item.id === view.id ? "primary" : "ghost"}
+              size="sm"
+              onClick={() => setViewId(item.id)}
+            >
+              {item.label}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+
+      {view.top || view.namespace ? (
         <form
           className="flex flex-wrap items-end gap-2"
           onSubmit={(event) => {
@@ -402,7 +718,7 @@ export function MetricsOverviewSection() {
             }
           }}
         >
-          {dimension.namespace ? (
+          {view.namespace ? (
             <div className="flex flex-col gap-1">
               <label htmlFor={namespaceInputId} className="text-muted-foreground text-xs">
                 Namespace（留空表示全部）
@@ -418,22 +734,24 @@ export function MetricsOverviewSection() {
               />
             </div>
           ) : null}
-          <div className="flex flex-col gap-1">
-            <span className="text-muted-foreground text-xs">Top N</span>
-            <Select value={String(top)} onValueChange={(value) => setTop(Number(value))}>
-              <SelectTrigger className="w-[110px]" aria-label="Top N">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TOP_CHOICES.map((choice) => (
-                  <SelectItem key={choice} value={String(choice)}>
-                    前 {choice} 条
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {dimension.namespace ? (
+          {view.top ? (
+            <div className="flex flex-col gap-1">
+              <span className="text-muted-foreground text-xs">Top N</span>
+              <Select value={String(top)} onValueChange={(value) => setTop(Number(value))}>
+                <SelectTrigger className="w-[110px]" aria-label="Top N">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TOP_CHOICES.map((choice) => (
+                    <SelectItem key={choice} value={String(choice)}>
+                      前 {choice} 条
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+          {view.namespace ? (
             <Button type="submit" size="sm" variant="ghost" disabled={namespaceInvalid}>
               应用
             </Button>
@@ -446,32 +764,18 @@ export function MetricsOverviewSection() {
         </form>
       ) : null}
 
-      <MetricsPanel
-        title={`${dimension.label} CPU 用量`}
-        description={dimension.top !== null ? `按当前范围内的用量取前 ${top} 条。` : undefined}
-        queryName={dimension.cpu}
-        clusterIds={selectedClusters}
-        namespace={appliedNamespace}
-        range={range}
-        window={chartWindow}
-        top={dimension.top === null ? undefined : top}
-        unit="millicores"
-        dimensions={dimension.labels}
-        live={live}
-      />
-      <MetricsPanel
-        title={`${dimension.label}内存用量`}
-        description={dimension.top !== null ? `按当前范围内的用量取前 ${top} 条。` : undefined}
-        queryName={dimension.memory}
-        clusterIds={selectedClusters}
-        namespace={appliedNamespace}
-        range={range}
-        window={chartWindow}
-        top={dimension.top === null ? undefined : top}
-        unit="bytes"
-        dimensions={dimension.labels}
-        live={live}
-      />
+      {view.panels.map((panel) => (
+        <MetricsPanel
+          key={panel.query}
+          panel={panel}
+          clusterIds={selectedClusters}
+          namespace={appliedNamespace}
+          range={range}
+          window={chartWindow}
+          top={view.top ? top : undefined}
+          live={live}
+        />
+      ))}
     </div>
   );
 }

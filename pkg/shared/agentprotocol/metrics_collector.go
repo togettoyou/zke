@@ -144,7 +144,8 @@ func ValidateMetricsCollectorRequest(
 			request.GetScrapeInterval() != "" || request.GetBufferSize() != "" ||
 			request.GetKubeletMetricsPort() != 0 ||
 			request.GetCpuRequest() != "" || request.GetMemoryRequest() != "" ||
-			request.GetCpuLimit() != "" || request.GetMemoryLimit() != "" {
+			request.GetCpuLimit() != "" || request.GetMemoryLimit() != "" ||
+			request.GetKubeStateMetrics() != nil || request.GetNodeExporter() != nil {
 			return ErrStreamProtocol
 		}
 		return nil
@@ -181,6 +182,45 @@ func ValidateMetricsCollectorRequest(
 		request.GetMemoryRequest(),
 		request.GetCpuLimit(),
 		request.GetMemoryLimit(),
+	} {
+		if len(quantity) > MaxCollectorQuantityLength ||
+			strings.TrimSpace(quantity) != quantity {
+			return ErrStreamProtocol
+		}
+	}
+	// A missing component message means the Server does not want that target
+	// installed, which is how an older Server's requests look. A present one
+	// must be complete, because a component with a blank image is not a smaller
+	// install — it is a Deployment Kubernetes would refuse.
+	for _, component := range []*agentv1.MetricsCollectorComponent{
+		request.GetKubeStateMetrics(),
+		request.GetNodeExporter(),
+	} {
+		if component == nil {
+			continue
+		}
+		if err := validateCollectorComponent(component); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCollectorComponent(component *agentv1.MetricsCollectorComponent) error {
+	image := component.GetImage()
+	if image == "" || len(image) > MaxCollectorImageLength ||
+		strings.TrimSpace(image) != image ||
+		strings.ContainsAny(image, " \t\r\n") {
+		return ErrStreamProtocol
+	}
+	if !validCollectorPullPolicy(component.GetImagePullPolicy()) {
+		return ErrStreamProtocol
+	}
+	for _, quantity := range []string{
+		component.GetCpuRequest(),
+		component.GetMemoryRequest(),
+		component.GetCpuLimit(),
+		component.GetMemoryLimit(),
 	} {
 		if len(quantity) > MaxCollectorQuantityLength ||
 			strings.TrimSpace(quantity) != quantity {

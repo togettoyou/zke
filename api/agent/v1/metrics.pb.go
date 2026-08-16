@@ -333,8 +333,17 @@ type MetricsCollectorRequest struct {
 	MemoryRequest string `protobuf:"bytes,8,opt,name=memory_request,json=memoryRequest,proto3" json:"memory_request,omitempty"`
 	CpuLimit      string `protobuf:"bytes,9,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`
 	MemoryLimit   string `protobuf:"bytes,10,opt,name=memory_limit,json=memoryLimit,proto3" json:"memory_limit,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// The two additional scrape targets. They carry the same shape as the
+	// collector's own fields above, which stay flat so an Agent too old to know
+	// these messages still installs the collector exactly as it used to — it
+	// ignores what it cannot parse and renders a scrape configuration with the
+	// kubelet target alone.
+	//
+	// An empty message means the Server does not want that target installed.
+	KubeStateMetrics *MetricsCollectorComponent `protobuf:"bytes,11,opt,name=kube_state_metrics,json=kubeStateMetrics,proto3" json:"kube_state_metrics,omitempty"`
+	NodeExporter     *MetricsCollectorComponent `protobuf:"bytes,12,opt,name=node_exporter,json=nodeExporter,proto3" json:"node_exporter,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *MetricsCollectorRequest) Reset() {
@@ -437,6 +446,107 @@ func (x *MetricsCollectorRequest) GetMemoryLimit() string {
 	return ""
 }
 
+func (x *MetricsCollectorRequest) GetKubeStateMetrics() *MetricsCollectorComponent {
+	if x != nil {
+		return x.KubeStateMetrics
+	}
+	return nil
+}
+
+func (x *MetricsCollectorRequest) GetNodeExporter() *MetricsCollectorComponent {
+	if x != nil {
+		return x.NodeExporter
+	}
+	return nil
+}
+
+// MetricsCollectorComponent is what the Server decides about one installed
+// workload. The Agent still owns the object's shape; this only says which image
+// runs it and how much of the Cluster it may take.
+type MetricsCollectorComponent struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Image           string                 `protobuf:"bytes,1,opt,name=image,proto3" json:"image,omitempty"`
+	ImagePullPolicy string                 `protobuf:"bytes,2,opt,name=image_pull_policy,json=imagePullPolicy,proto3" json:"image_pull_policy,omitempty"`
+	CpuRequest      string                 `protobuf:"bytes,3,opt,name=cpu_request,json=cpuRequest,proto3" json:"cpu_request,omitempty"`
+	MemoryRequest   string                 `protobuf:"bytes,4,opt,name=memory_request,json=memoryRequest,proto3" json:"memory_request,omitempty"`
+	CpuLimit        string                 `protobuf:"bytes,5,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`
+	MemoryLimit     string                 `protobuf:"bytes,6,opt,name=memory_limit,json=memoryLimit,proto3" json:"memory_limit,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *MetricsCollectorComponent) Reset() {
+	*x = MetricsCollectorComponent{}
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricsCollectorComponent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricsCollectorComponent) ProtoMessage() {}
+
+func (x *MetricsCollectorComponent) ProtoReflect() protoreflect.Message {
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricsCollectorComponent.ProtoReflect.Descriptor instead.
+func (*MetricsCollectorComponent) Descriptor() ([]byte, []int) {
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *MetricsCollectorComponent) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *MetricsCollectorComponent) GetImagePullPolicy() string {
+	if x != nil {
+		return x.ImagePullPolicy
+	}
+	return ""
+}
+
+func (x *MetricsCollectorComponent) GetCpuRequest() string {
+	if x != nil {
+		return x.CpuRequest
+	}
+	return ""
+}
+
+func (x *MetricsCollectorComponent) GetMemoryRequest() string {
+	if x != nil {
+		return x.MemoryRequest
+	}
+	return ""
+}
+
+func (x *MetricsCollectorComponent) GetCpuLimit() string {
+	if x != nil {
+		return x.CpuLimit
+	}
+	return ""
+}
+
+func (x *MetricsCollectorComponent) GetMemoryLimit() string {
+	if x != nil {
+		return x.MemoryLimit
+	}
+	return ""
+}
+
 type MetricsCollectorState struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Installed       bool                   `protobuf:"varint,1,opt,name=installed,proto3" json:"installed,omitempty"`
@@ -447,13 +557,17 @@ type MetricsCollectorState struct {
 	// Whether the Agent holds a credential the collector can present. It is
 	// reported as a fact, never as a value.
 	CredentialReady bool `protobuf:"varint,6,opt,name=credential_ready,json=credentialReady,proto3" json:"credential_ready,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// One entry per component the Agent knows about, including the collector
+	// itself. The three fields above stay for the collector so an older Server
+	// reading this response still sees what it expects.
+	Components    []*MetricsComponentState `protobuf:"bytes,7,rep,name=components,proto3" json:"components,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MetricsCollectorState) Reset() {
 	*x = MetricsCollectorState{}
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[4]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -465,7 +579,7 @@ func (x *MetricsCollectorState) String() string {
 func (*MetricsCollectorState) ProtoMessage() {}
 
 func (x *MetricsCollectorState) ProtoReflect() protoreflect.Message {
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[4]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -478,7 +592,7 @@ func (x *MetricsCollectorState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsCollectorState.ProtoReflect.Descriptor instead.
 func (*MetricsCollectorState) Descriptor() ([]byte, []int) {
-	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{4}
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *MetricsCollectorState) GetInstalled() bool {
@@ -523,6 +637,112 @@ func (x *MetricsCollectorState) GetCredentialReady() bool {
 	return false
 }
 
+func (x *MetricsCollectorState) GetComponents() []*MetricsComponentState {
+	if x != nil {
+		return x.Components
+	}
+	return nil
+}
+
+type MetricsComponentState struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Component is one of the identifiers in pkg/shared/observability.
+	Component       string `protobuf:"bytes,1,opt,name=component,proto3" json:"component,omitempty"`
+	Installed       bool   `protobuf:"varint,2,opt,name=installed,proto3" json:"installed,omitempty"`
+	Image           string `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	DesiredReplicas int32  `protobuf:"varint,4,opt,name=desired_replicas,json=desiredReplicas,proto3" json:"desired_replicas,omitempty"`
+	ReadyReplicas   int32  `protobuf:"varint,5,opt,name=ready_replicas,json=readyReplicas,proto3" json:"ready_replicas,omitempty"`
+	// UnavailableReason is set when this component is not installed for a reason
+	// the operator has to act on rather than because nobody asked for it. The
+	// node metrics exporter needs host namespaces and host paths, which a
+	// Namespace running under a restrictive Pod Security admission level refuses;
+	// that refusal must be reported rather than retried forever, and it must not
+	// fail the whole install — the rest of the pipeline works without it.
+	UnavailableReason  string `protobuf:"bytes,6,opt,name=unavailable_reason,json=unavailableReason,proto3" json:"unavailable_reason,omitempty"`
+	UnavailableMessage string `protobuf:"bytes,7,opt,name=unavailable_message,json=unavailableMessage,proto3" json:"unavailable_message,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *MetricsComponentState) Reset() {
+	*x = MetricsComponentState{}
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricsComponentState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricsComponentState) ProtoMessage() {}
+
+func (x *MetricsComponentState) ProtoReflect() protoreflect.Message {
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricsComponentState.ProtoReflect.Descriptor instead.
+func (*MetricsComponentState) Descriptor() ([]byte, []int) {
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *MetricsComponentState) GetComponent() string {
+	if x != nil {
+		return x.Component
+	}
+	return ""
+}
+
+func (x *MetricsComponentState) GetInstalled() bool {
+	if x != nil {
+		return x.Installed
+	}
+	return false
+}
+
+func (x *MetricsComponentState) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *MetricsComponentState) GetDesiredReplicas() int32 {
+	if x != nil {
+		return x.DesiredReplicas
+	}
+	return 0
+}
+
+func (x *MetricsComponentState) GetReadyReplicas() int32 {
+	if x != nil {
+		return x.ReadyReplicas
+	}
+	return 0
+}
+
+func (x *MetricsComponentState) GetUnavailableReason() string {
+	if x != nil {
+		return x.UnavailableReason
+	}
+	return ""
+}
+
+func (x *MetricsComponentState) GetUnavailableMessage() string {
+	if x != nil {
+		return x.UnavailableMessage
+	}
+	return ""
+}
+
 type MetricsCollectorResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Result               ResultCode             `protobuf:"varint,1,opt,name=result,proto3,enum=zke.agent.v1.ResultCode" json:"result,omitempty"`
@@ -536,7 +756,7 @@ type MetricsCollectorResponse struct {
 
 func (x *MetricsCollectorResponse) Reset() {
 	*x = MetricsCollectorResponse{}
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[5]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -548,7 +768,7 @@ func (x *MetricsCollectorResponse) String() string {
 func (*MetricsCollectorResponse) ProtoMessage() {}
 
 func (x *MetricsCollectorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[5]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -561,7 +781,7 @@ func (x *MetricsCollectorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsCollectorResponse.ProtoReflect.Descriptor instead.
 func (*MetricsCollectorResponse) Descriptor() ([]byte, []int) {
-	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{5}
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *MetricsCollectorResponse) GetResult() ResultCode {
@@ -615,7 +835,7 @@ type MetricsIngestAck struct {
 
 func (x *MetricsIngestAck) Reset() {
 	*x = MetricsIngestAck{}
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[6]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -627,7 +847,7 @@ func (x *MetricsIngestAck) String() string {
 func (*MetricsIngestAck) ProtoMessage() {}
 
 func (x *MetricsIngestAck) ProtoReflect() protoreflect.Message {
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[6]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -640,7 +860,7 @@ func (x *MetricsIngestAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsIngestAck.ProtoReflect.Descriptor instead.
 func (*MetricsIngestAck) Descriptor() ([]byte, []int) {
-	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{6}
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *MetricsIngestAck) GetBatchId() uint64 {
@@ -694,7 +914,7 @@ const file_api_agent_v1_metrics_proto_rawDesc = "" +
 	"\x15max_in_flight_batches\x18\x05 \x01(\rR\x12maxInFlightBatches\"R\n" +
 	"\x12MetricsIngestBatch\x12\x19\n" +
 	"\bbatch_id\x18\x01 \x01(\x04R\abatchId\x12!\n" +
-	"\fpayload_size\x18\x02 \x01(\x04R\vpayloadSize\"\x9d\x03\n" +
+	"\fpayload_size\x18\x02 \x01(\x04R\vpayloadSize\"\xc2\x04\n" +
 	"\x17MetricsCollectorRequest\x12<\n" +
 	"\x06action\x18\x01 \x01(\x0e2$.zke.agent.v1.MetricsCollectorActionR\x06action\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12*\n" +
@@ -708,14 +928,35 @@ const file_api_agent_v1_metrics_proto_rawDesc = "" +
 	"\x0ememory_request\x18\b \x01(\tR\rmemoryRequest\x12\x1b\n" +
 	"\tcpu_limit\x18\t \x01(\tR\bcpuLimit\x12!\n" +
 	"\fmemory_limit\x18\n" +
-	" \x01(\tR\vmemoryLimit\"\xe6\x01\n" +
+	" \x01(\tR\vmemoryLimit\x12U\n" +
+	"\x12kube_state_metrics\x18\v \x01(\v2'.zke.agent.v1.MetricsCollectorComponentR\x10kubeStateMetrics\x12L\n" +
+	"\rnode_exporter\x18\f \x01(\v2'.zke.agent.v1.MetricsCollectorComponentR\fnodeExporter\"\xe5\x01\n" +
+	"\x19MetricsCollectorComponent\x12\x14\n" +
+	"\x05image\x18\x01 \x01(\tR\x05image\x12*\n" +
+	"\x11image_pull_policy\x18\x02 \x01(\tR\x0fimagePullPolicy\x12\x1f\n" +
+	"\vcpu_request\x18\x03 \x01(\tR\n" +
+	"cpuRequest\x12%\n" +
+	"\x0ememory_request\x18\x04 \x01(\tR\rmemoryRequest\x12\x1b\n" +
+	"\tcpu_limit\x18\x05 \x01(\tR\bcpuLimit\x12!\n" +
+	"\fmemory_limit\x18\x06 \x01(\tR\vmemoryLimit\"\xab\x02\n" +
 	"\x15MetricsCollectorState\x12\x1c\n" +
 	"\tinstalled\x18\x01 \x01(\bR\tinstalled\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x14\n" +
 	"\x05image\x18\x03 \x01(\tR\x05image\x12)\n" +
 	"\x10desired_replicas\x18\x04 \x01(\x05R\x0fdesiredReplicas\x12%\n" +
 	"\x0eready_replicas\x18\x05 \x01(\x05R\rreadyReplicas\x12)\n" +
-	"\x10credential_ready\x18\x06 \x01(\bR\x0fcredentialReady\"\xef\x01\n" +
+	"\x10credential_ready\x18\x06 \x01(\bR\x0fcredentialReady\x12C\n" +
+	"\n" +
+	"components\x18\a \x03(\v2#.zke.agent.v1.MetricsComponentStateR\n" +
+	"components\"\x9b\x02\n" +
+	"\x15MetricsComponentState\x12\x1c\n" +
+	"\tcomponent\x18\x01 \x01(\tR\tcomponent\x12\x1c\n" +
+	"\tinstalled\x18\x02 \x01(\bR\tinstalled\x12\x14\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\x12)\n" +
+	"\x10desired_replicas\x18\x04 \x01(\x05R\x0fdesiredReplicas\x12%\n" +
+	"\x0eready_replicas\x18\x05 \x01(\x05R\rreadyReplicas\x12-\n" +
+	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReason\x12/\n" +
+	"\x13unavailable_message\x18\a \x01(\tR\x12unavailableMessage\"\xef\x01\n" +
 	"\x18MetricsCollectorResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\x05R\x14kubernetesStatusCode\x12\x16\n" +
@@ -750,31 +991,36 @@ func file_api_agent_v1_metrics_proto_rawDescGZIP() []byte {
 }
 
 var file_api_agent_v1_metrics_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_api_agent_v1_metrics_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_api_agent_v1_metrics_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_api_agent_v1_metrics_proto_goTypes = []any{
-	(MetricsPayloadEncoding)(0),      // 0: zke.agent.v1.MetricsPayloadEncoding
-	(MetricsCollectorAction)(0),      // 1: zke.agent.v1.MetricsCollectorAction
-	(*MetricsIngestHello)(nil),       // 2: zke.agent.v1.MetricsIngestHello
-	(*MetricsIngestReady)(nil),       // 3: zke.agent.v1.MetricsIngestReady
-	(*MetricsIngestBatch)(nil),       // 4: zke.agent.v1.MetricsIngestBatch
-	(*MetricsCollectorRequest)(nil),  // 5: zke.agent.v1.MetricsCollectorRequest
-	(*MetricsCollectorState)(nil),    // 6: zke.agent.v1.MetricsCollectorState
-	(*MetricsCollectorResponse)(nil), // 7: zke.agent.v1.MetricsCollectorResponse
-	(*MetricsIngestAck)(nil),         // 8: zke.agent.v1.MetricsIngestAck
-	(ResultCode)(0),                  // 9: zke.agent.v1.ResultCode
+	(MetricsPayloadEncoding)(0),       // 0: zke.agent.v1.MetricsPayloadEncoding
+	(MetricsCollectorAction)(0),       // 1: zke.agent.v1.MetricsCollectorAction
+	(*MetricsIngestHello)(nil),        // 2: zke.agent.v1.MetricsIngestHello
+	(*MetricsIngestReady)(nil),        // 3: zke.agent.v1.MetricsIngestReady
+	(*MetricsIngestBatch)(nil),        // 4: zke.agent.v1.MetricsIngestBatch
+	(*MetricsCollectorRequest)(nil),   // 5: zke.agent.v1.MetricsCollectorRequest
+	(*MetricsCollectorComponent)(nil), // 6: zke.agent.v1.MetricsCollectorComponent
+	(*MetricsCollectorState)(nil),     // 7: zke.agent.v1.MetricsCollectorState
+	(*MetricsComponentState)(nil),     // 8: zke.agent.v1.MetricsComponentState
+	(*MetricsCollectorResponse)(nil),  // 9: zke.agent.v1.MetricsCollectorResponse
+	(*MetricsIngestAck)(nil),          // 10: zke.agent.v1.MetricsIngestAck
+	(ResultCode)(0),                   // 11: zke.agent.v1.ResultCode
 }
 var file_api_agent_v1_metrics_proto_depIdxs = []int32{
-	0, // 0: zke.agent.v1.MetricsIngestHello.payload_encoding:type_name -> zke.agent.v1.MetricsPayloadEncoding
-	9, // 1: zke.agent.v1.MetricsIngestReady.result:type_name -> zke.agent.v1.ResultCode
-	1, // 2: zke.agent.v1.MetricsCollectorRequest.action:type_name -> zke.agent.v1.MetricsCollectorAction
-	9, // 3: zke.agent.v1.MetricsCollectorResponse.result:type_name -> zke.agent.v1.ResultCode
-	6, // 4: zke.agent.v1.MetricsCollectorResponse.state:type_name -> zke.agent.v1.MetricsCollectorState
-	9, // 5: zke.agent.v1.MetricsIngestAck.result:type_name -> zke.agent.v1.ResultCode
-	6, // [6:6] is the sub-list for method output_type
-	6, // [6:6] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	0,  // 0: zke.agent.v1.MetricsIngestHello.payload_encoding:type_name -> zke.agent.v1.MetricsPayloadEncoding
+	11, // 1: zke.agent.v1.MetricsIngestReady.result:type_name -> zke.agent.v1.ResultCode
+	1,  // 2: zke.agent.v1.MetricsCollectorRequest.action:type_name -> zke.agent.v1.MetricsCollectorAction
+	6,  // 3: zke.agent.v1.MetricsCollectorRequest.kube_state_metrics:type_name -> zke.agent.v1.MetricsCollectorComponent
+	6,  // 4: zke.agent.v1.MetricsCollectorRequest.node_exporter:type_name -> zke.agent.v1.MetricsCollectorComponent
+	8,  // 5: zke.agent.v1.MetricsCollectorState.components:type_name -> zke.agent.v1.MetricsComponentState
+	11, // 6: zke.agent.v1.MetricsCollectorResponse.result:type_name -> zke.agent.v1.ResultCode
+	7,  // 7: zke.agent.v1.MetricsCollectorResponse.state:type_name -> zke.agent.v1.MetricsCollectorState
+	11, // 8: zke.agent.v1.MetricsIngestAck.result:type_name -> zke.agent.v1.ResultCode
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_api_agent_v1_metrics_proto_init() }
@@ -789,7 +1035,7 @@ func file_api_agent_v1_metrics_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_agent_v1_metrics_proto_rawDesc), len(file_api_agent_v1_metrics_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

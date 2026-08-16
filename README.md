@@ -72,7 +72,7 @@ docker run -d --name zke \
 >
 > **数据：** 请务必保留 `zke-data`，它保存 Server Managed PKI，丢失后已接入的 Agent 无法继续连接。
 >
-> **指标：** 多集群指标默认启用，接入集群后在「可观测性 → 采集接入」中安装采集组件即可看到曲线。
+> **指标：** 多集群指标默认启用，接入集群后在「可观测性 → 采集接入」中一键安装三个采集组件即可看到曲线。
 > 用 `-e ZKE_OBSERVABILITY_METRICS_ENABLED=false` 关闭。
 
 ### 接入第一个集群
@@ -97,7 +97,7 @@ Agent 需要能访问 Server 的 HTTP 注册地址和 QUIC/UDP 地址。本机 D
 | 日常运维 | Pod 日志、Web Terminal、临时访问、事件追踪、资源用量 |
 | 诊断与回滚 | 工作负载诊断、关联对象分析、版本回滚 |
 | 原生资源 | Discovery、CRD 资源浏览、YAML 编辑、多文档清单应用与删除 |
-| 多集群指标 | 集群内采集、经 Agent 回传、集群/节点/Namespace/Pod 四个维度的 CPU 与内存视图、每集群摄取预算（默认启用） |
+| 多集群指标 | 集群内三组件一体采集、经 Agent 回传、五个维度的用量与利用率、申请与限制、节点磁盘与网络、每集群摄取预算（默认启用） |
 | 权限模型 | Tenant、Project、RBAC 与细粒度操作权限 |
 | 安全与审计 | 敏感操作确认、DryRun 差异、并发身份保护、审计日志 |
 
@@ -106,8 +106,9 @@ Agent 需要能访问 Server 的 HTTP 注册地址和 QUIC/UDP 地址。本机 D
 ## 架构
 
 每个接入集群部署一个 ZKE Agent。Agent 主动建立 QUIC/mTLS 长连接，ZKE Server 通过对应连接将查询和操作定域到目标集群。
-多集群指标复用同一条出向连接：集群内 vmagent 抓取后经 Agent 回传，Server 摄取时按连接身份写入 `zke_cluster_id`
-再存入 VictoriaMetrics。日志采集与 VictoriaLogs 仍在规划中，图中以虚线标注。
+多集群指标复用同一条出向连接：集群内 vmagent 抓取 kubelet、kube-state-metrics 与 node-exporter 后经 Agent
+回传，Server 摄取时按连接身份写入 `zke_cluster_id` 再存入 VictoriaMetrics。三个采集组件由该集群的 Agent
+一并安装与卸载。日志采集与 VictoriaLogs 仍在规划中，图中以虚线标注。
 
 ![ZKE 架构：平台用户经 Server，Agent 从各集群主动出向连接，vmagent 采集指标经 Agent 回传至 VictoriaMetrics，日志链路规划中](docs/images/architecture.svg)
 

@@ -63,6 +63,22 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 		{name: "namespace_memory_usage"},
 		{name: "pod_cpu_usage", top: 10},
 		{name: "pod_memory_usage", top: 10},
+		{name: "cluster_cpu_utilization"},
+		{name: "cluster_memory_utilization"},
+		{name: "node_cpu_utilization"},
+		{name: "node_memory_utilization"},
+		{name: "namespace_cpu_requests"},
+		{name: "namespace_memory_requests"},
+		{name: "namespace_cpu_limits"},
+		{name: "namespace_memory_limits"},
+		{name: "workload_cpu_usage", top: 10},
+		{name: "workload_memory_usage", top: 10},
+		{name: "pod_restarts", top: 10},
+		{name: "node_filesystem_utilization"},
+		{name: "node_network_receive"},
+		{name: "node_network_transmit"},
+		{name: "node_disk_read"},
+		{name: "node_disk_write"},
 	} {
 		name := testCase.name
 		t.Run(name, func(t *testing.T) {
@@ -135,6 +151,52 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	if memory.Series[0].ClusterName != "probe" {
 		t.Fatalf("series Cluster name = %q", memory.Series[0].ClusterName)
 	}
+
+	// The rollup has to name the Deployment. Reporting the ReplicaSet would make
+	// the same workload look like a different one after every rollout, and a
+	// template that compiles cannot tell anyone whether the two-level join
+	// actually resolved.
+	workload, err := service.Query(context.Background(), Input{
+		UserID: userID,
+		Name:   "workload_memory_usage",
+		Start:  end.Add(-10 * time.Minute),
+		End:    end,
+		Step:   time.Minute,
+		Top:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workload.Series) != 1 {
+		t.Fatalf("workload_memory_usage returned %d series, want the seeded Deployment", len(workload.Series))
+	}
+	labels := workload.Series[0].Labels
+	if labels["workload"] != "probe-app" || labels["workload_kind"] != "Deployment" {
+		t.Fatalf("workload labels = %v, want the Deployment behind the ReplicaSet", labels)
+	}
+	if labels["namespace"] != "kube-system" {
+		t.Fatalf("workload namespace = %q", labels["namespace"])
+	}
+
+	// Utilisation needs both sides of the division to survive the join.
+	utilization, err := service.Query(context.Background(), Input{
+		UserID: userID,
+		Name:   "node_memory_utilization",
+		Start:  end.Add(-10 * time.Minute),
+		End:    end,
+		Step:   time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(utilization.Series) != 1 {
+		t.Fatalf("node_memory_utilization returned %d series, want the seeded Node", len(utilization.Series))
+	}
+	last := utilization.Series[0].Points[len(utilization.Series[0].Points)-1]
+	// 1 GiB working set against 8 GiB allocatable.
+	if last.Value == nil || math.Abs(*last.Value-0.125) > 0.001 {
+		t.Fatalf("node_memory_utilization last point = %+v, want 0.125", last)
+	}
 }
 
 // seedKubeletSamples writes the metrics the generated scrape configuration
@@ -167,6 +229,8 @@ func seedKubeletSamples(t *testing.T, base string, clusterID string) {
 			"pod":                      "probe-pod",
 			metricsingest.ClusterLabel: clusterID,
 		}, 1<<28, at)...)
+		body = append(body, seedObjectSamples(clusterID, at)...)
+		body = append(body, seedNodeSamples(clusterID, at)...)
 	}
 	response, err := http.Post(
 		base+"/api/v1/write",
@@ -180,6 +244,105 @@ func seedKubeletSamples(t *testing.T, base string, clusterID string) {
 	if response.StatusCode >= 300 {
 		t.Fatalf("seed write status %d", response.StatusCode)
 	}
+}
+
+// seedObjectSamples writes the kube-state-metrics families the utilisation,
+// request and workload queries read.
+//
+// The Pod is owned by a ReplicaSet which is owned by a Deployment, because that
+// is the two-level case the workload rollup exists for: a template that only
+// handled the direct owner would pass a one-level fixture and report the
+// ReplicaSet's generated name to every operator in production.
+func seedObjectSamples(clusterID string, at int64) []byte {
+	var body []byte
+	for _, sample := range []struct {
+		labels map[string]string
+		value  float64
+	}{
+		{map[string]string{
+			"__name__": "kube_node_status_allocatable",
+			"node":     "probe-node", "resource": "cpu", "unit": "core",
+		}, 4},
+		{map[string]string{
+			"__name__": "kube_node_status_allocatable",
+			"node":     "probe-node", "resource": "memory", "unit": "byte",
+		}, 8 << 30},
+		{map[string]string{
+			"__name__":  "kube_pod_container_resource_requests",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+			"node": "probe-node", "resource": "cpu", "unit": "core",
+		}, 0.5},
+		{map[string]string{
+			"__name__":  "kube_pod_container_resource_requests",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+			"node": "probe-node", "resource": "memory", "unit": "byte",
+		}, 512 << 20},
+		{map[string]string{
+			"__name__":  "kube_pod_container_resource_limits",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+			"node": "probe-node", "resource": "cpu", "unit": "core",
+		}, 1},
+		{map[string]string{
+			"__name__":  "kube_pod_container_resource_limits",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+			"node": "probe-node", "resource": "memory", "unit": "byte",
+		}, 1 << 30},
+		{map[string]string{
+			"__name__": "kube_pod_owner", "namespace": "kube-system",
+			"pod": "probe-pod", "owner_kind": "ReplicaSet", "owner_name": "probe-rs",
+		}, 1},
+		{map[string]string{
+			"__name__": "kube_replicaset_owner", "namespace": "kube-system",
+			"replicaset": "probe-rs", "owner_kind": "Deployment", "owner_name": "probe-app",
+		}, 1},
+		{map[string]string{
+			"__name__":  "kube_pod_container_status_restarts_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+		}, 3},
+	} {
+		sample.labels[metricsingest.ClusterLabel] = clusterID
+		body = append(body, series(sample.labels, sample.value, at)...)
+	}
+	return body
+}
+
+// seedNodeSamples writes the node-exporter families the disk and network
+// queries read.
+func seedNodeSamples(clusterID string, at int64) []byte {
+	var body []byte
+	for _, sample := range []struct {
+		labels map[string]string
+		value  float64
+	}{
+		{map[string]string{
+			"__name__": "node_filesystem_avail_bytes",
+			"node":     "probe-node", "mountpoint": "/", "device": "/dev/sda1",
+		}, 40 << 30},
+		{map[string]string{
+			"__name__": "node_filesystem_size_bytes",
+			"node":     "probe-node", "mountpoint": "/", "device": "/dev/sda1",
+		}, 100 << 30},
+		{map[string]string{
+			"__name__": "node_network_receive_bytes_total",
+			"node":     "probe-node", "device": "eth0",
+		}, 1_000_000},
+		{map[string]string{
+			"__name__": "node_network_transmit_bytes_total",
+			"node":     "probe-node", "device": "eth0",
+		}, 2_000_000},
+		{map[string]string{
+			"__name__": "node_disk_read_bytes_total",
+			"node":     "probe-node", "device": "sda",
+		}, 3_000_000},
+		{map[string]string{
+			"__name__": "node_disk_written_bytes_total",
+			"node":     "probe-node", "device": "sda",
+		}, 4_000_000},
+	} {
+		sample.labels[metricsingest.ClusterLabel] = clusterID
+		body = append(body, series(sample.labels, sample.value, at)...)
+	}
+	return body
 }
 
 func series(labels map[string]string, value float64, timestampMS int64) []byte {

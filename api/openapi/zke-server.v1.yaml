@@ -12544,6 +12544,7 @@ components:
               - supports_namespace
               - supports_top
               - requires_top
+              - requires_component
             properties:
               name:
                 type: string
@@ -12554,7 +12555,7 @@ components:
                 enum: [range, instant]
               unit:
                 type: string
-                enum: [millicores, bytes, count, ratio]
+                enum: [millicores, bytes, bytes_per_second, count, ratio]
               dimensions:
                 type: array
                 description: 除集群身份外，该查询返回的序列标签。
@@ -12574,6 +12575,13 @@ components:
                 description: |
                   该查询必须给出 `top`。Pod 维度属于这一类：一个集群的 Pod 数量比节点高出几个量级，
                   “全部 Pod”既画不出也没人问，边界写在契约里比交给序列上限截断更清楚。
+              requires_component:
+                type: string
+                description: |
+                  该查询依赖的采集组件。空表示只依赖每次安装都会配置的 kubelet 端点。
+                  缺少对应组件的集群在这里返回空结果，而“空”本身与“集群很闲”无法区分，
+                  因此把依赖如实告诉客户端，而不是让它呈现一张没有解释的空图。
+                enum: ["", kube-state-metrics, node-exporter]
     MetricsQueryResult:
       type: object
       additionalProperties: false
@@ -12600,7 +12608,7 @@ components:
           enum: [range, instant]
         unit:
           type: string
-          enum: [millicores, bytes, count, ratio]
+          enum: [millicores, bytes, bytes_per_second, count, ratio]
         start:
           type: string
           format: date-time
@@ -12693,6 +12701,7 @@ components:
         - last_throttled_at
         - active_series
         - max_active_series
+        - components
       properties:
         cluster_id:
           $ref: "#/components/schemas/UUID"
@@ -12741,6 +12750,51 @@ components:
         max_active_series:
           type: integer
           description: 估算值所对照的上限。为 0 表示本 Server 没有该集群的预算信息。
+        components:
+          type: array
+          description: |
+            一次安装放进集群的每个工作负载各一条，包含采集组件自身。三者作为一体安装与卸载：
+            没人抓取的采集目标是浪费，而抓取一个从未安装的目标只会产生持续失败的 job。
+            旧版本 Agent 不报告组件，此时为空数组。
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - component
+              - installed
+              - image
+              - desired_image
+              - desired_replicas
+              - ready_replicas
+              - unavailable_reason
+              - unavailable_message
+            properties:
+              component:
+                type: string
+                enum: [collector, kube-state-metrics, node-exporter]
+              installed:
+                type: boolean
+              image:
+                type: string
+                description: 当前运行的镜像；未安装时为空。
+              desired_image:
+                type: string
+                description: 按当前平台配置安装时会使用的镜像。
+              desired_replicas:
+                type: integer
+                description: DaemonSet 形态的组件（node-exporter）为应调度到的节点数。
+              ready_replicas:
+                type: integer
+              unavailable_reason:
+                type: string
+                description: |
+                  集群**拒绝**了该组件时给出，与“没人安装过”不同。node-exporter 需要
+                  host 网络与 hostPath，运行在 baseline 或 restricted Pod Security 级别的
+                  Namespace 会拒绝它；ZKE 不会为此改写别人 Namespace 的安全等级，而是如实
+                  报告，并且不让它导致整个安装失败——其余链路没有它照常工作。
+              unavailable_message:
+                type: string
+                description: ZKE 自己撰写的说明，不回显集群的原始错误。
     KubernetesClusterOverview:
       type: object
       additionalProperties: false
@@ -14295,7 +14349,7 @@ components:
     PlatformSettings:
       type: object
       additionalProperties: false
-      required: [default_endpoint_profile_id, agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, metrics_collector_image, metrics_collector_image_pull_policy, metrics_collector_cpu_request, metrics_collector_memory_request, metrics_collector_cpu_limit, metrics_collector_memory_limit, cluster_terminal_session_ttl_seconds, revision, updated_at]
+      required: [default_endpoint_profile_id, agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, metrics_collector_image, metrics_collector_image_pull_policy, metrics_collector_cpu_request, metrics_collector_memory_request, metrics_collector_cpu_limit, metrics_collector_memory_limit, kube_state_metrics_image, kube_state_metrics_image_pull_policy, kube_state_metrics_cpu_request, kube_state_metrics_memory_request, kube_state_metrics_cpu_limit, kube_state_metrics_memory_limit, node_exporter_image, node_exporter_image_pull_policy, node_exporter_cpu_request, node_exporter_memory_request, node_exporter_cpu_limit, node_exporter_memory_limit, cluster_terminal_session_ttl_seconds, revision, updated_at]
       properties:
         default_endpoint_profile_id: { $ref: "#/components/schemas/UUID" }
         agent_image: { type: string }
@@ -14315,6 +14369,26 @@ components:
         metrics_collector_memory_request: { type: string, maxLength: 32 }
         metrics_collector_cpu_limit: { type: string, maxLength: 32 }
         metrics_collector_memory_limit: { type: string, maxLength: 32 }
+        kube_state_metrics_image:
+          type: string
+          description: |
+            与采集组件一并安装的对象指标导出器镜像。它是节点可分配量与 Pod 申请/限制的唯一来源，
+            没有它，用量曲线没有分母，任何容量问题都答不了。
+        kube_state_metrics_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        kube_state_metrics_cpu_request: { type: string, maxLength: 32 }
+        kube_state_metrics_memory_request: { type: string, maxLength: 32 }
+        kube_state_metrics_cpu_limit: { type: string, maxLength: 32 }
+        kube_state_metrics_memory_limit: { type: string, maxLength: 32 }
+        node_exporter_image:
+          type: string
+          description: |
+            与采集组件一并安装的节点指标导出器镜像，提供磁盘、文件系统与网络。它以 DaemonSet
+            形式运行在每个节点上，预算取值应当保持很小——它的开销会乘以集群规模。
+        node_exporter_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        node_exporter_cpu_request: { type: string, maxLength: 32 }
+        node_exporter_memory_request: { type: string, maxLength: 32 }
+        node_exporter_cpu_limit: { type: string, maxLength: 32 }
+        node_exporter_memory_limit: { type: string, maxLength: 32 }
         cluster_terminal_session_ttl_seconds:
           type: integer
           minimum: 60
@@ -14325,7 +14399,7 @@ components:
     PlatformSettingsUpdate:
       type: object
       additionalProperties: false
-      required: [agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, metrics_collector_image, metrics_collector_image_pull_policy, metrics_collector_cpu_request, metrics_collector_memory_request, metrics_collector_cpu_limit, metrics_collector_memory_limit, cluster_terminal_session_ttl_seconds, expected_revision]
+      required: [agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, metrics_collector_image, metrics_collector_image_pull_policy, metrics_collector_cpu_request, metrics_collector_memory_request, metrics_collector_cpu_limit, metrics_collector_memory_limit, kube_state_metrics_image, kube_state_metrics_image_pull_policy, kube_state_metrics_cpu_request, kube_state_metrics_memory_request, kube_state_metrics_cpu_limit, kube_state_metrics_memory_limit, node_exporter_image, node_exporter_image_pull_policy, node_exporter_cpu_request, node_exporter_memory_request, node_exporter_cpu_limit, node_exporter_memory_limit, cluster_terminal_session_ttl_seconds, expected_revision]
       properties:
         agent_image: { type: string }
         agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
@@ -14337,6 +14411,18 @@ components:
         metrics_collector_memory_request: { type: string, maxLength: 32 }
         metrics_collector_cpu_limit: { type: string, maxLength: 32 }
         metrics_collector_memory_limit: { type: string, maxLength: 32 }
+        kube_state_metrics_image: { type: string }
+        kube_state_metrics_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        kube_state_metrics_cpu_request: { type: string, maxLength: 32 }
+        kube_state_metrics_memory_request: { type: string, maxLength: 32 }
+        kube_state_metrics_cpu_limit: { type: string, maxLength: 32 }
+        kube_state_metrics_memory_limit: { type: string, maxLength: 32 }
+        node_exporter_image: { type: string }
+        node_exporter_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        node_exporter_cpu_request: { type: string, maxLength: 32 }
+        node_exporter_memory_request: { type: string, maxLength: 32 }
+        node_exporter_cpu_limit: { type: string, maxLength: 32 }
+        node_exporter_memory_limit: { type: string, maxLength: 32 }
         cluster_terminal_session_ttl_seconds: { type: integer, minimum: 60, maximum: 3600 }
         expected_revision: { type: integer, minimum: 1 }
     ClusterEnrollment:

@@ -99,6 +99,18 @@ type Settings struct {
 	MetricsCollectorMemoryRequest   string
 	MetricsCollectorCPULimit        string
 	MetricsCollectorMemoryLimit     string
+	KubeStateMetricsImage           string
+	KubeStateMetricsImagePullPolicy string
+	KubeStateMetricsCPURequest      string
+	KubeStateMetricsMemoryRequest   string
+	KubeStateMetricsCPULimit        string
+	KubeStateMetricsMemoryLimit     string
+	NodeExporterImage               string
+	NodeExporterImagePullPolicy     string
+	NodeExporterCPURequest          string
+	NodeExporterMemoryRequest       string
+	NodeExporterCPULimit            string
+	NodeExporterMemoryLimit         string
 	ClusterTerminalSessionTTL       time.Duration
 	Revision                        int64
 	UpdatedAt                       time.Time
@@ -127,6 +139,18 @@ type SettingsInput struct {
 	MetricsCollectorMemoryRequest   string
 	MetricsCollectorCPULimit        string
 	MetricsCollectorMemoryLimit     string
+	KubeStateMetricsImage           string
+	KubeStateMetricsImagePullPolicy string
+	KubeStateMetricsCPURequest      string
+	KubeStateMetricsMemoryRequest   string
+	KubeStateMetricsCPULimit        string
+	KubeStateMetricsMemoryLimit     string
+	NodeExporterImage               string
+	NodeExporterImagePullPolicy     string
+	NodeExporterCPURequest          string
+	NodeExporterMemoryRequest       string
+	NodeExporterCPULimit            string
+	NodeExporterMemoryLimit         string
 	ClusterTerminalSessionTTL       time.Duration
 	ExpectedRevision                int64
 	ActorUserID                     string
@@ -339,6 +363,18 @@ func (service *Service) UpdateSettings(ctx context.Context, input SettingsInput)
 		MetricsCollectorMemoryRequest:   strings.TrimSpace(input.MetricsCollectorMemoryRequest),
 		MetricsCollectorCPULimit:        strings.TrimSpace(input.MetricsCollectorCPULimit),
 		MetricsCollectorMemoryLimit:     strings.TrimSpace(input.MetricsCollectorMemoryLimit),
+		KubeStateMetricsImage:           strings.TrimSpace(input.KubeStateMetricsImage),
+		KubeStateMetricsImagePullPolicy: input.KubeStateMetricsImagePullPolicy,
+		KubeStateMetricsCPURequest:      strings.TrimSpace(input.KubeStateMetricsCPURequest),
+		KubeStateMetricsMemoryRequest:   strings.TrimSpace(input.KubeStateMetricsMemoryRequest),
+		KubeStateMetricsCPULimit:        strings.TrimSpace(input.KubeStateMetricsCPULimit),
+		KubeStateMetricsMemoryLimit:     strings.TrimSpace(input.KubeStateMetricsMemoryLimit),
+		NodeExporterImage:               strings.TrimSpace(input.NodeExporterImage),
+		NodeExporterImagePullPolicy:     input.NodeExporterImagePullPolicy,
+		NodeExporterCPURequest:          strings.TrimSpace(input.NodeExporterCPURequest),
+		NodeExporterMemoryRequest:       strings.TrimSpace(input.NodeExporterMemoryRequest),
+		NodeExporterCPULimit:            strings.TrimSpace(input.NodeExporterCPULimit),
+		NodeExporterMemoryLimit:         strings.TrimSpace(input.NodeExporterMemoryLimit),
 		ClusterTerminalSessionTTL:       input.ClusterTerminalSessionTTL,
 		ActorUserID:                     input.ActorUserID, Now: input.Now,
 	})
@@ -606,6 +642,8 @@ func validateSettingsInput(input SettingsInput) error {
 		{input.AgentImage, "Agent 镜像"},
 		{input.ClusterTerminalImage, "Cluster Terminal 镜像"},
 		{input.MetricsCollectorImage, "指标采集组件镜像"},
+		{input.KubeStateMetricsImage, "kube-state-metrics 镜像"},
+		{input.NodeExporterImage, "node-exporter 镜像"},
 	}
 	for _, image := range images {
 		if !validAgentImage(image.value) {
@@ -619,6 +657,8 @@ func validateSettingsInput(input SettingsInput) error {
 		{input.AgentImagePullPolicy, "Agent"},
 		{input.ClusterTerminalImagePullPolicy, "Cluster Terminal"},
 		{input.MetricsCollectorImagePullPolicy, "指标采集组件"},
+		{input.KubeStateMetricsImagePullPolicy, "kube-state-metrics"},
+		{input.NodeExporterImagePullPolicy, "node-exporter"},
 	}
 	for _, policy := range policies {
 		if !allowedPullPolicy(policy.value) {
@@ -633,8 +673,8 @@ func validateSettingsInput(input SettingsInput) error {
 	return validateCollectorResources(input)
 }
 
-// validateCollectorResources checks the four quantities the metrics collector
-// container is installed with.
+// validateCollectorResources checks the four quantities each installed metrics
+// workload is given.
 //
 // It is worth checking here rather than leaving it to the Agent: the value is
 // saved once and used at every later install, so a typo accepted now becomes a
@@ -644,35 +684,76 @@ func validateSettingsInput(input SettingsInput) error {
 // Empty is accepted and means the entry is left off the container. A limit
 // below its request is refused because Kubernetes would refuse the Pod.
 func validateCollectorResources(input SettingsInput) error {
-	cpuRequest, err := parseCollectorQuantity(
-		input.MetricsCollectorCPURequest, "采集组件的 CPU 请求",
-	)
+	for _, component := range []struct {
+		label         string
+		cpuRequest    string
+		memoryRequest string
+		cpuLimit      string
+		memoryLimit   string
+	}{
+		{
+			label:         "采集组件",
+			cpuRequest:    input.MetricsCollectorCPURequest,
+			memoryRequest: input.MetricsCollectorMemoryRequest,
+			cpuLimit:      input.MetricsCollectorCPULimit,
+			memoryLimit:   input.MetricsCollectorMemoryLimit,
+		},
+		{
+			label:         "kube-state-metrics",
+			cpuRequest:    input.KubeStateMetricsCPURequest,
+			memoryRequest: input.KubeStateMetricsMemoryRequest,
+			cpuLimit:      input.KubeStateMetricsCPULimit,
+			memoryLimit:   input.KubeStateMetricsMemoryLimit,
+		},
+		{
+			label:         "node-exporter",
+			cpuRequest:    input.NodeExporterCPURequest,
+			memoryRequest: input.NodeExporterMemoryRequest,
+			cpuLimit:      input.NodeExporterCPULimit,
+			memoryLimit:   input.NodeExporterMemoryLimit,
+		},
+	} {
+		if err := validateComponentResources(
+			component.label,
+			component.cpuRequest,
+			component.memoryRequest,
+			component.cpuLimit,
+			component.memoryLimit,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateComponentResources(
+	label string,
+	cpuRequestValue string,
+	memoryRequestValue string,
+	cpuLimitValue string,
+	memoryLimitValue string,
+) error {
+	cpuRequest, err := parseCollectorQuantity(cpuRequestValue, label+"的 CPU 请求")
 	if err != nil {
 		return err
 	}
-	memoryRequest, err := parseCollectorQuantity(
-		input.MetricsCollectorMemoryRequest, "采集组件的内存请求",
-	)
+	memoryRequest, err := parseCollectorQuantity(memoryRequestValue, label+"的内存请求")
 	if err != nil {
 		return err
 	}
-	cpuLimit, err := parseCollectorQuantity(
-		input.MetricsCollectorCPULimit, "采集组件的 CPU 限制",
-	)
+	cpuLimit, err := parseCollectorQuantity(cpuLimitValue, label+"的 CPU 限制")
 	if err != nil {
 		return err
 	}
-	memoryLimit, err := parseCollectorQuantity(
-		input.MetricsCollectorMemoryLimit, "采集组件的内存限制",
-	)
+	memoryLimit, err := parseCollectorQuantity(memoryLimitValue, label+"的内存限制")
 	if err != nil {
 		return err
 	}
 	if cpuRequest != nil && cpuLimit != nil && cpuLimit.Cmp(*cpuRequest) < 0 {
-		return invalidInput("采集组件的 CPU 限制不能低于 CPU 请求")
+		return invalidInput(label + "的 CPU 限制不能低于 CPU 请求")
 	}
 	if memoryRequest != nil && memoryLimit != nil && memoryLimit.Cmp(*memoryRequest) < 0 {
-		return invalidInput("采集组件的内存限制不能低于内存请求")
+		return invalidInput(label + "的内存限制不能低于内存请求")
 	}
 	return nil
 }
@@ -728,6 +809,18 @@ func settingsFromStore(item store.PlatformSettings) Settings {
 		MetricsCollectorMemoryRequest:   item.MetricsCollectorMemoryRequest,
 		MetricsCollectorCPULimit:        item.MetricsCollectorCPULimit,
 		MetricsCollectorMemoryLimit:     item.MetricsCollectorMemoryLimit,
+		KubeStateMetricsImage:           item.KubeStateMetricsImage,
+		KubeStateMetricsImagePullPolicy: item.KubeStateMetricsImagePullPolicy,
+		KubeStateMetricsCPURequest:      item.KubeStateMetricsCPURequest,
+		KubeStateMetricsMemoryRequest:   item.KubeStateMetricsMemoryRequest,
+		KubeStateMetricsCPULimit:        item.KubeStateMetricsCPULimit,
+		KubeStateMetricsMemoryLimit:     item.KubeStateMetricsMemoryLimit,
+		NodeExporterImage:               item.NodeExporterImage,
+		NodeExporterImagePullPolicy:     item.NodeExporterImagePullPolicy,
+		NodeExporterCPURequest:          item.NodeExporterCPURequest,
+		NodeExporterMemoryRequest:       item.NodeExporterMemoryRequest,
+		NodeExporterCPULimit:            item.NodeExporterCPULimit,
+		NodeExporterMemoryLimit:         item.NodeExporterMemoryLimit,
 		ClusterTerminalSessionTTL:       item.ClusterTerminalSessionTTL,
 		UpdatedAt:                       item.UpdatedAt,
 	}

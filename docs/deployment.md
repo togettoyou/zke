@@ -236,12 +236,34 @@ Compose 在 `.env` 中设置同名变量；Helm 使用 `server.metrics.enabled`�
 未启用指标存储。
 
 启用后在「可观测性 → 采集接入」的集群列表中逐个安装或卸载，需要 `cluster.metrics.manage`；查看指标是另一个
-权限 `cluster.metrics.read`。采集组件由该集群的 Agent 安装到自己的 Agent Namespace，摄取凭证也由 Agent 在
+权限 `cluster.metrics.read`。组件由该集群的 Agent 安装到自己的 Agent Namespace，摄取凭证也由 Agent 在
 集群内生成，不经过 Server。
 
-采集组件的镜像、拉取策略与资源请求/限制在「平台配置 → 指标采集」中管理，默认
-`victoriametrics/vmagent:v1.149.0`，请求 `50m` / `128Mi`，限制 `500m` / `512Mi`；留空表示不设置该项。
-修改后对下一次安装生效，已安装的集群会在采集接入列表中提示可以更新。
+**一次安装放进集群三个组件**，一次卸载全部删除——没人抓取的导出器是浪费，而抓取一个从未安装的目标只会
+产生持续失败的 job：
+
+| 组件 | 形态 | 提供什么 | 默认镜像 |
+| --- | --- | --- | --- |
+| 采集组件 vmagent | Deployment × 1 | 抓取下面两个与 kubelet，经 Agent 回传 | `victoriametrics/vmagent:v1.149.0` |
+| kube-state-metrics | Deployment × 1 | 节点可分配量、Pod 申请/限制、工作负载归属与重启 | `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1` |
+| node-exporter | DaemonSet（每节点） | 磁盘、文件系统、网络 | `quay.io/prometheus/node-exporter:v1.12.1` |
+
+kube-state-metrics 是**利用率的分母**：没有它，用量曲线无法回答任何容量问题，「利用率」「申请量」「限制量」
+与「工作负载」四组视图都会是空的。它以 `--resources` 与 `--metric-allowlist` 双重收窄，只 `list`/`watch`
+Node、Pod、Namespace 与五类工作负载对象，**不包含 Secret 与 ConfigMap**，也没有任何写权限。
+
+**node-exporter 需要 host 网络与 hostPath**，这是它读取 `/proc`、`/sys` 与根文件系统的唯一方式。运行在
+`baseline` 或 `restricted` Pod Security 级别的 Namespace 会拒绝它。ZKE **不会**为此改写 Agent Namespace 的
+安全等级——那不是一次安装可以顺带做的事。被拒绝时其余两个组件照常安装，采集接入列表中该行显示「已被集群
+拒绝」并说明原因，磁盘与网络视图会说明它依赖这个组件。要启用它，需要部署方自行把 Agent Namespace 的
+`pod-security.kubernetes.io/enforce` 设为 `privileged`。
+
+三个组件的镜像、拉取策略与资源请求/限制都在「平台配置 → 指标采集」中管理，留空表示不设置该项。修改后对
+下一次安装生效，已安装的集群会在采集接入列表中提示可以更新。node-exporter 跑在每个节点上，它的预算会乘以
+集群规模，因此默认值刻意很小（请求 `10m` / `32Mi`，限制 `200m` / `128Mi`）。
+
+安装不需要为 Agent 增加任何权限：Agent 授予 kube-state-metrics 的读取范围是它自己已经持有的子集，
+Kubernetes 也正是这样保证的——它拒绝创建一个包含创建者本身没有的权限的 ClusterRole。
 
 采集数据经该集群 Agent 已有的 QUIC 连接回传，不需要为指标开通新的网络路径，也不需要重新应用 Agent 清单。
 存储不可用时只影响指标查询。
@@ -250,18 +272,26 @@ Compose 在 `.env` 中设置同名变量；Helm 使用 `server.metrics.enabled`�
 
 ZKE 没有给出实测的吞吐、延迟或容量承诺。下面是估算方法和可调项，实际取值必须以自己部署中观察到的数字为准。
 
-**一个集群产生多少序列。** 采集组件只抓取 kubelet 的 `/metrics/resource`，抓取目标和 relabel 规则是固定的，
-因此序列数可以直接从集群规模算出来：
+**一个集群产生多少序列。** 三个抓取目标的配置与 allowlist 都是固定的，因此序列数可以直接从集群规模算出来。
+记 N = 节点数、P = Pod 数、C = 容器数：
 
 ```text
-序列数 ≈ 7 × 节点数 + 2 × Pod 数 + 2 × 容器数
-样本速率（每秒） ≈ 序列数 ÷ scrape_interval（默认 30s）
+kubelet             ≈ 7×N + 2×P + 2×C
+kube-state-metrics  ≈ 27×N + 6×P + 5×C
+node-exporter       ≈ (8×单节点核数 + 140)×N
+样本速率（每秒）     ≈ 序列总数 ÷ scrape_interval（默认 30s）
 ```
 
-每节点约 7 条 = 2 条节点指标（`node_cpu_usage_seconds_total`、`node_memory_working_set_bytes`）加上约 5 条
-vmagent 自己产生的抓取元信息（`up`、`scrape_duration_seconds` 等，条数随 vmagent 版本略有出入）；Pod 与
-容器各贡献 CPU 和内存两条。例如 100 节点、2000 Pod、3000 容器的集群约 10700 条序列、约 360 样本/秒。
-加入 kube-state-metrics 或 node-exporter 会显著改变这个估算——它们目前不在抓取配置中。
+各项来源：kubelet 每节点约 7 条 = 2 条节点指标加约 5 条 vmagent 自己产生的抓取元信息（条数随 vmagent 版本
+略有出入），Pod 与容器各贡献 CPU 和内存两条；kube-state-metrics 的每节点部分主要是可分配量、容量与节点
+状况，每 Pod 部分是归属与 phase，每容器部分是申请、限制与重启计数；node-exporter 中占大头的是
+`node_cpu_seconds_total`，它按「核数 × 模式数」展开，其余 meminfo、filesystem、diskstats、netdev、loadavg
+合计每节点约 140 条。
+
+例如 100 节点（每节点 16 核）、2000 Pod、3000 容器的集群：kubelet 约 10700 条、kube-state-metrics 约
+29700 条、node-exporter 约 26800 条，合计约 67000 条序列、约 2200 样本/秒。**这大约是只抓 kubelet 时的
+六倍**——多出来的部分买到的是利用率、申请量、工作负载归属与磁盘网络，但它确实是六倍，规划容量时要按这个
+数字算。只安装采集组件而拒绝 node-exporter 的集群按前两项估算。
 
 **磁盘。** 每个样本占用多少字节取决于压缩率，属于 VictoriaMetrics 的行为而不是 ZKE 的；请以上游文档的经验
 值做初次规划，并在运行一到两个保留周期后按实际磁盘增长修正。ZKE 不为此提供预估公式。
@@ -297,12 +327,14 @@ vmagent 自己产生的抓取元信息（`up`、`scrape_duration_seconds` 等，
 - 端点 —— Agent 接入端点预设：注册 URL、QUIC 地址、可选注册 HTTPS CA；
 - 镜像 —— Agent 镜像与 Cluster Terminal 镜像，各自独立的 Image Pull Policy；
 - 集群终端 —— Cluster Terminal 会话存续时长，可选 1 分钟至 1 小时，默认 15 分钟；
-- 指标采集 —— 采集组件镜像与 Image Pull Policy，以及它的 CPU / 内存请求与限制。
+- 指标采集 —— 三个采集组件（vmagent、kube-state-metrics、node-exporter）各自的镜像、Image Pull Policy
+  与 CPU / 内存请求与限制。三者一并安装，因此版本也在同一页固定，避免一个部署跑着今年的采集组件和去年的
+  导出器。
 
 每一页各自保存，只写入本页的改动；离开一页会丢弃其中尚未保存的修改，回到该页看到的始终是当前实际生效的
 配置。
 
-生效时机不同：Cluster Terminal 的镜像、拉取策略与会话时长立即用于新会话；采集组件的取值在下一次安装时
+生效时机不同：Cluster Terminal 的镜像、拉取策略与会话时长立即用于新会话；三个采集组件的取值在下一次安装时
 读取；Agent 镜像、拉取策略、Namespace 和凭证选中的端点在新 Enrollment 签发时进入不可变快照，已签发的凭证
 和已接入的集群不受影响。
 

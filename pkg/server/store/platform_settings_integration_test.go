@@ -8,6 +8,53 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store"
 )
 
+// The settings row is read by position, so a column added to the migration but
+// not to the scan — or added in a different order — mixes an image up with a
+// quantity and installs something nobody asked for. Only a real database can
+// catch that; a fake store scans nothing.
+//
+// The defaults are asserted rather than just the shape: they name real
+// published images at pinned versions, and an unpinned or misspelled one only
+// fails much later, inside somebody else's Cluster.
+func TestPlatformSettingsDefaultsCoverEveryMetricsComponent(t *testing.T) {
+	databaseURL := requireAuthTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool := openIsolatedDatabase(t, ctx, databaseURL)
+	applyMigrations(t, ctx, pool)
+	settings, err := store.NewPlatformSettingsStore(pool).GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"metrics collector image", settings.MetricsCollectorImage, "victoriametrics/vmagent:v1.149.0"},
+		{
+			"kube-state-metrics image",
+			settings.KubeStateMetricsImage,
+			"registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1",
+		},
+		{"node-exporter image", settings.NodeExporterImage, "quay.io/prometheus/node-exporter:v1.12.1"},
+		{"kube-state-metrics pull policy", settings.KubeStateMetricsImagePullPolicy, "IfNotPresent"},
+		{"node-exporter pull policy", settings.NodeExporterImagePullPolicy, "IfNotPresent"},
+		// The node exporter runs on every Node, so its budget is multiplied by
+		// the size of the Cluster and is deliberately the smallest of the three.
+		{"node-exporter CPU request", settings.NodeExporterCPURequest, "10m"},
+		{"node-exporter memory request", settings.NodeExporterMemoryRequest, "32Mi"},
+		{"node-exporter memory limit", settings.NodeExporterMemoryLimit, "128Mi"},
+		{"kube-state-metrics CPU request", settings.KubeStateMetricsCPURequest, "20m"},
+		{"kube-state-metrics memory limit", settings.KubeStateMetricsMemoryLimit, "512Mi"},
+	} {
+		if field.value != field.want {
+			t.Fatalf("%s = %q, want %q", field.name, field.value, field.want)
+		}
+	}
+}
+
 func TestPlatformDefaultEndpointReconciliationIsIdempotent(t *testing.T) {
 	databaseURL := requireAuthTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -78,8 +78,100 @@ const SECTION_FIELDS = {
     "metrics_collector_cpu_limit",
     "metrics_collector_memory_request",
     "metrics_collector_memory_limit",
+    "kube_state_metrics_image",
+    "kube_state_metrics_image_pull_policy",
+    "kube_state_metrics_cpu_request",
+    "kube_state_metrics_cpu_limit",
+    "kube_state_metrics_memory_request",
+    "kube_state_metrics_memory_limit",
+    "node_exporter_image",
+    "node_exporter_image_pull_policy",
+    "node_exporter_cpu_request",
+    "node_exporter_cpu_limit",
+    "node_exporter_memory_request",
+    "node_exporter_memory_limit",
   ],
 } as const satisfies Record<string, readonly (keyof PlatformSettings)[]>;
+
+/**
+ * The three workloads one install puts into a Cluster.
+ *
+ * They are one section rather than three because they are one operation: an
+ * operator turns collection on once and gets all three, so pinning their
+ * versions in three different places would let a deployment run a collector
+ * from this year against exporters from last.
+ *
+ * The budgets differ on purpose. The collector and the object exporter run once
+ * per Cluster; the node exporter runs on every Node, so its cost is multiplied
+ * by the size of the Cluster and its defaults are correspondingly small.
+ */
+const METRICS_COMPONENTS = [
+  {
+    id: "collector",
+    title: "采集组件（vmagent）",
+    label: "采集组件",
+    description:
+      "抓取 kubelet 与下面两个导出器，经该集群 Agent 已有的连接把样本回传给 Server。每个集群一个。",
+    keys: {
+      image: "metrics_collector_image",
+      pullPolicy: "metrics_collector_image_pull_policy",
+      cpuRequest: "metrics_collector_cpu_request",
+      cpuLimit: "metrics_collector_cpu_limit",
+      memoryRequest: "metrics_collector_memory_request",
+      memoryLimit: "metrics_collector_memory_limit",
+    },
+    placeholders: {
+      cpuRequest: "50m",
+      cpuLimit: "500m",
+      memoryRequest: "128Mi",
+      memoryLimit: "512Mi",
+    },
+  },
+  {
+    id: "kube-state-metrics",
+    title: "对象指标导出器（kube-state-metrics）",
+    label: "kube-state-metrics",
+    description:
+      "节点可分配量与 Pod 申请/限制的唯一来源，也是把 Pod 归到工作负载的依据。没有它，用量曲线没有分母，利用率、申请量与工作负载视图都是空的。每个集群一个。",
+    keys: {
+      image: "kube_state_metrics_image",
+      pullPolicy: "kube_state_metrics_image_pull_policy",
+      cpuRequest: "kube_state_metrics_cpu_request",
+      cpuLimit: "kube_state_metrics_cpu_limit",
+      memoryRequest: "kube_state_metrics_memory_request",
+      memoryLimit: "kube_state_metrics_memory_limit",
+    },
+    placeholders: {
+      cpuRequest: "20m",
+      cpuLimit: "500m",
+      memoryRequest: "128Mi",
+      memoryLimit: "512Mi",
+    },
+  },
+  {
+    id: "node-exporter",
+    title: "节点指标导出器（node-exporter）",
+    label: "node-exporter",
+    description:
+      "磁盘、文件系统与网络的唯一来源。以 DaemonSet 运行在每个节点上，因此预算取值应当保持很小——它的开销会乘以集群规模。它需要 host 网络与 hostPath，运行在 baseline 或 restricted Pod Security 级别的 Namespace 会拒绝它。",
+    keys: {
+      image: "node_exporter_image",
+      pullPolicy: "node_exporter_image_pull_policy",
+      cpuRequest: "node_exporter_cpu_request",
+      cpuLimit: "node_exporter_cpu_limit",
+      memoryRequest: "node_exporter_memory_request",
+      memoryLimit: "node_exporter_memory_limit",
+    },
+    placeholders: {
+      cpuRequest: "10m",
+      cpuLimit: "200m",
+      memoryRequest: "32Mi",
+      memoryLimit: "128Mi",
+    },
+  },
+] as const;
+
+type MetricsComponentForm = (typeof METRICS_COMPONENTS)[number];
 
 type SettingsSection = keyof typeof SECTION_FIELDS;
 
@@ -290,28 +382,32 @@ function sectionProblems(section: SettingsSection, settings: PlatformSettings): 
     }
     return problems;
   }
-  if (!validImage(settings.metrics_collector_image)) {
-    problems.push("指标采集组件镜像不能为空，且不能包含空白字符。");
-  }
-  const quantities = [
-    { label: "CPU 请求", value: settings.metrics_collector_cpu_request },
-    { label: "CPU 限制", value: settings.metrics_collector_cpu_limit },
-    { label: "内存请求", value: settings.metrics_collector_memory_request },
-    { label: "内存限制", value: settings.metrics_collector_memory_limit },
-  ];
-  for (const quantity of quantities) {
-    const problem = quantityProblem(quantity.label, quantity.value);
-    if (problem) {
-      problems.push(problem);
+  // One save writes all three components, so all three are checked. Naming the
+  // component in every message matters more here than it did with one: three
+  // identical "内存限制不能低于内存请求" would send the operator back to guess
+  // which section the Server meant.
+  for (const component of METRICS_COMPONENTS) {
+    const { keys, label } = component;
+    if (!validImage(settings[keys.image])) {
+      problems.push(`${label}镜像不能为空，且不能包含空白字符。`);
     }
-  }
-  if (exceedsLimit(settings.metrics_collector_cpu_request, settings.metrics_collector_cpu_limit)) {
-    problems.push("采集组件的 CPU 限制不能低于 CPU 请求。");
-  }
-  if (
-    exceedsLimit(settings.metrics_collector_memory_request, settings.metrics_collector_memory_limit)
-  ) {
-    problems.push("采集组件的内存限制不能低于内存请求。");
+    for (const quantity of [
+      { label: `${label}的 CPU 请求`, value: settings[keys.cpuRequest] },
+      { label: `${label}的 CPU 限制`, value: settings[keys.cpuLimit] },
+      { label: `${label}的内存请求`, value: settings[keys.memoryRequest] },
+      { label: `${label}的内存限制`, value: settings[keys.memoryLimit] },
+    ]) {
+      const problem = quantityProblem(quantity.label, quantity.value);
+      if (problem) {
+        problems.push(problem);
+      }
+    }
+    if (exceedsLimit(settings[keys.cpuRequest], settings[keys.cpuLimit])) {
+      problems.push(`${label}的 CPU 限制不能低于 CPU 请求。`);
+    }
+    if (exceedsLimit(settings[keys.memoryRequest], settings[keys.memoryLimit])) {
+      problems.push(`${label}的内存限制不能低于内存请求。`);
+    }
   }
   return problems;
 }
@@ -418,72 +514,107 @@ function MetricsCollectionSection({
   onChange: (next: PlatformSettings) => void;
 }) {
   return (
+    <div className="grid gap-6">
+      <section>
+        <h3 className="text-foreground mb-1 text-[13px] font-semibold">指标采集组件</h3>
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          三个组件由目标集群的 Agent 一并装进它自己的 Agent Namespace，也一并卸载：没人抓取的
+          导出器是浪费，而抓取一个从未安装的目标只会产生持续失败的 job。这里的取值在安装时读取，
+          修改后对下一次安装生效；已安装的集群需要在「可观测性 → 采集接入」中重新安装才会更换。
+        </p>
+      </section>
+      {METRICS_COMPONENTS.map((component) => (
+        <MetricsComponentFields
+          key={component.id}
+          component={component}
+          settings={settings}
+          onChange={onChange}
+        />
+      ))}
+      <FieldHint>
+        限制不能低于对应的请求；采集组件的磁盘缓冲区大小仍由 Server 配置文件中的
+        <code className="zke-mono"> observability.metrics.collector_buffer_size </code>
+        决定。
+      </FieldHint>
+    </div>
+  );
+}
+
+function MetricsComponentFields({
+  component,
+  settings,
+  onChange,
+}: {
+  component: MetricsComponentForm;
+  settings: PlatformSettings;
+  onChange: (next: PlatformSettings) => void;
+}) {
+  const { keys, placeholders } = component;
+  return (
     <section>
-      <h3 className="text-foreground mb-1 text-[13px] font-semibold">指标采集组件</h3>
-      <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
-        采集组件由目标集群的 Agent 装进它自己的 Agent Namespace。这里的取值在安装时读取，
-        修改后对下一次安装生效；已安装的集群需要在「可观测性 → 采集接入」中重新安装才会更换。
-      </p>
+      <h4 className="text-foreground mb-1 text-[13px] font-semibold">{component.title}</h4>
+      <p className="text-muted-foreground mb-3 text-xs leading-relaxed">{component.description}</p>
       <div className="grid gap-3">
         <ImageField
-          id="metrics-collector-image"
+          id={`${component.id}-image`}
           label="镜像"
-          value={settings.metrics_collector_image}
-          onChange={(value) => onChange({ ...settings, metrics_collector_image: value })}
+          value={settings[keys.image]}
+          onChange={(value) => onChange(withField(settings, keys.image, value))}
         />
         <PullPolicySelect
           label="拉取策略"
-          value={settings.metrics_collector_image_pull_policy}
-          onChange={(value) =>
-            onChange({ ...settings, metrics_collector_image_pull_policy: value })
-          }
+          value={settings[keys.pullPolicy]}
+          onChange={(value) => onChange(withField(settings, keys.pullPolicy, value))}
         />
-        <div className="grid gap-1.5">
-          <h4 className="text-foreground mt-2 text-[13px] font-semibold">资源请求与限制</h4>
-          <p className="text-muted-foreground text-xs leading-relaxed">
-            Kubernetes 数量，例如 <code className="zke-mono">500m</code>、
-            <code className="zke-mono">512Mi</code>。留空表示不在容器上设置该项：限制留空意味着
-            采集组件只受目标 Namespace 自身的 LimitRange 约束。
-          </p>
-        </div>
         <div className="grid grid-cols-2 gap-3">
           <QuantityField
-            id="metrics-collector-cpu-request"
+            id={`${component.id}-cpu-request`}
             label="CPU 请求"
-            placeholder="50m"
-            value={settings.metrics_collector_cpu_request}
-            onChange={(value) => onChange({ ...settings, metrics_collector_cpu_request: value })}
+            placeholder={placeholders.cpuRequest}
+            value={settings[keys.cpuRequest]}
+            onChange={(value) => onChange(withField(settings, keys.cpuRequest, value))}
           />
           <QuantityField
-            id="metrics-collector-cpu-limit"
+            id={`${component.id}-cpu-limit`}
             label="CPU 限制"
-            placeholder="500m"
-            value={settings.metrics_collector_cpu_limit}
-            onChange={(value) => onChange({ ...settings, metrics_collector_cpu_limit: value })}
+            placeholder={placeholders.cpuLimit}
+            value={settings[keys.cpuLimit]}
+            onChange={(value) => onChange(withField(settings, keys.cpuLimit, value))}
           />
           <QuantityField
-            id="metrics-collector-memory-request"
+            id={`${component.id}-memory-request`}
             label="内存请求"
-            placeholder="128Mi"
-            value={settings.metrics_collector_memory_request}
-            onChange={(value) => onChange({ ...settings, metrics_collector_memory_request: value })}
+            placeholder={placeholders.memoryRequest}
+            value={settings[keys.memoryRequest]}
+            onChange={(value) => onChange(withField(settings, keys.memoryRequest, value))}
           />
           <QuantityField
-            id="metrics-collector-memory-limit"
+            id={`${component.id}-memory-limit`}
             label="内存限制"
-            placeholder="512Mi"
-            value={settings.metrics_collector_memory_limit}
-            onChange={(value) => onChange({ ...settings, metrics_collector_memory_limit: value })}
+            placeholder={placeholders.memoryLimit}
+            value={settings[keys.memoryLimit]}
+            onChange={(value) => onChange(withField(settings, keys.memoryLimit, value))}
           />
         </div>
-        <FieldHint>
-          限制不能低于对应的请求；采集组件的磁盘缓冲区大小仍由 Server 配置文件中的
-          <code className="zke-mono"> observability.metrics.collector_buffer_size </code>
-          决定。
-        </FieldHint>
       </div>
     </section>
   );
+}
+
+/**
+ * One field of the settings row, replaced.
+ *
+ * The three components are edited through the same fields under different
+ * column names, so the setter takes the column as a value. The generic keeps
+ * that type-safe at every call site; the cast is here because TypeScript widens
+ * a computed key in a spread, and it is contained to this one line.
+ */
+function withField<K extends keyof PlatformSettings>(
+  settings: PlatformSettings,
+  key: K,
+  value: PlatformSettings[K],
+): PlatformSettings {
+  return { ...settings, [key]: value } as PlatformSettings;
 }
 
 /** An image reference. Marked invalid only for the two things a browser knows. */

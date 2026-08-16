@@ -152,10 +152,110 @@ func collectorStatus(
 	}
 	state.CredentialReady = err == nil &&
 		len(secret.Data[observability.IngestTokenKey]) >= minMetricsIngestTokenLength
+
+	components, failure := componentStates(ctx, client, namespace, state)
+	if failure != nil {
+		return failure, nil
+	}
+	state.Components = components
 	return &agentv1.MetricsCollectorResponse{
 		Result: agentv1.ResultCode_RESULT_CODE_OK,
 		State:  state,
 	}, nil
+}
+
+// componentStates reports each installed workload separately.
+//
+// One aggregate "installed" would hide the case this bundle exists to make
+// visible: a Cluster running the collector and the object exporter but not the
+// node exporter answers half the query catalogue and nothing about disk or
+// network, and an operator reading a single green badge would have no idea why.
+func componentStates(
+	ctx context.Context,
+	client kubernetes.Interface,
+	namespace string,
+	collector *agentv1.MetricsCollectorState,
+) ([]*agentv1.MetricsComponentState, *agentv1.MetricsCollectorResponse) {
+	components := []*agentv1.MetricsComponentState{{
+		Component:       observability.ComponentCollector,
+		Installed:       collector.GetInstalled(),
+		Image:           collector.GetImage(),
+		DesiredReplicas: collector.GetDesiredReplicas(),
+		ReadyReplicas:   collector.GetReadyReplicas(),
+	}}
+
+	kubeState := &agentv1.MetricsComponentState{Component: observability.ComponentKubeState}
+	deployment, err := client.AppsV1().Deployments(namespace).Get(
+		ctx, observability.KubeStateName, metav1.GetOptions{},
+	)
+	switch {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		return nil, collectorKubernetesFailure("read kube-state-metrics Deployment", err)
+	default:
+		if managedByAgent(deployment.Labels) {
+			kubeState.Installed = true
+			kubeState.Image = containerImageOf(
+				deployment.Spec.Template.Spec.Containers,
+				observability.KubeStateContainerName,
+			)
+			if deployment.Spec.Replicas != nil {
+				kubeState.DesiredReplicas = *deployment.Spec.Replicas
+			}
+			kubeState.ReadyReplicas = min(
+				deployment.Status.ReadyReplicas,
+				kubeState.DesiredReplicas,
+			)
+		}
+	}
+	components = append(components, kubeState)
+
+	nodeExporter := &agentv1.MetricsComponentState{Component: observability.ComponentNodeExporter}
+	daemonSet, err := client.AppsV1().DaemonSets(namespace).Get(
+		ctx, observability.NodeExporterName, metav1.GetOptions{},
+	)
+	switch {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		return nil, collectorKubernetesFailure("read node-exporter DaemonSet", err)
+	default:
+		if managedByAgent(daemonSet.Labels) {
+			nodeExporter.Installed = true
+			nodeExporter.Image = containerImageOf(
+				daemonSet.Spec.Template.Spec.Containers,
+				observability.NodeExporterContainerName,
+			)
+			nodeExporter.DesiredReplicas = daemonSet.Status.DesiredNumberScheduled
+			nodeExporter.ReadyReplicas = min(
+				daemonSet.Status.NumberReady,
+				nodeExporter.DesiredReplicas,
+			)
+		}
+	}
+	if !nodeExporter.GetInstalled() {
+		// The reason the last install recorded, if there was one. It only
+		// survives on the collector's own ConfigMap, so a Cluster with no
+		// collector reports no reason either — which is correct, nobody has
+		// tried to install anything there.
+		configMap, err := client.CoreV1().ConfigMaps(namespace).Get(
+			ctx, observability.CollectorConfigMapName, metav1.GetOptions{},
+		)
+		if err == nil && managedByAgent(configMap.Labels) {
+			nodeExporter.UnavailableReason = configMap.Annotations[nodeExporterReasonAnnotation]
+			nodeExporter.UnavailableMessage = configMap.Annotations[nodeExporterMessageAnnotation]
+		}
+	}
+	components = append(components, nodeExporter)
+	return components, nil
+}
+
+func containerImageOf(containers []corev1.Container, name string) string {
+	for _, container := range containers {
+		if container.Name == name {
+			return container.Image
+		}
+	}
+	return ""
 }
 
 // ingestURL reports where the collector should send batches, or an error when
@@ -318,14 +418,42 @@ func installMetricsCollector(
 		return collectorApplyFailure("ClusterRoleBinding", err), nil
 	}
 
+	// The targets come before the collector's own configuration, because that
+	// configuration says what to scrape and a job for something that was never
+	// installed fails every interval.
+	if request.GetKubeStateMetrics() != nil {
+		if err := applyKubeStateMetrics(
+			ctx, client, namespace, request.GetKubeStateMetrics(),
+		); err != nil {
+			return collectorApplyFailure("kube-state-metrics", err), nil
+		}
+	}
+	nodeExporterReason, nodeExporterMessage := "", ""
+	if request.GetNodeExporter() != nil {
+		nodeExporterReason, nodeExporterMessage = applyNodeExporter(
+			ctx, client, namespace, request.GetNodeExporter(),
+		)
+	}
+
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      observability.CollectorConfigMapName,
 			Namespace: namespace,
 			Labels:    labels,
+			// Why the node metrics exporter is missing, recorded where a later
+			// status read can still find it. Without this the Console would show
+			// "not installed" for a component the Cluster refused, and the
+			// operator would have to reinstall just to see the reason again.
+			// Annotations rather than data: changing them does not remount the
+			// collector's configuration volume.
+			Annotations: nodeExporterAnnotations(nodeExporterReason, nodeExporterMessage),
 		},
 		Data: map[string]string{
-			observability.CollectorConfigKey: renderCollectorScrapeConfig(request),
+			observability.CollectorConfigKey: renderCollectorScrapeConfig(
+				namespace,
+				request,
+				request.GetNodeExporter() != nil && nodeExporterReason == "",
+			),
 		},
 	}
 	if err := applyCollectorObject(
@@ -404,11 +532,134 @@ func uninstallMetricsCollector(
 	// running against permissions that are about to disappear. The credential
 	// goes last and does go: leaving it behind would keep a usable token in the
 	// Cluster for a collector that no longer exists.
+	//
+	// The scrape targets go with it. They were installed as one thing and they
+	// are removed as one thing — leaving an exporter behind that nothing scrapes
+	// would keep consuming a Node's memory for data nobody reads.
 	deletions := []struct {
 		kind   string
 		labels func() (map[string]string, error)
 		delete func() error
 	}{
+		{
+			kind: "node-exporter DaemonSet",
+			labels: func() (map[string]string, error) {
+				existing, err := client.AppsV1().DaemonSets(namespace).Get(
+					ctx, observability.NodeExporterName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.AppsV1().DaemonSets(namespace).Delete(
+					ctx, observability.NodeExporterName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "node-exporter ServiceAccount",
+			labels: func() (map[string]string, error) {
+				existing, err := client.CoreV1().ServiceAccounts(namespace).Get(
+					ctx, observability.NodeExporterName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.CoreV1().ServiceAccounts(namespace).Delete(
+					ctx, observability.NodeExporterName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "kube-state-metrics Deployment",
+			labels: func() (map[string]string, error) {
+				existing, err := client.AppsV1().Deployments(namespace).Get(
+					ctx, observability.KubeStateName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.AppsV1().Deployments(namespace).Delete(
+					ctx, observability.KubeStateName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "kube-state-metrics Service",
+			labels: func() (map[string]string, error) {
+				existing, err := client.CoreV1().Services(namespace).Get(
+					ctx, observability.KubeStateName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.CoreV1().Services(namespace).Delete(
+					ctx, observability.KubeStateName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "kube-state-metrics ClusterRoleBinding",
+			labels: func() (map[string]string, error) {
+				existing, err := client.RbacV1().ClusterRoleBindings().Get(
+					ctx, observability.KubeStateName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.RbacV1().ClusterRoleBindings().Delete(
+					ctx, observability.KubeStateName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "kube-state-metrics ClusterRole",
+			labels: func() (map[string]string, error) {
+				existing, err := client.RbacV1().ClusterRoles().Get(
+					ctx, observability.KubeStateName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.RbacV1().ClusterRoles().Delete(
+					ctx, observability.KubeStateName, metav1.DeleteOptions{},
+				)
+			},
+		},
+		{
+			kind: "kube-state-metrics ServiceAccount",
+			labels: func() (map[string]string, error) {
+				existing, err := client.CoreV1().ServiceAccounts(namespace).Get(
+					ctx, observability.KubeStateName, metav1.GetOptions{},
+				)
+				if err != nil {
+					return nil, err
+				}
+				return existing.Labels, nil
+			},
+			delete: func() error {
+				return client.CoreV1().ServiceAccounts(namespace).Delete(
+					ctx, observability.KubeStateName, metav1.DeleteOptions{},
+				)
+			},
+		},
 		{
 			kind: "Deployment",
 			labels: func() (map[string]string, error) {
@@ -751,6 +1002,35 @@ func collectorResources(
 			},
 		}, nil
 	}
+	return buildResourceRequirements(
+		request.GetCpuRequest(),
+		request.GetMemoryRequest(),
+		request.GetCpuLimit(),
+		request.GetMemoryLimit(),
+	)
+}
+
+// componentResources does the same for one of the additional scrape targets.
+// There is no legacy fallback here: these components did not exist before the
+// Server learned to name their budgets, so an empty set of four means the
+// operator cleared them on purpose.
+func componentResources(
+	component *agentv1.MetricsCollectorComponent,
+) (corev1.ResourceRequirements, error) {
+	return buildResourceRequirements(
+		component.GetCpuRequest(),
+		component.GetMemoryRequest(),
+		component.GetCpuLimit(),
+		component.GetMemoryLimit(),
+	)
+}
+
+func buildResourceRequirements(
+	cpuRequest string,
+	memoryRequest string,
+	cpuLimit string,
+	memoryLimit string,
+) (corev1.ResourceRequirements, error) {
 	requests := corev1.ResourceList{}
 	limits := corev1.ResourceList{}
 	type entry struct {
@@ -759,10 +1039,10 @@ func collectorResources(
 		value string
 	}
 	for _, item := range []entry{
-		{requests, corev1.ResourceCPU, request.GetCpuRequest()},
-		{requests, corev1.ResourceMemory, request.GetMemoryRequest()},
-		{limits, corev1.ResourceCPU, request.GetCpuLimit()},
-		{limits, corev1.ResourceMemory, request.GetMemoryLimit()},
+		{requests, corev1.ResourceCPU, cpuRequest},
+		{requests, corev1.ResourceMemory, memoryRequest},
+		{limits, corev1.ResourceCPU, cpuLimit},
+		{limits, corev1.ResourceMemory, memoryLimit},
 	} {
 		if item.value == "" {
 			continue
@@ -783,10 +1063,29 @@ func collectorResources(
 	return requirements, nil
 }
 
-// renderCollectorScrapeConfig covers the kubelet resource endpoint only. That
-// is what the metrics views read, and every additional target multiplies the
-// cardinality one Cluster sends.
-func renderCollectorScrapeConfig(request *agentv1.MetricsCollectorRequest) string {
+// renderCollectorScrapeConfig covers exactly the targets this install puts into
+// the Cluster: the kubelet always, and the two additional exporters when the
+// Server asked for them.
+//
+// A job is written only for a target that exists. A scrape configuration naming
+// something that was never installed produces a job that fails every interval,
+// which reads as a broken Cluster rather than as a target nobody asked for.
+func renderCollectorScrapeConfig(
+	namespace string,
+	request *agentv1.MetricsCollectorRequest,
+	nodeExporterInstalled bool,
+) string {
+	config := renderKubeletScrapeJob(request)
+	if request.GetKubeStateMetrics() != nil {
+		config += renderKubeStateScrapeJob(namespace)
+	}
+	if nodeExporterInstalled {
+		config += renderNodeExporterScrapeJob()
+	}
+	return config
+}
+
+func renderKubeletScrapeJob(request *agentv1.MetricsCollectorRequest) string {
 	return fmt.Sprintf(`global:
   scrape_interval: %s
 scrape_configs:
@@ -816,6 +1115,60 @@ scrape_configs:
       - regex: ^zke_.*$
         action: labeldrop
 `, request.GetScrapeInterval(), request.GetKubeletMetricsPort())
+}
+
+// renderKubeStateScrapeJob reaches the object metrics exporter through its
+// Service. A name that does not move means the collector needs no permission to
+// list Pods just to find one address.
+func renderKubeStateScrapeJob(namespace string) string {
+	return fmt.Sprintf(`  - job_name: kube-state-metrics
+    scheme: http
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['%s.%s.svc:%d']
+    relabel_configs:
+      - regex: ^zke_.*$
+        action: labeldrop
+`, observability.KubeStateName, namespace, observability.KubeStatePort)
+}
+
+// renderNodeExporterScrapeJob discovers the exporter the same way the kubelet
+// job discovers kubelets: it runs on the host network of every Node, so the
+// Node's own address plus its port is where it answers. Reusing Node discovery
+// means the collector needs no permission it does not already hold.
+func renderNodeExporterScrapeJob() string {
+	return fmt.Sprintf(`  - job_name: node-exporter
+    scheme: http
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
+      - source_labels: [__meta_kubernetes_node_address_InternalIP]
+        target_label: __address__
+        replacement: $1:%d
+      - regex: ^zke_.*$
+        action: labeldrop
+`, observability.NodeExporterPort)
+}
+
+const (
+	nodeExporterReasonAnnotation  = "zke.io/node-exporter-unavailable-reason"
+	nodeExporterMessageAnnotation = "zke.io/node-exporter-unavailable-message"
+)
+
+// nodeExporterAnnotations returns nil when the component installed, so a
+// recovered install clears the note rather than leaving a stale explanation on
+// a component that is now running.
+func nodeExporterAnnotations(reason string, message string) map[string]string {
+	if reason == "" {
+		return nil
+	}
+	return map[string]string{
+		nodeExporterReasonAnnotation:  reason,
+		nodeExporterMessageAnnotation: message,
+	}
 }
 
 func managedByAgent(labels map[string]string) bool {

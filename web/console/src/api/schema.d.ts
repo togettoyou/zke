@@ -4946,7 +4946,7 @@ export interface components {
                 /** @enum {string} */
                 kind: "range" | "instant";
                 /** @enum {string} */
-                unit: "millicores" | "bytes" | "count" | "ratio";
+                unit: "millicores" | "bytes" | "bytes_per_second" | "count" | "ratio";
                 /** @description 除集群身份外，该查询返回的序列标签。 */
                 dimensions: string[];
                 requires_namespace: boolean;
@@ -4961,6 +4961,13 @@ export interface components {
                  *     “全部 Pod”既画不出也没人问，边界写在契约里比交给序列上限截断更清楚。
                  */
                 requires_top: boolean;
+                /**
+                 * @description 该查询依赖的采集组件。空表示只依赖每次安装都会配置的 kubelet 端点。
+                 *     缺少对应组件的集群在这里返回空结果，而“空”本身与“集群很闲”无法区分，
+                 *     因此把依赖如实告诉客户端，而不是让它呈现一张没有解释的空图。
+                 * @enum {string}
+                 */
+                requires_component: "" | "kube-state-metrics" | "node-exporter";
             }[];
         };
         MetricsQueryResult: {
@@ -4969,7 +4976,7 @@ export interface components {
             /** @enum {string} */
             kind: "range" | "instant";
             /** @enum {string} */
-            unit: "millicores" | "bytes" | "count" | "ratio";
+            unit: "millicores" | "bytes" | "bytes_per_second" | "count" | "ratio";
             /** Format: date-time */
             start: string;
             /** Format: date-time */
@@ -5056,6 +5063,32 @@ export interface components {
             active_series: number;
             /** @description 估算值所对照的上限。为 0 表示本 Server 没有该集群的预算信息。 */
             max_active_series: number;
+            /**
+             * @description 一次安装放进集群的每个工作负载各一条，包含采集组件自身。三者作为一体安装与卸载：
+             *     没人抓取的采集目标是浪费，而抓取一个从未安装的目标只会产生持续失败的 job。
+             *     旧版本 Agent 不报告组件，此时为空数组。
+             */
+            components: {
+                /** @enum {string} */
+                component: "collector" | "kube-state-metrics" | "node-exporter";
+                installed: boolean;
+                /** @description 当前运行的镜像；未安装时为空。 */
+                image: string;
+                /** @description 按当前平台配置安装时会使用的镜像。 */
+                desired_image: string;
+                /** @description DaemonSet 形态的组件（node-exporter）为应调度到的节点数。 */
+                desired_replicas: number;
+                ready_replicas: number;
+                /**
+                 * @description 集群**拒绝**了该组件时给出，与“没人安装过”不同。node-exporter 需要
+                 *     host 网络与 hostPath，运行在 baseline 或 restricted Pod Security 级别的
+                 *     Namespace 会拒绝它；ZKE 不会为此改写别人 Namespace 的安全等级，而是如实
+                 *     报告，并且不让它导致整个安装失败——其余链路没有它照常工作。
+                 */
+                unavailable_reason: string;
+                /** @description ZKE 自己撰写的说明，不回显集群的原始错误。 */
+                unavailable_message: string;
+            }[];
         };
         KubernetesClusterOverview: {
             generated_at: components["schemas"]["Timestamp"];
@@ -5801,6 +5834,28 @@ export interface components {
             metrics_collector_memory_request: string;
             metrics_collector_cpu_limit: string;
             metrics_collector_memory_limit: string;
+            /**
+             * @description 与采集组件一并安装的对象指标导出器镜像。它是节点可分配量与 Pod 申请/限制的唯一来源，
+             *     没有它，用量曲线没有分母，任何容量问题都答不了。
+             */
+            kube_state_metrics_image: string;
+            /** @enum {string} */
+            kube_state_metrics_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            kube_state_metrics_cpu_request: string;
+            kube_state_metrics_memory_request: string;
+            kube_state_metrics_cpu_limit: string;
+            kube_state_metrics_memory_limit: string;
+            /**
+             * @description 与采集组件一并安装的节点指标导出器镜像，提供磁盘、文件系统与网络。它以 DaemonSet
+             *     形式运行在每个节点上，预算取值应当保持很小——它的开销会乘以集群规模。
+             */
+            node_exporter_image: string;
+            /** @enum {string} */
+            node_exporter_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            node_exporter_cpu_request: string;
+            node_exporter_memory_request: string;
+            node_exporter_cpu_limit: string;
+            node_exporter_memory_limit: string;
             /** @description Cluster Terminal Pod 存续时长，创建新会话时读取，无需重启 Server。 */
             cluster_terminal_session_ttl_seconds: number;
             revision: number;
@@ -5820,6 +5875,20 @@ export interface components {
             metrics_collector_memory_request: string;
             metrics_collector_cpu_limit: string;
             metrics_collector_memory_limit: string;
+            kube_state_metrics_image: string;
+            /** @enum {string} */
+            kube_state_metrics_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            kube_state_metrics_cpu_request: string;
+            kube_state_metrics_memory_request: string;
+            kube_state_metrics_cpu_limit: string;
+            kube_state_metrics_memory_limit: string;
+            node_exporter_image: string;
+            /** @enum {string} */
+            node_exporter_image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            node_exporter_cpu_request: string;
+            node_exporter_memory_request: string;
+            node_exporter_cpu_limit: string;
+            node_exporter_memory_limit: string;
             cluster_terminal_session_ttl_seconds: number;
             expected_revision: number;
         };

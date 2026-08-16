@@ -43,12 +43,14 @@ func TestLiveMetricsCollectorInstallAndUninstall(t *testing.T) {
 	// their names are fixed by the product, so this test cannot give itself
 	// private ones. If a real collector is already installed here, running
 	// would delete its authorization on the way out — skip instead.
-	if _, err := client.RbacV1().ClusterRoles().Get(
-		ctx, observability.CollectorName, metav1.GetOptions{},
-	); err == nil {
-		t.Skip("a metrics collector is already installed in this cluster")
-	} else if !apierrors.IsNotFound(err) {
-		t.Fatal(err)
+	for _, name := range []string{observability.CollectorName, observability.KubeStateName} {
+		if _, err := client.RbacV1().ClusterRoles().Get(
+			ctx, name, metav1.GetOptions{},
+		); err == nil {
+			t.Skip("a metrics collector is already installed in this cluster")
+		} else if !apierrors.IsNotFound(err) {
+			t.Fatal(err)
+		}
 	}
 
 	namespace := "zke-collector-e2e-" + strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
@@ -64,10 +66,12 @@ func TestLiveMetricsCollectorInstallAndUninstall(t *testing.T) {
 		defer cancelCleanup()
 		_ = client.CoreV1().Namespaces().Delete(cleanup, namespace, metav1.DeleteOptions{})
 		// Cluster-scoped objects do not go with the Namespace.
-		_ = client.RbacV1().ClusterRoleBindings().Delete(
-			cleanup, observability.CollectorName, metav1.DeleteOptions{})
-		_ = client.RbacV1().ClusterRoles().Delete(
-			cleanup, observability.CollectorName, metav1.DeleteOptions{})
+		for _, name := range []string{observability.CollectorName, observability.KubeStateName} {
+			_ = client.RbacV1().ClusterRoleBindings().Delete(
+				cleanup, name, metav1.DeleteOptions{})
+			_ = client.RbacV1().ClusterRoles().Delete(
+				cleanup, name, metav1.DeleteOptions{})
+		}
 	})
 
 	// The test runs outside the Cluster, so it advertises an address the way a
@@ -84,6 +88,18 @@ func TestLiveMetricsCollectorInstallAndUninstall(t *testing.T) {
 		ScrapeInterval:     "30s",
 		BufferSize:         "512Mi",
 		KubeletMetricsPort: 10250,
+		KubeStateMetrics: &agentv1.MetricsCollectorComponent{
+			Image:           "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1",
+			ImagePullPolicy: "IfNotPresent",
+			CpuRequest:      "20m",
+			MemoryRequest:   "128Mi",
+		},
+		NodeExporter: &agentv1.MetricsCollectorComponent{
+			Image:           "quay.io/prometheus/node-exporter:v1.12.1",
+			ImagePullPolicy: "IfNotPresent",
+			CpuRequest:      "10m",
+			MemoryRequest:   "32Mi",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,6 +109,25 @@ func TestLiveMetricsCollectorInstallAndUninstall(t *testing.T) {
 	}
 	if !response.GetState().GetInstalled() || !response.GetState().GetCredentialReady() {
 		t.Fatalf("install state = %+v", response.GetState())
+	}
+	// The object exporter has to be accepted too. Its ClusterRole is the part a
+	// fake client cannot check: Kubernetes refuses to create a ClusterRole
+	// granting a permission its creator does not itself hold, so this is where a
+	// missing Agent permission shows up. The node exporter is allowed to be
+	// refused — that is a Pod Security decision belonging to the Cluster — so it
+	// is reported rather than asserted.
+	for _, component := range response.GetState().GetComponents() {
+		if component.GetComponent() == observability.ComponentNodeExporter &&
+			!component.GetInstalled() {
+			t.Logf(
+				"node-exporter was refused by this cluster (%s); the rest of the install stands",
+				component.GetUnavailableReason(),
+			)
+			continue
+		}
+		if !component.GetInstalled() {
+			t.Fatalf("%s was not installed: %+v", component.GetComponent(), component)
+		}
 	}
 
 	// The Deployment has to be accepted and become available. A spec the API

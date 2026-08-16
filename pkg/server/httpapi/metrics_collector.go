@@ -70,6 +70,23 @@ type metricsCollectorStateResponse struct {
 	// count. Zero max means the Server has nothing to report.
 	ActiveSeries    int `json:"active_series"`
 	MaxActiveSeries int `json:"max_active_series"`
+	// One entry per workload the install puts into the Cluster, the collector
+	// included. An Agent too old to report them answers with an empty list.
+	Components []metricsComponentStateResponse `json:"components"`
+}
+
+type metricsComponentStateResponse struct {
+	Component       string `json:"component"`
+	Installed       bool   `json:"installed"`
+	Image           string `json:"image"`
+	DesiredImage    string `json:"desired_image"`
+	DesiredReplicas int32  `json:"desired_replicas"`
+	ReadyReplicas   int32  `json:"ready_replicas"`
+	// Set when the Cluster refused this component rather than when nobody asked
+	// for it. The message is written by ZKE and never quotes the Cluster's own
+	// error, which can name objects outside this operation.
+	UnavailableReason  string `json:"unavailable_reason"`
+	UnavailableMessage string `json:"unavailable_message"`
 }
 
 // status reports whether the target Cluster is collecting metrics.
@@ -197,7 +214,27 @@ func (handler *metricsCollectorHandler) respond(
 		LastThrottledAt: optionalTime(state.LastThrottledAt),
 		ActiveSeries:    state.ActiveSeries,
 		MaxActiveSeries: state.MaxActiveSeries,
+		Components:      componentStatesResponse(state.Components),
 	})
+}
+
+func componentStatesResponse(
+	components []metricscollector.ComponentState,
+) []metricsComponentStateResponse {
+	result := make([]metricsComponentStateResponse, 0, len(components))
+	for _, component := range components {
+		result = append(result, metricsComponentStateResponse{
+			Component:          component.Component,
+			Installed:          component.Installed,
+			Image:              component.Image,
+			DesiredImage:       component.DesiredImage,
+			DesiredReplicas:    component.DesiredReplicas,
+			ReadyReplicas:      component.ReadyReplicas,
+			UnavailableReason:  component.UnavailableReason,
+			UnavailableMessage: component.UnavailableMessage,
+		})
+	}
+	return result
 }
 
 // optionalTime keeps a zero time out of the response. Serialising it would
