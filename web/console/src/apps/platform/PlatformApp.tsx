@@ -15,12 +15,12 @@ import { errorMessage } from "@/api/errors";
 import { AppShell, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
-import { notifyFailure } from "@/components/common/notify";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
-import { FieldHint, Label } from "@/components/ui/label";
+import { FieldError, FieldHint, Label } from "@/components/ui/label";
 import { Alert, Switch } from "@/components/ui/misc";
 import {
   Dialog,
@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { parseQuantity } from "@/lib/quantity";
 
 const NAV: AppNavItem[] = [
   { id: "endpoints", label: "端点", icon: Network },
@@ -49,6 +50,42 @@ const NAV: AppNavItem[] = [
 ];
 
 const PULL_POLICIES = ["Always", "IfNotPresent", "Never"] as const;
+
+/**
+ * Which columns of the settings row each section owns.
+ *
+ * The Server keeps all of them in one row behind one revision, so a save is
+ * necessarily a write of the whole row — but that is a storage fact, and it used
+ * to be the operator's problem: an edit made under 镜像 was still in the draft
+ * when 集群终端 was saved, and both went to the Server under a button that only
+ * named one of them. Sections are independent here instead. A save takes the
+ * fields listed for the open section and reads every other field back from what
+ * the Server last returned, so it cannot carry an edit the operator is not
+ * looking at.
+ */
+const SECTION_FIELDS = {
+  images: [
+    "agent_image",
+    "agent_image_pull_policy",
+    "cluster_terminal_image",
+    "cluster_terminal_image_pull_policy",
+  ],
+  "cluster-terminal": ["cluster_terminal_session_ttl_seconds"],
+  "metrics-collection": [
+    "metrics_collector_image",
+    "metrics_collector_image_pull_policy",
+    "metrics_collector_cpu_request",
+    "metrics_collector_cpu_limit",
+    "metrics_collector_memory_request",
+    "metrics_collector_memory_limit",
+  ],
+} as const satisfies Record<string, readonly (keyof PlatformSettings)[]>;
+
+type SettingsSection = keyof typeof SECTION_FIELDS;
+
+function isSettingsSection(section: string): section is SettingsSection {
+  return section in SECTION_FIELDS;
+}
 
 const EMPTY_PROFILE: EndpointProfileInput = {
   name: "",
@@ -66,10 +103,10 @@ const EMPTY_PROFILE: EndpointProfileInput = {
  * are, their password, their desktop. This is about the deployment, and only a
  * global administrator can see or change any of it.
  *
- * All three sections read one settings row and one endpoint list from a single
- * query. The endpoint list is its own resource with its own revisions; images
- * and the Cluster Terminal lifetime are columns of the same row, so they share
- * one draft and one optimistic-concurrency save.
+ * All four sections read one settings row and one endpoint list from a single
+ * query. The endpoint list is its own resource with its own revisions; the rest
+ * are columns of that row, edited and saved one section at a time — see
+ * {@link SECTION_FIELDS}.
  */
 export function PlatformApp(_props: AppComponentProps) {
   const [section, setSection] = useState("endpoints");
@@ -89,19 +126,54 @@ export function PlatformApp(_props: AppComponentProps) {
     );
   }
 
-  const settings = draft ?? query.data?.settings ?? null;
+  const stored = query.data?.settings ?? null;
+  const settings = draft ?? stored;
 
-  async function save(next: PlatformSettings): Promise<void> {
+  /*
+   * Leaving a section discards what was typed in it.
+   *
+   * The draft used to survive the move, which made two things true at once that
+   * cannot both be: the section looked unchanged when it was returned to — it
+   * still showed the edit — while nothing in the rest of the application knew
+   * the edit existed. Dropping it means coming back to a section always shows
+   * what the deployment is actually configured with.
+   */
+  function navigate(next: string) {
+    if (next !== section) {
+      setDraft(null);
+      updateSettings.reset();
+    }
+    setSection(next);
+  }
+
+  async function save(active: SettingsSection): Promise<void> {
+    if (!stored || !settings) {
+      return;
+    }
+    const next = { ...stored };
+    for (const field of SECTION_FIELDS[active]) {
+      // A per-field copy rather than a spread of the whole draft: `stored` is
+      // the freshest answer from the Server, and the draft's other columns are
+      // a snapshot from whenever it was taken.
+      Object.assign(next, { [field]: settings[field] });
+    }
     try {
-      setDraft(await updateSettings.mutateAsync(next));
+      await updateSettings.mutateAsync(next);
+      // The mutation invalidates the query, so the saved values come back from
+      // the Server rather than being held here as a second copy.
+      setDraft(null);
       toast.success("平台配置已保存");
-    } catch (error) {
-      notifyFailure("保存平台配置失败", error);
+    } catch {
+      // Reported next to the button by SaveRow.
     }
   }
 
+  const activeSettingsSection = isSettingsSection(section) ? section : null;
+  const problems =
+    settings && activeSettingsSection ? sectionProblems(activeSettingsSection, settings) : [];
+
   return (
-    <AppShell nav={NAV} activeId={section} onNavigate={setSection}>
+    <AppShell nav={NAV} activeId={section} onNavigate={navigate}>
       <div className="mx-auto grid max-w-2xl gap-7">
         {query.isLoading ? (
           <p className="text-muted-foreground text-sm">正在加载平台配置…</p>
@@ -124,9 +196,14 @@ export function PlatformApp(_props: AppComponentProps) {
             {section === "metrics-collection" ? (
               <MetricsCollectionSection settings={settings} onChange={setDraft} />
             ) : null}
-            {section === "endpoints" ? null : (
-              <SaveRow pending={updateSettings.isPending} onSave={() => save(settings)} />
-            )}
+            {activeSettingsSection ? (
+              <SaveRow
+                pending={updateSettings.isPending}
+                problems={problems}
+                error={updateSettings.error}
+                onSave={() => void save(activeSettingsSection)}
+              />
+            ) : null}
           </>
         ) : null}
       </div>
@@ -135,23 +212,149 @@ export function PlatformApp(_props: AppComponentProps) {
 }
 
 /**
- * One save button, shown on every settings section.
+ * The save button of one settings section, with whatever is stopping it.
  *
- * Images, the Cluster Terminal lifetime and the collector's budget are columns
- * of a single row guarded by one revision, so a save from any section writes
- * all of them. Saying so under the button keeps that from being a surprise: an
- * operator who edited an image and then switched sections has not left the edit
- * behind.
+ * Two kinds of refusal end up here and they are kept apart: `problems` are what
+ * this form can decide on its own, listed before anything is sent, and `error`
+ * is what the Server refused. The Server checks all of it again — it owns these
+ * values, and the browser is not a boundary — but a form that submits a limit
+ * below its own request only to be told so a round trip later has made the
+ * operator wait to learn something it already knew.
  */
-function SaveRow({ pending, onSave }: { pending: boolean; onSave: () => void }) {
+function SaveRow({
+  pending,
+  problems,
+  error,
+  onSave,
+}: {
+  pending: boolean;
+  problems: string[];
+  error: unknown;
+  onSave: () => void;
+}) {
   return (
-    <div className="grid gap-1.5">
-      <Button variant="primary" className="justify-self-start" disabled={pending} onClick={onSave}>
-        {pending ? "保存中…" : "保存平台配置"}
+    <div className="grid gap-2">
+      {problems.length > 0 ? (
+        <Alert tone="danger">
+          <ul className="list-disc space-y-0.5 pl-4">
+            {problems.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+        </Alert>
+      ) : null}
+      <ErrorAlert error={error} />
+      <Button
+        variant="primary"
+        className="justify-self-start"
+        disabled={pending || problems.length > 0}
+        onClick={onSave}
+      >
+        {pending ? "保存中…" : "保存本页配置"}
       </Button>
-      <FieldHint>镜像、集群终端与指标采集属于同一份平台配置，保存会一并写入各处的改动。</FieldHint>
+      <FieldHint>
+        只保存当前页面的改动，其他页面的配置保持不变；切换到其他页面会丢弃本页未保存的修改。
+      </FieldHint>
     </div>
   );
+}
+
+/**
+ * What this section would be refused for, in the Server's own terms.
+ *
+ * Deliberately the same rules as `platformsettings.validateSettingsInput`, in
+ * the same order: this is a second statement of one boundary, so where the two
+ * disagree the Server wins and the operator sees its message instead. Anything
+ * the browser cannot decide — whether an image reference resolves, say — is not
+ * checked here at all rather than guessed at.
+ */
+function sectionProblems(section: SettingsSection, settings: PlatformSettings): string[] {
+  const problems: string[] = [];
+  if (section === "images") {
+    if (!validImage(settings.agent_image)) {
+      problems.push("Agent 镜像不能为空，且不能包含空白字符。");
+    }
+    if (!validImage(settings.cluster_terminal_image)) {
+      problems.push("Cluster Terminal 镜像不能为空，且不能包含空白字符。");
+    }
+    return problems;
+  }
+  if (section === "cluster-terminal") {
+    // Whole seconds between 60 and 3600, which is what the Server accepts — not
+    // whole minutes. A deployment configured elsewhere may hold 90 seconds, and
+    // a form that called that invalid would refuse to save a page the operator
+    // never edited.
+    const seconds = settings.cluster_terminal_session_ttl_seconds;
+    if (!Number.isInteger(seconds) || seconds < 60 || seconds > 3600) {
+      problems.push("集群终端会话存续时长必须在 1 至 60 分钟之间。");
+    }
+    return problems;
+  }
+  if (!validImage(settings.metrics_collector_image)) {
+    problems.push("指标采集组件镜像不能为空，且不能包含空白字符。");
+  }
+  const quantities = [
+    { label: "CPU 请求", value: settings.metrics_collector_cpu_request },
+    { label: "CPU 限制", value: settings.metrics_collector_cpu_limit },
+    { label: "内存请求", value: settings.metrics_collector_memory_request },
+    { label: "内存限制", value: settings.metrics_collector_memory_limit },
+  ];
+  for (const quantity of quantities) {
+    const problem = quantityProblem(quantity.label, quantity.value);
+    if (problem) {
+      problems.push(problem);
+    }
+  }
+  if (exceedsLimit(settings.metrics_collector_cpu_request, settings.metrics_collector_cpu_limit)) {
+    problems.push("采集组件的 CPU 限制不能低于 CPU 请求。");
+  }
+  if (
+    exceedsLimit(settings.metrics_collector_memory_request, settings.metrics_collector_memory_limit)
+  ) {
+    problems.push("采集组件的内存限制不能低于内存请求。");
+  }
+  return problems;
+}
+
+/**
+ * The Server trims an image reference before checking it, so surrounding
+ * whitespace is not what makes one invalid — whitespace inside it is.
+ */
+function validImage(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed !== "" && new TextEncoder().encode(trimmed).length <= 512 && !/\s/.test(trimmed);
+}
+
+/**
+ * An empty quantity is a real answer — it means the entry is left off the
+ * container — so only a value that is present and unusable is a problem.
+ */
+function quantityProblem(label: string, value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return null;
+  }
+  if (trimmed.length > 32) {
+    return `采集组件的${label}过长。`;
+  }
+  const parsed = parseQuantity(trimmed);
+  if (parsed === null) {
+    return `采集组件的${label}不是合法的 Kubernetes 数量，例如 500m 或 512Mi。`;
+  }
+  if (parsed <= 0) {
+    return `采集组件的${label}必须大于 0。`;
+  }
+  return null;
+}
+
+/** True only when both values are readable and the limit is the smaller one. */
+function exceedsLimit(request: string, limit: string): boolean {
+  const parsedRequest = parseQuantity(request.trim());
+  const parsedLimit = parseQuantity(limit.trim());
+  if (parsedRequest === null || parsedLimit === null) {
+    return false;
+  }
+  return parsedLimit < parsedRequest;
 }
 
 function ImagesSection({
@@ -169,27 +372,23 @@ function ImagesSection({
         镜像在创建新会话时读取，修改后立即对下一个会话生效。指标采集组件的镜像在「指标采集」中配置。
       </p>
       <div className="grid gap-3">
-        <div className="grid gap-1.5">
-          <Label>Agent 镜像</Label>
-          <Input
-            value={settings.agent_image}
-            onChange={(event) => onChange({ ...settings, agent_image: event.target.value })}
-          />
-        </div>
+        <ImageField
+          id="agent-image"
+          label="Agent 镜像"
+          value={settings.agent_image}
+          onChange={(value) => onChange({ ...settings, agent_image: value })}
+        />
         <PullPolicySelect
           label="Agent 拉取策略"
           value={settings.agent_image_pull_policy}
           onChange={(value) => onChange({ ...settings, agent_image_pull_policy: value })}
         />
-        <div className="grid gap-1.5">
-          <Label>Cluster Terminal 镜像</Label>
-          <Input
-            value={settings.cluster_terminal_image}
-            onChange={(event) =>
-              onChange({ ...settings, cluster_terminal_image: event.target.value })
-            }
-          />
-        </div>
+        <ImageField
+          id="cluster-terminal-image"
+          label="Cluster Terminal 镜像"
+          value={settings.cluster_terminal_image}
+          onChange={(value) => onChange({ ...settings, cluster_terminal_image: value })}
+        />
         <PullPolicySelect
           label="Cluster Terminal 拉取策略"
           value={settings.cluster_terminal_image_pull_policy}
@@ -226,16 +425,12 @@ function MetricsCollectionSection({
         修改后对下一次安装生效；已安装的集群需要在「可观测性 → 采集接入」中重新安装才会更换。
       </p>
       <div className="grid gap-3">
-        <div className="grid gap-1.5">
-          <Label htmlFor="metrics-collector-image">镜像</Label>
-          <Input
-            id="metrics-collector-image"
-            value={settings.metrics_collector_image}
-            onChange={(event) =>
-              onChange({ ...settings, metrics_collector_image: event.target.value })
-            }
-          />
-        </div>
+        <ImageField
+          id="metrics-collector-image"
+          label="镜像"
+          value={settings.metrics_collector_image}
+          onChange={(value) => onChange({ ...settings, metrics_collector_image: value })}
+        />
         <PullPolicySelect
           label="拉取策略"
           value={settings.metrics_collector_image_pull_policy}
@@ -291,6 +486,35 @@ function MetricsCollectionSection({
   );
 }
 
+/** An image reference. Marked invalid only for the two things a browser knows. */
+function ImageField({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const invalid = !validImage(value);
+  return (
+    <div className="grid content-start gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        className="zke-mono"
+        autoComplete="off"
+        spellCheck={false}
+        aria-invalid={invalid || undefined}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
 function QuantityField({
   id,
   label,
@@ -304,6 +528,7 @@ function QuantityField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const problem = quantityProblem(label, value);
   return (
     <div className="grid content-start gap-1.5">
       <Label htmlFor={id}>{label}</Label>
@@ -311,6 +536,9 @@ function QuantityField({
         id={id}
         className="zke-mono"
         placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+        aria-invalid={problem ? true : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
@@ -413,8 +641,19 @@ function EndpointsSection({
   const [profileTarget, setProfileTarget] = useState<AgentEndpointProfile | null | undefined>();
   const [deleteTarget, setDeleteTarget] = useState<AgentEndpointProfile | null>(null);
   const [profileDraft, setProfileDraft] = useState<EndpointProfileInput>(EMPTY_PROFILE);
+  // Field errors appear on the first submit rather than while the first
+  // character is being typed: a form that is red before it has been filled in
+  // is reporting the operator's progress, not their mistakes.
+  const [submitted, setSubmitted] = useState(false);
+
+  const problems = profileProblems(profileDraft);
+  const showProblems: ProfileProblems = submitted ? problems : {};
+  const pending = createProfile.isPending || updateProfile.isPending;
 
   function openProfile(profile?: AgentEndpointProfile) {
+    createProfile.reset();
+    updateProfile.reset();
+    setSubmitted(false);
     setProfileTarget(profile ?? null);
     setProfileDraft(
       profile
@@ -427,6 +666,29 @@ function EndpointsSection({
           }
         : EMPTY_PROFILE,
     );
+  }
+
+  async function submitProfile(): Promise<void> {
+    setSubmitted(true);
+    if (pending || Object.keys(problems).length > 0) {
+      return;
+    }
+    try {
+      if (profileTarget) {
+        await updateProfile.mutateAsync({
+          ...profileDraft,
+          id: profileTarget.id,
+          expected_revision: profileTarget.revision,
+        });
+      } else {
+        await createProfile.mutateAsync(profileDraft);
+      }
+      setProfileTarget(undefined);
+      toast.success("端点已保存");
+    } catch {
+      // Reported inside the dialog, above its footer. A toast would land behind
+      // the dialog's own overlay, blurred, under the form that produced it.
+    }
   }
 
   return (
@@ -508,98 +770,147 @@ function EndpointsSection({
               {profileTarget ? "编辑 Agent 接入端点" : "新增 Agent 接入端点"}
             </DialogTitle>
           </DialogHeader>
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label>名称</Label>
-              <Input
-                value={profileDraft.name}
-                onChange={(event) => setProfileDraft({ ...profileDraft, name: event.target.value })}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>注册 URL</Label>
-              <Input
-                placeholder="https://zke.example.com"
-                value={profileDraft.registration_url}
-                onChange={(event) => {
-                  const registrationURL = event.target.value;
-                  setProfileDraft({
-                    ...profileDraft,
-                    registration_url: registrationURL,
-                    registration_ca_certificate_pem: registrationURL
-                      .trimStart()
-                      .toLowerCase()
-                      .startsWith("http://")
-                      ? ""
-                      : profileDraft.registration_ca_certificate_pem,
-                  });
-                }}
-              />
-              <FieldHint>支持 HTTP 或 HTTPS。</FieldHint>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>QUIC 地址</Label>
-              <Input
-                placeholder="zke.example.com:8443"
-                value={profileDraft.quic_address}
-                onChange={(event) =>
-                  setProfileDraft({ ...profileDraft, quic_address: event.target.value })
-                }
-              />
-            </div>
-            {profileDraft.registration_url.trimStart().toLowerCase().startsWith("https://") ? (
+          {/* A form, so Enter submits — see the note on 组织与资源's name dialog. */}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitProfile();
+            }}
+          >
+            <div className="grid gap-3">
               <div className="grid gap-1.5">
-                <Label>自定义 HTTPS CA（可选）</Label>
-                <Textarea
-                  rows={5}
-                  placeholder="-----BEGIN CERTIFICATE-----"
-                  value={profileDraft.registration_ca_certificate_pem}
+                <Label htmlFor="endpoint-name">名称</Label>
+                <Input
+                  id="endpoint-name"
+                  autoFocus
+                  maxLength={128}
+                  aria-invalid={showProblems.name ? true : undefined}
+                  aria-describedby={showProblems.name ? "endpoint-name-error" : undefined}
+                  value={profileDraft.name}
                   onChange={(event) =>
-                    setProfileDraft({
-                      ...profileDraft,
-                      registration_ca_certificate_pem: event.target.value,
-                    })
+                    setProfileDraft({ ...profileDraft, name: event.target.value })
                   }
                 />
-                <FieldHint>公共可信证书无需填写；仅用于自签名证书或私有 CA。</FieldHint>
+                {showProblems.name ? (
+                  <FieldError id="endpoint-name-error">{showProblems.name}</FieldError>
+                ) : null}
               </div>
-            ) : null}
-            <div className="flex items-center justify-between">
-              <Label>启用</Label>
-              <Switch
-                checked={profileDraft.enabled}
-                onCheckedChange={(checked) =>
-                  setProfileDraft({ ...profileDraft, enabled: checked })
-                }
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setProfileTarget(undefined)}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              disabled={createProfile.isPending || updateProfile.isPending}
-              onClick={async () => {
-                try {
-                  if (profileTarget)
-                    await updateProfile.mutateAsync({
+              <div className="grid gap-1.5">
+                <Label htmlFor="endpoint-registration-url">注册 URL</Label>
+                <Input
+                  id="endpoint-registration-url"
+                  className="zke-mono"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="https://zke.example.com"
+                  aria-invalid={showProblems.registration_url ? true : undefined}
+                  aria-describedby={
+                    showProblems.registration_url ? "endpoint-registration-url-error" : undefined
+                  }
+                  value={profileDraft.registration_url}
+                  onChange={(event) => {
+                    const registrationURL = event.target.value;
+                    setProfileDraft({
                       ...profileDraft,
-                      id: profileTarget.id,
-                      expected_revision: profileTarget.revision,
+                      registration_url: registrationURL,
+                      registration_ca_certificate_pem: registrationURL
+                        .trimStart()
+                        .toLowerCase()
+                        .startsWith("http://")
+                        ? ""
+                        : profileDraft.registration_ca_certificate_pem,
                     });
-                  else await createProfile.mutateAsync(profileDraft);
-                  setProfileTarget(undefined);
-                  toast.success("端点已保存");
-                } catch (error) {
-                  notifyFailure("保存 Agent 接入端点失败", error);
-                }
-              }}
-            >
-              保存
-            </Button>
-          </DialogFooter>
+                  }}
+                />
+                <FieldHint>支持 HTTP 或 HTTPS，只填协议和主机，不带路径或查询参数。</FieldHint>
+                {showProblems.registration_url ? (
+                  <FieldError id="endpoint-registration-url-error">
+                    {showProblems.registration_url}
+                  </FieldError>
+                ) : null}
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="endpoint-quic-address">QUIC 地址</Label>
+                <Input
+                  id="endpoint-quic-address"
+                  className="zke-mono"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="zke.example.com:8443"
+                  aria-invalid={showProblems.quic_address ? true : undefined}
+                  aria-describedby={
+                    showProblems.quic_address ? "endpoint-quic-address-error" : undefined
+                  }
+                  value={profileDraft.quic_address}
+                  onChange={(event) =>
+                    setProfileDraft({ ...profileDraft, quic_address: event.target.value })
+                  }
+                />
+                <FieldHint>host:port 格式，端口介于 1 和 65535 之间。</FieldHint>
+                {showProblems.quic_address ? (
+                  <FieldError id="endpoint-quic-address-error">
+                    {showProblems.quic_address}
+                  </FieldError>
+                ) : null}
+              </div>
+              {profileDraft.registration_url.trimStart().toLowerCase().startsWith("https://") ? (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="endpoint-ca">自定义 HTTPS CA（可选）</Label>
+                  <Textarea
+                    id="endpoint-ca"
+                    rows={5}
+                    className="zke-mono"
+                    spellCheck={false}
+                    placeholder="-----BEGIN CERTIFICATE-----"
+                    aria-invalid={showProblems.registration_ca_certificate_pem ? true : undefined}
+                    aria-describedby={
+                      showProblems.registration_ca_certificate_pem ? "endpoint-ca-error" : undefined
+                    }
+                    value={profileDraft.registration_ca_certificate_pem}
+                    onChange={(event) =>
+                      setProfileDraft({
+                        ...profileDraft,
+                        registration_ca_certificate_pem: event.target.value,
+                      })
+                    }
+                  />
+                  <FieldHint>公共可信证书无需填写；仅用于自签名证书或私有 CA。</FieldHint>
+                  {showProblems.registration_ca_certificate_pem ? (
+                    <FieldError id="endpoint-ca-error">
+                      {showProblems.registration_ca_certificate_pem}
+                    </FieldError>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between">
+                <Label htmlFor="endpoint-enabled">启用</Label>
+                <Switch
+                  id="endpoint-enabled"
+                  checked={profileDraft.enabled}
+                  onCheckedChange={(checked) =>
+                    setProfileDraft({ ...profileDraft, enabled: checked })
+                  }
+                />
+              </div>
+            </div>
+            <ErrorAlert
+              error={profileTarget ? updateProfile.error : createProfile.error}
+              className="mt-3"
+            />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={pending}
+                onClick={() => setProfileTarget(undefined)}
+              >
+                取消
+              </Button>
+              <Button type="submit" variant="primary" disabled={pending}>
+                {pending ? "保存中…" : "保存"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -643,5 +954,112 @@ function EndpointsSection({
         }}
       />
     </>
+  );
+}
+
+/** The name the Server's own deployment configuration reserves for itself. */
+const RESERVED_PROFILE_NAME = "部署配置默认端点";
+
+type ProfileProblems = Partial<Record<keyof EndpointProfileInput, string>>;
+
+/**
+ * What the Server would refuse this endpoint for, per field.
+ *
+ * Same rules as `platformsettings.validateProfileInput`, restated because the
+ * refusal is worth having before a round trip — and because the Server can only
+ * name one problem at a time, while a form with four empty fields has four. The
+ * Server still validates all of it; this is an affordance, not the check.
+ */
+function profileProblems(draft: EndpointProfileInput): ProfileProblems {
+  const problems: ProfileProblems = {};
+
+  const name = draft.name.trim();
+  if (name === "") {
+    problems.name = "名称不能为空。";
+  } else if (new TextEncoder().encode(name).length > 128) {
+    problems.name = "名称不能超过 128 字节。";
+  } else if (name.toLowerCase() === RESERVED_PROFILE_NAME.toLowerCase()) {
+    problems.name = `「${RESERVED_PROFILE_NAME}」由 Server 部署配置保留。`;
+  }
+
+  const registrationURL = draft.registration_url.trim();
+  const parsed = parseRegistrationURL(registrationURL);
+  if (registrationURL === "") {
+    problems.registration_url = "注册 URL 不能为空。";
+  } else if (!parsed) {
+    problems.registration_url = "注册 URL 必须是包含主机名的完整 HTTP 或 HTTPS 地址。";
+  } else if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    problems.registration_url = "注册 URL 只支持 HTTP 或 HTTPS。";
+  } else if (parsed.username !== "" || parsed.password !== "") {
+    problems.registration_url = "注册 URL 不能包含用户名或密码。";
+  } else if (
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    (parsed.pathname !== "" && parsed.pathname !== "/")
+  ) {
+    problems.registration_url = "注册 URL 不能包含路径、查询参数或片段。";
+  }
+
+  const quicProblem = quicAddressProblem(draft.quic_address.trim());
+  if (quicProblem) {
+    problems.quic_address = quicProblem;
+  }
+
+  const certificate = draft.registration_ca_certificate_pem.trim();
+  if (certificate !== "") {
+    if (parsed?.protocol === "http:") {
+      problems.registration_ca_certificate_pem = "HTTP 注册地址不能配置 HTTPS CA。";
+    } else if (!looksLikeCertificatePEM(certificate)) {
+      problems.registration_ca_certificate_pem =
+        "必须是单个 PEM 证书，以 -----BEGIN CERTIFICATE----- 开头。";
+    }
+  }
+
+  return problems;
+}
+
+/**
+ * `URL` accepts anything with a scheme, including `mailto:` and a bare
+ * `sdf:` — so the host is checked separately rather than trusted from a
+ * successful parse. A value with no scheme at all fails to parse, which is the
+ * common case here and the one the field's own hint is about.
+ */
+function parseRegistrationURL(value: string): URL | null {
+  try {
+    const parsed = new URL(value);
+    return parsed.host === "" ? null : parsed;
+  } catch {
+    return null;
+  }
+}
+
+function quicAddressProblem(value: string): string | null {
+  if (value === "") {
+    return "QUIC 地址不能为空。";
+  }
+  // Rightmost colon, so an IPv6 literal in brackets keeps its own colons.
+  const separator = value.lastIndexOf(":");
+  const host = value.slice(0, separator);
+  const port = value.slice(separator + 1);
+  if (separator <= 0 || host.trim() === "" || !/^\d{1,5}$/.test(port)) {
+    return "QUIC 地址必须使用 host:port 格式。";
+  }
+  const portNumber = Number(port);
+  if (portNumber < 1 || portNumber > 65535) {
+    return "QUIC 端口必须介于 1 和 65535 之间。";
+  }
+  return null;
+}
+
+/**
+ * The shape of a PEM certificate, which is as far as a browser can honestly
+ * go: whether the block parses as a certificate, and whether that certificate
+ * is a CA, is decided by the Server.
+ */
+function looksLikeCertificatePEM(value: string): boolean {
+  return (
+    value.startsWith("-----BEGIN CERTIFICATE-----") &&
+    value.endsWith("-----END CERTIFICATE-----") &&
+    value.indexOf("-----BEGIN CERTIFICATE-----", 1) === -1
   );
 }

@@ -3,7 +3,6 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Building2, ChevronRight, FolderKanban, MoreHorizontal, PlusCircle } from "lucide-react";
 import { toast } from "sonner";
 
-import { errorMessage, errorRequestId } from "@/api/errors";
 import {
   useCreateProject,
   useCreateTenant,
@@ -20,6 +19,7 @@ import type { AppComponentProps } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { EmptyState } from "@/components/common/state";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { IdentifierLabel, RelativeTime, StatusBadge } from "@/components/common/status";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert } from "@/components/ui/misc";
 import { useScopeStore } from "@/scope/scope-store";
 import {
   Select,
@@ -829,16 +828,7 @@ function NameDialog({
             />
           </div>
 
-          {error ? (
-            <Alert tone="danger" className="mt-3">
-              {errorMessage(error)}
-              {errorRequestId(error) ? (
-                <span className="zke-mono mt-1 block text-xs opacity-80">
-                  请求 ID：{errorRequestId(error)}
-                </span>
-              ) : null}
-            </Alert>
-          ) : null}
+          <ErrorAlert error={error} className="mt-3" />
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>

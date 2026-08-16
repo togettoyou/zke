@@ -12,6 +12,7 @@ import { ArrowLeft, type LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { useScopeStore } from "@/scope/scope-store";
 
 export type AppNavItem = {
   id: string;
@@ -308,14 +309,36 @@ export function SectionTitle({
   );
 }
 
-/** Shown when an application needs a scope the operator has not selected yet. */
+/**
+ * Shown when an application needs a scope the operator has not selected yet.
+ *
+ * It also points at the control that resolves it. The picker is in the top bar,
+ * which is nowhere near the window this text is in, and an operator who has just
+ * signed in has no reason to have noticed it — so the sentence naming it is not
+ * enough on its own, and the picker is highlighted as this view appears. The
+ * button repeats the gesture, because the highlight is over in a couple of
+ * seconds and the reader may have been looking elsewhere.
+ *
+ * Nothing here changes the scope itself: choosing a Project is the operator's
+ * decision, and a view that picked one for them would be answering a question
+ * about authority with a guess.
+ */
 export function ScopeRequired() {
+  const requestAttention = useScopeStore((state) => state.requestAttention);
+
+  useEffect(() => {
+    requestAttention();
+  }, [requestAttention]);
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-1.5 text-center">
       <p className="text-foreground text-sm font-medium">请先选择项目</p>
       <p className="text-muted-foreground max-w-sm text-[13px]">
         该视图按项目定域执行。在顶部状态栏的项目选择器中选择一个项目后即可使用。
       </p>
+      <Button size="sm" variant="ghost" className="mt-1.5" onClick={requestAttention}>
+        定位项目选择器
+      </Button>
     </div>
   );
 }

@@ -56,8 +56,12 @@ Tenant 与 Project 不写入存储：Cluster 的归属是 Server 数据库中的
 `cluster_name` 只能作为展示属性，不能替代 `cluster_id` 作为数据身份。
 
 可观测性平台默认提供用户权限范围内的全局视图，同时允许按集群和 Namespace 缩小范围。全局视图不代表全局
-操作权限：查询结果始终受 Tenant、Project 与 RBAC 边界约束，规划中的读取权限词为 `cluster.metrics.read`，
+操作权限：查询结果始终受 Tenant、Project 与 RBAC 边界约束，读取权限词为 `cluster.metrics.read`，
 采集启停为 `cluster.metrics.manage`。
+
+Console 侧的可观测性应用与其他应用一样需要先选择项目才会打开：「采集接入」按项目列出集群，没有作用域时
+没有可操作的对象。指标查询本身仍按调用者在 `cluster.metrics.read` 上的完整可见范围执行，不因当前选择的
+项目而收窄。
 
 ## 不做的事
 

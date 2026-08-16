@@ -255,6 +255,9 @@ Compose 在 `.env` 中设置同名变量；Helm 使用 `server.metrics.enabled`�
 - 集群终端 —— Cluster Terminal 会话存续时长，可选 1 分钟至 1 小时，默认 15 分钟；
 - 指标采集 —— 采集组件镜像与 Image Pull Policy，以及它的 CPU / 内存请求与限制。
 
+每一页各自保存，只写入本页的改动；离开一页会丢弃其中尚未保存的修改，回到该页看到的始终是当前实际生效的
+配置。
+
 生效时机不同：Cluster Terminal 的镜像、拉取策略与会话时长立即用于新会话；采集组件的取值在下一次安装时
 读取；Agent 镜像、拉取策略、Namespace 和凭证选中的端点在新 Enrollment 签发时进入不可变快照，已签发的凭证
 和已接入的集群不受影响。

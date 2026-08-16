@@ -3,11 +3,12 @@ import { Activity, KeyRound, LayoutGrid, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { useChangePassword, useHealth } from "@/api/queries/auth";
-import { errorMessage, errorRequestId } from "@/api/errors";
+import { errorMessage } from "@/api/errors";
 import { AppShell, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
 import { describeCapability, GLOBAL_SCOPE } from "@/auth/capabilities";
 import { useSessionContext } from "@/auth/session-context";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { AbsoluteTime, IdentifierLabel } from "@/components/common/status";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -258,16 +259,7 @@ function PasswordSection() {
           ) : null}
         </div>
 
-        {changePassword.error ? (
-          <Alert tone="danger">
-            {errorMessage(changePassword.error)}
-            {errorRequestId(changePassword.error) ? (
-              <span className="zke-mono mt-1 block text-xs opacity-80">
-                请求 ID：{errorRequestId(changePassword.error)}
-              </span>
-            ) : null}
-          </Alert>
-        ) : null}
+        <ErrorAlert error={changePassword.error} />
 
         <Button
           type="submit"

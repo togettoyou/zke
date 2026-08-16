@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react
 import { useClusterEvents } from "@/api/events";
 import { useSessionContext } from "@/auth/session-context";
 import { cn } from "@/lib/cn";
-import { useScopeStore } from "@/scope/scope-store";
+import { SCOPE_ATTENTION_MS, useScopeStore } from "@/scope/scope-store";
 
 import { Dock } from "./Dock";
 import { IconGrid } from "./IconGrid";
@@ -74,9 +74,35 @@ export function Desktop() {
    * keeps its own title bar, which is where restoring happens.
    */
   const focusedWindow = focusedId ? windows[focusedId] : undefined;
+
+  /*
+   * A view inside a window can ask for the Project picker to be pointed at, and
+   * a full-screen window is exactly the case where that picker is off screen —
+   * which is also the case where an operator is most likely to have never seen
+   * it. The bar comes back for as long as the highlight runs and then leaves
+   * again; the window is not disturbed.
+   */
+  const [scopeAttention, setScopeAttention] = useState(false);
+  useEffect(() => {
+    let timer = 0;
+    const unsubscribe = useScopeStore.subscribe((state, previous) => {
+      if (state.attentionToken === previous.attentionToken) {
+        return;
+      }
+      window.clearTimeout(timer);
+      setScopeAttention(true);
+      timer = window.setTimeout(() => setScopeAttention(false), SCOPE_ATTENTION_MS);
+    });
+    return () => {
+      unsubscribe();
+      window.clearTimeout(timer);
+    };
+  }, []);
+
   // A revealed desktop is the opposite of immersive: the full-screen window is
   // off screen, and the bar it was hiding for is the desktop's own chrome again.
-  const immersive = !stacked && !desktopRevealed && focusedWindow?.mode === "maximized";
+  const immersive =
+    !stacked && !desktopRevealed && !scopeAttention && focusedWindow?.mode === "maximized";
 
   const toggleDock = useCallback(() => setDockVisible((shown) => !shown), []);
 

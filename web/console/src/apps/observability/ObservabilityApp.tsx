@@ -2,10 +2,11 @@ import { useMemo, useState } from "react";
 import { Activity, PlugZap } from "lucide-react";
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
-import { AppShell, type AppNavItem } from "@/apps/AppShell";
+import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
 import { isApiError } from "@/api/errors";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/state";
+import { useScopeStore } from "@/scope/scope-store";
 
 import { CollectionSection } from "./CollectionSection";
 import { MetricsOverviewSection } from "./MetricsOverviewSection";
@@ -23,12 +24,21 @@ const NAV: AppNavItem[] = [
 ];
 
 /**
- * Observability is a multi-cluster application: it opens on everything the
- * operator may read rather than asking which Cluster first. Narrowing to one
- * Cluster is a filter inside the view, not a precondition for entering it.
+ * Observability is a multi-cluster application: within the selected Project it
+ * opens on every Cluster the operator may read rather than asking which one
+ * first. Narrowing to a single Cluster is a filter inside the view, not a
+ * precondition for entering it.
+ *
+ * A Project is still a precondition, and it is checked here rather than in the
+ * section that needs it: 采集接入 lists the Clusters of one Project, so without a
+ * scope there is nothing for the navigation rail to navigate between, and a rail
+ * standing beside 请先选择项目 offers a choice that leads nowhere. Every other
+ * application in the Console answers this the same way — the shell does not
+ * open until there is a scope for it to work in.
  */
 export function ObservabilityApp(_props: AppComponentProps) {
   const [activeId, setActiveId] = useState(DEFAULT_SECTION);
+  const projectId = useScopeStore((state) => state.scope.projectId);
   const catalog = useMetricsQueryCatalog();
 
   const content = useMemo(() => {
@@ -54,6 +64,10 @@ export function ObservabilityApp(_props: AppComponentProps) {
     }
     return <CollectionSection />;
   }, [activeId, catalog]);
+
+  if (!projectId) {
+    return <ScopeRequired />;
+  }
 
   return (
     <AppShell nav={NAV} activeId={activeId} onNavigate={setActiveId}>

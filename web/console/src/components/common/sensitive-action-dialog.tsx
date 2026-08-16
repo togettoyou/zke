@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 
-import { errorMessage, errorRequestId } from "@/api/errors";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert } from "@/components/ui/misc";
 
 export type ScopeLine = {
   label: string;
@@ -85,7 +84,6 @@ export function SensitiveActionDialog({
   }
 
   const confirmationSatisfied = !confirmationText || typed.trim() === confirmationText;
-  const requestId = errorRequestId(error);
   const handleOpenChange = (nextOpen: boolean) => {
     // Once a sensitive request has started, its result must remain attached to
     // this dialog. In particular, terminal creation can take long enough that
@@ -109,14 +107,7 @@ export function SensitiveActionDialog({
       />
     </div>
   ) : null;
-  const errorAlert = error ? (
-    <Alert tone="danger" className="mt-3">
-      {errorMessage(error)}
-      {requestId ? (
-        <span className="zke-mono mt-1 block text-xs opacity-80">请求 ID：{requestId}</span>
-      ) : null}
-    </Alert>
-  ) : null;
+  const errorAlert = <ErrorAlert error={error} className="mt-3" />;
   const footer = (
     <DialogFooter className={pinConfirmationControls && !confirmationText ? "mt-0" : undefined}>
       <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={pending}>

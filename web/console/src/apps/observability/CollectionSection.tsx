@@ -13,11 +13,10 @@ import {
 } from "@/api/queries/observability";
 import { queryKeys } from "@/api/query-keys";
 import { DEFAULT_PAGE_SIZE, type ClusterAggregate, type MetricsCollectorState } from "@/api/types";
-import { ScopeRequired, SectionTitle } from "@/apps/AppShell";
+import { SectionTitle } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { RowDeleteAction } from "@/components/common/delete-action";
-import { notifyFailure } from "@/components/common/notify";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { StatusBadge } from "@/components/common/status";
@@ -93,12 +92,22 @@ export function CollectionSection() {
     }
   }, [clusterIds, clusters, queryClient]);
 
+  // Opening a dialog clears what the previous attempt left behind: a mutation
+  // holds its error until it is reset, and nothing about picking a new target
+  // touches the mutation behind it.
   const openInstall = useCallback(
     (cluster: ClusterAggregate) => {
       install.reset();
       setInstallTarget(cluster);
     },
     [install],
+  );
+  const openRemoval = useCallback(
+    (cluster: ClusterAggregate) => {
+      uninstall.reset();
+      setRemovalTarget(cluster);
+    },
+    [uninstall],
   );
 
   const installState = installTarget ? byCluster.get(installTarget.id)?.state : undefined;
@@ -201,7 +210,7 @@ export function CollectionSection() {
                   name={`${row.original.name} 的采集组件`}
                   hint="卸载采集组件"
                   disabled={uninstall.isPending}
-                  onDelete={() => setRemovalTarget(row.original)}
+                  onDelete={() => openRemoval(row.original)}
                 />
               ) : null}
             </div>
@@ -209,13 +218,11 @@ export function CollectionSection() {
         },
       },
     ],
-    [byCluster, canManage, install.isPending, openInstall, uninstall.isPending],
+    [byCluster, canManage, install.isPending, openInstall, openRemoval, uninstall.isPending],
   );
 
-  if (!projectId) {
-    return <ScopeRequired />;
-  }
-
+  // No scope guard here: the application does not open its shell without a
+  // Project, so this section only ever renders with one.
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* The rail already says 采集接入, so the heading is here only for the one
@@ -295,7 +302,7 @@ export function CollectionSection() {
               setInstallTarget(null);
               toast.success(installed ? "采集组件已重新安装" : "采集组件已安装");
             },
-            onError: (error) => notifyFailure("安装采集组件", error),
+            // The refusal is rendered by the dialog itself, through `error`.
           });
         }}
       />
@@ -330,7 +337,7 @@ export function CollectionSection() {
               setRemovalTarget(null);
               toast.success("采集组件已卸载");
             },
-            onError: (error) => notifyFailure("卸载采集组件", error),
+            // The refusal is rendered by the dialog itself, through `error`.
           });
         }}
       />

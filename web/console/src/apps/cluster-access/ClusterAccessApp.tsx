@@ -38,7 +38,7 @@ import { useScopeStore } from "@/scope/scope-store";
 import { DataTable } from "@/components/common/data-table";
 import { DetailCard, DetailRow } from "@/components/common/detail";
 import { SecretReveal } from "@/components/common/secret-reveal";
-import { notifyFailure } from "@/components/common/notify";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import {
   AbsoluteTime,
@@ -63,7 +63,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { FieldHint, Label } from "@/components/ui/label";
+import { FieldError, FieldHint, Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -76,6 +76,9 @@ import { cn } from "@/lib/cn";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 import { formatDuration } from "@/lib/time";
+
+/** A Kubernetes DNS-1123 label, which is what a Namespace name has to be. */
+const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 
 const NAV: AppNavItem[] = [
   { id: "clusters", label: "集群", icon: Server },
@@ -505,8 +508,9 @@ function ClusterSection({
                 });
                 toast.success("集群已重命名");
                 setRenameTarget(null);
-              } catch (error) {
-                notifyFailure("重命名集群失败", error);
+              } catch {
+                // Reported in place, below: a toast raised from a dialog lands
+                // behind its own overlay.
               }
             }}
           >
@@ -521,6 +525,7 @@ function ClusterSection({
               />
               <FieldHint>名称仅用于展示，集群身份始终由 cluster_id 决定。</FieldHint>
             </div>
+            <ErrorAlert error={updateCluster.error} className="mt-3" />
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setRenameTarget(null)}>
                 取消
@@ -746,6 +751,10 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
   };
   const canCreate = permissions.can("cluster.enrollment.create", projectScope);
   const canRevoke = permissions.can("cluster.enrollment.revoke", projectScope);
+  // An empty field is "not filled in yet", which the disabled submit already
+  // says; only a value that is present and wrong is worth marking.
+  const agentNamespaceInvalid =
+    agentNamespace.trim().length > 0 && !DNS_LABEL.test(agentNamespace.trim());
 
   // See the cluster section above.
   const clearActionErrors = useCallback(() => {
@@ -893,17 +902,30 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                 id="enrollment-agent-namespace"
                 value={agentNamespace}
                 maxLength={63}
-                pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?"
+                aria-invalid={agentNamespaceInvalid || undefined}
+                aria-describedby={agentNamespaceInvalid ? "enrollment-namespace-error" : undefined}
                 onChange={(event) => setAgentNamespace(event.target.value)}
               />
               <FieldHint className="leading-relaxed">
                 该值属于目标集群，完成首次注册后固定；一键安装清单会在此 Namespace 部署 Agent。
               </FieldHint>
+              {/*
+               * Checked here rather than left to the Server, because the value
+               * is a Kubernetes DNS-1123 label and the rule is short enough to
+               * state: `pattern` alone does nothing outside a submitted form,
+               * which is what this input used to rely on.
+               */}
+              {agentNamespaceInvalid ? (
+                <FieldError id="enrollment-namespace-error">
+                  只能包含小写字母、数字和中划线，且必须以字母或数字开头和结尾。
+                </FieldError>
+              ) : null}
             </div>
             <FieldHint className="leading-relaxed">
               创建后可选择复制一键安装命令，或仅复制 Enrollment Token 用于自定义部署流程。
             </FieldHint>
           </div>
+          <ErrorAlert error={createInstallation.error} className="mt-3" />
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>
               取消
@@ -914,6 +936,7 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                 createInstallation.isPending ||
                 clusterName.trim().length === 0 ||
                 !resolvedEndpointProfileId ||
+                agentNamespaceInvalid ||
                 agentNamespace.trim().length === 0
               }
               onClick={async () => {
@@ -933,8 +956,8 @@ function EnrollmentSection({ scope }: { scope: ScopeSelection }) {
                     manifestUrl: new URL(result.manifest_path, window.location.origin).toString(),
                     expiresAt: result.expires_at,
                   });
-                } catch (error) {
-                  notifyFailure("创建接入凭证失败", error);
+                } catch {
+                  // Reported in place, above the footer.
                 }
               }}
             >

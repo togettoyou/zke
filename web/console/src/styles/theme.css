@@ -559,6 +559,25 @@
   }
 
   /*
+   * "It is up there." A view that cannot run without a Project says so where it
+   * is, and points at the control that fixes it — which is in the top bar, in
+   * another corner of the screen, and is the one control an operator new to the
+   * Console has no reason to have looked at yet.
+   *
+   * Three pulses and done, rather than something that keeps going: this is a
+   * direction, and a highlight still blinking after it has been followed is
+   * decoration. It borrows the focus halo's colour so the thing being pointed at
+   * reads as a control rather than as a warning — nothing is wrong, there is
+   * just a step missing.
+   *
+   * Box-shadow and background only, so the picker's own text stays put; growing
+   * or moving it would drag the neighbouring bar contents with it.
+   */
+  .zke-attention {
+    animation: zke-attention 860ms var(--ease-lift) 3;
+  }
+
+  /*
    * The transparent text layer of the YAML editor.
    *
    * Its characters are invisible so the highlighted layer behind shows through
@@ -971,6 +990,19 @@
 
   to {
     stroke-dashoffset: -100;
+  }
+}
+
+@keyframes zke-attention {
+  0%,
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 var(--ring-soft);
+  }
+
+  40% {
+    background-color: var(--primary-surface);
+    box-shadow: 0 0 0 4px var(--ring-soft);
   }
 }
 

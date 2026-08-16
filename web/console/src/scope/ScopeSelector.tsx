@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Check, Layers, Search } from "lucide-react";
 
 import { useProject, useProjects, useTenant, useTenants } from "@/api/queries/resources";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/cn";
+import { SCOPE_ATTENTION_MS, useScopeStore } from "@/scope/scope-store";
 
 const NONE_LABEL = "选择项目";
 const LIST_PARAMS = { limit: 100, status: "active" } as const;
@@ -56,6 +57,45 @@ export const ScopeSelector = memo(function ScopeSelector({
   const [open, setOpen] = useState(false);
   const [drilled, setDrilled] = useState<{ id: string; name: string } | null>(null);
   const [filter, setFilter] = useState("");
+
+  /*
+   * A view that needs a Project and has none asks for this control to be
+   * pointed at. The request arrives as a bumped counter in the scope store, and
+   * the highlight is local state with a timer rather than a class left on by
+   * whoever asked: the requester is inside a window and may well be closed
+   * before the animation is over.
+   *
+   * Subscribed to rather than selected: the token is an event, not a value this
+   * control renders, and a selector would re-render the heaviest thing in the
+   * top bar for a number it never shows.
+   *
+   * The class is dropped for one frame before it goes back on, so a second
+   * request arriving while the animation is still running restarts it — CSS
+   * restarts an animation when its element gains the class, not when something
+   * re-renders with the class it already had.
+   */
+  const [highlighted, setHighlighted] = useState(false);
+  useEffect(() => {
+    let frame = 0;
+    let timer = 0;
+    const unsubscribe = useScopeStore.subscribe((state, previous) => {
+      if (state.attentionToken === previous.attentionToken) {
+        return;
+      }
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      setHighlighted(false);
+      frame = requestAnimationFrame(() => {
+        setHighlighted(true);
+        timer = window.setTimeout(() => setHighlighted(false), SCOPE_ATTENTION_MS);
+      });
+    });
+    return () => {
+      unsubscribe();
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const tenants = useTenants(LIST_PARAMS, open);
   const projects = useProjects(open ? (drilled?.id ?? null) : null, LIST_PARAMS);
@@ -114,6 +154,7 @@ export const ScopeSelector = memo(function ScopeSelector({
             // around it would read as a control dropped onto the bar rather than
             // as part of it.
             "zke-focus rounded-control hover:bg-surface/60 flex max-w-[17rem] min-w-0 items-center gap-2 py-1 pr-1.5 pl-1 text-left transition-colors",
+            highlighted && "zke-attention",
             className,
           )}
         >

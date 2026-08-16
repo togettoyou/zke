@@ -53,7 +53,7 @@ import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { DetailKeyValues, DetailRow } from "@/components/common/detail";
 import { errorMessage } from "@/api/errors";
-import { notifyFailure } from "@/components/common/notify";
+import { ErrorAlert } from "@/components/common/error-alert";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import {
   AbsoluteTime,
@@ -79,7 +79,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CREDENTIAL_MANAGER_IGNORE, Input } from "@/components/ui/input";
-import { FieldHint, Label } from "@/components/ui/label";
+import { FieldError, FieldHint, Label } from "@/components/ui/label";
 import { Alert, Checkbox } from "@/components/ui/misc";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/cn";
@@ -170,6 +170,8 @@ const PERMISSION_LABELS: Record<string, string> = {
   "cluster.pod.port_forward": "转发 Pod 端口",
   "cluster.node.drain": "排空节点",
   "cluster.event.read": "查看集群事件",
+  "cluster.metrics.read": "查看集群指标",
+  "cluster.metrics.manage": "安装和卸载指标采集组件",
   "cluster.manage": "管理集群",
   "cluster.namespace.manage": "创建和删除 Kubernetes 命名空间",
   "cluster.system_namespace.manage": "管理 Kubernetes 系统命名空间",
@@ -210,6 +212,7 @@ const PERMISSION_WARNINGS: Record<string, string> = {
   "cluster.pod.terminal_recording.read": "可读取同一项目范围内的历史终端输出",
   "cluster.pod.port_forward": "可访问 Pod 内部监听端口",
   "cluster.node.drain": "可排空节点并驱逐 Pod",
+  "cluster.metrics.manage": "可在集群的 Agent Namespace 中部署或删除采集组件及其 RBAC",
   "cluster.namespace.manage": "删除命名空间会连同其中的全部对象一起移除",
   "cluster.system_namespace.manage": "可增删改 default 生命周期及 kube-* 命名空间内的资源",
   "cluster.agent_namespace.manage": "可增删改 Agent 所在命名空间，错误操作可能导致 Agent 离线",
@@ -596,6 +599,7 @@ function UserSection() {
       <CreateUserDialog
         open={createOpen}
         pending={createUser.isPending}
+        error={createUser.error}
         onClose={() => setCreateOpen(false)}
         onSubmit={async (input) => {
           await createUser.mutateAsync(input);
@@ -607,6 +611,7 @@ function UserSection() {
       <RenameUserDialog
         user={renameTarget}
         pending={updateUser.isPending}
+        error={updateUser.error}
         onClose={() => setRenameTarget(null)}
         onSubmit={async (displayName) => {
           if (!renameTarget) {
@@ -741,11 +746,14 @@ function UserSection() {
 function CreateUserDialog({
   open,
   pending,
+  error,
   onClose,
   onSubmit,
 }: {
   open: boolean;
   pending: boolean;
+  /** Rendered in place: a toast raised from a dialog lands behind its overlay. */
+  error?: unknown;
   onClose: () => void;
   onSubmit: (input: { username: string; displayName: string; password: string }) => Promise<void>;
 }) {
@@ -803,8 +811,10 @@ function CreateUserDialog({
               onChange={(event) => setPassword(event.target.value)}
             />
             <FieldHint>至少 15 个字符。请通过安全渠道告知用户，并要求其首次登录后修改。</FieldHint>
+            {tooShort ? <FieldError>密码至少需要 15 个字符。</FieldError> : null}
           </div>
         </div>
+        <ErrorAlert error={error} className="mt-3" />
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>
             取消
@@ -813,6 +823,8 @@ function CreateUserDialog({
             variant="primary"
             disabled={pending || !username.trim() || !displayName.trim() || password.length < 15}
             onClick={() => {
+              // The rejection is already on screen through `error`; catching it
+              // here only stops an unhandled promise rejection.
               void onSubmit({
                 username: username.trim(),
                 displayName: displayName.trim(),
@@ -823,7 +835,7 @@ function CreateUserDialog({
                   setDisplayName("");
                   setPassword("");
                 })
-                .catch((error: unknown) => notifyFailure("创建用户失败", error));
+                .catch(() => undefined);
             }}
           >
             {pending ? "创建中…" : "创建"}
@@ -837,11 +849,14 @@ function CreateUserDialog({
 function RenameUserDialog({
   user,
   pending,
+  error,
   onClose,
   onSubmit,
 }: {
   user: ManagedUser | null;
   pending: boolean;
+  /** Rendered in place: a toast raised from a dialog lands behind its overlay. */
+  error?: unknown;
   onClose: () => void;
   onSubmit: (displayName: string) => Promise<void>;
 }) {
@@ -869,7 +884,8 @@ function RenameUserDialog({
             if (pending || value.trim().length === 0) {
               return;
             }
-            void onSubmit(value.trim()).catch((error: unknown) => notifyFailure("修改失败", error));
+            // The rejection is already on screen through `error`.
+            void onSubmit(value.trim()).catch(() => undefined);
           }}
         >
           <div className="grid gap-1.5">
@@ -882,6 +898,7 @@ function RenameUserDialog({
               onChange={(event) => setValue(event.target.value)}
             />
           </div>
+          <ErrorAlert error={error} className="mt-3" />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>
               取消
