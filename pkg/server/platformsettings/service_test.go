@@ -72,72 +72,202 @@ func (memory *memoryStore) DeleteEndpointProfile(_ context.Context, id string) e
 func (memory *memoryStore) GetSettings(context.Context) (store.PlatformSettings, error) {
 	return memory.settings, nil
 }
+
+// UpdateSettings applies the partial update the way the database does: the
+// named workloads replace their rows, and everything else keeps what is stored.
 func (memory *memoryStore) UpdateSettings(_ context.Context, input store.UpdatePlatformSettingsParams) (store.PlatformSettings, error) {
-	memory.settings = store.PlatformSettings{
-		DefaultEndpointProfileID:        memory.settings.DefaultEndpointProfileID,
-		AgentImage:                      input.AgentImage,
-		AgentImagePullPolicy:            input.AgentImagePullPolicy,
-		ClusterTerminalImage:            input.ClusterTerminalImage,
-		ClusterTerminalImagePullPolicy:  input.ClusterTerminalImagePullPolicy,
-		MetricsCollectorImage:           input.MetricsCollectorImage,
-		MetricsCollectorImagePullPolicy: input.MetricsCollectorImagePullPolicy,
-		MetricsCollectorCPURequest:      input.MetricsCollectorCPURequest,
-		MetricsCollectorMemoryRequest:   input.MetricsCollectorMemoryRequest,
-		MetricsCollectorCPULimit:        input.MetricsCollectorCPULimit,
-		MetricsCollectorMemoryLimit:     input.MetricsCollectorMemoryLimit,
-		KubeStateMetricsImage:           input.KubeStateMetricsImage,
-		KubeStateMetricsImagePullPolicy: input.KubeStateMetricsImagePullPolicy,
-		KubeStateMetricsCPURequest:      input.KubeStateMetricsCPURequest,
-		KubeStateMetricsMemoryRequest:   input.KubeStateMetricsMemoryRequest,
-		KubeStateMetricsCPULimit:        input.KubeStateMetricsCPULimit,
-		KubeStateMetricsMemoryLimit:     input.KubeStateMetricsMemoryLimit,
-		NodeExporterImage:               input.NodeExporterImage,
-		NodeExporterImagePullPolicy:     input.NodeExporterImagePullPolicy,
-		NodeExporterCPURequest:          input.NodeExporterCPURequest,
-		NodeExporterMemoryRequest:       input.NodeExporterMemoryRequest,
-		NodeExporterCPULimit:            input.NodeExporterCPULimit,
-		NodeExporterMemoryLimit:         input.NodeExporterMemoryLimit,
-		ClusterTerminalSessionTTL:       input.ClusterTerminalSessionTTL,
-		Revision:                        input.ExpectedRevision + 1,
-		UpdatedAt:                       input.Now,
+	workloads := make(map[string]store.WorkloadSettings, len(memory.settings.Workloads))
+	for component, workload := range memory.settings.Workloads {
+		workloads[component] = workload
 	}
+	for component, workload := range input.Workloads {
+		workloads[component] = workload
+	}
+	memory.settings.Workloads = workloads
+	if input.ClusterTerminalSessionTTL != nil {
+		memory.settings.ClusterTerminalSessionTTL = *input.ClusterTerminalSessionTTL
+	}
+	memory.settings.Revision = input.ExpectedRevision + 1
+	memory.settings.UpdatedAt = input.Now
 	return memory.settings, nil
 }
 
-// validSettingsInput is a settings update that changes nothing contentious, so
-// a test can vary exactly the field it is about.
-func validSettingsInput() SettingsInput {
-	return SettingsInput{
-		AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "IfNotPresent",
-		ClusterTerminalImage: "registry.example.com/zke-terminal:v1", ClusterTerminalImagePullPolicy: "IfNotPresent",
-		MetricsCollectorImage: "registry.example.com/vmagent:v1", MetricsCollectorImagePullPolicy: "IfNotPresent",
-		MetricsCollectorCPURequest: "50m", MetricsCollectorMemoryRequest: "128Mi",
-		MetricsCollectorCPULimit: "500m", MetricsCollectorMemoryLimit: "512Mi",
-		KubeStateMetricsImage:           "registry.example.com/kube-state-metrics:v1",
-		KubeStateMetricsImagePullPolicy: "IfNotPresent",
-		KubeStateMetricsCPURequest:      "20m", KubeStateMetricsMemoryRequest: "128Mi",
-		KubeStateMetricsCPULimit: "500m", KubeStateMetricsMemoryLimit: "512Mi",
-		NodeExporterImage:           "registry.example.com/node-exporter:v1",
-		NodeExporterImagePullPolicy: "IfNotPresent",
-		NodeExporterCPURequest:      "10m", NodeExporterMemoryRequest: "32Mi",
-		NodeExporterCPULimit: "200m", NodeExporterMemoryLimit: "128Mi",
+// storedSettings is a settings set with every declared workload present, which
+// is what the Server refuses to run without.
+func storedSettings() store.PlatformSettings {
+	return store.PlatformSettings{
+		DefaultEndpointProfileID: testProfileID,
+		Workloads: map[string]store.WorkloadSettings{
+			WorkloadAgent: {
+				Image: "registry.example.com/zke-agent:v1", ImagePullPolicy: "IfNotPresent",
+			},
+			WorkloadClusterTerminal: {
+				Image: "registry.example.com/zke-terminal:v1", ImagePullPolicy: "IfNotPresent",
+			},
+			WorkloadMetricsCollector: {
+				Image: "registry.example.com/vmagent:v1", ImagePullPolicy: "IfNotPresent",
+				CPURequest: "50m", MemoryRequest: "128Mi", CPULimit: "500m", MemoryLimit: "512Mi",
+			},
+			WorkloadKubeStateMetrics: {
+				Image: "registry.example.com/kube-state-metrics:v1", ImagePullPolicy: "IfNotPresent",
+				CPURequest: "20m", MemoryRequest: "128Mi", CPULimit: "500m", MemoryLimit: "512Mi",
+			},
+			WorkloadNodeExporter: {
+				Image: "registry.example.com/node-exporter:v1", ImagePullPolicy: "IfNotPresent",
+				CPURequest: "10m", MemoryRequest: "32Mi", CPULimit: "200m", MemoryLimit: "128Mi",
+			},
+		},
 		ClusterTerminalSessionTTL: 15 * time.Minute,
-		ExpectedRevision:          1, ActorUserID: testUserID, Now: time.Now().UTC(),
+		Revision:                  1,
 	}
 }
 
-func TestPlatformSettingsKeepAgentAndTerminalPullPoliciesIndependent(t *testing.T) {
-	memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
-	input := validSettingsInput()
-	input.AgentImagePullPolicy = "Never"
-	input.ClusterTerminalImage = "registry.example.com/zke-terminal:v2"
-	input.ClusterTerminalImagePullPolicy = "Always"
+// collectorInput is a save of the metrics section that changes nothing
+// contentious, so a test can vary exactly the field it is about.
+func collectorInput() SettingsInput {
+	return SettingsInput{
+		Workloads: map[string]WorkloadSettings{
+			WorkloadMetricsCollector: {
+				Image: "registry.example.com/vmagent:v1", ImagePullPolicy: "IfNotPresent",
+				CPURequest: "50m", MemoryRequest: "128Mi", CPULimit: "500m", MemoryLimit: "512Mi",
+			},
+		},
+		ExpectedRevision: 1, ActorUserID: testUserID, Now: time.Now().UTC(),
+	}
+}
+
+// A save of one section must leave every other workload exactly as stored. It
+// used to be the Console's job to send back the values it was not editing,
+// which meant a stale draft could overwrite somebody else's change.
+func TestPlatformSettingsSaveLeavesUnnamedWorkloadsAlone(t *testing.T) {
+	memory := &memoryStore{settings: storedSettings()}
+	input := collectorInput()
+	input.Workloads[WorkloadMetricsCollector] = WorkloadSettings{
+		Image: "registry.example.com/vmagent:v2", ImagePullPolicy: "Always",
+		CPURequest: "60m", MemoryRequest: "128Mi",
+	}
 	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.AgentImagePullPolicy != "Never" || updated.ClusterTerminalImagePullPolicy != "Always" {
-		t.Fatalf("pull policies = Agent %q, Terminal %q", updated.AgentImagePullPolicy, updated.ClusterTerminalImagePullPolicy)
+	collector := updated.Workload(WorkloadMetricsCollector)
+	if collector.Image != "registry.example.com/vmagent:v2" || collector.ImagePullPolicy != "Always" {
+		t.Fatalf("collector = %+v", collector)
+	}
+	agent := updated.Workload(WorkloadAgent)
+	if agent.Image != "registry.example.com/zke-agent:v1" || agent.ImagePullPolicy != "IfNotPresent" {
+		t.Fatalf("Agent workload changed by a metrics save: %+v", agent)
+	}
+	if updated.ClusterTerminalSessionTTL != 15*time.Minute {
+		t.Fatalf("session lifetime = %s, want it untouched", updated.ClusterTerminalSessionTTL)
+	}
+}
+
+// Every workload ZKE installs takes a budget, including the two whose sizes
+// used to be constants somewhere else: the Agent's, which the manifest never
+// set at all, and the Cluster Terminal's, which the Agent held.
+func TestPlatformSettingsAcceptBudgetsForEveryWorkload(t *testing.T) {
+	memory := &memoryStore{settings: storedSettings()}
+	input := collectorInput()
+	input.Workloads = map[string]WorkloadSettings{
+		WorkloadAgent: {
+			Image: "registry.example.com/zke-agent:v1", ImagePullPolicy: "IfNotPresent",
+			CPURequest: "100m", MemoryRequest: "256Mi", MemoryLimit: "512Mi",
+		},
+		WorkloadClusterTerminal: {
+			Image: "registry.example.com/zke-terminal:v1", ImagePullPolicy: "IfNotPresent",
+			CPURequest: "25m", MemoryRequest: "64Mi",
+			CPULimit: "500m", MemoryLimit: "512Mi",
+		},
+	}
+	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := updated.Workload(WorkloadAgent)
+	if agent.CPURequest != "100m" || agent.MemoryLimit != "512Mi" || agent.CPULimit != "" {
+		t.Fatalf("Agent budget = %+v", agent)
+	}
+	if updated.Workload(WorkloadClusterTerminal).CPULimit != "500m" {
+		t.Fatalf("Cluster Terminal budget = %+v", updated.Workload(WorkloadClusterTerminal))
+	}
+}
+
+// The Agent's budget travels in the enrollment snapshot, which is frozen at
+// issue time: an operator resizing the Agent afterwards must not change what an
+// already issued token installs.
+func TestEnrollmentSnapshotCarriesTheAgentBudget(t *testing.T) {
+	certificateFile := listenerCertificate(t, []string{"zke.example.com"})
+	settings := storedSettings()
+	settings.Workloads[WorkloadAgent] = store.WorkloadSettings{
+		Image: "registry.example.com/zke-agent:v1", ImagePullPolicy: "IfNotPresent",
+		CPURequest: "100m", MemoryLimit: "512Mi",
+	}
+	memory := &memoryStore{
+		profiles: map[string]store.AgentEndpointProfile{testProfileID: {
+			ID: testProfileID, Name: "Public", RegistrationURL: "https://zke.example.com",
+			QUICAddress: "zke.example.com:8443", Enabled: true, Revision: 1,
+		}},
+		settings: settings,
+	}
+	snapshot, err := NewService(memory, certificateFile, nil).
+		ResolveEnrollmentSnapshot(context.Background(), "", "zke-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.AgentWorkload.CPURequest != "100m" ||
+		snapshot.AgentWorkload.MemoryLimit != "512Mi" {
+		t.Fatalf("snapshot Agent workload = %+v", snapshot.AgentWorkload)
+	}
+}
+
+// The database has no list of workload names — the Server declares them — so a
+// name it does not declare has to be refused before it reaches a statement that
+// would silently match no row.
+func TestPlatformSettingsRefuseUndeclaredWorkload(t *testing.T) {
+	memory := &memoryStore{settings: storedSettings()}
+	input := collectorInput()
+	input.Workloads = map[string]WorkloadSettings{
+		"log-collector": {Image: "registry.example.com/vector:v1", ImagePullPolicy: "IfNotPresent"},
+	}
+	_, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateSettings() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+// A stored set missing a workload the Server declares means the migrations and
+// the registry have drifted. Reading it as an empty image would install nothing
+// into somebody else's Cluster; refusing the read says so instead.
+func TestPlatformSettingsRefuseSettingsMissingADeclaredWorkload(t *testing.T) {
+	settings := storedSettings()
+	delete(settings.Workloads, WorkloadNodeExporter)
+	memory := &memoryStore{settings: settings}
+	if _, _, err := NewService(memory, "", nil).Get(context.Background()); err == nil {
+		t.Fatal("Get() accepted settings missing a declared workload")
+	}
+}
+
+func TestPlatformSettingsKeepAgentAndTerminalPullPoliciesIndependent(t *testing.T) {
+	memory := &memoryStore{settings: storedSettings()}
+	input := collectorInput()
+	input.Workloads = map[string]WorkloadSettings{
+		WorkloadAgent: {Image: "registry.example.com/zke-agent:v1", ImagePullPolicy: "Never"},
+		WorkloadClusterTerminal: {
+			Image: "registry.example.com/zke-terminal:v2", ImagePullPolicy: "Always",
+		},
+	}
+	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Workload(WorkloadAgent).ImagePullPolicy != "Never" ||
+		updated.Workload(WorkloadClusterTerminal).ImagePullPolicy != "Always" {
+		t.Fatalf(
+			"pull policies = Agent %q, Terminal %q",
+			updated.Workload(WorkloadAgent).ImagePullPolicy,
+			updated.Workload(WorkloadClusterTerminal).ImagePullPolicy,
+		)
 	}
 }
 
@@ -150,9 +280,9 @@ func TestPlatformSettingsRejectSessionTTLOutsideAllowedRange(t *testing.T) {
 		2 * time.Hour,
 		90*time.Second + 500*time.Millisecond,
 	} {
-		memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
-		input := validSettingsInput()
-		input.ClusterTerminalSessionTTL = ttl
+		memory := &memoryStore{settings: storedSettings()}
+		input := collectorInput()
+		input.ClusterTerminalSessionTTL = &ttl
 		_, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
 		if !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("UpdateSettings(%s) error = %v, want ErrInvalidInput", ttl, err)
@@ -164,20 +294,21 @@ func TestPlatformSettingsRejectSessionTTLOutsideAllowedRange(t *testing.T) {
 // to say "do not set this entry", and something that filled it back in would
 // make the Namespace's own LimitRange impossible to defer to.
 func TestCollectorResourcesKeepEmptyQuantitiesEmpty(t *testing.T) {
-	memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
-	input := validSettingsInput()
-	input.MetricsCollectorCPULimit = ""
-	input.MetricsCollectorMemoryLimit = ""
+	memory := &memoryStore{settings: storedSettings()}
+	input := collectorInput()
+	collector := input.Workloads[WorkloadMetricsCollector]
+	collector.CPULimit, collector.MemoryLimit = "", ""
+	input.Workloads[WorkloadMetricsCollector] = collector
 	updated, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.MetricsCollectorCPURequest != "50m" ||
-		updated.MetricsCollectorMemoryRequest != "128Mi" {
-		t.Fatalf("requests = %q / %q", updated.MetricsCollectorCPURequest, updated.MetricsCollectorMemoryRequest)
+	saved := updated.Workload(WorkloadMetricsCollector)
+	if saved.CPURequest != "50m" || saved.MemoryRequest != "128Mi" {
+		t.Fatalf("requests = %q / %q", saved.CPURequest, saved.MemoryRequest)
 	}
-	if updated.MetricsCollectorCPULimit != "" || updated.MetricsCollectorMemoryLimit != "" {
-		t.Fatalf("limits = %q / %q", updated.MetricsCollectorCPULimit, updated.MetricsCollectorMemoryLimit)
+	if saved.CPULimit != "" || saved.MemoryLimit != "" {
+		t.Fatalf("limits = %q / %q", saved.CPULimit, saved.MemoryLimit)
 	}
 }
 
@@ -185,20 +316,22 @@ func TestCollectorResourcesKeepEmptyQuantitiesEmpty(t *testing.T) {
 // every later install, so a typo accepted now becomes a Cluster that refuses
 // collection with a Kubernetes error nobody connects back to this form.
 func TestCollectorResourcesRejectQuantitiesKubernetesWouldRefuse(t *testing.T) {
-	cases := map[string]func(*SettingsInput){
-		"not a quantity": func(input *SettingsInput) { input.MetricsCollectorCPURequest = "half" },
-		"negative":       func(input *SettingsInput) { input.MetricsCollectorMemoryLimit = "-1Gi" },
-		"zero":           func(input *SettingsInput) { input.MetricsCollectorCPULimit = "0" },
-		"limit below request": func(input *SettingsInput) {
-			input.MetricsCollectorMemoryRequest = "1Gi"
-			input.MetricsCollectorMemoryLimit = "512Mi"
+	cases := map[string]func(*WorkloadSettings){
+		"not a quantity": func(workload *WorkloadSettings) { workload.CPURequest = "half" },
+		"negative":       func(workload *WorkloadSettings) { workload.MemoryLimit = "-1Gi" },
+		"zero":           func(workload *WorkloadSettings) { workload.CPULimit = "0" },
+		"limit below request": func(workload *WorkloadSettings) {
+			workload.MemoryRequest = "1Gi"
+			workload.MemoryLimit = "512Mi"
 		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			memory := &memoryStore{settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, Revision: 1}}
-			input := validSettingsInput()
-			mutate(&input)
+			memory := &memoryStore{settings: storedSettings()}
+			input := collectorInput()
+			collector := input.Workloads[WorkloadMetricsCollector]
+			mutate(&collector)
+			input.Workloads[WorkloadMetricsCollector] = collector
 			_, err := NewService(memory, "", nil).UpdateSettings(context.Background(), input)
 			if !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("UpdateSettings() error = %v, want ErrInvalidInput", err)
@@ -271,12 +404,12 @@ func TestInvalidEndpointExplainsTheRejectedField(t *testing.T) {
 
 func TestResolveEnrollmentSnapshotCopiesProfileAndDefaults(t *testing.T) {
 	certificateFile := listenerCertificate(t, []string{"zke.example.com"})
-	memory := &memoryStore{profiles: map[string]store.AgentEndpointProfile{testProfileID: {ID: testProfileID, Name: "Public", RegistrationURL: "https://zke.example.com", QUICAddress: "zke.example.com:8443", Enabled: true, Revision: 3}}, settings: store.PlatformSettings{DefaultEndpointProfileID: testProfileID, AgentImage: "registry.example.com/zke-agent:v1", AgentImagePullPolicy: "IfNotPresent", Revision: 1}}
+	memory := &memoryStore{profiles: map[string]store.AgentEndpointProfile{testProfileID: {ID: testProfileID, Name: "Public", RegistrationURL: "https://zke.example.com", QUICAddress: "zke.example.com:8443", Enabled: true, Revision: 3}}, settings: storedSettings()}
 	snapshot, err := NewService(memory, certificateFile, nil).ResolveEnrollmentSnapshot(context.Background(), "", "custom-system")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.EndpointProfileRevision != 3 || snapshot.RegistrationURL != "https://zke.example.com" || snapshot.AgentImage != "registry.example.com/zke-agent:v1" || snapshot.AgentNamespace != "custom-system" {
+	if snapshot.EndpointProfileRevision != 3 || snapshot.RegistrationURL != "https://zke.example.com" || snapshot.AgentWorkload.Image != "registry.example.com/zke-agent:v1" || snapshot.AgentNamespace != "custom-system" {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
 }

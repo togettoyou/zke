@@ -28,43 +28,22 @@ type endpointProfileRequest struct {
 	ExpectedRevision             int64  `json:"expected_revision"`
 }
 
+// platformSettingsRequest is a partial update, keyed by workload name.
+//
+// The workloads it names are the ones this save changes; an omitted workload
+// keeps what is stored. That is what lets the Console save one section at a
+// time without carrying values from sections the operator is not looking at.
+// The images live here rather than in the Server's configuration file because
+// installs happen long after the Server started, so changing which image a
+// Cluster pulls must not require a restart.
 type platformSettingsRequest struct {
-	AgentImage                     string `json:"agent_image"`
-	AgentImagePullPolicy           string `json:"agent_image_pull_policy"`
-	ClusterTerminalImage           string `json:"cluster_terminal_image"`
-	ClusterTerminalImagePullPolicy string `json:"cluster_terminal_image_pull_policy"`
-	// The collector image lives here rather than in the Server configuration
-	// file: collection is enabled per Cluster long after the Server started, so
-	// changing which image a Cluster pulls must not require a restart.
-	MetricsCollectorImage           string `json:"metrics_collector_image"`
-	MetricsCollectorImagePullPolicy string `json:"metrics_collector_image_pull_policy"`
-	// Kubernetes quantities. An empty string is not a missing field: it means
-	// the entry is left off the collector container, which is the only way to
-	// say "no limit" in Kubernetes.
-	MetricsCollectorCPURequest    string `json:"metrics_collector_cpu_request"`
-	MetricsCollectorMemoryRequest string `json:"metrics_collector_memory_request"`
-	MetricsCollectorCPULimit      string `json:"metrics_collector_cpu_limit"`
-	MetricsCollectorMemoryLimit   string `json:"metrics_collector_memory_limit"`
-	// The two additional scrape targets the collector reads. They are installed
-	// and removed with it, so their images belong on the same form — an operator
-	// changing the collector's image and finding two other pinned versions
-	// managed somewhere else would have no way to keep the three in step.
-	KubeStateMetricsImage           string `json:"kube_state_metrics_image"`
-	KubeStateMetricsImagePullPolicy string `json:"kube_state_metrics_image_pull_policy"`
-	KubeStateMetricsCPURequest      string `json:"kube_state_metrics_cpu_request"`
-	KubeStateMetricsMemoryRequest   string `json:"kube_state_metrics_memory_request"`
-	KubeStateMetricsCPULimit        string `json:"kube_state_metrics_cpu_limit"`
-	KubeStateMetricsMemoryLimit     string `json:"kube_state_metrics_memory_limit"`
-	NodeExporterImage               string `json:"node_exporter_image"`
-	NodeExporterImagePullPolicy     string `json:"node_exporter_image_pull_policy"`
-	NodeExporterCPURequest          string `json:"node_exporter_cpu_request"`
-	NodeExporterMemoryRequest       string `json:"node_exporter_memory_request"`
-	NodeExporterCPULimit            string `json:"node_exporter_cpu_limit"`
-	NodeExporterMemoryLimit         string `json:"node_exporter_memory_limit"`
+	Workloads map[string]platformsettings.WorkloadSettings `json:"workloads"`
 	// Seconds rather than a duration string: the wire format stays a plain
-	// number the Console can bind to a numeric input without parsing.
-	ClusterTerminalSessionTTLSeconds int64 `json:"cluster_terminal_session_ttl_seconds"`
-	ExpectedRevision                 int64 `json:"expected_revision"`
+	// number the Console can bind to a numeric input without parsing. A pointer
+	// because absent and zero are different answers — absent leaves the stored
+	// lifetime alone, zero is a value the service refuses.
+	ClusterTerminalSessionTTLSeconds *int64 `json:"cluster_terminal_session_ttl_seconds"`
+	ExpectedRevision                 int64  `json:"expected_revision"`
 }
 
 func newPlatformSettingsHandler(logger *slog.Logger, service *platformsettings.Service, auditService *audit.Service, timeout time.Duration) *platformSettingsHandler {
@@ -160,29 +139,10 @@ func (handler *platformSettingsHandler) updateSettings(c *gin.Context) {
 	}
 	ctx, cancel := handler.operationContext(c)
 	result, err := handler.service.UpdateSettings(ctx, platformsettings.SettingsInput{
-		AgentImage: request.AgentImage, AgentImagePullPolicy: request.AgentImagePullPolicy,
-		ClusterTerminalImage: request.ClusterTerminalImage, ExpectedRevision: request.ExpectedRevision,
-		ClusterTerminalImagePullPolicy:  request.ClusterTerminalImagePullPolicy,
-		MetricsCollectorImage:           request.MetricsCollectorImage,
-		MetricsCollectorImagePullPolicy: request.MetricsCollectorImagePullPolicy,
-		MetricsCollectorCPURequest:      request.MetricsCollectorCPURequest,
-		MetricsCollectorMemoryRequest:   request.MetricsCollectorMemoryRequest,
-		MetricsCollectorCPULimit:        request.MetricsCollectorCPULimit,
-		MetricsCollectorMemoryLimit:     request.MetricsCollectorMemoryLimit,
-		KubeStateMetricsImage:           request.KubeStateMetricsImage,
-		KubeStateMetricsImagePullPolicy: request.KubeStateMetricsImagePullPolicy,
-		KubeStateMetricsCPURequest:      request.KubeStateMetricsCPURequest,
-		KubeStateMetricsMemoryRequest:   request.KubeStateMetricsMemoryRequest,
-		KubeStateMetricsCPULimit:        request.KubeStateMetricsCPULimit,
-		KubeStateMetricsMemoryLimit:     request.KubeStateMetricsMemoryLimit,
-		NodeExporterImage:               request.NodeExporterImage,
-		NodeExporterImagePullPolicy:     request.NodeExporterImagePullPolicy,
-		NodeExporterCPURequest:          request.NodeExporterCPURequest,
-		NodeExporterMemoryRequest:       request.NodeExporterMemoryRequest,
-		NodeExporterCPULimit:            request.NodeExporterCPULimit,
-		NodeExporterMemoryLimit:         request.NodeExporterMemoryLimit,
-		ClusterTerminalSessionTTL:       terminalSessionTTL(request.ClusterTerminalSessionTTLSeconds),
-		ActorUserID:                     identity.User.ID, Now: time.Now().UTC(),
+		Workloads:                 request.Workloads,
+		ClusterTerminalSessionTTL: terminalSessionTTL(request.ClusterTerminalSessionTTLSeconds),
+		ExpectedRevision:          request.ExpectedRevision,
+		ActorUserID:               identity.User.ID, Now: time.Now().UTC(),
 	})
 	cancel()
 	if handler.respondPlatformError(c, "update platform settings", err) {
@@ -196,12 +156,17 @@ func (handler *platformSettingsHandler) updateSettings(c *gin.Context) {
 // terminalSessionTTL converts requested seconds into a duration without
 // letting an absurd number wrap around: multiplying an unbounded int64 by
 // time.Second overflows into an arbitrary duration that could land inside the
-// accepted range. Out-of-range input becomes zero, which the service rejects.
-func terminalSessionTTL(seconds int64) time.Duration {
-	if seconds <= 0 || seconds > int64(time.Hour/time.Second) {
-		return 0
+// accepted range. Out-of-range input becomes zero, which the service rejects —
+// as opposed to an absent value, which stays absent and changes nothing.
+func terminalSessionTTL(seconds *int64) *time.Duration {
+	if seconds == nil {
+		return nil
 	}
-	return time.Duration(seconds) * time.Second
+	ttl := time.Duration(0)
+	if *seconds > 0 && *seconds <= int64(time.Hour/time.Second) {
+		ttl = time.Duration(*seconds) * time.Second
+	}
+	return &ttl
 }
 
 func (handler *platformSettingsHandler) respondPlatformError(c *gin.Context, operation string, err error) bool {
@@ -250,28 +215,7 @@ func profilesResponse(profiles []platformsettings.Profile) []gin.H {
 func settingsResponse(settings platformsettings.Settings) gin.H {
 	return gin.H{
 		"default_endpoint_profile_id":          settings.DefaultEndpointProfileID,
-		"agent_image":                          settings.AgentImage,
-		"agent_image_pull_policy":              settings.AgentImagePullPolicy,
-		"cluster_terminal_image":               settings.ClusterTerminalImage,
-		"cluster_terminal_image_pull_policy":   settings.ClusterTerminalImagePullPolicy,
-		"metrics_collector_image":              settings.MetricsCollectorImage,
-		"metrics_collector_image_pull_policy":  settings.MetricsCollectorImagePullPolicy,
-		"metrics_collector_cpu_request":        settings.MetricsCollectorCPURequest,
-		"metrics_collector_memory_request":     settings.MetricsCollectorMemoryRequest,
-		"metrics_collector_cpu_limit":          settings.MetricsCollectorCPULimit,
-		"metrics_collector_memory_limit":       settings.MetricsCollectorMemoryLimit,
-		"kube_state_metrics_image":             settings.KubeStateMetricsImage,
-		"kube_state_metrics_image_pull_policy": settings.KubeStateMetricsImagePullPolicy,
-		"kube_state_metrics_cpu_request":       settings.KubeStateMetricsCPURequest,
-		"kube_state_metrics_memory_request":    settings.KubeStateMetricsMemoryRequest,
-		"kube_state_metrics_cpu_limit":         settings.KubeStateMetricsCPULimit,
-		"kube_state_metrics_memory_limit":      settings.KubeStateMetricsMemoryLimit,
-		"node_exporter_image":                  settings.NodeExporterImage,
-		"node_exporter_image_pull_policy":      settings.NodeExporterImagePullPolicy,
-		"node_exporter_cpu_request":            settings.NodeExporterCPURequest,
-		"node_exporter_memory_request":         settings.NodeExporterMemoryRequest,
-		"node_exporter_cpu_limit":              settings.NodeExporterCPULimit,
-		"node_exporter_memory_limit":           settings.NodeExporterMemoryLimit,
+		"workloads":                            settings.Workloads,
 		"cluster_terminal_session_ttl_seconds": int64(settings.ClusterTerminalSessionTTL / time.Second),
 		"revision":                             settings.Revision,
 		"updated_at":                           responseTime(settings.UpdatedAt),

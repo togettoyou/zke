@@ -12,10 +12,10 @@ import (
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
+	"github.com/togettoyou/zke/pkg/shared/workloadbudget"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -35,6 +35,44 @@ unset token
 trap : TERM INT
 while :; do sleep 3600 & wait $!; done`
 )
+
+// What the session Pod was given before the Server learned to name a budget. A
+// Server too old to send one is asking for exactly this, and it must not
+// silently become an unbounded Pod in somebody's Cluster.
+const (
+	legacyTerminalCPURequest    = "25m"
+	legacyTerminalMemoryRequest = "64Mi"
+	legacyTerminalCPULimit      = "500m"
+	legacyTerminalMemoryLimit   = "512Mi"
+)
+
+// terminalSessionResources turns the budget the Server named into the session
+// container's resource block.
+//
+// Naming none of the four means the Server predates them, so the values it used
+// to get are used instead — the same reading the metrics collector applies, and
+// for the same reason: a workload in somebody else's Cluster losing its budget
+// on a version skew is worse than the ambiguity with an operator who cleared
+// all four on purpose.
+func terminalSessionResources(
+	request *agentv1.TerminalSessionRequest,
+) (corev1.ResourceRequirements, error) {
+	if request.GetCpuRequest() == "" && request.GetMemoryRequest() == "" &&
+		request.GetCpuLimit() == "" && request.GetMemoryLimit() == "" {
+		return workloadbudget.Requirements(
+			legacyTerminalCPURequest,
+			legacyTerminalMemoryRequest,
+			legacyTerminalCPULimit,
+			legacyTerminalMemoryLimit,
+		)
+	}
+	return workloadbudget.Requirements(
+		request.GetCpuRequest(),
+		request.GetMemoryRequest(),
+		request.GetCpuLimit(),
+		request.GetMemoryLimit(),
+	)
+}
 
 func newKubernetesTerminalSessionHandler(
 	client kubernetes.Interface,
@@ -131,6 +169,10 @@ func createKubernetesTerminalSession(
 		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: request.GetNamespace()}},
 		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: clusterName},
 	}
+	sessionResources, err := terminalSessionResources(request)
+	if err != nil {
+		return kubernetesTerminalSessionFailure(response, err), nil
+	}
 	nonRoot, userID, groupID, grace, deadline := true, int64(1000), int64(1000), int64(5), int64(request.GetTtlSeconds())
 	fsGroupPolicy := corev1.FSGroupChangeOnRootMismatch
 	pod := &corev1.Pod{
@@ -150,10 +192,7 @@ func createKubernetesTerminalSession(
 				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: terminalPointer(false),
 					ReadOnlyRootFilesystem: terminalPointer(true),
 					Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-				Resources: corev1.ResourceRequirements{
-					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("25m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
-					Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("512Mi")},
-				},
+				Resources:    sessionResources,
 				VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}},
 			}},
 			Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},

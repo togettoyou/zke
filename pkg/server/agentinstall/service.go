@@ -19,7 +19,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/togettoyou/zke/pkg/server/enrollment"
+	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/observability"
+	"github.com/togettoyou/zke/pkg/shared/workloadbudget"
 )
 
 const (
@@ -40,11 +42,13 @@ type Config struct {
 }
 
 type manifestConfig struct {
-	PublicHTTPURL                string
-	PublicQUICAddress            string
-	Image                        string
+	PublicHTTPURL     string
+	PublicQUICAddress string
+	// Workload is the Agent's platform workload settings as the enrollment
+	// froze them, so a manifest fetched twice for one token installs the same
+	// thing however the platform settings moved in between.
+	Workload                     store.WorkloadSettings
 	Namespace                    string
-	ImagePullPolicy              corev1.PullPolicy
 	ListenerCACertificatePEM     []byte
 	RegistrationCACertificatePEM []byte
 }
@@ -123,9 +127,8 @@ func (service *Service) Manifest(
 	return renderManifest(manifestConfig{
 		PublicHTTPURL:                snapshot.RegistrationURL,
 		PublicQUICAddress:            snapshot.QUICAddress,
-		Image:                        snapshot.AgentImage,
+		Workload:                     snapshot.AgentWorkload,
 		Namespace:                    snapshot.AgentNamespace,
-		ImagePullPolicy:              corev1.PullPolicy(snapshot.AgentImagePullPolicy),
 		ListenerCACertificatePEM:     service.config.ListenerCACertificatePEM,
 		RegistrationCACertificatePEM: []byte(snapshot.RegistrationCACertificatePEM),
 	}, active, token)
@@ -148,6 +151,18 @@ func renderManifest(
 	agentConfig, err := renderAgentConfig(config)
 	if err != nil {
 		return nil, err
+	}
+	// Refused here rather than accepted into a manifest Kubernetes would reject:
+	// the operator applies this file in their own Cluster, where a rejection is
+	// theirs to debug and says nothing about which platform setting caused it.
+	agentResources, err := workloadbudget.Requirements(
+		config.Workload.CPURequest,
+		config.Workload.MemoryRequest,
+		config.Workload.CPULimit,
+		config.Workload.MemoryLimit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("render Agent resource budget: %w", err)
 	}
 	configHash := sha256.New()
 	_, _ = configHash.Write([]byte(agentConfig))
@@ -515,8 +530,9 @@ func renderManifest(
 					TerminationGracePeriodSeconds: &terminationGracePeriod,
 					Containers: []corev1.Container{{
 						Name:            "zke-agent",
-						Image:           config.Image,
-						ImagePullPolicy: config.ImagePullPolicy,
+						Image:           config.Workload.Image,
+						ImagePullPolicy: corev1.PullPolicy(config.Workload.ImagePullPolicy),
+						Resources:       agentResources,
 						Args:            []string{"--config", "/etc/zke-agent/zke-agent.yaml"},
 						Ports: []corev1.ContainerPort{{
 							Name:          observability.IngestPortName,

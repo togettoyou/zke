@@ -8,8 +8,10 @@ func testEnrollmentSnapshot() store.EnrollmentConfigurationSnapshot {
 		EndpointProfileRevision: 1,
 		RegistrationURL:         "http://127.0.0.1:8080",
 		QUICAddress:             "127.0.0.1:8443",
-		AgentImage:              "ghcr.io/togettoyou/zke-agent:test",
-		AgentNamespace:          "zke-system",
-		AgentImagePullPolicy:    "IfNotPresent",
+		AgentWorkload: store.WorkloadSettings{
+			Image: "ghcr.io/togettoyou/zke-agent:test", ImagePullPolicy: "IfNotPresent",
+			CPURequest: "50m", MemoryLimit: "512Mi",
+		},
+		AgentNamespace: "zke-system",
 	}
 }

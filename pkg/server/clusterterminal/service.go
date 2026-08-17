@@ -14,6 +14,7 @@ import (
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/podexec"
+	"github.com/togettoyou/zke/pkg/server/store"
 )
 
 var (
@@ -38,15 +39,19 @@ type Config struct {
 	ResolveRuntime func(context.Context, string) (RuntimeConfig, error)
 }
 
-// RuntimeConfig is resolved once per session creation. Image, pull policy and
-// TTL come from the platform settings row, so an operator's change applies to
-// the next session without restarting the Server; Namespace comes from the
+// RuntimeConfig is resolved once per session creation. The workload settings
+// and the TTL come from the platform settings, so an operator's change applies
+// to the next session without restarting the Server; Namespace comes from the
 // Cluster scope.
 type RuntimeConfig struct {
-	Image           string
-	ImagePullPolicy string
-	Namespace       string
-	TTL             time.Duration
+	// Workload is the Cluster Terminal's platform workload settings: the image
+	// the session Pod runs and how much of the Cluster it may take. The budget
+	// used to be constants inside the Agent, which made the one workload
+	// running in the operator's own Cluster per session the one they could not
+	// size.
+	Workload  store.WorkloadSettings
+	Namespace string
+	TTL       time.Duration
 }
 
 type CreateInput struct {
@@ -98,7 +103,7 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 	if err != nil {
 		return podexec.Session{}, err
 	}
-	if runtimeConfig.Image == "" || runtimeConfig.ImagePullPolicy == "" ||
+	if runtimeConfig.Workload.Image == "" || runtimeConfig.Workload.ImagePullPolicy == "" ||
 		runtimeConfig.Namespace == "" || runtimeConfig.TTL <= 0 {
 		return podexec.Session{}, ErrUnavailable
 	}
@@ -120,8 +125,13 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (session 
 	response, requestErr := service.requester.RequestTerminalSession(ctx, input.ClusterID, &agentv1.TerminalSessionRequest{
 		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
 		SessionId: terminalID, UserId: input.UserID, Namespace: runtimeConfig.Namespace,
-		Permissions: input.Permissions, TtlSeconds: uint64(runtimeConfig.TTL.Seconds()), Image: runtimeConfig.Image,
-		ImagePullPolicy: runtimeConfig.ImagePullPolicy,
+		Permissions: input.Permissions, TtlSeconds: uint64(runtimeConfig.TTL.Seconds()),
+		Image:           runtimeConfig.Workload.Image,
+		ImagePullPolicy: runtimeConfig.Workload.ImagePullPolicy,
+		CpuRequest:      runtimeConfig.Workload.CPURequest,
+		MemoryRequest:   runtimeConfig.Workload.MemoryRequest,
+		CpuLimit:        runtimeConfig.Workload.CPULimit,
+		MemoryLimit:     runtimeConfig.Workload.MemoryLimit,
 	}, terminalIdempotencyKey(input.IdempotencyKey, "create"))
 	if requestErr != nil {
 		createErr = terminalRequestError(requestErr)

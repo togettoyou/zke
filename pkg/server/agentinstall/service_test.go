@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/togettoyou/zke/pkg/server/enrollment"
+	"github.com/togettoyou/zke/pkg/server/store"
 )
 
 func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *testing.T) {
@@ -23,11 +23,13 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 
 	manifest, err := renderManifest(
 		manifestConfig{
-			PublicHTTPURL:                "https://zke.example.com",
-			PublicQUICAddress:            "zke.example.com:8443",
-			Image:                        "registry.example.com/zke-agent:test",
+			PublicHTTPURL:     "https://zke.example.com",
+			PublicQUICAddress: "zke.example.com:8443",
+			Workload: store.WorkloadSettings{
+				Image: "registry.example.com/zke-agent:test", ImagePullPolicy: "IfNotPresent",
+				CPURequest: "50m", MemoryLimit: "512Mi",
+			},
 			Namespace:                    "zke-system",
-			ImagePullPolicy:              corev1.PullIfNotPresent,
 			ListenerCACertificatePEM:     []byte("listener-ca"),
 			RegistrationCACertificatePEM: []byte("registration-ca"),
 		},
@@ -107,6 +109,84 @@ func TestRenderManifestCreatesBootstrapResourcesWithoutIdentitySecretOrPV(t *tes
 	if strings.Contains(output, "/var/run/secrets/zke-") {
 		t.Fatal("manifest mounts Agent credentials as local files")
 	}
+	// The budget is what the enrollment snapshot froze, not a constant in this
+	// renderer: the operator sets it in platform settings and applies the file
+	// in their own Cluster, so a value that never reached the container would
+	// be a setting that silently does nothing.
+	for _, required := range []string{"cpu: 50m", "memory: 512Mi"} {
+		if !strings.Contains(output, required) {
+			t.Errorf("Agent container is missing resource entry %q", required)
+		}
+	}
+	// The two the snapshot left empty stay off the container: Kubernetes has no
+	// other spelling for "no limit".
+	if strings.Contains(output, "cpu: \"0\"") || strings.Contains(output, "memory: \"0\"") {
+		t.Error("an unset quantity was rendered as zero rather than left off")
+	}
+}
+
+// A Deployment carrying no budget at all is what the Agent has always installed
+// with, and it must stay renderable: an empty resources block is the operator
+// deferring to their Namespace's LimitRange, not a value the Server fills in.
+func TestRenderManifestOmitsAnEmptyAgentBudget(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := renderManifest(
+		manifestConfig{
+			PublicHTTPURL:     "https://zke.example.com",
+			PublicQUICAddress: "zke.example.com:8443",
+			Workload: store.WorkloadSettings{
+				Image: "registry.example.com/zke-agent:test", ImagePullPolicy: "IfNotPresent",
+			},
+			Namespace:                "zke-system",
+			ListenerCACertificatePEM: []byte("listener-ca"),
+		},
+		enrollment.ManifestEnrollment{
+			ID:          "00000000-0000-0000-0000-000000000001",
+			ProjectID:   "10000000-0000-0000-0000-000000000001",
+			ClusterName: "test-cluster",
+			ExpiresAt:   time.Now().Add(time.Minute),
+		},
+		"temporary-token",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Asserted on the quantity keys rather than on "resources:", which every
+	// RBAC rule in this manifest also uses for something unrelated.
+	output := string(manifest)
+	if strings.Contains(output, "cpu:") || strings.Contains(output, "memory:") {
+		t.Error("an empty budget put quantities on the Agent container")
+	}
+}
+
+// A quantity Kubernetes would refuse must fail here, where the message names
+// the platform setting, rather than in the operator's Cluster hours later.
+func TestRenderManifestRejectsAnUnusableAgentQuantity(t *testing.T) {
+	t.Parallel()
+
+	_, err := renderManifest(
+		manifestConfig{
+			PublicHTTPURL:     "https://zke.example.com",
+			PublicQUICAddress: "zke.example.com:8443",
+			Workload: store.WorkloadSettings{
+				Image: "registry.example.com/zke-agent:test", ImagePullPolicy: "IfNotPresent",
+				CPURequest: "half a core",
+			},
+			Namespace:                "zke-system",
+			ListenerCACertificatePEM: []byte("listener-ca"),
+		},
+		enrollment.ManifestEnrollment{
+			ID:          "00000000-0000-0000-0000-000000000001",
+			ProjectID:   "10000000-0000-0000-0000-000000000001",
+			ClusterName: "test-cluster",
+			ExpiresAt:   time.Now().Add(time.Minute),
+		},
+		"temporary-token",
+	)
+	if err == nil {
+		t.Fatal("renderManifest() accepted a quantity Kubernetes would refuse")
+	}
 }
 
 func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
@@ -114,11 +194,12 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 
 	manifest, err := renderManifest(
 		manifestConfig{
-			PublicHTTPURL:            "https://zke.example.com",
-			PublicQUICAddress:        "zke.example.com:8443",
-			Image:                    "registry.example.com/zke-agent:test",
+			PublicHTTPURL:     "https://zke.example.com",
+			PublicQUICAddress: "zke.example.com:8443",
+			Workload: store.WorkloadSettings{
+				Image: "registry.example.com/zke-agent:test", ImagePullPolicy: "IfNotPresent",
+			},
 			Namespace:                "zke-system",
-			ImagePullPolicy:          corev1.PullIfNotPresent,
 			ListenerCACertificatePEM: []byte("listener-ca"),
 		},
 		enrollment.ManifestEnrollment{

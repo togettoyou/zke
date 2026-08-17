@@ -345,7 +345,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 					return clusterterminal.RuntimeConfig{}, err
 				}
 				return clusterterminal.RuntimeConfig{
-					Image: settings.ClusterTerminalImage, ImagePullPolicy: settings.ClusterTerminalImagePullPolicy,
+					Workload:  settings.Workload(platformsettings.WorkloadClusterTerminal),
 					Namespace: clusterScope.AgentNamespace, TTL: settings.ClusterTerminalSessionTTL,
 				}, nil
 			},
@@ -760,32 +760,25 @@ func (source platformCollectorSettings) CollectorSettings(
 	if err != nil {
 		return metricscollector.CollectorSettings{}, err
 	}
+	// Named fields rather than a map, because the three are not interchangeable
+	// past this point: each has its own install manifest, and the install path
+	// reads them by name.
 	return metricscollector.CollectorSettings{
-		Collector: metricscollector.ComponentSettings{
-			Image:           settings.MetricsCollectorImage,
-			ImagePullPolicy: settings.MetricsCollectorImagePullPolicy,
-			CPURequest:      settings.MetricsCollectorCPURequest,
-			MemoryRequest:   settings.MetricsCollectorMemoryRequest,
-			CPULimit:        settings.MetricsCollectorCPULimit,
-			MemoryLimit:     settings.MetricsCollectorMemoryLimit,
-		},
-		KubeStateMetrics: metricscollector.ComponentSettings{
-			Image:           settings.KubeStateMetricsImage,
-			ImagePullPolicy: settings.KubeStateMetricsImagePullPolicy,
-			CPURequest:      settings.KubeStateMetricsCPURequest,
-			MemoryRequest:   settings.KubeStateMetricsMemoryRequest,
-			CPULimit:        settings.KubeStateMetricsCPULimit,
-			MemoryLimit:     settings.KubeStateMetricsMemoryLimit,
-		},
-		NodeExporter: metricscollector.ComponentSettings{
-			Image:           settings.NodeExporterImage,
-			ImagePullPolicy: settings.NodeExporterImagePullPolicy,
-			CPURequest:      settings.NodeExporterCPURequest,
-			MemoryRequest:   settings.NodeExporterMemoryRequest,
-			CPULimit:        settings.NodeExporterCPULimit,
-			MemoryLimit:     settings.NodeExporterMemoryLimit,
-		},
+		Collector:        componentSettings(settings.Workload(platformsettings.WorkloadMetricsCollector)),
+		KubeStateMetrics: componentSettings(settings.Workload(platformsettings.WorkloadKubeStateMetrics)),
+		NodeExporter:     componentSettings(settings.Workload(platformsettings.WorkloadNodeExporter)),
 	}, nil
+}
+
+func componentSettings(workload platformsettings.WorkloadSettings) metricscollector.ComponentSettings {
+	return metricscollector.ComponentSettings{
+		Image:           workload.Image,
+		ImagePullPolicy: workload.ImagePullPolicy,
+		CPURequest:      workload.CPURequest,
+		MemoryRequest:   workload.MemoryRequest,
+		CPULimit:        workload.CPULimit,
+		MemoryLimit:     workload.MemoryLimit,
+	}
 }
 
 // newMetricsCollectorService builds the install/uninstall path. It is nil when

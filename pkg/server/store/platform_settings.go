@@ -189,30 +189,19 @@ WHERE profile.id = $1
 
 // platformSettingsColumns is shared by the read and the update so the two can
 // never drift into scanning different shapes into the same struct.
+//
+// The workloads arrive as one JSON object rather than a second query: they are
+// read together with the row the revision lives on, so a concurrent update
+// cannot be observed half applied.
 const platformSettingsColumns = `
     default_endpoint_profile_id::text,
-    agent_image,
-    agent_image_pull_policy,
-    cluster_terminal_image,
-    cluster_terminal_image_pull_policy,
-    metrics_collector_image,
-    metrics_collector_image_pull_policy,
-    metrics_collector_cpu_request,
-    metrics_collector_memory_request,
-    metrics_collector_cpu_limit,
-    metrics_collector_memory_limit,
-    kube_state_metrics_image,
-    kube_state_metrics_image_pull_policy,
-    kube_state_metrics_cpu_request,
-    kube_state_metrics_memory_request,
-    kube_state_metrics_cpu_limit,
-    kube_state_metrics_memory_limit,
-    node_exporter_image,
-    node_exporter_image_pull_policy,
-    node_exporter_cpu_request,
-    node_exporter_memory_request,
-    node_exporter_cpu_limit,
-    node_exporter_memory_limit,
+    (
+        SELECT COALESCE(
+            jsonb_object_agg(workload.component, to_jsonb(workload) - 'component'),
+            '{}'::jsonb
+        )
+        FROM platform_workload_settings AS workload
+    ),
     cluster_terminal_session_ttl_seconds,
     revision,
     COALESCE(updated_by_user_id::text, ''),
@@ -223,28 +212,7 @@ func scanPlatformSettings(row pgx.Row) (PlatformSettings, error) {
 	var terminalSessionTTLSeconds int32
 	err := row.Scan(
 		&settings.DefaultEndpointProfileID,
-		&settings.AgentImage,
-		&settings.AgentImagePullPolicy,
-		&settings.ClusterTerminalImage,
-		&settings.ClusterTerminalImagePullPolicy,
-		&settings.MetricsCollectorImage,
-		&settings.MetricsCollectorImagePullPolicy,
-		&settings.MetricsCollectorCPURequest,
-		&settings.MetricsCollectorMemoryRequest,
-		&settings.MetricsCollectorCPULimit,
-		&settings.MetricsCollectorMemoryLimit,
-		&settings.KubeStateMetricsImage,
-		&settings.KubeStateMetricsImagePullPolicy,
-		&settings.KubeStateMetricsCPURequest,
-		&settings.KubeStateMetricsMemoryRequest,
-		&settings.KubeStateMetricsCPULimit,
-		&settings.KubeStateMetricsMemoryLimit,
-		&settings.NodeExporterImage,
-		&settings.NodeExporterImagePullPolicy,
-		&settings.NodeExporterCPURequest,
-		&settings.NodeExporterMemoryRequest,
-		&settings.NodeExporterCPULimit,
-		&settings.NodeExporterMemoryLimit,
+		&settings.Workloads,
 		&terminalSessionTTLSeconds,
 		&settings.Revision,
 		&settings.UpdatedByUserID,
@@ -352,75 +320,114 @@ WHERE id = $1`, profileID))
 	return profile, nil
 }
 
+// UpdateSettings writes the settings row and the named workload rows under one
+// revision check, in one transaction: they are one setting to an operator, so a
+// save that changed the images and then failed on the session lifetime would
+// leave a state nobody asked for and no revision to detect it by.
 func (store *PlatformSettingsStore) UpdateSettings(
 	ctx context.Context,
 	input UpdatePlatformSettingsParams,
 ) (PlatformSettings, error) {
-	settings, err := scanPlatformSettings(store.pool.QueryRow(ctx, `
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return PlatformSettings{}, fmt.Errorf("begin platform settings update: %w", err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	// The revision check lives on this statement alone. It is the row every
+	// workload write is serialized behind, so taking it first means a concurrent
+	// save is refused before any workload row has been touched.
+	var terminalSessionTTLSeconds *int32
+	if input.ClusterTerminalSessionTTL != nil {
+		seconds := int32(*input.ClusterTerminalSessionTTL / time.Second)
+		terminalSessionTTLSeconds = &seconds
+	}
+	command, err := transaction.Exec(ctx, `
 UPDATE platform_settings
-SET agent_image = $1,
-    agent_image_pull_policy = $2,
-    cluster_terminal_image = $3,
-    cluster_terminal_image_pull_policy = $4,
-    metrics_collector_image = $5,
-    metrics_collector_image_pull_policy = $6,
-    metrics_collector_cpu_request = $7,
-    metrics_collector_memory_request = $8,
-    metrics_collector_cpu_limit = $9,
-    metrics_collector_memory_limit = $10,
-    kube_state_metrics_image = $11,
-    kube_state_metrics_image_pull_policy = $12,
-    kube_state_metrics_cpu_request = $13,
-    kube_state_metrics_memory_request = $14,
-    kube_state_metrics_cpu_limit = $15,
-    kube_state_metrics_memory_limit = $16,
-    node_exporter_image = $17,
-    node_exporter_image_pull_policy = $18,
-    node_exporter_cpu_request = $19,
-    node_exporter_memory_request = $20,
-    node_exporter_cpu_limit = $21,
-    node_exporter_memory_limit = $22,
-    cluster_terminal_session_ttl_seconds = $23,
+SET cluster_terminal_session_ttl_seconds = COALESCE($1, cluster_terminal_session_ttl_seconds),
     revision = revision + 1,
-    updated_by_user_id = $24,
-    updated_at = $25
+    updated_by_user_id = $2,
+    updated_at = $3
 WHERE singleton = true
-  AND revision = $26
-RETURNING`+platformSettingsColumns,
-		input.AgentImage,
-		input.AgentImagePullPolicy,
-		input.ClusterTerminalImage,
-		input.ClusterTerminalImagePullPolicy,
-		input.MetricsCollectorImage,
-		input.MetricsCollectorImagePullPolicy,
-		input.MetricsCollectorCPURequest,
-		input.MetricsCollectorMemoryRequest,
-		input.MetricsCollectorCPULimit,
-		input.MetricsCollectorMemoryLimit,
-		input.KubeStateMetricsImage,
-		input.KubeStateMetricsImagePullPolicy,
-		input.KubeStateMetricsCPURequest,
-		input.KubeStateMetricsMemoryRequest,
-		input.KubeStateMetricsCPULimit,
-		input.KubeStateMetricsMemoryLimit,
-		input.NodeExporterImage,
-		input.NodeExporterImagePullPolicy,
-		input.NodeExporterCPURequest,
-		input.NodeExporterMemoryRequest,
-		input.NodeExporterCPULimit,
-		input.NodeExporterMemoryLimit,
-		int32(input.ClusterTerminalSessionTTL/time.Second),
+  AND revision = $4`,
+		terminalSessionTTLSeconds,
 		input.ActorUserID,
 		input.Now,
 		input.ExpectedRevision,
-	))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return PlatformSettings{}, ErrPlatformSettingsConflict
-	}
+	)
 	if err != nil {
 		return PlatformSettings{}, fmt.Errorf("update platform settings: %w", err)
 	}
+	if command.RowsAffected() != 1 {
+		return PlatformSettings{}, ErrPlatformSettingsConflict
+	}
+	if err := updateWorkloadSettings(ctx, transaction, input.Workloads); err != nil {
+		return PlatformSettings{}, err
+	}
+
+	settings, err := scanPlatformSettings(transaction.QueryRow(ctx, `SELECT `+
+		platformSettingsColumns+`
+FROM platform_settings
+WHERE singleton = true`))
+	if err != nil {
+		return PlatformSettings{}, fmt.Errorf("read updated platform settings: %w", err)
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return PlatformSettings{}, fmt.Errorf("commit platform settings update: %w", err)
+	}
 	return settings, nil
+}
+
+// updateWorkloadSettings writes every named workload in one statement, so the
+// number of parameters stays fixed however many workloads the platform grows.
+func updateWorkloadSettings(
+	ctx context.Context,
+	transaction pgx.Tx,
+	workloads map[string]WorkloadSettings,
+) error {
+	if len(workloads) == 0 {
+		return nil
+	}
+	components := make([]string, 0, len(workloads))
+	images := make([]string, 0, len(workloads))
+	pullPolicies := make([]string, 0, len(workloads))
+	cpuRequests := make([]string, 0, len(workloads))
+	memoryRequests := make([]string, 0, len(workloads))
+	cpuLimits := make([]string, 0, len(workloads))
+	memoryLimits := make([]string, 0, len(workloads))
+	for component, workload := range workloads {
+		components = append(components, component)
+		images = append(images, workload.Image)
+		pullPolicies = append(pullPolicies, workload.ImagePullPolicy)
+		cpuRequests = append(cpuRequests, workload.CPURequest)
+		memoryRequests = append(memoryRequests, workload.MemoryRequest)
+		cpuLimits = append(cpuLimits, workload.CPULimit)
+		memoryLimits = append(memoryLimits, workload.MemoryLimit)
+	}
+	command, err := transaction.Exec(ctx, `
+UPDATE platform_workload_settings AS workload
+SET image = input.image,
+    image_pull_policy = input.image_pull_policy,
+    cpu_request = input.cpu_request,
+    memory_request = input.memory_request,
+    cpu_limit = input.cpu_limit,
+    memory_limit = input.memory_limit
+FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+    AS input(
+        component, image, image_pull_policy,
+        cpu_request, memory_request, cpu_limit, memory_limit
+    )
+WHERE workload.component = input.component`,
+		components, images, pullPolicies,
+		cpuRequests, memoryRequests, cpuLimits, memoryLimits,
+	)
+	if err != nil {
+		return fmt.Errorf("update platform workload settings: %w", err)
+	}
+	if command.RowsAffected() != int64(len(workloads)) {
+		return ErrPlatformWorkloadNotFound
+	}
+	return nil
 }
 
 func isUniqueViolation(err error) bool {

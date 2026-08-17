@@ -368,30 +368,17 @@ INSERT INTO agent_endpoint_profiles (
 CREATE TABLE platform_settings (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     default_endpoint_profile_id uuid NOT NULL REFERENCES agent_endpoint_profiles (id),
-    agent_image text NOT NULL,
-    agent_image_pull_policy text NOT NULL,
-    cluster_terminal_image text NOT NULL,
-    cluster_terminal_image_pull_policy text NOT NULL,
     -- Cluster Terminal session lifetime is platform policy rather than a
     -- deployment parameter: the Server reads it per session creation, so a
     -- change takes effect without a restart.
     cluster_terminal_session_ttl_seconds integer NOT NULL,
+    -- One revision covers this row and every platform_workload_settings row.
+    -- They are one setting as far as an operator is concerned, and a revision
+    -- per workload would mean the Console tracking five of them to answer one
+    -- question: has anything I am looking at changed under me.
     revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
     updated_by_user_id uuid,
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT platform_settings_agent_image_format CHECK (
-        agent_image = btrim(agent_image) AND octet_length(agent_image) BETWEEN 1 AND 512
-    ),
-    CONSTRAINT platform_settings_terminal_image_format CHECK (
-        cluster_terminal_image = btrim(cluster_terminal_image)
-        AND octet_length(cluster_terminal_image) BETWEEN 1 AND 512
-    ),
-    CONSTRAINT platform_settings_agent_pull_policy CHECK (
-        agent_image_pull_policy IN ('Always', 'IfNotPresent', 'Never')
-    ),
-    CONSTRAINT platform_settings_terminal_pull_policy CHECK (
-        cluster_terminal_image_pull_policy IN ('Always', 'IfNotPresent', 'Never')
-    ),
     CONSTRAINT platform_settings_terminal_session_ttl CHECK (
         cluster_terminal_session_ttl_seconds BETWEEN 60 AND 3600
     )
@@ -399,19 +386,85 @@ CREATE TABLE platform_settings (
 
 INSERT INTO platform_settings (
     default_endpoint_profile_id,
-    agent_image,
-    agent_image_pull_policy,
-    cluster_terminal_image,
-    cluster_terminal_image_pull_policy,
     cluster_terminal_session_ttl_seconds
 ) VALUES (
     '00000000-0000-0000-0000-000000000010',
-    'ghcr.io/togettoyou/zke-agent:latest',
-    'IfNotPresent',
-    'ghcr.io/togettoyou/zke-agent:latest',
-    'IfNotPresent',
     900
 );
+
+-- What ZKE installs into somebody else's Cluster, and how much of that Cluster
+-- it may take.
+--
+-- One row per workload rather than six columns per workload on
+-- platform_settings: the set grows with the product — the Agent and the Cluster
+-- Terminal here, three metrics workloads in a later migration — while the shape
+-- never varies. As columns, each addition cost a schema change, a positional
+-- scan list, two request structs and two OpenAPI schemas to state something the
+-- table already knew; as rows it is one INSERT, and the constraints below cover
+-- every later workload without being rewritten.
+--
+-- The component name is deliberately unconstrained. Which workloads exist is
+-- the Server's to declare — it is the only side that knows what reads them —
+-- and a second list here would have to move in lockstep. A name that does not
+-- match is caught on the first read: the Server refuses a settings set that is
+-- missing any workload it declares, rather than quietly installing nothing.
+--
+-- An empty quantity means "do not set this entry on the container": Kubernetes
+-- has no other spelling for "no limit", and a deployment managing the budget
+-- with a LimitRange needs to be able to say so.
+CREATE TABLE platform_workload_settings (
+    component text PRIMARY KEY,
+    image text NOT NULL,
+    image_pull_policy text NOT NULL,
+    cpu_request text NOT NULL DEFAULT '',
+    memory_request text NOT NULL DEFAULT '',
+    cpu_limit text NOT NULL DEFAULT '',
+    memory_limit text NOT NULL DEFAULT '',
+    CONSTRAINT platform_workload_component_format CHECK (
+        component = btrim(component) AND octet_length(component) BETWEEN 1 AND 64
+    ),
+    CONSTRAINT platform_workload_image_format CHECK (
+        image = btrim(image) AND octet_length(image) BETWEEN 1 AND 512
+    ),
+    CONSTRAINT platform_workload_pull_policy CHECK (
+        image_pull_policy IN ('Always', 'IfNotPresent', 'Never')
+    ),
+    CONSTRAINT platform_workload_quantities CHECK (
+        cpu_request = btrim(cpu_request) AND octet_length(cpu_request) <= 32
+        AND memory_request = btrim(memory_request) AND octet_length(memory_request) <= 32
+        AND cpu_limit = btrim(cpu_limit) AND octet_length(cpu_limit) <= 32
+        AND memory_limit = btrim(memory_limit) AND octet_length(memory_limit) <= 32
+    )
+);
+
+-- The Agent is given requests so that it is not a BestEffort Pod. Without them
+-- the kubelet evicts it first under Node memory pressure, and losing the Agent
+-- is losing the whole Cluster from ZKE — at exactly the moment an operator most
+-- needs to see what is happening in it. The values are modest on purpose: they
+-- are what makes the Pod schedulable and survivable, not a measurement of what
+-- it uses, which depends on the size of the Cluster and how much is watched.
+--
+-- It gets a memory limit so a leak cannot take a Node down with it, and
+-- deliberately no CPU limit. A throttled Agent does not fail, it just makes
+-- every query, terminal keystroke and log stream in that Cluster slow, with
+-- nothing in any error to say why; memory is the resource worth capping here
+-- and CPU is the one worth leaving to the scheduler.
+--
+-- The Cluster Terminal's requests are what the Agent used to hold as constants,
+-- so an existing deployment keeps the session Pod it had. Its memory limit is
+-- lower than that constant: it caps a shell running kubectl, and a limit eight
+-- times its own request lets concurrent sessions push a Node into memory
+-- pressure on a Pod the scheduler admitted as tiny. It stays well above what a
+-- shell needs, because `kubectl get -A -o json` against a large Cluster is the
+-- one thing in there that legitimately allocates.
+INSERT INTO platform_workload_settings (
+    component, image, image_pull_policy,
+    cpu_request, memory_request, cpu_limit, memory_limit
+) VALUES
+    ('agent', 'ghcr.io/togettoyou/zke-agent:latest', 'IfNotPresent',
+     '50m', '128Mi', '', '512Mi'),
+    ('cluster-terminal', 'ghcr.io/togettoyou/zke-agent:latest', 'IfNotPresent',
+     '25m', '64Mi', '500m', '256Mi');
 
 CREATE FUNCTION notify_agent_credential_revocation()
 RETURNS trigger
@@ -566,10 +619,23 @@ CREATE TABLE enrollments (
     registration_url text NOT NULL,
     quic_address text NOT NULL,
     registration_ca_certificate_pem text NOT NULL,
-    agent_image text NOT NULL,
+    -- The Agent's platform workload settings as they were when the token was
+    -- issued, frozen: an operator changing the image or the budget later must
+    -- not change what an already issued token installs.
+    --
+    -- One JSON document rather than a column per field, and the same shape
+    -- platform_workload_settings holds a row of. The snapshot is exactly "the
+    -- workload settings at that moment", so a field added there arrives here
+    -- without a second migration and without another positional scan list.
+    agent_workload jsonb NOT NULL,
     agent_namespace text NOT NULL,
-    agent_image_pull_policy text NOT NULL CHECK (
-        agent_image_pull_policy IN ('Always', 'IfNotPresent', 'Never')
+    CONSTRAINT enrollments_agent_workload_shape CHECK (
+        jsonb_typeof(agent_workload) = 'object'
+        AND agent_workload->>'image' IS NOT NULL
+        AND btrim(agent_workload->>'image') = agent_workload->>'image'
+        AND octet_length(agent_workload->>'image') BETWEEN 1 AND 512
+        AND agent_workload->>'image_pull_policy'
+            IN ('Always', 'IfNotPresent', 'Never')
     ),
     consumed_at timestamptz,
     revoked_at timestamptz,

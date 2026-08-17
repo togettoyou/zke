@@ -2,21 +2,27 @@ package store_test
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
 )
 
-// The settings row is read by position, so a column added to the migration but
-// not to the scan — or added in a different order — mixes an image up with a
-// quantity and installs something nobody asked for. Only a real database can
-// catch that; a fake store scans nothing.
+// The settings row records who changed it, so an update needs an actor even
+// when the test is about something else.
+const testActorUserID = "11111111-1111-4111-8111-111111111111"
+
+// The workloads arrive as one JSON object built by the database, so a column
+// renamed in a migration and not in the struct tags silently drops a value
+// instead of failing to compile. Only a real database can catch that; a fake
+// store decodes nothing.
 //
 // The defaults are asserted rather than just the shape: they name real
 // published images at pinned versions, and an unpinned or misspelled one only
 // fails much later, inside somebody else's Cluster.
-func TestPlatformSettingsDefaultsCoverEveryMetricsComponent(t *testing.T) {
+func TestPlatformSettingsDefaultsCoverEveryWorkload(t *testing.T) {
 	databaseURL := requireAuthTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -27,31 +33,118 @@ func TestPlatformSettingsDefaultsCoverEveryMetricsComponent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []struct {
-		name  string
-		value string
-		want  string
-	}{
-		{"metrics collector image", settings.MetricsCollectorImage, "victoriametrics/vmagent:v1.149.0"},
-		{
-			"kube-state-metrics image",
-			settings.KubeStateMetricsImage,
-			"registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1",
+	// The node exporter runs on every Node, so its budget is multiplied by the
+	// size of the Cluster and is deliberately the smallest of the five.
+	//
+	// The Agent's requests are asserted because their absence is what would make
+	// it a BestEffort Pod — the first thing evicted under Node memory pressure,
+	// and the one whose loss takes the Cluster out of ZKE. Its empty CPU limit
+	// is asserted for the same reason it is empty: a throttled Agent does not
+	// fail, it just makes everything in that Cluster slow.
+	want := map[string]store.WorkloadSettings{
+		"agent": {
+			Image: "ghcr.io/togettoyou/zke-agent:latest", ImagePullPolicy: "IfNotPresent",
+			CPURequest: "50m", MemoryRequest: "128Mi", CPULimit: "", MemoryLimit: "512Mi",
 		},
-		{"node-exporter image", settings.NodeExporterImage, "quay.io/prometheus/node-exporter:v1.12.1"},
-		{"kube-state-metrics pull policy", settings.KubeStateMetricsImagePullPolicy, "IfNotPresent"},
-		{"node-exporter pull policy", settings.NodeExporterImagePullPolicy, "IfNotPresent"},
-		// The node exporter runs on every Node, so its budget is multiplied by
-		// the size of the Cluster and is deliberately the smallest of the three.
-		{"node-exporter CPU request", settings.NodeExporterCPURequest, "10m"},
-		{"node-exporter memory request", settings.NodeExporterMemoryRequest, "32Mi"},
-		{"node-exporter memory limit", settings.NodeExporterMemoryLimit, "128Mi"},
-		{"kube-state-metrics CPU request", settings.KubeStateMetricsCPURequest, "20m"},
-		{"kube-state-metrics memory limit", settings.KubeStateMetricsMemoryLimit, "512Mi"},
-	} {
-		if field.value != field.want {
-			t.Fatalf("%s = %q, want %q", field.name, field.value, field.want)
-		}
+		"cluster-terminal": {
+			Image: "ghcr.io/togettoyou/zke-agent:latest", ImagePullPolicy: "IfNotPresent",
+			CPURequest: "25m", MemoryRequest: "64Mi", CPULimit: "500m", MemoryLimit: "256Mi",
+		},
+		"collector": {
+			Image: "victoriametrics/vmagent:v1.149.0", ImagePullPolicy: "IfNotPresent",
+			CPURequest: "50m", MemoryRequest: "128Mi", CPULimit: "500m", MemoryLimit: "512Mi",
+		},
+		"kube-state-metrics": {
+			Image:           "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1",
+			ImagePullPolicy: "IfNotPresent",
+			CPURequest:      "20m", MemoryRequest: "128Mi", CPULimit: "500m", MemoryLimit: "512Mi",
+		},
+		"node-exporter": {
+			Image: "quay.io/prometheus/node-exporter:v1.12.1", ImagePullPolicy: "IfNotPresent",
+			CPURequest: "10m", MemoryRequest: "32Mi", CPULimit: "200m", MemoryLimit: "128Mi",
+		},
+	}
+	if !reflect.DeepEqual(settings.Workloads, want) {
+		t.Fatalf("workload defaults = %+v, want %+v", settings.Workloads, want)
+	}
+	if settings.ClusterTerminalSessionTTL != 15*time.Minute || settings.Revision != 1 {
+		t.Fatalf(
+			"session lifetime = %s, revision = %d",
+			settings.ClusterTerminalSessionTTL,
+			settings.Revision,
+		)
+	}
+}
+
+// One revision covers the settings row and every workload row, so a save that
+// names one workload has to move the revision the next save is checked against
+// — and must not touch a workload it did not name.
+func TestPlatformSettingsUpdateIsPartialAndBumpsOneRevision(t *testing.T) {
+	databaseURL := requireAuthTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pool := openIsolatedDatabase(t, ctx, databaseURL)
+	applyMigrations(t, ctx, pool)
+	settingsStore := store.NewPlatformSettingsStore(pool)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	updated, err := settingsStore.UpdateSettings(ctx, store.UpdatePlatformSettingsParams{
+		Workloads: map[string]store.WorkloadSettings{
+			"collector": {
+				Image: "registry.example.com/vmagent:v2", ImagePullPolicy: "Always",
+				CPURequest: "60m", MemoryRequest: "256Mi",
+			},
+		},
+		ExpectedRevision: 1, ActorUserID: testActorUserID, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Revision != 2 {
+		t.Fatalf("revision = %d, want 2", updated.Revision)
+	}
+	collector := updated.Workloads["collector"]
+	if collector.Image != "registry.example.com/vmagent:v2" ||
+		collector.CPULimit != "" || collector.MemoryLimit != "" {
+		t.Fatalf("collector = %+v", collector)
+	}
+	if updated.Workloads["node-exporter"].Image != "quay.io/prometheus/node-exporter:v1.12.1" {
+		t.Fatalf("unnamed workload was rewritten: %+v", updated.Workloads["node-exporter"])
+	}
+	if updated.ClusterTerminalSessionTTL != 15*time.Minute {
+		t.Fatalf("session lifetime = %s, want it untouched", updated.ClusterTerminalSessionTTL)
+	}
+
+	// The revision the caller held is now stale, so the same save again is a
+	// conflict rather than a second write.
+	_, err = settingsStore.UpdateSettings(ctx, store.UpdatePlatformSettingsParams{
+		Workloads: map[string]store.WorkloadSettings{
+			"collector": {Image: "registry.example.com/vmagent:v3", ImagePullPolicy: "Always"},
+		},
+		ExpectedRevision: 1, ActorUserID: testActorUserID, Now: now,
+	})
+	if !errors.Is(err, store.ErrPlatformSettingsConflict) {
+		t.Fatalf("stale update error = %v, want ErrPlatformSettingsConflict", err)
+	}
+
+	// A name no row carries must fail rather than write nothing and report
+	// success: it means the migrations and the Server's registry have drifted.
+	_, err = settingsStore.UpdateSettings(ctx, store.UpdatePlatformSettingsParams{
+		Workloads: map[string]store.WorkloadSettings{
+			"log-collector": {Image: "registry.example.com/vector:v1", ImagePullPolicy: "Always"},
+		},
+		ExpectedRevision: 2, ActorUserID: testActorUserID, Now: now,
+	})
+	if !errors.Is(err, store.ErrPlatformWorkloadNotFound) {
+		t.Fatalf("unknown workload error = %v, want ErrPlatformWorkloadNotFound", err)
+	}
+	current, err := settingsStore.GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Revision != 2 {
+		t.Fatalf("revision after refused update = %d, want 2", current.Revision)
 	}
 }
 

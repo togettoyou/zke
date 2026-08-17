@@ -66,9 +66,11 @@ type EnrollmentConfigurationSnapshot struct {
 	RegistrationURL              string
 	QUICAddress                  string
 	RegistrationCACertificatePEM string
-	AgentImage                   string
-	AgentNamespace               string
-	AgentImagePullPolicy         string
+	// AgentWorkload is the Agent's platform workload settings frozen at issue
+	// time. It is the settings type rather than a copy of its fields, so a
+	// field added to a workload reaches the installer without a change here.
+	AgentWorkload  WorkloadSettings
+	AgentNamespace string
 }
 
 type CreateEnrollmentParams struct {

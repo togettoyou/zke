@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { AgentEndpointProfile, PlatformSettings } from "../types";
+import type { AgentEndpointProfile, PlatformSettings, PlatformSettingsUpdate } from "../types";
 import { api, csrfHeaders, unwrap } from "../client";
 
 export type PlatformSettingsResult = {
@@ -41,39 +41,19 @@ export function useReadyAgentEndpointProfiles(projectId: string | null) {
   });
 }
 
+/**
+ * A partial save: the caller sends the workloads and fields its section owns,
+ * and everything else keeps what the Server has. Sending the whole object would
+ * mean every save carried values from sections the operator was not looking at.
+ */
 export function useUpdatePlatformSettings() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: PlatformSettings) =>
+    mutationFn: async (input: PlatformSettingsUpdate) =>
       unwrap(
         await api.PUT("/api/v1/platform/settings", {
           params: { header: csrfHeaders() },
-          body: {
-            agent_image: input.agent_image,
-            agent_image_pull_policy: input.agent_image_pull_policy,
-            cluster_terminal_image: input.cluster_terminal_image,
-            cluster_terminal_image_pull_policy: input.cluster_terminal_image_pull_policy,
-            metrics_collector_image: input.metrics_collector_image,
-            metrics_collector_image_pull_policy: input.metrics_collector_image_pull_policy,
-            metrics_collector_cpu_request: input.metrics_collector_cpu_request,
-            metrics_collector_memory_request: input.metrics_collector_memory_request,
-            metrics_collector_cpu_limit: input.metrics_collector_cpu_limit,
-            metrics_collector_memory_limit: input.metrics_collector_memory_limit,
-            kube_state_metrics_image: input.kube_state_metrics_image,
-            kube_state_metrics_image_pull_policy: input.kube_state_metrics_image_pull_policy,
-            kube_state_metrics_cpu_request: input.kube_state_metrics_cpu_request,
-            kube_state_metrics_memory_request: input.kube_state_metrics_memory_request,
-            kube_state_metrics_cpu_limit: input.kube_state_metrics_cpu_limit,
-            kube_state_metrics_memory_limit: input.kube_state_metrics_memory_limit,
-            node_exporter_image: input.node_exporter_image,
-            node_exporter_image_pull_policy: input.node_exporter_image_pull_policy,
-            node_exporter_cpu_request: input.node_exporter_cpu_request,
-            node_exporter_memory_request: input.node_exporter_memory_request,
-            node_exporter_cpu_limit: input.node_exporter_cpu_limit,
-            node_exporter_memory_limit: input.node_exporter_memory_limit,
-            cluster_terminal_session_ttl_seconds: input.cluster_terminal_session_ttl_seconds,
-            expected_revision: input.revision,
-          },
+          body: input,
         }),
       ),
     onSuccess: async () => queryClient.invalidateQueries({ queryKey: platformSettingsKey }),

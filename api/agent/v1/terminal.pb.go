@@ -80,8 +80,19 @@ type TerminalSessionRequest struct {
 	TtlSeconds      uint64                 `protobuf:"varint,6,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
 	Image           string                 `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
 	ImagePullPolicy string                 `protobuf:"bytes,8,opt,name=image_pull_policy,json=imagePullPolicy,proto3" json:"image_pull_policy,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// How much of the Cluster one session Pod may take. The Agent used to hold
+	// these as constants, which made the budget of a workload running in the
+	// operator's own Cluster the one thing about it they could not change.
+	//
+	// An empty quantity means the entry is left off the container: Kubernetes has
+	// no other spelling for "no limit", and a Namespace governed by a LimitRange
+	// needs to be able to defer to it.
+	CpuRequest    string `protobuf:"bytes,9,opt,name=cpu_request,json=cpuRequest,proto3" json:"cpu_request,omitempty"`
+	MemoryRequest string `protobuf:"bytes,10,opt,name=memory_request,json=memoryRequest,proto3" json:"memory_request,omitempty"`
+	CpuLimit      string `protobuf:"bytes,11,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`
+	MemoryLimit   string `protobuf:"bytes,12,opt,name=memory_limit,json=memoryLimit,proto3" json:"memory_limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TerminalSessionRequest) Reset() {
@@ -166,6 +177,34 @@ func (x *TerminalSessionRequest) GetImage() string {
 func (x *TerminalSessionRequest) GetImagePullPolicy() string {
 	if x != nil {
 		return x.ImagePullPolicy
+	}
+	return ""
+}
+
+func (x *TerminalSessionRequest) GetCpuRequest() string {
+	if x != nil {
+		return x.CpuRequest
+	}
+	return ""
+}
+
+func (x *TerminalSessionRequest) GetMemoryRequest() string {
+	if x != nil {
+		return x.MemoryRequest
+	}
+	return ""
+}
+
+func (x *TerminalSessionRequest) GetCpuLimit() string {
+	if x != nil {
+		return x.CpuLimit
+	}
+	return ""
+}
+
+func (x *TerminalSessionRequest) GetMemoryLimit() string {
+	if x != nil {
+		return x.MemoryLimit
 	}
 	return ""
 }
@@ -290,7 +329,7 @@ var File_api_agent_v1_terminal_proto protoreflect.FileDescriptor
 
 const file_api_agent_v1_terminal_proto_rawDesc = "" +
 	"\n" +
-	"\x1bapi/agent/v1/terminal.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\xb0\x02\n" +
+	"\x1bapi/agent/v1/terminal.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\xb8\x03\n" +
 	"\x16TerminalSessionRequest\x12;\n" +
 	"\x06action\x18\x01 \x01(\x0e2#.zke.agent.v1.TerminalSessionActionR\x06action\x12\x1d\n" +
 	"\n" +
@@ -301,7 +340,13 @@ const file_api_agent_v1_terminal_proto_rawDesc = "" +
 	"\vttl_seconds\x18\x06 \x01(\x04R\n" +
 	"ttlSeconds\x12\x14\n" +
 	"\x05image\x18\a \x01(\tR\x05image\x12*\n" +
-	"\x11image_pull_policy\x18\b \x01(\tR\x0fimagePullPolicy\"\xea\x02\n" +
+	"\x11image_pull_policy\x18\b \x01(\tR\x0fimagePullPolicy\x12\x1f\n" +
+	"\vcpu_request\x18\t \x01(\tR\n" +
+	"cpuRequest\x12%\n" +
+	"\x0ememory_request\x18\n" +
+	" \x01(\tR\rmemoryRequest\x12\x1b\n" +
+	"\tcpu_limit\x18\v \x01(\tR\bcpuLimit\x12!\n" +
+	"\fmemory_limit\x18\f \x01(\tR\vmemoryLimit\"\xea\x02\n" +
 	"\x17TerminalSessionResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\rR\x14kubernetesStatusCode\x12\x16\n" +

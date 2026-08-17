@@ -114,7 +114,12 @@ func TestFoundationMigrationDeclaresRequiredContracts(t *testing.T) {
 		"CREATE UNIQUE INDEX agent_credentials_agent_csr_unique",
 		"CREATE TABLE agent_endpoint_profiles",
 		"CREATE TABLE platform_settings",
-		"cluster_terminal_image_pull_policy text NOT NULL",
+		// Installed workloads are rows, not columns. A migration that adds one
+		// back as a column would work and then quietly bypass the constraints
+		// and the read path everything else goes through.
+		"CREATE TABLE platform_workload_settings",
+		"component text PRIMARY KEY",
+		"CONSTRAINT platform_workload_pull_policy",
 		"agent_namespace text NOT NULL",
 		"CREATE TRIGGER agent_credentials_notify_revocation",
 		"CREATE TRIGGER agents_notify_revocation",

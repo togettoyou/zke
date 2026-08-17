@@ -138,15 +138,17 @@ func seedRetentionFixture(
 		{`INSERT INTO enrollments (id, tenant_id, project_id, cluster_name,
 		      token_digest, created_by_user_id, idempotency_key, expires_at,
 		      endpoint_profile_id, endpoint_profile_revision, registration_url,
-		      quic_address, registration_ca_certificate_pem, agent_image,
-		      agent_namespace, agent_image_pull_policy, consumed_at)
+		      quic_address, registration_ca_certificate_pem, agent_workload,
+		      agent_namespace, consumed_at)
 		  VALUES ('00000000-0000-0000-0000-0000000000b1',
 		          '00000000-0000-0000-0000-0000000000f1',
 		          '00000000-0000-0000-0000-0000000000f2', 'consumed',
 		          decode(repeat('c1', 16), 'hex'),
 		          '00000000-0000-0000-0000-0000000000f4', 'idempotency-key-0001',
 		          $1, '00000000-0000-0000-0000-000000000010', 1, 'http://localhost',
-		          'localhost:8443', '', 'image', 'zke-system', 'IfNotPresent', $1)`,
+		          'localhost:8443', '',
+		          '{"image": "image", "image_pull_policy": "IfNotPresent", "cpu_request": "", "memory_request": "", "cpu_limit": "", "memory_limit": ""}',
+		          'zke-system', $1)`,
 			[]any{longAgo}},
 		{`INSERT INTO enrollment_attempts (id, enrollment_id, idempotency_key,
 		      csr_fingerprint, status)
@@ -156,15 +158,17 @@ func seedRetentionFixture(
 		{`INSERT INTO enrollments (id, tenant_id, project_id, cluster_name,
 		      token_digest, created_by_user_id, idempotency_key, expires_at,
 		      endpoint_profile_id, endpoint_profile_revision, registration_url,
-		      quic_address, registration_ca_certificate_pem, agent_image,
-		      agent_namespace, agent_image_pull_policy)
+		      quic_address, registration_ca_certificate_pem, agent_workload,
+		      agent_namespace)
 		  VALUES ('00000000-0000-0000-0000-0000000000b2',
 		          '00000000-0000-0000-0000-0000000000f1',
 		          '00000000-0000-0000-0000-0000000000f2', 'outstanding',
 		          decode(repeat('c2', 16), 'hex'),
 		          '00000000-0000-0000-0000-0000000000f4', 'idempotency-key-0002',
 		          $1, '00000000-0000-0000-0000-000000000010', 1, 'http://localhost',
-		          'localhost:8443', '', 'image', 'zke-system', 'IfNotPresent')`,
+		          'localhost:8443', '',
+		          '{"image": "image", "image_pull_policy": "IfNotPresent", "cpu_request": "", "memory_request": "", "cpu_limit": "", "memory_limit": ""}',
+		          'zke-system')`,
 			[]any{now.Add(24 * time.Hour)}},
 
 		// An Agent holding one superseded credential and one it is connected

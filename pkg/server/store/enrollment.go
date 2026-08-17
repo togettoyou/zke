@@ -36,9 +36,8 @@ SELECT
     enrollment.registration_url,
     enrollment.quic_address,
     enrollment.registration_ca_certificate_pem,
-    enrollment.agent_image,
-    enrollment.agent_namespace,
-    enrollment.agent_image_pull_policy
+    enrollment.agent_workload,
+    enrollment.agent_namespace
 FROM enrollments AS enrollment
 JOIN tenants AS tenant ON tenant.id = enrollment.tenant_id
 JOIN projects AS project
@@ -73,9 +72,8 @@ WHERE enrollment.token_digest = $1
 		&enrollment.Snapshot.RegistrationURL,
 		&enrollment.Snapshot.QUICAddress,
 		&enrollment.Snapshot.RegistrationCACertificatePEM,
-		&enrollment.Snapshot.AgentImage,
+		&enrollment.Snapshot.AgentWorkload,
 		&enrollment.Snapshot.AgentNamespace,
-		&enrollment.Snapshot.AgentImagePullPolicy,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActiveEnrollment{}, ErrEnrollmentTokenRejected
@@ -105,9 +103,9 @@ func (store *EnrollmentStore) CreateEnrollment(
 		input.Snapshot.EndpointProfileRevision <= 0 ||
 		strings.TrimSpace(input.Snapshot.RegistrationURL) == "" ||
 		strings.TrimSpace(input.Snapshot.QUICAddress) == "" ||
-		strings.TrimSpace(input.Snapshot.AgentImage) == "" ||
+		strings.TrimSpace(input.Snapshot.AgentWorkload.Image) == "" ||
 		strings.TrimSpace(input.Snapshot.AgentNamespace) == "" ||
-		strings.TrimSpace(input.Snapshot.AgentImagePullPolicy) == "" {
+		strings.TrimSpace(input.Snapshot.AgentWorkload.ImagePullPolicy) == "" {
 		return Enrollment{}, errors.New("enrollment configuration snapshot is required")
 	}
 
@@ -170,9 +168,8 @@ INSERT INTO enrollments (
     registration_url,
     quic_address,
     registration_ca_certificate_pem,
-    agent_image,
-    agent_namespace,
-    agent_image_pull_policy
+    agent_workload,
+    agent_namespace
 )
 SELECT
     gen_random_uuid(),
@@ -190,8 +187,7 @@ SELECT
     $11,
     $12,
     $13,
-    $14,
-    $15
+    $14
 FROM projects AS project
 JOIN tenants AS tenant ON tenant.id = project.tenant_id
 JOIN users ON users.id = $2
@@ -261,9 +257,8 @@ RETURNING
 		input.Snapshot.RegistrationURL,
 		input.Snapshot.QUICAddress,
 		input.Snapshot.RegistrationCACertificatePEM,
-		input.Snapshot.AgentImage,
+		input.Snapshot.AgentWorkload,
 		input.Snapshot.AgentNamespace,
-		input.Snapshot.AgentImagePullPolicy,
 	).Scan(
 		&created.ID,
 		&created.TenantID,

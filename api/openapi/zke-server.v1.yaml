@@ -14346,49 +14346,39 @@ components:
         quic_address: { type: string }
         registration_ca_certificate_pem: { type: string }
         enabled: { type: boolean }
-    PlatformSettings:
+    WorkloadSettings:
       type: object
       additionalProperties: false
-      required: [default_endpoint_profile_id, agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, metrics_collector_image, metrics_collector_image_pull_policy, metrics_collector_cpu_request, metrics_collector_memory_request, metrics_collector_cpu_limit, metrics_collector_memory_limit, kube_state_metrics_image, kube_state_metrics_image_pull_policy, kube_state_metrics_cpu_request, kube_state_metrics_memory_request, kube_state_metrics_cpu_limit, kube_state_metrics_memory_limit, node_exporter_image, node_exporter_image_pull_policy, node_exporter_cpu_request, node_exporter_memory_request, node_exporter_cpu_limit, node_exporter_memory_limit, cluster_terminal_session_ttl_seconds, revision, updated_at]
+      required: [image, image_pull_policy, cpu_request, memory_request, cpu_limit, memory_limit]
+      description: |
+        ZKE 装进目标集群的一个工作负载：跑哪个镜像，以及最多能占用集群多少资源。
       properties:
-        default_endpoint_profile_id: { $ref: "#/components/schemas/UUID" }
-        agent_image: { type: string }
-        agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        cluster_terminal_image: { type: string }
-        cluster_terminal_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        metrics_collector_image:
-          type: string
-          description: 启用指标采集时部署到目标集群的采集组件镜像。
-        metrics_collector_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        metrics_collector_cpu_request:
+        image: { type: string, maxLength: 512 }
+        image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
+        cpu_request:
           type: string
           maxLength: 32
           description: |
-            采集组件容器的 Kubernetes 数量，例如 `50m`。空字符串表示不在容器上设置该项——
-            Kubernetes 没有别的方式表达「不限制」。
-        metrics_collector_memory_request: { type: string, maxLength: 32 }
-        metrics_collector_cpu_limit: { type: string, maxLength: 32 }
-        metrics_collector_memory_limit: { type: string, maxLength: 32 }
-        kube_state_metrics_image:
-          type: string
+            容器上的 Kubernetes 数量，例如 `50m`。空字符串表示不在容器上设置该项——
+            Kubernetes 没有别的方式表达「不限制」，把预算交给目标 Namespace 的
+            LimitRange 时就留空。限制不能低于对应的请求。
+        memory_request: { type: string, maxLength: 32 }
+        cpu_limit: { type: string, maxLength: 32 }
+        memory_limit: { type: string, maxLength: 32 }
+    PlatformSettings:
+      type: object
+      additionalProperties: false
+      required: [default_endpoint_profile_id, workloads, cluster_terminal_session_ttl_seconds, revision, updated_at]
+      properties:
+        default_endpoint_profile_id: { $ref: "#/components/schemas/UUID" }
+        workloads:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/WorkloadSettings" }
           description: |
-            与采集组件一并安装的对象指标导出器镜像。它是节点可分配量与 Pod 申请/限制的唯一来源，
-            没有它，用量曲线没有分母，任何容量问题都答不了。
-        kube_state_metrics_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        kube_state_metrics_cpu_request: { type: string, maxLength: 32 }
-        kube_state_metrics_memory_request: { type: string, maxLength: 32 }
-        kube_state_metrics_cpu_limit: { type: string, maxLength: 32 }
-        kube_state_metrics_memory_limit: { type: string, maxLength: 32 }
-        node_exporter_image:
-          type: string
-          description: |
-            与采集组件一并安装的节点指标导出器镜像，提供磁盘、文件系统与网络。它以 DaemonSet
-            形式运行在每个节点上，预算取值应当保持很小——它的开销会乘以集群规模。
-        node_exporter_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        node_exporter_cpu_request: { type: string, maxLength: 32 }
-        node_exporter_memory_request: { type: string, maxLength: 32 }
-        node_exporter_cpu_limit: { type: string, maxLength: 32 }
-        node_exporter_memory_limit: { type: string, maxLength: 32 }
+            按工作负载名索引，当前为 `agent`、`cluster-terminal`、`collector`、
+            `kube-state-metrics`、`node-exporter`。名单由 Server 声明：后续新增的工作
+            负载会直接出现在这里，不改变本结构。指标采集的三个名字与集群内组件状态
+            上报使用的名字相同。
         cluster_terminal_session_ttl_seconds:
           type: integer
           minimum: 60
@@ -14399,31 +14389,20 @@ components:
     PlatformSettingsUpdate:
       type: object
       additionalProperties: false
-      required: [agent_image, agent_image_pull_policy, cluster_terminal_image, cluster_terminal_image_pull_policy, metrics_collector_image, metrics_collector_image_pull_policy, metrics_collector_cpu_request, metrics_collector_memory_request, metrics_collector_cpu_limit, metrics_collector_memory_limit, kube_state_metrics_image, kube_state_metrics_image_pull_policy, kube_state_metrics_cpu_request, kube_state_metrics_memory_request, kube_state_metrics_cpu_limit, kube_state_metrics_memory_limit, node_exporter_image, node_exporter_image_pull_policy, node_exporter_cpu_request, node_exporter_memory_request, node_exporter_cpu_limit, node_exporter_memory_limit, cluster_terminal_session_ttl_seconds, expected_revision]
+      required: [expected_revision]
+      description: |
+        增量更新：只写出现在请求里的工作负载与字段，其余保持已存储的值。平台配置按分区
+        分别保存，整体覆盖会让一次保存带上操作者当前并未查看的值。
       properties:
-        agent_image: { type: string }
-        agent_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        cluster_terminal_image: { type: string }
-        cluster_terminal_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        metrics_collector_image: { type: string }
-        metrics_collector_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        metrics_collector_cpu_request: { type: string, maxLength: 32 }
-        metrics_collector_memory_request: { type: string, maxLength: 32 }
-        metrics_collector_cpu_limit: { type: string, maxLength: 32 }
-        metrics_collector_memory_limit: { type: string, maxLength: 32 }
-        kube_state_metrics_image: { type: string }
-        kube_state_metrics_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        kube_state_metrics_cpu_request: { type: string, maxLength: 32 }
-        kube_state_metrics_memory_request: { type: string, maxLength: 32 }
-        kube_state_metrics_cpu_limit: { type: string, maxLength: 32 }
-        kube_state_metrics_memory_limit: { type: string, maxLength: 32 }
-        node_exporter_image: { type: string }
-        node_exporter_image_pull_policy: { type: string, enum: [Always, IfNotPresent, Never] }
-        node_exporter_cpu_request: { type: string, maxLength: 32 }
-        node_exporter_memory_request: { type: string, maxLength: 32 }
-        node_exporter_cpu_limit: { type: string, maxLength: 32 }
-        node_exporter_memory_limit: { type: string, maxLength: 32 }
-        cluster_terminal_session_ttl_seconds: { type: integer, minimum: 60, maximum: 3600 }
+        workloads:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/WorkloadSettings" }
+          description: 本次要修改的工作负载。未列出的工作负载保持不变；名字未被 Server 声明会被拒绝。
+        cluster_terminal_session_ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          description: 省略表示不修改。
         expected_revision: { type: integer, minimum: 1 }
     ClusterEnrollment:
       type: object

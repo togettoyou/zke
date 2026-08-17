@@ -23,8 +23,10 @@ func (staticEnrollmentConfigurationResolver) ResolveEnrollmentSnapshot(_ context
 	return store.EnrollmentConfigurationSnapshot{
 		EndpointProfileID: "00000000-0000-0000-0000-000000000010", EndpointProfileRevision: 1,
 		RegistrationURL: "https://zke.example.com", QUICAddress: "zke.example.com:8443",
-		AgentImage: "registry.example.com/zke-agent:test", AgentNamespace: agentNamespace,
-		AgentImagePullPolicy: "IfNotPresent",
+		AgentWorkload: store.WorkloadSettings{
+			Image: "registry.example.com/zke-agent:test", ImagePullPolicy: "IfNotPresent",
+		},
+		AgentNamespace: agentNamespace,
 	}, nil
 }
 

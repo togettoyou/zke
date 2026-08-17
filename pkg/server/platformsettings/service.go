@@ -46,8 +46,8 @@ const (
 	ProfileStatusReady       = "ready"
 	ProfileStatusDisabled    = "disabled"
 	ProfileStatusUnavailable = "unavailable"
-	// Mirrors the database CHECK constraint on the collector quantity columns.
-	maxCollectorQuantityLength = 32
+	// Mirrors the database CHECK constraint on the workload quantity columns.
+	maxWorkloadQuantityLength = 32
 )
 
 type ListenerCertificateReconciler func(
@@ -88,32 +88,18 @@ type Profile struct {
 }
 
 type Settings struct {
-	DefaultEndpointProfileID        string
-	AgentImage                      string
-	AgentImagePullPolicy            string
-	ClusterTerminalImage            string
-	ClusterTerminalImagePullPolicy  string
-	MetricsCollectorImage           string
-	MetricsCollectorImagePullPolicy string
-	MetricsCollectorCPURequest      string
-	MetricsCollectorMemoryRequest   string
-	MetricsCollectorCPULimit        string
-	MetricsCollectorMemoryLimit     string
-	KubeStateMetricsImage           string
-	KubeStateMetricsImagePullPolicy string
-	KubeStateMetricsCPURequest      string
-	KubeStateMetricsMemoryRequest   string
-	KubeStateMetricsCPULimit        string
-	KubeStateMetricsMemoryLimit     string
-	NodeExporterImage               string
-	NodeExporterImagePullPolicy     string
-	NodeExporterCPURequest          string
-	NodeExporterMemoryRequest       string
-	NodeExporterCPULimit            string
-	NodeExporterMemoryLimit         string
-	ClusterTerminalSessionTTL       time.Duration
-	Revision                        int64
-	UpdatedAt                       time.Time
+	DefaultEndpointProfileID  string
+	Workloads                 map[string]WorkloadSettings
+	ClusterTerminalSessionTTL time.Duration
+	Revision                  int64
+	UpdatedAt                 time.Time
+}
+
+// Workload reads one declared workload. Reads go through the service, which
+// refuses a settings set missing any declared workload, so a caller naming a
+// registry constant gets a real image rather than a zero value.
+func (settings Settings) Workload(component string) WorkloadSettings {
+	return settings.Workloads[component]
 }
 
 type ProfileInput struct {
@@ -128,33 +114,18 @@ type ProfileInput struct {
 	Now                          time.Time
 }
 
+// SettingsInput is a partial update: it changes the workloads it names and the
+// session lifetime if it carries one, and leaves everything else stored.
+//
+// Partial because the form is edited one section at a time. A whole-object
+// update would make every save carry values the operator was not looking at,
+// and an edit abandoned in one section would be written back from another.
 type SettingsInput struct {
-	AgentImage                      string
-	AgentImagePullPolicy            string
-	ClusterTerminalImage            string
-	ClusterTerminalImagePullPolicy  string
-	MetricsCollectorImage           string
-	MetricsCollectorImagePullPolicy string
-	MetricsCollectorCPURequest      string
-	MetricsCollectorMemoryRequest   string
-	MetricsCollectorCPULimit        string
-	MetricsCollectorMemoryLimit     string
-	KubeStateMetricsImage           string
-	KubeStateMetricsImagePullPolicy string
-	KubeStateMetricsCPURequest      string
-	KubeStateMetricsMemoryRequest   string
-	KubeStateMetricsCPULimit        string
-	KubeStateMetricsMemoryLimit     string
-	NodeExporterImage               string
-	NodeExporterImagePullPolicy     string
-	NodeExporterCPURequest          string
-	NodeExporterMemoryRequest       string
-	NodeExporterCPULimit            string
-	NodeExporterMemoryLimit         string
-	ClusterTerminalSessionTTL       time.Duration
-	ExpectedRevision                int64
-	ActorUserID                     string
-	Now                             time.Time
+	Workloads                 map[string]WorkloadSettings
+	ClusterTerminalSessionTTL *time.Duration
+	ExpectedRevision          int64
+	ActorUserID               string
+	Now                       time.Time
 }
 
 type Snapshot = store.EnrollmentConfigurationSnapshot
@@ -171,8 +142,23 @@ func NewService(
 	}
 }
 
-func (service *Service) Get(ctx context.Context) (Settings, []Profile, error) {
+// readSettings reads the settings and refuses a set missing a declared
+// workload. The plain store read is kept for the endpoint paths, which only
+// need the default profile: a workload the Server declares and the database has
+// no row for must not take endpoint management down with it.
+func (service *Service) readSettings(ctx context.Context) (store.PlatformSettings, error) {
 	settings, err := service.store.GetSettings(ctx)
+	if err != nil {
+		return store.PlatformSettings{}, err
+	}
+	if err := requireDeclaredWorkloads(settings); err != nil {
+		return store.PlatformSettings{}, err
+	}
+	return settings, nil
+}
+
+func (service *Service) Get(ctx context.Context) (Settings, []Profile, error) {
+	settings, err := service.readSettings(ctx)
 	if err != nil {
 		return Settings{}, nil, err
 	}
@@ -353,30 +339,10 @@ func (service *Service) UpdateSettings(ctx context.Context, input SettingsInput)
 	service.profileMutation.Lock()
 	defer service.profileMutation.Unlock()
 	updated, err := service.store.UpdateSettings(ctx, store.UpdatePlatformSettingsParams{
-		AgentImage:           strings.TrimSpace(input.AgentImage),
-		AgentImagePullPolicy: input.AgentImagePullPolicy, ExpectedRevision: input.ExpectedRevision,
-		ClusterTerminalImage:            strings.TrimSpace(input.ClusterTerminalImage),
-		ClusterTerminalImagePullPolicy:  input.ClusterTerminalImagePullPolicy,
-		MetricsCollectorImage:           strings.TrimSpace(input.MetricsCollectorImage),
-		MetricsCollectorImagePullPolicy: input.MetricsCollectorImagePullPolicy,
-		MetricsCollectorCPURequest:      strings.TrimSpace(input.MetricsCollectorCPURequest),
-		MetricsCollectorMemoryRequest:   strings.TrimSpace(input.MetricsCollectorMemoryRequest),
-		MetricsCollectorCPULimit:        strings.TrimSpace(input.MetricsCollectorCPULimit),
-		MetricsCollectorMemoryLimit:     strings.TrimSpace(input.MetricsCollectorMemoryLimit),
-		KubeStateMetricsImage:           strings.TrimSpace(input.KubeStateMetricsImage),
-		KubeStateMetricsImagePullPolicy: input.KubeStateMetricsImagePullPolicy,
-		KubeStateMetricsCPURequest:      strings.TrimSpace(input.KubeStateMetricsCPURequest),
-		KubeStateMetricsMemoryRequest:   strings.TrimSpace(input.KubeStateMetricsMemoryRequest),
-		KubeStateMetricsCPULimit:        strings.TrimSpace(input.KubeStateMetricsCPULimit),
-		KubeStateMetricsMemoryLimit:     strings.TrimSpace(input.KubeStateMetricsMemoryLimit),
-		NodeExporterImage:               strings.TrimSpace(input.NodeExporterImage),
-		NodeExporterImagePullPolicy:     input.NodeExporterImagePullPolicy,
-		NodeExporterCPURequest:          strings.TrimSpace(input.NodeExporterCPURequest),
-		NodeExporterMemoryRequest:       strings.TrimSpace(input.NodeExporterMemoryRequest),
-		NodeExporterCPULimit:            strings.TrimSpace(input.NodeExporterCPULimit),
-		NodeExporterMemoryLimit:         strings.TrimSpace(input.NodeExporterMemoryLimit),
-		ClusterTerminalSessionTTL:       input.ClusterTerminalSessionTTL,
-		ActorUserID:                     input.ActorUserID, Now: input.Now,
+		Workloads:                 trimWorkloads(input.Workloads),
+		ClusterTerminalSessionTTL: input.ClusterTerminalSessionTTL,
+		ExpectedRevision:          input.ExpectedRevision,
+		ActorUserID:               input.ActorUserID, Now: input.Now,
 	})
 	if errors.Is(err, store.ErrPlatformSettingsConflict) {
 		return Settings{}, ErrConflict
@@ -387,11 +353,30 @@ func (service *Service) UpdateSettings(ctx context.Context, input SettingsInput)
 	return settingsFromStore(updated), nil
 }
 
+// trimWorkloads stores what the operator meant rather than what the form sent.
+// The database refuses a value with surrounding whitespace, and a pasted image
+// reference carries it often enough that rejecting the save would be an error
+// message about something invisible.
+func trimWorkloads(workloads map[string]WorkloadSettings) map[string]WorkloadSettings {
+	trimmed := make(map[string]WorkloadSettings, len(workloads))
+	for component, workload := range workloads {
+		trimmed[component] = WorkloadSettings{
+			Image:           strings.TrimSpace(workload.Image),
+			ImagePullPolicy: workload.ImagePullPolicy,
+			CPURequest:      strings.TrimSpace(workload.CPURequest),
+			MemoryRequest:   strings.TrimSpace(workload.MemoryRequest),
+			CPULimit:        strings.TrimSpace(workload.CPULimit),
+			MemoryLimit:     strings.TrimSpace(workload.MemoryLimit),
+		}
+	}
+	return trimmed
+}
+
 func (service *Service) ResolveEnrollmentSnapshot(ctx context.Context, profileID, agentNamespace string) (Snapshot, error) {
 	if len(k8svalidation.IsDNS1123Label(strings.TrimSpace(agentNamespace))) != 0 {
 		return Snapshot{}, ErrInvalidInput
 	}
-	settings, err := service.store.GetSettings(ctx)
+	settings, err := service.readSettings(ctx)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -416,8 +401,8 @@ func (service *Service) ResolveEnrollmentSnapshot(ctx context.Context, profileID
 		EndpointProfileID: profile.ID, EndpointProfileRevision: profile.Revision,
 		RegistrationURL: profile.RegistrationURL, QUICAddress: profile.QUICAddress,
 		RegistrationCACertificatePEM: profile.RegistrationCACertificatePEM,
-		AgentImage:                   settings.AgentImage, AgentNamespace: strings.TrimSpace(agentNamespace),
-		AgentImagePullPolicy: settings.AgentImagePullPolicy,
+		AgentWorkload:                settings.Workloads[WorkloadAgent],
+		AgentNamespace:               strings.TrimSpace(agentNamespace),
 	}, nil
 }
 
@@ -625,9 +610,9 @@ func validCertificatePEM(value string) bool {
 // refused.
 //
 // Every rejection carries its own account rather than one shared "invalid
-// request": this form holds three images, three pull policies, a session
-// lifetime and four quantities, and a single fixed sentence would send the
-// operator back to guess which of them the Server meant.
+// request": this form holds five images, five pull policies, a session lifetime
+// and a dozen quantities, and a single fixed sentence would send the operator
+// back to guess which of them the Server meant.
 func validateSettingsInput(input SettingsInput) error {
 	// Identity and revision are not fields on the form. A caller that gets
 	// them wrong is not an operator making a typo, so they stay undetailed.
@@ -635,117 +620,60 @@ func validateSettingsInput(input SettingsInput) error {
 		input.Now.IsZero() {
 		return ErrInvalidInput
 	}
-	images := []struct {
-		value string
-		label string
-	}{
-		{input.AgentImage, "Agent 镜像"},
-		{input.ClusterTerminalImage, "Cluster Terminal 镜像"},
-		{input.MetricsCollectorImage, "指标采集组件镜像"},
-		{input.KubeStateMetricsImage, "kube-state-metrics 镜像"},
-		{input.NodeExporterImage, "node-exporter 镜像"},
-	}
-	for _, image := range images {
-		if !validAgentImage(image.value) {
-			return invalidInput(image.label + "不能为空，且不能包含空白字符")
-		}
-	}
-	policies := []struct {
-		value string
-		label string
-	}{
-		{input.AgentImagePullPolicy, "Agent"},
-		{input.ClusterTerminalImagePullPolicy, "Cluster Terminal"},
-		{input.MetricsCollectorImagePullPolicy, "指标采集组件"},
-		{input.KubeStateMetricsImagePullPolicy, "kube-state-metrics"},
-		{input.NodeExporterImagePullPolicy, "node-exporter"},
-	}
-	for _, policy := range policies {
-		if !allowedPullPolicy(policy.value) {
-			return invalidInput(
-				policy.label + "的拉取策略必须是 Always、IfNotPresent 或 Never",
-			)
-		}
-	}
-	if !allowedTerminalSessionTTL(input.ClusterTerminalSessionTTL) {
+	if input.ClusterTerminalSessionTTL != nil &&
+		!allowedTerminalSessionTTL(*input.ClusterTerminalSessionTTL) {
 		return invalidInput("集群终端会话存续时长必须是 1 至 60 分钟的整分钟数")
 	}
-	return validateCollectorResources(input)
-}
-
-// validateCollectorResources checks the four quantities each installed metrics
-// workload is given.
-//
-// It is worth checking here rather than leaving it to the Agent: the value is
-// saved once and used at every later install, so a typo accepted now becomes a
-// Cluster that refuses to install collection with a Kubernetes error nobody
-// connects back to this form.
-//
-// Empty is accepted and means the entry is left off the container. A limit
-// below its request is refused because Kubernetes would refuse the Pod.
-func validateCollectorResources(input SettingsInput) error {
-	for _, component := range []struct {
-		label         string
-		cpuRequest    string
-		memoryRequest string
-		cpuLimit      string
-		memoryLimit   string
-	}{
-		{
-			label:         "采集组件",
-			cpuRequest:    input.MetricsCollectorCPURequest,
-			memoryRequest: input.MetricsCollectorMemoryRequest,
-			cpuLimit:      input.MetricsCollectorCPULimit,
-			memoryLimit:   input.MetricsCollectorMemoryLimit,
-		},
-		{
-			label:         "kube-state-metrics",
-			cpuRequest:    input.KubeStateMetricsCPURequest,
-			memoryRequest: input.KubeStateMetricsMemoryRequest,
-			cpuLimit:      input.KubeStateMetricsCPULimit,
-			memoryLimit:   input.KubeStateMetricsMemoryLimit,
-		},
-		{
-			label:         "node-exporter",
-			cpuRequest:    input.NodeExporterCPURequest,
-			memoryRequest: input.NodeExporterMemoryRequest,
-			cpuLimit:      input.NodeExporterCPULimit,
-			memoryLimit:   input.NodeExporterMemoryLimit,
-		},
-	} {
-		if err := validateComponentResources(
-			component.label,
-			component.cpuRequest,
-			component.memoryRequest,
-			component.cpuLimit,
-			component.memoryLimit,
-		); err != nil {
+	for component, workload := range input.Workloads {
+		if err := validateWorkload(component, workload); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateComponentResources(
-	label string,
-	cpuRequestValue string,
-	memoryRequestValue string,
-	cpuLimitValue string,
-	memoryLimitValue string,
-) error {
-	cpuRequest, err := parseCollectorQuantity(cpuRequestValue, label+"的 CPU 请求")
+// validateWorkload checks one workload against what the Server declares about
+// it.
+//
+// The quantities are worth checking here rather than leaving them to the Agent:
+// the value is saved once and used at every later install, so a typo accepted
+// now becomes a Cluster that refuses to install with a Kubernetes error nobody
+// connects back to this form.
+func validateWorkload(component string, workload WorkloadSettings) error {
+	label, declared := workloadLabels[component]
+	// An undeclared name is not an operator typo — the form does not let one be
+	// typed — so it names itself rather than explaining anything.
+	if !declared {
+		return invalidInput("未知的平台工作负载：" + component)
+	}
+	if !validWorkloadImage(workload.Image) {
+		return invalidInput(label + "的镜像不能为空，且不能包含空白字符")
+	}
+	if !allowedPullPolicy(workload.ImagePullPolicy) {
+		return invalidInput(
+			label + "的拉取策略必须是 Always、IfNotPresent 或 Never",
+		)
+	}
+	return validateWorkloadResources(label, workload)
+}
+
+// validateWorkloadResources checks the four quantities a workload is
+// given. Empty is accepted and means the entry is left off the container. A
+// limit below its request is refused because Kubernetes would refuse the Pod.
+func validateWorkloadResources(label string, workload WorkloadSettings) error {
+	cpuRequest, err := parseWorkloadQuantity(workload.CPURequest, label+"的 CPU 请求")
 	if err != nil {
 		return err
 	}
-	memoryRequest, err := parseCollectorQuantity(memoryRequestValue, label+"的内存请求")
+	memoryRequest, err := parseWorkloadQuantity(workload.MemoryRequest, label+"的内存请求")
 	if err != nil {
 		return err
 	}
-	cpuLimit, err := parseCollectorQuantity(cpuLimitValue, label+"的 CPU 限制")
+	cpuLimit, err := parseWorkloadQuantity(workload.CPULimit, label+"的 CPU 限制")
 	if err != nil {
 		return err
 	}
-	memoryLimit, err := parseCollectorQuantity(memoryLimitValue, label+"的内存限制")
+	memoryLimit, err := parseWorkloadQuantity(workload.MemoryLimit, label+"的内存限制")
 	if err != nil {
 		return err
 	}
@@ -758,14 +686,14 @@ func validateComponentResources(
 	return nil
 }
 
-// parseCollectorQuantity returns nil for an empty value, which is the way to
+// parseWorkloadQuantity returns nil for an empty value, which is the way to
 // say "do not set this entry" rather than a missing field.
-func parseCollectorQuantity(value string, label string) (*resource.Quantity, error) {
+func parseWorkloadQuantity(value string, label string) (*resource.Quantity, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, nil
 	}
-	if len([]byte(value)) > maxCollectorQuantityLength {
+	if len([]byte(value)) > maxWorkloadQuantityLength {
 		return nil, invalidInput(label + "过长")
 	}
 	quantity, err := resource.ParseQuantity(value)
@@ -780,7 +708,7 @@ func parseCollectorQuantity(value string, label string) (*resource.Quantity, err
 	return &quantity, nil
 }
 
-func validAgentImage(value string) bool {
+func validWorkloadImage(value string) bool {
 	value = strings.TrimSpace(value)
 	return value != "" && len([]byte(value)) <= 512 && !strings.ContainsAny(value, "\r\n\t ")
 }
@@ -798,31 +726,11 @@ func allowedTerminalSessionTTL(value time.Duration) bool {
 
 func settingsFromStore(item store.PlatformSettings) Settings {
 	return Settings{
-		DefaultEndpointProfileID: item.DefaultEndpointProfileID,
-		AgentImage:               item.AgentImage,
-		AgentImagePullPolicy:     item.AgentImagePullPolicy, Revision: item.Revision,
-		ClusterTerminalImage:            item.ClusterTerminalImage,
-		ClusterTerminalImagePullPolicy:  item.ClusterTerminalImagePullPolicy,
-		MetricsCollectorImage:           item.MetricsCollectorImage,
-		MetricsCollectorImagePullPolicy: item.MetricsCollectorImagePullPolicy,
-		MetricsCollectorCPURequest:      item.MetricsCollectorCPURequest,
-		MetricsCollectorMemoryRequest:   item.MetricsCollectorMemoryRequest,
-		MetricsCollectorCPULimit:        item.MetricsCollectorCPULimit,
-		MetricsCollectorMemoryLimit:     item.MetricsCollectorMemoryLimit,
-		KubeStateMetricsImage:           item.KubeStateMetricsImage,
-		KubeStateMetricsImagePullPolicy: item.KubeStateMetricsImagePullPolicy,
-		KubeStateMetricsCPURequest:      item.KubeStateMetricsCPURequest,
-		KubeStateMetricsMemoryRequest:   item.KubeStateMetricsMemoryRequest,
-		KubeStateMetricsCPULimit:        item.KubeStateMetricsCPULimit,
-		KubeStateMetricsMemoryLimit:     item.KubeStateMetricsMemoryLimit,
-		NodeExporterImage:               item.NodeExporterImage,
-		NodeExporterImagePullPolicy:     item.NodeExporterImagePullPolicy,
-		NodeExporterCPURequest:          item.NodeExporterCPURequest,
-		NodeExporterMemoryRequest:       item.NodeExporterMemoryRequest,
-		NodeExporterCPULimit:            item.NodeExporterCPULimit,
-		NodeExporterMemoryLimit:         item.NodeExporterMemoryLimit,
-		ClusterTerminalSessionTTL:       item.ClusterTerminalSessionTTL,
-		UpdatedAt:                       item.UpdatedAt,
+		DefaultEndpointProfileID:  item.DefaultEndpointProfileID,
+		Workloads:                 item.Workloads,
+		ClusterTerminalSessionTTL: item.ClusterTerminalSessionTTL,
+		Revision:                  item.Revision,
+		UpdatedAt:                 item.UpdatedAt,
 	}
 }
 

@@ -5814,82 +5814,48 @@ export interface components {
             registration_ca_certificate_pem: string;
             enabled: boolean;
         };
+        /** @description ZKE 装进目标集群的一个工作负载：跑哪个镜像，以及最多能占用集群多少资源。 */
+        WorkloadSettings: {
+            image: string;
+            /** @enum {string} */
+            image_pull_policy: "Always" | "IfNotPresent" | "Never";
+            /**
+             * @description 容器上的 Kubernetes 数量，例如 `50m`。空字符串表示不在容器上设置该项——
+             *     Kubernetes 没有别的方式表达「不限制」，把预算交给目标 Namespace 的
+             *     LimitRange 时就留空。限制不能低于对应的请求。
+             */
+            cpu_request: string;
+            memory_request: string;
+            cpu_limit: string;
+            memory_limit: string;
+        };
         PlatformSettings: {
             default_endpoint_profile_id: components["schemas"]["UUID"];
-            agent_image: string;
-            /** @enum {string} */
-            agent_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            cluster_terminal_image: string;
-            /** @enum {string} */
-            cluster_terminal_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            /** @description 启用指标采集时部署到目标集群的采集组件镜像。 */
-            metrics_collector_image: string;
-            /** @enum {string} */
-            metrics_collector_image_pull_policy: "Always" | "IfNotPresent" | "Never";
             /**
-             * @description 采集组件容器的 Kubernetes 数量，例如 `50m`。空字符串表示不在容器上设置该项——
-             *     Kubernetes 没有别的方式表达「不限制」。
+             * @description 按工作负载名索引，当前为 `agent`、`cluster-terminal`、`collector`、
+             *     `kube-state-metrics`、`node-exporter`。名单由 Server 声明：后续新增的工作
+             *     负载会直接出现在这里，不改变本结构。指标采集的三个名字与集群内组件状态
+             *     上报使用的名字相同。
              */
-            metrics_collector_cpu_request: string;
-            metrics_collector_memory_request: string;
-            metrics_collector_cpu_limit: string;
-            metrics_collector_memory_limit: string;
-            /**
-             * @description 与采集组件一并安装的对象指标导出器镜像。它是节点可分配量与 Pod 申请/限制的唯一来源，
-             *     没有它，用量曲线没有分母，任何容量问题都答不了。
-             */
-            kube_state_metrics_image: string;
-            /** @enum {string} */
-            kube_state_metrics_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            kube_state_metrics_cpu_request: string;
-            kube_state_metrics_memory_request: string;
-            kube_state_metrics_cpu_limit: string;
-            kube_state_metrics_memory_limit: string;
-            /**
-             * @description 与采集组件一并安装的节点指标导出器镜像，提供磁盘、文件系统与网络。它以 DaemonSet
-             *     形式运行在每个节点上，预算取值应当保持很小——它的开销会乘以集群规模。
-             */
-            node_exporter_image: string;
-            /** @enum {string} */
-            node_exporter_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            node_exporter_cpu_request: string;
-            node_exporter_memory_request: string;
-            node_exporter_cpu_limit: string;
-            node_exporter_memory_limit: string;
+            workloads: {
+                [key: string]: components["schemas"]["WorkloadSettings"];
+            };
             /** @description Cluster Terminal Pod 存续时长，创建新会话时读取，无需重启 Server。 */
             cluster_terminal_session_ttl_seconds: number;
             revision: number;
             updated_at: components["schemas"]["Timestamp"];
         };
+        /**
+         * @description 增量更新：只写出现在请求里的工作负载与字段，其余保持已存储的值。平台配置按分区
+         *     分别保存，整体覆盖会让一次保存带上操作者当前并未查看的值。
+         */
         PlatformSettingsUpdate: {
-            agent_image: string;
-            /** @enum {string} */
-            agent_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            cluster_terminal_image: string;
-            /** @enum {string} */
-            cluster_terminal_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            metrics_collector_image: string;
-            /** @enum {string} */
-            metrics_collector_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            metrics_collector_cpu_request: string;
-            metrics_collector_memory_request: string;
-            metrics_collector_cpu_limit: string;
-            metrics_collector_memory_limit: string;
-            kube_state_metrics_image: string;
-            /** @enum {string} */
-            kube_state_metrics_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            kube_state_metrics_cpu_request: string;
-            kube_state_metrics_memory_request: string;
-            kube_state_metrics_cpu_limit: string;
-            kube_state_metrics_memory_limit: string;
-            node_exporter_image: string;
-            /** @enum {string} */
-            node_exporter_image_pull_policy: "Always" | "IfNotPresent" | "Never";
-            node_exporter_cpu_request: string;
-            node_exporter_memory_request: string;
-            node_exporter_cpu_limit: string;
-            node_exporter_memory_limit: string;
-            cluster_terminal_session_ttl_seconds: number;
+            /** @description 本次要修改的工作负载。未列出的工作负载保持不变；名字未被 Server 声明会被拒绝。 */
+            workloads?: {
+                [key: string]: components["schemas"]["WorkloadSettings"];
+            };
+            /** @description 省略表示不修改。 */
+            cluster_terminal_session_ttl_seconds?: number;
             expected_revision: number;
         };
         ClusterEnrollment: {

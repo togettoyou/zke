@@ -13,6 +13,7 @@ import (
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	"github.com/togettoyou/zke/pkg/shared/observability"
+	"github.com/togettoyou/zke/pkg/shared/workloadbudget"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -1048,7 +1049,7 @@ func collectorResources(
 			},
 		}, nil
 	}
-	return buildResourceRequirements(
+	return workloadbudget.Requirements(
 		request.GetCpuRequest(),
 		request.GetMemoryRequest(),
 		request.GetCpuLimit(),
@@ -1063,50 +1064,12 @@ func collectorResources(
 func componentResources(
 	component *agentv1.MetricsCollectorComponent,
 ) (corev1.ResourceRequirements, error) {
-	return buildResourceRequirements(
+	return workloadbudget.Requirements(
 		component.GetCpuRequest(),
 		component.GetMemoryRequest(),
 		component.GetCpuLimit(),
 		component.GetMemoryLimit(),
 	)
-}
-
-func buildResourceRequirements(
-	cpuRequest string,
-	memoryRequest string,
-	cpuLimit string,
-	memoryLimit string,
-) (corev1.ResourceRequirements, error) {
-	requests := corev1.ResourceList{}
-	limits := corev1.ResourceList{}
-	type entry struct {
-		list  corev1.ResourceList
-		name  corev1.ResourceName
-		value string
-	}
-	for _, item := range []entry{
-		{requests, corev1.ResourceCPU, cpuRequest},
-		{requests, corev1.ResourceMemory, memoryRequest},
-		{limits, corev1.ResourceCPU, cpuLimit},
-		{limits, corev1.ResourceMemory, memoryLimit},
-	} {
-		if item.value == "" {
-			continue
-		}
-		quantity, err := resource.ParseQuantity(item.value)
-		if err != nil {
-			return corev1.ResourceRequirements{}, err
-		}
-		item.list[item.name] = quantity
-	}
-	requirements := corev1.ResourceRequirements{}
-	if len(requests) != 0 {
-		requirements.Requests = requests
-	}
-	if len(limits) != 0 {
-		requirements.Limits = limits
-	}
-	return requirements, nil
 }
 
 // renderCollectorScrapeConfig covers exactly the targets this install puts into

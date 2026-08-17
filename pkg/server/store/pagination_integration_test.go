@@ -257,14 +257,15 @@ INSERT INTO enrollments (
     token_digest, expires_at, idempotency_key,
     endpoint_profile_id, endpoint_profile_revision, registration_url,
     quic_address, registration_ca_certificate_pem,
-    agent_image, agent_namespace, agent_image_pull_policy
+    agent_workload, agent_namespace
 )
 SELECT
     gen_random_uuid(), $1, $2, value.name, (SELECT id FROM users LIMIT 1),
     decode(value.digest, 'hex'), value.expires_at,
     'idempotency-' || value.name,
     '00000000-0000-0000-0000-000000000010', 1, 'http://127.0.0.1:8080',
-    '127.0.0.1:8443', '', 'zke-agent:test', 'zke-system', 'IfNotPresent'
+    '127.0.0.1:8443', '',
+    '{"image": "zke-agent:test", "image_pull_policy": "IfNotPresent", "cpu_request": "", "memory_request": "", "cpu_limit": "", "memory_limit": ""}', 'zke-system'
 FROM (VALUES
     ('active-cluster', repeat('a1', 32), $3::timestamptz),
     ('expired-cluster', repeat('b2', 32), $4::timestamptz)

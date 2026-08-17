@@ -325,18 +325,33 @@ node-exporter       ≈ (8×单节点核数 + 140)×N
 以下配置保存在 PostgreSQL，只能由全局 `admin` 在 Console 的「平台配置」应用修改，不需要重启：
 
 - 端点 —— Agent 接入端点预设：注册 URL、QUIC 地址、可选注册 HTTPS CA；
-- 镜像 —— Agent 镜像与 Cluster Terminal 镜像，各自独立的 Image Pull Policy；
-- 集群终端 —— Cluster Terminal 会话存续时长，可选 1 分钟至 1 小时，默认 15 分钟；
+- Agent —— Agent 的镜像、Image Pull Policy 与 CPU / 内存请求与限制；
+- 集群终端 —— Cluster Terminal 会话 Pod 的镜像、Image Pull Policy、CPU / 内存请求与限制，以及会话存续时长，
+  可选 1 分钟至 1 小时，默认 15 分钟；
 - 指标采集 —— 三个采集组件（vmagent、kube-state-metrics、node-exporter）各自的镜像、Image Pull Policy
   与 CPU / 内存请求与限制。三者一并安装，因此版本也在同一页固定，避免一个部署跑着今年的采集组件和去年的
   导出器。
 
+除端点外，每一页对应一个 ZKE 装进目标集群的工作负载，六个字段的形状完全相同：镜像、拉取策略和四项资源数量。
+数量留空表示不在容器上设置该项——Kubernetes 没有别的方式表达「不限制」，需要交给 Namespace 的 LimitRange
+决定时就留空。
+
+两个默认值值得说明。Agent 默认 `50m` / `128Mi` 请求、`512Mi` 内存限制、**不设 CPU 限制**：请求的作用是让它不
+再是 BestEffort Pod——节点内存不足时 BestEffort 最先被驱逐，而 Agent 一挂，该集群在 ZKE 里就整个失联；不设
+CPU 限制则是因为被限流的 Agent 不会报错，只会让该集群的每一次查询、终端按键和日志流都变慢，且任何错误信息里
+都看不出原因。这两个数字是让 Pod 可调度、可存活的下限，不是实测用量，实际开销取决于集群规模与被监视的对象
+数量，投产前应按自己的部署观察后调整。
+
+Cluster Terminal 默认 `25m` / `64Mi` 请求、`500m` / `256Mi` 限制。内存上限刻意保留余量：终端里的 kubectl
+对着大集群取全量 JSON 是其中唯一真正占内存的操作，上限压得太低会让一条正常命令直接被 OOMKill，而现象上完全
+看不出是内存限制导致的。
+
 每一页各自保存，只写入本页的改动；离开一页会丢弃其中尚未保存的修改，回到该页看到的始终是当前实际生效的
 配置。
 
-生效时机不同：Cluster Terminal 的镜像、拉取策略与会话时长立即用于新会话；三个采集组件的取值在下一次安装时
-读取；Agent 镜像、拉取策略、Namespace 和凭证选中的端点在新 Enrollment 签发时进入不可变快照，已签发的凭证
-和已接入的集群不受影响。
+生效时机不同：Cluster Terminal 的镜像、拉取策略、资源预算与会话时长立即用于新会话；三个采集组件的取值在下一次
+安装时读取；Agent 的镜像、拉取策略、资源预算、Namespace 和凭证选中的端点在新 Enrollment 签发时进入不可变快照，
+已签发的凭证和已接入的集群不受影响。
 
 ## 升级、备份与卸载
 

@@ -21,6 +21,17 @@ message TerminalSessionRequest {
   uint64 ttl_seconds = 6;
   string image = 7;
   string image_pull_policy = 8;
+  // How much of the Cluster one session Pod may take. The Agent used to hold
+  // these as constants, which made the budget of a workload running in the
+  // operator's own Cluster the one thing about it they could not change.
+  //
+  // An empty quantity means the entry is left off the container: Kubernetes has
+  // no other spelling for "no limit", and a Namespace governed by a LimitRange
+  // needs to be able to defer to it.
+  string cpu_request = 9;
+  string memory_request = 10;
+  string cpu_limit = 11;
+  string memory_limit = 12;
 }
 
 message TerminalSessionResponse {

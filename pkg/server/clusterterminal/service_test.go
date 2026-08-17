@@ -11,6 +11,7 @@ import (
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/podexec"
+	"github.com/togettoyou/zke/pkg/server/store"
 )
 
 type terminalRequesterFake struct {
@@ -46,7 +47,8 @@ const testTerminalTTL = 10 * time.Minute
 func fixedTerminalRuntime(image, imagePullPolicy, namespace string) func(context.Context, string) (RuntimeConfig, error) {
 	return func(context.Context, string) (RuntimeConfig, error) {
 		return RuntimeConfig{
-			Image: image, ImagePullPolicy: imagePullPolicy, Namespace: namespace, TTL: testTerminalTTL,
+			Workload:  store.WorkloadSettings{Image: image, ImagePullPolicy: imagePullPolicy},
+			Namespace: namespace, TTL: testTerminalTTL,
 		}, nil
 	}
 }
@@ -110,12 +112,16 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 
 func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
 	requester := &terminalRequesterFake{}
-	image, imagePullPolicy := "terminal:v1", "IfNotPresent"
+	image, imagePullPolicy, cpuRequest := "terminal:v1", "IfNotPresent", "25m"
 	ttl := 5 * time.Minute
 	service := NewService(requester, &podExecCreatorFake{}, Config{
 		ResolveRuntime: func(context.Context, string) (RuntimeConfig, error) {
 			return RuntimeConfig{
-				Image: image, ImagePullPolicy: imagePullPolicy, Namespace: "zke-system", TTL: ttl,
+				Workload: store.WorkloadSettings{
+					Image: image, ImagePullPolicy: imagePullPolicy,
+					CPURequest: cpuRequest, MemoryLimit: "512Mi",
+				},
+				Namespace: "zke-system", TTL: ttl,
 			}, nil
 		},
 	})
@@ -132,12 +138,21 @@ func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
 	create("first", time.Unix(100, 0))
 	image = "terminal:v2"
 	imagePullPolicy = "Always"
+	cpuRequest = "100m"
 	ttl = 20 * time.Minute
 	create("second", time.Unix(101, 0))
 	if len(requester.requests) != 2 || requester.requests[0].GetImage() != "terminal:v1" ||
 		requester.requests[0].GetImagePullPolicy() != "IfNotPresent" ||
 		requester.requests[1].GetImage() != "terminal:v2" || requester.requests[1].GetImagePullPolicy() != "Always" {
 		t.Fatalf("terminal runtime settings = %+v, want v1/IfNotPresent then v2/Always", requester.requests)
+	}
+	// The budget is platform settings state as much as the image is: an
+	// operator resizing the session Pod must reach the next session without
+	// the Agent holding a constant of its own.
+	if requester.requests[0].GetCpuRequest() != "25m" ||
+		requester.requests[1].GetCpuRequest() != "100m" ||
+		requester.requests[1].GetMemoryLimit() != "512Mi" {
+		t.Fatalf("terminal budgets = %+v, want 25m then 100m/512Mi", requester.requests)
 	}
 	// The session lifetime is platform settings state now, so a change between
 	// two sessions must reach the Agent without restarting the Server.
@@ -152,7 +167,10 @@ func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
 func TestCreateRejectsRuntimeWithoutSessionTTL(t *testing.T) {
 	service := NewService(&terminalRequesterFake{}, &podExecCreatorFake{}, Config{
 		ResolveRuntime: func(context.Context, string) (RuntimeConfig, error) {
-			return RuntimeConfig{Image: "terminal:test", ImagePullPolicy: "Never", Namespace: "zke-system"}, nil
+			return RuntimeConfig{
+				Workload:  store.WorkloadSettings{Image: "terminal:test", ImagePullPolicy: "Never"},
+				Namespace: "zke-system",
+			}, nil
 		},
 	})
 	_, err := service.Create(context.Background(), CreateInput{

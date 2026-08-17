@@ -10,7 +10,12 @@ import {
   useUpdatePlatformSettings,
   type EndpointProfileInput,
 } from "@/api/queries/platform-settings";
-import type { AgentEndpointProfile, PlatformSettings } from "@/api/types";
+import type {
+  AgentEndpointProfile,
+  PlatformSettings,
+  PlatformSettingsUpdate,
+  WorkloadSettings,
+} from "@/api/types";
 import { errorMessage } from "@/api/errors";
 import { AppShell, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
@@ -38,88 +43,90 @@ import {
 } from "@/components/ui/select";
 import { parseQuantity } from "@/lib/quantity";
 
+// One section per workload ZKE installs, rather than one section of images and
+// another of budgets. What image runs and what it may take from the Cluster are
+// one decision about one thing, and splitting them meant an operator sizing the
+// Cluster Terminal read its image on a different page.
 const NAV: AppNavItem[] = [
   { id: "endpoints", label: "端点", icon: Network },
-  { id: "images", label: "镜像", icon: Container },
+  { id: "agent", label: "Agent", icon: Container },
   { id: "cluster-terminal", label: "集群终端", icon: SquareTerminal },
-  // Its own section rather than two more fields under 镜像: the collector is a
-  // workload ZKE installs into somebody else's Cluster, so what it may take
-  // from that Cluster is the decision being made here, and an image field is
-  // only one part of it.
   { id: "metrics-collection", label: "指标采集", icon: Activity },
 ];
 
 const PULL_POLICIES = ["Always", "IfNotPresent", "Never"] as const;
 
 /**
- * Which columns of the settings row each section owns.
- *
- * The Server keeps all of them in one row behind one revision, so a save is
- * necessarily a write of the whole row — but that is a storage fact, and it used
- * to be the operator's problem: an edit made under 镜像 was still in the draft
- * when 集群终端 was saved, and both went to the Server under a button that only
- * named one of them. Sections are independent here instead. A save takes the
- * fields listed for the open section and reads every other field back from what
- * the Server last returned, so it cannot carry an edit the operator is not
- * looking at.
+ * The workload names the Server declares. They are the keys of
+ * `settings.workloads`, and the metrics three are the same names the Cluster
+ * reports its installed components under.
  */
-const SECTION_FIELDS = {
-  images: [
-    "agent_image",
-    "agent_image_pull_policy",
-    "cluster_terminal_image",
-    "cluster_terminal_image_pull_policy",
-  ],
-  "cluster-terminal": ["cluster_terminal_session_ttl_seconds"],
-  "metrics-collection": [
-    "metrics_collector_image",
-    "metrics_collector_image_pull_policy",
-    "metrics_collector_cpu_request",
-    "metrics_collector_cpu_limit",
-    "metrics_collector_memory_request",
-    "metrics_collector_memory_limit",
-    "kube_state_metrics_image",
-    "kube_state_metrics_image_pull_policy",
-    "kube_state_metrics_cpu_request",
-    "kube_state_metrics_cpu_limit",
-    "kube_state_metrics_memory_request",
-    "kube_state_metrics_memory_limit",
-    "node_exporter_image",
-    "node_exporter_image_pull_policy",
-    "node_exporter_cpu_request",
-    "node_exporter_cpu_limit",
-    "node_exporter_memory_request",
-    "node_exporter_memory_limit",
-  ],
-} as const satisfies Record<string, readonly (keyof PlatformSettings)[]>;
+const WORKLOAD_AGENT = "agent";
+const WORKLOAD_CLUSTER_TERMINAL = "cluster-terminal";
+const WORKLOAD_COLLECTOR = "collector";
+const WORKLOAD_KUBE_STATE = "kube-state-metrics";
+const WORKLOAD_NODE_EXPORTER = "node-exporter";
 
 /**
- * The three workloads one install puts into a Cluster.
+ * Which workloads each section owns, and whether it owns the session lifetime.
  *
- * They are one section rather than three because they are one operation: an
- * operator turns collection on once and gets all three, so pinning their
- * versions in three different places would let a deployment run a collector
- * from this year against exporters from last.
- *
- * The budgets differ on purpose. The collector and the object exporter run once
- * per Cluster; the node exporter runs on every Node, so its cost is multiplied
- * by the size of the Cluster and its defaults are correspondingly small.
+ * A save sends exactly this and nothing else. Sections used to share one write
+ * of the whole settings object, which made an edit left behind in one of them
+ * go to the Server when another was saved, under a button that only named one
+ * of the two. The Server takes partial updates now, so a section can only ever
+ * write what it shows.
  */
-const METRICS_COMPONENTS = [
-  {
-    id: "collector",
+const SECTIONS = {
+  agent: { workloads: [WORKLOAD_AGENT], sessionTTL: false },
+  "cluster-terminal": { workloads: [WORKLOAD_CLUSTER_TERMINAL], sessionTTL: true },
+  "metrics-collection": {
+    workloads: [WORKLOAD_COLLECTOR, WORKLOAD_KUBE_STATE, WORKLOAD_NODE_EXPORTER],
+    sessionTTL: false,
+  },
+} as const satisfies Record<string, { workloads: readonly string[]; sessionTTL: boolean }>;
+
+/**
+ * How each workload is presented. Titles and descriptions live here rather than
+ * with the values: the Server stores what an operator set, and this is the only
+ * side that has to explain it.
+ *
+ * Every one of them takes the same six fields, because every one of them is a
+ * container ZKE puts into somebody else's Cluster. The placeholders are what
+ * the platform ships with, and they differ on purpose — the node exporter runs
+ * on every Node, so its cost is multiplied by the size of the Cluster and its
+ * defaults are correspondingly small; the Agent ships with none at all, because
+ * what it costs depends on how much of the Cluster is being watched.
+ */
+const WORKLOAD_FORMS = {
+  [WORKLOAD_AGENT]: {
+    label: "Agent",
+    title: "Agent",
+    description:
+      "接入该集群的常驻组件，所有查询与操作都由它执行。镜像与预算在签发接入凭证时复制为不可变快照，后续修改只影响之后签发的凭证，不影响已接入的集群。默认不设 CPU 限制：被限流的 Agent 不会报错，只会让该集群的每一次查询、每一次终端按键都变慢。",
+    placeholders: {
+      cpuRequest: "50m",
+      cpuLimit: "",
+      memoryRequest: "128Mi",
+      memoryLimit: "512Mi",
+    },
+  },
+  [WORKLOAD_CLUSTER_TERMINAL]: {
+    label: "Cluster Terminal",
+    title: "Cluster Terminal",
+    description:
+      "每个集群终端会话在目标集群里运行的临时 Pod，会话结束即回收。预算按会话计算，因此并发会话越多、开销越大。内存上限需要留出余量——终端里的 kubectl 对着大集群取全量 JSON 是唯一真正占内存的操作。修改后立即对下一个会话生效。",
+    placeholders: {
+      cpuRequest: "25m",
+      cpuLimit: "500m",
+      memoryRequest: "64Mi",
+      memoryLimit: "256Mi",
+    },
+  },
+  [WORKLOAD_COLLECTOR]: {
+    label: "指标采集组件",
     title: "采集组件（vmagent）",
-    label: "采集组件",
     description:
       "抓取 kubelet 与下面两个导出器，经该集群 Agent 已有的连接把样本回传给 Server。每个集群一个。",
-    keys: {
-      image: "metrics_collector_image",
-      pullPolicy: "metrics_collector_image_pull_policy",
-      cpuRequest: "metrics_collector_cpu_request",
-      cpuLimit: "metrics_collector_cpu_limit",
-      memoryRequest: "metrics_collector_memory_request",
-      memoryLimit: "metrics_collector_memory_limit",
-    },
     placeholders: {
       cpuRequest: "50m",
       cpuLimit: "500m",
@@ -127,20 +134,11 @@ const METRICS_COMPONENTS = [
       memoryLimit: "512Mi",
     },
   },
-  {
-    id: "kube-state-metrics",
-    title: "对象指标导出器（kube-state-metrics）",
+  [WORKLOAD_KUBE_STATE]: {
     label: "kube-state-metrics",
+    title: "对象指标导出器（kube-state-metrics）",
     description:
       "节点可分配量与 Pod 申请/限制的唯一来源，也是把 Pod 归到工作负载的依据。没有它，用量曲线没有分母，利用率、申请量与工作负载视图都是空的。每个集群一个。",
-    keys: {
-      image: "kube_state_metrics_image",
-      pullPolicy: "kube_state_metrics_image_pull_policy",
-      cpuRequest: "kube_state_metrics_cpu_request",
-      cpuLimit: "kube_state_metrics_cpu_limit",
-      memoryRequest: "kube_state_metrics_memory_request",
-      memoryLimit: "kube_state_metrics_memory_limit",
-    },
     placeholders: {
       cpuRequest: "20m",
       cpuLimit: "500m",
@@ -148,20 +146,11 @@ const METRICS_COMPONENTS = [
       memoryLimit: "512Mi",
     },
   },
-  {
-    id: "node-exporter",
-    title: "节点指标导出器（node-exporter）",
+  [WORKLOAD_NODE_EXPORTER]: {
     label: "node-exporter",
+    title: "节点指标导出器（node-exporter）",
     description:
       "磁盘、文件系统与网络的唯一来源。以 DaemonSet 运行在每个节点上，因此预算取值应当保持很小——它的开销会乘以集群规模。它需要 host 网络与 hostPath，运行在 baseline 或 restricted Pod Security 级别的 Namespace 会拒绝它。",
-    keys: {
-      image: "node_exporter_image",
-      pullPolicy: "node_exporter_image_pull_policy",
-      cpuRequest: "node_exporter_cpu_request",
-      cpuLimit: "node_exporter_cpu_limit",
-      memoryRequest: "node_exporter_memory_request",
-      memoryLimit: "node_exporter_memory_limit",
-    },
     placeholders: {
       cpuRequest: "10m",
       cpuLimit: "200m",
@@ -169,14 +158,36 @@ const METRICS_COMPONENTS = [
       memoryLimit: "128Mi",
     },
   },
-] as const;
+} as const;
 
-type MetricsComponentForm = (typeof METRICS_COMPONENTS)[number];
+const EMPTY_WORKLOAD: WorkloadSettings = {
+  image: "",
+  image_pull_policy: "IfNotPresent",
+  cpu_request: "",
+  memory_request: "",
+  cpu_limit: "",
+  memory_limit: "",
+};
 
-type SettingsSection = keyof typeof SECTION_FIELDS;
+/**
+ * One workload's values.
+ *
+ * The Server refuses to serve settings missing a workload it declares, so a
+ * blank here means this Console knows a name the Server does not — a version
+ * skew, which shows as empty fields rather than a crash.
+ */
+function workloadOf(settings: PlatformSettings, component: string): WorkloadSettings {
+  return settings.workloads[component] ?? EMPTY_WORKLOAD;
+}
+
+function workloadLabel(component: string): string {
+  return WORKLOAD_FORMS[component as keyof typeof WORKLOAD_FORMS]?.label ?? component;
+}
+
+type SettingsSection = keyof typeof SECTIONS;
 
 function isSettingsSection(section: string): section is SettingsSection {
-  return section in SECTION_FIELDS;
+  return section in SECTIONS;
 }
 
 const EMPTY_PROFILE: EndpointProfileInput = {
@@ -195,10 +206,10 @@ const EMPTY_PROFILE: EndpointProfileInput = {
  * are, their password, their desktop. This is about the deployment, and only a
  * global administrator can see or change any of it.
  *
- * All four sections read one settings row and one endpoint list from a single
- * query. The endpoint list is its own resource with its own revisions; the rest
- * are columns of that row, edited and saved one section at a time — see
- * {@link SECTION_FIELDS}.
+ * All four sections read one settings object and one endpoint list from a
+ * single query. The endpoint list is its own resource with its own revisions;
+ * the rest is one revision covering the installed workloads and the session
+ * lifetime, edited and saved one section at a time — see {@link SECTIONS}.
  */
 export function PlatformApp(_props: AppComponentProps) {
   const [section, setSection] = useState("endpoints");
@@ -242,15 +253,22 @@ export function PlatformApp(_props: AppComponentProps) {
     if (!stored || !settings) {
       return;
     }
-    const next = { ...stored };
-    for (const field of SECTION_FIELDS[active]) {
-      // A per-field copy rather than a spread of the whole draft: `stored` is
-      // the freshest answer from the Server, and the draft's other columns are
-      // a snapshot from whenever it was taken.
-      Object.assign(next, { [field]: settings[field] });
+    // The revision comes from what the Server last returned rather than from
+    // the draft: it is the Server's answer to "is this still the version you
+    // read", and a draft can only ever hold a staler one.
+    const update: PlatformSettingsUpdate = { expected_revision: stored.revision };
+    const workloads: Record<string, WorkloadSettings> = {};
+    for (const component of SECTIONS[active].workloads) {
+      workloads[component] = workloadOf(settings, component);
+    }
+    if (Object.keys(workloads).length > 0) {
+      update.workloads = workloads;
+    }
+    if (SECTIONS[active].sessionTTL) {
+      update.cluster_terminal_session_ttl_seconds = settings.cluster_terminal_session_ttl_seconds;
     }
     try {
-      await updateSettings.mutateAsync(next);
+      await updateSettings.mutateAsync(update);
       // The mutation invalidates the query, so the saved values come back from
       // the Server rather than being held here as a second copy.
       setDraft(null);
@@ -279,9 +297,7 @@ export function PlatformApp(_props: AppComponentProps) {
                 defaultProfileID={settings.default_endpoint_profile_id}
               />
             ) : null}
-            {section === "images" ? (
-              <ImagesSection settings={settings} onChange={setDraft} />
-            ) : null}
+            {section === "agent" ? <AgentSection settings={settings} onChange={setDraft} /> : null}
             {section === "cluster-terminal" ? (
               <ClusterTerminalSection settings={settings} onChange={setDraft} />
             ) : null}
@@ -362,16 +378,7 @@ function SaveRow({
  */
 function sectionProblems(section: SettingsSection, settings: PlatformSettings): string[] {
   const problems: string[] = [];
-  if (section === "images") {
-    if (!validImage(settings.agent_image)) {
-      problems.push("Agent 镜像不能为空，且不能包含空白字符。");
-    }
-    if (!validImage(settings.cluster_terminal_image)) {
-      problems.push("Cluster Terminal 镜像不能为空，且不能包含空白字符。");
-    }
-    return problems;
-  }
-  if (section === "cluster-terminal") {
+  if (SECTIONS[section].sessionTTL) {
     // Whole seconds between 60 and 3600, which is what the Server accepts — not
     // whole minutes. A deployment configured elsewhere may hold 90 seconds, and
     // a form that called that invalid would refuse to save a page the operator
@@ -380,32 +387,32 @@ function sectionProblems(section: SettingsSection, settings: PlatformSettings): 
     if (!Number.isInteger(seconds) || seconds < 60 || seconds > 3600) {
       problems.push("集群终端会话存续时长必须在 1 至 60 分钟之间。");
     }
-    return problems;
   }
-  // One save writes all three components, so all three are checked. Naming the
-  // component in every message matters more here than it did with one: three
-  // identical "内存限制不能低于内存请求" would send the operator back to guess
-  // which section the Server meant.
-  for (const component of METRICS_COMPONENTS) {
-    const { keys, label } = component;
-    if (!validImage(settings[keys.image])) {
-      problems.push(`${label}镜像不能为空，且不能包含空白字符。`);
+  // A save writes every workload of the section, so every one of them is
+  // checked. Naming the workload in each message matters: several identical
+  // "内存限制不能低于内存请求" would send the operator back to guess which one
+  // the Server meant.
+  for (const component of SECTIONS[section].workloads) {
+    const label = workloadLabel(component);
+    const workload = workloadOf(settings, component);
+    if (!validImage(workload.image)) {
+      problems.push(`${label}的镜像不能为空，且不能包含空白字符。`);
     }
     for (const quantity of [
-      { label: `${label}的 CPU 请求`, value: settings[keys.cpuRequest] },
-      { label: `${label}的 CPU 限制`, value: settings[keys.cpuLimit] },
-      { label: `${label}的内存请求`, value: settings[keys.memoryRequest] },
-      { label: `${label}的内存限制`, value: settings[keys.memoryLimit] },
+      { label: `${label}的 CPU 请求`, value: workload.cpu_request },
+      { label: `${label}的 CPU 限制`, value: workload.cpu_limit },
+      { label: `${label}的内存请求`, value: workload.memory_request },
+      { label: `${label}的内存限制`, value: workload.memory_limit },
     ]) {
       const problem = quantityProblem(quantity.label, quantity.value);
       if (problem) {
         problems.push(problem);
       }
     }
-    if (exceedsLimit(settings[keys.cpuRequest], settings[keys.cpuLimit])) {
+    if (exceedsLimit(workload.cpu_request, workload.cpu_limit)) {
       problems.push(`${label}的 CPU 限制不能低于 CPU 请求。`);
     }
-    if (exceedsLimit(settings[keys.memoryRequest], settings[keys.memoryLimit])) {
+    if (exceedsLimit(workload.memory_request, workload.memory_limit)) {
       problems.push(`${label}的内存限制不能低于内存请求。`);
     }
   }
@@ -424,6 +431,10 @@ function validImage(value: string): boolean {
 /**
  * An empty quantity is a real answer — it means the entry is left off the
  * container — so only a value that is present and unusable is a problem.
+ *
+ * The label arrives already naming its workload. This used to prepend one of
+ * its own, which read as "采集组件的 node-exporter 的内存限制" once there was
+ * more than one budgeted workload to be wrong about.
  */
 function quantityProblem(label: string, value: string): string | null {
   const trimmed = value.trim();
@@ -431,14 +442,14 @@ function quantityProblem(label: string, value: string): string | null {
     return null;
   }
   if (trimmed.length > 32) {
-    return `采集组件的${label}过长。`;
+    return `${label}过长。`;
   }
   const parsed = parseQuantity(trimmed);
   if (parsed === null) {
-    return `采集组件的${label}不是合法的 Kubernetes 数量，例如 500m 或 512Mi。`;
+    return `${label}不是合法的 Kubernetes 数量，例如 500m 或 512Mi。`;
   }
   if (parsed <= 0) {
-    return `采集组件的${label}必须大于 0。`;
+    return `${label}必须大于 0。`;
   }
   return null;
 }
@@ -453,7 +464,7 @@ function exceedsLimit(request: string, limit: string): boolean {
   return parsedLimit < parsedRequest;
 }
 
-function ImagesSection({
+function AgentSection({
   settings,
   onChange,
 }: {
@@ -461,37 +472,26 @@ function ImagesSection({
   onChange: (next: PlatformSettings) => void;
 }) {
   return (
-    <section>
-      <h3 className="text-foreground mb-1 text-[13px] font-semibold">镜像与拉取策略</h3>
-      <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
-        Agent 镜像在创建接入凭证时复制为不可变快照，后续修改不影响已签发的凭证。Cluster Terminal
-        镜像在创建新会话时读取，修改后立即对下一个会话生效。指标采集组件的镜像在「指标采集」中配置。
-      </p>
-      <div className="grid gap-3">
-        <ImageField
-          id="agent-image"
-          label="Agent 镜像"
-          value={settings.agent_image}
-          onChange={(value) => onChange({ ...settings, agent_image: value })}
+    <div className="grid gap-6">
+      {SECTIONS.agent.workloads.map((component) => (
+        <WorkloadFields
+          key={component}
+          component={component}
+          settings={settings}
+          onChange={onChange}
         />
-        <PullPolicySelect
-          label="Agent 拉取策略"
-          value={settings.agent_image_pull_policy}
-          onChange={(value) => onChange({ ...settings, agent_image_pull_policy: value })}
-        />
-        <ImageField
-          id="cluster-terminal-image"
-          label="Cluster Terminal 镜像"
-          value={settings.cluster_terminal_image}
-          onChange={(value) => onChange({ ...settings, cluster_terminal_image: value })}
-        />
-        <PullPolicySelect
-          label="Cluster Terminal 拉取策略"
-          value={settings.cluster_terminal_image_pull_policy}
-          onChange={(value) => onChange({ ...settings, cluster_terminal_image_pull_policy: value })}
-        />
-      </div>
-    </section>
+      ))}
+      <BudgetHint />
+    </div>
+  );
+}
+
+/** Said once per section, because it is the same rule for every workload. */
+function BudgetHint() {
+  return (
+    <FieldHint>
+      限制不能低于对应的请求；留空表示不在容器上设置该项，把预算交给目标 Namespace 的 LimitRange。
+    </FieldHint>
   );
 }
 
@@ -523,16 +523,17 @@ function MetricsCollectionSection({
           修改后对下一次安装生效；已安装的集群需要在「可观测性 → 采集接入」中重新安装才会更换。
         </p>
       </section>
-      {METRICS_COMPONENTS.map((component) => (
-        <MetricsComponentFields
-          key={component.id}
+      {SECTIONS["metrics-collection"].workloads.map((component) => (
+        <WorkloadFields
+          key={component}
           component={component}
           settings={settings}
           onChange={onChange}
         />
       ))}
+      <BudgetHint />
       <FieldHint>
-        限制不能低于对应的请求；采集组件的磁盘缓冲区大小仍由 Server 配置文件中的
+        采集组件的磁盘缓冲区大小仍由 Server 配置文件中的
         <code className="zke-mono"> observability.metrics.collector_buffer_size </code>
         决定。
       </FieldHint>
@@ -540,60 +541,84 @@ function MetricsCollectionSection({
   );
 }
 
-function MetricsComponentFields({
+/**
+ * One workload: what runs, and how much of the Cluster it may take.
+ *
+ * The same six fields for all of them, because it is the same decision every
+ * time — the Agent, the Cluster Terminal Pod and the three metrics workloads
+ * are all containers ZKE puts into an operator's Cluster. An empty quantity is
+ * a real answer, so nothing here fills a blank back in on their behalf.
+ */
+function WorkloadFields({
   component,
   settings,
   onChange,
 }: {
-  component: MetricsComponentForm;
+  component: string;
   settings: PlatformSettings;
   onChange: (next: PlatformSettings) => void;
 }) {
-  const { keys, placeholders } = component;
+  const form = WORKLOAD_FORMS[component as keyof typeof WORKLOAD_FORMS];
+  const workload = workloadOf(settings, component);
+  // A workload the Server declares and this Console does not know how to
+  // describe is a version skew. Rendering nothing is better than a section with
+  // no title over inputs whose meaning is unexplained.
+  if (!form) {
+    return null;
+  }
+  const { placeholders } = form;
   return (
     <section>
-      <h4 className="text-foreground mb-1 text-[13px] font-semibold">{component.title}</h4>
-      <p className="text-muted-foreground mb-3 text-xs leading-relaxed">{component.description}</p>
+      <h4 className="text-foreground mb-1 text-[13px] font-semibold">{form.title}</h4>
+      <p className="text-muted-foreground mb-3 text-xs leading-relaxed">{form.description}</p>
       <div className="grid gap-3">
         <ImageField
-          id={`${component.id}-image`}
+          id={`${component}-image`}
           label="镜像"
-          value={settings[keys.image]}
-          onChange={(value) => onChange(withField(settings, keys.image, value))}
+          value={workload.image}
+          onChange={(value) => onChange(withWorkload(settings, component, { image: value }))}
         />
         <PullPolicySelect
           label="拉取策略"
-          value={settings[keys.pullPolicy]}
-          onChange={(value) => onChange(withField(settings, keys.pullPolicy, value))}
+          value={workload.image_pull_policy}
+          onChange={(value) =>
+            onChange(withWorkload(settings, component, { image_pull_policy: value }))
+          }
         />
         <div className="grid grid-cols-2 gap-3">
           <QuantityField
-            id={`${component.id}-cpu-request`}
+            id={`${component}-cpu-request`}
             label="CPU 请求"
             placeholder={placeholders.cpuRequest}
-            value={settings[keys.cpuRequest]}
-            onChange={(value) => onChange(withField(settings, keys.cpuRequest, value))}
+            value={workload.cpu_request}
+            onChange={(value) =>
+              onChange(withWorkload(settings, component, { cpu_request: value }))
+            }
           />
           <QuantityField
-            id={`${component.id}-cpu-limit`}
+            id={`${component}-cpu-limit`}
             label="CPU 限制"
             placeholder={placeholders.cpuLimit}
-            value={settings[keys.cpuLimit]}
-            onChange={(value) => onChange(withField(settings, keys.cpuLimit, value))}
+            value={workload.cpu_limit}
+            onChange={(value) => onChange(withWorkload(settings, component, { cpu_limit: value }))}
           />
           <QuantityField
-            id={`${component.id}-memory-request`}
+            id={`${component}-memory-request`}
             label="内存请求"
             placeholder={placeholders.memoryRequest}
-            value={settings[keys.memoryRequest]}
-            onChange={(value) => onChange(withField(settings, keys.memoryRequest, value))}
+            value={workload.memory_request}
+            onChange={(value) =>
+              onChange(withWorkload(settings, component, { memory_request: value }))
+            }
           />
           <QuantityField
-            id={`${component.id}-memory-limit`}
+            id={`${component}-memory-limit`}
             label="内存限制"
             placeholder={placeholders.memoryLimit}
-            value={settings[keys.memoryLimit]}
-            onChange={(value) => onChange(withField(settings, keys.memoryLimit, value))}
+            value={workload.memory_limit}
+            onChange={(value) =>
+              onChange(withWorkload(settings, component, { memory_limit: value }))
+            }
           />
         </div>
       </div>
@@ -602,19 +627,24 @@ function MetricsComponentFields({
 }
 
 /**
- * One field of the settings row, replaced.
+ * One workload's values, with some of them replaced.
  *
- * The three components are edited through the same fields under different
- * column names, so the setter takes the column as a value. The generic keeps
- * that type-safe at every call site; the cast is here because TypeScript widens
- * a computed key in a spread, and it is contained to this one line.
+ * Every workload is edited through the same six fields, so the setter takes the
+ * workload name and a patch rather than the form knowing which column it writes
+ * — that mapping is what a new workload used to have to be added to.
  */
-function withField<K extends keyof PlatformSettings>(
+function withWorkload(
   settings: PlatformSettings,
-  key: K,
-  value: PlatformSettings[K],
+  component: string,
+  patch: Partial<WorkloadSettings>,
 ): PlatformSettings {
-  return { ...settings, [key]: value } as PlatformSettings;
+  return {
+    ...settings,
+    workloads: {
+      ...settings.workloads,
+      [component]: { ...workloadOf(settings, component), ...patch },
+    },
+  };
 }
 
 /** An image reference. Marked invalid only for the two things a browser knows. */
@@ -683,15 +713,15 @@ function PullPolicySelect({
   onChange,
 }: {
   label: string;
-  value: PlatformSettings["agent_image_pull_policy"];
-  onChange: (value: PlatformSettings["agent_image_pull_policy"]) => void;
+  value: WorkloadSettings["image_pull_policy"];
+  onChange: (value: WorkloadSettings["image_pull_policy"]) => void;
 }) {
   return (
     <div className="grid content-start gap-1.5">
       <Label>{label}</Label>
       <Select
         value={value}
-        onValueChange={(next) => onChange(next as PlatformSettings["agent_image_pull_policy"])}
+        onValueChange={(next) => onChange(next as WorkloadSettings["image_pull_policy"])}
       >
         <SelectTrigger>
           <SelectValue />
@@ -709,12 +739,13 @@ function PullPolicySelect({
 }
 
 /**
- * The lifetime the Agent gives a Cluster Terminal Pod.
+ * The Pod one Cluster Terminal session runs, and how long it lives.
  *
- * Entered in minutes because that is the unit the decision is made in, and
- * stored in seconds because that is what the Agent's request carries. The
- * Server accepts 60 to 3600 seconds; a value set outside this Console that is
- * not a whole minute is shown rounded and would be rewritten by a save here.
+ * The lifetime is entered in minutes because that is the unit the decision is
+ * made in, and stored in seconds because that is what the Agent's request
+ * carries. The Server accepts 60 to 3600 seconds; a value set outside this
+ * Console that is not a whole minute is shown rounded and would be rewritten by
+ * a save here.
  */
 function ClusterTerminalSection({
   settings,
@@ -726,36 +757,46 @@ function ClusterTerminalSection({
   const minutes = Math.round(settings.cluster_terminal_session_ttl_seconds / 60);
 
   return (
-    <section>
-      <h3 className="text-foreground mb-1 text-[13px] font-semibold">集群终端</h3>
-      <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
-        每个 Cluster Terminal 会话在目标集群中运行一个临时 Pod。存续时长到期后 Agent 回收该
-        Pod，修改后立即对下一个会话生效，无需重启 Server。
-      </p>
-      <div className="grid max-w-xs gap-1.5">
-        <Label htmlFor="cluster-terminal-ttl">会话存续时长（分钟）</Label>
-        <Input
-          id="cluster-terminal-ttl"
-          type="number"
-          min={1}
-          max={60}
-          step={1}
-          value={minutes}
-          onChange={(event) => {
-            const next = Number(event.target.value);
-            if (!Number.isFinite(next)) {
-              return;
-            }
-            onChange({
-              ...settings,
-              cluster_terminal_session_ttl_seconds:
-                Math.min(60, Math.max(1, Math.round(next))) * 60,
-            });
-          }}
+    <div className="grid gap-6">
+      {SECTIONS["cluster-terminal"].workloads.map((component) => (
+        <WorkloadFields
+          key={component}
+          component={component}
+          settings={settings}
+          onChange={onChange}
         />
-        <FieldHint>1 至 60 分钟。已经建立的会话不受本次修改影响。</FieldHint>
-      </div>
-    </section>
+      ))}
+      <section>
+        <h4 className="text-foreground mb-1 text-[13px] font-semibold">会话存续时长</h4>
+        <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
+          存续时长到期后 Agent 回收该 Pod。修改后立即对下一个会话生效，无需重启 Server。
+        </p>
+        <div className="grid max-w-xs gap-1.5">
+          <Label htmlFor="cluster-terminal-ttl">会话存续时长（分钟）</Label>
+          <Input
+            id="cluster-terminal-ttl"
+            type="number"
+            min={1}
+            max={60}
+            step={1}
+            value={minutes}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              if (!Number.isFinite(next)) {
+                return;
+              }
+              onChange({
+                ...settings,
+                cluster_terminal_session_ttl_seconds:
+                  Math.min(60, Math.max(1, Math.round(next))) * 60,
+              });
+            }}
+          />
+          <FieldHint>1 至 60 分钟。已经建立的会话不受本次修改影响。</FieldHint>
+        </div>
+      </section>
+      <BudgetHint />
+    </div>
   );
 }
 

@@ -840,7 +840,14 @@ Server 和 Agent 各维护一份仓库 YAML 配置，并作为容器内默认配
 接入端点、Agent 镜像与拉取策略、Cluster Terminal 镜像与独立拉取策略、Cluster Terminal 会话存续时长、指标采集
 组件的镜像、拉取策略与资源请求/限制保存在
 PostgreSQL，由全局管理员通过 Console 的“平台配置”应用管理；该应用按全局管理员角色而非权限授权，与服务端
-`/api/v1/platform` 路由的 `RequireGlobalAdministrator` 一致，下设“端点”“镜像”“集群终端”“指标采集”四个菜单。
+`/api/v1/platform` 路由的 `RequireGlobalAdministrator` 一致，下设“端点”“Agent”“集群终端”“指标采集”四个菜单——
+除端点外每个菜单对应一个 ZKE 装进目标集群的工作负载，镜像、拉取策略与资源预算在同一页决定。
+ZKE 装进目标集群的工作负载（Agent、Cluster Terminal 与三个采集组件）在库中按工作负载一行存放，形状统一为
+镜像、拉取策略与四项资源数量，API 上同样以工作负载名为键；新增一个工作负载因此只是一条 INSERT 加一段
+Server 声明，不改表结构也不改接口形状。工作负载名单由 Server 声明而不是数据库约束，读取时若缺少已声明的
+工作负载会直接失败，而不是把空镜像装进别人的集群。五个工作负载都接受资源预算：Agent 的随 Enrollment 快照冻结，
+Cluster Terminal 的随会话请求下发（此前是 Agent 里的常量），三个采集组件的在下一次安装时读取。设置更新是增量的：只写请求中出现的工作负载与字段，其余
+保持已存储的值，整个设置（含全部工作负载）共用一个 `revision` 做乐观并发。
 平台默认端点由 YAML 或优先级更高的环境变量在 Server 启动时同步，Console 不允许修改、删除
 或重新指定；两项地址均未配置时使用本机回环预设，只配置其中一项时 Server 拒绝启动。切换到内置预设时，Server 会
 删除已被替代的部署端点，避免旧地址继续出现在端点列表和 Listener SAN 来源中。
