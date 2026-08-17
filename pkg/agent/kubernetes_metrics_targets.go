@@ -56,6 +56,11 @@ var kubeStateMetricFamilies = []string{
 	// it. Both are needed: a Deployment owns a ReplicaSet, which owns the Pods.
 	"kube_pod_owner",
 	"kube_replicaset_owner",
+	// Placement, so Pods can be counted per Node against that Node's Pod
+	// capacity. It is the third capacity a Node runs out of, and the only one
+	// nothing else here reports: no other family carries both the Pod and the
+	// Node it landed on. One series per Pod, the same order as kube_pod_owner.
+	"kube_pod_info",
 	// Workload and Pod health over time, which the live resource views can only
 	// show as "now".
 	"kube_pod_status_phase",

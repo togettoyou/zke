@@ -47,74 +47,68 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	}
 
 	end := time.Now().UTC().Truncate(time.Minute)
-	// Every range query in the catalogue, so a template that compiles here but
-	// is rejected by the real engine cannot ship. `top` is set where the query
-	// demands it; the rest are asked unbounded, which is how the Console asks
-	// for Cluster totals.
-	for _, testCase := range []struct {
-		name string
-		top  int
-	}{
-		{name: "cluster_cpu_usage"},
-		{name: "cluster_memory_usage"},
-		{name: "node_cpu_usage"},
-		{name: "node_memory_usage"},
-		{name: "namespace_cpu_usage"},
-		{name: "namespace_memory_usage"},
-		{name: "pod_cpu_usage", top: 10},
-		{name: "pod_memory_usage", top: 10},
-		{name: "cluster_cpu_utilization"},
-		{name: "cluster_memory_utilization"},
-		{name: "node_cpu_utilization"},
-		{name: "node_memory_utilization"},
-		{name: "namespace_cpu_requests"},
-		{name: "namespace_memory_requests"},
-		{name: "namespace_cpu_limits"},
-		{name: "namespace_memory_limits"},
-		{name: "workload_cpu_usage", top: 10},
-		{name: "workload_memory_usage", top: 10},
-		{name: "pod_restarts", top: 10},
-		{name: "node_filesystem_utilization"},
-		{name: "node_network_receive"},
-		{name: "node_network_transmit"},
-		{name: "node_disk_read"},
-		{name: "node_disk_write"},
-	} {
-		name := testCase.name
-		t.Run(name, func(t *testing.T) {
-			result, err := service.Query(context.Background(), Input{
-				UserID: userID,
-				Name:   name,
-				Start:  end.Add(-10 * time.Minute),
-				End:    end,
-				Step:   time.Minute,
-				Top:    testCase.top,
-			})
+	// The whole catalogue, read from the catalogue itself rather than listed
+	// here: a query added without a line in this test would otherwise ship
+	// unevaluated, which is the one thing this test exists to prevent. `top` is
+	// supplied wherever the definition allows it; a query that does not is asked
+	// unbounded, which is how the Console asks for Cluster totals.
+	for _, definition := range Catalog() {
+		definition := definition
+		t.Run(definition.Name, func(t *testing.T) {
+			input := Input{UserID: userID, Name: definition.Name}
+			if definition.SupportsTop {
+				input.Top = 10
+			}
+			if definition.Kind == KindRange {
+				input.Start = end.Add(-10 * time.Minute)
+				input.End = end
+				input.Step = time.Minute
+			}
+			result, err := service.Query(context.Background(), input)
 			if err != nil {
-				t.Fatalf("%s failed against storage: %v", name, err)
+				t.Fatalf("%s failed against storage: %v", definition.Name, err)
+			}
+			if definition.Kind != KindRange {
+				return
 			}
 			// The grid is produced by this Server, so it must be complete even
 			// where storage returned nothing.
 			for _, series := range result.Series {
 				if len(series.Points) != 11 {
-					t.Fatalf("%s returned %d points, want the full grid", name, len(series.Points))
+					t.Fatalf(
+						"%s returned %d points, want the full grid",
+						definition.Name,
+						len(series.Points),
+					)
 				}
 			}
 		})
 	}
 
-	t.Run("collection_health", func(t *testing.T) {
-		result, err := service.Query(context.Background(), Input{
-			UserID: userID,
-			Name:   "collection_health",
+	// A Namespace filter changes the expression rather than the parameters, so
+	// every query that accepts one is evaluated a second time with it set.
+	for _, definition := range Catalog() {
+		if !definition.SupportsNamespace {
+			continue
+		}
+		definition := definition
+		t.Run(definition.Name+"/namespace", func(t *testing.T) {
+			input := Input{
+				UserID:    userID,
+				Name:      definition.Name,
+				Namespace: "kube-system",
+				Start:     end.Add(-10 * time.Minute),
+				End:       end,
+				Step:      time.Minute,
+			}
+			if definition.SupportsTop {
+				input.Top = 10
+			}
+			if _, err := service.Query(context.Background(), input); err != nil {
+				t.Fatalf("%s with a Namespace failed: %v", definition.Name, err)
+			}
 		})
-		if err != nil {
-			t.Fatalf("collection_health failed against storage: %v", err)
-		}
-		if result.Kind != KindInstant {
-			t.Fatalf("collection_health kind = %s", result.Kind)
-		}
-	})
+	}
 
 	// The memory query reads a gauge that was just written, so it is the one
 	// that must come back with data. A template that compiles but selects
@@ -196,6 +190,84 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	// 1 GiB working set against 8 GiB allocatable.
 	if last.Value == nil || math.Abs(*last.Value-0.125) > 0.001 {
 		t.Fatalf("node_memory_utilization last point = %+v, want 0.125", last)
+	}
+
+	// The headline row is one query carrying several numbers under a label it
+	// writes itself. A union whose branches collide would return fewer series
+	// than it has branches, and the row would silently lose a tile.
+	inventory, err := service.Query(context.Background(), Input{
+		UserID: userID,
+		Name:   "cluster_inventory",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]float64{}
+	for _, item := range inventory.Series {
+		if len(item.Points) == 1 && item.Points[0].Value != nil {
+			counts[item.Labels["resource"]] = *item.Points[0].Value
+		}
+	}
+	for resource, want := range map[string]float64{
+		"node": 1, "node_ready": 1, "pod_running": 1, "pod_pending": 0,
+		"deployment": 1, "statefulset": 1, "daemonset": 1,
+	} {
+		if got, present := counts[resource]; !present || got != want {
+			t.Fatalf("cluster_inventory %s = %v (present %t), want %v",
+				resource, got, present, want)
+		}
+	}
+
+	// The shortfall subtracts two unions that name their objects with different
+	// labels. If the normalisation on either side is wrong the subtraction finds
+	// no match and answers nothing at all, which looks exactly like a healthy
+	// Cluster.
+	shortfall, err := service.Query(context.Background(), Input{
+		UserID: userID,
+		Name:   "workload_replicas_unavailable",
+		Start:  end.Add(-10 * time.Minute),
+		End:    end,
+		Step:   time.Minute,
+		Top:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := map[string]float64{}
+	for _, item := range shortfall.Series {
+		point := item.Points[len(item.Points)-1]
+		if point.Value != nil {
+			missing[item.Labels["workload_kind"]+"/"+item.Labels["workload"]] = *point.Value
+		}
+	}
+	// 3 desired against 1 available, beside a StatefulSet and a DaemonSet that
+	// are fully ready and must therefore report zero rather than disappear.
+	if missing["Deployment/probe-app"] != 2 {
+		t.Fatalf("workload_replicas_unavailable = %v, want Deployment/probe-app at 2", missing)
+	}
+	if _, present := missing["DaemonSet/probe-agent"]; !present {
+		t.Fatalf("workload_replicas_unavailable dropped the ready DaemonSet: %v", missing)
+	}
+
+	// Pod density joins two families on the Node label. The Pod count comes from
+	// one and the capacity from another, so a join that fails answers nothing.
+	density, err := service.Query(context.Background(), Input{
+		UserID: userID,
+		Name:   "node_pod_utilization",
+		Start:  end.Add(-10 * time.Minute),
+		End:    end,
+		Step:   time.Minute,
+		Top:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(density.Series) != 1 {
+		t.Fatalf("node_pod_utilization returned %d series, want the seeded Node", len(density.Series))
+	}
+	densityLast := density.Series[0].Points[len(density.Series[0].Points)-1]
+	if densityLast.Value == nil || math.Abs(*densityLast.Value-1.0/110.0) > 0.0001 {
+		t.Fatalf("node_pod_utilization last point = %+v, want 1/110", densityLast)
 	}
 }
 
@@ -299,6 +371,54 @@ func seedObjectSamples(clusterID string, at int64) []byte {
 			"__name__":  "kube_pod_container_status_restarts_total",
 			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
 		}, 3},
+		{map[string]string{
+			"__name__": "kube_node_status_capacity",
+			"node":     "probe-node", "resource": "pods", "unit": "integer",
+		}, 110},
+		{map[string]string{
+			"__name__": "kube_pod_info", "namespace": "kube-system",
+			"pod": "probe-pod", "node": "probe-node",
+		}, 1},
+		{map[string]string{
+			"__name__": "kube_node_status_condition",
+			"node":     "probe-node", "condition": "Ready", "status": "true",
+		}, 1},
+		{map[string]string{
+			"__name__": "kube_node_status_condition",
+			"node":     "probe-node", "condition": "MemoryPressure", "status": "true",
+		}, 0},
+		{map[string]string{
+			"__name__": "kube_pod_status_phase", "namespace": "kube-system",
+			"pod": "probe-pod", "phase": "Running",
+		}, 1},
+		{map[string]string{
+			"__name__": "kube_pod_status_phase", "namespace": "kube-system",
+			"pod": "probe-pod", "phase": "Pending",
+		}, 0},
+		{map[string]string{
+			"__name__":  "kube_deployment_status_replicas",
+			"namespace": "kube-system", "deployment": "probe-app",
+		}, 3},
+		{map[string]string{
+			"__name__":  "kube_deployment_status_replicas_available",
+			"namespace": "kube-system", "deployment": "probe-app",
+		}, 1},
+		{map[string]string{
+			"__name__":  "kube_statefulset_status_replicas",
+			"namespace": "kube-system", "statefulset": "probe-set",
+		}, 2},
+		{map[string]string{
+			"__name__":  "kube_statefulset_status_replicas_ready",
+			"namespace": "kube-system", "statefulset": "probe-set",
+		}, 2},
+		{map[string]string{
+			"__name__":  "kube_daemonset_status_desired_number_scheduled",
+			"namespace": "kube-system", "daemonset": "probe-agent",
+		}, 1},
+		{map[string]string{
+			"__name__":  "kube_daemonset_status_number_ready",
+			"namespace": "kube-system", "daemonset": "probe-agent",
+		}, 1},
 	} {
 		sample.labels[metricsingest.ClusterLabel] = clusterID
 		body = append(body, series(sample.labels, sample.value, at)...)
@@ -338,6 +458,54 @@ func seedNodeSamples(clusterID string, at int64) []byte {
 			"__name__": "node_disk_written_bytes_total",
 			"node":     "probe-node", "device": "sda",
 		}, 4_000_000},
+		{map[string]string{
+			"__name__": "node_filesystem_files",
+			"node":     "probe-node", "mountpoint": "/", "device": "/dev/sda1",
+		}, 1_000_000},
+		{map[string]string{
+			"__name__": "node_filesystem_files_free",
+			"node":     "probe-node", "mountpoint": "/", "device": "/dev/sda1",
+		}, 900_000},
+		{map[string]string{
+			"__name__": "node_cpu_seconds_total",
+			"node":     "probe-node", "cpu": "0", "mode": "idle",
+		}, 900_000},
+		{map[string]string{
+			"__name__": "node_cpu_seconds_total",
+			"node":     "probe-node", "cpu": "0", "mode": "iowait",
+		}, 1_000},
+		{map[string]string{
+			"__name__": "node_memory_MemAvailable_bytes", "node": "probe-node",
+		}, 6 << 30},
+		{map[string]string{"__name__": "node_load1", "node": "probe-node"}, 1.5},
+		{map[string]string{
+			"__name__": "node_disk_reads_completed_total",
+			"node":     "probe-node", "device": "sda",
+		}, 10_000},
+		{map[string]string{
+			"__name__": "node_disk_writes_completed_total",
+			"node":     "probe-node", "device": "sda",
+		}, 20_000},
+		{map[string]string{
+			"__name__": "node_disk_io_time_seconds_total",
+			"node":     "probe-node", "device": "sda",
+		}, 500},
+		{map[string]string{
+			"__name__": "node_network_receive_errs_total",
+			"node":     "probe-node", "device": "eth0",
+		}, 1},
+		{map[string]string{
+			"__name__": "node_network_transmit_errs_total",
+			"node":     "probe-node", "device": "eth0",
+		}, 2},
+		{map[string]string{
+			"__name__": "node_network_receive_drop_total",
+			"node":     "probe-node", "device": "eth0",
+		}, 3},
+		{map[string]string{
+			"__name__": "node_network_transmit_drop_total",
+			"node":     "probe-node", "device": "eth0",
+		}, 4},
 	} {
 		sample.labels[metricsingest.ClusterLabel] = clusterID
 		body = append(body, series(sample.labels, sample.value, at)...)

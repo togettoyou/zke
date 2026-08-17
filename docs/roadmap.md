@@ -31,7 +31,7 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。已勾选条
 ## Phase 3：可观测性
 
 数据通路与安全边界见 [Phase 3 可观测性架构设计](architecture/observability-phase-3.md)。指标、日志与告警
-按切片推进，后一项依赖前一项就绪。全部 25 个查询对着真实的 VictoriaMetrics 验证过，Agent 的采集组件安装
+按切片推进，后一项依赖前一项就绪。全部 50 个查询对着真实的 VictoriaMetrics 验证过，Agent 的采集组件安装
 也在真实集群上跑通过；但**三个采集组件尚未在真实集群上一起装过**，完整链路（集群内 vmagent → Agent →
 Server → 存储 → Console）也尚未在同一次运行中端到端跑通；每集群摄取预算只在单元测试中验证过，没有在真实
 集群的 vmagent 上观察过退避行为。
@@ -41,6 +41,7 @@ Server → 存储 → Console）也尚未在同一次运行中端到端跑通；
 - [x] 指标深化：Namespace 与 Pod 维度、Top N 与 Namespace 过滤、每集群摄取预算与限流状态呈现、查询响应的 `partial` 与 `issues`、容量与保留期运维文档
 - [x] 抓取目标扩展：kube-state-metrics 与 node-exporter 随采集组件一并安装/卸载，三者镜像与资源预算进入平台配置
 - [x] 深度指标：集群与节点利用率、Namespace 申请量与限制量、工作负载维度（Deployment 两级归属）、Pod 重启、节点文件系统/网络/磁盘 IO
+- [x] 完整可观测性视图：容量与申请占比、节点饱和度与 Pod 密度、磁盘 IOPS 与繁忙度、inode、网络错误丢包、Pod 与节点状态、未就绪副本；Console 拆为总览 / 计算资源 / 存储与网络 / Kubernetes 资源四个分区，共享时间范围选择、图上拖拽选取区间与光标读数
 - [ ] 集群标签体系
 - [ ] VictoriaLogs 集成与多集群日志
 - [ ] 告警中心

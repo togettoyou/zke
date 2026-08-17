@@ -1,4 +1,10 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { api, csrfHeaders, unwrap } from "../client";
 import { queryKeys } from "../query-keys";
@@ -30,6 +36,13 @@ const COLLECTOR_LIST_POLL_MS = 30_000;
 export type MetricsPollOptions = {
   /** Defaults to polling, so a caller with no opinion behaves as before. */
   live?: boolean;
+  /**
+   * How often to re-read, for a caller that has its own cadence. A chart view
+   * passes 0: its window is anchored to a step grid, so it already produces a
+   * new request whenever a new point could exist, and polling on top of that
+   * would ask the same question twice.
+   */
+  intervalMs?: number;
 };
 
 export type MetricsQueryParams = {
@@ -53,32 +66,64 @@ export function useMetricsQueryCatalog() {
   });
 }
 
-export function useMetricsQuery(
-  params: MetricsQueryParams | null,
-  { live = true }: MetricsPollOptions = {},
+/** The wire shape of one catalogue query, and the cache key it is read under. */
+function metricsQueryParams(params: MetricsQueryParams) {
+  return {
+    name: params.name,
+    ...(params.clusterIds?.length ? { cluster_ids: params.clusterIds.join(",") } : {}),
+    ...(params.namespace ? { namespace: params.namespace } : {}),
+    ...(params.start ? { start: params.start.toISOString() } : {}),
+    ...(params.end ? { end: params.end.toISOString() } : {}),
+    ...(params.stepSeconds ? { step_seconds: params.stepSeconds } : {}),
+    ...(params.top ? { top: params.top } : {}),
+  };
+}
+
+function metricsQueryOptions(
+  params: MetricsQueryParams,
+  { live = true, intervalMs = METRICS_POLL_MS }: MetricsPollOptions,
 ) {
-  const query = params
-    ? {
-        name: params.name,
-        ...(params.clusterIds?.length ? { cluster_ids: params.clusterIds.join(",") } : {}),
-        ...(params.namespace ? { namespace: params.namespace } : {}),
-        ...(params.start ? { start: params.start.toISOString() } : {}),
-        ...(params.end ? { end: params.end.toISOString() } : {}),
-        ...(params.stepSeconds ? { step_seconds: params.stepSeconds } : {}),
-        ...(params.top ? { top: params.top } : {}),
-      }
-    : null;
-  return useQuery({
-    queryKey: queryKeys.metricsQuery(query ?? {}),
-    queryFn: async ({ signal }) =>
+  const query = metricsQueryParams(params);
+  return {
+    queryKey: queryKeys.metricsQuery(query),
+    queryFn: async ({ signal }: { signal: AbortSignal }) =>
       unwrap(
         await api.GET("/api/v1/observability/metrics/query", {
-          params: { query: query as NonNullable<typeof query> },
+          params: { query },
           signal,
         }),
       ),
-    enabled: Boolean(query),
-    refetchInterval: live && METRICS_POLL_MS,
+    refetchInterval: (live && intervalMs > 0 && intervalMs) as number | false,
+    // A moved window is a new cache entry, and a chart that emptied itself on
+    // every step of the clock would flash under the operator's cursor. Holding
+    // the previous answer until the new one lands keeps the frame; the view
+    // dims it so nobody reads stale data as current.
+    placeholderData: keepPreviousData,
+  };
+}
+
+export function useMetricsQuery(
+  params: MetricsQueryParams | null,
+  options: MetricsPollOptions = {},
+) {
+  const resolved = metricsQueryOptions(params ?? { name: "" }, options);
+  return useQuery({ ...resolved, enabled: Boolean(params) });
+}
+
+/**
+ * Several catalogue queries for one panel.
+ *
+ * A panel that draws usage against what was requested and what is available is
+ * three queries in one chart, and their number is part of the panel's
+ * definition rather than of the component tree — so they are asked as a list
+ * rather than by calling the single-query hook a fixed number of times.
+ */
+export function useMetricsQueries(
+  paramsList: MetricsQueryParams[],
+  options: MetricsPollOptions = {},
+) {
+  return useQueries({
+    queries: paramsList.map((params) => metricsQueryOptions(params, options)),
   });
 }
 

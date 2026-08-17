@@ -24,6 +24,7 @@ const (
 	UnitMillicores     Unit = "millicores"
 	UnitBytes          Unit = "bytes"
 	UnitBytesPerSecond Unit = "bytes_per_second"
+	UnitOpsPerSecond   Unit = "ops_per_second"
 	UnitCount          Unit = "count"
 	UnitRatio          Unit = "ratio"
 )
@@ -510,6 +511,462 @@ func catalog() []Definition {
 				), params.Top)
 			},
 		},
+		// Cluster capacity and commitment. Usage answers "what is running";
+		// these answer "what is left", which is the question that decides whether
+		// the next workload can be scheduled at all. Requests are the number the
+		// scheduler actually enforces, so a Cluster can be fully committed while
+		// every node sits idle — a state no usage curve shows.
+		{
+			Name:              "cluster_cpu_requests",
+			Title:             "集群 CPU 申请量",
+			Kind:              KindRange,
+			Unit:              UnitMillicores,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(kube_pod_container_resource_requests{%s,resource="cpu"}) * 1000`,
+					matcher,
+				)
+			},
+		},
+		{
+			Name:              "cluster_memory_requests",
+			Title:             "集群内存申请量",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(kube_pod_container_resource_requests{%s,resource="memory"})`,
+					matcher,
+				)
+			},
+		},
+		{
+			Name:              "cluster_cpu_limits",
+			Title:             "集群 CPU 限制量",
+			Kind:              KindRange,
+			Unit:              UnitMillicores,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(kube_pod_container_resource_limits{%s,resource="cpu"}) * 1000`,
+					matcher,
+				)
+			},
+		},
+		{
+			Name:              "cluster_memory_limits",
+			Title:             "集群内存限制量",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(kube_pod_container_resource_limits{%s,resource="memory"})`,
+					matcher,
+				)
+			},
+		},
+		{
+			Name:              "cluster_cpu_allocatable",
+			Title:             "集群 CPU 可分配量",
+			Kind:              KindRange,
+			Unit:              UnitMillicores,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(kube_node_status_allocatable{%s,resource="cpu"}) * 1000`,
+					matcher,
+				)
+			},
+		},
+		{
+			Name:              "cluster_memory_allocatable",
+			Title:             "集群内存可分配量",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(kube_node_status_allocatable{%s,resource="memory"})`,
+					matcher,
+				)
+			},
+		},
+		{
+			// Above 1 the Cluster has promised more than it has. That is not by
+			// itself a fault — most Clusters run committed above their usage on
+			// purpose — but it is the line past which a Node failure has nowhere
+			// to reschedule to.
+			Name:              "cluster_cpu_commitment",
+			Title:             "集群 CPU 申请占比",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(kube_pod_container_resource_requests{%s,resource="cpu"})`+
+						` / on (zke_cluster_id) `+
+						`sum by (zke_cluster_id) (kube_node_status_allocatable{%s,resource="cpu"})`,
+					matcher,
+					matcher,
+				)
+			},
+		},
+		{
+			Name:              "cluster_memory_commitment",
+			Title:             "集群内存申请占比",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(kube_pod_container_resource_requests{%s,resource="memory"})`+
+						` / on (zke_cluster_id) `+
+						`sum by (zke_cluster_id) (kube_node_status_allocatable{%s,resource="memory"})`,
+					matcher,
+					matcher,
+				)
+			},
+		},
+		// Node saturation. Utilisation says how much of a Node is in use; these
+		// say whether it is keeping up. A Node at 60% CPU with a run queue of 40
+		// is a Node whose workloads are waiting, and no usage curve shows that.
+		{
+			Name:              "node_load1",
+			Title:             "节点 1 分钟负载",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// max rather than sum: one exporter reports per Node, and a second
+				// one during a rollout would otherwise double the number.
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, node) (node_load1{%s})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_cpu_iowait",
+			Title:             "节点 CPU I/O 等待",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// Divided by the Node's own core count, which is the number of
+				// `idle` series it reports. Without the divisor the same storage
+				// stall reads differently on a 4-core and a 64-core Node.
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, node) `+
+						`(rate(node_cpu_seconds_total{%s,mode="iowait"}[%s]))`+
+						` / on (zke_cluster_id, node) `+
+						`count by (zke_cluster_id, node) `+
+						`(node_cpu_seconds_total{%s,mode="idle"})`,
+					matcher,
+					params.Window,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_memory_available",
+			Title:             "节点可用内存",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// The kernel's own estimate of what a new allocation could get,
+				// which is not free memory: page cache is reclaimable and counts.
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, node) (node_memory_MemAvailable_bytes{%s})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_pod_count",
+			Title:             "节点 Pod 数量",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`count by (zke_cluster_id, node) (kube_pod_info{%s,node!=""})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			// The third capacity nobody watches until it runs out. A Node with
+			// spare CPU and memory still refuses Pods once it holds 110 of them,
+			// and the failure reads as "no nodes available" with no number behind
+			// it.
+			Name:              "node_pod_utilization",
+			Title:             "节点 Pod 密度",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`count by (zke_cluster_id, node) (kube_pod_info{%s,node!=""})`+
+						` / on (zke_cluster_id, node) `+
+						`sum by (zke_cluster_id, node) `+
+						`(kube_node_status_capacity{%s,resource="pods"})`,
+					matcher,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "namespace_pod_count",
+			Title:             "命名空间 Pod 数量",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"namespace"},
+			SupportsTop:       true,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace) `+
+						`(kube_pod_status_phase{%s,phase="Running"})`,
+					namespaceSelector(matcher, params.Namespace),
+				), params.Top)
+			},
+		},
+		// Kubernetes object state. Everything above measures consumption; these
+		// measure whether the Cluster is doing what it was told. The live resource
+		// views answer the same questions for "now" — only a series can say when it
+		// started.
+		{
+			Name:              "cluster_pod_phase",
+			Title:             "Pod 状态分布",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"phase"},
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id, phase) (kube_pod_status_phase{%s})`,
+					namespaceSelector(matcher, params.Namespace),
+				)
+			},
+		},
+		{
+			Name:              "cluster_node_readiness",
+			Title:             "节点就绪状态",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"status"},
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				// Every Node reports a series per status value, valued 1 for the
+				// one it is in, so summing by status counts Nodes per state and
+				// the three add up to the Cluster's Node count.
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id, status) `+
+						`(kube_node_status_condition{%s,condition="Ready"})`,
+					matcher,
+				)
+			},
+		},
+		{
+			Name:              "cluster_node_pressure",
+			Title:             "节点压力状态",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"condition"},
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				// Only the Nodes currently under each pressure. A flat zero line is
+				// the answer an operator wants to see, and it is only readable as
+				// an answer because the series exists.
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id, condition) (kube_node_status_condition{%s,`+
+						`condition=~"MemoryPressure|DiskPressure|PIDPressure",status="true"})`,
+					matcher,
+				)
+			},
+		},
+		{
+			Name:              "cluster_container_restarts",
+			Title:             "集群容器重启次数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) `+
+						`(increase(kube_pod_container_status_restarts_total{%s}[%s]))`,
+					namespaceSelector(matcher, params.Namespace),
+					params.Window,
+				)
+			},
+		},
+		{
+			// Desired minus ready, across the three controllers that promise a
+			// replica count. A Deployment reporting 3/3 and one reporting 1/3 are
+			// the same green tick in a list view; this is the number that separates
+			// them, and topk puts the second one first.
+			Name:              "workload_replicas_unavailable",
+			Title:             "工作负载未就绪副本",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"namespace", "workload_kind", "workload"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				selector := namespaceSelector(matcher, params.Namespace)
+				return topk(replicaShortfall(selector), params.Top)
+			},
+		},
+		// Disk and network saturation, beside the throughput queries above.
+		// Bytes per second says how much is moving; these say whether the device
+		// or the filesystem is about to stop it.
+		{
+			Name:              "node_filesystem_inode_utilization",
+			Title:             "节点 inode 使用率",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node", "mountpoint"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// A filesystem with free bytes and no free inodes fails every
+				// write, and the disk usage chart shows nothing wrong.
+				return topk(fmt.Sprintf(
+					`1 - (sum by (zke_cluster_id, node, mountpoint) `+
+						`(node_filesystem_files_free{%s})`+
+						` / on (zke_cluster_id, node, mountpoint) `+
+						`sum by (zke_cluster_id, node, mountpoint) `+
+						`(node_filesystem_files{%s}))`,
+					matcher,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_disk_read_ops",
+			Title:             "节点磁盘读 IOPS",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node", "device"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, node, device) `+
+						`(rate(node_disk_reads_completed_total{%s}[%s]))`,
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_disk_write_ops",
+			Title:             "节点磁盘写 IOPS",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node", "device"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, node, device) `+
+						`(rate(node_disk_writes_completed_total{%s}[%s]))`,
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_disk_io_utilization",
+			Title:             "节点磁盘繁忙度",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node", "device"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// The fraction of wall time the device had a request in flight.
+				// A device at 100% is the reason everything on that Node is slow,
+				// whatever its throughput happens to be.
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, node, device) `+
+						`(rate(node_disk_io_time_seconds_total{%s}[%s]))`,
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_network_errors",
+			Title:             "节点网络错误与丢包",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node", "device"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// Both directions and both kinds in one number: an operator asks
+				// "is this interface dropping packets", not which counter moved.
+				// Each term is reduced by the same grouping first, so a device
+				// missing one counter does not void the sum.
+				term := func(name string) string {
+					return fmt.Sprintf(
+						`sum by (zke_cluster_id, node, device) (rate(%s{%s}[%s]))`,
+						name,
+						matcher,
+						params.Window,
+					)
+				}
+				return topk(strings.Join([]string{
+					term("node_network_receive_errs_total"),
+					term("node_network_transmit_errs_total"),
+					term("node_network_receive_drop_total"),
+					term("node_network_transmit_drop_total"),
+				}, " + "), params.Top)
+			},
+		},
+		{
+			// One request for the whole headline row. Each number here is a count
+			// over an object family, cheap on its own but a separate round trip to
+			// storage every time the window moves; the Console draws six of them
+			// side by side, so they travel together under a `resource` label.
+			Name:              "cluster_inventory",
+			Title:             "集群对象概览",
+			Kind:              KindInstant,
+			Unit:              UnitCount,
+			Dimensions:        []string{"resource"},
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return clusterInventory(matcher)
+			},
+		},
 		{
 			Name:  "collection_health",
 			Title: "采集健康度",
@@ -580,6 +1037,113 @@ func workloadRollup(usage string, selector string) string {
 			`group_left(workload, workload_kind) (%s))`,
 		usage,
 		owners,
+	)
+}
+
+// replicaShortfall reports how many replicas each workload is missing.
+//
+// Three controllers promise a replica count and each names its object with a
+// different label, so both sides are normalised onto `workload` and
+// `workload_kind` before they can be subtracted — the same two labels the usage
+// rollup produces, so a reader moving between the two views sees one identity
+// for one workload. Jobs and CronJobs are deliberately absent: a Job that has
+// finished is not a workload missing replicas.
+//
+// Clamped at zero. A controller mid-rollout can report more ready than desired
+// for a moment, and a negative shortfall ranked by topk would put a healthy
+// workload nowhere while reading as a defect wherever it did appear.
+func replicaShortfall(selector string) string {
+	union := func(families [3]string) string {
+		branches := make([]string, 0, 3)
+		for index, kind := range [3]struct{ label, kind string }{
+			{"deployment", "Deployment"},
+			{"statefulset", "StatefulSet"},
+			{"daemonset", "DaemonSet"},
+		} {
+			branches = append(branches, fmt.Sprintf(
+				`label_replace(label_replace(%s{%s}, "workload", "$1", "%s", "(.*)")`+
+					`, "workload_kind", "%s", "namespace", ".*")`,
+				families[index],
+				selector,
+				kind.label,
+				kind.kind,
+			))
+		}
+		return fmt.Sprintf(
+			`sum by (zke_cluster_id, namespace, workload_kind, workload) ((%s))`,
+			strings.Join(branches, ") or ("),
+		)
+	}
+	desired := union([3]string{
+		"kube_deployment_status_replicas",
+		"kube_statefulset_status_replicas",
+		"kube_daemonset_status_desired_number_scheduled",
+	})
+	ready := union([3]string{
+		"kube_deployment_status_replicas_available",
+		"kube_statefulset_status_replicas_ready",
+		"kube_daemonset_status_number_ready",
+	})
+	return fmt.Sprintf(`clamp_min((%s) - (%s), 0)`, desired, ready)
+}
+
+// clusterInventory counts the object families behind the headline row.
+//
+// Each count carries its own `resource` label so the union returns one series
+// per number instead of colliding on an identical label set. The alternative —
+// one query per tile — is six round trips to shared storage every time the
+// window moves, for six numbers that are always read together.
+func clusterInventory(matcher string) string {
+	entries := []struct {
+		resource   string
+		expression string
+	}{
+		// Node count and ready count come from the same family: every Node
+		// reports the Ready condition, valued 1 only when it holds, so counting
+		// the series gives the Nodes and summing them gives the ready ones.
+		{"node", fmt.Sprintf(
+			`count by (zke_cluster_id) `+
+				`(kube_node_status_condition{%s,condition="Ready",status="true"})`,
+			matcher,
+		)},
+		{"node_ready", fmt.Sprintf(
+			`sum by (zke_cluster_id) `+
+				`(kube_node_status_condition{%s,condition="Ready",status="true"})`,
+			matcher,
+		)},
+		{"pod_running", phaseCount(matcher, "Running")},
+		{"pod_pending", phaseCount(matcher, "Pending")},
+		{"pod_failed", phaseCount(matcher, "Failed")},
+		{"deployment", fmt.Sprintf(
+			`count by (zke_cluster_id) (kube_deployment_status_replicas{%s})`,
+			matcher,
+		)},
+		{"statefulset", fmt.Sprintf(
+			`count by (zke_cluster_id) (kube_statefulset_status_replicas{%s})`,
+			matcher,
+		)},
+		{"daemonset", fmt.Sprintf(
+			`count by (zke_cluster_id) `+
+				`(kube_daemonset_status_desired_number_scheduled{%s})`,
+			matcher,
+		)},
+	}
+	branches := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		branches = append(branches, fmt.Sprintf(
+			`label_replace(%s, "resource", "%s", "", "")`,
+			entry.expression,
+			entry.resource,
+		))
+	}
+	return "(" + strings.Join(branches, ") or (") + ")"
+}
+
+func phaseCount(matcher string, phase string) string {
+	return fmt.Sprintf(
+		`sum by (zke_cluster_id) (kube_pod_status_phase{%s,phase="%s"})`,
+		matcher,
+		phase,
 	)
 }
 

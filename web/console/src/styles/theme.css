@@ -221,6 +221,41 @@
   --ring-soft: rgb(59 91 219 / 0.16);
 
   /*
+   * The chart series palette.
+   *
+   * Its own scale rather than the semantic colours, because those carry meaning
+   * the moment they appear: a curve drawn in `--danger` reads as a fault even
+   * when it is the fourth Node in a list. The five semantic tones also cannot
+   * separate a chart's worth of curves — they were chosen to contrast with
+   * surfaces, not with each other.
+   *
+   * The eight steps and their order are a validated set, not a taste: every
+   * adjacent pair clears the protan/deutan separation floor and the
+   * normal-vision floor against this theme's chart surface, in both themes. The
+   * ORDER is what carries that property, so slots are assigned in sequence and
+   * never re-sorted, and a ninth curve repeats slot 1 with a dashed stroke
+   * rather than inventing a colour that would land on top of an existing one.
+   * Changing any value means re-running the check that produced them.
+   *
+   * Three of the light steps sit under 3:1 against white. That is allowed here
+   * only because every chart ships a legend naming each series and a hover
+   * readout carrying its value — colour is never the only way to tell two
+   * curves apart.
+   */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
+  --chart-7: #4a3aa7;
+  --chart-8: #e34948;
+  /* The wash under a dragged-out time range. Translucent because it lies over
+     the curves being selected, and in the primary hue because selecting is what
+     it means. */
+  --chart-selection: rgb(59 91 219 / 0.12);
+
+  /*
    * Syntax ink for the YAML editor.
    *
    * Six colours, not a full theme's worth, and the restraint is the point: an
@@ -381,6 +416,20 @@
   --ring: #8fa4f7;
   --ring-soft: rgb(143 164 247 / 0.3);
 
+  /* The same eight hues re-stepped for a graphite surface, not the light
+     theme's values flipped: those are tuned against white and either vanish or
+     glare here. Validated as a set against this theme's `--surface`. */
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #008300;
+  --chart-7: #9085e9;
+  --chart-8: #e66767;
+  /* Carries more alpha: the same wash over a graphite surface reads as nothing. */
+  --chart-selection: rgb(143 164 247 / 0.2);
+
   /* Lifted and desaturated for a dark surface: the light theme's values are
      tuned for contrast against white and go muddy here. */
   --code-key: #8fb2ff;
@@ -448,6 +497,16 @@
   --color-neutral-surface: var(--neutral-surface);
 
   --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-selection: var(--chart-selection);
 
   --color-code-key: var(--code-key);
   --color-code-string: var(--code-string);

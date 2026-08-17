@@ -1,0 +1,28 @@
+/*
+ * The parts of a uPlot chart the Console cannot pass as an option.
+ *
+ * Everything a chart draws on its canvas — strokes, fills, axes, grid — is
+ * configured in TypeScript from `theme.css` tokens. The crosshair and the drag
+ * selection are not: uPlot draws them as DOM overlays styled by its own
+ * stylesheet, in a fixed slate `#607D8B` and a fixed `rgba(0,0,0,0.07)`. The
+ * first belongs to neither theme; the second is all but invisible on the dark
+ * surface, which is exactly where an operator is dragging out a time range.
+ *
+ * So they are restyled here from the same tokens, next to the component that
+ * imports uPlot rather than in `theme.css` — this is a patch to a third-party
+ * stylesheet, not a design decision the rest of the Console shares.
+ */
+
+.u-cursor-x,
+.u-vt .u-cursor-y {
+  border-right-color: var(--subtle-foreground);
+}
+
+.u-cursor-y,
+.u-vt .u-cursor-x {
+  border-bottom-color: var(--subtle-foreground);
+}
+
+.u-select {
+  background: var(--chart-selection);
+}

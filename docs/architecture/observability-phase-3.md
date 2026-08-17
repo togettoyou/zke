@@ -6,14 +6,18 @@
 > 状态：前三个切片已实现（见 §13）。协议层（`STREAM_KIND_METRICS_INGEST`、`STREAM_KIND_METRICS_COLLECTOR`
 > 与两个对应能力）、Agent 摄取端点与转发、Agent 侧**三个采集组件**（vmagent、kube-state-metrics、
 > node-exporter）的一体安装与卸载、Server 摄取网关与作用域改写、每集群的速率与基数预算、存储写入、
-> 25 个固定查询（用量、利用率、申请与限制、工作负载、Pod 重启、节点磁盘与网络，加采集健康度）、权限词、
-> 审计事件，以及 Console 的「可观测性」应用和「平台配置 → 指标采集」都已落地。
+> 50 个固定查询（用量、利用率、申请与限制与可分配量、节点饱和度与 Pod 密度、工作负载用量与未就绪副本、
+> Pod 重启、Pod 与节点状态、节点磁盘 IO 与网络，加集群对象概览与采集健康度）、权限词、
+> 审计事件，以及 Console 的「可观测性」应用和「平台配置 → 指标采集」都已落地。Console 侧的图表是共享时间
+> 窗口的：相对与绝对两种时间范围、在图上拖拽选取横轴区间、跨面板同步的十字光标与数值读数、可开关的图例
+> （见 §9.5）。
 >
 > 已验证，两项都可复跑：
 >
 > - 摄取网关与查询目录对着真实的 VictoriaMetrics v1.149.0 跑通——写入的样本可查回，集群侧伪造的
->   `zke_cluster_id` 被替换为连接身份，目录中全部 25 个具名查询都能在真实存储上执行，其中工作负载的两级
->   归属（Deployment 而非 ReplicaSet）与利用率的数值都做了断言
+>   `zke_cluster_id` 被替换为连接身份，目录中全部 50 个具名查询都能在真实存储上执行（用例直接遍历目录
+>   本身，因此新增查询不会漏测），其中工作负载的两级归属（Deployment 而非 ReplicaSet）、未就绪副本的
+>   三控制器归一、Pod 密度的两族 join、对象概览并集的分支数与利用率的数值都做了断言
 >   （`ZKE_TEST_METRICS_STORAGE_URL=http://127.0.0.1:8428 go test ./pkg/server/metricsingest ./pkg/server/metricsquery`）；
 > - Agent 在真实集群中安装采集组件：Deployment 被 API Server 接受、vmagent 启动并就绪，卸载后包括凭证在内
 >   的对象全部消失（`ZKE_LIVE_KUBERNETES_E2E=1 go test ./pkg/agent -run LiveMetricsCollector`）。这一步抓出了
@@ -132,15 +136,15 @@ QUIC 连接转发给 Server。这也让"断线期间数据不丢"由 vmagent 的
   才回落到旧的固定请求，那正是尚未认识这些字段的旧 Server 所要求的形状；
 - 一次安装放进集群的是**三个组件**，一次卸载全部删除（见 §5.3）。它们不是三个开关：没人抓取的导出器是
   浪费，抓取一个从未安装的目标只会产生持续失败的 job，而一个"装了采集组件但没装 kube-state-metrics"的
-  集群会让四组视图静默为空。作为一体安装意味着这三种状态不可能出现。
+  集群会让大半个查询目录静默为空。作为一体安装意味着这三种状态不可能出现。
 
 ### 5.3 三个采集组件
 
 | 组件 | 形态 | 提供什么 | 缺了它会怎样 |
 | --- | --- | --- | --- |
 | vmagent | Deployment × 1 | 抓取与回传 | 没有任何指标 |
-| kube-state-metrics | Deployment × 1 | 节点可分配量、Pod 申请/限制、工作负载归属、重启与副本状态 | 利用率、申请量、限制量、工作负载四组视图为空 |
-| node-exporter | DaemonSet（每节点） | 磁盘、文件系统、网络 | 磁盘与网络视图为空 |
+| kube-state-metrics | Deployment × 1 | 节点可分配量与容量、Pod 申请/限制、工作负载归属与放置节点、Pod 与节点状态、重启与副本状态 | 利用率、申请量、限制量、Pod 密度、工作负载与 Kubernetes 资源各组视图为空 |
+| node-exporter | DaemonSet（每节点） | 磁盘、文件系统、网络、负载与 CPU 模式 | 存储与网络、节点饱和度视图为空 |
 
 **kube-state-metrics 是利用率的分母。** kubelet 的资源端点报告"用了多少"，从不报告"有多少"，因此在引入它
 之前，`node_cpu_usage` 说"4 核"而没人知道那个节点是 8 核还是 64 核。容量数据在 ZKE 里本来就有——集群资源
@@ -153,6 +157,10 @@ QUIC 连接转发给 Server。这也让"断线期间数据不丢"由 vmagent 的
 族返回空且无从解释，这里有而目录里没有的族是纯粹的基数。它只持有 `list` 与 `watch`，且**不包含 Secret 与
 ConfigMap**：一个负责数 Pod 的组件没有理由掌握集群里所有 Secret 的清单。Agent 有能力授予它——正因如此这条
 限制必须写下来而不是默认成立。
+
+allowlist 里的 `kube_pod_info` 是唯一一族只为"Pod 落在哪个节点上"而收的指标：Pod 容量是节点会先耗尽的第三
+种资源——CPU 与内存都还有余量的节点，装满 Pod 之后同样调度不进去——而没有第二族指标同时带着 Pod 和它所在的
+节点。代价是每个 Pod 一条序列，与已有的 `kube_pod_owner` 同一量级。
 
 安装不需要扩展 Agent 的 ClusterRole：授予 kube-state-metrics 的读取范围是 Agent 自己已持有权限的子集，而
 Kubernetes 拒绝创建包含创建者本身没有的权限的 ClusterRole，这条约束由 API Server 强制而不是靠约定。
@@ -369,7 +377,7 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 改写缺陷都是跨租户数据泄露；同时自由表达式的执行成本无法预估，单个查询就能拖垮单副本 Server 背后的
 存储。固定目录让作用域过滤成为模板的一部分，而不是对用户输入的事后修补。
 
-已实现的查询目录（25 个）：
+已实现的查询目录（50 个）：
 
 | 查询 | 维度 | 依赖组件 | Namespace | Top N |
 | --- | --- | --- | --- | --- |
@@ -378,15 +386,42 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 | `namespace_cpu_usage` / `namespace_memory_usage` | `namespace` | kubelet | 可选 | 可选 |
 | `pod_cpu_usage` / `pod_memory_usage` | `namespace`、`pod` | kubelet | 可选 | **必需** |
 | `cluster_cpu_utilization` / `cluster_memory_utilization` | — | kube-state-metrics | 否 | 否 |
+| `cluster_cpu_requests` / `cluster_memory_requests` | — | kube-state-metrics | 否 | 否 |
+| `cluster_cpu_limits` / `cluster_memory_limits` | — | kube-state-metrics | 否 | 否 |
+| `cluster_cpu_allocatable` / `cluster_memory_allocatable` | — | kube-state-metrics | 否 | 否 |
+| `cluster_cpu_commitment` / `cluster_memory_commitment` | — | kube-state-metrics | 否 | 否 |
 | `node_cpu_utilization` / `node_memory_utilization` | `node` | kube-state-metrics | 否 | 可选 |
+| `node_load1` / `node_cpu_iowait` / `node_memory_available` | `node` | node-exporter | 否 | 可选 |
+| `node_pod_count` / `node_pod_utilization` | `node` | kube-state-metrics | 否 | 可选 |
 | `namespace_cpu_requests` / `namespace_memory_requests` | `namespace` | kube-state-metrics | 可选 | 可选 |
 | `namespace_cpu_limits` / `namespace_memory_limits` | `namespace` | kube-state-metrics | 可选 | 可选 |
+| `namespace_pod_count` | `namespace` | kube-state-metrics | 可选 | 可选 |
 | `workload_cpu_usage` / `workload_memory_usage` | `namespace`、`workload_kind`、`workload` | kube-state-metrics | 可选 | **必需** |
+| `workload_replicas_unavailable` | `namespace`、`workload_kind`、`workload` | kube-state-metrics | 可选 | **必需** |
 | `pod_restarts` | `namespace`、`pod` | kube-state-metrics | 可选 | **必需** |
-| `node_filesystem_utilization` | `node`、`mountpoint` | node-exporter | 否 | 可选 |
-| `node_network_receive` / `node_network_transmit` | `node`、`device` | node-exporter | 否 | 可选 |
+| `cluster_pod_phase` | `phase` | kube-state-metrics | 可选 | 否 |
+| `cluster_container_restarts` | — | kube-state-metrics | 可选 | 否 |
+| `cluster_node_readiness` | `status` | kube-state-metrics | 否 | 否 |
+| `cluster_node_pressure` | `condition` | kube-state-metrics | 否 | 否 |
+| `node_filesystem_utilization` / `node_filesystem_inode_utilization` | `node`、`mountpoint` | node-exporter | 否 | 可选 |
+| `node_network_receive` / `node_network_transmit` / `node_network_errors` | `node`、`device` | node-exporter | 否 | 可选 |
 | `node_disk_read` / `node_disk_write` | `node`、`device` | node-exporter | 否 | 可选 |
-| `collection_health` | — | kubelet | 否 | 否 |
+| `node_disk_read_ops` / `node_disk_write_ops` / `node_disk_io_utilization` | `node`、`device` | node-exporter | 否 | 可选 |
+| `cluster_inventory`（instant） | `resource` | kube-state-metrics | 否 | 否 |
+| `collection_health`（instant） | — | kubelet | 否 | 否 |
+
+`cluster_inventory` 是唯一一个把多个数字装进一次查询的条目：它用 `label_replace` 给八个计数各写一个
+`resource` 标签再取并集，因此总览的指标卡片是一次往返而不是八次。这些数字总是一起读，而每一次往返都落在
+所有集群共用的存储上。
+
+**利用率与申请占比是两个问题。** 利用率是用量除以可分配量，申请占比是申请量除以可分配量。一个申请占比接近
+1、利用率只有 0.2 的集群既不是"很闲"也不是"很满"：它已经调度不进新工作负载，而节点是空的。只画其中一条线
+的界面回答不了这个最常见的容量问题，所以两者画在同一张图上。
+
+**未就绪副本要跨三种控制器归一。** Deployment、StatefulSet 与 DaemonSet 各用不同的标签命名自己的对象，
+期望值与就绪值也来自不同的指标族，因此两侧都先归一到 `workload` / `workload_kind`（与用量视图相同的两个
+标签）再相减，结果用 `clamp_min` 夹在零以上——滚动更新中的控制器可能短暂地"就绪多于期望"，而 topk 排一个
+负数既排不出来又读起来像缺陷。
 
 目录与生成的抓取配置是同一个决定：目录里不应出现集群侧根本没有采集的指标，抓取配置里也不应出现没有查询
 读取的指标族。每个查询声明它依赖哪个组件（`requires_component`），Console 据此在空图上说明"该视图需要
@@ -495,8 +530,6 @@ ZKE 不为此提供数据源、代理路由或凭证分发。
 
 ### 9.5 Console 图表实现
 
-Console 当前没有图表依赖（React 19 + Tailwind 4 + Radix + TanStack Query/Table）。选型已定：
-
 **时序折线与面积图使用 uPlot（MIT，Canvas 渲染，无传递依赖）。** 可观测性视图的典型负载是"多集群 ×
 多序列 × 数百到数千点"，SVG 在这个量级会产生数以万计的 DOM 节点，拖慢的不只是图表本身，还有它所在
 窗口的滚动、拖拽与缩放——在一个可以同时打开多个窗口的桌面式工作空间里，这个代价会被窗口数量放大。
@@ -512,17 +545,36 @@ Recharts / ECharts 等通用库（功能远超所需，体积与主题定制成�
 - **条形、占比、迷你趋势和状态指示**：用现有 Tailwind 与内联 SVG 自绘，不为它们再引入第二个库。
   uPlot 只用于真正的时序场景；
 - uPlot 通过一个受控的 React 封装组件接入，实例创建、`setData`、`setSize` 与销毁在该组件内闭环，
-  不把命令式实例散落到各视图；窗口尺寸变化经现有窗口系统驱动，不额外监听全局 resize；
+  不把命令式实例散落到各视图；尺寸来自挂在自己容器上的 `ResizeObserver`，不监听全局 resize——图表要跟的是
+  它所在的面板，而面板会随窗口大小、侧栏与分栏一起变；容器宽度在 layout 阶段先量一次，因此窗口变化导致的
+  重建不会先空一帧再画；
 - 坐标轴、Tooltip、图例、配色与暗色模式全部复用 `styles/theme.css` 的语义变量，uPlot 不自带调色板，
   也不引入它自己的 CSS 主题；
-- 图表只消费 §9.3 的归一化响应，不在前端拼装查询表达式、不做单位换算、不做插值；`null` 直接交给
-  uPlot 的空值语义渲染为断点；
+- 图表只消费 §9.3 的归一化响应，不在前端拼装查询表达式、不做插值、不改变数值本身；`null` 直接交给
+  uPlot 的空值语义渲染为断点。显示层只按响应里的 `unit` 决定怎么写这个数字（B/KiB/GiB、m/核、百分比、
+  次/秒），而且坐标轴一整列共用同一个单位——每个刻度各自选单位会写出 `500 m` 压着 `1.00 核` 的刻度尺；
 - 加载中、无权限、采集未启用、数据空洞、部分失败与限流是六种不同的空状态，各自有明确文案与后续动作，
-  不复用同一个"暂无数据"；
-- 依赖在第一个切片实际动手时再加入 `package.json`，届时按仓库约定核对许可证与打包体积增量，不提前
-  引入一个没有使用者的依赖。
+  不复用同一个"暂无数据"。
 
-首期只提供固定视图，不做用户自定义仪表盘编辑器：自定义面板需要自由表达式，与 §9.1 的安全立场直接冲突。
+**时间窗口属于视图，不属于单张图。** 顶部一行筛选器（集群、时间范围、自动刷新）作用于其下的每一张图，
+四个图表分区共用同一份状态：换到另一个分区不需要把"哪些集群、哪一个小时"再说一遍。窗口有两种：跟着时钟走
+的相对范围，和钉住不动的绝对范围。在图上横向拖拽产生的是后者——一个仍然跟着时钟走的选区会从操作者刚刚指
+着的东西下面滑走。绝对范围下自动刷新停摆，窗口最小化时同样停摆：这里的每一次请求最终都落在所有集群共用的
+存储上。
+
+**步长由窗口算出来，落在固定的档位上。** 目标约 360 个点，远低于 Server 的 1500 上限，也低于任何面板的像素
+宽度——点比像素多的查询是整个部署替谁也看不见的东西付钱。档位而不是 `窗口 ÷ 点数`：步长进入查询键，任意秒数
+会让窗口每差一个像素就产生一次新的请求与一份新的缓存条目。窗口末端按步长向下取整，因此只在真的可能出现新
+点时才移动。
+
+**读数与图例。** 十字光标按 X 对齐并列出该时刻每一条序列的值，按值降序，超出的条数如实写明省略了多少；同一
+分区内的图表共享光标位置，但不共享序列高亮——相邻面板的序列集合不同，同步高亮会点亮一条无关的曲线。图例把
+最新、平均与最大三个数字写在名字旁边，因此不悬停也能读到，并且可以逐条开关。序列调色板是 `theme.css` 里
+独立的八档 `--chart-*`，不复用语义色：`--danger` 画出来的曲线一眼看上去就是故障，哪怕它只是列表里的第四个
+节点。八档的顺序本身是可分辨性的一部分（相邻两档在两套主题下都通过色觉与常态视觉的分离阈值），因此按顺序
+取用、不重排；第九条起重复颜色但换虚线样式——两条曲线可以同色，但不会同色又同线型。
+
+固定视图，不做用户自定义仪表盘编辑器：自定义面板需要自由表达式，与 §9.1 的安全立场直接冲突。
 若后续确有需求，方向是"基于具名查询与受校验参数的受限布局保存"，而不是开放查询语言。
 
 ### 9.6 错误分类

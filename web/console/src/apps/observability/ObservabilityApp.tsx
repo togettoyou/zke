@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Activity, PlugZap } from "lucide-react";
+import { Boxes, Cpu, HardDrive, LayoutDashboard, PlugZap } from "lucide-react";
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
@@ -9,7 +9,12 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/common/state"
 import { useScopeStore } from "@/scope/scope-store";
 
 import { CollectionSection } from "./CollectionSection";
-import { MetricsOverviewSection } from "./MetricsOverviewSection";
+import { ComputeSection } from "./ComputeSection";
+import { KubernetesSection } from "./KubernetesSection";
+import { MetricsToolbar } from "./MetricsToolbar";
+import { OverviewSection } from "./OverviewSection";
+import { StorageNetworkSection } from "./StorageNetworkSection";
+import { MetricsGate, MetricsScopeProvider } from "./MetricsScopeProvider";
 
 /**
  * Collection comes first because it comes first: a Cluster reports nothing
@@ -18,9 +23,21 @@ import { MetricsOverviewSection } from "./MetricsOverviewSection";
  */
 const DEFAULT_SECTION = "collection";
 
+/**
+ * The chart sections, split by the question rather than by the metric.
+ *
+ * One 指标总览 holding everything was the wrong shape twice over: it could not
+ * fit the catalogue, and the catalogue does not answer one question. Capacity,
+ * device saturation and object state are asked at different times by different
+ * people, and each of them wants its own set of panels open — not a select at
+ * the top of a single screen.
+ */
 const NAV: AppNavItem[] = [
   { id: DEFAULT_SECTION, label: "采集接入", icon: PlugZap },
-  { id: "metrics", label: "指标总览", icon: Activity },
+  { id: "overview", label: "总览", icon: LayoutDashboard },
+  { id: "compute", label: "计算资源", icon: Cpu },
+  { id: "storage", label: "存储与网络", icon: HardDrive },
+  { id: "kubernetes", label: "Kubernetes 资源", icon: Boxes },
 ];
 
 /**
@@ -40,6 +57,7 @@ export function ObservabilityApp(_props: AppComponentProps) {
   const [activeId, setActiveId] = useState(DEFAULT_SECTION);
   const projectId = useScopeStore((state) => state.scope.projectId);
   const catalog = useMetricsQueryCatalog();
+  const charts = activeId !== DEFAULT_SECTION;
 
   const content = useMemo(() => {
     if (catalog.isPending) {
@@ -59,10 +77,34 @@ export function ObservabilityApp(_props: AppComponentProps) {
       }
       return <ErrorState error={catalog.error} onRetry={() => void catalog.refetch()} />;
     }
-    if (activeId === "metrics") {
-      return <MetricsOverviewSection />;
+    switch (activeId) {
+      case "overview":
+        return (
+          <MetricsGate>
+            <OverviewSection />
+          </MetricsGate>
+        );
+      case "compute":
+        return (
+          <MetricsGate>
+            <ComputeSection />
+          </MetricsGate>
+        );
+      case "storage":
+        return (
+          <MetricsGate>
+            <StorageNetworkSection />
+          </MetricsGate>
+        );
+      case "kubernetes":
+        return (
+          <MetricsGate>
+            <KubernetesSection />
+          </MetricsGate>
+        );
+      default:
+        return <CollectionSection />;
     }
-    return <CollectionSection />;
   }, [activeId, catalog]);
 
   if (!projectId) {
@@ -70,8 +112,17 @@ export function ObservabilityApp(_props: AppComponentProps) {
   }
 
   return (
-    <AppShell nav={NAV} activeId={activeId} onNavigate={setActiveId}>
-      {content}
-    </AppShell>
+    // The scope provider wraps the shell rather than the sections: the toolbar
+    // is the thing that sets it, and it is rendered by the shell.
+    <MetricsScopeProvider enabled={charts}>
+      <AppShell
+        nav={NAV}
+        activeId={activeId}
+        onNavigate={setActiveId}
+        toolbar={charts ? <MetricsToolbar /> : undefined}
+      >
+        {content}
+      </AppShell>
+    </MetricsScopeProvider>
   );
 }
