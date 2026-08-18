@@ -38,11 +38,20 @@ type stubClusters struct {
 	err    error
 }
 
-func (stub stubClusters) ListVisibleClusters(
-	context.Context,
-	store.ListVisibleClustersParams,
-) ([]store.ClusterScope, error) {
-	return stub.scopes, stub.err
+func (stub stubClusters) GetVisibleCluster(
+	_ context.Context,
+	_ store.VisibleClusterParams,
+	clusterID string,
+) (store.ClusterScope, error) {
+	if stub.err != nil {
+		return store.ClusterScope{}, stub.err
+	}
+	for _, scope := range stub.scopes {
+		if scope.ClusterID == clusterID {
+			return scope, nil
+		}
+	}
+	return store.ClusterScope{}, store.ErrClusterNotVisible
 }
 
 type capturedQuery struct {
@@ -122,15 +131,16 @@ func testServiceWithBudget(
 func rangeInput(name string) Input {
 	end := time.Unix(1_755_216_000, 0).UTC()
 	return Input{
-		UserID: userID,
-		Name:   name,
-		Start:  end.Add(-2 * time.Minute),
-		End:    end,
-		Step:   time.Minute,
+		UserID:    userID,
+		Name:      name,
+		ClusterID: clusterOne,
+		Start:     end.Add(-2 * time.Minute),
+		End:       end,
+		Step:      time.Minute,
 	}
 }
 
-func TestQueryScopesEveryVisibleClusterWhenNoneIsRequested(t *testing.T) {
+func TestQueryScopesToTheNamedClusterWithAnExactMatcher(t *testing.T) {
 	t.Parallel()
 
 	captured := &capturedQuery{}
@@ -139,35 +149,65 @@ func TestQueryScopesEveryVisibleClusterWhenNoneIsRequested(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(captured.expression, clusterOne) ||
-		!strings.Contains(captured.expression, clusterTwo) {
-		t.Fatalf("expression does not cover both Clusters: %s", captured.expression)
+	// An equality, not an alternation. A regular expression over one value is
+	// the same answer more expensively, and `=~` on a matcher built from a set
+	// is what a multi-Cluster scope used to need.
+	if !strings.Contains(captured.expression, `zke_cluster_id="`+clusterOne+`"`) {
+		t.Fatalf("expression carries no exact scope matcher: %s", captured.expression)
 	}
-	if !strings.Contains(captured.expression, `zke_cluster_id=~"`) {
-		t.Fatalf("expression carries no scope matcher: %s", captured.expression)
+	if strings.Contains(captured.expression, "=~") &&
+		strings.Contains(captured.expression, "zke_cluster_id=~") {
+		t.Fatalf("scope matcher is still a regular expression: %s", captured.expression)
+	}
+	// The other visible Cluster must not appear anywhere: the scope is what was
+	// asked for, not what the caller could have asked for.
+	if strings.Contains(captured.expression, clusterTwo) {
+		t.Fatalf("expression reaches a Cluster that was not requested: %s", captured.expression)
 	}
 	if !strings.HasSuffix(captured.path, "/api/v1/query_range") {
 		t.Fatalf("range query hit %s", captured.path)
 	}
-	if len(result.ClusterIDs) != 2 {
-		t.Fatalf("covered Clusters = %v", result.ClusterIDs)
+	if result.ClusterID != clusterOne || result.ClusterName != "prod-sh" {
+		t.Fatalf("answer describes %q (%s)", result.ClusterName, result.ClusterID)
 	}
 }
 
-func TestQueryRefusesClustersOutsideVisibilityWithoutCallingStorage(t *testing.T) {
+func TestQueryRefusesAClusterOutsideVisibilityWithoutCallingStorage(t *testing.T) {
 	t.Parallel()
 
 	captured := &capturedQuery{}
 	service := testService(t, `{"status":"success","data":{"resultType":"matrix","result":[]}}`, http.StatusOK, captured)
 	input := rangeInput("cluster_cpu_usage")
-	input.ClusterIDs = []string{clusterOne, foreign}
+	input.ClusterID = foreign
 	if _, err := service.Query(context.Background(), input); !errors.Is(err, ErrDenied) {
 		t.Fatalf("error = %v, want ErrDenied", err)
 	}
 	// A refused scope must never reach storage: the query would otherwise run
-	// with the permitted subset and look like a complete answer.
+	// and its answer would look like a permitted one.
 	if captured.calls != 0 {
 		t.Fatal("a denied query reached the storage backend")
+	}
+}
+
+func TestQueryRequiresATargetCluster(t *testing.T) {
+	t.Parallel()
+
+	captured := &capturedQuery{}
+	service := testService(t, `{"status":"success","data":{"resultType":"matrix","result":[]}}`, http.StatusOK, captured)
+	for name, clusterID := range map[string]string{
+		"missing":    "",
+		"not a uuid": "prod-sh",
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := rangeInput("cluster_cpu_usage")
+			input.ClusterID = clusterID
+			if _, err := service.Query(context.Background(), input); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+	if captured.calls != 0 {
+		t.Fatal("a query without a target Cluster reached the storage backend")
 	}
 }
 
@@ -296,8 +336,9 @@ func TestInstantQueryIgnoresRangeParameters(t *testing.T) {
 	captured := &capturedQuery{}
 	service := testService(t, body, http.StatusOK, captured)
 	result, err := service.Query(context.Background(), Input{
-		UserID: userID,
-		Name:   "collection_health",
+		UserID:    userID,
+		ClusterID: clusterOne,
+		Name:      "collection_health",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -348,53 +389,57 @@ func TestNamespaceNarrowsTheExpressionWithoutLosingTheScopeFilter(t *testing.T) 
 		t.Fatalf("namespace filter missing: %s", captured.expression)
 	}
 	// The scope filter has to survive the narrowing, or a Namespace name would
-	// be a way to widen the answer past the caller's Clusters.
-	if !strings.Contains(captured.expression, clusterOne) ||
-		!strings.Contains(captured.expression, clusterTwo) {
+	// be a way to reach past the Cluster the caller named.
+	if !strings.Contains(captured.expression, `zke_cluster_id="`+clusterOne+`"`) {
 		t.Fatalf("scope filter lost: %s", captured.expression)
 	}
 }
 
-func TestQueryReportsSilentClustersWithoutCallingThemPartial(t *testing.T) {
+func TestQueryReportsASilentClusterWithoutCallingItPartial(t *testing.T) {
 	t.Parallel()
 
-	body := `{"status":"success","data":{"resultType":"matrix","result":[
-		{"metric":{"zke_cluster_id":"` + clusterOne + `"},"values":[[1755216000,"1"]]}
-	]}}`
 	captured := &capturedQuery{}
-	service := testService(t, body, http.StatusOK, captured)
+	service := testService(
+		t,
+		`{"status":"success","data":{"resultType":"matrix","result":[]}}`,
+		http.StatusOK,
+		captured,
+	)
 	result, err := service.Query(context.Background(), rangeInput("cluster_cpu_usage"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result.Issues) != 1 ||
 		result.Issues[0].Reason != IssueNoData ||
-		result.Issues[0].ClusterID != clusterTwo {
+		result.Issues[0].ClusterID != clusterOne {
 		t.Fatalf("issues = %+v", result.Issues)
 	}
 	// A Cluster that has nothing to report is not a failure of the query, and
 	// marking it partial would put a warning on every chart in a deployment
-	// where collection is only installed somewhere.
+	// where collection has simply not been installed yet.
 	if result.Partial {
 		t.Fatal("a silent Cluster made the answer partial")
 	}
 }
 
-func TestQueryReportsThrottledClustersAsPartial(t *testing.T) {
+func TestQueryReportsAThrottledClusterAsPartial(t *testing.T) {
 	t.Parallel()
 
-	body := `{"status":"success","data":{"resultType":"matrix","result":[
-		{"metric":{"zke_cluster_id":"` + clusterOne + `"},"values":[[1755216000,"1"]]}
-	]}}`
 	captured := &capturedQuery{}
-	service := testServiceWithBudget(t, body, http.StatusOK, captured, stubBudget{
-		states: map[string]metricsingest.ClusterState{
-			clusterTwo: {
-				Throttled: true,
-				Reason:    metricsingest.ThrottleReasonCardinality,
+	service := testServiceWithBudget(
+		t,
+		`{"status":"success","data":{"resultType":"matrix","result":[]}}`,
+		http.StatusOK,
+		captured,
+		stubBudget{
+			states: map[string]metricsingest.ClusterState{
+				clusterOne: {
+					Throttled: true,
+					Reason:    metricsingest.ThrottleReasonCardinality,
+				},
 			},
 		},
-	})
+	)
 	result, err := service.Query(context.Background(), rangeInput("cluster_cpu_usage"))
 	if err != nil {
 		t.Fatal(err)
@@ -404,18 +449,20 @@ func TestQueryReportsThrottledClustersAsPartial(t *testing.T) {
 	}
 	if len(result.Issues) != 1 ||
 		result.Issues[0].Reason != IssueThrottled ||
-		result.Issues[0].ClusterID != clusterTwo ||
+		result.Issues[0].ClusterID != clusterOne ||
 		result.Issues[0].Detail != metricsingest.ThrottleReasonCardinality {
 		t.Fatalf("issues = %+v", result.Issues)
 	}
-	// The reason must not be reported as "no data": the samples exist, this
-	// Server refused them, and only one of those is fixed in the Cluster.
+	// Not reported as "no data": the samples exist, this Server refused them,
+	// and only one of those two is fixed inside the Cluster. Reported once, not
+	// twice — an empty answer from a throttled Cluster is explained by the
+	// throttling and does not also need a silence notice.
 	if result.Issues[0].Reason == IssueNoData {
 		t.Fatal("a refused Cluster was reported as silent")
 	}
 }
 
-func TestTopQueriesDoNotReportRankedOutClustersAsSilent(t *testing.T) {
+func TestATopQueryThatAnswersReportsNoIssue(t *testing.T) {
 	t.Parallel()
 
 	body := `{"status":"success","data":{"resultType":"matrix","result":[
@@ -430,7 +477,7 @@ func TestTopQueriesDoNotReportRankedOutClustersAsSilent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(result.Issues) != 0 {
-		t.Fatalf("a Top N answer reported ranked-out Clusters as issues: %+v", result.Issues)
+		t.Fatalf("a Top N answer with series reported an issue: %+v", result.Issues)
 	}
 }
 

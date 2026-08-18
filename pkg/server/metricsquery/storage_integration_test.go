@@ -47,6 +47,11 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	}
 
 	end := time.Now().UTC().Truncate(time.Minute)
+	// VictoriaMetrics accepts a write before it is queryable, so the seed is
+	// waited for once here rather than in every subtest below. Everything after
+	// this point may treat an empty answer as the query's fault.
+	memory := waitForSeed(t, service, clusterID, end)
+
 	// The whole catalogue, read from the catalogue itself rather than listed
 	// here: a query added without a line in this test would otherwise ship
 	// unevaluated, which is the one thing this test exists to prevent. `top` is
@@ -55,7 +60,7 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	for _, definition := range Catalog() {
 		definition := definition
 		t.Run(definition.Name, func(t *testing.T) {
-			input := Input{UserID: userID, Name: definition.Name}
+			input := Input{UserID: userID, Name: definition.Name, ClusterID: clusterID}
 			if definition.SupportsTop {
 				input.Top = 10
 			}
@@ -67,6 +72,23 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 			result, err := service.Query(context.Background(), input)
 			if err != nil {
 				t.Fatalf("%s failed against storage: %v", definition.Name, err)
+			}
+			// A template that parses is not a template that reads anything. The
+			// metric names, their labels and the joins between them come from
+			// the kubelet and the two exporters rather than from this
+			// repository, and a query naming a family nobody scrapes, or joining
+			// on a label one side does not carry, answers nothing without ever
+			// failing. In the Console that is an empty chart on a Cluster whose
+			// collection is healthy — the one outcome no error path reports. The
+			// fixture therefore seeds every family the catalogue reads, and
+			// every entry has to come back with a series.
+			if len(result.Series) == 0 {
+				t.Fatalf(
+					"%s selected nothing from the seeded Cluster; "+
+						"either the expression reads a family the fixture does not "+
+						"write, or the fixture is missing a family the pipeline collects",
+					definition.Name,
+				)
 			}
 			if definition.Kind != KindRange {
 				return
@@ -96,6 +118,7 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 			input := Input{
 				UserID:    userID,
 				Name:      definition.Name,
+				ClusterID: clusterID,
 				Namespace: "kube-system",
 				Start:     end.Add(-10 * time.Minute),
 				End:       end,
@@ -104,38 +127,22 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 			if definition.SupportsTop {
 				input.Top = 10
 			}
-			if _, err := service.Query(context.Background(), input); err != nil {
+			result, err := service.Query(context.Background(), input)
+			if err != nil {
 				t.Fatalf("%s with a Namespace failed: %v", definition.Name, err)
+			}
+			// Every seeded object is in kube-system, so the filtered expression
+			// has to select what the unfiltered one did. An injection that lands
+			// in the wrong selector still parses and still returns nothing.
+			if len(result.Series) == 0 {
+				t.Fatalf(
+					"%s selected nothing once filtered to the seeded Namespace",
+					definition.Name,
+				)
 			}
 		})
 	}
 
-	// The memory query reads a gauge that was just written, so it is the one
-	// that must come back with data. A template that compiles but selects
-	// nothing would otherwise pass unnoticed.
-	//
-	// Polled rather than read once: VictoriaMetrics accepts a write before it
-	// is queryable, and failing on the first miss would make this test flaky
-	// for a reason that has nothing to do with ZKE.
-	var memory Result
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		result, err := service.Query(context.Background(), Input{
-			UserID: userID,
-			Name:   "cluster_memory_usage",
-			Start:  end.Add(-10 * time.Minute),
-			End:    end,
-			Step:   time.Minute,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		memory = result
-		if len(memory.Series) > 0 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Second)
-	}
 	if len(memory.Series) != 1 {
 		t.Fatalf("cluster_memory_usage returned %d series, want the seeded Cluster", len(memory.Series))
 	}
@@ -151,12 +158,13 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	// template that compiles cannot tell anyone whether the two-level join
 	// actually resolved.
 	workload, err := service.Query(context.Background(), Input{
-		UserID: userID,
-		Name:   "workload_memory_usage",
-		Start:  end.Add(-10 * time.Minute),
-		End:    end,
-		Step:   time.Minute,
-		Top:    10,
+		UserID:    userID,
+		ClusterID: clusterID,
+		Name:      "workload_memory_usage",
+		Start:     end.Add(-10 * time.Minute),
+		End:       end,
+		Step:      time.Minute,
+		Top:       10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -174,11 +182,12 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 
 	// Utilisation needs both sides of the division to survive the join.
 	utilization, err := service.Query(context.Background(), Input{
-		UserID: userID,
-		Name:   "node_memory_utilization",
-		Start:  end.Add(-10 * time.Minute),
-		End:    end,
-		Step:   time.Minute,
+		UserID:    userID,
+		ClusterID: clusterID,
+		Name:      "node_memory_utilization",
+		Start:     end.Add(-10 * time.Minute),
+		End:       end,
+		Step:      time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -196,8 +205,9 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	// writes itself. A union whose branches collide would return fewer series
 	// than it has branches, and the row would silently lose a tile.
 	inventory, err := service.Query(context.Background(), Input{
-		UserID: userID,
-		Name:   "cluster_inventory",
+		UserID:    userID,
+		ClusterID: clusterID,
+		Name:      "cluster_inventory",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -223,12 +233,13 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	// no match and answers nothing at all, which looks exactly like a healthy
 	// Cluster.
 	shortfall, err := service.Query(context.Background(), Input{
-		UserID: userID,
-		Name:   "workload_replicas_unavailable",
-		Start:  end.Add(-10 * time.Minute),
-		End:    end,
-		Step:   time.Minute,
-		Top:    10,
+		UserID:    userID,
+		ClusterID: clusterID,
+		Name:      "workload_replicas_unavailable",
+		Start:     end.Add(-10 * time.Minute),
+		End:       end,
+		Step:      time.Minute,
+		Top:       10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -252,12 +263,13 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	// Pod density joins two families on the Node label. The Pod count comes from
 	// one and the capacity from another, so a join that fails answers nothing.
 	density, err := service.Query(context.Background(), Input{
-		UserID: userID,
-		Name:   "node_pod_utilization",
-		Start:  end.Add(-10 * time.Minute),
-		End:    end,
-		Step:   time.Minute,
-		Top:    10,
+		UserID:    userID,
+		ClusterID: clusterID,
+		Name:      "node_pod_utilization",
+		Start:     end.Add(-10 * time.Minute),
+		End:       end,
+		Step:      time.Minute,
+		Top:       10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -269,6 +281,121 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 	if densityLast.Value == nil || math.Abs(*densityLast.Value-1.0/110.0) > 0.0001 {
 		t.Fatalf("node_pod_utilization last point = %+v, want 1/110", densityLast)
 	}
+
+	// The ratios whose denominator is guarded with `> 0`. A guard on the wrong
+	// side of the join, or a join on a label only one side carries, removes the
+	// series instead of answering wrongly — which the emptiness check above
+	// already catches. What it cannot catch is a ratio that resolves to the
+	// wrong pair, so each one is read for its value.
+	//
+	// 60 throttled periods per minute out of 600, a quarter of the quota's CPU
+	// in use, and 4 GiB of a 10 GiB claim.
+	for _, expected := range []struct {
+		name  string
+		value float64
+	}{
+		{"container_cpu_throttling", 0.1},
+		{"namespace_quota_utilization", 0.25},
+		{"pvc_utilization", 0.4},
+	} {
+		result, err := service.Query(context.Background(), Input{
+			UserID:    userID,
+			ClusterID: clusterID,
+			Name:      expected.name,
+			Start:     end.Add(-10 * time.Minute),
+			End:       end,
+			Step:      time.Minute,
+			Top:       10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Series) != 1 {
+			t.Fatalf("%s returned %d series, want one", expected.name, len(result.Series))
+		}
+		points := result.Series[0].Points
+		point := points[len(points)-1]
+		if point.Value == nil || math.Abs(*point.Value-expected.value) > 0.001 {
+			t.Fatalf("%s last point = %+v, want %v", expected.name, point, expected.value)
+		}
+	}
+
+	// Collection health averages the collector's own scrape results. One of the
+	// two seeded targets is down, so a Cluster that reports 1 here is one whose
+	// failing targets are being averaged away rather than counted.
+	health, err := service.Query(context.Background(), Input{
+		UserID:    userID,
+		ClusterID: clusterID,
+		Name:      "collection_health",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(health.Series) != 1 || health.Series[0].Points[0].Value == nil ||
+		*health.Series[0].Points[0].Value != 0.5 {
+		t.Fatalf("collection_health = %+v, want one series at 0.5", health.Series)
+	}
+
+	// The container state charts read a reason the Agent's scrape filter keeps.
+	// The two lists are shared, and a selector that drifted from the filter is
+	// an empty chart for the fault an operator is most likely to be looking for.
+	terminated, err := service.Query(context.Background(), Input{
+		UserID:    userID,
+		ClusterID: clusterID,
+		Name:      "pod_container_terminated",
+		Start:     end.Add(-10 * time.Minute),
+		End:       end,
+		Step:      time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(terminated.Series) != 1 || terminated.Series[0].Labels["reason"] != "OOMKilled" {
+		t.Fatalf("pod_container_terminated = %+v, want the seeded OOMKilled series", terminated.Series)
+	}
+}
+
+// waitForSeed polls one query until the seeded samples are queryable, and
+// returns its answer so the caller can assert on it rather than ask twice.
+//
+// Polled rather than read once: VictoriaMetrics acknowledges a write before it
+// serves it, and failing on the first miss would make every assertion below
+// flaky for a reason that has nothing to do with ZKE. The Cluster memory gauge
+// is the probe because it is written directly, without a join or a rate.
+//
+// The wait is for the newest point of the grid, not merely for the series to
+// exist. The two are not the same moment: the older samples of a batch become
+// queryable before the newest one, and a gate that stops at "something is
+// there" lets the assertions below run against a grid whose last step is still
+// empty — which they then report as a broken join rather than as a slow write.
+func waitForSeed(t *testing.T, service *Service, clusterID string, end time.Time) Result {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		result, err := service.Query(context.Background(), Input{
+			UserID:    userID,
+			ClusterID: clusterID,
+			Name:      "cluster_memory_usage",
+			Start:     end.Add(-10 * time.Minute),
+			End:       end,
+			Step:      time.Minute,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seedIsQueryable(result) || time.Now().After(deadline) {
+			return result
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func seedIsQueryable(result Result) bool {
+	if len(result.Series) == 0 {
+		return false
+	}
+	points := result.Series[0].Points
+	return len(points) > 0 && points[len(points)-1].Value != nil
 }
 
 // seedKubeletSamples writes the metrics the generated scrape configuration
@@ -301,8 +428,42 @@ func seedKubeletSamples(t *testing.T, base string, clusterID string) {
 			"pod":                      "probe-pod",
 			metricsingest.ClusterLabel: clusterID,
 		}, 1<<28, at)...)
+		// The same endpoint reports the containers inside the Pod. A Pod is a
+		// group of processes, and the container level is the only one that says
+		// which of them is the one consuming.
+		body = append(body, series(map[string]string{
+			"__name__":                 "container_cpu_usage_seconds_total",
+			"namespace":                "kube-system",
+			"pod":                      "probe-pod",
+			"container":                "app",
+			metricsingest.ClusterLabel: clusterID,
+		}, float64(40-offset), at)...)
+		body = append(body, series(map[string]string{
+			"__name__":                 "container_memory_working_set_bytes",
+			"namespace":                "kube-system",
+			"pod":                      "probe-pod",
+			"container":                "app",
+			metricsingest.ClusterLabel: clusterID,
+		}, 1<<27, at)...)
+		// The collector's own view of its targets. Two of them, one answering
+		// and one not, because a Cluster where everything is up cannot tell a
+		// working average from a constant.
+		body = append(body, series(map[string]string{
+			"__name__":                 "up",
+			"job":                      "kubelet-resource",
+			"node":                     "probe-node",
+			metricsingest.ClusterLabel: clusterID,
+		}, 1, at)...)
+		body = append(body, series(map[string]string{
+			"__name__":                 "up",
+			"job":                      "node-exporter",
+			"node":                     "probe-node",
+			metricsingest.ClusterLabel: clusterID,
+		}, 0, at)...)
 		body = append(body, seedObjectSamples(clusterID, at)...)
-		body = append(body, seedNodeSamples(clusterID, at)...)
+		body = append(body, seedNodeSamples(clusterID, at, offset)...)
+		body = append(body, seedCadvisorSamples(clusterID, at, offset)...)
+		body = append(body, seedVolumeStatsSamples(clusterID, at)...)
 	}
 	response, err := http.Post(
 		base+"/api/v1/write",
@@ -419,6 +580,30 @@ func seedObjectSamples(clusterID string, at int64) []byte {
 			"__name__":  "kube_daemonset_status_number_ready",
 			"namespace": "kube-system", "daemonset": "probe-agent",
 		}, 1},
+		// A quota with room left, so the ratio has a denominator to divide by.
+		// The `hard` side is guarded with `> 0` in the template, and a fixture
+		// without it would drop the whole series rather than answer wrongly.
+		{map[string]string{
+			"__name__": "kube_resourcequota", "namespace": "kube-system",
+			"resourcequota": "probe-quota", "resource": "requests.cpu", "type": "hard",
+		}, 8},
+		{map[string]string{
+			"__name__": "kube_resourcequota", "namespace": "kube-system",
+			"resourcequota": "probe-quota", "resource": "requests.cpu", "type": "used",
+		}, 2},
+		// The container state families. Both are filtered by reason at the
+		// scrape, so the fixture uses reasons from that same shared list: one
+		// the Agent keeps proves the selector and the filter still agree.
+		{map[string]string{
+			"__name__":  "kube_pod_container_status_waiting_reason",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+			"reason": "CrashLoopBackOff",
+		}, 1},
+		{map[string]string{
+			"__name__":  "kube_pod_container_status_last_terminated_reason",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+			"reason": "OOMKilled",
+		}, 1},
 	} {
 		sample.labels[metricsingest.ClusterLabel] = clusterID
 		body = append(body, series(sample.labels, sample.value, at)...)
@@ -426,9 +611,14 @@ func seedObjectSamples(clusterID string, at int64) []byte {
 	return body
 }
 
-// seedNodeSamples writes the node-exporter families the disk and network
-// queries read.
-func seedNodeSamples(clusterID string, at int64) []byte {
+// seedNodeSamples writes the node-exporter families the disk, network and
+// saturation queries read.
+//
+// The offset is the sample's position in the seeded window. The counters the
+// saturation queries read are rated against a guarded denominator, and a
+// counter that never moves makes that guard drop the series entirely — the
+// query then answers nothing while looking exactly like a healthy Node.
+func seedNodeSamples(clusterID string, at int64, offset int) []byte {
 	var body []byte
 	for _, sample := range []struct {
 		labels map[string]string
@@ -506,6 +696,132 @@ func seedNodeSamples(clusterID string, at int64) []byte {
 			"__name__": "node_network_transmit_drop_total",
 			"node":     "probe-node", "device": "eth0",
 		}, 4},
+		// Conntrack is a pair of gauges rather than a counter: the table's
+		// occupancy against the table's size.
+		{map[string]string{
+			"__name__": "node_nf_conntrack_entries", "node": "probe-node",
+		}, 16_384},
+		{map[string]string{
+			"__name__": "node_nf_conntrack_entries_limit", "node": "probe-node",
+		}, 131_072},
+	} {
+		sample.labels[metricsingest.ClusterLabel] = clusterID
+		body = append(body, series(sample.labels, sample.value, at)...)
+	}
+	// The counters, which have to advance across the window to survive their
+	// own rate. The netstat names are the four the exporter is configured to
+	// expose; the pressure names need a kernel with /proc/pressure, which is
+	// the one family a real Node may legitimately answer nothing for.
+	for _, sample := range []struct {
+		labels map[string]string
+		base   float64
+		step   float64
+	}{
+		{map[string]string{
+			"__name__": "node_netstat_Tcp_OutSegs", "node": "probe-node",
+		}, 1_000_000, 10_000},
+		{map[string]string{
+			"__name__": "node_netstat_Tcp_RetransSegs", "node": "probe-node",
+		}, 10_000, 100},
+		{map[string]string{
+			"__name__": "node_netstat_TcpExt_ListenDrops", "node": "probe-node",
+		}, 100, 6},
+		{map[string]string{
+			"__name__": "node_netstat_TcpExt_ListenOverflows", "node": "probe-node",
+		}, 50, 6},
+		{map[string]string{
+			"__name__": "node_pressure_cpu_waiting_seconds_total", "node": "probe-node",
+		}, 100, 3},
+		{map[string]string{
+			"__name__": "node_pressure_memory_waiting_seconds_total", "node": "probe-node",
+		}, 50, 1.5},
+		{map[string]string{
+			"__name__": "node_pressure_io_waiting_seconds_total", "node": "probe-node",
+		}, 20, 0.6},
+	} {
+		sample.labels[metricsingest.ClusterLabel] = clusterID
+		body = append(body, series(
+			sample.labels,
+			sample.base+sample.step*float64(10-offset),
+			at,
+		)...)
+	}
+	return body
+}
+
+// seedCadvisorSamples writes the families the kubelet's cAdvisor endpoint
+// contributes: CPU throttling and per-Pod network.
+//
+// Throttling is a ratio of two counters, and the denominator carries a `> 0`
+// guard because a container with no CPU limit reports no periods at all. Both
+// therefore have to advance, or the guard removes the series and the chart is
+// empty for a container that is in fact being throttled.
+//
+// The network families are reported on the Pod's own cgroup, where cAdvisor
+// leaves `container` empty — which is why the template selects on `pod` rather
+// than filtering the container out.
+func seedCadvisorSamples(clusterID string, at int64, offset int) []byte {
+	var body []byte
+	for _, sample := range []struct {
+		labels map[string]string
+		base   float64
+		step   float64
+	}{
+		{map[string]string{
+			"__name__":  "container_cpu_cfs_periods_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+		}, 10_000, 600},
+		{map[string]string{
+			"__name__":  "container_cpu_cfs_throttled_periods_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+		}, 1_000, 60},
+		{map[string]string{
+			"__name__":  "container_network_receive_bytes_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "",
+			"interface": "eth0",
+		}, 5_000_000, 60_000},
+		{map[string]string{
+			"__name__":  "container_network_transmit_bytes_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "",
+			"interface": "eth0",
+		}, 6_000_000, 120_000},
+	} {
+		sample.labels[metricsingest.ClusterLabel] = clusterID
+		body = append(body, series(
+			sample.labels,
+			sample.base+sample.step*float64(10-offset),
+			at,
+		)...)
+	}
+	return body
+}
+
+// seedVolumeStatsSamples writes the kubelet's volume statistics, the only
+// place a PersistentVolumeClaim's fullness is reported. kube-state knows the
+// claim exists and how large it was asked for; neither number says whether it
+// is about to fill up.
+func seedVolumeStatsSamples(clusterID string, at int64) []byte {
+	var body []byte
+	for _, sample := range []struct {
+		labels map[string]string
+		value  float64
+	}{
+		{map[string]string{
+			"__name__":  "kubelet_volume_stats_capacity_bytes",
+			"namespace": "kube-system", "persistentvolumeclaim": "probe-claim",
+		}, 10 << 30},
+		{map[string]string{
+			"__name__":  "kubelet_volume_stats_used_bytes",
+			"namespace": "kube-system", "persistentvolumeclaim": "probe-claim",
+		}, 4 << 30},
+		{map[string]string{
+			"__name__":  "kubelet_volume_stats_inodes",
+			"namespace": "kube-system", "persistentvolumeclaim": "probe-claim",
+		}, 1_000_000},
+		{map[string]string{
+			"__name__":  "kubelet_volume_stats_inodes_used",
+			"namespace": "kube-system", "persistentvolumeclaim": "probe-claim",
+		}, 250_000},
 	} {
 		sample.labels[metricsingest.ClusterLabel] = clusterID
 		body = append(body, series(sample.labels, sample.value, at)...)

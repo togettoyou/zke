@@ -179,7 +179,6 @@ func (cfg Config) validateObservability() error {
 		name  string
 	}{
 		{metrics.MaxIngestStreams, "maximum ingest streams"},
-		{metrics.MaxQueryClusters, "maximum query clusters"},
 		{metrics.MaxQueryPoints, "maximum query points"},
 		{metrics.MaxQuerySeries, "maximum query series"},
 		{metrics.KubeletMetricsPort, "kubelet metrics port"},

@@ -1646,12 +1646,15 @@ paths:
       tags: [Resources]
       operationId: runObservabilityMetricsQuery
       description: |
-        执行一个具名指标查询。可观测性是多集群应用，路径中没有 cluster_id：Server
-        解析调用者在 `cluster.metrics.read` 上的可见范围，展开成一组 `cluster_id`
-        并作为强制过滤注入查询模板，调用方参数无法覆盖。
+        执行一个具名指标查询。每次查询针对一个集群：`cluster_id` 必填，Server 校验
+        调用者在 `cluster.metrics.read` 上确实可以读取它，再把它作为强制过滤
+        （`zke_cluster_id="<id>"` 精确匹配）注入查询模板，调用方参数无法覆盖。
 
-        省略 `cluster_ids` 表示“当前权限范围内的全部集群”。显式给出的集群若有任何
-        一个超出可见范围，整个请求返回 403，而不是静默缩小范围并把部分结果当作全部。
+        一次一个集群，与容器服务操作一个集群是同一个理由：把两个集群的曲线加在一起
+        得到的是一个不存在的数，把它们画在共享坐标轴上则是把两个问题塞进一张图。
+
+        目标集群不可读时返回 403，且不区分“不存在”与“不属于你”——区分它们会让这个
+        接口变成探测范围外集群 ID 的手段。
 
         缺失采样点在响应中显式为 `null`，不做插值：数据空洞是采集中断的证据，补齐会
         把中断显示成平线。时间戳为秒级 Unix 时间，数值已按 `unit` 换算。
@@ -1667,12 +1670,12 @@ paths:
           schema:
             type: string
             maxLength: 128
-        - name: cluster_ids
+        - name: cluster_id
           in: query
-          description: 逗号分隔的 Cluster ID；省略表示权限范围内的全部集群。
+          required: true
+          description: 目标集群。每次查询只描述一个集群。
           schema:
-            type: string
-            maxLength: 8192
+            $ref: "#/components/schemas/UUID"
         - name: namespace
           in: query
           schema:
@@ -12593,7 +12596,8 @@ components:
         - start
         - end
         - step_seconds
-        - cluster_ids
+        - cluster_id
+        - cluster_name
         - series
         - truncated
         - partial
@@ -12618,11 +12622,13 @@ components:
         step_seconds:
           type: integer
           description: 瞬时查询为 0。
-        cluster_ids:
-          type: array
-          description: 本次查询实际覆盖的集群，用于区分“无数据”和“不在范围内”。
-          items:
-            $ref: "#/components/schemas/UUID"
+        cluster_id:
+          allOf:
+            - $ref: "#/components/schemas/UUID"
+          description: 本次查询描述的集群，原样回显，便于确认图表读的是哪一个。
+        cluster_name:
+          type: string
+          description: 展示属性，不能替代 `cluster_id` 作为数据身份。
         truncated:
           type: boolean
           description: 序列数超过上限而被截断。
@@ -12635,7 +12641,8 @@ components:
           type: array
           description: |
             请求范围与返回结果之间的差异。`no_data` 只是说明，不会使结果 `partial`；
-            `throttled` 与 `series_truncated` 会。
+            `throttled` 与 `series_truncated` 会。被限流的集群只报 `throttled`，
+            不再另报一次 `no_data`——空结果已经由限流解释了。
           items:
             type: object
             additionalProperties: false

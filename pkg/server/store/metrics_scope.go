@@ -2,16 +2,18 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// MetricsScopeStore answers one question: which Clusters may a caller's
-// metrics query cover. It is separate from the Cluster status store because
-// the answer feeds a label filter rather than a list a user reads: it carries
-// no Agent, certificate or connection state, and it must stay cheap enough to
-// run on every query.
+// MetricsScopeStore answers one question: may this caller's metrics query
+// read this Cluster. It is separate from the Cluster status store because the
+// answer feeds a label filter rather than a list a user reads: it carries no
+// Agent, certificate or connection state, and it must stay cheap enough to run
+// on every query — and every chart on screen is a query.
 type MetricsScopeStore struct {
 	pool *pgxpool.Pool
 }
@@ -32,66 +34,64 @@ type ClusterScope struct {
 	Status      string
 }
 
-// ListVisibleClustersParams describes a resolved RBAC visibility. Global sees
+// ErrClusterNotVisible reports a Cluster the caller may not read metrics for.
+// It does not distinguish "does not exist" from "not yours": telling them apart
+// would let somebody probe for Cluster identifiers outside their scope.
+var ErrClusterNotVisible = errors.New("cluster is not visible for metrics")
+
+// VisibleClusterParams describes a resolved RBAC visibility. Global sees
 // everything; otherwise the two sets are unioned, which matches how a
 // Tenant-scoped binding and a Project-scoped binding combine.
-type ListVisibleClustersParams struct {
+type VisibleClusterParams struct {
 	Global     bool
 	TenantIDs  []string
 	ProjectIDs []string
-	// Limit bounds the answer. A query covering more Clusters than this is
-	// refused rather than silently narrowed, so nobody reads a partial view as
-	// a complete one.
-	Limit int
 }
 
-func (store *MetricsScopeStore) ListVisibleClusters(
+// GetVisibleCluster resolves one Cluster inside a visibility, or reports that
+// it is out of scope.
+//
+// One row rather than the whole visible list: a query names exactly one target
+// Cluster, and a Console page holding a dozen charts would otherwise read every
+// Cluster the caller can see a dozen times over to answer a membership test
+// that the primary key already answers.
+func (store *MetricsScopeStore) GetVisibleCluster(
 	ctx context.Context,
-	params ListVisibleClustersParams,
-) ([]ClusterScope, error) {
+	params VisibleClusterParams,
+	clusterID string,
+) (ClusterScope, error) {
 	if !params.Global && len(params.TenantIDs) == 0 && len(params.ProjectIDs) == 0 {
-		return nil, nil
+		return ClusterScope{}, ErrClusterNotVisible
 	}
-	if params.Limit <= 0 {
-		return nil, fmt.Errorf("visible Cluster limit must be positive")
-	}
-	rows, err := store.pool.Query(
+	var scope ClusterScope
+	err := store.pool.QueryRow(
 		ctx,
 		`
 SELECT id, name, tenant_id, project_id, status
 FROM clusters
-WHERE $1
-   OR tenant_id = ANY ($2::uuid[])
-   OR project_id = ANY ($3::uuid[])
-ORDER BY name, id
-LIMIT $4
+WHERE id = $1
+  AND (
+       $2
+    OR tenant_id = ANY ($3::uuid[])
+    OR project_id = ANY ($4::uuid[])
+  )
 `,
+		clusterID,
 		params.Global,
 		params.TenantIDs,
 		params.ProjectIDs,
-		params.Limit,
+	).Scan(
+		&scope.ClusterID,
+		&scope.ClusterName,
+		&scope.TenantID,
+		&scope.ProjectID,
+		&scope.Status,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ClusterScope{}, ErrClusterNotVisible
+	}
 	if err != nil {
-		return nil, fmt.Errorf("list visible Clusters: %w", err)
+		return ClusterScope{}, fmt.Errorf("get visible Cluster: %w", err)
 	}
-	defer rows.Close()
-
-	var scopes []ClusterScope
-	for rows.Next() {
-		var scope ClusterScope
-		if err := rows.Scan(
-			&scope.ClusterID,
-			&scope.ClusterName,
-			&scope.TenantID,
-			&scope.ProjectID,
-			&scope.Status,
-		); err != nil {
-			return nil, fmt.Errorf("scan visible Cluster: %w", err)
-		}
-		scopes = append(scopes, scope)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read visible Clusters: %w", err)
-	}
-	return scopes, nil
+	return scope, nil
 }

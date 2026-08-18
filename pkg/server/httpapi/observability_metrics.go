@@ -13,10 +13,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/metricsquery"
 )
 
-const (
-	maxQueryClusterIDs = 200
-	maxStepSeconds     = 24 * 60 * 60
-)
+const maxStepSeconds = 24 * 60 * 60
 
 type metricsQueryService interface {
 	Catalog() []metricsquery.Definition
@@ -91,7 +88,8 @@ type metricsQueryResponse struct {
 	Start       time.Time                    `json:"start"`
 	End         time.Time                    `json:"end"`
 	StepSeconds int64                        `json:"step_seconds"`
-	ClusterIDs  []string                     `json:"cluster_ids"`
+	ClusterID   string                       `json:"cluster_id"`
+	ClusterName string                       `json:"cluster_name"`
 	Series      []metricsQuerySeriesResponse `json:"series"`
 	Truncated   bool                         `json:"truncated"`
 	Partial     bool                         `json:"partial"`
@@ -185,12 +183,6 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 			message: "当前权限范围内没有可读取指标的集群",
 		},
 		errorMapping{
-			target:  metricsquery.ErrTooManyTargets,
-			status:  http.StatusBadRequest,
-			code:    "scope_too_wide",
-			message: "查询覆盖的集群过多，请缩小范围",
-		},
-		errorMapping{
 			target:  metricsquery.ErrUnavailable,
 			status:  http.StatusServiceUnavailable,
 			code:    "storage_unavailable",
@@ -244,7 +236,8 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 		Start:       result.Start,
 		End:         result.End,
 		StepSeconds: result.StepSeconds,
-		ClusterIDs:  result.ClusterIDs,
+		ClusterID:   result.ClusterID,
+		ClusterName: result.ClusterName,
 		Series:      series,
 		Truncated:   result.Truncated,
 		Partial:     result.Partial,
@@ -253,34 +246,24 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 }
 
 // parseMetricsQuery validates transport-level shape only. Whether the caller
-// may read the named Clusters is decided by the service, which is the single
+// may read the named Cluster is decided by the service, which is the single
 // place that resolves scope.
 func parseMetricsQuery(c *gin.Context) (metricsquery.Input, bool) {
 	input := metricsquery.Input{
 		Name:      strings.TrimSpace(c.Query("name")),
+		ClusterID: strings.TrimSpace(c.Query("cluster_id")),
 		Namespace: strings.TrimSpace(c.Query("namespace")),
 	}
 	if input.Name == "" {
 		writeError(c, http.StatusBadRequest, "invalid_request", "name is required")
 		return metricsquery.Input{}, false
 	}
-	if raw := strings.TrimSpace(c.Query("cluster_ids")); raw != "" {
-		for _, clusterID := range strings.Split(raw, ",") {
-			clusterID = strings.TrimSpace(clusterID)
-			if clusterID == "" {
-				continue
-			}
-			input.ClusterIDs = append(input.ClusterIDs, clusterID)
-		}
-		if len(input.ClusterIDs) > maxQueryClusterIDs {
-			writeError(
-				c,
-				http.StatusBadRequest,
-				"invalid_request",
-				"too many cluster identifiers",
-			)
-			return metricsquery.Input{}, false
-		}
+	// Required rather than defaulted to "everything visible": a chart drawn
+	// without a target would be answering about whichever Clusters the caller
+	// happens to have, which is not a question anybody asked.
+	if input.ClusterID == "" {
+		writeError(c, http.StatusBadRequest, "invalid_request", "cluster_id is required")
+		return metricsquery.Input{}, false
 	}
 	start, ok := parseQueryTime(c, "start")
 	if !ok {

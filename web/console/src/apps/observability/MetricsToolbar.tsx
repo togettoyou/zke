@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/select";
 
 import { TimeRangePicker } from "./TimeRangePicker";
-import { ALL_CLUSTERS, REFRESH_CHOICES, useMetricsScope } from "./metrics-scope";
+import { REFRESH_CHOICES, useMetricsScope } from "./metrics-scope";
 import { MAX_RANGE_SECONDS, rangeSeconds } from "./time-range";
 
 /**
@@ -36,12 +36,22 @@ export function MetricsToolbar() {
 
   return (
     <>
-      <Select value={clusterId} onValueChange={setClusterId}>
-        <SelectTrigger className="h-8 w-[13rem] text-[13px]" aria-label="集群范围">
-          <SelectValue />
+      {/* The target Cluster, and the only scope in this application. Charts
+          are read one Cluster at a time, the way the container service is
+          operated one Cluster at a time: two Clusters summed into one curve is
+          a number that exists nowhere, and two drawn on shared axes are two
+          questions in one picture.
+
+          Labelled the way the container service labels it. A bare select in a
+          toolbar leaves the reader to infer what it selects, and the two
+          applications selecting the same thing should say so with the same
+          words. */}
+      <span className="text-muted-foreground text-xs">目标集群</span>
+      <Select value={clusterId} onValueChange={setClusterId} disabled={clusters.length === 0}>
+        <SelectTrigger className="h-8 w-[13rem] text-[13px]" aria-label="目标集群">
+          <SelectValue placeholder="选择集群" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={ALL_CLUSTERS}>全部集群（{clusters.length}）</SelectItem>
           {clusters.map((cluster) => (
             <SelectItem key={cluster.id} value={cluster.id}>
               {cluster.name}

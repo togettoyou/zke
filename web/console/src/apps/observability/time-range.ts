@@ -96,6 +96,20 @@ export function resolveWindow(range: TimeRange, nowMs: number): TimeWindow {
   return { startMs: endMs - range.seconds * 1000, endMs, stepSeconds };
 }
 
+/**
+ * Names a window without pinning it in time.
+ *
+ * "The last hour at a one minute step" is one question whose answer moves;
+ * putting the moving endpoints in a cache key made every tick of the clock a
+ * different question, which is how a refresh became a reload. Two windows share
+ * a key exactly when they are the same question.
+ */
+export function windowKeyFor(range: TimeRange, window: TimeWindow): string {
+  return range.kind === "relative"
+    ? `relative:${range.seconds}:${window.stepSeconds}`
+    : `absolute:${range.startMs}:${range.endMs}:${window.stepSeconds}`;
+}
+
 export function rangeSeconds(range: TimeRange): number {
   return range.kind === "relative"
     ? range.seconds

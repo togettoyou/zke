@@ -204,9 +204,6 @@ observability:
     # some deployments put the two behind different addresses.
     storage_query_url: http://127.0.0.1:8428/prometheus
     storage_query_timeout: 30s
-    # A query covering more Clusters than this is refused rather than narrowed,
-    # so nobody reads a partial view as a complete one.
-    max_query_clusters: 200
     max_query_points: 1500
     max_query_series: 500
     max_query_range: 168h

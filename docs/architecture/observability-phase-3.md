@@ -30,9 +30,9 @@
 > 尚未验证：node-exporter 在 `restricted` Namespace 下的实际拒绝路径（需要一个这样的 Namespace，替身客户端
 > 只模拟过该拒绝）。每集群预算只在单元测试中验证过，没有观察过 vmagent 收到 `RESOURCE_EXHAUSTED` 后的退避
 > 与回灌行为；容量、保留期与预算的实际取值还没有基线数据，当前默认值是保护性取值，五个抓取任务合计约十倍
-> 基数是按固定 allowlist 推算的结果而不是实测值。**kubelet 的 cAdvisor 与卷统计端点、node-exporter 新增的
-> netstat / conntrack / pressure 三个 collector 都是在上述验证之后加入的，尚未在真实集群上抓过。** 日志、
-> 告警与集群标签体系仍是规划（见 §13）。
+> 基数是按固定 allowlist 推算的结果而不是实测值。kubelet 的 cAdvisor 端点与 node-exporter 新增的
+> netstat / conntrack / pressure 三个 collector 已对着真实组件核对过指标名与标签形状（见 §14），
+> **`kubelet_volume_stats_*` 仍未在带 CSI 卷的真实集群上抓到过序列**。日志、告警仍是规划（见 §13）。
 
 前置阅读：[Server + Agent 架构](server-agent.md)、[Phase 2 Server–Agent 协议设计](agent-protocol-phase-2.md)、
 [应用作用域与资源模型](resource-model.md)、[安全与权限](../security/authorization.md)。
@@ -40,7 +40,7 @@
 
 ## 1. 目标
 
-- 在不要求 Server 直连任何集群网络的前提下，提供跨集群的指标查询与集群健康视图；
+- 在不要求 Server 直连任何集群网络的前提下，为接入的每一个集群提供指标查询与集群健康视图；
 - 可视化在 ZKE Console 内自建，与桌面工作空间的窗口、权限和作用域模型保持一致，不引入第二套 UI、
   第二套登录与第二套权限体系；
 - 采集、回传、存储和查询的每一段都保留不可变的 `cluster_id`，多集群数据不串扰；
@@ -493,6 +493,12 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 `resource` 标签再取并集，因此总览的指标卡片是一次往返而不是八次。这些数字总是一起读，而每一次往返都落在
 所有集群共用的存储上。
 
+**作用域是一个集群，不是一组。** 目标集群必填，来自当前项目的集群列表，与容器服务和终端读的是同一份列表。
+把多个集群的同名序列加在一起会得到一个不存在的数，把它们画在共享坐标轴上则是把两个问题塞进一张图；集群
+之间的对比是另一个功能，不是同一张折线图的默认行为。这条选择还让作用域过滤从对一个集合的正则匹配
+（`zke_cluster_id=~"a|b|c"`）变成对单个标签值的等值匹配（`zke_cluster_id="a"`）——后者直接走标签索引，
+不需要对候选值逐个求值，而每一个打开的图表分区都是十几次这样的查询。
+
 **利用率与申请占比是两个问题。** 利用率是用量除以可分配量，申请占比是申请量除以可分配量。一个申请占比接近
 1、利用率只有 0.2 的集群既不是"很闲"也不是"很满"：它已经调度不进新工作负载，而节点是空的。只画其中一条线
 的界面回答不了这个最常见的容量问题，所以两者画在同一张图上。
@@ -644,8 +650,8 @@ Recharts / ECharts 等通用库（功能远超所需，体积与主题定制成�
 - 加载中、无权限、采集未启用、数据空洞、部分失败与限流是六种不同的空状态，各自有明确文案与后续动作，
   不复用同一个"暂无数据"。
 
-**时间窗口属于视图，不属于单张图。** 顶部一行筛选器（集群、时间范围、自动刷新）作用于其下的每一张图，
-四个图表分区共用同一份状态：换到另一个分区不需要把"哪些集群、哪一个小时"再说一遍。窗口有两种：跟着时钟走
+**时间窗口属于视图，不属于单张图。** 顶部一行筛选器（目标集群、时间范围、自动刷新）作用于其下的每一张
+图，四个图表分区共用同一份状态：换到另一个分区不需要把"哪个集群、哪一个小时"再说一遍。窗口有两种：跟着时钟走
 的相对范围，和钉住不动的绝对范围。在图上横向拖拽产生的是后者——一个仍然跟着时钟走的选区会从操作者刚刚指
 着的东西下面滑走。绝对范围下自动刷新停摆，窗口最小化时同样停摆：这里的每一次请求最终都落在所有集群共用的
 存储上。
@@ -714,8 +720,8 @@ Recharts / ECharts 等通用库（功能远超所需，体积与主题定制成�
   `collector_buffer_size`、`scrape_interval`、`kubelet_metrics_port`、`ingest_session_timeout`、
   `max_batch_bytes`、`max_ingest_streams`、`max_decompressed_batch_bytes`、每批的序列与样本上限、
   标签数量与长度上限、样本时间窗口、每集群的 `max_samples_per_second_per_cluster`、`sample_burst_window`、
-  `max_active_series_per_cluster` 与 `active_series_window`，以及查询侧的 `max_query_clusters`、
-  `max_query_points`、`max_query_series`、`max_query_range`、`min_query_step`；
+  `max_active_series_per_cluster` 与 `active_series_window`，以及查询侧的 `max_query_points`、
+  `max_query_series`、`max_query_range`、`min_query_step`；
 - Agent `metrics_ingest`：`address`、`max_batch_bytes`、`max_concurrent_batches`、`session_timeout`、
   `token_refresh_interval`、`unavailable_retry_after` 与该 HTTP 端点自身的超时。Agent 侧**没有**开关：
   是否采集由 Server 决定（它是否有存储、是否通告能力），再由操作者决定（是否安装采集组件），Agent 配置
@@ -742,11 +748,10 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
    Console 在缺少组件时说明而不是呈现空图。此后在同一形状上补齐了 kubelet 的另外两个端点（容器 CPU 限流、
    Pod 网络、PVC 使用率与 inode）、容器维度用量、容器等待与退出原因、Namespace 配额，以及节点的连接跟踪、
    TCP 重传与 PSI 压力停顿——都没有引入第四个采集组件。
-4. **集群标签体系**：为跨集群筛选与分组提供稳定的标签维度，先在查询层落地，不改变存储侧身份标签。
-5. **日志链路**：VictoriaLogs 与日志采集，复用同一条回传通道与作用域改写机制；正文体量、保留期与
+4. **日志链路**：VictoriaLogs 与日志采集，复用同一条回传通道与作用域改写机制；正文体量、保留期与
    敏感内容过滤需要独立设计。
-6. **告警**：告警规则、评估位置（Server 侧集中评估与集群侧就地评估的取舍）、告警记录与通知，
-   依赖前五个切片就绪。
+5. **告警**：告警规则、评估位置（Server 侧集中评估与集群侧就地评估的取舍）、告警记录与通知，
+   依赖前四个切片就绪。
 
 每个切片都包含自己的 Console 视图。可视化不是排在链路之后的独立阶段：一条没有视图的采集链路无法验证
 它采到的数据是否正确。
@@ -799,17 +804,30 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 
 已执行：上述条目由 `pkg/server/metricsingest`、`pkg/server/metricsquery` 与 `pkg/agent` 的单元测试覆盖
 （含并发摄取的 `-race` 用例，以及用 reactor 模拟 Pod Security 拒绝的用例）；目录中全部 70 个查询在真实的
-VictoriaMetrics v1.149.0 上执行通过，其中工作负载两级归属与利用率的数值都做了断言；Console 通过
-`typecheck`、`lint`、`format:check` 与生产构建。
+VictoriaMetrics v1.149.0 上执行通过，其中工作负载两级归属与利用率的数值都做了断言。
+
+查询目录的集成测试现在还要求**每一个条目都真的选到序列**。此前它只断言查询不报 PromQL 错误，而一个引用了
+无人抓取的指标族、或 join 落在一侧没有的标签上的模板，同样不报错、同样返回空——在 Console 里就是一张采集
+健康的集群上的空图，是没有任何错误路径会报告的那一种失效。种子因此补齐了目录读取的全部指标族（cAdvisor
+的限流与 Pod 网络、kubelet 卷统计、容器等待与退出原因、ResourceQuota、conntrack、netstat、PSI，以及采集器
+自身的 `up`），被守卫的比值（限流比例、配额使用率、PVC 使用率）另外断言了数值。
+
+指标名不是本仓库能决定的，因此另外对着真实组件核对过：kubelet v1.31.1 的 `/metrics/resource` 与
+`/metrics/cadvisor` 确认了六个 kubelet 指标族与 cAdvisor 四个族的名称与标签形状（Pod 级网络序列的
+`container` 为空、每个 Pod 每张网卡一条，因此 labeldrop 掉 `id`/`image`/`name` 之后不会产生重复序列）；
+node-exporter v1.12.1 在 ZKE 下发的同一组 collector 参数下确认了 conntrack、netstat 四个字段与三个 PSI
+指标族，且 `--collector.netstat.fields` 之后暴露的恰好是目录读取的那四个。
+
+Console 通过 `typecheck`、`lint`、`format:check` 与生产构建。
 
 三个组件在真实集群上一起装过（`ZKE_LIVE_KUBERNETES_E2E=1 go test ./pkg/agent -run LiveMetricsCollector`），
 完整链路也跑通到 Console 的图表。
 
 **未执行**：node-exporter 在 `restricted` Namespace 下的实际拒绝路径只用 reactor 模拟过，没有对着真实的
 Pod Security 准入跑过。限流没有在真实集群的 vmagent 上验证过退避与回灌行为，基数估算的误差没有对着真实
-基数分布测过，十倍基数增长是按固定 allowlist 推算的结果而不是实测值；cAdvisor、kubelet 卷统计与新增的
-三个 node-exporter collector 都还没有在真实集群上抓过，PSI 在缺少 `/proc/pressure` 的内核上的表现也只按
-上游文档推断。
+基数分布测过，十倍基数增长是按固定 allowlist 推算的结果而不是实测值。`kubelet_volume_stats_*` 只核对了
+kubelet 声明的族名，没有在带 CSI 卷的真实集群上抓到过序列——手边的单节点集群用 hostPath 供给 PVC，kubelet
+不为它上报卷统计。PSI 在缺少 `/proc/pressure` 的内核上的表现也只按上游文档推断。
 
 性能指标先记录基线再设阈值，不预设未经实测的吞吐、延迟或容量承诺。
 

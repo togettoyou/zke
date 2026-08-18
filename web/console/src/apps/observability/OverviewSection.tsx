@@ -20,14 +20,16 @@ import { useMetricsScope } from "./metrics-scope";
  * and whether containers are restarting.
  */
 export function OverviewSection() {
-  const { clusterIds, clusters, window: chartWindow, live } = useMetricsScope();
+  const { clusterId, windowKey, readWindow, live } = useMetricsScope();
   const inventory = useMetricsQuery(
     {
       name: "cluster_inventory",
-      clusterIds,
-      // Anchored to the same window end as the charts, so the row and the
-      // curves under it describe the same moment.
-      end: new Date(chartWindow.endMs),
+      clusterId,
+      // Anchored to the same window as the charts, so the row and the curves
+      // under it describe the same moment. An instant query reads only the end
+      // of it; the Server ignores the rest.
+      windowKey,
+      window: readWindow,
     },
     { live, intervalMs: 0 },
   );
@@ -64,13 +66,11 @@ export function OverviewSection() {
         />
       ) : (
         <div className="@container">
-          <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-3 @5xl:grid-cols-6">
-            <StatTile
-              label="集群"
-              value={clusters.length}
-              note="正在上报指标"
-              loading={inventory.isPending}
-            />
+          {/* Five tiles, not six: the Cluster count that used to lead this row
+              answered a question this application no longer asks. The target
+              Cluster is named in the toolbar, and counting it as "1" beside
+              real numbers reads as a measurement rather than as a heading. */}
+          <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-3 @5xl:grid-cols-5">
             <StatTile
               label="节点"
               value={nodes}

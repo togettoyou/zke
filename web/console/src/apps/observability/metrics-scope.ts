@@ -4,13 +4,14 @@ import type { useMetricsQuery } from "@/api/queries/observability";
 
 import type { TimeRange, TimeWindow } from "./time-range";
 
-export const ALL_CLUSTERS = "__all__";
-
 /**
- * What the Server accepts as a Namespace, checked here so a typo does not
- * become a 400 the operator has to read as an error banner.
+ * The Namespace filter's "no filter" choice.
+ *
+ * A sentinel rather than the empty string because a Radix select item cannot
+ * carry an empty value — it reserves that for "nothing is selected", which is a
+ * different state from "every Namespace".
  */
-export const NAMESPACE_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+export const ALL_NAMESPACES = "__all__";
 
 export const DEFAULT_RANGE: TimeRange = { kind: "relative", seconds: 60 * 60 };
 
@@ -24,11 +25,20 @@ export const REFRESH_CHOICES: readonly { value: number | null; label: string }[]
 export type MetricsCluster = { id: string; name: string };
 
 export type MetricsScopeValue = {
+  /** The Clusters of the currently selected Project, in listing order. */
   clusters: MetricsCluster[];
+  /**
+   * The Cluster every chart in the application describes. Empty only before the
+   * Cluster list has loaded, or when the Project has none.
+   *
+   * One Cluster rather than a set, for the same reason the container service is
+   * operated one Cluster at a time: adding two Clusters' curves together
+   * produces a number that exists nowhere, and drawing them side by side on
+   * shared axes puts two questions in one picture. Comparing Clusters is a
+   * different feature from watching one.
+   */
   clusterId: string;
   setClusterId: (value: string) => void;
-  /** undefined means every Cluster the caller may read. */
-  clusterIds: string[] | undefined;
   namespace: string;
   setNamespace: (value: string) => void;
   top: number;
@@ -38,7 +48,22 @@ export type MetricsScopeValue = {
   /** Turns a drag across a chart into the window every chart then draws. */
   selectRange: (startMs: number, endMs: number) => void;
   zoomOutRange: () => void;
-  window: TimeWindow;
+  /**
+   * Identifies the window without its position, so a chart keeps one cache
+   * entry while the clock moves under it.
+   *
+   * The resolved window itself is deliberately not on this value. Nothing reads
+   * it, and putting an object that is rebuilt on every tick of the clock into
+   * the context would re-render every consumer once a minute to hand them
+   * numbers they never look at.
+   */
+  windowKey: string;
+  /**
+   * Reads the window a request should ask for, at the moment it asks. Shared by
+   * every chart, so panels that issue their own requests still describe the
+   * same window.
+   */
+  readWindow: () => TimeWindow;
   refreshSeconds: number | null;
   setRefreshSeconds: (value: number | null) => void;
   refresh: () => void;
@@ -56,9 +81,11 @@ export function useMetricsScope(): MetricsScopeValue {
 }
 
 /**
- * The Cluster inventory, shared so the gate and the toolbar read one answer.
- * It is `collection_health`: an instant query over every visible Cluster, so it
- * names exactly the Clusters that have sent anything.
+ * Whether the selected Cluster has reported anything at all.
+ *
+ * `collection_health` reads the collector's own scrape results, so an empty
+ * answer means this Cluster has sent nothing — which is a different screen from
+ * a Cluster that is reporting but idle, and the reason the gate exists.
  */
 export type MetricsHealthQuery = ReturnType<typeof useMetricsQuery>;
 

@@ -178,6 +178,7 @@ export const queryKeys = {
 
 /** Prefixes used for coarse invalidation after a mutation. */
 export const queryKeyPrefixes = {
+  metricsQuery: ["metrics-query"] as const,
   tenants: ["tenants"] as const,
   projects: ["projects"] as const,
   clusters: ["clusters"] as const,

@@ -1,7 +1,7 @@
-import { useId, useState } from "react";
+import { useState } from "react";
 
+import { useNamespaces } from "@/api/queries/namespaces";
 import { SectionToolbarActions } from "@/apps/AppShell";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -13,9 +13,17 @@ import { cn } from "@/lib/cn";
 
 import { ChartPanel } from "./ChartPanel";
 import type { MetricsView, MetricsViews } from "./metrics-catalog";
-import { NAMESPACE_PATTERN, useMetricsScope } from "./metrics-scope";
+import { ALL_NAMESPACES, useMetricsScope } from "./metrics-scope";
 
 const TOP_CHOICES = [5, 10, 20] as const;
+
+/**
+ * How many Namespaces the filter offers, matching the container service.
+ *
+ * The two applications pick a Namespace out of the same Cluster, so they should
+ * offer the same list rather than disagreeing about how much of it exists.
+ */
+const NAMESPACE_PICKER_LIMIT = 500;
 
 /**
  * A row of choices that swaps what is drawn below it.
@@ -73,13 +81,30 @@ export function SegmentedTabs<T extends { id: string; label: string }>({
  * are portaled into the shell's toolbar so every filter still reads as one row.
  */
 function ViewFilters({ view }: { view: MetricsView }) {
-  const { namespace, setNamespace, top, setTop } = useMetricsScope();
-  const namespaceInputId = useId();
-  // Draft and applied are separate so a half-typed Namespace never becomes a
-  // request: "kube-sys" is a valid name that simply has no data, and firing it
-  // would answer 暂无数据 while the operator is still typing 「kube-system」.
-  const [draft, setDraft] = useState(namespace);
-  const invalid = draft !== "" && !NAMESPACE_PATTERN.test(draft);
+  const { clusterId, namespace, setNamespace, top, setTop } = useMetricsScope();
+
+  // Chosen rather than typed, the way the container service chooses one.
+  //
+  // A text field asked the operator to know a name before they could use the
+  // filter, and spelling it almost right produced an empty chart rather than an
+  // error — 「kube-sys」 is a perfectly valid Namespace name that simply does not
+  // exist. The list is the Cluster's own answer, so a choice from it always
+  // names something real.
+  //
+  // Only fetched for a view that has the filter: the other views would be
+  // asking a Cluster for a list nothing on screen can use.
+  const namespaces = useNamespaces(view.namespace && clusterId ? clusterId : null, {
+    limit: NAMESPACE_PICKER_LIMIT,
+  });
+  const listed = (namespaces.data?.namespaces ?? []).map((item) => item.name);
+  const truncated = Boolean(namespaces.data?.continue_token);
+  // The current filter is always an option, even when the list does not contain
+  // it — while the list is still loading, or after the Namespace was deleted.
+  // The alternative is a select reading 全部 while the queries under it are
+  // still filtered, which is a picker that lies about what is on screen.
+  const namespaceNames =
+    namespace === "" || listed.includes(namespace) ? listed : [namespace, ...listed];
+  const selected = namespace === "" ? ALL_NAMESPACES : namespace;
 
   if (!view.top && !view.namespace) {
     return null;
@@ -87,34 +112,37 @@ function ViewFilters({ view }: { view: MetricsView }) {
   return (
     <SectionToolbarActions>
       {view.namespace ? (
-        <form
-          className="flex items-center gap-1.5"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!invalid) {
-              setNamespace(draft);
-            }
-          }}
-        >
-          <label htmlFor={namespaceInputId} className="text-muted-foreground text-xs">
-            Namespace
-          </label>
-          <Input
-            id={namespaceInputId}
-            className="h-8 w-[11rem] text-[13px]"
-            value={draft}
-            placeholder="全部"
-            aria-invalid={invalid}
-            aria-describedby={invalid ? `${namespaceInputId}-error` : undefined}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={() => !invalid && setNamespace(draft)}
-          />
-          {invalid ? (
-            <span id={`${namespaceInputId}-error`} className="text-danger text-xs">
-              只能包含小写字母、数字和短横线
-            </span>
-          ) : null}
-        </form>
+        <div className="flex items-center gap-1.5">
+          {/* Named as the navigation rail and the container service name it.
+              One resource with two names in one Console is one name too many. */}
+          <span className="text-muted-foreground text-xs">命名空间</span>
+          <Select
+            value={selected}
+            onValueChange={(value) => setNamespace(value === ALL_NAMESPACES ? "" : value)}
+            disabled={!clusterId || namespaces.isLoading}
+          >
+            <SelectTrigger className="h-8 w-[11rem] text-[13px]" aria-label="命名空间">
+              <SelectValue placeholder={namespaces.isLoading ? "加载命名空间…" : "全部"} />
+            </SelectTrigger>
+            <SelectContent>
+              {/* Unlike the container service, "every Namespace" is a real
+                  answer here: a Cluster-wide curve is what most of these panels
+                  are opened for, and the filter narrows it rather than being a
+                  precondition for asking. */}
+              <SelectItem value={ALL_NAMESPACES}>全部</SelectItem>
+              {namespaceNames.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {name}
+                </SelectItem>
+              ))}
+              {truncated ? (
+                <p className="text-subtle-foreground px-2 py-1.5 text-[11px]">
+                  只列出前 {NAMESPACE_PICKER_LIMIT} 个命名空间
+                </p>
+              ) : null}
+            </SelectContent>
+          </Select>
+        </div>
       ) : null}
       {view.top ? (
         <Select value={String(top)} onValueChange={(value) => setTop(Number(value))}>

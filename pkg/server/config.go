@@ -83,7 +83,6 @@ type MetricsConfig struct {
 	// addresses.
 	StorageQueryURL      string        `yaml:"storage_query_url"`
 	StorageQueryTimeout  time.Duration `yaml:"storage_query_timeout"`
-	MaxQueryClusters     int           `yaml:"max_query_clusters"`
 	MaxQueryPoints       int           `yaml:"max_query_points"`
 	MaxQuerySeries       int           `yaml:"max_query_series"`
 	MaxQueryRange        time.Duration `yaml:"max_query_range"`
@@ -385,7 +384,6 @@ func DefaultConfig() Config {
 				KubeletMetricsPort:   metricscollector.DefaultKubeletMetricsPort,
 				StorageWriteTimeout:  metricsingest.DefaultWriteTimeout,
 				StorageQueryTimeout:  metricsquery.DefaultQueryTimeout,
-				MaxQueryClusters:     metricsquery.DefaultMaxClusters,
 				MaxQueryPoints:       metricsquery.DefaultMaxPoints,
 				MaxQuerySeries:       metricsquery.DefaultMaxSeries,
 				MaxQueryRange:        metricsquery.DefaultMaxRange,

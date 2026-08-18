@@ -832,7 +832,6 @@ func newMetricsQueryService(
 		metricsquery.Config{
 			QueryURL:     metrics.StorageQueryURL,
 			QueryTimeout: metrics.StorageQueryTimeout,
-			MaxClusters:  metrics.MaxQueryClusters,
 			MaxPoints:    metrics.MaxQueryPoints,
 			MaxSeries:    metrics.MaxQuerySeries,
 			MaxRange:     metrics.MaxQueryRange,

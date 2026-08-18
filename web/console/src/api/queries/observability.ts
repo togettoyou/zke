@@ -1,10 +1,4 @@
-import {
-  keepPreviousData,
-  useMutation,
-  useQueries,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, csrfHeaders, unwrap } from "../client";
 import { queryKeys } from "../query-keys";
@@ -18,6 +12,25 @@ import { queryKeys } from "../query-keys";
  * chart.
  */
 const METRICS_POLL_MS = 60_000;
+
+/**
+ * The window a chart asks for, resolved when the request is made rather than
+ * when the component rendered.
+ *
+ * This is what makes a refresh a refresh instead of a different question. A
+ * moving window used to be part of the cache key, so every tick of the clock
+ * minted a new entry: the chart had no data for it, went back to `pending`, and
+ * put a spinner where the curves had been — once a minute, on every panel at
+ * once. `placeholderData: keepPreviousData` covers exactly this case for
+ * `useQuery` and has no effect inside `useQueries`, which is what every panel
+ * uses, so the previous answer was not carried across either.
+ *
+ * Keeping the position out of the key means "the last hour" is one entry whose
+ * contents move. Refreshing invalidates it, the same observer receives new data
+ * while still holding the old, and the chart updates through uPlot's `setData`
+ * without ever unmounting.
+ */
+export type MetricsWindow = { startMs: number; endMs: number; stepSeconds: number };
 
 /**
  * Collector status is polled faster than the charts: after an install the
@@ -47,12 +60,28 @@ export type MetricsPollOptions = {
 
 export type MetricsQueryParams = {
   name: string;
-  clusterIds?: string[];
+  /**
+   * The one Cluster the chart describes. Required by the Server: a chart with
+   * no target would be answering about whichever Clusters the caller happens to
+   * have, which is not a question anybody asked.
+   */
+  clusterId: string;
   namespace?: string;
-  start?: Date;
-  end?: Date;
-  stepSeconds?: number;
   top?: number;
+  /**
+   * Names the window without pinning it in time — "the last hour at a one
+   * minute step" rather than a pair of timestamps. It is what goes in the cache
+   * key, so the entry survives the clock moving.
+   */
+  windowKey?: string;
+  /**
+   * Reads the window to ask for, called once per request. Every chart on screen
+   * reads the same source, so a refresh moves all of them to the same window
+   * even though each one issues its own request.
+   *
+   * Omitted by an instant query that only needs "now".
+   */
+  window?: () => MetricsWindow;
 };
 
 export function useMetricsQueryCatalog() {
@@ -66,16 +95,14 @@ export function useMetricsQueryCatalog() {
   });
 }
 
-/** The wire shape of one catalogue query, and the cache key it is read under. */
-function metricsQueryParams(params: MetricsQueryParams) {
+/** What identifies one chart's answer, with the clock left out of it. */
+function metricsCacheKey(params: MetricsQueryParams) {
   return {
     name: params.name,
-    ...(params.clusterIds?.length ? { cluster_ids: params.clusterIds.join(",") } : {}),
+    cluster_id: params.clusterId,
     ...(params.namespace ? { namespace: params.namespace } : {}),
-    ...(params.start ? { start: params.start.toISOString() } : {}),
-    ...(params.end ? { end: params.end.toISOString() } : {}),
-    ...(params.stepSeconds ? { step_seconds: params.stepSeconds } : {}),
     ...(params.top ? { top: params.top } : {}),
+    ...(params.windowKey ? { window: params.windowKey } : {}),
   };
 }
 
@@ -83,22 +110,35 @@ function metricsQueryOptions(
   params: MetricsQueryParams,
   { live = true, intervalMs = METRICS_POLL_MS }: MetricsPollOptions,
 ) {
-  const query = metricsQueryParams(params);
   return {
-    queryKey: queryKeys.metricsQuery(query),
-    queryFn: async ({ signal }: { signal: AbortSignal }) =>
-      unwrap(
+    queryKey: queryKeys.metricsQuery(metricsCacheKey(params)),
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const window = params.window?.();
+      const query = {
+        name: params.name,
+        cluster_id: params.clusterId,
+        ...(params.namespace ? { namespace: params.namespace } : {}),
+        ...(params.top ? { top: params.top } : {}),
+        ...(window
+          ? {
+              start: new Date(window.startMs).toISOString(),
+              end: new Date(window.endMs).toISOString(),
+              step_seconds: window.stepSeconds,
+            }
+          : {}),
+      };
+      return unwrap(
         await api.GET("/api/v1/observability/metrics/query", {
           params: { query },
           signal,
         }),
-      ),
+      );
+    },
     refetchInterval: (live && intervalMs > 0 && intervalMs) as number | false,
-    // A moved window is a new cache entry, and a chart that emptied itself on
-    // every step of the clock would flash under the operator's cursor. Holding
-    // the previous answer until the new one lands keeps the frame; the view
-    // dims it so nobody reads stale data as current.
-    placeholderData: keepPreviousData,
+    // The answer is a window ending now, so it is stale the moment it lands.
+    // Refreshing is driven by the view, which invalidates every metrics query
+    // at once so the panels stay on the same window.
+    staleTime: 0,
   };
 }
 
@@ -106,7 +146,7 @@ export function useMetricsQuery(
   params: MetricsQueryParams | null,
   options: MetricsPollOptions = {},
 ) {
-  const resolved = metricsQueryOptions(params ?? { name: "" }, options);
+  const resolved = metricsQueryOptions(params ?? { name: "", clusterId: "" }, options);
   return useQuery({ ...resolved, enabled: Boolean(params) });
 }
 

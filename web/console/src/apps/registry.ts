@@ -140,8 +140,11 @@ export const APP_MANIFESTS: AppManifest[] = [
     availability: { state: "available" },
     // Wider than the other applications: every chart section lays its panels
     // out two per row, and this is the width that gives both of them a
-    // readable plot without the operator resizing the window first.
-    defaultSize: { width: 1_180, height: 680 },
+    // readable plot without the operator resizing the window first. The rail
+    // and the panel padding come off the top before the plots get their share,
+    // so the two columns need more room here than a table-shaped application
+    // does at the same nominal width.
+    defaultSize: { width: 1_280, height: 680 },
     entry: ObservabilityApp,
   },
 ];

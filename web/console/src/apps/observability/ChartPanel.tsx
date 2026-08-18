@@ -39,17 +39,16 @@ type PanelSeries = ChartSeries & {
  * empty box would leave the reader to guess which one they are looking at.
  */
 export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
-  const { clusterIds, window: chartWindow, live, selectRange } = useMetricsScope();
+  const { clusterId, windowKey, readWindow, live, selectRange } = useMetricsScope();
   const palette = useChartPalette();
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
 
   const results = useMetricsQueries(
     panel.queries.map((query) => ({
       name: query.name,
-      clusterIds,
-      start: new Date(chartWindow.startMs),
-      end: new Date(chartWindow.endMs),
-      stepSeconds: chartWindow.stepSeconds,
+      clusterId,
+      windowKey,
+      window: readWindow,
       ...(namespace ? { namespace } : {}),
       ...(top ? { top } : {}),
     })),
@@ -112,10 +111,20 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
         </div>
         {/* A quiet mark rather than a spinner over the chart: the previous
             answer stays on screen while the next one loads, and something has
-            to say that it is the previous one. */}
-        {fetching && !pending ? (
-          <span className="text-subtle-foreground shrink-0 text-[11px]">更新中…</span>
-        ) : null}
+            to say that it is the previous one.
+
+            Always mounted and faded, never conditionally rendered: appearing
+            and disappearing changes the width left to the title beside it, and
+            a heading that reflows once a minute is its own kind of flicker. */}
+        <span
+          aria-hidden={!(fetching && !pending)}
+          className={cn(
+            "text-subtle-foreground shrink-0 text-[11px] transition-opacity duration-200",
+            fetching && !pending ? "opacity-100" : "opacity-0",
+          )}
+        >
+          更新中…
+        </span>
       </div>
 
       {pending ? <LoadingState /> : null}
@@ -128,8 +137,15 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
       {!pending && !failed && chart.series.length === 0 ? (
         <EmptyState title="暂无指标数据" description={emptyDescription(panel, namespace)} />
       ) : null}
+      {/* The chart is not dimmed while the next answer loads.
+          uPlot redraws in place through `setData`, so a refresh moves the
+          curves and nothing else — but fading the whole panel to 60% and back
+          on every poll turned that quiet update into a blink across every chart
+          on screen at once, which reads as a full redraw. The 更新中… mark in
+          the header is what says the answer on screen is the previous one, and
+          it costs no ink on the data itself. */}
       {!failed && chart.series.length > 0 ? (
-        <div className={cn("transition-opacity", fetching && !pending && "opacity-60")}>
+        <div>
           <TimeSeriesChart
             timestamps={chart.timestamps}
             series={chart.series}

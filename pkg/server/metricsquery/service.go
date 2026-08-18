@@ -22,17 +22,15 @@ import (
 )
 
 var (
-	ErrInvalidInput   = errors.New("invalid metrics query")
-	ErrUnknownQuery   = errors.New("unknown metrics query")
-	ErrDenied         = errors.New("metrics query is not permitted for the requested Clusters")
-	ErrNoVisibility   = errors.New("no Cluster is visible for metrics")
-	ErrTooManyTargets = errors.New("metrics query covers too many Clusters")
-	ErrUnavailable    = errors.New("metrics storage is unavailable")
-	ErrTimeout        = errors.New("metrics query timed out")
+	ErrInvalidInput = errors.New("invalid metrics query")
+	ErrUnknownQuery = errors.New("unknown metrics query")
+	ErrDenied       = errors.New("metrics query is not permitted for the requested Cluster")
+	ErrNoVisibility = errors.New("no Cluster is visible for metrics")
+	ErrUnavailable  = errors.New("metrics storage is unavailable")
+	ErrTimeout      = errors.New("metrics query timed out")
 )
 
 const (
-	DefaultMaxClusters        = 200
 	DefaultMaxPoints          = 1500
 	DefaultMaxSeries          = 500
 	DefaultMaxRange           = 7 * 24 * time.Hour
@@ -90,10 +88,11 @@ func (adapter RBACVisibility) ResolveMetricsVisibility(
 }
 
 type ClusterScopeStore interface {
-	ListVisibleClusters(
+	GetVisibleCluster(
 		context.Context,
-		store.ListVisibleClustersParams,
-	) ([]store.ClusterScope, error)
+		store.VisibleClusterParams,
+		string,
+	) (store.ClusterScope, error)
 }
 
 type Config struct {
@@ -102,7 +101,6 @@ type Config struct {
 	// it; the browser reaches it through this service or not at all.
 	QueryURL     string
 	QueryTimeout time.Duration
-	MaxClusters  int
 	MaxPoints    int
 	MaxSeries    int
 	MaxRange     time.Duration
@@ -153,9 +151,6 @@ func NewService(
 	if config.QueryTimeout <= 0 {
 		config.QueryTimeout = DefaultQueryTimeout
 	}
-	if config.MaxClusters <= 0 {
-		config.MaxClusters = DefaultMaxClusters
-	}
 	if config.MaxPoints <= 0 {
 		config.MaxPoints = DefaultMaxPoints
 	}
@@ -189,18 +184,23 @@ func NewService(
 	}, nil
 }
 
-// Input is one catalogue query with its parameters. ClusterIDs narrows the
-// answer; leaving it empty means "every Cluster this caller may read", which
-// is the landing view of a multi-cluster application.
+// Input is one catalogue query with its parameters.
+//
+// ClusterID is required and names exactly one Cluster. Charts are read one
+// Cluster at a time for the same reason the container service is operated one
+// Cluster at a time: a curve that adds two Clusters together is a number that
+// exists nowhere, and two Clusters drawn side by side on shared axes are two
+// questions in one picture. Naming the target also makes the scope filter an
+// equality on a single identifier rather than an alternation over a set.
 type Input struct {
-	UserID     string
-	Name       string
-	ClusterIDs []string
-	Namespace  string
-	Start      time.Time
-	End        time.Time
-	Step       time.Duration
-	Top        int
+	UserID    string
+	Name      string
+	ClusterID string
+	Namespace string
+	Start     time.Time
+	End       time.Time
+	Step      time.Duration
+	Top       int
 }
 
 type Point struct {
@@ -227,14 +227,15 @@ type Result struct {
 	End         time.Time
 	StepSeconds int64
 	Series      []Series
-	// ClusterIDs are the Clusters the query actually covered, so a caller can
-	// tell "no data" from "not in scope".
-	ClusterIDs []string
-	Truncated  bool
+	// ClusterID and ClusterName are the Cluster the answer describes, echoed
+	// back so a caller can tell an empty chart apart from a chart it is reading
+	// under the wrong heading.
+	ClusterID   string
+	ClusterName string
+	Truncated   bool
 	// Partial marks an answer that does not describe the whole requested scope.
-	// Issues says why, per Cluster where the cause is per Cluster. A reader who
-	// cannot tell a real trough from a refused batch will draw the wrong
-	// conclusion from the same picture.
+	// Issues says why. A reader who cannot tell a real trough from a refused
+	// batch will draw the wrong conclusion from the same picture.
 	Partial bool
 	Issues  []Issue
 }
@@ -242,9 +243,9 @@ type Result struct {
 // Issue reasons. They are codes rather than sentences because each one leads
 // the operator somewhere different, and the Console owns the words.
 const (
-	// IssueNoData marks a Cluster inside the scope that returned nothing. It is
-	// not a failure — collection may simply not be installed there — so it does
-	// not make an answer partial.
+	// IssueNoData marks a target Cluster that returned nothing. It is not a
+	// failure — collection may simply not be installed there — so it does not
+	// make an answer partial.
 	IssueNoData = "no_data"
 	// IssueThrottled marks a Cluster whose batches this Server is refusing.
 	// Whatever gap the chart shows for it is the Server's doing.
@@ -255,7 +256,7 @@ const (
 
 type Issue struct {
 	// ClusterID is empty for an issue that belongs to the answer as a whole
-	// rather than to one Cluster.
+	// rather than to the target Cluster.
 	ClusterID   string
 	ClusterName string
 	Reason      string
@@ -301,22 +302,24 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 	if err != nil {
 		return Result{}, err
 	}
-	scopes, err := service.resolveScope(ctx, input)
+	scope, err := service.resolveCluster(ctx, input)
 	if err != nil {
 		return Result{}, err
 	}
 
-	clusterIDs := make([]string, 0, len(scopes))
-	for _, scope := range scopes {
-		clusterIDs = append(clusterIDs, scope.ClusterID)
-	}
-	// Every identifier is a validated UUID, so the matcher cannot carry
-	// anything but identifiers. The filter is built here rather than accepted
-	// from the caller, which is what makes the scope boundary structural.
+	// An equality rather than a regular expression: the target is one validated
+	// UUID, so there is nothing to alternate over, and an exact match is the
+	// cheapest lookup the storage has — it resolves through the label index
+	// instead of being evaluated against candidate values.
+	//
+	// The filter is built here rather than accepted from the caller, which is
+	// what makes the scope boundary structural. The identifier reaching this
+	// line has already been rejected unless it is a UUID and unless the caller
+	// may read it, so it cannot carry a quote or a metacharacter.
 	matcher := fmt.Sprintf(
-		`%s=~"%s"`,
+		`%s=%q`,
 		metricsingest.ClusterLabel,
-		strings.Join(clusterIDs, "|"),
+		scope.ClusterID,
 	)
 	expression := definition.build(matcher, buildParams{
 		Namespace: input.Namespace,
@@ -328,12 +331,9 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 	if err != nil {
 		return Result{}, err
 	}
-	names := make(map[string]string, len(scopes))
-	for _, scope := range scopes {
-		names[scope.ClusterID] = scope.ClusterName
-	}
+	names := map[string]string{scope.ClusterID: scope.ClusterName}
 	series, truncated := service.buildSeries(definition, samples, names, input)
-	issues, partial := service.collectIssues(input, scopes, series, truncated)
+	issues, partial := service.collectIssues(input, scope, series, truncated)
 	return Result{
 		Query:       definition.Name,
 		Title:       definition.Title,
@@ -343,51 +343,44 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 		End:         input.End,
 		StepSeconds: int64(input.Step / time.Second),
 		Series:      series,
-		ClusterIDs:  clusterIDs,
+		ClusterID:   scope.ClusterID,
+		ClusterName: scope.ClusterName,
 		Truncated:   truncated,
 		Partial:     partial,
 		Issues:      issues,
 	}, nil
 }
 
-// collectIssues explains the difference between the scope that was asked for
-// and the answer that came back.
+// collectIssues explains the difference between what was asked for and what
+// came back.
 func (service *Service) collectIssues(
 	input Input,
-	scopes []store.ClusterScope,
+	scope store.ClusterScope,
 	series []Series,
 	truncated bool,
 ) ([]Issue, bool) {
-	answered := make(map[string]struct{}, len(series))
-	for _, item := range series {
-		answered[item.ClusterID] = struct{}{}
-	}
-	issues := make([]Issue, 0, len(scopes))
+	issues := make([]Issue, 0, 2)
 	partial := false
-	for _, scope := range scopes {
-		if service.config.Budget != nil {
-			if budget, known := service.config.Budget.ClusterState(
-				scope.ClusterID,
-			); known && budget.Throttled {
-				issues = append(issues, Issue{
-					ClusterID:   scope.ClusterID,
-					ClusterName: scope.ClusterName,
-					Reason:      IssueThrottled,
-					Detail:      budget.Reason,
-				})
-				partial = true
-				continue
-			}
+
+	// Throttling first: a Cluster the Server is refusing has no data for a
+	// reason the operator can act on, and reporting it as "no data" would send
+	// them to restart a collector that is doing its job.
+	throttled := false
+	if service.config.Budget != nil {
+		if budget, known := service.config.Budget.ClusterState(
+			scope.ClusterID,
+		); known && budget.Throttled {
+			issues = append(issues, Issue{
+				ClusterID:   scope.ClusterID,
+				ClusterName: scope.ClusterName,
+				Reason:      IssueThrottled,
+				Detail:      budget.Reason,
+			})
+			partial = true
+			throttled = true
 		}
-		if _, present := answered[scope.ClusterID]; present {
-			continue
-		}
-		// A Top N answer ranks across the whole scope, so a Cluster missing from
-		// it usually just lost the ranking. Calling that "no data" would report
-		// a healthy Cluster as silent on every such chart.
-		if input.Top > 0 {
-			continue
-		}
+	}
+	if !throttled && len(series) == 0 {
 		issues = append(issues, Issue{
 			ClusterID:   scope.ClusterID,
 			ClusterName: scope.ClusterName,
@@ -460,72 +453,45 @@ func (service *Service) resolveWindow(
 	return formatWindow(window), nil
 }
 
-func (service *Service) resolveScope(
+func (service *Service) resolveCluster(
 	ctx context.Context,
 	input Input,
-) ([]store.ClusterScope, error) {
+) (store.ClusterScope, error) {
+	if !validation.IsUUID(input.ClusterID) {
+		return store.ClusterScope{}, fmt.Errorf(
+			"%w: a Cluster identifier is required",
+			ErrInvalidInput,
+		)
+	}
 	visibility, err := service.authorization.ResolveMetricsVisibility(
 		ctx,
 		input.UserID,
 	)
 	if err != nil {
-		return nil, err
+		return store.ClusterScope{}, err
 	}
 	if visibility.empty() {
-		return nil, ErrNoVisibility
+		return store.ClusterScope{}, ErrNoVisibility
 	}
-	scopes, err := service.clusters.ListVisibleClusters(
+	scope, err := service.clusters.GetVisibleCluster(
 		ctx,
-		store.ListVisibleClustersParams{
+		store.VisibleClusterParams{
 			Global:     visibility.Global,
 			TenantIDs:  visibility.TenantIDs,
 			ProjectIDs: visibility.ProjectIDs,
-			// One over the limit, so a scope that is too wide is detected
-			// rather than quietly cut off at the limit.
-			Limit: service.config.MaxClusters + 1,
 		},
+		input.ClusterID,
 	)
+	if errors.Is(err, store.ErrClusterNotVisible) {
+		// One answer for "no such Cluster" and "not yours". Separating them
+		// would turn this route into a way to discover Cluster identifiers
+		// outside the caller's scope.
+		return store.ClusterScope{}, ErrDenied
+	}
 	if err != nil {
-		return nil, err
+		return store.ClusterScope{}, err
 	}
-	if len(input.ClusterIDs) == 0 {
-		if len(scopes) == 0 {
-			return nil, ErrNoVisibility
-		}
-		if len(scopes) > service.config.MaxClusters {
-			return nil, ErrTooManyTargets
-		}
-		return scopes, nil
-	}
-	if len(input.ClusterIDs) > service.config.MaxClusters {
-		return nil, ErrTooManyTargets
-	}
-	allowed := make(map[string]store.ClusterScope, len(scopes))
-	for _, scope := range scopes {
-		allowed[scope.ClusterID] = scope
-	}
-	selected := make([]store.ClusterScope, 0, len(input.ClusterIDs))
-	seen := make(map[string]struct{}, len(input.ClusterIDs))
-	for _, clusterID := range input.ClusterIDs {
-		if !validation.IsUUID(clusterID) {
-			return nil, fmt.Errorf("%w: Cluster identifier is invalid", ErrInvalidInput)
-		}
-		if _, duplicate := seen[clusterID]; duplicate {
-			continue
-		}
-		seen[clusterID] = struct{}{}
-		scope, permitted := allowed[clusterID]
-		if !permitted {
-			// Refused rather than dropped: silently narrowing the answer would
-			// present a partial view as the whole one.
-			return nil, ErrDenied
-		}
-		selected = append(selected, scope)
-	}
-	if len(selected) == 0 {
-		return nil, ErrDenied
-	}
-	return selected, nil
+	return scope, nil
 }
 
 type promResponse struct {
