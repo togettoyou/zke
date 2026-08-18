@@ -84,8 +84,7 @@ docker run -d --name zke \
 Agent 需要能访问 Server 的 HTTP 注册地址和 QUIC/UDP 地址。本机 Docker Desktop / OrbStack 集群可直接使用内置
 端点预设；跨主机或跨网络接入时，先在「平台配置」中添加目标集群可达的接入端点。
 
-连接已有 PostgreSQL、Docker Compose、Helm 等其他部署方式，以及完整的配置、升级与备份说明见
-[部署指南](docs/deployment.md)。
+Docker Compose、Helm 等其他部署方式，以及完整的配置、升级与备份说明见[部署指南](docs/deployment.md)。
 
 ## 当前能力
 
@@ -97,7 +96,7 @@ Agent 需要能访问 Server 的 HTTP 注册地址和 QUIC/UDP 地址。本机 D
 | 日常运维 | Pod 日志、Web Terminal、临时访问、事件追踪、资源用量 |
 | 诊断与回滚 | 工作负载诊断、关联对象分析、版本回滚 |
 | 原生资源 | Discovery、CRD 资源浏览、YAML 编辑、多文档清单应用与删除 |
-| 多集群指标 | 集群内三组件一体采集、经 Agent 回传、五个维度的用量与利用率、申请与限制、节点磁盘与网络、每集群摄取预算（默认启用） |
+| 多集群指标 | 集群内三组件一体采集、经 Agent 回传、六个维度的用量与利用率、申请与限制、CPU 限流、节点磁盘与网络、持久卷、容器状态原因、每集群摄取预算（默认启用） |
 | 权限模型 | Tenant、Project、RBAC 与细粒度操作权限 |
 | 安全与审计 | 敏感操作确认、DryRun 差异、并发身份保护、审计日志 |
 

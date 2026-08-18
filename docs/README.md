@@ -27,6 +27,7 @@
 - [集群接入管理](features/agent-management.md)
 - [容器服务](features/container-service.md)
 - [终端](features/terminal.md)
+- [平台配置](features/platform-settings.md)
 - [可观测性平台](features/observability.md)
 
 ## 安全

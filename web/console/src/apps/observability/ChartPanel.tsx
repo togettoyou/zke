@@ -139,6 +139,8 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
             ariaLabel={panel.title}
             hidden={hidden}
             fullScale={panel.fullScale}
+            stacked={panel.stack}
+            reference={panel.reference}
             onSelectRange={selectRange}
             syncKey={SYNC_KEY}
           />
@@ -287,15 +289,16 @@ export function IssueNotice({ issues }: { issues: MetricsQueryIssue[] }) {
  * fixed by an install the operator would never think to make.
  */
 function emptyDescription(panel: Panel, namespace: string | undefined): string {
+  const note = panel.emptyNote ? ` ${panel.emptyNote}` : "";
   const required = [...new Set(panel.queries.map((query) => query.requires).filter(Boolean))];
   if (required.length > 0) {
     const names = required.map((component) => COMPONENT_LABELS[component!]).join("、");
-    return `该视图需要${names}。它随采集组件一并安装——若集群已安装采集但这里仍为空，请在「采集接入」中确认该组件的状态。`;
+    return `该视图需要${names}。它随采集组件一并安装——若集群已安装采集但这里仍为空，请在「采集接入」中确认该组件的状态。${note}`;
   }
   if (namespace) {
-    return `该时间范围内 Namespace ${namespace} 没有采样。请确认名称，或该 Namespace 当前没有运行中的 Pod。`;
+    return `该时间范围内 Namespace ${namespace} 没有采样。请确认名称，或该 Namespace 当前没有运行中的 Pod。${note}`;
   }
-  return "该时间范围内没有采样。集群可能尚未启用采集，或采集刚刚开始。";
+  return `该时间范围内没有采样。集群可能尚未启用采集，或采集刚刚开始。${note}`;
 }
 
 type QueryResult = { series: MetricsQuerySeries[] } | undefined;

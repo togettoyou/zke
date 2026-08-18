@@ -31,10 +31,10 @@ Roadmap 表示当前规划，不代表发布时间或交付承诺。已勾选条
 ## Phase 3：可观测性
 
 数据通路与安全边界见 [Phase 3 可观测性架构设计](architecture/observability-phase-3.md)。指标、日志与告警
-按切片推进，后一项依赖前一项就绪。全部 50 个查询对着真实的 VictoriaMetrics 验证过，Agent 的采集组件安装
-也在真实集群上跑通过；但**三个采集组件尚未在真实集群上一起装过**，完整链路（集群内 vmagent → Agent →
-Server → 存储 → Console）也尚未在同一次运行中端到端跑通；每集群摄取预算只在单元测试中验证过，没有在真实
-集群的 vmagent 上观察过退避行为。
+按切片推进，后一项依赖前一项就绪。全部 70 个查询对着真实的 VictoriaMetrics 验证过，三个采集组件
+在真实集群上一起装过，完整链路（集群内 vmagent → Agent → Server → 存储 → Console）也跑通到图表；但每集群
+摄取预算只在单元测试中验证过，没有在真实集群的 vmagent 上观察过退避行为，最近新增的 cAdvisor、卷统计与三个
+node-exporter collector 也还没有在真实集群上抓过。
 
 - [x] 指标端到端最小链路：采集清单生成、Agent 摄取端点、Metrics Ingest Stream、Server 摄取网关与作用域改写、VictoriaMetrics 写入
 - [x] 多集群指标查询：固定查询目录、权限过滤、集群与节点用量视图、Console 自建图表

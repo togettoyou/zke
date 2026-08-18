@@ -99,3 +99,37 @@ const (
 	ManagedByLabel = "app.kubernetes.io/managed-by"
 	ManagedByAgent = "zke-agent"
 )
+
+// The container states the pipeline carries, and the only ones it carries.
+//
+// kube-state-metrics reports one series per container per reason it knows,
+// most of them permanently zero, which on a Cluster of a few thousand
+// containers is a larger addition than everything else the exporter provides
+// put together. Both sides read this list: the Agent turns it into a scrape
+// filter so the series never leave the Cluster, and the Server turns it into
+// the selector its queries run with. A reason in one place and not the other
+// is either an empty chart or pure cardinality.
+//
+// The list is what an operator acts on, not what Kubernetes can report. The
+// full state of a container is a `kubectl describe` away; what belongs in a
+// time series is the handful of states whose *history* is the question —
+// when did this start, and does it happen every night at the same time.
+var (
+	ContainerWaitingReasons = []string{
+		"CrashLoopBackOff",
+		"ImagePullBackOff",
+		"ErrImagePull",
+		"CreateContainerConfigError",
+	}
+	ContainerTerminatedReasons = []string{
+		"OOMKilled",
+		"Error",
+		"Evicted",
+	}
+)
+
+// ContainerStateFamilies are the two metric families the reasons above live in.
+var ContainerStateFamilies = []string{
+	"kube_pod_container_status_waiting_reason",
+	"kube_pod_container_status_last_terminated_reason",
+}

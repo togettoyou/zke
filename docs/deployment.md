@@ -1,7 +1,7 @@
 # 部署指南
 
-ZKE Server 是单个 Go 二进制，内置 Console 静态资源，依赖 PostgreSQL、一个持久目录，以及启用多集群指标时的
-VictoriaMetrics。
+ZKE Server 是单个 Go 二进制，内置 Console 静态资源，依赖 PostgreSQL（仓库的镜像、Compose 与 Chart 都使用
+17）、一个持久目录，以及启用多集群指标时的 VictoriaMetrics。
 
 ZKE 当前处于开发预览阶段，投入关键环境前应自行完成安全、备份、容量和升级验证。
 
@@ -10,11 +10,10 @@ ZKE 当前处于开发预览阶段，投入关键环境前应自行完成安全�
 | 方式 | 适用场景 | 数据库 | 指标存储 |
 | --- | --- | --- | --- |
 | [Docker 一体镜像](#方式一-docker-一体镜像) | 快速体验、单机部署 | 镜像内置 | 镜像内置 |
-| [Docker 连接已有 PostgreSQL](#方式二-docker-连接已有-postgresql) | 已有数据库，独立备份与运维 | 自备 | 自备或关闭 |
-| [Docker Compose](#方式三-docker-compose) | 单机运行，但分开升级各组件 | Compose 内的容器 | Compose 内的容器 |
-| [Helm](#方式四-helm) | 部署到 Kubernetes | Chart 内的 StatefulSet | Chart 内的 StatefulSet |
+| [Docker Compose](#方式二-docker-compose) | 单机运行，但分开升级各组件 | Compose 内的容器 | Compose 内的容器 |
+| [Helm](#方式三-helm) | 部署到 Kubernetes | Chart 内的 StatefulSet | Chart 内的 StatefulSet |
 
-除方式二外，多集群指标默认启用并自带存储，接入集群后在「可观测性 → 采集接入」中安装采集组件即可。
+三种方式都自带数据库与指标存储，开箱即用。要接自己的 PostgreSQL 或已有的 VictoriaMetrics，见[配置参考](#配置参考)。
 
 启动之后的使用过程相同：打开 Console，创建全局管理员，然后[接入第一个集群](#接入第一个集群)。
 
@@ -76,27 +75,7 @@ docker run -d --name zke \
 
 查看启动日志：`docker logs -f zke`。
 
-## 方式二 Docker 连接已有 PostgreSQL
-
-用只包含 Server 的镜像启动，`ZKE_DATABASE_URL` 指向已有数据库：
-
-```bash
-docker run -d --name zke \
-  -p 8080:8080 \
-  -p 8081:8081 \
-  -p 8443:8443/udp \
-  -v zke-data:/data \
-  -e ZKE_DATABASE_URL='postgres://zke:<password>@db.example.com:5432/zke?sslmode=disable' \
-  ghcr.io/togettoyou/zke-server:latest
-```
-
-数据库和账号需要提前建好，账号要有在该库内建表的权限；Server 在开始监听 HTTP 之前自动执行迁移。密码会进入
-URL，应使用 URL-safe 的随机字符串。仓库的镜像、Compose 与 Chart 都使用 PostgreSQL 17。
-
-这个镜像不带指标存储，而内置配置默认开启指标并指向 `127.0.0.1:8428`。因此必须二选一：把存储地址指向可达的
-VictoriaMetrics，或者关闭指标，取值见[启用多集群指标](#启用多集群指标)。
-
-## 方式三 Docker Compose
+## 方式二 Docker Compose
 
 Compose 文件位于 `deploy/docker/`，Server、PostgreSQL 与指标存储是三个独立容器：
 
@@ -112,7 +91,7 @@ docker compose up -d
 
 `docker compose logs -f server` 查看日志，`docker compose down` 停止服务且不删除数据卷。
 
-## 方式四 Helm
+## 方式三 Helm
 
 ```bash
 helm upgrade --install zke oci://ghcr.io/togettoyou/charts/zke \
@@ -213,12 +192,10 @@ ZKE 的配置分两层：Server 启动前必须确定的引导配置，和启动
 平台默认端点由 `agent_install` 的两项配套提供；均为空时使用「本机回环预览」。Server 每次启动都按当前有效配置
 重新同步部署端点，Console 不能修改、删除或另设平台默认端点。
 
-### 启用多集群指标
+### 指标存储
 
-一体镜像、Docker Compose 与 Helm 都自带单节点 VictoriaMetrics 并默认启用指标，不需要额外准备；只包含
-Server 的镜像不带存储。
-
-改用已有的 VictoriaMetrics，或关闭指标：
+三种部署方式都自带单节点 VictoriaMetrics 并默认启用指标，不需要额外准备。改用已有的 VictoriaMetrics，或者
+关闭指标：
 
 ```bash
 # docker run：指向自己的存储
@@ -229,129 +206,22 @@ Server 的镜像不带存储。
 ```
 
 Compose 在 `.env` 中设置同名变量；Helm 使用 `server.metrics.enabled`、`server.metrics.storageWriteURL` 与
-`server.metrics.storageQueryURL`，后两项必须同时提供。给出外部地址后 Chart 不再部署自带存储，自带存储的
+`server.metrics.storageQueryURL`，后两项必须同时提供。给出外部地址后 Chart 不再部署自带存储；自带存储的
 镜像、保留期与容量在 `metrics.*` 下调整。ZKE 不管理外部存储的生命周期、容量与保留期。
 
-关闭时 Server 不向 Agent 提供摄取能力，集群侧不部署任何采集组件，Console 的「可观测性」会直接说明本部署
-未启用指标存储。
+关闭时 Server 不向 Agent 提供摄取能力，集群侧不部署任何采集组件，Console 的「可观测性」会说明本部署未启用
+指标存储。
 
-启用后在「可观测性 → 采集接入」的集群列表中逐个安装或卸载，需要 `cluster.metrics.manage`；查看指标是另一个
-权限 `cluster.metrics.read`。组件由该集群的 Agent 安装到自己的 Agent Namespace，摄取凭证也由 Agent 在
-集群内生成，不经过 Server。
-
-**一次安装放进集群三个组件**，一次卸载全部删除——没人抓取的导出器是浪费，而抓取一个从未安装的目标只会
-产生持续失败的 job：
-
-| 组件 | 形态 | 提供什么 | 默认镜像 |
-| --- | --- | --- | --- |
-| 采集组件 vmagent | Deployment × 1 | 抓取下面两个与 kubelet，经 Agent 回传 | `victoriametrics/vmagent:v1.149.0` |
-| kube-state-metrics | Deployment × 1 | 节点可分配量、Pod 申请/限制、工作负载归属与重启 | `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1` |
-| node-exporter | DaemonSet（每节点） | 磁盘、文件系统、网络 | `quay.io/prometheus/node-exporter:v1.12.1` |
-
-kube-state-metrics 是**利用率的分母**：没有它，用量曲线无法回答任何容量问题，「利用率」「申请量」「限制量」
-与「工作负载」四组视图都会是空的。它以 `--resources` 与 `--metric-allowlist` 双重收窄，只 `list`/`watch`
-Node、Pod、Namespace 与五类工作负载对象，**不包含 Secret 与 ConfigMap**，也没有任何写权限。
-
-**node-exporter 需要 host 网络与 hostPath**，这是它读取 `/proc`、`/sys` 与根文件系统的唯一方式。运行在
-`baseline` 或 `restricted` Pod Security 级别的 Namespace 会拒绝它。ZKE **不会**为此改写 Agent Namespace 的
-安全等级——那不是一次安装可以顺带做的事。被拒绝时其余两个组件照常安装，采集接入列表中该行显示「已被集群
-拒绝」并说明原因，磁盘与网络视图会说明它依赖这个组件。要启用它，需要部署方自行把 Agent Namespace 的
-`pod-security.kubernetes.io/enforce` 设为 `privileged`。
-
-三个组件的镜像、拉取策略与资源请求/限制都在「平台配置 → 指标采集」中管理，留空表示不设置该项。修改后对
-下一次安装生效，已安装的集群会在采集接入列表中提示可以更新。node-exporter 跑在每个节点上，它的预算会乘以
-集群规模，因此默认值刻意很小（请求 `10m` / `32Mi`，限制 `200m` / `128Mi`）。
-
-安装不需要为 Agent 增加任何权限：Agent 授予 kube-state-metrics 的读取范围是它自己已经持有的子集，
-Kubernetes 也正是这样保证的——它拒绝创建一个包含创建者本身没有的权限的 ClusterRole。
-
-采集数据经该集群 Agent 已有的 QUIC 连接回传，不需要为指标开通新的网络路径，也不需要重新应用 Agent 清单。
-存储不可用时只影响指标查询。
-
-### 指标容量、保留期与摄取预算
-
-ZKE 没有给出实测的吞吐、延迟或容量承诺。下面是估算方法和可调项，实际取值必须以自己部署中观察到的数字为准。
-
-**一个集群产生多少序列。** 三个抓取目标的配置与 allowlist 都是固定的，因此序列数可以直接从集群规模算出来。
-记 N = 节点数、P = Pod 数、C = 容器数：
-
-```text
-kubelet             ≈ 7×N + 2×P + 2×C
-kube-state-metrics  ≈ 27×N + 7×P + 5×C
-node-exporter       ≈ (8×单节点核数 + 140)×N
-样本速率（每秒）     ≈ 序列总数 ÷ scrape_interval（默认 30s）
-```
-
-各项来源：kubelet 每节点约 7 条 = 2 条节点指标加约 5 条 vmagent 自己产生的抓取元信息（条数随 vmagent 版本
-略有出入），Pod 与容器各贡献 CPU 和内存两条；kube-state-metrics 的每节点部分主要是可分配量、容量与节点
-状况，每 Pod 部分是归属、phase 与所在节点，每容器部分是申请、限制与重启计数；node-exporter 中占大头的是
-`node_cpu_seconds_total`，它按「核数 × 模式数」展开，其余 meminfo、filesystem、diskstats、netdev、loadavg
-合计每节点约 140 条。
-
-例如 100 节点（每节点 16 核）、2000 Pod、3000 容器的集群：kubelet 约 10700 条、kube-state-metrics 约
-31700 条、node-exporter 约 26800 条，合计约 69000 条序列、约 2300 样本/秒。**这大约是只抓 kubelet 时的
-六倍**——多出来的部分买到的是利用率、申请量、工作负载归属与磁盘网络，但它确实是六倍，规划容量时要按这个
-数字算。只安装采集组件而拒绝 node-exporter 的集群按前两项估算。
-
-**磁盘。** 每个样本占用多少字节取决于压缩率，属于 VictoriaMetrics 的行为而不是 ZKE 的；请以上游文档的经验
-值做初次规划，并在运行一到两个保留周期后按实际磁盘增长修正。ZKE 不为此提供预估公式。
-
-**保留期。** 自带存储的保留期用 `ZKE_METRICS_RETENTION_PERIOD` 调整（一体镜像与 Compose），Helm 在
-`metrics.*` 下；不带单位时以月计，也接受 `1d`、`12w`、`1y`。外部存储的保留期由部署方自己管理，ZKE 不修改它。
-
-**每集群摄取预算。** Server 对每个集群分别限制样本速率与活跃序列数，防止一个集群占满所有集群共用的存储。
-默认值是保护性的，远高于上面公式给出的正常量级：
-
-| 配置项 | 默认值 | 含义 |
-| --- | --- | --- |
-| `max_samples_per_second_per_cluster` | 50000 | 每集群样本速率上限 |
-| `sample_burst_window` | 1m | 允许一次性花掉的速率额度；断线重连时 vmagent 回灌缓冲需要它 |
-| `max_active_series_per_cluster` | 500000 | 每集群活跃序列上限 |
-| `active_series_window` | 10m | 活跃序列的统计窗口 |
-
-超出预算时 Server 拒绝该批次并返回 `RESOURCE_EXHAUSTED`，vmagent 按自己的退避重试并在本地磁盘缓冲，
-超出 `collector_buffer_size` 的最旧数据由 vmagent 丢弃。被拒绝不会静默发生：
-
-- 「可观测性 → 采集接入」的**摄取预算**列显示该集群当前是否被限流、触碰的是速率还是基数，以及活跃序列的
-  估算值与上限；限流恢复后仍会显示最近一次被限流的时间，否则一个已经恢复的空洞就没有解释了；
-- 图表中受影响的集群会在图下明确写出空洞由 Server 拒绝造成，而不是采集组件故障；
-- Server 日志在进入限流状态时记录一条结构化告警，携带 `cluster_id` 与原因。
-
-活跃序列数是**估算值**，来自固定大小的概率草图：跟踪一个集群的开销与它上报多少序列无关。界面按近似值呈现，
-不要把它当作精确计数使用。
+集群侧的采集组件不随部署下发：接入集群后在「可观测性 → 采集接入」中一键安装，三个组件一并安装、一并卸载。
+其中 node-exporter 需要 host 网络与 hostPath，`baseline` 或 `restricted` Pod Security 级别的 Namespace 会
+拒绝它——其余组件照常工作，要启用它需要自行把 Agent Namespace 的 `pod-security.kubernetes.io/enforce` 设为
+`privileged`。组件清单、权限边界与视图能力见[可观测性平台](features/observability.md)，容量估算与每集群
+摄取预算见[Phase 3 可观测性架构设计 · 7.4](architecture/observability-phase-3.md#74-容量估算与默认预算)。
 
 ### 平台配置
 
-以下配置保存在 PostgreSQL，只能由全局 `admin` 在 Console 的「平台配置」应用修改，不需要重启：
-
-- 端点 —— Agent 接入端点预设：注册 URL、QUIC 地址、可选注册 HTTPS CA；
-- Agent —— Agent 的镜像、Image Pull Policy 与 CPU / 内存请求与限制；
-- 集群终端 —— Cluster Terminal 会话 Pod 的镜像、Image Pull Policy、CPU / 内存请求与限制，以及会话存续时长，
-  可选 1 分钟至 1 小时，默认 15 分钟；
-- 指标采集 —— 三个采集组件（vmagent、kube-state-metrics、node-exporter）各自的镜像、Image Pull Policy
-  与 CPU / 内存请求与限制。三者一并安装，因此版本也在同一页固定，避免一个部署跑着今年的采集组件和去年的
-  导出器。
-
-除端点外，每一页对应一个 ZKE 装进目标集群的工作负载，六个字段的形状完全相同：镜像、拉取策略和四项资源数量。
-数量留空表示不在容器上设置该项——Kubernetes 没有别的方式表达「不限制」，需要交给 Namespace 的 LimitRange
-决定时就留空。
-
-两个默认值值得说明。Agent 默认 `50m` / `128Mi` 请求、`512Mi` 内存限制、**不设 CPU 限制**：请求的作用是让它不
-再是 BestEffort Pod——节点内存不足时 BestEffort 最先被驱逐，而 Agent 一挂，该集群在 ZKE 里就整个失联；不设
-CPU 限制则是因为被限流的 Agent 不会报错，只会让该集群的每一次查询、终端按键和日志流都变慢，且任何错误信息里
-都看不出原因。这两个数字是让 Pod 可调度、可存活的下限，不是实测用量，实际开销取决于集群规模与被监视的对象
-数量，投产前应按自己的部署观察后调整。
-
-Cluster Terminal 默认 `25m` / `64Mi` 请求、`500m` / `256Mi` 限制。内存上限刻意保留余量：终端里的 kubectl
-对着大集群取全量 JSON 是其中唯一真正占内存的操作，上限压得太低会让一条正常命令直接被 OOMKill，而现象上完全
-看不出是内存限制导致的。
-
-每一页各自保存，只写入本页的改动；离开一页会丢弃其中尚未保存的修改，回到该页看到的始终是当前实际生效的
-配置。
-
-生效时机不同：Cluster Terminal 的镜像、拉取策略、资源预算与会话时长立即用于新会话；三个采集组件的取值在下一次
-安装时读取；Agent 的镜像、拉取策略、资源预算、Namespace 和凭证选中的端点在新 Enrollment 签发时进入不可变快照，
-已签发的凭证和已接入的集群不受影响。
+Agent 与采集组件的镜像、资源预算，接入端点预设，以及集群终端的会话参数，都保存在数据库，由全局管理员在
+Console 的「平台配置」中修改，不需要重新部署。见[平台配置](features/platform-settings.md)。
 
 ## 升级、备份与卸载
 

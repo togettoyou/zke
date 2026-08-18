@@ -211,6 +211,114 @@ func catalog() []Definition {
 				return topk(expression, params.Top)
 			},
 		},
+		{
+			// Container level, from the same kubelet endpoint as everything
+			// above. A Pod is a group, not a process: one of its containers is
+			// usually the one consuming, and a Pod-level curve cannot say which.
+			Name:              "container_cpu_usage",
+			Title:             "容器 CPU 用量",
+			Kind:              KindRange,
+			Unit:              UnitMillicores,
+			Dimensions:        []string{"namespace", "pod", "container"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod, container) `+
+						`(rate(container_cpu_usage_seconds_total{%s,container!=""}[%s])) * 1000`,
+					namespaceSelector(matcher, params.Namespace),
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "container_memory_usage",
+			Title:             "容器内存用量",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			Dimensions:        []string{"namespace", "pod", "container"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod, container) `+
+						`(container_memory_working_set_bytes{%s,container!=""})`,
+					namespaceSelector(matcher, params.Namespace),
+				), params.Top)
+			},
+		},
+		{
+			// The one saturation signal no usage curve contains. A container
+			// held at its CPU limit uses exactly what it was allowed and looks
+			// perfectly healthy; the periods it spent waiting for the next
+			// quota window are the only evidence that it is being slowed down.
+			Name:              "container_cpu_throttling",
+			Title:             "容器 CPU 限流比例",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"namespace", "pod", "container"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				selector := namespaceSelector(matcher, params.Namespace)
+				// The denominator is guarded rather than divided blindly: a
+				// container with no CPU limit reports no periods at all, and an
+				// unguarded division would answer NaN for every one of them.
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod, container) `+
+						`(rate(container_cpu_cfs_throttled_periods_total{%s,container!=""}[%s]))`+
+						` / on (zke_cluster_id, namespace, pod, container) `+
+						`(sum by (zke_cluster_id, namespace, pod, container) `+
+						`(rate(container_cpu_cfs_periods_total{%s,container!=""}[%s])) > 0)`,
+					selector,
+					params.Window,
+					selector,
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			// Per-Pod network, which the Node-level device curves cannot
+			// attribute. A saturated uplink is a Node fact; which workload
+			// filled it is the question that follows, and it is answered here.
+			Name:              "pod_network_receive",
+			Title:             "Pod 网络接收",
+			Kind:              KindRange,
+			Unit:              UnitBytesPerSecond,
+			Dimensions:        []string{"namespace", "pod"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod) `+
+						`(rate(container_network_receive_bytes_total{%s,pod!=""}[%s]))`,
+					namespaceSelector(matcher, params.Namespace),
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "pod_network_transmit",
+			Title:             "Pod 网络发送",
+			Kind:              KindRange,
+			Unit:              UnitBytesPerSecond,
+			Dimensions:        []string{"namespace", "pod"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod) `+
+						`(rate(container_network_transmit_bytes_total{%s,pod!=""}[%s]))`,
+					namespaceSelector(matcher, params.Namespace),
+					params.Window,
+				), params.Top)
+			},
+		},
 		// Utilisation. Usage divided by what the Node was given — the number every
 		// capacity question actually asks, and the one the kubelet endpoint alone
 		// cannot answer, because it reports what is used and never what exists.
@@ -638,6 +746,25 @@ func catalog() []Definition {
 				)
 			},
 		},
+		{
+			// The denominator the load average has no unit without. A run queue
+			// of 8 is idle on a 64-core Node and a crisis on a 2-core one, so
+			// the core count is drawn beside it rather than left to the reader.
+			Name:              "node_cpu_cores",
+			Title:             "节点 CPU 核数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, node) `+
+						`(kube_node_status_allocatable{%s,resource="cpu"})`,
+					matcher,
+				), params.Top)
+			},
+		},
 		// Node saturation. Utilisation says how much of a Node is in use; these
 		// say whether it is keeping up. A Node at 60% CPU with a run queue of 40
 		// is a Node whose workloads are waiting, and no usage curve shows that.
@@ -700,6 +827,132 @@ func catalog() []Definition {
 			},
 		},
 		{
+			// The table every connection has to fit in. A Node whose conntrack
+			// table is full drops new connections while every byte counter on it
+			// stays ordinary — the traffic that fails is the traffic that never
+			// started.
+			Name:              "node_conntrack_utilization",
+			Title:             "节点连接跟踪表使用率",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, node) (node_nf_conntrack_entries{%s})`+
+						` / on (zke_cluster_id, node) `+
+						`(max by (zke_cluster_id, node) `+
+						`(node_nf_conntrack_entries_limit{%s}) > 0)`,
+					matcher,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			// Retransmissions as a share of what was sent, not as a count: a
+			// busy Node retransmits more segments than an idle one over a link
+			// of the same quality, and only the ratio compares across Nodes.
+			Name:              "node_tcp_retransmission",
+			Title:             "节点 TCP 重传比例",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, node) `+
+						`(rate(node_netstat_Tcp_RetransSegs{%s}[%s]))`+
+						` / on (zke_cluster_id, node) `+
+						`(sum by (zke_cluster_id, node) `+
+						`(rate(node_netstat_Tcp_OutSegs{%s}[%s])) > 0)`,
+					matcher,
+					params.Window,
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			// Connections the Node accepted nowhere. Both counters mean the same
+			// thing to whoever was connecting — the handshake completed and the
+			// listener never took it — so they are added rather than separated.
+			Name:              "node_tcp_listen_drops",
+			Title:             "节点连接队列丢弃",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				term := func(name string) string {
+					return fmt.Sprintf(
+						`sum by (zke_cluster_id, node) (rate(%s{%s}[%s]))`,
+						name,
+						matcher,
+						params.Window,
+					)
+				}
+				return topk(
+					term("node_netstat_TcpExt_ListenDrops")+" + "+
+						term("node_netstat_TcpExt_ListenOverflows"),
+					params.Top,
+				)
+			},
+		},
+		{
+			// Pressure stall information: the share of time at least one task
+			// was waiting for the resource rather than running. It is the only
+			// signal here that measures the delay itself instead of the level
+			// something sits at — a Node can stall on memory reclaim while its
+			// available memory looks unremarkable.
+			//
+			// The kernel must expose /proc/pressure. On an older one this
+			// answers nothing, which the client presents as no data rather than
+			// as no pressure.
+			Name:              "node_pressure_cpu",
+			Title:             "节点 CPU 压力",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(pressureStall(
+					"node_pressure_cpu_waiting_seconds_total", matcher, params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_pressure_memory",
+			Title:             "节点内存压力",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(pressureStall(
+					"node_pressure_memory_waiting_seconds_total", matcher, params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_pressure_io",
+			Title:             "节点 I/O 压力",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(pressureStall(
+					"node_pressure_io_waiting_seconds_total", matcher, params.Window,
+				), params.Top)
+			},
+		},
+		{
 			Name:              "node_pod_count",
 			Title:             "节点 Pod 数量",
 			Kind:              KindRange,
@@ -751,6 +1004,43 @@ func catalog() []Definition {
 					`sum by (zke_cluster_id, namespace) `+
 						`(kube_pod_status_phase{%s,phase="Running"})`,
 					namespaceSelector(matcher, params.Namespace),
+				), params.Top)
+			},
+		},
+		{
+			// The limit a Namespace reaches before the Cluster reaches any of
+			// its own. A full quota refuses every new Pod while the Nodes behind
+			// it sit half idle, and no usage curve in this application shows
+			// that — the workloads that would have used the capacity were never
+			// created.
+			Name:              "namespace_quota_utilization",
+			Title:             "命名空间配额使用率",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"namespace", "resource"},
+			SupportsTop:       true,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				selector := namespaceSelector(matcher, params.Namespace)
+				used := fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, resourcequota, resource) `+
+						`(kube_resourcequota{%s,type="used"})`,
+					selector,
+				)
+				hard := fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, resourcequota, resource) `+
+						`(kube_resourcequota{%s,type="hard"})`,
+					selector,
+				)
+				// Per quota object first, then the worst one per resource: a
+				// Namespace may carry several ResourceQuotas, and the one it is
+				// about to hit is the answer, not their average.
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, namespace, resource) ((%s)`+
+						` / on (zke_cluster_id, namespace, resourcequota, resource) ((%s) > 0))`,
+					used,
+					hard,
 				), params.Top)
 			},
 		},
@@ -826,6 +1116,53 @@ func catalog() []Definition {
 			},
 		},
 		{
+			// What the containers that are not running are waiting for. The
+			// restart curve above says something is wrong; this says whether it
+			// is an image that cannot be pulled, a configuration that cannot be
+			// resolved, or a process that keeps dying — three faults with three
+			// different fixes.
+			//
+			// Restricted to the reasons an operator acts on. kube-state reports
+			// a series for every reason it knows, most of them permanently zero,
+			// and a chart of twenty flat lines answers nothing.
+			Name:              "pod_container_waiting",
+			Title:             "容器等待原因",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"reason"},
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id, reason) `+
+						`(kube_pod_container_status_waiting_reason{%s,reason=~"%s"})`,
+					namespaceSelector(matcher, params.Namespace),
+					waitingReasons,
+				)
+			},
+		},
+		{
+			// Why the containers that did stop, stopped. OOMKilled is the one
+			// this exists for: it is invisible in every usage curve, because a
+			// container killed for exceeding its memory limit stops reporting
+			// the moment it is killed.
+			Name:              "pod_container_terminated",
+			Title:             "容器退出原因",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"reason"},
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id, reason) `+
+						`(kube_pod_container_status_last_terminated_reason{%s,reason=~"%s"})`,
+					namespaceSelector(matcher, params.Namespace),
+					terminatedReasons,
+				)
+			},
+		},
+		{
 			// Desired minus ready, across the three controllers that promise a
 			// replica count. A Deployment reporting 3/3 and one reporting 1/3 are
 			// the same green tick in a list view; this is the number that separates
@@ -842,6 +1179,45 @@ func catalog() []Definition {
 			build: func(matcher string, params buildParams) string {
 				selector := namespaceSelector(matcher, params.Namespace)
 				return topk(replicaShortfall(selector), params.Top)
+			},
+		},
+		{
+			// Desired and ready as two curves rather than one difference. The
+			// shortfall above answers "is something missing"; these answer what
+			// happened — a workload that was scaled up, a rollout replacing its
+			// replicas, or a controller that lost them without being asked to
+			// change anything.
+			Name:              "workload_replicas_desired",
+			Title:             "工作负载期望副本",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"namespace", "workload_kind", "workload"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return topk(replicaUnion(
+					namespaceSelector(matcher, params.Namespace),
+					desiredReplicaFamilies,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "workload_replicas_ready",
+			Title:             "工作负载就绪副本",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"namespace", "workload_kind", "workload"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return topk(replicaUnion(
+					namespaceSelector(matcher, params.Namespace),
+					readyReplicaFamilies,
+				), params.Top)
 			},
 		},
 		// Disk and network saturation, beside the throughput queries above.
@@ -866,6 +1242,75 @@ func catalog() []Definition {
 						`(node_filesystem_files{%s}))`,
 					matcher,
 					matcher,
+				), params.Top)
+			},
+		},
+		{
+			// PersistentVolumeClaim fullness, reported by the kubelet that
+			// mounted it. Nothing else in the pipeline knows it: kube-state
+			// knows the claim exists and how much was requested, and the Node's
+			// own filesystem series describe the disk under it, not the claim.
+			//
+			// `max` rather than `sum`: a ReadWriteMany claim is reported by every
+			// kubelet that mounted it, and adding those up would report a volume
+			// as several times its own size.
+			Name:              "pvc_utilization",
+			Title:             "PVC 使用率",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"namespace", "persistentvolumeclaim"},
+			SupportsTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				selector := namespaceSelector(matcher, params.Namespace)
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, namespace, persistentvolumeclaim) `+
+						`(kubelet_volume_stats_used_bytes{%s})`+
+						` / on (zke_cluster_id, namespace, persistentvolumeclaim) `+
+						`(max by (zke_cluster_id, namespace, persistentvolumeclaim) `+
+						`(kubelet_volume_stats_capacity_bytes{%s}) > 0)`,
+					selector,
+					selector,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "pvc_used_bytes",
+			Title:             "PVC 已用空间",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			Dimensions:        []string{"namespace", "persistentvolumeclaim"},
+			SupportsTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, namespace, persistentvolumeclaim) `+
+						`(kubelet_volume_stats_used_bytes{%s})`,
+					namespaceSelector(matcher, params.Namespace),
+				), params.Top)
+			},
+		},
+		{
+			// The same distinction the Node filesystem view makes, one level up:
+			// a claim can run out of inodes with most of its bytes unused, and
+			// the writes fail with a message about disk space either way.
+			Name:              "pvc_inode_utilization",
+			Title:             "PVC inode 使用率",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"namespace", "persistentvolumeclaim"},
+			SupportsTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				selector := namespaceSelector(matcher, params.Namespace)
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, namespace, persistentvolumeclaim) `+
+						`(kubelet_volume_stats_inodes_used{%s})`+
+						` / on (zke_cluster_id, namespace, persistentvolumeclaim) `+
+						`(max by (zke_cluster_id, namespace, persistentvolumeclaim) `+
+						`(kubelet_volume_stats_inodes{%s}) > 0)`,
+					selector,
+					selector,
 				), params.Top)
 			},
 		},
@@ -986,6 +1431,45 @@ func catalog() []Definition {
 	}
 }
 
+// waitingReasons and terminatedReasons bound the container state charts to the
+// states an operator can act on.
+//
+// Read from the shared list the Agent filters its scrape with, so the two
+// cannot drift: a reason queried here but dropped there is an empty chart, and
+// one kept there but never queried is cardinality nobody reads.
+var (
+	waitingReasons    = strings.Join(observability.ContainerWaitingReasons, "|")
+	terminatedReasons = strings.Join(observability.ContainerTerminatedReasons, "|")
+)
+
+// The three controllers that promise a replica count, and the family each one
+// reports its desired and its ready number in.
+var (
+	desiredReplicaFamilies = [3]string{
+		"kube_deployment_status_replicas",
+		"kube_statefulset_status_replicas",
+		"kube_daemonset_status_desired_number_scheduled",
+	}
+	readyReplicaFamilies = [3]string{
+		"kube_deployment_status_replicas_available",
+		"kube_statefulset_status_replicas_ready",
+		"kube_daemonset_status_number_ready",
+	}
+)
+
+// pressureStall reads one PSI counter as the share of wall clock time something
+// spent waiting for a resource. The counter accumulates stall time, so its rate
+// is already that share; `max` keeps a second exporter during a rollout from
+// doubling it.
+func pressureStall(name string, matcher string, window string) string {
+	return fmt.Sprintf(
+		`max by (zke_cluster_id, node) (rate(%s{%s}[%s]))`,
+		name,
+		matcher,
+		window,
+	)
+}
+
 // workloadRollup sums a per-Pod expression by the controller that owns each Pod.
 //
 // Two levels, because Kubernetes has two. A StatefulSet, DaemonSet or Job owns
@@ -1042,49 +1526,50 @@ func workloadRollup(usage string, selector string) string {
 
 // replicaShortfall reports how many replicas each workload is missing.
 //
-// Three controllers promise a replica count and each names its object with a
-// different label, so both sides are normalised onto `workload` and
-// `workload_kind` before they can be subtracted — the same two labels the usage
-// rollup produces, so a reader moving between the two views sees one identity
-// for one workload. Jobs and CronJobs are deliberately absent: a Job that has
-// finished is not a workload missing replicas.
+// Desired minus ready, across the three controllers that promise a replica
+// count. A Deployment reporting 3/3 and one reporting 1/3 are the same green
+// tick in a list view; this is the number that separates them, and topk puts
+// the second one first.
 //
 // Clamped at zero. A controller mid-rollout can report more ready than desired
 // for a moment, and a negative shortfall ranked by topk would put a healthy
 // workload nowhere while reading as a defect wherever it did appear.
 func replicaShortfall(selector string) string {
-	union := func(families [3]string) string {
-		branches := make([]string, 0, 3)
-		for index, kind := range [3]struct{ label, kind string }{
-			{"deployment", "Deployment"},
-			{"statefulset", "StatefulSet"},
-			{"daemonset", "DaemonSet"},
-		} {
-			branches = append(branches, fmt.Sprintf(
-				`label_replace(label_replace(%s{%s}, "workload", "$1", "%s", "(.*)")`+
-					`, "workload_kind", "%s", "namespace", ".*")`,
-				families[index],
-				selector,
-				kind.label,
-				kind.kind,
-			))
-		}
-		return fmt.Sprintf(
-			`sum by (zke_cluster_id, namespace, workload_kind, workload) ((%s))`,
-			strings.Join(branches, ") or ("),
-		)
+	return fmt.Sprintf(
+		`clamp_min((%s) - (%s), 0)`,
+		replicaUnion(selector, desiredReplicaFamilies),
+		replicaUnion(selector, readyReplicaFamilies),
+	)
+}
+
+// replicaUnion normalises one number reported by three controllers onto one set
+// of labels.
+//
+// Each controller names its object with a different label, so all three are
+// rewritten onto `workload` and `workload_kind` — the same two labels the usage
+// rollup produces, so a reader moving between the views sees one identity for
+// one workload. Jobs and CronJobs are deliberately absent: a Job that has
+// finished is not a workload missing replicas.
+func replicaUnion(selector string, families [3]string) string {
+	branches := make([]string, 0, 3)
+	for index, kind := range [3]struct{ label, kind string }{
+		{"deployment", "Deployment"},
+		{"statefulset", "StatefulSet"},
+		{"daemonset", "DaemonSet"},
+	} {
+		branches = append(branches, fmt.Sprintf(
+			`label_replace(label_replace(%s{%s}, "workload", "$1", "%s", "(.*)")`+
+				`, "workload_kind", "%s", "namespace", ".*")`,
+			families[index],
+			selector,
+			kind.label,
+			kind.kind,
+		))
 	}
-	desired := union([3]string{
-		"kube_deployment_status_replicas",
-		"kube_statefulset_status_replicas",
-		"kube_daemonset_status_desired_number_scheduled",
-	})
-	ready := union([3]string{
-		"kube_deployment_status_replicas_available",
-		"kube_statefulset_status_replicas_ready",
-		"kube_daemonset_status_number_ready",
-	})
-	return fmt.Sprintf(`clamp_min((%s) - (%s), 0)`, desired, ready)
+	return fmt.Sprintf(
+		`sum by (zke_cluster_id, namespace, workload_kind, workload) ((%s))`,
+		strings.Join(branches, ") or ("),
+	)
 }
 
 // clusterInventory counts the object families behind the headline row.

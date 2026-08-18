@@ -42,6 +42,24 @@ export type Panel = {
    * expected to sit near zero, where the shape is the whole point.
    */
   fullScale?: boolean;
+  /**
+   * Draws the series stacked. Only for a panel whose series are parts of one
+   * total — Pod phases, Node readiness — where the height of the stack is an
+   * answer of its own. Never for independent measurements: two Nodes' CPU
+   * usage piled on top of each other is a number nothing has.
+   */
+  stack?: boolean;
+  /** The line the panel's curves are read against. */
+  reference?: { value: number; label: string };
+  /**
+   * Added to the panel's empty state. For a panel whose data depends on
+   * something the operator can act on but the Server cannot see — a scrape
+   * target that older collector installs did not configure, a Kubernetes object
+   * that may simply not exist in this Cluster. Without it the panel reads as
+   * "no data" and the reader has no way to tell an idle Cluster from one that
+   * has to be reconfigured.
+   */
+  emptyNote?: string;
 };
 
 export type MetricsView = {
@@ -128,6 +146,11 @@ const CLUSTER_DIMENSION: MetricsDimension = {
           unit: "ratio",
           labels: [],
           fullScale: true,
+          // 申请占比 is the one ratio here that legitimately goes above 1, and
+          // that is the moment the panel exists to show: past this line the
+          // Cluster has promised more than it has, and a Node failure has
+          // nowhere to reschedule to.
+          reference: { value: 1, label: "可分配量" },
           queries: [
             { name: "cluster_cpu_utilization", label: "利用率", requires: KUBE_STATE },
             { name: "cluster_cpu_commitment", label: "申请占比", requires: KUBE_STATE },
@@ -139,6 +162,7 @@ const CLUSTER_DIMENSION: MetricsDimension = {
           unit: "ratio",
           labels: [],
           fullScale: true,
+          reference: { value: 1, label: "可分配量" },
           queries: [
             { name: "cluster_memory_utilization", label: "利用率", requires: KUBE_STATE },
             { name: "cluster_memory_commitment", label: "申请占比", requires: KUBE_STATE },
@@ -155,17 +179,25 @@ const CLUSTER_DIMENSION: MetricsDimension = {
         {
           id: "cluster-cpu-limits",
           title: "CPU 限制量",
-          description: "容器被允许使用的上限之和。超过可分配量意味着节点在压力下会开始限流。",
+          description:
+            "容器被允许使用的上限之和，与可分配量画在一起。限制量高于可分配量说明集群超卖，节点在压力下会开始限流；具体哪些容器被限流见「容器 · 限流」。",
           unit: "millicores",
           labels: [],
-          queries: [{ name: "cluster_cpu_limits", requires: KUBE_STATE }],
+          queries: [
+            { name: "cluster_cpu_limits", label: "限制量", requires: KUBE_STATE },
+            { name: "cluster_cpu_allocatable", label: "可分配量", requires: KUBE_STATE },
+          ],
         },
         {
           id: "cluster-memory-limits",
           title: "内存限制量",
+          description: "内存没有限流：超过限制的容器被直接终止，退出原因是 OOMKilled。",
           unit: "bytes",
           labels: [],
-          queries: [{ name: "cluster_memory_limits", requires: KUBE_STATE }],
+          queries: [
+            { name: "cluster_memory_limits", label: "限制量", requires: KUBE_STATE },
+            { name: "cluster_memory_allocatable", label: "可分配量", requires: KUBE_STATE },
+          ],
         },
       ],
     },
@@ -234,10 +266,14 @@ const NODE_DIMENSION: MetricsDimension = {
         {
           id: "node-load1",
           title: "1 分钟负载",
-          description: "可运行与不可中断的进程数。与该节点的核数比较才有意义。",
+          description:
+            "可运行与不可中断的进程数，与该节点的核数画在一起：负载 8 在 64 核节点上是空闲，在 2 核节点上是排队。",
           unit: "count",
           labels: ["node"],
-          queries: [{ name: "node_load1", requires: NODE_EXPORTER }],
+          queries: [
+            { name: "node_load1", label: "负载", requires: NODE_EXPORTER },
+            { name: "node_cpu_cores", label: "核数", requires: KUBE_STATE },
+          ],
         },
         {
           id: "node-cpu-iowait",
@@ -280,6 +316,40 @@ const NODE_DIMENSION: MetricsDimension = {
           unit: "count",
           labels: ["node"],
           queries: [{ name: "node_pod_count", requires: KUBE_STATE }],
+        },
+      ],
+    },
+    {
+      id: "pressure",
+      label: "压力停顿",
+      description:
+        "内核统计的等待时间：任务因为拿不到 CPU、内存或磁盘而停下来的时间占比。它衡量的是延迟本身，而不是资源用到了多少——内存回收忙碌的节点，可用内存看上去可能完全正常。需要节点内核提供 /proc/pressure（Linux 4.20 及以上），否则这里没有数据。",
+      top: true,
+      namespace: false,
+      panels: [
+        {
+          id: "node-pressure-cpu",
+          title: "CPU 压力",
+          unit: "ratio",
+          labels: ["node"],
+          emptyNote: "需要节点内核提供 /proc/pressure（Linux 4.20 及以上），较旧的内核不会上报。",
+          queries: [{ name: "node_pressure_cpu", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-pressure-memory",
+          title: "内存压力",
+          unit: "ratio",
+          labels: ["node"],
+          emptyNote: "需要节点内核提供 /proc/pressure（Linux 4.20 及以上），较旧的内核不会上报。",
+          queries: [{ name: "node_pressure_memory", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-pressure-io",
+          title: "I/O 压力",
+          unit: "ratio",
+          labels: ["node"],
+          emptyNote: "需要节点内核提供 /proc/pressure（Linux 4.20 及以上），较旧的内核不会上报。",
+          queries: [{ name: "node_pressure_io", requires: NODE_EXPORTER }],
         },
       ],
     },
@@ -372,6 +442,26 @@ const NAMESPACE_DIMENSION: MetricsDimension = {
         },
       ],
     },
+    {
+      id: "quota",
+      label: "配额",
+      description:
+        "ResourceQuota 的已用量占上限的比例，按资源分别统计。配额用满的 Namespace 会拒绝新建 Pod，而集群本身可能还很空闲——这种情况在上面任何一张用量曲线里都看不见，因为那些工作负载根本没有被创建出来。没有配置 ResourceQuota 的 Namespace 在这里没有数据。",
+      top: true,
+      namespace: true,
+      panels: [
+        {
+          id: "namespace-quota-utilization",
+          title: "配额使用率",
+          unit: "ratio",
+          labels: ["namespace", "resource"],
+          fullScale: true,
+          reference: { value: 1, label: "配额上限" },
+          emptyNote: "没有配置 ResourceQuota 的 Namespace 不会有数据。",
+          queries: [{ name: "namespace_quota_utilization", requires: KUBE_STATE }],
+        },
+      ],
+    },
   ],
 };
 
@@ -448,6 +538,85 @@ const POD_DIMENSION: MetricsDimension = {
         },
       ],
     },
+    {
+      id: "network",
+      label: "网络",
+      description:
+        "按 Pod 统计的收发速率。节点网卡打满是「存储与网络」回答的问题，是谁打满的在这里回答。",
+      top: true,
+      namespace: true,
+      panels: [
+        {
+          id: "pod-network-receive",
+          title: "网络接收",
+          unit: "bytes_per_second",
+          labels: ["namespace", "pod"],
+          emptyNote:
+            "这些指标来自 kubelet 的 cAdvisor 端点。若集群的采集组件安装于该端点被纳入抓取之前，请在「采集接入」中重新安装采集，以更新抓取配置。",
+          queries: [{ name: "pod_network_receive" }],
+        },
+        {
+          id: "pod-network-transmit",
+          title: "网络发送",
+          unit: "bytes_per_second",
+          labels: ["namespace", "pod"],
+          emptyNote:
+            "这些指标来自 kubelet 的 cAdvisor 端点。若集群的采集组件安装于该端点被纳入抓取之前，请在「采集接入」中重新安装采集，以更新抓取配置。",
+          queries: [{ name: "pod_network_transmit" }],
+        },
+      ],
+    },
+  ],
+};
+
+const CONTAINER_DIMENSION: MetricsDimension = {
+  id: "container",
+  label: "容器",
+  views: [
+    {
+      id: "usage",
+      label: "用量",
+      description:
+        "Pod 是一组进程而不是一个。上一层的曲线说明这个 Pod 在消耗，这里说明是其中哪个容器。",
+      top: true,
+      namespace: true,
+      panels: [
+        {
+          id: "container-cpu-usage",
+          title: "CPU 用量",
+          unit: "millicores",
+          labels: ["namespace", "pod", "container"],
+          queries: [{ name: "container_cpu_usage" }],
+        },
+        {
+          id: "container-memory-usage",
+          title: "内存用量",
+          unit: "bytes",
+          labels: ["namespace", "pod", "container"],
+          queries: [{ name: "container_memory_usage" }],
+        },
+      ],
+    },
+    {
+      id: "throttling",
+      label: "限流",
+      description:
+        "容器因为达到 CPU 限制而被暂停的周期占比。被限流的容器用量恰好等于它被允许的量，因此在任何用量曲线上都看不出异常——变慢的原因只在这条曲线里。没有设置 CPU 限制的容器在这里没有数据。",
+      top: true,
+      namespace: true,
+      panels: [
+        {
+          id: "container-cpu-throttling",
+          title: "CPU 限流比例",
+          unit: "ratio",
+          labels: ["namespace", "pod", "container"],
+          fullScale: true,
+          emptyNote:
+            "这些指标来自 kubelet 的 cAdvisor 端点。若集群的采集组件安装于该端点被纳入抓取之前，请在「采集接入」中重新安装采集，以更新抓取配置。",
+          queries: [{ name: "container_cpu_throttling" }],
+        },
+      ],
+    },
   ],
 };
 
@@ -457,11 +626,52 @@ export const COMPUTE_DIMENSIONS: readonly [MetricsDimension, ...MetricsDimension
   NAMESPACE_DIMENSION,
   WORKLOAD_DIMENSION,
   POD_DIMENSION,
+  CONTAINER_DIMENSION,
 ];
 
 /* ── 存储与网络 ───────────────────────────────────────────────────────── */
 
 export const STORAGE_VIEWS: MetricsViews = [
+  {
+    id: "pvc",
+    label: "持久卷",
+    description:
+      "PersistentVolumeClaim 的用量，由挂载它的 kubelet 上报，因此不需要节点指标导出器。下面的节点文件系统描述的是磁盘，这里描述的是声明——一个写满的 PVC 所在的磁盘可能还很空。",
+    top: true,
+    namespace: true,
+    panels: [
+      {
+        id: "pvc-utilization",
+        title: "PVC 使用率",
+        unit: "ratio",
+        labels: ["namespace", "persistentvolumeclaim"],
+        fullScale: true,
+        emptyNote:
+          "该视图来自 kubelet 的卷统计端点，只统计已被 Pod 挂载的 PVC。若集群的采集组件安装于该端点被纳入抓取之前，请在「采集接入」中重新安装采集，以更新抓取配置。",
+        queries: [{ name: "pvc_utilization" }],
+      },
+      {
+        id: "pvc-used",
+        title: "PVC 已用空间",
+        unit: "bytes",
+        labels: ["namespace", "persistentvolumeclaim"],
+        emptyNote:
+          "该视图来自 kubelet 的卷统计端点，只统计已被 Pod 挂载的 PVC。若集群的采集组件安装于该端点被纳入抓取之前，请在「采集接入」中重新安装采集，以更新抓取配置。",
+        queries: [{ name: "pvc_used_bytes" }],
+      },
+      {
+        id: "pvc-inodes",
+        title: "PVC inode 使用率",
+        description: "inode 用完的卷剩余空间看起来完全正常，写入却全部失败。",
+        unit: "ratio",
+        labels: ["namespace", "persistentvolumeclaim"],
+        fullScale: true,
+        emptyNote:
+          "该视图来自 kubelet 的卷统计端点，只统计已被 Pod 挂载的 PVC。若集群的采集组件安装于该端点被纳入抓取之前，请在「采集接入」中重新安装采集，以更新抓取配置。",
+        queries: [{ name: "pvc_inode_utilization" }],
+      },
+    ],
+  },
   {
     id: "filesystem",
     label: "文件系统",
@@ -573,6 +783,41 @@ export const STORAGE_VIEWS: MetricsViews = [
       },
     ],
   },
+  {
+    id: "network-saturation",
+    label: "网络饱和",
+    description:
+      "吞吐量说的是通过了多少，这里说的是还通不通得过。连接跟踪表写满、握手完成却没有进程接收、重传升高，都会让请求超时，而节点的字节计数在这三种情况下都完全正常。",
+    top: true,
+    namespace: false,
+    panels: [
+      {
+        id: "node-conntrack",
+        title: "连接跟踪表使用率",
+        description: "表写满的节点会丢弃新建连接，已建立的连接不受影响——现象是新请求超时。",
+        unit: "ratio",
+        labels: ["node"],
+        fullScale: true,
+        queries: [{ name: "node_conntrack_utilization", requires: NODE_EXPORTER }],
+      },
+      {
+        id: "node-tcp-retransmission",
+        title: "TCP 重传比例",
+        description: "重传段数占发出段数的比例。按比例而不是按条数，繁忙节点才不会天然显得更糟。",
+        unit: "ratio",
+        labels: ["node"],
+        queries: [{ name: "node_tcp_retransmission", requires: NODE_EXPORTER }],
+      },
+      {
+        id: "node-listen-drops",
+        title: "连接队列丢弃",
+        description: "握手已经完成、监听队列却满了而被丢掉的连接。客户端看到的是连接超时。",
+        unit: "ops_per_second",
+        labels: ["node"],
+        queries: [{ name: "node_tcp_listen_drops", requires: NODE_EXPORTER }],
+      },
+    ],
+  },
 ];
 
 /* ── Kubernetes 资源 ──────────────────────────────────────────────────── */
@@ -589,8 +834,12 @@ export const KUBERNETES_VIEWS: MetricsViews = [
       {
         id: "pod-phase",
         title: "Pod 状态分布",
+        // Stacked because the phases are parts of one number: the height of the
+        // stack is the Pod count, and a Failed band appearing without the total
+        // moving is a different event from one that grew it.
         unit: "count",
         labels: ["phase"],
+        stack: true,
         queries: [{ name: "cluster_pod_phase", requires: KUBE_STATE }],
       },
       {
@@ -615,6 +864,7 @@ export const KUBERNETES_VIEWS: MetricsViews = [
         description: "按 Ready 条件统计的节点数，三种状态相加等于集群的节点总数。",
         unit: "count",
         labels: ["status"],
+        stack: true,
         queries: [{ name: "cluster_node_readiness", requires: KUBE_STATE }],
       },
       {
@@ -625,6 +875,36 @@ export const KUBERNETES_VIEWS: MetricsViews = [
         unit: "count",
         labels: ["condition"],
         queries: [{ name: "cluster_node_pressure", requires: KUBE_STATE }],
+      },
+    ],
+  },
+  {
+    id: "containers",
+    label: "容器状态",
+    description:
+      "重启曲线说明有容器在反复出问题，这两张图说明是什么问题。原因保留 Kubernetes 的英文原值，与 kubectl describe 里看到的一致。只统计操作者需要处理的原因。",
+    top: false,
+    namespace: true,
+    panels: [
+      {
+        id: "container-waiting",
+        title: "等待中的容器",
+        description:
+          "拉不到镜像、配置解析不了、进程反复退出——三种故障对应三种处理方式，重启次数分不出来。",
+        unit: "count",
+        labels: ["reason"],
+        stack: true,
+        queries: [{ name: "pod_container_waiting", requires: KUBE_STATE }],
+      },
+      {
+        id: "container-terminated",
+        title: "容器退出原因",
+        description:
+          "最近一次退出的原因。OOMKilled 是这张图存在的理由：内存超限的容器被直接杀掉，它在任何用量曲线上都只是突然消失。",
+        unit: "count",
+        labels: ["reason"],
+        stack: true,
+        queries: [{ name: "pod_container_terminated", requires: KUBE_STATE }],
       },
     ],
   },
@@ -643,6 +923,18 @@ export const KUBERNETES_VIEWS: MetricsViews = [
         labels: ["namespace", "workload_kind", "workload"],
         queries: [{ name: "workload_replicas_unavailable", requires: KUBE_STATE }],
       },
+      {
+        id: "workload-replicas",
+        title: "期望与就绪副本",
+        description:
+          "两条线画在一起才看得出发生了什么：一起抬升是扩容，就绪掉下去而期望不动是副本掉了，两条一起波动是滚动更新。",
+        unit: "count",
+        labels: ["namespace", "workload_kind", "workload"],
+        queries: [
+          { name: "workload_replicas_desired", label: "期望", requires: KUBE_STATE },
+          { name: "workload_replicas_ready", label: "就绪", requires: KUBE_STATE },
+        ],
+      },
     ],
   },
 ];
@@ -650,12 +942,31 @@ export const KUBERNETES_VIEWS: MetricsViews = [
 /* ── 总览 ─────────────────────────────────────────────────────────────── */
 
 export const OVERVIEW_PANELS: readonly Panel[] = [
+  // Usage first, and from the kubelet alone. Every other panel on this screen
+  // reads kube-state-metrics, so a Cluster whose object exporter is down or was
+  // never installed would land on a completely blank overview while the usage
+  // data behind it is arriving normally.
+  {
+    id: "overview-cpu-usage",
+    title: "CPU 用量",
+    unit: "millicores",
+    labels: [],
+    queries: [{ name: "cluster_cpu_usage" }],
+  },
+  {
+    id: "overview-memory-usage",
+    title: "内存用量",
+    unit: "bytes",
+    labels: [],
+    queries: [{ name: "cluster_memory_usage" }],
+  },
   {
     id: "overview-cpu",
     title: "CPU 利用率与申请占比",
     unit: "ratio",
     labels: [],
     fullScale: true,
+    reference: { value: 1, label: "可分配量" },
     queries: [
       { name: "cluster_cpu_utilization", label: "利用率", requires: KUBE_STATE },
       { name: "cluster_cpu_commitment", label: "申请占比", requires: KUBE_STATE },
@@ -667,6 +978,7 @@ export const OVERVIEW_PANELS: readonly Panel[] = [
     unit: "ratio",
     labels: [],
     fullScale: true,
+    reference: { value: 1, label: "可分配量" },
     queries: [
       { name: "cluster_memory_utilization", label: "利用率", requires: KUBE_STATE },
       { name: "cluster_memory_commitment", label: "申请占比", requires: KUBE_STATE },
@@ -677,6 +989,7 @@ export const OVERVIEW_PANELS: readonly Panel[] = [
     title: "Pod 状态分布",
     unit: "count",
     labels: ["phase"],
+    stack: true,
     queries: [{ name: "cluster_pod_phase", requires: KUBE_STATE }],
   },
   {

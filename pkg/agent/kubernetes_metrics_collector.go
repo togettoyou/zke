@@ -1084,7 +1084,13 @@ func renderCollectorScrapeConfig(
 	request *agentv1.MetricsCollectorRequest,
 	nodeExporterInstalled bool,
 ) string {
-	config := renderKubeletScrapeJob(request)
+	config := fmt.Sprintf(`global:
+  scrape_interval: %s
+scrape_configs:
+`, request.GetScrapeInterval())
+	for _, job := range kubeletScrapeJobs {
+		config += renderKubeletScrapeJob(job, request.GetKubeletMetricsPort())
+	}
 	if request.GetKubeStateMetrics() != nil {
 		config += renderKubeStateScrapeJob(namespace)
 	}
@@ -1094,14 +1100,63 @@ func renderCollectorScrapeConfig(
 	return config
 }
 
-func renderKubeletScrapeJob(request *agentv1.MetricsCollectorRequest) string {
-	return fmt.Sprintf(`global:
-  scrape_interval: %s
-scrape_configs:
-  - job_name: kubelet-resource
+// kubeletScrapeJob is one of the kubelet's metrics endpoints.
+//
+// The kubelet answers on three paths and they are three different datasets, not
+// three spellings of one: `/metrics/resource` is the small, stable usage
+// endpoint Kubernetes maintains as an API, `/metrics/cadvisor` is the container
+// runtime's own view, and `/metrics` is the kubelet's internals. Only the first
+// is small enough to take whole — the other two are taken through an allow list
+// for the same reason the exporters are, and `keep` names exactly the families
+// the query catalogue reads.
+type kubeletScrapeJob struct {
+	name string
+	path string
+	// keep is a regular expression over metric names. Empty takes the endpoint
+	// whole, which is only ever right for `/metrics/resource`.
+	keep string
+	// honorTimestamps takes the timestamps the endpoint reports rather than the
+	// moment of the scrape. Right for the resource endpoint, which Kubernetes
+	// stamps from the sample it took; wrong for cAdvisor, whose housekeeping
+	// runs on its own interval and whose stamps therefore arrive out of step
+	// with the scrape that carried them.
+	honorTimestamps bool
+}
+
+var kubeletScrapeJobs = []kubeletScrapeJob{
+	{name: "kubelet-resource", path: "/metrics/resource", honorTimestamps: true},
+	{
+		// Throttling and per-Pod network, neither of which the resource endpoint
+		// reports. A container held at its CPU limit shows no anomaly in usage —
+		// it is using exactly what it was allowed — so throttled periods are the
+		// only series that explains why it is slow.
+		name: "kubelet-cadvisor",
+		path: "/metrics/cadvisor",
+		keep: "container_cpu_cfs_periods_total|" +
+			"container_cpu_cfs_throttled_periods_total|" +
+			"container_network_receive_bytes_total|" +
+			"container_network_transmit_bytes_total",
+	},
+	{
+		// Volume statistics. The kubelet is the only component that reports how
+		// full a PersistentVolumeClaim is: kube-state-metrics knows the claim
+		// exists and how large it was requested, and neither answers whether it
+		// is about to fill up.
+		name: "kubelet-volume",
+		path: "/metrics",
+		keep: "kubelet_volume_stats_available_bytes|" +
+			"kubelet_volume_stats_capacity_bytes|" +
+			"kubelet_volume_stats_used_bytes|" +
+			"kubelet_volume_stats_inodes|" +
+			"kubelet_volume_stats_inodes_used",
+	},
+}
+
+func renderKubeletScrapeJob(job kubeletScrapeJob, port uint32) string {
+	config := fmt.Sprintf(`  - job_name: %s
     scheme: https
-    metrics_path: /metrics/resource
-    honor_timestamps: true
+    metrics_path: %s
+    honor_timestamps: %t
     tls_config:
       # The kubelet serving certificate is usually signed by a CA the
       # ServiceAccount bundle does not contain. The connection stays inside the
@@ -1123,7 +1178,23 @@ scrape_configs:
       # none is sent.
       - regex: ^zke_.*$
         action: labeldrop
-`, request.GetScrapeInterval(), request.GetKubeletMetricsPort())
+`, job.name, job.path, job.honorTimestamps, port)
+	if job.keep == "" {
+		return config
+	}
+	// cAdvisor labels every series with the cgroup id, the image reference and
+	// the runtime's container name. All three change on every restart of the
+	// same container, which is how a Cluster's series count grows without its
+	// workloads changing at all. Nothing in the catalogue reads them, and
+	// dropping them on the volume endpoint too costs nothing: it never sets
+	// them.
+	return config + fmt.Sprintf(`    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: %s
+        action: keep
+      - regex: ^(id|image|name)$
+        action: labeldrop
+`, job.keep)
 }
 
 // renderKubeStateScrapeJob reaches the object metrics exporter through its
@@ -1138,7 +1209,37 @@ func renderKubeStateScrapeJob(namespace string) string {
     relabel_configs:
       - regex: ^zke_.*$
         action: labeldrop
-`, observability.KubeStateName, namespace, observability.KubeStatePort)
+%s`, observability.KubeStateName, namespace, observability.KubeStatePort, containerStateFilter())
+}
+
+// containerStateFilter drops the container state series nothing queries.
+//
+// The two families report one series per container per reason, and the reasons
+// nobody acts on outnumber the ones anybody does. Filtering them at the scrape
+// rather than at the query is what keeps them out of storage every Cluster
+// shares — a query-side selector would still have paid for them.
+//
+// Written as mark-then-drop because relabelling cannot express "not one of
+// these": a temporary label is set on the series worth keeping, everything in
+// those two families without it is dropped, and the label is removed again so
+// it never reaches storage. Every other family passes through untouched.
+func containerStateFilter() string {
+	families := strings.Join(observability.ContainerStateFamilies, "|")
+	reasons := strings.Join(append(
+		append([]string{}, observability.ContainerWaitingReasons...),
+		observability.ContainerTerminatedReasons...,
+	), "|")
+	return fmt.Sprintf(`    metric_relabel_configs:
+      - source_labels: [__name__, reason]
+        regex: (%s);(%s)
+        target_label: __tmp_zke_keep
+        replacement: "yes"
+      - source_labels: [__name__, __tmp_zke_keep]
+        regex: (%s);
+        action: drop
+      - regex: ^__tmp_zke_keep$
+        action: labeldrop
+`, families, reasons, families)
 }
 
 // renderNodeExporterScrapeJob discovers the exporter the same way the kubelet

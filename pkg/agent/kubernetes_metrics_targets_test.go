@@ -200,12 +200,20 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 	}{
 		"whole bundle": {
 			request: bundleRequest(),
-			jobs:    []string{"kubelet-resource", "kube-state-metrics", "node-exporter"},
+			jobs: []string{
+				"kubelet-resource",
+				"kubelet-cadvisor",
+				"kubelet-volume",
+				"kube-state-metrics",
+				"node-exporter",
+			},
 		},
 		"collector alone, as an older Server asks": {
 			request: installRequest(),
-			jobs:    []string{"kubelet-resource"},
-			absent:  []string{"kube-state-metrics", "node-exporter"},
+			// The kubelet endpoints are not optional: they are one target, and
+			// every install reads all three of them.
+			jobs:   []string{"kubelet-resource", "kubelet-cadvisor", "kubelet-volume"},
+			absent: []string{"kube-state-metrics", "node-exporter"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -236,6 +244,31 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 			// Cluster's own idea of its identity.
 			if strings.Count(config, "regex: ^zke_.*$") != len(testCase.jobs) {
 				t.Fatalf("not every job drops reserved scope labels:\n%s", config)
+			}
+			// The two large kubelet endpoints are taken through an allow list.
+			// Without it a single install multiplies what every Cluster ships
+			// into storage they all share, which is the failure this pipeline
+			// is built to avoid rather than to discover in production.
+			for _, family := range []string{
+				"container_cpu_cfs_throttled_periods_total",
+				"kubelet_volume_stats_used_bytes",
+			} {
+				if !strings.Contains(config, family) {
+					t.Fatalf("scrape configuration does not keep %q:\n%s", family, config)
+				}
+			}
+			if strings.Count(config, "action: keep") != 2 {
+				t.Fatalf("cAdvisor and volume statistics must be filtered:\n%s", config)
+			}
+			// Container state reasons are filtered where they are produced. A
+			// query-side selector would have paid for every reason the exporter
+			// knows, per container, in storage every Cluster shares.
+			if strings.Contains(config, "job_name: kube-state-metrics") &&
+				!strings.Contains(config, "__tmp_zke_keep") {
+				t.Fatalf("container state reasons are not filtered at the scrape:\n%s", config)
+			}
+			if strings.Contains(config, "ContainerCannotRun") {
+				t.Fatalf("scrape keeps a reason no query reads:\n%s", config)
 			}
 		})
 	}

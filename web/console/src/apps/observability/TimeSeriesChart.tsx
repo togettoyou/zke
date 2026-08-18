@@ -35,6 +35,20 @@ export type TimeSeriesChartProps = {
    * of 98%.
    */
   fullScale?: boolean;
+  /**
+   * Draws the series as a stack, each one resting on the sum of the ones below
+   * it. Only for a panel whose series add up to something — a phase breakdown,
+   * a set of Namespaces inside one Cluster — where the total is as much of the
+   * answer as any single curve. Anything else is stacked nonsense: two
+   * utilisations summed to 140% describe nothing.
+   */
+  stacked?: boolean;
+  /**
+   * A horizontal line the curves are read against — the capacity, the quota,
+   * the limit. Drawn because the comparison is the point of the panel and the
+   * reader would otherwise have to hold the number in their head.
+   */
+  reference?: { value: number; label: string };
   /** Charts sharing a key share a crosshair. */
   syncKey?: string;
 };
@@ -64,6 +78,58 @@ const FULL_TIME = new Intl.DateTimeFormat("zh-CN", {
   hour12: false,
 });
 
+type PlotOrder = {
+  /** Series index drawn at each plot position, in painting order. */
+  order: number[];
+  /** What uPlot draws, aligned with `order`. */
+  columns: (number | null)[][];
+  /** What the reader is told, indexed by series rather than by position. */
+  values: (number | null)[][];
+};
+
+/**
+ * Turns the series into what the canvas needs.
+ *
+ * Unstacked this is the identity. Stacked, each column becomes the running
+ * total up to and including its own series, and the order is reversed: uPlot
+ * paints in index order and every band is filled to the axis, so the total has
+ * to go down first and the bottom band last for each one to end up showing its
+ * own share.
+ *
+ * A hidden series contributes nothing to the totals rather than leaving a step
+ * in them — switching a curve off in the legend has to remove it from the sum,
+ * or the stack keeps describing a series that is no longer on the chart.
+ *
+ * A gap stays a gap. A null is not carried into the running total as a zero,
+ * because a Cluster that stopped reporting did not report zero.
+ */
+function plotOrder(
+  series: ChartSeries[],
+  hidden: ReadonlySet<string> | undefined,
+  stacked: boolean | undefined,
+): PlotOrder {
+  const values = series.map((item) => item.values);
+  if (!stacked) {
+    return { order: series.map((_, index) => index), columns: values, values };
+  }
+  const length = series[0]?.values.length ?? 0;
+  const running = new Array<number>(length).fill(0);
+  const cumulative = series.map((item) => {
+    const off = hidden?.has(item.id) ?? false;
+    return item.values.map((value, index) => {
+      if (value === null) {
+        return null;
+      }
+      if (!off) {
+        running[index] = (running[index] ?? 0) + value;
+      }
+      return running[index] ?? 0;
+    });
+  });
+  const order = series.map((_, index) => series.length - 1 - index);
+  return { order, columns: order.map((source) => cumulative[source] ?? []), values };
+}
+
 /**
  * A window longer than a day needs the date on the axis; a shorter one does
  * not, and repeating it on every tick spends the width that keeps the labels
@@ -86,7 +152,15 @@ function axisFormatter(spanSeconds: number): (value: number) => string {
  * `textContent`. There is no path here where markup from a Cluster could be
  * parsed.
  */
-function tooltipPlugin(formatValue: (value: number) => string): uPlot.Plugin {
+function tooltipPlugin(
+  formatValue: (value: number) => string,
+  /**
+   * The value to show for a drawn series, which is not always the one on the
+   * canvas: a stacked chart draws running totals, and a readout of those would
+   * report every series as larger than it is.
+   */
+  valueAt: (seriesIndex: number, dataIndex: number) => number | null,
+): uPlot.Plugin {
   let root: HTMLDivElement | null = null;
   let head: HTMLDivElement | null = null;
   let body: HTMLDivElement | null = null;
@@ -153,13 +227,13 @@ function tooltipPlugin(formatValue: (value: number) => string): uPlot.Plugin {
         const entries: { label: string; value: number; color: string }[] = [];
         for (let seriesIndex = 1; seriesIndex < plot.series.length; seriesIndex += 1) {
           const series = plot.series[seriesIndex];
-          const value = series?.show ? plot.data[seriesIndex]?.[index] : null;
+          const value = series?.show ? valueAt(seriesIndex, index) : null;
           if (!series || value == null) {
             continue;
           }
           entries.push({
             label: typeof series.label === "string" ? series.label : "",
-            value: value as number,
+            value,
             color: typeof series.stroke === "string" ? series.stroke : "",
           });
         }
@@ -234,6 +308,8 @@ export function TimeSeriesChart({
   hidden,
   onSelectRange,
   fullScale = false,
+  stacked = false,
+  reference,
   syncKey,
 }: TimeSeriesChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -277,10 +353,24 @@ export function TimeSeriesChart({
     return () => observer.disconnect();
   }, []);
 
-  const data = useMemo<uPlot.AlignedData>(() => {
-    const columns: (number | null)[][] = series.map((item) => item.values);
-    return [timestamps, ...columns] as unknown as uPlot.AlignedData;
-  }, [series, timestamps]);
+  // What is drawn, which is not always what was passed in. A stack is painted
+  // from the total downwards — every band is filled to the axis, and the one
+  // below has to be painted over the one above it — so the drawing order is the
+  // reverse of the series order, and each column carries the running total up
+  // to its own series rather than that series' own value.
+  const plotted = useMemo(() => plotOrder(series, hidden, stacked), [series, hidden, stacked]);
+
+  const data = useMemo<uPlot.AlignedData>(
+    () => [timestamps, ...plotted.columns] as unknown as uPlot.AlignedData,
+    [plotted, timestamps],
+  );
+
+  // The readout reads the original values through this rather than the canvas,
+  // and it must not rebuild the instance when only the numbers change.
+  const readoutRef = useRef(plotted);
+  useEffect(() => {
+    readoutRef.current = plotted;
+  });
 
   // The instance is rebuilt when the series set, the palette or the size
   // changes, and only then. Those change what the chart *is*; new data for the
@@ -342,7 +432,14 @@ export function TimeSeriesChart({
               // is a flat line, and drawing it as a mountain range invents a
               // volatility the Cluster does not have.
               const min = dataMin < 0 ? dataMin * 1.05 : 0;
-              const max = fullScale ? Math.max(1, dataMax) : dataMax > 0 ? dataMax * 1.08 : 1;
+              let max = fullScale ? Math.max(1, dataMax) : dataMax > 0 ? dataMax * 1.08 : 1;
+              // A reference line off the top of the axis is a line the reader
+              // never sees, which is worse than not drawing one: the panel then
+              // says the curves are being compared against something and shows
+              // no comparison.
+              if (reference) {
+                max = Math.max(max, reference.value * 1.05);
+              }
               return [min, max];
             },
           },
@@ -368,41 +465,81 @@ export function TimeSeriesChart({
         ],
         series: [
           { label: "时间" },
-          ...series.map((item, index) => {
-            const color = seriesColor(palette, index);
+          ...plotted.order.map((source) => {
+            const item = series[source];
+            const color = seriesColor(palette, source);
             return {
-              label: item.label,
+              label: item?.label ?? "",
               stroke: color,
               width: 1.75,
-              dash: seriesDash(index),
-              show: !hidden?.has(item.id),
+              dash: stacked ? undefined : seriesDash(source),
+              show: !(item && hidden?.has(item.id)),
               // A gap must read as a gap: connecting across it would draw a
               // collection outage as a straight line between the samples on
               // either side.
               spanGaps: false,
               points: { show: false },
-              // A single curve gets a wash under it — with nothing to occlude,
-              // the fill makes the shape readable at a glance. Two or more
-              // would hide each other.
-              ...(series.length === 1
-                ? {
-                    fill: (plot: uPlot) => {
-                      const gradient = plot.ctx.createLinearGradient(
-                        0,
-                        plot.bbox.top,
-                        0,
-                        plot.bbox.top + plot.bbox.height,
-                      );
-                      gradient.addColorStop(0, `${color}38`);
-                      gradient.addColorStop(1, `${color}00`);
-                      return gradient;
-                    },
-                  }
-                : {}),
+              // A stacked band is opaque on purpose. Every band is filled down
+              // to the axis and painted over the one above it, so a translucent
+              // fill would blend two bands into a third colour that belongs to
+              // neither series.
+              ...(stacked
+                ? { fill: color }
+                : // A single curve gets a wash under it — with nothing to
+                  // occlude, the fill makes the shape readable at a glance. Two
+                  // or more would hide each other.
+                  series.length === 1
+                  ? {
+                      fill: (plot: uPlot) => {
+                        const gradient = plot.ctx.createLinearGradient(
+                          0,
+                          plot.bbox.top,
+                          0,
+                          plot.bbox.top + plot.bbox.height,
+                        );
+                        gradient.addColorStop(0, `${color}38`);
+                        gradient.addColorStop(1, `${color}00`);
+                        return gradient;
+                      },
+                    }
+                  : {}),
             };
           }),
         ],
         hooks: {
+          // Drawn after the curves rather than under them: the line is what the
+          // curves are judged against, and a series crossing it has to be seen
+          // crossing it.
+          draw: reference
+            ? [
+                (plot: uPlot) => {
+                  const context = plot.ctx;
+                  const y = Math.round(plot.valToPos(reference.value, "y", true)) + 0.5;
+                  if (y < plot.bbox.top || y > plot.bbox.top + plot.bbox.height) {
+                    return;
+                  }
+                  context.save();
+                  context.strokeStyle = palette.axis;
+                  context.lineWidth = 1;
+                  context.setLineDash([5, 4]);
+                  context.beginPath();
+                  context.moveTo(plot.bbox.left, y);
+                  context.lineTo(plot.bbox.left + plot.bbox.width, y);
+                  context.stroke();
+                  context.setLineDash([]);
+                  context.fillStyle = palette.axis;
+                  context.font = `${11 * devicePixelRatio}px system-ui, sans-serif`;
+                  context.textAlign = "right";
+                  context.textBaseline = "bottom";
+                  context.fillText(
+                    reference.label,
+                    plot.bbox.left + plot.bbox.width - 4 * devicePixelRatio,
+                    y - 2 * devicePixelRatio,
+                  );
+                  context.restore();
+                },
+              ]
+            : [],
           setSelect: [
             (plot) => {
               if (plot.select.width <= 0) {
@@ -418,7 +555,19 @@ export function TimeSeriesChart({
             },
           ],
         },
-        plugins: [tooltipPlugin((value) => formatRef.current(value))],
+        plugins: [
+          tooltipPlugin(
+            (value) => formatRef.current(value),
+            (seriesIndex, dataIndex) => {
+              const current = readoutRef.current;
+              const source = current.order[seriesIndex - 1];
+              if (source === undefined) {
+                return null;
+              }
+              return current.values[source]?.[dataIndex] ?? null;
+            },
+          ),
+        ],
       },
       data,
       container,
@@ -432,7 +581,18 @@ export function TimeSeriesChart({
     // and setSeries below, which is what keeps a poll or a legend click from
     // rebuilding the instance.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesSignature, paletteSignature, width, height, fullScale, syncKey, spanSeconds]);
+  }, [
+    seriesSignature,
+    paletteSignature,
+    width,
+    height,
+    fullScale,
+    stacked,
+    reference?.value,
+    reference?.label,
+    syncKey,
+    spanSeconds,
+  ]);
 
   useEffect(() => {
     plotRef.current?.setData(data);
@@ -443,14 +603,20 @@ export function TimeSeriesChart({
     if (!plot) {
       return;
     }
-    series.forEach((item, index) => {
+    // Through the drawing order, which is not the series order once the chart
+    // is stacked.
+    plotted.order.forEach((source, position) => {
+      const item = series[source];
+      if (!item) {
+        return;
+      }
       const show = !hidden?.has(item.id);
-      const drawn = plot.series[index + 1];
+      const drawn = plot.series[position + 1];
       if (drawn && drawn.show !== show) {
-        plot.setSeries(index + 1, { show });
+        plot.setSeries(position + 1, { show });
       }
     });
-  }, [hidden, series]);
+  }, [hidden, series, plotted]);
 
   useEffect(() => {
     if (width > 0) {

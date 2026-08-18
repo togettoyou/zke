@@ -36,8 +36,8 @@ import (
 // count Pods has no reason to hold a list of every Secret in the Cluster. The
 // Agent could grant it — it holds that permission itself — which is exactly why
 // the restriction has to be written down rather than assumed.
-const kubeStateResources = "nodes,pods,namespaces,deployments,statefulsets," +
-	"daemonsets,replicasets,jobs,cronjobs"
+const kubeStateResources = "nodes,pods,namespaces,resourcequotas,deployments," +
+	"statefulsets,daemonsets,replicasets,jobs,cronjobs"
 
 // kubeStateMetricFamilies is what kube-state-metrics is allowed to expose.
 //
@@ -65,6 +65,16 @@ var kubeStateMetricFamilies = []string{
 	// show as "now".
 	"kube_pod_status_phase",
 	"kube_pod_container_status_restarts_total",
+	// Why a container is not running. A restart count says something happened;
+	// these two say what it was — OOMKilled and CrashLoopBackOff are different
+	// faults with different fixes, and a curve that only counts restarts sends
+	// the operator to read logs to find out which one they are looking at.
+	"kube_pod_container_status_waiting_reason",
+	"kube_pod_container_status_last_terminated_reason",
+	// Namespace quotas, which are the limit a workload hits before the Cluster
+	// runs out of anything. A Namespace refused at 100% of its quota looks
+	// identical to a healthy one in every usage curve here.
+	"kube_resourcequota",
 	"kube_deployment_status_replicas",
 	"kube_deployment_status_replicas_available",
 	"kube_statefulset_status_replicas",
@@ -86,7 +96,24 @@ var nodeExporterCollectors = []string{
 	"diskstats",
 	"netdev",
 	"loadavg",
+	// Saturation that never appears in a throughput or utilisation curve. A
+	// Node whose conntrack table is full, or whose TCP connections are being
+	// retransmitted, serves traffic that simply times out while every byte
+	// counter on it looks ordinary.
+	"netstat",
+	"conntrack",
+	// Pressure stall information: how long tasks actually waited for CPU, memory
+	// or I/O. It needs a kernel new enough to expose /proc/pressure; on an older
+	// one the collector reports nothing and the rest of the exporter is
+	// unaffected.
+	"pressure",
 }
+
+// nodeExporterNetstatFields bounds the one collector above that is otherwise
+// unbounded: netstat exposes the whole of /proc/net/snmp, around a hundred
+// series per Node, for the four counters the catalogue reads.
+const nodeExporterNetstatFields = `^(Tcp_RetransSegs|Tcp_OutSegs|` +
+	`TcpExt_ListenDrops|TcpExt_ListenOverflows)$`
 
 // nodeExporterUnavailable marks the one component a Cluster may legitimately
 // refuse. It needs the host's network namespace and host paths, which a
@@ -146,7 +173,7 @@ func applyKubeStateMetrics(
 		Rules: []rbacv1.PolicyRule{
 			{
 				APIGroups: []string{""},
-				Resources: []string{"nodes", "pods", "namespaces"},
+				Resources: []string{"nodes", "pods", "namespaces", "resourcequotas"},
 				Verbs:     []string{"list", "watch"},
 			},
 			{
@@ -444,6 +471,7 @@ func renderNodeExporterDaemonSet(
 			`^(veth|cali|cni|docker|flannel|lxc|tunl|nodelocaldns).*|^lo$`,
 		"--collector.diskstats.device-exclude=" +
 			`^(ram|loop|fd|dm-|sr|nbd)\d+$`,
+		"--collector.netstat.fields=" + nodeExporterNetstatFields,
 	}
 	for _, collector := range nodeExporterCollectors {
 		args = append(args, "--collector."+collector)
