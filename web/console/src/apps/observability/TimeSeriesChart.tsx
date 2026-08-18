@@ -230,7 +230,7 @@ export function TimeSeriesChart({
   formatValue,
   formatAxis,
   ariaLabel,
-  height = 240,
+  height = 200,
   hidden,
   onSelectRange,
   fullScale = false,

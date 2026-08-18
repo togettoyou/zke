@@ -108,7 +108,7 @@ export function OverviewSection() {
       {inventory.data ? <IssueNotice issues={inventory.data.issues} /> : null}
 
       <div className="@container">
-        <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 @3xl:grid-cols-2">
           {OVERVIEW_PANELS.map((panel) => (
             <ChartPanel key={panel.id} panel={panel} />
           ))}

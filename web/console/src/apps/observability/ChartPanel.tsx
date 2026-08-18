@@ -184,13 +184,13 @@ function ChartLegend({
 }) {
   return (
     <div className="mt-3">
-      <div className="text-subtle-foreground grid grid-cols-[minmax(0,1fr)_5rem_5rem_5rem] gap-x-3 px-1 pb-1 text-[11px]">
+      <div className="text-subtle-foreground grid grid-cols-[minmax(0,1fr)_4.25rem_4.25rem_4.25rem] gap-x-3 px-1 pb-1 text-[11px]">
         <span>序列</span>
         <span className="text-right">最新</span>
         <span className="text-right">平均</span>
         <span className="text-right">最大</span>
       </div>
-      <ul className="max-h-44 overflow-y-auto">
+      <ul className="max-h-36 overflow-y-auto">
         {series.map((item, index) => {
           const off = hidden.has(item.id);
           const dash = dashAt(index);
@@ -202,7 +202,7 @@ function ChartLegend({
                 aria-checked={!off}
                 onClick={() => onToggle(item.id)}
                 className={cn(
-                  "zke-focus rounded-control hover:bg-surface-muted grid w-full grid-cols-[minmax(0,1fr)_5rem_5rem_5rem] items-center gap-x-3 px-1 py-0.5 text-left text-xs transition-colors",
+                  "zke-focus rounded-control hover:bg-surface-muted grid w-full grid-cols-[minmax(0,1fr)_4.25rem_4.25rem_4.25rem] items-center gap-x-3 px-1 py-0.5 text-left text-xs transition-colors",
                   off && "opacity-45",
                 )}
               >

@@ -138,7 +138,10 @@ export const APP_MANIFESTS: AppManifest[] = [
     // application at all.
     requiredPermissions: ["cluster.metrics.read"],
     availability: { state: "available" },
-    defaultSize: { width: 1_060, height: 680 },
+    // Wider than the other applications: every chart section lays its panels
+    // out two per row, and this is the width that gives both of them a
+    // readable plot without the operator resizing the window first.
+    defaultSize: { width: 1_180, height: 680 },
     entry: ObservabilityApp,
   },
 ];
