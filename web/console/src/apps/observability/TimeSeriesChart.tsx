@@ -62,12 +62,9 @@ const TIME_OF_DAY = new Intl.DateTimeFormat("zh-CN", {
   minute: "2-digit",
   hour12: false,
 });
-const DAY_AND_TIME = new Intl.DateTimeFormat("zh-CN", {
+const MONTH_AND_DAY = new Intl.DateTimeFormat("zh-CN", {
   month: "2-digit",
   day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
 });
 const FULL_TIME = new Intl.DateTimeFormat("zh-CN", {
   month: "2-digit",
@@ -130,15 +127,48 @@ function plotOrder(
   return { order, columns: order.map((source) => cumulative[source] ?? []), values };
 }
 
+type TimeAxis = {
+  /** Labels a whole tick set at once, so a tick can be read against the one before it. */
+  format: (splits: number[]) => string[];
+  /** Least horizontal room a tick may have, which is what decides how many there are. */
+  space: number;
+};
+
 /**
- * A window longer than a day needs the date on the axis; a shorter one does
- * not, and repeating it on every tick spends the width that keeps the labels
- * from colliding.
+ * How the window is written along the bottom of a chart.
+ *
+ * A window longer than a day needs the date, but carrying `08/18 06:00` on
+ * every tick is what packed the labels into each other on the 2-day and 7-day
+ * ranges: the label is twice as wide as the time alone, while uPlot keeps
+ * choosing tick counts for a narrower one. So the date is written the way a
+ * reader would write it — once, on the tick that opens the day, with every
+ * other tick showing only its time — and the spacing is stated for the widest
+ * label that leaves, rather than left at a default that assumes `06:00`.
+ *
+ * The day label lands on a day boundary because every tick interval uPlot
+ * picks above a minute divides one: were that not so, a date could appear
+ * against a mid-morning tick and read as that day's first sample.
  */
-function axisFormatter(spanSeconds: number): (value: number) => string {
-  return spanSeconds > 24 * 60 * 60
-    ? (value) => DAY_AND_TIME.format(value * 1000)
-    : (value) => TIME_OF_DAY.format(value * 1000);
+function timeAxis(spanSeconds: number): TimeAxis {
+  if (spanSeconds <= 24 * 60 * 60) {
+    return {
+      format: (splits) => splits.map((value) => TIME_OF_DAY.format(value * 1000)),
+      space: 56,
+    };
+  }
+  return {
+    format: (splits) => {
+      let previous: string | null = null;
+      return splits.map((value) => {
+        const at = value * 1000;
+        const day = MONTH_AND_DAY.format(at);
+        const label = day === previous ? TIME_OF_DAY.format(at) : day;
+        previous = day;
+        return label;
+      });
+    },
+    space: 68,
+  };
 }
 
 /**
@@ -392,12 +422,15 @@ export function TimeSeriesChart({
     }
     const formatAxisValues = (splits: number[]) =>
       axisRef.current ? axisRef.current(splits) : splits.map((value) => formatRef.current(value));
-    const formatTime = axisFormatter(spanSeconds);
+    const time = timeAxis(spanSeconds);
     const plot = new uPlot(
       {
         width,
         height,
-        padding: [12, 10, 0, 0],
+        // Right padding is half an axis label rather than a token gap: the last
+        // tick can sit on the edge of the plot, and its label is centred on it,
+        // so anything narrower cuts the final timestamp in half.
+        padding: [12, 18, 0, 0],
         legend: { show: false },
         cursor: {
           // `setScale: false` because the window is owned by the view, not by
@@ -450,7 +483,8 @@ export function TimeSeriesChart({
             grid: { stroke: palette.grid, width: 1, dash: [3, 4] },
             ticks: { stroke: palette.grid, width: 1, size: 4 },
             font: "11px system-ui, sans-serif",
-            values: (_plot, splits) => splits.map(formatTime),
+            space: time.space,
+            values: (_plot, splits) => time.format(splits),
           },
           {
             stroke: palette.axis,

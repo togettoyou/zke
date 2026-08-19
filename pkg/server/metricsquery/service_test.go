@@ -57,6 +57,9 @@ func (stub stubClusters) GetVisibleCluster(
 type capturedQuery struct {
 	expression string
 	path       string
+	start      string
+	end        string
+	step       string
 	calls      int
 }
 
@@ -98,6 +101,9 @@ func testServiceWithBudget(
 			captured.calls++
 			captured.expression = request.Form.Get("query")
 			captured.path = request.URL.Path
+			captured.start = request.Form.Get("start")
+			captured.end = request.Form.Get("end")
+			captured.step = request.Form.Get("step")
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(status)
 			_, _ = writer.Write([]byte(body))
@@ -493,5 +499,48 @@ func TestNewServiceRequiresAnAbsoluteQueryURL(t *testing.T) {
 		); err == nil {
 			t.Fatalf("query URL %q was accepted", queryURL)
 		}
+	}
+}
+
+// A window dragged out of a chart starts on whatever second the pointer was
+// over. Storage answers a range query on multiples of the step and quietly
+// moves an unaligned start onto that grid, so a request that keeps the raw
+// second gets back samples that line up with nothing — the same window that is
+// full when its bounds are typed by hand comes back as an empty chart.
+func TestRangeStartIsSnappedOntoTheStepGrid(t *testing.T) {
+	t.Parallel()
+
+	// The grid storage will answer on, and one sample on it.
+	body := `{"status":"success","data":{"resultType":"matrix","result":[
+		{"metric":{"zke_cluster_id":"` + clusterOne + `"},
+		 "values":[[1755215940,"1200"]]}
+	]}}`
+	captured := &capturedQuery{}
+	service := testService(t, body, http.StatusOK, captured)
+
+	input := rangeInput("cluster_cpu_usage")
+	// Seven seconds past the grid, the way a drag lands.
+	input.Start = input.Start.Add(-7 * time.Second)
+
+	result, err := service.Query(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.start != "1755215820" {
+		t.Fatalf("start sent to storage = %q, want it snapped back to 1755215820", captured.start)
+	}
+	points := result.Series[0].Points
+	if len(points) != 4 {
+		t.Fatalf("points = %d, want a grid of 4", len(points))
+	}
+	for _, point := range points {
+		if point.UnixSeconds%60 != 0 {
+			t.Fatalf("point %d is off the step grid", point.UnixSeconds)
+		}
+	}
+	// The sample storage returned has to land in the grid rather than falling
+	// between two of its positions.
+	if points[2].Value == nil || *points[2].Value != 1200 {
+		t.Fatalf("sample was lost between grid positions: %+v", points[2])
 	}
 }

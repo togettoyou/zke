@@ -87,6 +87,38 @@ export function MetricsScopeProvider({
   const [refreshSeconds, setRefreshSeconds] = useState<number | null>(60);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
+  const chartWindow = useMemo(() => resolveWindow(range, nowMs), [range, nowMs]);
+  const windowKey = useMemo(() => windowKeyFor(range, chartWindow), [range, chartWindow]);
+
+  // The window a request asks for is read when it asks, rather than being baked
+  // into its cache key. One entry per chart then survives the clock moving,
+  // which is what lets a refresh replace the numbers in place instead of asking
+  // a question the cache has never seen and blanking the panel back to a
+  // spinner.
+  const windowRef = useRef<TimeWindow>(chartWindow);
+  const readWindow = useCallback(() => windowRef.current, []);
+
+  /**
+   * Moves the window every chart reads, and tells them it moved.
+   *
+   * The ref is written here, where the move is initiated, and not from an
+   * effect watching the resolved window. The panels are children, and a child's
+   * effects run before its parent's: a new range gives them a new cache key,
+   * and the effect that subscribes them issues the request for it while this
+   * component's own effects are still pending. A window written afterwards
+   * arrives too late for the very request it was meant to describe — the first
+   * request for a new range asked for the previous one and filed the answer
+   * under the new key, so the charts went on showing the old window until
+   * something invalidated them. That something was the refresh button, which is
+   * why a range only appeared to apply on the second try.
+   */
+  const moveWindow = useCallback((next: TimeRange) => {
+    const at = Date.now();
+    windowRef.current = resolveWindow(next, at);
+    setRangeState(next);
+    setNowMs(at);
+  }, []);
+
   // The clock only advances for a relative range: an absolute one is a window
   // the operator pinned, and moving it would take the chart out from under the
   // thing they had just selected. A minimised window stops it entirely — every
@@ -95,51 +127,29 @@ export function MetricsScopeProvider({
     if (!live || refreshSeconds === null || range.kind !== "relative") {
       return;
     }
-    const timer = window.setInterval(() => setNowMs(Date.now()), refreshSeconds * 1000);
+    const timer = window.setInterval(() => moveWindow(range), refreshSeconds * 1000);
     return () => window.clearInterval(timer);
-  }, [live, refreshSeconds, range.kind]);
-
-  const setRange = useCallback((next: TimeRange) => {
-    setNowMs(Date.now());
-    setRangeState(next);
-  }, []);
+  }, [live, moveWindow, range, refreshSeconds]);
 
   const selectRange = useCallback(
     (startMs: number, endMs: number) => {
       const selected = selectionToRange(startMs, endMs);
       if (selected) {
-        setRange(selected);
+        moveWindow(selected);
       }
     },
-    [setRange],
+    [moveWindow],
   );
 
-  const zoomOutRange = useCallback(() => {
-    const at = Date.now();
-    setRangeState((current) => zoomOut(current, at));
-    setNowMs(at);
-  }, []);
+  const zoomOutRange = useCallback(
+    () => moveWindow(zoomOut(range, Date.now())),
+    [moveWindow, range],
+  );
 
-  const refresh = useCallback(() => setNowMs(Date.now()), []);
-
-  const chartWindow = useMemo(() => resolveWindow(range, nowMs), [range, nowMs]);
-  const windowKey = useMemo(() => windowKeyFor(range, chartWindow), [range, chartWindow]);
-
-  // The window a request asks for is read here, when it asks, rather than being
-  // baked into its cache key. One entry per chart then survives the clock
-  // moving, which is what lets a refresh replace the numbers in place instead
-  // of asking a question the cache has never seen and blanking the panel back
-  // to a spinner.
-  const windowRef = useRef<TimeWindow>(chartWindow);
-  useEffect(() => {
-    windowRef.current = chartWindow;
-  }, [chartWindow]);
-  const readWindow = useCallback(() => windowRef.current, []);
+  const refresh = useCallback(() => moveWindow(range), [moveWindow, range]);
 
   // Refreshing is an invalidation, not a new key: the observers stay mounted
-  // and keep the answer they are showing until the next one arrives. Declared
-  // after the effect above so the window is already current when the refetch it
-  // triggers reads it.
+  // and keep the answer they are showing until the next one arrives.
   //
   // Skipped on the first run — the queries are fetching anyway, and invalidating
   // them at that moment would only ask twice.
@@ -208,7 +218,7 @@ export function MetricsScopeProvider({
       top,
       setTop,
       range,
-      setRange,
+      setRange: moveWindow,
       selectRange,
       zoomOutRange,
       windowKey,
@@ -222,6 +232,7 @@ export function MetricsScopeProvider({
       clusterId,
       clusters,
       live,
+      moveWindow,
       namespace,
       setNamespace,
       range,
@@ -229,7 +240,6 @@ export function MetricsScopeProvider({
       refresh,
       refreshSeconds,
       selectRange,
-      setRange,
       top,
       windowKey,
       zoomOutRange,

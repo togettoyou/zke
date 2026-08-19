@@ -1683,6 +1683,9 @@ paths:
             maxLength: 63
         - name: start
           in: query
+          description: >-
+            范围查询的起点。会向前对齐到 step_seconds 的整数倍，与指标存储回答范围查询所用的网格一致；
+            响应中的 start 是实际生效的起点。
           schema:
             type: string
             format: date-time

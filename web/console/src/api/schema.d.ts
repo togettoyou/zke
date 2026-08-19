@@ -7839,6 +7839,7 @@ export interface operations {
                 /** @description 目标集群。每次查询只描述一个集群。 */
                 cluster_id: components["schemas"]["UUID"];
                 namespace?: string;
+                /** @description 范围查询的起点。会向前对齐到 step_seconds 的整数倍，与指标存储回答范围查询所用的网格一致； 响应中的 start 是实际生效的起点。 */
                 start?: string;
                 end?: string;
                 step_seconds?: number;

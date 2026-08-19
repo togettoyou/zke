@@ -436,6 +436,28 @@ func (service *Service) resolveWindow(
 	if input.Step%time.Second != 0 {
 		return "", fmt.Errorf("%w: step must be whole seconds", ErrInvalidInput)
 	}
+	// Storage answers a range query on its own grid — multiples of the step
+	// counted from the Unix epoch — and moves an unaligned start onto it as
+	// soon as a request is long enough to be worth caching, which is most of
+	// them. alignToGrid rebuilds the grid from the start that was asked for, so
+	// a start off that grid lines up with nothing storage returned and every
+	// point became a hole: an empty chart for exactly the window that was full
+	// when the same bounds were typed by hand.
+	//
+	// Snapping here rather than filling the grid from the returned timestamps
+	// keeps the answer the shape the caller asked for — one point per step,
+	// gaps included — and keeps it identical whether or not storage decided the
+	// request was cacheable.
+	//
+	// Down, never up: a window that grew forwards would report samples from
+	// after the end the caller named.
+	if aligned := alignDown(
+		input.Start.Unix(),
+		int64(input.Step/time.Second),
+	); aligned != input.Start.Unix() {
+		input.Start = time.Unix(aligned, 0).UTC()
+		span = input.End.Sub(input.Start)
+	}
 	if int(span/input.Step)+1 > service.config.MaxPoints {
 		return "", fmt.Errorf(
 			"%w: range and step would return more than %d points",
@@ -668,6 +690,16 @@ func decodePoint(raw []json.RawMessage) (Point, bool) {
 		return Point{UnixSeconds: int64(timestamp)}, true
 	}
 	return Point{UnixSeconds: int64(timestamp), Value: &value}, true
+}
+
+// alignDown places a Unix second on the largest multiple of step at or below
+// it, which is the grid storage answers a range query on.
+func alignDown(seconds, step int64) int64 {
+	offset := seconds % step
+	if offset < 0 {
+		offset += step
+	}
+	return seconds - offset
 }
 
 // alignToGrid places samples on the requested step grid and leaves an explicit
