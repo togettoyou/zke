@@ -199,13 +199,13 @@ func TestTerminalCommandProjectsCurrentPermissionsButNeverSecretAccess(t *testin
 	if !result.Failed || len(commander.created) != 1 || len(commander.executed) != 1 ||
 		commander.executed[0].Command != "kubectl exec api-0 -- id" ||
 		!slices.Contains(commander.created[0].Permissions, string(rbac.PermissionClusterTerminalExec)) ||
-		!slices.Contains(commander.created[0].Permissions, string(rbac.PermissionClusterPodExec)) {
+		!slices.Contains(commander.created[0].Permissions, string(rbac.PermissionClusterPodExec)) ||
+		!slices.Contains(commander.created[0].Permissions, string(rbac.PermissionClusterAgentNamespaceManage)) {
 		t.Fatalf("result=%+v created=%+v executed=%+v", result, commander.created, commander.executed)
 	}
 	if slices.Contains(commander.created[0].Permissions, string(rbac.PermissionClusterSecretRead)) ||
-		slices.Contains(commander.created[0].Permissions, string(rbac.PermissionClusterSecretManage)) ||
-		slices.Contains(commander.created[0].Permissions, string(rbac.PermissionClusterAgentNamespaceManage)) {
-		t.Fatalf("protected permissions reached AIOps terminal: %v", commander.created[0].Permissions)
+		slices.Contains(commander.created[0].Permissions, string(rbac.PermissionClusterSecretManage)) {
+		t.Fatalf("Secret permissions reached AIOps terminal: %v", commander.created[0].Permissions)
 	}
 	if _, err := catalogue.Invoke(context.Background(), airuntime.ToolInvocation{
 		Name: toolRunTerminalCommand, TurnID: "turn-1", ClusterID: "cluster", UserID: "user",

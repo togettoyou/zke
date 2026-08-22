@@ -144,12 +144,30 @@ func rbacPermissionName(argument ast.Expr, wireNames map[string]string) (string,
 	return permission, known
 }
 
-// Reads the constant name to wire name mapping out of the rbac package's own
-// declarations. Parsed rather than exported from rbac: nothing outside a test
-// needs to go from a Go identifier back to a permission, and adding an API for
-// it would be adding production surface to serve a test.
+// Reads the constant name to wire name mapping out of the rbac declarations
+// and the shared Server/Agent vocabulary they reference. Parsed rather than
+// exported from rbac: nothing outside a test needs to go from a Go identifier
+// back to a permission, and adding an API for it would be production surface
+// created only for a test.
 func permissionConstantNames(t *testing.T) map[string]string {
 	t.Helper()
+
+	sharedFile, err := parser.ParseFile(token.NewFileSet(), "../../shared/permissionname/names.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse permissionname/names.go: %v", err)
+	}
+	sharedNames := make(map[string]string)
+	ast.Inspect(sharedFile, func(node ast.Node) bool {
+		spec, isValue := node.(*ast.ValueSpec)
+		if !isValue || len(spec.Names) != 1 || len(spec.Values) != 1 {
+			return true
+		}
+		literal, isLiteral := spec.Values[0].(*ast.BasicLit)
+		if isLiteral && literal.Kind == token.STRING {
+			sharedNames[spec.Names[0].Name] = strings.Trim(literal.Value, `"`)
+		}
+		return true
+	})
 
 	file, err := parser.ParseFile(token.NewFileSet(), "../rbac/model.go", nil, 0)
 	if err != nil {
@@ -162,11 +180,18 @@ func permissionConstantNames(t *testing.T) map[string]string {
 		if !isValue || len(spec.Names) != 1 || len(spec.Values) != 1 {
 			return true
 		}
-		literal, isLiteral := spec.Values[0].(*ast.BasicLit)
-		if !isLiteral || literal.Kind != token.STRING {
+		selector, isSelector := spec.Values[0].(*ast.SelectorExpr)
+		if !isSelector {
 			return true
 		}
-		names[spec.Names[0].Name] = strings.Trim(literal.Value, `"`)
+		packageIdent, isIdent := selector.X.(*ast.Ident)
+		if !isIdent || packageIdent.Name != "permissionname" {
+			return true
+		}
+		wireName, known := sharedNames[selector.Sel.Name]
+		if known {
+			names[spec.Names[0].Name] = wireName
+		}
 		return true
 	})
 
@@ -181,7 +206,7 @@ func permissionConstantNames(t *testing.T) map[string]string {
 			}
 		}
 		if !found {
-			t.Fatalf("permission %s not found in rbac/model.go declarations", permission)
+			t.Fatalf("permission %s not found in shared/rbac declarations", permission)
 		}
 	}
 	return names

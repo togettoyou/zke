@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/togettoyou/zke/pkg/server/airuntime"
 	"github.com/togettoyou/zke/pkg/server/aisession"
@@ -50,15 +49,13 @@ func (catalogue *Catalogue) scaleWorkload(
 			airuntime.ErrInvalidInput,
 		)
 	}
-	scope, err := catalogue.dependencies.Scopes.ResolveClusterScope(ctx, invocation.ClusterID)
+	target := workloadScaleTarget(invocation.Arguments)
+	_, missing, err := catalogue.authorizeWorkloadMutation(ctx, invocation, arguments.Namespace)
 	if err != nil {
 		return airuntime.ToolResult{}, err
 	}
-	if protectedWorkloadNamespace(arguments.Namespace, scope.AgentNamespace) {
-		return airuntime.ToolResult{}, fmt.Errorf(
-			"%w: AIOps 伸缩工具不操作 kube-* 或 Agent Namespace",
-			airuntime.ErrInvalidInput,
-		)
+	if missing != "" {
+		return deniedWorkloadMutation(missing, target), nil
 	}
 
 	input := kubernetesresource.ScaleWorkloadInput{
@@ -138,9 +135,4 @@ func scalableWorkloadResource(kind string) (kubernetesresource.WorkloadResource,
 	default:
 		return "", false
 	}
-}
-
-func protectedWorkloadNamespace(namespace, agentNamespace string) bool {
-	return strings.HasPrefix(namespace, "kube-") ||
-		(agentNamespace != "" && namespace == agentNamespace)
 }

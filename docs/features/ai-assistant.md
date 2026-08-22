@@ -64,8 +64,8 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `get_pod_logs` | Pod 容器日志尾部（敏感），按 Pod 实例身份读取；单容器 Pod 可以省略容器名 | `cluster.pod.logs.read` |
 | `list_metric_queries` | 可用的指标查询目录 | `cluster.metrics.read` |
 | `query_metrics` | 执行目录中的一个查询，返回每条曲线的最新值、峰值与均值 | `cluster.metrics.read` |
-| `preview_workload_scale` | 对 Deployment/StatefulSet 目标副本数执行 Kubernetes 服务端 DryRun，不改变集群 | `cluster.resource.update` |
-| `scale_workload` | 实际调整 Deployment/StatefulSet 副本数；提交前内部再次执行同参数 DryRun | `cluster.resource.update` |
+| `preview_workload_scale` | 对 Deployment/StatefulSet 目标副本数执行 Kubernetes 服务端 DryRun，不改变集群 | 普通 Namespace 使用 `cluster.resource.update`，受保护 Namespace 改用 system/agent manage |
+| `scale_workload` | 实际调整 Deployment/StatefulSet 副本数；提交前内部再次执行同参数 DryRun | 同预检；实际伸缩始终按敏感操作处理 |
 | `list_workload_revisions` | 读取 Deployment/StatefulSet/DaemonSet 历史版本及回滚并发前置条件 | `cluster.read` |
 | `preview_workload_rollback` | 对指定 revision 执行 DryRun 并生成绑定用户和 Cluster 的预检快照 | `cluster.read` + 按 Namespace 选择 update/system/agent manage |
 | `rollback_workload` | 使用 `preview_id` 提交回滚；提交前重验权限和 DryRun | 同预检；受保护 Namespace 属于敏感操作 |
@@ -103,9 +103,9 @@ Namespace 选择一项有效权限，少一项就整次拒绝并把拒绝写进�
 按模型顺序执行。AIOps 明确拒绝 Secret 清单，即使账号持有 `cluster.secret.manage`，Secret 仍只能从 ZKE 专用入口修改。
 
 Cluster Terminal 命令始终同时标记为敏感和可能变更：“请求批准”和“帮我批准”都会逐次等待确认；“完全访问”只省略
-人工停顿，不扩大权限。Server 在本 Turn 首次命令批准后重新计算当前用户的全部 `cluster.*` 权限，移除 Secret 读写
-权限后交给 Agent 按固定白名单投射到 Turn 专属 ServiceAccount；后续命令复用同一 Pod 和冻结快照。Secret 读写和
-Agent Namespace 管理权限不会进入 AIOps 终端。命令容器
+人工停顿，不扩大权限。Server 在本 Turn 首次命令批准后重新计算当前用户的全部 `cluster.*` 权限，仅移除 Secret 读写
+权限后交给 Agent 按固定白名单投射到 Turn 专属 ServiceAccount；后续命令复用同一 Pod 和冻结快照。Agent Namespace 与系统 Namespace 不再有 AIOps 额外禁止，而是分别依据
+`cluster.agent_namespace.manage` 与 `cluster.system_namespace.manage`，Pod Exec 再叠加 `cluster.pod.exec`。命令容器
 不挂载该 ServiceAccount Token，而是通过同 Pod 的 localhost
 凭证代理运行 kubectl；代理凭证不会进入命令、stdout/stderr、轨迹或模型上下文。命令及有界输出会进入轨迹并发送给
 模型，因此调用参数不得包含密码、Token 或其他凭证明文。Turn 结束、失败或取消后立即清理 Pod 和临时 RBAC，异常时

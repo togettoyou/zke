@@ -12,6 +12,7 @@ import (
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
+	"github.com/togettoyou/zke/pkg/shared/permissionname"
 	"github.com/togettoyou/zke/pkg/shared/workloadbudget"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -44,11 +45,13 @@ kubectl config set-context terminal --cluster=in-cluster --user=terminal --names
 kubectl config use-context terminal --kubeconfig=/workspace/.kube/config >/dev/null
 trap : TERM INT
 while :; do sleep 3600 & wait $!; done`
-	terminalCredentialProxyCommand = `exec kubectl proxy \
+	terminalCredentialProxyRejectPaths = `^/api/v1/namespaces/[^/]+/pods/zke-terminal-[^/]+/(exec|attach|portforward)(/|$)`
+	terminalCredentialProxyCommand     = `exec kubectl proxy \
   --server=https://kubernetes.default.svc \
   --certificate-authority=/var/run/secrets/zke-terminal/ca.crt \
   --token="$(cat /var/run/secrets/zke-terminal/token)" \
-  --address=127.0.0.1 --port=8001 --accept-hosts='.*' --reject-paths='^$'`
+  --address=127.0.0.1 --port=8001 --accept-hosts='.*' \
+  --reject-paths='` + terminalCredentialProxyRejectPaths + `'`
 )
 
 // What the session Pod was given before the Server learned to name a budget. A
@@ -151,8 +154,11 @@ func createKubernetesTerminalSession(
 	if err != nil {
 		return kubernetesTerminalSessionFailure(response, err), nil
 	}
-	clusterPolicyRules := terminalClusterPolicyRules(request.GetPermissions())
-	if terminalHasPermission(request.GetPermissions(), "cluster.rbac.manage") {
+	clusterPolicyRules := append(
+		terminalClusterPolicyRules(request.GetPermissions()),
+		terminalNamespacedReadPolicyRules(request.GetPermissions())...,
+	)
+	if terminalHasPermission(request.GetPermissions(), permissionname.ClusterRBACManage) {
 		clusterRoles, listErr := client.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{})
 		if listErr != nil {
 			return kubernetesTerminalSessionFailure(response, listErr), nil
@@ -174,10 +180,10 @@ func createKubernetesTerminalSession(
 		Rules:      terminalPolicyRules(request.GetPermissions()),
 	}, {
 		ObjectMeta: metav1.ObjectMeta{Name: systemRoleName, Labels: labels, Annotations: annotations},
-		Rules:      terminalProtectedPolicyRules(request.GetPermissions(), "cluster.system_namespace.manage"),
+		Rules:      terminalProtectedPolicyRules(request.GetPermissions(), permissionname.ClusterSystemNamespaceManage),
 	}, {
 		ObjectMeta: metav1.ObjectMeta{Name: agentRoleName, Labels: labels, Annotations: annotations},
-		Rules:      terminalProtectedPolicyRules(request.GetPermissions(), "cluster.agent_namespace.manage"),
+		Rules:      terminalProtectedPolicyRules(request.GetPermissions(), permissionname.ClusterAgentNamespaceManage),
 	}}
 	clusterName := name + "-cluster"
 	clusterRole := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: clusterName, Labels: labels, Annotations: annotations},
@@ -382,9 +388,9 @@ func terminalNamespaceLifecyclePolicyRules(
 		permission string
 		names      []string
 	}{
-		{"cluster.namespace.manage", ordinary},
-		{"cluster.system_namespace.manage", system},
-		{"cluster.agent_namespace.manage", agent},
+		{permissionname.ClusterNamespaceManage, ordinary},
+		{permissionname.ClusterSystemNamespaceManage, system},
+		{permissionname.ClusterAgentNamespaceManage, agent},
 	} {
 		if held[item.permission] && len(item.names) > 0 {
 			rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"namespaces"},
@@ -394,7 +400,8 @@ func terminalNamespaceLifecyclePolicyRules(
 	// Kubernetes RBAC cannot restrict Namespace create by object name. Grant it
 	// only when the session holds all three Namespace classes, so no name can
 	// cross a permission boundary after the request reaches the API Server.
-	if held["cluster.namespace.manage"] && held["cluster.system_namespace.manage"] && held["cluster.agent_namespace.manage"] {
+	if held[permissionname.ClusterNamespaceManage] && held[permissionname.ClusterSystemNamespaceManage] &&
+		held[permissionname.ClusterAgentNamespaceManage] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"create"}})
 	}
 	return rules
@@ -457,16 +464,16 @@ func terminalNamespacePolicyRules(permissions []string, protectedPermission stri
 	protected := protectedPermission != ""
 	protectedManage := !protected || held[protectedPermission]
 	verbs := make([]string, 0, 7)
-	if held["cluster.read"] {
+	if held[permissionname.ClusterRead] {
 		verbs = append(verbs, "get", "list", "watch")
 	}
-	if protectedManage && (protected || held["cluster.resource.create"]) {
+	if protectedManage && (protected || held[permissionname.ClusterResourceCreate]) {
 		verbs = append(verbs, "create")
 	}
-	if protectedManage && (protected || held["cluster.resource.update"]) {
+	if protectedManage && (protected || held[permissionname.ClusterResourceUpdate]) {
 		verbs = append(verbs, "update", "patch")
 	}
-	if protectedManage && (protected || held["cluster.resource.delete"]) {
+	if protectedManage && (protected || held[permissionname.ClusterResourceDelete]) {
 		verbs = append(verbs, "delete")
 	}
 	rules := make([]rbacv1.PolicyRule, 0, 12)
@@ -482,37 +489,37 @@ func terminalNamespacePolicyRules(permissions []string, protectedPermission stri
 			rbacv1.PolicyRule{APIGroups: []string{"keda.sh"}, Resources: []string{"scaledobjects"}, Verbs: verbs},
 			rbacv1.PolicyRule{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: verbs},
 		)
-		if held["cluster.read"] {
+		if held[permissionname.ClusterRead] {
 			rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{"apps"}, Resources: []string{"replicasets", "controllerrevisions"}, Verbs: []string{"get", "list", "watch"}})
 		}
 	}
-	if held["cluster.event.read"] {
+	if held[permissionname.ClusterEventRead] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "watch"}})
 	}
-	if held["cluster.pod.logs.read"] {
+	if held[permissionname.ClusterPodLogsRead] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}})
 	}
-	if protectedManage && held["cluster.pod.exec"] {
+	if protectedManage && held[permissionname.ClusterPodExec] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"get", "create"}})
 	}
-	if protectedManage && held["cluster.pod.port_forward"] {
+	if protectedManage && held[permissionname.ClusterPodPortForward] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/portforward"}, Verbs: []string{"get", "create"}})
 	}
 	secretVerbs := make([]string, 0, 7)
-	if protectedManage && held["cluster.secret.read"] {
+	if protectedManage && held[permissionname.ClusterSecretRead] {
 		secretVerbs = append(secretVerbs, "get", "list", "watch")
 	}
-	if protectedManage && held["cluster.secret.manage"] {
+	if protectedManage && held[permissionname.ClusterSecretManage] {
 		secretVerbs = append(secretVerbs, "create", "update", "patch", "delete")
 	}
 	if len(secretVerbs) > 0 {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: secretVerbs})
 	}
 	rbacVerbs := make([]string, 0, 6)
-	if held["cluster.rbac.read"] {
+	if held[permissionname.ClusterRBACRead] {
 		rbacVerbs = append(rbacVerbs, "get", "list", "watch")
 	}
-	if protectedManage && held["cluster.rbac.manage"] {
+	if protectedManage && held[permissionname.ClusterRBACManage] {
 		rbacVerbs = append(rbacVerbs, "create", "update", "delete")
 	}
 	if len(rbacVerbs) > 0 {
@@ -530,16 +537,16 @@ func terminalClusterPolicyRules(permissions []string) []rbacv1.PolicyRule {
 	}
 	rules := make([]rbacv1.PolicyRule, 0, 8)
 	verbs := make([]string, 0, 6)
-	if held["cluster.read"] {
+	if held[permissionname.ClusterRead] {
 		verbs = append(verbs, "get", "list", "watch")
 	}
-	if held["cluster.resource.create"] {
+	if held[permissionname.ClusterResourceCreate] {
 		verbs = append(verbs, "create")
 	}
-	if held["cluster.resource.update"] {
+	if held[permissionname.ClusterResourceUpdate] {
 		verbs = append(verbs, "update", "patch")
 	}
-	if held["cluster.resource.delete"] {
+	if held[permissionname.ClusterResourceDelete] {
 		verbs = append(verbs, "delete")
 	}
 	if len(verbs) > 0 {
@@ -548,24 +555,73 @@ func terminalClusterPolicyRules(permissions []string) []rbacv1.PolicyRule {
 			rbacv1.PolicyRule{APIGroups: []string{"storage.k8s.io"}, Resources: []string{"storageclasses"}, Verbs: verbs},
 			rbacv1.PolicyRule{APIGroups: []string{"scheduling.k8s.io"}, Resources: []string{"priorityclasses"}, Verbs: verbs})
 	}
-	if held["cluster.read"] {
+	if held[permissionname.ClusterRead] {
 		rules = append(rules,
 			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"nodes", "namespaces"}, Verbs: []string{"get", "list", "watch"}},
 			rbacv1.PolicyRule{APIGroups: []string{"apiextensions.k8s.io"}, Resources: []string{"customresourcedefinitions"}, Verbs: []string{"get", "list", "watch"}})
 	}
-	if held["cluster.resource.update"] {
+	if held[permissionname.ClusterResourceUpdate] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"update", "patch"}})
 	}
 	rbacVerbs := make([]string, 0, 5)
-	if held["cluster.rbac.read"] {
+	if held[permissionname.ClusterRBACRead] {
 		rbacVerbs = append(rbacVerbs, "get", "list", "watch")
 	}
-	if held["cluster.rbac.manage"] {
+	if held[permissionname.ClusterRBACManage] {
 		rbacVerbs = append(rbacVerbs, "create")
 	}
 	if len(rbacVerbs) > 0 {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{"rbac.authorization.k8s.io"},
 			Resources: []string{"clusterroles", "clusterrolebindings"}, Verbs: rbacVerbs})
+	}
+	return rules
+}
+
+// terminalNamespacedReadPolicyRules is bound at Cluster scope so a Cluster-wide
+// ZKE read permission behaves the same in kubectl: `get ... -A` must not become
+// forbidden merely because write permissions are projected with per-Namespace
+// RoleBindings. Only read-only verbs live here; Namespace-sensitive writes,
+// pods/exec and port-forward remain in the ordinary/system/Agent roles.
+func terminalNamespacedReadPolicyRules(permissions []string) []rbacv1.PolicyRule {
+	held := make(map[string]bool, len(permissions))
+	for _, permission := range permissions {
+		held[permission] = true
+	}
+	rules := make([]rbacv1.PolicyRule, 0, 13)
+	readVerbs := []string{"get", "list", "watch"}
+	if held[permissionname.ClusterRead] {
+		rules = append(rules,
+			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods", "services", "configmaps", "persistentvolumeclaims", "resourcequotas", "limitranges"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "daemonsets", "replicasets", "controllerrevisions"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"gateway.networking.k8s.io"}, Resources: []string{"gateways", "httproutes", "grpcroutes", "tlsroutes", "tcproutes", "udproutes"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"autoscaling.k8s.io"}, Resources: []string{"verticalpodautoscalers"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"keda.sh"}, Resources: []string{"scaledobjects"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: readVerbs},
+		)
+	}
+	if held[permissionname.ClusterEventRead] {
+		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: readVerbs})
+	}
+	if held[permissionname.ClusterPodLogsRead] {
+		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}})
+	}
+	// Secret reads in kube-* and the Agent Namespace require both the Secret
+	// permission and the corresponding protected-Namespace grant. A
+	// ClusterRoleBinding cannot exclude those namespaces, so only project an
+	// all-Namespace Secret read when both protected grants are present; otherwise
+	// the per-Namespace roles retain the exact boundary.
+	if held[permissionname.ClusterSecretRead] && held[permissionname.ClusterSystemNamespaceManage] &&
+		held[permissionname.ClusterAgentNamespaceManage] {
+		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: readVerbs})
+	}
+	if held[permissionname.ClusterRBACRead] {
+		rules = append(rules,
+			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"serviceaccounts"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{"rbac.authorization.k8s.io"}, Resources: []string{"roles", "rolebindings"}, Verbs: readVerbs},
+		)
 	}
 	return rules
 }

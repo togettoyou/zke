@@ -77,8 +77,8 @@ Namespace、RBAC 或受保护 Namespace 权限；回滚按普通、系统或 Age
 
 受控 Cluster Terminal 命令已经实现：`run_terminal_command` 在目标 Agent 创建的 Turn 级终端 Pod 中执行非交互
 Shell 命令，固定要求 `cluster.terminal.exec` 并标记为敏感且可能变更。一个 Turn 的首次命令批准后重新计算用户当前
-Cluster 权限并投射 Kubernetes RBAC，后续命令复用该 Pod 与冻结快照；`kubectl exec` 还需 `cluster.pod.exec`；AIOps
-不投射 Secret 或 Agent Namespace 管理权限。命令容器通过 localhost 凭证代理访问 API Server，本身不挂载
+Cluster 权限并投射 Kubernetes RBAC，后续命令复用该 Pod 与冻结快照；`kubectl exec` 还需 `cluster.pod.exec`，受保护 Namespace 再叠加对应管理权限；AIOps
+仅不投射 Secret 读写权限。命令容器通过 localhost 凭证代理访问 API Server，本身不挂载
 ServiceAccount Token。命令和有界输出属于不可信轨迹数据，会发送到模型端点。权限重验覆盖命令之间的空闲期，撤权、
 Turn 结束、失败或取消都会关闭 Pod 和临时 RBAC。
 

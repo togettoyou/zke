@@ -428,27 +428,33 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 			"kind": enumStringProperty(
 				"只允许 Deployment 或 StatefulSet。", "Deployment", "StatefulSet",
 			),
-			"namespace": stringProperty("工作负载所在 Namespace；不支持 kube-* 或 Agent Namespace。"),
+			"namespace": stringProperty("工作负载所在 Namespace。受保护 Namespace 会改用对应的独立管理权限。"),
 			"name":      stringProperty("工作负载名称。"),
 			"replicas":  nonNegativeIntegerProperty("目标副本数，必须大于等于 0。"),
 		}, []string{"kind", "namespace", "name", "replicas"})
+		workloadWritePermissions := []rbac.Permission{
+			rbac.PermissionClusterResourceUpdate,
+			rbac.PermissionClusterSystemNamespaceManage,
+			rbac.PermissionClusterAgentNamespaceManage,
+		}
 		specs = append(specs,
 			airuntime.ToolSpec{
 				Name: toolPreviewWorkloadScale,
 				Description: "对目标 Deployment 或 StatefulSet 的副本数变更执行 Kubernetes 服务端 DryRun。" +
 					"它不会改变集群；实际伸缩前先调用此工具，并把返回的目标与副本数展示给操作者。",
-				Schema:      scaleSchema,
-				Target:      workloadScaleTarget,
-				Permissions: []rbac.Permission{rbac.PermissionClusterResourceUpdate},
+				Schema:                 scaleSchema,
+				Target:                 workloadScaleTarget,
+				ConditionalPermissions: workloadWritePermissions,
 			},
 			airuntime.ToolSpec{
 				Name: toolScaleWorkload,
 				Description: "实际调整目标 Deployment 或 StatefulSet 的副本数。" +
 					"调用前应先用 preview_workload_scale 对完全相同的参数完成 DryRun。",
-				Schema:      scaleSchema,
-				Target:      workloadScaleTarget,
-				Permissions: []rbac.Permission{rbac.PermissionClusterResourceUpdate},
-				Mutating:    true,
+				Schema:                 scaleSchema,
+				Target:                 workloadScaleTarget,
+				ConditionalPermissions: workloadWritePermissions,
+				Mutating:               true,
+				Sensitive:              true,
 			},
 		)
 	}
@@ -535,13 +541,13 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 		specs = append(specs,
 			airuntime.ToolSpec{
 				Name:        toolListWorkloadRevisions,
-				Description: "读取 Deployment、StatefulSet 或 DaemonSet 的历史 Pod 模板版本；回滚前先用它选择 revision。",
+				Description: "读取 Deployment、StatefulSet 或 DaemonSet 的历史 Pod 模板版本；回滚前先用它选择 current=false 的 revision，没有非当前版本时不能回滚。",
 				Schema:      objectSchema(targetSchema, []string{"kind", "namespace", "name"}),
 				Target:      workloadRevisionTarget, Permissions: []rbac.Permission{rbac.PermissionClusterRead},
 			},
 			airuntime.ToolSpec{
 				Name:        toolPreviewWorkloadRollback,
-				Description: "对指定历史版本执行 Kubernetes 服务端 DryRun；不改变集群，并保存提交所需的精确快照。",
+				Description: "对指定 current=false 的历史版本执行 Kubernetes 服务端 DryRun；不改变集群，并保存提交所需的精确快照。",
 				Schema:      objectSchema(rollbackSchema, []string{"kind", "namespace", "name", "revision", "uid", "resource_version"}),
 				Target:      workloadRevisionTarget, Permissions: []rbac.Permission{rbac.PermissionClusterRead},
 				ConditionalPermissions: workloadWritePermissions,
@@ -561,9 +567,9 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 			Name: toolRunTerminalCommand,
 			Description: "在目标 Cluster 的本轮隔离终端中执行一条非交互 Shell 命令；同一 AIOps Turn 的后续命令复用该终端，Turn 结束自动清理。" +
 				"可使用 kubectl、BusyBox、curl 和 jq；kubectl 只能执行当前用户权限投射后允许的操作，" +
-				"kubectl exec 还必须持有 cluster.pod.exec。命令与有界输出会进入 AIOps 轨迹和模型上下文，" +
+				"kubectl exec 还必须持有 cluster.pod.exec，受保护 Namespace 再叠加对应管理权限。命令与有界输出会进入 AIOps 轨迹和模型上下文，" +
 				"不得在命令中放入 Secret、Token、密码或其他凭证明文。优先用于取证；可能变更状态的命令必须自身幂等，" +
-				"响应不确定时不得盲目重试。AIOps 不投射 Secret 或 Agent Namespace 管理权限。",
+				"响应不确定时不得盲目重试。AIOps 不投射 Secret 读写权限。",
 			Schema: objectSchema(map[string]any{
 				"command": stringProperty("要交给 /bin/sh -c 的单条命令；不得包含任何凭证明文。"),
 			}, []string{"command"}),

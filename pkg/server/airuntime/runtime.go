@@ -1262,7 +1262,11 @@ func (runtime *Runtime) authorizeTool(
 			return false, permission
 		}
 	}
-	return len(spec.Permissions) > 0, ""
+	// A content- or target-dependent tool may have no unconditional permission:
+	// its implementation resolves exactly one ConditionalPermission after it
+	// has parsed the target. Such a tool is still authorized to reach that
+	// fail-closed check; a tool declaring no permission boundary at all is not.
+	return len(spec.Permissions) > 0 || len(spec.ConditionalPermissions) > 0, ""
 }
 
 // visibleEvidence keeps only what the operator may still read. A tool that

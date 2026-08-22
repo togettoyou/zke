@@ -182,11 +182,11 @@ func (catalogue *Catalogue) resolveTerminalPermissions(
 		)
 		if err == nil {
 			// Arbitrary terminal output is persisted and sent to the configured
-			// model, so Secret access is never projected. Agent Namespace manage
-			// is also excluded to prevent exec into the credential-proxy container.
+			// model, so Secret access is never projected. Every other Cluster
+			// permission follows the same namespace-aware mapping as Container
+			// Service; the credential remains isolated in the localhost proxy.
 			if permission != rbac.PermissionClusterSecretRead &&
-				permission != rbac.PermissionClusterSecretManage &&
-				permission != rbac.PermissionClusterAgentNamespaceManage {
+				permission != rbac.PermissionClusterSecretManage {
 				permissions = append(permissions, string(permission))
 			}
 			continue

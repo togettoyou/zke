@@ -18,7 +18,11 @@
 // constants below.
 package auditaction
 
-import "slices"
+import (
+	"slices"
+
+	"github.com/togettoyou/zke/pkg/shared/permissionname"
+)
 
 // Actions written by the Server. Every writer names one of these constants:
 // where the action used to be a literal inside the store's SQL it is now a bound
@@ -53,13 +57,13 @@ const (
 	RoleUpdate = "role.update"
 	RoleDelete = "role.delete"
 
-	TenantCreate  = "tenant.create"
+	TenantCreate  = permissionname.TenantCreate
 	TenantUpdate  = "tenant.update"
 	TenantSuspend = "tenant.suspend"
 	TenantResume  = "tenant.resume"
 	TenantDelete  = "tenant.delete"
 
-	ProjectCreate  = "project.create"
+	ProjectCreate  = permissionname.ProjectCreate
 	ProjectUpdate  = "project.update"
 	ProjectSuspend = "project.suspend"
 	ProjectResume  = "project.resume"
@@ -95,9 +99,9 @@ const (
 	ClusterSuspend                       = "cluster.suspend"
 	ClusterResume                        = "cluster.resume"
 	ClusterDelete                        = "cluster.delete"
-	ClusterEnrollmentCreate              = "cluster.enrollment.create"
-	ClusterEnrollmentRevoke              = "cluster.enrollment.revoke"
-	ClusterConnectionRevoke              = "cluster.connection.revoke"
+	ClusterEnrollmentCreate              = permissionname.ClusterEnrollmentCreate
+	ClusterEnrollmentRevoke              = permissionname.ClusterEnrollmentRevoke
+	ClusterConnectionRevoke              = permissionname.ClusterConnectionRevoke
 	ClusterConnectionReenroll            = "cluster.connection.reenroll"
 	ClusterMetricsCollectorInstall       = "cluster.metrics.collector.install"
 	ClusterMetricsCollectorUninstall     = "cluster.metrics.collector.uninstall"
@@ -158,40 +162,40 @@ const (
 // on, and a filter on them returns the successful operation and the refused
 // attempt together — told apart by `result`, which is what `result` is for.
 const (
-	DeniedTenantRead                        = "tenant.read"
-	DeniedTenantManage                      = "tenant.manage"
-	DeniedProjectRead                       = "project.read"
-	DeniedProjectManage                     = "project.manage"
-	DeniedClusterEnrollmentRead             = "cluster.enrollment.read"
-	DeniedClusterRead                       = "cluster.read"
-	DeniedClusterPodLogsRead                = "cluster.pod.logs.read"
-	DeniedClusterPodExec                    = "cluster.pod.exec"
-	DeniedClusterTerminalExec               = "cluster.terminal.exec"
-	DeniedClusterPodTerminalRecordingCreate = "cluster.pod.terminal_recording.create"
-	DeniedClusterPodTerminalRecordingRead   = "cluster.pod.terminal_recording.read"
-	DeniedClusterPodPortForward             = "cluster.pod.port_forward"
-	DeniedClusterNodeDrain                  = "cluster.node.drain"
-	DeniedClusterEventRead                  = "cluster.event.read"
-	DeniedClusterMetricsRead                = "cluster.metrics.read"
-	DeniedClusterMetricsManage              = "cluster.metrics.manage"
-	DeniedClusterManage                     = "cluster.manage"
-	DeniedClusterNamespaceManage            = "cluster.namespace.manage"
-	DeniedClusterSystemNamespaceManage      = "cluster.system_namespace.manage"
-	DeniedClusterAgentNamespaceManage       = "cluster.agent_namespace.manage"
-	DeniedClusterResourceCreate             = "cluster.resource.create"
-	DeniedClusterResourceUpdate             = "cluster.resource.update"
-	DeniedClusterResourceDelete             = "cluster.resource.delete"
-	DeniedClusterRBACRead                   = "cluster.rbac.read"
-	DeniedClusterRBACManage                 = "cluster.rbac.manage"
-	DeniedClusterSecretRead                 = "cluster.secret.read"
-	DeniedClusterSecretManage               = "cluster.secret.manage"
-	DeniedUserRead                          = "user.read"
-	DeniedUserManage                        = "user.manage"
-	DeniedUserPasswordChange                = "user.password.change"
-	DeniedRBACRead                          = "rbac.read"
-	DeniedRBACManage                        = "rbac.manage"
-	DeniedAuditRead                         = "audit.read"
-	DeniedAIRun                             = "ai.run"
+	DeniedTenantRead                        = permissionname.TenantRead
+	DeniedTenantManage                      = permissionname.TenantManage
+	DeniedProjectRead                       = permissionname.ProjectRead
+	DeniedProjectManage                     = permissionname.ProjectManage
+	DeniedClusterEnrollmentRead             = permissionname.ClusterEnrollmentRead
+	DeniedClusterRead                       = permissionname.ClusterRead
+	DeniedClusterPodLogsRead                = permissionname.ClusterPodLogsRead
+	DeniedClusterPodExec                    = permissionname.ClusterPodExec
+	DeniedClusterTerminalExec               = permissionname.ClusterTerminalExec
+	DeniedClusterPodTerminalRecordingCreate = permissionname.ClusterPodTerminalRecordingCreate
+	DeniedClusterPodTerminalRecordingRead   = permissionname.ClusterPodTerminalRecordingRead
+	DeniedClusterPodPortForward             = permissionname.ClusterPodPortForward
+	DeniedClusterNodeDrain                  = permissionname.ClusterNodeDrain
+	DeniedClusterEventRead                  = permissionname.ClusterEventRead
+	DeniedClusterMetricsRead                = permissionname.ClusterMetricsRead
+	DeniedClusterMetricsManage              = permissionname.ClusterMetricsManage
+	DeniedClusterManage                     = permissionname.ClusterManage
+	DeniedClusterNamespaceManage            = permissionname.ClusterNamespaceManage
+	DeniedClusterSystemNamespaceManage      = permissionname.ClusterSystemNamespaceManage
+	DeniedClusterAgentNamespaceManage       = permissionname.ClusterAgentNamespaceManage
+	DeniedClusterResourceCreate             = permissionname.ClusterResourceCreate
+	DeniedClusterResourceUpdate             = permissionname.ClusterResourceUpdate
+	DeniedClusterResourceDelete             = permissionname.ClusterResourceDelete
+	DeniedClusterRBACRead                   = permissionname.ClusterRBACRead
+	DeniedClusterRBACManage                 = permissionname.ClusterRBACManage
+	DeniedClusterSecretRead                 = permissionname.ClusterSecretRead
+	DeniedClusterSecretManage               = permissionname.ClusterSecretManage
+	DeniedUserRead                          = permissionname.UserRead
+	DeniedUserManage                        = permissionname.UserManage
+	DeniedUserPasswordChange                = permissionname.UserPasswordChange
+	DeniedRBACRead                          = permissionname.RBACRead
+	DeniedRBACManage                        = permissionname.RBACManage
+	DeniedAuditRead                         = permissionname.AuditRead
+	DeniedAIRun                             = permissionname.AIRun
 )
 
 // Group names the family an action belongs to. It is declared here rather than

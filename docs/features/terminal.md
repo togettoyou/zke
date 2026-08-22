@@ -10,8 +10,8 @@ Namespace 为 `default`。
 
 - 一个不可提权、无宿主机挂载并带 CPU/内存上限的 Terminal Pod；
 - 一个自动挂载 projected ServiceAccount Token 的专属 ServiceAccount；
-- 三个分别承载普通、`kube-*` 与 Agent Namespace 权限的 ClusterRole，以及每个现有 Namespace 中指向对应角色的 RoleBinding；
-- 一组仅包含已授权集群级资源的 ClusterRole 与 ClusterRoleBinding。
+- 三个分别承载普通、`kube-*` 与 Agent Namespace 写权限的 ClusterRole，以及每个现有 Namespace 中指向对应角色的 RoleBinding；
+- 一组承载已授权集群级资源和 Namespace 资源全集群只读规则的 ClusterRole 与 ClusterRoleBinding。
 
 普通资源权限只投射到普通 Namespace；`kube-*` 与 Agent Namespace 分别要求
 `cluster.system_namespace.manage`、`cluster.agent_namespace.manage` 才投射写权限。Secret、Kubernetes RBAC、Pod Exec
@@ -26,8 +26,8 @@ AIOps 的 `run_terminal_command` 复用这些短生命周期资源和权限映�
 调用仍重新检查 `cluster.terminal.exec`，完整快照在命令之间的空闲期也周期重验；任一权限撤销都会终止正在执行的命令、
 删除 Pod 与临时 RBAC，且本 Turn 不会重新创建终端。Turn 正常结束、失败或取消走同一清理路径，Agent TTL 负责 Server
 进程异常时兜底。会话期间新授予的权限不会扩张冻结快照，要到下一 Turn 才生效。由于命令和输出会进入 AIOps 轨迹与
-模型上下文，AIOps 不投射 Secret 或 Agent Namespace 管理权限，并使用 localhost 凭证代理让命令容器本身不接触
-ServiceAccount Token。
+模型上下文，AIOps 不投射 Secret 读写权限，其余权限（包括 Agent Namespace 管理）与独立终端、容器服务使用同一映射。命令容器通过 localhost 凭证代理访问 API Server，本身不接触
+ServiceAccount Token；代理还拒绝对任何 `zke-terminal-*` 会话 Pod 发起 exec、attach 或 port-forward，但不影响持有对应权限的用户进入 Agent Namespace 的其他 Pod。
 
 复用的是 Pod，不是同一个交互式 Shell：每次调用仍启动独立的 `/bin/sh -c`，因此 `cd` 和 `export` 不会自动传给下一条
 命令；写入 `/workspace` 或 `/tmp` 的文件以及仍在运行的子进程会保留到本 Turn 清理。权限监控覆盖这些后台进程的存续期，
@@ -41,7 +41,7 @@ Kubernetes RBAC：
 
 | ZKE 权限                                                                | 终端中的 Kubernetes 能力                                          |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `cluster.read`                                                          | 已支持主资源的 `get`、`list`、`watch`                             |
+| `cluster.read`                                                          | 已支持主资源的 `get`、`list`、`watch`，包括 `kubectl get ... -A` |
 | `cluster.resource.create/update/delete`                                 | 普通 Namespace 中对应主资源的创建、更新/Patch、删除               |
 | `cluster.system_namespace.manage`                                       | `kube-*` 中普通资源增删改及系统 Namespace 生命周期                 |
 | `cluster.agent_namespace.manage`                                        | Agent Namespace 中普通资源增删改及 Agent Namespace 生命周期       |
@@ -57,7 +57,7 @@ Namespace 权限时才投射 Namespace 创建；只持有其中一类时仍可�
 
 会话保存创建时的权限快照并周期重新验证。快照中的任何权限被撤销都会终止会话并清理临时授权；会话期间新授予的
 权限不会自动进入已有 Role，需要重新打开终端。会话建立后新建的 Namespace 也不会自动出现 RoleBinding，重新打开
-终端后才会获得对应的命名空间级权限。
+终端后才会获得对应的命名空间级写权限；只读权限不受该 RoleBinding 限制。
 
 `cluster.rbac.manage` 仍受 Kubernetes 的提权检查约束，不包含 `bind`、`escalate` 或 `impersonate`。ZKE 管理的
 Agent ClusterRole/ClusterRoleBinding 不会进入终端可更新或删除的对象名单；会话中新建的集群级授权对象需要重新
@@ -89,8 +89,8 @@ Server 默认把同一 Agent 镜像用于平台配置中的 Agent 镜像和 Clus
 
 ## 当前边界
 
-- Namespace 级权限覆盖会话建立时已经存在的 Namespace，并按普通、`kube-*` 与 Agent 三类分别投射；新建 Namespace
-  后需要重新打开会话才能获得其中的资源权限。
+- Namespace 级写权限覆盖会话建立时已经存在的 Namespace，并按普通、`kube-*` 与 Agent 三类分别投射；新建 Namespace
+  后需要重新打开会话才能获得其中的写权限。`cluster.read` 等只读权限使用 ClusterRoleBinding，可直接读取新 Namespace 并支持 `-A`。
 - 默认权限映射覆盖 ZKE 当前已经管理的内置资源和可选扩展。任意新 CRD 不会因 Discovery 自动获得写权限，需先
   扩展 Agent 安装 RBAC 和终端映射，避免通配符在未来新增资源时静默扩大权限。
 - ZKE 审计记录会话创建、目标和 Pod Exec 生命周期，不记录键盘输入、stdout 或 Secret 正文。逐条 Kubernetes API

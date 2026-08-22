@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/shared/permissionname"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,7 +30,7 @@ func TestTerminalPodUsesRequestedImagePullPolicy(t *testing.T) {
 		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
 		SessionId: "11111111-1111-4111-8111-111111111111",
 		UserId:    "22222222-2222-4222-8222-222222222222", Namespace: namespace,
-		Permissions: []string{"cluster.terminal.exec"}, TtlSeconds: 60,
+		Permissions: []string{permissionname.ClusterTerminalExec}, TtlSeconds: 60,
 		Image: "registry.example.com/zke-terminal:v1", ImagePullPolicy: "Never",
 	}
 	response, err := createKubernetesTerminalSession(context.Background(), client, request, &agentv1.TerminalSessionResponse{})
@@ -58,7 +61,7 @@ func TestAIOpsTerminalPodKeepsCredentialOutOfCommandContainer(t *testing.T) {
 		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
 		SessionId: "11111111-1111-4111-8111-111111111111",
 		UserId:    "22222222-2222-4222-8222-222222222222", Namespace: namespace,
-		Permissions: []string{"cluster.terminal.exec", "cluster.pod.exec"}, TtlSeconds: 60,
+		Permissions: []string{permissionname.ClusterTerminalExec, permissionname.ClusterPodExec}, TtlSeconds: 60,
 		Image: "registry.example.com/zke-terminal:v1", ImagePullPolicy: "Never",
 		CredentialProxy: true,
 	}
@@ -89,6 +92,23 @@ func TestAIOpsTerminalPodKeepsCredentialOutOfCommandContainer(t *testing.T) {
 	if !proxyHasCredential {
 		t.Fatalf("credential proxy has no projected token mount: %+v", pod.Spec.Containers[1].VolumeMounts)
 	}
+	proxyCommand := strings.Join(pod.Spec.Containers[1].Command, " ")
+	if !strings.Contains(proxyCommand, terminalCredentialProxyRejectPaths) {
+		t.Fatalf("credential proxy does not reject access to Terminal Pods: %q", proxyCommand)
+	}
+	rejectPaths := regexp.MustCompile(terminalCredentialProxyRejectPaths)
+	for _, path := range []string{
+		"/api/v1/namespaces/zke-system/pods/zke-terminal-abcd/exec",
+		"/api/v1/namespaces/zke-system/pods/zke-terminal-abcd/attach",
+		"/api/v1/namespaces/zke-system/pods/zke-terminal-abcd/portforward",
+	} {
+		if !rejectPaths.MatchString(path) {
+			t.Fatalf("credential proxy accepted Terminal Pod path %q", path)
+		}
+	}
+	if rejectPaths.MatchString("/api/v1/namespaces/zke-system/pods/zke-metrics-collector/exec") {
+		t.Fatal("credential proxy rejected a non-Terminal Pod exec path")
+	}
 	accounts, err := client.CoreV1().ServiceAccounts(namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil || len(accounts.Items) != 1 || accounts.Items[0].AutomountServiceAccountToken == nil ||
 		*accounts.Items[0].AutomountServiceAccountToken {
@@ -104,11 +124,11 @@ func TestTerminalPolicyKeepsSecretAndRBACPermissionsIndependent(t *testing.T) {
 		rbacVerbs   []string
 	}{
 		{name: "generic resource permissions do not reach protected families",
-			permissions: []string{"cluster.read", "cluster.resource.create", "cluster.resource.update", "cluster.resource.delete"}},
-		{name: "Secret read is read only", permissions: []string{"cluster.secret.read"}, secretVerbs: []string{"get", "list", "watch"}},
-		{name: "Secret manage does not imply read", permissions: []string{"cluster.secret.manage"}, secretVerbs: []string{"create", "update", "patch", "delete"}},
-		{name: "RBAC read is read only", permissions: []string{"cluster.rbac.read"}, rbacVerbs: []string{"get", "list", "watch"}},
-		{name: "RBAC manage does not add bind or escalate", permissions: []string{"cluster.rbac.manage"}, rbacVerbs: []string{"create", "update", "delete"}},
+			permissions: []string{permissionname.ClusterRead, permissionname.ClusterResourceCreate, permissionname.ClusterResourceUpdate, permissionname.ClusterResourceDelete}},
+		{name: "Secret read is read only", permissions: []string{permissionname.ClusterSecretRead}, secretVerbs: []string{"get", "list", "watch"}},
+		{name: "Secret manage does not imply read", permissions: []string{permissionname.ClusterSecretManage}, secretVerbs: []string{"create", "update", "patch", "delete"}},
+		{name: "RBAC read is read only", permissions: []string{permissionname.ClusterRBACRead}, rbacVerbs: []string{"get", "list", "watch"}},
+		{name: "RBAC manage does not add bind or escalate", permissions: []string{permissionname.ClusterRBACManage}, rbacVerbs: []string{"create", "update", "delete"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -131,9 +151,9 @@ func TestTerminalClusterPolicyKeepsRBACIndependent(t *testing.T) {
 		want        []string
 	}{
 		{name: "generic resource permissions do not reach cluster RBAC",
-			permissions: []string{"cluster.read", "cluster.resource.create", "cluster.resource.update", "cluster.resource.delete"}},
-		{name: "cluster RBAC read is read only", permissions: []string{"cluster.rbac.read"}, want: []string{"get", "list", "watch"}},
-		{name: "cluster RBAC manage cannot bind or escalate", permissions: []string{"cluster.rbac.manage"}, want: []string{"create"}},
+			permissions: []string{permissionname.ClusterRead, permissionname.ClusterResourceCreate, permissionname.ClusterResourceUpdate, permissionname.ClusterResourceDelete}},
+		{name: "cluster RBAC read is read only", permissions: []string{permissionname.ClusterRBACRead}, want: []string{"get", "list", "watch"}},
+		{name: "cluster RBAC manage cannot bind or escalate", permissions: []string{permissionname.ClusterRBACManage}, want: []string{"create"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -207,15 +227,53 @@ func TestDeleteTerminalSessionCleansLegacyNamespaceResources(t *testing.T) {
 }
 
 func TestTerminalReadIncludesWatchForKubectlWaits(t *testing.T) {
-	namespaced := terminalPolicyRules([]string{"cluster.read"})
+	namespaced := terminalPolicyRules([]string{permissionname.ClusterRead})
 	assertTerminalVerbs(t, namespaced, "", "pods", []string{"get", "list", "watch"})
 
-	clusterScoped := terminalClusterPolicyRules([]string{"cluster.read"})
+	clusterScoped := terminalClusterPolicyRules([]string{permissionname.ClusterRead})
 	assertTerminalVerbs(t, clusterScoped, "", "namespaces", []string{"get", "list", "watch"})
+
+	allNamespaces := terminalNamespacedReadPolicyRules([]string{
+		permissionname.ClusterRead, permissionname.ClusterEventRead, permissionname.ClusterPodLogsRead,
+	})
+	assertTerminalVerbs(t, allNamespaces, "", "pods", []string{"get", "list", "watch"})
+	assertTerminalVerbs(t, allNamespaces, "", "events", []string{"get", "list", "watch"})
+	assertTerminalVerbs(t, allNamespaces, "", "pods/log", []string{"get"})
+	assertTerminalVerbs(t, allNamespaces, "", "pods/exec", nil)
+}
+
+func TestTerminalNamespacedClusterReadsNeverCarryWritesOrStreamingAccess(t *testing.T) {
+	rules := terminalNamespacedReadPolicyRules([]string{
+		permissionname.ClusterRead,
+		permissionname.ClusterResourceCreate,
+		permissionname.ClusterResourceUpdate,
+		permissionname.ClusterResourceDelete,
+		permissionname.ClusterPodExec,
+		permissionname.ClusterPodPortForward,
+		permissionname.ClusterSecretRead,
+		permissionname.ClusterSecretManage,
+		permissionname.ClusterSystemNamespaceManage,
+		permissionname.ClusterAgentNamespaceManage,
+		permissionname.ClusterRBACRead,
+		permissionname.ClusterRBACManage,
+	})
+	assertTerminalVerbs(t, rules, "", "secrets", []string{"get", "list", "watch"})
+	assertTerminalVerbs(t, rules, "rbac.authorization.k8s.io", "roles", []string{"get", "list", "watch"})
+	assertTerminalVerbs(t, rules, "", "pods/exec", nil)
+	assertTerminalVerbs(t, rules, "", "pods/portforward", nil)
+	for _, rule := range rules {
+		for _, verb := range rule.Verbs {
+			if slices.Contains([]string{"create", "update", "patch", "delete"}, verb) {
+				t.Fatalf("Cluster-wide namespaced read rule contains %q: %+v", verb, rule)
+			}
+		}
+	}
+	withoutProtectedSecretGrants := terminalNamespacedReadPolicyRules([]string{permissionname.ClusterSecretRead})
+	assertTerminalVerbs(t, withoutProtectedSecretGrants, "", "secrets", nil)
 }
 
 func TestTerminalStreamingSubresourcesSupportWebSocketAndSPDY(t *testing.T) {
-	rules := terminalPolicyRules([]string{"cluster.pod.exec", "cluster.pod.port_forward"})
+	rules := terminalPolicyRules([]string{permissionname.ClusterPodExec, permissionname.ClusterPodPortForward})
 	assertTerminalVerbs(t, rules, "", "pods/exec", []string{"get", "create"})
 	assertTerminalVerbs(t, rules, "", "pods/portforward", []string{"get", "create"})
 }
@@ -259,7 +317,7 @@ func TestTerminalNamespaceLifecycleRulesUseIndependentPermissions(t *testing.T) 
 		{ObjectMeta: metav1.ObjectMeta{Name: "zke-system"}},
 	}
 	rules := terminalNamespaceLifecyclePolicyRules(
-		[]string{"cluster.namespace.manage", "cluster.system_namespace.manage", "cluster.agent_namespace.manage"},
+		[]string{permissionname.ClusterNamespaceManage, permissionname.ClusterSystemNamespaceManage, permissionname.ClusterAgentNamespaceManage},
 		namespaces,
 		"zke-system",
 	)
@@ -271,7 +329,7 @@ func TestTerminalNamespaceLifecycleRulesUseIndependentPermissions(t *testing.T) 
 	}
 
 	ordinaryOnly := terminalNamespaceLifecyclePolicyRules(
-		[]string{"cluster.namespace.manage"}, namespaces, "zke-system",
+		[]string{permissionname.ClusterNamespaceManage}, namespaces, "zke-system",
 	)
 	if len(ordinaryOnly) != 1 || !slices.Equal(ordinaryOnly[0].ResourceNames, []string{"team-a"}) || slices.Contains(ordinaryOnly[0].Verbs, "create") {
 		t.Fatalf("ordinary lifecycle rules = %+v", ordinaryOnly)
@@ -280,21 +338,21 @@ func TestTerminalNamespaceLifecycleRulesUseIndependentPermissions(t *testing.T) 
 
 func TestTerminalProtectedPolicyReplacesGenericMutationAndStacksSensitivePermissions(t *testing.T) {
 	ordinary := terminalProtectedPolicyRules(
-		[]string{"cluster.read", "cluster.resource.create", "cluster.resource.update", "cluster.resource.delete"},
-		"cluster.system_namespace.manage",
+		[]string{permissionname.ClusterRead, permissionname.ClusterResourceCreate, permissionname.ClusterResourceUpdate, permissionname.ClusterResourceDelete},
+		permissionname.ClusterSystemNamespaceManage,
 	)
 	assertTerminalVerbs(t, ordinary, "", "pods", []string{"get", "list", "watch"})
 
 	protected := terminalProtectedPolicyRules(
-		[]string{"cluster.system_namespace.manage"},
-		"cluster.system_namespace.manage",
+		[]string{permissionname.ClusterSystemNamespaceManage},
+		permissionname.ClusterSystemNamespaceManage,
 	)
 	assertTerminalVerbs(t, protected, "", "pods", []string{"create", "update", "patch", "delete"})
 	assertTerminalVerbs(t, protected, "", "secrets", nil)
 
 	sensitive := terminalProtectedPolicyRules(
-		[]string{"cluster.system_namespace.manage", "cluster.secret.read", "cluster.secret.manage"},
-		"cluster.system_namespace.manage",
+		[]string{permissionname.ClusterSystemNamespaceManage, permissionname.ClusterSecretRead, permissionname.ClusterSecretManage},
+		permissionname.ClusterSystemNamespaceManage,
 	)
 	assertTerminalVerbs(t, sensitive, "", "secrets", []string{"get", "list", "watch", "create", "update", "patch", "delete"})
 }

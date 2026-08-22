@@ -78,7 +78,7 @@ func (catalogue *Catalogue) listWorkloadRevisions(
 	live := &unstructured.Unstructured{Object: object}
 	target := workloadRevisionTarget(invocation.Arguments)
 	return airuntime.ToolResult{
-		Text: "已读取工作负载历史版本；回滚预检必须原样使用 workload_uid 与 resource_version。\n" + catalogue.encode(map[string]any{
+		Text: "已读取工作负载历史版本；只能选择 current=false 的 revision，并必须原样使用 workload_uid 与 resource_version。\n" + catalogue.encode(map[string]any{
 			"workload_uid":     string(live.GetUID()),
 			"resource_version": live.GetResourceVersion(),
 			"truncated":        page.Truncated,
@@ -115,6 +115,9 @@ func (catalogue *Catalogue) previewWorkloadRollback(
 	input := rollbackInput(invocation.ClusterID, invocation.IdempotencyKey, resource, arguments, true)
 	result, err := catalogue.dependencies.Revisions.RollbackWorkload(ctx, input)
 	if err != nil {
+		if failure, ok := workloadRollbackFailure(err, target); ok {
+			return failure, nil
+		}
 		return airuntime.ToolResult{}, err
 	}
 	id, err := newRollbackPreviewID()
@@ -157,11 +160,17 @@ func (catalogue *Catalogue) rollbackWorkload(
 	resource, _ := revisionWorkloadResource(preview.arguments.Kind)
 	preflight := rollbackInput(invocation.ClusterID, preview.executionKey+":preflight", resource, preview.arguments, true)
 	if _, err = catalogue.dependencies.Revisions.RollbackWorkload(ctx, preflight); err != nil {
+		if failure, ok := workloadRollbackFailure(err, preview.target); ok {
+			return failure, nil
+		}
 		return airuntime.ToolResult{}, err
 	}
 	input := rollbackInput(invocation.ClusterID, preview.executionKey, resource, preview.arguments, false)
 	result, err := catalogue.dependencies.Revisions.RollbackWorkload(ctx, input)
 	if err != nil {
+		if failure, ok := workloadRollbackFailure(err, preview.target); ok {
+			return failure, nil
+		}
 		return airuntime.ToolResult{}, err
 	}
 	toolResult := catalogue.rollbackToolResult(result, preview.arguments.Revision, false, "", preview.target)
@@ -227,6 +236,25 @@ func deniedWorkloadMutation(
 		}}
 	}
 	return result
+}
+
+// workloadRollbackFailure keeps expected concurrency and revision outcomes
+// explicit without exposing arbitrary upstream error strings to the model or
+// durable trajectory. They are actionable domain results, not evidence that
+// the Agent is disconnected.
+func workloadRollbackFailure(err error, target *aisession.Target) (airuntime.ToolResult, bool) {
+	result := airuntime.ToolResult{Target: target, Failed: true}
+	switch {
+	case errors.Is(err, kubernetesresource.ErrWorkloadRevisionUnchanged):
+		result.Text = "目标 revision 已是工作负载当前版本，未执行回滚；请从历史列表选择 current=false 的 revision。"
+	case errors.Is(err, kubernetesresource.ErrWorkloadRevisionNotFound):
+		result.Text = "目标历史 revision 已不存在，未执行回滚；请重新读取工作负载历史版本。"
+	case errors.Is(err, kubernetesresource.ErrUpstreamConflict):
+		result.Text = "工作负载在预检后已发生变化，未执行回滚；请重新读取历史版本和并发前置条件。"
+	default:
+		return airuntime.ToolResult{}, false
+	}
+	return result, true
 }
 
 func revisionWorkloadResource(kind string) (kubernetesresource.WorkloadResource, bool) {

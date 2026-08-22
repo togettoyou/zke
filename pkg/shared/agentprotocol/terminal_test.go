@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/shared/permissionname"
 )
 
 func TestTerminalSessionCreateRequiresSupportedImagePullPolicy(t *testing.T) {
@@ -12,7 +13,7 @@ func TestTerminalSessionCreateRequiresSupportedImagePullPolicy(t *testing.T) {
 		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
 		SessionId: "11111111-1111-4111-8111-111111111111",
 		UserId:    "22222222-2222-4222-8222-222222222222",
-		Namespace: "zke-system", Permissions: []string{"cluster.terminal.exec"},
+		Namespace: "zke-system", Permissions: []string{permissionname.ClusterTerminalExec},
 		TtlSeconds: 60, Image: "registry.example.com/zke-terminal:v1", ImagePullPolicy: "Always",
 	}
 	if err := validateTerminalSessionRequest(header, request); err != nil {

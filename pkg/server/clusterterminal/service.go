@@ -18,6 +18,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
+	"github.com/togettoyou/zke/pkg/shared/permissionname"
 )
 
 var (
@@ -161,7 +162,7 @@ func (service *Service) CreateCommandSession(
 	if service == nil || service.requester == nil || service.commands == nil ||
 		strings.TrimSpace(input.UserID) == "" || strings.TrimSpace(input.ClusterID) == "" ||
 		strings.TrimSpace(input.IdempotencyKey) == "" ||
-		!terminalPermissionHeld(input.Permissions, "cluster.terminal.exec") {
+		!terminalPermissionHeld(input.Permissions, permissionname.ClusterTerminalExec) {
 		return CommandSession{}, ErrInvalidCommand
 	}
 	runtimeConfig, err := service.runtimeConfig(ctx, input.ClusterID)

@@ -413,6 +413,29 @@ func TestDynamicSensitivityOnlyUpgradesMatchingCalls(t *testing.T) {
 	}
 }
 
+func TestConditionalOnlyToolReachesItsDynamicAuthorization(t *testing.T) {
+	t.Parallel()
+	runtime := &Runtime{authorizer: allowAuthorizer{}}
+	job := turnJob{
+		userID: testUserID, tenantID: testTenantID,
+		projectID: testProjectID, clusterID: testClusterID,
+	}
+	conditional := ToolSpec{
+		Name: "preview_workload_scale",
+		ConditionalPermissions: []rbac.Permission{
+			rbac.PermissionClusterResourceUpdate,
+			rbac.PermissionClusterSystemNamespaceManage,
+			rbac.PermissionClusterAgentNamespaceManage,
+		},
+	}
+	if authorized, missing := runtime.authorizeTool(context.Background(), job, conditional); !authorized || missing != "" {
+		t.Fatalf("conditional tool authorized=%t missing=%q", authorized, missing)
+	}
+	if authorized, _ := runtime.authorizeTool(context.Background(), job, ToolSpec{Name: "unsafe"}); authorized {
+		t.Fatal("tool without any permission boundary was authorized")
+	}
+}
+
 func TestBackgroundTurnPersistsConclusionAndFinishes(t *testing.T) {
 	t.Parallel()
 	sessions := &memorySessions{session: idleSession(aisession.ApprovalAsk)}

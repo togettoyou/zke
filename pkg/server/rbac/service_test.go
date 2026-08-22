@@ -162,6 +162,52 @@ func TestBuiltinRoleAndScopeRules(t *testing.T) {
 	}
 }
 
+func TestClusterAuthorizationUsesEffectivePermissionsNotRoleName(t *testing.T) {
+	t.Parallel()
+
+	t.Run("custom role grants its bound permissions", func(t *testing.T) {
+		t.Parallel()
+
+		service := NewService(bindingStub{bindings: []store.RoleBinding{{
+			Role:        "cluster-operator",
+			ScopeType:   "project",
+			TenantID:    testTenantID,
+			ProjectID:   testProjectID,
+			Permissions: []string{string(PermissionClusterTerminalExec), string(PermissionClusterAgentNamespaceManage)},
+		}}})
+
+		for _, permission := range []Permission{
+			PermissionClusterTerminalExec,
+			PermissionClusterAgentNamespaceManage,
+		} {
+			if _, err := service.AuthorizeCluster(
+				context.Background(), testUserID, permission, testClusterID,
+			); err != nil {
+				t.Errorf("custom role failed to authorize %s: %v", permission, err)
+			}
+		}
+	})
+
+	t.Run("admin name grants nothing absent from its permission set", func(t *testing.T) {
+		t.Parallel()
+
+		service := NewService(bindingStub{bindings: []store.RoleBinding{{
+			Role:        RoleAdmin,
+			ScopeType:   "project",
+			TenantID:    testTenantID,
+			ProjectID:   testProjectID,
+			Permissions: []string{string(PermissionClusterRead)},
+		}}})
+
+		_, err := service.AuthorizeCluster(
+			context.Background(), testUserID, PermissionClusterTerminalExec, testClusterID,
+		)
+		if !errors.Is(err, ErrDenied) {
+			t.Fatalf("admin role name authorized an unheld permission: %v", err)
+		}
+	})
+}
+
 // A binding must not report permissions its own scope cannot exercise.
 //
 // `me` is what a client builds its interface from, so a capability it lists is

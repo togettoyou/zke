@@ -586,6 +586,7 @@ AIOps 不新增 Kubernetes 写权限，也不直接调用 Agent。Manifest 工�
 工具再为当前用户解析 create/update/delete、Namespace、RBAC、系统 Namespace 与 Agent Namespace 权限，并由
 `ManifestAccess` 逐文档选择实际需要的一项。工作负载回滚同样按目标 Namespace 在
 `cluster.resource.update`、`cluster.system_namespace.manage` 与 `cluster.agent_namespace.manage` 中选择有效权限。
+工作负载伸缩使用完全相同的选择规则，不再按 Namespace 名称永久禁止。
 权限在预检和实际提交前各解析一次；预检后撤权会使提交拒绝，而不是沿用会话开始时的授权结果。
 
 Manifest Apply/Delete 和回滚的预检成功后只返回一个随机 `preview_id`。对应快照仅保存在 Server 内存中，默认 15 分钟
@@ -623,22 +624,23 @@ stdin/stdout 或 Secret 正文；逐条 `kubectl` API 请求审计依赖目标�
 
 AIOps 的 `run_terminal_command` 复用同一终端资源模型，但不是交互式终端录制规则：模型请求的命令和有界输出会进入
 append-only 轨迹并发送到配置的模型端点，所以该工具固定为敏感且可能变更，并且不投射
-`cluster.secret.read/manage` 或 `cluster.agent_namespace.manage`。后者避免命令通过 `pods/exec` 进入承载凭证代理的
-Terminal Pod。调用入口要求 `cluster.terminal.exec`；批准后重新计算当前 Cluster 权限，命令里的
-`kubectl exec` 还必须由 Kubernetes `pods/exec` RBAC 验证 `cluster.pod.exec`。AIOps 命令容器不挂载
-ServiceAccount Token，而是通过同 Pod、只监听 localhost 的凭证代理访问 API Server。一个 Turn 首次执行命令时创建
+`cluster.secret.read/manage`。Agent Namespace 和系统 Namespace 不再附加 AIOps 特例，而是与容器服务、独立终端一样分别验证
+`cluster.agent_namespace.manage` 和 `cluster.system_namespace.manage`。调用入口要求 `cluster.terminal.exec`；批准后重新计算当前 Cluster 权限，命令里的
+`kubectl exec` 还必须由 Kubernetes `pods/exec` RBAC 验证 `cluster.pod.exec`。Namespace 级只读规则通过 ClusterRoleBinding 投射，因此 `cluster.read` 包含
+`kubectl get ... -A`；写规则继续通过分类 RoleBinding 限制到会话建立时已存在的 Namespace。AIOps 命令容器不挂载
+ServiceAccount Token，而是通过同 Pod、只监听 localhost 的凭证代理访问 API Server；代理明确拒绝对 `zke-terminal-*` 会话 Pod 的 exec、attach 与 port-forward。一个 Turn 首次执行命令时创建
 Pod 并冻结权限快照，后续命令复用；Turn 结束、失败或取消时删除 Pod、ServiceAccount 和临时 RBAC，TTL 清理兜底。
 周期重验覆盖命令执行和命令间空闲期，快照内任一权限被撤销都会取消命令、立即清理并阻止本 Turn 重新创建终端；新授予
 权限要到下一 Turn 才会进入快照。撤权不会回滚此前已经完成的操作。审计保存工具名、会话、目标和结果，不复制命令或
 输出正文。
 
-终端输出录制必须由操作者显式选择，创建额外要求默认仅授予 admin 的
-`cluster.pod.terminal_recording.create`；只旁路保存 stdout/stderr，不保存 stdin、Cookie、一次性票据或认证头。
+终端输出录制必须由操作者显式选择，创建额外要求
+`cluster.pod.terminal_recording.create`；内置角色中默认只有 `admin` 持有，自定义角色持有该权限时同样可以使用。录制只旁路保存 stdout/stderr，不保存 stdin、Cookie、一次性票据或认证头。
 读取录制使用另一项 `cluster.pod.terminal_recording.read`，不从 `cluster.pod.exec` 推导，并在每次列表/详情请求上
 重新执行项目范围内的 Cluster 判权和审计。数据库记录绑定不可变 Cluster UUID、Namespace、Pod 名称与 Pod UID，
 详情还必须匹配 recording ID；记录有界且默认 7 天过期，列表不返回输出帧，只有详情读取暴露正文。
 
-Pod 端口访问使用另一项默认仅授予 admin 的 `cluster.pod.port_forward`，不因持有 `cluster.read`、
+Pod 端口访问使用另一项 `cluster.pod.port_forward`；内置角色中默认只有 `admin` 持有，自定义角色持有该权限时同样可以使用。该权限不因持有 `cluster.read`、
 `cluster.pod.exec` 或通用资源写权限而获得。浏览器 Pod Access 激活地址必须通过 CSRF、
 幂等键和显式确认，并绑定用户、登录 Session、Cluster、Namespace、Pod UID、单个远端端口与用户从 15、30、
 60 分钟中选择的时长，只能消费一次；所选时长不得超过 Server 配置的一小时硬上限，并进入幂等指纹与审计目标；

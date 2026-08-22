@@ -1,51 +1,53 @@
 package rbac
 
+import "github.com/togettoyou/zke/pkg/shared/permissionname"
+
 type Permission string
 
 const (
-	PermissionTenantCreate                      Permission = "tenant.create"
-	PermissionTenantRead                        Permission = "tenant.read"
-	PermissionTenantManage                      Permission = "tenant.manage"
-	PermissionProjectCreate                     Permission = "project.create"
-	PermissionProjectRead                       Permission = "project.read"
-	PermissionProjectManage                     Permission = "project.manage"
-	PermissionClusterEnrollmentCreate           Permission = "cluster.enrollment.create"
-	PermissionClusterEnrollmentRead             Permission = "cluster.enrollment.read"
-	PermissionClusterEnrollmentRevoke           Permission = "cluster.enrollment.revoke"
-	PermissionClusterRead                       Permission = "cluster.read"
-	PermissionClusterPodLogsRead                Permission = "cluster.pod.logs.read"
-	PermissionClusterPodExec                    Permission = "cluster.pod.exec"
-	PermissionClusterTerminalExec               Permission = "cluster.terminal.exec"
-	PermissionClusterPodTerminalRecordingCreate Permission = "cluster.pod.terminal_recording.create"
-	PermissionClusterPodTerminalRecordingRead   Permission = "cluster.pod.terminal_recording.read"
-	PermissionClusterPodPortForward             Permission = "cluster.pod.port_forward"
-	PermissionClusterNodeDrain                  Permission = "cluster.node.drain"
-	PermissionClusterEventRead                  Permission = "cluster.event.read"
-	PermissionClusterMetricsRead                Permission = "cluster.metrics.read"
-	PermissionClusterMetricsManage              Permission = "cluster.metrics.manage"
-	PermissionClusterManage                     Permission = "cluster.manage"
-	PermissionClusterNamespaceManage            Permission = "cluster.namespace.manage"
-	PermissionClusterSystemNamespaceManage      Permission = "cluster.system_namespace.manage"
-	PermissionClusterAgentNamespaceManage       Permission = "cluster.agent_namespace.manage"
-	PermissionClusterResourceCreate             Permission = "cluster.resource.create"
-	PermissionClusterResourceUpdate             Permission = "cluster.resource.update"
-	PermissionClusterResourceDelete             Permission = "cluster.resource.delete"
-	PermissionClusterRBACRead                   Permission = "cluster.rbac.read"
-	PermissionClusterRBACManage                 Permission = "cluster.rbac.manage"
-	PermissionClusterSecretRead                 Permission = "cluster.secret.read"
-	PermissionClusterSecretManage               Permission = "cluster.secret.manage"
-	PermissionClusterConnectionRevoke           Permission = "cluster.connection.revoke"
-	PermissionUserRead                          Permission = "user.read"
-	PermissionUserManage                        Permission = "user.manage"
-	PermissionUserPasswordChange                Permission = "user.password.change"
-	PermissionRBACRead                          Permission = "rbac.read"
-	PermissionRBACManage                        Permission = "rbac.manage"
-	PermissionAuditRead                         Permission = "audit.read"
+	PermissionTenantCreate                      Permission = permissionname.TenantCreate
+	PermissionTenantRead                        Permission = permissionname.TenantRead
+	PermissionTenantManage                      Permission = permissionname.TenantManage
+	PermissionProjectCreate                     Permission = permissionname.ProjectCreate
+	PermissionProjectRead                       Permission = permissionname.ProjectRead
+	PermissionProjectManage                     Permission = permissionname.ProjectManage
+	PermissionClusterEnrollmentCreate           Permission = permissionname.ClusterEnrollmentCreate
+	PermissionClusterEnrollmentRead             Permission = permissionname.ClusterEnrollmentRead
+	PermissionClusterEnrollmentRevoke           Permission = permissionname.ClusterEnrollmentRevoke
+	PermissionClusterRead                       Permission = permissionname.ClusterRead
+	PermissionClusterPodLogsRead                Permission = permissionname.ClusterPodLogsRead
+	PermissionClusterPodExec                    Permission = permissionname.ClusterPodExec
+	PermissionClusterTerminalExec               Permission = permissionname.ClusterTerminalExec
+	PermissionClusterPodTerminalRecordingCreate Permission = permissionname.ClusterPodTerminalRecordingCreate
+	PermissionClusterPodTerminalRecordingRead   Permission = permissionname.ClusterPodTerminalRecordingRead
+	PermissionClusterPodPortForward             Permission = permissionname.ClusterPodPortForward
+	PermissionClusterNodeDrain                  Permission = permissionname.ClusterNodeDrain
+	PermissionClusterEventRead                  Permission = permissionname.ClusterEventRead
+	PermissionClusterMetricsRead                Permission = permissionname.ClusterMetricsRead
+	PermissionClusterMetricsManage              Permission = permissionname.ClusterMetricsManage
+	PermissionClusterManage                     Permission = permissionname.ClusterManage
+	PermissionClusterNamespaceManage            Permission = permissionname.ClusterNamespaceManage
+	PermissionClusterSystemNamespaceManage      Permission = permissionname.ClusterSystemNamespaceManage
+	PermissionClusterAgentNamespaceManage       Permission = permissionname.ClusterAgentNamespaceManage
+	PermissionClusterResourceCreate             Permission = permissionname.ClusterResourceCreate
+	PermissionClusterResourceUpdate             Permission = permissionname.ClusterResourceUpdate
+	PermissionClusterResourceDelete             Permission = permissionname.ClusterResourceDelete
+	PermissionClusterRBACRead                   Permission = permissionname.ClusterRBACRead
+	PermissionClusterRBACManage                 Permission = permissionname.ClusterRBACManage
+	PermissionClusterSecretRead                 Permission = permissionname.ClusterSecretRead
+	PermissionClusterSecretManage               Permission = permissionname.ClusterSecretManage
+	PermissionClusterConnectionRevoke           Permission = permissionname.ClusterConnectionRevoke
+	PermissionUserRead                          Permission = permissionname.UserRead
+	PermissionUserManage                        Permission = permissionname.UserManage
+	PermissionUserPasswordChange                Permission = permissionname.UserPasswordChange
+	PermissionRBACRead                          Permission = permissionname.RBACRead
+	PermissionRBACManage                        Permission = permissionname.RBACManage
+	PermissionAuditRead                         Permission = permissionname.AuditRead
 	// PermissionAIRun opens the AIOps runtime inside the scope where the
 	// binding applies. It grants no Kubernetes read permission by itself: the
 	// runtime rechecks the concrete cluster permission for every piece of
 	// evidence it reads.
-	PermissionAIRun Permission = "ai.run"
+	PermissionAIRun Permission = permissionname.AIRun
 )
 
 type scopeType string

@@ -3,6 +3,7 @@ package aitools
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,6 +22,7 @@ type recordingRevisionWriter struct {
 	rollbackInputs []kubernetesresource.RollbackWorkloadInput
 	rollbackResult kubernetesresource.WorkloadDetail
 	page           kubernetesresource.WorkloadRevisionPage
+	err            error
 }
 
 func (writer *recordingRevisionWriter) ListWorkloadRevisions(
@@ -35,7 +37,7 @@ func (writer *recordingRevisionWriter) RollbackWorkload(
 	input kubernetesresource.RollbackWorkloadInput,
 ) (kubernetesresource.WorkloadDetail, error) {
 	writer.rollbackInputs = append(writer.rollbackInputs, input)
-	return writer.rollbackResult, nil
+	return writer.rollbackResult, writer.err
 }
 
 type staticScopeResolver struct {
@@ -100,13 +102,16 @@ func TestWorkloadScaleToolsDeclareTheApprovalBoundary(t *testing.T) {
 	if preview.Name != toolPreviewWorkloadScale || preview.Mutating {
 		t.Fatalf("preview spec = %+v", preview)
 	}
-	if apply.Name != toolScaleWorkload || !apply.Mutating || apply.Sensitive {
+	if apply.Name != toolScaleWorkload || !apply.Mutating || !apply.Sensitive {
 		t.Fatalf("apply spec = %+v", apply)
 	}
 	for _, spec := range specs {
-		if len(spec.Permissions) != 1 ||
-			spec.Permissions[0] != rbac.PermissionClusterResourceUpdate {
-			t.Fatalf("%s permissions = %+v", spec.Name, spec.Permissions)
+		if len(spec.Permissions) != 0 || !slices.Equal(spec.ConditionalPermissions, []rbac.Permission{
+			rbac.PermissionClusterResourceUpdate,
+			rbac.PermissionClusterSystemNamespaceManage,
+			rbac.PermissionClusterAgentNamespaceManage,
+		}) {
+			t.Fatalf("%s permissions = %+v conditional=%+v", spec.Name, spec.Permissions, spec.ConditionalPermissions)
 		}
 		if !strings.Contains(string(spec.Schema), `"additionalProperties":false`) {
 			t.Fatalf("%s schema accepts undeclared fields: %s", spec.Name, spec.Schema)
@@ -190,26 +195,71 @@ func TestWorkloadScaleRefusesUnsupportedTargetsBeforeTheService(t *testing.T) {
 	}
 }
 
-func TestWorkloadScaleRefusesProtectedNamespaces(t *testing.T) {
+func TestWorkloadScaleUsesProtectedNamespacePermissions(t *testing.T) {
 	t.Parallel()
-	for _, namespace := range []string{"kube-system", "zke-system"} {
-		t.Run(namespace, func(t *testing.T) {
-			writer := &recordingWorkloadWriter{}
+	for _, test := range []struct {
+		namespace  string
+		permission rbac.Permission
+	}{
+		{namespace: "kube-system", permission: rbac.PermissionClusterSystemNamespaceManage},
+		{namespace: "zke-system", permission: rbac.PermissionClusterAgentNamespaceManage},
+	} {
+		t.Run(test.namespace, func(t *testing.T) {
+			result := workloadScaleResult()
+			result.Namespace = test.namespace
+			writer := &recordingWorkloadWriter{result: result}
 			catalogue := New(Dependencies{
-				Workloads: writer, Scopes: ordinaryScope(),
+				Workloads: writer,
+				Scopes: permissionScope{
+					staticScopeResolver: ordinaryScope(),
+					allowed:             map[rbac.Permission]bool{test.permission: true},
+				},
 			}, Config{})
-			_, err := catalogue.Invoke(context.Background(), airuntime.ToolInvocation{
-				Name: toolScaleWorkload, ClusterID: testClusterID,
+			allowed, err := catalogue.Invoke(context.Background(), airuntime.ToolInvocation{
+				Name: toolPreviewWorkloadScale, ClusterID: testClusterID, UserID: testUserID,
 				Arguments: json.RawMessage(`{"kind":"Deployment","namespace":"` +
-					namespace + `","name":"web","replicas":3}`),
+					test.namespace + `","name":"web","replicas":3}`),
 			})
-			if err == nil || !strings.Contains(err.Error(), "不操作") {
-				t.Fatalf("namespace %q error = %v", namespace, err)
+			if err != nil || allowed.Failed || len(writer.inputs) != 1 {
+				t.Fatalf("namespace %q result=%+v error=%v inputs=%+v", test.namespace, allowed, err, writer.inputs)
 			}
-			if len(writer.inputs) != 0 {
-				t.Fatalf("namespace %q reached service: %+v", namespace, writer.inputs)
+
+			deniedWriter := &recordingWorkloadWriter{}
+			deniedCatalogue := New(Dependencies{
+				Workloads: deniedWriter,
+				Scopes:    permissionScope{staticScopeResolver: ordinaryScope(), allowed: map[rbac.Permission]bool{}},
+			}, Config{})
+			denied, err := deniedCatalogue.Invoke(context.Background(), airuntime.ToolInvocation{
+				Name: toolPreviewWorkloadScale, ClusterID: testClusterID, UserID: testUserID,
+				Arguments: json.RawMessage(`{"kind":"Deployment","namespace":"` +
+					test.namespace + `","name":"web","replicas":3}`),
+			})
+			if err != nil || !denied.Denied || len(deniedWriter.inputs) != 0 ||
+				len(denied.AuditTargets) != 1 ||
+				denied.AuditTargets[0].MissingPermission != string(test.permission) {
+				t.Fatalf("namespace %q denied=%+v error=%v inputs=%+v", test.namespace, denied, err, deniedWriter.inputs)
 			}
 		})
+	}
+}
+
+func TestPreviewWorkloadRollbackReportsCurrentRevision(t *testing.T) {
+	t.Parallel()
+	writer := &recordingRevisionWriter{err: kubernetesresource.ErrWorkloadRevisionUnchanged}
+	catalogue := New(Dependencies{
+		Revisions: writer,
+		Resources: &stubResources{pod: map[string]any{}},
+		Scopes: permissionScope{
+			staticScopeResolver: ordinaryScope(),
+			allowed:             map[rbac.Permission]bool{rbac.PermissionClusterAgentNamespaceManage: true},
+		},
+	}, Config{})
+	result, err := catalogue.Invoke(context.Background(), airuntime.ToolInvocation{
+		Name: toolPreviewWorkloadRollback, ClusterID: testClusterID, UserID: testUserID,
+		Arguments: json.RawMessage(`{"kind":"Deployment","namespace":"zke-system","name":"metrics","revision":1,"uid":"uid","resource_version":"8"}`),
+	})
+	if err != nil || !result.Failed || result.Denied || !strings.Contains(result.Text, "current=false") {
+		t.Fatalf("current revision result=%+v error=%v", result, err)
 	}
 }
 

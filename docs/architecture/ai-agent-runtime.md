@@ -77,8 +77,8 @@ Kubernetes API Server。工具失败或逐目标拒绝都会形成明确结果�
 
 终端命令固定为敏感且可能变更，必须持有 `cluster.terminal.exec`。一个 Turn 首次调用时重新计算用户当前 Cluster
 权限并投射到短生命周期 ServiceAccount，后续命令复用同一个终端 Pod 和冻结的权限快照；`kubectl exec` 由目标集群
-的 `pods/exec` RBAC 再要求 `cluster.pod.exec`。AIOps 不投射
-Secret 读写与 Agent Namespace 管理权限；命令容器也不挂载 ServiceAccount Token，而是通过同 Pod 的 localhost 凭证代理访问 API Server。
+的 `pods/exec` RBAC 再要求 `cluster.pod.exec`，系统或 Agent Namespace 还要求对应的独立管理权限。AIOps 仅不投射
+Secret 读写权限；命令容器也不挂载 ServiceAccount Token，而是通过同 Pod 的 localhost 凭证代理访问 API Server。
 命令、stdout 与 stderr 进入轨迹前受字节和上下文双重上限。快照权限在命令执行及模型思考的空闲期持续重验；任一权限
 被撤销就关闭本轮终端，Turn 结束、失败或取消时也立即清理，Agent TTL 负责进程异常时兜底。
 

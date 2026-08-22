@@ -14,6 +14,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
+	"github.com/togettoyou/zke/pkg/shared/permissionname"
 )
 
 type terminalRequesterFake struct {
@@ -97,7 +98,7 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 	service := NewService(requester, podExec, Config{
 		ResolveRuntime: fixedTerminalRuntime("terminal:test", "Never", "cluster-agent"),
 	})
-	wantPermissions := []string{"cluster.read", "cluster.terminal.exec"}
+	wantPermissions := []string{permissionname.ClusterRead, permissionname.ClusterTerminalExec}
 
 	session, err := service.Create(context.Background(), CreateInput{
 		UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
@@ -119,7 +120,8 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 	if request.GetImagePullPolicy() != "Never" {
 		t.Fatalf("image pull policy = %q, want Never", request.GetImagePullPolicy())
 	}
-	if slices.Contains(request.GetPermissions(), "cluster.secret.read") || slices.Contains(request.GetPermissions(), "cluster.secret.manage") {
+	if slices.Contains(request.GetPermissions(), permissionname.ClusterSecretRead) ||
+		slices.Contains(request.GetPermissions(), permissionname.ClusterSecretManage) {
 		t.Fatalf("Secret permission was added to snapshot: %v", request.GetPermissions())
 	}
 	if !podExec.input.Confirm || podExec.input.PodName != "zke-terminal-test" || podExec.input.PodUID != "pod-uid" {
@@ -145,7 +147,7 @@ func TestCommandSessionReusesOneCredentialProxyPodUntilExplicitFinish(t *testing
 	service := NewService(requester, &podExecCreatorFake{}, Config{
 		ResolveRuntime: fixedTerminalRuntime("terminal:test", "Never", "zke-system"),
 	})
-	permissions := []string{"cluster.terminal.exec", "cluster.read", "cluster.pod.exec"}
+	permissions := []string{permissionname.ClusterTerminalExec, permissionname.ClusterRead, permissionname.ClusterPodExec}
 	session, err := service.CreateCommandSession(context.Background(), CommandSessionInput{
 		UserID: "user", ClusterID: "cluster", IdempotencyKey: "aiops-call",
 		Permissions: permissions,
@@ -191,7 +193,7 @@ func TestCreateCommandSessionRequiresTerminalPermissionInProjectedSnapshot(t *te
 	})
 	_, err := service.CreateCommandSession(context.Background(), CommandSessionInput{
 		UserID: "user", ClusterID: "cluster", IdempotencyKey: "aiops-call",
-		Permissions: []string{"cluster.read"},
+		Permissions: []string{permissionname.ClusterRead},
 	})
 	if !errors.Is(err, ErrInvalidCommand) || len(requester.requests) != 0 {
 		t.Fatalf("CreateCommandSession() error = %v requests=%d, want local rejection", err, len(requester.requests))
@@ -211,7 +213,7 @@ func TestCreateCommandSessionCancellationCleansAgentResources(t *testing.T) {
 	})
 	_, err := service.CreateCommandSession(ctx, CommandSessionInput{
 		UserID: "user", ClusterID: "cluster", IdempotencyKey: "aiops-turn",
-		Permissions: []string{"cluster.terminal.exec"},
+		Permissions: []string{permissionname.ClusterTerminalExec},
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("CreateCommandSession() error = %v, want context cancellation", err)
@@ -229,7 +231,7 @@ func TestCreateCommandSessionLostResponseCompensatesByDeterministicDelete(t *tes
 	})
 	_, err := service.CreateCommandSession(context.Background(), CommandSessionInput{
 		UserID: "user", ClusterID: "cluster", IdempotencyKey: "aiops-turn",
-		Permissions: []string{"cluster.terminal.exec"},
+		Permissions: []string{permissionname.ClusterTerminalExec},
 	})
 	if !errors.Is(err, ErrAgentNotConnected) {
 		t.Fatalf("CreateCommandSession() error = %v, want ErrAgentNotConnected", err)
@@ -261,7 +263,7 @@ func TestCreateResolvesLatestRuntimeConfiguration(t *testing.T) {
 		t.Helper()
 		if _, err := service.Create(context.Background(), CreateInput{
 			UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
-			IdempotencyKey: key, Permissions: []string{"cluster.terminal.exec"},
+			IdempotencyKey: key, Permissions: []string{permissionname.ClusterTerminalExec},
 			Columns: 120, Rows: 36, Now: now,
 		}); err != nil {
 			t.Fatalf("Create() error = %v", err)
@@ -307,7 +309,7 @@ func TestCreateRejectsRuntimeWithoutSessionTTL(t *testing.T) {
 	})
 	_, err := service.Create(context.Background(), CreateInput{
 		UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
-		IdempotencyKey: "request-key", Permissions: []string{"cluster.terminal.exec"},
+		IdempotencyKey: "request-key", Permissions: []string{permissionname.ClusterTerminalExec},
 		Columns: 120, Rows: 36, Now: time.Unix(100, 0),
 	})
 	if !errors.Is(err, ErrUnavailable) {
@@ -359,7 +361,7 @@ func TestCreateCancellationCleansAgentResourcesWithDetachedContext(t *testing.T)
 
 	_, err := service.Create(ctx, CreateInput{
 		UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
-		IdempotencyKey: "request-key", Permissions: []string{"cluster.terminal.exec"},
+		IdempotencyKey: "request-key", Permissions: []string{permissionname.ClusterTerminalExec},
 		Columns: 120, Rows: 36, Now: time.Unix(100, 0),
 	})
 	if !errors.Is(err, context.Canceled) {
@@ -380,7 +382,7 @@ func TestCreateRejectsIdempotencyKeyReuseWithDifferentInputBeforeAgentRequest(t 
 		ResolveRuntime: fixedTerminalRuntime("terminal:test", "IfNotPresent", "cluster-agent"),
 	})
 	input := CreateInput{UserID: "user", AuthSessionID: "auth-session", ClusterID: "cluster",
-		IdempotencyKey: "request-key", Permissions: []string{"cluster.terminal.exec"}, Columns: 120, Rows: 36, Now: time.Unix(100, 0)}
+		IdempotencyKey: "request-key", Permissions: []string{permissionname.ClusterTerminalExec}, Columns: 120, Rows: 36, Now: time.Unix(100, 0)}
 	if _, err := service.Create(context.Background(), input); err != nil {
 		t.Fatalf("first Create() error = %v", err)
 	}
