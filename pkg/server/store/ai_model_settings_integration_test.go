@@ -9,10 +9,10 @@ import (
 	"github.com/togettoyou/zke/pkg/server/store"
 )
 
-// The shipped state is off with nothing filled in: no endpoint, no entry in the
-// Console, no data leaving ZKE until an operator decides otherwise. Asserted
-// against a real database because the defaults live in the migration.
-func TestAIModelSettingsShipDisabled(t *testing.T) {
+// The shipped preset is enabled but cannot reach the public endpoint without
+// the one value only the deployment can provide: its API key. Asserted against
+// a real database because the defaults live in the migration.
+func TestAIModelSettingsShipPreset(t *testing.T) {
 	databaseURL := requireAuthTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -114,8 +114,24 @@ func TestAIModelSettingsRefuseEnabledWithoutEndpoint(t *testing.T) {
 	applyMigrations(t, ctx, pool)
 
 	settingsStore := store.NewAIModelSettingsStore(pool)
-	_, err := settingsStore.SetAIModelEnabled(ctx, store.SetAIModelEnabledParams{
-		Enabled: true, ExpectedRevision: 1, ActorUserID: testActorUserID, Now: time.Now().UTC(),
+	disabled, err := settingsStore.SetAIModelEnabled(ctx, store.SetAIModelEnabledParams{
+		Enabled: false, ExpectedRevision: 1, ActorUserID: testActorUserID, Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unconfiguredInput := aiModelUpdate(disabled.Revision, nil)
+	unconfiguredInput.BaseURL = ""
+	unconfiguredInput.Model = ""
+	unconfigured, err := settingsStore.UpdateAIModelSettings(ctx, unconfiguredInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = settingsStore.SetAIModelEnabled(ctx, store.SetAIModelEnabledParams{
+		Enabled:          true,
+		ExpectedRevision: unconfigured.Revision,
+		ActorUserID:      testActorUserID,
+		Now:              time.Now().UTC(),
 	})
 	if !errors.Is(err, store.ErrAIModelSettingsNotConfigured) {
 		t.Fatalf("enabling without an endpoint error = %v, want ErrAIModelSettingsNotConfigured", err)

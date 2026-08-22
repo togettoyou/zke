@@ -325,7 +325,7 @@ func TestAISessionArchiveRoundTripsAndRefusesWorkingSessions(t *testing.T) {
 	defer cancel()
 
 	sessionStore := openAISessionStore(t, ctx)
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	cutoff := now.Add(-aiSessionRetention)
 	createAISession(t, ctx, sessionStore, aiSessionID, aiSessionUserID, now)
 

@@ -2288,7 +2288,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description AIOps 在本部署是否可用，以及运行时向模型公开的受控工具目录。描述的是运行时自身而不是任何 Cluster， 因此不需要作用域参数；每个工具在每次调用前仍会针对发起用户在会话固定 Cluster 上重新校验 permissions。 enabled 让 Console 在平台未启用 AIOps 时直接不展示该应用，而不必读取仅全局管理员可见的平台配置。 */
+        /** @description AIOps 在本部署是否可用，以及运行时向模型公开的受控工具目录。描述的是运行时自身而不是任何 Cluster， 因此不需要作用域参数；每个工具在每次调用前仍会针对发起用户在会话固定 Cluster 上重新校验 permissions。 Cluster Terminal 命令工具在一个 Turn 的首次调用批准后重新计算并投射当前 Cluster 权限；后续命令复用同一 Terminal Pod 和冻结快照，Turn 结束或权限撤销时自动清理，且不投射 Secret 读写或 Agent Namespace 管理权限。 enabled 让 Console 在平台未启用 AIOps 时直接不展示该应用，而不必读取仅全局管理员可见的平台配置。 */
         get: operations["listAITools"];
         put?: never;
         post?: never;
