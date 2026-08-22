@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Boxes, Cpu, HardDrive, LayoutDashboard, PlugZap } from "lucide-react";
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
+import { METRICS_EVIDENCE_QUERY_KEY } from "@/apps/evidence-link";
 import type { AppComponentProps } from "@/apps/types";
 import { isApiError } from "@/api/errors";
 import { useSessionContext } from "@/auth/session-context";
@@ -17,6 +18,13 @@ import { MetricsToolbar } from "./MetricsToolbar";
 import { OverviewSection } from "./OverviewSection";
 import { StorageNetworkSection } from "./StorageNetworkSection";
 import { MetricsGate, MetricsScopeProvider } from "./MetricsScopeProvider";
+import {
+  COMPUTE_DIMENSIONS,
+  KUBERNETES_VIEWS,
+  OVERVIEW_PANELS,
+  STORAGE_VIEWS,
+  type MetricsView,
+} from "./metrics-catalog";
 
 /**
  * Collection comes first because it comes first: a Cluster reports nothing
@@ -46,6 +54,22 @@ const NAV: AppNavItem[] = [
   { id: "kubernetes", label: "Kubernetes 资源", icon: Boxes },
 ];
 
+function viewsContainQuery(views: readonly MetricsView[], query: string): boolean {
+  return views.some((view) =>
+    view.panels.some((panel) => panel.queries.some((item) => item.name === query)),
+  );
+}
+
+function evidenceSection(query: string): string {
+  if (OVERVIEW_PANELS.some((panel) => panel.queries.some((item) => item.name === query)))
+    return "overview";
+  if (COMPUTE_DIMENSIONS.some((dimension) => viewsContainQuery(dimension.views, query)))
+    return "compute";
+  if (viewsContainQuery(STORAGE_VIEWS, query)) return "storage";
+  if (viewsContainQuery(KUBERNETES_VIEWS, query)) return "kubernetes";
+  return COLLECTION_SECTION;
+}
+
 /**
  * Observability is a single-Cluster application: it opens inside the selected
  * Project and every chart under it describes the one Cluster picked in the
@@ -66,7 +90,11 @@ const NAV: AppNavItem[] = [
  * worse than no entry.
  */
 export function ObservabilityApp(_props: AppComponentProps) {
-  const [section, setSection] = useState(COLLECTION_SECTION);
+  const [initialQuery] = useState(() => sessionStorage.getItem(METRICS_EVIDENCE_QUERY_KEY) ?? "");
+  useEffect(() => {
+    sessionStorage.removeItem(METRICS_EVIDENCE_QUERY_KEY);
+  }, []);
+  const [section, setSection] = useState(() => evidenceSection(initialQuery));
   const scope = useScopeStore((state) => state.scope);
   const projectId = scope.projectId;
   const { permissions } = useSessionContext();
@@ -119,25 +147,25 @@ export function ObservabilityApp(_props: AppComponentProps) {
       case "compute":
         return (
           <MetricsGate>
-            <ComputeSection />
+            <ComputeSection initialQuery={initialQuery} />
           </MetricsGate>
         );
       case "storage":
         return (
           <MetricsGate>
-            <StorageNetworkSection />
+            <StorageNetworkSection initialQuery={initialQuery} />
           </MetricsGate>
         );
       case "kubernetes":
         return (
           <MetricsGate>
-            <KubernetesSection />
+            <KubernetesSection initialQuery={initialQuery} />
           </MetricsGate>
         );
       default:
         return <CollectionSection />;
     }
-  }, [activeId, catalog]);
+  }, [activeId, catalog, initialQuery]);
 
   if (!projectId) {
     return <ScopeRequired />;

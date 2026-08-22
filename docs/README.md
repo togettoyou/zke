@@ -19,6 +19,8 @@
 - [Agent 注册与连接](architecture/agent-enrollment-and-connection.md)
 - [Phase 2 Server–Agent 协议设计](architecture/agent-protocol-phase-2.md)
 - [Phase 3 可观测性架构设计](architecture/observability-phase-3.md)
+- [Phase 4 AIOps：架构设计](architecture/ai-phase-4.md)（开发预览）
+- [AIOps Agent 运行时与上下文设计](architecture/ai-agent-runtime.md)（开发预览）
 - [应用作用域与资源模型](architecture/resource-model.md)
 - [技术基础设计](architecture/technical-foundation.md)
 
@@ -29,6 +31,7 @@
 - [终端](features/terminal.md)
 - [平台配置](features/platform-settings.md)
 - [可观测性平台](features/observability.md)
+- [AIOps](features/ai-assistant.md)（开发预览）
 
 ## 安全
 

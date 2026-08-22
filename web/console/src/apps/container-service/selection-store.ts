@@ -1,31 +1,66 @@
 import { create } from "zustand";
 
+import { CONTAINER_EVIDENCE_KEY } from "@/apps/evidence-link";
+
 type SelectionState = {
   /** The chosen value per owning scope, so returning to a scope restores it. */
   selections: Record<string, string>;
   select: (scopeKey: string, value: string) => void;
 };
 
+export type ContainerEvidenceTarget = {
+  projectId?: string;
+  clusterId?: string;
+  namespace?: string;
+  evidenceKind?: string;
+  gvk?: string;
+  resource?: string;
+};
+
+export function readContainerEvidenceTarget(): ContainerEvidenceTarget | null {
+  try {
+    const raw = sessionStorage.getItem(CONTAINER_EVIDENCE_KEY);
+    if (!raw) return null;
+    const value: unknown = JSON.parse(raw);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as ContainerEvidenceTarget)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function load(storageKey: string): Record<string, string> {
+  const result: Record<string, string> = {};
   try {
     const raw = localStorage.getItem(storageKey);
-    if (!raw) {
-      return {};
-    }
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-    const result: Record<string, string> = {};
-    for (const [scopeKey, value] of Object.entries(parsed)) {
-      if (typeof value === "string") {
-        result[scopeKey] = value;
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        for (const [scopeKey, value] of Object.entries(parsed)) {
+          if (typeof value === "string") {
+            result[scopeKey] = value;
+          }
+        }
       }
     }
-    return result;
+    const target = readContainerEvidenceTarget();
+    if (target) {
+      if (storageKey === "zke.container-service.cluster" && target.projectId && target.clusterId) {
+        result[target.projectId] = target.clusterId;
+      }
+      if (
+        storageKey === "zke.container-service.namespace" &&
+        target.clusterId &&
+        target.namespace
+      ) {
+        result[target.clusterId] = target.namespace;
+      }
+    }
   } catch {
-    return {};
+    // Local or session storage may be unavailable; the in-memory default works.
   }
+  return result;
 }
 
 function save(storageKey: string, selections: Record<string, string>): void {

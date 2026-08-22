@@ -51,6 +51,7 @@ import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
 import { namespaceLifecyclePermission, namespaceMutationPermission } from "./namespace-permissions";
+import type { ContainerEvidenceTarget } from "./selection-store";
 
 const PAGE_SIZE = 50;
 /** The Namespace picker reads one page at the endpoint's maximum. */
@@ -76,12 +77,14 @@ export function ResourceBrowserSection({
   agentNamespace,
   tenantId,
   projectId,
-}: ClusterSectionProps) {
+  initialEvidence,
+}: ClusterSectionProps & { initialEvidence?: ContainerEvidenceTarget | null }) {
   const { permissions } = useSessionContext();
   const queryClient = useQueryClient();
   const catalog = useResourceTypes(clusterId);
   const [customOnly, setCustomOnly] = useState(false);
-  const [typeQuery, setTypeQuery] = useState("");
+  const evidenceType = initialEvidence?.gvk?.split("/").at(-1) ?? "";
+  const [typeQuery, setTypeQuery] = useState(evidenceType);
   const [selected, setSelected] = useState<KubernetesResourceType | null>(null);
 
   const projectScope = useMemo(
@@ -95,6 +98,15 @@ export function ResourceBrowserSection({
   // empty array on every render would re-filter and re-group the whole catalog
   // each time, and a large cluster's catalog is thousands of entries.
   const types = useMemo(() => catalog.data?.resources ?? [], [catalog.data]);
+  const deepLinkSelected = useMemo(() => {
+    if (!evidenceType) return null;
+    const needle = evidenceType.toLowerCase();
+    return (
+      types.find(
+        (type) => type.kind.toLowerCase() === needle || type.resource.toLowerCase() === needle,
+      ) ?? null
+    );
+  }, [evidenceType, types]);
   const customResourcesKnown = catalog.data?.custom_resources_known ?? false;
   const filtered = useMemo(() => {
     const needle = typeQuery.trim().toLowerCase();
@@ -116,7 +128,9 @@ export function ResourceBrowserSection({
 
   // The selected kind survives a filter change only while it still matches, so
   // the table never shows rows the tree no longer offers.
-  const active = selected && filtered.some((type) => sameType(type, selected)) ? selected : null;
+  const candidate = selected ?? deepLinkSelected;
+  const active = candidate && filtered.some((type) => sameType(type, candidate)) ? candidate : null;
+  const usingDeepLink = selected === null && active !== null && active === deepLinkSelected;
 
   // This section reads two things at once — the type tree and the objects of the
   // selected kind — and the toolbar button is the only refresh it offers, so it
@@ -165,6 +179,8 @@ export function ResourceBrowserSection({
             tenantId={tenantId}
             projectId={projectId}
             canDescribe={canDescribe}
+            initialNamespace={usingDeepLink ? initialEvidence?.namespace : undefined}
+            initialName={usingDeepLink ? initialEvidence?.resource : undefined}
           />
         ) : (
           <div className="border-border rounded-panel bg-surface flex items-center justify-center border p-6">
@@ -391,6 +407,8 @@ function ResourceObjectPanel({
   tenantId,
   projectId,
   canDescribe,
+  initialNamespace,
+  initialName,
 }: {
   clusterId: string;
   clusterName: string;
@@ -399,6 +417,8 @@ function ResourceObjectPanel({
   tenantId: string | null;
   projectId: string | null;
   canDescribe: boolean;
+  initialNamespace?: string;
+  initialName?: string;
 }) {
   const { permissions } = useSessionContext();
   const identity: GenericResourceIdentity = {
@@ -406,8 +426,9 @@ function ResourceObjectPanel({
     version: type.version,
     resource: type.resource,
   };
-  const [namespace, setNamespace] = useState(ALL_NAMESPACES);
-  const [nameQuery, setNameQuery] = useState("");
+  const [namespace, setNamespace] = useState(initialNamespace || ALL_NAMESPACES);
+  const [nameQuery, setNameQuery] = useState(initialName ?? "");
+  const [exactName, setExactName] = useState(initialName ?? "");
   const [yamlTarget, setYamlTarget] = useState<UnstructuredObject | null>(null);
   const [describeTarget, setDescribeTarget] = useState<UnstructuredObject | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UnstructuredObject | null>(null);
@@ -435,6 +456,7 @@ function ResourceObjectPanel({
   const pager = useContinuePagination(`${clusterId}/${typeKey(type)}/${scopedNamespace}`);
   const list = useGenericResources(clusterId, identity, scopedNamespace, {
     limit: PAGE_SIZE,
+    ...(exactName ? { field_selector: `metadata.name=${exactName}` } : {}),
     ...(pager.token ? { continue: pager.token } : {}),
   });
   const namespaces = useNamespaces(type.namespaced ? clusterId : null, { limit: NAMESPACE_LIMIT });
@@ -628,7 +650,10 @@ function ResourceObjectPanel({
             <Search className="text-subtle-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
             <Input
               value={nameQuery}
-              onChange={(event) => setNameQuery(event.target.value)}
+              onChange={(event) => {
+                setExactName("");
+                setNameQuery(event.target.value);
+              }}
               placeholder="在当前页中筛选名称"
               aria-label="筛选资源名称"
               autoComplete="off"

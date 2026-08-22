@@ -1,5 +1,6 @@
 import { memo } from "react";
 
+import { useAITools } from "@/api/queries/aiops";
 import { appFaceClass, appHoverClass } from "@/apps/accent";
 import { APP_MANIFESTS } from "@/apps/registry";
 import type { AppManifest } from "@/apps/types";
@@ -9,8 +10,14 @@ import { cn } from "@/lib/cn";
 /**
  * Desktop launcher.
  *
- * Applications the user has no permission for anywhere are hidden. Planned ones
- * stay visible so the product shape is legible, and each says so on its own
+ * Applications the user has no permission for anywhere are hidden, and so is
+ * the one application the deployment itself can switch off: AIOps without a
+ * model endpoint has nothing behind its icon, and an icon that opens onto "not
+ * configured" is worse than no icon. It stays hidden while the answer is still
+ * loading — appearing a moment late is a smaller lie than appearing and then
+ * being taken away.
+ *
+ * Planned ones stay visible so the product shape is legible, and each says so on its own
  * face — the marker belongs to the tile, not to a section heading above a block
  * of them. A desktop does not sort its icons under administrative captions, and
  * per-tile marking states the case more directly anyway: it survives however the
@@ -26,9 +33,13 @@ import { cn } from "@/lib/cn";
  */
 export const IconGrid = memo(function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
   const { permissions } = useSessionContext();
+  const aiRuntime = useAITools({ enabled: permissions.canAnywhere("ai.run") });
 
   const visible = APP_MANIFESTS.filter((manifest) => {
     if (manifest.requiresGlobalAdmin && !permissions.isGlobalAdmin) {
+      return false;
+    }
+    if (manifest.requiresPlatformFeature === "aiops" && !aiRuntime.data?.enabled) {
       return false;
     }
     if (manifest.availability.state === "planned" || manifest.requiredPermissions.length === 0) {

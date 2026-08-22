@@ -59,6 +59,51 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	platformRoutes.POST("/agent-endpoint-profiles", handlers.authMiddleware.RequireCSRF, handlers.platformSettings.createProfile)
 	platformRoutes.PUT("/agent-endpoint-profiles/:profile_id", handlers.authMiddleware.RequireCSRF, handlers.platformSettings.updateProfile)
 	platformRoutes.DELETE("/agent-endpoint-profiles/:profile_id", handlers.authMiddleware.RequireCSRF, handlers.platformSettings.deleteProfile)
+	// The AI model endpoint is platform configuration like the rest of this
+	// group, and is authorized the same way. It carries its own revision
+	// because it is saved on its own, so it gets its own routes rather than
+	// widening the settings body.
+	platformRoutes.GET("/ai-model", handlers.aiModelSettings.get)
+	platformRoutes.PUT("/ai-model", handlers.authMiddleware.RequireCSRF, handlers.aiModelSettings.update)
+	platformRoutes.PATCH("/ai-model/enabled", handlers.authMiddleware.RequireCSRF, handlers.aiModelSettings.setEnabled)
+
+	// The connectivity test is authorized exactly like the rest of the platform
+	// group but cannot share its request budget: it waits on somebody else's
+	// inference service for as long as the operator configured. Its own group
+	// carries the longer timeout, the same way a manifest's does.
+	aiModelTestRoutes := apiV1.Group("/platform")
+	aiModelTestRoutes.Use(
+		handlers.aiModelTestTimeout,
+		handlers.roleBindingCache,
+		handlers.authMiddleware.RequireAuthentication,
+		handlers.authorizationMiddleware.RequireGlobalAdministrator,
+	)
+	aiModelTestRoutes.POST("/ai-model/test", handlers.authMiddleware.RequireCSRF, handlers.aiModelSettings.test)
+
+	// AIOps follows the current Project and every session has one fixed target
+	// Cluster, so authorization is resolved by the runtime after loading the
+	// session. The SSE route deliberately has no request timeout; it reauthenticates and
+	// reauthorizes throughout its bounded lifetime.
+	aiRoutes := apiV1.Group("/ai")
+	aiRoutes.Use(
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	aiRoutes.GET("/tools", handlers.aiRuntime.tools)
+	aiRoutes.GET("/sessions", handlers.aiRuntime.listSessions)
+	aiRoutes.POST("/sessions", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.createSession)
+	aiRoutes.GET("/sessions/:session_id", handlers.aiRuntime.getSession)
+	aiRoutes.PATCH("/sessions/:session_id", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.updateSession)
+	aiRoutes.DELETE("/sessions/:session_id", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.deleteSession)
+	aiRoutes.POST("/sessions/:session_id/turns", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.startTurn)
+	aiRoutes.DELETE("/sessions/:session_id/turns/current", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.cancelTurn)
+	aiRoutes.POST("/sessions/:session_id/approvals", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.decideApproval)
+	aiRoutes.GET("/sessions/:session_id/trajectory", handlers.aiRuntime.trajectory)
+	aiRoutes.GET("/sessions/:session_id/context", handlers.aiRuntime.contextUsage)
+	aiRoutes.GET("/sessions/:session_id/events", handlers.aiRuntime.events)
+	aiRoutes.GET("/sessions/:session_id/attachments", handlers.aiRuntime.listAttachments)
+	aiRoutes.POST("/sessions/:session_id/attachments", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.createAttachment)
+	aiRoutes.DELETE("/sessions/:session_id/attachments/:attachment_id", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.deleteAttachment)
+	aiRoutes.GET("/sessions/:session_id/export", handlers.aiRuntime.exportSession)
 	authenticatedAuthRoutes.POST(
 		"/password",
 		handlers.requestTimeout,

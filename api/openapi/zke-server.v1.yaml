@@ -23,6 +23,7 @@ tags:
   - name: Agent Protocol
   - name: Audit
   - name: Platform
+  - name: AIOps
   - name: Events
 paths:
   /healthz:
@@ -6573,6 +6574,575 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/platform/ai-model:
+    get:
+      tags: [Platform]
+      operationId: getAIModelSettings
+      security: [{ sessionCookie: [] }]
+      description: |
+        AIOps 的模型接入配置。API Key 只报告是否已配置，不返回明文，也不返回密文。
+      responses:
+        "200":
+          description: 模型接入配置
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AIModelSettings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      tags: [Platform]
+      operationId: updateAIModelSettings
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      description: |
+        整段保存。接入地址、模型名与凭证只有放在一起才有意义，因此不做字段级增量更新；
+        `api_key` 是例外，见其字段说明。本接口不更改启用状态。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIModelSettingsUpdate" }
+      responses:
+        "200":
+          description: 已更新的模型接入配置
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AIModelSettings" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/platform/ai-model/enabled:
+    patch:
+      tags: [Platform]
+      operationId: setAIModelEnabled
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      description: |
+        单独启用或关闭 AIOps。调用立即生效并保留模型接入配置；启用前要求已保存接入地址和模型名。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIModelEnabledUpdate" }
+      responses:
+        "200":
+          description: 已更新启用状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AIModelSettings" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/platform/ai-model/test:
+    post:
+      tags: [Platform]
+      operationId: testAIModelSettings
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      description: |
+        用已保存的配置向模型端点发起一次最小请求，返回成功或分类后的失败原因，不回显任何
+        凭证内容，也不回显端点返回的正文。测试不要求配置处于启用状态：先配置、再测试、
+        最后启用是操作者的自然顺序。未配置接入地址或模型名时返回 409。
+      responses:
+        "200":
+          description: 连通性测试结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AIModelTestResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/ai/tools:
+    get:
+      tags: [AIOps]
+      operationId: listAITools
+      description: >-
+        AIOps 在本部署是否可用，以及运行时向模型公开的只读工具目录。描述的是运行时自身而不是任何 Cluster，
+        因此不需要作用域参数；每个工具在每次调用前仍会针对发起用户在会话固定 Cluster 上重新校验 permissions。
+        enabled 让 Console 在平台未启用 AIOps 时直接不展示该应用，而不必读取仅全局管理员可见的平台配置。
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: 当前部署的 AIOps 可用状态与工具目录
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [enabled, tools]
+                        properties:
+                          enabled:
+                            type: boolean
+                            description: 平台已启用 AIOps，且模型接入地址与模型名都已配置。
+                          tools:
+                            type: array
+                            items: { $ref: "#/components/schemas/AITool" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+  /api/v1/ai/sessions:
+    get:
+      tags: [AIOps]
+      operationId: listAISessions
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          description: Console 当前桌面环境选定的 Tenant。
+          schema: { $ref: "#/components/schemas/UUID" }
+        - name: project_id
+          in: query
+          required: true
+          description: Console 当前桌面环境选定的 Project。
+          schema: { $ref: "#/components/schemas/UUID" }
+        - name: cluster_id
+          in: query
+          required: true
+          description: AIOps 当前选定的 Cluster 工作区。
+          schema: { $ref: "#/components/schemas/UUID" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - name: search
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: 当前用户在指定 Cluster 工作区中仍有权访问的会话
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [sessions]
+                        properties:
+                          sessions:
+                            type: array
+                            items: { $ref: "#/components/schemas/AISession" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [AIOps]
+      operationId: createAISession
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AISessionCreate" }
+      responses:
+        "201":
+          description: 已创建的 AIOps 会话
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AISession" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ai/sessions/{session_id}:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+    get:
+      tags: [AIOps]
+      operationId: getAISession
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: AIOps 会话
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AISession" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [AIOps]
+      operationId: updateAISession
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AISessionUpdate" }
+      responses:
+        "200":
+          description: 已更新的会话
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AISession" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [AIOps]
+      operationId: deleteAISession
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      description: 永久删除已归档会话及其轨迹和附件；未归档会话返回 409。
+      responses:
+        "204": { description: 已删除 }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ai/sessions/{session_id}/turns:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+    post:
+      tags: [AIOps]
+      operationId: startAITurn
+      description: 持久化问题后返回 202；模型任务在后台继续，并在每个外部步骤重新检查账户与 RBAC。
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AITurnStart" }
+      responses:
+        "202":
+          description: 已持久化并启动后台运行
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AITrajectoryEntry" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ai/sessions/{session_id}/turns/current:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+    delete:
+      tags: [AIOps]
+      operationId: cancelAITurn
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      responses:
+        "200":
+          description: 已请求取消后台运行
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { type: "null" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ai/sessions/{session_id}/approvals:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+    post:
+      tags: [AIOps]
+      operationId: decideAIApproval
+      description: >-
+        答复一次被审批模式拦下的工具调用。批准与拒绝都会写入轨迹；
+        拒绝不是运行失败，模型会收到明确的拒绝说明并继续本轮。
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIApprovalDecision" }
+      responses:
+        "200":
+          description: 已把决定交给正在等待的运行
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { type: "null" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ai/sessions/{session_id}/trajectory:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+      - name: after_sequence
+        in: query
+        schema: { type: integer, format: int32, minimum: 0, default: 0 }
+      - name: limit
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+    get:
+      tags: [AIOps]
+      operationId: listAITrajectory
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: 当前权限重验与脱敏后的增量轨迹
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [entries]
+                        properties:
+                          entries:
+                            type: array
+                            items: { $ref: "#/components/schemas/AITrajectoryEntry" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ai/sessions/{session_id}/context:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+    get:
+      tags: [AIOps]
+      operationId: getAIContextUsage
+      description: >-
+        会话当前占用的模型上下文。总量优先使用端点自己报告的用量作为锚点，再对锚点之后新增的内容做本地估算；
+        system、tools 与 messages 三项拆分始终是本地估算，用于解释总量而不参与任何判定。
+        阈值来自 Server 配置中的压缩比例与端点上下文窗口，未配置模型端点时返回 409。
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: 当前会话的上下文占用
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required:
+                          [
+                            used_tokens,
+                            context_window_tokens,
+                            threshold_tokens,
+                            system_tokens,
+                            tools_tokens,
+                            message_tokens,
+                            measured,
+                          ]
+                        properties:
+                          used_tokens: { type: integer }
+                          context_window_tokens: { type: integer }
+                          threshold_tokens: { type: integer }
+                          system_tokens: { type: integer }
+                          tools_tokens: { type: integer }
+                          message_tokens: { type: integer }
+                          measured:
+                            type: boolean
+                            description: 总量是否锚定在端点报告的用量上
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ai/sessions/{session_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+      - name: after_sequence
+        in: query
+        schema: { type: integer, format: int32, minimum: 0, default: 0 }
+    get:
+      tags: [AIOps]
+      operationId: streamAITrajectory
+      description: >-
+        trajectory 事件的 SSE id 等于持久化轨迹序号，重连通过 Last-Event-ID 或 after_sequence 精确续传。
+        delta 事件是模型正在产生的正文，没有 id、不会重放，也不是记录；对应步骤的 model 轨迹事件才是。
+        delta 的 kind 为 reset 时表示该步骤的请求正在重发，此前收到的增量应当丢弃。
+        session 事件在会话标题、状态或归档状态变化时发送，正文与会话对象相同。安静期发送注释心跳。
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: "ready、session、trajectory、delta 与 close 事件流"
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ai/sessions/{session_id}/attachments:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+    get:
+      tags: [AIOps]
+      operationId: listAIAttachments
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: 会话的附件元数据
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [attachments]
+                        properties:
+                          attachments:
+                            type: array
+                            items: { $ref: "#/components/schemas/AIAttachment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [AIOps]
+      operationId: createAIAttachment
+      description: 只接受不超过 256 KiB 的文本、Markdown、JSON 或 YAML，作为不可信数据进入模型上下文。
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIAttachmentCreate" }
+      responses:
+        "201":
+          description: 已保存的附件元数据
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AIAttachment" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ai/sessions/{session_id}/attachments/{attachment_id}:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+      - name: attachment_id
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/UUID" }
+    delete:
+      tags: [AIOps]
+      operationId: deleteAIAttachment
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      responses:
+        "200":
+          description: 已删除附件
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { type: "null" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ai/sessions/{session_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+    get:
+      tags: [AIOps]
+      operationId: exportAISession
+      security: [{ sessionCookie: [] }]
+      description: 导出当前权限重验和脱敏后的会话、完整轨迹与文本附件。
+      responses:
+        "200":
+          description: 可下载的会话 JSON
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+          content:
+            application/vnd.zke.ai-session+json:
+              schema: { $ref: "#/components/schemas/AISessionExport" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/platform/agent-endpoint-profiles:
     post:
       tags: [Platform]
@@ -7082,6 +7652,12 @@ components:
         $ref: "#/components/schemas/UUID"
     ClusterID:
       name: cluster_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
+    AISessionID:
+      name: session_id
       in: path
       required: true
       schema:
@@ -7920,6 +8496,7 @@ components:
               - rbac.read
               - rbac.manage
               - audit.read
+              - ai.run
     ChangePasswordRequest:
       type: object
       additionalProperties: false
@@ -14414,6 +14991,384 @@ components:
           maximum: 3600
           description: 省略表示不修改。
         expected_revision: { type: integer, minimum: 1 }
+    AISession:
+      type: object
+      additionalProperties: false
+      required: [id, tenant_id, project_id, cluster_id, title, status, approval_mode, current_turn, last_turn_status, last_turn_failure, created_at, last_activity_at]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        tenant_id:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          description: 创建会话时 Console 的当前 Tenant。
+        project_id:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          description: 创建会话时 Console 的当前 Project；用于按桌面环境隔离会话列表。
+        cluster_id:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          description: 会话创建时选定且不可切换的唯一目标 Cluster。
+        title: { type: string, minLength: 1, maxLength: 200 }
+        status: { type: string, enum: [idle, working] }
+        approval_mode: { type: string, enum: [ask, assisted, full] }
+        current_turn: { type: integer, format: int32, minimum: 0 }
+        last_turn_status: { type: string, enum: ["", succeeded, failed, canceled] }
+        last_turn_failure: { type: string, maxLength: 64 }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        last_activity_at: { $ref: "#/components/schemas/Timestamp" }
+        archived_at: { $ref: "#/components/schemas/Timestamp" }
+    AISessionCreate:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, project_id, cluster_id, title]
+      properties:
+        tenant_id:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          description: 必须是 Console 当前桌面环境的 Tenant。
+        project_id:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          description: 必须是 Console 当前桌面环境的 Project。
+        cluster_id:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          description: 必须属于 project_id；会话创建后不可切换。
+        title: { type: string, minLength: 1, maxLength: 200 }
+        approval_mode: { type: string, enum: [ask, assisted, full], default: ask }
+    AISessionUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      maxProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        archived: { type: boolean }
+        approval_mode:
+          type: string
+          enum: [ask, assisted, full]
+          description: 记录会话的审批策略并在运行中切换时写入 system 轨迹；敏感工具在 ask 与 assisted 下会产生审批请求。
+    AIEvidence:
+      type: object
+      additionalProperties: false
+      required: [kind, cluster]
+      properties:
+        kind: { type: string, enum: [resource, event, metric, log] }
+        cluster:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          description: 必须等于所属会话固定的 cluster_id。
+        tenant_id:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          readOnly: true
+          description: Server 根据 Cluster 解析的证据深链导航提示，不参与授权。
+        project_id:
+          allOf: [{ $ref: "#/components/schemas/UUID" }]
+          readOnly: true
+          description: Server 根据 Cluster 解析的证据深链导航提示，不参与授权。
+        namespace: { type: string, maxLength: 253 }
+        gvk: { type: string, maxLength: 256 }
+        name: { type: string, maxLength: 253 }
+        resource_version: { type: string, maxLength: 128 }
+        query: { type: string, maxLength: 256 }
+        parameters: { type: string, maxLength: 4096 }
+        container: { type: string, maxLength: 253 }
+        from: { $ref: "#/components/schemas/Timestamp" }
+        to: { $ref: "#/components/schemas/Timestamp" }
+    AITurnStart:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 32768 }
+        evidence:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/AIEvidence" }
+        attachment_ids:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/UUID" }
+    AIApprovalDecision:
+      type: object
+      additionalProperties: false
+      required: [call_id, decision]
+      properties:
+        call_id:
+          type: string
+          maxLength: 256
+          description: approval_request 轨迹事件中的 call_id。
+        decision: { type: string, enum: [approved, denied] }
+    AITool:
+      type: object
+      additionalProperties: false
+      required: [name, description, permissions, sensitive, mutating]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        permissions:
+          type: array
+          items: { type: string }
+          description: 每次调用前都会针对发起用户在目标 Cluster 上重新校验的权限，全部满足才执行。
+        sensitive:
+          type: boolean
+          description: 除完全访问模式外都会停下来等待用户批准。
+        mutating:
+          type: boolean
+          description: 会改变集群状态。当前目录中没有这类工具。
+    AIAttachment:
+      type: object
+      additionalProperties: false
+      required: [id, session_id, name, media_type, size_bytes, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        session_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        media_type: { type: string, enum: [text/plain, text/markdown, application/json, application/yaml] }
+        size_bytes: { type: integer, minimum: 1, maximum: 262144 }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+    AIAttachmentCreate:
+      type: object
+      additionalProperties: false
+      required: [name, media_type, content]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        media_type: { type: string, enum: [text/plain, text/markdown, application/json, application/yaml] }
+        content: { type: string, minLength: 1, maxLength: 262144 }
+    AIAttachmentExport:
+      type: object
+      additionalProperties: false
+      required: [id, session_id, name, media_type, size_bytes, created_at, content]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        session_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string }
+        media_type: { type: string }
+        size_bytes: { type: integer, minimum: 1 }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        content: { type: string }
+    AITarget:
+      type: object
+      additionalProperties: false
+      required: [cluster]
+      properties:
+        cluster: { $ref: "#/components/schemas/UUID" }
+        namespace: { type: string }
+        gvk: { type: string }
+        name: { type: string }
+    AITokens:
+      type: object
+      additionalProperties: false
+      required: [input, output, context]
+      properties:
+        input: { type: integer, minimum: 0 }
+        cached_input: { type: integer, minimum: 0 }
+        output: { type: integer, minimum: 0 }
+        reasoning: { type: integer, minimum: 0 }
+        context:
+          type: integer
+          minimum: 0
+          description: 这一步请求占用的上下文总量，优先锚定在端点报告的用量上。
+        context_window:
+          type: integer
+          minimum: 0
+          description: 该步骤运行时端点的上下文窗口，与 context 一起记录，便于事后按当时的配置复核。
+    AITiming:
+      type: object
+      additionalProperties: false
+      properties:
+        first_token_ms:
+          type: integer
+          minimum: 0
+          description: 端点产出第一个 token 的耗时。端点以单个 JSON 文档而不是流应答时没有首 token，该字段缺省。
+        elapsed_ms: { type: integer, minimum: 0 }
+        streamed: { type: boolean }
+    AICompaction:
+      type: object
+      additionalProperties: false
+      required: [method, before_tokens, after_tokens, threshold_tokens, shadowed_from, shadowed_to]
+      properties:
+        method:
+          type: string
+          enum: [model_summary, summary]
+          description: model_summary 是模型写出的检查点；summary 是摘要调用无法完成时退回的机械摘要。
+        trigger:
+          type: string
+          enum: [pressure, context_overflow]
+          description: pressure 是达到压缩阈值，context_overflow 是端点已经拒绝了过大的请求。
+        before_tokens: { type: integer, minimum: 1 }
+        after_tokens: { type: integer, minimum: 1 }
+        threshold_tokens:
+          type: integer
+          minimum: 1
+          description: 触发压缩的压力线，由配置中的压缩比例与端点上下文窗口计算得出。
+        retained_tokens:
+          type: integer
+          minimum: 0
+          description: 原样保留的最近尾部大小。
+        context_window_tokens: { type: integer, minimum: 0 }
+        shadowed_from:
+          type: integer
+          format: int32
+          minimum: 1
+          description: 被这份检查点替换的轨迹序号区间起点（含）。
+        shadowed_to:
+          type: integer
+          format: int32
+          minimum: 1
+          description: 区间终点（含）。重建模型可见上下文时跳过该区间，其后的条目原样保留。
+    AITrajectoryContent:
+      type: object
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          description: 事件正文；compaction 事件中的正文是后续请求重建模型可见上下文使用的持久摘要。
+        step:
+          type: integer
+          minimum: 1
+          description: 该事件属于本轮的第几个模型步骤。一个 Turn 由多个 Step 组成，每个 Step 是一次模型调用及其请求的工具执行。
+        tool:
+          type: string
+          description: 工具调用、结果或审批请求对应的稳定工具名，取自 GET /api/v1/ai/tools 的目录。
+        call_id:
+          type: string
+          description: 模型为这次调用生成的标识，用于把 tool_call、approval_request、approval_decision 和 tool_result 串联起来。
+        arguments: { type: string }
+        target: { $ref: "#/components/schemas/AITarget" }
+        authorized:
+          type: boolean
+          description: 该调用是否真正被执行。RBAC 拒绝、用户拒绝批准和未知工具都记为 false。
+        failed:
+          type: boolean
+          description: 工具结果没有拿到预期内容；模型收到的也是同样的说明。
+        evidence:
+          type: array
+          items: { $ref: "#/components/schemas/AIEvidence" }
+        tokens: { $ref: "#/components/schemas/AITokens" }
+        timing: { $ref: "#/components/schemas/AITiming" }
+        compaction: { $ref: "#/components/schemas/AICompaction" }
+        decision:
+          type: string
+          enum: [approved, denied]
+          description: 对一次 approval_request 的答复。
+        tools:
+          type: array
+          items: { type: string }
+          description: 在 system 事件上是本轮允许调用的工具集合；在 model 事件上是该步骤请求调用的工具。
+        failure: { type: string }
+        mode: { type: string, enum: [ask, assisted, full] }
+        untrusted:
+          type: boolean
+          description: 正文来自附件或目标 Cluster，只能作为数据而不能改变运行时指令、权限或审批状态。
+    AITrajectoryEntry:
+      type: object
+      additionalProperties: false
+      required: [sequence, turn, kind, occurred_at, duration_ms, truncated, content]
+      properties:
+        sequence: { type: integer, format: int32, minimum: 1 }
+        turn: { type: integer, format: int32, minimum: 1 }
+        kind:
+          type: string
+          enum: [system, input, context, model, reasoning, tool_call, tool_result, approval_request, approval_decision, compaction, conclusion, error]
+        occurred_at: { $ref: "#/components/schemas/Timestamp" }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        truncated: { type: boolean }
+        content: { $ref: "#/components/schemas/AITrajectoryContent" }
+    AISessionExport:
+      type: object
+      additionalProperties: false
+      required: [session, trajectory, attachments]
+      properties:
+        session: { $ref: "#/components/schemas/AISession" }
+        trajectory:
+          type: array
+          items: { $ref: "#/components/schemas/AITrajectoryEntry" }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/AIAttachmentExport" }
+    AIModelSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, base_url, model, api_protocol, api_key_configured, context_window_tokens, max_output_tokens, request_timeout_seconds, revision, updated_at]
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            默认开启，并预置一个可用的接入地址、协议与模型名；只有 API Key 留空，需要部署方补齐。
+            关闭时保留配置，但停止新的 AIOps 模型运行。
+        base_url:
+          type: string
+          maxLength: 2048
+          description: |
+            OpenAI 兼容端点的 Base URL，不含尾部斜杠，例如 `https://inference.internal/v1`。
+            Server 按所选协议在其后追加 `/responses` 或 `/chat/completions`。
+        model:
+          type: string
+          maxLength: 256
+          description: 由管理员填写。Server 不内置任何厂商模型清单。
+        api_protocol:
+          type: string
+          enum: [responses, chat_completions]
+          description: Responses 适合长任务与原生压缩；Chat Completions 用于兼容自建推理服务。
+        api_key_configured:
+          type: boolean
+          description: 是否已配置 API Key。写入后不回显，读取接口不返回明文也不返回密文。
+        context_window_tokens:
+          type: integer
+          minimum: 16384
+          maximum: 4000000
+          description: |
+            模型可接收的总上下文窗口。运行时按 Server 配置中的压缩比例乘以该窗口得到压缩阈值，
+            因此更换模型只需要改这里，不需要再维护一个绝对的 token 阈值。
+        max_output_tokens:
+          type: integer
+          minimum: 1024
+          maximum: 262144
+          description: 单次模型响应预留的最大输出空间。
+        request_timeout_seconds:
+          type: integer
+          minimum: 5
+          maximum: 300
+          description: 单次模型调用的上限。
+        revision: { type: integer, minimum: 1 }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+    AIModelSettingsUpdate:
+      type: object
+      additionalProperties: false
+      required: [base_url, model, api_protocol, context_window_tokens, max_output_tokens, request_timeout_seconds, expected_revision]
+      properties:
+        base_url: { type: string, maxLength: 2048 }
+        model: { type: string, maxLength: 256 }
+        api_protocol: { type: string, enum: [responses, chat_completions] }
+        api_key:
+          type: string
+          maxLength: 4096
+          description: |
+            三态字段：省略保持已存储的凭证，空串清除凭证，其他值替换凭证。已存储的值不会
+            返回给浏览器，因此未修改该字段的保存必须省略它，而不是回填。
+        context_window_tokens: { type: integer, minimum: 16384, maximum: 4000000 }
+        max_output_tokens: { type: integer, minimum: 1024, maximum: 262144 }
+        request_timeout_seconds: { type: integer, minimum: 5, maximum: 300 }
+        expected_revision: { type: integer, minimum: 1 }
+    AIModelEnabledUpdate:
+      type: object
+      additionalProperties: false
+      required: [enabled, expected_revision]
+      properties:
+        enabled: { type: boolean }
+        expected_revision: { type: integer, minimum: 1 }
+    AIModelTestResult:
+      type: object
+      additionalProperties: false
+      required: [succeeded, failure, detail, status]
+      properties:
+        succeeded: { type: boolean }
+        failure:
+          type: string
+          enum: ["", unauthorized, model_not_found, unreachable, timeout, unexpected_response]
+          description: 成功时为空串。每个取值对应一件操作者可以去修的事：凭证、模型名或路径、网络、端点自身。
+        detail:
+          type: string
+          description: 由 ZKE 撰写的中文说明，不包含端点返回的正文，也不包含任何凭证内容。
+        status:
+          type: integer
+          description: 端点返回的 HTTP 状态码；未收到响应时为 0。
     ClusterEnrollment:
       type: object
       additionalProperties: false
@@ -14649,6 +15604,7 @@ components:
               cluster,
               platform,
               kubernetes_resource,
+              aiops,
               denied,
             ]
           description: >-
@@ -14676,6 +15632,7 @@ components:
         - kubernetes_resource
         - platform_settings
         - agent_endpoint_profile
+        - ai_session
     AuditEventPage:
       type: object
       additionalProperties: false

@@ -664,6 +664,46 @@ func TestConfigRejectsOperationTimeoutAtOrAboveWriteTimeout(t *testing.T) {
 	}
 }
 
+// Every AIOps bound is one an operator can only get wrong in a way that shows
+// up much later — a turn that runs for an hour, a compaction threshold below
+// the tail it is supposed to leave alone, a tool budget that would grow a
+// result instead of trimming it. The Server refuses at startup rather than at
+// the point where somebody is waiting for an answer.
+func TestConfigRejectsUnworkableAIOpsPolicy(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]func(*AIOpsConfig){
+		"没有步骤预算的循环不会停": func(aiops *AIOpsConfig) { aiops.MaxSteps = 0 },
+		"没有工具预算的循环不会停": func(aiops *AIOpsConfig) { aiops.MaxToolCalls = 0 },
+		"压缩比例超出 0 到 1": func(aiops *AIOpsConfig) {
+			aiops.Compaction.ThresholdRatio = 1.5
+		},
+		"保留尾部不低于压缩阈值": func(aiops *AIOpsConfig) {
+			aiops.Compaction.RetainRatio = aiops.Compaction.ThresholdRatio
+		},
+		"抖动比例超出 0 到 1": func(aiops *AIOpsConfig) { aiops.ModelRetry.JitterRatio = 2 },
+		"退避上界低于下界": func(aiops *AIOpsConfig) {
+			aiops.ModelRetry.MaxDelay = aiops.ModelRetry.InitialDelay / 2
+		},
+		"工具首尾之和不小于阈值": func(aiops *AIOpsConfig) {
+			aiops.ToolResult.HeadChars = aiops.ToolResult.ThresholdChars
+		},
+		"Turn 时长为零": func(aiops *AIOpsConfig) { aiops.TurnTimeout = 0 },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := DefaultConfig()
+			cfg.AgentInstall.PublicHTTPURL = ""
+			cfg.AgentInstall.PublicQUICAddress = ""
+			mutate(&cfg.AIOps)
+			if err := cfg.Validate(); err == nil {
+				t.Fatalf("Validate() accepted %s", name)
+			}
+		})
+	}
+}
+
 func TestLoadConfigRejectsUnknownYAMLField(t *testing.T) {
 	t.Parallel()
 

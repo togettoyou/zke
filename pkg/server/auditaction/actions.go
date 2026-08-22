@@ -65,11 +65,30 @@ const (
 	ProjectResume  = "project.resume"
 	ProjectDelete  = "project.delete"
 
-	PlatformSettingsUpdate     = "platform_settings.update"
+	PlatformSettingsUpdate = "platform_settings.update"
+	// The AI model endpoint is a section of platform settings with its own
+	// revision, so its save is its own action: an operator reviewing who
+	// changed where cluster content gets sent should not have to open every
+	// platform_settings.update to find out.
+	AIModelSettingsUpdate      = "ai_model_settings.update"
+	AIModelEnabledUpdate       = "ai_model.enabled.update"
+	AIModelSettingsTest        = "ai_model_settings.test"
 	AgentEndpointProfileCreate = "agent_endpoint_profile.create"
 	AgentEndpointProfileUpdate = "agent_endpoint_profile.update"
 	AgentEndpointProfileDelete = "agent_endpoint_profile.delete"
 	PlatformSettingsManage     = "platform.settings.manage"
+
+	// AIOps reads a Cluster on an operator behalf, through a model that chose
+	// what to read. Those reads are audited exactly like the ones an operator
+	// makes by hand: otherwise AIOps would be a way to read Pod logs without
+	// leaving the record that reading Pod logs leaves.
+	//
+	// One action for every tool rather than reusing each capability own action,
+	// because the question an auditor asks here is different — not "who read
+	// this Pod log" but "what did the agent do on this Cluster, and was it
+	// allowed to". The tool name is in the detail.
+	AIToolInvoke     = "ai_tool.invoke"
+	AIApprovalDecide = "ai_approval.decide"
 
 	ClusterEnroll                        = "cluster.enroll"
 	ClusterUpdate                        = "cluster.update"
@@ -172,6 +191,7 @@ const (
 	DeniedRBACRead                          = "rbac.read"
 	DeniedRBACManage                        = "rbac.manage"
 	DeniedAuditRead                         = "audit.read"
+	DeniedAIRun                             = "ai.run"
 )
 
 // Group names the family an action belongs to. It is declared here rather than
@@ -189,6 +209,7 @@ const (
 	GroupPlatform    = "platform"
 	GroupCluster     = "cluster"
 	GroupKubernetes  = "kubernetes_resource"
+	GroupAI          = "aiops"
 	// GroupDenied holds the permission names above. They are grouped apart
 	// rather than filed under the resource they name because they answer a
 	// different question: not "what happened to this tenant" but "who was turned
@@ -220,6 +241,7 @@ const (
 	TargetKubernetesResource   = "kubernetes_resource"
 	TargetPlatformSettings     = "platform_settings"
 	TargetAgentEndpointProfile = "agent_endpoint_profile"
+	TargetAISession            = "ai_session"
 )
 
 var targetTypes = []string{
@@ -237,6 +259,7 @@ var targetTypes = []string{
 	TargetKubernetesResource,
 	TargetPlatformSettings,
 	TargetAgentEndpointProfile,
+	TargetAISession,
 }
 
 // TargetTypes reports the target type vocabulary in presentation order.
@@ -294,10 +317,16 @@ var actions = []Action{
 	{ProjectDelete, GroupProject},
 
 	{PlatformSettingsUpdate, GroupPlatform},
+	{AIModelSettingsUpdate, GroupPlatform},
+	{AIModelEnabledUpdate, GroupPlatform},
+	{AIModelSettingsTest, GroupPlatform},
 	{AgentEndpointProfileCreate, GroupPlatform},
 	{AgentEndpointProfileUpdate, GroupPlatform},
 	{AgentEndpointProfileDelete, GroupPlatform},
 	{PlatformSettingsManage, GroupPlatform},
+
+	{AIToolInvoke, GroupAI},
+	{AIApprovalDecide, GroupAI},
 
 	{ClusterEnroll, GroupCluster},
 	{ClusterUpdate, GroupCluster},
@@ -368,6 +397,7 @@ var actions = []Action{
 	{DeniedRBACRead, GroupDenied},
 	{DeniedRBACManage, GroupDenied},
 	{DeniedAuditRead, GroupDenied},
+	{DeniedAIRun, GroupDenied},
 }
 
 // All reports the vocabulary in presentation order. The slice is copied so that

@@ -47,6 +47,16 @@ const (
 	maxResourceWatchRequests      = 100_000
 	maxPodAccessSessions          = 100_000
 	maxPodAccessConnections       = 100_000
+	maxAIOpsTurnTimeout           = 2 * time.Hour
+	maxAIOpsApprovalTimeout       = time.Hour
+	maxAIOpsRetryDelay            = 5 * time.Minute
+	maxAIOpsSteps                 = 1_000
+	maxAIOpsToolCalls             = 10_000
+	maxAIOpsParallelToolCalls     = 64
+	maxAIOpsRepeatedCalls         = 100
+	maxAIOpsRetries               = 20
+	maxAIOpsSummaryTokens         = 65_536
+	maxAIOpsToolResultChars       = 1_000_000
 )
 
 // boundedDuration describes a duration that must be positive and capped.
@@ -109,6 +119,7 @@ func (cfg Config) Validate() error {
 		cfg.validateAgentEnrollment,
 		cfg.validateAgentListener,
 		cfg.validateObservability,
+		cfg.validateAIOps,
 		cfg.validateRetention,
 		cfg.validateProcess,
 		cfg.validateCrossSection,
@@ -501,6 +512,79 @@ func (cfg Config) validateAgentPKIMonitor() error {
 // use. A zero or negative grace deletes a session at the instant it expires and
 // a credential at the instant it is superseded, which is exactly when someone
 // is most likely to be asking about it; a zero interval would spin.
+// validateAIOps refuses a loop that could not stop, a compaction policy that
+// could not reduce anything, and a tool budget that would grow a result instead
+// of trimming it.
+//
+// Every bound here is one an operator can only get wrong in a way that shows up
+// much later — a turn that runs for an hour, a threshold below the tail it is
+// supposed to leave alone — so the Server refuses at startup rather than at the
+// point where somebody is waiting for an answer.
+func (cfg Config) validateAIOps() error {
+	aiops := cfg.AIOps
+	if err := validateDurations([]boundedDuration{
+		{aiops.TurnTimeout, maxAIOpsTurnTimeout, "AIOps turn timeout"},
+		{aiops.ApprovalTimeout, maxAIOpsApprovalTimeout, "AIOps approval timeout"},
+		{aiops.TitleTimeout, maxAuthOperation, "AIOps title timeout"},
+		{aiops.ModelRetry.InitialDelay, maxAIOpsRetryDelay, "AIOps model retry initial delay"},
+		{aiops.ModelRetry.MaxDelay, maxAIOpsRetryDelay, "AIOps model retry maximum delay"},
+	}); err != nil {
+		return err
+	}
+	if aiops.ModelRetry.MaxDelay < aiops.ModelRetry.InitialDelay {
+		return errors.New(
+			"AIOps model retry maximum delay must not be below the initial delay",
+		)
+	}
+	for _, count := range []struct {
+		value int
+		max   int
+		name  string
+	}{
+		{aiops.MaxSteps, maxAIOpsSteps, "AIOps maximum steps"},
+		{aiops.MaxToolCalls, maxAIOpsToolCalls, "AIOps maximum tool calls"},
+		{aiops.MaxParallelToolCalls, maxAIOpsParallelToolCalls, "AIOps maximum parallel tool calls"},
+		{aiops.RepeatedCallLimit, maxAIOpsRepeatedCalls, "AIOps repeated call limit"},
+		{aiops.Compaction.MaxSummaryTokens, maxAIOpsSummaryTokens, "AIOps compaction summary tokens"},
+		{aiops.ToolResult.ThresholdChars, maxAIOpsToolResultChars, "AIOps tool result threshold"},
+		{aiops.ToolResult.HeadChars, maxAIOpsToolResultChars, "AIOps tool result head"},
+		{aiops.ToolResult.TailChars, maxAIOpsToolResultChars, "AIOps tool result tail"},
+	} {
+		if count.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero", count.name)
+		}
+		if count.value > count.max {
+			return fmt.Errorf("%s must not exceed %d", count.name, count.max)
+		}
+	}
+	if aiops.ToolResult.HeadChars+aiops.ToolResult.TailChars >= aiops.ToolResult.ThresholdChars {
+		return errors.New(
+			"AIOps tool result head and tail together must stay below the threshold",
+		)
+	}
+	if aiops.ModelRetry.MaxRetries < 0 || aiops.ModelRetry.MaxRetries > maxAIOpsRetries {
+		return fmt.Errorf("AIOps model retries must be between 0 and %d", maxAIOpsRetries)
+	}
+	if aiops.Compaction.Retries < 0 || aiops.Compaction.Retries > maxAIOpsRetries ||
+		aiops.Compaction.MaxOverflowRetries < 0 ||
+		aiops.Compaction.MaxOverflowRetries > maxAIOpsRetries {
+		return fmt.Errorf("AIOps compaction retries must be between 0 and %d", maxAIOpsRetries)
+	}
+	if aiops.ModelRetry.JitterRatio < 0 || aiops.ModelRetry.JitterRatio > 1 {
+		return errors.New("AIOps model retry jitter ratio must be between 0 and 1")
+	}
+	if aiops.Compaction.ThresholdRatio <= 0 || aiops.Compaction.ThresholdRatio > 1 {
+		return errors.New("AIOps compaction threshold ratio must be greater than 0 and at most 1")
+	}
+	if aiops.Compaction.RetainRatio <= 0 ||
+		aiops.Compaction.RetainRatio >= aiops.Compaction.ThresholdRatio {
+		return errors.New(
+			"AIOps compaction retain ratio must be greater than zero and below the threshold ratio",
+		)
+	}
+	return nil
+}
+
 func (cfg Config) validateRetention() error {
 	retention := cfg.Retention
 	if retention.SweepInterval <= 0 || retention.SweepInterval > 24*time.Hour {

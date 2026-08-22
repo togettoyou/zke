@@ -50,11 +50,21 @@ kubelet（v1.31.1）与真实 node-exporter（v1.12.1，使用 ZKE 下发的同�
 
 可视化由 Console 自建，不集成 Grafana，也不提供通用仪表盘编辑器。
 
-## Phase 4：AI 运维与排障助手（Copilot）
+## Phase 4：AIOps
 
-- [ ] Copilot 交互模型、上下文范围与权限边界设计
-- [ ] 按 Tenant、Project、Cluster、Namespace 和资源对象安全收集诊断上下文
-- [ ] 关联资源状态、Kubernetes Event、日志和指标辅助定位故障
-- [ ] 提供带依据、影响范围和风险说明的分析结论与处理建议
-- [ ] Copilot 发起的敏感操作沿用权限检查、用户确认和审计机制
-- [ ] 建立诊断效果评估、用户反馈与持续改进机制
+产品形态与安全边界见 [Phase 4 AIOps：架构设计](architecture/ai-phase-4.md)，能力范围见
+[AIOps](features/ai-assistant.md)。
+
+AIOps 是运行在 ZKE 云端的 Codex 式运维 App：它跟随 Console 当前 Tenant/Project，每个会话固定一个 Cluster，并提供
+对话、后台任务与轨迹。它计划在用户授权范围内读写该集群资源、查询指标与日志、执行受控 Cluster Terminal 命令、
+部署和分析应用；每次操作仍由会话 Cluster 的 Agent 定域执行，不考虑跨 Cluster 会话。
+
+已落地模型端点配置、跟随桌面 Tenant/Project 并按 Cluster 工作区隔离的会话与轨迹存储、后台运行时、模型自主
+工具循环与只读工具目录、敏感工具审批等待、流式输出，以及使用对话/轨迹 Tab 的 AIOps App。写操作工具仍未实现。
+
+- [x] 运行时底座：`ai.run`、后台任务、SSE/重连、权限重验、按比例触发的检查点压缩、模型失败分类与退避重试、证据引用
+- [x] AIOps App：随当前 Tenant/Project 和 Cluster 工作区切换的会话、对话/轨迹 Tab、轨迹时间线与详情、附件、搜索、归档、删除、导出和证据深链
+- [x] Agent 循环：多 Step 工具调用、同一 Step 内有界并发读取、只读工具目录（概览、资源、诊断、Event、Pod 日志、指标）、逐次权限重验、敏感工具审批、收敛与预算保护、流式增量与运行统计
+- [ ] 写操作能力：YAML/DryRun/差异、部署、回滚、Cluster Terminal，以及写入路径上的三档审批
+- [ ] 扩展能力：技能、并行子任务、图表/资源就地唤起、定时巡检和事件触发自动化
+- [ ] 配额、诊断效果评估与用户反馈

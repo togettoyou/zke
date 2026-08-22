@@ -11,6 +11,9 @@ import (
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
 	"github.com/togettoyou/zke/pkg/server/agentmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
+	"github.com/togettoyou/zke/pkg/server/aimodel"
+	"github.com/togettoyou/zke/pkg/server/airuntime"
+	"github.com/togettoyou/zke/pkg/server/aisession"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
@@ -58,6 +61,9 @@ type Dependencies struct {
 	ResourceManagementService *resourcemanagement.Service
 	AccessManagementService   *accessmanagement.Service
 	PlatformSettingsService   *platformsettings.Service
+	AIModelSettingsService    *aimodel.Service
+	AIRuntimeService          *airuntime.Runtime
+	AISessionService          *aisession.Service
 }
 
 type Config struct {
@@ -114,6 +120,9 @@ type handlers struct {
 	accessManagement        *accessManagementHandler
 	auditQuery              *auditQueryHandler
 	platformSettings        *platformSettingsHandler
+	aiModelSettings         *aiModelSettingsHandler
+	aiRuntime               *aiRuntimeHandler
+	aiModelTestTimeout      gin.HandlerFunc
 	authMiddleware          *httpmiddleware.Authentication
 	authorizationMiddleware *httpmiddleware.Authorization
 	requestTimeout          gin.HandlerFunc
@@ -427,6 +436,20 @@ func New(
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),
+		aiModelSettings: newAIModelSettingsHandler(
+			logger,
+			dependencies.AIModelSettingsService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		aiRuntime: newAIRuntimeHandler(
+			logger,
+			dependencies.AIRuntimeService,
+			dependencies.AISessionService,
+			dependencies.AuthService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
 		authMiddleware: httpmiddleware.NewAuthentication(
 			logger,
 			dependencies.AuthService,
@@ -449,6 +472,9 @@ func New(
 			config.KubernetesManifest.RequestTimeout,
 		),
 		roleBindingCache: httpmiddleware.RoleBindingCache(),
+		aiModelTestTimeout: httpmiddleware.RequestTimeout(
+			aimodel.MaxRequestTimeout + aiModelProbeMargin,
+		),
 	}
 	routeHandlers.clusterTerminal = newClusterTerminalHandler(
 		logger, dependencies.ClusterTerminalService, routeHandlers.kubernetesPodExec,

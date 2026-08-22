@@ -197,8 +197,21 @@ export function ViewPanels({ view }: { view: MetricsView }) {
 }
 
 /** A set of views with the row that switches between them. */
-export function ViewedPanels({ views, label }: { views: MetricsViews; label: string }) {
-  const [viewId, setViewId] = useState(views[0].id);
+export function ViewedPanels({
+  views,
+  label,
+  initialQuery,
+}: {
+  views: MetricsViews;
+  label: string;
+  initialQuery?: string;
+}) {
+  const [viewId, setViewId] = useState(
+    () =>
+      views.find((view) =>
+        view.panels.some((panel) => panel.queries.some((query) => query.name === initialQuery)),
+      )?.id ?? views[0].id,
+  );
   const view = views.find((item) => item.id === viewId) ?? views[0];
   return (
     <div className="flex flex-col gap-4">

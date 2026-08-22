@@ -18,12 +18,17 @@ import (
 	"github.com/togettoyou/zke/pkg/server/agentinstall"
 	"github.com/togettoyou/zke/pkg/server/agentmanagement"
 	"github.com/togettoyou/zke/pkg/server/agentstatus"
+	"github.com/togettoyou/zke/pkg/server/aimodel"
+	"github.com/togettoyou/zke/pkg/server/airuntime"
+	"github.com/togettoyou/zke/pkg/server/aisession"
+	"github.com/togettoyou/zke/pkg/server/aitools"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/clusterterminal"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
+	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/metricscollector"
 	"github.com/togettoyou/zke/pkg/server/metricsingest"
@@ -138,6 +143,23 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return err
 	}
 	logServerPKIExpiry(logger, managedFiles.State, cfg.AgentPKI.Monitor.WarnBefore)
+	aiModelSettingsService := aimodel.NewService(
+		store.NewAIModelSettingsStore(database),
+		aimodel.NewHTTPProber(),
+	)
+	// A turn is driven by a goroutine in this process, so any session still
+	// marked working belongs to a process that is gone. Ending them here,
+	// before anything can open a new turn, keeps the history from showing a
+	// turn that never advances and never ends.
+	aiSessionService := aisession.NewService(store.NewAISessionStore(database), aisession.Config{})
+	interruptedTurns, err := aiSessionService.RecoverInterrupted(ctx, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("recover interrupted AIOps turns: %w", err)
+	}
+	if interruptedTurns > 0 {
+		logger.Warn("ended AIOps turns left by a previous Server process",
+			slog.Int64("turns", interruptedTurns))
+	}
 	platformSettingsService := platformsettings.NewService(
 		platformSettingsStore,
 		managedFiles.AgentListenerCertificate,
@@ -382,6 +404,61 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		}
 	}
 	resourceWatchService := resourcewatch.NewService(agentConnectionManager)
+
+	// AIOps reads a Cluster through the same services every other application
+	// uses, which is what keeps it inside the Agent transport, the response
+	// bounds and the permission model rather than beside them. The catalogue is
+	// assembled here because this is where those services exist; the runtime
+	// only ever sees tool names, schemas and required permissions.
+	aiToolCatalogue := aitools.New(aitools.Dependencies{
+		Resources: kubernetesResourceService,
+		Overview:  clusterOverviewService,
+		Describe: kubernetesdescribe.NewService(
+			kubernetesResourceService,
+			resourceWatchService,
+			kubernetesdescribe.Config{},
+		),
+		Logs: podLogsService,
+		// A deployment without multi-Cluster metrics has no metrics service at
+		// all. Leaving the field nil removes those tools from the catalogue,
+		// rather than advertising a tool that fails on every call.
+		Metrics: optionalMetricsReader(metricsQueryService),
+	}, aitools.Config{
+		ResultThresholdRunes: cfg.AIOps.ToolResult.ThresholdChars,
+		ResultHeadRunes:      cfg.AIOps.ToolResult.HeadChars,
+		ResultTailRunes:      cfg.AIOps.ToolResult.TailChars,
+	})
+	aiRuntimeService := airuntime.New(
+		runContext,
+		aiSessionService,
+		aiModelSettingsService,
+		rbacService,
+		store.NewAIRuntimeStore(database),
+		airuntime.Config{
+			TurnTimeout:          cfg.AIOps.TurnTimeout,
+			MaxSteps:             cfg.AIOps.MaxSteps,
+			MaxToolCalls:         cfg.AIOps.MaxToolCalls,
+			MaxParallelToolCalls: cfg.AIOps.MaxParallelToolCalls,
+			RepeatedCallLimit:    cfg.AIOps.RepeatedCallLimit,
+			ApprovalTimeout:      cfg.AIOps.ApprovalTimeout,
+			TitleTimeout:         cfg.AIOps.TitleTimeout,
+			ModelRetry: airuntime.RetryConfig{
+				MaxRetries:   cfg.AIOps.ModelRetry.MaxRetries,
+				InitialDelay: cfg.AIOps.ModelRetry.InitialDelay,
+				MaxDelay:     cfg.AIOps.ModelRetry.MaxDelay,
+				JitterRatio:  cfg.AIOps.ModelRetry.JitterRatio,
+			},
+			Compaction: airuntime.CompactionConfig{
+				ThresholdRatio:     cfg.AIOps.Compaction.ThresholdRatio,
+				RetainRatio:        cfg.AIOps.Compaction.RetainRatio,
+				MaxSummaryTokens:   cfg.AIOps.Compaction.MaxSummaryTokens,
+				Retries:            cfg.AIOps.Compaction.Retries,
+				MaxOverflowRetries: cfg.AIOps.Compaction.MaxOverflowRetries,
+			},
+			Tools: aiToolCatalogue,
+			Audit: auditService,
+		},
+	)
 	resourceManagementService := resourcemanagement.NewService(
 		store.NewResourceManagementStore(database),
 		rbacService,
@@ -432,6 +509,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			ResourceManagementService: resourceManagementService,
 			AccessManagementService:   accessManagementService,
 			PlatformSettingsService:   platformSettingsService,
+			AIModelSettingsService:    aiModelSettingsService,
+			AIRuntimeService:          aiRuntimeService,
+			AISessionService:          aiSessionService,
 		},
 		httpapi.Config{
 			ConsoleDirectory: cfg.HTTP.ConsoleDirectory,
@@ -606,6 +686,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if podAccessServer != nil {
 		shutdownError = errors.Join(shutdownError, shutdownHTTPServer(podAccessServer, cfg.ShutdownTimeout))
 	}
+	aiRuntimeService.Wait()
 	// Wait before returning: the deferred database.Close runs on return, and
 	// Agent heartbeats or the certificate monitor may still be mid-query.
 	backgroundTasks.Wait()
@@ -923,4 +1004,17 @@ func loadAgentCertificateSigner(
 		return nil, fmt.Errorf("configure Agent identity certificate signer: %w", err)
 	}
 	return signer, nil
+}
+
+// optionalMetricsReader keeps a missing metrics service out of an interface.
+//
+// A typed nil pointer assigned to an interface field is not nil, and the
+// catalogue tests its dependencies for absence to decide what to advertise.
+// Converting here is what makes "metrics are not installed" mean "those tools
+// do not exist" instead of "those tools always fail".
+func optionalMetricsReader(service *metricsquery.Service) aitools.MetricsReader {
+	if service == nil {
+		return nil
+	}
+	return service
 }

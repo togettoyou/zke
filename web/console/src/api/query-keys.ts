@@ -174,6 +174,12 @@ export const queryKeys = {
 
   auditEvents: (params: Record<string, unknown> = {}) => ["audit-events", params] as const,
   auditActions: () => ["audit-actions"] as const,
+  aiTools: () => ["ai-tools"] as const,
+  aiSessions: (params: Record<string, unknown> = {}) => ["ai-sessions", params] as const,
+  aiSession: (sessionId: string) => ["ai-session", sessionId] as const,
+  aiTrajectory: (sessionId: string) => ["ai-trajectory", sessionId] as const,
+  aiContextUsage: (sessionId: string) => ["ai-context-usage", sessionId] as const,
+  aiAttachments: (sessionId: string) => ["ai-attachments", sessionId] as const,
 } as const;
 
 /** Prefixes used for coarse invalidation after a mutation. */
@@ -213,4 +219,6 @@ export const queryKeyPrefixes = {
   policyResources: ["policy-resources"] as const,
   policyResource: ["policy-resource"] as const,
   auditEvents: ["audit-events"] as const,
+  aiSessions: ["ai-sessions"] as const,
+  aiAttachments: ["ai-attachments"] as const,
 } as const;

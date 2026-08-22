@@ -257,5 +257,75 @@ observability:
     # The port the kubelet serves /metrics/resource on.
     kubelet_metrics_port: 10250
 
+# The AIOps agent loop and its context management.
+#
+# Which model AIOps talks to, how wide that model's context window is and how
+# much it may emit are platform settings an administrator edits in the Console
+# under 平台配置 → AI 模型: they change when the endpoint changes, and a Server
+# restart must not be what it takes to point at a different model.
+#
+# What is here is deployment policy. Compaction is expressed as fractions of
+# whatever context window the configured endpoint has, so moving from a 128k
+# model to a 1M one widens the conversation instead of leaving a stored token
+# count quietly wrong.
+aiops:
+  # One whole turn: model calls and cluster reads together.
+  turn_timeout: 20m
+  # The two budgets that guarantee the loop stops. A turn that spends either
+  # without reaching a conclusion ends with a classified failure rather than
+  # continuing to spend the operator's model budget.
+  max_steps: 40
+  max_tool_calls: 120
+  # Reads from one step run concurrently up to this many at a time. Every tool
+  # in the catalogue is a read, so they are safe together; the bound is what
+  # stops one step from opening a Stream per object to an Agent that also serves
+  # the rest of the platform.
+  max_parallel_tool_calls: 10
+  # The same tool with the same arguments beyond this is answered with a
+  # convergence note instead of another round trip to the Cluster.
+  repeated_call_limit: 2
+  # A sensitive call parked on a person, and the naming call that runs beside a
+  # first turn. Neither holds a turn open indefinitely.
+  approval_timeout: 15m
+  title_timeout: 30s
+
+  # Transient endpoint failures — a rate limit, a 5xx, a dropped stream — are
+  # retried with bounded exponential backoff. max_retries counts attempts after
+  # the first, so 0 disables retrying. A credential the endpoint refused, an
+  # exhausted balance and a request it will not accept are never retried: they
+  # fail identically every time.
+  model_retry:
+    max_retries: 5
+    initial_delay: 500ms
+    max_delay: 10s
+    # Symmetric spread around each delay, so several turns refused together do
+    # not come back together.
+    jitter_ratio: 0.1
+
+  compaction:
+    # Fraction of the context window at which the conversation is compacted
+    # before the next request is built.
+    threshold_ratio: 0.8
+    # Fraction kept verbatim at the tail. Recent steps are what the next step
+    # reasons from, so they survive compaction unsummarized; everything before
+    # them is replaced by one checkpoint the model writes.
+    retain_ratio: 0.16
+    # The checkpoint is a structured brief, not a transcript.
+    max_summary_tokens: 8192
+    # Extra attempts one summarization gets before the runtime falls back to a
+    # mechanical summary, and how many times a request the endpoint refused as
+    # too large may be compacted and sent again inside one step.
+    retries: 1
+    max_overflow_retries: 1
+
+  # What one tool answer may occupy in the model context, in characters. Above
+  # the threshold the head and the tail are kept with a marker between them:
+  # the head says what was returned and in what shape, and a container that
+  # crashed says why at the end of its log.
+  tool_result:
+    threshold_chars: 8192
+    head_chars: 4096
+    tail_chars: 1024
+
 shutdown_timeout: 10s
 log_level: info

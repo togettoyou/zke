@@ -23,10 +23,28 @@ export type WindowInstance = {
   restoreRect: WindowRect;
   mode: WindowMode;
   zIndex: number;
+  /**
+   * Bumped to mount the application again in the window that is already open.
+   *
+   * Deliberately not persisted: it exists to hand a target to an application
+   * that reads it as it mounts, and a restored desktop has no such target
+   * waiting. See `OpenWindowOptions.restart`.
+   */
+  generation: number;
 };
 
 export type OpenWindowOptions = {
   title?: string;
+  /**
+   * Start the application over rather than only bringing its window forward.
+   *
+   * For a link that names where the application should open — an AIOps
+   * evidence reference, a deep link from outside the Console. An application
+   * that is already open picked its Cluster and its view when it mounted, so
+   * focusing it would show the operator the wrong thing under a link that
+   * claimed to go somewhere specific.
+   */
+  restart?: boolean;
 };
 
 type WindowState = {
@@ -121,6 +139,19 @@ export const useWindowStore = create<WindowState>((set, get) => ({
       if (options.title) {
         get().setWindowTitle(existing, options.title);
       }
+      if (options.restart) {
+        set((current) => {
+          const instance = current.windows[existing];
+          return instance
+            ? {
+                windows: {
+                  ...current.windows,
+                  [existing]: { ...instance, generation: instance.generation + 1 },
+                },
+              }
+            : current;
+        });
+      }
       return existing;
     }
 
@@ -142,6 +173,7 @@ export const useWindowStore = create<WindowState>((set, get) => ({
       restoreRect: rect,
       mode: "normal",
       zIndex: state.nextZIndex,
+      generation: 0,
     };
 
     set({
@@ -353,6 +385,7 @@ export const useWindowStore = create<WindowState>((set, get) => ({
               : clampRect(persisted.rect, state.viewport),
           restoreRect: clampRect(persisted.restoreRect, state.viewport),
           zIndex: zIndex++,
+          generation: 0,
         };
         order.push(persisted.id);
       }

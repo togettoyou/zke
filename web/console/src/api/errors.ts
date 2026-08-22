@@ -121,6 +121,11 @@ export const ERROR_MESSAGES: Record<string, string> = {
   // node no longer keeps the log of the instance before this one.
   previous_logs_not_found: "该容器没有上一个实例的日志：它没有重启过，或上一个实例的日志已被清理",
   resource_conflict: "资源状态与请求冲突",
+  // Not a revision conflict, which is what a bare 409 here would be read as:
+  // the endpoint and model name are simply still empty, and there is nothing
+  // for the switch to turn on.
+  ai_model_not_configured: "启用 AIOps 前请先填写模型接入地址和模型名并保存",
+  ai_model_not_ready: "AIOps 模型端点未启用或不可用，请联系全局管理员检查平台配置",
   resource_state_conflict: "目标资源当前状态不允许该操作",
   pod_access_already_active: "该 Pod 已有待激活地址或访问会话，需要明确替换后才能继续",
   // Only one situation reaches this now: a previous submission under this key

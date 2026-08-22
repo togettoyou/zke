@@ -95,6 +95,12 @@ export const Window = memo(function Window({
     [handleOpenApp, instance.id, manifest],
   );
 
+  // A link that names where an application should open restarts it, and the
+  // generation is what makes React mount it again: the applications read their
+  // target as they mount, so an already-open window has to start over to honour
+  // one. The window itself — its place, its size, its stacking — is untouched.
+  const generation = instance.generation;
+
   /*
    * The application is held apart from the frame, and this is what keeps a drag
    * cheap on the React side.
@@ -113,13 +119,13 @@ export const Window = memo(function Window({
   const content = useMemo(
     () =>
       manifest && appProps ? (
-        <AppErrorBoundary label={manifest.title}>
+        <AppErrorBoundary key={generation} label={manifest.title}>
           <Suspense fallback={<LoadingState label="正在加载应用…" />}>
             <manifest.entry {...appProps} />
           </Suspense>
         </AppErrorBoundary>
       ) : null,
-    [appProps, manifest],
+    [appProps, generation, manifest],
   );
 
   if (!manifest || !appProps) {

@@ -14,9 +14,14 @@ import { COMPUTE_DIMENSIONS } from "./metrics-catalog";
  * Namespace requests, or at Node saturation, not at thirty charts while
  * comparing.
  */
-export function ComputeSection() {
-  const [dimensionId, setDimensionId] = useState(COMPUTE_DIMENSIONS[0].id);
-  const [viewId, setViewId] = useState(COMPUTE_DIMENSIONS[0].views[0].id);
+export function ComputeSection({ initialQuery }: { initialQuery?: string }) {
+  const initial = COMPUTE_DIMENSIONS.flatMap((dimension) =>
+    dimension.views.map((view) => ({ dimension, view })),
+  ).find(({ view }) =>
+    view.panels.some((panel) => panel.queries.some((query) => query.name === initialQuery)),
+  );
+  const [dimensionId, setDimensionId] = useState(initial?.dimension.id ?? COMPUTE_DIMENSIONS[0].id);
+  const [viewId, setViewId] = useState(initial?.view.id ?? COMPUTE_DIMENSIONS[0].views[0].id);
 
   const dimension =
     COMPUTE_DIMENSIONS.find((item) => item.id === dimensionId) ?? COMPUTE_DIMENSIONS[0];

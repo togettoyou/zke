@@ -7,6 +7,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   SquareTerminal,
 } from "lucide-react";
 
@@ -35,6 +36,9 @@ const TerminalApp = lazy(async () => ({
 }));
 const ObservabilityApp = lazy(async () => ({
   default: (await import("./observability/ObservabilityApp")).ObservabilityApp,
+}));
+const AIOpsApp = lazy(async () => ({
+  default: (await import("./aiops/AIOpsApp")).AIOpsApp,
 }));
 
 /**
@@ -110,6 +114,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "容器服务",
     description: "在所选集群中管理节点、命名空间与工作负载",
     icon: Boxes,
+    accent: "blue",
     requiredPermissions: ["cluster.read"],
     availability: { state: "available" },
     defaultSize: { width: 1_060, height: 680 },
@@ -138,14 +143,37 @@ export const APP_MANIFESTS: AppManifest[] = [
     // application at all.
     requiredPermissions: ["cluster.metrics.read"],
     availability: { state: "available" },
-    // Wider than the other applications: every chart section lays its panels
-    // out two per row, and this is the width that gives both of them a
-    // readable plot without the operator resizing the window first. The rail
-    // and the panel padding come off the top before the plots get their share,
-    // so the two columns need more room here than a table-shaped application
-    // does at the same nominal width.
-    defaultSize: { width: 1_280, height: 680 },
+    // The largest default in the catalogue, and deliberately larger than any
+    // screen it is likely to open on: `cascadeRect` clamps a window to the
+    // desktop, so asking for this much means "as much as there is" everywhere
+    // below it and stays a fixed size above.
+    //
+    // Every chart section lays its panels out two per row and stacks several
+    // sections down the page, so this application is the one where a default
+    // that merely fits leaves the operator resizing before they can read
+    // anything: the rail, the toolbar and the panel padding all come off the
+    // top before the plots get their share, and a plot too short to separate
+    // two series is a picture of nothing.
+    defaultSize: { width: 1_200, height: 900 },
     entry: ObservabilityApp,
+  },
+  {
+    id: "aiops",
+    title: "AIOps",
+    description: "以目标集群为工作区的运维 Agent：自主查证、可复核轨迹",
+    icon: Sparkles,
+    accent: "fuchsia",
+    requiredPermissions: ["ai.run"],
+    // The one application the deployment can switch off: without a model
+    // endpoint there is nothing behind the icon, so it is left off the desktop
+    // rather than opened onto a workspace whose every turn would be refused.
+    requiresPlatformFeature: "aiops",
+    availability: { state: "available" },
+    // A conversation is a column, not a spreadsheet: the extra width a wide
+    // window buys is margin, while the extra height is more of the exchange on
+    // screen at once. Same width as the container service, taller.
+    defaultSize: { width: 1_060, height: 760 },
+    entry: AIOpsApp,
   },
 ];
 

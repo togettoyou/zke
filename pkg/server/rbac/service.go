@@ -126,6 +126,7 @@ var allPermissions = []Permission{
 	PermissionRBACRead,
 	PermissionRBACManage,
 	PermissionAuditRead,
+	PermissionAIRun,
 }
 
 var (

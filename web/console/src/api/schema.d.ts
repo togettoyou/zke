@@ -2222,6 +2222,291 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/platform/ai-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description AIOps 的模型接入配置。API Key 只报告是否已配置，不返回明文，也不返回密文。 */
+        get: operations["getAIModelSettings"];
+        /**
+         * @description 整段保存。接入地址、模型名与凭证只有放在一起才有意义，因此不做字段级增量更新；
+         *     `api_key` 是例外，见其字段说明。本接口不更改启用状态。
+         */
+        put: operations["updateAIModelSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/platform/ai-model/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description 单独启用或关闭 AIOps。调用立即生效并保留模型接入配置；启用前要求已保存接入地址和模型名。 */
+        patch: operations["setAIModelEnabled"];
+        trace?: never;
+    };
+    "/api/v1/platform/ai-model/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 用已保存的配置向模型端点发起一次最小请求，返回成功或分类后的失败原因，不回显任何
+         *     凭证内容，也不回显端点返回的正文。测试不要求配置处于启用状态：先配置、再测试、
+         *     最后启用是操作者的自然顺序。未配置接入地址或模型名时返回 409。
+         */
+        post: operations["testAIModelSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description AIOps 在本部署是否可用，以及运行时向模型公开的只读工具目录。描述的是运行时自身而不是任何 Cluster， 因此不需要作用域参数；每个工具在每次调用前仍会针对发起用户在会话固定 Cluster 上重新校验 permissions。 enabled 让 Console 在平台未启用 AIOps 时直接不展示该应用，而不必读取仅全局管理员可见的平台配置。 */
+        get: operations["listAITools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAISessions"];
+        put?: never;
+        post: operations["createAISession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        get: operations["getAISession"];
+        put?: never;
+        post?: never;
+        /** @description 永久删除已归档会话及其轨迹和附件；未归档会话返回 409。 */
+        delete: operations["deleteAISession"];
+        options?: never;
+        head?: never;
+        patch: operations["updateAISession"];
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 持久化问题后返回 202；模型任务在后台继续，并在每个外部步骤重新检查账户与 RBAC。 */
+        post: operations["startAITurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/turns/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["cancelAITurn"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description 答复一次被审批模式拦下的工具调用。批准与拒绝都会写入轨迹； 拒绝不是运行失败，模型会收到明确的拒绝说明并继续本轮。 */
+        post: operations["decideAIApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/trajectory": {
+        parameters: {
+            query?: {
+                after_sequence?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        get: operations["listAITrajectory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        /** @description 会话当前占用的模型上下文。总量优先使用端点自己报告的用量作为锚点，再对锚点之后新增的内容做本地估算； system、tools 与 messages 三项拆分始终是本地估算，用于解释总量而不参与任何判定。 阈值来自 Server 配置中的压缩比例与端点上下文窗口，未配置模型端点时返回 409。 */
+        get: operations["getAIContextUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/events": {
+        parameters: {
+            query?: {
+                after_sequence?: number;
+            };
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        /** @description trajectory 事件的 SSE id 等于持久化轨迹序号，重连通过 Last-Event-ID 或 after_sequence 精确续传。 delta 事件是模型正在产生的正文，没有 id、不会重放，也不是记录；对应步骤的 model 轨迹事件才是。 delta 的 kind 为 reset 时表示该步骤的请求正在重发，此前收到的增量应当丢弃。 session 事件在会话标题、状态或归档状态变化时发送，正文与会话对象相同。安静期发送注释心跳。 */
+        get: operations["streamAITrajectory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        get: operations["listAIAttachments"];
+        put?: never;
+        /** @description 只接受不超过 256 KiB 的文本、Markdown、JSON 或 YAML，作为不可信数据进入模型上下文。 */
+        post: operations["createAIAttachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+                attachment_id: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteAIAttachment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        /** @description 导出当前权限重验和脱敏后的会话、完整轨迹与文本附件。 */
+        get: operations["exportAISession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/platform/agent-endpoint-profiles": {
         parameters: {
             query?: never;
@@ -2457,7 +2742,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "audit.read")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "audit.read" | "ai.run")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -5864,6 +6149,279 @@ export interface components {
             cluster_terminal_session_ttl_seconds?: number;
             expected_revision: number;
         };
+        AISession: {
+            id: components["schemas"]["UUID"];
+            /** @description 创建会话时 Console 的当前 Tenant。 */
+            tenant_id: components["schemas"]["UUID"];
+            /** @description 创建会话时 Console 的当前 Project；用于按桌面环境隔离会话列表。 */
+            project_id: components["schemas"]["UUID"];
+            /** @description 会话创建时选定且不可切换的唯一目标 Cluster。 */
+            cluster_id: components["schemas"]["UUID"];
+            title: string;
+            /** @enum {string} */
+            status: "idle" | "working";
+            /** @enum {string} */
+            approval_mode: "ask" | "assisted" | "full";
+            /** Format: int32 */
+            current_turn: number;
+            /** @enum {string} */
+            last_turn_status: "" | "succeeded" | "failed" | "canceled";
+            last_turn_failure: string;
+            created_at: components["schemas"]["Timestamp"];
+            last_activity_at: components["schemas"]["Timestamp"];
+            archived_at?: components["schemas"]["Timestamp"];
+        };
+        AISessionCreate: {
+            /** @description 必须是 Console 当前桌面环境的 Tenant。 */
+            tenant_id: components["schemas"]["UUID"];
+            /** @description 必须是 Console 当前桌面环境的 Project。 */
+            project_id: components["schemas"]["UUID"];
+            /** @description 必须属于 project_id；会话创建后不可切换。 */
+            cluster_id: components["schemas"]["UUID"];
+            title: string;
+            /**
+             * @default ask
+             * @enum {string}
+             */
+            approval_mode: "ask" | "assisted" | "full";
+        };
+        AISessionUpdate: {
+            title?: string;
+            archived?: boolean;
+            /**
+             * @description 记录会话的审批策略并在运行中切换时写入 system 轨迹；敏感工具在 ask 与 assisted 下会产生审批请求。
+             * @enum {string}
+             */
+            approval_mode?: "ask" | "assisted" | "full";
+        };
+        AIEvidence: {
+            /** @enum {string} */
+            kind: "resource" | "event" | "metric" | "log";
+            /** @description 必须等于所属会话固定的 cluster_id。 */
+            cluster: components["schemas"]["UUID"];
+            /** @description Server 根据 Cluster 解析的证据深链导航提示，不参与授权。 */
+            readonly tenant_id?: components["schemas"]["UUID"];
+            /** @description Server 根据 Cluster 解析的证据深链导航提示，不参与授权。 */
+            readonly project_id?: components["schemas"]["UUID"];
+            namespace?: string;
+            gvk?: string;
+            name?: string;
+            resource_version?: string;
+            query?: string;
+            parameters?: string;
+            container?: string;
+            from?: components["schemas"]["Timestamp"];
+            to?: components["schemas"]["Timestamp"];
+        };
+        AITurnStart: {
+            text: string;
+            evidence?: components["schemas"]["AIEvidence"][];
+            attachment_ids?: components["schemas"]["UUID"][];
+        };
+        AIApprovalDecision: {
+            /** @description approval_request 轨迹事件中的 call_id。 */
+            call_id: string;
+            /** @enum {string} */
+            decision: "approved" | "denied";
+        };
+        AITool: {
+            name: string;
+            description: string;
+            /** @description 每次调用前都会针对发起用户在目标 Cluster 上重新校验的权限，全部满足才执行。 */
+            permissions: string[];
+            /** @description 除完全访问模式外都会停下来等待用户批准。 */
+            sensitive: boolean;
+            /** @description 会改变集群状态。当前目录中没有这类工具。 */
+            mutating: boolean;
+        };
+        AIAttachment: {
+            id: components["schemas"]["UUID"];
+            session_id: components["schemas"]["UUID"];
+            name: string;
+            /** @enum {string} */
+            media_type: "text/plain" | "text/markdown" | "application/json" | "application/yaml";
+            size_bytes: number;
+            created_at: components["schemas"]["Timestamp"];
+        };
+        AIAttachmentCreate: {
+            name: string;
+            /** @enum {string} */
+            media_type: "text/plain" | "text/markdown" | "application/json" | "application/yaml";
+            content: string;
+        };
+        AIAttachmentExport: {
+            id: components["schemas"]["UUID"];
+            session_id: components["schemas"]["UUID"];
+            name: string;
+            media_type: string;
+            size_bytes: number;
+            created_at: components["schemas"]["Timestamp"];
+            content: string;
+        };
+        AITarget: {
+            cluster: components["schemas"]["UUID"];
+            namespace?: string;
+            gvk?: string;
+            name?: string;
+        };
+        AITokens: {
+            input: number;
+            cached_input?: number;
+            output: number;
+            reasoning?: number;
+            /** @description 这一步请求占用的上下文总量，优先锚定在端点报告的用量上。 */
+            context: number;
+            /** @description 该步骤运行时端点的上下文窗口，与 context 一起记录，便于事后按当时的配置复核。 */
+            context_window?: number;
+        };
+        AITiming: {
+            /** @description 端点产出第一个 token 的耗时。端点以单个 JSON 文档而不是流应答时没有首 token，该字段缺省。 */
+            first_token_ms?: number;
+            elapsed_ms?: number;
+            streamed?: boolean;
+        };
+        AICompaction: {
+            /**
+             * @description model_summary 是模型写出的检查点；summary 是摘要调用无法完成时退回的机械摘要。
+             * @enum {string}
+             */
+            method: "model_summary" | "summary";
+            /**
+             * @description pressure 是达到压缩阈值，context_overflow 是端点已经拒绝了过大的请求。
+             * @enum {string}
+             */
+            trigger?: "pressure" | "context_overflow";
+            before_tokens: number;
+            after_tokens: number;
+            /** @description 触发压缩的压力线，由配置中的压缩比例与端点上下文窗口计算得出。 */
+            threshold_tokens: number;
+            /** @description 原样保留的最近尾部大小。 */
+            retained_tokens?: number;
+            context_window_tokens?: number;
+            /**
+             * Format: int32
+             * @description 被这份检查点替换的轨迹序号区间起点（含）。
+             */
+            shadowed_from: number;
+            /**
+             * Format: int32
+             * @description 区间终点（含）。重建模型可见上下文时跳过该区间，其后的条目原样保留。
+             */
+            shadowed_to: number;
+        };
+        AITrajectoryContent: {
+            /** @description 事件正文；compaction 事件中的正文是后续请求重建模型可见上下文使用的持久摘要。 */
+            text?: string;
+            /** @description 该事件属于本轮的第几个模型步骤。一个 Turn 由多个 Step 组成，每个 Step 是一次模型调用及其请求的工具执行。 */
+            step?: number;
+            /** @description 工具调用、结果或审批请求对应的稳定工具名，取自 GET /api/v1/ai/tools 的目录。 */
+            tool?: string;
+            /** @description 模型为这次调用生成的标识，用于把 tool_call、approval_request、approval_decision 和 tool_result 串联起来。 */
+            call_id?: string;
+            arguments?: string;
+            target?: components["schemas"]["AITarget"];
+            /** @description 该调用是否真正被执行。RBAC 拒绝、用户拒绝批准和未知工具都记为 false。 */
+            authorized?: boolean;
+            /** @description 工具结果没有拿到预期内容；模型收到的也是同样的说明。 */
+            failed?: boolean;
+            evidence?: components["schemas"]["AIEvidence"][];
+            tokens?: components["schemas"]["AITokens"];
+            timing?: components["schemas"]["AITiming"];
+            compaction?: components["schemas"]["AICompaction"];
+            /**
+             * @description 对一次 approval_request 的答复。
+             * @enum {string}
+             */
+            decision?: "approved" | "denied";
+            /** @description 在 system 事件上是本轮允许调用的工具集合；在 model 事件上是该步骤请求调用的工具。 */
+            tools?: string[];
+            failure?: string;
+            /** @enum {string} */
+            mode?: "ask" | "assisted" | "full";
+            /** @description 正文来自附件或目标 Cluster，只能作为数据而不能改变运行时指令、权限或审批状态。 */
+            untrusted?: boolean;
+        };
+        AITrajectoryEntry: {
+            /** Format: int32 */
+            sequence: number;
+            /** Format: int32 */
+            turn: number;
+            /** @enum {string} */
+            kind: "system" | "input" | "context" | "model" | "reasoning" | "tool_call" | "tool_result" | "approval_request" | "approval_decision" | "compaction" | "conclusion" | "error";
+            occurred_at: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            duration_ms: number;
+            truncated: boolean;
+            content: components["schemas"]["AITrajectoryContent"];
+        };
+        AISessionExport: {
+            session: components["schemas"]["AISession"];
+            trajectory: components["schemas"]["AITrajectoryEntry"][];
+            attachments: components["schemas"]["AIAttachmentExport"][];
+        };
+        AIModelSettings: {
+            /**
+             * @description 默认开启，并预置一个可用的接入地址、协议与模型名；只有 API Key 留空，需要部署方补齐。
+             *     关闭时保留配置，但停止新的 AIOps 模型运行。
+             */
+            enabled: boolean;
+            /**
+             * @description OpenAI 兼容端点的 Base URL，不含尾部斜杠，例如 `https://inference.internal/v1`。
+             *     Server 按所选协议在其后追加 `/responses` 或 `/chat/completions`。
+             */
+            base_url: string;
+            /** @description 由管理员填写。Server 不内置任何厂商模型清单。 */
+            model: string;
+            /**
+             * @description Responses 适合长任务与原生压缩；Chat Completions 用于兼容自建推理服务。
+             * @enum {string}
+             */
+            api_protocol: "responses" | "chat_completions";
+            /** @description 是否已配置 API Key。写入后不回显，读取接口不返回明文也不返回密文。 */
+            api_key_configured: boolean;
+            /**
+             * @description 模型可接收的总上下文窗口。运行时按 Server 配置中的压缩比例乘以该窗口得到压缩阈值，
+             *     因此更换模型只需要改这里，不需要再维护一个绝对的 token 阈值。
+             */
+            context_window_tokens: number;
+            /** @description 单次模型响应预留的最大输出空间。 */
+            max_output_tokens: number;
+            /** @description 单次模型调用的上限。 */
+            request_timeout_seconds: number;
+            revision: number;
+            updated_at: components["schemas"]["Timestamp"];
+        };
+        AIModelSettingsUpdate: {
+            base_url: string;
+            model: string;
+            /** @enum {string} */
+            api_protocol: "responses" | "chat_completions";
+            /**
+             * @description 三态字段：省略保持已存储的凭证，空串清除凭证，其他值替换凭证。已存储的值不会
+             *     返回给浏览器，因此未修改该字段的保存必须省略它，而不是回填。
+             */
+            api_key?: string;
+            context_window_tokens: number;
+            max_output_tokens: number;
+            request_timeout_seconds: number;
+            expected_revision: number;
+        };
+        AIModelEnabledUpdate: {
+            enabled: boolean;
+            expected_revision: number;
+        };
+        AIModelTestResult: {
+            succeeded: boolean;
+            /**
+             * @description 成功时为空串。每个取值对应一件操作者可以去修的事：凭证、模型名或路径、网络、端点自身。
+             * @enum {string}
+             */
+            failure: "" | "unauthorized" | "model_not_found" | "unreachable" | "timeout" | "unexpected_response";
+            /** @description 由 ZKE 撰写的中文说明，不包含端点返回的正文，也不包含任何凭证内容。 */
+            detail: string;
+            /** @description 端点返回的 HTTP 状态码；未收到响应时为 0。 */
+            status: number;
+        };
         ClusterEnrollment: {
             id: components["schemas"]["UUID"];
             cluster_id?: components["schemas"]["UUID"];
@@ -5961,13 +6519,13 @@ export interface components {
              * @description 所属族。由 Server 声明而非由名称拆分得出——`cluster.delete` 与 `cluster.enrollment.create` 同族但层级不同，按点号切分会得到错误的分组。 `denied` 组是鉴权拒绝时记录的权限名，其事件的 `result` 恒为 `denied`。
              * @enum {string}
              */
-            group: "auth" | "user" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "platform" | "kubernetes_resource" | "denied";
+            group: "auth" | "user" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "platform" | "kubernetes_resource" | "aiops" | "denied";
         };
         /**
          * @description 写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是 服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的 `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
          * @enum {string}
          */
-        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile";
+        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile" | "ai_session";
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
             pagination: components["schemas"]["Pagination"];
@@ -6370,6 +6928,7 @@ export interface components {
         TenantID: components["schemas"]["UUID"];
         ProjectID: components["schemas"]["UUID"];
         ClusterID: components["schemas"]["UUID"];
+        AISessionID: components["schemas"]["UUID"];
         NodeName: string;
         NamespaceName: string;
         PodName: string;
@@ -12214,6 +12773,620 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    getAIModelSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模型接入配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AIModelSettings"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    updateAIModelSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description 已更新的模型接入配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AIModelSettings"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    setAIModelEnabled: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelEnabledUpdate"];
+            };
+        };
+        responses: {
+            /** @description 已更新启用状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AIModelSettings"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    testAIModelSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 连通性测试结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AIModelTestResult"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listAITools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前部署的 AIOps 可用状态与工具目录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            /** @description 平台已启用 AIOps，且模型接入地址与模型名都已配置。 */
+                            enabled: boolean;
+                            tools: components["schemas"]["AITool"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    listAISessions: {
+        parameters: {
+            query: {
+                /** @description Console 当前桌面环境选定的 Tenant。 */
+                tenant_id: components["schemas"]["UUID"];
+                /** @description Console 当前桌面环境选定的 Project。 */
+                project_id: components["schemas"]["UUID"];
+                /** @description AIOps 当前选定的 Cluster 工作区。 */
+                cluster_id: components["schemas"]["UUID"];
+                limit?: number;
+                search?: string;
+                archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前用户在指定 Cluster 工作区中仍有权访问的会话 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            sessions: components["schemas"]["AISession"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAISession: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AISessionCreate"];
+            };
+        };
+        responses: {
+            /** @description 已创建的 AIOps 会话 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AISession"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAISession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AIOps 会话 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AISession"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteAISession: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    updateAISession: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AISessionUpdate"];
+            };
+        };
+        responses: {
+            /** @description 已更新的会话 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AISession"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    startAITurn: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AITurnStart"];
+            };
+        };
+        responses: {
+            /** @description 已持久化并启动后台运行 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AITrajectoryEntry"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    cancelAITurn: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已请求取消后台运行 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    decideAIApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIApprovalDecision"];
+            };
+        };
+        responses: {
+            /** @description 已把决定交给正在等待的运行 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: null;
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listAITrajectory: {
+        parameters: {
+            query?: {
+                after_sequence?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前权限重验与脱敏后的增量轨迹 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            entries: components["schemas"]["AITrajectoryEntry"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAIContextUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前会话的上下文占用 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            used_tokens: number;
+                            context_window_tokens: number;
+                            threshold_tokens: number;
+                            system_tokens: number;
+                            tools_tokens: number;
+                            message_tokens: number;
+                            /** @description 总量是否锚定在端点报告的用量上 */
+                            measured: boolean;
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    streamAITrajectory: {
+        parameters: {
+            query?: {
+                after_sequence?: number;
+            };
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ready、session、trajectory、delta 与 close 事件流 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAIAttachments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 会话的附件元数据 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            attachments: components["schemas"]["AIAttachment"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createAIAttachment: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIAttachmentCreate"];
+            };
+        };
+        responses: {
+            /** @description 已保存的附件元数据 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AIAttachment"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteAIAttachment: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+                attachment_id: components["schemas"]["UUID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除附件 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    exportAISession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 可下载的会话 JSON */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.zke.ai-session+json": components["schemas"]["AISessionExport"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     createAgentEndpointProfile: {

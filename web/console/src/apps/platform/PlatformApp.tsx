@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Activity, Container, Network, Plus, SquareTerminal } from "lucide-react";
+import { Activity, Container, Network, Plus, Sparkles, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -17,6 +17,7 @@ import type {
   WorkloadSettings,
 } from "@/api/types";
 import { errorMessage } from "@/api/errors";
+import { AIModelSection } from "@/apps/platform/AIModelSection";
 import { AppShell, type AppNavItem } from "@/apps/AppShell";
 import type { AppComponentProps } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
@@ -52,6 +53,7 @@ const NAV: AppNavItem[] = [
   { id: "agent", label: "Agent", icon: Container },
   { id: "cluster-terminal", label: "集群终端", icon: SquareTerminal },
   { id: "metrics-collection", label: "指标采集", icon: Activity },
+  { id: "ai-model", label: "AI 模型", icon: Sparkles },
 ];
 
 const PULL_POLICIES = ["Always", "IfNotPresent", "Never"] as const;
@@ -304,6 +306,7 @@ export function PlatformApp(_props: AppComponentProps) {
             {section === "metrics-collection" ? (
               <MetricsCollectionSection settings={settings} onChange={setDraft} />
             ) : null}
+            {section === "ai-model" ? <AIModelSection /> : null}
             {activeSettingsSection ? (
               <SaveRow
                 pending={updateSettings.isPending}

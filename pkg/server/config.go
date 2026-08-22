@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/togettoyou/zke/pkg/server/airuntime"
+	"github.com/togettoyou/zke/pkg/server/aitools"
 	"github.com/togettoyou/zke/pkg/server/metricscollector"
 	"github.com/togettoyou/zke/pkg/server/metricsingest"
 	"github.com/togettoyou/zke/pkg/server/metricsquery"
@@ -29,6 +31,7 @@ type Config struct {
 	AgentEnrollment AgentEnrollmentConfig `yaml:"agent_enrollment"`
 	AgentListener   AgentListenerConfig   `yaml:"agent_listener"`
 	Observability   ObservabilityConfig   `yaml:"observability"`
+	AIOps           AIOpsConfig           `yaml:"aiops"`
 	Retention       RetentionConfig       `yaml:"retention"`
 	ShutdownTimeout time.Duration         `yaml:"shutdown_timeout"`
 	LogLevel        string                `yaml:"log_level"`
@@ -105,6 +108,88 @@ type MetricsConfig struct {
 	SampleBurstWindow             time.Duration `yaml:"sample_burst_window"`
 	MaxActiveSeriesPerCluster     int           `yaml:"max_active_series_per_cluster"`
 	ActiveSeriesWindow            time.Duration `yaml:"active_series_window"`
+}
+
+// AIOpsConfig bounds the AIOps agent loop and its context management.
+//
+// The endpoint itself is deliberately absent: which model, how wide its context
+// window is and how much it may emit are platform settings an administrator
+// edits in the Console long after the Server started, because they change when
+// the endpoint changes. What lives here is deployment policy — how long a turn
+// may run, how far the loop may go, when the conversation is compacted, and how
+// hard a failed model request is retried — which changes when the installation
+// does.
+//
+// Compaction is expressed as fractions of whatever context window the endpoint
+// actually has rather than as absolute token counts, so pointing the same
+// deployment at a wider model widens the conversation instead of leaving a
+// stored number quietly wrong.
+type AIOpsConfig struct {
+	// TurnTimeout bounds one whole turn, model calls and tool reads together.
+	TurnTimeout time.Duration `yaml:"turn_timeout"`
+	// MaxSteps and MaxToolCalls are the two budgets that guarantee the loop
+	// stops: how many times one question may go back to the model, and how many
+	// reads the whole turn may perform.
+	MaxSteps     int `yaml:"max_steps"`
+	MaxToolCalls int `yaml:"max_tool_calls"`
+	// MaxParallelToolCalls is how many of one step's reads run at once. Every
+	// tool in the catalogue is a read, so they are safe together; the bound is
+	// what stops one step from opening a Stream per object to an Agent that
+	// also serves the rest of the platform.
+	MaxParallelToolCalls int `yaml:"max_parallel_tool_calls"`
+	// RepeatedCallLimit is the convergence guard: the same tool with the same
+	// arguments beyond this is answered with a note rather than another read.
+	RepeatedCallLimit int `yaml:"repeated_call_limit"`
+	// ApprovalTimeout is how long a parked call waits for a person, and
+	// TitleTimeout how long the naming call beside a first turn may take.
+	ApprovalTimeout time.Duration         `yaml:"approval_timeout"`
+	TitleTimeout    time.Duration         `yaml:"title_timeout"`
+	ModelRetry      AIOpsModelRetryConfig `yaml:"model_retry"`
+	Compaction      AIOpsCompactionConfig `yaml:"compaction"`
+	ToolResult      AIOpsToolResultConfig `yaml:"tool_result"`
+}
+
+// AIOpsModelRetryConfig is the bounded backoff applied to a transient model
+// failure — a rate limit, a 5xx, a dropped stream. MaxRetries counts attempts
+// after the first, so zero disables retrying entirely.
+type AIOpsModelRetryConfig struct {
+	MaxRetries   int           `yaml:"max_retries"`
+	InitialDelay time.Duration `yaml:"initial_delay"`
+	MaxDelay     time.Duration `yaml:"max_delay"`
+	JitterRatio  float64       `yaml:"jitter_ratio"`
+}
+
+// AIOpsCompactionConfig is when a conversation is compacted and how much of it
+// survives verbatim.
+type AIOpsCompactionConfig struct {
+	// ThresholdRatio is the fraction of the context window at which the
+	// conversation is compacted before the next request, and RetainRatio the
+	// fraction kept verbatim at the tail. Recent steps are what the next step
+	// reasons from, so they survive compaction unsummarized.
+	ThresholdRatio float64 `yaml:"threshold_ratio"`
+	RetainRatio    float64 `yaml:"retain_ratio"`
+	// MaxSummaryTokens bounds the summarization call's own output: a checkpoint
+	// is a structured brief, not a transcript.
+	MaxSummaryTokens int `yaml:"max_summary_tokens"`
+	// Retries is how many extra attempts one summarization gets before the
+	// runtime falls back to a mechanical summary; MaxOverflowRetries how many
+	// times a request the endpoint refused as too large may be compacted and
+	// sent again.
+	Retries            int `yaml:"retries"`
+	MaxOverflowRetries int `yaml:"max_overflow_retries"`
+}
+
+// AIOpsToolResultConfig bounds what one tool answer may occupy in the model
+// context, in characters.
+//
+// A result above the threshold keeps its head and its tail with a marker
+// between them rather than being cut at the front: the head says what was asked
+// and what shape the answer has, and the tail is where a crashed container says
+// why it crashed.
+type AIOpsToolResultConfig struct {
+	ThresholdChars int `yaml:"threshold_chars"`
+	HeadChars      int `yaml:"head_chars"`
+	TailChars      int `yaml:"tail_chars"`
 }
 
 type AgentInstallConfig struct {
@@ -404,6 +489,33 @@ func DefaultConfig() Config {
 				SampleBurstWindow:             metricsingest.DefaultSampleBurstWindow,
 				MaxActiveSeriesPerCluster:     metricsingest.DefaultMaxActiveSeries,
 				ActiveSeriesWindow:            metricsingest.DefaultActiveSeriesWindow,
+			},
+		},
+		AIOps: AIOpsConfig{
+			TurnTimeout:          airuntime.DefaultTurnTimeout,
+			MaxSteps:             airuntime.DefaultMaxSteps,
+			MaxToolCalls:         airuntime.DefaultMaxToolCalls,
+			MaxParallelToolCalls: airuntime.DefaultMaxParallelToolCalls,
+			RepeatedCallLimit:    airuntime.DefaultRepeatedCallLimit,
+			ApprovalTimeout:      airuntime.DefaultApprovalTimeout,
+			TitleTimeout:         airuntime.DefaultTitleTimeout,
+			ModelRetry: AIOpsModelRetryConfig{
+				MaxRetries:   airuntime.DefaultModelRetries,
+				InitialDelay: airuntime.DefaultModelRetryInitialDelay,
+				MaxDelay:     airuntime.DefaultModelRetryMaxDelay,
+				JitterRatio:  airuntime.DefaultModelRetryJitterRatio,
+			},
+			Compaction: AIOpsCompactionConfig{
+				ThresholdRatio:     airuntime.DefaultCompactionThresholdRatio,
+				RetainRatio:        airuntime.DefaultCompactionRetainRatio,
+				MaxSummaryTokens:   airuntime.DefaultCompactionMaxSummaryTokens,
+				Retries:            airuntime.DefaultCompactionRetries,
+				MaxOverflowRetries: airuntime.DefaultMaxOverflowRetries,
+			},
+			ToolResult: AIOpsToolResultConfig{
+				ThresholdChars: aitools.DefaultResultThresholdRunes,
+				HeadChars:      aitools.DefaultResultHeadRunes,
+				TailChars:      aitools.DefaultResultTailRunes,
 			},
 		},
 		ShutdownTimeout: 10 * time.Second,

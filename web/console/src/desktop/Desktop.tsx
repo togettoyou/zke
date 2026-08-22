@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { useClusterEvents } from "@/api/events";
+import { stashEvidenceTarget } from "@/apps/evidence-link";
 import { useSessionContext } from "@/auth/session-context";
 import { cn } from "@/lib/cn";
 import { SCOPE_ATTENTION_MS, useScopeStore } from "@/scope/scope-store";
@@ -154,12 +155,30 @@ export function Desktop() {
     const appId = params.get("app");
     const tenantId = params.get("tenant");
     const projectId = params.get("project");
+    const clusterId = params.get("cluster");
+    const namespace = params.get("namespace");
+    const evidenceKind = params.get("evidence_kind");
+    const gvk = params.get("gvk");
+    const resource = params.get("resource");
+    const query = params.get("query");
 
     // A deep link may carry the Project to work in. It arrives as bare ids; the
     // picker resolves the labels, and the Server still authorizes every request
     // against it, so an unreachable Project simply yields empty views.
     if (tenantId && projectId) {
       setScope({ tenantId, tenantName: null, projectId, projectName: null });
+      if (clusterId && appId) {
+        stashEvidenceTarget({
+          appId,
+          projectId,
+          clusterId,
+          namespace,
+          evidenceKind,
+          gvk,
+          resource,
+          query,
+        });
+      }
     }
 
     if (appId) {

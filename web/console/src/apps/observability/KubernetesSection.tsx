@@ -10,6 +10,12 @@ import { KUBERNETES_VIEWS } from "./metrics-catalog";
  * those are the questions somebody asks after the fact, when the live view has
  * already gone green again.
  */
-export function KubernetesSection() {
-  return <ViewedPanels views={KUBERNETES_VIEWS} label="Kubernetes 资源视角" />;
+export function KubernetesSection({ initialQuery }: { initialQuery?: string }) {
+  return (
+    <ViewedPanels
+      views={KUBERNETES_VIEWS}
+      label="Kubernetes 资源视角"
+      initialQuery={initialQuery}
+    />
+  );
 }

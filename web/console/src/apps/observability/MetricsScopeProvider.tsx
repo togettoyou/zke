@@ -13,6 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useClusters } from "@/api/queries/clusters";
 import { useMetricsQuery } from "@/api/queries/observability";
 import { queryKeyPrefixes } from "@/api/query-keys";
+import { METRICS_EVIDENCE_CLUSTER_KEY } from "@/apps/evidence-link";
 import { isForbidden } from "@/api/errors";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/state";
 import { useWindowVisible } from "@/desktop/window-visibility";
@@ -76,7 +77,9 @@ export function MetricsScopeProvider({
   const live = visible && enabled;
   const queryClient = useQueryClient();
   const projectId = useScopeStore((state) => state.scope.projectId);
-  const [selectedClusterId, setSelectedClusterId] = useState("");
+  const [selectedClusterId, setSelectedClusterId] = useState(
+    () => sessionStorage.getItem(METRICS_EVIDENCE_CLUSTER_KEY) ?? "",
+  );
   // Remembered with the Cluster it was chosen in, not on its own. Namespace
   // names only mean something inside one Cluster, and a filter carried across a
   // Cluster switch would quietly narrow every chart to a name the new Cluster

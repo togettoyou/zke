@@ -6,10 +6,10 @@ ZKE 的安全模型遵循以下原则：
 - **作用域明确**：所有查询和操作均关联租户、项目、集群及必要的 Namespace。
 - **服务端校验**：不依赖前端隐藏操作，权限必须在服务端执行校验。
 - **目标确认**：敏感操作必须展示目标集群、资源对象、操作内容和潜在影响。
-- **人工确认**：AI 建议或生成的变更不能绕过用户确认。
+- **受控审批**：AI 操作必须遵守会话审批模式，任何模式都不能绕过授权、目标校验、幂等与审计。
 - **Agent 定域执行**：集群操作由目标集群中的 Agent 执行。
 - **全程审计**：记录操作发起者、目标、请求、结果和必要的分析依据。
-- **凭证保护**：Kubernetes 凭证、API Key 和 Secret 不应以明文出现在日志、界面或 AI 上下文中。
+- **凭证保护**：ZKE Session Token、Agent 证书、模型 API Key 和 kubeconfig 不得进入日志、轨迹或 AI 上下文。
 
 ## 权限边界
 
@@ -20,9 +20,39 @@ ZKE 的安全模型遵循以下原则：
 `cluster.namespace.manage` 是「在该 Cluster 内创建和删除 Namespace」，不是「管理某一个 Namespace」。详见
 [应用作用域与资源模型](../architecture/resource-model.md)。
 
-AI 发起的操作与用户直接发起的操作遵守相同权限规则，并额外要求展示分析依据、操作内容、目标资源和潜在影响。
-
 当前项目尚未通过任何安全、云原生或 Kubernetes 认证，也不对生产可用性作出承诺。
+
+### AIOps 的权限模型
+
+AIOps 的只读 Agent 循环已经实现。AIOps 与容器服务一样跟随 Console 当前 Tenant/Project，并在 App 内选择 Cluster
+工作区；切换 Cluster 后只能看到该 Cluster 的会话。会话创建后不可切换目标，也不会跨 Cluster 查询或操作。
+会话持久化 `tenant_id`、`project_id` 和 `cluster_id` 但不设置外键，每次访问都重新解析当前归属。Cluster 选择不新增授权层级。`ai.run` 是独立
+前置权限且不进入内置 `viewer`；后台每个 Step 重新检查账户有效、Project 和会话 Cluster 权限，结构化证据还必须属于
+同一 Cluster，并检查当前资源、Event、指标或 Pod 日志读取权限。
+
+模型每次工具调用都是一次独立授权：工具声明它需要的权限集合，运行时针对当前用户在会话固定 Cluster 上逐项校验，
+缺一项就不执行，并把这个判定写入 `tool_call`。`ai.run` 从不替代其中任何一项，因此只有 `ai.run` 的账户在 AIOps 里
+读不到任何集群内容。工具的目标 Cluster 由运行时填入，模型无法在参数里改写；未在 Schema 中声明的参数一律拒绝，
+而不是忽略——被静默丢弃的 `namespace` 会把一次窄查询变成全集群查询。
+
+会话删除采用两阶段保护：活动会话只能归档，永久删除接口只接受已归档且空闲的会话，并同时删除其轨迹和附件。
+
+关闭窗口不终止云端任务。后台任务以发起用户 ID 运行，不保存或继续持有浏览器 Session Token，并在每个外部阶段
+重新读取账户和 RBAC。定时巡检和
+事件触发任务必须使用显式委派，限制所有者、Project、Cluster、权限、审批策略与有效期；该机制落地前不开放无人值守写操作。
+
+三档审批模式已经生效：请求批准 / 帮我批准 / 完全访问只改变何时等待人工确认，不改变权限上限。当前只读目录中
+被标记为敏感的是 Pod 日志读取，前两档会停下来等待用户在对话中批准或拒绝；拒绝不是运行失败，模型收到明确说明
+后继续，无人答复超时才结束本轮。批准只对该次调用生效，不改变账户权限，并与请求一起写入轨迹。
+
+写工具与终端工具仍在规划中；接入后仍须经目标 Agent 定域执行，不在 Server 主机执行，也不给模型 kubeconfig。
+
+历史读取需要重新检查当前权限。用户自己的问题和系统状态可以保留；已无权访问的集群正文、工具结果和证据由
+服务端脱敏。Pod 日志、Event、annotation、ConfigMap、Secret 和终端输出均作为不可信数据，不能改变工具白名单、
+作用域或授权判定。当前工具目录不提供读取 Secret 明文的工具：`cluster.secret.read` 不会因为 AIOps 而变成一条把
+凭证送进模型上下文的路径。
+
+完整设计见 [Phase 4 AIOps：架构设计](../architecture/ai-phase-4.md)。
 
 ## 当前实现状态
 
@@ -315,6 +345,7 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 | 节点与 Pod 操作 | `cluster.node.drain`、`cluster.pod.logs.read`、`cluster.pod.exec`、`cluster.pod.port_forward`、`cluster.pod.terminal_recording.create/read`、`cluster.terminal.exec` |
 | 可观测性 | `cluster.metrics.read`、`cluster.metrics.manage` |
 | 平台管理 | `user.read/manage`、`user.password.change`、`rbac.read/manage`、`audit.read` |
+| AIOps | `ai.run`（只允许在当前 Project 创建并运行固定 Cluster 会话，不包含任何集群读取权限） |
 
 所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，

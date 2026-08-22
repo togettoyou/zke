@@ -57,10 +57,15 @@
   --desktop-ray: rgb(24 33 56 / 0.03);
 
   /*
-   * Application icon fills. One saturated pair per application, identical in
-   * both themes: a blue application is blue at night too, exactly as it is on
-   * every desktop that has ever shipped. The glyph on top is always white, which
-   * is what separates an icon from a button wearing a tint.
+   * Application icon fills. One pair per application, identical in both themes:
+   * a blue application is blue at night too, exactly as it is on every desktop
+   * that has ever shipped. The glyph on top is always white, which is what
+   * separates an icon from a button wearing a tint.
+   *
+   * The names are historical identifiers, not descriptions of the values.
+   * `--app-fuchsia-*` currently holds a blue and `--app-amber-*` a neutral
+   * grey, because the palette was reassigned without renaming the tokens the
+   * manifests already point at. Read the hex, not the word.
    */
   --app-blue-from: #5878f7;
   --app-blue-to: #3b5bdb;
@@ -70,26 +75,29 @@
   --app-violet-to: #7048e8;
   --app-emerald-from: #2bcf9d;
   --app-emerald-to: #0ca678;
-  --app-amber-from: #ffb454;
-  --app-amber-to: #f08c00;
-  --app-rose-from: #fb7185;
-  --app-rose-to: #e11d48;
+  --app-amber-from: #7b8794;
+  --app-amber-to: #3a444f;
+  --app-rose-from: #ec8383;
+  --app-rose-to: #e61a1a;
   --app-slate-from: #475569;
   --app-slate-to: #1e293b;
-  --app-steel-from: #6d9fc0;
-  --app-steel-to: #2f6690;
+  --app-steel-from: #8c99c1;
+  --app-steel-to: #485e9f;
+  --app-fuchsia-from: #8fa7ee;
+  --app-fuchsia-to: #2656e7;
 
   /* What an icon does under the pointer: its own colour blooms beneath it. The
      hue is the application's, so the response is the application's too — a
      neutral grey shadow under a saturated face would only look like dirt. */
-  --app-blue-glow: rgb(59 91 219 / 0.45);
+  --app-blue-glow: rgb(59 91 219 / 0.42);
   --app-cyan-glow: rgb(8 145 178 / 0.42);
   --app-violet-glow: rgb(112 72 232 / 0.42);
-  --app-emerald-glow: rgb(12 166 120 / 0.4);
-  --app-amber-glow: rgb(240 140 0 / 0.42);
-  --app-rose-glow: rgb(225 29 72 / 0.42);
+  --app-emerald-glow: rgb(12 166 120 / 0.42);
+  --app-amber-glow: rgb(58 68 79 / 0.42);
+  --app-rose-glow: rgb(230 26 26 / 0.42);
   --app-slate-glow: rgb(30 41 59 / 0.42);
-  --app-steel-glow: rgb(47 102 144 / 0.42);
+  --app-steel-glow: rgb(72 94 159 / 0.42);
+  --app-fuchsia-glow: rgb(38 86 231 / 0.42);
   --tile-highlight: rgb(255 255 255 / 0.9);
 
   /* Ink for the sign-in dot field. The desktop deliberately does not share it:

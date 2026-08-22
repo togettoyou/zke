@@ -41,6 +41,11 @@ const (
 	PermissionRBACRead                          Permission = "rbac.read"
 	PermissionRBACManage                        Permission = "rbac.manage"
 	PermissionAuditRead                         Permission = "audit.read"
+	// PermissionAIRun opens the AIOps runtime inside the scope where the
+	// binding applies. It grants no Kubernetes read permission by itself: the
+	// runtime rechecks the concrete cluster permission for every piece of
+	// evidence it reads.
+	PermissionAIRun Permission = "ai.run"
 )
 
 type scopeType string

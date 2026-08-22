@@ -128,6 +128,7 @@ const ACTION_GROUP_LABELS: Record<string, string> = {
   project: "项目",
   cluster: "集群",
   kubernetes_resource: "Kubernetes 资源",
+  aiops: "AIOps",
   denied: "权限拒绝",
 };
 
@@ -190,6 +191,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   "rbac.read": "查看角色与绑定",
   "rbac.manage": "管理角色与绑定",
   "audit.read": "查看审计事件",
+  "ai.run": "使用 AIOps",
 };
 
 function permissionLabel(name: string): string {
@@ -217,6 +219,12 @@ const PERMISSION_WARNINGS: Record<string, string> = {
   "cluster.system_namespace.manage": "可增删改 default 生命周期及 kube-* 命名空间内的资源",
   "cluster.agent_namespace.manage": "可增删改 Agent 所在命名空间，错误操作可能导致 Agent 离线",
   "rbac.manage": "可创建角色并授予自己已持有的权限",
+  // AIOps reads a Cluster on the operator's behalf and sends what it read to
+  // the configured model endpoint. It grants nothing by itself — every read is
+  // rechecked against the operator's own permissions — but who reads a Pod log
+  // and where that log then goes are two different questions, and only the
+  // first is answered by the permissions beside it.
+  "ai.run": "可让 AIOps 代为读取集群，读到的内容会发送到已配置的模型端点",
 };
 
 /**

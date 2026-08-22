@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Bell,
@@ -25,6 +25,7 @@ import type {
   Permission,
 } from "@/api/types";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
+import { CONTAINER_EVIDENCE_KEY } from "@/apps/evidence-link";
 import type { AppComponentProps } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
 import { ErrorState, LoadingState } from "@/components/common/state";
@@ -54,7 +55,11 @@ import { PodSection } from "./PodSection";
 import { PolicySection } from "./PolicySection";
 import { ResourceBrowserSection } from "./ResourceBrowserSection";
 import { ResourceUsageSection } from "./ResourceUsageSection";
-import { useTargetClusterStore, useTargetNamespaceStore } from "./selection-store";
+import {
+  readContainerEvidenceTarget,
+  useTargetClusterStore,
+  useTargetNamespaceStore,
+} from "./selection-store";
 import { STORAGE_TYPES } from "./storage-catalog";
 import { WORKLOAD_TYPES } from "./workload-catalog";
 import { WorkloadSection } from "./WorkloadSection";
@@ -146,6 +151,10 @@ const NAMESPACE_PICKER_LIMIT = 500;
  * that Cluster's Agent.
  */
 export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windowId">) {
+  const [evidenceTarget] = useState(readContainerEvidenceTarget);
+  useEffect(() => {
+    sessionStorage.removeItem(CONTAINER_EVIDENCE_KEY);
+  }, []);
   const scope = useScopeStore((state) => state.scope);
   const active = useWindowStore(
     (state) => state.focusedId === windowId && state.windows[windowId]?.mode !== "minimized",
@@ -153,7 +162,12 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
   const { permissions } = useSessionContext();
   // The overview is where an operator lands: it is the one view that answers
   // "what is in this cluster" before they know which category to open.
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useState(() => {
+    if (evidenceTarget?.evidenceKind === "event") return "events";
+    if (evidenceTarget?.evidenceKind === "log") return "pods";
+    if (evidenceTarget?.gvk || evidenceTarget?.resource) return "browser";
+    return "overview";
+  });
   /*
    * The tab a drill-down asked for, consumed once by the section it names.
    *
@@ -179,6 +193,30 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
   const selectCluster = useTargetClusterStore((state) => state.select);
   const storedNamespaces = useTargetNamespaceStore((state) => state.selections);
   const selectNamespace = useTargetNamespaceStore((state) => state.select);
+  useEffect(() => {
+    if (
+      evidenceTarget?.projectId &&
+      evidenceTarget.projectId === scope.projectId &&
+      evidenceTarget.clusterId &&
+      storedClusters[evidenceTarget.projectId] !== evidenceTarget.clusterId
+    ) {
+      selectCluster(evidenceTarget.projectId, evidenceTarget.clusterId);
+    }
+    if (
+      evidenceTarget?.clusterId &&
+      evidenceTarget.namespace &&
+      storedNamespaces[evidenceTarget.clusterId] !== evidenceTarget.namespace
+    ) {
+      selectNamespace(evidenceTarget.clusterId, evidenceTarget.namespace);
+    }
+  }, [
+    evidenceTarget,
+    scope.projectId,
+    selectCluster,
+    selectNamespace,
+    storedClusters,
+    storedNamespaces,
+  ]);
 
   const projectClusters = clusters.data?.clusters ?? [];
   // Offline Clusters stay in the picker — disabled — because an operator looking
@@ -497,6 +535,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             agentNamespace={agentNamespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
+            initialEvidence={evidenceTarget}
           />
         ) : activeSection === "manifests" ? (
           <ManifestSection key={clusterId} clusterId={clusterId} clusterName={clusterName} />

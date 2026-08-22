@@ -26,7 +26,7 @@ export type AppComponentProps = {
  * under it does.
  */
 export type AppAccent =
-  "blue" | "cyan" | "violet" | "emerald" | "amber" | "rose" | "slate" | "steel";
+  "blue" | "cyan" | "violet" | "emerald" | "amber" | "rose" | "slate" | "steel" | "fuchsia";
 
 export type AppManifest = {
   id: string;
@@ -47,6 +47,15 @@ export type AppManifest = {
    * Server refuses.
    */
   requiresGlobalAdmin?: boolean;
+  /**
+   * Entry is shown only where the deployment has this capability switched on.
+   *
+   * Distinct from `requiredPermissions`, which is about the person: this is
+   * about whether the platform has anything behind the icon at all. An
+   * application the administrator has not configured is left off the desktop
+   * rather than opened onto a window that can only report its own absence.
+   */
+  requiresPlatformFeature?: "aiops";
   availability: AppAvailability;
   defaultSize: { width: number; height: number };
   entry: LazyExoticComponent<ComponentType<AppComponentProps>>;
