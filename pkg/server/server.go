@@ -29,6 +29,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
+	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/metricscollector"
 	"github.com/togettoyou/zke/pkg/server/metricsingest"
@@ -404,6 +405,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		}
 	}
 	resourceWatchService := resourcewatch.NewService(agentConnectionManager)
+	aiManifestService := kubernetesmanifest.NewService(kubernetesmanifest.Config{
+		MaxDocuments: maxManifestDocuments,
+		FieldManager: "zke-manifest",
+	})
 
 	// AIOps reads a Cluster through the same services every other application
 	// uses, which is what keeps it inside the Agent transport, the response
@@ -419,6 +424,16 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			kubernetesdescribe.Config{},
 		),
 		Logs: podLogsService,
+		// The first write tools reuse the same workload mutation service as the
+		// Container Service. DryRun, confirmation and Agent idempotency therefore
+		// remain properties of one path rather than AIOps-specific conventions.
+		Workloads: kubernetesResourceService,
+		Revisions: kubernetesResourceService,
+		Scopes:    rbacService,
+		Manifests: aiManifestService,
+		ManifestAccess: func(grant kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess {
+			return kubernetesresource.NewManifestAccess(kubernetesResourceService, grant)
+		},
 		// A deployment without multi-Cluster metrics has no metrics service at
 		// all. Leaving the field nil removes those tools from the catalogue,
 		// rather than advertising a tool that fails on every call.
@@ -427,6 +442,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		ResultThresholdRunes: cfg.AIOps.ToolResult.ThresholdChars,
 		ResultHeadRunes:      cfg.AIOps.ToolResult.HeadChars,
 		ResultTailRunes:      cfg.AIOps.ToolResult.TailChars,
+		MaxManifestDocuments: maxManifestDocuments,
 	})
 	aiRuntimeService := airuntime.New(
 		runContext,

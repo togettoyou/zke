@@ -1,8 +1,8 @@
-// Package aitools is the read-only tool catalogue AIOps offers to the model.
+// Package aitools is the bounded tool catalogue AIOps offers to the model.
 //
 // It exists as its own package so the runtime can stay free of Kubernetes: the
 // runtime owns authorization, budgets, approvals and the trail, and this owns
-// what a read actually does and how large its answer is allowed to be. Every
+// what a tool actually does and how large its answer is allowed to be. Every
 // tool here goes through a service ZKE already has, which means it goes through
 // the target Cluster Agent and inherits that path bounds; none of them holds a
 // credential of its own and none of them can address a Cluster other than the
@@ -26,6 +26,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/airuntime"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
+	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/metricsquery"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
@@ -61,6 +62,9 @@ type Config struct {
 	ResultThresholdRunes int
 	ResultHeadRunes      int
 	ResultTailRunes      int
+	ManifestPreviewTTL   time.Duration
+	MaxManifestBytes     int
+	MaxManifestDocuments int
 }
 
 func (config Config) normalized() Config {
@@ -72,6 +76,15 @@ func (config Config) normalized() Config {
 	}
 	if config.ResultTailRunes <= 0 {
 		config.ResultTailRunes = DefaultResultTailRunes
+	}
+	if config.ManifestPreviewTTL <= 0 {
+		config.ManifestPreviewTTL = 15 * time.Minute
+	}
+	if config.MaxManifestBytes <= 0 {
+		config.MaxManifestBytes = 256 * 1024
+	}
+	if config.MaxManifestDocuments <= 0 {
+		config.MaxManifestDocuments = 64
 	}
 	// The emitted answer has to be smaller than the threshold, or pruning would
 	// grow a result that was already inside the budget.
@@ -131,12 +144,44 @@ type MetricsReader interface {
 	Query(context.Context, metricsquery.Input) (metricsquery.Result, error)
 }
 
+// WorkloadWriter is the existing Kubernetes workload mutation path narrowed to
+// the first AIOps write: scaling a Deployment or StatefulSet. The service
+// implementation still enforces DryRun, confirmation and Agent idempotency;
+// the catalogue does not open a second write path beside it.
+type WorkloadWriter interface {
+	ScaleWorkload(
+		context.Context,
+		kubernetesresource.ScaleWorkloadInput,
+	) (kubernetesresource.WorkloadDetail, error)
+}
+
+type WorkloadRevisionWriter interface {
+	ListWorkloadRevisions(context.Context, kubernetesresource.ListWorkloadRevisionsInput) (kubernetesresource.WorkloadRevisionPage, error)
+	RollbackWorkload(context.Context, kubernetesresource.RollbackWorkloadInput) (kubernetesresource.WorkloadDetail, error)
+}
+
+type ClusterScopeResolver interface {
+	ResolveClusterScope(context.Context, string) (rbac.ResolvedScope, error)
+	AuthorizeResolvedCluster(context.Context, string, rbac.Permission, rbac.ResolvedScope) error
+}
+
+type ManifestWriter interface {
+	Execute(context.Context, kubernetesmanifest.ResourceAccess, kubernetesmanifest.Input) (kubernetesmanifest.Result, error)
+}
+
+type ManifestAccessFactory func(kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess
+
 type Dependencies struct {
-	Resources ResourceReader
-	Overview  OverviewReader
-	Describe  DescribeReader
-	Logs      LogReader
-	Metrics   MetricsReader
+	Resources      ResourceReader
+	Overview       OverviewReader
+	Describe       DescribeReader
+	Logs           LogReader
+	Metrics        MetricsReader
+	Workloads      WorkloadWriter
+	Revisions      WorkloadRevisionWriter
+	Scopes         ClusterScopeResolver
+	Manifests      ManifestWriter
+	ManifestAccess ManifestAccessFactory
 }
 
 // Catalogue is the ToolSet the runtime advertises.
@@ -150,8 +195,10 @@ type Catalogue struct {
 	config       Config
 	specs        []airuntime.ToolSpec
 
-	mu      sync.Mutex
-	catalog map[string]catalogEntry
+	mu        sync.Mutex
+	catalog   map[string]catalogEntry
+	previews  map[string]*writePreview
+	rollbacks map[string]*rollbackPreview
 }
 
 type catalogEntry struct {
@@ -162,7 +209,9 @@ type catalogEntry struct {
 func New(dependencies Dependencies, config Config) *Catalogue {
 	catalogue := &Catalogue{
 		dependencies: dependencies, config: config.normalized(),
-		catalog: make(map[string]catalogEntry),
+		catalog:   make(map[string]catalogEntry),
+		previews:  make(map[string]*writePreview),
+		rollbacks: make(map[string]*rollbackPreview),
 	}
 	catalogue.specs = catalogue.build()
 	return catalogue
@@ -192,25 +241,52 @@ func (catalogue *Catalogue) Invoke(
 		return catalogue.listMetricQueries(ctx, invocation)
 	case toolQueryMetrics:
 		return catalogue.queryMetrics(ctx, invocation)
+	case toolPreviewWorkloadScale:
+		return catalogue.scaleWorkload(ctx, invocation, true)
+	case toolScaleWorkload:
+		return catalogue.scaleWorkload(ctx, invocation, false)
+	case toolPreviewManifestApply:
+		return catalogue.previewManifest(ctx, invocation, kubernetesmanifest.OperationApply)
+	case toolApplyManifest:
+		return catalogue.executeManifest(ctx, invocation, kubernetesmanifest.OperationApply)
+	case toolPreviewManifestDelete:
+		return catalogue.previewManifest(ctx, invocation, kubernetesmanifest.OperationDelete)
+	case toolDeleteManifest:
+		return catalogue.executeManifest(ctx, invocation, kubernetesmanifest.OperationDelete)
+	case toolListWorkloadRevisions:
+		return catalogue.listWorkloadRevisions(ctx, invocation)
+	case toolPreviewWorkloadRollback:
+		return catalogue.previewWorkloadRollback(ctx, invocation)
+	case toolRollbackWorkload:
+		return catalogue.rollbackWorkload(ctx, invocation)
 	default:
 		return airuntime.ToolResult{}, ErrUnknownTool
 	}
 }
 
 const (
-	toolClusterOverview   = "cluster_overview"
-	toolListAPIResources  = "list_api_resources"
-	toolListResources     = "list_resources"
-	toolGetResource       = "get_resource"
-	toolDescribeResource  = "describe_resource"
-	toolListNodes         = "list_nodes"
-	toolPodLogs           = "get_pod_logs"
-	toolListMetricQueries = "list_metric_queries"
-	toolQueryMetrics      = "query_metrics"
+	toolClusterOverview         = "cluster_overview"
+	toolListAPIResources        = "list_api_resources"
+	toolListResources           = "list_resources"
+	toolGetResource             = "get_resource"
+	toolDescribeResource        = "describe_resource"
+	toolListNodes               = "list_nodes"
+	toolPodLogs                 = "get_pod_logs"
+	toolListMetricQueries       = "list_metric_queries"
+	toolQueryMetrics            = "query_metrics"
+	toolPreviewWorkloadScale    = "preview_workload_scale"
+	toolScaleWorkload           = "scale_workload"
+	toolPreviewManifestApply    = "preview_manifest_apply"
+	toolApplyManifest           = "apply_manifest"
+	toolPreviewManifestDelete   = "preview_manifest_delete"
+	toolDeleteManifest          = "delete_manifest"
+	toolListWorkloadRevisions   = "list_workload_revisions"
+	toolPreviewWorkloadRollback = "preview_workload_rollback"
+	toolRollbackWorkload        = "rollback_workload"
 )
 
 func (catalogue *Catalogue) build() []airuntime.ToolSpec {
-	specs := make([]airuntime.ToolSpec, 0, 9)
+	specs := make([]airuntime.ToolSpec, 0, 18)
 	if catalogue.dependencies.Overview != nil {
 		specs = append(specs, airuntime.ToolSpec{
 			Name: toolClusterOverview,
@@ -321,6 +397,139 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 					"top":       integerProperty("Top N，仅当该查询支持或要求时可用。"),
 				}, []string{"query"}),
 				Permissions: []rbac.Permission{rbac.PermissionClusterMetricsRead},
+			},
+		)
+	}
+	if catalogue.dependencies.Workloads != nil && catalogue.dependencies.Scopes != nil {
+		scaleSchema := objectSchema(map[string]any{
+			"kind": enumStringProperty(
+				"只允许 Deployment 或 StatefulSet。", "Deployment", "StatefulSet",
+			),
+			"namespace": stringProperty("工作负载所在 Namespace；不支持 kube-* 或 Agent Namespace。"),
+			"name":      stringProperty("工作负载名称。"),
+			"replicas":  nonNegativeIntegerProperty("目标副本数，必须大于等于 0。"),
+		}, []string{"kind", "namespace", "name", "replicas"})
+		specs = append(specs,
+			airuntime.ToolSpec{
+				Name: toolPreviewWorkloadScale,
+				Description: "对目标 Deployment 或 StatefulSet 的副本数变更执行 Kubernetes 服务端 DryRun。" +
+					"它不会改变集群；实际伸缩前先调用此工具，并把返回的目标与副本数展示给操作者。",
+				Schema:      scaleSchema,
+				Target:      workloadScaleTarget,
+				Permissions: []rbac.Permission{rbac.PermissionClusterResourceUpdate},
+			},
+			airuntime.ToolSpec{
+				Name: toolScaleWorkload,
+				Description: "实际调整目标 Deployment 或 StatefulSet 的副本数。" +
+					"调用前应先用 preview_workload_scale 对完全相同的参数完成 DryRun。",
+				Schema:      scaleSchema,
+				Target:      workloadScaleTarget,
+				Permissions: []rbac.Permission{rbac.PermissionClusterResourceUpdate},
+				Mutating:    true,
+			},
+		)
+	}
+	if catalogue.dependencies.Manifests != nil &&
+		catalogue.dependencies.ManifestAccess != nil &&
+		catalogue.dependencies.Scopes != nil {
+		manifestSchema := objectSchema(map[string]any{
+			"manifest":  stringProperty("严格多文档 Kubernetes YAML；不得包含 Secret。"),
+			"namespace": stringProperty("为未声明 metadata.namespace 的 Namespace 级对象提供默认值。"),
+			"force":     booleanProperty("Apply 时是否强制接管字段所有权；仅在冲突且操作者明确要求时使用。"),
+		}, []string{"manifest"})
+		deletePreviewSchema := objectSchema(map[string]any{
+			"manifest":  stringProperty("只用 apiVersion、kind、metadata.name/namespace 标识待删除对象；不得包含 Secret。"),
+			"namespace": stringProperty("为未声明 metadata.namespace 的 Namespace 级对象提供默认值。"),
+		}, []string{"manifest"})
+		executeSchema := objectSchema(map[string]any{
+			"preview_id": stringProperty("对应预检返回的服务端快照 ID；不可提交任意新 YAML。"),
+		}, []string{"preview_id"})
+		manifestPermissions := []rbac.Permission{
+			rbac.PermissionClusterResourceCreate,
+			rbac.PermissionClusterResourceUpdate,
+			rbac.PermissionClusterResourceDelete,
+			rbac.PermissionClusterNamespaceManage,
+			rbac.PermissionClusterSecretRead,
+			rbac.PermissionClusterSecretManage,
+			rbac.PermissionClusterRBACManage,
+			rbac.PermissionClusterSystemNamespaceManage,
+			rbac.PermissionClusterAgentNamespaceManage,
+		}
+		specs = append(specs,
+			airuntime.ToolSpec{
+				Name:                   toolPreviewManifestApply,
+				Description:            "严格解析多文档 YAML，逐对象判权并执行 Kubernetes 服务端 DryRun，返回动作和有界差异；不改变集群。",
+				Schema:                 manifestSchema,
+				Permissions:            []rbac.Permission{rbac.PermissionClusterRead},
+				ConditionalPermissions: manifestPermissions,
+			},
+			airuntime.ToolSpec{
+				Name:        toolApplyManifest,
+				Description: "提交已预检的 Manifest Apply；只接受 preview_id，批准后重验权限并再次 DryRun。",
+				Schema:      executeSchema, Target: catalogue.previewTarget,
+				Permissions: []rbac.Permission{rbac.PermissionClusterRead}, Mutating: true,
+				ConditionalPermissions: manifestPermissions,
+				SensitiveWhen:          catalogue.previewSensitive,
+			},
+			airuntime.ToolSpec{
+				Name:                   toolPreviewManifestDelete,
+				Description:            "逐对象判权并 DryRun 预检 Manifest 删除；返回将删除或已不存在的对象，不改变集群。",
+				Schema:                 deletePreviewSchema,
+				Permissions:            []rbac.Permission{rbac.PermissionClusterRead},
+				ConditionalPermissions: manifestPermissions,
+			},
+			airuntime.ToolSpec{
+				Name:        toolDeleteManifest,
+				Description: "提交已预检的 Manifest 删除；只接受 preview_id，批准后重验权限并再次 DryRun。",
+				Schema:      executeSchema, Target: catalogue.previewTarget,
+				Permissions: []rbac.Permission{rbac.PermissionClusterRead}, Mutating: true, Sensitive: true,
+				ConditionalPermissions: manifestPermissions,
+			},
+		)
+	}
+	if catalogue.dependencies.Revisions != nil && catalogue.dependencies.Resources != nil &&
+		catalogue.dependencies.Scopes != nil {
+		targetSchema := map[string]any{
+			"kind":      enumStringProperty("支持 Deployment、StatefulSet 或 DaemonSet。", "Deployment", "StatefulSet", "DaemonSet"),
+			"namespace": stringProperty("工作负载所在 Namespace。"),
+			"name":      stringProperty("工作负载名称。"),
+		}
+		rollbackSchema := map[string]any{}
+		for key, value := range targetSchema {
+			rollbackSchema[key] = value
+		}
+		rollbackSchema["revision"] = positiveIntegerProperty("目标历史版本号。")
+		rollbackSchema["uid"] = stringProperty("读取历史时工作负载的 UID。")
+		rollbackSchema["resource_version"] = stringProperty("读取历史时工作负载的 resourceVersion；变更后会以冲突拒绝。")
+		executeSchema := objectSchema(map[string]any{
+			"preview_id": stringProperty("回滚 DryRun 返回的服务端快照 ID。"),
+		}, []string{"preview_id"})
+		workloadWritePermissions := []rbac.Permission{
+			rbac.PermissionClusterResourceUpdate,
+			rbac.PermissionClusterSystemNamespaceManage,
+			rbac.PermissionClusterAgentNamespaceManage,
+		}
+		specs = append(specs,
+			airuntime.ToolSpec{
+				Name:        toolListWorkloadRevisions,
+				Description: "读取 Deployment、StatefulSet 或 DaemonSet 的历史 Pod 模板版本；回滚前先用它选择 revision。",
+				Schema:      objectSchema(targetSchema, []string{"kind", "namespace", "name"}),
+				Target:      workloadRevisionTarget, Permissions: []rbac.Permission{rbac.PermissionClusterRead},
+			},
+			airuntime.ToolSpec{
+				Name:        toolPreviewWorkloadRollback,
+				Description: "对指定历史版本执行 Kubernetes 服务端 DryRun；不改变集群，并保存提交所需的精确快照。",
+				Schema:      objectSchema(rollbackSchema, []string{"kind", "namespace", "name", "revision", "uid", "resource_version"}),
+				Target:      workloadRevisionTarget, Permissions: []rbac.Permission{rbac.PermissionClusterRead},
+				ConditionalPermissions: workloadWritePermissions,
+			},
+			airuntime.ToolSpec{
+				Name:        toolRollbackWorkload,
+				Description: "提交已预检的工作负载回滚；批准后重新判权并再次 DryRun。",
+				Schema:      executeSchema, Target: catalogue.previewTarget,
+				Permissions: []rbac.Permission{rbac.PermissionClusterRead}, Mutating: true,
+				ConditionalPermissions: workloadWritePermissions,
+				SensitiveWhen:          catalogue.previewSensitive,
 			},
 		)
 	}

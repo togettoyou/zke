@@ -34,8 +34,26 @@ func stringProperty(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
 }
 
+func enumStringProperty(description string, values ...string) map[string]any {
+	return map[string]any{
+		"type": "string", "description": description, "enum": values,
+	}
+}
+
 func integerProperty(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
+}
+
+func nonNegativeIntegerProperty(description string) map[string]any {
+	return map[string]any{
+		"type": "integer", "description": description, "minimum": 0,
+	}
+}
+
+func positiveIntegerProperty(description string) map[string]any {
+	return map[string]any{
+		"type": "integer", "description": description, "minimum": 1,
+	}
 }
 
 func booleanProperty(description string) map[string]any {

@@ -288,6 +288,68 @@ func TestParallelReadsRunTogetherWithinTheBound(t *testing.T) {
 	}
 }
 
+type mixedMutationTools struct {
+	mu       sync.Mutex
+	inFlight int
+	peak     int
+	order    []string
+}
+
+func (tools *mixedMutationTools) Specs() []ToolSpec {
+	read := readOnlyTool()
+	write := mutatingTool()
+	return []ToolSpec{read, write}
+}
+
+func (tools *mixedMutationTools) Invoke(
+	_ context.Context, invocation ToolInvocation,
+) (ToolResult, error) {
+	tools.mu.Lock()
+	tools.inFlight++
+	if tools.inFlight > tools.peak {
+		tools.peak = tools.inFlight
+	}
+	tools.order = append(tools.order, invocation.Name)
+	tools.mu.Unlock()
+	time.Sleep(5 * time.Millisecond)
+	tools.mu.Lock()
+	tools.inFlight--
+	tools.mu.Unlock()
+	return ToolResult{Text: "{}"}, nil
+}
+
+func TestStepContainingAWriteRunsSeriallyInModelOrder(t *testing.T) {
+	t.Parallel()
+	sessions := &memorySessions{session: idleSession(aisession.ApprovalFull)}
+	model := &scriptedModel{steps: []aimodel.Completion{
+		{ToolCalls: []aimodel.ToolCall{
+			{ID: "read_before", Name: "cluster_overview", Arguments: `{}`},
+			{ID: "write", Name: "scale_workload", Arguments: `{"replicas":3}`},
+			{ID: "read_after", Name: "cluster_overview", Arguments: `{"after":true}`},
+		}},
+		answering("完成。"),
+	}}
+	tools := &mixedMutationTools{}
+	runtime := New(context.Background(), sessions, model, allowAuthorizer{},
+		activeUsers{true}, Config{Tools: tools, MaxParallelToolCalls: 3})
+
+	if _, err := runtime.Start(context.Background(), StartInput{
+		SessionID: testSessionID, UserID: testUserID, Text: "伸缩并复查", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Wait()
+
+	tools.mu.Lock()
+	defer tools.mu.Unlock()
+	if tools.peak != 1 {
+		t.Fatalf("peak concurrency = %d, want a write batch serialized", tools.peak)
+	}
+	if got := strings.Join(tools.order, ","); got != "cluster_overview,scale_workload,cluster_overview" {
+		t.Fatalf("execution order = %s", got)
+	}
+}
+
 // The trail is read in order by people and by the export. Which read happened
 // to finish first is not a fact worth recording, so results are written back in
 // the order the model asked for them.

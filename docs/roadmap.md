@@ -60,11 +60,14 @@ AIOps 是运行在 ZKE 云端的 Codex 式运维 App：它跟随 Console 当前 
 部署和分析应用；每次操作仍由会话 Cluster 的 Agent 定域执行，不考虑跨 Cluster 会话。
 
 已落地模型端点配置、跟随桌面 Tenant/Project 并按 Cluster 工作区隔离的会话与轨迹存储、后台运行时、模型自主
-工具循环与只读工具目录、敏感工具审批等待、流式输出，以及使用对话/轨迹 Tab 的 AIOps App。写操作工具仍未实现。
+工具循环与读取工具目录、敏感工具审批等待、流式输出，以及使用对话/轨迹 Tab 的 AIOps App。受控资源写入已支持
+Deployment/StatefulSet 副本数伸缩、工作负载回滚，以及多文档 Manifest 的 DryRun、差异、Apply 与 Delete。
 
 - [x] 运行时底座：`ai.run`、后台任务、SSE/重连、权限重验、按比例触发的检查点压缩、模型失败分类与退避重试、证据引用
 - [x] AIOps App：随当前 Tenant/Project 和 Cluster 工作区切换的会话、对话/轨迹 Tab、轨迹时间线与详情、附件、搜索、归档、删除、导出和证据深链
-- [x] Agent 循环：多 Step 工具调用、同一 Step 内有界并发读取、只读工具目录（概览、资源、诊断、Event、Pod 日志、指标）、逐次权限重验、敏感工具审批、收敛与预算保护、流式增量与运行统计
-- [ ] 写操作能力：YAML/DryRun/差异、部署、回滚、Cluster Terminal，以及写入路径上的三档审批
+- [x] Agent 循环：多 Step 工具调用、同一 Step 内有界并发读取、读取工具目录（概览、资源、诊断、Event、Pod 日志、指标）、逐次权限重验、敏感工具审批、收敛与预算保护、流式增量与运行统计
+- [x] 首个受控写操作：Deployment/StatefulSet 副本数 DryRun 预检与实际伸缩、稳定幂等键、写入批次顺序执行和三档审批
+- [x] 资源写操作：YAML/DryRun/有界差异、Manifest 部署与删除、工作负载历史读取与回滚、预检快照、逐目标权限重验
+- [ ] Cluster Terminal 的 AIOps 受控命令执行
 - [ ] 扩展能力：技能、并行子任务、图表/资源就地唤起、定时巡检和事件触发自动化
 - [ ] 配额、诊断效果评估与用户反馈

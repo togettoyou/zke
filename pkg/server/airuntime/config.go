@@ -32,9 +32,10 @@ const (
 	// hundred reads is a loop that lost the plot.
 	DefaultMaxToolCalls = 120
 	// DefaultMaxParallelToolCalls is how many reads one step may have in
-	// flight. Every tool in the catalogue is a read, so they are safe to run
-	// together; the bound is what stops one step from opening a Stream per
-	// object to an Agent that also serves the rest of the platform.
+	// flight. A step containing a mutating tool is executed serially in model
+	// order; the bound therefore applies only to read-only batches and stops one
+	// step from opening a Stream per object to an Agent that also serves the
+	// rest of the platform.
 	DefaultMaxParallelToolCalls = 10
 	// DefaultRepeatedCallLimit is the convergence guard. The same tool with the
 	// same arguments returning the same answer a third time is not

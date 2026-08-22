@@ -22,19 +22,32 @@ type ToolSpec struct {
 	// the implementation validates against, so the contract the model reads is
 	// the contract it is held to.
 	Schema json.RawMessage
+	// Target extracts the namespace and object identity used in approval,
+	// trajectory and audit records before the tool executes. The runtime always
+	// overwrites Cluster with the session workspace. Nil is valid for tools whose
+	// target is only the Cluster or cannot be known from their arguments.
+	Target func(json.RawMessage) *aisession.Target
 	// Permissions are rechecked for the calling operator before every single
 	// invocation, all of them. A tool that reads an object and its Events needs
 	// both, and granting it on the strength of one would let a permission the
 	// operator does have stand in for one they do not. `ai.run` opens AIOps; it
 	// never stands in for any of these.
 	Permissions []rbac.Permission
+	// ConditionalPermissions are selected and rechecked by the tool from its
+	// resolved target or documents. They are advertised for operator clarity but
+	// are not all required at once.
+	ConditionalPermissions []rbac.Permission
 	// Sensitive marks a tool that stops for a person unless the session runs in
 	// full mode. It mirrors what ZKE already makes an operator confirm rather
 	// than inventing a second notion of risky.
 	Sensitive bool
-	// Mutating marks a tool that changes a cluster. No tool in the shipped
-	// catalogue sets it; the loop honours it so that adding one is a
-	// registration rather than a redesign of the approval path.
+	// SensitiveWhen upgrades a particular call to sensitive from its arguments.
+	// This is used by tools such as manifest Apply: an ordinary Deployment is a
+	// normal write, while RBAC or a protected Namespace in the same tool must
+	// still stop in assisted mode. It may only make a call more restrictive.
+	SensitiveWhen func(json.RawMessage) bool
+	// Mutating marks a tool that changes a cluster. The loop uses it for
+	// approval and to serialize every call in the same model step.
 	Mutating bool
 }
 
@@ -49,6 +62,11 @@ type ToolInvocation struct {
 	// do on their own, never as a second authorization of its own devising.
 	UserID    string
 	Arguments json.RawMessage
+	// IdempotencyKey is a stable identity for this exact model-requested call.
+	// The runtime derives it from the session, turn, step and call identifier;
+	// mutating tools pass it into the existing Server -> Agent write path so a
+	// lost response cannot turn a retry into a second change.
+	IdempotencyKey string
 }
 
 // ToolResult is what one call produced.
@@ -61,6 +79,23 @@ type ToolResult struct {
 	Text     string
 	Evidence []aisession.Evidence
 	Target   *aisession.Target
+	// AuditTargets gives a multi-object tool one deployment-audit row per
+	// resolved object. The trajectory still holds one bounded tool result, while
+	// the audit log can answer exactly which objects a manifest reached.
+	AuditTargets []ToolAuditTarget
+	// Failed keeps a structured tool answer (for example a per-document manifest
+	// plan) while telling the loop that the requested outcome did not complete.
+	Failed bool
+	// Denied is a Failed result caused by the tool's document- or target-level
+	// authorization. Static catalogue permissions are checked by the runtime;
+	// tools whose required permission depends on their contents report it here.
+	Denied bool
+}
+
+type ToolAuditTarget struct {
+	Target            aisession.Target
+	Result            string
+	MissingPermission string
 }
 
 // ToolSet is the catalogue the runtime advertises and calls.
@@ -81,13 +116,25 @@ type ToolSet interface {
 // prompt injection out of a Pod log can reach, which is why the mode in force
 // is recorded on every request.
 func requiresApproval(spec ToolSpec, mode aisession.ApprovalMode) bool {
+	return requiresApprovalFor(spec, mode, nil)
+}
+
+func requiresApprovalFor(
+	spec ToolSpec,
+	mode aisession.ApprovalMode,
+	arguments json.RawMessage,
+) bool {
+	sensitive := spec.Sensitive
+	if spec.SensitiveWhen != nil && spec.SensitiveWhen(arguments) {
+		sensitive = true
+	}
 	switch mode {
 	case aisession.ApprovalFull:
 		return false
 	case aisession.ApprovalAssisted:
-		return spec.Sensitive
+		return sensitive
 	default:
-		return spec.Sensitive || spec.Mutating
+		return sensitive || spec.Mutating
 	}
 }
 

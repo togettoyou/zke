@@ -45,7 +45,10 @@ AIOps 的只读 Agent 循环已经实现。AIOps 与容器服务一样跟随 Con
 被标记为敏感的是 Pod 日志读取，前两档会停下来等待用户在对话中批准或拒绝；拒绝不是运行失败，模型收到明确说明
 后继续，无人答复超时才结束本轮。批准只对该次调用生效，不改变账户权限，并与请求一起写入轨迹。
 
-写工具与终端工具仍在规划中；接入后仍须经目标 Agent 定域执行，不在 Server 主机执行，也不给模型 kubeconfig。
+资源写工具支持 Deployment/StatefulSet 伸缩、工作负载历史读取与回滚，以及 Manifest DryRun/差异/Apply/Delete。
+它们遵守会话审批模式、确认、幂等与审计边界；Manifest 与回滚以服务端预检快照固定待批准内容，提交前重新判权并
+再次 DryRun。Cluster Terminal 工具仍在规划中；所有调用经目标 Agent 定域执行，不在 Server 主机执行，也不给模型
+kubeconfig。
 
 历史读取需要重新检查当前权限。用户自己的问题和系统状态可以保留；已无权访问的集群正文、工具结果和证据由
 服务端脱敏。Pod 日志、Event、annotation、ConfigMap、Secret 和终端输出均作为不可信数据，不能改变工具白名单、
@@ -576,6 +579,24 @@ UID 与 `resourceVersion` 作为前置条件，对象已不存在记为跳过而
   停下的执行走到了哪里，正是审计要回答的问题。删除时对象本就不存在的文档不记录：没有向集群发出任何请求。
 
 无论哪种粒度都不记录 YAML 正文。
+
+#### AIOps 资源写入：预检快照与动态权限
+
+AIOps 不新增 Kubernetes 写权限，也不直接调用 Agent。Manifest 工具复用上述清单服务，运行时先要求 `cluster.read`，
+工具再为当前用户解析 create/update/delete、Namespace、RBAC、系统 Namespace 与 Agent Namespace 权限，并由
+`ManifestAccess` 逐文档选择实际需要的一项。工作负载回滚同样按目标 Namespace 在
+`cluster.resource.update`、`cluster.system_namespace.manage` 与 `cluster.agent_namespace.manage` 中选择有效权限。
+权限在预检和实际提交前各解析一次；预检后撤权会使提交拒绝，而不是沿用会话开始时的授权结果。
+
+Manifest Apply/Delete 和回滚的预检成功后只返回一个随机 `preview_id`。对应快照仅保存在 Server 内存中，默认 15 分钟
+有效并绑定发起用户、会话 Cluster、操作类型及原始 YAML/回滚前置条件；实际工具只接受该 ID，模型不能在审批后替换
+正文、对象或 revision。提交会再次 DryRun，首次提交固定幂等键，并发重复提交会拒绝；成功重试返回缓存结果，不再向
+Agent 发出第二次写入。进程重启会使尚未提交的预检失效，操作者需要重新预检。
+
+删除始终属于敏感操作；RBAC、受保护 Namespace 和强制字段接管按预检结果升级为敏感操作，因此“帮我批准”模式仍会
+停下来等待用户确认。Manifest 调用按解析出的每个对象写入目标与结果，逐文档权限拒绝记为 `denied`，失败和成功也
+分别记录；审计只保存工具、目标、作用域和结果，不保存 YAML 正文或字段差异值。AIOps 对 Secret 清单一律在进入清单服务前拒绝，即使调用者持有
+`cluster.secret.manage`；这是为了不让 Secret 明文进入模型上下文和 append-only 轨迹，Secret 写入继续只走专用入口。
 
 Pod 日志读取不复用宽泛的 `cluster.read` 或通用资源写权限。请求必须明确 Cluster、Namespace、Pod 当前 UID
 和容器，Server 与 Agent 通过独立日志协议执行，最终还受 Agent ServiceAccount 的 `pods/log` 最小权限约束。

@@ -419,7 +419,7 @@ function ToolsChip({ tools }: { tools: AITool[] }) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button type="button" size="sm" variant="ghost" aria-label="可用工具">
-          <Wrench aria-hidden /> {tools.length} 个只读工具
+          <Wrench aria-hidden /> {tools.length} 个工具
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="max-h-96 w-96 overflow-auto p-1.5">
@@ -431,15 +431,23 @@ function ToolsChip({ tools }: { tools: AITool[] }) {
             <li key={tool.name} className="rounded-control px-2 py-1.5">
               <p className="text-foreground flex items-center gap-1.5 font-mono text-xs">
                 {tool.name}
-                {tool.sensitive ? (
+                {tool.sensitive || tool.conditionally_sensitive ? (
                   <span className="bg-warning-surface text-warning rounded-inline px-1 py-px font-sans text-[11px]">
-                    敏感
+                    {tool.sensitive ? "敏感" : "按目标敏感"}
+                  </span>
+                ) : null}
+                {tool.mutating ? (
+                  <span className="bg-warning-surface text-warning rounded-inline px-1 py-px font-sans text-[11px]">
+                    写入
                   </span>
                 ) : null}
               </p>
               <p className="text-muted-foreground mt-0.5 text-[11px]">{tool.description}</p>
               <p className="text-subtle-foreground mt-0.5 font-mono text-[11px]">
                 {tool.permissions.join(" + ")}
+                {tool.conditional_permissions.length > 0
+                  ? `；按目标：${tool.conditional_permissions.join(" / ")}`
+                  : ""}
               </p>
             </li>
           ))}

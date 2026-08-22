@@ -129,6 +129,12 @@ type Document struct {
 	// precondition and shown so an operator can tell which object was meant.
 	UID             string
 	ResourceVersion string
+	// Before and After are internal material for an exact DryRun difference.
+	// HTTP responses deliberately map Document field by field and never expose
+	// either object; AIOps reduces them to bounded changed paths so Secret or
+	// ConfigMap bodies do not become audit or trajectory content.
+	Before map[string]any `json:"-"`
+	After  map[string]any `json:"-"`
 	// Why this document was refused, invalid or failed. Not serialized here: the
 	// HTTP layer maps it to the same codes and messages every other Kubernetes
 	// endpoint uses, so one failure does not have two vocabularies.
@@ -437,6 +443,7 @@ func (service *Service) planApply(
 	switch {
 	case err == nil:
 		entry.current = current
+		entry.document.Before = current
 		live := &unstructured.Unstructured{Object: current}
 		entry.document.UID = string(live.GetUID())
 		entry.document.ResourceVersion = live.GetResourceVersion()
@@ -510,6 +517,7 @@ func (service *Service) planDelete(
 		return
 	}
 	entry.current = current
+	entry.document.Before = current
 	live := &unstructured.Unstructured{Object: current}
 	entry.document.UID = string(live.GetUID())
 	entry.document.ResourceVersion = live.GetResourceVersion()
@@ -659,6 +667,7 @@ func (service *Service) executeDocument(
 	if err != nil {
 		return err
 	}
+	entry.document.After = applied
 	live := &unstructured.Unstructured{Object: applied}
 	entry.document.UID = string(live.GetUID())
 	entry.document.ResourceVersion = live.GetResourceVersion()

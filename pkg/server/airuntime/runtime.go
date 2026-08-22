@@ -12,6 +12,7 @@ package airuntime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,9 +80,9 @@ type Authorizer interface {
 // A separate record from the trajectory, and not a duplicate of it: the trail
 // is a short-lived account of one conversation, kept for weeks and readable
 // only by the person who started it, while the audit trail is the deployment
-// long-term account of who touched which Cluster. A read AIOps performs on an
-// operator behalf has to appear in the second one too, or AIOps becomes a way
-// to read a Pod log without leaving the record that reading a Pod log leaves.
+// long-term account of who touched which Cluster. Every AIOps call performed on
+// an operator behalf has to appear in the second one too; write records also
+// name their mutating flag and resolved resource target.
 type Auditor interface {
 	RecordClusterEvent(context.Context, audit.ClusterEventInput) error
 }
@@ -721,10 +722,11 @@ type plannedCall struct {
 // Admission is sequential and in the order the model asked, because a person
 // answering approvals answers one at a time and an operator reading the trail
 // has to see the calls in the order the model made them. Execution is
-// concurrent and bounded, because every tool in the catalogue is a read and a
-// step that asked for four of them should not take four round trips to an
-// Agent. Recording is back in model order, so the trail and the export do not
-// depend on which read happened to finish first.
+// concurrent and bounded when the whole batch is read-only. A batch containing
+// a write runs serially in model order: concurrent writes make the outcome
+// depend on scheduling, and a read beside a write would have no defined side
+// of the change to observe. Recording is back in model order, so the trail and
+// the export do not depend on which read happened to finish first.
 //
 // It reports whether the loop may continue; a false result means the turn
 // already ended.
@@ -789,19 +791,27 @@ func (runtime *Runtime) admit(
 		return item, false
 	}
 	item.spec = spec
+	if spec.Target != nil {
+		if target := spec.Target(json.RawMessage(call.Arguments)); target != nil {
+			target.Cluster = job.clusterID
+			item.target = target
+		}
+	}
 	// Authorization is the operator current RBAC, checked here for this call
 	// and not inherited from the session or from an earlier call that passed.
 	authorized, missing := runtime.authorizeTool(ctx, job, spec)
 	if !authorized {
 		runtime.recordCall(ctx, job, step, call, item.target, false)
-		runtime.recordAudit(ctx, job, step, call, auditResultDenied, string(missing))
+		runtime.recordAudit(
+			ctx, job, step, call, spec, item.target, auditResultDenied, string(missing),
+		)
 		item.outcome = &aisession.Content{
-			Text:   fmt.Sprintf("当前账户在该 Cluster 上没有 %s 权限，未执行这次读取。", missing),
+			Text:   fmt.Sprintf("当前账户在该 Cluster 上没有 %s 权限，未执行这次调用。", missing),
 			Failed: true,
 		}
 		return item, false
 	}
-	if requiresApproval(spec, mode) {
+	if requiresApprovalFor(spec, mode, json.RawMessage(call.Arguments)) {
 		decision, failure := runtime.awaitApproval(ctx, job, step, call, spec, mode, item.target)
 		if failure != "" {
 			runtime.fail(job.sessionID, failure)
@@ -811,6 +821,28 @@ func (runtime *Runtime) admit(
 			runtime.recordCall(ctx, job, step, call, item.target, false)
 			item.outcome = &aisession.Content{
 				Text: "用户拒绝了这次调用。请在不执行它的前提下继续，或说明为什么无法继续。", Failed: true,
+			}
+			return item, false
+		}
+		// Approval can wait for minutes. Neither an earlier permission decision nor
+		// an approval is authority to run after the account or RBAC changed while
+		// the turn was parked.
+		if err := runtime.revalidate(ctx, job.userID, job.tenantID, job.projectID, job.clusterID); err != nil {
+			runtime.fail(job.sessionID, aisession.FailurePermissionRevoked)
+			return item, true
+		}
+		authorized, missing = runtime.authorizeTool(ctx, job, spec)
+		if !authorized {
+			runtime.recordCall(ctx, job, step, call, item.target, false)
+			runtime.recordAudit(
+				ctx, job, step, call, spec, item.target, auditResultDenied, string(missing),
+			)
+			item.outcome = &aisession.Content{
+				Text: fmt.Sprintf(
+					"批准后重新检查发现当前账户已没有 %s 权限，未执行这次调用。",
+					missing,
+				),
+				Failed: true,
 			}
 			return item, false
 		}
@@ -838,8 +870,20 @@ func (runtime *Runtime) admit(
 	return item, false
 }
 
-// execute runs the admitted calls, at most maxParallelToolCalls at a time.
+// execute runs an all-read batch with bounded concurrency. The presence of one
+// mutating call makes the entire batch serial: model order is then the only
+// safe and explainable order for both writes and adjacent reads.
 func (runtime *Runtime) execute(ctx context.Context, job turnJob, planned []plannedCall) {
+	for index := range planned {
+		if planned[index].run && planned[index].spec.Mutating {
+			for itemIndex := range planned {
+				if planned[itemIndex].run {
+					runtime.invoke(ctx, job, &planned[itemIndex])
+				}
+			}
+			return
+		}
+	}
 	slots := make(chan struct{}, runtime.maxParallelToolCalls)
 	var running sync.WaitGroup
 	for index := range planned {
@@ -864,6 +908,7 @@ func (runtime *Runtime) invoke(ctx context.Context, job turnJob, item *plannedCa
 	result, toolErr := runtime.tools.Invoke(ctx, ToolInvocation{
 		Name: item.call.Name, ClusterID: job.clusterID,
 		UserID: job.userID, Arguments: item.arguments,
+		IdempotencyKey: toolIdempotencyKey(job, item.step, item.call.ID),
 	})
 	content := aisession.Content{Untrusted: true, Target: item.target}
 	auditResult := auditResultSucceeded
@@ -873,16 +918,50 @@ func (runtime *Runtime) invoke(ctx context.Context, job turnJob, item *plannedCa
 		auditResult = auditResultFailed
 	} else {
 		content.Text = result.Text
+		content.Failed = result.Failed || result.Denied
+		if result.Denied {
+			auditResult = auditResultDenied
+		} else if result.Failed {
+			auditResult = auditResultFailed
+		}
 		content.Evidence = runtime.visibleEvidence(ctx, job, result.Evidence)
 		if result.Target != nil {
 			result.Target.Cluster = job.clusterID
 			content.Target = result.Target
 		}
 	}
-	runtime.recordAudit(ctx, job, item.step, item.call, auditResult, "")
-	item.outcome = &content
 	item.target = content.Target
+	if toolErr == nil && len(result.AuditTargets) > 0 {
+		for _, auditTarget := range result.AuditTargets {
+			target := auditTarget.Target
+			target.Cluster = job.clusterID
+			resolvedResult := auditTarget.Result
+			switch resolvedResult {
+			case auditResultSucceeded, auditResultFailed, auditResultDenied:
+			default:
+				resolvedResult = auditResult
+			}
+			runtime.recordAudit(
+				ctx, job, item.step, item.call, item.spec, &target,
+				resolvedResult, auditTarget.MissingPermission,
+			)
+		}
+	} else {
+		runtime.recordAudit(
+			ctx, job, item.step, item.call, item.spec, item.target, auditResult, "",
+		)
+	}
+	item.outcome = &content
 	item.duration = time.Since(started)
+}
+
+// toolIdempotencyKey is stable for one persisted turn and opaque to the Agent.
+// Hashing also keeps model-controlled call identifiers out of the key grammar
+// and within the shared idempotency-key bound.
+func toolIdempotencyKey(job turnJob, step int, callID string) string {
+	identity := fmt.Sprintf("%s\x00%d\x00%d\x00%s", job.sessionID, job.turn, step, callID)
+	digest := sha256.Sum256([]byte(identity))
+	return fmt.Sprintf("aiops:%x", digest[:])
 }
 
 // Audit results, as the audit store spells them.
@@ -900,10 +979,17 @@ const (
 // audit row to the exact place in the trail that explains it.
 //
 // Failures to record are dropped rather than propagated: this runs after the
-// read already happened, and turning an audit outage into a failed turn would
-// hide the read from the operator as well as from the auditor.
+// tool already happened, and turning an audit outage into a failed turn would
+// report a write as failed even when the Cluster accepted it. Deployment audit
+// health must be monitored separately from the operation result.
 func (runtime *Runtime) recordAudit(
-	ctx context.Context, job turnJob, step int, call aimodel.ToolCall, result, missing string,
+	ctx context.Context,
+	job turnJob,
+	step int,
+	call aimodel.ToolCall,
+	spec ToolSpec,
+	target *aisession.Target,
+	result, missing string,
 ) {
 	if runtime.audit == nil {
 		return
@@ -913,6 +999,16 @@ func (runtime *Runtime) recordAudit(
 		"session_id": job.sessionID,
 		"turn":       strconv.Itoa(int(job.turn)),
 		"step":       strconv.Itoa(step),
+		"mutating":   strconv.FormatBool(spec.Mutating),
+		"sensitive": strconv.FormatBool(
+			spec.Sensitive || (spec.SensitiveWhen != nil &&
+				spec.SensitiveWhen(json.RawMessage(call.Arguments))),
+		),
+	}
+	if target != nil {
+		detail["namespace"] = target.Namespace
+		detail["gvk"] = target.GVK
+		detail["resource_name"] = target.Name
 	}
 	if missing != "" {
 		detail["missing_permission"] = missing

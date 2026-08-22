@@ -1,7 +1,8 @@
 # AIOps
 
 > 开发预览。当前已完成模型配置、跟随桌面 Tenant/Project 并按 Cluster 隔离的会话与轨迹存储、模型自主工具循环
-> （只读工具目录）、敏感工具的审批等待、流式输出与轨迹时间线；写操作工具、技能、子任务与自动化仍在规划中。
+> （读取工具目录、工作负载伸缩/回滚和 Manifest 写操作）、敏感工具的审批等待、流式输出与轨迹时间线；技能、
+> 子任务、Cluster Terminal 与自动化仍在规划中。
 
 AIOps 是 ZKE 中的云端 Codex 式运维 App：一个把目标 Cluster 当作工作区的 Agent。用户用自然语言提出问题，模型
 自己决定读取哪些对象、Event、日志和指标，按什么顺序读取，读到什么程度算够；每一次调用、授权判断和返回结果都
@@ -50,7 +51,7 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 
 工具目录由 Server 维护，模型只能从中选择，不能安装或定义新工具。`GET /api/v1/ai/tools` 返回当前部署组装出的
 目录以及 `enabled`——平台是否已启用 AIOps 并配置了模型端点，Console 据此决定是否在桌面展示 AIOps 应用。
-目录本身在输入区展示。当前全部为只读工具：
+目录本身在输入区展示。当前工具包括：
 
 | 工具 | 作用 | 需要的权限 |
 | --- | --- | --- |
@@ -63,12 +64,22 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `get_pod_logs` | Pod 容器日志尾部（敏感），按 Pod 实例身份读取；单容器 Pod 可以省略容器名 | `cluster.pod.logs.read` |
 | `list_metric_queries` | 可用的指标查询目录 | `cluster.metrics.read` |
 | `query_metrics` | 执行目录中的一个查询，返回每条曲线的最新值、峰值与均值 | `cluster.metrics.read` |
+| `preview_workload_scale` | 对 Deployment/StatefulSet 目标副本数执行 Kubernetes 服务端 DryRun，不改变集群 | `cluster.resource.update` |
+| `scale_workload` | 实际调整 Deployment/StatefulSet 副本数；提交前内部再次执行同参数 DryRun | `cluster.resource.update` |
+| `list_workload_revisions` | 读取 Deployment/StatefulSet/DaemonSet 历史版本及回滚并发前置条件 | `cluster.read` |
+| `preview_workload_rollback` | 对指定 revision 执行 DryRun 并生成绑定用户和 Cluster 的预检快照 | `cluster.read` + 按 Namespace 选择 update/system/agent manage |
+| `rollback_workload` | 使用 `preview_id` 提交回滚；提交前重验权限和 DryRun | 同预检；受保护 Namespace 属于敏感操作 |
+| `preview_manifest_apply` | 严格解析多文档 YAML，逐文档判权、DryRun 并返回动作与有界字段路径差异 | `cluster.read` + 按文档选择 create/update/Namespace/RBAC/受保护 Namespace 权限；RBAC 规则涉及 Secret 时还需对应 Secret 权限 |
+| `apply_manifest` | 使用 `preview_id` 提交原始 Manifest；批准后重新逐文档判权和 DryRun | 同预检；RBAC、受保护 Namespace 或 force 属于敏感操作 |
+| `preview_manifest_delete` | 逐文档判权并 DryRun 预检删除 | `cluster.read` + 按文档选择 delete/Namespace/RBAC/受保护 Namespace 权限 |
+| `delete_manifest` | 使用 `preview_id` 删除预检中的对象 | 同预检；始终为敏感操作 |
 
 部署没有安装多集群指标时，指标工具不会出现在目录里，而不是出现后每次调用都失败。工具输出经过摘要与截断，
 超出单次上限时会明确告知模型，让它缩小范围重读，而不是把截断当成完整事实。
 
-`ai.run` 只负责打开 AIOps，不替代上表中的任何权限。每次调用前都会针对当前用户在会话固定 Cluster 上重新校验，
-少一项就不执行，并把这个结果写进轨迹。
+`ai.run` 只负责打开 AIOps，不替代上表中的任何权限。固定权限由运行时逐次重验；Manifest 和回滚再按实际文档、动作与
+Namespace 选择一项有效权限，少一项就整次拒绝并把拒绝写进轨迹和审计。工具目录 API 用 `conditional_permissions`
+公开这些候选权限，不表示调用者必须同时持有全部权限。
 
 ## 审批模式
 
@@ -84,7 +95,11 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 提示注入能走多远，所以每次请求都会记录当时的模式。等待批准超过时限、或运行被取消，本轮以明确的失败分类结束，
 不会补写虚构的成功。
 
-写工具尚未开放。工具目录中的 `mutating` 标记与审批状态机已经就位，接入写工具只需注册，不需要重新设计审批路径。
+所有资源写工具在“请求批准”模式逐次确认；删除、RBAC、受保护 Namespace、Manifest `force` 等敏感调用在“帮我批准”
+模式也会等待。DryRun 工具不标记为写操作。Manifest 与回滚预检成功后由 Server 保存 15 分钟有效的 `preview_id`，
+它绑定当前用户、Cluster、操作和原始内容；实际工具不接受新 YAML 或新回滚参数。批准后先重验当前 RBAC 并重新 DryRun，
+失败就不写入。首次实际提交固定预检的幂等键，成功后的重试直接返回缓存结果，不重复写 Agent。包含写工具的同一步调用
+按模型顺序执行。AIOps 明确拒绝 Secret 清单，即使账号持有 `cluster.secret.manage`，Secret 仍只能从 ZKE 专用入口修改。
 
 ## 运行时
 
@@ -120,8 +135,8 @@ API Key、Secret 明文和 kubeconfig 不会进入模型上下文或轨迹。
 
 1. 只读运行时、实时推送、权限重验、上下文预算、摘要压缩和证据引用（已实现）；
 2. AIOps App、轨迹、文本附件、搜索、归档、删除、导出与证据深链（已实现）；
-3. 模型自主工具循环、只读工具目录、敏感工具审批、流式输出与轨迹时间线（已实现）；
-4. 写工具：DryRun 差异、幂等键、审计闭环与三档审批的写入路径；
+3. 模型自主工具循环、读取工具目录、敏感工具审批、流式输出与轨迹时间线（已实现）；
+4. 资源写工具：DryRun 差异、预检快照、幂等键、审计闭环与三档审批（已实现）；Cluster Terminal 继续推进；
 5. 技能、子任务、定时巡检与事件触发自动化。
 
 详细约束见 [Phase 4 AIOps 架构](../architecture/ai-phase-4.md) 与

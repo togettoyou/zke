@@ -13,6 +13,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/aisession"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/rbac"
+	"github.com/togettoyou/zke/pkg/shared/validation"
 )
 
 const (
@@ -174,6 +175,30 @@ type evidenceAuthorizer struct {
 	denied rbac.Permission
 }
 
+type revocableAuthorizer struct {
+	allowAuthorizer
+	mu     sync.RWMutex
+	denied rbac.Permission
+}
+
+func (authorizer *revocableAuthorizer) AuthorizeCluster(
+	ctx context.Context, userID string, permission rbac.Permission, clusterID string,
+) (rbac.ResolvedScope, error) {
+	authorizer.mu.RLock()
+	denied := authorizer.denied
+	authorizer.mu.RUnlock()
+	if permission == denied {
+		return rbac.ResolvedScope{}, rbac.ErrDenied
+	}
+	return authorizer.allowAuthorizer.AuthorizeCluster(ctx, userID, permission, clusterID)
+}
+
+func (authorizer *revocableAuthorizer) revoke(permission rbac.Permission) {
+	authorizer.mu.Lock()
+	authorizer.denied = permission
+	authorizer.mu.Unlock()
+}
+
 func (authorizer evidenceAuthorizer) AuthorizeCluster(
 	ctx context.Context, userID string, permission rbac.Permission, clusterID string,
 ) (rbac.ResolvedScope, error) {
@@ -262,6 +287,7 @@ type scriptedTools struct {
 	spec    ToolSpec
 	text    string
 	err     error
+	result  *ToolResult
 	invoked []ToolInvocation
 }
 
@@ -275,6 +301,9 @@ func (tools *scriptedTools) Invoke(
 	tools.invoked = append(tools.invoked, invocation)
 	if tools.err != nil {
 		return ToolResult{}, tools.err
+	}
+	if tools.result != nil {
+		return *tools.result, nil
 	}
 	return ToolResult{Text: tools.text, Evidence: []aisession.Evidence{
 		{Kind: aisession.EvidenceResource, Cluster: testClusterID},
@@ -323,6 +352,42 @@ func sensitiveTool() ToolSpec {
 	spec.Permissions = []rbac.Permission{rbac.PermissionClusterPodLogsRead}
 	spec.Sensitive = true
 	return spec
+}
+
+func mutatingTool() ToolSpec {
+	spec := readOnlyTool()
+	spec.Name = "scale_workload"
+	spec.Permissions = []rbac.Permission{rbac.PermissionClusterResourceUpdate}
+	spec.Mutating = true
+	return spec
+}
+
+func TestMutatingToolApprovalFollowsAllThreeModes(t *testing.T) {
+	t.Parallel()
+	spec := mutatingTool()
+	if !requiresApproval(spec, aisession.ApprovalAsk) {
+		t.Fatal("ask mode must stop before a write")
+	}
+	if requiresApproval(spec, aisession.ApprovalAssisted) {
+		t.Fatal("assisted mode should run an ordinary write without stopping")
+	}
+	if requiresApproval(spec, aisession.ApprovalFull) {
+		t.Fatal("full mode should not stop before an authorized write")
+	}
+}
+
+func TestDynamicSensitivityOnlyUpgradesMatchingCalls(t *testing.T) {
+	t.Parallel()
+	spec := mutatingTool()
+	spec.SensitiveWhen = func(arguments json.RawMessage) bool {
+		return strings.Contains(string(arguments), `"protected"`)
+	}
+	if requiresApprovalFor(spec, aisession.ApprovalAssisted, json.RawMessage(`{"scope":"ordinary"}`)) {
+		t.Fatal("ordinary call became sensitive")
+	}
+	if !requiresApprovalFor(spec, aisession.ApprovalAssisted, json.RawMessage(`{"scope":"protected"}`)) {
+		t.Fatal("protected call did not become sensitive")
+	}
 }
 
 func TestBackgroundTurnPersistsConclusionAndFinishes(t *testing.T) {
@@ -518,6 +583,49 @@ func TestSensitiveToolWaitsForApprovalAndRunsOnceApproved(t *testing.T) {
 	}
 }
 
+func TestApprovedWriteRechecksPermissionAfterWaiting(t *testing.T) {
+	t.Parallel()
+	sessions := &memorySessions{session: idleSession(aisession.ApprovalAsk)}
+	model := &scriptedModel{steps: []aimodel.Completion{
+		calling("scale_workload", `{"kind":"Deployment","namespace":"default","name":"web","replicas":3}`),
+		answering("权限已撤销，未伸缩。"),
+	}}
+	tools := &scriptedTools{spec: mutatingTool(), text: "{}"}
+	authorizer := &revocableAuthorizer{}
+	auditor := &recordingAuditor{}
+	runtime := New(context.Background(), sessions, model, authorizer,
+		activeUsers{true}, Config{Tools: tools, Audit: auditor})
+
+	if _, err := runtime.Start(context.Background(), StartInput{
+		SessionID: testSessionID, UserID: testUserID, Text: "伸缩", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		_, found := sessions.firstOf(aisession.KindApprovalRequest)
+		return found
+	})
+	authorizer.revoke(rbac.PermissionClusterResourceUpdate)
+	if err := runtime.Decide(context.Background(), testSessionID, testUserID,
+		"call_1", aisession.DecisionApproved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Wait()
+
+	if tools.count() != 0 {
+		t.Fatalf("write ran after permission revocation: %+v", tools.invoked)
+	}
+	result, _ := sessions.firstOf(aisession.KindToolResult)
+	if !result.Content.Failed || !strings.Contains(result.Content.Text, string(rbac.PermissionClusterResourceUpdate)) {
+		t.Fatalf("tool result = %+v", result)
+	}
+	events := auditor.recorded()
+	if len(events) != 1 || events[0].Result != auditResultDenied ||
+		events[0].Detail["missing_permission"] != string(rbac.PermissionClusterResourceUpdate) {
+		t.Fatalf("audit events = %+v", events)
+	}
+}
+
 func TestDeniedApprovalKeepsTheToolFromRunningAndTellsTheModel(t *testing.T) {
 	t.Parallel()
 	sessions := &memorySessions{session: idleSession(aisession.ApprovalAsk)}
@@ -580,6 +688,84 @@ func TestFullApprovalModeDoesNotStopForASensitiveTool(t *testing.T) {
 	}
 	if tools.count() != 1 {
 		t.Fatalf("tool ran %d times", tools.count())
+	}
+}
+
+func TestMutatingToolReceivesAValidStableIdempotencyKey(t *testing.T) {
+	t.Parallel()
+	sessions := &memorySessions{session: idleSession(aisession.ApprovalFull)}
+	model := &scriptedModel{steps: []aimodel.Completion{
+		calling("scale_workload", `{"kind":"Deployment","namespace":"default","name":"web","replicas":3}`),
+		answering("已伸缩。"),
+	}}
+	tools := &scriptedTools{spec: mutatingTool(), text: "{}"}
+	runtime := New(context.Background(), sessions, model, allowAuthorizer{},
+		activeUsers{true}, Config{Tools: tools})
+
+	if _, err := runtime.Start(context.Background(), StartInput{
+		SessionID: testSessionID, UserID: testUserID, Text: "扩到三个副本", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Wait()
+
+	if tools.count() != 1 {
+		t.Fatalf("tool ran %d times", tools.count())
+	}
+	key := tools.invoked[0].IdempotencyKey
+	if !validation.IsIdempotencyKey(key) || !strings.HasPrefix(key, "aiops:") {
+		t.Fatalf("idempotency key = %q", key)
+	}
+	want := toolIdempotencyKey(turnJob{
+		sessionID: testSessionID, turn: 1,
+	}, 1, "call_1")
+	if key != want {
+		t.Fatalf("idempotency key = %q, want stable %q", key, want)
+	}
+}
+
+func TestMutatingApprovalNamesTheResolvedResourceTarget(t *testing.T) {
+	t.Parallel()
+	sessions := &memorySessions{session: idleSession(aisession.ApprovalAsk)}
+	model := &scriptedModel{steps: []aimodel.Completion{
+		calling("scale_workload", `{"kind":"Deployment","namespace":"team-a","name":"web","replicas":3}`),
+		answering("已伸缩。"),
+	}}
+	spec := mutatingTool()
+	spec.Target = func(json.RawMessage) *aisession.Target {
+		return &aisession.Target{Namespace: "team-a", GVK: "apps/v1/Deployment", Name: "web"}
+	}
+	tools := &scriptedTools{spec: spec, text: "{}"}
+	auditor := &recordingAuditor{}
+	runtime := New(context.Background(), sessions, model, allowAuthorizer{},
+		activeUsers{true}, Config{Tools: tools, Audit: auditor})
+
+	if _, err := runtime.Start(context.Background(), StartInput{
+		SessionID: testSessionID, UserID: testUserID, Text: "扩到三个副本", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		_, found := sessions.firstOf(aisession.KindApprovalRequest)
+		return found
+	})
+	approval, _ := sessions.firstOf(aisession.KindApprovalRequest)
+	target := approval.Content.Target
+	if target == nil || target.Cluster != testClusterID || target.Namespace != "team-a" ||
+		target.GVK != "apps/v1/Deployment" || target.Name != "web" {
+		t.Fatalf("approval target = %+v", target)
+	}
+	if err := runtime.Decide(context.Background(), testSessionID, testUserID,
+		"call_1", aisession.DecisionApproved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Wait()
+	events := auditor.recorded()
+	if len(events) != 1 || events[0].Detail["mutating"] != "true" ||
+		events[0].Detail["namespace"] != "team-a" ||
+		events[0].Detail["gvk"] != "apps/v1/Deployment" ||
+		events[0].Detail["resource_name"] != "web" {
+		t.Fatalf("mutating audit event = %+v", events)
 	}
 }
 
@@ -746,6 +932,37 @@ func TestRefusedToolCallIsAuditedAsDenied(t *testing.T) {
 	events := auditor.recorded()
 	if len(events) != 1 || events[0].Result != auditResultDenied ||
 		events[0].Detail["missing_permission"] != string(rbac.PermissionClusterRead) {
+		t.Fatalf("audit events = %+v", events)
+	}
+}
+
+func TestDynamicToolDenialIsFailedInTrajectoryAndDeniedInAudit(t *testing.T) {
+	t.Parallel()
+	sessions := &memorySessions{session: idleSession(aisession.ApprovalFull)}
+	model := &scriptedModel{steps: []aimodel.Completion{
+		calling("apply_manifest", `{"preview_id":"manifest_1"}`),
+		answering("权限不足，未提交。"),
+	}}
+	toolResult := ToolResult{Text: "缺少 rbac_manage。", Failed: true, Denied: true}
+	spec := mutatingTool()
+	spec.Name = "apply_manifest"
+	tools := &scriptedTools{spec: spec, result: &toolResult}
+	auditor := &recordingAuditor{}
+	runtime := New(context.Background(), sessions, model, allowAuthorizer{},
+		activeUsers{true}, Config{Tools: tools, Audit: auditor})
+
+	if _, err := runtime.Start(context.Background(), StartInput{
+		SessionID: testSessionID, UserID: testUserID, Text: "应用清单", Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Wait()
+	entry, _ := sessions.firstOf(aisession.KindToolResult)
+	if !entry.Content.Failed || !strings.Contains(entry.Content.Text, "rbac_manage") {
+		t.Fatalf("tool result = %+v", entry)
+	}
+	events := auditor.recorded()
+	if len(events) != 1 || events[0].Result != auditResultDenied {
 		t.Fatalf("audit events = %+v", events)
 	}
 }

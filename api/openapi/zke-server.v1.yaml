@@ -6684,7 +6684,7 @@ paths:
       tags: [AIOps]
       operationId: listAITools
       description: >-
-        AIOps 在本部署是否可用，以及运行时向模型公开的只读工具目录。描述的是运行时自身而不是任何 Cluster，
+        AIOps 在本部署是否可用，以及运行时向模型公开的受控工具目录。描述的是运行时自身而不是任何 Cluster，
         因此不需要作用域参数；每个工具在每次调用前仍会针对发起用户在会话固定 Cluster 上重新校验 permissions。
         enabled 让 Console 在平台未启用 AIOps 时直接不展示该应用，而不必读取仅全局管理员可见的平台配置。
       security: [{ sessionCookie: [] }]
@@ -15097,20 +15097,27 @@ components:
     AITool:
       type: object
       additionalProperties: false
-      required: [name, description, permissions, sensitive, mutating]
+      required: [name, description, permissions, conditional_permissions, sensitive, conditionally_sensitive, mutating]
       properties:
         name: { type: string }
         description: { type: string }
         permissions:
           type: array
           items: { type: string }
-          description: 每次调用前都会针对发起用户在目标 Cluster 上重新校验的权限，全部满足才执行。
+          description: 运行时在每次调用前针对发起用户和目标 Cluster 重验的固定权限，全部满足才执行。
+        conditional_permissions:
+          type: array
+          items: { type: string }
+          description: 工具按实际目标或逐文档选择并重验的权限；列表中的权限不要求同时持有。
         sensitive:
           type: boolean
           description: 除完全访问模式外都会停下来等待用户批准。
+        conditionally_sensitive:
+          type: boolean
+          description: 是否会按预检后的实际目标升级为敏感操作。
         mutating:
           type: boolean
-          description: 会改变集群状态。当前目录中没有这类工具。
+          description: 会改变集群状态；审批模式据此决定是否在执行前等待用户确认。
     AIAttachment:
       type: object
       additionalProperties: false

@@ -129,9 +129,15 @@ func (handler *aiRuntimeHandler) tools(c *gin.Context) {
 		for _, permission := range spec.Permissions {
 			permissions = append(permissions, string(permission))
 		}
+		conditionalPermissions := make([]string, 0, len(spec.ConditionalPermissions))
+		for _, permission := range spec.ConditionalPermissions {
+			conditionalPermissions = append(conditionalPermissions, string(permission))
+		}
 		items = append(items, gin.H{
 			"name": spec.Name, "description": spec.Description, "permissions": permissions,
-			"sensitive": spec.Sensitive, "mutating": spec.Mutating,
+			"conditional_permissions": conditionalPermissions,
+			"sensitive":               spec.Sensitive, "conditionally_sensitive": spec.SensitiveWhen != nil,
+			"mutating": spec.Mutating,
 		})
 	}
 	writeSuccess(c, http.StatusOK, gin.H{"enabled": enabled, "tools": items})
@@ -141,7 +147,8 @@ func (handler *aiRuntimeHandler) tools(c *gin.Context) {
 //
 // The decision is audited here rather than in the runtime because this is where
 // the person is: the request carries their address and request id, and "who
-// allowed this read" is the question the audit trail exists to answer.
+// allowed this sensitive call or write" is the question the audit trail exists
+// to answer.
 func (handler *aiRuntimeHandler) decideApproval(c *gin.Context) {
 	identity, _ := httpmiddleware.Identity(c)
 	var request aiApprovalRequest
