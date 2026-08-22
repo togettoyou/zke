@@ -262,6 +262,7 @@ var (
 	ErrPodLogsCapabilityMissing          = errors.New("target Cluster Agent does not support Pod Logs Streams")
 	ErrPodLogsRequestExhausted           = errors.New("Pod Logs Stream request capacity is exhausted")
 	ErrPodExecCapabilityMissing          = errors.New("target Cluster Agent does not support Pod Exec Streams")
+	ErrTerminalCommandCapabilityMissing  = errors.New("target Cluster Agent does not support Terminal commands")
 	ErrPodExecRequestExhausted           = errors.New("Pod Exec Stream request capacity is exhausted")
 	ErrPodPortForwardCapabilityMissing   = errors.New("target Cluster Agent does not support Pod Port Forward Streams")
 	ErrPodPortForwardRequestExhausted    = errors.New("Pod Port Forward Stream request capacity is exhausted")
@@ -745,6 +746,10 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityTerminalSessionV1) {
 		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityTerminalSessionV1)
 		current.capabilities[agentprotocol.CapabilityTerminalSessionV1] = struct{}{}
+	}
+	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityTerminalCommandV1) {
+		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityTerminalCommandV1)
+		current.capabilities[agentprotocol.CapabilityTerminalCommandV1] = struct{}{}
 	}
 	// Managing the collector is offered only when this Server has storage: an
 	// installed collector with nowhere to send data is worse than none.
@@ -1401,8 +1406,8 @@ func (manager *Manager) RequestTerminalSession(
 		return nil, ErrAgentNotConnected
 	}
 	defer current.endBusiness()
-	if _, supported := current.capabilities[agentprotocol.CapabilityTerminalSessionV1]; !supported {
-		return nil, ErrTerminalSessionCapabilityMissing
+	if err := terminalSessionCapabilityError(current.capabilities, request); err != nil {
+		return nil, err
 	}
 	if !tryAcquire(manager.resourceAdmissions) {
 		return nil, ErrResourceRequestExhausted
@@ -1426,6 +1431,26 @@ func (manager *Manager) RequestTerminalSession(
 		TimeoutMillis:   uint64(max(int64(1), time.Until(deadline).Milliseconds())),
 		IdempotencyKey:  idempotencyKey,
 	}, request)
+}
+
+func terminalSessionCapabilityError(
+	capabilities map[string]struct{},
+	request *agentv1.TerminalSessionRequest,
+) error {
+	if _, supported := capabilities[agentprotocol.CapabilityTerminalSessionV1]; !supported {
+		return ErrTerminalSessionCapabilityMissing
+	}
+	// credential_proxy is the AIOps command-session shape introduced together
+	// with terminal-command.v1. An older Agent would ignore the unknown proto
+	// field and create a token-mounted interactive Pod, only for command exec to
+	// fail afterwards. Reject before sending CREATE so version skew cannot create
+	// the wrong security shape or leave needless temporary resources.
+	if request.GetCredentialProxy() {
+		if _, supported := capabilities[agentprotocol.CapabilityTerminalCommandV1]; !supported {
+			return ErrTerminalCommandCapabilityMissing
+		}
+	}
+	return nil
 }
 
 // RequestMetricsCollector asks one Cluster's Agent to install, remove or
@@ -1547,6 +1572,36 @@ func (manager *Manager) RequestPodExec(
 	request *agentv1.PodExecRequest,
 	peer agentprotocol.PodExecPeer,
 ) (*agentv1.PodExecResponse, *agentv1.PodExecExit, error) {
+	return manager.requestPodExec(
+		ctx, clusterID, request, peer,
+		agentprotocol.CapabilityPodExecV1, ErrPodExecCapabilityMissing,
+	)
+}
+
+// RequestTerminalCommand uses the Pod Exec transport but requires a separate
+// negotiated capability. Older Agents understand interactive Pod Exec yet do
+// not know the command field, so treating pod-exec.v1 as sufficient would turn
+// a requested bounded command into an interactive shell by version skew.
+func (manager *Manager) RequestTerminalCommand(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.PodExecRequest,
+	peer agentprotocol.PodExecPeer,
+) (*agentv1.PodExecResponse, *agentv1.PodExecExit, error) {
+	return manager.requestPodExec(
+		ctx, clusterID, request, peer,
+		agentprotocol.CapabilityTerminalCommandV1, ErrTerminalCommandCapabilityMissing,
+	)
+}
+
+func (manager *Manager) requestPodExec(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.PodExecRequest,
+	peer agentprotocol.PodExecPeer,
+	requiredCapability string,
+	capabilityError error,
+) (*agentv1.PodExecResponse, *agentv1.PodExecExit, error) {
 	if ctx == nil || !validation.IsUUID(clusterID) {
 		return nil, nil, errors.New("Pod Exec request Context or target Cluster ID is invalid")
 	}
@@ -1557,8 +1612,8 @@ func (manager *Manager) RequestPodExec(
 		return nil, nil, ErrAgentNotConnected
 	}
 	defer current.endBusiness()
-	if _, supported := current.capabilities[agentprotocol.CapabilityPodExecV1]; !supported {
-		return nil, nil, ErrPodExecCapabilityMissing
+	if _, supported := current.capabilities[requiredCapability]; !supported {
+		return nil, nil, capabilityError
 	}
 	if !tryAcquire(manager.podExecAdmissions) {
 		return nil, nil, ErrPodExecRequestExhausted

@@ -357,6 +357,10 @@ func (runtime *Runtime) run(ctx context.Context, job turnJob) {
 		delete(runtime.jobs, job.sessionID)
 		runtime.mu.Unlock()
 	}()
+	// Register resource cleanup last so it runs before the job is removed. A
+	// second Turn for the same session must not start while the previous Turn's
+	// temporary Kubernetes RBAC is still being deleted.
+	defer runtime.closeToolTurn(ctx, toolTurnID(job))
 	if err := runtime.revalidate(ctx, job.userID, job.tenantID, job.projectID, job.clusterID); err != nil {
 		runtime.fail(job.sessionID, aisession.FailurePermissionRevoked)
 		return
@@ -906,7 +910,7 @@ func (runtime *Runtime) execute(ctx context.Context, job turnJob, planned []plan
 func (runtime *Runtime) invoke(ctx context.Context, job turnJob, item *plannedCall) {
 	started := time.Now()
 	result, toolErr := runtime.tools.Invoke(ctx, ToolInvocation{
-		Name: item.call.Name, ClusterID: job.clusterID,
+		Name: item.call.Name, TurnID: toolTurnID(job), ClusterID: job.clusterID,
 		UserID: job.userID, Arguments: item.arguments,
 		IdempotencyKey: toolIdempotencyKey(job, item.step, item.call.ID),
 	})
@@ -962,6 +966,26 @@ func toolIdempotencyKey(job turnJob, step int, callID string) string {
 	identity := fmt.Sprintf("%s\x00%d\x00%d\x00%s", job.sessionID, job.turn, step, callID)
 	digest := sha256.Sum256([]byte(identity))
 	return fmt.Sprintf("aiops:%x", digest[:])
+}
+
+// toolTurnID is stable across every model step in one persisted turn. Hashing
+// prevents session identifiers from leaking into temporary Kubernetes resource
+// identities and keeps the value out of model-controlled input.
+func toolTurnID(job turnJob) string {
+	identity := fmt.Sprintf("%s\x00%d", job.sessionID, job.turn)
+	digest := sha256.Sum256([]byte(identity))
+	return fmt.Sprintf("aiops-turn:%x", digest[:])
+}
+
+func (runtime *Runtime) closeToolTurn(ctx context.Context, turnID string) {
+	tools, ok := runtime.tools.(TurnScopedToolSet)
+	if !ok {
+		return
+	}
+	// The turn context commonly carries cancellation or its deadline by the
+	// time this defer runs. Resource cleanup needs a detached context; each tool
+	// implementation remains responsible for its own finite cleanup timeout.
+	_ = tools.CloseTurn(context.WithoutCancel(ctx), turnID)
 }
 
 // Audit results, as the audit store spells them.

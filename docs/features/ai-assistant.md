@@ -1,8 +1,8 @@
 # AIOps
 
-> 开发预览。当前已完成模型配置、跟随桌面 Tenant/Project 并按 Cluster 隔离的会话与轨迹存储、模型自主工具循环
-> （读取工具目录、工作负载伸缩/回滚和 Manifest 写操作）、敏感工具的审批等待、流式输出与轨迹时间线；技能、
-> 子任务、Cluster Terminal 与自动化仍在规划中。
+> 当前已完成模型配置、跟随桌面 Tenant/Project 并按 Cluster 隔离的会话与轨迹存储、模型自主工具循环
+> （读取工具目录、工作负载伸缩/回滚和 Manifest 写操作）、敏感工具的审批等待、流式输出、轨迹时间线与 Cluster
+> Terminal 受控非交互命令；技能、子任务与自动化仍在规划中。
 
 AIOps 是 ZKE 中的云端 Codex 式运维 App：一个把目标 Cluster 当作工作区的 Agent。用户用自然语言提出问题，模型
 自己决定读取哪些对象、Event、日志和指标，按什么顺序读取，读到什么程度算够；每一次调用、授权判断和返回结果都
@@ -73,6 +73,7 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `apply_manifest` | 使用 `preview_id` 提交原始 Manifest；批准后重新逐文档判权和 DryRun | 同预检；RBAC、受保护 Namespace 或 force 属于敏感操作 |
 | `preview_manifest_delete` | 逐文档判权并 DryRun 预检删除 | `cluster.read` + 按文档选择 delete/Namespace/RBAC/受保护 Namespace 权限 |
 | `delete_manifest` | 使用 `preview_id` 删除预检中的对象 | 同预检；始终为敏感操作 |
+| `run_terminal_command` | 在本 Turn 复用的 Cluster Terminal 中执行一条非交互 Shell 命令，可使用 kubectl、BusyBox、curl 与 jq | `cluster.terminal.exec`；命令内 Kubernetes 操作再由本 Turn 冻结的权限快照决定，`kubectl exec` 还需 `cluster.pod.exec` |
 
 部署没有安装多集群指标时，指标工具不会出现在目录里，而不是出现后每次调用都失败。工具输出经过摘要与截断，
 超出单次上限时会明确告知模型，让它缩小范围重读，而不是把截断当成完整事实。
@@ -100,6 +101,16 @@ Namespace 选择一项有效权限，少一项就整次拒绝并把拒绝写进�
 它绑定当前用户、Cluster、操作和原始内容；实际工具不接受新 YAML 或新回滚参数。批准后先重验当前 RBAC 并重新 DryRun，
 失败就不写入。首次实际提交固定预检的幂等键，成功后的重试直接返回缓存结果，不重复写 Agent。包含写工具的同一步调用
 按模型顺序执行。AIOps 明确拒绝 Secret 清单，即使账号持有 `cluster.secret.manage`，Secret 仍只能从 ZKE 专用入口修改。
+
+Cluster Terminal 命令始终同时标记为敏感和可能变更：“请求批准”和“帮我批准”都会逐次等待确认；“完全访问”只省略
+人工停顿，不扩大权限。Server 在本 Turn 首次命令批准后重新计算当前用户的全部 `cluster.*` 权限，移除 Secret 读写
+权限后交给 Agent 按固定白名单投射到 Turn 专属 ServiceAccount；后续命令复用同一 Pod 和冻结快照。Secret 读写和
+Agent Namespace 管理权限不会进入 AIOps 终端。命令容器
+不挂载该 ServiceAccount Token，而是通过同 Pod 的 localhost
+凭证代理运行 kubectl；代理凭证不会进入命令、stdout/stderr、轨迹或模型上下文。命令及有界输出会进入轨迹并发送给
+模型，因此调用参数不得包含密码、Token 或其他凭证明文。Turn 结束、失败或取消后立即清理 Pod 和临时 RBAC，异常时
+仍由 Agent TTL 清理任务兜底；从 Pod 创建到清理的完整生命周期持续重验冻结快照，覆盖命令执行和模型思考的空闲期。
+快照中的任一权限被撤销都会取消命令、清理资源并禁止本 Turn 重建终端；已经发生的 Kubernetes 操作不会伪装成已回滚。
 
 ## 运行时
 
@@ -136,7 +147,7 @@ API Key、Secret 明文和 kubeconfig 不会进入模型上下文或轨迹。
 1. 只读运行时、实时推送、权限重验、上下文预算、摘要压缩和证据引用（已实现）；
 2. AIOps App、轨迹、文本附件、搜索、归档、删除、导出与证据深链（已实现）；
 3. 模型自主工具循环、读取工具目录、敏感工具审批、流式输出与轨迹时间线（已实现）；
-4. 资源写工具：DryRun 差异、预检快照、幂等键、审计闭环与三档审批（已实现）；Cluster Terminal 继续推进；
+4. 资源写工具与 Cluster Terminal：DryRun 差异、预检快照、幂等键、审计闭环、三档审批及受控命令（已实现）；
 5. 技能、子任务、定时巡检与事件触发自动化。
 
 详细约束见 [Phase 4 AIOps 架构](../architecture/ai-phase-4.md) 与

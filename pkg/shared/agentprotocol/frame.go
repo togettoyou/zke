@@ -23,6 +23,7 @@ const (
 	CapabilityResourceWriteV1            = "resource-write.v1"
 	CapabilityPodLogsV1                  = "pod-logs.v1"
 	CapabilityPodExecV1                  = "pod-exec.v1"
+	CapabilityTerminalCommandV1          = "terminal-command.v1"
 	CapabilityPodPortForwardV1           = "pod-port-forward.v1"
 	CapabilityResourceWatchV1            = "resource-watch.v1"
 	CapabilityTerminalSessionV1          = "terminal-session.v1"

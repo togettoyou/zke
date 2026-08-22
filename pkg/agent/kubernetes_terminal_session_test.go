@@ -43,6 +43,59 @@ func TestTerminalPodUsesRequestedImagePullPolicy(t *testing.T) {
 	}
 }
 
+func TestAIOpsTerminalPodKeepsCredentialOutOfCommandContainer(t *testing.T) {
+	namespace := "zke-system"
+	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
+	client.PrependReactor("get", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: action.(k8stesting.GetAction).GetName(), Namespace: namespace, UID: "pod-uid"},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{
+				Type: corev1.PodReady, Status: corev1.ConditionTrue,
+			}}},
+		}, nil
+	})
+	request := &agentv1.TerminalSessionRequest{
+		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
+		SessionId: "11111111-1111-4111-8111-111111111111",
+		UserId:    "22222222-2222-4222-8222-222222222222", Namespace: namespace,
+		Permissions: []string{"cluster.terminal.exec", "cluster.pod.exec"}, TtlSeconds: 60,
+		Image: "registry.example.com/zke-terminal:v1", ImagePullPolicy: "Never",
+		CredentialProxy: true,
+	}
+	response, err := createKubernetesTerminalSession(context.Background(), client, request, &agentv1.TerminalSessionResponse{})
+	if err != nil || response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+		t.Fatalf("create AIOps terminal response = %+v, error = %v", response, err)
+	}
+	pods, err := client.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(pods.Items) != 1 {
+		t.Fatalf("terminal Pods = %+v, error = %v", pods, err)
+	}
+	pod := pods.Items[0]
+	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken ||
+		pod.Labels[terminalCredentialProxyLabel] != "true" ||
+		len(pod.Spec.Containers) != 2 || pod.Spec.Containers[0].Name != terminalContainerName ||
+		pod.Spec.Containers[1].Name != terminalProxyContainer {
+		t.Fatalf("AIOps terminal Pod = %+v", pod.Spec)
+	}
+	for _, mount := range pod.Spec.Containers[0].VolumeMounts {
+		if mount.Name == "credential" {
+			t.Fatalf("command container received credential mount: %+v", mount)
+		}
+	}
+	proxyHasCredential := false
+	for _, mount := range pod.Spec.Containers[1].VolumeMounts {
+		proxyHasCredential = proxyHasCredential || mount.Name == "credential"
+	}
+	if !proxyHasCredential {
+		t.Fatalf("credential proxy has no projected token mount: %+v", pod.Spec.Containers[1].VolumeMounts)
+	}
+	accounts, err := client.CoreV1().ServiceAccounts(namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(accounts.Items) != 1 || accounts.Items[0].AutomountServiceAccountToken == nil ||
+		*accounts.Items[0].AutomountServiceAccountToken {
+		t.Fatalf("AIOps terminal ServiceAccount = %+v, error = %v", accounts, err)
+	}
+}
+
 func TestTerminalPolicyKeepsSecretAndRBACPermissionsIndependent(t *testing.T) {
 	tests := []struct {
 		name        string

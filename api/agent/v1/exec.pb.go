@@ -81,8 +81,13 @@ type PodExecRequest struct {
 	Rows           uint32                 `protobuf:"varint,7,opt,name=rows,proto3" json:"rows,omitempty"`
 	MaxOutputBytes uint64                 `protobuf:"varint,8,opt,name=max_output_bytes,json=maxOutputBytes,proto3" json:"max_output_bytes,omitempty"`
 	MaxInputBytes  uint64                 `protobuf:"varint,9,opt,name=max_input_bytes,json=maxInputBytes,proto3" json:"max_input_bytes,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Empty keeps the interactive shell behavior used by Web Terminal. A
+	// non-empty argv is only accepted for a ZKE-managed credential-proxy
+	// Cluster Terminal Pod and runs without a TTY; this is the bounded command
+	// path used by AIOps.
+	Command       []string `protobuf:"bytes,10,rep,name=command,proto3" json:"command,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PodExecRequest) Reset() {
@@ -176,6 +181,13 @@ func (x *PodExecRequest) GetMaxInputBytes() uint64 {
 		return x.MaxInputBytes
 	}
 	return 0
+}
+
+func (x *PodExecRequest) GetCommand() []string {
+	if x != nil {
+		return x.Command
+	}
+	return nil
 }
 
 type PodExecResponse struct {
@@ -664,7 +676,7 @@ var File_api_agent_v1_exec_proto protoreflect.FileDescriptor
 
 const file_api_agent_v1_exec_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/agent/v1/exec.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\x92\x02\n" +
+	"\x17api/agent/v1/exec.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\xac\x02\n" +
 	"\x0ePodExecRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x19\n" +
 	"\bpod_name\x18\x02 \x01(\tR\apodName\x12\x17\n" +
@@ -674,7 +686,9 @@ const file_api_agent_v1_exec_proto_rawDesc = "" +
 	"\acolumns\x18\x06 \x01(\rR\acolumns\x12\x12\n" +
 	"\x04rows\x18\a \x01(\rR\x04rows\x12(\n" +
 	"\x10max_output_bytes\x18\b \x01(\x04R\x0emaxOutputBytes\x12&\n" +
-	"\x0fmax_input_bytes\x18\t \x01(\x04R\rmaxInputBytes\"\xe2\x01\n" +
+	"\x0fmax_input_bytes\x18\t \x01(\x04R\rmaxInputBytes\x12\x18\n" +
+	"\acommand\x18\n" +
+	" \x03(\tR\acommand\"\xe2\x01\n" +
 	"\x0fPodExecResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\x05R\x14kubernetesStatusCode\x12\x16\n" +

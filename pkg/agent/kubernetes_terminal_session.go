@@ -22,9 +22,11 @@ import (
 )
 
 const (
-	terminalContainerName    = "terminal"
-	terminalManagedLabel     = "zke.io/terminal-session"
-	terminalKeepaliveCommand = `set -eu
+	terminalContainerName        = "terminal"
+	terminalProxyContainer       = "credential-proxy"
+	terminalManagedLabel         = "zke.io/terminal-session"
+	terminalCredentialProxyLabel = "zke.io/terminal-credential-proxy"
+	terminalKeepaliveCommand     = `set -eu
 mkdir -p /workspace/.kube
 token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
 kubectl config set-cluster in-cluster --server=https://kubernetes.default.svc --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt --kubeconfig=/workspace/.kube/config >/dev/null
@@ -34,6 +36,19 @@ kubectl config use-context terminal --kubeconfig=/workspace/.kube/config >/dev/n
 unset token
 trap : TERM INT
 while :; do sleep 3600 & wait $!; done`
+	terminalProxyKeepaliveCommand = `set -eu
+mkdir -p /workspace/.kube
+kubectl config set-cluster in-cluster --server=http://127.0.0.1:8001 --insecure-skip-tls-verify=true --kubeconfig=/workspace/.kube/config >/dev/null
+kubectl config set-credentials terminal --kubeconfig=/workspace/.kube/config >/dev/null
+kubectl config set-context terminal --cluster=in-cluster --user=terminal --namespace=default --kubeconfig=/workspace/.kube/config >/dev/null
+kubectl config use-context terminal --kubeconfig=/workspace/.kube/config >/dev/null
+trap : TERM INT
+while :; do sleep 3600 & wait $!; done`
+	terminalCredentialProxyCommand = `exec kubectl proxy \
+  --server=https://kubernetes.default.svc \
+  --certificate-authority=/var/run/secrets/zke-terminal/ca.crt \
+  --token="$(cat /var/run/secrets/zke-terminal/token)" \
+  --address=127.0.0.1 --port=8001 --accept-hosts='.*' --reject-paths='^$'`
 )
 
 // What the session Pod was given before the Server learned to name a budget. A
@@ -119,10 +134,14 @@ func createKubernetesTerminalSession(
 	systemRoleName := namespacedRoleName + "-system"
 	agentRoleName := namespacedRoleName + "-agent"
 	expiresAt := time.Now().UTC().Add(time.Duration(request.GetTtlSeconds()) * time.Second)
+	credentialProxy := request.GetCredentialProxy()
 	labels := map[string]string{
 		"app.kubernetes.io/name":       "zke-terminal",
 		"app.kubernetes.io/managed-by": "zke-agent",
 		terminalManagedLabel:           request.GetSessionId(),
+	}
+	if credentialProxy {
+		labels[terminalCredentialProxyLabel] = "true"
 	}
 	annotations := map[string]string{
 		"zke.io/user-id":    request.GetUserId(),
@@ -148,7 +167,7 @@ func createKubernetesTerminalSession(
 
 	serviceAccount := &corev1.ServiceAccount{
 		ObjectMeta:                   metav1.ObjectMeta{Name: name, Namespace: request.GetNamespace(), Labels: labels, Annotations: annotations},
-		AutomountServiceAccountToken: terminalPointer(true),
+		AutomountServiceAccountToken: terminalPointer(!credentialProxy),
 	}
 	namespacedRoles := []*rbacv1.ClusterRole{{
 		ObjectMeta: metav1.ObjectMeta{Name: namespacedRoleName, Labels: labels, Annotations: annotations},
@@ -175,28 +194,68 @@ func createKubernetesTerminalSession(
 	}
 	nonRoot, userID, groupID, grace, deadline := true, int64(1000), int64(1000), int64(5), int64(request.GetTtlSeconds())
 	fsGroupPolicy := corev1.FSGroupChangeOnRootMismatch
+	keepaliveCommand := terminalKeepaliveCommand
+	if credentialProxy {
+		keepaliveCommand = terminalProxyKeepaliveCommand
+	}
+	volumes := []corev1.Volume{
+		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+	containers := []corev1.Container{{
+		Name: terminalContainerName, Image: request.GetImage(), ImagePullPolicy: corev1.PullPolicy(request.GetImagePullPolicy()),
+		Command:    []string{"/bin/sh", "-c", keepaliveCommand},
+		WorkingDir: "/workspace", Env: []corev1.EnvVar{{Name: "HOME", Value: "/workspace"},
+			{Name: "KUBECONFIG", Value: "/workspace/.kube/config"}},
+		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: terminalPointer(false),
+			ReadOnlyRootFilesystem: terminalPointer(true),
+			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+		Resources:    sessionResources,
+		VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}},
+	}}
+	if credentialProxy {
+		containers[0].ReadinessProbe = &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
+				Command: []string{"/bin/sh", "-c", "test -s /workspace/.kube/config && wget -q -O /dev/null http://127.0.0.1:8001/version"},
+			}},
+			PeriodSeconds: 1, TimeoutSeconds: 1, FailureThreshold: 30,
+		}
+		tokenExpiration := int64(max(uint64(600), request.GetTtlSeconds()))
+		volumes = append(volumes, corev1.Volume{Name: "credential", VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{
+				{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token", ExpirationSeconds: &tokenExpiration}},
+				{ConfigMap: &corev1.ConfigMapProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "kube-root-ca.crt"},
+					Items: []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}}}},
+			}},
+		}})
+		proxyResources, resourceErr := workloadbudget.Requirements("10m", "16Mi", "100m", "128Mi")
+		if resourceErr != nil {
+			return kubernetesTerminalSessionFailure(response, resourceErr), nil
+		}
+		containers = append(containers, corev1.Container{
+			Name: terminalProxyContainer, Image: request.GetImage(), ImagePullPolicy: corev1.PullPolicy(request.GetImagePullPolicy()),
+			Command: []string{"/bin/sh", "-c", terminalCredentialProxyCommand},
+			SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: terminalPointer(false),
+				ReadOnlyRootFilesystem: terminalPointer(true),
+				Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+			Resources:    proxyResources,
+			VolumeMounts: []corev1.VolumeMount{{Name: "credential", MountPath: "/var/run/secrets/zke-terminal", ReadOnly: true}},
+			ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
+				Command: []string{"/bin/sh", "-c", "wget -q -O /dev/null http://127.0.0.1:8001/version"},
+			}}, PeriodSeconds: 1, TimeoutSeconds: 1, FailureThreshold: 30},
+		})
+	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: request.GetNamespace(), Labels: labels, Annotations: annotations},
 		Spec: corev1.PodSpec{
-			ServiceAccountName: name, AutomountServiceAccountToken: terminalPointer(true),
+			ServiceAccountName: name, AutomountServiceAccountToken: terminalPointer(!credentialProxy),
 			RestartPolicy: corev1.RestartPolicyNever, ActiveDeadlineSeconds: &deadline,
 			TerminationGracePeriodSeconds: &grace,
 			SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &userID, RunAsGroup: &groupID,
 				FSGroup: &groupID, FSGroupChangePolicy: &fsGroupPolicy,
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
-			Containers: []corev1.Container{{
-				Name: terminalContainerName, Image: request.GetImage(), ImagePullPolicy: corev1.PullPolicy(request.GetImagePullPolicy()),
-				Command:    []string{"/bin/sh", "-c", terminalKeepaliveCommand},
-				WorkingDir: "/workspace", Env: []corev1.EnvVar{{Name: "HOME", Value: "/workspace"},
-					{Name: "KUBECONFIG", Value: "/workspace/.kube/config"}},
-				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: terminalPointer(false),
-					ReadOnlyRootFilesystem: terminalPointer(true),
-					Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-				Resources:    sessionResources,
-				VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}},
-			}},
-			Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-				{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+			Containers: containers,
+			Volumes:    volumes,
 		},
 	}
 	roleBindings := terminalNamespaceRoleBindings(namespaces.Items, request.GetNamespace(), name, namespacedRoleName, labels, annotations)
@@ -247,7 +306,18 @@ func createKubernetesTerminalSession(
 		if current.Status.Phase == corev1.PodFailed {
 			return false, fmt.Errorf("terminal Pod failed: %s", current.Status.Message)
 		}
-		return current.Status.Phase == corev1.PodRunning, nil
+		if current.Status.Phase != corev1.PodRunning {
+			return false, nil
+		}
+		if !credentialProxy {
+			return true, nil
+		}
+		for _, condition := range current.Status.Conditions {
+			if condition.Type == corev1.PodReady {
+				return condition.Status == corev1.ConditionTrue, nil
+			}
+		}
+		return false, nil
 	})
 	if err != nil {
 		return kubernetesTerminalSessionFailure(response, err), nil

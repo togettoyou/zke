@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"slices"
 	"testing"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
@@ -99,6 +100,99 @@ func TestKubernetesPodExecRejectsChangedPodIdentityBeforeTransport(t *testing.T)
 	if err != nil || exits != nil || called ||
 		response.GetResult() != agentv1.ResultCode_RESULT_CODE_CONFLICT ||
 		response.GetReason() != "PodUIDMismatch" {
+		t.Fatalf("response=%+v exits=%v called=%t err=%v", response, exits, called, err)
+	}
+}
+
+func TestKubernetesPodExecRunsNonInteractiveCommandOnlyInManagedTerminal(t *testing.T) {
+	t.Parallel()
+	pod := testExecPod()
+	pod.Name = "zke-terminal-test"
+	pod.Spec.Containers[0].Name = terminalContainerName
+	pod.Labels = map[string]string{
+		terminalManagedLabel: "session-id", terminalCredentialProxyLabel: "true",
+	}
+	client := fake.NewClientset(pod)
+	executor := &fakePodExecExecutor{run: func(options remotecommand.StreamOptions) error {
+		if options.Tty || options.Stdin != nil || options.Stdout == nil ||
+			options.Stderr == nil || options.TerminalSizeQueue != nil {
+			t.Fatalf("unexpected command stream options: %+v", options)
+		}
+		_, _ = options.Stdout.Write([]byte("out"))
+		_, _ = options.Stderr.Write([]byte("err"))
+		return nil
+	}}
+	handler := newKubernetesPodExecHandlerWithFactory(client, &rest.Config{}, func(
+		_ *rest.Config, _ kubernetes.Interface, _, _ string, options corev1.PodExecOptions,
+	) (remotecommand.Executor, error) {
+		if options.Stdin || !options.Stdout || !options.Stderr || options.TTY ||
+			!slices.Equal(options.Command, []string{"/bin/sh", "-c", "kubectl get pods"}) {
+			t.Fatalf("unexpected command options: %+v", options)
+		}
+		return executor, nil
+	})
+	request := testPodExecRequest()
+	request.PodName = pod.Name
+	request.Container = terminalContainerName
+	request.Tty = false
+	request.Command = []string{"/bin/sh", "-c", "kubectl get pods"}
+	var stdout, stderr bytes.Buffer
+	response, exits, err := handler(context.Background(), request, nil, &stdout, &stderr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit := <-exits
+	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK ||
+		exit.GetResult() != agentv1.ResultCode_RESULT_CODE_OK || exit.GetOutputBytes() != 6 ||
+		stdout.String() != "out" || stderr.String() != "err" {
+		t.Fatalf("response=%+v exit=%+v stdout=%q stderr=%q", response, exit, stdout.String(), stderr.String())
+	}
+}
+
+func TestKubernetesPodExecRejectsCommandInApplicationPod(t *testing.T) {
+	t.Parallel()
+	client := fake.NewClientset(testExecPod())
+	called := false
+	handler := newKubernetesPodExecHandlerWithFactory(client, &rest.Config{}, func(
+		_ *rest.Config, _ kubernetes.Interface, _, _ string, _ corev1.PodExecOptions,
+	) (remotecommand.Executor, error) {
+		called = true
+		return nil, errors.New("must not be called")
+	})
+	request := testPodExecRequest()
+	request.Tty = false
+	request.Command = []string{"/bin/sh", "-c", "id"}
+	response, exits, err := handler(context.Background(), request, nil, io.Discard, io.Discard, nil)
+	if err != nil || called || exits != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_FORBIDDEN ||
+		response.GetReason() != "TerminalCommandForbidden" {
+		t.Fatalf("response=%+v exits=%v called=%t err=%v", response, exits, called, err)
+	}
+}
+
+func TestKubernetesPodExecRejectsCommandInTokenMountedTerminal(t *testing.T) {
+	t.Parallel()
+	pod := testExecPod()
+	pod.Name = "zke-terminal-interactive"
+	pod.Spec.Containers[0].Name = terminalContainerName
+	pod.Labels = map[string]string{terminalManagedLabel: "session-id"}
+	client := fake.NewClientset(pod)
+	called := false
+	handler := newKubernetesPodExecHandlerWithFactory(client, &rest.Config{}, func(
+		_ *rest.Config, _ kubernetes.Interface, _, _ string, _ corev1.PodExecOptions,
+	) (remotecommand.Executor, error) {
+		called = true
+		return nil, errors.New("must not be called")
+	})
+	request := testPodExecRequest()
+	request.PodName = pod.Name
+	request.Container = terminalContainerName
+	request.Tty = false
+	request.Command = []string{"/bin/sh", "-c", "id"}
+	response, exits, err := handler(context.Background(), request, nil, io.Discard, io.Discard, nil)
+	if err != nil || called || exits != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_FORBIDDEN ||
+		response.GetReason() != "TerminalCommandForbidden" {
 		t.Fatalf("response=%+v exits=%v called=%t err=%v", response, exits, called, err)
 	}
 }

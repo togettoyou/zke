@@ -91,8 +91,12 @@ type TerminalSessionRequest struct {
 	MemoryRequest string `protobuf:"bytes,10,opt,name=memory_request,json=memoryRequest,proto3" json:"memory_request,omitempty"`
 	CpuLimit      string `protobuf:"bytes,11,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`
 	MemoryLimit   string `protobuf:"bytes,12,opt,name=memory_limit,json=memoryLimit,proto3" json:"memory_limit,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Uses a localhost kubectl proxy sidecar and does not mount the projected
+	// ServiceAccount credential into the command container. This is required
+	// for AIOps command output, which is persisted and sent to the model.
+	CredentialProxy bool `protobuf:"varint,13,opt,name=credential_proxy,json=credentialProxy,proto3" json:"credential_proxy,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *TerminalSessionRequest) Reset() {
@@ -207,6 +211,13 @@ func (x *TerminalSessionRequest) GetMemoryLimit() string {
 		return x.MemoryLimit
 	}
 	return ""
+}
+
+func (x *TerminalSessionRequest) GetCredentialProxy() bool {
+	if x != nil {
+		return x.CredentialProxy
+	}
+	return false
 }
 
 type TerminalSessionResponse struct {
@@ -329,7 +340,7 @@ var File_api_agent_v1_terminal_proto protoreflect.FileDescriptor
 
 const file_api_agent_v1_terminal_proto_rawDesc = "" +
 	"\n" +
-	"\x1bapi/agent/v1/terminal.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\xb8\x03\n" +
+	"\x1bapi/agent/v1/terminal.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\xe3\x03\n" +
 	"\x16TerminalSessionRequest\x12;\n" +
 	"\x06action\x18\x01 \x01(\x0e2#.zke.agent.v1.TerminalSessionActionR\x06action\x12\x1d\n" +
 	"\n" +
@@ -346,7 +357,8 @@ const file_api_agent_v1_terminal_proto_rawDesc = "" +
 	"\x0ememory_request\x18\n" +
 	" \x01(\tR\rmemoryRequest\x12\x1b\n" +
 	"\tcpu_limit\x18\v \x01(\tR\bcpuLimit\x12!\n" +
-	"\fmemory_limit\x18\f \x01(\tR\vmemoryLimit\"\xea\x02\n" +
+	"\fmemory_limit\x18\f \x01(\tR\vmemoryLimit\x12)\n" +
+	"\x10credential_proxy\x18\r \x01(\bR\x0fcredentialProxy\"\xea\x02\n" +
 	"\x17TerminalSessionResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\rR\x14kubernetesStatusCode\x12\x16\n" +

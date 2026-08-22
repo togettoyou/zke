@@ -116,7 +116,7 @@ func validateTerminalSessionRequest(header *agentv1.StreamHeader, request *agent
 		}
 	case agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_DELETE:
 		if request.GetTtlSeconds() != 0 || len(request.GetPermissions()) != 0 || request.GetImage() != "" ||
-			request.GetImagePullPolicy() != "" {
+			request.GetImagePullPolicy() != "" || request.GetCredentialProxy() {
 			return ErrStreamProtocol
 		}
 	default:

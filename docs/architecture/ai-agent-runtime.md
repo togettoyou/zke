@@ -1,7 +1,7 @@
 # AIOps Agent 运行时与上下文设计
 
 > 状态：事件溯源会话、后台运行、SSE 续传与流式增量、可重建的摘要压缩、模型自主工具循环、受控资源写入及
-> 敏感工具审批等待已经实现；Cluster Terminal、并行子任务与自动化仍在规划中。
+> 敏感工具审批等待与受控 Cluster Terminal 命令已经实现；并行子任务与自动化仍在规划中。
 
 本文描述 AIOps 从“单次模型对话”演进为受控运维 Agent 的运行时边界。产品总览见
 [Phase 4 AIOps 架构](ai-phase-4.md)，用户可见行为见 [AIOps](../features/ai-assistant.md)。
@@ -69,10 +69,18 @@ sequenceDiagram
 ```
 
 工具目录由 `aitools` 组装，全部复用 ZKE 已有的读取或写入服务，因此经过 Agent 传输、权限与响应上限。资源写工具包括
-工作负载伸缩、历史读取与回滚，以及多文档 Manifest 的 DryRun、差异、Apply 和 Delete。Manifest 与回滚的预检结果由
+工作负载伸缩、历史读取与回滚，多文档 Manifest 的 DryRun、差异、Apply 和 Delete，以及 AIOps Turn 级 Cluster
+Terminal 命令会话。Manifest 与回滚的预检结果由
 Server 保存为 15 分钟有效、绑定用户和 Cluster 的不可替换快照；实际工具只接受 `preview_id`，批准后重验权限并再次
 DryRun。运行时为实际调用稳定派生幂等键，含写工具的同一步按模型顺序执行。运行时本身没有 kubeconfig，也不直连
 Kubernetes API Server。工具失败或逐目标拒绝都会形成明确结果与审计状态。
+
+终端命令固定为敏感且可能变更，必须持有 `cluster.terminal.exec`。一个 Turn 首次调用时重新计算用户当前 Cluster
+权限并投射到短生命周期 ServiceAccount，后续命令复用同一个终端 Pod 和冻结的权限快照；`kubectl exec` 由目标集群
+的 `pods/exec` RBAC 再要求 `cluster.pod.exec`。AIOps 不投射
+Secret 读写与 Agent Namespace 管理权限；命令容器也不挂载 ServiceAccount Token，而是通过同 Pod 的 localhost 凭证代理访问 API Server。
+命令、stdout 与 stderr 进入轨迹前受字节和上下文双重上限。快照权限在命令执行及模型思考的空闲期持续重验；任一权限
+被撤销就关闭本轮终端，Turn 结束、失败或取消时也立即清理，Agent TTL 负责进程异常时兜底。
 
 ## 循环边界与参数
 

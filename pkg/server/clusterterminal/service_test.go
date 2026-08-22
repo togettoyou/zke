@@ -10,13 +10,17 @@ import (
 	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 )
 
 type terminalRequesterFake struct {
 	requests  []*agentv1.TerminalSessionRequest
+	execs     []*agentv1.PodExecRequest
 	onRequest func(*agentv1.TerminalSessionRequest)
+	createErr error
 }
 
 func (fake *terminalRequesterFake) RequestTerminalSession(
@@ -29,6 +33,10 @@ func (fake *terminalRequesterFake) RequestTerminalSession(
 	if fake.onRequest != nil {
 		fake.onRequest(request)
 	}
+	if request.GetAction() == agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE &&
+		fake.createErr != nil {
+		return nil, fake.createErr
+	}
 	return &agentv1.TerminalSessionResponse{
 		Result:    agentv1.ResultCode_RESULT_CODE_OK,
 		Namespace: request.GetNamespace(),
@@ -36,6 +44,28 @@ func (fake *terminalRequesterFake) RequestTerminalSession(
 		PodUid:    "pod-uid",
 		Container: "terminal",
 	}, nil
+}
+
+func (fake *terminalRequesterFake) RequestTerminalCommand(
+	ctx context.Context,
+	_ string,
+	request *agentv1.PodExecRequest,
+	peer agentprotocol.PodExecPeer,
+) (*agentv1.PodExecResponse, *agentv1.PodExecExit, error) {
+	fake.execs = append(fake.execs, request)
+	if err := peer.Send(ctx, &agentv1.PodExecFrame{Message: &agentv1.PodExecFrame_Output{
+		Output: &agentv1.PodExecOutput{Stream: agentv1.PodExecOutputStream_POD_EXEC_OUTPUT_STREAM_STDOUT, Data: []byte("pod/api-0\n")},
+	}}); err != nil {
+		return nil, nil, err
+	}
+	if err := peer.Send(ctx, &agentv1.PodExecFrame{Message: &agentv1.PodExecFrame_Output{
+		Output: &agentv1.PodExecOutput{Stream: agentv1.PodExecOutputStream_POD_EXEC_OUTPUT_STREAM_STDERR, Data: []byte("warning\n")},
+	}}); err != nil {
+		return nil, nil, err
+	}
+	return &agentv1.PodExecResponse{
+		Result: agentv1.ResultCode_RESULT_CODE_OK, PodUid: request.GetPodUid(), Container: request.GetContainer(),
+	}, &agentv1.PodExecExit{Result: agentv1.ResultCode_RESULT_CODE_OK, ExitCode: 0, OutputBytes: 18}, nil
 }
 
 type podExecCreatorFake struct {
@@ -107,6 +137,108 @@ func TestCreateProjectsOnlyTheSuppliedPermissionSnapshot(t *testing.T) {
 	}
 	if got := service.Permissions(session.ID); len(got) != 0 {
 		t.Fatalf("permissions after Finish = %v, want empty", got)
+	}
+}
+
+func TestCommandSessionReusesOneCredentialProxyPodUntilExplicitFinish(t *testing.T) {
+	requester := &terminalRequesterFake{}
+	service := NewService(requester, &podExecCreatorFake{}, Config{
+		ResolveRuntime: fixedTerminalRuntime("terminal:test", "Never", "zke-system"),
+	})
+	permissions := []string{"cluster.terminal.exec", "cluster.read", "cluster.pod.exec"}
+	session, err := service.CreateCommandSession(context.Background(), CommandSessionInput{
+		UserID: "user", ClusterID: "cluster", IdempotencyKey: "aiops-call",
+		Permissions: permissions,
+	})
+	if err != nil {
+		t.Fatalf("CreateCommandSession() error = %v", err)
+	}
+	for _, command := range []string{"kubectl get pods", "busybox id"} {
+		result, executeErr := service.ExecuteCommand(context.Background(), CommandInput{
+			Session: session, Command: command,
+		})
+		if executeErr != nil {
+			t.Fatalf("ExecuteCommand(%q) error = %v", command, executeErr)
+		}
+		if result.ExitCode != 0 || result.Stdout != "pod/api-0\n" || result.Stderr != "warning\n" {
+			t.Fatalf("ExecuteCommand(%q) result = %+v", command, result)
+		}
+	}
+	if len(requester.requests) != 1 ||
+		requester.requests[0].GetAction() != agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE ||
+		!requester.requests[0].GetCredentialProxy() ||
+		!slices.Equal(requester.requests[0].GetPermissions(), permissions) {
+		t.Fatalf("terminal lifecycle requests = %+v", requester.requests)
+	}
+	if len(requester.execs) != 2 || requester.execs[0].GetTty() || requester.execs[1].GetTty() ||
+		!slices.Equal(requester.execs[0].GetCommand(), []string{"/bin/sh", "-c", "kubectl get pods"}) ||
+		!slices.Equal(requester.execs[1].GetCommand(), []string{"/bin/sh", "-c", "busybox id"}) {
+		t.Fatalf("terminal command requests = %+v", requester.execs)
+	}
+	if err := service.FinishCommandSession(context.Background(), session); err != nil {
+		t.Fatalf("FinishCommandSession() error = %v", err)
+	}
+	if len(requester.requests) != 2 ||
+		requester.requests[1].GetAction() != agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_DELETE {
+		t.Fatalf("terminal lifecycle after finish = %+v", requester.requests)
+	}
+}
+
+func TestCreateCommandSessionRequiresTerminalPermissionInProjectedSnapshot(t *testing.T) {
+	requester := &terminalRequesterFake{}
+	service := NewService(requester, &podExecCreatorFake{}, Config{
+		ResolveRuntime: fixedTerminalRuntime("terminal:test", "Never", "zke-system"),
+	})
+	_, err := service.CreateCommandSession(context.Background(), CommandSessionInput{
+		UserID: "user", ClusterID: "cluster", IdempotencyKey: "aiops-call",
+		Permissions: []string{"cluster.read"},
+	})
+	if !errors.Is(err, ErrInvalidCommand) || len(requester.requests) != 0 {
+		t.Fatalf("CreateCommandSession() error = %v requests=%d, want local rejection", err, len(requester.requests))
+	}
+}
+
+func TestCreateCommandSessionCancellationCleansAgentResources(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	requester := &terminalRequesterFake{}
+	requester.onRequest = func(request *agentv1.TerminalSessionRequest) {
+		if request.GetAction() == agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE {
+			cancel()
+		}
+	}
+	service := NewService(requester, &podExecCreatorFake{}, Config{
+		ResolveRuntime: fixedTerminalRuntime("terminal:test", "Never", "zke-system"),
+	})
+	_, err := service.CreateCommandSession(ctx, CommandSessionInput{
+		UserID: "user", ClusterID: "cluster", IdempotencyKey: "aiops-turn",
+		Permissions: []string{"cluster.terminal.exec"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("CreateCommandSession() error = %v, want context cancellation", err)
+	}
+	if len(requester.requests) != 2 ||
+		requester.requests[1].GetAction() != agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_DELETE {
+		t.Fatalf("requests = %+v, want create followed by detached delete", requester.requests)
+	}
+}
+
+func TestCreateCommandSessionLostResponseCompensatesByDeterministicDelete(t *testing.T) {
+	requester := &terminalRequesterFake{createErr: agentconn.ErrAgentNotConnected}
+	service := NewService(requester, &podExecCreatorFake{}, Config{
+		ResolveRuntime: fixedTerminalRuntime("terminal:test", "Never", "zke-system"),
+	})
+	_, err := service.CreateCommandSession(context.Background(), CommandSessionInput{
+		UserID: "user", ClusterID: "cluster", IdempotencyKey: "aiops-turn",
+		Permissions: []string{"cluster.terminal.exec"},
+	})
+	if !errors.Is(err, ErrAgentNotConnected) {
+		t.Fatalf("CreateCommandSession() error = %v, want ErrAgentNotConnected", err)
+	}
+	if len(requester.requests) != 2 ||
+		requester.requests[0].GetAction() != agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE ||
+		requester.requests[1].GetAction() != agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_DELETE ||
+		requester.requests[0].GetSessionId() != requester.requests[1].GetSessionId() {
+		t.Fatalf("requests = %+v, want CREATE followed by same-session DELETE", requester.requests)
 	}
 }
 
@@ -204,6 +336,11 @@ func TestTerminalTimeoutsRemainClassifiedForHTTP(t *testing.T) {
 	})
 	if !errors.Is(responseErr, ErrUpstreamTimeout) {
 		t.Fatalf("terminalResponseError() = %v, want ErrUpstreamTimeout", responseErr)
+	}
+	if capabilityErr := terminalRequestError(agentconn.ErrTerminalCommandCapabilityMissing); !errors.Is(
+		capabilityErr, ErrAgentUnsupported,
+	) {
+		t.Fatalf("terminalRequestError(command capability) = %v, want ErrAgentUnsupported", capabilityErr)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"net/url"
 	"sync/atomic"
@@ -17,6 +18,30 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 	"github.com/togettoyou/zke/pkg/shared/requestctx"
 )
+
+func TestCredentialProxyTerminalSessionRequiresCommandCapability(t *testing.T) {
+	t.Parallel()
+	terminalOnly := map[string]struct{}{
+		agentprotocol.CapabilityTerminalSessionV1: {},
+	}
+	if err := terminalSessionCapabilityError(terminalOnly, &agentv1.TerminalSessionRequest{}); err != nil {
+		t.Fatalf("interactive terminal capability error = %v", err)
+	}
+	if err := terminalSessionCapabilityError(terminalOnly, &agentv1.TerminalSessionRequest{
+		CredentialProxy: true,
+	}); !errors.Is(err, ErrTerminalCommandCapabilityMissing) {
+		t.Fatalf("credential proxy capability error = %v, want command capability missing", err)
+	}
+	terminalAndCommand := map[string]struct{}{
+		agentprotocol.CapabilityTerminalSessionV1: {},
+		agentprotocol.CapabilityTerminalCommandV1: {},
+	}
+	if err := terminalSessionCapabilityError(terminalAndCommand, &agentv1.TerminalSessionRequest{
+		CredentialProxy: true,
+	}); err != nil {
+		t.Fatalf("fully capable Agent error = %v", err)
+	}
+}
 
 func TestSessionDrainWaitsForInFlightResources(t *testing.T) {
 	t.Parallel()

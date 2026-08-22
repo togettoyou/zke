@@ -54,6 +54,11 @@ type ToolSpec struct {
 // ToolInvocation is one authorized call, already fixed to the session Cluster.
 type ToolInvocation struct {
 	Name string
+	// TurnID is the runtime-owned identity of the current AIOps turn. It is
+	// stable across every step in that turn, opaque outside the Server and never
+	// accepted from model arguments. Turn-scoped tools use it to reuse bounded
+	// resources without allowing one conversation turn to reach another.
+	TurnID string
 	// ClusterID is the session workspace. The runtime sets it; a tool may not
 	// take a target cluster from the model.
 	ClusterID string
@@ -106,6 +111,14 @@ type ToolAuditTarget struct {
 type ToolSet interface {
 	Specs() []ToolSpec
 	Invoke(context.Context, ToolInvocation) (ToolResult, error)
+}
+
+// TurnScopedToolSet owns resources that may be reused by multiple calls in one
+// AIOps turn. The runtime calls CloseTurn exactly once when that turn ends,
+// including cancellation and failure paths. Implementations must make cleanup
+// idempotent and must not rely on the already-cancelled turn context.
+type TurnScopedToolSet interface {
+	CloseTurn(context.Context, string) error
 }
 
 // requiresApproval reports whether a call has to stop for a person under the

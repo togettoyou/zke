@@ -2,8 +2,6 @@
 
 这里收录 ZKE 的产品、架构、功能、安全与开发规划文档。
 
-> ZKE 当前处于开发预览阶段。文档同时描述已经实现的行为与后续规划；具体状态以功能文档和 Roadmap 为准。当前版本不适用于生产环境，产品范围与技术选型仍可能调整。
-
 ## 产品
 
 - [产品愿景与设计原则](product/vision.md)
@@ -19,8 +17,8 @@
 - [Agent 注册与连接](architecture/agent-enrollment-and-connection.md)
 - [Phase 2 Server–Agent 协议设计](architecture/agent-protocol-phase-2.md)
 - [Phase 3 可观测性架构设计](architecture/observability-phase-3.md)
-- [Phase 4 AIOps：架构设计](architecture/ai-phase-4.md)（开发预览）
-- [AIOps Agent 运行时与上下文设计](architecture/ai-agent-runtime.md)（开发预览）
+- [Phase 4 AIOps：架构设计](architecture/ai-phase-4.md)
+- [AIOps Agent 运行时与上下文设计](architecture/ai-agent-runtime.md)
 - [应用作用域与资源模型](architecture/resource-model.md)
 - [技术基础设计](architecture/technical-foundation.md)
 
@@ -31,7 +29,7 @@
 - [终端](features/terminal.md)
 - [平台配置](features/platform-settings.md)
 - [可观测性平台](features/observability.md)
-- [AIOps](features/ai-assistant.md)（开发预览）
+- [AIOps](features/ai-assistant.md)
 
 ## 安全
 

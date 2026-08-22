@@ -177,6 +177,7 @@ resource-write.v1
 resource-watch.v1
 pod-logs.v1
 pod-exec.v1
+terminal-command.v1
 pod-port-forward.v1
 terminal-session.v1
 metrics-ingest.v1
@@ -186,6 +187,12 @@ metrics-collector.v1
 未声明 `resource.v1` 的旧 Agent 仍可维持 Phase 1 Control Stream，Server 不得向其打开 Resource Stream；
 `resource-watch.v1` 和其他独立能力也按相同规则逐项协商。
 能力协商用于增量上线功能，不能替代 `protocol_version` 的兼容性检查。
+
+`terminal-command.v1` 复用 Pod Exec Stream 的帧与输出上限，但要求 `PodExecRequest.command` 非空且 `tty=false`，并且
+Agent 只允许它命中同时带 Terminal 会话标签和 credential-proxy 专用标签的 `terminal` 容器，普通挂载 Token 的交互式
+Terminal Pod 也会拒绝。它与 `pod-exec.v1` 独立协商；credential-proxy 会话在发送创建请求前也必须确认该能力，避免新
+Server 把新字段或命令发给只理解交互式 Shell 的旧 Agent。版本不匹配时必须明确返回能力缺失，不能创建降级 Pod 或
+回退成一段交互 Shell。
 
 ## 6. 通用 Kubernetes 资源协议
 

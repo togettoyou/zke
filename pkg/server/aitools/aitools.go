@@ -25,6 +25,7 @@ import (
 
 	"github.com/togettoyou/zke/pkg/server/airuntime"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
+	"github.com/togettoyou/zke/pkg/server/clusterterminal"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
 	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
@@ -49,6 +50,7 @@ const (
 	DefaultResultThresholdRunes = 8192
 	DefaultResultHeadRunes      = 4096
 	DefaultResultTailRunes      = 1024
+	DefaultTerminalRevalidate   = 15 * time.Second
 )
 
 // pruneMarker stands in for every removed middle.
@@ -65,6 +67,7 @@ type Config struct {
 	ManifestPreviewTTL   time.Duration
 	MaxManifestBytes     int
 	MaxManifestDocuments int
+	TerminalRevalidate   time.Duration
 }
 
 func (config Config) normalized() Config {
@@ -85,6 +88,9 @@ func (config Config) normalized() Config {
 	}
 	if config.MaxManifestDocuments <= 0 {
 		config.MaxManifestDocuments = 64
+	}
+	if config.TerminalRevalidate <= 0 {
+		config.TerminalRevalidate = DefaultTerminalRevalidate
 	}
 	// The emitted answer has to be smaller than the threshold, or pruning would
 	// grow a result that was already inside the budget.
@@ -165,6 +171,16 @@ type ClusterScopeResolver interface {
 	AuthorizeResolvedCluster(context.Context, string, rbac.Permission, rbac.ResolvedScope) error
 }
 
+type ClusterPermissionResolver interface {
+	AuthorizeCluster(context.Context, string, rbac.Permission, string) (rbac.ResolvedScope, error)
+}
+
+type TerminalCommander interface {
+	CreateCommandSession(context.Context, clusterterminal.CommandSessionInput) (clusterterminal.CommandSession, error)
+	ExecuteCommand(context.Context, clusterterminal.CommandInput) (clusterterminal.CommandResult, error)
+	FinishCommandSession(context.Context, clusterterminal.CommandSession) error
+}
+
 type ManifestWriter interface {
 	Execute(context.Context, kubernetesmanifest.ResourceAccess, kubernetesmanifest.Input) (kubernetesmanifest.Result, error)
 }
@@ -182,6 +198,8 @@ type Dependencies struct {
 	Scopes         ClusterScopeResolver
 	Manifests      ManifestWriter
 	ManifestAccess ManifestAccessFactory
+	Terminal       TerminalCommander
+	Permissions    ClusterPermissionResolver
 }
 
 // Catalogue is the ToolSet the runtime advertises.
@@ -199,6 +217,7 @@ type Catalogue struct {
 	catalog   map[string]catalogEntry
 	previews  map[string]*writePreview
 	rollbacks map[string]*rollbackPreview
+	terminals map[string]*terminalTurn
 }
 
 type catalogEntry struct {
@@ -212,6 +231,7 @@ func New(dependencies Dependencies, config Config) *Catalogue {
 		catalog:   make(map[string]catalogEntry),
 		previews:  make(map[string]*writePreview),
 		rollbacks: make(map[string]*rollbackPreview),
+		terminals: make(map[string]*terminalTurn),
 	}
 	catalogue.specs = catalogue.build()
 	return catalogue
@@ -259,6 +279,8 @@ func (catalogue *Catalogue) Invoke(
 		return catalogue.previewWorkloadRollback(ctx, invocation)
 	case toolRollbackWorkload:
 		return catalogue.rollbackWorkload(ctx, invocation)
+	case toolRunTerminalCommand:
+		return catalogue.runTerminalCommand(ctx, invocation)
 	default:
 		return airuntime.ToolResult{}, ErrUnknownTool
 	}
@@ -283,10 +305,11 @@ const (
 	toolListWorkloadRevisions   = "list_workload_revisions"
 	toolPreviewWorkloadRollback = "preview_workload_rollback"
 	toolRollbackWorkload        = "rollback_workload"
+	toolRunTerminalCommand      = "run_terminal_command"
 )
 
 func (catalogue *Catalogue) build() []airuntime.ToolSpec {
-	specs := make([]airuntime.ToolSpec, 0, 18)
+	specs := make([]airuntime.ToolSpec, 0, 19)
 	if catalogue.dependencies.Overview != nil {
 		specs = append(specs, airuntime.ToolSpec{
 			Name: toolClusterOverview,
@@ -532,6 +555,22 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 				SensitiveWhen:          catalogue.previewSensitive,
 			},
 		)
+	}
+	if catalogue.dependencies.Terminal != nil && catalogue.dependencies.Permissions != nil {
+		specs = append(specs, airuntime.ToolSpec{
+			Name: toolRunTerminalCommand,
+			Description: "在目标 Cluster 的本轮隔离终端中执行一条非交互 Shell 命令；同一 AIOps Turn 的后续命令复用该终端，Turn 结束自动清理。" +
+				"可使用 kubectl、BusyBox、curl 和 jq；kubectl 只能执行当前用户权限投射后允许的操作，" +
+				"kubectl exec 还必须持有 cluster.pod.exec。命令与有界输出会进入 AIOps 轨迹和模型上下文，" +
+				"不得在命令中放入 Secret、Token、密码或其他凭证明文。优先用于取证；可能变更状态的命令必须自身幂等，" +
+				"响应不确定时不得盲目重试。AIOps 不投射 Secret 或 Agent Namespace 管理权限。",
+			Schema: objectSchema(map[string]any{
+				"command": stringProperty("要交给 /bin/sh -c 的单条命令；不得包含任何凭证明文。"),
+			}, []string{"command"}),
+			Permissions: []rbac.Permission{rbac.PermissionClusterTerminalExec},
+			Sensitive:   true,
+			Mutating:    true,
+		})
 	}
 	return specs
 }

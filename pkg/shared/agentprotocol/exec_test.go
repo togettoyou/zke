@@ -38,6 +38,32 @@ func TestPodExecFrameWriterStopsExactlyAtOutputLimit(t *testing.T) {
 	}
 }
 
+func TestPodExecRequestSeparatesInteractiveShellFromBoundedCommand(t *testing.T) {
+	header := &agentv1.StreamHeader{
+		ProtocolVersion: ProtocolVersion,
+		Kind:            agentv1.StreamKind_STREAM_KIND_POD_EXEC,
+		RequestId:       "00000000-0000-4000-8000-000000000031",
+		TimeoutMillis:   1000,
+	}
+	request := &agentv1.PodExecRequest{
+		Namespace: "zke-system", PodName: "zke-terminal-test", PodUid: "pod-uid", Container: "terminal",
+		Tty: false, Columns: 80, Rows: 24, MaxInputBytes: 1, MaxOutputBytes: 1024,
+		Command: []string{"/bin/sh", "-c", "kubectl get pods"},
+	}
+	if err := validatePodExecRequest(header, request, 1024, 1024); err != nil {
+		t.Fatalf("command request rejected: %v", err)
+	}
+	request.Command = nil
+	if err := validatePodExecRequest(header, request, 1024, 1024); !errors.Is(err, ErrStreamProtocol) {
+		t.Fatalf("non-TTY request without command error = %v, want protocol error", err)
+	}
+	request.Tty = true
+	request.Command = []string{"/bin/sh", "-c", "id"}
+	if err := validatePodExecRequest(header, request, 1024, 1024); !errors.Is(err, ErrStreamProtocol) {
+		t.Fatalf("TTY command request error = %v, want protocol error", err)
+	}
+}
+
 func TestPodExecFrameWriterSharesOutputLimitAcrossConcurrentStreams(t *testing.T) {
 	t.Parallel()
 

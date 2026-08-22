@@ -19,6 +19,8 @@ const (
 	DefaultMaxPodExecInputBytes  uint64 = 16 * 1024 * 1024
 	DefaultMaxPodExecOutputBytes uint64 = 32 * 1024 * 1024
 	MaxPodExecDimension          uint32 = 4096
+	MaxPodExecCommandArguments          = 16
+	MaxPodExecCommandBytes              = 32 * 1024
 	podExecChunkBytes                   = 32 * 1024
 )
 
@@ -324,16 +326,36 @@ func validatePodExecRequest(
 	maxInputBytes uint64,
 	maxOutputBytes uint64,
 ) error {
+	command := request.GetCommand()
 	if request == nil || header.GetIdempotencyKey() != "" ||
 		len(k8svalidation.IsDNS1123Label(request.GetNamespace())) != 0 ||
 		len(k8svalidation.IsDNS1123Subdomain(request.GetPodName())) != 0 ||
 		len(k8svalidation.IsDNS1123Label(request.GetContainer())) != 0 ||
 		request.GetPodUid() == "" || len(request.GetPodUid()) > maxPodUIDLength ||
 		strings.TrimSpace(request.GetPodUid()) != request.GetPodUid() ||
-		!request.GetTty() || !validPodExecSize(request.GetColumns(), request.GetRows()) ||
+		!validPodExecSize(request.GetColumns(), request.GetRows()) ||
 		request.GetMaxInputBytes() == 0 || request.GetMaxInputBytes() > maxInputBytes ||
 		request.GetMaxOutputBytes() == 0 || request.GetMaxOutputBytes() > maxOutputBytes {
 		return ErrStreamProtocol
+	}
+	if len(command) == 0 {
+		if !request.GetTty() {
+			return ErrStreamProtocol
+		}
+		return nil
+	}
+	if request.GetTty() || len(command) > MaxPodExecCommandArguments {
+		return ErrStreamProtocol
+	}
+	total := 0
+	for _, argument := range command {
+		if argument == "" || strings.IndexByte(argument, 0) >= 0 {
+			return ErrStreamProtocol
+		}
+		total += len(argument)
+		if total > MaxPodExecCommandBytes {
+			return ErrStreamProtocol
+		}
 	}
 	return nil
 }

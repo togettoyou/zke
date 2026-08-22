@@ -133,9 +133,9 @@ type AIOpsConfig struct {
 	MaxSteps     int `yaml:"max_steps"`
 	MaxToolCalls int `yaml:"max_tool_calls"`
 	// MaxParallelToolCalls is how many of one step's reads run at once. Every
-	// tool in the catalogue is a read, so they are safe together; the bound is
-	// what stops one step from opening a Stream per object to an Agent that
-	// also serves the rest of the platform.
+	// mutating tool, including a terminal command, makes its step run in model
+	// order instead; the bound stops a read-only step from opening a Stream per
+	// object to an Agent that also serves the rest of the platform.
 	MaxParallelToolCalls int `yaml:"max_parallel_tool_calls"`
 	// RepeatedCallLimit is the convergence guard: the same tool with the same
 	// arguments beyond this is answered with a note rather than another read.

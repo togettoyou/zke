@@ -94,10 +94,26 @@ func newKubernetesPodExecHandlerWithFactory(
 			), nil, nil
 		}
 
+		command := request.GetCommand()
+		interactive := len(command) == 0
+		if interactive {
+			command = []string{"/bin/sh", "-c", podExecShellSelector}
+		} else if request.GetTty() || request.GetContainer() != terminalContainerName ||
+			pod.Labels[terminalManagedLabel] == "" ||
+			pod.Labels[terminalCredentialProxyLabel] != "true" || len(command) != 3 ||
+			command[0] != "/bin/sh" || command[1] != "-c" {
+			return podExecErrorResponse(
+				agentv1.ResultCode_RESULT_CODE_FORBIDDEN,
+				http.StatusForbidden,
+				"TerminalCommandForbidden",
+				"non-interactive commands are restricted to credential-proxy ZKE Cluster Terminal Pods",
+			), nil, nil
+		}
+
 		executor, err := factory(config, client, request.GetNamespace(), request.GetPodName(), corev1.PodExecOptions{
 			Container: request.GetContainer(),
-			Command:   []string{"/bin/sh", "-c", podExecShellSelector},
-			Stdin:     true,
+			Command:   command,
+			Stdin:     interactive,
 			Stdout:    true,
 			Stderr:    !request.GetTty(),
 			TTY:       request.GetTty(),
@@ -113,15 +129,25 @@ func newKubernetesPodExecHandlerWithFactory(
 
 		var outputBytes atomic.Uint64
 		countedStdout := &podExecCountingWriter{writer: stdout, bytes: &outputBytes}
+		var countedStderr io.Writer
+		if !request.GetTty() {
+			countedStderr = &podExecCountingWriter{writer: stderr, bytes: &outputBytes}
+		}
 		exits := make(chan *agentv1.PodExecExit, 1)
 		go func() {
 			defer close(exits)
+			var execInput io.Reader
+			var sizeQueue remotecommand.TerminalSizeQueue
+			if interactive {
+				execInput = stdin
+				sizeQueue = podExecRemoteSizeQueue{source: sizes}
+			}
 			err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{
-				Stdin:             stdin,
+				Stdin:             execInput,
 				Stdout:            countedStdout,
-				Stderr:            nil,
-				Tty:               true,
-				TerminalSizeQueue: podExecRemoteSizeQueue{source: sizes},
+				Stderr:            countedStderr,
+				Tty:               request.GetTty(),
+				TerminalSizeQueue: sizeQueue,
 			})
 			exits <- podExecExit(err, outputBytes.Load())
 		}()

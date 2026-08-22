@@ -16,6 +16,11 @@ message PodExecRequest {
   uint32 rows = 7;
   uint64 max_output_bytes = 8;
   uint64 max_input_bytes = 9;
+  // Empty keeps the interactive shell behavior used by Web Terminal. A
+  // non-empty argv is only accepted for a ZKE-managed credential-proxy
+  // Cluster Terminal Pod and runs without a TTY; this is the bounded command
+  // path used by AIOps.
+  repeated string command = 10;
 }
 
 message PodExecResponse {

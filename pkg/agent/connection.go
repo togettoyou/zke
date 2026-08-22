@@ -189,6 +189,9 @@ func runConnection(
 	}
 	if services.terminalSessionHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityTerminalSessionV1)
+		if services.podExecHandler != nil {
+			capabilities = append(capabilities, agentprotocol.CapabilityTerminalCommandV1)
+		}
 	}
 	if services.metricsForwarder != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityMetricsIngestV1)

@@ -358,6 +358,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		agentConnectionManager,
 		podExecService,
 		clusterterminal.Config{
+			CommandMaxOutputBytes: min(
+				uint64(cfg.AIOps.ToolResult.ThresholdChars*4),
+				cfg.AgentListener.MaxPodExecOutputBytes,
+			),
 			ResolveRuntime: func(ctx context.Context, clusterID string) (clusterterminal.RuntimeConfig, error) {
 				settings, _, err := platformSettingsService.Get(ctx)
 				if err != nil {
@@ -434,6 +438,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		ManifestAccess: func(grant kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess {
 			return kubernetesresource.NewManifestAccess(kubernetesResourceService, grant)
 		},
+		Terminal:    clusterTerminalService,
+		Permissions: rbacService,
 		// A deployment without multi-Cluster metrics has no metrics service at
 		// all. Leaving the field nil removes those tools from the catalogue,
 		// rather than advertising a tool that fails on every call.
@@ -443,6 +449,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		ResultHeadRunes:      cfg.AIOps.ToolResult.HeadChars,
 		ResultTailRunes:      cfg.AIOps.ToolResult.TailChars,
 		MaxManifestDocuments: maxManifestDocuments,
+		TerminalRevalidate:   cfg.PodAccess.RevalidateInterval,
 	})
 	aiRuntimeService := airuntime.New(
 		runContext,

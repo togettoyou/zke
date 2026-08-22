@@ -311,9 +311,9 @@ func chatCompletionRequestFor(
 		StreamOptions: chatStreamOptions{IncludeUsage: true},
 	}
 	for _, tool := range input.Tools {
-		request.Tools = append(request.Tools, chatTool{Type: "function", Function: chatToolFunction{
-			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
-		}})
+		request.Tools = append(request.Tools, chatTool{
+			Type: "function", Function: chatToolFunction(tool),
+		})
 	}
 	return request
 }

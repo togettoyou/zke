@@ -99,7 +99,7 @@ Docker Compose、Helm 等其他部署方式，以及完整的配置、升级与�
 | 多集群指标 | 集群内三组件一体采集、经 Agent 回传、六个维度的用量与利用率、申请与限制、CPU 限流、节点磁盘与网络、持久卷、容器状态原因、每集群摄取预算（默认启用） |
 | 权限模型 | Tenant、Project、RBAC 与细粒度操作权限 |
 | 安全与审计 | 敏感操作确认、DryRun 差异、并发身份保护、审计日志 |
-| AIOps（开发预览） | 固定 Cluster 的自主取证与受控资源写入、Manifest DryRun/差异/Apply/Delete、工作负载伸缩与回滚、审批、轨迹和证据深链 |
+| AIOps | 固定 Cluster 的自主取证、受控资源写入与 Cluster Terminal 命令，Manifest DryRun/差异/Apply/Delete、工作负载伸缩与回滚、审批、轨迹和证据深链 |
 
 各项能力的具体边界和已知限制以 [Roadmap](docs/roadmap.md) 与功能文档为准。
 
@@ -121,16 +121,16 @@ Docker Compose、Helm 等其他部署方式，以及完整的配置、升级与�
 
 - **已实现主要链路：** 平台基础、集群接入、容器服务，以及多集群指标的采集、摄取、查询与可视化。
 - **规划中：** 可观测性的其余部分，包括日志、告警与集群间资源对比。
-- **开发预览：** AIOps 已提供跟随桌面 Tenant/Project、按 Cluster 隔离的会话，以及模型自主工具循环、敏感工具审批、
+- **AIOps：** 已提供跟随桌面 Tenant/Project、按 Cluster 隔离的会话，以及模型自主工具循环、敏感工具审批、
   流式输出、可重建长上下文压缩与完整轨迹；资源写入已支持工作负载伸缩与回滚，以及多文档 Manifest 的 DryRun、
-  有界差异、Apply 和 Delete。受控 Cluster Terminal 仍在规划中。
+  有界差异、Apply 和 Delete；受控 Cluster Terminal 命令通过 AIOps Turn 级权限投影会话执行。
 
 规划不代表发布时间或交付承诺。完整规划见 [Roadmap](docs/roadmap.md)；产品、架构、功能与安全设计统一收录在
 [ZKE 文档导航](docs/README.md)。
 
 ## 参与贡献
 
-ZKE 仍在快速开发中，欢迎通过 [Issues](https://github.com/togettoyou/zke/issues) 反馈问题和需求，
+欢迎通过 [Issues](https://github.com/togettoyou/zke/issues) 反馈问题和需求，
 或直接提交 Pull Request。提交前请阅读 [ZKE 开发协作指南](AGENTS.md)。
 
 如果 ZKE 对你有帮助，欢迎点一个 Star，这对项目很有意义。

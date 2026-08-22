@@ -289,6 +289,22 @@ type scriptedTools struct {
 	err     error
 	result  *ToolResult
 	invoked []ToolInvocation
+	closed  []string
+}
+
+type blockingCloseTools struct {
+	*scriptedTools
+	started chan struct{}
+	release chan struct{}
+}
+
+func (tools *blockingCloseTools) CloseTurn(_ context.Context, turnID string) error {
+	tools.mu.Lock()
+	tools.closed = append(tools.closed, turnID)
+	tools.mu.Unlock()
+	close(tools.started)
+	<-tools.release
+	return nil
 }
 
 func (tools *scriptedTools) Specs() []ToolSpec { return []ToolSpec{tools.spec} }
@@ -314,6 +330,13 @@ func (tools *scriptedTools) count() int {
 	tools.mu.Lock()
 	defer tools.mu.Unlock()
 	return len(tools.invoked)
+}
+
+func (tools *scriptedTools) CloseTurn(_ context.Context, turnID string) error {
+	tools.mu.Lock()
+	defer tools.mu.Unlock()
+	tools.closed = append(tools.closed, turnID)
+	return nil
 }
 
 // recordingAuditor keeps what the runtime tried to record, so a test can hold
@@ -722,6 +745,44 @@ func TestMutatingToolReceivesAValidStableIdempotencyKey(t *testing.T) {
 	if key != want {
 		t.Fatalf("idempotency key = %q, want stable %q", key, want)
 	}
+	wantTurnID := toolTurnID(turnJob{sessionID: testSessionID, turn: 1})
+	if tools.invoked[0].TurnID != wantTurnID {
+		t.Fatalf("TurnID = %q, want %q", tools.invoked[0].TurnID, wantTurnID)
+	}
+	if len(tools.closed) != 1 || tools.closed[0] != wantTurnID {
+		t.Fatalf("closed Turns = %v, want [%s]", tools.closed, wantTurnID)
+	}
+}
+
+func TestTurnRemainsRunningUntilToolResourcesAreClosed(t *testing.T) {
+	sessions := &memorySessions{session: idleSession(aisession.ApprovalFull)}
+	model := &scriptedModel{steps: []aimodel.Completion{answering("完成。")}}
+	tools := &blockingCloseTools{
+		scriptedTools: &scriptedTools{spec: mutatingTool(), text: "{}"},
+		started:       make(chan struct{}),
+		release:       make(chan struct{}),
+	}
+	runtime := New(context.Background(), sessions, model, allowAuthorizer{},
+		activeUsers{true}, Config{Tools: tools})
+	if _, err := runtime.Start(context.Background(), StartInput{
+		SessionID: testSessionID, UserID: testUserID, Text: "检查一下",
+		Now: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-tools.started:
+	case <-time.After(time.Second):
+		t.Fatal("Turn tool cleanup did not start")
+	}
+	if _, err := runtime.Start(context.Background(), StartInput{
+		SessionID: testSessionID, UserID: testUserID, Text: "再检查一次",
+		Now: time.Now().UTC(),
+	}); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Start() during tool cleanup error = %v, want ErrAlreadyRunning", err)
+	}
+	close(tools.release)
+	runtime.Wait()
 }
 
 func TestMutatingApprovalNamesTheResolvedResourceTarget(t *testing.T) {

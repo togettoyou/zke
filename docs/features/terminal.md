@@ -20,6 +20,19 @@ Namespace 为 `default`。
 浏览器仍通过 Server 和目标 Cluster Agent 的 `pod-exec.v1` QUIC Stream 接入 Terminal Pod。会话关闭、达到最长
 时长或权限重验失败后，Agent 删除上述资源；Agent 内的清理任务也会回收 Server 异常退出后遗留的过期会话。
 
+AIOps 的 `run_terminal_command` 复用这些短生命周期资源和权限映射，但使用独立协商的 `terminal-command.v1` 能力
+执行非交互命令。一个 AIOps Turn 的首次命令创建一个终端 Pod 并冻结当前 Cluster 权限快照，后续命令复用它，不再
+逐条创建 Pod；例如只有快照包含 `cluster.pod.exec` 时，命令里的 `kubectl exec` 才能通过 Kubernetes RBAC。每次工具
+调用仍重新检查 `cluster.terminal.exec`，完整快照在命令之间的空闲期也周期重验；任一权限撤销都会终止正在执行的命令、
+删除 Pod 与临时 RBAC，且本 Turn 不会重新创建终端。Turn 正常结束、失败或取消走同一清理路径，Agent TTL 负责 Server
+进程异常时兜底。会话期间新授予的权限不会扩张冻结快照，要到下一 Turn 才生效。由于命令和输出会进入 AIOps 轨迹与
+模型上下文，AIOps 不投射 Secret 或 Agent Namespace 管理权限，并使用 localhost 凭证代理让命令容器本身不接触
+ServiceAccount Token。
+
+复用的是 Pod，不是同一个交互式 Shell：每次调用仍启动独立的 `/bin/sh -c`，因此 `cd` 和 `export` 不会自动传给下一条
+命令；写入 `/workspace` 或 `/tmp` 的文件以及仍在运行的子进程会保留到本 Turn 清理。权限监控覆盖这些后台进程的存续期，
+Turn 清理通过删除 Pod 终止全部剩余进程。
+
 ## 权限投影
 
 打开入口要求独立的 `cluster.terminal.exec`。该权限可以像现有权限一样授予自定义角色，但它本身不授予任何

@@ -1,11 +1,13 @@
 package clusterterminal
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/agentconn"
 	"github.com/togettoyou/zke/pkg/server/podexec"
 	"github.com/togettoyou/zke/pkg/server/store"
+	"github.com/togettoyou/zke/pkg/shared/agentprotocol"
 )
 
 var (
@@ -25,6 +28,7 @@ var (
 	ErrClusterAccessDenied = errors.New("Kubernetes denied the Cluster terminal session")
 	ErrUpstreamTimeout     = errors.New("Kubernetes Cluster terminal session timed out")
 	ErrUpstreamFailure     = errors.New("Kubernetes Cluster terminal session failed")
+	ErrInvalidCommand      = errors.New("invalid Cluster terminal command")
 )
 
 type Requester interface {
@@ -35,8 +39,22 @@ type PodExecCreator interface {
 	Create(podexec.CreateInput) (podexec.Session, error)
 }
 
+type CommandRequester interface {
+	RequestTerminalCommand(
+		context.Context,
+		string,
+		*agentv1.PodExecRequest,
+		agentprotocol.PodExecPeer,
+	) (*agentv1.PodExecResponse, *agentv1.PodExecExit, error)
+}
+
 type Config struct {
 	ResolveRuntime func(context.Context, string) (RuntimeConfig, error)
+	// CommandMaxOutputBytes bounds raw stdout and stderr before they enter the
+	// AIOps trajectory and model context. The catalogue applies its own rune
+	// truncation afterwards; this earlier byte bound protects transport and
+	// memory even for binary output.
+	CommandMaxOutputBytes uint64
 }
 
 // RuntimeConfig is resolved once per session creation. The workload settings
@@ -61,6 +79,37 @@ type CreateInput struct {
 	Now                                              time.Time
 }
 
+type CommandSessionInput struct {
+	UserID, ClusterID, IdempotencyKey string
+	Permissions                       []string
+}
+
+// CommandSession identifies one Agent-owned terminal Pod that is private to a
+// single AIOps turn. It contains no Kubernetes credential; the command
+// container reaches the API only through the Pod-local credential proxy.
+type CommandSession struct {
+	TerminalSessionID string
+	ClusterID         string
+	Namespace         string
+	PodName           string
+	PodUID            string
+	Container         string
+	UserID            string
+}
+
+type CommandInput struct {
+	Session CommandSession
+	Command string
+}
+
+type CommandResult struct {
+	Stdout             string
+	Stderr             string
+	ExitCode           int32
+	OutputBytes        uint64
+	OutputLimitReached bool
+}
+
 type Lifecycle struct {
 	TerminalSessionID string
 	ClusterID         string
@@ -81,6 +130,7 @@ const terminalCleanupTimeout = 15 * time.Second
 
 type Service struct {
 	requester   Requester
+	commands    CommandRequester
 	podExec     PodExecCreator
 	config      Config
 	mutex       sync.Mutex
@@ -89,9 +139,234 @@ type Service struct {
 }
 
 func NewService(requester Requester, podExec PodExecCreator, config Config) *Service {
+	if config.CommandMaxOutputBytes == 0 {
+		config.CommandMaxOutputBytes = 32 * 1024
+	}
+	commands, _ := requester.(CommandRequester)
 	return &Service{
-		requester: requester, podExec: podExec, config: config,
+		requester: requester, commands: commands, podExec: podExec, config: config,
 		lifecycles: make(map[string]Lifecycle), idempotency: make(map[string]*idempotencyRecord),
+	}
+}
+
+// CreateCommandSession creates one permission-projected terminal Pod for an
+// AIOps turn. Commands never receive a kubeconfig or ServiceAccount token:
+// kubectl goes through the Agent-created localhost credential proxy, so every
+// Kubernetes API operation — including pods/exec — is still decided by the
+// target Cluster.
+func (service *Service) CreateCommandSession(
+	ctx context.Context,
+	input CommandSessionInput,
+) (session CommandSession, createErr error) {
+	if service == nil || service.requester == nil || service.commands == nil ||
+		strings.TrimSpace(input.UserID) == "" || strings.TrimSpace(input.ClusterID) == "" ||
+		strings.TrimSpace(input.IdempotencyKey) == "" ||
+		!terminalPermissionHeld(input.Permissions, "cluster.terminal.exec") {
+		return CommandSession{}, ErrInvalidCommand
+	}
+	runtimeConfig, err := service.runtimeConfig(ctx, input.ClusterID)
+	if err != nil {
+		return CommandSession{}, err
+	}
+	if runtimeConfig.Workload.Image == "" || runtimeConfig.Workload.ImagePullPolicy == "" ||
+		runtimeConfig.Namespace == "" || runtimeConfig.TTL <= 0 {
+		return CommandSession{}, ErrUnavailable
+	}
+
+	terminalID := deterministicTerminalID(
+		input.UserID, input.ClusterID, runtimeConfig.Namespace, "aiops", input.IdempotencyKey,
+	)
+	lifecycle := Lifecycle{
+		TerminalSessionID: terminalID, ClusterID: input.ClusterID,
+		Namespace: runtimeConfig.Namespace, UserID: input.UserID,
+	}
+	response, err := service.requester.RequestTerminalSession(ctx, input.ClusterID, &agentv1.TerminalSessionRequest{
+		Action:    agentv1.TerminalSessionAction_TERMINAL_SESSION_ACTION_CREATE,
+		SessionId: terminalID, UserId: input.UserID, Namespace: runtimeConfig.Namespace,
+		Permissions: input.Permissions, TtlSeconds: uint64(runtimeConfig.TTL.Seconds()),
+		Image:           runtimeConfig.Workload.Image,
+		ImagePullPolicy: runtimeConfig.Workload.ImagePullPolicy,
+		CpuRequest:      runtimeConfig.Workload.CPURequest,
+		MemoryRequest:   runtimeConfig.Workload.MemoryRequest,
+		CpuLimit:        runtimeConfig.Workload.CPULimit,
+		MemoryLimit:     runtimeConfig.Workload.MemoryLimit,
+		CredentialProxy: true,
+	}, terminalIdempotencyKey(input.IdempotencyKey, "ai-command-create"))
+	if err != nil {
+		// The Agent may have committed CREATE before its response was lost. The
+		// deterministic identity lets us compensate without knowing the Pod UID;
+		// the Turn is also tombstoned by aitools so it cannot race this cleanup by
+		// recreating the same resources with a newer permission snapshot.
+		_ = service.deleteDetached(ctx, lifecycle)
+		return CommandSession{}, terminalRequestError(err)
+	}
+	if err := terminalResponseError(response); err != nil {
+		_ = service.deleteDetached(ctx, lifecycle)
+		return CommandSession{}, err
+	}
+	lifecycle.Namespace = response.GetNamespace()
+	if err := ctx.Err(); err != nil {
+		_ = service.deleteDetached(ctx, lifecycle)
+		return CommandSession{}, terminalRequestError(err)
+	}
+	return CommandSession{
+		TerminalSessionID: terminalID,
+		ClusterID:         input.ClusterID,
+		Namespace:         response.GetNamespace(),
+		PodName:           response.GetPodName(),
+		PodUID:            response.GetPodUid(),
+		Container:         response.GetContainer(),
+		UserID:            input.UserID,
+	}, nil
+}
+
+// ExecuteCommand runs one non-interactive shell command in an existing
+// turn-scoped terminal Pod. The caller owns permission revalidation and the
+// session lifetime; a non-zero shell exit is a structured result, not a broken
+// session.
+func (service *Service) ExecuteCommand(
+	ctx context.Context,
+	input CommandInput,
+) (result CommandResult, executeErr error) {
+	if service == nil || service.commands == nil ||
+		strings.TrimSpace(input.Session.TerminalSessionID) == "" ||
+		strings.TrimSpace(input.Session.ClusterID) == "" ||
+		strings.TrimSpace(input.Session.Namespace) == "" ||
+		strings.TrimSpace(input.Session.PodName) == "" ||
+		strings.TrimSpace(input.Session.PodUID) == "" ||
+		strings.TrimSpace(input.Session.Container) == "" ||
+		strings.TrimSpace(input.Command) == "" ||
+		len(input.Command) > agentprotocol.MaxPodExecCommandBytes {
+		return CommandResult{}, ErrInvalidCommand
+	}
+
+	peer := &commandPeer{}
+	execResponse, exit, err := service.commands.RequestTerminalCommand(
+		ctx,
+		input.Session.ClusterID,
+		&agentv1.PodExecRequest{
+			Namespace: input.Session.Namespace, PodName: input.Session.PodName,
+			PodUid: input.Session.PodUID, Container: input.Session.Container,
+			Tty: false, Columns: 80, Rows: 24, MaxInputBytes: 1,
+			MaxOutputBytes: service.config.CommandMaxOutputBytes,
+			Command:        []string{"/bin/sh", "-c", input.Command},
+		},
+		peer,
+	)
+	result.Stdout = strings.ToValidUTF8(peer.stdout.String(), "�")
+	result.Stderr = strings.ToValidUTF8(peer.stderr.String(), "�")
+	if err != nil {
+		return result, terminalCommandRequestError(err)
+	}
+	if err := terminalCommandResponseError(execResponse); err != nil {
+		return result, err
+	}
+	if exit == nil || exit.GetResult() == agentv1.ResultCode_RESULT_CODE_UNSPECIFIED {
+		return result, ErrUpstreamFailure
+	}
+	result.ExitCode = exit.GetExitCode()
+	result.OutputBytes = exit.GetOutputBytes()
+	result.OutputLimitReached = exit.GetOutputLimitReached()
+	if exit.GetResult() == agentv1.ResultCode_RESULT_CODE_OK || result.OutputLimitReached {
+		return result, nil
+	}
+	return result, terminalCommandResultError(exit.GetResult(), exit.GetReason())
+}
+
+// FinishCommandSession removes the terminal Pod and all temporary RBAC. It is
+// safe to call with a cancelled turn parent because deletion is detached and
+// bounded; the Agent session TTL remains the final process-crash fallback.
+func (service *Service) FinishCommandSession(ctx context.Context, session CommandSession) error {
+	if service == nil || service.requester == nil ||
+		strings.TrimSpace(session.TerminalSessionID) == "" {
+		return nil
+	}
+	return service.deleteDetached(ctx, Lifecycle{
+		TerminalSessionID: session.TerminalSessionID,
+		ClusterID:         session.ClusterID,
+		Namespace:         session.Namespace,
+		UserID:            session.UserID,
+	})
+}
+
+type commandPeer struct {
+	closed bool
+	stdout bytes.Buffer
+	stderr bytes.Buffer
+}
+
+func (peer *commandPeer) Receive(ctx context.Context) (*agentv1.PodExecFrame, error) {
+	if !peer.closed {
+		peer.closed = true
+		return &agentv1.PodExecFrame{Message: &agentv1.PodExecFrame_CloseInput{
+			CloseInput: &agentv1.PodExecCloseInput{},
+		}}, nil
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (peer *commandPeer) Send(_ context.Context, frame *agentv1.PodExecFrame) error {
+	output := frame.GetOutput()
+	if output == nil {
+		return nil
+	}
+	var destination io.Writer
+	switch output.GetStream() {
+	case agentv1.PodExecOutputStream_POD_EXEC_OUTPUT_STREAM_STDOUT:
+		destination = &peer.stdout
+	case agentv1.PodExecOutputStream_POD_EXEC_OUTPUT_STREAM_STDERR:
+		destination = &peer.stderr
+	default:
+		return ErrUpstreamFailure
+	}
+	_, err := destination.Write(output.GetData())
+	return err
+}
+
+func terminalPermissionHeld(permissions []string, want string) bool {
+	for _, permission := range permissions {
+		if permission == want {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalCommandRequestError(err error) error {
+	switch {
+	case errors.Is(err, agentconn.ErrAgentNotConnected):
+		return ErrAgentNotConnected
+	case errors.Is(err, agentconn.ErrTerminalCommandCapabilityMissing):
+		return ErrAgentUnsupported
+	case errors.Is(err, agentconn.ErrPodExecRequestExhausted):
+		return fmt.Errorf("%w: terminal command capacity exhausted", ErrUpstreamFailure)
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
+		return fmt.Errorf("%w: %w", ErrUpstreamTimeout, err)
+	default:
+		return fmt.Errorf("%w: %w", ErrUpstreamFailure, err)
+	}
+}
+
+func terminalCommandResponseError(response *agentv1.PodExecResponse) error {
+	if response == nil || response.GetResult() == agentv1.ResultCode_RESULT_CODE_UNSPECIFIED {
+		return ErrUpstreamFailure
+	}
+	if response.GetResult() == agentv1.ResultCode_RESULT_CODE_OK {
+		return nil
+	}
+	return terminalCommandResultError(response.GetResult(), response.GetReason())
+}
+
+func terminalCommandResultError(result agentv1.ResultCode, reason string) error {
+	switch result {
+	case agentv1.ResultCode_RESULT_CODE_UNAUTHENTICATED,
+		agentv1.ResultCode_RESULT_CODE_FORBIDDEN:
+		return ErrClusterAccessDenied
+	case agentv1.ResultCode_RESULT_CODE_TIMEOUT:
+		return fmt.Errorf("%w: %s", ErrUpstreamTimeout, reason)
+	default:
+		return fmt.Errorf("%w: %s", ErrUpstreamFailure, reason)
 	}
 }
 
@@ -269,7 +544,8 @@ func terminalRequestError(err error) error {
 	switch {
 	case errors.Is(err, agentconn.ErrAgentNotConnected):
 		return ErrAgentNotConnected
-	case errors.Is(err, agentconn.ErrTerminalSessionCapabilityMissing):
+	case errors.Is(err, agentconn.ErrTerminalSessionCapabilityMissing),
+		errors.Is(err, agentconn.ErrTerminalCommandCapabilityMissing):
 		return ErrAgentUnsupported
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
 		return fmt.Errorf("%w: %w", ErrUpstreamTimeout, err)

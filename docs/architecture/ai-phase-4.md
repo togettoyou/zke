@@ -2,13 +2,13 @@
 
 > 状态：模型端点配置、会话与 append-only 轨迹存储、后台运行、SSE 续传与流式增量、权限重验、可重建摘要压缩、
 > 模型自主工具循环、受控资源写操作、敏感工具审批等待、证据引用，以及 AIOps App 的会话、对话/轨迹 Tab、
-> 轨迹时间线与详情、文本附件、搜索、归档、删除和导出已经落地；Cluster Terminal 与自动化仍在规划中。
+> 轨迹时间线与详情、文本附件、搜索、归档、删除和导出，以及受控 Cluster Terminal 命令已经落地；自动化仍在规划中。
 
 AIOps 是运行在 ZKE 云端的 Codex 式运维应用。它跟随 Console 桌面环境当前选定的 Tenant 和 Project，并在创建会话时
 选定该 Project 下的一个 Cluster。它的目标是让用户用自然语言完成该集群的巡检、故障分析、
 资源读写、应用部署、指标查询和终端操作；任务可以在窗口关闭后继续。与编码助手相比，AIOps 的工作对象不是本地
-目录，而是 ZKE 已接入且当前用户有权访问的 Kubernetes 资源。当前开发预览提供模型自主工具循环、敏感工具审批、
-显式证据引用，以及工作负载伸缩/回滚和 Manifest DryRun/差异/Apply/Delete；Cluster Terminal 仍在规划中。
+目录，而是 ZKE 已接入且当前用户有权访问的 Kubernetes 资源。当前实现提供模型自主工具循环、敏感工具审批、
+显式证据引用、工作负载伸缩/回滚、Manifest DryRun/差异/Apply/Delete，以及受控 Cluster Terminal 命令。
 
 它额外提供“轨迹”：对模型、上下文、工具调用、审批、压缩和结果的完整时间线，既用于实时观察，也用于事后复盘。
 
@@ -75,10 +75,17 @@ Pod 日志（敏感）、指标查询目录与查询执行。每个工具声明�
 Namespace、RBAC 或受保护 Namespace 权限；回滚按普通、系统或 Agent Namespace 选择有效权限。包含写工具的同一步
 调用不并发，按模型请求顺序执行。AIOps 拒绝 Secret 清单，避免 Secret 明文进入模型上下文和轨迹。
 
-规划中的工具：
+受控 Cluster Terminal 命令已经实现：`run_terminal_command` 在目标 Agent 创建的 Turn 级终端 Pod 中执行非交互
+Shell 命令，固定要求 `cluster.terminal.exec` 并标记为敏感且可能变更。一个 Turn 的首次命令批准后重新计算用户当前
+Cluster 权限并投射 Kubernetes RBAC，后续命令复用该 Pod 与冻结快照；`kubectl exec` 还需 `cluster.pod.exec`；AIOps
+不投射 Secret 或 Agent Namespace 管理权限。命令容器通过 localhost 凭证代理访问 API Server，本身不挂载
+ServiceAccount Token。命令和有界输出属于不可信轨迹数据，会发送到模型端点。权限重验覆盖命令之间的空闲期，撤权、
+Turn 结束、失败或取消都会关闭 Pod 和临时 RBAC。
+
+仍在规划的工具：
 
 - Pod Exec、日志流和临时访问；
-- Cluster Terminal 中的非交互命令与受控交互会话；
+- Cluster Terminal 的受控交互会话；
 - 会话计划与产物。
 
 写工具必须走 ZKE 已有服务层的授权、幂等、超时和审计路径，不能绕开 Agent、RBAC 或敏感操作保护。终端工具通过目标
@@ -162,7 +169,7 @@ Pod 日志、Event、annotation、ConfigMap、镜像输出和终端 stdout 都�
 2. `ai.run`、后台运行、SSE/重连、上下文预算、可重建摘要压缩与证据引用（已实现）；
 3. AIOps App：Cluster 工作区、对话/轨迹 Tab、轨迹筛选与详情、文本附件、搜索、归档、删除、导出和证据深链（已实现）；
 4. 模型自主工具循环、读取工具目录、敏感工具审批等待、流式输出与轨迹时间线（已实现）；
-5. 资源写工具与部署，复用现有 DryRun、幂等键和敏感操作确认（已实现）；Cluster Terminal 继续推进；
+5. 资源写工具、部署与 Cluster Terminal 非交互命令，复用现有权限、幂等键和敏感操作确认（已实现）；
 6. 技能、子任务、定时巡检与事件触发自动化；
 7. 质量评估、配额、反馈和运行治理。
 
@@ -171,7 +178,7 @@ Pod 日志、Event、annotation、ConfigMap、镜像输出和终端 stdout 都�
 - 不在 Server 主机执行模型生成的 shell；
 - 不让 Server 直连集群或保存 kubeconfig；
 - 不提供绕过 ZKE RBAC、审批、幂等和审计的 AI 专用写路径；
-- 不把 AIOps 描述为无人监督、保证正确或生产可用；
+- 不把 AIOps 描述为无人监督或保证正确；
 - 不在 Phase 4 自建通用模型训练平台。
 
 运行循环、上下文表层替换和子 Agent 约束见 [AIOps Agent 运行时与上下文设计](ai-agent-runtime.md)。

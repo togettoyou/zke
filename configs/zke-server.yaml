@@ -276,10 +276,10 @@ aiops:
   # continuing to spend the operator's model budget.
   max_steps: 40
   max_tool_calls: 120
-  # Reads from one step run concurrently up to this many at a time. Every tool
-  # in the catalogue is a read, so they are safe together; the bound is what
-  # stops one step from opening a Stream per object to an Agent that also serves
-  # the rest of the platform.
+  # Reads from one step run concurrently up to this many at a time. A step with
+  # any mutating tool, including a terminal command, runs in model order; this
+  # bound stops a read-only step from opening a Stream per object to an Agent
+  # that also serves the rest of the platform.
   max_parallel_tool_calls: 10
   # The same tool with the same arguments beyond this is answered with a
   # convergence note instead of another round trip to the Cluster.

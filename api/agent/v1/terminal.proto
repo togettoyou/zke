@@ -32,6 +32,10 @@ message TerminalSessionRequest {
   string memory_request = 10;
   string cpu_limit = 11;
   string memory_limit = 12;
+  // Uses a localhost kubectl proxy sidecar and does not mount the projected
+  // ServiceAccount credential into the command container. This is required
+  // for AIOps command output, which is persisted and sent to the model.
+  bool credential_proxy = 13;
 }
 
 message TerminalSessionResponse {

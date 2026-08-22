@@ -20,7 +20,7 @@ ZKE 的安全模型遵循以下原则：
 `cluster.namespace.manage` 是「在该 Cluster 内创建和删除 Namespace」，不是「管理某一个 Namespace」。详见
 [应用作用域与资源模型](../architecture/resource-model.md)。
 
-当前项目尚未通过任何安全、云原生或 Kubernetes 认证，也不对生产可用性作出承诺。
+当前项目不声明已经通过任何安全、云原生或 Kubernetes 认证。
 
 ### AIOps 的权限模型
 
@@ -42,13 +42,13 @@ AIOps 的只读 Agent 循环已经实现。AIOps 与容器服务一样跟随 Con
 事件触发任务必须使用显式委派，限制所有者、Project、Cluster、权限、审批策略与有效期；该机制落地前不开放无人值守写操作。
 
 三档审批模式已经生效：请求批准 / 帮我批准 / 完全访问只改变何时等待人工确认，不改变权限上限。当前只读目录中
-被标记为敏感的是 Pod 日志读取，前两档会停下来等待用户在对话中批准或拒绝；拒绝不是运行失败，模型收到明确说明
+被标记为敏感的是 Pod 日志读取和 Cluster Terminal 命令，前两档会停下来等待用户在对话中批准或拒绝；拒绝不是运行失败，模型收到明确说明
 后继续，无人答复超时才结束本轮。批准只对该次调用生效，不改变账户权限，并与请求一起写入轨迹。
 
 资源写工具支持 Deployment/StatefulSet 伸缩、工作负载历史读取与回滚，以及 Manifest DryRun/差异/Apply/Delete。
 它们遵守会话审批模式、确认、幂等与审计边界；Manifest 与回滚以服务端预检快照固定待批准内容，提交前重新判权并
-再次 DryRun。Cluster Terminal 工具仍在规划中；所有调用经目标 Agent 定域执行，不在 Server 主机执行，也不给模型
-kubeconfig。
+再次 DryRun。Cluster Terminal 命令使用 Turn 级终端 Pod 和冻结的当前权限快照；所有调用经目标 Agent 定域执行，不在
+Server 主机执行，也不给模型 kubeconfig。
 
 历史读取需要重新检查当前权限。用户自己的问题和系统状态可以保留；已无权访问的集群正文、工具结果和证据由
 服务端脱敏。Pod 日志、Event、annotation、ConfigMap、Secret 和终端输出均作为不可信数据，不能改变工具白名单、
@@ -621,6 +621,17 @@ Kubernetes 资源权限。Server 在目标 Cluster 上逐项计算当前登录�
 收回时立即断开并清理 ServiceAccount、RoleBinding 和 Pod。审计记录会话创建、目标和连接结果，不记录命令、
 stdin/stdout 或 Secret 正文；逐条 `kubectl` API 请求审计依赖目标集群启用 Kubernetes Audit。
 
+AIOps 的 `run_terminal_command` 复用同一终端资源模型，但不是交互式终端录制规则：模型请求的命令和有界输出会进入
+append-only 轨迹并发送到配置的模型端点，所以该工具固定为敏感且可能变更，并且不投射
+`cluster.secret.read/manage` 或 `cluster.agent_namespace.manage`。后者避免命令通过 `pods/exec` 进入承载凭证代理的
+Terminal Pod。调用入口要求 `cluster.terminal.exec`；批准后重新计算当前 Cluster 权限，命令里的
+`kubectl exec` 还必须由 Kubernetes `pods/exec` RBAC 验证 `cluster.pod.exec`。AIOps 命令容器不挂载
+ServiceAccount Token，而是通过同 Pod、只监听 localhost 的凭证代理访问 API Server。一个 Turn 首次执行命令时创建
+Pod 并冻结权限快照，后续命令复用；Turn 结束、失败或取消时删除 Pod、ServiceAccount 和临时 RBAC，TTL 清理兜底。
+周期重验覆盖命令执行和命令间空闲期，快照内任一权限被撤销都会取消命令、立即清理并阻止本 Turn 重新创建终端；新授予
+权限要到下一 Turn 才会进入快照。撤权不会回滚此前已经完成的操作。审计保存工具名、会话、目标和结果，不复制命令或
+输出正文。
+
 终端输出录制必须由操作者显式选择，创建额外要求默认仅授予 admin 的
 `cluster.pod.terminal_recording.create`；只旁路保存 stdout/stderr，不保存 stdin、Cookie、一次性票据或认证头。
 读取录制使用另一项 `cluster.pod.terminal_recording.read`，不从 `cluster.pod.exec` 推导，并在每次列表/详情请求上
@@ -728,4 +739,4 @@ RoleBinding、账户恢复和密码重置的成功、失败与权限拒绝也会
 被审计方无法通过断开连接决定哪些拒绝留痕、哪些失败登录不计入锁定。
 
 可信反向代理来源解析和跨组织的细粒度委派管理仍属于后续工作。认证、用户与 RoleBinding 管理以及
-审计查询后端已经实现，但项目仍处于开发预览阶段，不适用于生产环境。
+审计查询后端已经实现。

@@ -3,8 +3,6 @@
 ZKE Server 是单个 Go 二进制，内置 Console 静态资源，依赖 PostgreSQL（仓库的镜像、Compose 与 Chart 都使用
 17）、一个持久目录，以及启用多集群指标时的 VictoriaMetrics。
 
-ZKE 当前处于开发预览阶段，投入关键环境前应自行完成安全、备份、容量和升级验证。
-
 ## 选择部署方式
 
 | 方式 | 适用场景 | 数据库 | 指标存储 |
