@@ -19,7 +19,7 @@ ZKE（Z Kubernetes Engine）把分散在数据中心、私有云、公有云和�
 云环境：Agent 从每个集群主动向 Server 建立 QUIC/mTLS 出向连接，Console 用桌面、窗口和 Dock 组织能力，AIOps 作为
 常驻其中的运维 Agent，与人共用同一套权限、同一条通道和同一份审计。
 
-![ZKE 桌面预览](docs/images/product-preview/desktop-overview.gif)
+https://github.com/user-attachments/assets/f06f2229-48c2-4911-8e72-8cf60975d28f
 
 > **在线体验：** <https://fbcupchhlacp.sealosbja.site/>
 >
