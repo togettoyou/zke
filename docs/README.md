@@ -2,9 +2,13 @@
 
 这里收录 ZKE 的产品、架构、功能、安全与开发规划文档。
 
+ZKE 是 AI 原生的 Kubernetes 云操作环境：Server + Agent 连接各处集群，Console 以桌面组织能力，AIOps 作为常驻其中
+的运维 Agent 与人共用同一套权限与审计。整体定位与边界见产品愿景。
+
 ## 产品
 
 - [产品愿景与设计原则](product/vision.md)
+- [产品预览图清单](images/product-preview/README.md)：截图规范与待补充的占位图
 
 ## 部署
 
