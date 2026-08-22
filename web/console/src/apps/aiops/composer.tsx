@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from "react";
 import {
+  BookOpen,
   Check,
   FileText,
   Hand,
@@ -12,7 +13,7 @@ import {
   Zap,
 } from "lucide-react";
 
-import type { AIAttachment, AIContextUsage, AISession, AITool } from "@/api/types";
+import type { AIAttachment, AIContextUsage, AISession, AISkill, AITool } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -51,6 +52,7 @@ export function Composer({
   working,
   attachments,
   tools,
+  skills,
   context,
   disabled,
   pending,
@@ -69,6 +71,12 @@ export function Composer({
   /** Omitted before the session exists, which is what the Server hangs them on. */
   attachments?: AIAttachment[];
   tools: AITool[];
+  /**
+   * The playbooks the runtime offers. Shown next to the tools because they are
+   * the same kind of fact about what the next turn can do — with the difference
+   * stated in the panel: a skill decides an order, never a permission.
+   */
+  skills: AISkill[];
   /**
    * How full the model context is. Absent before the session exists and on a
    * deployment whose endpoint is not configured, where there is no window to
@@ -200,6 +208,7 @@ export function Composer({
 
           <ApprovalModePicker mode={approvalMode} onChange={onApprovalMode} />
           <ToolsChip tools={tools} />
+          <SkillsChip skills={skills} />
 
           {/* The keyboard contract, stated where the keys are used. It is the
               first thing the box gets wrong for somebody who expects Enter to
@@ -407,6 +416,46 @@ function ApprovalModePicker({
         <p className="text-subtle-foreground border-border mt-1 border-t px-2 pt-2 text-[11px]">
           任何模式都不会扩大权限：上限始终是你自己的 RBAC。模式只决定谁来按下确认。
         </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * The playbooks, for a person.
+ *
+ * Worth a chip of its own rather than a line in the tool panel: an operator
+ * reading "12 个工具" learns what AIOps may touch, and an operator reading
+ * "7 个技能" learns what it already knows how to do. The panel says the part
+ * that is easy to get wrong — a skill is a procedure and grants nothing — where
+ * somebody is actually looking at the list.
+ */
+function SkillsChip({ skills }: { skills: AISkill[] }) {
+  const [open, setOpen] = useState(false);
+  if (skills.length === 0) return null;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" size="sm" variant="ghost" aria-label="可用技能">
+          <BookOpen aria-hidden /> {skills.length} 个技能
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="max-h-96 w-96 overflow-auto p-1.5">
+        <p className="text-muted-foreground px-2 py-1.5 text-xs">
+          技能是 ZKE
+          提供的排查流程：模型在需要时读取它，按其中的顺序取证。技能不新增工具，也不扩大权限。
+        </p>
+        <ul className="space-y-1">
+          {skills.map((skill) => (
+            <li key={skill.id} className="rounded-control px-2 py-1.5">
+              <p className="text-foreground text-[13px] font-medium">{skill.title}</p>
+              <p className="text-muted-foreground mt-0.5 text-[11px]">{skill.summary}</p>
+              <p className="text-subtle-foreground mt-0.5 font-mono text-[11px]">
+                {skill.id} · {skill.tools.join(" / ")}
+              </p>
+            </li>
+          ))}
+        </ul>
       </PopoverContent>
     </Popover>
   );

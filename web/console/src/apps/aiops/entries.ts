@@ -107,6 +107,28 @@ export function approvalModeLabel(mode: AISession["approval_mode"]): string {
   return { ask: "请求批准", assisted: "帮我批准", full: "完全访问" }[mode] ?? mode;
 }
 
+/**
+ * One delegated branch, folded out of the main line.
+ *
+ * A branch writes its own steps into the same trail as the turn that spawned
+ * it, which is what makes the run reviewable — and what would make the
+ * conversation unreadable if it were rendered inline: three branches reading a
+ * Cluster at once produce three interleaved streams of tool calls under a
+ * question nobody asked three times. The stamp on each entry is what lets the
+ * conversation put them back where they belong, under the one call that
+ * delegated them.
+ */
+export type ConversationBranch = {
+  id: string;
+  index: number;
+  goal: string;
+  /** The branch's own trail, in order. */
+  entries: AITrajectoryEntry[];
+  /** What it came back with, absent while it is still working. */
+  conclusion: AITrajectoryEntry | null;
+  calls: number;
+};
+
 /** One line of the conversation tab. */
 export type ConversationItem =
   | { id: string; type: "question"; entry: AITrajectoryEntry }
@@ -121,6 +143,8 @@ export type ConversationItem =
       type: "activity";
       call: AITrajectoryEntry;
       result: AITrajectoryEntry | null;
+      /** Empty for every call except a delegation. */
+      branches: ConversationBranch[];
     };
 
 /**
@@ -143,9 +167,15 @@ export function conversationItems(entries: AITrajectoryEntry[]): ConversationIte
       decisionsByCall.set(callId, entry.content.decision);
     }
   }
+  const branchesByCall = groupBranches(entries);
   const items: ConversationItem[] = [];
   for (const entry of entries) {
     const id = String(entry.sequence);
+    // A branch's own steps belong under the call that delegated them, not in
+    // the conversation. The exception is an approval: a branch parked on a
+    // person has to be answerable where the person is looking, and folding the
+    // request away would stall the run behind a disclosure triangle.
+    if (entry.content.subtask && entry.kind !== "approval_request") continue;
     switch (entry.kind) {
       case "input":
         items.push({ id, type: "question", entry });
@@ -185,6 +215,7 @@ export function conversationItems(entries: AITrajectoryEntry[]): ConversationIte
           type: "activity",
           call: entry,
           result: resultsByCall.get(entry.content.call_id ?? "") ?? null,
+          branches: branchesByCall.get(entry.content.call_id ?? "") ?? [],
         });
         break;
       default:
@@ -195,26 +226,83 @@ export function conversationItems(entries: AITrajectoryEntry[]): ConversationIte
 }
 
 /**
- * The call the turn is currently parked on, if any.
+ * Every branch in the trail, filed under the call that delegated it.
+ *
+ * Ordered by the stamp's index rather than by when entries arrived: branches
+ * run concurrently, so arrival order is the scheduler's answer and not the
+ * model's — and a list that reorders itself between two renders of the same
+ * finished run is one nobody can point at.
+ */
+function groupBranches(entries: AITrajectoryEntry[]): Map<string, ConversationBranch[]> {
+  const byCall = new Map<string, Map<string, ConversationBranch>>();
+  for (const entry of entries) {
+    const stamp = entry.content.subtask;
+    if (!stamp) continue;
+    let branches = byCall.get(stamp.call_id);
+    if (!branches) {
+      branches = new Map();
+      byCall.set(stamp.call_id, branches);
+    }
+    let branch = branches.get(stamp.id);
+    if (!branch) {
+      branch = {
+        id: stamp.id,
+        index: stamp.index,
+        goal: "",
+        entries: [],
+        conclusion: null,
+        calls: 0,
+      };
+      branches.set(stamp.id, branch);
+    }
+    // The goal is carried only on the entry that opens the branch, so it is
+    // taken wherever it appears rather than assumed to be on the first row.
+    if (stamp.goal) branch.goal = stamp.goal;
+    branch.entries.push(entry);
+    if (entry.kind === "tool_call") branch.calls += 1;
+    if (entry.kind === "conclusion") branch.conclusion = entry;
+  }
+  const grouped = new Map<string, ConversationBranch[]>();
+  for (const [callId, branches] of byCall) {
+    grouped.set(
+      callId,
+      [...branches.values()].sort((left, right) => left.index - right.index),
+    );
+  }
+  return grouped;
+}
+
+/**
+ * The calls the turn is currently parked on.
+ *
+ * Plural because delegation made it plural: three branches may each reach a
+ * sensitive read at once, and a banner that named only the newest would leave
+ * the operator answering one request while the run waits on two more they were
+ * never told about.
  *
  * Derived from the pair of entries rather than from a session status field: a
  * request answered by a decision is finished, and everything else the runtime
  * could store about it would be a second copy of that fact able to disagree.
  */
-export function pendingApproval(
+export function pendingApprovals(
   entries: AITrajectoryEntry[],
   session: AISession,
-): AITrajectoryEntry | null {
-  if (session.status !== "working") return null;
+): AITrajectoryEntry[] {
+  if (session.status !== "working") return [];
   const decided = new Set(
     entries
       .filter((entry) => entry.kind === "approval_decision")
       .map((entry) => entry.content.call_id ?? ""),
   );
-  const waiting = entries.filter(
+  return entries.filter(
     (entry) => entry.kind === "approval_request" && !decided.has(entry.content.call_id ?? ""),
   );
-  return waiting.at(-1) ?? null;
+}
+
+/** How a branch is named wherever one entry has to say which it came from. */
+export function subtaskLabel(entry: AITrajectoryEntry): string | null {
+  const stamp = entry.content.subtask;
+  return stamp ? `子任务 ${stamp.index}` : null;
 }
 
 export type RunStats = {

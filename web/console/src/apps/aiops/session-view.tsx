@@ -11,7 +11,7 @@ import {
   useDeleteAIAttachment,
   useStartAITurn,
 } from "@/api/queries/aiops";
-import type { AISession, AITool } from "@/api/types";
+import type { AISession, AISkill, AITool } from "@/api/types";
 import { notifyFailure } from "@/components/common/notify";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,7 +19,7 @@ import { cn } from "@/lib/cn";
 
 import { Composer } from "./composer";
 import { Conversation } from "./conversation";
-import { pendingApproval, streamLabel } from "./entries";
+import { pendingApprovals, streamLabel } from "./entries";
 import { Trajectory } from "./trajectory";
 
 /**
@@ -38,11 +38,13 @@ export function SessionView({
   session,
   clusterName,
   tools,
+  skills,
   onUpdate,
 }: {
   session: AISession;
   clusterName: string;
   tools: AITool[];
+  skills: AISkill[];
   onUpdate: (input: {
     title?: string;
     archived?: boolean;
@@ -77,7 +79,7 @@ export function SessionView({
   const field = useRef<HTMLTextAreaElement | null>(null);
 
   const archived = Boolean(session.archived_at);
-  const waiting = pendingApproval(entries, session);
+  const waiting = pendingApprovals(entries, session);
 
   const send = (text: string) =>
     void startTurn
@@ -151,12 +153,14 @@ export function SessionView({
         </Tabs>
       </header>
 
-      {waiting ? (
+      {waiting.length > 0 ? (
         <div
           role="status"
           className="border-warning/40 bg-warning-surface text-warning shrink-0 border-b px-4 py-1.5 text-xs"
         >
-          运行已暂停，等待你批准 {waiting.content.tool}。
+          {waiting.length === 1
+            ? `运行已暂停，等待你批准 ${waiting[0]?.content.tool}。`
+            : `运行已暂停，有 ${waiting.length} 个调用等待你批准。`}
         </div>
       ) : null}
 
@@ -208,6 +212,7 @@ export function SessionView({
           inputRef={field}
           attachments={attachments}
           tools={tools}
+          skills={skills}
           context={context.data}
           disabled={archived}
           pending={startTurn.isPending}

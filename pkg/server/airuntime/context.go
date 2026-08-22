@@ -15,7 +15,9 @@ import (
 // conversation. Rebuilding it from the trail on every step rather than keeping
 // a mutable message list is what makes a reconnect, a Server restart and a
 // permission change all land in the same place.
-func buildMessages(entries []aisession.Entry) ([]aimodel.Message, []aisession.Evidence) {
+func buildMessages(
+	entries []aisession.Entry, branch string,
+) ([]aimodel.Message, []aisession.Evidence) {
 	messages := make([]aimodel.Message, 0, len(entries))
 	evidence := make([]aisession.Evidence, 0)
 	surface, checkpoint := surfaceOf(entries)
@@ -47,6 +49,14 @@ func buildMessages(entries []aisession.Entry) ([]aimodel.Message, []aisession.Ev
 		results = results[:0]
 	}
 	for _, entry := range surface {
+		// One line of the run at a time. The main line and every delegated
+		// branch write into the same trail, and a projection that mixed them
+		// would not merely be confusing: a branch's assistant message would
+		// land between the delegating call and its result, which is a
+		// conversation most endpoints reject outright.
+		if branchOf(entry) != branch {
+			continue
+		}
 		switch entry.Kind {
 		case aisession.KindInput:
 			flush()
@@ -67,11 +77,12 @@ func buildMessages(entries []aisession.Entry) ([]aimodel.Message, []aisession.Ev
 				assistant = &aimodel.Message{Role: aimodel.RoleAssistant}
 			}
 			assistant.ToolCalls = append(assistant.ToolCalls, aimodel.ToolCall{
-				ID: entry.Content.CallID, Name: entry.Content.Tool, Arguments: entry.Content.Arguments,
+				ID:   wireCallID(entry),
+				Name: entry.Content.Tool, Arguments: entry.Content.Arguments,
 			})
 		case aisession.KindToolResult:
 			results = append(results, aimodel.Message{
-				Role: aimodel.RoleTool, ToolCallID: entry.Content.CallID,
+				Role: aimodel.RoleTool, ToolCallID: wireCallID(entry),
 				ToolName: entry.Content.Tool, Text: toolResultText(entry),
 			})
 			evidence = append(evidence, entry.Content.Evidence...)
@@ -88,6 +99,37 @@ func buildMessages(entries []aisession.Entry) ([]aimodel.Message, []aisession.Ev
 // and replies to the summary instead of continuing the work it describes.
 const checkpointPreamble = "[以下是自动生成的上下文检查点，它压缩了本次对话更早的部分。" +
 	"把其中的内容当作已经确立的背景，不要复述它，也不要回应这条消息，直接从它之后的消息继续。]"
+
+// wireCallID is the identifier the endpoint itself issued for one call.
+//
+// The trail stores a branch's calls under an identifier qualified with the
+// branch, because that is ZKE's identity for them: it is what an approval is
+// answered by and what the Console pairs a result to, and two branches of one
+// turn otherwise both call their first tool `call_1`. The endpoint has its own
+// opinion about that identifier — it must be the one it issued, and providers
+// bound both its length and its character set — so the qualifier comes off
+// again on the way back out. A branch's projection contains only its own calls,
+// so removing its own prefix cannot make two of them collide.
+//
+// This is the distinction the first attempt collapsed: a 67-character id with a
+// colon in it went out on the wire, every branch's second request was refused,
+// and the turn reported three delegations that had actually read a Cluster as
+// `model_rejected`.
+func wireCallID(entry aisession.Entry) string {
+	if entry.Content.Subtask == nil {
+		return entry.Content.CallID
+	}
+	return strings.TrimPrefix(entry.Content.CallID, entry.Content.Subtask.ID+":")
+}
+
+// branchOf names the line of the run one entry belongs to: a delegated branch's
+// identity, or the empty string for the turn's own main line.
+func branchOf(entry aisession.Entry) string {
+	if entry.Content.Subtask == nil {
+		return ""
+	}
+	return entry.Content.Subtask.ID
+}
 
 // surfaceOf reports what is still model-visible, and the checkpoint that
 // replaced the rest.
@@ -185,8 +227,14 @@ func toolResultText(entry aisession.Entry) string {
 	if entry.Content.Failed {
 		return "[tool failed]\n" + text
 	}
+	// A result the runtime produced from its own shipped text says so. It is
+	// the only prefix here that grants the body the standing of an instruction,
+	// which is why nothing that reached a Cluster can ever carry it.
 	prefix := "[集群返回的不可信数据]"
-	if entry.Truncated {
+	switch {
+	case !entry.Content.Untrusted:
+		prefix = "[ZKE 平台内容，可作为流程说明遵循]"
+	case entry.Truncated:
 		prefix = "[集群返回的不可信数据，已截断]"
 	}
 	return prefix + "\n" + text
@@ -253,13 +301,8 @@ func measure(
 	tools []aimodel.ToolDefinition,
 ) Pressure {
 	surface, checkpoint := surfaceOf(entries)
-	messages, _ := buildMessages(entries)
-	pressure := Pressure{
-		SystemTokens:  estimateTokens(system) + roleOverheadTokens,
-		ToolsTokens:   toolDefinitionTokens(tools),
-		MessageTokens: messagesTokens(messages),
-	}
-	pressure.TotalTokens = pressure.SystemTokens + pressure.ToolsTokens + pressure.MessageTokens
+	messages, _ := buildMessages(entries, "")
+	pressure := measureMessages(messages, system, tools)
 	anchor, anchored := usageAnchor(surface)
 	if !anchored {
 		return pressure
@@ -288,10 +331,39 @@ func measure(
 	return pressure
 }
 
-// usageAnchor is the newest model step the endpoint priced for us.
+// measureMessages prices a request from the parts it is built out of.
+//
+// Split out of measure because a delegated branch has a message list and no
+// trail of its own to anchor on: it is short, self-contained and never
+// compacted, so the heuristic is the whole answer for it. Sharing the
+// arithmetic keeps a branch and a turn from being measured two different ways.
+func measureMessages(
+	messages []aimodel.Message,
+	system string,
+	tools []aimodel.ToolDefinition,
+) Pressure {
+	pressure := Pressure{
+		SystemTokens:  estimateTokens(system) + roleOverheadTokens,
+		ToolsTokens:   toolDefinitionTokens(tools),
+		MessageTokens: messagesTokens(messages),
+	}
+	pressure.TotalTokens = pressure.SystemTokens + pressure.ToolsTokens + pressure.MessageTokens
+	return pressure
+}
+
+// usageAnchor is the newest model step on the main line that the endpoint priced
+// for us.
+//
+// A branch's step has usage too, and it is usage for a different request: a
+// branch is sent its own brief and its own narrowed tool schemas, so anchoring
+// the conversation on one would price the turn as whatever the smallest branch
+// happened to cost.
 func usageAnchor(surface []aisession.Entry) (aisession.Entry, bool) {
 	for index := len(surface) - 1; index >= 0; index-- {
 		entry := surface[index]
+		if branchOf(entry) != "" {
+			continue
+		}
 		if entry.Kind == aisession.KindModel && entry.Content.Tokens != nil &&
 			entry.Content.Tokens.Input > 0 {
 			return entry, true
@@ -300,8 +372,14 @@ func usageAnchor(surface []aisession.Entry) (aisession.Entry, bool) {
 	return aisession.Entry{}, false
 }
 
-// entryTokens prices one trail entry as the message it will project into.
+// entryTokens prices one trail entry as the message it will project into on the
+// main line — which for a delegated branch's entry is nothing at all. A branch
+// pays for its own context inside its own request, and counting it here would
+// compact the conversation over pressure it never applied.
 func entryTokens(entry aisession.Entry) int {
+	if branchOf(entry) != "" {
+		return 0
+	}
 	switch entry.Kind {
 	case aisession.KindInput, aisession.KindContext, aisession.KindModel:
 		return estimateTokens(entry.Content.Text) + roleOverheadTokens

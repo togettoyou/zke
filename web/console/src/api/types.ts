@@ -39,6 +39,8 @@ export type AITrajectoryEntry = Schemas["AITrajectoryEntry"];
 export type AIEvidence = Schemas["AIEvidence"];
 export type AIAttachment = Schemas["AIAttachment"];
 export type AITool = Schemas["AITool"];
+export type AISkill = Schemas["AISkill"];
+export type AISubtask = Schemas["AISubtask"];
 export type AIContextUsage = {
   used_tokens: number;
   context_window_tokens: number;

@@ -147,6 +147,26 @@ type AIOpsConfig struct {
 	ModelRetry      AIOpsModelRetryConfig `yaml:"model_retry"`
 	Compaction      AIOpsCompactionConfig `yaml:"compaction"`
 	ToolResult      AIOpsToolResultConfig `yaml:"tool_result"`
+	Subtask         AIOpsSubtaskConfig    `yaml:"subtask"`
+}
+
+// AIOpsSubtaskConfig bounds delegated investigation branches.
+//
+// A branch is a second agent loop, so it needs its own version of every bound
+// the main loop has. They are deliberately much tighter: delegation exists to
+// answer a few independent questions at once, not to let one question become
+// several investigations running on the same operator's budget.
+type AIOpsSubtaskConfig struct {
+	// MaxParallel is how many branches one delegation may open, and therefore
+	// how many model conversations a single step may start. Zero switches
+	// delegation off and removes the tool from the catalogue entirely, which is
+	// the right setting for a deployment whose endpoint has little headroom.
+	MaxParallel int `yaml:"max_parallel"`
+	// MaxSteps and MaxToolCalls bound one branch; Timeout bounds it in wall
+	// clock inside the turn that owns it.
+	MaxSteps     int           `yaml:"max_steps"`
+	MaxToolCalls int           `yaml:"max_tool_calls"`
+	Timeout      time.Duration `yaml:"timeout"`
 }
 
 // AIOpsModelRetryConfig is the bounded backoff applied to a transient model
@@ -516,6 +536,12 @@ func DefaultConfig() Config {
 				ThresholdChars: aitools.DefaultResultThresholdRunes,
 				HeadChars:      aitools.DefaultResultHeadRunes,
 				TailChars:      aitools.DefaultResultTailRunes,
+			},
+			Subtask: AIOpsSubtaskConfig{
+				MaxParallel:  airuntime.DefaultMaxParallelSubtasks,
+				MaxSteps:     airuntime.DefaultSubtaskSteps,
+				MaxToolCalls: airuntime.DefaultSubtaskToolCalls,
+				Timeout:      airuntime.DefaultSubtaskTimeout,
 			},
 		},
 		ShutdownTimeout: 10 * time.Second,

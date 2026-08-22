@@ -9,7 +9,7 @@ import {
   useUpdateAISession,
 } from "@/api/queries/aiops";
 import { useClusters, type ClusterListResult } from "@/api/queries/clusters";
-import type { AISession, AITool } from "@/api/types";
+import type { AISession, AISkill, AITool } from "@/api/types";
 import { ScopeRequired } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { notifyFailure } from "@/components/common/notify";
@@ -90,6 +90,7 @@ export function AIOpsApp(_props: AppComponentProps) {
   const sessions = useMemo(() => sessionsQuery.data?.sessions ?? [], [sessionsQuery.data]);
   const toolsQuery = useAITools();
   const tools = toolsQuery.data?.tools ?? [];
+  const skills = toolsQuery.data?.skills ?? [];
 
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
   const createSession = useCreateAISession();
@@ -237,6 +238,7 @@ export function AIOpsApp(_props: AppComponentProps) {
             session={selected}
             clusterName={clusterName}
             tools={tools}
+            skills={skills}
             onUpdate={(input) => update({ ...input, sessionId: selected.id })}
           />
         ) : (
@@ -245,6 +247,7 @@ export function AIOpsApp(_props: AppComponentProps) {
             ready={Boolean(clusterId)}
             busy={createSession.isPending || startTurn.isPending}
             tools={tools}
+            skills={skills}
             approvalMode={nextApprovalMode}
             onApprovalMode={setNextApprovalMode}
             onAsk={(question) => void openSession(question)}
@@ -312,6 +315,7 @@ function Welcome({
   ready,
   busy,
   tools,
+  skills,
   approvalMode,
   onApprovalMode,
   onAsk,
@@ -320,6 +324,7 @@ function Welcome({
   ready: boolean;
   busy: boolean;
   tools: AITool[];
+  skills: AISkill[];
   approvalMode: AISession["approval_mode"];
   onApprovalMode: (mode: AISession["approval_mode"]) => void;
   onAsk: (question: string) => void;
@@ -342,6 +347,7 @@ function Welcome({
         approvalMode={approvalMode}
         working={false}
         tools={tools}
+        skills={skills}
         disabled={!ready}
         pending={busy}
         draft={draft}

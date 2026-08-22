@@ -1162,7 +1162,7 @@ func TestBuildMessagesUsesLatestDurableCompactionAsBaseline(t *testing.T) {
 		}},
 		{Sequence: 3, Turn: 2, Kind: aisession.KindModel, Content: aisession.Content{Text: "摘要后的新结论"}},
 	}
-	messages, evidence := buildMessages(entries)
+	messages, evidence := buildMessages(entries, "")
 	joined := ""
 	for _, message := range messages {
 		joined += message.Text + "\n"
@@ -1204,7 +1204,7 @@ func TestBuildMessagesKeepsOneStepWithParallelCallsAsOneAssistantTurn(t *testing
 			Tool: "list_resources", CallID: "call_3", Text: "命名空间", Step: 1,
 		}},
 	}
-	messages, _ := buildMessages(entries)
+	messages, _ := buildMessages(entries, "")
 	if len(messages) != 5 {
 		t.Fatalf("buildMessages() = %d messages, want 5: %+v", len(messages), messages)
 	}
@@ -1286,7 +1286,7 @@ func TestBuildMessagesDropsToolResultsWithoutTheirCall(t *testing.T) {
 			Tool: "cluster_overview", CallID: "call_gone", Text: "孤立的工具结果",
 		}},
 	}
-	messages, _ := buildMessages(entries)
+	messages, _ := buildMessages(entries, "")
 	for _, message := range messages {
 		if message.Role == aimodel.RoleTool {
 			t.Fatalf("orphaned tool result reached the model: %+v", messages)

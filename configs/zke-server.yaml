@@ -327,5 +327,23 @@ aiops:
     head_chars: 4096
     tail_chars: 1024
 
+  # Delegated investigation branches. A branch is a second agent loop with only
+  # read-only tools: it answers one independent question, writes its own steps
+  # into the same trail, and returns a conclusion, evidence and a failure
+  # classification to the turn that spawned it. It can neither change a cluster
+  # nor delegate further.
+  #
+  # max_parallel: 0 switches delegation off and removes the tool from the
+  # catalogue, which is the right setting where the model endpoint has little
+  # headroom — three branches are three concurrent conversations against it.
+  # The other budgets are deliberately far below the turn's: a branch that needs
+  # forty steps is the investigation itself and belongs on the main line, where
+  # the operator can watch it converge.
+  subtask:
+    max_parallel: 3
+    max_steps: 8
+    max_tool_calls: 24
+    timeout: 5m
+
 shutdown_timeout: 10s
 log_level: info

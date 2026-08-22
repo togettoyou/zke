@@ -21,6 +21,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/aimodel"
 	"github.com/togettoyou/zke/pkg/server/airuntime"
 	"github.com/togettoyou/zke/pkg/server/aisession"
+	"github.com/togettoyou/zke/pkg/server/aiskills"
 	"github.com/togettoyou/zke/pkg/server/aitools"
 	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/auth"
@@ -478,8 +479,19 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				Retries:            cfg.AIOps.Compaction.Retries,
 				MaxOverflowRetries: cfg.AIOps.Compaction.MaxOverflowRetries,
 			},
+			Subtask: airuntime.SubtaskConfig{
+				MaxParallel:  cfg.AIOps.Subtask.MaxParallel,
+				MaxSteps:     cfg.AIOps.Subtask.MaxSteps,
+				MaxToolCalls: cfg.AIOps.Subtask.MaxToolCalls,
+				Timeout:      cfg.AIOps.Subtask.Timeout,
+			},
 			Tools: aiToolCatalogue,
 			Audit: auditService,
+			// Playbooks ship with the Server and carry no authority of their
+			// own: a skill can only tell the model which of the tools above to
+			// reach for and in what order. A library a session could write into
+			// would be the prompt injection the rest of Phase 4 refuses.
+			Skills: aiskills.New(),
 		},
 	)
 	resourceManagementService := resourcemanagement.NewService(

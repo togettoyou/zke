@@ -8,6 +8,7 @@ import type {
   AIContextUsage,
   AIEvidence,
   AISession,
+  AISkill,
   AITool,
   AITrajectoryEntry,
 } from "../types";
@@ -15,11 +16,11 @@ import type {
 type SessionList = { sessions: AISession[] };
 type Trajectory = { entries: AITrajectoryEntry[] };
 type Attachments = { attachments: AIAttachment[] };
-type Tools = { enabled: boolean; tools: AITool[] };
+type Tools = { enabled: boolean; tools: AITool[]; skills: AISkill[] };
 
 /**
- * Whether AIOps is switched on for this deployment, and the tool catalogue the
- * runtime advertises to the model.
+ * Whether AIOps is switched on for this deployment, and the tool catalogue and
+ * skill library the runtime advertises to the model.
  *
  * It describes the runtime rather than any Cluster, so it is fetched once and
  * shared: what AIOps can do does not change with the workspace, only whether

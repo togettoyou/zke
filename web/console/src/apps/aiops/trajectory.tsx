@@ -970,6 +970,14 @@ const EntryRow = memo(function EntryRow({
         >
           {KIND_CODES[entry.kind]}
         </span>
+        {/* A branch's rows sit in the same list as the turn's, because they are
+            the same append-only trail. The stamp is what keeps them from being
+            read as something the main line did. */}
+        {entry.content.subtask ? (
+          <span className="bg-info-surface text-info rounded-inline shrink-0 px-1 py-px text-[10px]">
+            子 {entry.content.subtask.index}
+          </span>
+        ) : null}
         <span className="text-foreground min-w-0 flex-1 truncate text-xs">{entryTitle(entry)}</span>
         {fold?.folded ? (
           <span className="text-subtle-foreground shrink-0 text-[11px]">+{fold.count} 次调用</span>
@@ -1043,6 +1051,12 @@ function Detail({ entry, onClose }: { entry: AITrajectoryEntry; onClose: () => v
           <dl className="grid grid-cols-2 gap-x-5 gap-y-2 text-xs">
             <Field label="时间" value={new Date(entry.occurred_at).toLocaleString("zh-CN")} />
             <Field label="耗时" value={formatDuration(entry.duration_ms)} />
+            {content.subtask ? (
+              <Field label="子任务" value={`第 ${content.subtask.index} 个分支`} />
+            ) : null}
+            {content.subtask?.goal ? (
+              <Field label="子任务目标" value={content.subtask.goal} />
+            ) : null}
             {content.tool ? <Field label="工具" value={content.tool} /> : null}
             {content.call_id ? <Field label="调用 ID" value={content.call_id} /> : null}
             {content.authorized !== undefined ? (

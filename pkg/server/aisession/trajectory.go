@@ -284,6 +284,31 @@ type Content struct {
 	// on every context entry rather than left to the caller: it is an invariant,
 	// not an option.
 	Untrusted bool `json:"untrusted,omitempty"`
+	// Subtask names the delegated branch an entry belongs to. Absent on the
+	// main line of a turn, which is what makes "the turn itself" and "one of
+	// its branches" distinguishable in a single append-only list.
+	Subtask *Subtask `json:"subtask,omitempty"`
+}
+
+// Subtask identifies one delegated investigation branch inside a turn.
+//
+// Branches write into the same trail as the turn that spawned them, because a
+// second store would be a second account of the same run and the two could
+// disagree. What keeps them readable is this stamp: every entry says which
+// branch produced it, so the Console can fold a branch away and a review can
+// tell a fact the main line established from one a branch reported.
+type Subtask struct {
+	// ID is the branch identity, unique inside one session.
+	ID string `json:"id"`
+	// CallID is the parent tool call that delegated this branch. It is what
+	// ties a branch back to the one call the main line sees.
+	CallID string `json:"call_id"`
+	// Index is the branch's 1-based position in that call, so labels and order
+	// stay stable however the branches interleave.
+	Index int `json:"index"`
+	// Goal is what the branch was asked to find out. Carried on the entry that
+	// opens the branch; the rest of its entries only need the identity.
+	Goal string `json:"goal,omitempty"`
 }
 
 type Target struct {
@@ -432,6 +457,10 @@ const (
 	maxTextBytes      = 32 * 1024
 	maxArgumentsBytes = 4 * 1024
 	maxEvidenceItems  = 32
+	// maxSubtaskGoalBytes bounds the one piece of a subtask stamp that is not
+	// Server-generated. The goal is written by the model, so it is bounded here
+	// as well as by the tool schema rather than trusted to arrive short.
+	maxSubtaskGoalBytes = 1024
 	// maxTitleBytes mirrors the column. A title is a label in a list, not a
 	// summary.
 	maxTitleBytes = 200
@@ -479,6 +508,11 @@ func (content *Content) normalize(kind Kind) bool {
 	if len(content.Evidence) > maxEvidenceItems {
 		content.Evidence = content.Evidence[:maxEvidenceItems]
 		truncated = true
+	}
+	if content.Subtask != nil {
+		if goal, cut := bound(content.Subtask.Goal, maxSubtaskGoalBytes); cut {
+			content.Subtask.Goal, truncated = goal, true
+		}
 	}
 	// Cluster content is untrusted by construction, not by whoever remembered
 	// to say so.

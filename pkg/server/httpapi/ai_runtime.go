@@ -140,7 +140,21 @@ func (handler *aiRuntimeHandler) tools(c *gin.Context) {
 			"mutating": spec.Mutating,
 		})
 	}
-	writeSuccess(c, http.StatusOK, gin.H{"enabled": enabled, "tools": items})
+	// Skills travel with the catalogue rather than on a route of their own:
+	// they are the same fact about the runtime, the Console shows them in the
+	// same place, and a second round trip would only make the two able to
+	// disagree about which deployment they describe.
+	skills := handler.runtime.SkillCatalogue()
+	playbooks := make([]gin.H, 0, len(skills))
+	for _, skill := range skills {
+		playbooks = append(playbooks, gin.H{
+			"id": skill.ID, "title": skill.Title, "summary": skill.Summary,
+			"tools": append([]string{}, skill.Tools...),
+		})
+	}
+	writeSuccess(c, http.StatusOK, gin.H{
+		"enabled": enabled, "tools": items, "skills": playbooks,
+	})
 }
 
 // decideApproval answers a call the runtime parked on a person.

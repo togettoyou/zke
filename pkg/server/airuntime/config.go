@@ -80,6 +80,22 @@ const (
 	// DefaultMaxOverflowRetries is how many times a request the endpoint
 	// rejected for exceeding its context window may be compacted and retried.
 	DefaultMaxOverflowRetries = 1
+
+	// DefaultMaxParallelSubtasks is how many branches one delegation may open.
+	// Three covers the shape subtasks are for — resource state, recent Events,
+	// metric anomaly — and keeps one question from opening a fan of model calls
+	// against a shared endpoint.
+	DefaultMaxParallelSubtasks = 3
+	// DefaultSubtaskSteps and DefaultSubtaskToolCalls are one branch's own
+	// budgets. They are much smaller than the turn's because a branch that
+	// needs forty steps is not a branch: it is the investigation, and it
+	// belongs on the main line where the operator can see it converge.
+	DefaultSubtaskSteps     = 8
+	DefaultSubtaskToolCalls = 24
+	// DefaultSubtaskTimeout bounds one branch. The turn timeout still bounds
+	// all of them together; this stops one stuck branch from spending the
+	// whole turn while its siblings have already answered.
+	DefaultSubtaskTimeout = 5 * time.Minute
 )
 
 // RetryConfig is the bounded exponential backoff applied to a transient model
@@ -143,6 +159,43 @@ func (compaction CompactionConfig) normalized() CompactionConfig {
 	return compaction
 }
 
+// SubtaskConfig bounds delegated investigation branches.
+//
+// A branch is a second agent loop with its own budget, so every bound the main
+// loop has, a branch needs its own version of. The numbers are deliberately
+// tight: subtasks exist to answer three independent questions at once, not to
+// let one question become three investigations.
+type SubtaskConfig struct {
+	// MaxParallel is how many branches one delegation may open, and therefore
+	// how many model conversations one step may start. Zero disables
+	// delegation entirely and removes the tool from the catalogue.
+	MaxParallel int
+	// MaxSteps and MaxToolCalls bound one branch.
+	MaxSteps     int
+	MaxToolCalls int
+	// Timeout bounds one branch inside the turn that owns it.
+	Timeout time.Duration
+}
+
+func (subtask SubtaskConfig) normalized() SubtaskConfig {
+	// Zero MaxParallel is a deployment saying "no delegation", which is a
+	// setting rather than an omission — so only a negative value asks for the
+	// default. The other three are budgets that have no meaningful zero.
+	if subtask.MaxParallel < 0 {
+		subtask.MaxParallel = DefaultMaxParallelSubtasks
+	}
+	if subtask.MaxSteps <= 0 {
+		subtask.MaxSteps = DefaultSubtaskSteps
+	}
+	if subtask.MaxToolCalls <= 0 {
+		subtask.MaxToolCalls = DefaultSubtaskToolCalls
+	}
+	if subtask.Timeout <= 0 {
+		subtask.Timeout = DefaultSubtaskTimeout
+	}
+	return subtask
+}
+
 // Config is what a deployment may set about the loop.
 //
 // A zero value is a working configuration: every budget falls back to the
@@ -160,6 +213,7 @@ type Config struct {
 	TitleTimeout         time.Duration
 	ModelRetry           RetryConfig
 	Compaction           CompactionConfig
+	Subtask              SubtaskConfig
 
 	// Tools is the catalogue the model may call. A nil catalogue leaves the
 	// runtime useful in tests and in a deployment that has not composed one;
@@ -168,6 +222,10 @@ type Config struct {
 	// Audit records executed tool calls and approval decisions. Nil disables
 	// recording, which is only appropriate in tests.
 	Audit Auditor
+	// Skills is the playbook library offered alongside the catalogue. Nil
+	// leaves the runtime working with no skills rather than failing, which is
+	// what a test and a deployment that composed none both need.
+	Skills SkillLibrary
 }
 
 func (config Config) normalized() Config {
@@ -194,5 +252,6 @@ func (config Config) normalized() Config {
 	}
 	config.ModelRetry = config.ModelRetry.normalized()
 	config.Compaction = config.Compaction.normalized()
+	config.Subtask = config.Subtask.normalized()
 	return config
 }

@@ -95,6 +95,12 @@ type Runtime struct {
 	users      UserStore
 	tools      ToolSet
 	audit      Auditor
+	// skills are the playbooks this deployment can actually carry out, and
+	// builtins the tools the runtime implements itself rather than delegating
+	// to the catalogue. Both are resolved once at construction: they depend on
+	// what was composed, which does not change while the Server runs.
+	skills   []Skill
+	builtins []ToolSpec
 
 	turnTimeout          time.Duration
 	maxSteps             int
@@ -105,6 +111,7 @@ type Runtime struct {
 	titleTimeout         time.Duration
 	retry                RetryConfig
 	compaction           CompactionConfig
+	subtask              SubtaskConfig
 
 	stream    *broker
 	approvals *pendingApprovals
@@ -123,9 +130,24 @@ func New(
 	config Config,
 ) *Runtime {
 	config = config.normalized()
+	var catalogue []ToolSpec
+	if config.Tools != nil {
+		catalogue = config.Tools.Specs()
+	}
+	skills := availableSkills(config.Skills, catalogue)
+	// A built-in is advertised only when it can do something. A skill tool with
+	// an empty library and a delegation tool a deployment switched off are both
+	// tools that would cost a slot in every request and fail every call.
+	builtins := make([]ToolSpec, 0, 2)
+	if len(skills) > 0 {
+		builtins = append(builtins, loadSkillSpec(skills))
+	}
+	if config.Subtask.MaxParallel > 0 && len(delegableSpecs(catalogue)) > 0 {
+		builtins = append(builtins, runSubtasksSpec(config.Subtask.MaxParallel))
+	}
 	return &Runtime{
 		base: base, sessions: sessions, model: model, authorizer: authorizer, users: users,
-		tools: config.Tools, audit: config.Audit,
+		tools: config.Tools, audit: config.Audit, skills: skills, builtins: builtins,
 		turnTimeout:          config.TurnTimeout,
 		maxSteps:             config.MaxSteps,
 		maxToolCalls:         config.MaxToolCalls,
@@ -135,6 +157,7 @@ func New(
 		titleTimeout:         config.TitleTimeout,
 		retry:                config.ModelRetry,
 		compaction:           config.Compaction,
+		subtask:              config.Subtask,
 		stream:               newBroker(),
 		approvals:            newPendingApprovals(),
 		jobs:                 make(map[string]context.CancelFunc),
@@ -164,10 +187,18 @@ type StartInput struct {
 // a turn is started. It carries no arguments and no cluster identity: it is a
 // description of the runtime, not an authorization decision.
 func (runtime *Runtime) ToolCatalogue() []ToolSpec {
-	if runtime.tools == nil {
-		return nil
+	var catalogue []ToolSpec
+	if runtime.tools != nil {
+		catalogue = runtime.tools.Specs()
 	}
-	return runtime.tools.Specs()
+	if len(runtime.builtins) == 0 {
+		return catalogue
+	}
+	// The built-ins go last so the Kubernetes tools keep the order the
+	// catalogue chose for them, which is the order a model reads them in.
+	specs := make([]ToolSpec, 0, len(catalogue)+len(runtime.builtins))
+	specs = append(specs, catalogue...)
+	return append(specs, runtime.builtins...)
 }
 
 // Enabled reports whether the platform has AIOps turned on and pointed at an
@@ -348,6 +379,11 @@ type turnJob struct {
 	title       string
 	question    string
 	attachments []aisession.Attachment
+	// subtask names the delegated branch this job drives, nil on the main line
+	// of a turn. Everything the job writes is stamped with it, which is what
+	// keeps one append-only trail readable when several branches write into it
+	// at once — and what keeps a branch from being mistaken for the turn.
+	subtask *aisession.Subtask
 }
 
 func (runtime *Runtime) run(ctx context.Context, job turnJob) {
@@ -373,7 +409,7 @@ func (runtime *Runtime) run(ctx context.Context, job turnJob) {
 	runtime.nameSession(ctx, job)
 	specs := runtime.ToolCatalogue()
 	mode := runtime.currentMode(ctx, job)
-	runtime.append(ctx, job.sessionID, aisession.AppendInput{
+	runtime.append(ctx, job, aisession.AppendInput{
 		Kind: aisession.KindSystem,
 		Content: aisession.Content{
 			Text:  runtimeContextText(job.clusterID, mode, specs),
@@ -384,7 +420,7 @@ func (runtime *Runtime) run(ctx context.Context, job turnJob) {
 	})
 	for _, attachment := range job.attachments {
 		for _, chunk := range attachmentChunks(attachment) {
-			runtime.append(ctx, job.sessionID, aisession.AppendInput{
+			runtime.append(ctx, job, aisession.AppendInput{
 				Kind: aisession.KindContext, Content: aisession.Content{Text: chunk},
 				OccurredAt: time.Now().UTC(),
 			})
@@ -418,7 +454,7 @@ func (runtime *Runtime) loop(
 			return
 		}
 		mode := runtime.currentMode(ctx, job)
-		system := systemPrompt(job.clusterID, mode, specs)
+		system := systemPrompt(job.clusterID, mode, specs, runtime.skills)
 		completion, evidence, pressure, err := runtime.think(
 			ctx, job, step, budget, system, definitions, specs,
 		)
@@ -437,7 +473,7 @@ func (runtime *Runtime) loop(
 			Streamed:     completion.Streamed,
 		}
 		if reasoning := strings.TrimSpace(completion.Reasoning); reasoning != "" {
-			runtime.append(ctx, job.sessionID, aisession.AppendInput{
+			runtime.append(ctx, job, aisession.AppendInput{
 				Kind:       aisession.KindReasoning,
 				Content:    aisession.Content{Text: reasoning, Step: step},
 				OccurredAt: time.Now().UTC(),
@@ -447,7 +483,7 @@ func (runtime *Runtime) loop(
 		for _, call := range completion.ToolCalls {
 			requested = append(requested, call.Name)
 		}
-		runtime.append(ctx, job.sessionID, aisession.AppendInput{
+		runtime.append(ctx, job, aisession.AppendInput{
 			Kind: aisession.KindModel,
 			Content: aisession.Content{
 				Text: completion.Text, Step: step, Tokens: tokens, Timing: timing, Tools: requested,
@@ -463,7 +499,10 @@ func (runtime *Runtime) loop(
 			return
 		}
 		toolCalls += len(completion.ToolCalls)
-		if !runtime.runToolCalls(ctx, job, step, completion.ToolCalls, specs, mode, repeats) {
+		if failure := runtime.runToolCalls(
+			ctx, job, step, completion.ToolCalls, specs, mode, repeats,
+		); failure != "" {
+			runtime.fail(job.sessionID, failure)
 			return
 		}
 	}
@@ -553,7 +592,10 @@ func (runtime *Runtime) complete(
 			// A retried call starts its answer over. Whatever the failed
 			// attempt put on screen has to go, or the operator reads one answer
 			// spliced onto the beginning of another.
-			if streamed {
+			// A branch does not stream, so it has nothing on screen to reset.
+			// Publishing its step numbers would clear the main line's partial
+			// answer instead, which is the one thing a reset must not do.
+			if streamed && job.subtask == nil {
 				runtime.stream.publish(job.sessionID, StreamEvent{
 					Type: StreamReset, Turn: job.turn, Step: step,
 				})
@@ -640,7 +682,7 @@ func (runtime *Runtime) prepare(
 	if pressure.TotalTokens+budget.maxOutputTokens >= budget.contextWindowTokens {
 		return nil, nil, Pressure{}, ErrContextBudget
 	}
-	messages, _ := buildMessages(entries)
+	messages, _ := buildMessages(entries, "")
 	// The conclusion cites what this turn read, not everything the session ever
 	// read. Carrying the whole history's references made every answer end in
 	// the same growing wall of chips — including answers to "谢谢你", which read
@@ -690,7 +732,7 @@ func (runtime *Runtime) Usage(
 	budget := runtime.budgetFor(settings)
 	pressure := measure(
 		entries,
-		systemPrompt(session.ClusterID, session.ApprovalMode, specs),
+		systemPrompt(session.ClusterID, session.ApprovalMode, specs, runtime.skills),
 		toolDefinitions(specs),
 	)
 	return ContextUsage{
@@ -732,8 +774,10 @@ type plannedCall struct {
 // of the change to observe. Recording is back in model order, so the trail and
 // the export do not depend on which read happened to finish first.
 //
-// It reports whether the loop may continue; a false result means the turn
-// already ended.
+// It returns the classification that must end this run, or the empty string
+// when the caller may continue. Ending is the caller's to do rather than this
+// function's: the same admission logic drives a turn, which fails, and a
+// delegated branch, which reports a failure back to the turn that spawned it.
 func (runtime *Runtime) runToolCalls(
 	ctx context.Context,
 	job turnJob,
@@ -742,12 +786,13 @@ func (runtime *Runtime) runToolCalls(
 	specs []ToolSpec,
 	mode aisession.ApprovalMode,
 	repeats map[string]int,
-) bool {
+) string {
 	planned := make([]plannedCall, 0, len(calls))
 	for _, call := range calls {
-		admitted, ended := runtime.admit(ctx, job, step, call, specs, mode, repeats)
-		if ended {
-			return false
+		call.ID = qualifiedCallID(job, call.ID)
+		admitted, failure := runtime.admit(ctx, job, step, call, specs, mode, repeats)
+		if failure != "" {
+			return failure
 		}
 		planned = append(planned, admitted)
 	}
@@ -762,7 +807,7 @@ func (runtime *Runtime) runToolCalls(
 		}
 		runtime.recordResult(ctx, job, step, item.call, item.target, *outcome, item.duration)
 	}
-	return true
+	return ""
 }
 
 // admit decides one call: is it a tool, may this operator use it, does a person
@@ -770,8 +815,10 @@ func (runtime *Runtime) runToolCalls(
 //
 // Every branch that refuses records the refusal as the call's result, so the
 // model is told what happened and can change course. The one branch that ends
-// the turn is an approval nobody answered or a cancellation, because neither
-// leaves anything for the model to do next.
+// the run is an approval nobody answered or a cancellation, because neither
+// leaves anything for the model to do next; it is reported as a classification
+// rather than acted on here, so a delegated branch can end without ending the
+// turn that spawned it.
 func (runtime *Runtime) admit(
 	ctx context.Context,
 	job turnJob,
@@ -780,7 +827,7 @@ func (runtime *Runtime) admit(
 	specs []ToolSpec,
 	mode aisession.ApprovalMode,
 	repeats map[string]int,
-) (plannedCall, bool) {
+) (plannedCall, string) {
 	item := plannedCall{
 		call: call, step: step, target: &aisession.Target{Cluster: job.clusterID},
 	}
@@ -792,7 +839,7 @@ func (runtime *Runtime) admit(
 				call.Name, strings.Join(specNames(specs), ", ")),
 			Failed: true,
 		}
-		return item, false
+		return item, ""
 	}
 	item.spec = spec
 	if spec.Target != nil {
@@ -813,27 +860,25 @@ func (runtime *Runtime) admit(
 			Text:   fmt.Sprintf("当前账户在该 Cluster 上没有 %s 权限，未执行这次调用。", missing),
 			Failed: true,
 		}
-		return item, false
+		return item, ""
 	}
 	if requiresApprovalFor(spec, mode, json.RawMessage(call.Arguments)) {
 		decision, failure := runtime.awaitApproval(ctx, job, step, call, spec, mode, item.target)
 		if failure != "" {
-			runtime.fail(job.sessionID, failure)
-			return item, true
+			return item, failure
 		}
 		if decision == aisession.DecisionDenied {
 			runtime.recordCall(ctx, job, step, call, item.target, false)
 			item.outcome = &aisession.Content{
 				Text: "用户拒绝了这次调用。请在不执行它的前提下继续，或说明为什么无法继续。", Failed: true,
 			}
-			return item, false
+			return item, ""
 		}
 		// Approval can wait for minutes. Neither an earlier permission decision nor
 		// an approval is authority to run after the account or RBAC changed while
 		// the turn was parked.
 		if err := runtime.revalidate(ctx, job.userID, job.tenantID, job.projectID, job.clusterID); err != nil {
-			runtime.fail(job.sessionID, aisession.FailurePermissionRevoked)
-			return item, true
+			return item, aisession.FailurePermissionRevoked
 		}
 		authorized, missing = runtime.authorizeTool(ctx, job, spec)
 		if !authorized {
@@ -848,7 +893,7 @@ func (runtime *Runtime) admit(
 				),
 				Failed: true,
 			}
-			return item, false
+			return item, ""
 		}
 	}
 	runtime.recordCall(ctx, job, step, call, item.target, true)
@@ -858,7 +903,7 @@ func (runtime *Runtime) admit(
 			Text:   "参数不是合法的 JSON 对象，请按工具 Schema 重新构造后再调用。",
 			Failed: true,
 		}
-		return item, false
+		return item, ""
 	}
 	fingerprint := call.Name + "\x00" + string(arguments)
 	repeats[fingerprint]++
@@ -867,11 +912,11 @@ func (runtime *Runtime) admit(
 			Text:   "同样的调用在本轮中已经执行过，结果不会改变。请改变参数或基于已有结果给出结论。",
 			Failed: true,
 		}
-		return item, false
+		return item, ""
 	}
 	item.arguments = arguments
 	item.run = true
-	return item, false
+	return item, ""
 }
 
 // execute runs an all-read batch with bounded concurrency. The presence of one
@@ -888,7 +933,7 @@ func (runtime *Runtime) execute(ctx context.Context, job turnJob, planned []plan
 			return
 		}
 	}
-	slots := make(chan struct{}, runtime.maxParallelToolCalls)
+	slots := make(chan struct{}, runtime.parallelismFor(job))
 	var running sync.WaitGroup
 	for index := range planned {
 		if !planned[index].run {
@@ -905,15 +950,26 @@ func (runtime *Runtime) execute(ctx context.Context, job turnJob, planned []plan
 	running.Wait()
 }
 
+// parallelismFor is how many reads one step of this job may have in flight.
+//
+// The configured bound is about the Agent on the other end, which also serves
+// the rest of the platform — so it has to hold for the turn as a whole, not for
+// each branch separately. Branches run at the same time, so each of them gets a
+// share rather than the whole allowance; without that, delegation would
+// multiply the concurrency the deployment configured by the number of branches
+// it happened to open.
+func (runtime *Runtime) parallelismFor(job turnJob) int {
+	if job.subtask == nil || runtime.subtask.MaxParallel <= 1 {
+		return runtime.maxParallelToolCalls
+	}
+	return max(1, runtime.maxParallelToolCalls/runtime.subtask.MaxParallel)
+}
+
 // invoke performs one authorized call and turns it into the content the trail
 // and the model will both see.
 func (runtime *Runtime) invoke(ctx context.Context, job turnJob, item *plannedCall) {
 	started := time.Now()
-	result, toolErr := runtime.tools.Invoke(ctx, ToolInvocation{
-		Name: item.call.Name, TurnID: toolTurnID(job), ClusterID: job.clusterID,
-		UserID: job.userID, Arguments: item.arguments,
-		IdempotencyKey: toolIdempotencyKey(job, item.step, item.call.ID),
-	})
+	result, toolErr := runtime.perform(ctx, job, item)
 	content := aisession.Content{Untrusted: true, Target: item.target}
 	auditResult := auditResultSucceeded
 	if toolErr != nil {
@@ -922,6 +978,10 @@ func (runtime *Runtime) invoke(ctx context.Context, job turnJob, item *plannedCa
 		auditResult = auditResultFailed
 	} else {
 		content.Text = result.Text
+		// Untrusted is the default and the safe answer: only a tool whose whole
+		// body is text the Server itself ships may claim otherwise, and the
+		// claim travels with the content into the model surface.
+		content.Untrusted = !result.Trusted
 		content.Failed = result.Failed || result.Denied
 		if result.Denied {
 			auditResult = auditResultDenied
@@ -957,6 +1017,55 @@ func (runtime *Runtime) invoke(ctx context.Context, job turnJob, item *plannedCa
 	}
 	item.outcome = &content
 	item.duration = time.Since(started)
+}
+
+// perform routes one admitted call to whoever implements it.
+//
+// Two tools are the runtime's own rather than the catalogue's, and both are
+// there because they need what the catalogue deliberately does not have.
+// Loading a skill returns text the Server ships, which is the one answer in the
+// whole system that is not derived from a Cluster. Delegating subtasks starts
+// model conversations with their own budgets, approvals and trail entries —
+// all of which are the runtime's, not Kubernetes'. Everything that does touch a
+// Cluster still goes through the catalogue, so the Agent transport, the
+// permission checks and the response bounds stay in one place.
+func (runtime *Runtime) perform(
+	ctx context.Context, job turnJob, item *plannedCall,
+) (ToolResult, error) {
+	switch item.call.Name {
+	case toolLoadSkill:
+		return runtime.loadSkill(item.arguments)
+	case toolRunSubtasks:
+		return runtime.runSubtasks(ctx, job, item)
+	}
+	if runtime.tools == nil {
+		return ToolResult{}, ErrInvalidInput
+	}
+	return runtime.tools.Invoke(ctx, ToolInvocation{
+		Name: item.call.Name, TurnID: toolTurnID(job), ClusterID: job.clusterID,
+		UserID: job.userID, Arguments: item.arguments,
+		IdempotencyKey: toolIdempotencyKey(job, item.step, item.call.ID),
+	})
+}
+
+// qualifiedCallID makes one model-chosen call identifier unique within a
+// session.
+//
+// Each branch is a conversation of its own, so its model numbers its calls from
+// one — and two branches of the same turn routinely hand back the same
+// identifier. That identifier is what ties an approval to the call parked on
+// it, a result to the call that produced it, and a row in the Console to both;
+// letting two branches share one would silently deliver a person's approval to
+// the wrong branch.
+//
+// It is only ZKE's identity, and it never leaves: the projection strips the
+// qualifier again so the endpoint gets back the identifier it issued, which it
+// requires and whose length and character set providers bound. See wireCallID.
+func qualifiedCallID(job turnJob, callID string) string {
+	if job.subtask == nil {
+		return callID
+	}
+	return job.subtask.ID + ":" + callID
 }
 
 // toolIdempotencyKey is stable for one persisted turn and opaque to the Agent.
@@ -1064,7 +1173,7 @@ func (runtime *Runtime) awaitApproval(
 ) (string, string) {
 	answer := runtime.approvals.open(job.sessionID, call.ID)
 	defer runtime.approvals.close(job.sessionID, call.ID)
-	runtime.append(ctx, job.sessionID, aisession.AppendInput{
+	runtime.append(ctx, job, aisession.AppendInput{
 		Kind: aisession.KindApprovalRequest,
 		Content: aisession.Content{
 			Tool: call.Name, CallID: call.ID, Arguments: call.Arguments, Step: step,
@@ -1082,7 +1191,7 @@ func (runtime *Runtime) awaitApproval(
 	case <-timeout.C:
 		return "", aisession.FailureApprovalTimeout
 	}
-	runtime.append(ctx, job.sessionID, aisession.AppendInput{
+	runtime.append(ctx, job, aisession.AppendInput{
 		Kind: aisession.KindApprovalDecision,
 		Content: aisession.Content{
 			Tool: call.Name, CallID: call.ID, Step: step, Decision: decision, Target: target,
@@ -1168,7 +1277,7 @@ func (runtime *Runtime) conclude(
 	evidence []aisession.Evidence,
 	tokens *aisession.Tokens,
 ) {
-	runtime.append(ctx, job.sessionID, aisession.AppendInput{
+	runtime.append(ctx, job, aisession.AppendInput{
 		Kind: aisession.KindConclusion,
 		Content: aisession.Content{
 			Text: text, Step: step, Evidence: evidence, Tokens: tokens,
@@ -1186,7 +1295,7 @@ func (runtime *Runtime) recordCall(
 	call aimodel.ToolCall, target *aisession.Target, authorized bool,
 ) {
 	decision := authorized
-	runtime.append(ctx, job.sessionID, aisession.AppendInput{
+	runtime.append(ctx, job, aisession.AppendInput{
 		Kind: aisession.KindToolCall,
 		Content: aisession.Content{
 			Tool: call.Name, CallID: call.ID, Arguments: call.Arguments,
@@ -1206,7 +1315,7 @@ func (runtime *Runtime) recordResult(
 	if content.Target == nil {
 		content.Target = target
 	}
-	runtime.append(ctx, job.sessionID, aisession.AppendInput{
+	runtime.append(ctx, job, aisession.AppendInput{
 		Kind: aisession.KindToolResult, Content: content,
 		OccurredAt: time.Now().UTC(), Duration: duration,
 	})
@@ -1214,17 +1323,31 @@ func (runtime *Runtime) recordResult(
 
 // append writes one entry and only then tells watchers to read it. The order is
 // the invariant: a watcher never learns about something the trail does not have.
+//
+// The branch stamp is applied here rather than by each caller for the same
+// reason the untrusted flag is applied inside aisession: it is an invariant of
+// who is writing, not a field a caller may remember or forget. It returns the
+// stored entry so a branch can record where its own trail starts.
 func (runtime *Runtime) append(
-	ctx context.Context, sessionID string, input aisession.AppendInput,
-) {
-	input.SessionID = sessionID
+	ctx context.Context, job turnJob, input aisession.AppendInput,
+) aisession.Entry {
+	input.SessionID = job.sessionID
+	if job.subtask != nil {
+		// A copy per entry. The stamp is the runtime's, and an entry that shared
+		// it would let a later change to the branch — or the bounding aisession
+		// applies to the model-written goal — reach back into rows already
+		// written.
+		stamp := *job.subtask
+		input.Content.Subtask = &stamp
+	}
 	entry, err := runtime.sessions.Append(context.WithoutCancel(ctx), input)
 	if err != nil {
-		return
+		return aisession.Entry{}
 	}
-	runtime.stream.publish(sessionID, StreamEvent{
+	runtime.stream.publish(job.sessionID, StreamEvent{
 		Type: StreamEntries, Turn: entry.Turn, Step: input.Content.Step,
 	})
+	return entry
 }
 
 func (runtime *Runtime) publishDelta(job turnJob, step int, delta aimodel.Delta) {
@@ -1305,8 +1428,20 @@ func (runtime *Runtime) fail(sessionID, failure string) {
 }
 
 func (runtime *Runtime) loadHistory(ctx context.Context, sessionID, userID string) ([]aisession.Entry, error) {
+	return runtime.loadHistoryAfter(ctx, sessionID, userID, 0)
+}
+
+// loadHistoryAfter reads the trail from one sequence onward.
+//
+// A delegated branch only ever needs what it wrote itself, all of which comes
+// after the entry that opened it. Reading from there keeps the cost of a branch
+// step proportional to the branch rather than to the conversation it was
+// spawned from — which matters most in exactly the long investigation somebody
+// would delegate out of.
+func (runtime *Runtime) loadHistoryAfter(
+	ctx context.Context, sessionID, userID string, after int32,
+) ([]aisession.Entry, error) {
 	result := make([]aisession.Entry, 0)
-	var after int32
 	for {
 		page, err := runtime.Trajectory(ctx, aisession.TrajectoryQuery{
 			SessionID: sessionID, InitiatorUserID: userID, AfterSequence: after,

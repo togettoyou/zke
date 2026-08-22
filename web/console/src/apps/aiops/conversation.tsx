@@ -4,6 +4,7 @@ import {
   Brain,
   ChevronRight,
   CircleAlert,
+  GitBranch,
   Layers,
   LoaderCircle,
   ShieldQuestion,
@@ -29,6 +30,8 @@ import {
   failureLabel,
   formatDuration,
   prettyBody,
+  subtaskLabel,
+  type ConversationBranch,
   type ConversationItem,
 } from "./entries";
 import { Markdown } from "./markdown";
@@ -168,7 +171,7 @@ function ConversationRow({
     case "reasoning":
       return <Collapsible icon={Brain} title="思考过程" body={entryText(item.entry)} />;
     case "activity":
-      return <Activity call={item.call} result={item.result} />;
+      return <Activity call={item.call} result={item.result} branches={item.branches} />;
     case "approval":
       return (
         <Approval
@@ -237,7 +240,15 @@ function Answer({ entry }: { entry: AITrajectoryEntry }) {
  * AIOps read the Deployment, and only sometimes wants the object. Leaving it
  * open would bury the answer under evidence.
  */
-function Activity({ call, result }: { call: AITrajectoryEntry; result: AITrajectoryEntry | null }) {
+function Activity({
+  call,
+  result,
+  branches,
+}: {
+  call: AITrajectoryEntry;
+  result: AITrajectoryEntry | null;
+  branches: ConversationBranch[];
+}) {
   const [open, setOpen] = useState(false);
   const denied = call.content.authorized === false;
   const failed = result?.content.failed ?? false;
@@ -266,6 +277,11 @@ function Activity({ call, result }: { call: AITrajectoryEntry; result: AITraject
         {result ? null : (
           <LoaderCircle aria-hidden className="text-primary size-3.5 shrink-0 animate-spin" />
         )}
+        {branches.length > 0 ? (
+          <span className="text-subtle-foreground shrink-0 text-[11px]">
+            {branches.length} 个子任务
+          </span>
+        ) : null}
         <span className="text-subtle-foreground ml-auto flex shrink-0 items-center gap-2 text-[11px]">
           {denied ? "未执行" : failed ? "未取得结果" : result ? "已完成" : "执行中"}
           {result ? formatDuration(result.duration_ms) : null}
@@ -278,11 +294,84 @@ function Activity({ call, result }: { call: AITrajectoryEntry; result: AITraject
       {open ? (
         <div className="border-border space-y-3 border-t px-3 py-2.5">
           <Block title="参数" body={call.content.arguments ?? "{}"} />
+          {branches.map((branch) => (
+            <Branch key={branch.id} branch={branch} />
+          ))}
           {result ? (
             <Block title="结果" body={prettyBody(result)} truncated={result.truncated} />
           ) : null}
           {result?.content.evidence?.length ? (
             <Evidence evidence={result.content.evidence} />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * One delegated branch, inside the call that delegated it.
+ *
+ * It shows the goal, what the branch read and what it concluded — the three
+ * things somebody checking a folded answer actually wants — and deliberately
+ * not the branch's model text step by step. A branch is a means to the folded
+ * result above it; a reader who wants every step of it has the trajectory tab,
+ * where the branch's entries sit in the same list as everything else.
+ */
+function Branch({ branch }: { branch: ConversationBranch }) {
+  const [open, setOpen] = useState(false);
+  const failure = branch.entries.find((entry) => entry.kind === "error");
+  return (
+    <div className="border-border rounded-control border">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        className="zke-focus rounded-control flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
+      >
+        <GitBranch aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
+        <span className="text-subtle-foreground shrink-0 text-[11px]">子任务 {branch.index}</span>
+        <span className="text-foreground min-w-0 flex-1 truncate text-xs">{branch.goal}</span>
+        {branch.conclusion || failure ? null : (
+          <LoaderCircle aria-hidden className="text-primary size-3.5 shrink-0 animate-spin" />
+        )}
+        <span className="text-subtle-foreground shrink-0 text-[11px]">{branch.calls} 次调用</span>
+        <ChevronRight
+          aria-hidden
+          className={cn(
+            "text-subtle-foreground size-3.5 shrink-0 transition-transform duration-150",
+            open && "rotate-90",
+          )}
+        />
+      </button>
+      {open ? (
+        <div className="border-border space-y-2 border-t px-2.5 py-2">
+          <ul className="space-y-1">
+            {branch.entries
+              .filter((entry) => entry.kind === "tool_call")
+              .map((entry) => (
+                <li
+                  key={entry.sequence}
+                  className="text-subtle-foreground flex items-center gap-2 font-mono text-[11px]"
+                >
+                  <Wrench aria-hidden className="size-3 shrink-0" />
+                  <span className="truncate">{entry.content.tool}</span>
+                  <span className="truncate">
+                    {[entry.content.target?.namespace, entry.content.target?.name]
+                      .filter(Boolean)
+                      .join("/")}
+                  </span>
+                </li>
+              ))}
+          </ul>
+          {branch.conclusion ? (
+            <div className="text-foreground text-[13px]">
+              <Markdown text={entryText(branch.conclusion)} />
+            </div>
+          ) : failure ? (
+            <p className="text-warning text-[11px]">
+              未完成：{failureLabel(failure.content.failure ?? "")}
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -304,6 +393,9 @@ function Approval({
   onDecide: (callId: string, decision: "approved" | "denied") => void;
 }) {
   const callId = entry.content.call_id ?? "";
+  // A parked branch has to say which branch it is: three of them asking at once
+  // is a supported shape, and three identical cards would be unanswerable.
+  const branch = subtaskLabel(entry);
   const target = [entry.content.target?.namespace, entry.content.target?.name]
     .filter(Boolean)
     .join("/");
@@ -313,7 +405,8 @@ function Approval({
         <ShieldQuestion aria-hidden className="text-warning mt-0.5 size-4 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-foreground text-[13px] font-medium">
-            AIOps 请求执行敏感操作 <span className="font-mono">{entry.content.tool}</span>
+            {branch ? `${branch}的 AIOps 请求执行敏感操作 ` : "AIOps 请求执行敏感操作 "}
+            <span className="font-mono">{entry.content.tool}</span>
           </p>
           {target ? (
             <p className="text-muted-foreground mt-0.5 text-[11px]">目标 {target}</p>

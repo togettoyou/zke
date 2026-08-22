@@ -62,6 +62,8 @@ AIOps 是运行在 ZKE 云端的 Codex 式运维 App：它跟随 Console 当前 
 已落地模型端点配置、跟随桌面 Tenant/Project 并按 Cluster 工作区隔离的会话与轨迹存储、后台运行时、模型自主
 工具循环与读取工具目录、敏感工具审批等待、流式输出，以及使用对话/轨迹 Tab 的 AIOps App。受控资源写入已支持
 Deployment/StatefulSet 副本数伸缩、工作负载回滚，以及多文档 Manifest 的 DryRun、差异、Apply 与 Delete。
+随 Server 发布的排查技能（Playbook）与只读并行子任务也已落地：技能只规定用哪些既有工具、按什么顺序取证，
+子任务只有只读工具、有独立预算、写回同一条轨迹。
 
 - [x] 运行时底座：`ai.run`、后台任务、SSE/重连、权限重验、按比例触发的检查点压缩、模型失败分类与退避重试、证据引用
 - [x] AIOps App：随当前 Tenant/Project 和 Cluster 工作区切换的会话、对话/轨迹 Tab、轨迹时间线与详情、附件、搜索、归档、删除、导出和证据深链
@@ -69,5 +71,6 @@ Deployment/StatefulSet 副本数伸缩、工作负载回滚，以及多文档 Ma
 - [x] 首个受控写操作：Deployment/StatefulSet 副本数 DryRun 预检与实际伸缩、稳定幂等键、写入批次顺序执行和三档审批
 - [x] 资源写操作：YAML/DryRun/有界差异、Manifest 部署与删除、工作负载历史读取与回滚、预检快照、逐目标权限重验
 - [x] Cluster Terminal 的 AIOps 受控命令执行：Turn 级终端复用、冻结权限快照、敏感审批、有界输出与自动清理
-- [ ] 扩展能力：技能、并行子任务、图表/资源就地唤起、定时巡检和事件触发自动化
+- [x] 技能与并行子任务：随 Server 发布、按需加载的排查 Playbook；只读、有界、可回收并写回同一轨迹的并行取证分支
+- [ ] 扩展能力：图表/资源就地唤起、定时巡检和事件触发自动化
 - [ ] 配额、诊断效果评估与用户反馈

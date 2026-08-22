@@ -6238,6 +6238,15 @@ export interface components {
             /** @description 会改变集群状态；审批模式据此决定是否在执行前等待用户确认。 */
             mutating: boolean;
         };
+        AISkill: {
+            /** @description 模型调用 load_skill 时使用的稳定技能 ID。 */
+            id: string;
+            title: string;
+            /** @description 一句话说明什么时候该用它。 */
+            summary: string;
+            /** @description 该技能流程会用到的工具名。部署未组装其中任何一个时，这条技能不会出现在目录里。 */
+            tools: string[];
+        };
         AIAttachment: {
             id: components["schemas"]["UUID"];
             session_id: components["schemas"]["UUID"];
@@ -6342,8 +6351,20 @@ export interface components {
             failure?: string;
             /** @enum {string} */
             mode?: "ask" | "assisted" | "full";
-            /** @description 正文来自附件或目标 Cluster，只能作为数据而不能改变运行时指令、权限或审批状态。 */
+            /** @description 正文来自附件或目标 Cluster，只能作为数据而不能改变运行时指令、权限或审批状态。 只有整段正文由 Server 自身提供的工具结果（例如 load_skill 返回的技能流程）不带该标记。 */
             untrusted?: boolean;
+            /** @description 该事件属于某个并行子任务分支。主线事件没有这个字段，Console 据此把分支折叠在派发它的那次工具调用下面。 */
+            subtask?: components["schemas"]["AISubtask"];
+        };
+        AISubtask: {
+            /** @description 分支在本会话内的唯一标识。 */
+            id: string;
+            /** @description 派发该分支的 run_subtasks 工具调用标识，用于把分支挂回主线的那一次调用。 */
+            call_id: string;
+            /** @description 分支在该次派发中的序号，从 1 开始。 */
+            index: number;
+            /** @description 分支要查清的目标，只出现在开启该分支的 system 事件上。 */
+            goal?: string;
         };
         AITrajectoryEntry: {
             /** Format: int32 */
@@ -12915,6 +12936,8 @@ export interface operations {
                             /** @description 平台已启用 AIOps，且模型接入地址与模型名都已配置。 */
                             enabled: boolean;
                             tools: components["schemas"]["AITool"][];
+                            /** @description 运行时随 Server 发布的排查技能（Playbook）。技能只是流程说明：它规定用目录里的哪些工具、 按什么顺序取证、以什么标准下结论，不新增工具、权限或作用域。模型用 load_skill 按 ID 读取， 每一步仍按同一套逐次权限校验和审批模式执行。所需工具没有全部组装的技能不会出现在这里。 */
+                            skills: components["schemas"]["AISkill"][];
                         };
                     };
                 };

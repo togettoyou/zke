@@ -95,6 +95,16 @@ type ToolResult struct {
 	// authorization. Static catalogue permissions are checked by the runtime;
 	// tools whose required permission depends on their contents report it here.
 	Denied bool
+	// Trusted marks an answer that did not come out of a Cluster and may
+	// therefore be read as instruction rather than as data.
+	//
+	// It exists for exactly one shape of tool: one whose whole answer is text
+	// the Server itself ships, such as a skill playbook. Nothing that passed
+	// through an Agent, an object, a log or a command may set it, because the
+	// rule that cluster content is data and never instruction is what the
+	// approval modes are protecting. The default is the safe one: a result says
+	// nothing and is recorded as untrusted.
+	Trusted bool
 }
 
 type ToolAuditTarget struct {

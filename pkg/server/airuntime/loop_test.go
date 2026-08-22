@@ -452,7 +452,7 @@ func TestSurfaceKeepsTheTailACheckpointDidNotShadow(t *testing.T) {
 		}},
 	}
 
-	messages, _ := buildMessages(entries)
+	messages, _ := buildMessages(entries, "")
 
 	joined := ""
 	for _, message := range messages {

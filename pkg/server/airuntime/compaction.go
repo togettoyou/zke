@@ -48,7 +48,7 @@ func planCompaction(entries []aisession.Entry, retainTokens int) (compactionPlan
 	if len(surface) == 0 {
 		return compactionPlan{}, false
 	}
-	messages, _ := buildMessages(entries)
+	messages, _ := buildMessages(entries, "")
 	plan := compactionPlan{beforeTokens: messagesTokens(messages)}
 	keepFrom := len(surface)
 	for index := len(surface) - 1; index >= 0; index-- {
@@ -122,7 +122,7 @@ func (runtime *Runtime) compact(
 		// without shrinking the request.
 		return false
 	}
-	runtime.append(ctx, job.sessionID, aisession.AppendInput{
+	runtime.append(ctx, job, aisession.AppendInput{
 		Kind: aisession.KindCompaction,
 		Content: aisession.Content{
 			Text: summary, Step: step, Evidence: shadowedEvidence,
@@ -157,7 +157,7 @@ func (runtime *Runtime) retainFor(
 	if trigger != aisession.CompactionTriggerOverflow {
 		return budget.retainTokens
 	}
-	messages, _ := buildMessages(entries)
+	messages, _ := buildMessages(entries, "")
 	return min(budget.retainTokens, messagesTokens(messages)/2)
 }
 
@@ -179,7 +179,7 @@ func (runtime *Runtime) summarize(
 	plan compactionPlan,
 	specs []ToolSpec,
 ) (string, string) {
-	messages, _ := buildMessages(plan.shadowed)
+	messages, _ := buildMessages(plan.shadowed, "")
 	if len(messages) == 0 {
 		return "", ""
 	}
@@ -191,7 +191,7 @@ func (runtime *Runtime) summarize(
 			break
 		}
 		completion, _, err := runtime.model.Complete(ctx, aimodel.CompletionInput{
-			System:          systemPrompt(job.clusterID, aisession.ApprovalAsk, specs),
+			System:          systemPrompt(job.clusterID, aisession.ApprovalAsk, specs, runtime.skills),
 			Messages:        request,
 			MaxOutputTokens: runtime.compaction.MaxSummaryTokens,
 		})
