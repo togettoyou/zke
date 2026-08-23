@@ -471,7 +471,7 @@ function AuthorizationEditor({
                   {existing.role_ref?.name}。要指向其他角色需要删除后重建。
                 </Alert>
               ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 @md:grid-cols-2">
                   <Field label="角色类型" htmlFor="rbac-role-kind">
                     <Select
                       value={roleKind}
@@ -620,7 +620,7 @@ function RuleRows({
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
           <div className="border-border/60 rounded-control grid gap-2 border p-2">
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 @md:grid-cols-2">
               <Input
                 value={row.verbs}
                 aria-label={`规则 ${index + 1} 动作`}

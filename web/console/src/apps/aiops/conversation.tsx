@@ -205,7 +205,7 @@ function Question({ entry }: { entry: AITrajectoryEntry }) {
       <div className="border-primary/25 bg-primary-surface text-foreground rounded-panel max-w-[85%] border px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap">
         {text}
       </div>
-      <div className="-mr-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+      <div className="hoverless:opacity-100 -mr-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
         <CopyIconButton value={text} label="复制这条提问" />
       </div>
     </div>

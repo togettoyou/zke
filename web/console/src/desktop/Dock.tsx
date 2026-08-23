@@ -70,9 +70,15 @@ export const Dock = memo(function Dock({
           // glass the rim is part of the material rather than a boundary drawn
           // around it — `--border` is tuned to separate two opaque surfaces and
           // reads as a drawn line here.
-          "zke-focus zke-dock text-subtle-foreground hover:text-foreground zke-pointer-layer flex h-6 w-16 items-center justify-center rounded-full border transition-[color,opacity] duration-200",
+          // Taller under a finger: 24px of handle is a comfortable mouse target
+          // and a miss on touch, and this is the only way back once the Dock is
+          // put away.
+          "zke-focus zke-dock text-subtle-foreground hover:text-foreground zke-pointer-layer coarse:h-9 flex h-6 w-16 items-center justify-center rounded-full border transition-[color,opacity] duration-200",
           visible
-            ? "opacity-0 group-hover/dock:opacity-100 focus-visible:opacity-100"
+            ? // A device with no hover has no state between not touching and
+              // activating, so a control that appears on hover never appears at
+              // all. It is drawn where a pointer would have revealed it.
+              "hoverless:opacity-100 opacity-0 group-hover/dock:opacity-100 focus-visible:opacity-100"
             : "opacity-100",
         )}
       >

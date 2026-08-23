@@ -301,7 +301,7 @@ export function AutoscalingExtensionForm({
       />
       <div className="grid gap-4">
         <FormSection title="基本信息">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-4">
             <Field label="名称" htmlFor="extension-name">
               <Input
                 id="extension-name"
@@ -495,7 +495,7 @@ function VPAPolicyEditor({
               <X />
             </Button>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3">
             <Field
               label="容器名称"
               htmlFor={`vpa-policy-${index}-container`}
@@ -546,7 +546,7 @@ function VPAPolicyEditor({
               </Select>
             </Field>
           </div>
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid gap-3 @md:grid-cols-2">
             <QuantityBounds
               label="CPU"
               minimum={policy.minCPU}
@@ -566,7 +566,7 @@ function VPAPolicyEditor({
               examples="例如 128Mi、2Gi"
             />
           </div>
-          <div className="grid items-end gap-3 md:grid-cols-2">
+          <div className="grid items-end gap-3 @md:grid-cols-2">
             <Field label="受控资源">
               <Select
                 value={policy.resourceSelection}
@@ -630,7 +630,7 @@ function QuantityBounds({
   return (
     <div className="bg-surface-muted/45 rounded-control grid gap-2 p-3">
       <span className="text-foreground text-xs font-medium">{label} 边界</span>
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2 @md:grid-cols-2">
         <Field label="最小值" hint={examples}>
           <Input value={minimum} disabled={disabled} onChange={(e) => onMinimum(e.target.value)} />
         </Field>
@@ -691,7 +691,7 @@ function KEDATriggerEditor({
               <X />
             </Button>
           </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3">
             <Field
               label="类型"
               htmlFor={`keda-trigger-${index}-type`}
@@ -758,7 +758,7 @@ function KEDATriggerEditor({
             <Field
               label="TriggerAuthentication 名称（可选）"
               htmlFor={`keda-trigger-${index}-auth`}
-              className="md:col-span-2 xl:col-span-3"
+              className="@md:col-span-2 @3xl:col-span-3"
             >
               <Input
                 id={`keda-trigger-${index}-auth`}
@@ -813,7 +813,7 @@ function MetadataEditor({
       {rows.map((row, index) => (
         <div
           key={index}
-          className="grid gap-2 sm:grid-cols-[minmax(8rem,0.8fr)_minmax(10rem,1.2fr)_auto]"
+          className="grid gap-2 @lg:grid-cols-[minmax(8rem,0.8fr)_minmax(10rem,1.2fr)_auto]"
         >
           <Input
             value={row.key}

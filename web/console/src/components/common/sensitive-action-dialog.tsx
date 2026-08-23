@@ -141,7 +141,7 @@ export function SensitiveActionDialog({
         }}
         className={
           pinConfirmationControls
-            ? `flex max-h-[calc(100vh-4rem)] flex-col overflow-hidden ${contentClassName ?? ""}`
+            ? `flex max-h-[calc(100dvh-4rem)] flex-col overflow-hidden ${contentClassName ?? ""}`
             : contentClassName
         }
       >

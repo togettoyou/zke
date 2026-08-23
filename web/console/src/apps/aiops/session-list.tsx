@@ -162,7 +162,7 @@ export function SessionList({
   // would keep all of them and make none of them readable.
   if (collapsed) {
     return (
-      <aside className="border-border bg-surface-muted/40 flex min-h-0 flex-col items-center gap-1 border-r px-2 pt-2.5">
+      <aside className="border-border bg-surface-muted/60 flex min-h-0 flex-col items-center gap-1 border-r p-2">
         <HintTooltip label="展开会话列表">
           <Button
             size="icon"
@@ -205,7 +205,18 @@ export function SessionList({
   }
 
   return (
-    <aside className="border-border bg-surface-muted/40 flex min-h-0 flex-col border-r">
+    <aside
+      /*
+       * A column while there is room for one, a panel over the conversation when
+       * there is not. Out of flow rather than squeezed: 204px of rail in a 390px
+       * window leaves the conversation less than half the screen, and the rail is
+       * open for a moment while the conversation is what the operator came for.
+       */
+      // Opaque once it is a panel rather than a column: the 40% tint reads as a
+      // surface only while there is a wallpaper behind it, and over a live
+      // conversation it is a list with somebody else's text showing through it.
+      className="border-border bg-surface-muted/60 @max-2xl:bg-surface-muted @max-2xl:shadow-e3 z-20 flex min-h-0 flex-col border-r @max-2xl:absolute @max-2xl:inset-y-0 @max-2xl:left-0 @max-2xl:w-[min(17rem,85%)]"
+    >
       <div className="space-y-2 px-2.5 pt-2.5 pb-2">
         <div className="flex items-center justify-between gap-2 pl-1">
           <label htmlFor="aiops-workspace" className="text-subtle-foreground text-[11px]">
@@ -495,7 +506,11 @@ const SessionRow = memo(function SessionRow({
           <span
             className={cn(
               "text-subtle-foreground shrink-0 text-[11px] transition-opacity duration-150",
-              "group-focus-within:opacity-0 group-hover:opacity-0",
+              // The age and the menu trigger share the right end of the row, so
+              // they trade places rather than overlap. With no hover to make that
+              // trade, the menu wins outright: an action that cannot be reached
+              // costs more than a timestamp that can be read one row down.
+              "hoverless:opacity-0 group-focus-within:opacity-0 group-hover:opacity-0",
               menuOpen && "opacity-0",
             )}
           >
@@ -512,7 +527,7 @@ const SessionRow = memo(function SessionRow({
             aria-label={`会话操作：${session.title}`}
             className={cn(
               "absolute top-1/2 right-1 size-6 -translate-y-1/2 opacity-0 transition-opacity duration-150",
-              "group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100",
+              "hoverless:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100",
               menuOpen && "opacity-100",
             )}
           >

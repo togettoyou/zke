@@ -17,7 +17,7 @@ export function DropdownMenuContent({
       <DropdownMenuPrimitive.Content
         sideOffset={sideOffset}
         className={cn(
-          "zke-pop-motion border-border bg-surface shadow-e3 rounded-panel z-1100 min-w-44 overflow-hidden border p-1",
+          "zke-pop-motion border-border bg-surface shadow-e3 rounded-panel z-1100 max-w-[var(--radix-dropdown-menu-content-available-width)] min-w-44 overflow-hidden border p-1",
           className,
         )}
         {...props}
@@ -36,7 +36,7 @@ export function DropdownMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       className={cn(
-        "rounded-control flex cursor-default items-center gap-2 px-2 py-1.5 text-[13px] outline-none select-none",
+        "zke-control rounded-control flex cursor-default items-center gap-2 px-2 py-1.5 text-[13px] outline-none select-none",
         "data-[highlighted]:bg-surface-muted",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         variant === "danger" ? "text-danger" : "text-foreground",

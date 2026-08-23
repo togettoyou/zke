@@ -941,7 +941,7 @@ function useDisruptionBudgetEditor(
         hint="可写 Pod 个数或百分比，例如 2 或 50%"
         problem={shown?.section === SECTIONS.budget ? shown.message : undefined}
       >
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 @md:grid-cols-2">
           <Field label="约束方式" htmlFor="pdb-mode">
             <Select
               value={mode}
@@ -1045,7 +1045,7 @@ function usePriorityClassEditor(
       title={SECTIONS.priority}
       problem={shown?.section === SECTIONS.priority ? shown.message : undefined}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         <Field
           label="优先级值"
           htmlFor="priority-value"
@@ -1355,7 +1355,7 @@ function PeerEditor({
         </Button>
       </div>
       {peer.mode === "ip" ? (
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 @md:grid-cols-2">
           <Input
             value={peer.cidr}
             aria-label={`${label} CIDR`}

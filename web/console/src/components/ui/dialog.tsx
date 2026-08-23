@@ -20,8 +20,16 @@ export function DialogContent({
       <DialogPrimitive.Content
         className={cn(
           "zke-dialog-motion fixed top-1/2 left-1/2 z-1001 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2",
-          "rounded-window border-border bg-surface shadow-window-focused border p-6",
-          "max-h-[calc(100vh-4rem)] overflow-y-auto",
+          // A dialog is portalled to the body, so it has no container to ask
+          // about and is sized against the viewport instead. It declares one for
+          // whatever is inside it: a form laid out in a dialog is inside a box
+          // 358px wide on a phone, and that box is what it has to answer to.
+          "rounded-window border-border bg-surface shadow-window-focused @container border p-4 sm:p-6",
+          // `dvh`, not `vh`: on a phone `100vh` is the height the page would have
+          // with the browser chrome retracted, so a dialog capped against it is
+          // capped against space that is not on screen and loses its own footer
+          // under the address bar.
+          "max-h-[calc(100dvh-4rem)] overflow-y-auto",
           className,
         )}
         {...props}

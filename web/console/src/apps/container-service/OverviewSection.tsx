@@ -124,7 +124,7 @@ function OverviewContent({
     <div className="grid gap-3">
       {overview.partial ? <PartialNotice issues={overview.issues} /> : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-4">
         <StatTile
           label="节点"
           value={sectionValue(nodes.total, nodeIssue)}
@@ -361,7 +361,7 @@ function OverviewContent({
         </div>
       </DetailCard>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3">
         <DetailCard title="节点状态">
           <div className="py-1">
             <StatusCounts
@@ -504,6 +504,15 @@ function CountRow({
   const layout = cn(
     "border-border/50 grid items-baseline gap-3 border-b py-1.5 text-[13px] last:border-b-0 last:pb-0",
     open ? "grid-cols-[10rem_4rem_1fr_auto]" : "grid-cols-[10rem_4rem_1fr]",
+    /*
+     * Narrow, the row stops being a table and becomes a line that wraps.
+     *
+     * 10rem of label plus 4rem of value plus three gaps is 260px of the row
+     * spoken for before the note gets any, so under `@md` the note was left a
+     * dozen pixels and set itself one glyph per line. The columns are worth
+     * having only while every one of them fits.
+     */
+    "@max-md:flex @max-md:flex-wrap @max-md:gap-x-3 @max-md:gap-y-0.5",
   );
   if (!open) {
     return <div className={layout}>{row}</div>;

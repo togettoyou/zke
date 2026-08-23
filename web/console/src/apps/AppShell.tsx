@@ -4,13 +4,16 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, type LucideIcon } from "lucide-react";
+import { ArrowLeft, PanelLeftClose, PanelLeftOpen, type LucideIcon } from "lucide-react";
 
+import { useNarrowSurface } from "@/apps/sidebar";
 import { Button } from "@/components/ui/button";
+import { HintTooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { useScopeStore } from "@/scope/scope-store";
 
@@ -141,7 +144,13 @@ export function PageHeader({
           {scope ? <span className="text-subtle-foreground text-xs">{scope}</span> : null}
         </div>
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      {/* `max-w-full` with `flex-wrap`, not `shrink-0` alone. Unshrinkable was
+          right — the actions are why anyone reads a header — but unshrinkable
+          and unwrapping means a header three buttons wide simply runs off a
+          390px window. Capped at the row it sits in, the buttons stack instead. */}
+      {actions ? (
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>
+      ) : null}
     </>,
     element,
   );
@@ -170,6 +179,35 @@ export function AppShell({
   children: ReactNode;
 }) {
   const visible = nav.filter((item) => !item.hidden);
+
+  /*
+   * The rail collapses to its icons, and the operator's own answer outranks the
+   * layout's — but only once they have given one.
+   *
+   * `null` means they have not, and the rail follows the surface: expanded while
+   * there is room for a column, collapsed once there is not. An explicit toggle
+   * replaces that with a fixed answer which then holds at every width, because a
+   * rail put away on purpose should not come back on a resize.
+   *
+   * Navigating while the rail is covering the work area releases the override
+   * rather than adding one. Dismissing the panel that way costs nothing later:
+   * widening the window still returns the column.
+   */
+  const surface = useRef<HTMLDivElement | null>(null);
+  const narrow = useNarrowSurface(surface);
+  const [railChoice, setRailChoice] = useState<boolean | null>(null);
+  const railCollapsed = railChoice ?? narrow;
+  const railOverlays = narrow && !railCollapsed;
+  const navigate = useCallback(
+    (id: string) => {
+      onNavigate(id);
+      if (railOverlays) {
+        setRailChoice(null);
+      }
+    },
+    [onNavigate, railOverlays],
+  );
+
   const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
   const [pageHeaderSlot, setPageHeaderSlot] = useState<HTMLElement | null>(null);
   const [openPageHeaders, setOpenPageHeaders] = useState(0);
@@ -191,50 +229,139 @@ export function AppShell({
   );
 
   return (
-    <div className="flex h-full min-h-0">
+    /*
+     * The rail is a column beside the work area while the window can afford one,
+     * and a panel over it when it cannot.
+     *
+     * 160px of permanent navigation is cheap in a 1060px window and ruinous in a
+     * 390px one, where it takes 40% of the width and leaves the forms behind it
+     * roughly 190px to lay out in. Collapsed to its icons it costs 52px at any
+     * width, which even a phone can spare, and the labels are one tap away.
+     *
+     * The question is asked of the window, through `@container` and through the
+     * width this element reports, never of the screen. A window dragged down to
+     * 500px on a wide display has exactly the problem a phone has and gets
+     * exactly the same answer.
+     */
+    <div ref={surface} className="@container relative flex h-full min-h-0">
       {visible.length > 1 ? (
         <nav
           aria-label="应用导航"
-          className="border-border bg-surface-muted/60 flex w-40 shrink-0 flex-col gap-0.5 border-r p-2"
+          className={cn(
+            "border-border bg-surface-muted/60 z-20 flex shrink-0 flex-col border-r p-2 transition-[width] duration-200 ease-[var(--ease-lift)]",
+            railCollapsed
+              ? "w-13"
+              : // Out of flow rather than squeezed once it no longer fits: a
+                // 160px column in a 390px window leaves the work area unusable,
+                // and the rail is open for a moment while that work area is what
+                // the operator came for.
+                "@max-2xl:bg-surface-muted @max-2xl:shadow-e3 w-40 @max-2xl:absolute @max-2xl:inset-y-0 @max-2xl:left-0 @max-2xl:w-[min(15rem,80%)]",
+          )}
         >
-          {visible.map((item) => {
-            const Icon = item.icon;
-            const active = item.id === activeId;
-            return (
+          {/* The list scrolls, the toggle under it does not. A landscape phone
+              leaves the window about 260px tall, which is four of these items —
+              losing the way back out of a collapsed rail to reach the fifth is
+              not a trade worth making. */}
+          <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+            {visible.map((item) => {
+              const Icon = item.icon;
+              const active = item.id === activeId;
+              const entry = (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-current={active ? "page" : undefined}
+                  aria-label={railCollapsed ? item.label : undefined}
+                  onClick={() => navigate(item.id)}
+                  className={cn(
+                    // `zke-control` for the same reason every control in
+                    // `components/ui` carries it: on a coarse pointer this is a
+                    // primary target, and 28px of it is a miss. AIOps' own rail is
+                    // built from `Button`, so without this the two rails hand a
+                    // finger two different sizes of the same thing.
+                    "zke-focus zke-control rounded-control relative flex shrink-0 items-center gap-2 py-1.5 text-left text-[13px] transition-colors",
+                    /*
+                     * `w-full`, never a fixed square.
+                     *
+                     * The collapsed rail is 52px, and `border-box` spends that on
+                     * a 1px right border and 8px of padding either side — leaving
+                     * 35px, not 36. A 36px item is one pixel too wide, and since
+                     * `overflow-y-auto` computes the other axis to `auto` as well,
+                     * that one pixel is a horizontal scrollbar across the rail.
+                     * Sized against the box it is in, the item cannot disagree
+                     * with it — including when a vertical scrollbar takes a slice
+                     * of that box at run time.
+                     */
+                    railCollapsed ? "w-full justify-center px-0" : "px-2",
+                    active
+                      ? "bg-surface text-foreground font-medium"
+                      : "text-muted-foreground hover:bg-surface/70 hover:text-foreground",
+                  )}
+                >
+                  {/*
+                   * A rail plus a fill, and that is all. The active item used to
+                   * carry a border and an elevation as well — six signals for one
+                   * piece of state, on a rail eight items long. Weight is only
+                   * legible against something lighter, so spending all of it at
+                   * once leaves nothing to spend.
+                   */}
+                  {active ? (
+                    <span
+                      aria-hidden
+                      className="bg-primary absolute inset-y-1.5 left-0 w-0.5 rounded-full"
+                    />
+                  ) : null}
+                  <Icon
+                    className={cn("size-4 shrink-0", active && "text-primary")}
+                    strokeWidth={1.75}
+                    aria-hidden
+                  />
+                  {railCollapsed ? null : <span className="truncate">{item.label}</span>}
+                </button>
+              );
+
+              // The tooltip is the label while the label is not drawn, and noise
+              // the moment it is.
+              return railCollapsed ? (
+                <HintTooltip key={item.id} label={item.label}>
+                  {entry}
+                </HintTooltip>
+              ) : (
+                entry
+              );
+            })}
+          </div>
+
+          {/*
+           * The toggle sits under the list, drawn as one more item on the same
+           * icon column, behind the hairline that says it is not one.
+           *
+           * It had a row of its own above the list, which is where a header
+           * would go — except this rail has no header, so it read as a control
+           * dropped into an empty band, and the band pushed the first section
+           * out of line with the toolbar row beside it. Down here it costs the
+           * rail nothing it was using and lines up with everything above it.
+           */}
+          <div className="border-border -mx-2 mt-1 shrink-0 border-t px-2 pt-1">
+            <HintTooltip label={railCollapsed ? "展开导航" : "收起导航"}>
               <button
-                key={item.id}
                 type="button"
-                aria-current={active ? "page" : undefined}
-                onClick={() => onNavigate(item.id)}
+                aria-label={railCollapsed ? "展开导航" : "收起导航"}
+                aria-expanded={!railCollapsed}
+                onClick={() => setRailChoice(!railCollapsed)}
                 className={cn(
-                  "zke-focus rounded-control relative flex items-center gap-2 px-2 py-1.5 text-left text-[13px] transition-colors",
-                  active
-                    ? "bg-surface text-foreground font-medium"
-                    : "text-muted-foreground hover:bg-surface/70 hover:text-foreground",
+                  "zke-focus zke-control rounded-control text-subtle-foreground hover:bg-surface/70 hover:text-foreground flex items-center py-1.5 transition-colors",
+                  railCollapsed ? "w-full justify-center px-0" : "px-2",
                 )}
               >
-                {/*
-                 * A rail plus a fill, and that is all. The active item used to
-                 * carry a border and an elevation as well — six signals for one
-                 * piece of state, on a rail eight items long. Weight is only
-                 * legible against something lighter, so spending all of it at
-                 * once leaves nothing to spend.
-                 */}
-                {active ? (
-                  <span
-                    aria-hidden
-                    className="bg-primary absolute inset-y-1.5 left-0 w-0.5 rounded-full"
-                  />
-                ) : null}
-                <Icon
-                  className={cn("size-4 shrink-0", active && "text-primary")}
-                  strokeWidth={1.75}
-                  aria-hidden
-                />
-                <span className="truncate">{item.label}</span>
+                {railCollapsed ? (
+                  <PanelLeftOpen className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+                ) : (
+                  <PanelLeftClose className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+                )}
               </button>
-            );
-          })}
+            </HintTooltip>
+          </div>
         </nav>
       ) : null}
 
@@ -249,7 +376,7 @@ export function AppShell({
             {toolbar}
             {/* `ml-auto` on an empty div costs nothing and keeps section actions
                 pinned to the far end whether or not any are portaled in. */}
-            <div ref={setActionSlot} className="ml-auto flex items-center gap-2" />
+            <div ref={setActionSlot} className="ml-auto flex flex-wrap items-center gap-2" />
           </div>
         ) : null}
         {/* `empty:hidden` keeps a list view, which has no header of its own, from
@@ -261,7 +388,14 @@ export function AppShell({
           ref={setPageHeaderSlot}
           className="border-border bg-surface-muted/30 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-3 py-2 empty:hidden [&>*]:min-h-9"
         />
-        <div className="min-h-0 flex-1 overflow-auto p-4">
+        {/*
+         * The working area is a container of its own, so a view inside it reads
+         * the width it actually has — the window less the rail and the padding —
+         * rather than the window's. Nested inside the shell's container: a
+         * container query resolves against the nearest container ancestor, which
+         * is this one for everything an application renders.
+         */}
+        <div className="@container min-h-0 flex-1 overflow-auto p-3 @2xl:p-4">
           <PageHeaderSlot.Provider value={pageHeader}>
             <ToolbarActionSlot.Provider value={actionSlot}>{children}</ToolbarActionSlot.Provider>
           </PageHeaderSlot.Provider>
@@ -304,7 +438,9 @@ export function SectionTitle({
           <p className="text-muted-foreground mt-1 text-xs leading-relaxed">{description}</p>
         ) : null}
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      {actions ? (
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>
+      ) : null}
     </div>
   );
 }

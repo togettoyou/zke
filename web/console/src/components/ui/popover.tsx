@@ -19,7 +19,10 @@ export function PopoverContent({
         align={align}
         sideOffset={sideOffset}
         className={cn(
-          "zke-pop-motion border-border bg-surface shadow-e3 rounded-panel z-1100 w-72 border p-3 outline-none",
+          // Radix measures the room it actually has and publishes it; without
+          // reading it back a `w-80` popover is 320px wide on a 390px phone and
+          // simply hangs off the edge it was flipped away from.
+          "zke-pop-motion border-border bg-surface shadow-e3 rounded-panel z-1100 w-72 max-w-[var(--radix-popover-content-available-width)] border p-3 outline-none",
           className,
         )}
         {...props}

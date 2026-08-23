@@ -570,7 +570,7 @@ function AuthorizationDetailCards({
     <div className="grid gap-3">
       {locked ? <Alert tone="warning">{locked}。</Alert> : null}
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         <DetailCard title="概览">
           <DetailRow label="名称" value={item.name} />
           <DetailRow

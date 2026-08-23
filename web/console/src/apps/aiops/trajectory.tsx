@@ -301,7 +301,7 @@ export function Trajectory({
         className={cn(
           "grid min-h-0 flex-1",
           detail
-            ? "grid-cols-[minmax(300px,1fr)_minmax(340px,1fr)] max-[900px]:grid-cols-1 max-[900px]:grid-rows-[minmax(160px,1fr)_minmax(220px,1.4fr)]"
+            ? "grid-cols-[minmax(300px,1fr)_minmax(340px,1fr)] @max-2xl:grid-cols-1 @max-2xl:grid-rows-[minmax(160px,1fr)_minmax(220px,1.4fr)]"
             : "grid-cols-1",
         )}
       >
@@ -311,7 +311,7 @@ export function Trajectory({
             const node = event.currentTarget;
             pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
           }}
-          className="border-border min-h-0 overflow-auto border-r max-[900px]:border-r-0"
+          className="border-border min-h-0 overflow-auto border-r @max-2xl:border-r-0"
         >
           {visible.length === 0 ? (
             <EmptyState title="没有匹配的轨迹" description="调整时间窗口、类型或搜索条件后重试。" />

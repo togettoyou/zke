@@ -595,7 +595,7 @@ function PodDetailView({
 
 function PodDetailCards({ pod }: { pod: KubernetesPodDetail }) {
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-3 @md:grid-cols-2">
       <DetailCard title="概览">
         <DetailRow label="名称" value={pod.name} />
         <DetailRow label="命名空间" value={pod.namespace} />

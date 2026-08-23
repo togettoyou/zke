@@ -295,7 +295,16 @@ export const Window = memo(function Window({
          * handful of hooks that actually read this value are woken, which is
          * exactly the set that has a poll to pause.
          */}
-        <div className="min-h-0 flex-1 overflow-hidden">
+        {/*
+         * The window is the container every layout inside it should be asking
+         * about. Viewport breakpoints answer a different question — how wide the
+         * screen is — and on a desktop of resizable windows the two are only
+         * accidentally the same number: a 420px window on a 2560px display would
+         * otherwise lay itself out as if it had the whole screen. Declaring the
+         * container here means a view narrowed by a drag and a view narrowed by
+         * a phone are the same case, handled once.
+         */}
+        <div className="@container min-h-0 flex-1 overflow-hidden">
           <WindowVisibilityContext.Provider value={!parked}>
             {content}
           </WindowVisibilityContext.Provider>

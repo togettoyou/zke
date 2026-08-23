@@ -542,7 +542,7 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
   const fields = (
     <>
       <FormSection title="卷" problem={shown?.section === "卷" ? shown.message : undefined}>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 @md:grid-cols-2">
           <Field label="容量" htmlFor="pv-capacity" hint="Kubernetes quantity，例如 10Gi">
             <Input
               id="pv-capacity"
@@ -620,7 +620,7 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
             </Select>
           </Field>
           {sourceType === "csi" ? (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <Field label="驱动" htmlFor="pv-driver">
                 <Input
                   id="pv-driver"
@@ -655,7 +655,7 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
             </div>
           ) : null}
           {sourceType === "nfs" ? (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <Field label="服务器" htmlFor="pv-server">
                 <Input
                   id="pv-server"
@@ -680,7 +680,7 @@ function usePersistentVolumeDraft(existing: KubernetesStorageResourceDetail | nu
             </div>
           ) : null}
           {sourceType === "local" ? (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <Field label="节点路径" htmlFor="pv-local-path">
                 <Input
                   id="pv-local-path"
@@ -802,7 +802,7 @@ function useClaimDraft(existing: KubernetesStorageResourceDetail | null): SpecEd
 
   const fields = (
     <FormSection title="申领" problem={shown?.section === "申领" ? shown.message : undefined}>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         <Field
           label="申请容量"
           htmlFor="pvc-capacity"
@@ -950,7 +950,7 @@ function useStorageClassDraft(existing: KubernetesStorageResourceDetail | null):
         title="StorageClass"
         problem={shown?.section === "StorageClass" ? shown.message : undefined}
       >
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 @md:grid-cols-2">
           <Field label="Provisioner" htmlFor="sc-provisioner">
             <Input
               id="sc-provisioner"

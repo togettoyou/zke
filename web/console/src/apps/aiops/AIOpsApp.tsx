@@ -11,6 +11,7 @@ import {
 import { useClusters, type ClusterListResult } from "@/api/queries/clusters";
 import type { AISession, AISkill, AITool } from "@/api/types";
 import { ScopeRequired } from "@/apps/AppShell";
+import { useNarrowSurface } from "@/apps/sidebar";
 import { useSessionContext } from "@/auth/session-context";
 import { notifyFailure } from "@/components/common/notify";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
@@ -65,7 +66,25 @@ export function AIOpsApp(_props: AppComponentProps) {
   const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [railCollapsed, setRailCollapsed] = useState(false);
+
+  /*
+   * The rail follows the same contract `AppShell` does — see `apps/sidebar.ts`:
+   * `null` means the operator has not chosen and the rail tracks the surface,
+   * an explicit toggle holds at every width, and selecting something while the
+   * rail is covering it releases the override rather than adding one.
+   */
+  const surface = useRef<HTMLDivElement | null>(null);
+  const narrow = useNarrowSurface(surface);
+  const [railChoice, setRailChoice] = useState<boolean | null>(null);
+  const railCollapsed = railChoice ?? narrow;
+
+  // Choosing a session is also the moment to stop covering it.
+  const chooseSession = (id: string | null) => {
+    setSelectedId(id);
+    if (id && narrow && !railCollapsed) {
+      setRailChoice(null);
+    }
+  };
   // The mode the next conversation will be created with. It lives here rather
   // than in the composer because it is a property of the session about to
   // exist, and the composer is discarded the moment that session opens.
@@ -133,7 +152,7 @@ export function AIOpsApp(_props: AppComponentProps) {
       });
       setArchived(false);
       setSearch("");
-      setSelectedId(created.id);
+      chooseSession(created.id);
       if (question) {
         await startTurn.mutateAsync({ sessionId: created.id, text: question, attachmentIds: [] });
       }
@@ -189,14 +208,30 @@ export function AIOpsApp(_props: AppComponentProps) {
 
   return (
     <div
+      ref={surface}
       className={cn(
         // The rail slides rather than snaps: it is the only column that changes
         // width, and a track transition moves it without reflowing anything the
         // conversation has already laid out.
-        "bg-surface grid h-full min-h-0 transition-[grid-template-columns] duration-200 ease-[var(--ease-reveal)]",
+        "bg-surface relative grid h-full min-h-0 transition-[grid-template-columns] duration-200 ease-[var(--ease-reveal)]",
+        /*
+         * Two columns need a window wide enough for two columns. The 420px floor
+         * under the conversation plus a rail is more than a phone has, and a
+         * grid track that does not fit does not wrap — it runs off the side of a
+         * window that clips it, taking the composer with it.
+         *
+         * Under `@2xl` the conversation therefore gets the window and the rail
+         * stops being a column: collapsed it is a 52px strip beside it, expanded
+         * it comes over the top (see `session-list.tsx`) and the track it left
+         * behind closes to nothing.
+         */
         railCollapsed
-          ? "grid-cols-[52px_minmax(420px,1fr)]"
-          : "grid-cols-[256px_minmax(420px,1fr)] max-[860px]:grid-cols-[204px_minmax(320px,1fr)]",
+          ? "grid-cols-[52px_minmax(0,1fr)] @2xl:grid-cols-[52px_minmax(420px,1fr)]"
+          : // One track, not a zero-width first one: the expanded rail is taken
+            // out of flow at this width, and an out-of-flow child is not a grid
+            // item — leave two tracks and the conversation slides up into the
+            // empty first one and is laid out at zero width.
+            "grid-cols-[minmax(0,1fr)] @2xl:grid-cols-[204px_minmax(320px,1fr)] @4xl:grid-cols-[256px_minmax(420px,1fr)]",
       )}
     >
       <SessionList
@@ -211,12 +246,12 @@ export function AIOpsApp(_props: AppComponentProps) {
         onRetryClusters={() => void clustersQuery.refetch()}
         sessions={sessions}
         selectedId={selected?.id ?? null}
-        onSelect={setSelectedId}
+        onSelect={chooseSession}
         onCreate={() => void openSession()}
         creating={createSession.isPending}
         atNewSession={atNewSession}
         collapsed={railCollapsed}
-        onCollapsedChange={setRailCollapsed}
+        onCollapsedChange={setRailChoice}
         search={search}
         onSearch={setSearch}
         archived={archived}
@@ -231,7 +266,9 @@ export function AIOpsApp(_props: AppComponentProps) {
         actions={actions}
       />
 
-      <main className="flex min-h-0 min-w-0 flex-col">
+      {/* The conversation column is what its own views have to answer to: the
+          window less whatever the rail is currently taking. */}
+      <main className="@container flex min-h-0 min-w-0 flex-col">
         {selected ? (
           <SessionView
             key={selected.id}

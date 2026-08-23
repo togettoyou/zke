@@ -10,10 +10,10 @@ import { Dock } from "./Dock";
 import { IconGrid } from "./IconGrid";
 import { TopBar } from "./TopBar";
 import { Window } from "./Window";
+import { isStackedViewport } from "./geometry";
 import { clearDesktopState, loadDesktopState, saveDesktopState } from "./persistence";
 import { toPersistedDesktop, useWindowStore, type WindowInstance } from "./window-store";
 
-const STACKED_BREAKPOINT = 1024;
 const PERSIST_DEBOUNCE_MS = 400;
 
 /**
@@ -50,7 +50,7 @@ export function Desktop() {
   const resetScope = useScopeStore((state) => state.reset);
 
   const [stacked, setStacked] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < STACKED_BREAKPOINT,
+    () => typeof window !== "undefined" && isStackedViewport(window.innerWidth),
   );
   // The Dock is shown or hidden by the operator, never by pointer proximity, and
   // the choice holds whether or not a window is full screen. Read straight from
@@ -121,7 +121,7 @@ export function Desktop() {
     const applyViewport = () => {
       frame = null;
       setViewport({ width: window.innerWidth, height: window.innerHeight });
-      setStacked(window.innerWidth < STACKED_BREAKPOINT);
+      setStacked(isStackedViewport(window.innerWidth));
     };
     const scheduleViewport = () => {
       if (frame === null) {

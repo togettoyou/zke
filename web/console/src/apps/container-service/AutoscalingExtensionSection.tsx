@@ -507,7 +507,7 @@ function ExtensionDetail({
   if (kind === "vpa") {
     const vpa = item as KubernetesVPADetail;
     return (
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         <DetailCard title="概览">
           <DetailRow label="名称" value={vpa.name} />
           <DetailRow label="命名空间" value={vpa.namespace} />
@@ -600,7 +600,7 @@ function ExtensionDetail({
   }
   const keda = item as KubernetesKEDADetail;
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-3 @md:grid-cols-2">
       <DetailCard title="概览">
         <DetailRow label="名称" value={keda.name} />
         <DetailRow label="命名空间" value={keda.namespace} />

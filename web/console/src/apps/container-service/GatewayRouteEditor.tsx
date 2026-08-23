@@ -118,7 +118,7 @@ function ParentRow({
 }) {
   return (
     <div className="border-border/60 rounded-control grid gap-2 border p-2">
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 @2xl:grid-cols-3">
         <ReferenceInput
           value={parent.group}
           defaultValue="gateway.networking.k8s.io"
@@ -143,7 +143,7 @@ function ParentRow({
           onChange={(event) => update({ name: event.target.value })}
         />
       </div>
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 @2xl:grid-cols-3">
         <Input
           value={parent.namespace}
           aria-label={`父级 ${index + 1} 命名空间`}
@@ -266,7 +266,7 @@ function HTTPMatchRow({
   const prefix = `规则 ${ruleIndex + 1} HTTP 匹配 ${matchIndex + 1}`;
   return (
     <div className="border-border/60 rounded-control grid gap-2 border p-2">
-      <div className="grid gap-2 md:grid-cols-[10rem_1fr_10rem]">
+      <div className="grid gap-2 @xl:grid-cols-[10rem_1fr_10rem]">
         <Select value={match.pathType} onValueChange={(pathType) => update({ pathType })}>
           <SelectTrigger aria-label={`${prefix} 路径类型`}>
             <SelectValue />
@@ -333,7 +333,7 @@ function GRPCMatchRow({
   const prefix = `规则 ${ruleIndex + 1} gRPC 匹配 ${matchIndex + 1}`;
   return (
     <div className="border-border/60 rounded-control grid gap-2 border p-2">
-      <div className="grid gap-2 md:grid-cols-[12rem_1fr_1fr]">
+      <div className="grid gap-2 @xl:grid-cols-[12rem_1fr_1fr]">
         <Select value={match.methodType} onValueChange={(methodType) => update({ methodType })}>
           <SelectTrigger aria-label={`${prefix} 方法类型`}>
             <SelectValue />
@@ -387,7 +387,7 @@ function BackendRow({
   const prefix = `规则 ${ruleIndex + 1} 后端 ${backendIndex + 1}`;
   return (
     <div className="border-border/60 rounded-control grid gap-2 border p-2">
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 @2xl:grid-cols-3">
         <ReferenceInput
           value={backend.group}
           defaultValue="core/v1"
@@ -411,7 +411,7 @@ function BackendRow({
           onChange={(event) => update({ name: event.target.value })}
         />
       </div>
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 @2xl:grid-cols-3">
         <Input
           value={backend.namespace}
           aria-label={`${prefix} 命名空间`}
@@ -459,7 +459,7 @@ function ValueMatchRows({
         create={emptyRouteValueMatch}
         addLabel={`添加${label}`}
         render={(row, index, update) => (
-          <div className="grid gap-2 md:grid-cols-[10rem_1fr_1fr]">
+          <div className="grid gap-2 @xl:grid-cols-[10rem_1fr_1fr]">
             <Select value={row.type} onValueChange={(type) => update({ type })}>
               <SelectTrigger aria-label={`${prefix} ${index + 1} 类型`}>
                 <SelectValue />

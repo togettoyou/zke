@@ -579,7 +579,7 @@ function WorkloadDetailCards({ workload }: { workload: KubernetesWorkloadDetail 
   const configuration = configurationRows(workload);
 
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-3 @md:grid-cols-2">
       <DetailCard title="概览">
         <DetailRow label="名称" value={workload.name} />
         <DetailRow

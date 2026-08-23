@@ -820,7 +820,7 @@ function SecretEditor({
           </FormSection>
         ) : (
           <FormSection title={SECTION_LABELS.basic} problem={problemIn("basic")}>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <div className="grid content-start gap-1.5">
                 <Label htmlFor="secret-name">名称</Label>
                 <Input
@@ -1074,7 +1074,7 @@ function RegistryList({
                 onChange={(event) => update(index, { registry: event.target.value })}
               />
             </div>
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2 @2xl:grid-cols-3">
               <div className="grid content-start gap-1.5">
                 <Label htmlFor={`registry-username-${index}`}>用户名</Label>
                 <Input

@@ -1098,7 +1098,7 @@ function ClusterDetailSection({
         }
       />
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         <DetailCard title="接入">
           <DetailRow label="集群 ID" value={<IdentifierLabel value={cluster.id} />} />
           <DetailRow

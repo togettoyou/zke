@@ -12,6 +12,38 @@ export const MINIMUM_WINDOW_WIDTH = 380;
 export const MINIMUM_WINDOW_HEIGHT = 260;
 
 /**
+ * The width below which the desktop stops behaving like a desktop.
+ *
+ * Under it there is no room to place two windows beside each other, so windows
+ * stop being movable objects and become one full-bleed surface at a time. The
+ * shell reads the same number to switch layouts, so it lives here with the rest
+ * of the geometry rather than beside the component that reacts to it — bounds
+ * and layout cannot disagree if they are the same constant.
+ */
+export const STACKED_BREAKPOINT = 1024;
+
+/** Whether this viewport is too narrow to arrange windows on. */
+export function isStackedViewport(viewportWidth: number): boolean {
+  return viewportWidth < STACKED_BREAKPOINT;
+}
+
+/*
+ * The minimum window size is itself bounded by the screen.
+ *
+ * A floor wider than the display is not a floor, it is an overflow: on a 390pt
+ * phone the raw 380 floor plus a margin on each side puts the right edge past
+ * the viewport, where the desktop's `overflow-hidden` silently cuts it off. A
+ * window may be as small as the screen it is on.
+ */
+function minimumWidth(viewportWidth: number): number {
+  return Math.min(MINIMUM_WINDOW_WIDTH, viewportWidth);
+}
+
+function minimumHeight(viewportHeight: number): number {
+  return Math.min(MINIMUM_WINDOW_HEIGHT, viewportHeight);
+}
+
+/**
  * How close to a screen edge a drag must come before it snaps.
  *
  * Deliberately tight. The top bar sits behind windows, so dropping one on top
@@ -31,13 +63,20 @@ const TITLE_BAR_HEIGHT = 38;
  * and snapped beyond it — {@link clampRect} constrains them to the screen.
  */
 export function computeDesktopBounds(viewportWidth: number, viewportHeight: number): DesktopBounds {
+  /*
+   * Full bleed once windows stop being movable. A margin frames a window that
+   * sits among others; around the single surface a stacked layout draws, it is
+   * only screen taken away from the one thing on it — and on a phone it is the
+   * difference between fitting and being clipped.
+   */
+  const margin = isStackedViewport(viewportWidth) ? 0 : DESKTOP_MARGIN;
   return {
-    x: DESKTOP_MARGIN,
-    y: TOP_BAR_HEIGHT + DESKTOP_MARGIN,
-    width: Math.max(MINIMUM_WINDOW_WIDTH, viewportWidth - DESKTOP_MARGIN * 2),
+    x: margin,
+    y: TOP_BAR_HEIGHT + margin,
+    width: Math.max(minimumWidth(viewportWidth), viewportWidth - margin * 2),
     height: Math.max(
-      MINIMUM_WINDOW_HEIGHT,
-      viewportHeight - TOP_BAR_HEIGHT - DOCK_RESERVED_HEIGHT - DESKTOP_MARGIN,
+      minimumHeight(viewportHeight),
+      viewportHeight - TOP_BAR_HEIGHT - DOCK_RESERVED_HEIGHT - margin,
     ),
   };
 }
@@ -59,9 +98,9 @@ export function fullscreenRect(viewport: Viewport): WindowRect {
  * fully off either side.
  */
 export function clampRect(rect: WindowRect, viewport: Viewport): WindowRect {
-  const width = Math.max(MINIMUM_WINDOW_WIDTH, Math.min(rect.width, viewport.width));
-  const height = Math.max(MINIMUM_WINDOW_HEIGHT, Math.min(rect.height, viewport.height));
-  const minimumX = MINIMUM_VISIBLE_WIDTH - width;
+  const width = Math.max(minimumWidth(viewport.width), Math.min(rect.width, viewport.width));
+  const height = Math.max(minimumHeight(viewport.height), Math.min(rect.height, viewport.height));
+  const minimumX = Math.min(MINIMUM_VISIBLE_WIDTH, width) - width;
   const maximumX = viewport.width - MINIMUM_VISIBLE_WIDTH;
   const maximumY = viewport.height - TITLE_BAR_HEIGHT;
   return {

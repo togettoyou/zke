@@ -157,7 +157,7 @@ export function NetworkingFormView({
 
         {existing ? null : (
           <FormSection title={SECTION_LABELS.basic} problem={problemIn("basic")}>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <Field
                 label="名称"
                 hint={
@@ -302,7 +302,7 @@ function ServiceFields({
   return (
     <>
       <FormSection title={SECTION_LABELS.service} problem={problemIn("service")}>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 @md:grid-cols-2">
           <Field
             label="类型"
             hint={
@@ -689,7 +689,7 @@ function GatewayFields({
   return (
     <>
       <FormSection title={SECTION_LABELS.gateway} problem={problemIn("gateway")}>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 @md:grid-cols-2">
           <Field label="GatewayClass" hint="必须是集群中已存在的 GatewayClass">
             {(id) => (
               <Input

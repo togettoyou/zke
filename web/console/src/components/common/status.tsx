@@ -127,7 +127,10 @@ export function CopyableValue({
         // against the card it usually sits on is a couple of steps of grey, too
         // little to be read as "this responds to a click" on a page that is
         // otherwise full of plain text.
-        "zke-focus group/copy hover:bg-surface-muted hover:border-border -mx-1 inline-flex w-fit cursor-pointer items-center rounded border border-transparent px-1 whitespace-nowrap transition-colors",
+        // `zke-touch-pad`, not a taller control: this is an identifier sitting
+        // inside a line of text, and growing it to 40px would push every row it
+        // appears in apart. Under a finger the pad it hangs behind it is 44px.
+        "zke-focus zke-touch-pad group/copy hover:bg-surface-muted hover:border-border -mx-1 inline-flex w-fit cursor-pointer items-center rounded border border-transparent px-1 whitespace-nowrap transition-colors",
         className,
       )}
     >
@@ -149,13 +152,18 @@ export function CopyableValue({
        * resting state nor cover a neighbour. The cost is that the button is
        * wider for as long as it is shown, which moves nothing but its own
        * trailing edge — and by then the pointer is already on it.
+       *
+       * Where there is no hover it is simply always on. The trailing edge pays
+       * for it permanently on those devices, which is the smaller price: an
+       * affordance that only a pointer can uncover does not exist on a phone,
+       * and the identifier goes back to reading as plain text nobody can copy.
        */}
       {copied ? (
         <Check aria-hidden className="text-success ml-1 size-3 shrink-0" />
       ) : (
         <Copy
           aria-hidden
-          className="ml-1 hidden size-3 shrink-0 opacity-70 group-hover/copy:block group-focus-visible/copy:block"
+          className="hoverless:block ml-1 hidden size-3 shrink-0 opacity-70 group-hover/copy:block group-focus-visible/copy:block"
         />
       )}
     </button>

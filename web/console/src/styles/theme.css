@@ -9,6 +9,21 @@
  */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/*
+ * Input modality, as two variants rather than as a device guess.
+ *
+ * `coarse` is a finger — the pointer cannot be placed to the pixel, so the
+ * things it has to hit get bigger. `hoverless` is the same device from the other
+ * side: there is no state between "not touching" and "activated", so anything a
+ * hover was revealing has to already be on screen.
+ *
+ * Neither is a synonym for "phone". A touch laptop is coarse and hovering; a
+ * tablet with a trackpad is fine and hovering. Asking about the input is the
+ * only question with an answer.
+ */
+@custom-variant coarse (@media (pointer: coarse));
+@custom-variant hoverless (@media (hover: none));
+
 :root {
   color-scheme: light;
 
@@ -595,6 +610,21 @@
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /*
+     * The shell is a fixed surface: nothing here scrolls the page, every scroll
+     * belongs to a box inside a window. Left at the default, a drag that reaches
+     * the end of one of those boxes carries on into the browser's own gesture —
+     * pull-to-refresh at the top of a Pod list, or a rubber-band that peels the
+     * whole Console away from the address bar.
+     */
+    overscroll-behavior: none;
+    /*
+     * Every control in this Console draws its own pressed and focused states.
+     * The grey rectangle a mobile browser flashes over the tapped element is a
+     * second, uninvited one, and it ignores the shape underneath — a round icon
+     * button flashes square.
+     */
+    -webkit-tap-highlight-color: transparent;
   }
 
   /*
@@ -1323,4 +1353,58 @@ select:-webkit-autofill:focus-visible {
   box-shadow:
     0 0 0 3px var(--ring-soft),
     0 0 0 1000px var(--surface) inset;
+}
+
+/*
+ * Touch sizing.
+ *
+ * Every control in `components/ui` carries `.zke-control`, and the ones that are
+ * square carry `.zke-control-square` as well. On a fine pointer both are inert
+ * and the Console keeps its density: a 28px icon button is a perfectly good
+ * target for a mouse, and the alternative is a toolbar inflated for a device
+ * nobody is using. The rules therefore live inside the query rather than being
+ * declared and then taken back outside it.
+ *
+ * On a coarse pointer they grow to 40px. Not the 44px the platform guidelines
+ * ask for — that floor is written for a full-screen phone application, and
+ * applying it to a window title bar that is itself 40px tall would make the
+ * chrome taller than the frame it belongs to. 40px is the largest size that
+ * leaves every existing row intact, and it is still 43% more target than a 28px
+ * button.
+ *
+ * `min-height` rather than `height`, so a control that is already taller — a
+ * textarea, a wrapped menu item — is left where it is.
+ */
+@media (pointer: coarse) {
+  .zke-control {
+    min-height: 2.5rem;
+  }
+
+  .zke-control-square {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+
+  /*
+   * The exception to growing the control: a checkbox and a switch are read as
+   * marks rather than as buttons, and a 40px checkbox beside 13px label text is
+   * a different component. These keep their drawn size and grow only the area
+   * that responds — a centred pad that takes the pointer and paints nothing.
+   * Since nothing is inflated, the pad can be the full 44px.
+   */
+  .zke-touch-pad {
+    position: relative;
+  }
+
+  .zke-touch-pad::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    width: 100%;
+    height: 100%;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
 }

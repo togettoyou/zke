@@ -388,7 +388,7 @@ function AutoscalerEditor({
         />
 
         <FormSection title={SECTION_LABELS.basic} problem={problemIn("basic")}>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 @md:grid-cols-2">
             {existing ? null : (
               <Field
                 label="名称"
@@ -588,7 +588,7 @@ function MetricRows({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid gap-2 sm:grid-cols-[9rem_1fr_1fr_9rem_6rem]">
+          <div className="grid gap-2 @2xl:grid-cols-[9rem_1fr_1fr_9rem_6rem]">
             <Select
               value={row.type}
               onValueChange={(value) =>
@@ -699,7 +699,7 @@ function RulesEditor({
       </label>
       {rules.enabled ? (
         <>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 @md:grid-cols-2">
             <Field label="稳定窗口（秒）" htmlFor={`hpa-${idPrefix}-window`}>
               <NumericInput
                 id={`hpa-${idPrefix}-window`}

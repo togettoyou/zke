@@ -178,7 +178,11 @@ export function Composer({
           rows={3}
           className="text-foreground placeholder:text-subtle-foreground h-24 w-full resize-none overflow-y-auto border-0 bg-transparent px-3.5 pt-3 pb-1 text-sm leading-relaxed outline-none disabled:cursor-not-allowed disabled:opacity-60"
         />
-        <div className="flex items-center gap-2 px-2.5 pb-2.5">
+        {/* Wrapping, because the row is seven controls long and a narrow window
+            is not going to fit them. Without it the send button — the one thing
+            in here that has to be reachable — is the item that runs off the
+            end. */}
+        <div className="flex flex-wrap items-center gap-2 px-2.5 pb-2.5">
           {onAttach ? (
             <>
               <input
@@ -215,10 +219,10 @@ export function Composer({
               be a newline, and the last place they would go looking for it is
               documentation. Dropped at narrow widths, where the row has to
               stay usable before it can be helpful. */}
-          <span className="text-subtle-foreground ml-auto text-[11px] max-[760px]:hidden">
+          <span className="text-subtle-foreground ml-auto text-[11px] @max-xl:hidden">
             Enter 发送 · Shift + Enter 换行
           </span>
-          <span className="max-[760px]:ml-auto">
+          <span className="@max-xl:ml-auto">
             <ContextMeter context={context} />
           </span>
           <div className="ml-1">

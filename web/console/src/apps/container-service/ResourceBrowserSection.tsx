@@ -152,7 +152,7 @@ export function ResourceBrowserSection({
       <SectionToolbarActions>
         <RefreshAction isFetching={catalog.isFetching || objectsFetching} onRefresh={refreshAll} />
       </SectionToolbarActions>
-      <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 gap-3 @3xl:grid-cols-[300px_minmax(0,1fr)]">
         <ResourceTypeTree
           tree={tree}
           total={types.length}

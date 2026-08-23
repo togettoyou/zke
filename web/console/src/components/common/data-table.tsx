@@ -94,7 +94,17 @@ export function DataTable<TData>({
         ) : (data?.length ?? 0) === 0 ? (
           <EmptyState title={emptyTitle} description={emptyDescription} action={emptyAction} />
         ) : (
-          <table className="zke-tnum w-full border-collapse text-[13px]">
+          /*
+           * A floor under the table, not just `w-full`.
+           *
+           * `w-full` alone lets the browser solve a too-narrow table by taking
+           * the width out of whichever column resists least, and what that looks
+           * like at 338px is a 38px column setting its content one glyph per line
+           * while the column beside it is comfortable. A table that does not fit
+           * should say so by scrolling — the box around it already does — rather
+           * than crush one column and pretend it fits.
+           */
+          <table className="zke-tnum w-full min-w-[36rem] border-collapse text-[13px]">
             {/* The header floats over scrolled rows, so its fill is fully
                 opaque. It used to be 95% with a blur behind it, which is a
                 compositing layer bought to hide 5% of show-through — cheaper and

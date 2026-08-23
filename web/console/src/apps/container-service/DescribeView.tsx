@@ -871,7 +871,7 @@ function NodeDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   return (
     <Card>
       <CardTitle>节点概况</CardTitle>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-2 grid gap-2 @md:grid-cols-2 @3xl:grid-cols-4">
         <DiagnosticValue
           label="CPU requests / 可分配"
           value={
@@ -924,7 +924,7 @@ function PersistentVolumeClaimDiagnosticSummary({ data }: { data: KubernetesDesc
   return (
     <Card>
       <CardTitle>存储声明概况</CardTitle>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-2 grid gap-2 @md:grid-cols-2 @3xl:grid-cols-4">
         <DiagnosticValue label="状态" value={claim.phase || "—"} />
         <DiagnosticValue
           label="容量 / 申请"
@@ -968,7 +968,7 @@ function ServiceDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
     return (
       <Card>
         <CardTitle>Service 端点概况</CardTitle>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <div className="mt-2 grid gap-2 @md:grid-cols-2">
           <DiagnosticValue label="类型" value="ExternalName" />
           <DiagnosticValue label="外部名称" value={service.spec.external_name || "—"} />
         </div>
@@ -981,7 +981,7 @@ function ServiceDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   return (
     <Card>
       <CardTitle>Service 端点概况</CardTitle>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-2 grid gap-2 @md:grid-cols-2 @3xl:grid-cols-4">
         <DiagnosticValue label="类型" value={service.spec.type || "ClusterIP"} />
         <DiagnosticValue
           label="就绪 / 全部端点"
@@ -1107,7 +1107,7 @@ function GatewayDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   return (
     <Card>
       <CardTitle>Gateway 状态</CardTitle>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      <div className="mt-2 grid gap-2 @md:grid-cols-2">
         <DiagnosticValue
           label="地址"
           value={gateway.addresses.map((item) => item.value).join(", ") || "尚未分配"}
@@ -1169,7 +1169,7 @@ function GatewayRouteDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   return (
     <Card>
       <CardTitle>Route 状态</CardTitle>
-      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+      <div className="mt-2 grid gap-2 @2xl:grid-cols-3">
         <DiagnosticValue label="ParentRef" value={`${route.parent_refs.length} 个`} />
         <DiagnosticValue label="BackendRef" value={`${route.backend_refs.length} 个`} />
         <DiagnosticValue label="Controller 状态" value={`${route.parents.length} 个`} />
@@ -1210,7 +1210,7 @@ function AutoscalerDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   return (
     <Card>
       <CardTitle>自动伸缩状态</CardTitle>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      <div className="mt-2 grid gap-2 @md:grid-cols-2">
         <DiagnosticValue
           label="伸缩目标"
           value={
@@ -1355,7 +1355,7 @@ function PolicyDiagnosticSummary({ data }: { data: KubernetesDescribe }) {
   return (
     <Card>
       <CardTitle>中断预算状态</CardTitle>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      <div className="mt-2 grid gap-2 @md:grid-cols-2">
         <DiagnosticValue
           label="当前健康 / 期望健康"
           value={`${budget.current_healthy} / ${budget.desired_healthy}`}

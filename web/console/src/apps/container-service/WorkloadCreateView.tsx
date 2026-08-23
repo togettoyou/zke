@@ -225,7 +225,7 @@ export function WorkloadCreateView({
         />
 
         <FormSection title="基本信息" problem={problemIn("basic")}>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 @md:grid-cols-2">
             <Field
               label="名称"
               hint={
@@ -425,7 +425,7 @@ export function WorkloadCreateView({
             hint="留空的项交由 Kubernetes 默认处理"
             problem={problemIn("job")}
           >
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <CountField
                 label="并行度"
                 value={draft.parallelism}
@@ -454,7 +454,7 @@ export function WorkloadCreateView({
 
         {cronJob ? (
           <FormSection title="调度" problem={problemIn("schedule")}>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <Field label="Cron 表达式">
                 {(id) => (
                   <Input
@@ -653,7 +653,7 @@ function ContainerPanel({
 
   return (
     <div className="border-border bg-surface-muted/40 rounded-panel grid gap-3 border p-3">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         <Field label="名称">
           {(id) => (
             <Input
@@ -710,7 +710,7 @@ function ContainerPanel({
         {() => <EnvRows rows={container.env} onChange={(env) => onChange({ env })} />}
       </Field>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         <Field label="CPU 限制" hint="单位为核，request 用于预分配，limit 为使用上限">
           {() => (
             <div className="flex items-center gap-2">
@@ -783,7 +783,7 @@ function ContainerPanel({
               />
             )}
           </Field>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 @md:grid-cols-2">
             <Field label="运行命令" hint="覆盖镜像 ENTRYPOINT，每行一条">
               {(id) => (
                 <Textarea
@@ -872,7 +872,7 @@ function ContainerPanel({
             </>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 @md:grid-cols-2">
             <ToggleField
               label="初始化容器"
               hint="标识为 init container，在主容器之前按顺序运行"
@@ -923,7 +923,7 @@ function ProbeEditor({
         启用
       </label>
       {probe.enabled ? (
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 @2xl:grid-cols-3">
           <Select
             value={probe.kind}
             onValueChange={(kind) => onChange({ ...probe, kind: kind as ProbeDraft["kind"] })}
@@ -943,7 +943,7 @@ function ProbeEditor({
               aria-label="检查命令"
               spellCheck={false}
               placeholder="每行一条，例如 cat /tmp/healthy"
-              className="zke-mono min-h-9 text-xs sm:col-span-2"
+              className="zke-mono min-h-9 text-xs @2xl:col-span-2"
               onChange={(event) => onChange({ ...probe, command: event.target.value })}
             />
           ) : (
@@ -1016,7 +1016,7 @@ function HookEditor({ hook, onChange }: { hook: HookDraft; onChange: (hook: Hook
         启用
       </label>
       {hook.enabled ? (
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 @2xl:grid-cols-3">
           <Select
             value={hook.kind}
             onValueChange={(kind) => onChange({ ...hook, kind: kind as HookDraft["kind"] })}
@@ -1035,7 +1035,7 @@ function HookEditor({ hook, onChange }: { hook: HookDraft; onChange: (hook: Hook
               aria-label="执行命令"
               spellCheck={false}
               placeholder="每行一条"
-              className="zke-mono min-h-9 text-xs sm:col-span-2"
+              className="zke-mono min-h-9 text-xs @2xl:col-span-2"
               onChange={(event) => onChange({ ...hook, command: event.target.value })}
             />
           ) : (
@@ -1100,7 +1100,7 @@ function EnvRows({ rows, onChange }: { rows: EnvDraft[]; onChange: (rows: EnvDra
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid gap-2 sm:grid-cols-4">
+          <div className="grid gap-2 @3xl:grid-cols-4">
             <Input
               value={row.name}
               aria-label={`第 ${index + 1} 个变量名`}
@@ -1131,7 +1131,7 @@ function EnvRows({ rows, onChange }: { rows: EnvDraft[]; onChange: (rows: EnvDra
                 autoComplete="off"
                 spellCheck={false}
                 placeholder="值"
-                className="sm:col-span-2"
+                className="@3xl:col-span-2"
                 onChange={(event) => update(index, { value: event.target.value })}
               />
             ) : (
@@ -1185,7 +1185,7 @@ function ContainerPortRows({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 @2xl:grid-cols-3">
             <Input
               value={row.name}
               aria-label={`第 ${index + 1} 个端口名称`}
@@ -1250,7 +1250,7 @@ function MountRows({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid gap-2 sm:grid-cols-4">
+          <div className="grid gap-2 @3xl:grid-cols-4">
             <Select value={row.name} onValueChange={(name) => update(index, { name })}>
               <SelectTrigger aria-label={`第 ${index + 1} 个挂载的数据卷`}>
                 <SelectValue placeholder="选择数据卷" />
@@ -1319,7 +1319,7 @@ function VolumeRows({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={row.id} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid gap-2 sm:grid-cols-4">
+          <div className="grid gap-2 @3xl:grid-cols-4">
             <Input
               value={row.name}
               aria-label={`第 ${index + 1} 个数据卷名称`}
@@ -1492,7 +1492,7 @@ function TolerationRows({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid gap-2 sm:grid-cols-5">
+          <div className="grid gap-2 @3xl:grid-cols-5">
             <Input
               value={row.key}
               aria-label={`第 ${index + 1} 个容忍键`}
@@ -1569,7 +1569,7 @@ function KeyValueRows({
     <div className="grid gap-2">
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 @md:grid-cols-2">
             <Input
               value={row.key}
               aria-label={`第 ${index + 1} 个键`}

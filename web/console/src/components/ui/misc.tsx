@@ -32,7 +32,7 @@ export function Checkbox({
   return (
     <CheckboxPrimitive.Root
       className={cn(
-        "zke-focus peer border-border-strong bg-surface size-4 shrink-0 rounded-[5px] border",
+        "zke-focus zke-touch-pad peer border-border-strong bg-surface size-4 shrink-0 rounded-[5px] border",
         "data-[state=checked]:border-primary data-[state=checked]:bg-primary",
         "disabled:cursor-not-allowed disabled:opacity-50",
         className,
@@ -50,7 +50,7 @@ export function Switch({ className, ...props }: React.ComponentProps<typeof Swit
   return (
     <SwitchPrimitive.Root
       className={cn(
-        "bg-border-strong inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors",
+        "zke-touch-pad bg-border-strong inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors",
         "data-[state=checked]:bg-primary disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}

@@ -347,7 +347,7 @@ function PodTermCard({
 }) {
   return (
     <RuleCard title={title} onRemove={onRemove}>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 @md:grid-cols-2">
         {onWeightChange ? (
           <Labeled label="权重" hint="1–100">
             <NumericInput
@@ -379,7 +379,7 @@ function PodTermCard({
         onChange={(namespace_selector) => onChange({ ...term, namespace_selector })}
       />
 
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-3 @2xl:grid-cols-3">
         <StringListEditor
           label="显式命名空间"
           values={term.namespaces ?? []}
@@ -429,7 +429,7 @@ function TopologySpreadEditor({
           title={`分布约束 ${index + 1}`}
           onRemove={() => onChange(values.filter((_, position) => position !== index))}
         >
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3">
             <Labeled label="拓扑键" hint="按该节点标签划分拓扑域">
               <Input
                 value={value.topology_key}
@@ -639,7 +639,7 @@ function RequirementRows({
             key={index}
             className="border-border bg-surface-muted rounded-control grid gap-2 border p-2"
           >
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.7fr)_auto]">
+            <div className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_minmax(8rem,0.7fr)_auto]">
               <Input
                 value={row.key}
                 aria-label={`${label} ${index + 1} 的键`}
@@ -719,7 +719,7 @@ function MatchLabelRows({
     <div className="grid gap-2">
       <p className="text-foreground text-[13px] font-medium">精确匹配标签</p>
       {rows.map((row, index) => (
-        <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+        <div key={index} className="grid gap-2 @lg:grid-cols-[1fr_1fr_auto]">
           <Input
             value={row.key}
             aria-label={`精确匹配标签 ${index + 1} 的键`}

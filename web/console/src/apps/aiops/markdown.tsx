@@ -147,7 +147,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
         ) : null}
         <code>{code}</code>
       </pre>
-      <div className="absolute top-1 right-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
+      <div className="hoverless:opacity-100 absolute top-1 right-1 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
         <CopyIconButton value={code} label="复制代码" className="bg-surface/80 backdrop-blur-sm" />
       </div>
     </div>
