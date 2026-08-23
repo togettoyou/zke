@@ -26,21 +26,15 @@ type Tools = { enabled: boolean; tools: AITool[]; skills: AISkill[] };
  * shared: what AIOps can do does not change with the workspace, only whether
  * the operator holds the permissions each tool needs.
  *
- * The launcher reads `enabled` from here rather than from the platform
- * settings, which only a global administrator may read: whether an application
- * appears on the desktop cannot depend on a route most of its users are
- * refused.
+ * Asked when the application opens, and not before: whether AIOps is offered at
+ * all rides on the session, so the launcher decides the icon without this
+ * request and a desktop that never opens AIOps never makes it.
  */
-export function useAITools(options?: { enabled?: boolean }) {
+export function useAITools() {
   return useQuery({
     queryKey: queryKeys.aiTools(),
     queryFn: async ({ signal }) => unwrap(await api.GET("/api/v1/ai/tools", { signal })) as Tools,
     staleTime: 5 * 60 * 1_000,
-    // The launcher asks this on every desktop, for every operator. Passing the
-    // permission in keeps the request off the accounts that could not start a
-    // session anyway, while still sharing one cached answer with the
-    // application itself.
-    enabled: options?.enabled ?? true,
   });
 }
 

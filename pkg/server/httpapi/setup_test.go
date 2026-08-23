@@ -112,7 +112,7 @@ func TestSetupHandlerRejectsCompletedSetup(t *testing.T) {
 
 func setupTestRouter(service setupService) http.Handler {
 	config := defaultAuthenticationTestConfig()
-	authHandler := newAuthHandler(discardLogger(), nil, nil, config)
+	authHandler := newAuthHandler(discardLogger(), nil, nil, nil, config)
 	handler := newSetupHandler(discardLogger(), service, authHandler, config)
 	router := gin.New()
 	router.GET("/api/v1/setup", handler.status)

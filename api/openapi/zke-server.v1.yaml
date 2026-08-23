@@ -8427,7 +8427,7 @@ components:
     CurrentSession:
       type: object
       additionalProperties: false
-      required: [user, expires_at, server_version, capabilities]
+      required: [user, expires_at, server_version, capabilities, features]
       properties:
         user:
           $ref: "#/components/schemas/UserIdentity"
@@ -8446,6 +8446,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Capability"
+        features:
+          $ref: "#/components/schemas/SessionFeatures"
+    SessionFeatures:
+      type: object
+      additionalProperties: false
+      required: [aiops]
+      description: >-
+        本部署启用了哪些可选能力。与调用者身份无关，只说明能力是否存在，
+        不描述其配置。Console 用它决定启动器上是否出现对应应用图标。
+      properties:
+        aiops:
+          type: boolean
+          description: >-
+            AIOps 是否已启用并配置了模型端点。为 false 时 Console 不展示 AIOps 应用。
     Capability:
       type: object
       additionalProperties: false

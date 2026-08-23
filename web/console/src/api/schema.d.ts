@@ -2734,6 +2734,12 @@ export interface components {
              */
             server_version: string;
             capabilities: components["schemas"]["Capability"][];
+            features: components["schemas"]["SessionFeatures"];
+        };
+        /** @description 本部署启用了哪些可选能力。与调用者身份无关，只说明能力是否存在， 不描述其配置。Console 用它决定启动器上是否出现对应应用图标。 */
+        SessionFeatures: {
+            /** @description AIOps 是否已启用并配置了模型端点。为 false 时 Console 不展示 AIOps 应用。 */
+            aiops: boolean;
         };
         Capability: {
             /** @description 角色名。角色由操作者定义，取值不封闭。 */

@@ -202,10 +202,19 @@ func New(
 			kubernetesresource.SecretManifestGuard,
 		)
 	}
+	// Nil-checked into the interface rather than assigned through it: a nil
+	// *Runtime stored in an interface is not a nil interface, and the session
+	// would call Enabled on it. Deployments and tests that leave AIOps out get
+	// an absent feature, not a panic.
+	var aiopsFeature aiopsAvailability
+	if dependencies.AIRuntimeService != nil {
+		aiopsFeature = dependencies.AIRuntimeService
+	}
 	authRoutesHandler := newAuthHandler(
 		logger,
 		dependencies.AuthService,
 		dependencies.RBACService,
+		aiopsFeature,
 		config.Authentication,
 	)
 	routeHandlers := handlers{

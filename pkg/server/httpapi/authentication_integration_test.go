@@ -195,6 +195,12 @@ func TestAuthenticationHTTPFlow(t *testing.T) {
 			buildinfo.Version(),
 		)
 	}
+	// This router was built without an AIOps runtime, which is the case the
+	// interface's typed nil would otherwise turn into a panic on every session
+	// read rather than into an absent feature.
+	if meBody.Features.AIOps {
+		t.Fatal("current session features.aiops = true, want false without an AIOps runtime")
+	}
 
 	missingCSRFResponse := httptest.NewRecorder()
 	missingCSRFRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)

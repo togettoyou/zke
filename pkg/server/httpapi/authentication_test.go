@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,7 +19,7 @@ func TestLoginSetsProtectedAuthenticationCookies(t *testing.T) {
 	t.Parallel()
 
 	expiresAt := time.Now().UTC().Add(8 * time.Hour)
-	handler := newAuthHandler(discardLogger(), nil, nil, AuthenticationConfig{})
+	handler := newAuthHandler(discardLogger(), nil, nil, nil, AuthenticationConfig{})
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
 	context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
@@ -64,7 +65,7 @@ func TestLoginSetsProtectedAuthenticationCookies(t *testing.T) {
 func TestLoginOmitsSecureCookiesOverPlainHTTP(t *testing.T) {
 	t.Parallel()
 
-	handler := newAuthHandler(discardLogger(), nil, nil, AuthenticationConfig{})
+	handler := newAuthHandler(discardLogger(), nil, nil, nil, AuthenticationConfig{})
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
 	context.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
@@ -144,6 +145,7 @@ func TestServiceErrorReturnsTimeout(t *testing.T) {
 		discardLogger(),
 		nil,
 		nil,
+		nil,
 		defaultAuthenticationTestConfig(),
 	)
 	response := httptest.NewRecorder()
@@ -191,5 +193,65 @@ func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, expected
 	}
 	if body.Data.ErrorCode != expected {
 		t.Fatalf("error code = %q, want %q", body.Data.ErrorCode, expected)
+	}
+}
+
+type stubAIOpsAvailability struct {
+	enabled bool
+	err     error
+}
+
+func (stub stubAIOpsAvailability) Enabled(context.Context) (bool, error) {
+	return stub.enabled, stub.err
+}
+
+// The launcher decides whether the AIOps icon exists from this response alone,
+// so the flag has to be answered here rather than on a route of its own.
+func TestCurrentSessionReportsAIOpsFeature(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name        string
+		aiops       aiopsAvailability
+		wantEnabled bool
+	}{
+		{name: "enabled", aiops: stubAIOpsAvailability{enabled: true}, wantEnabled: true},
+		{name: "disabled", aiops: stubAIOpsAvailability{}, wantEnabled: false},
+		// An optional subsystem must not be able to fail the response the whole
+		// Console renders off: an unreadable flag is reported as not offered.
+		{
+			name:        "unreadable",
+			aiops:       stubAIOpsAvailability{enabled: true, err: errors.New("settings unavailable")},
+			wantEnabled: false,
+		},
+		// A deployment built without AIOps at all.
+		{name: "absent", aiops: nil, wantEnabled: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler := newAuthHandler(
+				discardLogger(),
+				nil,
+				nil,
+				testCase.aiops,
+				defaultAuthenticationTestConfig(),
+			)
+			response := httptest.NewRecorder()
+			ginContext, _ := gin.CreateTestContext(response)
+			ginContext.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+			handler.me(ginContext)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body)
+			}
+			var body currentSessionResponse
+			if err := decodeSuccessResponse(response, &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Features.AIOps != testCase.wantEnabled {
+				t.Fatalf("features.aiops = %t, want %t", body.Features.AIOps, testCase.wantEnabled)
+			}
+		})
 	}
 }

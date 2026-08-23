@@ -1,6 +1,5 @@
 import { memo } from "react";
 
-import { useAITools } from "@/api/queries/aiops";
 import { appFaceClass, appHoverClass } from "@/apps/accent";
 import { APP_MANIFESTS } from "@/apps/registry";
 import type { AppManifest } from "@/apps/types";
@@ -13,9 +12,12 @@ import { cn } from "@/lib/cn";
  * Applications the user has no permission for anywhere are hidden, and so is
  * the one application the deployment itself can switch off: AIOps without a
  * model endpoint has nothing behind its icon, and an icon that opens onto "not
- * configured" is worse than no icon. It stays hidden while the answer is still
- * loading — appearing a moment late is a smaller lie than appearing and then
- * being taken away.
+ * configured" is worse than no icon.
+ *
+ * Both answers arrive on the session, so the grid is decided in one render:
+ * asking a route of its own for the feature flag put that one icon a round trip
+ * behind the other nine, and an icon that appears after the desktop has settled
+ * reads as an afterthought rather than as part of the same launcher.
  *
  * Planned ones stay visible so the product shape is legible, and each says so on its own
  * face — the marker belongs to the tile, not to a section heading above a block
@@ -32,14 +34,13 @@ import { cn } from "@/lib/cn";
  * on the Desktop above, and the launcher has nothing to do with it.
  */
 export const IconGrid = memo(function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
-  const { permissions } = useSessionContext();
-  const aiRuntime = useAITools({ enabled: permissions.canAnywhere("ai.run") });
+  const { session, permissions } = useSessionContext();
 
   const visible = APP_MANIFESTS.filter((manifest) => {
     if (manifest.requiresGlobalAdmin && !permissions.isGlobalAdmin) {
       return false;
     }
-    if (manifest.requiresPlatformFeature === "aiops" && !aiRuntime.data?.enabled) {
+    if (manifest.requiresPlatformFeature === "aiops" && !session?.features.aiops) {
       return false;
     }
     if (manifest.availability.state === "planned" || manifest.requiredPermissions.length === 0) {

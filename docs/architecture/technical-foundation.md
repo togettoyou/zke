@@ -550,6 +550,11 @@ Console 与管理 API 采用同源部署模型。生产环境由同一 Origin �
 `GET /api/v1/auth/me` 除用户和 Session 过期时间外，还返回当前用户的 `capabilities`。每项能力包含 RoleBinding
 作用域以及该角色在该作用域授予的权限，Console 应据此控制操作入口，但服务端仍会对每次请求重新授权。
 
+同一响应还返回 `features`，说明本部署启用了哪些可选能力（当前只有 `aiops`）。它描述部署而非调用者，只回答能力
+是否存在，不描述其配置，因此不需要全局管理员权限即可读取。Console 的启动器据此决定应用图标是否出现；把它与
+`capabilities` 放在一起返回，桌面才能在一次渲染中定下全部图标，而不必为某一个图标多等一次往返。读取该标志失败
+不会让整个响应失败，此时按“未启用”返回并在 Server 端记录原因。
+
 持有 Global `user.password.change` 权限的当前用户可以通过 `POST /api/v1/auth/password` 提交当前密码、新密码和
 显式确认来自助改密。成功后 Server 撤销该用户的全部 Session 并清除当前认证 Cookie，用户必须使用新密码重新登录。
 
