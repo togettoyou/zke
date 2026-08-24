@@ -15,9 +15,9 @@
 
 </div>
 
-ZKE（Z Kubernetes Engine）把分散在数据中心、私有云、公有云和边缘的 Kubernetes 集群，收敛成一个可以直接操作的
-云环境：Agent 从每个集群主动向 Server 建立 QUIC/mTLS 出向连接，Console 用桌面、窗口和 Dock 组织能力，AIOps 作为
-常驻其中的运维 Agent，与人共用同一套权限、同一条通道和同一份审计。
+ZKE（Z Kubernetes Engine）是一个 AI 原生的 Kubernetes 云操作环境，把分散在数据中心、私有云、公有云和边缘的 Kubernetes 集群，收敛成一个可以直接操作的云环境：Agent 从每个集群主动向 Server 建立 QUIC/mTLS 出向连接，Console 用桌面、窗口和 Dock 组织能力，AIOps 作为常驻其中的运维 Agent，与人共用同一套权限、同一条通道和同一份审计。
+
+ZKE Console 采用了一套运行在浏览器中的桌面式交互界面。集群接入管理、组织与资源、访问与审计、容器服务、终端和 AIOps 都以独立应用存在。用户可以从桌面或 Dock 打开应用，在窗口之间切换、最小化、最大化，并保存自己的桌面布局和工作作用域。这种设计并不只是视觉模仿。多集群运维很少是一条从上到下的单页面流程。排查一个异常工作负载时，操作者可能同时需要资源详情、事件、Pod 日志和终端。多窗口让这些上下文保留在同一个工作空间中，最小化终端窗口也不会被当成关闭会话。
 
 https://github.com/user-attachments/assets/f06f2229-48c2-4911-8e72-8cf60975d28f
 
@@ -53,13 +53,13 @@ https://github.com/user-attachments/assets/f06f2229-48c2-4911-8e72-8cf60975d28f
   `preview_id`，批准后重验权限、重跑 DryRun，幂等键防重复写入。
 - **每一步留痕。** 模型调用、工具参数与返回、授权判断、审批与压缩写入 append-only 轨迹，可筛选、回放和导出；
   结论里的每条证据都能在当前桌面打开对应窗口并定位到那个对象或那张图。
-- **是 Dock 上的一个 App。** 关掉窗口任务继续跑，重开从上次位置接续。
+- **是 Dock 上的一个 App。** 关掉应用窗口任务会继续跑，重开从上次位置接着继续。
 
 | AIOps 对话 | AIOps 轨迹 |
 | --- | --- |
 | ![模型自主调用工具、敏感操作等待审批、结论携带证据引用](docs/images/product-preview/aiops-conversation.png) | ![输入 / 模型 / 工具三条时间轨与运行统计](docs/images/product-preview/aiops-trajectory.png) |
 
-技能、并行子任务、定时巡检与事件触发自动化仍在规划中，具体边界见 [AIOps](docs/features/ai-assistant.md)。
+定时巡检与事件触发自动化仍在规划中，具体边界见 [AIOps](docs/features/ai-assistant.md)。
 
 ## 它解决什么问题
 
@@ -163,7 +163,7 @@ Docker Compose、Helm 等其他部署方式，以及完整的配置、升级与�
 ## Roadmap
 
 - **已实现：** 平台基础、集群接入、容器服务、多集群指标，以及 AIOps 的自主工具循环、受控写操作与受控终端命令。
-- **规划中：** 日志、告警、集群间资源对比，以及 AIOps 的技能、并行子任务、定时巡检和事件触发自动化。
+- **规划中：** 日志、告警、集群间资源对比，以及 AIOps 的定时巡检和事件触发自动化。
 
 规划不代表发布时间或交付承诺。完整规划见 [Roadmap](docs/roadmap.md)；产品、架构、功能与安全设计统一收录在
 [ZKE 文档导航](docs/README.md)。
