@@ -6,6 +6,7 @@ toolchain go1.26.4
 
 require (
 	github.com/gin-gonic/gin v1.12.0
+	github.com/golang/snappy v1.0.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/quic-go/quic-go v0.60.0
@@ -42,7 +43,6 @@ require (
 	github.com/go-playground/validator/v10 v10.30.3 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

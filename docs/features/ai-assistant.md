@@ -64,7 +64,7 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `describe_resource` | 对象的关键状态、ZKE 归纳的问题点和指向它的 Event | `cluster.read` + `cluster.event.read` |
 | `list_nodes` | Node 状态、可调度性、容量与 kubelet 版本 | `cluster.read` |
 | `get_pod_logs` | Pod 容器日志尾部（敏感），按 Pod 实例身份读取；单容器 Pod 可以省略容器名 | `cluster.pod.logs.read` |
-| `list_metric_queries` | 可用的指标查询目录 | `cluster.metrics.read` |
+| `list_metric_queries` | 可用的指标查询目录，每行一个查询：查询名、标题、单位与参数标记 | `cluster.metrics.read` |
 | `query_metrics` | 执行目录中的一个查询，返回每条曲线的最新值、峰值与均值 | `cluster.metrics.read` |
 | `preview_workload_scale` | 对 Deployment/StatefulSet 目标副本数执行 Kubernetes 服务端 DryRun，不改变集群 | 普通 Namespace 使用 `cluster.resource.update`，受保护 Namespace 改用 system/agent manage |
 | `scale_workload` | 实际调整 Deployment/StatefulSet 副本数；提交前内部再次执行同参数 DryRun | 同预检；实际伸缩始终按敏感操作处理 |
@@ -81,6 +81,16 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 
 部署没有安装多集群指标时，指标工具不会出现在目录里，而不是出现后每次调用都失败。工具输出经过摘要与截断，
 超出单次上限时会明确告知模型，让它缩小范围重读，而不是把截断当成完整事实。
+
+**指标目录是唯一一个必须完整返回的工具输出。** 其余读取工具回答的都是调用方指名的东西——某个 Namespace、
+某个选择器、某个条数上限——因此被截断之后可以问得更窄再读一次；而这一个是索引本身：看不见名字的查询就没法
+被调用，截断保留的又是首尾，消失的正是目录中间那一段，且没有任何地方会报告这件事。所以它按每行一个查询
+渲染，并且只写出调用方必须照做的标记（`ns`/`ns!`/`top`/`top!`/`instant`/`ksm`/`node`），而不是把九个字段
+逐个拼成 JSON。目录会继续变长，因此「整份放得进一次工具结果」由一个单元测试守着，而不是靠人记得。
+
+AIOps 读到的就是 Console 图表读的那一份目录：查询目录由 Server 现场枚举，新增查询不需要在 AIOps 侧登记，
+权限也仍然是 `cluster.metrics.read` 按目标 Cluster 逐次校验。模型引用的每条指标都会作为证据落进轨迹，
+点开时在 Console 中打开对应的图表分区。
 
 `ai.run` 只负责打开 AIOps，不替代上表中的任何权限。固定权限由运行时逐次重验；Manifest 和回滚再按实际文档、动作与
 Namespace 选择一项有效权限，少一项就整次拒绝并把拒绝写进轨迹和审计。工具目录 API 用 `conditional_permissions`

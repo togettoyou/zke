@@ -297,6 +297,14 @@ func TestCatalogueQueriesRunAgainstRealStorage(t *testing.T) {
 		{"container_cpu_throttling", 0.1},
 		{"namespace_quota_utilization", 0.25},
 		{"pvc_utilization", 0.4},
+		// Half of the seeded swap in use, ten and twenty milliseconds of device
+		// time per operation, and a relist loop averaging a tenth of a second.
+		// Each divides two families that a wrong join would silently pair with
+		// the wrong partner.
+		{"node_memory_swap_utilization", 0.5},
+		{"node_disk_read_latency", 0.01},
+		{"node_disk_write_latency", 0.02},
+		{"node_kubelet_pleg_latency", 0.1},
 	} {
 		result, err := service.Query(context.Background(), Input{
 			UserID:    userID,
@@ -460,10 +468,38 @@ func seedKubeletSamples(t *testing.T, base string, clusterID string) {
 			"node":                     "probe-node",
 			metricsingest.ClusterLabel: clusterID,
 		}, 0, at)...)
+		// The rest of what the collector writes about its own scrapes. They
+		// have been in storage since the first install and were never read;
+		// the collection quality view is what reads them.
+		for _, meta := range []struct {
+			name  string
+			value float64
+		}{
+			{"scrape_duration_seconds", 0.4},
+			{"scrape_samples_post_metric_relabeling", 1_200},
+			{"scrape_series_added", 3},
+		} {
+			body = append(body, series(map[string]string{
+				"__name__":                 meta.name,
+				"job":                      "kubelet-resource",
+				"node":                     "probe-node",
+				metricsingest.ClusterLabel: clusterID,
+			}, meta.value, at)...)
+		}
+		// The node exporter's report on its own collectors. One of them is
+		// failing, which is what separates "nothing to report" from "this
+		// collector cannot run on this Node".
+		body = append(body, series(map[string]string{
+			"__name__":                 "node_scrape_collector_success",
+			"collector":                "pressure",
+			"node":                     "probe-node",
+			metricsingest.ClusterLabel: clusterID,
+		}, 0, at)...)
 		body = append(body, seedObjectSamples(clusterID, at)...)
 		body = append(body, seedNodeSamples(clusterID, at, offset)...)
 		body = append(body, seedCadvisorSamples(clusterID, at, offset)...)
 		body = append(body, seedVolumeStatsSamples(clusterID, at)...)
+		body = append(body, seedKubeletHealthSamples(clusterID, at, offset)...)
 	}
 	response, err := http.Post(
 		base+"/api/v1/write",
@@ -604,6 +640,41 @@ func seedObjectSamples(clusterID string, at int64) []byte {
 			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
 			"reason": "OOMKilled",
 		}, 1},
+		// A Node that is schedulable and a Pod that is ready and placed. Both
+		// families report the healthy case as a number rather than as an absent
+		// series, which is what the queries reading them count on.
+		{map[string]string{
+			"__name__": "kube_node_spec_unschedulable", "node": "probe-node",
+		}, 0},
+		{map[string]string{
+			"__name__": "kube_pod_status_ready", "namespace": "kube-system",
+			"pod": "probe-pod", "condition": "true",
+		}, 1},
+		{map[string]string{
+			"__name__": "kube_pod_status_unschedulable", "namespace": "kube-system",
+			"pod": "probe-pod",
+		}, 0},
+		// Batch work, which the replica families deliberately exclude.
+		{map[string]string{
+			"__name__": "kube_job_status_active", "namespace": "kube-system",
+			"job_name": "probe-job",
+		}, 1},
+		{map[string]string{
+			"__name__": "kube_job_status_failed", "namespace": "kube-system",
+			"job_name": "probe-job",
+		}, 2},
+		// The storage objects the kubelet's volume statistics cannot report: it
+		// measures what it has mounted, and a claim nothing could bind is
+		// precisely what is missing from that view.
+		{map[string]string{
+			"__name__":  "kube_persistentvolumeclaim_status_phase",
+			"namespace": "kube-system", "persistentvolumeclaim": "probe-claim",
+			"phase": "Bound",
+		}, 1},
+		{map[string]string{
+			"__name__":         "kube_persistentvolume_status_phase",
+			"persistentvolume": "probe-volume", "phase": "Bound",
+		}, 1},
 	} {
 		sample.labels[metricsingest.ClusterLabel] = clusterID
 		body = append(body, series(sample.labels, sample.value, at)...)
@@ -664,22 +735,102 @@ func seedNodeSamples(clusterID string, at int64, offset int) []byte {
 			"__name__": "node_cpu_seconds_total",
 			"node":     "probe-node", "cpu": "0", "mode": "iowait",
 		}, 1_000},
+		// A virtualised Node's fourth mode. The mode breakdown reads every mode
+		// that is not idle, and steal is the one an operator cannot act on from
+		// inside the Cluster.
+		{map[string]string{
+			"__name__": "node_cpu_seconds_total",
+			"node":     "probe-node", "cpu": "0", "mode": "steal",
+		}, 500},
+		{map[string]string{
+			"__name__": "node_cpu_seconds_total",
+			"node":     "probe-node", "cpu": "0", "mode": "system",
+		}, 20_000},
 		{map[string]string{
 			"__name__": "node_memory_MemAvailable_bytes", "node": "probe-node",
 		}, 6 << 30},
 		{map[string]string{"__name__": "node_load1", "node": "probe-node"}, 1.5},
-		{map[string]string{
-			"__name__": "node_disk_reads_completed_total",
-			"node":     "probe-node", "device": "sda",
-		}, 10_000},
-		{map[string]string{
-			"__name__": "node_disk_writes_completed_total",
-			"node":     "probe-node", "device": "sda",
-		}, 20_000},
+		{map[string]string{"__name__": "node_load5", "node": "probe-node"}, 1.2},
+		{map[string]string{"__name__": "node_load15", "node": "probe-node"}, 0.9},
 		{map[string]string{
 			"__name__": "node_disk_io_time_seconds_total",
 			"node":     "probe-node", "device": "sda",
 		}, 500},
+		// The memory the kernel keeps for itself, none of which is in any
+		// container's working set.
+		{map[string]string{
+			"__name__": "node_memory_Slab_bytes", "node": "probe-node",
+		}, 1 << 29},
+		{map[string]string{
+			"__name__": "node_memory_PageTables_bytes", "node": "probe-node",
+		}, 1 << 26},
+		{map[string]string{
+			"__name__": "node_memory_KernelStack_bytes", "node": "probe-node",
+		}, 1 << 24},
+		{map[string]string{
+			"__name__": "node_memory_Committed_AS_bytes", "node": "probe-node",
+		}, 6 << 30},
+		{map[string]string{
+			"__name__": "node_memory_CommitLimit_bytes", "node": "probe-node",
+		}, 12 << 30},
+		// Swap, which a Kubernetes Node usually has none of: the ratio guards
+		// its denominator, so a Node reporting a total of zero is dropped rather
+		// than divided by nothing. The fixture gives it swap so the guard itself
+		// is exercised.
+		{map[string]string{
+			"__name__": "node_memory_SwapTotal_bytes", "node": "probe-node",
+		}, 2 << 30},
+		{map[string]string{
+			"__name__": "node_memory_SwapFree_bytes", "node": "probe-node",
+		}, 1 << 30},
+		{map[string]string{
+			"__name__": "node_procs_running", "node": "probe-node",
+		}, 3},
+		{map[string]string{
+			"__name__": "node_procs_blocked", "node": "probe-node",
+		}, 1},
+		{map[string]string{
+			"__name__": "node_filefd_allocated", "node": "probe-node",
+		}, 8_192},
+		{map[string]string{
+			"__name__": "node_filefd_maximum", "node": "probe-node",
+		}, 1_048_576},
+		// Booted a day ago, so uptime is a positive number rather than a clock
+		// difference that happens to land near zero.
+		{map[string]string{
+			"__name__": "node_boot_time_seconds", "node": "probe-node",
+		}, float64(time.Now().Add(-24 * time.Hour).Unix())},
+		// A clock a little behind, and disciplined. The offset is read as a
+		// magnitude, so the negative value here proves the query does not rank
+		// a Node that is behind below one that is exactly right.
+		{map[string]string{
+			"__name__": "node_timex_offset_seconds", "node": "probe-node",
+		}, -0.002},
+		{map[string]string{
+			"__name__": "node_timex_sync_status", "node": "probe-node",
+		}, 1},
+		// The filesystem fault flags, both clear: a Cluster with none is the
+		// normal case, and the queries still have to answer with a series.
+		{map[string]string{
+			"__name__": "node_filesystem_readonly",
+			"node":     "probe-node", "mountpoint": "/", "device": "/dev/sda1",
+		}, 0},
+		{map[string]string{
+			"__name__": "node_filesystem_device_error",
+			"node":     "probe-node", "mountpoint": "/", "device": "/dev/sda1",
+		}, 0},
+		{map[string]string{
+			"__name__": "node_netstat_Tcp_CurrEstab", "node": "probe-node",
+		}, 420},
+		{map[string]string{
+			"__name__": "node_sockstat_TCP_tw", "node": "probe-node",
+		}, 1_200},
+		{map[string]string{
+			"__name__": "node_sockstat_TCP_mem_bytes", "node": "probe-node",
+		}, 4 << 20},
+		{map[string]string{
+			"__name__": "node_sockstat_UDP_mem_bytes", "node": "probe-node",
+		}, 1 << 20},
 		{map[string]string{
 			"__name__": "node_network_receive_errs_total",
 			"node":     "probe-node", "device": "eth0",
@@ -738,6 +889,76 @@ func seedNodeSamples(clusterID string, at int64, offset int) []byte {
 		{map[string]string{
 			"__name__": "node_pressure_io_waiting_seconds_total", "node": "probe-node",
 		}, 20, 0.6},
+		// The four UDP counters cluster DNS fails behind.
+		{map[string]string{
+			"__name__": "node_netstat_Udp_InErrors", "node": "probe-node",
+		}, 10, 1},
+		{map[string]string{
+			"__name__": "node_netstat_Udp_RcvbufErrors", "node": "probe-node",
+		}, 5, 1},
+		{map[string]string{
+			"__name__": "node_netstat_Udp_SndbufErrors", "node": "probe-node",
+		}, 2, 1},
+		{map[string]string{
+			"__name__": "node_netstat_Udp_NoPorts", "node": "probe-node",
+		}, 7, 1},
+		// Packets beside the bytes already seeded: a link is rated for both, and
+		// the packet ceiling is the one small requests reach first.
+		{map[string]string{
+			"__name__": "node_network_receive_packets_total",
+			"node":     "probe-node", "device": "eth0",
+		}, 100_000, 6_000},
+		{map[string]string{
+			"__name__": "node_network_transmit_packets_total",
+			"node":     "probe-node", "device": "eth0",
+		}, 90_000, 4_800},
+		// Pages still moving between memory and disk, which is the state the
+		// swap ratio alone cannot distinguish from swap that was filled once.
+		{map[string]string{
+			"__name__": "node_vmstat_pswpin", "node": "probe-node",
+		}, 500, 30},
+		{map[string]string{
+			"__name__": "node_vmstat_pswpout", "node": "probe-node",
+		}, 400, 24},
+		{map[string]string{
+			"__name__": "node_context_switches_total", "node": "probe-node",
+		}, 1_000_000, 60_000},
+		{map[string]string{
+			"__name__": "node_intr_total", "node": "probe-node",
+		}, 2_000_000, 120_000},
+		{map[string]string{
+			"__name__": "node_vmstat_pgmajfault", "node": "probe-node",
+		}, 1_000, 60},
+		{map[string]string{
+			"__name__": "node_vmstat_oom_kill", "node": "probe-node",
+		}, 2, 1},
+		// Disk service time. The completion counters advance because the
+		// latency queries divide by their rate under a `> 0` guard: a device
+		// that completed nothing has no average service time, and the guard
+		// drops it rather than reporting one.
+		//
+		// Ten reads a second taking 100 ms of device time in total, and twenty
+		// writes a second taking 400 ms: 10 ms and 20 ms per operation.
+		{map[string]string{
+			"__name__": "node_disk_reads_completed_total",
+			"node":     "probe-node", "device": "sda",
+		}, 10_000, 600},
+		{map[string]string{
+			"__name__": "node_disk_writes_completed_total",
+			"node":     "probe-node", "device": "sda",
+		}, 20_000, 1_200},
+		{map[string]string{
+			"__name__": "node_disk_read_time_seconds_total",
+			"node":     "probe-node", "device": "sda",
+		}, 100, 6},
+		{map[string]string{
+			"__name__": "node_disk_write_time_seconds_total",
+			"node":     "probe-node", "device": "sda",
+		}, 200, 24},
+		{map[string]string{
+			"__name__": "node_disk_io_time_weighted_seconds_total",
+			"node":     "probe-node", "device": "sda",
+		}, 1_000, 30},
 	} {
 		sample.labels[metricsingest.ClusterLabel] = clusterID
 		body = append(body, series(
@@ -785,6 +1006,86 @@ func seedCadvisorSamples(clusterID string, at int64, offset int) []byte {
 			"namespace": "kube-system", "pod": "probe-pod", "container": "",
 			"interface": "eth0",
 		}, 6_000_000, 120_000},
+		{map[string]string{
+			"__name__":  "container_network_receive_packets_dropped_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "",
+			"interface": "eth0",
+		}, 100, 6},
+		{map[string]string{
+			"__name__":  "container_network_transmit_packets_dropped_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "",
+			"interface": "eth0",
+		}, 50, 6},
+		// Per-Pod disk, which the scrape keeps only where a Pod identity is
+		// present: the same families are reported for cgroups outside any Pod,
+		// and those are dropped before they reach here.
+		{map[string]string{
+			"__name__":  "container_fs_reads_bytes_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+			"device": "/dev/sda",
+		}, 1_000_000, 60_000},
+		{map[string]string{
+			"__name__":  "container_fs_writes_bytes_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+			"device": "/dev/sda",
+		}, 2_000_000, 120_000},
+		{map[string]string{
+			"__name__":  "container_oom_events_total",
+			"namespace": "kube-system", "pod": "probe-pod", "container": "app",
+		}, 1, 1},
+	} {
+		sample.labels[metricsingest.ClusterLabel] = clusterID
+		body = append(body, series(
+			sample.labels,
+			sample.base+sample.step*float64(10-offset),
+			at,
+		)...)
+	}
+	return body
+}
+
+// seedKubeletHealthSamples writes the kubelet's own health families.
+//
+// They come from the same endpoint as the volume statistics and describe the
+// component every other number here is measured through: a kubelet whose
+// runtime calls fail, or whose lifecycle loop has slowed down, reports a Node
+// whose curves do not spike but stop moving.
+func seedKubeletHealthSamples(clusterID string, at int64, offset int) []byte {
+	var body []byte
+	for _, sample := range []struct {
+		labels map[string]string
+		value  float64
+	}{
+		{map[string]string{
+			"__name__": "kubelet_running_pods", "node": "probe-node",
+		}, 1},
+		{map[string]string{
+			"__name__": "kubelet_running_containers", "node": "probe-node",
+			"container_state": "running",
+		}, 2},
+	} {
+		sample.labels[metricsingest.ClusterLabel] = clusterID
+		body = append(body, series(sample.labels, sample.value, at)...)
+	}
+	// The relist loop's average is a ratio of two counters, so both have to
+	// advance: one relist a second taking 100 ms of it.
+	for _, sample := range []struct {
+		labels map[string]string
+		base   float64
+		step   float64
+	}{
+		{map[string]string{
+			"__name__": "kubelet_runtime_operations_errors_total",
+			"node":     "probe-node", "operation_type": "create_container",
+		}, 10, 6},
+		{map[string]string{
+			"__name__": "kubelet_pleg_relist_duration_seconds_count",
+			"node":     "probe-node",
+		}, 1_000, 60},
+		{map[string]string{
+			"__name__": "kubelet_pleg_relist_duration_seconds_sum",
+			"node":     "probe-node",
+		}, 100, 6},
 	} {
 		sample.labels[metricsingest.ClusterLabel] = clusterID
 		body = append(body, series(

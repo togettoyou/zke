@@ -37,7 +37,8 @@ import (
 // Agent could grant it — it holds that permission itself — which is exactly why
 // the restriction has to be written down rather than assumed.
 const kubeStateResources = "nodes,pods,namespaces,resourcequotas,deployments," +
-	"statefulsets,daemonsets,replicasets,jobs,cronjobs"
+	"statefulsets,daemonsets,replicasets,jobs,cronjobs,persistentvolumeclaims," +
+	"persistentvolumes"
 
 // kubeStateMetricFamilies is what kube-state-metrics is allowed to expose.
 //
@@ -49,6 +50,10 @@ var kubeStateMetricFamilies = []string{
 	"kube_node_status_allocatable",
 	"kube_node_status_capacity",
 	"kube_node_status_condition",
+	// A cordoned Node is not a failed one, so it appears in no condition and in
+	// no usage curve — it simply stops receiving work, and the Cluster loses
+	// that much capacity without anything saying so.
+	"kube_node_spec_unschedulable",
 	// What workloads asked for, against what they use.
 	"kube_pod_container_resource_requests",
 	"kube_pod_container_resource_limits",
@@ -65,6 +70,17 @@ var kubeStateMetricFamilies = []string{
 	// show as "now".
 	"kube_pod_status_phase",
 	"kube_pod_container_status_restarts_total",
+	// Running is not serving. A Pod whose readiness probe fails stays in the
+	// Running phase and is removed from every Service behind it, which is the
+	// difference between a workload that is up and one that answers. Only the
+	// `true` series is kept — the other two conditions are its complement
+	// against the Pod count, at three times the series.
+	"kube_pod_status_ready",
+	// A Pod the scheduler could not place. It is Pending like a Pod that is
+	// merely still starting, and the two are the same phase with completely
+	// different causes: one resolves itself, the other waits for capacity,
+	// a toleration or a volume that may never arrive.
+	"kube_pod_status_unschedulable",
 	// Why a container is not running. A restart count says something happened;
 	// these two say what it was — OOMKilled and CrashLoopBackOff are different
 	// faults with different fixes, and a curve that only counts restarts sends
@@ -81,6 +97,19 @@ var kubeStateMetricFamilies = []string{
 	"kube_statefulset_status_replicas_ready",
 	"kube_daemonset_status_desired_number_scheduled",
 	"kube_daemonset_status_number_ready",
+	// Batch work, which the replica families above deliberately exclude: a Job
+	// that has finished is not a workload missing replicas. A failing nightly
+	// Job is invisible in every other family here — its Pods are gone by the
+	// time anybody looks, and the object itself reports the failure.
+	"kube_job_status_active",
+	"kube_job_status_failed",
+	"kube_job_status_succeeded",
+	// Storage objects, which the kubelet's volume statistics cannot report: it
+	// measures the volumes it has mounted, so a claim no Pod could bind and a
+	// volume released without being reclaimed are precisely the ones missing
+	// from that view.
+	"kube_persistentvolumeclaim_status_phase",
+	"kube_persistentvolume_status_phase",
 }
 
 // nodeExporterCollectors are the only collectors enabled.
@@ -96,6 +125,26 @@ var nodeExporterCollectors = []string{
 	"diskstats",
 	"netdev",
 	"loadavg",
+	// The kernel's own counters for what the machine is doing between its
+	// workloads: context switches, interrupts, the run queue and the blocked
+	// queue, and the boot time an unexpected reboot is only visible against.
+	"stat",
+	// Paging and the kernel OOM killer. Its default field selector is already
+	// narrow — page faults, swap pages and `oom_kill` — and those are exactly
+	// the events that explain a Node whose memory looks unremarkable while
+	// everything on it is slow.
+	"vmstat",
+	// Sockets, which no byte counter reports: a Node out of ephemeral ports or
+	// over its TCP memory limit refuses new connections while its throughput
+	// stays flat.
+	"sockstat",
+	// The process-wide file descriptor table. Exhausting it fails every accept
+	// and every open on the Node at once.
+	"filefd",
+	// Clock offset and synchronisation state. A Node whose clock has drifted
+	// produces certificate errors, out-of-order logs and metrics that arrive
+	// outside the ingest window — all of which are read as faults elsewhere.
+	"timex",
 	// Saturation that never appears in a throughput or utilisation curve. A
 	// Node whose conntrack table is full, or whose TCP connections are being
 	// retransmitted, serves traffic that simply times out while every byte
@@ -109,11 +158,44 @@ var nodeExporterCollectors = []string{
 	"pressure",
 }
 
+// nodeExporterMountPointsExclude keeps Kubernetes' own mounts out of the
+// filesystem view.
+//
+// Every Pod's volumes are mounts on its Node, and so is a shared memory segment
+// for every container, so a Cluster of a few thousand Pods would otherwise
+// report a filesystem series per Pod per Node — the exact per-Pod cardinality
+// this pipeline is built to avoid.
+//
+// Two of the three branches deliberately match a path fragment rather than a
+// prefix. The first branch is upstream's, and it assumes the kubelet keeps its
+// state in /var/lib/kubelet and the runtime in /var/lib/docker; a Docker Desktop
+// Node keeps both under /mnt/docker-desktop-disk/data and k3s keeps the kubelet
+// under /var/lib/rancher, so on those Nodes a prefix matches nothing and every
+// Pod comes back. The second branch is where a Pod's volumes and a CSI mount
+// live under any kubelet root, and the third is the per-container shared memory
+// mount, which ends in /shm under every runtime. The Node's own /dev/shm is
+// already covered by the /dev branch.
+const nodeExporterMountPointsExclude = `^/(dev|proc|sys|run/credentials/.+|` +
+	`var/lib/kubelet/.+|var/lib/docker/.+)($|/)` +
+	`|/kubelet/(pods|plugins)/` +
+	`|/shm$`
+
 // nodeExporterNetstatFields bounds the one collector above that is otherwise
 // unbounded: netstat exposes the whole of /proc/net/snmp, around a hundred
-// series per Node, for the four counters the catalogue reads.
-const nodeExporterNetstatFields = `^(Tcp_RetransSegs|Tcp_OutSegs|` +
-	`TcpExt_ListenDrops|TcpExt_ListenOverflows)$`
+// series per Node, for the nine counters the catalogue reads.
+//
+// The four UDP counters are here because cluster DNS runs on UDP: a receive
+// buffer overflow on the Node is a resolver timeout in every Pod on it, and it
+// appears in no TCP counter and in no throughput curve.
+//
+// Deliberately not enabled, so that turning one on later is a visible decision:
+// `softnet` and `schedstat` report per CPU, which multiplies their series by
+// the core count of every Node; `hwmon`, `thermal_zone` and `power_supply`
+// describe hardware that a virtualised Node does not have and that a bare metal
+// one exposes under sensor names nothing here could query portably.
+const nodeExporterNetstatFields = `^(Tcp_RetransSegs|Tcp_OutSegs|Tcp_CurrEstab|` +
+	`TcpExt_ListenDrops|TcpExt_ListenOverflows|` +
+	`Udp_InErrors|Udp_NoPorts|Udp_RcvbufErrors|Udp_SndbufErrors)$`
 
 // nodeExporterUnavailable marks the one component a Cluster may legitimately
 // refuse. It needs the host's network namespace and host paths, which a
@@ -173,8 +255,11 @@ func applyKubeStateMetrics(
 		Rules: []rbacv1.PolicyRule{
 			{
 				APIGroups: []string{""},
-				Resources: []string{"nodes", "pods", "namespaces", "resourcequotas"},
-				Verbs:     []string{"list", "watch"},
+				Resources: []string{
+					"nodes", "pods", "namespaces", "resourcequotas",
+					"persistentvolumeclaims", "persistentvolumes",
+				},
+				Verbs: []string{"list", "watch"},
 			},
 			{
 				APIGroups: []string{"apps"},
@@ -456,11 +541,7 @@ func renderNodeExporterDaemonSet(
 		"--path.rootfs=/host/root",
 		"--web.listen-address=:" + strconv.Itoa(observability.NodeExporterPort),
 		"--collector.disable-defaults",
-		// Kubernetes' own mounts are excluded: every Pod's volumes appear on the
-		// host, so a Cluster with a few thousand Pods would otherwise report a
-		// filesystem series per Pod per Node.
-		"--collector.filesystem.mount-points-exclude=" +
-			`^/(dev|proc|sys|run/credentials/.+|var/lib/kubelet/.+|var/lib/docker/.+)($|/)`,
+		"--collector.filesystem.mount-points-exclude=" + nodeExporterMountPointsExclude,
 		"--collector.filesystem.fs-types-exclude=" +
 			`^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|` +
 			`fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|` +
@@ -524,8 +605,34 @@ func renderNodeExporterDaemonSet(
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "proc", MountPath: "/host/proc", ReadOnly: true},
 							{Name: "sys", MountPath: "/host/sys", ReadOnly: true},
-							{Name: "root", MountPath: "/host/root", ReadOnly: true,
-								MountPropagation: mountPropagation(corev1.MountPropagationHostToContainer)},
+							// The host's root, and deliberately without mount
+							// propagation.
+							//
+							// `HostToContainer` is what the exporter's own
+							// packaging uses, and it is what lets a filesystem
+							// mounted on the Node after this Pod started appear
+							// inside it. It also makes the whole component
+							// refuse to start on a Node whose own `/` is a
+							// private mount: the Docker runtime validates the
+							// source's propagation before it creates the
+							// container and answers `ContainerCannotRun`, so
+							// nothing runs and no log is ever written — which is
+							// the state a Docker Desktop Cluster arrives in out
+							// of the box.
+							//
+							// Without it a hostPath is still a recursive bind,
+							// so every mount that existed when the Pod started
+							// is visible and measured. What is lost is the Node
+							// whose disks changed underneath a running Pod, and
+							// the two places that would most often happen are
+							// already excluded from what this exporter reports:
+							// PersistentVolume mounts live under
+							// /var/lib/kubelet and the runtime's own layers
+							// under /var/lib/docker. The residual case — an
+							// operator mounting a new filesystem on the Node —
+							// corrects itself the next time this Pod is
+							// recreated.
+							{Name: "root", MountPath: "/host/root", ReadOnly: true},
 						},
 					}},
 					Volumes: []corev1.Volume{
@@ -552,8 +659,4 @@ func nodeExporterFailureMessage(err error) string {
 		return "the Cluster refused the node metrics exporter; it needs host network and host path access, which a Namespace under a baseline or restricted Pod Security level does not allow"
 	}
 	return "the node metrics exporter could not be installed in this Cluster"
-}
-
-func mountPropagation(mode corev1.MountPropagationMode) *corev1.MountPropagationMode {
-	return &mode
 }

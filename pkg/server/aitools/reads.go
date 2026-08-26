@@ -16,6 +16,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/metricsquery"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/shared/kubernetescatalog"
+	"github.com/togettoyou/zke/pkg/shared/observability"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -355,22 +356,78 @@ func soleContainer(pod *unstructured.Unstructured) (string, error) {
 		airuntime.ErrInvalidInput, pod.GetNamespace(), pod.GetName(), strings.Join(names, "、"))
 }
 
+// MetricsCatalogueLegend heads the query listing and explains its columns.
+//
+// The listing is a table rather than the indented JSON every other read tool
+// returns, and the reason is the size cap those tools share: one object per
+// query, with nine keys spelled out, is four times what a tool result may carry
+// — and a pruned answer would silently drop the middle of the catalogue. Every
+// other tool can be re-read against a narrower selector; this one cannot, so it
+// has to fit whole. `metricsCatalogueFitsOneResult` holds it to that.
+const MetricsCatalogueLegend = "指标查询目录。每行：查询名 | 标题 | 单位 | 标记。\n" +
+	"标记：ns 可按 Namespace 收窄；ns! 必须给 Namespace；top 可给 Top N；top! 必须给 Top N；" +
+	"instant 只返回当前值而不是曲线；ksm 需要集群已安装 kube-state-metrics；" +
+	"node 需要已安装 node-exporter。没有标记表示都不需要。"
+
 func (catalogue *Catalogue) listMetricQueries(
 	ctx context.Context, invocation airuntime.ToolInvocation,
 ) (airuntime.ToolResult, error) {
 	_ = ctx
 	_ = invocation
-	definitions := catalogue.dependencies.Metrics.Catalog()
-	rows := make([]map[string]any, 0, len(definitions))
+	return airuntime.ToolResult{
+		Text: catalogue.prune(MetricsCatalogueListing(catalogue.dependencies.Metrics.Catalog())),
+	}, nil
+}
+
+// MetricsCatalogueListing renders the catalogue as one line per query.
+func MetricsCatalogueListing(definitions []metricsquery.Definition) string {
+	lines := make([]string, 0, len(definitions)+1)
+	lines = append(lines, MetricsCatalogueLegend)
 	for _, definition := range definitions {
-		rows = append(rows, map[string]any{
-			"query": definition.Name, "title": definition.Title, "unit": definition.Unit,
-			"kind": definition.Kind, "supports_namespace": definition.SupportsNamespace,
-			"requires_namespace": definition.RequiresNamespace, "supports_top": definition.SupportsTop,
-			"requires_top": definition.RequiresTop, "requires_component": definition.RequiresComponent,
-		})
+		line := fmt.Sprintf(
+			"%s | %s | %s",
+			definition.Name,
+			definition.Title,
+			definition.Unit,
+		)
+		if flags := metricQueryFlags(definition); flags != "" {
+			line += " | " + flags
+		}
+		lines = append(lines, line)
 	}
-	return airuntime.ToolResult{Text: catalogue.encode(rows)}, nil
+	return strings.Join(lines, "\n")
+}
+
+// metricQueryFlags writes only what a caller has to act on.
+//
+// A query that supports nothing carries no flags at all: the common case is the
+// one that should cost the fewest characters, and "supports_namespace": false
+// repeated over a hundred entries is the difference between a listing that fits
+// and one that gets cut in half.
+func metricQueryFlags(definition metricsquery.Definition) string {
+	flags := make([]string, 0, 4)
+	switch {
+	case definition.RequiresNamespace:
+		flags = append(flags, "ns!")
+	case definition.SupportsNamespace:
+		flags = append(flags, "ns")
+	}
+	switch {
+	case definition.RequiresTop:
+		flags = append(flags, "top!")
+	case definition.SupportsTop:
+		flags = append(flags, "top")
+	}
+	if definition.Kind == metricsquery.KindInstant {
+		flags = append(flags, "instant")
+	}
+	switch definition.RequiresComponent {
+	case observability.ComponentKubeState:
+		flags = append(flags, "ksm")
+	case observability.ComponentNodeExporter:
+		flags = append(flags, "node")
+	}
+	return strings.Join(flags, " ")
 }
 
 type queryMetricsArguments struct {

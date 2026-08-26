@@ -6,9 +6,14 @@
 > 状态：前三个切片已实现（见 §13）。协议层（`STREAM_KIND_METRICS_INGEST`、`STREAM_KIND_METRICS_COLLECTOR`
 > 与两个对应能力）、Agent 摄取端点与转发、Agent 侧**三个采集组件**（vmagent、kube-state-metrics、
 > node-exporter）的一体安装与卸载、Server 摄取网关与作用域改写、每集群的速率与基数预算、存储写入、
-> 70 个固定查询（用量、利用率、申请与限制与可分配量、节点饱和度与 Pod 密度、工作负载用量与副本状态、
+> 119 个固定查询（用量、利用率、申请与限制与可分配量、节点饱和度与 Pod 密度、工作负载用量与副本状态、
 > 容器用量与 CPU 限流、Pod 网络、PVC 使用率与 inode、容器等待与退出原因、Namespace 配额、Pod 重启、
-> Pod 与节点状态、节点磁盘 IO 与网络、连接跟踪与 TCP 重传、PSI 压力停顿，加集群对象概览与采集健康度）、权限词、
+> Pod 与节点状态、节点磁盘 IO 与网络、连接跟踪与 TCP 重传、PSI 压力停顿，加 CPU 模式分布与被抢占、
+> 三档负载与进程队列、上下文切换与中断、内存承诺/内核内存/Swap/主缺页/节点 OOM、文件描述符、运行时长与
+> 时钟偏移、只读挂载与设备错误、磁盘延迟与队列、TCP 连接与 TIME_WAIT、套接字内存与 UDP 错误、kubelet 自身
+> 的运行时错误与 PLEG 时延、Pod 磁盘与丢包与 OOM、封锁节点与无法调度 Pod、就绪 Pod、Job 状态、
+> PVC 与持久卷状态、网络包速率与 Swap 换页，再加集群对象概览、采集健康度与采集链路自身的目标健康、抓取
+> 耗时、样本数、新增序列与节点采集器失败数）、权限词、
 > 审计事件，以及 Console 的「可观测性」应用和「平台配置 → 指标采集」都已落地。Console 侧的图表是共享时间
 > 窗口的：相对与绝对两种时间范围、在图上拖拽选取横轴区间、跨面板同步的十字光标与数值读数、可开关的图例
 > （见 §9.5）。
@@ -16,7 +21,7 @@
 > 已验证：
 >
 > - 摄取网关与查询目录对着真实的 VictoriaMetrics v1.149.0 跑通——写入的样本可查回，集群侧伪造的
->   `zke_cluster_id` 被替换为连接身份，目录中全部 70 个具名查询都能在真实存储上执行（用例直接遍历目录
+>   `zke_cluster_id` 被替换为连接身份，目录中全部 119 个具名查询都能在真实存储上执行（用例直接遍历目录
 >   本身，因此新增查询不会漏测），其中工作负载的两级归属（Deployment 而非 ReplicaSet）、未就绪副本的
 >   三控制器归一、Pod 密度的两族 join、对象概览并集的分支数与利用率的数值都做了断言
 >   （`ZKE_TEST_METRICS_STORAGE_URL=http://127.0.0.1:8428 go test ./pkg/server/metricsingest ./pkg/server/metricsquery`）；
@@ -29,10 +34,13 @@
 >
 > 尚未验证：node-exporter 在 `restricted` Namespace 下的实际拒绝路径（需要一个这样的 Namespace，替身客户端
 > 只模拟过该拒绝）。每集群预算只在单元测试中验证过，没有观察过 vmagent 收到 `RESOURCE_EXHAUSTED` 后的退避
-> 与回灌行为；容量、保留期与预算的实际取值还没有基线数据，当前默认值是保护性取值，五个抓取任务合计约十倍
-> 基数是按固定 allowlist 推算的结果而不是实测值。kubelet 的 cAdvisor 端点与 node-exporter 新增的
-> netstat / conntrack / pressure 三个 collector 已对着真实组件核对过指标名与标签形状（见 §14），
-> **`kubelet_volume_stats_*` 仍未在带 CSI 卷的真实集群上抓到过序列**。日志、告警仍是规划（见 §13）。
+> 与回灌行为；容量、保留期与预算的实际取值还没有基线数据，当前默认值是保护性取值，五个抓取任务合计约十二倍
+> 基数是按固定 allowlist 推算的结果而不是实测值。kubelet 的 cAdvisor 端点已对着真实组件核对过指标名与标签
+> 形状；node-exporter v1.12.1 在 ZKE 下发的同一组参数下，目录读取的**全部**族都已核对（见 §14），vmagent
+> v1.149.0 每个抓取目标产生的七条元信息也已核对；**`kubelet_volume_stats_*` 仍未在带 CSI 卷的真实集群上
+> 抓到过序列**，kube-state-metrics 新增的封锁与调度失败/就绪/Job/PVC/PV 各族、kubelet 自身健康的五个族与
+> cAdvisor 的容器磁盘与 OOM 三族**只在种子数据上验证过查询本身，尚未对着真实组件核对**（见 §14）。
+> 日志、告警仍是规划（见 §13）。
 
 前置阅读：[Server + Agent 架构](server-agent.md)、[Phase 2 Server–Agent 协议设计](agent-protocol-phase-2.md)、
 [应用作用域与资源模型](resource-model.md)、[安全与权限](../security/authorization.md)。
@@ -145,14 +153,21 @@ QUIC 连接转发给 Server。这也让"断线期间数据不丢"由 vmagent 的
 | 组件 | 形态 | 提供什么 | 缺了它会怎样 |
 | --- | --- | --- | --- |
 | vmagent | Deployment × 1 | 抓取与回传 | 没有任何指标 |
-| kube-state-metrics | Deployment × 1 | 节点可分配量与容量、Pod 申请/限制、工作负载归属与放置节点、Pod 与节点状态、重启与副本状态、容器等待与退出原因、ResourceQuota | 利用率、申请量、限制量、Pod 密度、配额、容器状态原因、工作负载与 Kubernetes 资源各组视图为空 |
-| node-exporter | DaemonSet（每节点） | 磁盘、文件系统、网络、负载与 CPU 模式、连接跟踪与 TCP 计数、PSI 压力停顿 | 存储与网络、节点饱和度与网络饱和视图为空 |
+| kube-state-metrics | Deployment × 1 | 节点可分配量与容量、Pod 申请/限制、工作负载归属与放置节点、Pod 与节点状态、就绪与调度失败、重启与副本状态、容器等待与退出原因、ResourceQuota、Job 状态、PVC 与持久卷状态 | 利用率、申请量、限制量、Pod 密度、配额、容器状态原因、工作负载与 Kubernetes 资源各组视图为空 |
+| node-exporter | DaemonSet（每节点） | 磁盘、文件系统、网络、负载与 CPU 模式、连接跟踪与 TCP/UDP 计数、套接字、PSI 压力停顿、内核内存与分页、进程与文件描述符、时钟 | 存储与网络、节点饱和度、内存明细、系统与网络饱和视图为空 |
 
 **kube-state-metrics 是利用率的分母。** kubelet 的资源端点报告"用了多少"，从不报告"有多少"，因此在引入它
 之前，`node_cpu_usage` 说"4 核"而没人知道那个节点是 8 核还是 64 核。容量数据在 ZKE 里本来就有——集群资源
 视图通过 Agent 实时查询 Node 对象——但那是"此刻的容量"，画不进时间序列，也就没法和用量放在同一张图上。
 让 Agent 把 Node 容量合成为指标上报的方案被否决了：那违反 §4 中"回传段不解释指标语义"的分工，Agent 一旦
 开始造指标，Server 侧的作用域改写就不再是唯一防线。
+
+新增的对象族沿用同一条界线：只收操作者会处理、而其他视图答不出来的那几种状态。被 cordon 的节点不带任何
+条件、用量一切正常，只是安静地不再接收 Pod；调度不上的 Pod 与还在拉镜像的 Pod 同样是 Pending；就绪探针失败
+的 Pod 仍然是 Running，却已经被从每个 Service 后面摘掉；跑完的 Job 不是缺副本的工作负载，因此副本查询故意
+不包含它，而连续失败的定时任务在别处看不见——等有人去看的时候，它的 Pod 早就不在了；卡在 Pending 的 PVC 没有
+Pod 起得来，因此 kubelet 的卷统计里根本没有它。`kube_pod_status_ready` 每个 Pod 每个条件取值一条，因此在抓取
+处只保留 `true`：另外两个取值是它对 Pod 总数的补集，而 Pod 总数这条链路上已经有了。
 
 **两侧都收窄，而不是装一个默认的 kube-state-metrics。** `--resources` 限制它 watch 哪些对象，
 `--metric-allowlist` 限制它导出哪些指标族；两份清单与 Server 的查询目录是同一个决定——目录里有而这里没有的
@@ -174,16 +189,52 @@ Namespace 会拒绝它。ZKE **不改写别人 Namespace 的安全等级**——
 annotation 上（改 annotation 不会重挂配置卷），后续的状态查询仍能读到，Console 如实显示"已被集群拒绝"。
 不这样做的话，被拒绝的组件与"没人装过"在界面上完全一样，操作者会反复重装。
 
-它同时启用 `--collector.disable-defaults` 再逐项打开九个 collector（cpu、meminfo、filesystem、diskstats、
-netdev、loadavg、netstat、conntrack、pressure）：默认约四十个 collector 里大部分描述的是没人向 ZKE 提问的
-硬件，而每一个都会乘以节点数。文件系统排除 kubelet 与容器运行时的挂载点，网络排除 veth/cali/cni 等虚拟
-接口——否则每个节点上每个 Pod 都会贡献一组序列。netstat 本身会导出整份 `/proc/net/snmp`（每节点约一百条
-序列），因此用 `--collector.netstat.fields` 收窄到目录真正读取的四个计数。
+**宿主机根目录不带挂载传播。** 它以 hostPath 只读挂到 `/host/root`，供 `--path.rootfs` 使用，但**不设**
+`mountPropagation: HostToContainer`——尽管上游 node-exporter 的打包用的正是它。原因是那一项会让整个组件在
+根挂载为 private 的节点上根本起不来：Docker 运行时在创建容器之前校验源挂载的传播属性，直接以
+`ContainerCannotRun`（`path / is mounted on / but it is not a shared or slave mount`）拒绝，进程没有运行过，
+也就没有任何日志可读，`kubectl logs` 只会报找不到日志文件。Docker Desktop 的虚拟机正是这种情况（其
+`/` 既不是 shared 也不是 slave），containerd 与 CRI-O 没有这道校验，而装了 systemd 的常规节点上 `/` 本来
+就是 rshared。
 
-conntrack、netstat 与 pressure 回答的是"还通不通得过"而不是"用了多少"：连接跟踪表写满的节点会丢弃新建连接，
-握手完成却没有进程接收的连接会被静默丢掉，而这两种情况下节点的字节计数完全正常。PSI 需要内核暴露
-`/proc/pressure`（Linux 4.20 及以上），较旧的内核上该 collector 不上报，其余部分不受影响——因此它是一个
-可能没有数据的视图，而不是一个会失败的安装。
+代价写在这里而不是留给读数：hostPath 本身是递归绑定，Pod 启动时已经存在的挂载全都可见、也都会被测量；
+丢掉的是**该 Pod 启动之后**节点上新挂的文件系统。而最常发生这件事的两个位置已经不在这个导出器上报的范围
+内——PersistentVolume 挂在 `/var/lib/kubelet` 下、运行时分层挂在 `/var/lib/docker` 下，两者都在
+`--collector.filesystem.mount-points-exclude` 里。剩下的情形是操作者给节点新挂了一块盘或一个网络文件系统：
+在这个 Pod 被重建之前，它的挂载点如果是新建目录，容器内不存在该路径，node-exporter 会以 `device_error`
+标记并报零（「只读挂载与设备错误」面板会显示），如果目录早已存在，则读到的是下层文件系统的数字。
+Pod 重建即恢复。
+
+它同时启用 `--collector.disable-defaults` 再逐项打开十四个 collector（cpu、meminfo、filesystem、diskstats、
+netdev、loadavg、netstat、conntrack、pressure、stat、vmstat、sockstat、filefd、timex）：默认约四十个
+collector 里大部分描述的是没人向 ZKE 提问的硬件，而每一个都会乘以节点数。文件系统排除 kubelet 与容器运行时
+的挂载点，网络排除 veth/cali/cni 等虚拟接口——否则每个节点上每个 Pod 都会贡献一组序列。
+
+**文件系统的排除按路径片段而不是按前缀匹配。** 上游的写法锚在 `/var/lib/kubelet` 与 `/var/lib/docker`，
+那是 kubeadm 节点的位置，而 Docker Desktop 把两者都放在 `/mnt/docker-desktop-disk/data` 下、k3s 把 kubelet
+放在 `/var/lib/rancher/k3s/agent` 下。在这些节点上锚定前缀什么都匹配不到，结果不是少排除了一点，而是完全
+相反：每个 Pod 的每个卷、每个容器的共享内存段都变成一条文件系统序列，并且因为导出器以 nobody 运行、stat
+不了它们，每一条还附带一个永久的 `device_error`——这会让「只读挂载与设备错误」这张本该长期为零的图一直
+误报。因此排除表达式在上游那一支之外另加两支：任意 kubelet 根目录下的 `/kubelet/(pods|plugins)/`，以及
+所有运行时都以 `/shm` 结尾的每容器共享内存挂载（节点自己的 `/dev/shm` 由 `/dev` 那一支覆盖）。netstat 本身会导出
+整份 `/proc/net/snmp`（每节点约一百条序列），因此用 `--collector.netstat.fields` 收窄到目录真正读取的九个
+计数。
+
+conntrack、netstat、sockstat 与 pressure 回答的是"还通不通得过"而不是"用了多少"：连接跟踪表写满的节点会
+丢弃新建连接，握手完成却没有进程接收的连接会被静默丢掉，TIME_WAIT 占满本地端口的节点建不出新连接，而这
+几种情况下节点的字节计数完全正常。四个 UDP 计数是为集群 DNS 收的：DNS 走 UDP，节点上的接收缓冲区溢出在
+每个 Pod 里都表现为解析超时，而它不出现在任何 TCP 计数器上。PSI 需要内核暴露 `/proc/pressure`
+（Linux 4.20 及以上），较旧的内核上该 collector 不上报，其余部分不受影响——因此它是一个可能没有数据的视图，
+而不是一个会失败的安装。
+
+stat、vmstat、filefd 与 timex 补的是"节点自己出问题"的那一类：主缺页与内核 OOM 说明内存压力已经变成延迟或
+杀进程，阻塞进程数说明任务在等存储而不是等 CPU，描述符用尽会让节点上所有的 accept 与 open 一起失败，时钟
+漂移则在别处一律以别的名义出现——证书未生效、日志乱序、样本因超出摄取窗口被拒。它们都没有对应的
+Kubernetes 对象，因此除了节点指标导出器没有第二个来源。
+
+**没有启用的 collector 也是一个决定。** `softnet` 与 `schedstat` 按 CPU 上报，序列数要乘以每个节点的核数；
+`hwmon`、`thermal_zone` 与 `power_supply` 描述的硬件在虚拟节点上不存在，在裸金属上则以各不相同的传感器名
+暴露，没有可移植的查询写法。把它们留在关闭状态，意味着以后打开任何一个都是一次显式的改动。
 
 抓取配置只写这次安装真的放进集群的目标：kubelet 总是有，另外两个按是否安装成功决定。默认抓取间隔 30 秒。
 所有默认值都是资源保护配置，不是容量承诺；三个目标合计的基数估算见
@@ -191,14 +242,25 @@ conntrack、netstat 与 pressure 回答的是"还通不通得过"而不是"用�
 
 **kubelet 是一个目标、三个端点。** `/metrics/resource` 是 Kubernetes 作为 API 维护的用量端点，小而稳定，
 整份收下；`/metrics/cadvisor` 是容器运行时自己的视图，`/metrics` 是 kubelet 的内部指标，两者都远大于目录
-需要的部分，因此各自带一份 `keep` 允许列表，只留下 CPU 限流周期、Pod 网络收发与卷统计五族。cAdvisor 还会
-给每条序列打上 cgroup id、镜像引用和运行时容器名，三者都随同一个容器的每次重启而改变——集群的工作负载没
-有变化，序列数却在长——所以它们被 labeldrop 掉；目录里没有任何查询读它们。cAdvisor 的时间戳来自它自己的
-housekeeping 周期，与抓取时刻不同步，因此这两个端点不使用 `honor_timestamps`，而资源端点使用。
+需要的部分，因此各自带一份 `keep` 允许列表：cAdvisor 留下 CPU 限流周期、Pod 网络收发与丢包、容器磁盘读写
+与容器 OOM 事件，`/metrics` 留下卷统计与 kubelet 自身的健康——运行中的 Pod 与容器数、容器运行时操作的
+错误数、PLEG 重列时长的 `_sum` 与 `_count`。kubelet 是其余所有数字的测量工具，它自己出问题时节点看起来
+反而很平静：曲线不是抬升，而是不再变化。卷统计的 `available_bytes` 与运行时操作的总数都**不收**：前者是
+容量减去已用，后者是按操作类型展开的成功调用数，两者都没有查询读取，而没有查询读取的族就是所有集群共用的
+存储里的纯粹基数。PLEG 只取 `_sum` 与 `_count` 而不取分桶，因为一个平均值就是操作者
+会处理的信号，而分桶要为一个界面上画不出来的分位数付出每节点十余条序列。
+
+cAdvisor 还会给每条序列打上 cgroup id、镜像引用和运行时容器名，三者都随同一个容器的每次重启而改变——集群
+的工作负载没有变化，序列数却在长——所以它们被 labeldrop 掉；目录里没有任何查询读它们。容器磁盘与 OOM 三族
+同时也会为 Pod 之外的 cgroup（根 cgroup、kubelet 自己的 slice）上报，那些序列只靠 `id` 区分，因此在丢标签
+之前先按"没有 Pod 身份"丢弃：否则一次批次里会出现若干组标签完全相同的序列，写入端只能把它们当成重复样本。
+cAdvisor 的时间戳来自它自己的 housekeeping 周期，与抓取时刻不同步，因此这两个端点不使用 `honor_timestamps`，
+而资源端点使用。
 
 **新增抓取端点需要重新安装采集。** 抓取配置随安装下发，Server 不会主动改写已经在集群里运行的采集组件；
-升级 Server 之后，依赖新端点的视图（PVC、容器限流、Pod 网络）在旧安装上会一直为空。Console 在这些面板的
-空态里写明了这一点，而不是让它读起来像"集群很闲"。
+升级 Server 之后，依赖新端点或新指标族的视图（PVC、容器限流、Pod 网络与磁盘、kubelet 自身健康、节点的系统
+与套接字指标、Job 与存储对象状态）在旧安装上会一直为空。Console 在这些面板的空态里写明了这一点，而不是让它
+读起来像"集群很闲"。
 
 ### 5.4 集群内摄取端点与来源认证
 
@@ -375,26 +437,34 @@ retry-after 有上限（当前 1 分钟）：让采集器睡更久只会推迟�
 记 N = 节点数、P = Pod 数、C = 容器数、V = 已被 Pod 挂载的 PVC 数：
 
 ```text
-kubelet 资源端点     ≈ 7×N + 2×P + 2×C
-kubelet cAdvisor    ≈ 2×C + 2×P
-kubelet 卷统计       ≈ 5×V
-kube-state-metrics  ≈ 27×N + 7×P + 12×C
-node-exporter       ≈ (8×单节点核数 + 145)×N
+抓取元信息           ≈ 7×(4×N + 1)
+kubelet 资源端点     ≈ 2×N + 2×P + 2×C
+kubelet cAdvisor    ≈ 5×C + 4×P
+kubelet 卷统计       ≈ 4×V
+kubelet 内部指标     ≈ 12×N
+kube-state-metrics  ≈ 28×N + 9×P + 12×C + 3×J + 2×(V+PV)
+node-exporter       ≈ (8×单节点核数 + 215)×N
 样本速率（每秒）     ≈ 序列总数 ÷ scrape_interval（默认 30s）
 ```
 
-各项来源：kubelet 资源端点每节点约 7 条 = 2 条节点指标加约 5 条 vmagent 自己产生的抓取元信息（条数随
-vmagent 版本略有出入），Pod 与容器各贡献 CPU 和内存两条；cAdvisor 每容器两条限流计数、每 Pod 每网卡两条
-收发计数；卷统计每个已挂载的 PVC 五条；kube-state-metrics 的每节点部分主要是可分配量、容量与节点状况，
-每 Pod 部分是归属、phase 与所在节点，每容器部分是申请、限制、重启计数与已收窄的等待/退出原因；
-node-exporter 中占大头的是 `node_cpu_seconds_total`，它按「核数 × 模式数」展开，其余 meminfo、filesystem、
-diskstats、netdev、loadavg 合计每节点约 140 条，netstat（已收窄到四个计数）、conntrack 与 pressure 再加
-约 5 条。
+各项来源：抓取元信息是采集器为每个目标写的七条（`up`、抓取耗时、响应大小、抓取样本数、过滤后样本数、
+新增序列数与超时时间，在 vmagent v1.149.0 上实测），而四个按节点发现的任务各把每个节点算作一个目标，
+kube-state-metrics 是唯一的静态目标；kubelet 资源端点每节点两条节点指标，Pod 与容器各贡献 CPU 和内存两条；
+cAdvisor 每容器两条限流计数、每容器两条磁盘读写与一条 OOM 计数、每 Pod 每网卡两条收发计数与两条丢包计数；
+卷统计每个已挂载的 PVC 四条；kubelet 内部指标每节点约 12 条（运行中的 Pod 与容器、按操作类型展开的运行时
+错误数、PLEG 的 `_sum` 与 `_count`）；kube-state-metrics 的每节点部分主要是可分配量、容量、节点状况与是否
+封锁，每 Pod 部分是归属、phase、所在节点、就绪与是否可调度，每容器部分是申请、限制、重启计数与已收窄的
+等待/退出原因，此外每个 Job 三条、每个 PVC 与 PV 各一条；node-exporter 中占大头的是 `node_cpu_seconds_total`，
+它按「核数 × 模式数」展开，其余 meminfo、filesystem、diskstats、netdev、loadavg 合计每节点约 140 条，
+netstat（已收窄到九个计数）、conntrack、pressure、stat、vmstat、sockstat、filefd、timex 与导出器自己的
+per-collector 状态再加约 75 条——后一半是在 v1.12.1 上照 ZKE 下发的参数实测的。
 
-例如 100 节点（每节点 16 核）、2000 Pod、3000 容器、500 个已挂载 PVC 的集群：kubelet 资源端点约 10700 条、
-cAdvisor 约 10000 条、卷统计约 2500 条、kube-state-metrics 约 52700 条、node-exporter 约 27300 条，合计约
-103000 条序列、约 3400 样本/秒——大约是只抓 kubelet 资源端点时的十倍。多出来的部分买到的是利用率、申请量、
-工作负载归属、磁盘网络、CPU 限流、Pod 网络、PVC 使用率与容器状态原因，但它确实是十倍，规划容量时要按这个
+例如 100 节点（每节点 16 核）、2000 Pod、3000 容器、500 个已挂载 PVC 的集群：抓取元信息约 2800 条、
+kubelet 资源端点约 10200 条、cAdvisor 约 23000 条、卷统计约 2000 条、kubelet 内部指标约 1200 条、
+kube-state-metrics 约 58000 条、node-exporter 约 34300 条，合计约 131500 条序列、约 4400 样本/秒——大约是
+只抓 kubelet 资源端点时的十二倍。
+多出来的部分买到的是利用率、申请量、工作负载归属、磁盘网络与延迟、CPU 限流、Pod 网络与磁盘、PVC 使用率、
+容器状态原因、节点自身的内核与网络饱和信号，以及 kubelet 本身的健康，但它确实是十二倍，规划容量时要按这个
 数字算。拒绝 node-exporter 的集群按去掉最后一项估算。
 
 每个样本占用多少字节取决于压缩率，属于 VictoriaMetrics 的行为而不是 ZKE 的；请以上游文档的经验值做初次
@@ -447,7 +517,7 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 改写缺陷都是跨租户数据泄露；同时自由表达式的执行成本无法预估，单个查询就能拖垮单副本 Server 背后的
 存储。固定目录让作用域过滤成为模板的一部分，而不是对用户输入的事后修补。
 
-已实现的查询目录（70 个）：
+已实现的查询目录（119 个）：
 
 | 查询 | 维度 | 依赖组件 | Namespace | Top N |
 | --- | --- | --- | --- | --- |
@@ -464,7 +534,13 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 | `cluster_cpu_allocatable` / `cluster_memory_allocatable` | — | kube-state-metrics | 否 | 否 |
 | `cluster_cpu_commitment` / `cluster_memory_commitment` | — | kube-state-metrics | 否 | 否 |
 | `node_cpu_utilization` / `node_memory_utilization` | `node` | kube-state-metrics | 否 | 可选 |
-| `node_load1` / `node_cpu_iowait` / `node_memory_available` | `node` | node-exporter | 否 | 可选 |
+| `node_load1` / `node_load5` / `node_load15` / `node_cpu_iowait` / `node_memory_available` | `node` | node-exporter | 否 | 可选 |
+| `cluster_cpu_mode` | `mode` | node-exporter | 否 | 否 |
+| `node_cpu_steal` | `node` | node-exporter | 否 | 可选 |
+| `node_context_switches` / `node_interrupts` / `node_procs_running` / `node_procs_blocked` | `node` | node-exporter | 否 | 可选 |
+| `node_file_descriptor_utilization` / `node_uptime` / `node_clock_offset` / `node_clock_synchronized` | `node` | node-exporter | 否 | 可选 |
+| `node_memory_kernel` / `node_memory_commitment` / `node_memory_swap_utilization` | `node` | node-exporter | 否 | 可选 |
+| `node_major_page_faults` / `node_oom_kills` / `node_swap_io` | `node` | node-exporter | 否 | 可选 |
 | `node_cpu_cores` | `node` | kube-state-metrics | 否 | 可选 |
 | `node_conntrack_utilization` / `node_tcp_retransmission` / `node_tcp_listen_drops` | `node` | node-exporter | 否 | 可选 |
 | `node_pressure_cpu` / `node_pressure_memory` / `node_pressure_io` | `node` | node-exporter | 否 | 可选 |
@@ -483,11 +559,29 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 | `cluster_node_pressure` | `condition` | kube-state-metrics | 否 | 否 |
 | `node_filesystem_utilization` / `node_filesystem_inode_utilization` | `node`、`mountpoint` | node-exporter | 否 | 可选 |
 | `pvc_utilization` / `pvc_used_bytes` / `pvc_inode_utilization` | `namespace`、`persistentvolumeclaim` | kubelet（卷统计） | 可选 | 可选 |
-| `node_network_receive` / `node_network_transmit` / `node_network_errors` | `node`、`device` | node-exporter | 否 | 可选 |
+| `node_network_receive` / `node_network_transmit` / `node_network_errors` / `node_network_packets` | `node`、`device` | node-exporter | 否 | 可选 |
 | `node_disk_read` / `node_disk_write` | `node`、`device` | node-exporter | 否 | 可选 |
 | `node_disk_read_ops` / `node_disk_write_ops` / `node_disk_io_utilization` | `node`、`device` | node-exporter | 否 | 可选 |
+| `node_disk_read_latency` / `node_disk_write_latency` / `node_disk_queue` | `node`、`device` | node-exporter | 否 | 可选 |
+| `node_filesystem_readonly` / `node_filesystem_device_errors` | `node` | node-exporter | 否 | 可选 |
+| `node_tcp_connections` / `node_tcp_timewait` / `node_socket_memory` / `node_udp_errors` | `node` | node-exporter | 否 | 可选 |
+| `node_kubelet_pods` / `node_kubelet_containers` / `node_kubelet_runtime_errors` / `node_kubelet_pleg_latency` | `node` | kubelet | 否 | 可选 |
+| `pod_disk_read` / `pod_disk_write` / `pod_network_drops` / `pod_oom_kills` | `namespace`、`pod` | kubelet（cAdvisor） | 可选 | **必需** |
+| `cluster_node_unschedulable` | — | kube-state-metrics | 否 | 否 |
+| `cluster_pod_ready` / `cluster_pod_unschedulable` | — | kube-state-metrics | 可选 | 否 |
+| `cluster_job_active` / `cluster_job_failed` | — | kube-state-metrics | 可选 | 否 |
+| `namespace_job_failed` | `namespace` | kube-state-metrics | 可选 | 可选 |
+| `cluster_pvc_phase` | `phase` | kube-state-metrics | 可选 | 否 |
+| `cluster_pv_phase` | `phase` | kube-state-metrics | 否 | 否 |
 | `cluster_inventory`（instant） | `resource` | kube-state-metrics | 否 | 否 |
+| `collection_target_health` / `collection_scrape_duration` / `collection_samples` / `collection_series_added` | `job` | 采集器自身 | 否 | 可选 |
+| `collection_node_collectors` | `collector` | node-exporter | 否 | 可选 |
 | `collection_health`（instant） | — | kubelet | 否 | 否 |
+
+`collection_*` 一组读的是采集链路写下的关于它自己的序列。它们从第一次安装起就在存储里——采集器为每个
+抓取目标各写七条——而在此之前只有 `up` 的集群级平均值被读过。它们回答的是这个应用对自己回答不了的那个
+问题：一屏图表全空的时候，是集群闲着、某个目标挂了，还是某个导出器的 collector 在这些节点上根本跑不起来。
+样本数与新增序列还与 §7.3 的每集群预算是同一件事：前者是每次抓取要付的，后者是整个保留期要付的。
 
 `cluster_inventory` 是唯一一个把多个数字装进一次查询的条目：它用 `label_replace` 给八个计数各写一个
 `resource` 标签再取并集，因此总览的指标卡片是一次往返而不是八次。这些数字总是一起读，而每一次往返都落在
@@ -651,7 +745,7 @@ Recharts / ECharts 等通用库（功能远超所需，体积与主题定制成�
   不复用同一个"暂无数据"。
 
 **时间窗口属于视图，不属于单张图。** 顶部一行筛选器（目标集群、时间范围、自动刷新）作用于其下的每一张
-图，四个图表分区共用同一份状态：换到另一个分区不需要把"哪个集群、哪一个小时"再说一遍。窗口有两种：跟着时钟走
+图，五个图表分区共用同一份状态：换到另一个分区不需要把"哪个集群、哪一个小时"再说一遍。窗口有两种：跟着时钟走
 的相对范围，和钉住不动的绝对范围。在图上横向拖拽产生的是后者——一个仍然跟着时钟走的选区会从操作者刚刚指
 着的东西下面滑走。绝对范围下自动刷新停摆，窗口最小化时同样停摆：这里的每一次请求最终都落在所有集群共用的
 存储上。
@@ -796,27 +890,44 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 - node-exporter 被拒绝时整个安装仍然成功，该组件报告原因，抓取配置不写它的 job，且原因在后续的状态查询中
   仍然可读；
 - 抓取配置只写这次真的安装了的目标，每个 job 都丢弃 `zke_` 前缀标签；
-- kubelet 的三个端点各自按允许列表收窄，cAdvisor 的 cgroup id、镜像与运行时容器名被丢弃，容器状态原因
-  在抓取处收窄到查询真正读取的取值（Agent 与 Server 读同一份清单）；
+- kubelet 的三个端点各自按允许列表收窄，cAdvisor 的 cgroup id、镜像与运行时容器名被丢弃，只在 Pod 之外的
+  cgroup 上出现的容器磁盘与 OOM 序列在丢标签之前先被丢掉，容器状态原因与 Pod 就绪条件在抓取处收窄到查询
+  真正读取的取值（Agent 与 Server 读同一份清单）；
 - 旧 Server 的请求（不携带组件配置）仍然只安装采集组件，另外两个报告为未安装且**不带**原因；
 - 已有同名但非 ZKE 管理的对象一律拒绝而不是接管；
 - 工作负载归属：Deployment 的 Pod 归到 Deployment 而不是 ReplicaSet；利用率的除法两侧都能通过 join。
 
 已执行：上述条目由 `pkg/server/metricsingest`、`pkg/server/metricsquery` 与 `pkg/agent` 的单元测试覆盖
-（含并发摄取的 `-race` 用例，以及用 reactor 模拟 Pod Security 拒绝的用例）；目录中全部 70 个查询在真实的
+（含并发摄取的 `-race` 用例，以及用 reactor 模拟 Pod Security 拒绝的用例）；目录中全部 119 个查询在真实的
 VictoriaMetrics v1.149.0 上执行通过，其中工作负载两级归属与利用率的数值都做了断言。
 
 查询目录的集成测试现在还要求**每一个条目都真的选到序列**。此前它只断言查询不报 PromQL 错误，而一个引用了
 无人抓取的指标族、或 join 落在一侧没有的标签上的模板，同样不报错、同样返回空——在 Console 里就是一张采集
 健康的集群上的空图，是没有任何错误路径会报告的那一种失效。种子因此补齐了目录读取的全部指标族（cAdvisor
-的限流与 Pod 网络、kubelet 卷统计、容器等待与退出原因、ResourceQuota、conntrack、netstat、PSI，以及采集器
-自身的 `up`），被守卫的比值（限流比例、配额使用率、PVC 使用率）另外断言了数值。
+的限流、Pod 网络与丢包、容器磁盘与 OOM，kubelet 卷统计与自身健康，容器等待与退出原因、就绪与调度失败、
+Job 与 PVC/PV 状态、ResourceQuota，conntrack、netstat 的九个计数、sockstat、PSI、stat、vmstat、filefd、
+timex，以及采集器自身的 `up`），被守卫的比值（限流比例、配额使用率、PVC 使用率、Swap 使用率、磁盘读写延迟、
+PLEG 平均时长）另外断言了数值。
 
 指标名不是本仓库能决定的，因此另外对着真实组件核对过：kubelet v1.31.1 的 `/metrics/resource` 与
 `/metrics/cadvisor` 确认了六个 kubelet 指标族与 cAdvisor 四个族的名称与标签形状（Pod 级网络序列的
 `container` 为空、每个 Pod 每张网卡一条，因此 labeldrop 掉 `id`/`image`/`name` 之后不会产生重复序列）；
 node-exporter v1.12.1 在 ZKE 下发的同一组 collector 参数下确认了 conntrack、netstat 四个字段与三个 PSI
 指标族，且 `--collector.netstat.fields` 之后暴露的恰好是目录读取的那四个。
+
+扩充之后又补做了一次同样的核对：node-exporter v1.12.1 按 ZKE 下发的同一组参数启动，目录读取的**全部**
+node-exporter 指标族都在它的 `/metrics` 里，包括 stat、vmstat、sockstat、filefd、timex 五个新 collector 的
+族，以及 `--collector.netstat.fields` 之后恰好暴露的那九个计数（不多不少）；`node_cpu_seconds_total` 确实
+带 `steal` 模式，`node_filesystem_*` 在这一版上多带一个 `device_error` 标签（查询按挂载点归约，因此不受
+影响）。同一轮里用 vmagent v1.149.0 实际抓了一遍并写入 VictoriaMetrics，确认它为每个目标写的元信息正是
+`up`、`scrape_duration_seconds`、`scrape_response_size_bytes`、`scrape_samples_scraped`、
+`scrape_samples_post_metric_relabeling`、`scrape_series_added` 与 `scrape_timeout_seconds` 七条——采集质量
+视图读的就是其中三条。
+
+**仍未做这一步核对的是另外三组。** kube-state-metrics 的封锁/就绪/调度失败/Job/PVC/PV 各族、kubelet 自身
+健康的五个族、cAdvisor 的容器磁盘与 OOM 三族，目前只在种子数据上验证了查询与 join，指标名与标签形状来自
+上游文档而不是实测——这三组都需要一个真实的 API Server 或 kubelet 才能核对。名字对不上的族在界面上表现为
+空图而不是报错，因此这一项必须补做。
 
 Console 通过 `typecheck`、`lint`、`format:check` 与生产构建。
 
@@ -825,7 +936,7 @@ Console 通过 `typecheck`、`lint`、`format:check` 与生产构建。
 
 **未执行**：node-exporter 在 `restricted` Namespace 下的实际拒绝路径只用 reactor 模拟过，没有对着真实的
 Pod Security 准入跑过。限流没有在真实集群的 vmagent 上验证过退避与回灌行为，基数估算的误差没有对着真实
-基数分布测过，十倍基数增长是按固定 allowlist 推算的结果而不是实测值。`kubelet_volume_stats_*` 只核对了
+基数分布测过，十二倍基数增长是按固定 allowlist 推算的结果而不是实测值。`kubelet_volume_stats_*` 只核对了
 kubelet 声明的族名，没有在带 CSI 卷的真实集群上抓到过序列——手边的单节点集群用 hostPath 供给 PVC，kubelet
 不为它上报卷统计。PSI 在缺少 `/proc/pressure` 的内核上的表现也只按上游文档推断。
 

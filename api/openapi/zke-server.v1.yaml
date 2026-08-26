@@ -13161,7 +13161,16 @@ components:
                 enum: [range, instant]
               unit:
                 type: string
-                enum: [millicores, bytes, bytes_per_second, count, ratio]
+                enum:
+                  [
+                    millicores,
+                    bytes,
+                    bytes_per_second,
+                    ops_per_second,
+                    seconds,
+                    count,
+                    ratio,
+                  ]
               dimensions:
                 type: array
                 description: 除集群身份外，该查询返回的序列标签。
@@ -13215,7 +13224,8 @@ components:
           enum: [range, instant]
         unit:
           type: string
-          enum: [millicores, bytes, bytes_per_second, count, ratio]
+          enum:
+            [millicores, bytes, bytes_per_second, ops_per_second, seconds, count, ratio]
         start:
           type: string
           format: date-time

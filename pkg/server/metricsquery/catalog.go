@@ -27,6 +27,11 @@ const (
 	UnitOpsPerSecond   Unit = "ops_per_second"
 	UnitCount          Unit = "count"
 	UnitRatio          Unit = "ratio"
+	// UnitSeconds is a duration rather than a point in time: a service time, a
+	// stall, a clock offset, an uptime. The client scales it — a disk answers in
+	// microseconds and a Node's uptime in weeks, and both arrive here in the
+	// same unit.
+	UnitSeconds Unit = "seconds"
 )
 
 // Definition is one query the Console may ask for.
@@ -794,19 +799,7 @@ func catalog() []Definition {
 			SupportsTop:       true,
 			RequiresComponent: observability.ComponentNodeExporter,
 			build: func(matcher string, params buildParams) string {
-				// Divided by the Node's own core count, which is the number of
-				// `idle` series it reports. Without the divisor the same storage
-				// stall reads differently on a 4-core and a 64-core Node.
-				return topk(fmt.Sprintf(
-					`sum by (zke_cluster_id, node) `+
-						`(rate(node_cpu_seconds_total{%s,mode="iowait"}[%s]))`+
-						` / on (zke_cluster_id, node) `+
-						`count by (zke_cluster_id, node) `+
-						`(node_cpu_seconds_total{%s,mode="idle"})`,
-					matcher,
-					params.Window,
-					matcher,
-				), params.Top)
+				return topk(cpuModeShare(matcher, "iowait", params.Window), params.Top)
 			},
 		},
 		{
@@ -1397,6 +1390,841 @@ func catalog() []Definition {
 				}, " + "), params.Top)
 			},
 		},
+		// Node CPU detail. Utilisation says how much of a Node is in use; these
+		// say what it is being used for, which is a different question with a
+		// different answer.
+		{
+			// A Cluster at 80% spending half of it in `system` or `steal` is not
+			// the same machine as one spending it in `user`, and only one of the
+			// two is doing the work it was bought for.
+			Name:              "cluster_cpu_mode",
+			Title:             "集群 CPU 模式分布",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"mode"},
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// Divided by the number of `idle` series, which is the Cluster's
+				// total logical core count: each mode is then a share of the
+				// whole Cluster, and the shares stack up to the utilisation the
+				// rest of the catalogue reports.
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id, mode) `+
+						`(rate(node_cpu_seconds_total{%s,mode!="idle"}[%s]))`+
+						` / on (zke_cluster_id) group_left() `+
+						`count by (zke_cluster_id) (node_cpu_seconds_total{%s,mode="idle"})`,
+					matcher,
+					params.Window,
+					matcher,
+				)
+			},
+		},
+		{
+			// Time the hypervisor gave to somebody else. A virtual Node showing
+			// steal is a Node whose neighbours are busy, and nothing measured
+			// inside it — not utilisation, not load, not pressure — explains why
+			// its work suddenly takes longer.
+			Name:              "node_cpu_steal",
+			Title:             "节点 CPU 被抢占",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(cpuModeShare(matcher, "steal", params.Window), params.Top)
+			},
+		},
+		{
+			Name:              "node_load5",
+			Title:             "节点 5 分钟负载",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeGauge("node_load5", matcher), params.Top)
+			},
+		},
+		{
+			// The three averages are read together: a run queue that is high at
+			// one minute and low at fifteen is a spike, and the reverse is a Node
+			// that has been behind for a quarter of an hour.
+			Name:              "node_load15",
+			Title:             "节点 15 分钟负载",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeGauge("node_load15", matcher), params.Top)
+			},
+		},
+		// What the kernel is doing between the workloads. None of it appears in
+		// a usage curve, and all of it changes how much work a Node of a given
+		// size actually gets through.
+		{
+			Name:              "node_context_switches",
+			Title:             "节点上下文切换",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(
+					nodeCounter("node_context_switches_total", matcher, params.Window),
+					params.Top,
+				)
+			},
+		},
+		{
+			Name:              "node_interrupts",
+			Title:             "节点中断",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(
+					nodeCounter("node_intr_total", matcher, params.Window),
+					params.Top,
+				)
+			},
+		},
+		{
+			Name:              "node_procs_running",
+			Title:             "节点可运行进程数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeGauge("node_procs_running", matcher), params.Top)
+			},
+		},
+		{
+			// Processes in uninterruptible sleep: tasks waiting on the kernel,
+			// which in practice means waiting on storage. The load average counts
+			// them without saying so, and this is the half of it that a faster
+			// CPU cannot help.
+			Name:              "node_procs_blocked",
+			Title:             "节点阻塞进程数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeGauge("node_procs_blocked", matcher), params.Top)
+			},
+		},
+		{
+			// The process-wide descriptor table. Exhausting it fails every accept
+			// and every open on the Node at once, and the failures surface as
+			// application errors that name no resource at all.
+			Name:              "node_file_descriptor_utilization",
+			Title:             "节点文件描述符使用率",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeRatio(
+					nodeGauge("node_filefd_allocated", matcher),
+					nodeGauge("node_filefd_maximum", matcher),
+				), params.Top)
+			},
+		},
+		{
+			// Time since the Node booted. A restart is reported nowhere else: the
+			// Node comes back Ready, its Pods are rescheduled, and every curve
+			// here simply resumes — this is the one series where the drop to zero
+			// is the event.
+			Name:              "node_uptime",
+			Title:             "节点运行时长",
+			Kind:              KindRange,
+			Unit:              UnitSeconds,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`time() - %s`,
+					nodeGauge("node_boot_time_seconds", matcher),
+				), params.Top)
+			},
+		},
+		{
+			// Clock drift, as a magnitude rather than a signed offset: a Node
+			// five seconds behind and one five seconds ahead have the same
+			// problem, and only the magnitude ranks them together. A drifted
+			// clock is read everywhere else as something else — expired
+			// certificates, out-of-order logs, samples refused for arriving
+			// outside the ingest window.
+			Name:              "node_clock_offset",
+			Title:             "节点时钟偏移",
+			Kind:              KindRange,
+			Unit:              UnitSeconds,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`abs(%s)`,
+					nodeGauge("node_timex_offset_seconds", matcher),
+				), params.Top)
+			},
+		},
+		{
+			// Whether the clock is being disciplined at all. 1 is synchronised;
+			// 0 is a Node whose offset above is an estimate nobody is correcting.
+			Name:              "node_clock_synchronized",
+			Title:             "节点时钟同步状态",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// min rather than max: during a rollout two exporters report the
+				// same Node, and the unsynchronised answer is the one worth
+				// showing.
+				return topk(fmt.Sprintf(
+					`min by (zke_cluster_id, node) (node_timex_sync_status{%s})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		// Node memory detail. Available memory says how much is left; these say
+		// what the rest of it turned into, and which parts a workload will never
+		// get back.
+		{
+			// Swap in use on a Kubernetes Node. The kubelet normally refuses to
+			// start where swap is enabled, so this is usually empty — and a Node
+			// that does appear here is running its workloads against a disk while
+			// every memory curve on it looks healthy.
+			Name:              "node_memory_swap_utilization",
+			Title:             "节点 Swap 使用率",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				total := nodeGauge("node_memory_SwapTotal_bytes", matcher)
+				return topk(nodeRatio(
+					fmt.Sprintf(
+						`(%s - %s)`,
+						total,
+						nodeGauge("node_memory_SwapFree_bytes", matcher),
+					),
+					total,
+				), params.Top)
+			},
+		},
+		{
+			// Pages actually moving between memory and disk. The ratio above says
+			// swap is in use, which a Node can be with no ill effect if the pages
+			// went out once and stayed there; this says the Node is still moving
+			// them, which is the state where everything on it is slow.
+			Name:              "node_swap_io",
+			Title:             "节点 Swap 换入换出",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(strings.Join([]string{
+					nodeCounter("node_vmstat_pswpin", matcher, params.Window),
+					nodeCounter("node_vmstat_pswpout", matcher, params.Window),
+				}, " + "), params.Top)
+			},
+		},
+		{
+			// What the kernel has promised against what it is willing to promise.
+			// Past this line allocations start failing outright rather than being
+			// reclaimed from somewhere else.
+			Name:              "node_memory_commitment",
+			Title:             "节点内存承诺占比",
+			Kind:              KindRange,
+			Unit:              UnitRatio,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeRatio(
+					nodeGauge("node_memory_Committed_AS_bytes", matcher),
+					nodeGauge("node_memory_CommitLimit_bytes", matcher),
+				), params.Top)
+			},
+		},
+		{
+			// Memory the kernel holds for itself: slab caches, page tables and
+			// kernel stacks. It belongs to no container, so it is in no Pod's
+			// working set — a Node losing memory here loses it from everything
+			// scheduled on it, and the container view shows nothing at all.
+			Name:              "node_memory_kernel",
+			Title:             "节点内核内存",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(strings.Join([]string{
+					nodeGauge("node_memory_Slab_bytes", matcher),
+					nodeGauge("node_memory_PageTables_bytes", matcher),
+					nodeGauge("node_memory_KernelStack_bytes", matcher),
+				}, " + "), params.Top)
+			},
+		},
+		{
+			// Faults the kernel had to go to disk for. Minor faults are ordinary
+			// and deliberately absent; major ones mean the Node is reading back
+			// pages it evicted, which is the shape of memory pressure that
+			// arrives as latency rather than as an OOM kill.
+			Name:              "node_major_page_faults",
+			Title:             "节点主缺页",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(
+					nodeCounter("node_vmstat_pgmajfault", matcher, params.Window),
+					params.Top,
+				)
+			},
+		},
+		{
+			// The kernel OOM killer, counted on the Node. The Kubernetes side
+			// reports OOMKilled per container, which is a different set: a
+			// process killed because the Node itself ran out never reaches that
+			// family at all.
+			Name:              "node_oom_kills",
+			Title:             "节点 OOM 次数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// increase() over the window, like Pod restarts: the counter's
+				// absolute value is dominated by the Node's uptime.
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, node) (increase(node_vmstat_oom_kill{%s}[%s]))`,
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		// Filesystem faults. A full filesystem is what the utilisation curves are
+		// for; these two are the failures that arrive with space to spare.
+		{
+			// A filesystem the kernel remounted read-only after an I/O error.
+			// Every write on it fails while its used-space curve holds perfectly
+			// steady — because nothing can be written.
+			Name:              "node_filesystem_readonly",
+			Title:             "节点只读挂载点",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(mountpointFault("node_filesystem_readonly", matcher), params.Top)
+			},
+		},
+		{
+			// Mounts the exporter could not stat at all, which is what a failing
+			// device looks like from userspace before it disappears.
+			Name:              "node_filesystem_device_errors",
+			Title:             "节点文件系统设备错误",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(
+					mountpointFault("node_filesystem_device_error", matcher),
+					params.Top,
+				)
+			},
+		},
+		// Disk service time. Throughput and IOPS say how much the device is
+		// doing; these say how long each operation took, which is what the
+		// workload on top of it actually experiences.
+		{
+			Name:              "node_disk_read_latency",
+			Title:             "节点磁盘读延迟",
+			Kind:              KindRange,
+			Unit:              UnitSeconds,
+			Dimensions:        []string{"node", "device"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(diskLatency(
+					"node_disk_read_time_seconds_total",
+					"node_disk_reads_completed_total",
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "node_disk_write_latency",
+			Title:             "节点磁盘写延迟",
+			Kind:              KindRange,
+			Unit:              UnitSeconds,
+			Dimensions:        []string{"node", "device"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(diskLatency(
+					"node_disk_write_time_seconds_total",
+					"node_disk_writes_completed_total",
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			// The average number of requests in flight, which is where a device
+			// at 100% busy separates from one that is merely always working: the
+			// first has a queue behind it and the second does not.
+			Name:              "node_disk_queue",
+			Title:             "节点磁盘队列长度",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node", "device"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, node, device) `+
+						`(rate(node_disk_io_time_weighted_seconds_total{%s}[%s]))`,
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		// Sockets. The connection table has limits of its own, and a Node that
+		// has run out of any of them refuses new work while every byte counter on
+		// it stays exactly as it was.
+		{
+			Name:              "node_tcp_connections",
+			Title:             "节点 TCP 连接数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeGauge("node_netstat_Tcp_CurrEstab", matcher), params.Top)
+			},
+		},
+		{
+			// Sockets waiting out TIME_WAIT. Each holds a local port, so a Node
+			// that opens many short-lived connections runs out of ports long
+			// before it runs out of anything else on this screen.
+			Name:              "node_tcp_timewait",
+			Title:             "节点 TIME_WAIT 连接数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeGauge("node_sockstat_TCP_tw", matcher), params.Top)
+			},
+		},
+		{
+			// Kernel memory held by socket buffers. The kernel starts pruning
+			// connections once it crosses its own limit, and the applications see
+			// resets nobody sent.
+			Name:              "node_socket_memory",
+			Title:             "节点套接字内存",
+			Kind:              KindRange,
+			Unit:              UnitBytes,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(strings.Join([]string{
+					nodeGauge("node_sockstat_TCP_mem_bytes", matcher),
+					nodeGauge("node_sockstat_UDP_mem_bytes", matcher),
+				}, " + "), params.Top)
+			},
+		},
+		{
+			// UDP datagrams the Node dropped. Cluster DNS runs on UDP, so a
+			// receive buffer overflow here is a resolver timeout in every Pod on
+			// the Node — and it appears in no TCP counter and in no throughput
+			// curve.
+			Name:              "node_udp_errors",
+			Title:             "节点 UDP 错误",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				terms := make([]string, 0, 4)
+				for _, name := range []string{
+					"node_netstat_Udp_InErrors",
+					"node_netstat_Udp_RcvbufErrors",
+					"node_netstat_Udp_SndbufErrors",
+					"node_netstat_Udp_NoPorts",
+				} {
+					terms = append(terms, nodeCounter(name, matcher, params.Window))
+				}
+				return topk(strings.Join(terms, " + "), params.Top)
+			},
+		},
+		// The kubelet itself. Everything else about a Node is measured through
+		// it, so a kubelet in trouble reports a Node that looks calm: the curves
+		// do not spike, they stop moving.
+		{
+			Name:        "node_kubelet_pods",
+			Title:       "节点 kubelet 运行 Pod 数",
+			Kind:        KindRange,
+			Unit:        UnitCount,
+			Dimensions:  []string{"node"},
+			SupportsTop: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(nodeGauge("kubelet_running_pods", matcher), params.Top)
+			},
+		},
+		{
+			// Containers the runtime reports as running, which is not the Pod
+			// count: a Pod is several containers, and a Node whose container
+			// count moves while its Pod count does not has something restarting
+			// inside a Pod that never leaves Running.
+			Name:        "node_kubelet_containers",
+			Title:       "节点 kubelet 运行容器数",
+			Kind:        KindRange,
+			Unit:        UnitCount,
+			Dimensions:  []string{"node"},
+			SupportsTop: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, node) `+
+						`(kubelet_running_containers{%s,container_state="running"})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			// Failed calls into the container runtime — pulling an image,
+			// creating a sandbox, killing a container. They are the layer under
+			// every Pod-level symptom, and a Node failing them is one where Pods
+			// are stuck rather than crashing.
+			Name:        "node_kubelet_runtime_errors",
+			Title:       "节点容器运行时错误",
+			Kind:        KindRange,
+			Unit:        UnitOpsPerSecond,
+			Dimensions:  []string{"node"},
+			SupportsTop: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, node) `+
+						`(rate(kubelet_runtime_operations_errors_total{%s}[%s]))`,
+					matcher,
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			// How long the kubelet's Pod lifecycle event loop takes to walk the
+			// Node's containers. It is the kubelet's own heartbeat: as it grows,
+			// everything the kubelet reports — readiness, restarts, usage —
+			// arrives late, and Pods start being marked unhealthy for reasons
+			// that are not theirs.
+			//
+			// The average of the histogram rather than a quantile: the buckets
+			// cost a dozen series per Node for a number nothing here draws.
+			Name:        "node_kubelet_pleg_latency",
+			Title:       "节点 kubelet PLEG 时延",
+			Kind:        KindRange,
+			Unit:        UnitSeconds,
+			Dimensions:  []string{"node"},
+			SupportsTop: true,
+			build: func(matcher string, params buildParams) string {
+				term := func(suffix string) string {
+					return fmt.Sprintf(
+						`sum by (zke_cluster_id, node) `+
+							`(rate(kubelet_pleg_relist_duration_seconds_%s{%s}[%s]))`,
+						suffix,
+						matcher,
+						params.Window,
+					)
+				}
+				return topk(nodeRatio(term("sum"), term("count")), params.Top)
+			},
+		},
+		// Pod level, from the same cAdvisor endpoint the throttling and network
+		// curves come from. Node level says a device or an interface is in
+		// trouble; these say which workload is in it.
+		{
+			Name:              "pod_disk_read",
+			Title:             "Pod 磁盘读取",
+			Kind:              KindRange,
+			Unit:              UnitBytesPerSecond,
+			Dimensions:        []string{"namespace", "pod"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod) `+
+						`(rate(container_fs_reads_bytes_total{%s,pod!=""}[%s]))`,
+					namespaceSelector(matcher, params.Namespace),
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			Name:              "pod_disk_write",
+			Title:             "Pod 磁盘写入",
+			Kind:              KindRange,
+			Unit:              UnitBytesPerSecond,
+			Dimensions:        []string{"namespace", "pod"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod) `+
+						`(rate(container_fs_writes_bytes_total{%s,pod!=""}[%s]))`,
+					namespaceSelector(matcher, params.Namespace),
+					params.Window,
+				), params.Top)
+			},
+		},
+		{
+			// Packets the Pod's interface never delivered. A dropped packet costs
+			// a retry and a timeout upstream while the Pod's own byte counters
+			// carry on unchanged.
+			Name:              "pod_network_drops",
+			Title:             "Pod 网络丢包",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"namespace", "pod"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				selector := namespaceSelector(matcher, params.Namespace)
+				term := func(name string) string {
+					return fmt.Sprintf(
+						`sum by (zke_cluster_id, namespace, pod) `+
+							`(rate(%s{%s,pod!=""}[%s]))`,
+						name,
+						selector,
+						params.Window,
+					)
+				}
+				return topk(
+					term("container_network_receive_packets_dropped_total")+" + "+
+						term("container_network_transmit_packets_dropped_total"),
+					params.Top,
+				)
+			},
+		},
+		{
+			// The kernel OOM killer firing inside a container, counted as it
+			// happens. The Kubernetes side reports OOMKilled as a container's
+			// last terminated reason, which survives only as long as that
+			// container object does — a Pod replaced by its controller takes the
+			// evidence with it, and this counter is what remains.
+			Name:              "pod_oom_kills",
+			Title:             "Pod OOM 次数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"namespace", "pod"},
+			SupportsTop:       true,
+			RequiresTop:       true,
+			SupportsNamespace: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace, pod) `+
+						`(increase(container_oom_events_total{%s,pod!=""}[%s]))`,
+					namespaceSelector(matcher, params.Namespace),
+					params.Window,
+				), params.Top)
+			},
+		},
+		// Object states nothing else reports. Each of these is a Cluster that
+		// looks healthy in every usage curve while some part of it is refusing to
+		// accept work.
+		{
+			// Cordoned Nodes. A cordoned Node holds no condition, reports normal
+			// usage, and quietly stops taking Pods — a Cluster that lost a third
+			// of its schedulable capacity to an unfinished maintenance says so
+			// nowhere else.
+			Name:              "cluster_node_unschedulable",
+			Title:             "集群已封锁节点数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) (kube_node_spec_unschedulable{%s})`,
+					matcher,
+				)
+			},
+		},
+		{
+			// Pods the scheduler could not place. They are Pending exactly like a
+			// Pod that is still pulling its image, and the two have nothing in
+			// common: one resolves itself, the other waits for capacity, a
+			// toleration or a volume that may never arrive.
+			Name:              "cluster_pod_unschedulable",
+			Title:             "集群无法调度 Pod 数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) (kube_pod_status_unschedulable{%s})`,
+					namespaceSelector(matcher, params.Namespace),
+				)
+			},
+		},
+		{
+			// Ready Pods, to be read against the Running count beside them.
+			// Running is not serving: a Pod whose readiness probe fails stays
+			// Running and is removed from every Service in front of it, which is
+			// an outage the phase distribution draws as perfectly healthy.
+			Name:              "cluster_pod_ready",
+			Title:             "集群就绪 Pod 数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) (kube_pod_status_ready{%s,condition="true"})`,
+					namespaceSelector(matcher, params.Namespace),
+				)
+			},
+		},
+		{
+			Name:              "cluster_job_active",
+			Title:             "集群运行中 Job 数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) (kube_job_status_active{%s})`,
+					namespaceSelector(matcher, params.Namespace),
+				)
+			},
+		},
+		{
+			// Batch work, which the replica queries deliberately exclude: a Job
+			// that has finished is not a workload missing replicas. A nightly Job
+			// that has been failing for a week is invisible everywhere else here
+			// — its Pods are long gone by the time anybody looks.
+			Name:              "cluster_job_failed",
+			Title:             "集群失败 Job 数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id) (kube_job_status_failed{%s})`,
+					namespaceSelector(matcher, params.Namespace),
+				)
+			},
+		},
+		{
+			Name:              "namespace_job_failed",
+			Title:             "命名空间失败 Job 数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"namespace"},
+			SupportsTop:       true,
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, namespace) (kube_job_status_failed{%s})`,
+					namespaceSelector(matcher, params.Namespace),
+				), params.Top)
+			},
+		},
+		{
+			// Claims by phase. The kubelet's volume statistics measure the
+			// volumes it has mounted, which is exactly the set that excludes the
+			// failure: a claim stuck Pending is one no Pod could start against,
+			// and it appears in no PVC usage curve because there is nothing to
+			// measure.
+			Name:              "cluster_pvc_phase",
+			Title:             "集群 PVC 状态分布",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"phase"},
+			SupportsNamespace: true,
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, params buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id, phase) `+
+						`(kube_persistentvolumeclaim_status_phase{%s})`,
+					namespaceSelector(matcher, params.Namespace),
+				)
+			},
+		},
+		{
+			// Volumes by phase. Released and Failed are the two that cost real
+			// storage: the claim is gone, the volume is not, and nothing will
+			// reuse it until somebody says so.
+			Name:              "cluster_pv_phase",
+			Title:             "集群持久卷状态分布",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"phase"},
+			RequiresComponent: observability.ComponentKubeState,
+			build: func(matcher string, _ buildParams) string {
+				return fmt.Sprintf(
+					`sum by (zke_cluster_id, phase) `+
+						`(kube_persistentvolume_status_phase{%s})`,
+					matcher,
+				)
+			},
+		},
+		{
+			// Packets, not bytes. A cloud interface is rated for both, and the
+			// packet ceiling is the one that is reached first by traffic made of
+			// small requests — at which point the byte counters are still
+			// reporting a link that looks half idle.
+			Name:              "node_network_packets",
+			Title:             "节点网络包速率",
+			Kind:              KindRange,
+			Unit:              UnitOpsPerSecond,
+			Dimensions:        []string{"node", "device"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				return topk(strings.Join([]string{
+					deviceCounter("node_network_receive_packets_total", matcher, params.Window),
+					deviceCounter("node_network_transmit_packets_total", matcher, params.Window),
+				}, " + "), params.Top)
+			},
+		},
 		{
 			// One request for the whole headline row. Each number here is a count
 			// over an object family, cheap on its own but a separate round trip to
@@ -1410,6 +2238,115 @@ func catalog() []Definition {
 			RequiresComponent: observability.ComponentKubeState,
 			build: func(matcher string, _ buildParams) string {
 				return clusterInventory(matcher)
+			},
+		},
+		// The collection pipeline observing itself.
+		//
+		// Every one of these series is already in storage: the collector writes a
+		// handful of them for each target it scrapes, and until now only `up` was
+		// ever read. They are also the only answer to the question this
+		// application otherwise cannot answer about itself — when every chart on
+		// a screen is empty, whether the Cluster is idle, a target is down, or
+		// one exporter's collector is failing on every Node.
+		{
+			// Which target is failing, rather than how many of them are. The
+			// Cluster-wide average says something is wrong; this says whether it
+			// is the kubelet, the object exporter or the node exporter, and those
+			// are three different repairs.
+			Name:        "collection_target_health",
+			Title:       "采集目标健康度",
+			Kind:        KindRange,
+			Unit:        UnitRatio,
+			Dimensions:  []string{"job"},
+			SupportsTop: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`avg by (zke_cluster_id, job) (up{%s})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			// How long each target takes to answer. A scrape that approaches the
+			// interval is one that will start being cut short, and the data loss
+			// that follows reads as a Cluster that went quiet rather than as a
+			// target that got slow.
+			Name:        "collection_scrape_duration",
+			Title:       "采集抓取耗时",
+			Kind:        KindRange,
+			Unit:        UnitSeconds,
+			Dimensions:  []string{"job"},
+			SupportsTop: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`max by (zke_cluster_id, job) (scrape_duration_seconds{%s})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			// Samples per scrape, counted after the scrape filters have run —
+			// which is what actually reaches storage, and therefore what the
+			// Cluster's ingest budget is spent on. A Cluster that starts being
+			// throttled is one where this number moved, and this says which
+			// target moved it.
+			Name:        "collection_samples",
+			Title:       "采集样本数",
+			Kind:        KindRange,
+			Unit:        UnitCount,
+			Dimensions:  []string{"job"},
+			SupportsTop: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, job) `+
+						`(scrape_samples_post_metric_relabeling{%s})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			// Series a scrape brought that the one before it did not. Sample
+			// count is what the Cluster pays per scrape; this is what it pays
+			// for over the retention window, and a target with steady samples
+			// and constant churn here is one whose labels carry something that
+			// changes on every restart.
+			Name:        "collection_series_added",
+			Title:       "采集新增序列",
+			Kind:        KindRange,
+			Unit:        UnitCount,
+			Dimensions:  []string{"job"},
+			SupportsTop: true,
+			build: func(matcher string, params buildParams) string {
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, job) (scrape_series_added{%s})`,
+					matcher,
+				), params.Top)
+			},
+		},
+		{
+			// The node exporter's own report on each of its collectors, counted
+			// as the number of Nodes where one of them failed. It is the only
+			// series that separates "this Cluster has nothing to report" from
+			// "this collector cannot run here" — PSI on a kernel without
+			// `/proc/pressure`, conntrack where the module is not loaded — and
+			// without it the two are the same empty chart.
+			Name:              "collection_node_collectors",
+			Title:             "节点采集器失败数",
+			Kind:              KindRange,
+			Unit:              UnitCount,
+			Dimensions:        []string{"collector"},
+			SupportsTop:       true,
+			RequiresComponent: observability.ComponentNodeExporter,
+			build: func(matcher string, params buildParams) string {
+				// Summed as `1 -` rather than counted with a filter: a filter
+				// answers nothing at all while every collector is healthy, and
+				// an empty chart is the one reading this panel exists to rule
+				// out.
+				return topk(fmt.Sprintf(
+					`sum by (zke_cluster_id, collector) `+
+						`(1 - node_scrape_collector_success{%s})`,
+					matcher,
+				), params.Top)
 			},
 		},
 		{
@@ -1456,6 +2393,96 @@ var (
 		"kube_daemonset_status_number_ready",
 	}
 )
+
+// nodeGauge reads one per-Node gauge.
+//
+// `max` rather than `sum`: one exporter reports per Node, and a second one
+// during a rollout would otherwise double every number on this screen.
+func nodeGauge(name string, matcher string) string {
+	return fmt.Sprintf(`max by (zke_cluster_id, node) (%s{%s})`, name, matcher)
+}
+
+// nodeCounter reads one per-Node counter as a per-second rate, guarded the same
+// way against a second exporter.
+func nodeCounter(name string, matcher string, window string) string {
+	return fmt.Sprintf(
+		`max by (zke_cluster_id, node) (rate(%s{%s}[%s]))`,
+		name,
+		matcher,
+		window,
+	)
+}
+
+// deviceCounter reads one per-device counter as a per-second rate. Summed
+// rather than maxed: a Node reports one series per interface or disk, and the
+// device is part of the answer rather than something to reduce away.
+func deviceCounter(name string, matcher string, window string) string {
+	return fmt.Sprintf(
+		`sum by (zke_cluster_id, node, device) (rate(%s{%s}[%s]))`,
+		name,
+		matcher,
+		window,
+	)
+}
+
+// nodeRatio divides two per-Node expressions.
+//
+// The denominator carries `> 0` because a Node reporting zero there has no
+// ratio at all: dividing anyway produces an infinity that takes the whole axis
+// with it, and the empty series it becomes instead is the honest answer.
+func nodeRatio(numerator string, denominator string) string {
+	return fmt.Sprintf(`%s / on (zke_cluster_id, node) (%s > 0)`, numerator, denominator)
+}
+
+// cpuModeShare reads one CPU mode as a share of the Node's own core count,
+// which is the number of `idle` series that Node reports. Without the divisor
+// the same stall reads differently on a 4-core and a 64-core Node.
+func cpuModeShare(matcher string, mode string, window string) string {
+	return fmt.Sprintf(
+		`sum by (zke_cluster_id, node) `+
+			`(rate(node_cpu_seconds_total{%s,mode="%s"}[%s]))`+
+			` / on (zke_cluster_id, node) `+
+			`count by (zke_cluster_id, node) (node_cpu_seconds_total{%s,mode="idle"})`,
+		matcher,
+		mode,
+		window,
+		matcher,
+	)
+}
+
+// mountpointFault counts the mount points on a Node whose fault flag is set.
+//
+// Reduced per mount point before it is summed, so a second exporter during a
+// rollout reports the same faulty mount rather than two of them.
+func mountpointFault(name string, matcher string) string {
+	return fmt.Sprintf(
+		`sum by (zke_cluster_id, node) `+
+			`(max by (zke_cluster_id, node, mountpoint) (%s{%s}))`,
+		name,
+		matcher,
+	)
+}
+
+// diskLatency reads a device's average service time: the time the kernel spent
+// on those requests divided by how many of them completed.
+//
+// A device with no traffic completes nothing, and the guarded denominator drops
+// it rather than reporting a latency it never measured.
+func diskLatency(timeName string, countName string, matcher string, window string) string {
+	term := func(name string) string {
+		return fmt.Sprintf(
+			`sum by (zke_cluster_id, node, device) (rate(%s{%s}[%s]))`,
+			name,
+			matcher,
+			window,
+		)
+	}
+	return fmt.Sprintf(
+		`%s / on (zke_cluster_id, node, device) (%s > 0)`,
+		term(timeName),
+		term(countName),
+	)
+}
 
 // pressureStall reads one PSI counter as the share of wall clock time something
 // spent waiting for a resource. The counter accumulates stall time, so its rate

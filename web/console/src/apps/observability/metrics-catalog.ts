@@ -15,7 +15,7 @@
  */
 
 export type MetricUnit =
-  "millicores" | "bytes" | "bytes_per_second" | "ops_per_second" | "ratio" | "count";
+  "millicores" | "bytes" | "bytes_per_second" | "ops_per_second" | "seconds" | "ratio" | "count";
 
 export type CollectorComponent = "kube-state-metrics" | "node-exporter";
 
@@ -87,6 +87,18 @@ export type MetricsDimension = {
 
 const KUBE_STATE = "kube-state-metrics" as const;
 const NODE_EXPORTER = "node-exporter" as const;
+
+/**
+ * For a panel whose metric was added to the scrape configuration after the
+ * first collectors shipped.
+ *
+ * The Server never rewrites a collector already running inside somebody's
+ * Cluster, so an install made before the family was collected keeps scraping
+ * exactly what it was told to. That reads as an empty chart, and the reader has
+ * no way to tell it from a Cluster where nothing is wrong.
+ */
+const RESCRAPE_NOTE =
+  "该指标在更新后的抓取配置中才会被采集。若集群的采集组件安装于此之前，请在「采集接入」中重新安装采集，以更新抓取配置。";
 
 /** Which install a missing component belongs to, in the operator's words. */
 export const COMPONENT_LABELS: Record<CollectorComponent, string> = {
@@ -201,6 +213,25 @@ const CLUSTER_DIMENSION: MetricsDimension = {
         },
       ],
     },
+    {
+      id: "modes",
+      label: "CPU 模式",
+      description:
+        "CPU 时间花在了哪里。同样是 80% 利用率，花在用户态上和花在内核态、I/O 等待、被抢占上是三种完全不同的机器，其中只有一种在做被购买的那份工作。堆叠的高度就是集群的 CPU 利用率。",
+      top: false,
+      namespace: false,
+      panels: [
+        {
+          id: "cluster-cpu-modes",
+          title: "CPU 模式分布",
+          unit: "ratio",
+          labels: ["mode"],
+          stack: true,
+          fullScale: true,
+          queries: [{ name: "cluster_cpu_mode", requires: NODE_EXPORTER }],
+        },
+      ],
+    },
   ],
 };
 
@@ -265,13 +296,15 @@ const NODE_DIMENSION: MetricsDimension = {
       panels: [
         {
           id: "node-load1",
-          title: "1 分钟负载",
+          title: "负载",
           description:
-            "可运行与不可中断的进程数，与该节点的核数画在一起：负载 8 在 64 核节点上是空闲，在 2 核节点上是排队。",
+            "可运行与不可中断的进程数，与该节点的核数画在一起：负载 8 在 64 核节点上是空闲，在 2 核节点上是排队。1 分钟高、15 分钟低是一次尖峰，反过来则是这个节点已经落后了一刻钟。",
           unit: "count",
           labels: ["node"],
           queries: [
-            { name: "node_load1", label: "负载", requires: NODE_EXPORTER },
+            { name: "node_load1", label: "1 分钟", requires: NODE_EXPORTER },
+            { name: "node_load5", label: "5 分钟", requires: NODE_EXPORTER },
+            { name: "node_load15", label: "15 分钟", requires: NODE_EXPORTER },
             { name: "node_cpu_cores", label: "核数", requires: KUBE_STATE },
           ],
         },
@@ -284,12 +317,214 @@ const NODE_DIMENSION: MetricsDimension = {
           queries: [{ name: "node_cpu_iowait", requires: NODE_EXPORTER }],
         },
         {
+          id: "node-cpu-steal",
+          title: "CPU 被抢占",
+          description:
+            "虚拟机等待宿主机让出 CPU 的时间占比。抢占来自节点之外，节点内部的利用率、负载与压力都解释不了它，而上面的工作负载确实变慢了。",
+          unit: "ratio",
+          labels: ["node"],
+          queries: [{ name: "node_cpu_steal", requires: NODE_EXPORTER }],
+        },
+        {
           id: "node-memory-available",
           title: "可用内存",
           description: "内核估算的可分配内存，包含可回收的页缓存，因此不等于空闲内存。",
           unit: "bytes",
           labels: ["node"],
           queries: [{ name: "node_memory_available", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-procs",
+          title: "进程队列",
+          description:
+            "可运行的进程在等 CPU，阻塞的进程在等内核——实际上是在等磁盘。负载把两者加在一起，这张图把它们分开：换更快的 CPU 只对前一条线有用。",
+          unit: "count",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [
+            { name: "node_procs_running", label: "可运行", requires: NODE_EXPORTER },
+            { name: "node_procs_blocked", label: "阻塞", requires: NODE_EXPORTER },
+          ],
+        },
+      ],
+    },
+    {
+      id: "memory-detail",
+      label: "内存明细",
+      description:
+        "可用内存说的是还剩多少，这里说的是其余部分变成了什么，以及哪一部分工作负载再也拿不回来。",
+      top: true,
+      namespace: false,
+      panels: [
+        {
+          id: "node-memory-kernel",
+          title: "内核内存",
+          description:
+            "slab 缓存、页表与内核栈。它不属于任何容器，因此不出现在任何 Pod 的工作集里——这里涨上去，是所有工作负载一起变少。",
+          unit: "bytes",
+          labels: ["node"],
+          queries: [{ name: "node_memory_kernel", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-memory-commitment",
+          title: "内存承诺占比",
+          description:
+            "内核已经答应出去的内存占它愿意答应的上限。越过这条线之后，新的分配直接失败，而不是从别处回收。",
+          unit: "ratio",
+          labels: ["node"],
+          fullScale: true,
+          reference: { value: 1, label: "承诺上限" },
+          queries: [{ name: "node_memory_commitment", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-memory-swap",
+          title: "Swap 使用率",
+          description:
+            "kubelet 默认拒绝在启用 swap 的节点上启动，因此这张图通常是空的。出现在这里的节点，是在拿磁盘当内存跑工作负载，而它的内存曲线一切正常。",
+          unit: "ratio",
+          labels: ["node"],
+          fullScale: true,
+          emptyNote: "未启用 swap 的节点没有数据，这也是 Kubernetes 节点的常态。",
+          queries: [{ name: "node_memory_swap_utilization", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-swap-io",
+          title: "Swap 换入换出",
+          description:
+            "真正在内存与磁盘之间搬运的页。上面的使用率说 swap 被占用了，而占用可以是很久以前换出去、之后一直没动的页；这张图说的是节点此刻还在搬，那是上面一切都慢下来的那种状态。",
+          unit: "ops_per_second",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_swap_io", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-major-page-faults",
+          title: "主缺页",
+          description:
+            "必须回磁盘取页的缺页。次缺页是常态，不在这里；主缺页意味着节点正在把刚换出去的页读回来，表现为延迟而不是 OOM。",
+          unit: "ops_per_second",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_major_page_faults", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-oom-kills",
+          title: "节点 OOM 次数",
+          description:
+            "内核在节点层面杀掉的进程数。与容器的 OOMKilled 不是同一件事：节点自己耗尽内存时杀掉的进程，不会进入任何容器状态原因。",
+          unit: "count",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_oom_kills", requires: NODE_EXPORTER }],
+        },
+      ],
+    },
+    {
+      id: "system",
+      label: "系统",
+      description:
+        "内核在工作负载之间做的事，以及节点自己的状态。没有一项会出现在用量曲线里，每一项都会改变同样规格的节点实际能做完多少事。",
+      top: true,
+      namespace: false,
+      panels: [
+        {
+          id: "node-context-switches",
+          title: "上下文切换",
+          unit: "ops_per_second",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_context_switches", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-interrupts",
+          title: "中断",
+          unit: "ops_per_second",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_interrupts", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-file-descriptors",
+          title: "文件描述符使用率",
+          description:
+            "整台机器共用的描述符表。用尽之后，节点上所有的 accept 与 open 一起失败，而应用报出来的错误不会提到任何资源。",
+          unit: "ratio",
+          labels: ["node"],
+          fullScale: true,
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_file_descriptor_utilization", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-uptime",
+          title: "运行时长",
+          description:
+            "节点重启在别处不留痕迹：节点重新 Ready，Pod 被重新调度，所有曲线接着画下去。这是唯一一条把重启画成事件的线——它归零的那一刻。",
+          unit: "seconds",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_uptime", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-clock-offset",
+          title: "时钟偏移",
+          description:
+            "取绝对值：快 5 秒和慢 5 秒是同一个问题。时钟漂移在别处从来不以自己的名义出现，它表现为证书未生效、日志乱序、样本因为超出摄取窗口被拒绝。",
+          unit: "seconds",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_clock_offset", requires: NODE_EXPORTER }],
+        },
+        {
+          id: "node-clock-sync",
+          title: "时钟同步状态",
+          description: "1 表示时钟正在被校准；0 表示上面那条偏移没有人在纠正。",
+          unit: "count",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_clock_synchronized", requires: NODE_EXPORTER }],
+        },
+      ],
+    },
+    {
+      id: "kubelet",
+      label: "Kubelet",
+      description:
+        "节点上其余所有数字都是经由 kubelet 测出来的，因此 kubelet 本身出问题时，节点看起来反而很平静——曲线不是抬升，而是不再变化。",
+      top: true,
+      namespace: false,
+      panels: [
+        {
+          id: "node-kubelet-workload",
+          title: "运行中的 Pod 与容器",
+          description:
+            "容器数不是 Pod 数：一个 Pod 是若干个容器。容器数在动而 Pod 数不动的节点，是有容器在反复重启，而 Pod 始终停留在 Running。",
+          unit: "count",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [
+            { name: "node_kubelet_pods", label: "Pod" },
+            { name: "node_kubelet_containers", label: "容器" },
+          ],
+        },
+        {
+          id: "node-kubelet-runtime-errors",
+          title: "容器运行时错误",
+          description:
+            "拉镜像、建沙箱、杀容器——这些调用失败的节点，上面的 Pod 是卡住而不是崩溃，症状在 Pod 层面看不出原因。",
+          unit: "ops_per_second",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_kubelet_runtime_errors" }],
+        },
+        {
+          id: "node-kubelet-pleg",
+          title: "PLEG 时延",
+          description:
+            "kubelet 遍历本节点容器状态一轮的平均耗时，是它自己的心跳。这个值变大之后，就绪、重启与用量全部迟到，Pod 会因为不属于它们的原因被判定为不健康。",
+          unit: "seconds",
+          labels: ["node"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "node_kubelet_pleg_latency" }],
         },
       ],
     },
@@ -536,6 +771,42 @@ const POD_DIMENSION: MetricsDimension = {
           labels: ["namespace", "pod"],
           queries: [{ name: "pod_restarts", requires: KUBE_STATE }],
         },
+        {
+          id: "pod-oom-kills",
+          title: "OOM 次数",
+          description:
+            "容器内被内核杀掉的次数，按发生时间计。Kubernetes 侧的 OOMKilled 只保留最后一次退出原因，Pod 被控制器换掉之后就随之消失，这条计数器是留下来的那份。",
+          unit: "count",
+          labels: ["namespace", "pod"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "pod_oom_kills" }],
+        },
+      ],
+    },
+    {
+      id: "disk",
+      label: "磁盘",
+      description:
+        "节点层面能看出某块盘被打满，看不出是谁打满的。这两张图回答后一个问题，数据与限流、Pod 网络来自 kubelet 的同一个端点。",
+      top: true,
+      namespace: true,
+      panels: [
+        {
+          id: "pod-disk-read",
+          title: "磁盘读取",
+          unit: "bytes_per_second",
+          labels: ["namespace", "pod"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "pod_disk_read" }],
+        },
+        {
+          id: "pod-disk-write",
+          title: "磁盘写入",
+          unit: "bytes_per_second",
+          labels: ["namespace", "pod"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "pod_disk_write" }],
+        },
       ],
     },
     {
@@ -563,6 +834,16 @@ const POD_DIMENSION: MetricsDimension = {
           emptyNote:
             "这些指标来自 kubelet 的 cAdvisor 端点。若集群的采集组件安装于该端点被纳入抓取之前，请在「采集接入」中重新安装采集，以更新抓取配置。",
           queries: [{ name: "pod_network_transmit" }],
+        },
+        {
+          id: "pod-network-drops",
+          title: "网络丢包",
+          description:
+            "Pod 网卡上没有送出去的包。丢包在收发字节曲线上完全看不出来——失败的那部分流量根本没有被计入。",
+          unit: "ops_per_second",
+          labels: ["namespace", "pod"],
+          emptyNote: RESCRAPE_NOTE,
+          queries: [{ name: "pod_network_drops" }],
         },
       ],
     },
@@ -696,6 +977,18 @@ export const STORAGE_VIEWS: MetricsViews = [
         fullScale: true,
         queries: [{ name: "node_filesystem_inode_utilization", requires: NODE_EXPORTER }],
       },
+      {
+        id: "filesystem-faults",
+        title: "只读挂载与设备错误",
+        description:
+          "写满是上面两张图的事，这一张是空间还富余时就已经失败的那些：I/O 错误之后被内核改成只读的文件系统，写入全部失败而已用空间纹丝不动；统计不到的挂载点，则是设备正在消失。",
+        unit: "count",
+        labels: ["node"],
+        queries: [
+          { name: "node_filesystem_readonly", label: "只读挂载点", requires: NODE_EXPORTER },
+          { name: "node_filesystem_device_errors", label: "设备错误", requires: NODE_EXPORTER },
+        ],
+      },
     ],
   },
   {
@@ -754,6 +1047,38 @@ export const STORAGE_VIEWS: MetricsViews = [
     ],
   },
   {
+    id: "disk-latency",
+    label: "磁盘延迟",
+    description:
+      "吞吐量与 IOPS 说的是设备做了多少，延迟说的是每一次操作花了多久——后者才是上面的工作负载真正感受到的东西。繁忙度接近 1 而队列很短的设备是一直在做事，队列涨起来的设备才是排上队了。",
+    top: true,
+    namespace: false,
+    panels: [
+      {
+        id: "disk-read-latency",
+        title: "读延迟",
+        unit: "seconds",
+        labels: ["node", "device"],
+        queries: [{ name: "node_disk_read_latency", requires: NODE_EXPORTER }],
+      },
+      {
+        id: "disk-write-latency",
+        title: "写延迟",
+        unit: "seconds",
+        labels: ["node", "device"],
+        queries: [{ name: "node_disk_write_latency", requires: NODE_EXPORTER }],
+      },
+      {
+        id: "disk-queue",
+        title: "队列长度",
+        description: "设备上平均有多少个请求在飞。这是「一直在忙」与「已经排队」之间的那条界线。",
+        unit: "count",
+        labels: ["node", "device"],
+        queries: [{ name: "node_disk_queue", requires: NODE_EXPORTER }],
+      },
+    ],
+  },
+  {
     id: "network",
     label: "网络",
     top: true,
@@ -772,6 +1097,15 @@ export const STORAGE_VIEWS: MetricsViews = [
         unit: "bytes_per_second",
         labels: ["node", "device"],
         queries: [{ name: "node_network_transmit", requires: NODE_EXPORTER }],
+      },
+      {
+        id: "network-packets",
+        title: "网络包速率",
+        description:
+          "云上的网卡同时按带宽和包数计费与限速，而由小请求组成的流量先撞到的是包数上限——那一刻字节曲线看起来还只用了一半。",
+        unit: "ops_per_second",
+        labels: ["node", "device"],
+        queries: [{ name: "node_network_packets", requires: NODE_EXPORTER }],
       },
       {
         id: "network-errors",
@@ -816,6 +1150,39 @@ export const STORAGE_VIEWS: MetricsViews = [
         labels: ["node"],
         queries: [{ name: "node_tcp_listen_drops", requires: NODE_EXPORTER }],
       },
+      {
+        id: "node-tcp-connections",
+        title: "TCP 连接数",
+        description:
+          "已建立的连接，与正在等待 TIME_WAIT 结束的连接。后者每一条都占着一个本地端口，短连接密集的节点会先用完端口，而不是用完这一屏上的任何别的东西。",
+        unit: "count",
+        labels: ["node"],
+        emptyNote: RESCRAPE_NOTE,
+        queries: [
+          { name: "node_tcp_connections", label: "已建立", requires: NODE_EXPORTER },
+          { name: "node_tcp_timewait", label: "TIME_WAIT", requires: NODE_EXPORTER },
+        ],
+      },
+      {
+        id: "node-udp-errors",
+        title: "UDP 错误",
+        description:
+          "集群 DNS 走 UDP：节点上的接收缓冲区溢出，在每一个 Pod 里都表现为解析超时，而它不出现在任何 TCP 计数器和任何吞吐曲线上。",
+        unit: "ops_per_second",
+        labels: ["node"],
+        emptyNote: RESCRAPE_NOTE,
+        queries: [{ name: "node_udp_errors", requires: NODE_EXPORTER }],
+      },
+      {
+        id: "node-socket-memory",
+        title: "套接字内存",
+        description:
+          "内核为套接字缓冲区占用的内存。越过内核自己的上限之后，它会开始裁剪连接，应用看到的是没有人发出过的 reset。",
+        unit: "bytes",
+        labels: ["node"],
+        emptyNote: RESCRAPE_NOTE,
+        queries: [{ name: "node_socket_memory", requires: NODE_EXPORTER }],
+      },
     ],
   },
 ];
@@ -850,6 +1217,19 @@ export const KUBERNETES_VIEWS: MetricsViews = [
         labels: [],
         queries: [{ name: "cluster_container_restarts", requires: KUBE_STATE }],
       },
+      {
+        id: "pod-scheduling",
+        title: "就绪与调度失败",
+        description:
+          "Running 不等于在服务：就绪探针失败的 Pod 仍然是 Running，却已经被从每一个 Service 后面摘掉，而状态分布把这件事画成一片健康。无法调度的 Pod 同样是 Pending，与还在拉镜像的 Pod 长得一模一样——一个自己会好，另一个在等永远可能不来的容量、容忍或卷。",
+        unit: "count",
+        labels: [],
+        emptyNote: RESCRAPE_NOTE,
+        queries: [
+          { name: "cluster_pod_ready", label: "就绪", requires: KUBE_STATE },
+          { name: "cluster_pod_unschedulable", label: "无法调度", requires: KUBE_STATE },
+        ],
+      },
     ],
   },
   {
@@ -875,6 +1255,16 @@ export const KUBERNETES_VIEWS: MetricsViews = [
         unit: "count",
         labels: ["condition"],
         queries: [{ name: "cluster_node_pressure", requires: KUBE_STATE }],
+      },
+      {
+        id: "node-unschedulable",
+        title: "已封锁节点",
+        description:
+          "被 cordon 的节点不是故障节点：它不带任何条件，用量一切正常，只是安静地不再接收 Pod。一次没做完的维护让集群少掉三分之一可调度容量，别处不会说。",
+        unit: "count",
+        labels: [],
+        emptyNote: RESCRAPE_NOTE,
+        queries: [{ name: "cluster_node_unschedulable", requires: KUBE_STATE }],
       },
     ],
   },
@@ -934,6 +1324,139 @@ export const KUBERNETES_VIEWS: MetricsViews = [
           { name: "workload_replicas_desired", label: "期望", requires: KUBE_STATE },
           { name: "workload_replicas_ready", label: "就绪", requires: KUBE_STATE },
         ],
+      },
+    ],
+  },
+  {
+    id: "jobs",
+    label: "批处理",
+    description:
+      "副本视角故意不包含 Job：跑完的 Job 不是缺副本的工作负载。而一个连续失败了一周的定时任务，在别的任何视角里都看不见——等有人去看的时候，它的 Pod 早就不在了。",
+    top: false,
+    namespace: true,
+    panels: [
+      {
+        id: "job-status",
+        title: "Job 状态",
+        unit: "count",
+        labels: [],
+        emptyNote: RESCRAPE_NOTE,
+        queries: [
+          { name: "cluster_job_active", label: "运行中", requires: KUBE_STATE },
+          { name: "cluster_job_failed", label: "失败", requires: KUBE_STATE },
+        ],
+      },
+      {
+        id: "job-failed-namespace",
+        title: "各 Namespace 失败任务",
+        unit: "count",
+        labels: ["namespace"],
+        emptyNote: RESCRAPE_NOTE,
+        queries: [{ name: "namespace_job_failed", requires: KUBE_STATE }],
+      },
+    ],
+  },
+  {
+    id: "storage-objects",
+    label: "存储对象",
+    description:
+      "持久卷视角量的是已经被挂载的 PVC，而故障恰好落在这个集合之外：卡在 Pending 的声明没有 Pod 起得来，因此没有任何使用率可量。持久卷同理，Released 与 Failed 占着真实的存储，声明已经没了，卷还在。",
+    top: false,
+    namespace: false,
+    panels: [
+      {
+        id: "pvc-phase",
+        title: "PVC 状态分布",
+        unit: "count",
+        labels: ["phase"],
+        stack: true,
+        emptyNote: RESCRAPE_NOTE,
+        queries: [{ name: "cluster_pvc_phase", requires: KUBE_STATE }],
+      },
+      {
+        id: "pv-phase",
+        title: "持久卷状态分布",
+        unit: "count",
+        labels: ["phase"],
+        stack: true,
+        emptyNote: RESCRAPE_NOTE,
+        queries: [{ name: "cluster_pv_phase", requires: KUBE_STATE }],
+      },
+    ],
+  },
+];
+
+/* ── 采集质量 ─────────────────────────────────────────────────────────── */
+
+/**
+ * The collection pipeline observing itself.
+ *
+ * Every series here has been in storage since the first install — the collector
+ * writes a handful of them for each target it scrapes — and until now only the
+ * overall `up` average was ever read. They answer the one question the rest of
+ * this application cannot answer about itself: when a screen is empty, whether
+ * the Cluster is idle, a target is down, or one exporter's collector cannot run
+ * on these Nodes.
+ *
+ * It is a chart section rather than a part of 采集接入 on purpose. Installing
+ * and removing collectors needs `cluster.metrics.manage`; reading charts needs
+ * only `cluster.metrics.read` — and an operator who can only read is exactly
+ * the one left with a screen of empty charts and no way to find out why.
+ */
+export const COLLECTION_QUALITY_VIEWS: MetricsViews = [
+  {
+    id: "scrape",
+    label: "抓取",
+    description:
+      "采集器为它抓的每一个目标写下这几条序列。它们与集群的摄取预算是同一件事：样本数是每次抓取要付的，新增序列是在整个保留期里要付的。",
+    top: false,
+    namespace: false,
+    panels: [
+      {
+        id: "collection-target-health",
+        title: "目标健康度",
+        description:
+          "哪一个目标在失败，而不是有几个在失败。集群级的平均值只说明出了问题，这张图说明该去修 kubelet、对象导出器还是节点导出器——三者是三种不同的处置。",
+        unit: "ratio",
+        labels: ["job"],
+        fullScale: true,
+        queries: [{ name: "collection_target_health" }],
+      },
+      {
+        id: "collection-scrape-duration",
+        title: "抓取耗时",
+        description:
+          "抓取耗时接近抓取间隔的目标会开始被截断，而随之而来的数据缺失读起来像集群安静了下来，不像某个目标变慢了。",
+        unit: "seconds",
+        labels: ["job"],
+        queries: [{ name: "collection_scrape_duration" }],
+      },
+      {
+        id: "collection-samples",
+        title: "采集样本数",
+        description:
+          "每次抓取在过滤之后真正写进存储的样本数，也就是这个集群的摄取预算花在哪里。开始被限流的集群，是这条线先动的。",
+        unit: "count",
+        labels: ["job"],
+        queries: [{ name: "collection_samples" }],
+      },
+      {
+        id: "collection-series-added",
+        title: "新增序列",
+        description:
+          "这次抓取带来了上次没有的多少条序列。样本数是每次抓取要付的钱，这条是整个保留期要付的——样本数平稳而它持续不为零的目标，标签里带着每次重启都会变的东西。",
+        unit: "count",
+        labels: ["job"],
+        queries: [{ name: "collection_series_added" }],
+      },
+      {
+        id: "collection-node-collectors",
+        title: "节点采集器失败数",
+        description:
+          "节点导出器对自己每个 collector 的报告，按失败的节点数统计。它是唯一能把「这个集群没什么可报」和「这个 collector 在这里跑不起来」分开的序列——缺少 /proc/pressure 的内核、没有加载模块的 conntrack，在别处都只是一张空图。",
+        unit: "count",
+        labels: ["collector"],
+        queries: [{ name: "collection_node_collectors", requires: NODE_EXPORTER }],
       },
     ],
   },
@@ -1025,6 +1548,32 @@ export function formatBytes(value: number): string {
 const BYTE_UNITS = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"] as const;
 
 /**
+ * The scale one duration is read in.
+ *
+ * A disk answers in microseconds and a Node's uptime in weeks, and both arrive
+ * from the Server in seconds. Choosing the scale from the value is what keeps
+ * `0.000012 s` and `1209600 s` from both being written out in full.
+ */
+function secondScaleFor(value: number): { factor: number; suffix: string } {
+  const magnitude = Math.abs(value);
+  if (magnitude >= 86_400) return { factor: 86_400, suffix: " 天" };
+  if (magnitude >= 3_600) return { factor: 3_600, suffix: " 小时" };
+  if (magnitude >= 60) return { factor: 60, suffix: " 分钟" };
+  if (magnitude >= 1) return { factor: 1, suffix: " s" };
+  if (magnitude >= 1e-3) return { factor: 1e-3, suffix: " ms" };
+  return { factor: 1e-6, suffix: " µs" };
+}
+
+export function formatSeconds(value: number): string {
+  // Zero has no scale of its own, and picking one from the magnitude would
+  // write it as `0.00 µs` — a precision the number does not have.
+  if (value === 0) return "0 s";
+  const { factor, suffix } = secondScaleFor(value);
+  const scaled = value / factor;
+  return `${scaled.toFixed(Math.abs(scaled) < 10 ? 2 : 1)}${suffix}`;
+}
+
+/**
  * Axis ticks, all in one unit.
  *
  * A tick formatter that scales each label on its own produces `500 m` above
@@ -1060,6 +1609,14 @@ export function axisFormatterFor(unit: MetricUnit): (splits: number[]) => string
       );
     };
   }
+  if (unit === "seconds") {
+    return (splits) => {
+      const peak = Math.max(...splits.map(Math.abs), 0);
+      const { factor, suffix } = secondScaleFor(peak);
+      const decimals = peak / factor < 10 ? 2 : 1;
+      return splits.map((value) => `${(value / factor).toFixed(decimals)}${suffix}`);
+    };
+  }
   const format = formatterFor(unit);
   return (splits) => splits.map(format);
 }
@@ -1072,6 +1629,8 @@ export function formatterFor(unit: MetricUnit): (value: number) => string {
       return (value) => `${formatBytes(value)}/s`;
     case "ops_per_second":
       return (value) => `${COUNT_FORMAT.format(value)} /s`;
+    case "seconds":
+      return formatSeconds;
     case "ratio":
       return (value) => `${(value * 100).toFixed(1)}%`;
     case "count":
@@ -1090,7 +1649,7 @@ export function formatterFor(unit: MetricUnit): (value: number) => string {
  * label rather than to every value, because Namespaces, Pods and Nodes are
  * named by whoever created them — one called `Unknown` must keep its name.
  */
-const TRANSLATED_LABELS = new Set(["phase", "status", "condition"]);
+const TRANSLATED_LABELS = new Set(["phase", "status", "condition", "mode"]);
 
 const LABEL_VALUES: Record<string, string> = {
   Running: "运行中",
@@ -1098,6 +1657,17 @@ const LABEL_VALUES: Record<string, string> = {
   Succeeded: "已完成",
   Failed: "失败",
   Unknown: "未知",
+  Bound: "已绑定",
+  Available: "可用",
+  Released: "已释放",
+  Lost: "已丢失",
+  user: "用户态",
+  system: "内核态",
+  nice: "低优先级",
+  iowait: "I/O 等待",
+  steal: "被抢占",
+  irq: "硬中断",
+  softirq: "软中断",
   MemoryPressure: "内存压力",
   DiskPressure: "磁盘压力",
   PIDPressure: "PID 压力",

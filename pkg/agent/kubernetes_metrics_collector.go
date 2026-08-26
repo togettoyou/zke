@@ -1115,6 +1115,12 @@ type kubeletScrapeJob struct {
 	// keep is a regular expression over metric names. Empty takes the endpoint
 	// whole, which is only ever right for `/metrics/resource`.
 	keep string
+	// dropWithoutPod names the families among `keep` that are also reported for
+	// cgroups outside any Pod. They are dropped rather than kept with an empty
+	// Pod identity: nothing in the catalogue asks about the root cgroup, and
+	// after the label drop below several of those series would be
+	// indistinguishable from one another.
+	dropWithoutPod string
 	// honorTimestamps takes the timestamps the endpoint reports rather than the
 	// moment of the scrape. Right for the resource endpoint, which Kubernetes
 	// stamps from the sample it took; wrong for cAdvisor, whose housekeeping
@@ -1135,20 +1141,60 @@ var kubeletScrapeJobs = []kubeletScrapeJob{
 		keep: "container_cpu_cfs_periods_total|" +
 			"container_cpu_cfs_throttled_periods_total|" +
 			"container_network_receive_bytes_total|" +
-			"container_network_transmit_bytes_total",
+			"container_network_transmit_bytes_total|" +
+			// Packets the Pod's own interface never delivered. A dropped packet
+			// is invisible in the byte counters beside it: the traffic that
+			// fails is the traffic that was never carried.
+			"container_network_receive_packets_dropped_total|" +
+			"container_network_transmit_packets_dropped_total|" +
+			// Which Pod is working the disk. Node level says a device is
+			// saturated; nothing else here says who saturated it.
+			"container_fs_reads_bytes_total|" +
+			"container_fs_writes_bytes_total|" +
+			// The kernel OOM killer firing inside a container. The Kubernetes
+			// side reports OOMKilled as the last terminated reason, which only
+			// survives while that container object does — a Pod replaced by its
+			// controller takes the evidence with it.
+			"container_oom_events_total",
+		// The families above that are also reported for cgroups that are not a
+		// Pod — the root, the kubelet's own slice — where cAdvisor identifies
+		// the series by `id` alone. Those labels are dropped two rules later,
+		// which would leave several such series with identical labels and make
+		// the batch a stream of duplicate samples.
+		dropWithoutPod: "container_fs_reads_bytes_total|" +
+			"container_fs_writes_bytes_total|" +
+			"container_oom_events_total",
 	},
 	{
-		// Volume statistics. The kubelet is the only component that reports how
-		// full a PersistentVolumeClaim is: kube-state-metrics knows the claim
-		// exists and how large it was requested, and neither answers whether it
-		// is about to fill up.
-		name: "kubelet-volume",
+		// Volume statistics and the kubelet's own health. The kubelet is the
+		// only component that reports how full a PersistentVolumeClaim is:
+		// kube-state-metrics knows the claim exists and how large it was
+		// requested, and neither answers whether it is about to fill up.
+		//
+		// It is also the component every other number here is measured through.
+		// A kubelet whose runtime operations are failing, or whose Pod lifecycle
+		// event loop has slowed down, reports stale usage for the Node it runs
+		// on — and that is the one fault the usage curves cannot show, because
+		// they are what stops moving.
+		name: "kubelet",
 		path: "/metrics",
-		keep: "kubelet_volume_stats_available_bytes|" +
-			"kubelet_volume_stats_capacity_bytes|" +
+		// Available bytes and the runtime operation total are deliberately
+		// absent: the first is capacity minus used, which is already here, and
+		// the second is a per-operation-type breakdown of calls that succeeded.
+		// Neither is read by any query, and a family nothing queries is
+		// cardinality in storage every Cluster shares.
+		keep: "kubelet_volume_stats_capacity_bytes|" +
 			"kubelet_volume_stats_used_bytes|" +
 			"kubelet_volume_stats_inodes|" +
-			"kubelet_volume_stats_inodes_used",
+			"kubelet_volume_stats_inodes_used|" +
+			"kubelet_running_pods|" +
+			"kubelet_running_containers|" +
+			"kubelet_runtime_operations_errors_total|" +
+			// The relist loop's sum and count, not its buckets: the average is
+			// the signal an operator acts on, and the histogram costs a dozen
+			// series per Node for a quantile nothing here would draw.
+			"kubelet_pleg_relist_duration_seconds_sum|" +
+			"kubelet_pleg_relist_duration_seconds_count",
 	},
 }
 
@@ -1188,13 +1234,20 @@ func renderKubeletScrapeJob(job kubeletScrapeJob, port uint32) string {
 	// workloads changing at all. Nothing in the catalogue reads them, and
 	// dropping them on the volume endpoint too costs nothing: it never sets
 	// them.
-	return config + fmt.Sprintf(`    metric_relabel_configs:
+	config += fmt.Sprintf(`    metric_relabel_configs:
       - source_labels: [__name__]
         regex: %s
         action: keep
-      - regex: ^(id|image|name)$
-        action: labeldrop
 `, job.keep)
+	if job.dropWithoutPod != "" {
+		config += fmt.Sprintf(`      - source_labels: [__name__, pod]
+        regex: (%s);
+        action: drop
+`, job.dropWithoutPod)
+	}
+	return config + `      - regex: ^(id|image|name)$
+        action: labeldrop
+`
 }
 
 // renderKubeStateScrapeJob reaches the object metrics exporter through its
@@ -1209,21 +1262,26 @@ func renderKubeStateScrapeJob(namespace string) string {
     relabel_configs:
       - regex: ^zke_.*$
         action: labeldrop
-%s`, observability.KubeStateName, namespace, observability.KubeStatePort, containerStateFilter())
+%s`, observability.KubeStateName, namespace, observability.KubeStatePort, kubeStateMetricFilter())
 }
 
-// containerStateFilter drops the container state series nothing queries.
+// kubeStateMetricFilter drops the object series nothing queries.
 //
 // The two families report one series per container per reason, and the reasons
 // nobody acts on outnumber the ones anybody does. Filtering them at the scrape
 // rather than at the query is what keeps them out of storage every Cluster
 // shares — a query-side selector would still have paid for them.
 //
+// The readiness condition is filtered the same way and for the same reason:
+// kube-state-metrics reports one series per Pod per condition value, and the
+// two that are not `true` are the complement of the one that is against a Pod
+// count the pipeline already carries.
+//
 // Written as mark-then-drop because relabelling cannot express "not one of
 // these": a temporary label is set on the series worth keeping, everything in
 // those two families without it is dropped, and the label is removed again so
 // it never reaches storage. Every other family passes through untouched.
-func containerStateFilter() string {
+func kubeStateMetricFilter() string {
 	families := strings.Join(observability.ContainerStateFamilies, "|")
 	reasons := strings.Join(append(
 		append([]string{}, observability.ContainerWaitingReasons...),
@@ -1239,6 +1297,9 @@ func containerStateFilter() string {
         action: drop
       - regex: ^__tmp_zke_keep$
         action: labeldrop
+      - source_labels: [__name__, condition]
+        regex: kube_pod_status_ready;(false|unknown)
+        action: drop
 `, families, reasons, families)
 }
 

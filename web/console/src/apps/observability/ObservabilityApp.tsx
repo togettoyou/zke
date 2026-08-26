@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Boxes, Cpu, HardDrive, LayoutDashboard, PlugZap } from "lucide-react";
+import { Activity, Boxes, Cpu, HardDrive, LayoutDashboard, PlugZap } from "lucide-react";
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
@@ -11,6 +11,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/common/state"
 import { Alert } from "@/components/ui/misc";
 import { useScopeStore } from "@/scope/scope-store";
 
+import { CollectionQualitySection } from "./CollectionQualitySection";
 import { CollectionSection } from "./CollectionSection";
 import { ComputeSection } from "./ComputeSection";
 import { KubernetesSection } from "./KubernetesSection";
@@ -19,6 +20,7 @@ import { OverviewSection } from "./OverviewSection";
 import { StorageNetworkSection } from "./StorageNetworkSection";
 import { MetricsGate, MetricsScopeProvider } from "./MetricsScopeProvider";
 import {
+  COLLECTION_QUALITY_VIEWS,
   COMPUTE_DIMENSIONS,
   KUBERNETES_VIEWS,
   OVERVIEW_PANELS,
@@ -52,6 +54,10 @@ const NAV: AppNavItem[] = [
   { id: "compute", label: "计算资源", icon: Cpu },
   { id: "storage", label: "存储与网络", icon: HardDrive },
   { id: "kubernetes", label: "Kubernetes 资源", icon: Boxes },
+  // Last, and a chart section rather than part of 采集接入 above: it answers
+  // why the other four are empty, and it has to be reachable by an operator who
+  // holds only the read permission.
+  { id: "collection-quality", label: "采集质量", icon: Activity },
 ];
 
 function viewsContainQuery(views: readonly MetricsView[], query: string): boolean {
@@ -67,6 +73,7 @@ function evidenceSection(query: string): string {
     return "compute";
   if (viewsContainQuery(STORAGE_VIEWS, query)) return "storage";
   if (viewsContainQuery(KUBERNETES_VIEWS, query)) return "kubernetes";
+  if (viewsContainQuery(COLLECTION_QUALITY_VIEWS, query)) return "collection-quality";
   return COLLECTION_SECTION;
 }
 
@@ -160,6 +167,12 @@ export function ObservabilityApp(_props: AppComponentProps) {
         return (
           <MetricsGate>
             <KubernetesSection initialQuery={initialQuery} />
+          </MetricsGate>
+        );
+      case "collection-quality":
+        return (
+          <MetricsGate>
+            <CollectionQualitySection initialQuery={initialQuery} />
           </MetricsGate>
         );
       default:

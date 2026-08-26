@@ -31,10 +31,13 @@ ZKE Server 当前只支持单副本部署。
 ## Phase 3：可观测性
 
 数据通路与安全边界见 [Phase 3 可观测性架构设计](architecture/observability-phase-3.md)。指标、日志与告警
-按切片推进，后一项依赖前一项就绪。全部 70 个查询对着真实的 VictoriaMetrics 验证过，并且要求每一条都
+按切片推进，后一项依赖前一项就绪。全部 119 个查询对着真实的 VictoriaMetrics 验证过，并且要求每一条都
 真的选到数据——指标族齐备的种子加上「每个目录条目至少返回一条序列」的断言，堵住了「模板能编译但选不到
-任何东西」这一类静默空图。查询读取的 kubelet resource、cAdvisor 与 node-exporter 指标名，也在真实
-kubelet（v1.31.1）与真实 node-exporter（v1.12.1，使用 ZKE 下发的同一组 collector 参数）上核对过。三个采集
+任何东西」这一类静默空图。查询读取的 kubelet resource、cAdvisor 与**全部** node-exporter 指标名，都在真实
+kubelet（v1.31.1）与真实 node-exporter（v1.12.1，使用 ZKE 下发的同一组 collector 参数）上核对过，采集质量
+视图读的抓取元信息也在真实 vmagent（v1.149.0）上核对过；kube-state-metrics 新增的封锁与就绪与 Job 与
+PVC/PV 状态、kubelet 自身健康、cAdvisor 的容器磁盘与 OOM **还没有做这一步核对**，它们需要真实的
+API Server 或 kubelet。三个采集
 组件在真实集群上一起装过，完整链路（集群内 vmagent → Agent → Server → 存储 → Console）也跑通到图表；
 但每集群摄取预算只在单元测试中验证过，没有在真实集群的 vmagent 上观察过退避行为，
 `kubelet_volume_stats_*` 也还没有在带 CSI 卷的真实集群上抓到过。
@@ -44,7 +47,7 @@ kubelet（v1.31.1）与真实 node-exporter（v1.12.1，使用 ZKE 下发的同�
 - [x] 指标深化：Namespace 与 Pod 维度、Top N 与 Namespace 过滤、每集群摄取预算与限流状态呈现、查询响应的 `partial` 与 `issues`、容量与保留期运维文档
 - [x] 抓取目标扩展：kube-state-metrics 与 node-exporter 随采集组件一并安装/卸载，三者镜像与资源预算进入平台配置
 - [x] 深度指标：集群与节点利用率、Namespace 申请量与限制量、工作负载维度（Deployment 两级归属）、Pod 重启、节点文件系统/网络/磁盘 IO
-- [x] 完整可观测性视图：容量与申请占比、节点饱和度与 Pod 密度、磁盘 IOPS 与繁忙度、inode、网络错误丢包、Pod 与节点状态、未就绪副本；Console 拆为总览 / 计算资源 / 存储与网络 / Kubernetes 资源四个分区，共享时间范围选择、图上拖拽选取区间与光标读数
+- [x] 完整可观测性视图：容量与申请占比、节点饱和度与 Pod 密度、磁盘 IOPS 与繁忙度、inode、网络错误丢包、Pod 与节点状态、未就绪副本；Console 拆为总览 / 计算资源 / 存储与网络 / Kubernetes 资源 / 采集质量五个分区，共享时间范围选择、图上拖拽选取区间与光标读数
 - [ ] VictoriaLogs 集成与多集群日志
 - [ ] 告警中心
 

@@ -5240,7 +5240,7 @@ export interface components {
                 /** @enum {string} */
                 kind: "range" | "instant";
                 /** @enum {string} */
-                unit: "millicores" | "bytes" | "bytes_per_second" | "count" | "ratio";
+                unit: "millicores" | "bytes" | "bytes_per_second" | "ops_per_second" | "seconds" | "count" | "ratio";
                 /** @description 除集群身份外，该查询返回的序列标签。 */
                 dimensions: string[];
                 requires_namespace: boolean;
@@ -5270,7 +5270,7 @@ export interface components {
             /** @enum {string} */
             kind: "range" | "instant";
             /** @enum {string} */
-            unit: "millicores" | "bytes" | "bytes_per_second" | "count" | "ratio";
+            unit: "millicores" | "bytes" | "bytes_per_second" | "ops_per_second" | "seconds" | "count" | "ratio";
             /** Format: date-time */
             start: string;
             /** Format: date-time */

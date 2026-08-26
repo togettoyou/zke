@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -182,8 +183,76 @@ func TestNodeExporterRunsOnEveryNodeWithoutAnAPIToken(t *testing.T) {
 	if !strings.Contains(args, "--collector.disable-defaults") {
 		t.Fatalf("node-exporter runs with its default collectors: %s", args)
 	}
+	// The host root is mounted without propagation, and it has to stay that
+	// way. `HostToContainer` is what the exporter's own packaging uses, and on
+	// a Node whose own `/` is a private mount the Docker runtime refuses to
+	// create the container at all — the component never starts, writes no log,
+	// and reports `ContainerCannotRun`. A hostPath is a recursive bind either
+	// way, so everything mounted when the Pod started is still measured.
+	root := containerMountByName(spec.Containers[0], "root")
+	if root == nil {
+		t.Fatal("node-exporter does not mount the host root, so it measures its own filesystem")
+	}
+	if root.MountPropagation != nil {
+		t.Fatalf("host root mount propagation = %v, which some runtimes refuse", *root.MountPropagation)
+	}
 	if !strings.Contains(args, "--collector.filesystem.mount-points-exclude=") {
 		t.Fatalf("node-exporter would report a filesystem series per Pod per Node: %s", args)
+	}
+}
+
+func containerMountByName(container corev1.Container, name string) *corev1.VolumeMount {
+	for index, mount := range container.VolumeMounts {
+		if mount.Name == name {
+			return &container.VolumeMounts[index]
+		}
+	}
+	return nil
+}
+
+// The filesystem exclusion is a regular expression the exporter compiles, and
+// the paths it has to match are not the same on every Kubernetes distribution.
+//
+// Upstream's pattern is anchored at /var/lib/kubelet and /var/lib/docker, which
+// is where a kubeadm Node keeps them and where a Docker Desktop or k3s Node does
+// not. On those Nodes an anchored pattern matches nothing at all, and the result
+// is not a missing exclusion but its opposite: one filesystem series per Pod
+// volume and per container, on every Node, in storage every Cluster shares —
+// plus a permanent device error on each of them, because the exporter runs as
+// nobody and cannot stat them.
+func TestFilesystemExclusionCoversEveryKubeletAndRuntimeRoot(t *testing.T) {
+	t.Parallel()
+
+	pattern, err := regexp.Compile(nodeExporterMountPointsExclude)
+	if err != nil {
+		t.Fatalf("the exporter would refuse this pattern: %v", err)
+	}
+	for name, mountPoint := range map[string]string{
+		"kubeadm volume":         "/var/lib/kubelet/pods/abc/volumes/kubernetes.io~projected/token",
+		"docker desktop volume":  "/mnt/docker-desktop-disk/data/kubelet/pods/abc/volumes/kubernetes.io~projected/token",
+		"k3s volume":             "/var/lib/rancher/k3s/agent/kubelet/pods/abc/volumes/kubernetes.io~empty-dir/cache",
+		"csi mount":              "/var/lib/kubelet/plugins/kubernetes.io/csi/driver/volume/globalmount",
+		"docker container shm":   "/mnt/docker-desktop-disk/data/docker/containers/abc/mounts/shm",
+		"containerd sandbox shm": "/run/containerd/io.containerd.grpc.v1.cri/sandboxes/abc/shm",
+		"node device tree":       "/dev/shm",
+		"proc":                   "/proc",
+	} {
+		if !pattern.MatchString(mountPoint) {
+			t.Fatalf("%s (%s) would be reported as a Node filesystem", name, mountPoint)
+		}
+	}
+	// The other half of the same decision: a Node's own filesystems are what
+	// this collector exists to report, and a pattern that swallows them leaves
+	// the capacity view empty.
+	for name, mountPoint := range map[string]string{
+		"root":      "/",
+		"data disk": "/data",
+		"host mnt":  "/mnt",
+		"boot":      "/boot/efi",
+	} {
+		if pattern.MatchString(mountPoint) {
+			t.Fatalf("%s (%s) is a Node filesystem and would be excluded", name, mountPoint)
+		}
 	}
 }
 
@@ -203,7 +272,7 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 			jobs: []string{
 				"kubelet-resource",
 				"kubelet-cadvisor",
-				"kubelet-volume",
+				"kubelet",
 				"kube-state-metrics",
 				"node-exporter",
 			},
@@ -212,7 +281,7 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 			request: installRequest(),
 			// The kubelet endpoints are not optional: they are one target, and
 			// every install reads all three of them.
-			jobs:   []string{"kubelet-resource", "kubelet-cadvisor", "kubelet-volume"},
+			jobs:   []string{"kubelet-resource", "kubelet-cadvisor", "kubelet"},
 			absent: []string{"kube-state-metrics", "node-exporter"},
 		},
 	} {
@@ -251,7 +320,9 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 			// is built to avoid rather than to discover in production.
 			for _, family := range []string{
 				"container_cpu_cfs_throttled_periods_total",
+				"container_oom_events_total",
 				"kubelet_volume_stats_used_bytes",
+				"kubelet_runtime_operations_errors_total",
 			} {
 				if !strings.Contains(config, family) {
 					t.Fatalf("scrape configuration does not keep %q:\n%s", family, config)
@@ -266,6 +337,19 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 			if strings.Contains(config, "job_name: kube-state-metrics") &&
 				!strings.Contains(config, "__tmp_zke_keep") {
 				t.Fatalf("container state reasons are not filtered at the scrape:\n%s", config)
+			}
+			// Readiness is filtered the same way: only the condition the
+			// catalogue reads survives the scrape.
+			if strings.Contains(config, "job_name: kube-state-metrics") &&
+				!strings.Contains(config, "regex: kube_pod_status_ready;(false|unknown)") {
+				t.Fatalf("pod readiness is not narrowed at the scrape:\n%s", config)
+			}
+			// The cAdvisor families that are also reported for cgroups outside
+			// any Pod are dropped before the identifying labels are, or the
+			// batch would carry several series with identical labels.
+			if !strings.Contains(config, "regex: (container_fs_reads_bytes_total|"+
+				"container_fs_writes_bytes_total|container_oom_events_total);") {
+				t.Fatalf("cAdvisor keeps cgroup series outside any Pod:\n%s", config)
 			}
 			if strings.Contains(config, "ContainerCannotRun") {
 				t.Fatalf("scrape keeps a reason no query reads:\n%s", config)
