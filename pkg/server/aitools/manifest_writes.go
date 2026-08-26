@@ -194,6 +194,7 @@ func (catalogue *Catalogue) manifestAccess(
 		rbac.PermissionClusterResourceUpdate,
 		rbac.PermissionClusterResourceDelete,
 		rbac.PermissionClusterNamespaceManage,
+		rbac.PermissionClusterNodeManage,
 		rbac.PermissionClusterSecretRead,
 		rbac.PermissionClusterSecretManage,
 		rbac.PermissionClusterRBACManage,
@@ -214,6 +215,7 @@ func (catalogue *Catalogue) manifestAccess(
 		ResourceUpdate:        granted[rbac.PermissionClusterResourceUpdate],
 		ResourceDelete:        granted[rbac.PermissionClusterResourceDelete],
 		NamespaceManage:       granted[rbac.PermissionClusterNamespaceManage],
+		NodeManage:            granted[rbac.PermissionClusterNodeManage],
 		SecretRead:            granted[rbac.PermissionClusterSecretRead],
 		SecretManage:          granted[rbac.PermissionClusterSecretManage],
 		RBACManage:            granted[rbac.PermissionClusterRBACManage],
@@ -342,6 +344,8 @@ func manifestRequirementPermission(requirement kubernetesresource.ManifestRequir
 		return string(rbac.PermissionClusterResourceDelete)
 	case kubernetesresource.ManifestRequirementNamespaceManage:
 		return string(rbac.PermissionClusterNamespaceManage)
+	case kubernetesresource.ManifestRequirementNodeManage:
+		return string(rbac.PermissionClusterNodeManage)
 	case kubernetesresource.ManifestRequirementSecretManage:
 		return string(rbac.PermissionClusterSecretManage)
 	case kubernetesresource.ManifestRequirementRBACManage:

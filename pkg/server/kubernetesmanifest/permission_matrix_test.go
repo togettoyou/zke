@@ -41,7 +41,69 @@ var everyFamilyRequirements = []kubernetesresource.ManifestRequirement{
 func fullManifestGrant() kubernetesresource.ManifestGrant {
 	return kubernetesresource.ManifestGrant{
 		ResourceCreate: true, ResourceUpdate: true, ResourceDelete: true,
-		NamespaceManage: true, SecretRead: true, SecretManage: true, RBACManage: true,
+		NamespaceManage: true, NodeManage: true, SecretRead: true, SecretManage: true,
+		RBACManage: true,
+	}
+}
+
+// A Node reached through a manifest answers to `cluster.node.manage`, the same
+// permission the typed and generic routes require for one. Without this the
+// manifest endpoint would be the way around it: relabelling every Node in the
+// Cluster would need nothing but `cluster.resource.update`, which is also what
+// changing one ConfigMap needs.
+func TestManifestNodeDocumentAnswersToTheNodePermission(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(Config{MaxDocuments: 20, FieldManager: "zke-manifest"})
+	manifest := document("v1", "Node", "", "worker-1")
+
+	for _, operation := range []Operation{OperationApply, OperationDelete} {
+		t.Run(string(operation), func(t *testing.T) {
+			t.Parallel()
+
+			// Every resource permission there is, and no Node permission.
+			access := newFakeAccess()
+			access.grant = fullManifestGrant()
+			access.grant.NodeManage = false
+			access.existing["v1/nodes//worker-1"] = liveObject("uid-node", "1")
+
+			result, err := service.Execute(context.Background(), access, Input{
+				ClusterID: testClusterID,
+				Manifest:  []byte(manifest),
+				Operation: operation,
+				Confirm:   true,
+			})
+			if err != nil {
+				t.Fatalf("Execute() = %v", err)
+			}
+			if result.Allowed {
+				t.Fatal("a Node document was allowed without cluster.node.manage")
+			}
+			if len(access.applied) != 0 || len(access.deleted) != 0 {
+				t.Fatal("a refused Node document reached the Cluster")
+			}
+			if got := result.Documents[0].Requirement; got != kubernetesresource.ManifestRequirementNodeManage {
+				t.Fatalf("requirement = %q, want %q", got, kubernetesresource.ManifestRequirementNodeManage)
+			}
+
+			// The same document with the Node permission goes through, so the
+			// refusal above is about that permission and not about the document.
+			access = newFakeAccess()
+			access.grant = fullManifestGrant()
+			access.existing["v1/nodes//worker-1"] = liveObject("uid-node", "1")
+			result, err = service.Execute(context.Background(), access, Input{
+				ClusterID: testClusterID,
+				Manifest:  []byte(manifest),
+				Operation: operation,
+				Confirm:   true,
+			})
+			if err != nil {
+				t.Fatalf("Execute() = %v", err)
+			}
+			if !result.Allowed || result.Failed {
+				t.Fatalf("allowed = %v failed = %v", result.Allowed, result.Failed)
+			}
+		})
 	}
 }
 

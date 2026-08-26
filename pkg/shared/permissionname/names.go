@@ -24,6 +24,7 @@ const (
 	ClusterPodTerminalRecordingCreate = "cluster.pod.terminal_recording.create"
 	ClusterPodTerminalRecordingRead   = "cluster.pod.terminal_recording.read"
 	ClusterPodPortForward             = "cluster.pod.port_forward"
+	ClusterNodeManage                 = "cluster.node.manage"
 	ClusterNodeDrain                  = "cluster.node.drain"
 	ClusterEventRead                  = "cluster.event.read"
 	ClusterMetricsRead                = "cluster.metrics.read"

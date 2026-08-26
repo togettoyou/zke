@@ -484,7 +484,8 @@ Service、Ingress 和 Gateway 管理；Gateway API 未安装时，Server 会通�
 扩展其他内置资源或 CRD 资源必须由安装方显式增加最小 RBAC。
 
 通用写接口分别要求 `cluster.resource.create`、`cluster.resource.update` 或 `cluster.resource.delete`，
-并要求 Session、CSRF、16 至 128 字符 `Idempotency-Key` 及实际写入的显式确认。Server 校验对象身份、
+目标为 core/v1 Node 时改用独立的 `cluster.node.manage`；并要求 Session、CSRF、16 至 128 字符
+`Idempotency-Key` 及实际写入的显式确认。Server 校验对象身份、
 resourceVersion、Patch 类型、DryRun、Apply field manager、删除传播策略和前置条件；Agent 再次校验并通过
 dynamic client 执行。每个操作独占一条 QUIC Resource Stream，幂等重放不记录 Secret 或请求正文到日志与审计。
 DryRun 使用独立审计动作。Server 通过

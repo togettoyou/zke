@@ -357,6 +357,39 @@ func TestTerminalProtectedPolicyReplacesGenericMutationAndStacksSensitivePermiss
 	assertTerminalVerbs(t, sensitive, "", "secrets", []string{"get", "list", "watch", "create", "update", "patch", "delete"})
 }
 
+// kubectl inside the Cluster terminal writes a Node only for a session whose
+// operator holds `cluster.node.manage`. The generic resource permissions cover
+// the other Cluster-scoped objects the terminal projects — PersistentVolumes,
+// StorageClasses, PriorityClasses — and must not reach a Node through
+// `kubectl label node` or `kubectl edit node`, which is exactly what the HTTP
+// routes refuse.
+func TestTerminalClusterPolicyKeepsNodeWritesBehindTheNodePermission(t *testing.T) {
+	nodeVerbs := func(permissions []string) []string {
+		verbs := []string{}
+		for _, rule := range terminalClusterPolicyRules(permissions) {
+			if slices.Contains(rule.APIGroups, "") && slices.Contains(rule.Resources, "nodes") {
+				verbs = append(verbs, rule.Verbs...)
+			}
+		}
+		return verbs
+	}
+
+	generic := nodeVerbs([]string{
+		permissionname.ClusterRead,
+		permissionname.ClusterResourceCreate,
+		permissionname.ClusterResourceUpdate,
+		permissionname.ClusterResourceDelete,
+	})
+	if !slices.Equal(generic, []string{"get", "list", "watch"}) {
+		t.Fatalf("Node verbs without cluster.node.manage = %v, want reads only", generic)
+	}
+
+	withNodeManage := nodeVerbs([]string{permissionname.ClusterRead, permissionname.ClusterNodeManage})
+	if !slices.Contains(withNodeManage, "update") || !slices.Contains(withNodeManage, "patch") {
+		t.Fatalf("Node verbs with cluster.node.manage = %v, want update and patch", withNodeManage)
+	}
+}
+
 func assertTerminalVerbs(t *testing.T, rules []rbacv1.PolicyRule, group, resource string, want []string) {
 	t.Helper()
 	for _, rule := range rules {

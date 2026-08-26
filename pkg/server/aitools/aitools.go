@@ -478,6 +478,7 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 			rbac.PermissionClusterResourceUpdate,
 			rbac.PermissionClusterResourceDelete,
 			rbac.PermissionClusterNamespaceManage,
+			rbac.PermissionClusterNodeManage,
 			rbac.PermissionClusterSecretRead,
 			rbac.PermissionClusterSecretManage,
 			rbac.PermissionClusterRBACManage,

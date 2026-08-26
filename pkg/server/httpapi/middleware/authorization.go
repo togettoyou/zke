@@ -184,6 +184,11 @@ func (authorization *Authorization) effectiveClusterPermission(
 		rbac.PermissionClusterResourceCreate,
 		rbac.PermissionClusterResourceUpdate,
 		rbac.PermissionClusterResourceDelete:
+		// A Node is Cluster-scoped, so no protected-Namespace grant can ever
+		// apply to one; the two branches cannot both match.
+		if isNodeObjectMutation(c) {
+			return rbac.PermissionClusterNodeManage
+		}
 		if protected != "" {
 			return protected
 		}
@@ -194,6 +199,18 @@ func (authorization *Authorization) effectiveClusterPermission(
 	default:
 		return permission
 	}
+}
+
+// A write to the Node object itself through the generic resource routes: its
+// YAML, its labels, its taints, `spec.unschedulable`. Node labels and taints
+// decide where every workload in the Cluster may run, so that write answers to
+// `cluster.node.manage` rather than to the ordinary resource permissions —
+// exactly as a Namespace write answers to `cluster.namespace.manage`.
+func isNodeObjectMutation(c *gin.Context) bool {
+	return c.Request.Method != http.MethodGet &&
+		strings.Contains(c.FullPath(), "/kubernetes/resources") &&
+		c.Query("group") == "" && c.Query("version") == "v1" &&
+		c.Query("resource") == "nodes"
 }
 
 func isNamespaceObjectMutation(c *gin.Context) bool {
@@ -561,6 +578,7 @@ func permissionTargetType(permission rbac.Permission) string {
 	case rbac.PermissionClusterNamespaceManage,
 		rbac.PermissionClusterSystemNamespaceManage,
 		rbac.PermissionClusterAgentNamespaceManage,
+		rbac.PermissionClusterNodeManage,
 		rbac.PermissionClusterNodeDrain,
 		rbac.PermissionClusterResourceCreate,
 		rbac.PermissionClusterResourceUpdate,

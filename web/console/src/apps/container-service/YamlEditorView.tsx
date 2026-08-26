@@ -3,6 +3,7 @@ import { RotateCw, Save } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
+import type { Permission } from "@/api/types";
 import { newIdempotencyKey } from "@/api/client";
 import { useResourceYaml, useUpdateResourceYaml, type YamlTarget } from "@/api/queries/yaml";
 import { PageHeader } from "@/apps/AppShell";
@@ -36,6 +37,7 @@ export function YamlEditorView({
   clusterName,
   kindLabel,
   canUpdate,
+  writePermission,
   readOnlyReason,
   impacts,
   onBack,
@@ -45,6 +47,14 @@ export function YamlEditorView({
   /** What to call this object in headings and confirmations, e.g. "Deployment". */
   kindLabel: string;
   canUpdate: boolean;
+  /**
+   * The permission this document's write actually answers to, named in the
+   * read-only notice. Passed where it is not the one an operator would assume —
+   * a Node answers to `cluster.node.manage`, not to `cluster.resource.update` —
+   * so the notice says which grant to go and ask for rather than leaving it to
+   * be guessed from the role editor.
+   */
+  writePermission?: Permission;
   /**
    * Why this document cannot be saved, when that is not about permissions —
    * an immutable Secret, one of ZKE's own objects. Stated rather than left to
@@ -217,6 +227,7 @@ export function YamlEditorView({
           ) : canUpdate ? null : (
             <Alert tone="info" className="mb-3">
               当前身份没有该集群的写入权限，YAML 只读。
+              {writePermission ? `写入该对象需要 ${writePermission} 权限。` : null}
             </Alert>
           )}
           {oversized ? (

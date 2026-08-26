@@ -50,7 +50,8 @@ import { DescribeView } from "./DescribeView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 import { YamlEditorView } from "./YamlEditorView";
-import { namespaceLifecyclePermission, namespaceMutationPermission } from "./namespace-permissions";
+import { namespaceLifecyclePermission } from "./namespace-permissions";
+import { resourceMutationPermission } from "./resource-permissions";
 import type { ContainerEvidenceTarget } from "./selection-store";
 
 const PAGE_SIZE = 50;
@@ -445,13 +446,14 @@ function ResourceObjectPanel({
   const canDeleteNamespace = useCallback(
     (targetNamespace: string) =>
       permissions.can(
-        namespaceMutationPermission(
+        resourceMutationPermission(
+          type,
           { namespace: targetNamespace, agentNamespace },
           "cluster.resource.delete",
         ),
         projectScope,
       ),
-    [permissions, projectScope, agentNamespace],
+    [permissions, projectScope, agentNamespace, type],
   );
   const pager = useContinuePagination(`${clusterId}/${typeKey(type)}/${scopedNamespace}`);
   const list = useGenericResources(clusterId, identity, scopedNamespace, {
@@ -583,6 +585,17 @@ function ResourceObjectPanel({
       type.group === "" && type.version === "v1" && type.resource === "namespaces"
         ? (yamlTarget.metadata?.name ?? "")
         : targetNamespace;
+    // Which permission this document's write answers to, resolved once: the
+    // editor both hides the save button with it and names it in the read-only
+    // notice, and those two must not be able to disagree.
+    const yamlWritePermission =
+      type.group === "" && type.version === "v1" && type.resource === "namespaces"
+        ? namespaceLifecyclePermission({ namespace: permissionNamespace, agentNamespace })
+        : resourceMutationPermission(
+            type,
+            { namespace: permissionNamespace, agentNamespace },
+            "cluster.resource.update",
+          );
     return (
       <YamlEditorView
         identity={{
@@ -596,16 +609,9 @@ function ResourceObjectPanel({
         clusterName={clusterName}
         kindLabel={type.kind}
         canUpdate={
-          permissions.can(
-            type.group === "" && type.version === "v1" && type.resource === "namespaces"
-              ? namespaceLifecyclePermission({ namespace: permissionNamespace, agentNamespace })
-              : namespaceMutationPermission(
-                  { namespace: permissionNamespace, agentNamespace },
-                  "cluster.resource.update",
-                ),
-            projectScope,
-          ) && type.verbs.includes("update")
+          permissions.can(yamlWritePermission, projectScope) && type.verbs.includes("update")
         }
+        writePermission={yamlWritePermission}
         onBack={() => setYamlTarget(null)}
       />
     );

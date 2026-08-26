@@ -18,7 +18,7 @@ import (
 //
 // Like SecretGrant, resolving is not deciding: this never refuses a request. The
 // handler compares the grant against what the documents actually ask for, and
-// refuses the request whole when any document is not covered. Seven booleans
+// refuses the request whole when any document is not covered. Plain booleans
 // rather than the resource layer's own type, so this package keeps depending on
 // nothing but authorization.
 type ManifestGrant struct {
@@ -26,6 +26,7 @@ type ManifestGrant struct {
 	ResourceUpdate        bool
 	ResourceDelete        bool
 	NamespaceManage       bool
+	NodeManage            bool
 	SecretRead            bool
 	SecretManage          bool
 	RBACManage            bool
@@ -66,6 +67,7 @@ func (authorization *Authorization) ResolveClusterManifestGrant(
 			ResourceUpdate:        holds(rbac.PermissionClusterResourceUpdate),
 			ResourceDelete:        holds(rbac.PermissionClusterResourceDelete),
 			NamespaceManage:       holds(rbac.PermissionClusterNamespaceManage),
+			NodeManage:            holds(rbac.PermissionClusterNodeManage),
 			SecretRead:            holds(rbac.PermissionClusterSecretRead),
 			SecretManage:          holds(rbac.PermissionClusterSecretManage),
 			RBACManage:            holds(rbac.PermissionClusterRBACManage),

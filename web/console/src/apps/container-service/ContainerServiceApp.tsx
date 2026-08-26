@@ -106,6 +106,7 @@ const MANIFEST_PERMISSIONS: Permission[] = [
   "cluster.resource.update",
   "cluster.resource.delete",
   "cluster.namespace.manage",
+  "cluster.node.manage",
   "cluster.system_namespace.manage",
   "cluster.agent_namespace.manage",
   "cluster.secret.manage",

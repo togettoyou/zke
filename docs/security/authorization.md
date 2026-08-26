@@ -345,7 +345,7 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 | Kubernetes 资源 | `cluster.resource.create/update/delete` |
 | 命名空间 | `cluster.namespace.manage`、`cluster.system_namespace.manage`、`cluster.agent_namespace.manage` |
 | 敏感资源 | `cluster.secret.read/manage`、`cluster.rbac.read/manage`、`cluster.event.read` |
-| 节点与 Pod 操作 | `cluster.node.drain`、`cluster.pod.logs.read`、`cluster.pod.exec`、`cluster.pod.port_forward`、`cluster.pod.terminal_recording.create/read`、`cluster.terminal.exec` |
+| 节点与 Pod 操作 | `cluster.node.manage`、`cluster.node.drain`、`cluster.pod.logs.read`、`cluster.pod.exec`、`cluster.pod.port_forward`、`cluster.pod.terminal_recording.create/read`、`cluster.terminal.exec` |
 | 可观测性 | `cluster.metrics.read`、`cluster.metrics.manage` |
 | 平台管理 | `user.read/manage`、`user.password.change`、`rbac.read/manage`、`audit.read` |
 | AIOps | `ai.run`（只允许在当前 Project 创建并运行固定 Cluster 会话，不包含任何集群读取权限） |
@@ -379,6 +379,25 @@ DryRun 使用独立的 `.dry_run` 审计动作，不会与实际写入混记。
 该 Pod 标为阻塞项，不会先驱逐其他 Pod。类型化接口、通用 Resource/YAML、多文档清单和 Console 使用同一判定；
 清单逐文档使用对应的命名空间权限替代普通资源权限；Secret 与 Kubernetes RBAC 等敏感资源仍额外检查资源家族权限，
 任一文档不满足就整份拒绝。
+
+#### 节点对象的独立权限
+
+Node 对象自身的写入使用独立的 `cluster.node.manage`，不由 `cluster.resource.create/update/delete` 蕴含。
+覆盖范围是「改的是 Node 这个对象」的全部入口：容器服务的节点标签编辑与调度开关（对 `metadata.labels` 与
+`spec.unschedulable` 的 merge patch）、节点 YAML 编辑、资源对象浏览器中的 Node、通用 Resource/YAML 路由上
+GVR 为 core/v1 `nodes` 的写入，以及清单中的 Node 文档。集群终端的 kubectl 同样只在会话持有该权限时才被投射
+`nodes` 的 `update`、`patch`。
+
+理由与 Namespace 同源，是影响面而不是敏感度：其余 `cluster.resource.*` 写入作用于一个对象，而节点的标签、
+污点与 `spec.unschedulable` 决定整个集群的调度结果——一次 `kubectl label node` 足以把工作负载吸引到或排除出
+一批机器。把它和「改一个 ConfigMap」放在同一个权限位上，等于由同一次授予决定两件量级不同的事。
+
+读取没有被收窄：节点列表、详情、诊断和 YAML 读取仍是 `cluster.read`。驱逐节点上已有的 Pod 仍是独立的
+`cluster.node.drain`，两者互不蕴含——只持有 `cluster.node.manage` 可以停止调度，但不能驱逐；只持有
+`cluster.node.drain` 可以排空，但不能改标签。Node 是集群级对象，因此受保护命名空间权限不参与它的判定。
+
+内置 `admin` 由权限词表自动获得该权限；升级前已存在的自定义角色不会因为持有 `cluster.resource.update` 而
+自动获得，需要显式授予。
 
 #### Namespace 的创建与删除
 
@@ -495,8 +514,8 @@ ServiceAccount，`zke-agent` ClusterRole 恰好就是它自己的权限集，所
 
 资源对象浏览器不引入新的权限面：资源目录与对象列表使用 `cluster.read`，YAML 编辑使用
 `cluster.resource.update`，删除使用 `cluster.resource.delete` 并要求 UID/resourceVersion 前置条件、CSRF、
-幂等键与显式确认。它能看到的范围就是通用 Resource 接口的范围——Secret 与 Event 被 Agent 拒绝，五类 Kubernetes
-授权资源被 Server 从该入口排除；Namespace 的增删改按目标名称要求独立的普通、系统或 Agent 命名空间权限——因此
+幂等键与显式确认；目标为 core/v1 Node 时按上文改用 `cluster.node.manage`。它能看到的范围就是通用 Resource
+接口的范围——Secret 与 Event 被 Agent 拒绝，五类 Kubernetes 授权资源被 Server 从该入口排除；Namespace 的增删改按目标名称要求独立的普通、系统或 Agent 命名空间权限——因此
 浏览器不会成为绕过 `cluster.rbac.*`、命名空间独立权限或敏感资源限制的旁路。CRD 判定所需的
 `customresourcedefinitions` 只读权限属于 Agent ServiceAccount，不改变调用者在 ZKE 中的权限。
 
@@ -506,7 +525,8 @@ ServiceAccount，`zke-agent` ClusterRole 恰好就是它自己的权限集，所
 `TestGenericMutationIdentityRejectsNamespaceCreateAndDelete` 互为另一半：只有请求侧的拒绝仍会让不该出现的类型
 出现在资源树里，点开才发现打不开。
 
-通用 YAML 读取沿用 `cluster.read`，更新沿用 `cluster.resource.update`，不扩大 Agent ServiceAccount 权限；
+通用 YAML 读取沿用 `cluster.read`，更新沿用 `cluster.resource.update`（Node 改用 `cluster.node.manage`），
+不扩大 Agent ServiceAccount 权限；
 Secret 与 Kubernetes 授权资源从该入口排除，避免绕过 `cluster.secret.*` 与 `cluster.rbac.*`，它们的 YAML 由上文
 各自的专用路由提供。
 更新只接受有界的严格单文档 YAML，并在发往目标 Cluster Agent 前，将正文的 GVR、Namespace、名称、UID 与
@@ -525,9 +545,9 @@ Secret 与 Kubernetes 授权资源从该入口排除，避免绕过 `cluster.sec
 - **路由层**只要求 `cluster.read`。它是下限——确认调用者至少看得见这个 Cluster——并为看不见的调用者产生
   与其他路由一致的拒绝审计。它不是这两个接口的授权。
 - **逐文档层**由 `ResolveClusterManifestGrant` 一次性解析
-  `cluster.resource.create/update/delete`、`cluster.namespace.manage`、`cluster.secret.read/manage` 与
-  `cluster.rbac.manage`（与 Secret Grant 同一套「只解析、不拒绝」的中间件模式），再对每个文档判定它所属族
-  需要的权限。
+  `cluster.resource.create/update/delete`、`cluster.namespace.manage`、`cluster.node.manage`、
+  `cluster.secret.read/manage` 与 `cluster.rbac.manage`（与 Secret Grant 同一套「只解析、不拒绝」的中间件
+  模式），再对每个文档判定它所属族需要的权限。
 
 映射与类型化 API 完全一致，没有为清单放宽任何一条：
 
@@ -536,6 +556,7 @@ Secret 与 Kubernetes 授权资源从该入口排除，避免绕过 `cluster.sec
 | Secret              | `cluster.secret.manage`                                                  | `cluster.secret.manage`    |
 | Kubernetes 授权五类 | `cluster.rbac.manage`                                                    | `cluster.rbac.manage`      |
 | Namespace           | `cluster.namespace.manage`                                               | `cluster.namespace.manage` |
+| Node                | `cluster.node.manage`                                                    | `cluster.node.manage`      |
 | Event（两个 group） | 一律拒绝                                                                 | 一律拒绝                   |
 | 其余主资源          | 对象不存在时 `cluster.resource.create`，存在时 `cluster.resource.update` | `cluster.resource.delete`  |
 

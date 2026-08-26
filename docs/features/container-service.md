@@ -198,8 +198,12 @@ ZKE 自身的授权对象以只读方式打开，理由分别见下文。
 或已复制时占位，因此静止状态下不会把每个值的右边缘撑开。`title` 写明将要复制的内容，因此屏幕上分开显示的
 地址与端口可以作为一个整体复制。ClusterIP 为 `None` 时保持纯文本：那是「没有地址」的说法，不是一个地址。
 
-节点的调度开关是对 `spec.unschedulable` 的 merge patch，走既有的受控通用 CRUD 路由，要求
-`cluster.resource.update`。节点 Drain 使用独立的 `cluster.node.drain`（默认只授予 admin）：先按 Node UID
+节点的调度开关是对 `spec.unschedulable` 的 merge patch，走既有的受控通用 CRUD 路由，要求独立的
+`cluster.node.manage`——Node 对象自身的写入（标签、污点、调度状态、YAML）都用这一项权限，不由
+`cluster.resource.update` 蕴含，理由与判定链路见
+[授权与安全边界](../security/authorization.md#节点对象的独立权限)。
+
+节点 Drain 使用独立的 `cluster.node.drain`（默认只授予 admin）：先按 Node UID
 复核并用 `spec.nodeName` 一次列全 Pod，超过 500 个或出现下一页时拒绝执行；Mirror、DaemonSet 和终止中的 Pod
 跳过，无控制器 Pod 与 emptyDir 默认阻断整个操作，必须分别显式接受才会继续。无阻断项后以带 UID test 的 JSON
 Patch 停止调度，再为每个 Pod 提交携带 UID precondition 的 `policy/v1 Eviction`。PDB 的 429 逐 Pod 报告为
@@ -210,7 +214,7 @@ Subresource 通道。响应中的 `evicted` 表示 API Server 已接受驱逐请
 Pod 或 emptyDir 等静态阻断时，明确说明尚未停止调度、也未发送 Eviction，并要求先接受对应风险后才能重新预检。
 PDB 等可能随副本状态恢复的动态阻断仍可直接重新执行 DryRun。
 
-节点标签管理与调度开关走同一条受控通用 CRUD 路由，同样要求 `cluster.resource.update`：请求是只命名
+节点标签管理与调度开关走同一条受控通用 CRUD 路由，同样要求 `cluster.node.manage`：请求是只命名
 `metadata.labels` 的 merge patch，其中只包含本次改动的键——新增与修改带新值，移除写成 `null`，未改动的键
 不出现。因此在打开表单与提交之间由控制器或另一个操作者设置的标签不会被整体回写覆盖，这也是 `kubectl label`
 发出的请求形状。Console 用页面视图而不是对话框编辑标签：字段数量就是该节点已有的标签数量。提交前按
@@ -623,7 +627,8 @@ ZKE 不安装网络插件，也不为不支持的插件伪造效果。
 
 浏览器只提供读取、YAML 编辑和删除三件事，且都复用既有链路：读取要求 `cluster.read`，YAML 编辑走
 `cluster.resource.update`，删除走 `cluster.resource.delete` 并携带该对象当前的 UID 与 resourceVersion 前置
-条件、Background 传播策略、DryRun 与显式确认。它不为未知类型编造类型化表单——对一个 ZKE 不认识其语义的 CR，
+条件、Background 传播策略、DryRun 与显式确认；目标是 core/v1 Node 时改用 `cluster.node.manage`，与节点分区
+里的入口是同一项权限。它不为未知类型编造类型化表单——对一个 ZKE 不认识其语义的 CR，
 YAML 是唯一诚实的编辑方式。命名空间选择器提供「所有命名空间」，对应通用接口省略 Namespace 参数的跨命名空间
 查询；名称筛选只作用于已加载的当前页并在界面上说明，因为 Kubernetes Field Selector 只能精确匹配名称，把它
 当成模糊搜索会静默变成另一种语义。Secret、Event 和五类 Kubernetes 授权资源不出现在这里：它们分别被通用接口

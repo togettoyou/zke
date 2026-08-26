@@ -29,6 +29,7 @@ import { Alert, Checkbox } from "@/components/ui/misc";
 import { formatAbsolute } from "@/lib/time";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
+import { NODE_MUTATION_PERMISSION } from "./resource-permissions";
 import { YamlEditorView } from "./YamlEditorView";
 import { DescribeView } from "./DescribeView";
 import { NodeLabelsView } from "./NodeLabelsView";
@@ -75,9 +76,10 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
   const drainApplyKey = useSubmissionKey(drainTarget !== null);
 
   const projectScope = { type: "project" as const, tenantId, projectId };
-  // Scheduling is a patch of the Node object, so it is an update rather than a
-  // Node-specific permission.
-  const canUpdate = permissions.can("cluster.resource.update", projectScope);
+  // Labels, the YAML and the scheduling switch are all writes to the Node object
+  // itself, so all three answer to the Node permission rather than to the
+  // ordinary resource one. Draining keeps its own permission below.
+  const canUpdate = permissions.can(NODE_MUTATION_PERMISSION, projectScope);
   const canDescribe = permissions.can("cluster.event.read", projectScope);
   const canDrain = permissions.can("cluster.node.drain", projectScope);
 
@@ -233,6 +235,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           clusterName={clusterName}
           kindLabel="Node"
           canUpdate={canUpdate}
+          writePermission={NODE_MUTATION_PERMISSION}
           onBack={() => setYamlName(null)}
         />
       ) : describeName ? (

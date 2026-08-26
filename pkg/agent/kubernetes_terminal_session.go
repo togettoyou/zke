@@ -560,7 +560,9 @@ func terminalClusterPolicyRules(permissions []string) []rbacv1.PolicyRule {
 			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"nodes", "namespaces"}, Verbs: []string{"get", "list", "watch"}},
 			rbacv1.PolicyRule{APIGroups: []string{"apiextensions.k8s.io"}, Resources: []string{"customresourcedefinitions"}, Verbs: []string{"get", "list", "watch"}})
 	}
-	if held[permissionname.ClusterResourceUpdate] {
+	// Writing a Node answers to its own ZKE permission, so kubectl inside the
+	// terminal must not inherit it from the ordinary resource permissions either.
+	if held[permissionname.ClusterNodeManage] {
 		rules = append(rules, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"update", "patch"}})
 	}
 	rbacVerbs := make([]string, 0, 5)

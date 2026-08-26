@@ -71,9 +71,9 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `list_workload_revisions` | 读取 Deployment/StatefulSet/DaemonSet 历史版本及回滚并发前置条件 | `cluster.read` |
 | `preview_workload_rollback` | 对指定 revision 执行 DryRun 并生成绑定用户和 Cluster 的预检快照 | `cluster.read` + 按 Namespace 选择 update/system/agent manage |
 | `rollback_workload` | 使用 `preview_id` 提交回滚；提交前重验权限和 DryRun | 同预检；受保护 Namespace 属于敏感操作 |
-| `preview_manifest_apply` | 严格解析多文档 YAML，逐文档判权、DryRun 并返回动作与有界字段路径差异 | `cluster.read` + 按文档选择 create/update/Namespace/RBAC/受保护 Namespace 权限；RBAC 规则涉及 Secret 时还需对应 Secret 权限 |
+| `preview_manifest_apply` | 严格解析多文档 YAML，逐文档判权、DryRun 并返回动作与有界字段路径差异 | `cluster.read` + 按文档选择 create/update/Namespace/Node/RBAC/受保护 Namespace 权限；RBAC 规则涉及 Secret 时还需对应 Secret 权限 |
 | `apply_manifest` | 使用 `preview_id` 提交原始 Manifest；批准后重新逐文档判权和 DryRun | 同预检；RBAC、受保护 Namespace 或 force 属于敏感操作 |
-| `preview_manifest_delete` | 逐文档判权并 DryRun 预检删除 | `cluster.read` + 按文档选择 delete/Namespace/RBAC/受保护 Namespace 权限 |
+| `preview_manifest_delete` | 逐文档判权并 DryRun 预检删除 | `cluster.read` + 按文档选择 delete/Namespace/Node/RBAC/受保护 Namespace 权限 |
 | `delete_manifest` | 使用 `preview_id` 删除预检中的对象 | 同预检；始终为敏感操作 |
 | `run_terminal_command` | 在本 Turn 复用的 Cluster Terminal 中执行一条非交互 Shell 命令，可使用 kubectl、BusyBox、curl 与 jq | `cluster.terminal.exec`；命令内 Kubernetes 操作再由本 Turn 冻结的权限快照决定，`kubectl exec` 还需 `cluster.pod.exec` |
 | `load_skill` | 读取一份 ZKE 发布的排查流程；只说明用哪些既有工具、按什么顺序取证 | `ai.run`（它不读取任何集群内容） |

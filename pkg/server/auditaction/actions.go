@@ -174,6 +174,7 @@ const (
 	DeniedClusterPodTerminalRecordingCreate = permissionname.ClusterPodTerminalRecordingCreate
 	DeniedClusterPodTerminalRecordingRead   = permissionname.ClusterPodTerminalRecordingRead
 	DeniedClusterPodPortForward             = permissionname.ClusterPodPortForward
+	DeniedClusterNodeManage                 = permissionname.ClusterNodeManage
 	DeniedClusterNodeDrain                  = permissionname.ClusterNodeDrain
 	DeniedClusterEventRead                  = permissionname.ClusterEventRead
 	DeniedClusterMetricsRead                = permissionname.ClusterMetricsRead
@@ -379,6 +380,7 @@ var actions = []Action{
 	{DeniedClusterPodTerminalRecordingCreate, GroupDenied},
 	{DeniedClusterPodTerminalRecordingRead, GroupDenied},
 	{DeniedClusterPodPortForward, GroupDenied},
+	{DeniedClusterNodeManage, GroupDenied},
 	{DeniedClusterNodeDrain, GroupDenied},
 	{DeniedClusterEventRead, GroupDenied},
 	{DeniedClusterMetricsRead, GroupDenied},

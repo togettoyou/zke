@@ -104,6 +104,7 @@ var allPermissions = []Permission{
 	PermissionClusterPodTerminalRecordingCreate,
 	PermissionClusterPodTerminalRecordingRead,
 	PermissionClusterPodPortForward,
+	PermissionClusterNodeManage,
 	PermissionClusterNodeDrain,
 	PermissionClusterEventRead,
 	PermissionClusterMetricsRead,

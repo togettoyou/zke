@@ -2037,6 +2037,9 @@ export interface paths {
          * @description 在明确的 Cluster、GVR 和 Namespace 中创建具名 Kubernetes 主资源。
          *     不接受 generateName、Secret 或 Subresource。实际写入要求显式确认；
          *     dry-run 可用于预览 API Server 默认值和校验结果。
+         *
+         *     目标为 core/v1 Node 时改用独立的 `cluster.node.manage`：节点的标签与污点决定
+         *     整个集群的调度结果，因此不由 `cluster.resource.create/update/delete` 蕴含。
          */
         post: operations["createGenericKubernetesResource"];
         delete?: never;
@@ -2086,12 +2089,18 @@ export interface paths {
         /**
          * @description 以完整对象更新具名 Kubernetes 主资源。URL、GVR、Namespace 和正文身份必须一致，
          *     正文必须携带 metadata.resourceVersion。实际写入要求显式确认。
+         *
+         *     目标为 core/v1 Node 时改用独立的 `cluster.node.manage`：节点的标签与污点决定
+         *     整个集群的调度结果，因此不由 `cluster.resource.create/update/delete` 蕴含。
          */
         put: operations["updateGenericKubernetesResource"];
         post?: never;
         /**
          * @description 删除具名 Kubernetes 主资源。支持 Grace Period、Propagation Policy、
          *     UID/resourceVersion 前置条件和 dry-run；实际删除要求显式确认。
+         *
+         *     目标为 core/v1 Node 时改用独立的 `cluster.node.manage`：节点的标签与污点决定
+         *     整个集群的调度结果，因此不由 `cluster.resource.create/update/delete` 蕴含。
          */
         delete: operations["deleteGenericKubernetesResource"];
         options?: never;
@@ -2099,6 +2108,9 @@ export interface paths {
         /**
          * @description 使用显式 patch_type 修改具名 Kubernetes 主资源。支持 json、merge、
          *     strategic-merge 和 apply；apply 必须提供 field_manager，force 默认 false。
+         *
+         *     目标为 core/v1 Node 时改用独立的 `cluster.node.manage`：节点的标签与污点决定
+         *     整个集群的调度结果，因此不由 `cluster.resource.create/update/delete` 蕴含。
          */
         patch: operations["patchGenericKubernetesResource"];
         trace?: never;
@@ -2122,6 +2134,9 @@ export interface paths {
          *     metadata.uid 和 metadata.resourceVersion 与实时对象一致。dry_run=true
          *     调用 Kubernetes API Server DryRun 校验且无需 confirm；实际写入必须提供
          *     confirm=true。请求正文及其字段不会写入 ZKE 审计记录。
+         *
+         *     目标为 core/v1 Node 时改用独立的 `cluster.node.manage`：节点的标签与污点决定
+         *     整个集群的调度结果，因此不由 `cluster.resource.create/update/delete` 蕴含。
          */
         put: operations["updateKubernetesResourceYAML"];
         post?: never;
@@ -2147,7 +2162,8 @@ export interface paths {
          *
          *     权限逐文档判定，不由路由单独决定：Secret 需要 `cluster.secret.manage`，
          *     Kubernetes RBAC 五类需要 `cluster.rbac.manage`，Namespace 需要
-         *     `cluster.namespace.manage`，其余资源按新建或更新分别需要
+         *     `cluster.namespace.manage`，core/v1 Node 需要 `cluster.node.manage`，
+         *     其余资源按新建或更新分别需要
          *     `cluster.resource.create` 或 `cluster.resource.update`。只要有一个文档不被
          *     当前身份的权限覆盖，整份清单被拒绝且不写入任何对象，返回 403。
          *
@@ -2748,7 +2764,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "audit.read" | "ai.run")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.manage" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "audit.read" | "ai.run")[];
         };
         ChangePasswordRequest: {
             /** Format: password */

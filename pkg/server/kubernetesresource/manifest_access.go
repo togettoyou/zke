@@ -43,6 +43,7 @@ type ManifestGrant struct {
 	ResourceUpdate        bool
 	ResourceDelete        bool
 	NamespaceManage       bool
+	NodeManage            bool
 	SecretRead            bool
 	SecretManage          bool
 	RBACManage            bool
@@ -60,6 +61,7 @@ type ManifestFamily string
 const (
 	ManifestFamilyGeneric       ManifestFamily = "generic"
 	ManifestFamilyNamespace     ManifestFamily = "namespace"
+	ManifestFamilyNode          ManifestFamily = "node"
 	ManifestFamilySecret        ManifestFamily = "secret"
 	ManifestFamilyAuthorization ManifestFamily = "authorization"
 	// Refused outright, regardless of the grant.
@@ -77,6 +79,7 @@ const (
 	ManifestRequirementResourceUpdate        ManifestRequirement = "resource_update"
 	ManifestRequirementResourceDelete        ManifestRequirement = "resource_delete"
 	ManifestRequirementNamespaceManage       ManifestRequirement = "namespace_manage"
+	ManifestRequirementNodeManage            ManifestRequirement = "node_manage"
 	ManifestRequirementSecretManage          ManifestRequirement = "secret_manage"
 	ManifestRequirementRBACManage            ManifestRequirement = "rbac_manage"
 	ManifestRequirementSystemNamespaceManage ManifestRequirement = "system_namespace_manage"
@@ -104,6 +107,8 @@ func ManifestFamilyFor(resource ResourceIdentity) ManifestFamily {
 		return ManifestFamilyRefused
 	case resource.Group == "" && resource.Resource == "namespaces":
 		return ManifestFamilyNamespace
+	case resource.Group == "" && resource.Resource == "nodes":
+		return ManifestFamilyNode
 	default:
 		return ManifestFamilyGeneric
 	}
@@ -166,6 +171,12 @@ func (access *ManifestAccess) RequirementForApply(
 		// Applying an ordinary Namespace is `cluster.namespace.manage` whether or
 		// not it exists. Protected targets returned above use their own permission.
 		return ManifestRequirementNamespaceManage, access.grant.NamespaceManage, nil
+	case ManifestFamilyNode:
+		// A Node is Cluster-scoped, so the protected-Namespace branch above never
+		// matches one. Creating and changing a Node answer to the same permission:
+		// a manifest that registers a Node and one that relabels it both decide
+		// where the Cluster's workloads may run.
+		return ManifestRequirementNodeManage, access.grant.NodeManage, nil
 	default:
 		if creating {
 			return ManifestRequirementResourceCreate, access.grant.ResourceCreate, nil
@@ -201,6 +212,8 @@ func (access *ManifestAccess) RequirementForDelete(
 		return ManifestRequirementRBACManage, access.grant.RBACManage, nil
 	case ManifestFamilyNamespace:
 		return ManifestRequirementNamespaceManage, access.grant.NamespaceManage, nil
+	case ManifestFamilyNode:
+		return ManifestRequirementNodeManage, access.grant.NodeManage, nil
 	default:
 		return ManifestRequirementResourceDelete, access.grant.ResourceDelete, nil
 	}

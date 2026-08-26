@@ -763,6 +763,15 @@ var fakeCatalog = map[kubernetesresource.ManifestKind]kubernetesresource.Manifes
 		Namespaced: false,
 		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
 	},
+	// Cluster-scoped and in the catalog because a manifest may legitimately name
+	// one: a Node document answers to `cluster.node.manage` rather than to the
+	// ordinary resource permissions, and that is only testable against a Kind
+	// that resolves.
+	{Version: "v1", Kind: "Node"}: {
+		Resource:   kubernetesresource.ResourceIdentity{Version: "v1", Resource: "nodes"},
+		Namespaced: false,
+		Verbs:      []string{"get", "list", "create", "update", "patch", "delete"},
+	},
 	// Refused by the resource layer whatever the grant, and in the catalog so the
 	// refusal is tested against a Kind that resolves rather than one that does not.
 	{Version: "v1", Kind: "Event"}: {
