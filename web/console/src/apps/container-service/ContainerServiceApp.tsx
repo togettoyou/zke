@@ -12,10 +12,10 @@ import {
   LayoutDashboard,
   Layers,
   Network,
-  Package,
   Search,
   Server,
   ShieldCheck,
+  ShipWheel,
 } from "lucide-react";
 
 import { useClusters } from "@/api/queries/clusters";
@@ -78,7 +78,7 @@ const NAV: AppNavItem[] = [
   // Between the workloads and the Pods they own: a Helm release is what an
   // operator installed, and the workloads below it are what that install
   // produced.
-  { id: "helm", label: "应用（Helm）", icon: Package },
+  { id: "helm", label: "Helm 应用", icon: ShipWheel },
   { id: "pods", label: "Pod", icon: Box },
   { id: "metrics", label: "资源用量", icon: Activity },
   { id: "networking", label: "服务与路由", icon: Network },
@@ -158,7 +158,10 @@ const NAMESPACE_PICKER_LIMIT = 500;
  * Only online Clusters can be the target, because each request is executed by
  * that Cluster's Agent.
  */
-export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windowId">) {
+export function ContainerServiceApp({
+  windowId,
+  openApp,
+}: Pick<AppComponentProps, "windowId" | "openApp">) {
   const [evidenceTarget] = useState(readContainerEvidenceTarget);
   useEffect(() => {
     sessionStorage.removeItem(CONTAINER_EVIDENCE_KEY);
@@ -539,6 +542,7 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
+            onOpenHelmApp={() => openApp("helm")}
           />
         ) : activeSection === "authorization" ? (
           <AuthorizationSection

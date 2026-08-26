@@ -507,9 +507,10 @@ values、渲染出的清单和 NOTES 都在它的 `release` 取值里。因此 `
 `kubernetes_helm_release.list`；读取某一次修订会返回 values，记为 `kubernetes_helm_release.read`。审计目标名
 沿用 Secret 家族，这样按「谁读了这个命名空间的 Secret」筛选的人不会漏掉这条路径。
 
-**没有写入路由，这是刻意的。** 安装、升级、回滚与卸载需要 Helm 自己的渲染引擎——模板、Hook、执行顺序——由
-ZKE 代写 Release Secret 会破坏 `helm` 客户端依赖的历史记录，而一个只写对了一半的 Release 比没有这个功能更难
-收拾。列表按 Release 名归并到存储中最新的一次修订（与 `helm list` 相同），只读 Secret 的 label，不解压任何
+**当前没有写入路由。** 安装、升级、回滚与卸载需要 Helm 自己的渲染引擎——模板、Hook、执行顺序——由 ZKE 代写
+Release Secret 会破坏 `helm` 客户端依赖的历史记录，而一个只写对了一半的 Release 比没有这个功能更难收拾。这些
+能力属于规划中的独立「Helm 应用」App，随它一起设计；它们需要的权限也随之决定，不由这三条只读路由预先声明。
+列表按 Release 名归并到存储中最新的一次修订（与 `helm list` 相同），只读 Secret 的 label，不解压任何
 负载；某个 Namespace 的修订 Secret 超过一次盘点上限时返回 `422 helm_release_inventory_truncated`，而不是用
 跨页的部分结果把错误的修订认成最新。解压带上限，超过时按响应过大拒绝：Release 负载是 gzip，重复内容的膨胀
 比远大于 Secret 自身 1 MiB 的限制。只支持 Secret 存储驱动，使用 ConfigMap 或 SQL 驱动的 Release 不会出现。

@@ -26,6 +26,13 @@ import { cn } from "@/lib/cn";
  * grid reflows, and it is impossible to read one icon without reading its own
  * status.
  *
+ * That is also why the grid keeps the catalogue's own order rather than sorting
+ * the planned ones to the end. A planned application belongs beside the one it
+ * extends — Helm 应用 next to 容器服务, which is where an operator goes looking
+ * for it — and sorting by availability moves it away from its subject to say a
+ * second time what its unlit face already says. The catalogue orders by what an
+ * application is about; availability is a property of the tile.
+ *
  * The difference between "you can use this" and "this is where it will go" has
  * to be legible before the window opens, so a planned tile is drawn without the
  * lit face and the raised edge that make an available one look pressable.
@@ -49,19 +56,12 @@ export const IconGrid = memo(function IconGrid({ onOpen }: { onOpen: (appId: str
     return manifest.requiredPermissions.some((permission) => permissions.canAnywhere(permission));
   });
 
-  // Available first, then planned: what can be used should be reachable without
-  // reading past what cannot.
-  const ordered = [
-    ...visible.filter((manifest) => manifest.availability.state === "available"),
-    ...visible.filter((manifest) => manifest.availability.state === "planned"),
-  ];
-
   return (
     <ul
       className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-x-2 gap-y-6 p-6"
       aria-label="平台应用"
     >
-      {ordered.map((manifest) => (
+      {visible.map((manifest) => (
         <li key={manifest.id}>
           <AppIcon manifest={manifest} onOpen={() => onOpen(manifest.id)} />
         </li>

@@ -21,7 +21,7 @@
 | 自动伸缩 | HorizontalPodAutoscaler，以及可选的 VerticalPodAutoscaler 与 KEDA ScaledObject |
 | 策略管理 | ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass |
 | 授权管理 | ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding，使用独立的 `cluster.rbac.*` |
-| 应用（Helm） | 只读的 Release 清单、修订历史与某次修订的 Chart、values、NOTES 与渲染清单，使用 `cluster.secret.read` |
+| Helm 应用 | Release 清单、修订历史与某次修订的 Chart、values、NOTES 与渲染清单（只读），使用 `cluster.secret.read` |
 | 资源对象浏览器 | Discovery 目录与任意已授权主资源的 List/Get/YAML/Delete |
 | YAML 清单 | 多文档清单的 DryRun、逐文档判权、Server-Side Apply 与删除 |
 | 事件 | 按 Namespace 或全 Cluster 的 Event 快照与实时 Follow，使用独立的 `cluster.event.read` |
@@ -1085,11 +1085,16 @@ SSE `id` 保存的最后 resourceVersion 续读。其余原因结束读取并在
 事件页面需要 `cluster.event.read`。当前身份在所选项目没有该权限时，左侧导航不显示「事件」类别；服务端仍然
 独立判定。
 
-## 应用（Helm）
+## Helm 应用
 
-「应用（Helm）」是一个只读分区，回答「这个命名空间里装了哪些应用、什么 Chart 版本、用的什么 values」——容器
-服务里没有别的地方能回答它：资源对象浏览器看得到 Chart 生成的 Deployment，而 Deployment 上没有任何指回
-Release 的引用。
+容器服务里的「Helm 应用」回答「这个命名空间里装了哪些应用、什么 Chart 版本、用的什么 values」——容器服务里
+没有别的地方能回答它：资源对象浏览器看得到 Chart 生成的 Deployment，而 Deployment 上没有任何指回 Release 的
+引用。它是**读**的那一半，另一半在同名的独立应用里，工具栏上的「Helm 应用」按钮就是通往它的入口。
+
+这样切分不是把功能砍掉一半。仓库接入、Chart 检索、values 编辑、提交前的渲染差异、回滚与卸载各自需要自己的
+工作区，塞进一个按命名空间定域的资源列表里只会两头都不好用；而排查一个工作负载时想知道「它是哪个 Release
+装的、用的什么 values」，也不该为此离开当前上下文。独立应用当前是 Roadmap 中的规划项，桌面上以未点亮的图标
+呈现，打开后如实说明尚未实现，不提供任何数据或操作。
 
 Helm Release 不是 Kubernetes 的一种资源，而是一个 `helm.sh/release.v1` 类型的 Secret：Release 名、修订号和
 状态在它的 label 上，Chart、安装时传入的 values、渲染出的清单和 NOTES 在它的 `release` 取值里，编码是
@@ -1106,9 +1111,9 @@ Base64 套 gzip 套 JSON。因此这三条路由要求 `cluster.read` **与** `c
 的修订：被 `--history-max` 清理掉的不再存在，接口也不假装它们还在。只支持 Secret 存储驱动，使用 ConfigMap
 或 SQL 驱动的 Release 不会出现在这里，空列表文案说明了这一点。
 
-**没有写入路由，这是刻意的，界面也直说。** 安装、升级、回滚与卸载需要 Helm 自己的渲染引擎——模板、Hook、
-执行顺序——由 ZKE 代写 Release Secret 会破坏 `helm` 客户端依赖的历史记录，一个只写对了一半的 Release 比没有
-这个功能更难收拾。values 页上单独提示它可能包含凭证、查看已写入审计。
+当前没有写入路由。安装、升级、回滚与卸载需要 Helm 自己的渲染引擎——模板、Hook、执行顺序——由 ZKE 代写
+Release Secret 会破坏 `helm` 客户端依赖的历史记录；这些能力属于独立的 Helm 应用，随它一起落地。values 页上
+单独提示它可能包含凭证、查看已写入审计。
 
 Console Pod 页面列出所选命名空间的 Pod，展示 Phase、就绪与终止状态、控制器 Owner、节点、Pod IP、累计重启
 次数和创建时间，可下钻到包含调度与网络信息、主容器/初始化容器/临时容器的当前与上次状态、资源

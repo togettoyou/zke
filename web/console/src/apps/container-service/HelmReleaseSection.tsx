@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { History } from "lucide-react";
+import { History, ShipWheel } from "lucide-react";
 
 import {
   useHelmRelease,
@@ -25,6 +25,8 @@ import type { ClusterSectionProps } from "./types";
 type HelmReleaseSectionProps = ClusterSectionProps & {
   /** The Namespace every query in this section is scoped to. */
   namespace: string;
+  /** Opens the standalone Helm application, where the writes live. */
+  onOpenHelmApp: () => void;
 };
 
 /**
@@ -36,10 +38,13 @@ type HelmReleaseSectionProps = ClusterSectionProps & {
  * section reads Helm's own storage — one Secret per revision — and reports what
  * is in it.
  *
- * Read-only, and it says so rather than leaving an operator to discover it: ZKE
- * does not install, upgrade, roll back or uninstall a release. Doing that
- * correctly means running Helm's rendering engine, and writing release Secrets
- * without it would corrupt the history the real `helm` client depends on.
+ * It is the reading half on purpose, not a half-finished version of the other
+ * one. Installing, upgrading, rolling back and uninstalling need Helm's own
+ * rendering engine and a workspace of their own — a chart repository, a values
+ * editor, a rendered diff — none of which belongs inside a Namespace-scoped
+ * resource list. Those live in the standalone Helm application, which the header
+ * links to; here an operator answers "what is installed, at what version, with
+ * what values" without leaving the workload they were looking at.
  */
 export function HelmReleaseSection({
   clusterId,
@@ -47,6 +52,7 @@ export function HelmReleaseSection({
   namespace,
   tenantId,
   projectId,
+  onOpenHelmApp,
 }: HelmReleaseSectionProps) {
   const { permissions } = useSessionContext();
   const projectScope = { type: "project" as const, tenantId, projectId };
@@ -125,11 +131,13 @@ export function HelmReleaseSection({
     <div className="flex h-full min-h-0 flex-col">
       <SectionToolbarActions>
         <RefreshAction isFetching={list.isFetching} onRefresh={() => void list.refetch()} />
+        {/* The way out to the application that manages releases, rather than a
+            notice explaining what this page does not do. */}
+        <Button size="sm" variant="secondary" onClick={onOpenHelmApp}>
+          <ShipWheel />
+          Helm 应用
+        </Button>
       </SectionToolbarActions>
-      <Alert tone="info" className="mb-3">
-        ZKE 只读取 Helm 的存储，不提供安装、升级、回滚与卸载：这些操作需要 Helm 自己的渲染引擎，由
-        ZKE 代写 Release Secret 会破坏 `helm` 客户端依赖的历史记录。
-      </Alert>
       <DataTable
         columns={columns}
         data={list.data?.releases}
