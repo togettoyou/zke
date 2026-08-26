@@ -14,8 +14,9 @@ export type PodListParams = {
  * Reads the Pods of one Namespace of one Cluster.
  *
  * Both are path segments rather than filters, so a query cannot widen itself to
- * another Namespace. Logs, exec and eviction are not here and are not available:
- * they are Kubernetes subresources, which the Resource protocol rejects.
+ * another Namespace. Logs and exec are not here: they are Kubernetes
+ * subresources, which the generic Resource protocol rejects, and each has an
+ * endpoint of its own. So does eviction — see `useEvictPod` below.
  */
 export function usePods(
   clusterId: string | null,
@@ -79,6 +80,7 @@ export function usePod(clusterId: string | null, namespace: string | null, name:
  * an intended deletion into a conflict.
  *
  * This is a delete, not an eviction: it does not consult PodDisruptionBudgets.
+ * `useEvictPod` below is the one that does.
  */
 export function useDeletePod() {
   const queryClient = useQueryClient();
@@ -94,6 +96,62 @@ export function useDeletePod() {
       unwrap(
         await api.DELETE(
           "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}",
+          {
+            params: {
+              path: {
+                cluster_id: input.clusterId,
+                namespace_name: input.namespace,
+                pod_name: input.name,
+              },
+              header: idempotentHeaders(input.idempotencyKey),
+            },
+            body: { dry_run: input.dryRun, confirm: !input.dryRun, uid: input.uid },
+          },
+        ),
+      ),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents });
+      if (variables.dryRun) {
+        return;
+      }
+      queryClient.removeQueries({
+        queryKey: queryKeys.pod(variables.clusterId, variables.namespace, variables.name),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["pods", variables.clusterId, variables.namespace],
+      });
+    },
+  });
+}
+
+/**
+ * Evicts a Pod through the Kubernetes eviction subresource.
+ *
+ * The same power as the delete above — the Pod goes away either way, and both
+ * answer to `cluster.resource.delete` — used more carefully: Kubernetes checks
+ * the PodDisruptionBudgets covering the Pod first and refuses when honouring one
+ * would take its workload below the budget. That refusal arrives as a 409 with
+ * `pod_disruption_budget_blocked`, carrying the API Server's own account of
+ * which budget said no.
+ *
+ * Pinned to the UID for the reason the delete is, and `resource_version` is
+ * omitted for the same reason: a Pod's status changes constantly, and any of
+ * those updates would turn an intended eviction into a conflict.
+ */
+export function useEvictPod() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      clusterId: string;
+      namespace: string;
+      name: string;
+      uid: string;
+      dryRun: boolean;
+      idempotencyKey: string;
+    }) =>
+      unwrap(
+        await api.POST(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/eviction",
           {
             params: {
               path: {

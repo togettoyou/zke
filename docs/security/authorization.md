@@ -384,9 +384,14 @@ DryRun 使用独立的 `.dry_run` 审计动作，不会与实际写入混记。
 
 Node 对象自身的写入使用独立的 `cluster.node.manage`，不由 `cluster.resource.create/update/delete` 蕴含。
 覆盖范围是「改的是 Node 这个对象」的全部入口：容器服务的节点标签编辑与调度开关（对 `metadata.labels` 与
-`spec.unschedulable` 的 merge patch）、节点 YAML 编辑、资源对象浏览器中的 Node、通用 Resource/YAML 路由上
-GVR 为 core/v1 `nodes` 的写入，以及清单中的 Node 文档。集群终端的 kubectl 同样只在会话持有该权限时才被投射
-`nodes` 的 `update`、`patch`。
+`spec.unschedulable` 的 merge patch）、节点污点编辑（对 `spec.taints` 的 JSON Patch）、节点 YAML 编辑、
+资源对象浏览器中的 Node、通用 Resource/YAML 路由上 GVR 为 core/v1 `nodes` 的写入，以及清单中的 Node 文档。
+集群终端的 kubectl 同样只在会话持有该权限时才被投射 `nodes` 的 `update`、`patch`。
+
+污点编辑没有独立路由，走的就是通用 Resource 的 JSON Patch，因此权限由上面这条统一判定。它的并发前置条件是
+对 `/spec/taints` 的 `test`，而不是 `metadata.resourceVersion`：Node 的 resourceVersion 随每次 kubelet 心跳
+变化，用它做前置条件几乎每次都会因为与污点无关的原因失败；`test` 现有污点列表恰好只在别人改过污点时失败。
+Node 没有污点时不存在 `/spec/taints` 这个路径，JSON Patch 也无法断言路径缺失，这一种情形不带该前置条件。
 
 理由与 Namespace 同源，是影响面而不是敏感度：其余 `cluster.resource.*` 写入作用于一个对象，而节点的标签、
 污点与 `spec.unschedulable` 决定整个集群的调度结果——一次 `kubectl label node` 足以把工作负载吸引到或排除出
@@ -414,6 +419,31 @@ Namespace 则连同其中的全部对象一起移除，创建一个则新增了�
 Resource 与 YAML 接口照常返回它们。Server 会在类型化、通用 Resource 与 Manifest 路径中解析实际 Namespace 目标，
 并以对应的独立权限替代通用资源写权限；资源目录无需通过移除 `create`、`delete`、`patch` 动词隐藏能力。因此具备
 相应权限的调用者可以从任一受支持入口操作 Namespace，同时普通 `cluster.resource.*` 不能成为绕过路径。
+
+#### Pod 驱逐与 CronJob 立即运行：按写入的性质取权限，不按入口取
+
+这两个动作都不引入新权限，都按「它实际写了什么」落在既有权限位上。
+
+**Pod 驱逐**（`POST .../pods/{pod}/eviction`）与删除 Pod 是同一件事的两种做法——Pod 都会消失——因此使用同一个
+`cluster.resource.delete`，也走同一套受保护命名空间替换：路径里有 Namespace，`kube-*` 与 Agent Namespace
+仍分别要求系统或 Agent 命名空间权限。它比删除多的不是权力而是约束：Kubernetes 先校验覆盖该 Pod 的
+PodDisruptionBudget，破坏可用性预算时拒绝执行，Server 把这种拒绝映射为独立的
+`409 pod_disruption_budget_blocked` 并带上 API Server 自己的说明，而不是与「对象已变更」的冲突混为一谈——
+前者重新读取后重试就能过，后者要等其他副本就绪。请求必须携带当前 Pod UID，DryRun 与显式确认同删除；审计使用
+独立的 `kubernetes_pod.evict` / `kubernetes_pod.evict.dry_run`，因为「这次移除有没有过预算校验」正是事后要问的。
+Agent 侧仍只接受 Node Drain 已有的那一种精确请求形状：core/v1 `pods` 的 `eviction` 子资源、policy/v1 Eviction
+正文、UID 前置条件，`pod_eviction_access` 不是操作任意子资源的通行证。
+
+**CronJob 立即运行**（`POST .../workloads/cronjobs/{name}/trigger`）等价于
+`kubectl create job --from=cronjob/<name>`：读取 CronJob、用它的 `jobTemplate` 创建一个 Job，CronJob 本身
+一个字节都不改。它因此要求 `cluster.resource.create` 而不是其余 CronJob 动作使用的 update——**能修改已有对象**
+和**能在这个命名空间新建对象**是两次不同的授予。请求必须携带当前 CronJob UID：调度表达式和 Pod 模板正是打开
+页面到按下按钮之间最可能变化的东西。已暂停的 CronJob 被拒绝（`409 cron_job_suspended`）——Kubernetes 会接受
+这个 Job，`spec.suspend` 停的是调度而不是 API，但有人是有意暂停它的，替他运行会把「已暂停」变成一个标签而
+不是一个状态。生成的 Job 名由 CronJob 名与幂等键推导，重放同一请求只会得到 AlreadyExists；它持有指向 CronJob
+的 ownerReference 但不是 controller 引用，因此会被垃圾回收一并清理，又不会被 CronJob 控制器计入
+`concurrencyPolicy` 与历史保留数。审计使用独立的 `kubernetes_cron_job.trigger` / `.dry_run`：从一条通用的对象
+创建记录里反推「这是一次计划外的运行」只能靠猜名字。
 
 Service、Ingress 与 Gateway 类型化接口沿用 `cluster.read` 和 `cluster.resource.create/update/delete`，
 并固定 GVR 与 Namespace，客户端不能改写资源类型。更新要求当前 UID/resourceVersion，删除同时把两者作为
@@ -466,6 +496,23 @@ Secret 的**读取**同样写入审计，这是它与 ConfigMap 的区别所在�
 已经交出去的凭证收不回来，事后唯一还能回答的问题就是谁在什么时候取走了它。列表与单对象读取记为两个不同的
 动作（`kubernetes_secret.list` 与 `kubernetes_secret.read`），因为列表不返回任何取值——区分这两者就是区分
 "浏览"与"取走"。审计记录发起者、Cluster、Namespace、对象名和结果，不记录任何键名或取值。
+
+#### Helm Release：权限跟着存储走，不跟着路由名走
+
+Helm Release 不是 Kubernetes 的一种资源，而是一个 `helm.sh/release.v1` 类型的 Secret：Chart、安装时传入的
+values、渲染出的清单和 NOTES 都在它的 `release` 取值里。因此 `GET .../helm-releases` 系列三条只读路由要求
+`cluster.read` **与** `cluster.secret.read`，并且和 `/secrets` 一样进入受保护命名空间的附加判定——读
+`kube-system` 里的一个 Release 就是读 `kube-system` 里的一个 Secret，路由叫什么名字不能成为绕过这条边界的
+方式。审计沿用 Secret 读取的划分：列表与修订历史不返回任何 values，记为
+`kubernetes_helm_release.list`；读取某一次修订会返回 values，记为 `kubernetes_helm_release.read`。审计目标名
+沿用 Secret 家族，这样按「谁读了这个命名空间的 Secret」筛选的人不会漏掉这条路径。
+
+**没有写入路由，这是刻意的。** 安装、升级、回滚与卸载需要 Helm 自己的渲染引擎——模板、Hook、执行顺序——由
+ZKE 代写 Release Secret 会破坏 `helm` 客户端依赖的历史记录，而一个只写对了一半的 Release 比没有这个功能更难
+收拾。列表按 Release 名归并到存储中最新的一次修订（与 `helm list` 相同），只读 Secret 的 label，不解压任何
+负载；某个 Namespace 的修订 Secret 超过一次盘点上限时返回 `422 helm_release_inventory_truncated`，而不是用
+跨页的部分结果把错误的修订认成最新。解压带上限，超过时按响应过大拒绝：Release 负载是 gzip，重复内容的膨胀
+比远大于 Secret 自身 1 MiB 的限制。只支持 Secret 存储驱动，使用 ConfigMap 或 SQL 驱动的 Release 不会出现。
 
 Secret 的 YAML 是一对独立路由，读要求 `cluster.secret.read`，写要求 `cluster.secret.manage`，不经过通用 YAML
 入口——后者对 Secret 的拒绝没有放开。该路由使用 Secret 服务自己的资源访问，其只接受 `core/v1 Secret`，并保留
@@ -684,11 +731,23 @@ Domain。即使 Access Listener 与 API 使用同一 IP 的不同端口——Coo
 进入日志、审计或 AI 上下文；审计只记录创建者、目标 Cluster/Namespace/Pod UID、端口、时长与会话结果。
 
 Kubernetes Event 同样不复用 `cluster.read`。Server 和 Agent 的通用 Resource 接口会拒绝并从 Discovery 中
-隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。普通请求必须明确 Cluster 和 Namespace，可使用受限
-字段过滤器定域到具体资源；唯一的空 Namespace 例外是 Node describe 使用的一次性非 Follow 快照，且 Server、
-协议校验和 Agent 都要求 `involvedObject.kind=Node` 与非空精确 UID。实时 Follow 周期重新验证 Session 与
-`cluster.event.read`。Agent ServiceAccount 仅
-增加 `events` 的 `get/list/watch`，Event 的 message 正文不写入日志或审计，审计只记录作用域、过滤目标和结果。
+隐藏 `core/v1/events`，只能通过独立 Resource Watch 协议读取。Namespace 级请求必须明确 Cluster 和 Namespace，
+可使用受限字段过滤器定域到具体资源。实时 Follow 周期重新验证 Session 与 `cluster.event.read`。Agent
+ServiceAccount 仅增加 `events` 的 `get/list/watch`，Event 的 message 正文不写入日志或审计，审计只记录作用域、
+过滤目标和结果。
+
+空 Namespace 意味着该 Cluster 的全部 Namespace，只有两个调用方被允许这样请求，而且是按请求上的标志区分的，
+不是按选择器的形状猜出来的：
+
+- **事件中心**（`GET /api/v1/clusters/{cluster_id}/events`）明确要求全 Cluster，请求上带
+  `cluster_event_access`。它要求的仍然是 `cluster.event.read`——该权限一直按 Cluster 授予，持有者本来就可以
+  逐个 Namespace 读到同样的事件，这里省掉的是逐个读取而不是一次授权。审计目标记为 `namespace:*`，与
+  Namespace 级读取区分开。
+- **Node describe** 使用一次性非 Follow 快照，不带该标志，Server、协议校验和 Agent 三处仍然要求
+  `involvedObject.kind=Node` 与非空精确 UID。它不能通过去掉一个选择器项变成全 Cluster 的 Follow。
+
+`cluster_event_access` 是协议上的新增字段，早于该能力的 Agent 读不到它，因而继续按原规则拒绝空 Namespace：
+Server 先于 Agent 升级时得到的是一次明确的能力缺失（`503 agent_capability_unavailable`），而不是一次意外放宽。
 
 describe 接口（`.../pods/{pod_name}/describe`、
 `.../workloads/{workload_resource}/{workload_name}/describe` 与

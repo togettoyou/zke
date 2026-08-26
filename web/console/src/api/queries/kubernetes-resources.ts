@@ -113,6 +113,47 @@ export function useGenericResources(
 }
 
 /**
+ * Reads one object exactly as Kubernetes stores it.
+ *
+ * The typed sections project an object into a stable shape and drop what they do
+ * not model, which is the right trade for reading. It is the wrong one for a
+ * caller that has to write a field back byte-for-byte — a JSON Patch `test`
+ * comparing against a re-assembled value fails on a field the projection never
+ * carried — so a form editing one raw field reads the raw object.
+ */
+export function useGenericResource(
+  clusterId: string | null,
+  identity: GenericResourceIdentity | null,
+  namespace: string,
+  name: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.genericResource(
+      clusterId ?? "",
+      identity ? `${identity.group}/${identity.version}/${identity.resource}` : "",
+      namespace,
+      name ?? "",
+    ),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(ITEM_PATH, {
+          params: {
+            path: { cluster_id: clusterId as string, resource_name: name as string },
+            query: {
+              version: identity?.version as string,
+              resource: identity?.resource as string,
+              ...(identity?.group ? { group: identity.group } : {}),
+              ...(namespace ? { namespace } : {}),
+            },
+          },
+          signal,
+        }),
+      ) as UnstructuredObject,
+    enabled: Boolean(clusterId && identity && name),
+  });
+}
+
+/**
  * Deletes one object through the generic endpoint.
  *
  * The browser reaches kinds no typed section models, so the object's own UID and

@@ -10,10 +10,10 @@
 | 能力 | 当前范围 |
 | --- | --- |
 | 集群概览 | Node、Namespace、Pod、PV、PVC 与五类工作负载的状态计数、kubelet 版本分布、容量与 requests 汇总 |
-| 节点 | List/Detail、停止与恢复调度、标签管理、Drain、诊断 |
+| 节点 | List/Detail、停止与恢复调度、标签管理、污点管理、Drain、诊断 |
 | 命名空间 | List/Detail/Create/Delete 与配额管理 |
-| 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob 的类型化 CRUD、伸缩、滚动重启、CronJob 暂停与恢复、修订历史与回滚 |
-| Pod | List/Detail/Delete、日志、Web Terminal 与输出录制、Pod Access、诊断 |
+| 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob 的类型化 CRUD、伸缩、滚动重启、CronJob 暂停/恢复与立即运行、修订历史与回滚 |
+| Pod | List/Detail/Delete/驱逐、日志、Web Terminal 与输出录制、Pod Access、诊断 |
 | 资源用量 | 经 Agent 读取 `metrics.k8s.io/v1beta1` 的 Node 与 Pod 实时用量 |
 | 服务与路由 | Service、Ingress、Gateway 与五种 Gateway API Route |
 | 配置管理 | ConfigMap 与 Secret，Secret 使用独立权限和专用路由 |
@@ -21,9 +21,10 @@
 | 自动伸缩 | HorizontalPodAutoscaler，以及可选的 VerticalPodAutoscaler 与 KEDA ScaledObject |
 | 策略管理 | ResourceQuota、LimitRange、NetworkPolicy、PodDisruptionBudget、PriorityClass |
 | 授权管理 | ServiceAccount、Role、ClusterRole、RoleBinding、ClusterRoleBinding，使用独立的 `cluster.rbac.*` |
+| 应用（Helm） | 只读的 Release 清单、修订历史与某次修订的 Chart、values、NOTES 与渲染清单，使用 `cluster.secret.read` |
 | 资源对象浏览器 | Discovery 目录与任意已授权主资源的 List/Get/YAML/Delete |
 | YAML 清单 | 多文档清单的 DryRun、逐文档判权、Server-Side Apply 与删除 |
-| 事件 | 按 Namespace 的 Event 快照与实时 Follow，使用独立的 `cluster.event.read` |
+| 事件 | 按 Namespace 或全 Cluster 的 Event 快照与实时 Follow，使用独立的 `cluster.event.read` |
 
 统一的执行边界：
 
@@ -121,7 +122,8 @@ Kubernetes continuation token，并与 offset 分页一样固定渲染在表格�
 持久化在浏览器本地，只保存集群标识，且每次都会重新对照该项目当前在线的集群解析——已下线的集群不会被选中。
 离线集群仍出现在选择器中但不可选，避免操作者以为集群不存在。命名空间提供 List/Detail/Create/Delete 与配额管理，
 其中创建与删除要求 `cluster.namespace.manage`，配额管理与 YAML 编辑仍是 `cluster.resource.*`；
-节点提供 List/Detail、停止与恢复调度和标签管理。所有变更都经过权限门控、DryRun 预检、影响展示与二次确认。
+节点提供 List/Detail、停止与恢复调度、标签管理和污点管理。所有变更都经过权限门控、DryRun 预检、影响展示与
+二次确认。
 Console 对这一步统一使用「DryRun 预检」：校验成功显示「DryRun 预检已通过」；请求已经返回但存在静态阻断或
 PDB 阻断时显示「DryRun 预检已完成，存在阻断项」，不得用「已通过」掩盖无法继续执行的结果。
 
@@ -223,6 +225,22 @@ Kubernetes 规则校验键名（可选的 DNS 子域名前缀加 `/`，名称部
 `topology.kubernetes.io/zone` 这类由 kubelet 或云控制器在每次节点上报时写回的标签仍然可以编辑，但会先明确
 提示改动可能很快被覆盖，而不是把操作者留在「谁改回去了」的问题里。`node-role.kubernetes.io/*` 与
 `kubernetes.io/role` 决定列表和详情中显示的角色，因此标签写入成功后节点列表、详情与诊断一并失效重取。
+
+节点污点管理走同一条路由和同一项 `cluster.node.manage`，但请求形状不同：污点是一个列表，merge patch 只能
+整份替换而无从声明「替换的是哪一份」，因此它是 JSON Patch——一条 `test /metadata/uid`，一条 `test
+/spec/taints` 断言列表仍是打开页面时读到的那一份，再把新列表写回去。并发前置条件用的是污点列表本身而不是
+`metadata.resourceVersion`：Node 的 resourceVersion 随每次 kubelet 心跳变化，用它做前置条件几乎每次都会因为
+与污点无关的原因失败，而 `test` 污点列表恰好只在别人改过污点时失败。为了让这次比较逐字节成立，页面读的是
+通用资源接口返回的原始 Node 对象而不是类型化投影——投影会丢掉它不建模的字段，用它重新拼出来的列表通不过
+`test`。节点完全没有污点时不存在 `/spec/taints` 这个路径，而 JSON Patch 无法断言路径缺失，这一种情形不带该
+前置条件。
+
+Console 同样用页面视图编辑污点，键与值按 Kubernetes 规则校验，效果从 `NoSchedule`、`PreferNoSchedule`、
+`NoExecute` 中选择，并逐条说明三者的区别；同一个键配不同效果是两条合法的污点，因此只有「键 + 效果」这一对
+要求唯一。二次确认列出新增、修改与移除，新增或修改 `NoExecute` 时单独标红说明该节点上不容忍它的 Pod 会被
+立即驱逐——这是污点与标签真正不同的地方，标签只决定 Pod 能去哪里，`NoExecute` 会赶走已经在跑的。
+`node.kubernetes.io/not-ready`、`node.kubernetes.io/unreachable` 这类由 Kubernetes 自己按节点状况写入和清除的
+污点仍然可以编辑，但会先提示改动可能很快被改回。
 
 命名空间的配额管理是同一批 `policies/resourcequotas` 类型化接口的另一个视图，不是新的后端能力：入口在命名空间
 列表行和详情页，页面把 `core/v1 ResourceQuota` 的 `hard` 按计算资源配额、存储资源限制和其他资源限制三组展开成
@@ -780,10 +798,20 @@ YAML 不是绕过类型化护栏的通道：提交前会重跑同一套规则—
 Pod 类型化后端返回统一元数据、Phase、Ready、Node、Pod IP、控制器 Owner、镜像和总重启次数；详情补充
 Annotations、完整 Owner References、调度与网络信息、主容器、初始化容器和 Ephemeral Container 的当前/上次
 状态、资源 requests/limits、重启次数以及 Pod Conditions。删除 Pod 时必须携带当前 UID，避免误删同名重建对象；
-由 Deployment、StatefulSet、DaemonSet、Job 等控制器管理的 Pod 删除后通常会被控制器重新创建。Pod 删除不是
-Eviction，不执行 PodDisruptionBudget 语义；Logs 通过独立协议和最小 `pods/log` 权限实现，不会放宽通用
-Subresource 边界；Exec 只通过独立 Pod Exec 协议开放。Eviction 只由节点 Drain 的精确 allowlist 使用，Pod
-详情中的删除仍然是 DELETE，不会伪装成 PDB 感知的操作。
+由 Deployment、StatefulSet、DaemonSet、Job 等控制器管理的 Pod 删除后通常会被控制器重新创建。Logs 通过独立
+协议和最小 `pods/log` 权限实现，不会放宽通用 Subresource 边界；Exec 只通过独立 Pod Exec 协议开放。
+
+Pod 删除与 Pod 驱逐是两条并列的路由，不是一个带开关的操作。删除是 DELETE，不执行 PodDisruptionBudget 语义；
+驱逐（`POST .../pods/{pod}/eviction`）走 Kubernetes 的 Eviction 子资源，由 API Server 先校验覆盖该 Pod 的
+PodDisruptionBudget，破坏可用性预算时拒绝执行。两者要求同一项 `cluster.resource.delete`——Pod 都会消失，
+驱逐多出来的是约束而不是权力——也都要求当前 UID、DryRun 与显式确认。PDB 拒绝映射为独立的
+`409 pod_disruption_budget_blocked` 并带上 API Server 自己的说明，不与「对象已变更」的冲突混记：前者重新
+读取再试仍然会被拒，后者不会。审计使用独立的 `kubernetes_pod.evict` / `.dry_run`。DryRun 通过只说明此刻允许
+驱逐，副本状态随时在变，实际提交仍可能被预算拒绝，界面明说这一点而不是把预检结果当作承诺。
+
+Agent 侧的判定没有放宽：`pod_eviction_access` 仍然只接受 core/v1 `pods` 的 `eviction` 子资源加 policy/v1
+Eviction 正文加 UID 前置条件这一种组合，通用 Resource、YAML 与 Manifest 路径无法设置该位，因此它不是一个
+任意 Subresource 通道。节点 Drain 与单 Pod 驱逐用的是同一条 Agent 路径。
 
 Pod 日志后端在读取前和打开 Kubernetes 日志流后分别核对 Pod UID，避免同名 Pod 重建竞态；支持主容器、
 初始化容器和临时容器，`tail_lines` 最大 5000、`since_seconds` 最大 7 天。`previous` 不接受与 `follow`
@@ -1030,7 +1058,14 @@ textarea resize 角使用当前主题的 `surface` 色，避免深色主题回�
 没有对应写权限时页面只读并说明原因；不可变的 Secret 与 ZKE 自身的授权对象同样只读打开，说明的是「为什么不能
 写」而不是「你没有权限」——那是两件不同的事。文档超过 4 MiB 时在提交前就拒绝，不做无谓往返。
 
-Console 事件页面按所选 Cluster 和 Namespace 展示 Event，可按 Event type、关联资源 Kind/名称和 reason 筛选。
+Console 事件页面有两个范围：当前命名空间，或整个集群。后者是「事件中心」——命名空间恰恰是操作者最常还不知道
+的那一项，集群里某处出现了 Warning 是起点，逐个命名空间点过去不叫检索。两者要求的是同一项
+`cluster.event.read`：该权限一直按 Cluster 授予，持有者本来就可以逐个命名空间读到同样的事件，全集群视图省掉
+的是逐个读取而不是一次授权。协议上它是一个显式的 Cluster 级读取标志，早于该能力的 Agent 会明确拒绝而不是
+意外放宽，详见[安全与权限](../security/authorization.md)。全集群视图额外显示「命名空间」列；从某个对象下钻
+进来的事件页固定在该对象所在的命名空间，因为它已经按 UID 精确定域，放宽范围找不到更多属于它的事件。
+
+事件页面可按 Event type、关联资源 Kind/名称和 reason 筛选。
 筛选分两层执行。Event type 与关联资源 Kind 是下拉选择，由服务端转成 Field Selector 下推到 Watch，快照上限因此
 只花在已经匹配的事件上；两者都不做输入，是因为 Field Selector 只能精确匹配，手输的 `pod` 或 `Pods` 只会静默
 返回空列表。type 的选项与列表「类型」列共用同一份文案；Kind 的选项来自目标集群 API Discovery 的资源目录（因此
@@ -1050,11 +1085,38 @@ SSE `id` 保存的最后 resourceVersion 续读。其余原因结束读取并在
 事件页面需要 `cluster.event.read`。当前身份在所选项目没有该权限时，左侧导航不显示「事件」类别；服务端仍然
 独立判定。
 
+## 应用（Helm）
+
+「应用（Helm）」是一个只读分区，回答「这个命名空间里装了哪些应用、什么 Chart 版本、用的什么 values」——容器
+服务里没有别的地方能回答它：资源对象浏览器看得到 Chart 生成的 Deployment，而 Deployment 上没有任何指回
+Release 的引用。
+
+Helm Release 不是 Kubernetes 的一种资源，而是一个 `helm.sh/release.v1` 类型的 Secret：Release 名、修订号和
+状态在它的 label 上，Chart、安装时传入的 values、渲染出的清单和 NOTES 在它的 `release` 取值里，编码是
+Base64 套 gzip 套 JSON。因此这三条路由要求 `cluster.read` **与** `cluster.secret.read`，并且和 `/secrets`
+一样进入受保护命名空间的附加判定——读 `kube-system` 里的一个 Release 就是读 `kube-system` 里的一个 Secret。
+审计沿用 Secret 读取的划分：列表与修订历史不返回任何 values，记为 `kubernetes_helm_release.list`；读取某一次
+修订会返回 values，记为 `kubernetes_helm_release.read`。
+
+列表只读 Secret 的 label，不解压任何负载：Release 名、修订与状态都在 label 上，而列表需要解压的恰好是 Chart
+和 values，那两样都不属于一页多个 Release。列表按 Release 名归并到存储中最新的一次修订，与 `helm list` 相同；
+某个命名空间的修订 Secret 超过一次盘点上限（500）时整体拒绝，而不是用跨页的部分结果把错误的修订认成最新——
+归并要求看到全部修订。详情解压一份负载并有上限：Release 是 gzip，重复内容的膨胀比远大于 Secret 自身 1 MiB
+的限制。渲染清单超长时截断并显式标注，完整对象可在资源对象浏览器中逐个查看。修订历史给出的是存储实际保留
+的修订：被 `--history-max` 清理掉的不再存在，接口也不假装它们还在。只支持 Secret 存储驱动，使用 ConfigMap
+或 SQL 驱动的 Release 不会出现在这里，空列表文案说明了这一点。
+
+**没有写入路由，这是刻意的，界面也直说。** 安装、升级、回滚与卸载需要 Helm 自己的渲染引擎——模板、Hook、
+执行顺序——由 ZKE 代写 Release Secret 会破坏 `helm` 客户端依赖的历史记录，一个只写对了一半的 Release 比没有
+这个功能更难收拾。values 页上单独提示它可能包含凭证、查看已写入审计。
+
 Console Pod 页面列出所选命名空间的 Pod，展示 Phase、就绪与终止状态、控制器 Owner、节点、Pod IP、累计重启
 次数和创建时间，可下钻到包含调度与网络信息、主容器/初始化容器/临时容器的当前与上次状态、资源
 requests/limits、Owner References、Conditions、标签和注解的详情页。Phase 与就绪分开展示，因为 `Running`
 并不等于健康；带 `deletionTimestamp` 的 Pod 单独标记为「删除中」。删除需要 `cluster.resource.delete`，同样
 先执行 DryRun 再确认，确认弹窗要求输入 Pod 名称，并在该 Pod 有控制器时明确说明删除后通常会被重新创建。
+驱逐是列表行和详情页上与删除并列的另一个入口，排在删除之前——它是把 Pod 移出节点的两种方式里更温和的那个，
+应该先被够到。它的确认弹窗说明 Kubernetes 会先校验 PodDisruptionBudget，以及预检通过不等于提交时一定通过。
 页面不提供 Exec 或 Eviction 入口。
 
 Console 日志入口在 Pod 列表行和详情页，需要 `cluster.pod.logs.read`。日志读取占据整个应用视图而不是弹窗，
@@ -1084,12 +1146,22 @@ CronJob，列表展示状态、副本或 Job/CronJob 进度、镜像和创建时
 配置、容器、Selector、条件、标签和注解的详情页。
 
 列表行和详情页提供与后端一致的变更操作：Deployment 和 StatefulSet 伸缩，Deployment、StatefulSet 和
-DaemonSet 滚动重启，CronJob 暂停和恢复，以及五类工作负载删除。伸缩、重启和暂停/恢复需要
-`cluster.resource.update`，删除需要 `cluster.resource.delete`；Console 只在权限和资源类型都允许时展示对应
+DaemonSet 滚动重启，CronJob 暂停、恢复和立即运行，以及五类工作负载删除。伸缩、重启和暂停/恢复需要
+`cluster.resource.update`，立即运行需要 `cluster.resource.create`，删除需要
+`cluster.resource.delete`；Console 只在权限和资源类型都允许时展示对应
 菜单项，实际判定仍由 Server 执行。每个操作都先提交一次服务端 DryRun，通过后再在确认弹窗中展示目标集群、
 命名空间、对象 UID 和具体影响，删除还要求输入对象名称。伸缩确认提交的是 DryRun 校验过的副本数，而不是
 确认时输入框中的值。每个步骤各自携带一个在弹窗生命周期内稳定的幂等键，因此重试同一次提交不会重复执行，
 滚动重启也不会产生第二轮滚动。
+
+CronJob 的「立即运行」等价于 `kubectl create job --from=cronjob/<name>`：用它当前的 `jobTemplate` 立刻创建
+一个 Job，CronJob 本身一个字节都不改，调度照常。它因此按创建而不是按修改判权——**能改已有对象**和**能在这个
+命名空间新建对象**是两次不同的授予。请求携带当前 CronJob UID：调度表达式和 Pod 模板正是打开页面到按下按钮
+之间最可能变化的东西。已暂停的 CronJob 会被服务端拒绝，界面在确认前就说明这一点：`spec.suspend` 停的是调度
+而不是 API，替一个有意暂停它的人运行会把「已暂停」变成一个标签而不是一个状态。生成的 Job 名由 CronJob 名与
+幂等键推导，重放同一次提交只会得到 AlreadyExists；它持有指向该 CronJob 的 ownerReference 但不是 controller
+引用，因此删除 CronJob 时会被一并回收，又不会被 CronJob 控制器计入 `concurrencyPolicy` 与历史保留数。写入
+成功后 CronJob 列表和 Job 列表一并失效重取——新建的对象落在后者。
 
 创建表单需要 `cluster.resource.create`，并直接创建当前标签页所选的类型，不再提供第二个类型选择器。它占据
 整个应用视图而不是弹窗：Pod 模板是一个工作负载的绝大部分，把四十个字段塞进一个盖在列表上的盒子里，比离开

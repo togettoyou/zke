@@ -64,19 +64,42 @@ func newKubernetesEventsHandler(
 	}
 }
 
+// stream serves the Events of one Namespace.
 func (handler *kubernetesEventsHandler) stream(c *gin.Context) {
+	handler.streamScope(c, false)
+}
+
+// clusterStream serves the Events of every Namespace in the Cluster — the
+// event centre an operator opens when they do not yet know which Namespace the
+// problem is in.
+//
+// It answers to the same `cluster.event.read` as the Namespace route rather
+// than to a permission of its own: that permission is already Cluster-scoped,
+// so a holder could reach every one of these Events by walking the Namespace
+// list. Making the walk unnecessary is a usability change, not a wider grant.
+func (handler *kubernetesEventsHandler) clusterStream(c *gin.Context) {
+	handler.streamScope(c, true)
+}
+
+func (handler *kubernetesEventsHandler) streamScope(c *gin.Context, clusterScope bool) {
 	c.Header("Cache-Control", "no-store")
 	input, err := parseKubernetesEventsQuery(c.Request.URL.Query())
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_request", "invalid Kubernetes Events query")
 		return
 	}
-	input.ClusterID, input.Namespace = c.Param("cluster_id"), c.Param("namespace_name")
+	input.ClusterID, input.ClusterScope = c.Param("cluster_id"), clusterScope
+	if !clusterScope {
+		input.Namespace = c.Param("namespace_name")
+	}
 	if input.ResourceVersion == "" {
 		input.ResourceVersion = c.GetHeader("Last-Event-ID")
 	}
 	identity, _ := httpmiddleware.Identity(c)
 	target := fmt.Sprintf("core/v1/events namespace:%s", input.Namespace)
+	if clusterScope {
+		target = "core/v1/events namespace:*"
+	}
 	if input.ResourceUID != "" {
 		target += " resource_uid:" + input.ResourceUID
 	}

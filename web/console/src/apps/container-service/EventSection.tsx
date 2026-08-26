@@ -32,6 +32,9 @@ const ANY_TYPE = "__any__";
 const ANY_KIND = "__any_kind__";
 const LIMIT_OPTIONS = [100, 200, 500];
 
+/** Which Namespaces the stream reads. */
+type EventScope = "namespace" | "cluster";
+
 /**
  * Why the Server ended a stream, in the operator's terms.
  *
@@ -57,11 +60,23 @@ type EventSectionProps = {
 };
 
 /**
- * Kubernetes Events of one Namespace of one Cluster.
+ * Kubernetes Events of one Cluster, read either from the Namespace the
+ * application is scoped to or from every Namespace at once.
  *
  * Events are read through their own permission and their own protocol rather
  * than the generic Resource stream, which rejects them outright — reading them
  * is not implied by reading the Cluster.
+ *
+ * The Cluster-wide scope exists because the Namespace is the thing an operator
+ * most often does not know yet: a Warning somewhere in the Cluster is the
+ * starting point, and picking Namespaces one at a time until one of them has it
+ * is not a search. It answers to the same `cluster.event.read` — that permission
+ * has always been Cluster-scoped — so the wider view is a shortcut through
+ * Namespaces the operator could already have visited, not a wider grant.
+ *
+ * A drill-down from an object pins the scope to that object's Namespace: it
+ * arrives with a UID filter, and widening the read would not find more of that
+ * object's events.
  */
 export function EventSection({
   clusterId,
@@ -69,6 +84,7 @@ export function EventSection({
   initialObjectFilter,
   onBack,
 }: EventSectionProps) {
+  const [scope, setScope] = useState<EventScope>("namespace");
   const [follow, setFollow] = useState(true);
   const [limit, setLimit] = useState(200);
   const [type, setType] = useState(ANY_TYPE);
@@ -86,9 +102,12 @@ export function EventSection({
   // `api-server-7d9f`, and as a selector term it found nothing at all. They are
   // therefore matched here, as substrings of what the stream has delivered, and
   // the fields say so.
+  // The object drill-down keeps its Namespace whatever the toggle says: it is
+  // already pinned to one object's UID.
+  const clusterWide = scope === "cluster" && !objectFilter;
   const stream = useKubernetesEventStream({
     clusterId,
-    namespace,
+    namespace: clusterWide ? "" : namespace,
     follow,
     limit,
     filters: {
@@ -172,6 +191,22 @@ export function EventSection({
         size: 200,
         cell: ({ row }) => <ObjectCell reference={row.original.regarding} />,
       },
+      // Only in the Cluster-wide view: with one Namespace on screen the column
+      // would repeat the scope the toolbar already names, and it costs the
+      // message column the width it needs.
+      ...(clusterWide
+        ? [
+            {
+              header: "命名空间",
+              size: 150,
+              cell: ({ row }) => (
+                <span className="text-muted-foreground text-xs break-all">
+                  {row.original.namespace || "—"}
+                </span>
+              ),
+            } satisfies ColumnDef<KubernetesEventRecord, unknown>,
+          ]
+        : []),
       {
         header: "消息",
         cell: ({ row }) => (
@@ -191,7 +226,7 @@ export function EventSection({
         ),
       },
     ],
-    [],
+    [clusterWide],
   );
 
   const streamActions = (
@@ -253,6 +288,23 @@ export function EventSection({
       ) : null}
 
       <div className="mb-3 flex flex-wrap items-end gap-3">
+        {/* First, because it decides what everything to its right filters. */}
+        <div className="grid content-start gap-1.5">
+          <Label htmlFor="event-scope">范围</Label>
+          <Select
+            value={scope}
+            onValueChange={(value) => setScope(value as EventScope)}
+            disabled={Boolean(objectFilter)}
+          >
+            <SelectTrigger id="event-scope" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="namespace">当前命名空间</SelectItem>
+              <SelectItem value="cluster">全集群</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="grid content-start gap-1.5">
           <Label htmlFor="event-type">类型</Label>
           <Select value={type} onValueChange={setType}>
@@ -343,7 +395,9 @@ export function EventSection({
         emptyDescription={
           nameNeedle || reasonNeedle
             ? "已读取的事件中没有匹配名称或原因的；这两项只在已读取的事件中模糊匹配，更早的事件需要放宽类型筛选或提高快照上限后重新加载。"
-            : "当前筛选条件下，该命名空间没有 Kubernetes Event。集群会按保留期回收事件。"
+            : clusterWide
+              ? "当前筛选条件下，该集群没有 Kubernetes Event。集群会按保留期回收事件。"
+              : "当前筛选条件下，该命名空间没有 Kubernetes Event。集群会按保留期回收事件。"
         }
       />
 

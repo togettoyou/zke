@@ -889,6 +889,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/eviction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 通过 Kubernetes Eviction 子资源驱逐明确 Cluster 和 Namespace 中的 Pod。与删除的区别
+         *     在于 Kubernetes 会先校验覆盖该 Pod 的 PodDisruptionBudget：如果驱逐会破坏可用性预算，
+         *     请求被拒绝并返回 409 `pod_disruption_budget_blocked`，正文携带 Kubernetes 自己的说明。
+         *
+         *     请求必须携带当前 Pod UID，避免驱逐同名重建对象；dry_run=true 时执行 Kubernetes 服务端
+         *     预览，实际驱逐要求显式 confirm=true。驱逐与删除同属 `cluster.resource.delete`，
+         *     kube-* 与 Agent Namespace 仍需对应的独立 Namespace 权限。
+         */
+        post: operations["evictKubernetesPod"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe": {
         parameters: {
             query?: never;
@@ -1088,6 +1113,32 @@ export interface paths {
          *     双向总字节、全局及单会话连接数。Token 与正文不进入日志或审计。
          */
         post: operations["createKubernetesPodAccessSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 通过目标 Cluster 的 Agent 读取该 Cluster 全部 Namespace 的 Kubernetes Event——
+         *     在还不知道问题出在哪个 Namespace 时使用的事件中心。SSE 帧、过滤参数、恢复语义、
+         *     终止原因与 Namespace 级事件接口完全一致，区别只是不限定 Namespace。
+         *
+         *     权限与 Namespace 级接口相同，都是 `cluster.event.read`：该权限本就按 Cluster 授予，
+         *     持有者原本可以逐个 Namespace 读到同样的事件，这里只是省去逐个读取。Agent 必须支持
+         *     Cluster 级 Event 读取，早于该能力的 Agent 会拒绝并返回 503
+         *     `agent_capability_unavailable`。Event 正文不会写入 Server 日志或审计记录。
+         */
+        get: operations["streamClusterKubernetesEvents"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1297,6 +1348,35 @@ export interface paths {
          *     实际写入要求显式 confirm=true。
          */
         post: operations["rollbackKubernetesWorkload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/trigger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 用目标 CronJob 的 jobTemplate 立即创建一个 Job，等价于
+         *     `kubectl create job --from=cronjob/<name>`，不修改 CronJob 本身，也不影响调度。
+         *     workload_resource 必须是 `cronjobs`。
+         *
+         *     生成的 Job 带 `cronjob.kubernetes.io/instantiate: manual` 注解，并持有指向该 CronJob 的
+         *     ownerReference（非 controller 引用），因此删除 CronJob 时会被一并回收，同时不会被
+         *     CronJob 控制器计入 concurrencyPolicy 与历史保留数。Job 名由 CronJob 名和幂等键推导，
+         *     重放同一请求只会得到 AlreadyExists，不会重复执行。
+         *
+         *     该接口创建对象而不是修改 CronJob，因此要求 `cluster.resource.create`。请求必须携带
+         *     当前 CronJob UID；已暂停的 CronJob 返回 409 `cron_job_suspended`。
+         */
+        post: operations["triggerKubernetesCronJob"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1943,6 +2023,80 @@ export interface paths {
          *     审计记录。
          */
         put: operations["updateKubernetesSecretYAML"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出目标 Namespace 中的 Helm 应用（Release），每个 Release 只返回存储中最新的一次
+         *     修订，与 `helm list` 的收敛方式一致。
+         *
+         *     Helm 3 把每次修订存成一个 `helm.sh/release.v1` 类型的 Secret，Release 名、修订号与
+         *     状态在该 Secret 的 label 上，因此列表不解压任何 Release 负载。ZKE 只读取 Helm 的
+         *     存储，不安装、升级、回滚或卸载 Release。
+         *
+         *     该接口读取 Secret，因此同时要求 `cluster.read` 与 `cluster.secret.read`，kube-* 与
+         *     Agent Namespace 还需对应的独立 Namespace 权限；每次调用都会写入与 Secret 列表一致的
+         *     审计记录。若 Namespace 中的修订 Secret 超过一次盘点上限，返回 422
+         *     `helm_release_inventory_truncated` 而不是给出可能选错最新修订的部分结果。
+         */
+        get: operations["listHelmReleases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 读取一个 Helm Release 的某次修订：Chart 名称与版本、appVersion、状态与描述、部署时间、
+         *     渲染出的 NOTES，以及安装或升级时使用的 values。省略 revision 时读取存储中最新的一次修订。
+         *
+         *     values 常常包含密码一类的凭证，这也是该接口要求 `cluster.secret.read` 的原因：返回的是
+         *     Release Secret 的内容本身，而不是它的摘要。渲染出的 manifest 超过上限时会被截断，
+         *     并由 `manifest_truncated` 说明。
+         */
+        get: operations["getHelmRelease"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出一个 Helm Release 在存储中保留的修订历史，按修订号从新到旧返回。Helm 每次修订一个
+         *     Secret，因此这里给出的就是存储实际保留的内容：被 `--history-max` 清理掉的修订不再存在，
+         *     接口也不会假装它们还在。仅返回修订号、状态与写入时间，不返回 values。
+         */
+        get: operations["listHelmReleaseRevisions"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -3491,6 +3645,14 @@ export interface components {
             /** @description 实际写入必须为 true；dry-run 可以为 false。 */
             confirm: boolean;
         };
+        KubernetesTriggerCronJobRequest: {
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际创建 Job 必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+            /** @description 当前 CronJob UID，确保运行的是操作者刚看过的那个模板。 */
+            uid: string;
+        };
         KubernetesScaleWorkloadRequest: {
             /** Format: int32 */
             replicas: number;
@@ -5007,6 +5169,44 @@ export interface components {
             resource_version: string;
             remaining_item_count: number | null;
         };
+        KubernetesHelmRelease: {
+            namespace: string;
+            name: string;
+            /** Format: int64 */
+            revision: number;
+            /** @description Helm 写在 Release Secret label 上的状态，例如 deployed、failed、superseded。 */
+            status: string;
+            /** @description 存放该修订的 Secret 名，便于直接查看存储本身。 */
+            secret_name: string;
+            /**
+             * Format: date-time
+             * @description 该修订的 Secret 创建时间，也就是 Helm 写入这次修订的时间。
+             */
+            updated: string;
+        };
+        KubernetesHelmReleasePage: {
+            releases: components["schemas"]["KubernetesHelmRelease"][];
+        };
+        KubernetesHelmReleaseDetail: components["schemas"]["KubernetesHelmRelease"] & {
+            description: string;
+            chart_name: string;
+            chart_version: string;
+            app_version: string;
+            chart_description: string;
+            /** Format: date-time */
+            first_deployed?: string;
+            /** Format: date-time */
+            last_deployed?: string;
+            /** @description Chart 渲染出的 NOTES.txt。 */
+            notes: string;
+            /** @description 安装或升级该 Release 时使用的 values。常包含凭证， 因此该接口要求 cluster.secret.read。 */
+            values: {
+                [key: string]: unknown;
+            };
+            /** @description Chart 渲染出的清单；超过上限时被截断。 */
+            manifest: string;
+            manifest_truncated: boolean;
+        };
         KubernetesCreateSecretRequest: {
             name: string;
             /**
@@ -6057,6 +6257,23 @@ export interface components {
             recording_id: components["schemas"]["UUID"];
             recording_saved: boolean;
         };
+        KubernetesEvictPodRequest: {
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际驱逐必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+            /** @description 当前 Pod UID，防止驱逐同名重建对象。 */
+            uid: string;
+            grace_period_seconds?: number | null;
+        };
+        KubernetesPodEvictionResult: {
+            namespace: string;
+            name: string;
+            uid: string;
+            dry_run: boolean;
+            /** @description dry-run 预览恒为 false——预览只说明 Kubernetes 会不会允许这次驱逐。 */
+            evicted: boolean;
+        };
         KubernetesDeletePodRequest: {
             /** @default false */
             dry_run: boolean;
@@ -7006,6 +7223,8 @@ export interface components {
         DescribePolicyResource: "resourcequotas" | "poddisruptionbudgets";
         PolicyResourceName: string;
         SecretName: string;
+        /** @description Helm Release 名，而不是存储它的 Secret 名。 */
+        HelmReleaseName: string;
         ConfigMapName: string;
         KubernetesResourceName: string;
         /** @description Core API Group 使用空字符串或省略该参数。 */
@@ -9048,6 +9267,48 @@ export interface operations {
             504: components["responses"]["Timeout"];
         };
     };
+    evictKubernetesPod: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                pod_name: components["parameters"]["PodName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesEvictPodRequest"];
+            };
+        };
+        responses: {
+            /** @description Pod 驱逐或 DryRun 结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesPodEvictionResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
     describeKubernetesPod: {
         parameters: {
             query?: never;
@@ -9380,6 +9641,49 @@ export interface operations {
             409: components["responses"]["Conflict"];
             429: components["responses"]["TooManyRequests"];
             503: components["responses"]["Unavailable"];
+        };
+    };
+    streamClusterKubernetesEvents: {
+        parameters: {
+            query?: {
+                follow?: boolean;
+                include_initial?: boolean;
+                limit?: number;
+                resource_version?: string;
+                resource_uid?: string;
+                resource_kind?: string;
+                resource_name?: string;
+                type?: "Normal" | "Warning";
+                reason?: string;
+            };
+            header?: {
+                /** @description resource_version 未提供时使用的 Kubernetes resourceVersion 恢复点。 */
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 全 Cluster Kubernetes Event 快照或实时 SSE 流 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
         };
     };
     streamKubernetesEvents: {
@@ -9815,6 +10119,49 @@ export interface operations {
         };
         responses: {
             /** @description 回滚后的工作负载或 dry-run 预览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    triggerKubernetesCronJob: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesTriggerCronJobRequest"];
+            };
+        };
+        responses: {
+            /** @description 创建的 Job 或 dry-run 预览 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11994,6 +12341,114 @@ export interface operations {
             409: components["responses"]["Conflict"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listHelmReleases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Helm Release 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesHelmReleasePage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["InvalidRequest"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getHelmRelease: {
+        parameters: {
+            query?: {
+                /** @description 要读取的修订号；省略表示存储中最新的一次修订。 */
+                revision?: number;
+            };
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                /** @description Helm Release 名，而不是存储它的 Secret 名。 */
+                release_name: components["parameters"]["HelmReleaseName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Helm Release 详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesHelmReleaseDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listHelmReleaseRevisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                /** @description Helm Release 名，而不是存储它的 Secret 名。 */
+                release_name: components["parameters"]["HelmReleaseName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Helm Release 修订历史 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesHelmReleasePage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["InvalidRequest"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

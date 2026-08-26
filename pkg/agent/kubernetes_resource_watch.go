@@ -28,7 +28,12 @@ func newKubernetesResourceWatchHandler(client kubernetes.Interface) agentprotoco
 				"ResourceWatchForbidden", "only core/v1 Kubernetes Events may be watched",
 			), nil, nil
 		}
-		if request.GetNamespace() == "" &&
+		// An empty Namespace means every Namespace in the Cluster, which two
+		// callers are allowed to ask for and nobody else is. The cluster-wide
+		// Event route says so with `cluster_event_access`; a describe gets the
+		// narrower exception — a bounded snapshot pinned to one exact Node UID —
+		// and may not follow.
+		if request.GetNamespace() == "" && !request.GetClusterEventAccess() &&
 			(!request.GetIncludeInitialEvents() || request.GetFollow() ||
 				!agentprotocol.IsNodeEventFieldSelector(request.GetFieldSelector())) {
 			return resourceWatchResponseError(

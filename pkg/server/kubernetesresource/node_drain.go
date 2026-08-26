@@ -267,7 +267,7 @@ func (service *Service) evictDrainPod(ctx context.Context, input DrainNodeInput,
 		TypeMeta:   metav1.TypeMeta{APIVersion: "policy/v1", Kind: "Eviction"},
 		ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
 		DeleteOptions: &metav1.DeleteOptions{
-			DryRun:             drainDryRun(input.DryRun),
+			DryRun:             evictionDryRun(input.DryRun),
 			GracePeriodSeconds: input.GracePeriodSeconds,
 			Preconditions:      &metav1.Preconditions{UID: drainPodUID(pod.UID)},
 		},
@@ -287,13 +287,6 @@ func (service *Service) evictDrainPod(ctx context.Context, input DrainNodeInput,
 		MutationOptions:   &agentv1.MutationOptions{DryRun: input.DryRun},
 		PodEvictionAccess: true,
 	}, bytes.NewReader(body), io.Discard, drainIdempotencyKey(input.IdempotencyKey, pod.UID))
-}
-
-func drainDryRun(enabled bool) []string {
-	if enabled {
-		return []string{metav1.DryRunAll}
-	}
-	return nil
 }
 
 func drainPodUID(value string) *types.UID {

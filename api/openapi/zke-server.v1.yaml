@@ -2514,6 +2514,63 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/eviction:
+    post:
+      tags: [Resources]
+      operationId: evictKubernetesPod
+      description: |
+        通过 Kubernetes Eviction 子资源驱逐明确 Cluster 和 Namespace 中的 Pod。与删除的区别
+        在于 Kubernetes 会先校验覆盖该 Pod 的 PodDisruptionBudget：如果驱逐会破坏可用性预算，
+        请求被拒绝并返回 409 `pod_disruption_budget_blocked`，正文携带 Kubernetes 自己的说明。
+
+        请求必须携带当前 Pod UID，避免驱逐同名重建对象；dry_run=true 时执行 Kubernetes 服务端
+        预览，实际驱逐要求显式 confirm=true。驱逐与删除同属 `cluster.resource.delete`，
+        kube-* 与 Agent Namespace 仍需对应的独立 Namespace 权限。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/PodName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesEvictPodRequest"
+      responses:
+        "200":
+          description: Pod 驱逐或 DryRun 结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesPodEvictionResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/pods/{pod_name}/describe:
     get:
       tags: [Resources]
@@ -2966,6 +3023,99 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/clusters/{cluster_id}/events:
+    get:
+      tags: [Events]
+      operationId: streamClusterKubernetesEvents
+      description: |
+        通过目标 Cluster 的 Agent 读取该 Cluster 全部 Namespace 的 Kubernetes Event——
+        在还不知道问题出在哪个 Namespace 时使用的事件中心。SSE 帧、过滤参数、恢复语义、
+        终止原因与 Namespace 级事件接口完全一致，区别只是不限定 Namespace。
+
+        权限与 Namespace 级接口相同，都是 `cluster.event.read`：该权限本就按 Cluster 授予，
+        持有者原本可以逐个 Namespace 读到同样的事件，这里只是省去逐个读取。Agent 必须支持
+        Cluster 级 Event 读取，早于该能力的 Agent 会拒绝并返回 503
+        `agent_capability_unavailable`。Event 正文不会写入 Server 日志或审计记录。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - name: Last-Event-ID
+          in: header
+          description: resource_version 未提供时使用的 Kubernetes resourceVersion 恢复点。
+          schema:
+            type: string
+            maxLength: 256
+        - name: follow
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: include_initial
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: resource_version
+          in: query
+          schema:
+            type: string
+            maxLength: 256
+        - name: resource_uid
+          in: query
+          schema:
+            type: string
+            maxLength: 253
+        - name: resource_kind
+          in: query
+          schema:
+            type: string
+            maxLength: 253
+        - name: resource_name
+          in: query
+          schema:
+            type: string
+            maxLength: 253
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [Normal, Warning]
+        - name: reason
+          in: query
+          schema:
+            type: string
+            maxLength: 253
+      responses:
+        "200":
+          description: 全 Cluster Kubernetes Event 快照或实时 SSE 流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/events:
     get:
       tags: [Events]
@@ -3578,6 +3728,68 @@ paths:
       responses:
         "200":
           description: 回滚后的工作负载或 dry-run 预览
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/trigger:
+    post:
+      tags: [Resources]
+      operationId: triggerKubernetesCronJob
+      description: |
+        用目标 CronJob 的 jobTemplate 立即创建一个 Job，等价于
+        `kubectl create job --from=cronjob/<name>`，不修改 CronJob 本身，也不影响调度。
+        workload_resource 必须是 `cronjobs`。
+
+        生成的 Job 带 `cronjob.kubernetes.io/instantiate: manual` 注解，并持有指向该 CronJob 的
+        ownerReference（非 controller 引用），因此删除 CronJob 时会被一并回收，同时不会被
+        CronJob 控制器计入 concurrencyPolicy 与历史保留数。Job 名由 CronJob 名和幂等键推导，
+        重放同一请求只会得到 AlreadyExists，不会重复执行。
+
+        该接口创建对象而不是修改 CronJob，因此要求 `cluster.resource.create`。请求必须携带
+        当前 CronJob UID；已暂停的 CronJob 返回 409 `cron_job_suspended`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesTriggerCronJobRequest"
+      responses:
+        "200":
+          description: 创建的 Job 或 dry-run 预览
           content:
             application/json:
               schema:
@@ -5559,6 +5771,156 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases:
+    get:
+      tags: [Resources]
+      operationId: listHelmReleases
+      description: |
+        列出目标 Namespace 中的 Helm 应用（Release），每个 Release 只返回存储中最新的一次
+        修订，与 `helm list` 的收敛方式一致。
+
+        Helm 3 把每次修订存成一个 `helm.sh/release.v1` 类型的 Secret，Release 名、修订号与
+        状态在该 Secret 的 label 上，因此列表不解压任何 Release 负载。ZKE 只读取 Helm 的
+        存储，不安装、升级、回滚或卸载 Release。
+
+        该接口读取 Secret，因此同时要求 `cluster.read` 与 `cluster.secret.read`，kube-* 与
+        Agent Namespace 还需对应的独立 Namespace 权限；每次调用都会写入与 Secret 列表一致的
+        审计记录。若 Namespace 中的修订 Secret 超过一次盘点上限，返回 422
+        `helm_release_inventory_truncated` 而不是给出可能选错最新修订的部分结果。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+      responses:
+        "200":
+          description: Helm Release 列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesHelmReleasePage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}:
+    get:
+      tags: [Resources]
+      operationId: getHelmRelease
+      description: |
+        读取一个 Helm Release 的某次修订：Chart 名称与版本、appVersion、状态与描述、部署时间、
+        渲染出的 NOTES，以及安装或升级时使用的 values。省略 revision 时读取存储中最新的一次修订。
+
+        values 常常包含密码一类的凭证，这也是该接口要求 `cluster.secret.read` 的原因：返回的是
+        Release Secret 的内容本身，而不是它的摘要。渲染出的 manifest 超过上限时会被截断，
+        并由 `manifest_truncated` 说明。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HelmReleaseName"
+        - name: revision
+          in: query
+          description: 要读取的修订号；省略表示存储中最新的一次修订。
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Helm Release 详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesHelmReleaseDetail"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}/revisions:
+    get:
+      tags: [Resources]
+      operationId: listHelmReleaseRevisions
+      description: |
+        列出一个 Helm Release 在存储中保留的修订历史，按修订号从新到旧返回。Helm 每次修订一个
+        Secret，因此这里给出的就是存储实际保留的内容：被 `--history-max` 清理掉的修订不再存在，
+        接口也不会假装它们还在。仅返回修订号、状态与写入时间，不返回 values。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HelmReleaseName"
+      responses:
+        "200":
+          description: Helm Release 修订历史
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesHelmReleasePage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/InvalidRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/configmaps:
     get:
       tags: [Resources]
@@ -7874,6 +8236,15 @@ components:
         maxLength: 253
     SecretName:
       name: secret_name
+    HelmReleaseName:
+      name: release_name
+      in: path
+      required: true
+      description: Helm Release 名，而不是存储它的 Secret 名。
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
     ConfigMapName:
       name: config_map_name
       in: path
@@ -10103,6 +10474,22 @@ components:
         confirm:
           type: boolean
           description: 实际写入必须为 true；dry-run 可以为 false。
+    KubernetesTriggerCronJobRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, confirm]
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际创建 Job 必须为 true；dry-run 可以为 false。
+        uid:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 当前 CronJob UID，确保运行的是操作者刚看过的那个模板。
     KubernetesScaleWorkloadRequest:
       type: object
       additionalProperties: false
@@ -12723,6 +13110,68 @@ components:
         continue_token: { type: string }
         resource_version: { type: string }
         remaining_item_count: { type: [integer, "null"], minimum: 0 }
+    KubernetesHelmRelease:
+      type: object
+      additionalProperties: false
+      required: [namespace, name, revision, status, secret_name, updated]
+      properties:
+        namespace: { type: string }
+        name: { type: string }
+        revision: { type: integer, format: int64, minimum: 1 }
+        status:
+          type: string
+          description: Helm 写在 Release Secret label 上的状态，例如 deployed、failed、superseded。
+        secret_name:
+          type: string
+          description: 存放该修订的 Secret 名，便于直接查看存储本身。
+        updated:
+          type: string
+          format: date-time
+          description: 该修订的 Secret 创建时间，也就是 Helm 写入这次修订的时间。
+    KubernetesHelmReleasePage:
+      type: object
+      additionalProperties: false
+      required: [releases]
+      properties:
+        releases:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesHelmRelease" }
+    KubernetesHelmReleaseDetail:
+      allOf:
+        - $ref: "#/components/schemas/KubernetesHelmRelease"
+        - type: object
+          additionalProperties: false
+          required:
+            - description
+            - chart_name
+            - chart_version
+            - app_version
+            - chart_description
+            - notes
+            - values
+            - manifest
+            - manifest_truncated
+          properties:
+            description: { type: string }
+            chart_name: { type: string }
+            chart_version: { type: string }
+            app_version: { type: string }
+            chart_description: { type: string }
+            first_deployed: { type: string, format: date-time }
+            last_deployed: { type: string, format: date-time }
+            notes:
+              type: string
+              description: Chart 渲染出的 NOTES.txt。
+            values:
+              type: object
+              additionalProperties: true
+              description: >-
+                安装或升级该 Release 时使用的 values。常包含凭证，
+                因此该接口要求 cluster.secret.read。
+            manifest:
+              type: string
+              description: Chart 渲染出的清单；超过上限时被截断。
+            manifest_truncated: { type: boolean }
     KubernetesCreateSecretRequest:
       type: object
       additionalProperties: false
@@ -14833,6 +15282,41 @@ components:
               $ref: "#/components/schemas/UUID"
             recording_saved:
               type: boolean
+    KubernetesEvictPodRequest:
+      type: object
+      additionalProperties: false
+      required: [uid, confirm]
+      properties:
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际驱逐必须为 true；dry-run 可以为 false。
+        uid:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 当前 Pod UID，防止驱逐同名重建对象。
+        grace_period_seconds:
+          type: [integer, "null"]
+          minimum: 0
+    KubernetesPodEvictionResult:
+      type: object
+      additionalProperties: false
+      required: [namespace, name, uid, dry_run, evicted]
+      properties:
+        namespace:
+          type: string
+        name:
+          type: string
+        uid:
+          type: string
+        dry_run:
+          type: boolean
+        evicted:
+          type: boolean
+          description: dry-run 预览恒为 false——预览只说明 Kubernetes 会不会允许这次驱逐。
     KubernetesDeletePodRequest:
       type: object
       additionalProperties: false

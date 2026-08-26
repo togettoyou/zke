@@ -42,6 +42,12 @@ type Input struct {
 	IncludeInitial, Follow, AllowBookmarks                     bool
 	InitialLimit                                               uint32
 	ResourceUID, ResourceKind, ResourceName, EventType, Reason string
+	// ClusterScope asks for the Events of every Namespace in the Cluster. It is
+	// set only by the cluster-wide Event route, which answers to the same
+	// `cluster.event.read` the Namespace route does — that permission has always
+	// been Cluster-scoped, so the wider read grants nothing the caller could not
+	// already reach one Namespace at a time.
+	ClusterScope bool
 }
 
 type Result struct {
@@ -65,6 +71,7 @@ func (service *Service) Stream(ctx context.Context, input Input, sink agentproto
 	response, trailer, err := service.requester.RequestResourceWatch(ctx, input.ClusterID, &agentv1.ResourceWatchRequest{
 		Resource:  &agentv1.GroupVersionResource{Version: "v1", Resource: "events"},
 		Namespace: input.Namespace, FieldSelector: selector, ResourceVersion: input.ResourceVersion,
+		ClusterEventAccess:   input.ClusterScope,
 		IncludeInitialEvents: input.IncludeInitial, Follow: input.Follow,
 		InitialEventLimit: input.InitialLimit, AllowWatchBookmarks: input.AllowBookmarks,
 		MaxEventBytes: agentprotocol.DefaultMaxResourceWatchEventBytes,
@@ -115,12 +122,16 @@ func validateInput(input Input) error {
 	return nil
 }
 
-// An empty Namespace is reserved for a bounded snapshot of one cluster-scoped
-// Node. The ordinary Event page remains Namespace-scoped, and a caller cannot
-// turn this exception into a cross-Namespace follow or an unfiltered list.
+// An empty Namespace means either the cluster-wide Event page, which asks for it
+// deliberately, or a bounded snapshot of one cluster-scoped Node. The
+// Namespace-scoped page keeps its Namespace, and a describe cannot turn its
+// exception into a cross-Namespace follow or an unfiltered list.
 func validEventScope(input Input) bool {
 	if input.Namespace != "" {
-		return len(k8svalidation.IsDNS1123Label(input.Namespace)) == 0
+		return len(k8svalidation.IsDNS1123Label(input.Namespace)) == 0 && !input.ClusterScope
+	}
+	if input.ClusterScope {
+		return true
 	}
 	return input.IncludeInitial && !input.Follow &&
 		input.ResourceUID != "" && input.ResourceKind == "Node"

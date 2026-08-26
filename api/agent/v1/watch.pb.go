@@ -89,8 +89,14 @@ type ResourceWatchRequest struct {
 	MaxEventBytes        uint64                 `protobuf:"varint,9,opt,name=max_event_bytes,json=maxEventBytes,proto3" json:"max_event_bytes,omitempty"`
 	MaxTotalBytes        uint64                 `protobuf:"varint,10,opt,name=max_total_bytes,json=maxTotalBytes,proto3" json:"max_total_bytes,omitempty"`
 	MaxEvents            uint64                 `protobuf:"varint,11,opt,name=max_events,json=maxEvents,proto3" json:"max_events,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Set only by the Server's cluster-wide Kubernetes Event route, and honoured
+	// only for core/v1 Events. Without it the Agent keeps refusing an empty
+	// Namespace for anything but the exact Node UID snapshot a describe needs, so
+	// an Agent that predates this field simply refuses — which is the behaviour a
+	// Server upgraded ahead of its Agents should get.
+	ClusterEventAccess bool `protobuf:"varint,12,opt,name=cluster_event_access,json=clusterEventAccess,proto3" json:"cluster_event_access,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ResourceWatchRequest) Reset() {
@@ -198,6 +204,13 @@ func (x *ResourceWatchRequest) GetMaxEvents() uint64 {
 		return x.MaxEvents
 	}
 	return 0
+}
+
+func (x *ResourceWatchRequest) GetClusterEventAccess() bool {
+	if x != nil {
+		return x.ClusterEventAccess
+	}
+	return false
 }
 
 type ResourceWatchResponse struct {
@@ -538,7 +551,7 @@ var File_api_agent_v1_watch_proto protoreflect.FileDescriptor
 
 const file_api_agent_v1_watch_proto_rawDesc = "" +
 	"\n" +
-	"\x18api/agent/v1/watch.proto\x12\fzke.agent.v1\x1a\x1bapi/agent/v1/resource.proto\x1a\x19api/agent/v1/stream.proto\"\xe7\x03\n" +
+	"\x18api/agent/v1/watch.proto\x12\fzke.agent.v1\x1a\x1bapi/agent/v1/resource.proto\x1a\x19api/agent/v1/stream.proto\"\x99\x04\n" +
 	"\x14ResourceWatchRequest\x12>\n" +
 	"\bresource\x18\x01 \x01(\v2\".zke.agent.v1.GroupVersionResourceR\bresource\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12%\n" +
@@ -552,7 +565,8 @@ const file_api_agent_v1_watch_proto_rawDesc = "" +
 	"\x0fmax_total_bytes\x18\n" +
 	" \x01(\x04R\rmaxTotalBytes\x12\x1d\n" +
 	"\n" +
-	"max_events\x18\v \x01(\x04R\tmaxEvents\"\xb9\x02\n" +
+	"max_events\x18\v \x01(\x04R\tmaxEvents\x120\n" +
+	"\x14cluster_event_access\x18\f \x01(\bR\x12clusterEventAccess\"\xb9\x02\n" +
 	"\x15ResourceWatchResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\x05R\x14kubernetesStatusCode\x12\x16\n" +

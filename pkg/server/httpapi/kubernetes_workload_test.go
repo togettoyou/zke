@@ -12,6 +12,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/server/audit"
+	"github.com/togettoyou/zke/pkg/server/auditaction"
+	"github.com/togettoyou/zke/pkg/server/auth"
+	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 )
 
@@ -32,6 +36,10 @@ type fakeKubernetesWorkloadService struct {
 	revisionsInput kubernetesresource.ListWorkloadRevisionsInput
 	rollbackInput  kubernetesresource.RollbackWorkloadInput
 	rollbackError  error
+
+	triggerInput     kubernetesresource.TriggerCronJobInput
+	triggerCallCount int
+	triggerError     error
 }
 
 func (service *fakeKubernetesWorkloadService) ListWorkloads(
@@ -135,6 +143,25 @@ func (service *fakeKubernetesWorkloadService) SetWorkloadSuspension(
 	service.suspendInput = input
 	service.suspendCalls = append(service.suspendCalls, input)
 	return fakeWorkloadMutationResult(input.WorkloadMutationInput), nil
+}
+
+func (service *fakeKubernetesWorkloadService) TriggerCronJob(
+	_ context.Context,
+	input kubernetesresource.TriggerCronJobInput,
+) (kubernetesresource.WorkloadDetail, error) {
+	service.triggerCallCount++
+	service.triggerInput = input
+	if service.triggerError != nil {
+		return kubernetesresource.WorkloadDetail{}, service.triggerError
+	}
+	return fakeWorkloadMutationResult(kubernetesresource.WorkloadMutationInput{
+		ClusterID: input.ClusterID,
+		Namespace: input.Namespace,
+		Resource:  kubernetesresource.WorkloadJobs,
+		Name:      input.Name + "-manual-0a1b2c3d",
+		DryRun:    input.DryRun,
+		Confirm:   input.Confirm,
+	}), nil
 }
 
 func (service *fakeKubernetesWorkloadService) ListWorkloadRevisions(
@@ -756,5 +783,138 @@ func TestKubernetesWorkloadRollbackReportsRevisionFailuresDistinctly(t *testing.
 				response.Body.String(),
 			)
 		}
+	}
+}
+
+// Running a CronJob now is a create, not an edit of the CronJob, and the route
+// is registered under the create permission for that reason. The handler has to
+// hold up its half: only a CronJob, only against the UID the operator saw, only
+// with a confirmation, and recorded under an action that says a run was started
+// off schedule rather than under a generic object create.
+func TestKubernetesCronJobTriggerPinsTheCronJobAndRecordsItsOwnAction(t *testing.T) {
+	t.Parallel()
+
+	const (
+		clusterID      = "00000000-0000-4000-8000-000000000003"
+		idempotencyKey = "0123456789abcdef"
+	)
+	service := &fakeKubernetesWorkloadService{}
+	auditStore := &recordingPodAuditStore{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := newKubernetesWorkloadHandler(
+		logger,
+		service,
+		audit.NewService(auditStore, nil),
+		time.Second,
+	)
+	router := gin.New()
+	router.Use(httpmiddleware.RequestLogger(logger))
+	router.Use(func(c *gin.Context) {
+		c.Set("authenticated_identity", auth.Identity{
+			User: auth.User{ID: "00000000-0000-4000-8000-000000000001"},
+		})
+		c.Next()
+	})
+	baseRoute := "/clusters/:cluster_id/namespaces/:namespace_name/workloads/" +
+		":workload_resource/:workload_name"
+	router.POST(baseRoute+"/trigger", handler.trigger)
+	baseURL := "/clusters/" + clusterID + "/namespaces/model-serving/workloads"
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		baseURL+"/cronjobs/nightly-report/trigger",
+		bytes.NewBufferString(`{"dry_run":false,"confirm":true,"uid":"cronjob-uid"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyKeyHeaderName, idempotencyKey)
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		service.triggerCallCount != 1 ||
+		service.triggerInput.ClusterID != clusterID ||
+		service.triggerInput.Namespace != "model-serving" ||
+		service.triggerInput.Name != "nightly-report" ||
+		service.triggerInput.UID != "cronjob-uid" ||
+		!service.triggerInput.Confirm ||
+		service.triggerInput.IdempotencyKey != idempotencyKey ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"nightly-report-manual-0a1b2c3d"`)) {
+		t.Fatalf("trigger status=%d input=%+v body=%s", response.Code, service.triggerInput, response.Body.String())
+	}
+	if len(auditStore.events) != 1 ||
+		auditStore.events[0].Action != auditaction.KubernetesCronJobTrigger ||
+		auditStore.events[0].Result != "succeeded" {
+		t.Fatalf("unexpected CronJob trigger audit events: %+v", auditStore.events)
+	}
+
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(
+		http.MethodPost,
+		baseURL+"/cronjobs/nightly-report/trigger",
+		bytes.NewBufferString(`{"dry_run":true,"confirm":false,"uid":"cronjob-uid"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyKeyHeaderName, idempotencyKey+"-preview")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		!service.triggerInput.DryRun ||
+		len(auditStore.events) != 2 ||
+		auditStore.events[1].Action != auditaction.KubernetesCronJobTriggerDryRun {
+		t.Fatalf("preview status=%d audit=%+v body=%s", response.Code, auditStore.events, response.Body.String())
+	}
+
+	service.triggerError = kubernetesresource.ErrCronJobSuspended
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(
+		http.MethodPost,
+		baseURL+"/cronjobs/nightly-report/trigger",
+		bytes.NewBufferString(`{"dry_run":false,"confirm":true,"uid":"cronjob-uid"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(idempotencyKeyHeaderName, idempotencyKey+"-suspended")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict ||
+		!bytes.Contains(response.Body.Bytes(), []byte("cron_job_suspended")) {
+		t.Fatalf("suspended CronJob status=%d body=%s", response.Code, response.Body.String())
+	}
+	service.triggerError = nil
+
+	triggered := service.triggerCallCount
+	for _, testCase := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "not a CronJob",
+			path: baseURL + "/deployments/inference/trigger",
+			body: `{"dry_run":false,"confirm":true,"uid":"deployment-uid"}`,
+		},
+		{
+			name: "confirmation required",
+			path: baseURL + "/cronjobs/nightly-report/trigger",
+			body: `{"dry_run":false,"confirm":false,"uid":"cronjob-uid"}`,
+		},
+		{
+			name: "UID required",
+			path: baseURL + "/cronjobs/nightly-report/trigger",
+			body: `{"dry_run":true,"confirm":false,"uid":""}`,
+		},
+		{
+			name: "query parameters",
+			path: baseURL + "/cronjobs/nightly-report/trigger?force=true",
+			body: `{"dry_run":true,"confirm":false,"uid":"cronjob-uid"}`,
+		},
+	} {
+		response = httptest.NewRecorder()
+		request = httptest.NewRequest(http.MethodPost, testCase.path, bytes.NewBufferString(testCase.body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(idempotencyKeyHeaderName, idempotencyKey)
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("%s status=%d body=%s", testCase.name, response.Code, response.Body.String())
+		}
+	}
+	if service.triggerCallCount != triggered {
+		t.Fatal("unsafe CronJob run reached service")
 	}
 }

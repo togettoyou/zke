@@ -424,6 +424,48 @@ export function useSetCronJobSuspension() {
 }
 
 /**
+ * Runs a CronJob now, by creating a Job from its `jobTemplate`.
+ *
+ * A create, not a change to the CronJob: the schedule, the suspension state and
+ * the template are all left alone, and what appears is a new Job. That is why
+ * this needs `cluster.resource.create` rather than the update permission the
+ * other CronJob actions need, and why the Console gates the entry on the create
+ * permission.
+ *
+ * Pinned to the CronJob's UID: a schedule and a Pod template are exactly what
+ * changes between opening the page and pressing the button, and a run confirmed
+ * against the old one would start work nobody reviewed.
+ */
+export function useTriggerCronJob() {
+  const invalidate = useWorkloadInvalidation();
+  return useMutation({
+    mutationFn: async (input: WorkloadMutationInput & { uid: string }) =>
+      unwrap(
+        await api.POST(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/trigger",
+          {
+            params: {
+              path: workloadPath(input),
+              header: idempotentHeaders(input.idempotencyKey),
+            },
+            body: { dry_run: input.dryRun, confirm: !input.dryRun, uid: input.uid },
+          },
+        ),
+      ),
+    // The Job it creates lands in the Jobs list, not in the CronJob list the
+    // action was started from, so both are invalidated.
+    onSuccess: async (_data, variables) => {
+      await invalidate(variables);
+      if (!variables.dryRun) {
+        // Only the list: the Job's name is generated, so there is no Job detail
+        // query keyed by it for anyone to be looking at.
+        await invalidate({ ...variables, resource: "jobs" }, false);
+      }
+    },
+  });
+}
+
+/**
  * Deletes a workload, pinned to the UID the caller read it at.
  *
  * The endpoint requires the UID rather than accepting it, so a same-named object

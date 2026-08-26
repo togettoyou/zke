@@ -172,6 +172,7 @@ export function WorkloadSection({
                 namespace,
                 workload: row.original,
               }}
+              canCreate={canCreate}
               canUpdate={canUpdate}
               canDelete={canDelete}
               onEdit={() => setEditingName(row.original.name)}
@@ -180,7 +181,7 @@ export function WorkloadSection({
         ),
       },
     ],
-    [resource, clusterId, clusterName, namespace, canUpdate, canDelete, canDescribe],
+    [resource, clusterId, clusterName, namespace, canCreate, canUpdate, canDelete, canDescribe],
   );
 
   if (describeName) {
@@ -267,6 +268,7 @@ export function WorkloadSection({
         namespace={namespace}
         resource={resource}
         name={detailName}
+        canCreate={canCreate}
         canUpdate={canUpdate}
         canDelete={canDelete}
         onEdit={() => setEditingName(detailName)}
@@ -493,6 +495,7 @@ function WorkloadDetailView({
   namespace,
   resource,
   name,
+  canCreate,
   canUpdate,
   canDelete,
   canDescribe,
@@ -507,6 +510,7 @@ function WorkloadDetailView({
   namespace: string;
   resource: KubernetesWorkloadResource;
   name: string;
+  canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
   canDescribe: boolean;
@@ -554,6 +558,7 @@ function WorkloadDetailView({
             {detail.data ? (
               <WorkloadActions
                 target={{ clusterId, clusterName, namespace, workload: detail.data }}
+                canCreate={canCreate}
                 canUpdate={canUpdate}
                 canDelete={canDelete}
                 variant="buttons"

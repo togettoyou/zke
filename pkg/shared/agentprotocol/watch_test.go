@@ -141,6 +141,29 @@ func TestResourceWatchValidationBoundsClusterWideEventsToOneNode(t *testing.T) {
 	}
 }
 
+// The flagged cluster-wide read is a second, wider scope, and the two must stay
+// separate: the flag admits any selector, and its absence keeps the Node
+// snapshot exactly as narrow as it was.
+func TestResourceWatchValidationAdmitsTheFlaggedClusterWideEventScope(t *testing.T) {
+	header := &agentv1.StreamHeader{ProtocolVersion: ProtocolVersion,
+		Kind:      agentv1.StreamKind_STREAM_KIND_RESOURCE_WATCH,
+		RequestId: "00000000-0000-4000-8000-000000000032", TimeoutMillis: 1000}
+	flagged := validResourceWatchRequest()
+	flagged.Namespace = ""
+	flagged.FieldSelector = "type=Warning"
+	flagged.Follow = true
+	flagged.ClusterEventAccess = true
+	if err := validateResourceWatchRequest(header, flagged); err != nil {
+		t.Fatalf("flagged cluster-wide follow rejected: %v", err)
+	}
+	unflagged := validResourceWatchRequest()
+	unflagged.Namespace = ""
+	unflagged.FieldSelector = "type=Warning"
+	if err := validateResourceWatchRequest(header, unflagged); err == nil {
+		t.Fatal("unflagged cluster-wide selector accepted")
+	}
+}
+
 func validResourceWatchRequest() *agentv1.ResourceWatchRequest {
 	return &agentv1.ResourceWatchRequest{
 		Resource: &agentv1.GroupVersionResource{Version: "v1", Resource: "events"}, Namespace: "default",

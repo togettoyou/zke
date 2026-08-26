@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreHorizontal, Pause, Pencil, Play, RotateCw, Scaling } from "lucide-react";
+import { MoreHorizontal, Pause, Pencil, Play, RotateCw, Scaling, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
@@ -8,6 +8,7 @@ import {
   useRestartWorkload,
   useScaleWorkload,
   useSetCronJobSuspension,
+  useTriggerCronJob,
 } from "@/api/queries/workloads";
 import type { KubernetesWorkloadSummary } from "@/api/types";
 import { DetailDeleteAction } from "@/components/common/delete-action";
@@ -43,7 +44,7 @@ export type WorkloadTarget = {
   workload: KubernetesWorkloadSummary;
 };
 
-type WorkloadAction = "scale" | "restart" | "suspension" | "delete";
+type WorkloadAction = "scale" | "restart" | "suspension" | "trigger" | "delete";
 type ActiveWorkloadAction = {
   type: WorkloadAction;
   // Freeze the object the operator chose. A background refetch must not replace
@@ -67,6 +68,7 @@ type ActiveWorkloadAction = {
  */
 export function WorkloadActions({
   target,
+  canCreate,
   canUpdate,
   canDelete,
   variant = "menu",
@@ -74,6 +76,12 @@ export function WorkloadActions({
   onDeleted,
 }: {
   target: WorkloadTarget;
+  /**
+   * Whether the caller may create objects in this Namespace. Only running a
+   * CronJob now needs it: that action creates a Job rather than changing the
+   * CronJob, and the Server gates it on `cluster.resource.create` accordingly.
+   */
+  canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
   variant?: "menu" | "buttons";
@@ -92,13 +100,16 @@ export function WorkloadActions({
   const scalable = canUpdate && supportsScale(resource);
   const restartable = canUpdate && supportsRestart(resource);
   const suspendable = canUpdate && supportsSuspension(resource);
+  // Running a CronJob now is a create, and it names the CronJob by UID, so an
+  // object that arrived without one has no run this Console can safely submit.
+  const triggerable = canCreate && supportsSuspension(resource) && Boolean(uid);
   // The endpoint requires a UID precondition, so an object that somehow arrived
   // without one has no deletion this Console can safely submit.
   const removable = canDelete && Boolean(uid);
 
   const editable = canUpdate && onEdit !== undefined;
 
-  if (!editable && !scalable && !restartable && !suspendable && !removable) {
+  if (!editable && !scalable && !restartable && !suspendable && !triggerable && !removable) {
     return null;
   }
 
@@ -121,6 +132,9 @@ export function WorkloadActions({
             {restartable ? (
               <DropdownMenuItem onSelect={() => openAction("restart")}>滚动重启</DropdownMenuItem>
             ) : null}
+            {triggerable ? (
+              <DropdownMenuItem onSelect={() => openAction("trigger")}>立即运行</DropdownMenuItem>
+            ) : null}
             {suspendable ? (
               <DropdownMenuItem onSelect={() => openAction("suspension")}>
                 {suspended ? "恢复" : "暂停"}
@@ -128,7 +142,9 @@ export function WorkloadActions({
             ) : null}
             {removable ? (
               <>
-                {scalable || restartable || suspendable ? <DropdownMenuSeparator /> : null}
+                {scalable || restartable || suspendable || triggerable ? (
+                  <DropdownMenuSeparator />
+                ) : null}
                 <DropdownMenuItem variant="danger" onSelect={() => openAction("delete")}>
                   删除
                 </DropdownMenuItem>
@@ -156,6 +172,12 @@ export function WorkloadActions({
               滚动重启
             </Button>
           ) : null}
+          {triggerable ? (
+            <Button size="sm" variant="secondary" onClick={() => openAction("trigger")}>
+              <Zap />
+              立即运行
+            </Button>
+          ) : null}
           {suspendable ? (
             <Button size="sm" variant="secondary" onClick={() => openAction("suspension")}>
               {suspended ? <Play /> : <Pause />}
@@ -176,6 +198,9 @@ export function WorkloadActions({
       ) : null}
       {action?.type === "suspension" ? (
         <SuspensionDialog target={action.target} onClose={() => setAction(null)} />
+      ) : null}
+      {action?.type === "trigger" ? (
+        <TriggerDialog target={action.target} onClose={() => setAction(null)} />
       ) : null}
       {action?.type === "delete" ? (
         <DeleteDialog
@@ -410,6 +435,62 @@ function SuspensionDialog({ target, onClose }: { target: WorkloadTarget; onClose
                 ? `${target.workload.name} 已暂停调度`
                 : `${target.workload.name} 已恢复调度`,
             );
+            onClose();
+          })
+          .catch(() => undefined);
+      }}
+    />
+  );
+}
+
+function TriggerDialog({ target, onClose }: { target: WorkloadTarget; onClose: () => void }) {
+  const trigger = useTriggerCronJob();
+  const [previewed, setPreviewed] = useState(false);
+  const previewKey = useSubmissionKey(true);
+  const applyKey = useSubmissionKey(true);
+  const suspended = target.workload.cron_job?.suspend ?? false;
+
+  return (
+    <SensitiveActionDialog
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title="立即运行 CronJob"
+      description={
+        previewed
+          ? "DryRun 预检已通过。再次确认将真正创建这次 Job。"
+          : "首次点击只执行服务端 DryRun 预检；通过后才会真正创建 Job。"
+      }
+      scopeLines={scopeLines(target)}
+      impacts={[
+        "用该 CronJob 当前的 jobTemplate 立即创建一个 Job，等同于 kubectl create job --from=cronjob/<name>。",
+        "调度本身不变：schedule 表达式、暂停状态和模板都不会被修改，下一次按表定时的运行照常发生。",
+        "生成的 Job 持有指向该 CronJob 的 ownerReference，删除 CronJob 时会被一并回收，但不计入 concurrencyPolicy 与历史保留数。",
+        ...(suspended
+          ? ["该 CronJob 当前处于暂停状态，服务端会拒绝这次运行；如需运行，请先恢复调度。"]
+          : []),
+      ]}
+      confirmLabel={previewed ? "确认运行" : "执行 DryRun 预检"}
+      pending={trigger.isPending}
+      error={trigger.error}
+      onConfirm={() => {
+        const dryRun = !previewed;
+        void trigger
+          .mutateAsync({
+            clusterId: target.clusterId,
+            namespace: target.namespace,
+            resource: target.workload.resource,
+            name: target.workload.name,
+            uid: target.workload.uid,
+            dryRun,
+            idempotencyKey: dryRun ? previewKey : applyKey,
+          })
+          .then((result) => {
+            if (dryRun) {
+              setPreviewed(true);
+              toast.success("立即运行 DryRun 预检已通过");
+              return;
+            }
+            toast.success(`已创建 Job ${result.workload.name}`);
             onClose();
           })
           .catch(() => undefined);

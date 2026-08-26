@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Ban, FileCode, PlayCircle, ServerOff, Stethoscope, Tags } from "lucide-react";
+import { Ban, FileCode, PlayCircle, ServerOff, ShieldAlert, Stethoscope, Tags } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDrainNode, useNode, useNodes, useSetNodeSchedulable } from "@/api/queries/nodes";
@@ -33,6 +33,7 @@ import { NODE_MUTATION_PERMISSION } from "./resource-permissions";
 import { YamlEditorView } from "./YamlEditorView";
 import { DescribeView } from "./DescribeView";
 import { NodeLabelsView } from "./NodeLabelsView";
+import { NodeTaintsView } from "./NodeTaintsView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 
@@ -59,6 +60,9 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
   const [yamlName, setYamlName] = useState<string | null>(null);
   // Labels are a list of their own length, so they get a page as well.
   const [labelsName, setLabelsName] = useState<string | null>(null);
+  // Taints are a list too, and a more consequential one: a NoExecute taint
+  // evicts what is already running. Same shape of page, its own confirmation.
+  const [taintsName, setTaintsName] = useState<string | null>(null);
   const [schedulingTarget, setSchedulingTarget] = useState<SchedulingTarget | null>(null);
   const [schedulingPreviewed, setSchedulingPreviewed] = useState(false);
   const schedulingPreviewKey = useSubmissionKey(schedulingTarget !== null);
@@ -251,6 +255,13 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           name={labelsName}
           onBack={() => setLabelsName(null)}
         />
+      ) : taintsName ? (
+        <NodeTaintsView
+          clusterId={clusterId}
+          clusterName={clusterName}
+          name={taintsName}
+          onBack={() => setTaintsName(null)}
+        />
       ) : detailName ? (
         <NodeDetailView
           clusterId={clusterId}
@@ -262,6 +273,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           onToggleScheduling={openScheduling}
           onOpenYaml={() => setYamlName(detailName)}
           onOpenLabels={() => setLabelsName(detailName)}
+          onOpenTaints={() => setTaintsName(detailName)}
           onOpenDescribe={() => setDescribeName(detailName)}
           onDrain={openDrain}
         />
@@ -461,6 +473,7 @@ function NodeDetailView({
   onToggleScheduling,
   onOpenYaml,
   onOpenLabels,
+  onOpenTaints,
   onOpenDescribe,
   onDrain,
 }: {
@@ -473,6 +486,7 @@ function NodeDetailView({
   onToggleScheduling: (node: SchedulingTarget) => void;
   onOpenYaml: () => void;
   onOpenLabels: () => void;
+  onOpenTaints: () => void;
   onOpenDescribe: () => void;
   onDrain: (node: Pick<KubernetesNodeSummary, "name" | "uid">) => void;
 }) {
@@ -503,6 +517,12 @@ function NodeDetailView({
               <Button size="sm" variant="secondary" onClick={onOpenLabels}>
                 <Tags />
                 标签
+              </Button>
+            ) : null}
+            {canUpdate ? (
+              <Button size="sm" variant="secondary" onClick={onOpenTaints}>
+                <ShieldAlert />
+                污点
               </Button>
             ) : null}
             {canUpdate && detail.data ? (

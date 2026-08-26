@@ -103,6 +103,8 @@ export const queryKeys = {
     namespace: string,
     params: Record<string, unknown> = {},
   ) => ["generic-resources", clusterId, gvr, namespace, params] as const,
+  genericResource: (clusterId: string, gvr: string, namespace: string, name: string) =>
+    ["generic-resource", clusterId, gvr, namespace, name] as const,
   policyResources: (
     clusterId: string,
     namespace: string,
@@ -115,6 +117,12 @@ export const queryKeys = {
     ["config-maps", clusterId, namespace, params] as const,
   configMap: (clusterId: string, namespace: string, name: string) =>
     ["config-map", clusterId, namespace, name] as const,
+  helmReleases: (clusterId: string, namespace: string) =>
+    ["helm-releases", clusterId, namespace] as const,
+  helmRelease: (clusterId: string, namespace: string, name: string, revision: number) =>
+    ["helm-release", clusterId, namespace, name, revision] as const,
+  helmReleaseRevisions: (clusterId: string, namespace: string, name: string) =>
+    ["helm-release-revisions", clusterId, namespace, name] as const,
   secrets: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
     ["secrets", clusterId, namespace, params] as const,
   secret: (clusterId: string, namespace: string, name: string) =>
@@ -216,6 +224,7 @@ export const queryKeyPrefixes = {
   storageResources: ["storage-resources"] as const,
   storageResource: ["storage-resource"] as const,
   genericResources: ["generic-resources"] as const,
+  genericResource: ["generic-resource"] as const,
   policyResources: ["policy-resources"] as const,
   policyResource: ["policy-resource"] as const,
   auditEvents: ["audit-events"] as const,

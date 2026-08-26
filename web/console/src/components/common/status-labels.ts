@@ -141,6 +141,20 @@ export const STATUS_LABELS: Record<string, Record<string, StatusDescriptor>> = {
     expired: { label: "已过期", tone: "neutral" },
     revoked: { label: "已撤销", tone: "danger" },
   },
+  // Helm's own release statuses, as they are written on the release Secret's
+  // `status` label. `superseded` is the ordinary resting state of every revision
+  // but the newest, so it is neutral rather than a warning.
+  helmRelease: {
+    deployed: { label: "已部署", tone: "success" },
+    superseded: { label: "已被取代", tone: "neutral" },
+    failed: { label: "失败", tone: "danger" },
+    uninstalling: { label: "卸载中", tone: "warning" },
+    uninstalled: { label: "已卸载", tone: "neutral" },
+    "pending-install": { label: "安装中", tone: "warning" },
+    "pending-upgrade": { label: "升级中", tone: "warning" },
+    "pending-rollback": { label: "回滚中", tone: "warning" },
+    unknown: { label: "未知", tone: "neutral" },
+  },
   auditResult: {
     succeeded: { label: "成功", tone: "success" },
     failed: { label: "失败", tone: "danger" },

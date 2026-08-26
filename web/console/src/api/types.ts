@@ -139,6 +139,9 @@ export type KubernetesConfigMapSummary = Schemas["KubernetesConfigMapSummary"];
 export type KubernetesConfigMapDetail = Schemas["KubernetesConfigMapDetail"];
 export type KubernetesSecretSummary = Schemas["KubernetesSecretSummary"];
 export type KubernetesSecretDetail = Schemas["KubernetesSecretDetail"];
+export type KubernetesHelmRelease = Schemas["KubernetesHelmRelease"];
+export type KubernetesHelmReleasePage = Schemas["KubernetesHelmReleasePage"];
+export type KubernetesHelmReleaseDetail = Schemas["KubernetesHelmReleaseDetail"];
 export type KubernetesNetworkingResource = Schemas["KubernetesNetworkingResource"];
 export type KubernetesNetworkingResourceSummary = Schemas["KubernetesNetworkingResourceSummary"];
 export type KubernetesNetworkingResourceDetail = Schemas["KubernetesNetworkingResourceDetail"];
@@ -160,6 +163,7 @@ export type KubernetesPodPhase = KubernetesPodSummary["phase"];
 export type KubernetesPodTerminalRecording = Schemas["KubernetesPodTerminalRecording"];
 export type KubernetesPodTerminalRecordingFrame = Schemas["KubernetesPodTerminalRecordingFrame"];
 export type KubernetesDeleteResult = Schemas["KubernetesDeleteResult"];
+export type KubernetesPodEvictionResult = Schemas["KubernetesPodEvictionResult"];
 
 export type KubernetesDescribe = Schemas["KubernetesDescribe"];
 export type KubernetesDescribeTarget = Schemas["KubernetesDescribeTarget"];

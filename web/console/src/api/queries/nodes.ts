@@ -160,6 +160,90 @@ export function useUpdateNodeLabels() {
   });
 }
 
+/** One taint exactly as Kubernetes stores it on `spec.taints`. */
+export type NodeTaint = {
+  key: string;
+  value?: string;
+  effect: string;
+  timeAdded?: string;
+};
+
+/**
+ * Replaces the taints on one Node.
+ *
+ * A JSON Patch rather than the merge patch labels use, because taints are a
+ * list: a merge patch replaces a list wholesale with no way to say what it was
+ * replacing, so the whole list would be written over whatever is there now.
+ *
+ * The concurrency guard is a `test` on the list itself rather than on
+ * `metadata.resourceVersion`. A Node's resourceVersion changes with every
+ * kubelet status heartbeat — every few seconds, on every Node — so a
+ * resourceVersion precondition here would fail almost every time for reasons
+ * that have nothing to do with taints. Testing `spec.taints` fails exactly when
+ * someone else changed the taints, which is the collision worth refusing.
+ *
+ * A Node with no taints at all has no `/spec/taints` to test, and JSON Patch has
+ * no way to assert a path is absent; that one case is written without the guard.
+ */
+export function useUpdateNodeTaints() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      clusterId: string;
+      name: string;
+      uid: string;
+      /** The taints as they were read, verbatim; absent when the Node had none. */
+      baseline: NodeTaint[] | undefined;
+      /** The complete list to store; empty removes every taint. */
+      taints: NodeTaint[];
+      dryRun: boolean;
+      idempotencyKey: string;
+    }) => {
+      const operations: Record<string, unknown>[] = [
+        { op: "test", path: "/metadata/uid", value: input.uid },
+      ];
+      if (input.baseline !== undefined) {
+        operations.push({ op: "test", path: "/spec/taints", value: input.baseline });
+      }
+      operations.push(
+        input.taints.length > 0
+          ? { op: "add", path: "/spec/taints", value: input.taints }
+          : { op: "remove", path: "/spec/taints" },
+      );
+      return unwrap(
+        await api.PATCH("/api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}", {
+          params: {
+            path: { cluster_id: input.clusterId, resource_name: input.name },
+            query: { version: "v1", resource: "nodes" },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: {
+            patch_type: "json",
+            patch: operations,
+            options: { dry_run: input.dryRun, force: false },
+            confirm: !input.dryRun,
+          },
+        }),
+      );
+    },
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents });
+      if (!variables.dryRun) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["nodes", variables.clusterId] }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.node(variables.clusterId, variables.name),
+          }),
+          queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.genericResource }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.nodeDescribe(variables.clusterId, variables.name),
+          }),
+        ]);
+      }
+    },
+  });
+}
+
 export function useDrainNode() {
   const queryClient = useQueryClient();
   return useMutation({

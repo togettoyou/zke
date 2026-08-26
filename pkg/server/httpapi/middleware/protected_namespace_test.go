@@ -89,3 +89,59 @@ func TestEffectiveClusterPermissionUsesNamespaceLifecycleGrantForOrdinaryNamespa
 		t.Fatalf("permission = %q, want %q", got, rbac.PermissionClusterNamespaceManage)
 	}
 }
+
+// The additional gate follows what a route reads, not what it is called. A Helm
+// release is a Secret of type `helm.sh/release.v1`, so reading one in a
+// protected Namespace has to answer to that Namespace's permission exactly as
+// reading the Secret directly does — otherwise the release routes would be a way
+// around the boundary. Reads of ordinary resources stay on `cluster.read`.
+func TestProtectedNamespaceGateCoversHelmReleaseReads(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		route string
+		path  string
+		gated bool
+	}{
+		{
+			name:  "Helm release list",
+			route: "/api/v1/clusters/:cluster_id/namespaces/:namespace_name/helm-releases",
+			path:  "/api/v1/clusters/cluster/namespaces/kube-system/helm-releases",
+			gated: true,
+		},
+		{
+			name:  "Helm release detail",
+			route: "/api/v1/clusters/:cluster_id/namespaces/:namespace_name/helm-releases/:release_name",
+			path:  "/api/v1/clusters/cluster/namespaces/zke-system/helm-releases/reporting",
+			gated: true,
+		},
+		{
+			name:  "Secret read",
+			route: "/api/v1/clusters/:cluster_id/namespaces/:namespace_name/secrets/:secret_name",
+			path:  "/api/v1/clusters/cluster/namespaces/kube-system/secrets/token",
+			gated: true,
+		},
+		{
+			name:  "ordinary read",
+			route: "/api/v1/clusters/:cluster_id/namespaces/:namespace_name/pods/:pod_name",
+			path:  "/api/v1/clusters/cluster/namespaces/kube-system/pods/api",
+			gated: false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router := gin.New()
+			var gated bool
+			router.GET(testCase.route, func(c *gin.Context) {
+				gated = protectedNamespaceRequestNeedsAdditionalGate(c)
+			})
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, testCase.path, nil))
+			if gated != testCase.gated {
+				t.Fatalf("gated = %v, want %v", gated, testCase.gated)
+			}
+		})
+	}
+}

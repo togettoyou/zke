@@ -26,6 +26,9 @@ ZKE Server 当前只支持单副本部署。
 - [x] Discovery、CRD 资源浏览、通用主资源 CRUD 和 YAML 编辑
 - [x] 多文档 YAML 清单 DryRun、逐文档授权、应用与删除
 - [x] 资源诊断、关联对象与 Event 证据导航
+- [x] 节点污点管理、Pod 驱逐（PDB 感知）与 CronJob 立即运行
+- [x] 全集群事件中心，与 Namespace 级事件共用 `cluster.event.read`
+- [x] 只读的 Helm Release 清单、修订历史与 values，使用 `cluster.secret.read`
 - [x] 按当前用户权限投影 Kubernetes RBAC 的独立终端 App
 
 ## Phase 3：可观测性

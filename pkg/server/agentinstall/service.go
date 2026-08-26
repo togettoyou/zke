@@ -338,8 +338,9 @@ func renderManifest(
 			},
 			{
 				APIGroups: []string{""},
-				// Drain is the sole Resource Stream subresource allowlist entry.
-				// The Agent also requires the dedicated access bit, policy/v1
+				// Eviction is the sole Resource Stream subresource allowlist
+				// entry, used by Node Drain and by evicting a single Pod. The
+				// Agent also requires the dedicated access bit, policy/v1
 				// Eviction identity and a Pod UID precondition.
 				Resources: []string{"pods/eviction"},
 				Verbs:     []string{"create"},

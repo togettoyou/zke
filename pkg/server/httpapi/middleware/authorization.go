@@ -337,7 +337,14 @@ func protectedNamespaceRequestNeedsAdditionalGate(c *gin.Context) bool {
 	}
 	// Reading a Secret retains cluster.secret.read and additionally requires the
 	// protected namespace grant. Other reads remain ordinary cluster.read.
-	return strings.Contains(path, "/secrets") || strings.Contains(path, "/terminal-sessions")
+	//
+	// A Helm release is a Secret of type `helm.sh/release.v1` reached under a
+	// name of its own, so the gate follows what is read rather than what the
+	// path is called: reading a release in `kube-system` is reading a Secret in
+	// `kube-system`, and a route name must not be a way around that.
+	return strings.Contains(path, "/secrets") ||
+		strings.Contains(path, "/helm-releases") ||
+		strings.Contains(path, "/terminal-sessions")
 }
 
 func (authorization *Authorization) require(

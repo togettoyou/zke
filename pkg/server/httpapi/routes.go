@@ -663,6 +663,19 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesPod.delete,
 	)
+	// Eviction takes the Pod away exactly as the delete above does, so it
+	// answers to the same permission — and to the same protected-Namespace
+	// substitution, because the Namespace is in the path. What it adds is the
+	// Cluster's own veto: a PodDisruptionBudget can refuse.
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/pods/:pod_name/eviction",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceDelete,
+			"cluster_id",
+		),
+		handlers.kubernetesPod.evict,
+	)
 	// Pod logs intentionally use a separate group: clusterRoutes installs the
 	// short request timeout, while follow=true is a bounded, revalidated stream
 	// whose cancellation must propagate to the target Agent.
@@ -713,6 +726,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesEvents.stream,
 	)
+	// The Cluster-wide event centre. Same permission as the Namespace route
+	// above: `cluster.event.read` is granted per Cluster, never per Namespace,
+	// so this reaches nothing a holder could not already read one Namespace at
+	// a time.
+	eventRoutes.GET(
+		"/:cluster_id/events",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterEventRead,
+			"cluster_id",
+		),
+		handlers.kubernetesEvents.clusterStream,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource",
 		handlers.authorizationMiddleware.RequireCluster(
@@ -755,6 +780,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesWorkload.scale,
+	)
+	// Running a CronJob now creates a Job; nothing about the CronJob changes.
+	// So it takes the create permission, not the update one the other CronJob
+	// actions beside it take.
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/trigger",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceCreate,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.trigger,
 	)
 	clusterRoutes.POST(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/restart",
@@ -1267,6 +1304,50 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesSecretYAML.update,
+	)
+	// Helm releases are Secrets of type `helm.sh/release.v1`, so they answer to
+	// the Secret permission and not to `cluster.read` alone: reading a release
+	// hands back the values the chart was installed with. Both permissions are
+	// required — `cluster.read` because this is a Cluster query like any other,
+	// `cluster.secret.read` because of what it returns — and the
+	// protected-Namespace gate covers these routes for the same reason it covers
+	// `/secrets`. There is no write route: ZKE reads Helm's storage and never
+	// writes it.
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/helm-releases",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretRead,
+			"cluster_id",
+		),
+		handlers.kubernetesHelmRelease.list,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/helm-releases/:release_name",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretRead,
+			"cluster_id",
+		),
+		handlers.kubernetesHelmRelease.get,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/helm-releases/:release_name/revisions",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterSecretRead,
+			"cluster_id",
+		),
+		handlers.kubernetesHelmRelease.revisions,
 	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/configmaps",

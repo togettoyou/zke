@@ -63,6 +63,10 @@ type kubernetesWorkloadService interface {
 		context.Context,
 		kubernetesresource.DeleteWorkloadInput,
 	) error
+	TriggerCronJob(
+		context.Context,
+		kubernetesresource.TriggerCronJobInput,
+	) (kubernetesresource.WorkloadDetail, error)
 }
 
 type kubernetesWorkloadHandler struct {
@@ -189,6 +193,15 @@ type rollbackWorkloadRequest struct {
 	Revision        int64  `json:"revision"`
 	UID             string `json:"uid"`
 	ResourceVersion string `json:"resource_version"`
+	workloadMutationRequest
+}
+
+// Running a CronJob now names the CronJob it runs, by UID. A schedule and a Pod
+// template are exactly what changes between the moment an operator opens the
+// page and the moment they press the button, and a run confirmed against the
+// old one would start work nobody reviewed.
+type triggerCronJobRequest struct {
+	UID string `json:"uid"`
 	workloadMutationRequest
 }
 
@@ -514,6 +527,101 @@ func (handler *kubernetesWorkloadHandler) setSuspension(c *gin.Context, suspende
 		err,
 		"change Kubernetes CronJob suspension",
 	)
+}
+
+// trigger creates one Job from a CronJob's template, off schedule.
+//
+// It answers to `cluster.resource.create` rather than to the update permission
+// the other CronJob actions use, and the route is registered accordingly: this
+// creates an object, and nothing about the CronJob changes.
+func (handler *kubernetesWorkloadHandler) trigger(c *gin.Context) {
+	resource, target, ok := handler.parseMutationTarget(
+		c,
+		auditaction.KubernetesCronJobTrigger,
+	)
+	if !ok {
+		return
+	}
+	identity, _ := httpmiddleware.Identity(c)
+	if resource != kubernetesresource.WorkloadCronJobs {
+		handler.recordMutation(c, identity.User.ID, auditaction.KubernetesCronJobTrigger, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "only a CronJob can be run on demand")
+		return
+	}
+	var request triggerCronJobRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(c, identity.User.ID, auditaction.KubernetesCronJobTrigger, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid CronJob run request")
+		return
+	}
+	action := auditaction.KubernetesCronJobTrigger
+	if request.DryRun {
+		action = auditaction.KubernetesCronJobTriggerDryRun
+	}
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	if request.UID == "" {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid CronJob run request")
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.TriggerCronJob(ctx, kubernetesresource.TriggerCronJobInput{
+		ClusterID:      c.Param("cluster_id"),
+		Namespace:      c.Param("namespace_name"),
+		Name:           c.Param("workload_name"),
+		UID:            request.UID,
+		DryRun:         request.DryRun,
+		Confirm:        request.Confirm,
+		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
+	})
+	cancel()
+	if err != nil {
+		handler.recordMutation(c, identity.User.ID, action, target, "failed")
+	}
+	if handler.respondCronJobTriggerError(c, err) {
+		return
+	}
+	handler.recordMutation(c, identity.User.ID, action, target, "succeeded")
+	writeSuccess(c, http.StatusOK, gin.H{
+		"workload": result,
+		"dry_run":  request.DryRun,
+	})
+}
+
+// The two refusals this endpoint makes on its own are worth their own codes: a
+// suspended CronJob is answered by resuming it, and a name with no room for the
+// run suffix is answered by renaming the CronJob. Neither is fixed by retrying.
+func (handler *kubernetesWorkloadHandler) respondCronJobTriggerError(c *gin.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, kubernetesresource.ErrCronJobSuspended) ||
+		errors.Is(err, kubernetesresource.ErrCronJobJobNameTooLong) {
+		return handler.respondError(c, "run Kubernetes CronJob", err,
+			errorMapping{
+				kubernetesresource.ErrCronJobSuspended,
+				http.StatusConflict,
+				"cron_job_suspended",
+				"CronJob is suspended; resume it before running it on demand",
+			},
+			errorMapping{
+				kubernetesresource.ErrCronJobJobNameTooLong,
+				http.StatusBadRequest,
+				"cron_job_name_too_long",
+				"CronJob name leaves no room for the generated Job name",
+			},
+		)
+	}
+	return handler.respondWorkloadError(c, "run Kubernetes CronJob", err)
 }
 
 func (handler *kubernetesWorkloadHandler) revisions(c *gin.Context) {

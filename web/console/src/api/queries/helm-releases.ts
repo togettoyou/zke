@@ -1,0 +1,100 @@
+import { useQuery } from "@tanstack/react-query";
+
+import { api, unwrap } from "../client";
+import { queryKeys } from "../query-keys";
+
+const LIST_PATH = "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases";
+const ITEM_PATH =
+  "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}";
+const REVISIONS_PATH =
+  "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}/revisions";
+
+/**
+ * The Helm releases installed in one Namespace, each at its newest revision.
+ *
+ * Read-only, and read-only on purpose: ZKE reads Helm's own storage and never
+ * writes it. Installing, upgrading, rolling back and uninstalling need Helm's
+ * rendering engine, and a half-implementation writing release Secrets itself
+ * would corrupt the history the real `helm` client depends on.
+ *
+ * A release lives in a Secret, so every one of these needs `cluster.secret.read`
+ * as well as `cluster.read`, and the Server audits them the way it audits a
+ * Secret read.
+ */
+export function useHelmReleases(clusterId: string | null, namespace: string | null) {
+  return useQuery({
+    queryKey: queryKeys.helmReleases(clusterId ?? "", namespace ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(LIST_PATH, {
+          params: {
+            path: { cluster_id: clusterId as string, namespace_name: namespace as string },
+          },
+          signal,
+        }),
+      ),
+    enabled: Boolean(clusterId && namespace),
+  });
+}
+
+/**
+ * One revision of one release, values included.
+ *
+ * `revision` selects an older one; omitting it reads whichever revision storage
+ * currently holds as newest.
+ */
+export function useHelmRelease(
+  clusterId: string | null,
+  namespace: string | null,
+  name: string | null,
+  revision?: number,
+) {
+  return useQuery({
+    queryKey: queryKeys.helmRelease(clusterId ?? "", namespace ?? "", name ?? "", revision ?? 0),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(ITEM_PATH, {
+          params: {
+            path: {
+              cluster_id: clusterId as string,
+              namespace_name: namespace as string,
+              release_name: name as string,
+            },
+            ...(revision ? { query: { revision } } : {}),
+          },
+          signal,
+        }),
+      ),
+    enabled: Boolean(clusterId && namespace && name),
+  });
+}
+
+/**
+ * The revisions storage still holds for one release.
+ *
+ * Helm keeps a Secret per revision and trims them by `--history-max`, so this is
+ * what is actually retained rather than everything that ever happened.
+ */
+export function useHelmReleaseRevisions(
+  clusterId: string | null,
+  namespace: string | null,
+  name: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.helmReleaseRevisions(clusterId ?? "", namespace ?? "", name ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(REVISIONS_PATH, {
+          params: {
+            path: {
+              cluster_id: clusterId as string,
+              namespace_name: namespace as string,
+              release_name: name as string,
+            },
+          },
+          signal,
+        }),
+      ),
+    enabled: Boolean(clusterId && namespace && name),
+  });
+}

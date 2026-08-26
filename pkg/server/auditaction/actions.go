@@ -122,9 +122,28 @@ const (
 	KubernetesPodTerminalRecordingRead   = "kubernetes_pod.terminal_recording.read"
 	KubernetesPodAccessSessionCreate     = "kubernetes_pod.access_session.create"
 	KubernetesPodAccess                  = "kubernetes_pod.access"
-	KubernetesNodeDrain                  = "kubernetes_node.drain"
-	KubernetesNodeDrainDryRun            = "kubernetes_node.drain.dry_run"
-	KubernetesEventRead                  = "kubernetes_event.read"
+	// Evicting one Pod and deleting it answer to the same permission and end
+	// the same way, so they would be indistinguishable in the trail if they
+	// shared an action. They are worth telling apart: an eviction is the
+	// disruption-budget-checked path, and "was this removal checked against the
+	// budget" is exactly the question asked afterwards about an outage.
+	KubernetesPodEvict       = "kubernetes_pod.evict"
+	KubernetesPodEvictDryRun = "kubernetes_pod.evict.dry_run"
+	// Running a CronJob now creates a Job that the schedule did not ask for.
+	// The Job it creates is an ordinary object, but the decision to run it off
+	// schedule is not, and reading it back out of a generic create record would
+	// mean guessing from the object's name.
+	KubernetesCronJobTrigger       = "kubernetes_cron_job.trigger"
+	KubernetesCronJobTriggerDryRun = "kubernetes_cron_job.trigger.dry_run"
+	KubernetesNodeDrain            = "kubernetes_node.drain"
+	KubernetesNodeDrainDryRun      = "kubernetes_node.drain.dry_run"
+	KubernetesEventRead            = "kubernetes_event.read"
+	// A Helm release is stored in a Secret, and reading one hands back the
+	// values the chart was installed with. That is the same exposure a Secret
+	// read is, and it is recorded the same way — separately for a listing,
+	// which returns no values at all, and for reading one release.
+	KubernetesHelmReleaseList = "kubernetes_helm_release.list"
+	KubernetesHelmReleaseRead = "kubernetes_helm_release.read"
 
 	// Reading a Secret is recorded because reading it is the whole exposure:
 	// unlike a ConfigMap or a Deployment, one successful GET hands the caller a
@@ -363,11 +382,17 @@ var actions = []Action{
 	{KubernetesPodTerminalRecordingRead, GroupKubernetes},
 	{KubernetesPodAccessSessionCreate, GroupKubernetes},
 	{KubernetesPodAccess, GroupKubernetes},
+	{KubernetesPodEvict, GroupKubernetes},
+	{KubernetesPodEvictDryRun, GroupKubernetes},
+	{KubernetesCronJobTrigger, GroupKubernetes},
+	{KubernetesCronJobTriggerDryRun, GroupKubernetes},
 	{KubernetesNodeDrain, GroupKubernetes},
 	{KubernetesNodeDrainDryRun, GroupKubernetes},
 	{KubernetesEventRead, GroupKubernetes},
 	{KubernetesSecretList, GroupKubernetes},
 	{KubernetesSecretRead, GroupKubernetes},
+	{KubernetesHelmReleaseList, GroupKubernetes},
+	{KubernetesHelmReleaseRead, GroupKubernetes},
 
 	{DeniedTenantRead, GroupDenied},
 	{DeniedTenantManage, GroupDenied},

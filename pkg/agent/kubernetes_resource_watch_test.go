@@ -95,6 +95,56 @@ func TestKubernetesResourceWatchAllowsOneNodeAcrossNamespaces(t *testing.T) {
 	}
 }
 
+// The Cluster-wide event centre is the second caller allowed an empty
+// Namespace, and it has to ask for it explicitly. Without the flag the Agent
+// keeps refusing anything but the exact Node UID snapshot — the behaviour an
+// Agent older than this Server has, and the one that keeps a
+// `cluster.event.read` holder from widening a describe into a Cluster-wide
+// follow by dropping a selector term.
+func TestKubernetesResourceWatchAllowsEveryNamespaceOnlyWhenAsked(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Event{
+			ObjectMeta:     metav1.ObjectMeta{Name: "node-ready", Namespace: "default"},
+			InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "worker-a", UID: "node-a"},
+		},
+		&corev1.Event{
+			ObjectMeta:     metav1.ObjectMeta{Name: "pod-ready", Namespace: "workloads"},
+			InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "api-0", UID: "pod-a"},
+		},
+	)
+	handler := newKubernetesResourceWatchHandler(client)
+	request := &agentv1.ResourceWatchRequest{
+		Resource:             &agentv1.GroupVersionResource{Version: "v1", Resource: "events"},
+		IncludeInitialEvents: true,
+		Follow:               true,
+		InitialEventLimit:    50,
+		ClusterEventAccess:   true,
+	}
+	response, source, err := handler(context.Background(), request)
+	if err != nil || response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK || source == nil {
+		t.Fatalf("response=%+v source=%v err=%v", response, source, err)
+	}
+	seen := 0
+	for range 2 {
+		event, nextErr := source.Next(context.Background())
+		if nextErr != nil || len(event.GetObject()) == 0 {
+			t.Fatalf("event=%+v err=%v", event, nextErr)
+		}
+		seen++
+	}
+	if seen != 2 {
+		t.Fatalf("cluster-wide snapshot returned %d events", seen)
+	}
+	refused := proto.Clone(request).(*agentv1.ResourceWatchRequest)
+	refused.ClusterEventAccess = false
+	response, source, err = handler(context.Background(), refused)
+	if err != nil || source != nil ||
+		response.GetResult() != agentv1.ResultCode_RESULT_CODE_FORBIDDEN ||
+		response.GetReason() != "ClusterEventWatchForbidden" {
+		t.Fatalf("unflagged response=%+v source=%v err=%v", response, source, err)
+	}
+}
+
 func TestGenericResourcePathRejectsKubernetesEvents(t *testing.T) {
 	request := &agentv1.ResourceRequest{Verb: agentv1.ResourceVerb_RESOURCE_VERB_LIST,
 		Resource: &agentv1.GroupVersionResource{Version: "v1", Resource: "events"}}

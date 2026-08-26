@@ -48,6 +48,13 @@ export type KubernetesEventFilters = {
 
 export type KubernetesEventStreamOptions = {
   clusterId: string;
+  /**
+   * The Namespace to read, or an empty string for every Namespace in the
+   * Cluster — the event centre an operator opens before they know which
+   * Namespace the problem is in. Both routes answer to `cluster.event.read`,
+   * which is granted per Cluster, so the wider one reaches nothing the
+   * Namespace one could not already be pointed at.
+   */
   namespace: string;
   follow: boolean;
   limit: number;
@@ -83,9 +90,10 @@ const RECONNECT_DELAY_MS = 1_000;
 type CloseFrame = { reason: string; last_resource_version?: string; limit_reached?: boolean };
 
 function eventsUrl(options: KubernetesEventStreamOptions, resourceVersion?: string): string {
-  const path =
-    `/api/v1/clusters/${encodeURIComponent(options.clusterId)}` +
-    `/namespaces/${encodeURIComponent(options.namespace)}/events`;
+  const cluster = `/api/v1/clusters/${encodeURIComponent(options.clusterId)}`;
+  const path = options.namespace
+    ? `${cluster}/namespaces/${encodeURIComponent(options.namespace)}/events`
+    : `${cluster}/events`;
   const query = new URLSearchParams({ limit: String(options.limit) });
   if (options.follow) {
     query.set("follow", "true");
@@ -155,7 +163,8 @@ function parseFrame(raw: string): ParsedFrame | null {
 }
 
 /**
- * Reads one Namespace's Kubernetes Events over SSE.
+ * Reads Kubernetes Events over SSE, from one Namespace or from the whole
+ * Cluster.
  *
  * `EventSource` is not used, deliberately. It never exposes the HTTP status of a
  * failed connection, so an expired resourceVersion (409), a withdrawn permission

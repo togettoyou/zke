@@ -1,10 +1,10 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Cable, FileCode, ScrollText, SquareTerminal, Stethoscope } from "lucide-react";
+import { Cable, FileCode, LogOut, ScrollText, SquareTerminal, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 
 import { usePodDescribe } from "@/api/queries/describe";
-import { useDeletePod, usePod, usePods } from "@/api/queries/pods";
+import { useDeletePod, useEvictPod, usePod, usePods } from "@/api/queries/pods";
 import type {
   KubernetesPodContainer,
   KubernetesPodDetail,
@@ -101,6 +101,15 @@ export function PodSection({
   const deletePreviewKey = useSubmissionKey(deleteTarget !== null);
   const deleteApplyKey = useSubmissionKey(deleteTarget !== null);
   const remove = useDeletePod();
+  // Eviction is a second, separate confirmation rather than a checkbox inside
+  // the delete one: the two ask Kubernetes different questions, and the answer
+  // an operator wants — "may this Pod go now" — is the one they should have to
+  // pick deliberately.
+  const [evictTarget, setEvictTarget] = useState<KubernetesPodSummary | null>(null);
+  const [evictPreviewed, setEvictPreviewed] = useState(false);
+  const evictPreviewKey = useSubmissionKey(evictTarget !== null);
+  const evictApplyKey = useSubmissionKey(evictTarget !== null);
+  const evict = useEvictPod();
 
   const projectScope = { type: "project" as const, tenantId, projectId };
   const canDelete = permissions.can(
@@ -159,6 +168,15 @@ export function PodSection({
       remove.reset();
     },
     [remove],
+  );
+
+  const openEvict = useCallback(
+    (pod: KubernetesPodSummary) => {
+      setEvictTarget(pod);
+      setEvictPreviewed(false);
+      evict.reset();
+    },
+    [evict],
   );
 
   const columns = useMemo<ColumnDef<KubernetesPodSummary, unknown>[]>(
@@ -263,6 +281,17 @@ export function PodSection({
               </Button>
             ) : null}
             {canDelete && row.original.uid ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="text-warning hover:text-warning"
+                aria-label={`驱逐 ${row.original.name}`}
+                onClick={() => openEvict(row.original)}
+              >
+                <LogOut />
+              </Button>
+            ) : null}
+            {canDelete && row.original.uid ? (
               <RowDeleteAction name={row.original.name} onDelete={() => openDelete(row.original)} />
             ) : null}
           </div>
@@ -279,6 +308,7 @@ export function PodSection({
       onOpenTerminal,
       onOpenPodAccess,
       openDelete,
+      openEvict,
     ],
   );
 
@@ -342,6 +372,7 @@ export function PodSection({
           canExec={canExec}
           canPodAccess={canPodAccess}
           onDelete={openDelete}
+          onEvict={openEvict}
           onOpenLogs={onOpenLogs}
           onOpenTerminal={onOpenTerminal}
           onOpenPodAccess={onOpenPodAccess}
@@ -423,14 +454,79 @@ export function PodSection({
             .catch(() => undefined);
         }}
       />
+
+      <SensitiveActionDialog
+        open={evictTarget !== null}
+        onOpenChange={(open) => !open && setEvictTarget(null)}
+        title="驱逐 Pod"
+        description={
+          evictPreviewed
+            ? "DryRun 预检已通过，说明当前的 PodDisruptionBudget 允许这次驱逐。再次确认将提交实际驱逐。"
+            : "首次点击只执行服务端 DryRun 预检；Kubernetes 会先校验 PodDisruptionBudget，通过后才能实际驱逐。"
+        }
+        scopeLines={[
+          { label: "集群", name: clusterName, id: clusterId },
+          { label: "命名空间", name: namespace },
+          { label: "Pod", name: evictTarget?.name ?? "", id: evictTarget?.uid },
+        ]}
+        impacts={evictImpacts(evictTarget)}
+        confirmationText={evictPreviewed ? evictTarget?.name : undefined}
+        confirmLabel={evictPreviewed ? "确认驱逐" : "执行 DryRun 预检"}
+        destructive
+        pending={evict.isPending}
+        error={evict.error}
+        onConfirm={() => {
+          if (!evictTarget) return;
+          const dryRun = !evictPreviewed;
+          void evict
+            .mutateAsync({
+              clusterId,
+              namespace,
+              name: evictTarget.name,
+              uid: evictTarget.uid,
+              dryRun,
+              idempotencyKey: dryRun ? evictPreviewKey : evictApplyKey,
+            })
+            .then(() => {
+              if (dryRun) {
+                setEvictPreviewed(true);
+                toast.success("Pod 驱逐 DryRun 预检已通过");
+                return;
+              }
+              toast.success(`Pod ${evictTarget.name} 已提交驱逐`);
+              if (detailName === evictTarget.name) {
+                setDetailName(null);
+              }
+              setEvictTarget(null);
+            })
+            .catch(() => undefined);
+        }}
+      />
     </>
   );
+}
+
+function evictImpacts(pod: KubernetesPodSummary | null): string[] {
+  const impacts = [
+    "Pod 将被终止，其中所有容器都会停止运行。",
+    "Kubernetes 会先检查覆盖该 Pod 的 PodDisruptionBudget：如果驱逐会破坏可用性预算，请求被拒绝，Pod 保持运行。",
+    "预检通过只说明此刻允许驱逐；副本状态随时在变，实际提交时仍可能被预算拒绝。",
+    "请求携带该 Pod 当前的 UID 前置条件，避免驱逐同名重建的对象。",
+  ];
+  if (pod?.controller) {
+    impacts.splice(
+      1,
+      0,
+      `该 Pod 由 ${pod.controller.kind}/${pod.controller.name} 管理，驱逐后控制器通常会重新创建一个。`,
+    );
+  }
+  return impacts;
 }
 
 function deleteImpacts(pod: KubernetesPodSummary | null): string[] {
   const impacts = [
     "Pod 将被终止，其中所有容器都会停止运行。",
-    "这是删除而不是驱逐：不会执行 PodDisruptionBudget 语义。",
+    "这是删除而不是驱逐：不检查 PodDisruptionBudget。如果需要 Kubernetes 先校验可用性预算，请改用「驱逐」。",
     "请求携带该 Pod 当前的 UID 前置条件，避免误删同名重建的对象。",
   ];
   if (pod?.controller) {
@@ -511,6 +607,7 @@ function PodDetailView({
   canExec,
   canPodAccess,
   onDelete,
+  onEvict,
   onOpenLogs,
   onOpenTerminal,
   onOpenPodAccess,
@@ -527,6 +624,7 @@ function PodDetailView({
   canExec: boolean;
   canPodAccess: boolean;
   onDelete: (pod: KubernetesPodSummary) => void;
+  onEvict: (pod: KubernetesPodSummary) => void;
   onOpenLogs: (pod: PodLogTarget) => void;
   onOpenTerminal: (pod: PodLogTarget) => void;
   onOpenPodAccess: (pod: PodLogTarget) => void;
@@ -574,6 +672,20 @@ function PodDetailView({
               <Button size="sm" variant="secondary" onClick={() => onOpenPodAccess(pod)}>
                 <Cable />
                 Pod 访问
+              </Button>
+            ) : null}
+            {/* Before deletion, because it is the gentler of the two ways to
+                take a Pod off its Node and the one an operator should reach
+                for first. */}
+            {canDelete && pod?.uid ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="text-warning"
+                onClick={() => onEvict(pod)}
+              >
+                <LogOut />
+                驱逐
               </Button>
             ) : null}
             {canDelete && pod?.uid ? (

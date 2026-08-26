@@ -19,6 +19,12 @@ message ResourceWatchRequest {
   uint64 max_event_bytes = 9;
   uint64 max_total_bytes = 10;
   uint64 max_events = 11;
+  // Set only by the Server's cluster-wide Kubernetes Event route, and honoured
+  // only for core/v1 Events. Without it the Agent keeps refusing an empty
+  // Namespace for anything but the exact Node UID snapshot a describe needs, so
+  // an Agent that predates this field simply refuses — which is the behaviour a
+  // Server upgraded ahead of its Agents should get.
+  bool cluster_event_access = 12;
 }
 
 message ResourceWatchResponse {

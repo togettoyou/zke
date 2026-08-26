@@ -106,3 +106,45 @@ func TestServiceMapsExpiredResourceVersion(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 }
+
+// The Cluster-wide event centre asks for every Namespace on purpose, and says
+// so with the flag rather than by leaving the Namespace off and hoping. An Agent
+// that predates the flag refuses an empty Namespace, which is the behaviour a
+// Server upgraded ahead of its Agents should get.
+func TestServiceMarksTheClusterWideEventScopeExplicitly(t *testing.T) {
+	requester := &fakeRequester{}
+	_, err := NewService(requester).Stream(context.Background(), Input{
+		ClusterID:      "00000000-0000-4000-8000-000000000003",
+		ClusterScope:   true,
+		IncludeInitial: true,
+		Follow:         true,
+		AllowBookmarks: true,
+		InitialLimit:   100,
+		EventType:      "Warning",
+	}, &discardSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requester.request.GetNamespace() != "" ||
+		!requester.request.GetClusterEventAccess() ||
+		!requester.request.GetFollow() ||
+		!strings.Contains(requester.request.GetFieldSelector(), "type=Warning") {
+		t.Fatalf("unexpected cluster-wide Event request: %+v", requester.request)
+	}
+}
+
+// The flag names a scope; it cannot be attached to a Namespace-scoped read as
+// well, because that would leave two different claims about what is being asked
+// for in one request.
+func TestServiceRefusesAClusterScopeFlagOnANamespacedRead(t *testing.T) {
+	_, err := NewService(&fakeRequester{}).Stream(context.Background(), Input{
+		ClusterID:      "00000000-0000-4000-8000-000000000003",
+		Namespace:      "default",
+		ClusterScope:   true,
+		IncludeInitial: true,
+		InitialLimit:   100,
+	}, &discardSink{})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Namespace with cluster scope accepted: err=%v", err)
+	}
+}

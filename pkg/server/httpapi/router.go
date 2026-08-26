@@ -106,6 +106,7 @@ type handlers struct {
 	kubernetesAuthorization *kubernetesAuthorizationHandler
 	kubernetesConfigMap     *kubernetesConfigMapHandler
 	kubernetesSecret        *kubernetesSecretHandler
+	kubernetesHelmRelease   *kubernetesHelmReleaseHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
 	kubernetesDescribe      *kubernetesDescribeHandler
@@ -368,6 +369,15 @@ func New(
 			config.Authentication.OperationTimeout,
 		),
 		kubernetesConfigMap: newKubernetesConfigMapHandler(
+			logger,
+			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		// Helm releases hold no accessor of their own: they are read through the
+		// same Secret reads the Secret endpoints use, so they can reach nothing
+		// a caller holding `cluster.secret.read` could not already reach.
+		kubernetesHelmRelease: newKubernetesHelmReleaseHandler(
 			logger,
 			dependencies.KubernetesResourceService,
 			dependencies.AuditService,

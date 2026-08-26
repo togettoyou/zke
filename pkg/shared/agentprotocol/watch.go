@@ -319,14 +319,23 @@ func validResourceWatchScope(request *agentv1.ResourceWatchRequest) bool {
 	if request.GetNamespace() != "" {
 		return len(k8svalidation.IsDNS1123Label(request.GetNamespace())) == 0
 	}
+	// Two different requests reach NamespaceAll, and they are told apart by the
+	// flag rather than by the shape of the selector. A describe reads the Events
+	// of one cluster-scoped Node and may not become anything wider, so it stays
+	// pinned to the exact-UID snapshot below. The cluster-wide Event route asks
+	// for every Namespace on purpose, and says so.
+	if request.GetClusterEventAccess() {
+		return true
+	}
 	return !request.GetFollow() &&
 		IsNodeEventFieldSelector(request.GetFieldSelector())
 }
 
-// IsNodeEventFieldSelector recognizes the only cluster-wide Event query the
-// protocol permits: one exact Node UID. Kubernetes Events are namespaced even
-// when their involved object is not; allowing NamespaceAll without both exact
-// terms would expose unrelated Namespaces through a describe request.
+// IsNodeEventFieldSelector recognizes the cluster-wide Event query the protocol
+// permits without `cluster_event_access`: one exact Node UID. Kubernetes Events
+// are namespaced even when their involved object is not; allowing NamespaceAll
+// without both exact terms would expose unrelated Namespaces through a describe
+// request.
 func IsNodeEventFieldSelector(value string) bool {
 	selector, err := fields.ParseSelector(value)
 	if err != nil {

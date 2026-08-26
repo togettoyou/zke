@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   Layers,
   Network,
+  Package,
   Search,
   Server,
   ShieldCheck,
@@ -46,6 +47,7 @@ import { ConfigurationSection } from "./ConfigurationSection";
 import { DiagnosticNavigationProvider } from "./DiagnosticNavigationProvider";
 import { StorageSection } from "./StorageSection";
 import { EventSection } from "./EventSection";
+import { HelmReleaseSection } from "./HelmReleaseSection";
 import { ManifestSection } from "./ManifestSection";
 import { NamespaceSection } from "./NamespaceSection";
 import { NetworkingSection } from "./NetworkingSection";
@@ -73,6 +75,10 @@ const NAV: AppNavItem[] = [
   { id: "nodes", label: "节点", icon: Server },
   { id: "namespaces", label: "命名空间", icon: FolderTree },
   { id: "workloads", label: "工作负载", icon: Layers },
+  // Between the workloads and the Pods they own: a Helm release is what an
+  // operator installed, and the workloads below it are what that install
+  // produced.
+  { id: "helm", label: "应用（Helm）", icon: Package },
   { id: "pods", label: "Pod", icon: Box },
   { id: "metrics", label: "资源用量", icon: Activity },
   { id: "networking", label: "服务与路由", icon: Network },
@@ -130,6 +136,7 @@ function storageTab(tab: string | null): KubernetesStorageResource | undefined {
 /** Sections whose queries are scoped by a Namespace as well as by a Cluster. */
 const NAMESPACED_SECTIONS = new Set([
   "workloads",
+  "helm",
   "pods",
   "networking",
   "configmaps",
@@ -255,6 +262,15 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
     tenantId: scope.tenantId,
     projectId: scope.projectId,
   });
+  // A Helm release lives in a Secret and hands back the values its chart was
+  // installed with, so the whole category answers to the Secret permission.
+  // Hidden without it rather than shown as an empty list: the Server refuses
+  // every request behind it.
+  const canReadHelm = permissions.can("cluster.secret.read", {
+    type: "project",
+    tenantId: scope.tenantId,
+    projectId: scope.projectId,
+  });
   // YAML 清单 only writes. It answers to no permission of its own — each document
   // in a manifest answers to the permission of the family it belongs to — so the
   // rail shows it to anyone holding any of them, and hides it from a caller who
@@ -277,16 +293,20 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
         if (item.id === "authorization") {
           return { ...item, hidden: !canReadRbac };
         }
+        if (item.id === "helm") {
+          return { ...item, hidden: !canReadHelm };
+        }
         if (item.id === "manifests") {
           return { ...item, hidden: !canWriteAnything };
         }
         return item;
       }),
-    [canReadEvents, canReadRbac, canWriteAnything],
+    [canReadEvents, canReadHelm, canReadRbac, canWriteAnything],
   );
   const hiddenSection =
     (section === "events" && !canReadEvents) ||
     (section === "authorization" && !canReadRbac) ||
+    (section === "helm" && !canReadHelm) ||
     (section === "manifests" && !canWriteAnything);
   const activeSection = hiddenSection ? "overview" : section;
 
@@ -509,6 +529,16 @@ export function ContainerServiceApp({ windowId }: Pick<AppComponentProps, "windo
             key={`${clusterId}/${namespace}`}
             clusterId={clusterId}
             namespace={namespace}
+          />
+        ) : activeSection === "helm" ? (
+          <HelmReleaseSection
+            key={clusterId}
+            clusterId={clusterId}
+            clusterName={clusterName}
+            agentNamespace={agentNamespace}
+            namespace={namespace}
+            tenantId={scope.tenantId}
+            projectId={scope.projectId}
           />
         ) : activeSection === "authorization" ? (
           <AuthorizationSection
