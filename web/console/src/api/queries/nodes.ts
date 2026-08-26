@@ -102,6 +102,64 @@ export function useSetNodeSchedulable() {
   });
 }
 
+/**
+ * Adds, changes and removes labels on one Node.
+ *
+ * Like cordon above, a merge patch through the controlled generic CRUD route
+ * rather than an endpoint of its own: the patch names only `metadata.labels`,
+ * so it cannot carry an unrelated change to the Node along with it.
+ *
+ * The body holds only the keys this edit actually touched — a removed one as
+ * `null`, an untouched one not at all — which is the request `kubectl label`
+ * makes. Sending the whole map instead would revert any label a controller or
+ * another operator set between the read this form opened on and the write.
+ */
+export function useUpdateNodeLabels() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      clusterId: string;
+      name: string;
+      /** Only the touched keys; `null` removes one. */
+      labels: Record<string, string | null>;
+      dryRun: boolean;
+      idempotencyKey: string;
+    }) =>
+      unwrap(
+        await api.PATCH("/api/v1/clusters/{cluster_id}/kubernetes/resources/{resource_name}", {
+          params: {
+            path: { cluster_id: input.clusterId, resource_name: input.name },
+            query: { version: "v1", resource: "nodes" },
+            header: idempotentHeaders(input.idempotencyKey),
+          },
+          body: {
+            patch_type: "merge",
+            patch: { metadata: { labels: input.labels } },
+            options: { dry_run: input.dryRun, force: false },
+            confirm: !input.dryRun,
+          },
+        }),
+      ),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents });
+      if (!variables.dryRun) {
+        await Promise.all([
+          // The list is invalidated as well as the detail: a Node's roles are
+          // read out of its `node-role.kubernetes.io/*` and `kubernetes.io/role`
+          // labels, so a label edit can change what the list shows.
+          queryClient.invalidateQueries({ queryKey: ["nodes", variables.clusterId] }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.node(variables.clusterId, variables.name),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.nodeDescribe(variables.clusterId, variables.name),
+          }),
+        ]);
+      }
+    },
+  });
+}
+
 export function useDrainNode() {
   const queryClient = useQueryClient();
   return useMutation({

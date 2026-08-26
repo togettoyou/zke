@@ -10,7 +10,7 @@
 | 能力 | 当前范围 |
 | --- | --- |
 | 集群概览 | Node、Namespace、Pod、PV、PVC 与五类工作负载的状态计数、kubelet 版本分布、容量与 requests 汇总 |
-| 节点 | List/Detail、停止与恢复调度、Drain、诊断 |
+| 节点 | List/Detail、停止与恢复调度、标签管理、Drain、诊断 |
 | 命名空间 | List/Detail/Create/Delete 与配额管理 |
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob 的类型化 CRUD、伸缩、滚动重启、CronJob 暂停与恢复、修订历史与回滚 |
 | Pod | List/Detail/Delete、日志、Web Terminal 与输出录制、Pod Access、诊断 |
@@ -121,7 +121,7 @@ Kubernetes continuation token，并与 offset 分页一样固定渲染在表格�
 持久化在浏览器本地，只保存集群标识，且每次都会重新对照该项目当前在线的集群解析——已下线的集群不会被选中。
 离线集群仍出现在选择器中但不可选，避免操作者以为集群不存在。命名空间提供 List/Detail/Create/Delete 与配额管理，
 其中创建与删除要求 `cluster.namespace.manage`，配额管理与 YAML 编辑仍是 `cluster.resource.*`；
-节点提供 List/Detail 以及停止调度和恢复调度。所有变更都经过权限门控、DryRun 预检、影响展示与二次确认。
+节点提供 List/Detail、停止与恢复调度和标签管理。所有变更都经过权限门控、DryRun 预检、影响展示与二次确认。
 Console 对这一步统一使用「DryRun 预检」：校验成功显示「DryRun 预检已通过」；请求已经返回但存在静态阻断或
 PDB 阻断时显示「DryRun 预检已完成，存在阻断项」，不得用「已通过」掩盖无法继续执行的结果。
 
@@ -209,6 +209,16 @@ Subresource 通道。响应中的 `evicted` 表示 API Server 已接受驱逐请
 节点已经为空时重新读取节点诊断中的已分配 Pod。Console 将清单分类得到的候选显示为“计划驱逐”；存在无控制器
 Pod 或 emptyDir 等静态阻断时，明确说明尚未停止调度、也未发送 Eviction，并要求先接受对应风险后才能重新预检。
 PDB 等可能随副本状态恢复的动态阻断仍可直接重新执行 DryRun。
+
+节点标签管理与调度开关走同一条受控通用 CRUD 路由，同样要求 `cluster.resource.update`：请求是只命名
+`metadata.labels` 的 merge patch，其中只包含本次改动的键——新增与修改带新值，移除写成 `null`，未改动的键
+不出现。因此在打开表单与提交之间由控制器或另一个操作者设置的标签不会被整体回写覆盖，这也是 `kubectl label`
+发出的请求形状。Console 用页面视图而不是对话框编辑标签：字段数量就是该节点已有的标签数量。提交前按
+Kubernetes 规则校验键名（可选的 DNS 子域名前缀加 `/`，名称部分最长 63 个字符）与值（最长 63 个字符，可以
+为空），二次确认中逐条列出新增、修改与移除的键及其前后取值。`kubernetes.io/hostname`、`kubernetes.io/arch`、
+`topology.kubernetes.io/zone` 这类由 kubelet 或云控制器在每次节点上报时写回的标签仍然可以编辑，但会先明确
+提示改动可能很快被覆盖，而不是把操作者留在「谁改回去了」的问题里。`node-role.kubernetes.io/*` 与
+`kubernetes.io/role` 决定列表和详情中显示的角色，因此标签写入成功后节点列表、详情与诊断一并失效重取。
 
 命名空间的配额管理是同一批 `policies/resourcequotas` 类型化接口的另一个视图，不是新的后端能力：入口在命名空间
 列表行和详情页，页面把 `core/v1 ResourceQuota` 的 `hard` 按计算资源配额、存储资源限制和其他资源限制三组展开成

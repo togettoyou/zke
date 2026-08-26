@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Ban, FileCode, PlayCircle, ServerOff, Stethoscope } from "lucide-react";
+import { Ban, FileCode, PlayCircle, ServerOff, Stethoscope, Tags } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDrainNode, useNode, useNodes, useSetNodeSchedulable } from "@/api/queries/nodes";
@@ -31,6 +31,7 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { YamlEditorView } from "./YamlEditorView";
 import { DescribeView } from "./DescribeView";
+import { NodeLabelsView } from "./NodeLabelsView";
 import { useContinuePagination } from "./use-continue-pagination";
 import type { ClusterSectionProps } from "./types";
 
@@ -55,6 +56,8 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
   const [describeName, setDescribeName] = useState<string | null>(null);
   // The YAML editor takes over the section: it is a document, not a field.
   const [yamlName, setYamlName] = useState<string | null>(null);
+  // Labels are a list of their own length, so they get a page as well.
+  const [labelsName, setLabelsName] = useState<string | null>(null);
   const [schedulingTarget, setSchedulingTarget] = useState<SchedulingTarget | null>(null);
   const [schedulingPreviewed, setSchedulingPreviewed] = useState(false);
   const schedulingPreviewKey = useSubmissionKey(schedulingTarget !== null);
@@ -238,6 +241,13 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           name={describeName}
           onBack={() => setDescribeName(null)}
         />
+      ) : labelsName ? (
+        <NodeLabelsView
+          clusterId={clusterId}
+          clusterName={clusterName}
+          name={labelsName}
+          onBack={() => setLabelsName(null)}
+        />
       ) : detailName ? (
         <NodeDetailView
           clusterId={clusterId}
@@ -248,6 +258,7 @@ export function NodeSection({ clusterId, clusterName, tenantId, projectId }: Clu
           onBack={() => setDetailName(null)}
           onToggleScheduling={openScheduling}
           onOpenYaml={() => setYamlName(detailName)}
+          onOpenLabels={() => setLabelsName(detailName)}
           onOpenDescribe={() => setDescribeName(detailName)}
           onDrain={openDrain}
         />
@@ -446,6 +457,7 @@ function NodeDetailView({
   onBack,
   onToggleScheduling,
   onOpenYaml,
+  onOpenLabels,
   onOpenDescribe,
   onDrain,
 }: {
@@ -457,6 +469,7 @@ function NodeDetailView({
   onBack: () => void;
   onToggleScheduling: (node: SchedulingTarget) => void;
   onOpenYaml: () => void;
+  onOpenLabels: () => void;
   onOpenDescribe: () => void;
   onDrain: (node: Pick<KubernetesNodeSummary, "name" | "uid">) => void;
 }) {
@@ -483,6 +496,12 @@ function NodeDetailView({
               <FileCode />
               YAML
             </Button>
+            {canUpdate ? (
+              <Button size="sm" variant="secondary" onClick={onOpenLabels}>
+                <Tags />
+                标签
+              </Button>
+            ) : null}
             {canUpdate && detail.data ? (
               // Same colour rule as the list action: warning for the direction
               // that stops scheduling, success for the one that restores it.
