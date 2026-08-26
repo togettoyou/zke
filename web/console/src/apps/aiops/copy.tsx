@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { toast } from "sonner";
 
-import { notifyFailure } from "@/components/common/notify";
 import { Button } from "@/components/ui/button";
 import { HintTooltip } from "@/components/ui/tooltip";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 
 /**
@@ -12,8 +13,8 @@ import { cn } from "@/lib/cn";
  * The confirmation is state rather than a toast: an answer, a tool result and a
  * code block all offer this, and a toast for each one would report on the
  * clipboard more loudly than on the cluster. A failure is different — the
- * clipboard is refused outright in an insecure context, and a control that
- * silently does nothing is the worst of both.
+ * browser can still refuse the write, and a control that silently does nothing
+ * is the worst of both.
  */
 function useCopy(): { copied: boolean; copy: (value: string | (() => string)) => void } {
   const [copied, setCopied] = useState(false);
@@ -32,7 +33,7 @@ function useCopy(): { copied: boolean; copy: (value: string | (() => string)) =>
     // A function so a caller whose text is expensive to materialise — a whole
     // tool result, a rendered trajectory entry — does not build it every render.
     const text = typeof value === "function" ? value() : value;
-    void navigator.clipboard.writeText(text).then(
+    void copyText(text).then(
       () => {
         if (!alive.current) return;
         setCopied(true);
@@ -41,8 +42,13 @@ function useCopy(): { copied: boolean; copy: (value: string | (() => string)) =>
           if (alive.current) setCopied(false);
         }, 1_600);
       },
-      (error: unknown) => {
-        if (alive.current) notifyFailure("复制失败", error);
+      () => {
+        // Not `notifyFailure`: nothing here ever reached the Server, and its
+        // message for a non-API error is "网络错误", which points the operator
+        // at the wrong thing entirely.
+        if (alive.current) {
+          toast.error("复制失败", { description: "浏览器不允许写入剪贴板，请手动选择文本复制。" });
+        }
       },
     );
   }, []);

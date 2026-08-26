@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { findAppManifest } from "@/apps/registry";
+import { randomUuid } from "@/lib/uuid";
 
 import {
   cascadeRect,
@@ -97,7 +98,7 @@ const INITIAL_VIEWPORT: Viewport = { width: 1_440, height: 900 };
 const INITIAL_BOUNDS = computeDesktopBounds(INITIAL_VIEWPORT.width, INITIAL_VIEWPORT.height);
 
 function createWindowId(): string {
-  return crypto.randomUUID();
+  return randomUuid();
 }
 
 export const useWindowStore = create<WindowState>((set, get) => ({

@@ -3,6 +3,7 @@ import { Check, Copy } from "lucide-react";
 
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { formatAbsolute, formatRelative } from "@/lib/time";
 
@@ -113,7 +114,7 @@ export function CopyableValue({
         // These often sit inside clickable rows.
         event.stopPropagation();
         try {
-          await navigator.clipboard.writeText(value);
+          await copyText(value);
           setCopied(true);
         } catch {
           setCopied(false);
@@ -265,7 +266,7 @@ export function CopyButton({
       className={className}
       onClick={async () => {
         try {
-          await navigator.clipboard.writeText(typeof value === "function" ? value() : value);
+          await copyText(typeof value === "function" ? value() : value);
           setCopied(true);
         } catch {
           setCopied(false);

@@ -1,6 +1,7 @@
 import createClient, { type Middleware } from "openapi-fetch";
 
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, readCookie } from "@/lib/cookie";
+import { randomUuid } from "@/lib/uuid";
 
 import { ApiError, type ErrorBody } from "./errors";
 import type { paths } from "./schema";
@@ -192,7 +193,7 @@ export function unwrapEmpty(
  * logical submission, so callers create it once per submission.
  */
 export function newIdempotencyKey(): string {
-  return crypto.randomUUID();
+  return randomUuid();
 }
 
 /**
