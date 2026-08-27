@@ -13,9 +13,10 @@ import { CopyIconButton } from "./copy";
  * chart README written by whoever published the chart — can put markup, a link
  * scheme or a script into the Console. A general Markdown library would have to
  * be paired with a sanitizer and both kept correct forever. The second is scope:
- * the documents this renders use headings, lists, tables, emphasis, inline code
- * and fenced blocks, and that is the whole grammar implemented below. Anything
- * else renders as the literal text it was, which is the honest failure mode.
+ * the documents this renders use headings, lists, tables, emphasis, inline code,
+ * links and fenced blocks, and that is the whole grammar implemented below.
+ * Anything else renders as the literal text it was, which is the honest failure
+ * mode.
  *
  * It lives in `components/common` because two applications read Markdown from
  * outside ZKE: AIOps renders what a model answered, and the Helm catalogue
@@ -23,7 +24,14 @@ import { CopyIconButton } from "./copy";
  */
 export function Markdown({ text, className }: { text: string; className?: string }) {
   return (
-    <div className={cn("space-y-2 text-[13px] leading-relaxed break-words", className)}>
+    /*
+     * `min-w-0` is load-bearing. A code block and a table each scroll inside
+     * their own `overflow-x-auto` box, but a grid or flex item defaults to
+     * `min-width: auto` — it refuses to shrink below its content — so without
+     * this the widest line in a README pushes the whole page sideways instead,
+     * and the desktop clips rather than scrolls.
+     */
+    <div className={cn("min-w-0 space-y-2 text-[13px] leading-relaxed break-words", className)}>
       {renderBlocks(text)}
     </div>
   );
@@ -66,6 +74,39 @@ function renderBlocks(text: string): ReactNode[] {
         index += 1;
       }
       blocks.push(renderTable(key++, rows, alignments));
+      continue;
+    }
+    // A heading written as a line of `=` or `-` under the text. Chart READMEs
+    // are full of them, and without this the underline shows up as prose —
+    // which is how `Anchore Engine Helm Chart ====` ends up on screen.
+    if (
+      line.trim() !== "" &&
+      isSetextUnderline(at(index + 1)) &&
+      !isTableStart(at, index) &&
+      // A list item, a quote or an ATX heading is already one of those; only a
+      // plain line of text can be turned into a heading by what follows it.
+      !/^\s*([-*+]|\d+\.)\s+/.test(line) &&
+      !/^\s*>\s?/.test(line) &&
+      !/^#{1,6}\s+/.test(line)
+    ) {
+      const level = at(index + 1)
+        .trim()
+        .startsWith("=")
+        ? "text-sm"
+        : "text-[13px]";
+      blocks.push(
+        <p key={key++} className={cn("text-foreground pt-1 font-semibold", level)}>
+          {renderInline(line.trim())}
+        </p>,
+      );
+      index += 2;
+      continue;
+    }
+    // A rule, checked after the heading above: `---` under a line of text is an
+    // underline and belongs to that line, while `---` on its own is a divider.
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
+      blocks.push(<hr key={key++} className="border-border my-3" />);
+      index += 1;
       continue;
     }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
@@ -122,7 +163,8 @@ function renderBlocks(text: string): ReactNode[] {
       !/^\s*([-*+]|\d+\.)\s+/.test(at(index)) &&
       !/^\s*>\s?/.test(at(index)) &&
       !/^#{1,6}\s+/.test(at(index)) &&
-      !isTableStart(at, index)
+      !isTableStart(at, index) &&
+      !(paragraph.length > 0 && isSetextUnderline(at(index)))
     ) {
       paragraph.push(at(index));
       index += 1;
@@ -143,7 +185,7 @@ function renderBlocks(text: string): ReactNode[] {
 function CodeBlock({ language, code }: { language: string; code: string }) {
   return (
     <div className="group relative">
-      <pre className="border-border bg-surface-muted rounded-control overflow-x-auto border p-3 font-mono text-xs">
+      <pre className="border-border bg-surface-muted rounded-control max-w-full overflow-x-auto border p-3 font-mono text-xs">
         {language ? (
           <span className="text-subtle-foreground mb-1 block font-sans text-[11px]">
             {language}
@@ -165,6 +207,14 @@ type Alignment = "left" | "center" | "right";
 // which is common in cluster output — a container command, a log line.
 function isTableStart(at: (position: number) => string, index: number): boolean {
   return at(index).includes("|") && isTableDelimiter(at(index + 1));
+}
+
+// `=====` or `-----` under a line of text. Three characters minimum, so a `--`
+// used as a dash in prose does not turn the line above it into a heading; a
+// delimiter row belongs to a table and is checked before this.
+function isSetextUnderline(line: string): boolean {
+  const trimmed = line.trim();
+  return /^={3,}$/.test(trimmed) || /^-{3,}$/.test(trimmed);
 }
 
 function isTableDelimiter(line: string): boolean {
@@ -211,7 +261,7 @@ function renderTable(key: number, rows: string[], alignments: Alignment[]): Reac
       alignments[column] ?? "left"
     ];
   return (
-    <div key={key} className="border-border rounded-panel overflow-x-auto border">
+    <div key={key} className="border-border rounded-panel max-w-full overflow-x-auto border">
       <table className="w-full border-collapse text-[13px]">
         <thead className="bg-surface-muted">
           <tr>
@@ -247,7 +297,13 @@ function renderTable(key: number, rows: string[], alignments: Alignment[]): Reac
 // Inline code first, then emphasis: a backtick span is literal by definition,
 // and running emphasis over it would let `**` inside a code fragment change how
 // the fragment renders.
-const INLINE = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*\n]+\*)/g;
+const INLINE = /(`[^`]+`|\[[^\]\n]*\]\([^)\s]+\)|\*\*[^*]+\*\*|__[^_]+__|\*[^*\n]+\*)/g;
+
+// `[text](url)`, with the scheme decided here rather than by whoever wrote the
+// document. A chart README and a model answer are both text from outside ZKE;
+// only http and https become a control the operator can click, and anything
+// else stays the literal Markdown it was so nothing is hidden from them.
+const LINK = /^\[([^\]\n]*)\]\(([^)\s]+)\)$/;
 
 function renderInline(text: string): ReactNode {
   const parts = text.split(INLINE).filter((part) => part !== "");
@@ -271,6 +327,26 @@ function renderInline(text: string): ReactNode {
           {part.slice(2, -2)}
         </strong>
       );
+    }
+    const link = LINK.exec(part);
+    if (link) {
+      const label = link[1] ?? "";
+      const href = link[2] ?? "";
+      const lower = href.toLowerCase();
+      if (lower.startsWith("https://") || lower.startsWith("http://")) {
+        return (
+          <a
+            key={index}
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            className="zke-focus text-primary rounded-inline break-all hover:underline"
+          >
+            {label || href}
+          </a>
+        );
+      }
+      return <Fragment key={index}>{part}</Fragment>;
     }
     if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
       return <em key={index}>{part.slice(1, -1)}</em>;

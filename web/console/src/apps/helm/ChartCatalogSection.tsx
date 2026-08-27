@@ -378,19 +378,28 @@ function ChartDetailView({
               onChange={() => {}}
               readOnly
               label={`${detail.data.name} 默认 values`}
-              className="max-h-96"
+              // A height, not a cap: the editor paints into absolutely positioned
+              // layers, so a `max-h` alone leaves it with nothing to be capped
+              // against and it collapses to a line. It scrolls inside this.
+              className="h-96"
             />
           </Card>
 
           {detail.data.readme ? (
-            <Card className="grid gap-2 p-4">
+            /* `min-w-0` so the README's widest code block scrolls inside the
+               card instead of widening it — a grid item will not shrink below
+               its content unless it is told it may. */
+            <Card className="grid min-w-0 gap-2 p-4">
               <CardTitle>README</CardTitle>
               {/* Rendered rather than dumped: a chart README is documentation,
                   and the renderer builds React nodes instead of injecting HTML,
-                  so nothing the chart author wrote becomes markup here. */}
-              <div className="max-h-[36rem] overflow-auto">
-                <Markdown text={detail.data.readme} />
-              </div>
+                  so nothing the chart author wrote becomes markup here.
+                  
+                  No height cap and no scrollbar of its own: the page already
+                  scrolls, and a document boxed inside a scrolling page gives the
+                  reader two scrollbars to choose between and a card whose bottom
+                  edge is never where the text ends. */}
+              <Markdown text={detail.data.readme} />
             </Card>
           ) : null}
         </div>

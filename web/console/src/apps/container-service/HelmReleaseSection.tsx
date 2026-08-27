@@ -230,7 +230,7 @@ function HelmReleaseDetailView({
 
           {detail.data.notes ? (
             <DetailCard title="NOTES">
-              <pre className="zke-mono text-muted-foreground max-h-72 overflow-auto text-xs whitespace-pre-wrap">
+              <pre className="zke-mono text-muted-foreground border-border bg-surface-muted/60 rounded-control border p-2.5 text-xs leading-relaxed whitespace-pre-wrap">
                 {detail.data.notes}
               </pre>
             </DetailCard>
@@ -247,7 +247,7 @@ function HelmReleaseDetailView({
               onChange={() => {}}
               readOnly
               label={`${detail.data.name} 的渲染清单`}
-              className="max-h-96"
+              className="h-96"
             />
           </DetailCard>
 
@@ -315,7 +315,7 @@ function HelmReleaseValues({ release }: { release: KubernetesHelmReleaseDetail }
         onChange={() => {}}
         readOnly
         label={`${release.name} 的 values`}
-        className="max-h-72"
+        className="h-72"
       />
     </DetailCard>
   );

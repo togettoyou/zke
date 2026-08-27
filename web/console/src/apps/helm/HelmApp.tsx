@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Library, PackageSearch, ShipWheel } from "lucide-react";
 import { toast } from "sonner";
 
@@ -325,11 +325,17 @@ export function HelmApp({ windowId }: Pick<AppComponentProps, "windowId">) {
             : "没有可执行请求的在线集群"
       }
     >
-      {/* The Cluster is a hard identity boundary: a release named `checkout`
-          exists in many Clusters and is a different application in each. */}
-      <div key={`${clusterId}:${namespace}`} className="flex h-full min-h-0 flex-col">
-        {body()}
-      </div>
+      {/*
+       * A Fragment rather than a wrapping box. The Cluster is a hard identity
+       * boundary — a release named `checkout` exists in many Clusters and is a
+       * different application in each — so the key stays, but a `h-full` box
+       * around it costs the page its bottom padding: content taller than a
+       * full-height child overflows that child, and a scroll container adds its
+       * padding-bottom to the scrollable area only for content that grew the
+       * child rather than escaped it. The sections that want to fill the work
+       * area ask for `h-full` themselves.
+       */}
+      <Fragment key={`${clusterId}:${namespace}`}>{body()}</Fragment>
     </AppShell>
   );
 }

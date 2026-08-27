@@ -258,7 +258,7 @@ function ReleaseDetailView({
               onChange={() => {}}
               readOnly
               label={`${detail.data.name} 的 values`}
-              className="max-h-72"
+              className="h-72"
             />
           </DetailCard>
 
@@ -266,8 +266,11 @@ function ReleaseDetailView({
             <DetailCard title="NOTES">
               {/* Plain text, not YAML and not Markdown: NOTES.txt is whatever
                   the chart's template rendered, and formatting it as either
-                  would be a claim about it that the chart never made. */}
-              <pre className="zke-mono text-muted-foreground border-border bg-surface-muted/60 rounded-control max-h-72 overflow-auto border p-2.5 text-xs leading-relaxed whitespace-pre-wrap">
+                  would be a claim about it that the chart never made. It flows
+                  with the page rather than scrolling inside a box — the page
+                  already scrolls, and a second scrollbar inside the first is a
+                  choice nobody wants to make while reading. */}
+              <pre className="zke-mono text-muted-foreground border-border bg-surface-muted/60 rounded-control border p-2.5 text-xs leading-relaxed whitespace-pre-wrap">
                 {detail.data.notes}
               </pre>
             </DetailCard>
@@ -284,7 +287,7 @@ function ReleaseDetailView({
               onChange={() => {}}
               readOnly
               label={`${detail.data.name} 的渲染清单`}
-              className="max-h-96"
+              className="h-96"
             />
           </DetailCard>
 

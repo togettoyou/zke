@@ -15,6 +15,7 @@ import { RowDeleteAction } from "@/components/common/delete-action";
 import { ErrorAlert } from "@/components/common/error-alert";
 import { notifyFailure } from "@/components/common/notify";
 import { RefreshAction } from "@/components/common/refresh-action";
+import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,6 +46,7 @@ export function RepositorySection({ canManage }: { canManage: boolean }) {
   const repositories = useHelmRepositories();
   const [editing, setEditing] = useState<HelmRepository | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<HelmRepository | null>(null);
   const remove = useDeleteHelmRepository();
 
   const columns = useMemo<ColumnDef<HelmRepository, unknown>[]>(
@@ -94,14 +96,14 @@ export function RepositorySection({ canManage }: { canManage: boolean }) {
                   <Button size="sm" variant="ghost" onClick={() => setEditing(row.original)}>
                     编辑
                   </Button>
+                  {/* The button opens the confirmation; it does not delete.
+                      Wiring it straight to the mutation is one click away from
+                      removing a repository — and its stored credential — for
+                      everyone on the platform. */}
                   <RowDeleteAction
                     name={row.original.name}
-                    hint="删除后不影响已安装的 Release，只是新的安装不能再从它选择 Chart。"
-                    onDelete={() =>
-                      remove.mutate(row.original.id, {
-                        onError: (error) => notifyFailure("删除 Chart 仓库", error),
-                      })
-                    }
+                    hint="从平台目录中移除该仓库。已安装的 Release 不受影响。"
+                    onDelete={() => setDeleting(row.original)}
                   />
                 </div>
               ),
@@ -109,7 +111,7 @@ export function RepositorySection({ canManage }: { canManage: boolean }) {
           ]
         : []),
     ],
-    [canManage, remove],
+    [canManage],
   );
 
   return (
@@ -164,6 +166,40 @@ export function RepositorySection({ canManage }: { canManage: boolean }) {
         onOpenChange={(open) => setEditing(open ? editing : null)}
         repository={editing}
         onDone={() => setEditing(null)}
+      />
+      <SensitiveActionDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleting(null);
+            remove.reset();
+          }
+        }}
+        title={`删除 Chart 仓库 ${deleting?.name ?? ""}`}
+        description="这是平台级的目录条目：删除之后，所有人的新安装都不能再从它选择 Chart。"
+        scopeLines={[
+          { label: "仓库", name: deleting?.name ?? "", id: deleting?.id },
+          { label: "地址", name: deleting?.url ?? "" },
+        ]}
+        impacts={[
+          "该仓库不再出现在 Chart 目录中，新的安装与升级不能再从它选择 Chart",
+          deleting?.has_credentials
+            ? "为它配置的凭证一并删除，重新添加时需要再次填写"
+            : "该仓库没有配置凭证",
+          "已安装的 Release 不受影响：Release 自带安装时使用的 Chart",
+        ]}
+        confirmationText={deleting?.name}
+        confirmLabel="删除"
+        destructive
+        pending={remove.isPending}
+        error={remove.error}
+        onConfirm={() => {
+          if (!deleting) return;
+          remove.mutate(deleting.id, {
+            onSuccess: () => setDeleting(null),
+            onError: (error) => notifyFailure("删除 Chart 仓库", error),
+          });
+        }}
       />
     </div>
   );

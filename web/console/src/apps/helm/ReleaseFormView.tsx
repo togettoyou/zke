@@ -483,7 +483,10 @@ function PreviewCard({
   mode: ReleaseFormMode;
 }) {
   return (
-    <Card className="grid gap-2 p-4">
+    // `min-w-0` for the same reason the README card carries it: the diff and the
+    // manifest scroll inside their own boxes only if this one may shrink below
+    // the widest line in them.
+    <Card className="grid min-w-0 gap-2 p-4">
       <CardTitle>{mode === "install" ? "将要创建的对象" : "与当前修订的差异"}</CardTitle>
       <p className="text-subtle-foreground text-xs">
         由目标集群渲染，未写入任何对象。Chart {report.chart_name} {report.chart_version}
@@ -502,13 +505,13 @@ function PreviewCard({
           onChange={() => {}}
           readOnly
           label="将要应用的清单"
-          className="max-h-[32rem]"
+          className="h-[32rem]"
         />
       )}
       {report.notes ? (
         <>
           <CardTitle className="mt-1">NOTES</CardTitle>
-          <pre className="zke-mono text-muted-foreground border-border bg-surface-muted/60 rounded-control max-h-60 overflow-auto border p-2.5 text-xs leading-relaxed whitespace-pre-wrap">
+          <pre className="zke-mono text-muted-foreground border-border bg-surface-muted/60 rounded-control border p-2.5 text-xs leading-relaxed whitespace-pre-wrap">
             {report.notes}
           </pre>
         </>
