@@ -6058,6 +6058,56 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/helm/repositories/{repository_id}/charts/{chart_name}/file:
+    get:
+      tags: [Helm]
+      operationId: getHelmChartFile
+      description: |
+        返回 Chart 归档中的一个文件原文，要求 `helm.repository.read`。
+
+        Chart 详情接口已经列出了归档中的全部文件，这条接口是读取其中一个。之所以分开：
+        一个带打包子 Chart 的归档可能有数百个文件，把它们的内容都放进详情里，等于为了显示
+        一棵目录树而把整个归档下载到浏览器。
+
+        `path` 与归档自身的成员名精确匹配，不做任何拼接，因此不存在可被穿越的路径。非文本
+        文件返回空的 `content` 与 `text: false`；超过上限的文件会被截断并标注，`size`
+        仍是文件的真实长度。省略 `version` 表示仓库发布的最新版本。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/HelmRepositoryID"
+        - $ref: "#/components/parameters/HelmChartName"
+        - name: path
+          in: query
+          required: true
+          description: 文件在归档中的路径，例如 `templates/deployment.yaml`。
+          schema: { type: string, minLength: 1, maxLength: 1024 }
+        - name: version
+          in: query
+          description: Chart 版本；省略表示最新版本。
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Chart 文件内容
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmChartFileDetail" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/helm/repositories/{repository_id}/charts/{chart_name}/versions:
     get:
       tags: [Helm]
@@ -13872,6 +13922,8 @@ components:
         - type
         - values
         - readme
+        - file_count
+        - files_truncated
       properties:
         repository_id: { $ref: "#/components/schemas/UUID" }
         name: { type: string }
@@ -13899,6 +13951,50 @@ components:
         dependencies:
           type: array
           items: { $ref: "#/components/schemas/HelmChartDependency" }
+        files:
+          type: array
+          description: >-
+            Chart 归档中的全部文件，含 `charts/` 下的子 Chart，按路径排序。
+            文件内容不在这里：一个带打包子 Chart 的归档可能有数百个文件，
+            而其中绝大多数不会被打开，因此内容由单独的接口按文件读取。
+          items: { $ref: "#/components/schemas/HelmChartFileEntry" }
+        file_count:
+          type: integer
+          description: 归档中的文件总数，即施加列表上限之前的数量。
+        files_truncated:
+          type: boolean
+          description: 文件列表因超过上限而被截断。
+    HelmChartFileEntry:
+      type: object
+      additionalProperties: false
+      required: [path, size, text]
+      properties:
+        path:
+          type: string
+          description: 文件在归档中的路径，例如 `templates/deployment.yaml`。
+        size: { type: integer, description: 文件的字节数。 }
+        text:
+          type: boolean
+          description: >-
+            该文件可以按文本展示。判定依据是文件头部的内容而不是扩展名——
+            Chart 可以用任意名字打包任意内容。
+    HelmChartFileDetail:
+      type: object
+      additionalProperties: false
+      required: [repository_id, chart, version, path, size, text, content, truncated]
+      properties:
+        repository_id: { $ref: "#/components/schemas/UUID" }
+        chart: { type: string }
+        version: { type: string }
+        path: { type: string }
+        size: { type: integer, description: 文件的字节数，截断前的真实长度。 }
+        text: { type: boolean }
+        content:
+          type: string
+          description: 文件原文；非文本文件为空字符串。
+        truncated:
+          type: boolean
+          description: 内容因超过上限而被截断，`size` 仍是文件的真实长度。
     HelmReleaseReport:
       type: object
       additionalProperties: false

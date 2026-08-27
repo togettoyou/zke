@@ -37,6 +37,11 @@ func chartArchive(t *testing.T, name string, version string) []byte {
 		name + "/README.md":   "# " + name + "\n",
 		name + "/templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\n" +
 			"metadata:\n  name: {{ .Release.Name }}\n",
+		name + "/templates/NOTES.txt": "Thanks for installing {{ .Chart.Name }}.\n",
+		// A chart may package anything, so the fixture packages something that
+		// is not text. The file browser has to notice on the bytes rather than
+		// on the extension, which is why this one is named `.yaml`.
+		name + "/files/logo.yaml": "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
 	}
 	buffer := &bytes.Buffer{}
 	compressor := gzip.NewWriter(buffer)

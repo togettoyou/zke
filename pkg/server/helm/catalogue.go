@@ -37,6 +37,16 @@ var (
 	ErrRepositoryUnreachable = errors.New("Helm chart repository could not be read")
 	// ErrChartTooLarge is a chart archive past what may be sent to an Agent.
 	ErrChartTooLarge = errors.New("chart archive exceeds the transferable size")
+	// ErrChartOCIUnsupported is a chart the index lists only as an OCI
+	// reference. It is its own failure rather than an unreachable repository:
+	// the repository answered, the index is valid and the chart is really
+	// there — ZKE just does not read OCI registries yet, and no amount of
+	// retrying or fixing the address changes that.
+	//
+	// It is not hypothetical. A repository can keep publishing an index full of
+	// charts long after moving the archives themselves into a registry, so the
+	// catalogue lists everything and none of it can be fetched.
+	ErrChartOCIUnsupported = errors.New("chart is published to an OCI registry, which ZKE does not read")
 )
 
 const (
@@ -54,6 +64,18 @@ const (
 	// repositories than this still works; the least recently used index is
 	// refetched.
 	maxCachedIndexes = 16
+	// How long a parsed chart is reused. The same window as the index, for the
+	// same reason: a version's contents are meant to be immutable, so this
+	// bounds how long a republished version stays invisible.
+	chartCacheTTL = 5 * time.Minute
+	// How much of one chart's unpacked contents may be held. A chart is
+	// templates and defaults; one larger than this is served to the request
+	// that fetched it and then dropped rather than kept.
+	maxCachedChartBytes = 16 << 20
+	// How much the whole chart cache may hold. It is a byte budget rather than
+	// an entry count because charts differ by orders of magnitude in size, and
+	// an entry count would bound the wrong thing.
+	maxCachedChartsBytes = 32 << 20
 	// Bounds on one upstream request. They apply to the whole exchange, so a
 	// repository that accepts the connection and then never sends a body
 	// cannot hold a Server request open.
@@ -129,6 +151,16 @@ type ChartDetail struct {
 	// Dependencies names the subcharts this chart pulls in, so an operator can
 	// see that installing one thing installs four.
 	Dependencies []ChartDependency `json:"dependencies"`
+	// Files is every member of the chart archive: templates, subcharts and
+	// whatever else it packages. The listing travels with the detail because
+	// this request already downloaded and parsed the archive — asking for it
+	// separately would download the chart twice to show a tree. Contents are
+	// fetched one file at a time, because most of them are never opened.
+	Files []ChartFileEntry `json:"files"`
+	// FileCount is how many files the archive holds before the listing bound
+	// was applied, and FilesTruncated says the bound applied.
+	FileCount      int  `json:"file_count"`
+	FilesTruncated bool `json:"files_truncated"`
 }
 
 type ChartDependency struct {
@@ -163,7 +195,7 @@ func (service *Service) RefreshCharts(
 	if !isUUID(repositoryID) {
 		return ChartPage{}, ErrInvalidInput
 	}
-	service.catalogue.forget(repositoryID)
+	service.forgetRepository(repositoryID)
 	return service.ListCharts(ctx, repositoryID, search, limit)
 }
 
@@ -268,12 +300,16 @@ func (service *Service) GetChart(
 	if err != nil {
 		return ChartDetail{}, err
 	}
+	files, fileCount := chartFileEntries(loaded)
 	detail := ChartDetail{
-		RepositoryID: repositoryID,
-		Name:         chartName,
-		Version:      resolved,
-		Values:       truncateText(string(chartFile(loaded, "values.yaml")), maxChartValuesBytes),
-		README:       truncateText(string(chartFile(loaded, "README.md")), maxChartREADMEBytes),
+		RepositoryID:   repositoryID,
+		Name:           chartName,
+		Version:        resolved,
+		Values:         truncateText(string(chartFile(loaded, "values.yaml")), maxChartValuesBytes),
+		README:         truncateText(string(chartFile(loaded, "README.md")), maxChartREADMEBytes),
+		Files:          files,
+		FileCount:      fileCount,
+		FilesTruncated: fileCount > len(files),
 	}
 	if loaded.Metadata != nil {
 		detail.Name = loaded.Metadata.Name
@@ -301,16 +337,33 @@ func (service *Service) GetChart(
 	return detail, nil
 }
 
-// loadChart resolves a version and parses the archive. The archive itself is
-// not kept: a release operation fetches it again, because it must send the
-// bytes and not a parse of them.
+// loadChart resolves a version and parses the archive, for reading.
+//
+// The parse is cached for a few minutes because browsing a chart's files is a
+// sequence of requests about the same archive, and downloading it again for
+// every file opened would put that cost on the repository. A release operation
+// does not come through here: it calls fetchChartArchive directly, so what an
+// Agent applies is the bytes this Server just fetched rather than a copy it
+// happened to still be holding.
 func (service *Service) loadChart(
 	ctx context.Context,
 	repositoryID string,
 	chartName string,
 	version string,
 ) (*chart.Chart, string, error) {
-	archive, resolved, err := service.fetchChartArchive(ctx, repositoryID, chartName, version)
+	// Resolved before the cache is consulted, so that "newest" and the number
+	// it resolves to are the same cache entry. Without this the chart detail
+	// (which asks for "newest") and the file reads that follow it (which ask
+	// for the version the detail reported) would be two entries and two
+	// downloads of the same archive.
+	resolved, err := service.resolveChartVersion(ctx, repositoryID, chartName, version)
+	if err != nil {
+		return nil, "", err
+	}
+	if cached, found := service.charts.get(repositoryID, chartName, resolved); found {
+		return cached, resolved, nil
+	}
+	archive, _, err := service.fetchChartArchive(ctx, repositoryID, chartName, resolved)
 	if err != nil {
 		return nil, "", err
 	}
@@ -321,7 +374,28 @@ func (service *Service) loadChart(
 			err,
 		)
 	}
+	service.charts.put(repositoryID, chartName, resolved, loaded)
 	return loaded, resolved, nil
+}
+
+// resolveChartVersion turns a requested version — possibly empty, meaning the
+// newest published — into the one the index names. It reads the index, which is
+// cached, so it is not a request upstream on its own.
+func (service *Service) resolveChartVersion(
+	ctx context.Context,
+	repositoryID string,
+	chartName string,
+	version string,
+) (string, error) {
+	index, _, err := service.catalogue.index(ctx, service, repositoryID)
+	if err != nil {
+		return "", err
+	}
+	entry, err := selectChartVersion(index, chartName, version)
+	if err != nil {
+		return "", err
+	}
+	return entry.Version, nil
 }
 
 // fetchChartArchive returns the chart archive bytes and the version it resolved
@@ -345,14 +419,33 @@ func (service *Service) fetchChartArchive(
 	if err != nil {
 		return nil, "", err
 	}
-	if len(entry.URLs) == 0 {
+	reference := chartDownloadURL(entry)
+	if reference == "" {
 		return nil, "", unreachable(
 			"index lists %s %s without a download URL",
 			chartName,
 			entry.Version,
 		)
 	}
-	target, err := repo.ResolveReferenceURL(repository.URL, entry.URLs[0])
+	// A repository may keep publishing an index that names every chart long
+	// after the archives themselves moved into an OCI registry — that is what
+	// Helm 3.8 onwards made ordinary. The index still answers what is published
+	// and at which versions; only the download changes, so the branch is here
+	// and nothing above it has to know.
+	if isOCIReference(reference) {
+		body, err := service.fetchOCIChartArchive(
+			ctx,
+			repository,
+			reference,
+			entry.Version,
+			int64(helmrelease.MaxChartBytes),
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		return body, entry.Version, nil
+	}
+	target, err := repo.ResolveReferenceURL(repository.URL, reference)
 	if err != nil {
 		return nil, "", unreachable("chart URL in the index is not usable")
 	}
@@ -364,6 +457,21 @@ func (service *Service) fetchChartArchive(
 		return nil, "", err
 	}
 	return body, entry.Version, nil
+}
+
+// chartDownloadURL picks the address one chart version is fetched from.
+//
+// An index entry may list several — mirrors, or the same chart in more than one
+// form. An `oci://` reference is a usable address here, so the first non-empty
+// candidate wins; an empty return means the index gave no URL at all, which is
+// the caller's complaint to make.
+func chartDownloadURL(entry *repo.ChartVersion) string {
+	for _, candidate := range entry.URLs {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func selectChartVersion(
@@ -542,6 +650,137 @@ func (cache *indexCache) evictLocked() {
 		}
 		delete(cache.entries, oldestID)
 	}
+}
+
+// chartCache holds parsed chart archives.
+//
+// It exists because reading a chart is no longer one request. The file browser
+// asks for one file at a time, and without this each of those would download
+// the whole archive from the repository again — turning a reader clicking
+// through templates into sustained traffic against somebody else's server.
+//
+// Like the index cache it is in memory and per process: an archive is derived
+// data with an authoritative upstream, so a replica with a colder cache is
+// slower and never wrong.
+type chartCache struct {
+	mutex   sync.Mutex
+	entries map[string]*cachedChart
+	// bytes is the sum of the entries' sizes, kept alongside them so eviction
+	// does not have to walk the map to know whether it is done.
+	bytes int
+}
+
+type cachedChart struct {
+	repositoryID string
+	chart        *chart.Chart
+	size         int
+	fetchedAt    time.Time
+	usedAt       time.Time
+}
+
+func newChartCache() *chartCache {
+	return &chartCache{entries: make(map[string]*cachedChart)}
+}
+
+// chartCacheKey keys on the resolved version. Callers resolve before they look,
+// so "newest" and the number it resolved to land on one entry.
+func chartCacheKey(repositoryID string, chartName string, version string) string {
+	return repositoryID + "\x00" + chartName + "\x00" + version
+}
+
+func (cache *chartCache) get(
+	repositoryID string,
+	chartName string,
+	version string,
+) (*chart.Chart, bool) {
+	if cache == nil {
+		return nil, false
+	}
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+	entry, found := cache.entries[chartCacheKey(repositoryID, chartName, version)]
+	if !found || time.Since(entry.fetchedAt) >= chartCacheTTL {
+		return nil, false
+	}
+	entry.usedAt = time.Now()
+	return entry.chart, true
+}
+
+func (cache *chartCache) put(
+	repositoryID string,
+	chartName string,
+	version string,
+	loaded *chart.Chart,
+) {
+	if cache == nil || loaded == nil {
+		return
+	}
+	size := chartRawBytes(loaded)
+	if size > maxCachedChartBytes {
+		return
+	}
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+	key := chartCacheKey(repositoryID, chartName, version)
+	if previous, found := cache.entries[key]; found {
+		cache.bytes -= previous.size
+	}
+	now := time.Now()
+	cache.entries[key] = &cachedChart{
+		repositoryID: repositoryID,
+		chart:        loaded,
+		size:         size,
+		fetchedAt:    now,
+		usedAt:       now,
+	}
+	cache.bytes += size
+	cache.evictLocked()
+}
+
+// forget drops every chart read from one repository. A repository that was
+// edited may point somewhere else or authenticate differently, so what it
+// published a moment ago is no longer an answer to the same question.
+func (cache *chartCache) forget(repositoryID string) {
+	if cache == nil {
+		return
+	}
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+	for key, entry := range cache.entries {
+		if entry.repositoryID != repositoryID {
+			continue
+		}
+		cache.bytes -= entry.size
+		delete(cache.entries, key)
+	}
+}
+
+func (cache *chartCache) evictLocked() {
+	for cache.bytes > maxCachedChartsBytes && len(cache.entries) > 0 {
+		oldestKey := ""
+		var oldest time.Time
+		for key, entry := range cache.entries {
+			if oldestKey == "" || entry.usedAt.Before(oldest) {
+				oldestKey = key
+				oldest = entry.usedAt
+			}
+		}
+		cache.bytes -= cache.entries[oldestKey].size
+		delete(cache.entries, oldestKey)
+	}
+}
+
+// chartRawBytes is how much memory holding this chart costs, near enough to
+// budget with: the archive's members are the bulk of it.
+func chartRawBytes(loaded *chart.Chart) int {
+	total := 0
+	for _, file := range loaded.Raw {
+		if file == nil {
+			continue
+		}
+		total += len(file.Name) + len(file.Data)
+	}
+	return total
 }
 
 // fetchIndex downloads and parses one repository's index.yaml.

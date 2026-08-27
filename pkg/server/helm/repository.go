@@ -166,7 +166,7 @@ func (service *Service) CreateRepository(
 	if err != nil {
 		return Repository{}, err
 	}
-	service.catalogue.forget(row.ID)
+	service.forgetRepository(row.ID)
 	return publicRepository(row), nil
 }
 
@@ -206,7 +206,7 @@ func (service *Service) UpdateRepository(
 	// The cached index belonged to the old URL and the old credential. Keeping
 	// it would mean an administrator who corrected a mistyped URL still sees
 	// what the mistake returned.
-	service.catalogue.forget(id)
+	service.forgetRepository(id)
 	return publicRepository(row), nil
 }
 
@@ -217,7 +217,7 @@ func (service *Service) DeleteRepository(ctx context.Context, id string) error {
 	if err := service.repositories.DeleteHelmRepository(ctx, id); err != nil {
 		return err
 	}
-	service.catalogue.forget(id)
+	service.forgetRepository(id)
 	return nil
 }
 

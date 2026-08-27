@@ -2161,6 +2161,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 返回 Chart 归档中的一个文件原文，要求 `helm.repository.read`。
+         *
+         *     Chart 详情接口已经列出了归档中的全部文件，这条接口是读取其中一个。之所以分开：
+         *     一个带打包子 Chart 的归档可能有数百个文件，把它们的内容都放进详情里，等于为了显示
+         *     一棵目录树而把整个归档下载到浏览器。
+         *
+         *     `path` 与归档自身的成员名精确匹配，不做任何拼接，因此不存在可被穿越的路径。非文本
+         *     文件返回空的 `content` 与 `text: false`；超过上限的文件会被截断并标注，`size`
+         *     仍是文件的真实长度。省略 `version` 表示仓库发布的最新版本。
+         */
+        get: operations["getHelmChartFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/versions": {
         parameters: {
             query?: never;
@@ -5519,6 +5546,33 @@ export interface components {
             /** @description Chart 打包的 README.md；没有则为空。超过上限时被截断。 */
             readme: string;
             dependencies?: components["schemas"]["HelmChartDependency"][];
+            /** @description Chart 归档中的全部文件，含 `charts/` 下的子 Chart，按路径排序。 文件内容不在这里：一个带打包子 Chart 的归档可能有数百个文件， 而其中绝大多数不会被打开，因此内容由单独的接口按文件读取。 */
+            files?: components["schemas"]["HelmChartFileEntry"][];
+            /** @description 归档中的文件总数，即施加列表上限之前的数量。 */
+            file_count: number;
+            /** @description 文件列表因超过上限而被截断。 */
+            files_truncated: boolean;
+        };
+        HelmChartFileEntry: {
+            /** @description 文件在归档中的路径，例如 `templates/deployment.yaml`。 */
+            path: string;
+            /** @description 文件的字节数。 */
+            size: number;
+            /** @description 该文件可以按文本展示。判定依据是文件头部的内容而不是扩展名—— Chart 可以用任意名字打包任意内容。 */
+            text: boolean;
+        };
+        HelmChartFileDetail: {
+            repository_id: components["schemas"]["UUID"];
+            chart: string;
+            version: string;
+            path: string;
+            /** @description 文件的字节数，截断前的真实长度。 */
+            size: number;
+            text: boolean;
+            /** @description 文件原文；非文本文件为空字符串。 */
+            content: string;
+            /** @description 内容因超过上限而被截断，`size` 仍是文件的真实长度。 */
+            truncated: boolean;
         };
         /** @description Helm 在这次操作之后对该 Release 的说明。dry-run 也会产生一份：其中的字段描述 「将会写入什么」，`manifest` 就是待批准的渲染结果。 */
         HelmReleaseReport: {
@@ -13056,6 +13110,48 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["HelmChartDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getHelmChartFile: {
+        parameters: {
+            query: {
+                /** @description 文件在归档中的路径，例如 `templates/deployment.yaml`。 */
+                path: string;
+                /** @description Chart 版本；省略表示最新版本。 */
+                version?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+                /** @description 仓库索引中的 Chart 名。 */
+                chart_name: components["parameters"]["HelmChartName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart 文件内容 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmChartFileDetail"];
                     };
                 };
             };

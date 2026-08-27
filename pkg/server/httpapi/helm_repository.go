@@ -44,6 +44,7 @@ type helmRepositoryService interface {
 	RefreshCharts(context.Context, string, string, int) (helm.ChartPage, error)
 	ListChartVersions(context.Context, string, string) (helm.ChartVersionPage, error)
 	GetChart(context.Context, string, string, string) (helm.ChartDetail, error)
+	GetChartFile(context.Context, string, string, string, string) (helm.ChartFileDetail, error)
 }
 
 // helmRepositoryServiceOrNil keeps a nil *helm.Service from becoming a non-nil
@@ -329,6 +330,40 @@ func (handler *helmRepositoryHandler) chart(c *gin.Context) {
 	writeSuccess(c, http.StatusOK, result)
 }
 
+// chartFile returns one file out of a chart archive.
+//
+// A request of its own rather than part of the chart detail: the detail already
+// lists what the archive holds, and a chart with a packaged subchart carries
+// hundreds of files that nobody opens. The path is matched against the
+// archive's own member names, so there is nothing here for a caller to traverse
+// with.
+func (handler *helmRepositoryHandler) chartFile(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !handler.ready(c, "Helm chart catalogue is unavailable") {
+		return
+	}
+	query := c.Request.URL.Query()
+	if err := validateQueryNames(query, map[string]struct{}{
+		"version": {}, "path": {},
+	}); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid chart file query")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.GetChartFile(
+		ctx,
+		c.Param("repository_id"),
+		c.Param("chart_name"),
+		query.Get("version"),
+		query.Get("path"),
+	)
+	cancel()
+	if handler.respondRepositoryError(c, "get Helm chart file", err) {
+		return
+	}
+	writeSuccess(c, http.StatusOK, result)
+}
+
 func parseChartLimit(query url.Values) (int, error) {
 	value := query.Get("limit")
 	if value == "" {
@@ -403,6 +438,12 @@ func (handler *helmRepositoryHandler) respondRepositoryError(
 			http.StatusNotFound,
 			"chart_not_found",
 			"chart or chart version was not found in this repository",
+		},
+		errorMapping{
+			helm.ErrChartFileNotFound,
+			http.StatusNotFound,
+			"chart_file_not_found",
+			"chart does not contain this file",
 		},
 		// 502 rather than 500: the failure is upstream of this Server, and an
 		// operator reading it should go and look at the repository.

@@ -123,6 +123,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
 		handlers.helmRepository.chartVersions,
 	)
+	// One file out of the chart archive. The chart detail already lists what
+	// the archive holds; this is how one of them is read, and it answers to the
+	// same permission because it is the same document by another route.
+	//
+	// The path travels as a query parameter rather than in the URL: it is
+	// matched against the archive's own member names, and a path segment would
+	// invite reading it as one.
+	helmCatalogueRoutes.GET(
+		"/repositories/:repository_id/charts/:chart_name/file",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
+		handlers.helmRepository.chartFile,
+	)
 	helmCatalogueRoutes.POST(
 		"/repositories",
 		handlers.authMiddleware.RequireCSRF,

@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { HintTooltip } from "@/components/ui/tooltip";
 
+import { ChartFileBrowser } from "./ChartFileBrowser";
 import { ChartIcon, Field } from "./form";
 
 /**
@@ -382,6 +383,25 @@ function ChartDetailView({
               // layers, so a `max-h` alone leaves it with nothing to be capped
               // against and it collapses to a line. It scrolls inside this.
               className="h-96"
+            />
+          </Card>
+
+          {/* Keyed on the version so switching versions starts the browser over:
+              the selected path and the folded directories describe one
+              archive, and carrying them into another one would leave a
+              selection pointing at a file that may not be in it. */}
+          <Card className="grid min-w-0 gap-2 p-4">
+            <ChartFileBrowser
+              key={`${detail.data.name}@${detail.data.version}`}
+              repositoryId={repositoryId}
+              chart={chart}
+              // The version as it resolved, not as it was asked for: "latest"
+              // is a moving target, and the file requests must land on the same
+              // archive this listing came from.
+              version={detail.data.version}
+              files={detail.data.files ?? []}
+              fileCount={detail.data.file_count}
+              truncated={detail.data.files_truncated}
             />
           </Card>
 

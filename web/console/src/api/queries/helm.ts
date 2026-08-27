@@ -26,6 +26,7 @@ const CHARTS_PATH = "/api/v1/helm/repositories/{repository_id}/charts";
 const CHART_PATH = "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}";
 const CHART_VERSIONS_PATH =
   "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/versions";
+const CHART_FILE_PATH = "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/file";
 const REFRESH_PATH = "/api/v1/helm/repositories/{repository_id}/index-refresh";
 const RELEASES_PATH = "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases";
 const RELEASE_PATH =
@@ -102,6 +103,7 @@ export function useRefreshHelmCharts() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["helm-chart"] }),
         queryClient.invalidateQueries({ queryKey: ["helm-chart-versions"] }),
+        queryClient.invalidateQueries({ queryKey: ["helm-chart-file"] }),
         queryClient.invalidateQueries({ queryKey: ["helm-charts"] }),
       ]);
     },
@@ -144,6 +146,41 @@ export function useHelmChart(repositoryId: string | null, chart: string | null, 
         }),
       ),
     enabled: Boolean(repositoryId && chart),
+  });
+}
+
+/**
+ * One file out of a chart archive.
+ *
+ * The chart detail already lists what the archive holds; this reads one of
+ * them. Separate requests because a chart with a packaged subchart carries
+ * hundreds of files and a reader opens a handful — and because the Server holds
+ * the parsed archive for a few minutes, so clicking through a tree costs one
+ * download rather than one per file.
+ *
+ * A file already read stays read: the contents of a published chart version do
+ * not change, so going back to a file is not worth a round trip.
+ */
+export function useHelmChartFile(
+  repositoryId: string | null,
+  chart: string | null,
+  version: string,
+  path: string | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.helmChartFile(repositoryId ?? "", chart ?? "", version, path ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(CHART_FILE_PATH, {
+          params: {
+            path: { repository_id: repositoryId as string, chart_name: chart as string },
+            query: { path: path as string, ...(version ? { version } : {}) },
+          },
+          signal,
+        }),
+      ),
+    enabled: Boolean(repositoryId && chart && path),
+    staleTime: Infinity,
   });
 }
 
@@ -380,6 +417,7 @@ async function invalidateCatalogue(queryClient: ReturnType<typeof useQueryClient
     queryClient.invalidateQueries({ queryKey: ["helm-charts"] }),
     queryClient.invalidateQueries({ queryKey: ["helm-chart"] }),
     queryClient.invalidateQueries({ queryKey: ["helm-chart-versions"] }),
+    queryClient.invalidateQueries({ queryKey: ["helm-chart-file"] }),
     queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents }),
   ]);
 }

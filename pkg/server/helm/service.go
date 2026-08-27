@@ -27,6 +27,7 @@ type Service struct {
 	repositories RepositoryStore
 	agents       AgentAccess
 	catalogue    *indexCache
+	charts       *chartCache
 	userAgent    string
 }
 
@@ -45,8 +46,18 @@ func NewService(
 		repositories: repositories,
 		agents:       agents,
 		catalogue:    newIndexCache(),
+		charts:       newChartCache(),
 		userAgent:    userAgent,
 	}, nil
+}
+
+// forgetRepository drops everything this Server derived from one repository:
+// its index and every chart read out of it. Both are answers to "what does
+// this address publish", and a repository that was edited, disabled or removed
+// no longer answers it the same way.
+func (service *Service) forgetRepository(repositoryID string) {
+	service.catalogue.forget(repositoryID)
+	service.charts.forget(repositoryID)
 }
 
 func isUUID(value string) bool {

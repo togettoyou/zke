@@ -134,6 +134,8 @@ export const queryKeys = {
     ["helm-chart", repositoryId, chart, version] as const,
   helmChartVersions: (repositoryId: string, chart: string) =>
     ["helm-chart-versions", repositoryId, chart] as const,
+  helmChartFile: (repositoryId: string, chart: string, version: string, path: string) =>
+    ["helm-chart-file", repositoryId, chart, version, path] as const,
   secrets: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
     ["secrets", clusterId, namespace, params] as const,
   secret: (clusterId: string, namespace: string, name: string) =>
