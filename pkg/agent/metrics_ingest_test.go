@@ -117,9 +117,6 @@ func TestMetricsIngestEndpointTellsCollectorsToRetryWhileOffline(t *testing.T) {
 func TestMetricsIngestEndpointRejectsUnusableRequests(t *testing.T) {
 	t.Parallel()
 
-	forwarder := testIngestForwarder(t, map[string][]byte{
-		observability.IngestTokenKey: []byte(testIngestToken),
-	})
 	cases := map[string]struct {
 		build func() *http.Request
 		want  int
@@ -183,6 +180,17 @@ func TestMetricsIngestEndpointRejectsUnusableRequests(t *testing.T) {
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			// A forwarder per case, not one shared by all of them. The admission
+			// gate is taken before the body is read — that is what bounds how
+			// much is being read at once — and this configuration allows one
+			// batch in flight, so two parallel cases that get past the header
+			// checks contend for the same slot and the loser is answered 429.
+			// That is the endpoint behaving correctly and the test asserting
+			// something it never meant to: each case here is about one
+			// malformed request, not about what a second concurrent one does.
+			forwarder := testIngestForwarder(t, map[string][]byte{
+				observability.IngestTokenKey: []byte(testIngestToken),
+			})
 			recorder := httptest.NewRecorder()
 			forwarder.ServeHTTP(recorder, testCase.build())
 			if recorder.Code != testCase.want {
