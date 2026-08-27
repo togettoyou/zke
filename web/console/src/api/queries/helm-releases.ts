@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 
 import { api, unwrap } from "../client";
 import { queryKeys } from "../query-keys";
@@ -50,23 +50,48 @@ export function useHelmRelease(
   revision?: number,
 ) {
   return useQuery({
-    queryKey: queryKeys.helmRelease(clusterId ?? "", namespace ?? "", name ?? "", revision ?? 0),
-    queryFn: async ({ signal }) =>
+    ...helmReleaseQuery(clusterId ?? "", namespace ?? "", name ?? "", revision),
+    enabled: Boolean(clusterId && namespace && name),
+  });
+}
+
+function helmReleaseQuery(clusterId: string, namespace: string, name: string, revision?: number) {
+  return {
+    queryKey: queryKeys.helmRelease(clusterId, namespace, name, revision ?? 0),
+    queryFn: async ({ signal }: { signal: AbortSignal }) =>
       unwrap(
         await api.GET(ITEM_PATH, {
           params: {
             path: {
-              cluster_id: clusterId as string,
-              namespace_name: namespace as string,
-              release_name: name as string,
+              cluster_id: clusterId,
+              namespace_name: namespace,
+              release_name: name,
             },
             ...(revision ? { query: { revision } } : {}),
           },
           signal,
         }),
       ),
-    enabled: Boolean(clusterId && namespace && name),
-  });
+  };
+}
+
+/**
+ * Read one release on demand, outside a render.
+ *
+ * A listing carries only what the release Secrets' labels say — decompressing
+ * every release to draw a table would be a page of Secrets read for four
+ * columns — so an action that needs the values, such as opening the upgrade
+ * form, asks for the one release it is about at the moment it is clicked. It
+ * goes through the same cache as the hook, so opening a release that was just
+ * read costs nothing.
+ */
+export function fetchHelmRelease(
+  queryClient: QueryClient,
+  clusterId: string,
+  namespace: string,
+  name: string,
+) {
+  return queryClient.fetchQuery(helmReleaseQuery(clusterId, namespace, name));
 }
 
 /**

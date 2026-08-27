@@ -532,7 +532,19 @@ Helm 的 Release 存储本身就是一个 Secret，而它保存的 values 就是
 可安装的 Chart 只来自平台级的仓库目录：读目录要求全局 `helm.repository.read`，增删改要求全局
 `helm.repository.manage`，没有任何接受任意地址的路由——否则「装这个 Chart」就成了让 Server 向调用方指定的地址
 发起请求的方式。仓库口令只写不读，任何接口都不返回它。四种写入各有自己的审计动作，预演（`dry_run`）与真正写入
-分开记录；目标名沿用 Secret 家族并附上 Release 名。详见[Helm 应用](../features/helm.md)。
+分开记录；目标名沿用 Secret 家族并附上 Release 名，安装与升级另外记下仓库 ID、Chart 名与请求指定的版本。
+
+仓库还可以要求 Chart 带有可校验的来源证明。索引里的 `digest` 只说明仓库正在提供它自己发布的内容，不说明归档是
+谁生产的；管理员为一个仓库配置 PGP 公钥并选择 `verify_if_present` 或 `required` 之后，Server 会取回 Helm 的
+`.prov` 分离签名，确认签名来自该仓库声明的密钥且摘要与手上的归档一致，否则以 422 拒绝
+（`chart_unsigned` / `chart_signature_invalid`）。校验在取 Chart 的那一步进行，浏览与安装因此走同一道门；每次
+取用都重新校验，撤下一把密钥立即对已缓存的归档生效。除 `disabled` 外必须至少配置一把公钥——没有密钥的策略在
+`required` 下拒绝一切、在 `verify_if_present` 下放行一切，而界面看起来仍像在校验。
+
+Chart 自带的 `values.schema.json` 在请求离开 Server 之前先校验一次（用 Helm 自己的 `CoalesceValues` 与
+`ValidateAgainstSchema`），不合法的 values 以 422 `values_schema_violation` 拒绝。它不放行 Helm 会拒绝的东西，
+Agent 上的 Helm 仍是权威；它移动的是失败的位置——集群不被联系，幂等键不被占用。详见
+[Helm 应用](../features/helm.md)。
 
 Secret 的 YAML 是一对独立路由，读要求 `cluster.secret.read`，写要求 `cluster.secret.manage`，不经过通用 YAML
 入口——后者对 Secret 的拒绝没有放开。该路由使用 Secret 服务自己的资源访问，其只接受 `core/v1 Secret`，并保留

@@ -171,6 +171,7 @@ func (handler *helmReleaseWriteHandler) install(c *gin.Context) {
 	if !ok {
 		return
 	}
+	operation.detail = chartAudit(request.chartReleaseRequest)
 	ctx, cancel := handler.operationContext(c)
 	report, err := handler.service.Install(ctx, helm.InstallInput{
 		ClusterID:          c.Param("cluster_id"),
@@ -211,6 +212,7 @@ func (handler *helmReleaseWriteHandler) upgrade(c *gin.Context) {
 	if !ok {
 		return
 	}
+	operation.detail = chartAudit(request.chartReleaseRequest)
 	ctx, cancel := handler.operationContext(c)
 	report, err := handler.service.Upgrade(ctx, helm.UpgradeInput{
 		InstallInput: helm.InstallInput{
@@ -311,11 +313,35 @@ func (handler *helmReleaseWriteHandler) uninstall(c *gin.Context) {
 // record, against which target, and whether the operator may install objects
 // that no Namespace contains.
 type helmWriteOperation struct {
-	actorUserID        string
-	action             string
-	target             string
-	dryRun             bool
+	actorUserID string
+	action      string
+	target      string
+	dryRun      bool
+	// detail is what the audit row says about the change beyond its target.
+	// For an install or an upgrade that is the chart: the target names the
+	// release, and "which chart, from which repository, at which version" is
+	// the question asked of the trail afterwards — it is the difference between
+	// "this release was upgraded" and "this release was moved onto a chart from
+	// a repository nobody had approved".
+	detail             map[string]string
 	allowClusterScoped bool
+}
+
+// chartAudit records what an install or an upgrade was asked to apply.
+//
+// The values are what the caller sent, not what the fetch resolved: an empty
+// version means "the newest published", and recording it as empty is the honest
+// account of a request that did not pin one. The resolved version is in the
+// release report the same operation returns.
+func chartAudit(request chartReleaseRequest) map[string]string {
+	detail := map[string]string{
+		"repository_id": request.RepositoryID,
+		"chart":         request.Chart,
+	}
+	if version := strings.TrimSpace(request.Version); version != "" {
+		detail["chart_version"] = version
+	}
+	return detail
 }
 
 // begin performs everything the four handlers share: refuse query parameters,
@@ -466,6 +492,7 @@ func (handler *helmReleaseWriteHandler) record(
 		TargetType:  auditaction.TargetKubernetesResource,
 		TargetName:  operation.target,
 		Result:      result,
+		Detail:      operation.detail,
 	})
 }
 
@@ -526,6 +553,27 @@ func (handler *helmReleaseWriteHandler) respondHelmWriteError(
 			http.StatusRequestEntityTooLarge,
 			"chart_too_large",
 			"chart archive exceeds the transferable size",
+		},
+		// Both refusals happen before a Cluster is contacted, so nothing was
+		// written and the idempotency key the caller sent is still theirs to
+		// retry with once the cause is fixed.
+		errorMapping{
+			helm.ErrChartUnsigned,
+			http.StatusUnprocessableEntity,
+			"chart_unsigned",
+			"this repository requires signed charts and this version publishes no signature",
+		},
+		errorMapping{
+			helm.ErrChartSignatureInvalid,
+			http.StatusUnprocessableEntity,
+			"chart_signature_invalid",
+			"chart signature did not verify against this repository's keys",
+		},
+		errorMapping{
+			helm.ErrValuesRejected,
+			http.StatusUnprocessableEntity,
+			"values_schema_violation",
+			"values do not satisfy the chart's own values.schema.json",
 		},
 		errorMapping{
 			helm.ErrReportUnreadable,

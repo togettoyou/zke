@@ -5455,16 +5455,48 @@ export interface components {
             username: string;
             /** @description 是否配置了口令。口令本身任何接口都不返回。 */
             has_credentials: boolean;
-            /** @description 是否配置了自定义 CA。证书正文不返回。 */
+            /** @description 是否配置了自定义 CA。 */
             ca_certificate_provided: boolean;
+            /** @description 自定义 CA 的 PEM 原文。它是公开证书而不是机密，且会被原样返回： 读不回它的编辑表单也保不住它——保存时提交一个空字段就等于清除了没人想删的 CA。 */
+            ca_certificate_pem?: string;
             /** @description 是否跳过 TLS 校验。它是一次明确且可审计的选择，不是静默回退。 */
             insecure_skip_tls_verify: boolean;
             /** @description 关闭后不再用于新的安装；已安装的 Release 不受影响。 */
             enabled: boolean;
+            signature_policy?: components["schemas"]["HelmSignaturePolicy"];
+            /** @description 该仓库的 Chart 允许由哪些 PGP 公钥签名。以指纹与身份返回而不是 armor 原文： 「这里信任哪些密钥」问的是这个。 */
+            signing_keys?: components["schemas"]["HelmSigningKey"][];
+            /** @description 存储的 ASCII-armored PGP 公钥原文。公钥不是机密，且管理员在三把密钥中替换 一把时必须能编辑现有内容，因此与口令不同，它会被原样返回。 */
+            public_keyring?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /**
+         * @description 该仓库对 Chart 来源证明的要求。索引里的 digest 只说明仓库正在提供它自己发布的内容， 不说明是谁生产的；Helm 在归档旁发布 `<chart>-<version>.tgz.prov`——一份注明归档 SHA-256 的 PGP 明文签名文档——校验它同时证明了两件事：平台信任的密钥签署了这份摘要表， 且手上的归档正是表中所写的那一份。
+         *     `disabled` 不取也不校验；`verify_if_present` 在仓库发布 `.prov` 时校验、未发布时放行， 它是发布方尚在推进签名时的过渡状态而不是安全边界（能替换归档的一方也能删掉它旁边的文件）； `required` 拒绝一切无法归因到该仓库密钥的归档，安装与浏览同样适用。
+         * @enum {string}
+         */
+        HelmSignaturePolicy: "disabled" | "verify_if_present" | "required";
+        HelmSigningKey: {
+            /** @description 密钥指纹。它是 PGP 密钥中唯一能标识自身的部分——用户 ID 是密钥所有者自己写的自由文本。 */
+            fingerprint: string;
+            key_id: string;
+            identities: string[];
+        };
+        HelmChartSignature: {
+            policy: components["schemas"]["HelmSignaturePolicy"];
+            /** @description 该仓库密钥环上的某把密钥签署了一份注明此归档 SHA-256 的摘要表。 */
+            verified: boolean;
+            /** @description 仓库没有为这个版本发布来源证明。`verify_if_present` 下这是被放行的情形， 界面据此说明原因，而不是显示一个没有解释的「未验证」。 */
+            unsigned: boolean;
+            signed_by?: string[];
+            key_id?: string;
+            /** @description 归档的 SHA-256，带算法前缀。`verified` 为真时它是发布方签署的那一个， 否则只是本 Server 算出的值——区别就在 `verified`。 */
+            digest?: string;
+            /** @description 已签名摘要表中匹配到的文件名。来源证明按文件名绑定摘要，因此匹配到哪个名字也是被证明的一部分。 */
+            file_name?: string;
         };
         HelmRepositoryPage: {
             repositories: components["schemas"]["HelmRepository"][];
@@ -5483,12 +5515,16 @@ export interface components {
              * @description 三态字段：不传保留已存储的口令，传空字符串清除，传值替换。写入后不再返回。
              */
             password?: string | null;
-            /** @description 私有仓库使用的自定义 CA，PEM 编码；留空表示使用系统信任库。 */
+            /** @description 私有仓库使用的自定义 CA，PEM 编码；留空表示使用系统信任库。 它是完整提交的：提交空字符串即清除已配置的 CA。 */
             ca_certificate_pem?: string;
             /** @default false */
             insecure_skip_tls_verify: boolean;
             /** @default true */
             enabled: boolean;
+            /** @default disabled */
+            signature_policy: components["schemas"]["HelmSignaturePolicy"];
+            /** @description ASCII-armored PGP 公钥。与口令不同，它是完整提交与返回的：公钥不是机密， 而在多把密钥中增删一把必须提交全部内容。`disabled` 之外的策略要求至少一把密钥—— 没有密钥的策略在 `required` 下会拒绝一切 Chart，在 `verify_if_present` 下 会放行一切 Chart，而界面上看起来仍然像在校验。 */
+            public_keyring?: string;
         };
         HelmChartSummary: {
             name: string;
@@ -5550,6 +5586,9 @@ export interface components {
             values: string;
             /** @description Chart 打包的 README.md；没有则为空。超过上限时被截断。 */
             readme: string;
+            /** @description Chart 打包的 values.schema.json 原文；没有则为空。它是 Chart 作者对 「什么是合法配置」的声明，Server 在安装抵达集群之前按它校验一次， 因此把它交给需要满足它的那个编辑器，而不是留给一次拒绝去揭示。 */
+            values_schema: string;
+            signature: components["schemas"]["HelmChartSignature"];
             dependencies?: components["schemas"]["HelmChartDependency"][];
             /** @description Chart 归档中的全部文件，含 `charts/` 下的子 Chart，按路径排序。 文件内容不在这里：一个带打包子 Chart 的归档可能有数百个文件， 而其中绝大多数不会被打开，因此内容由单独的接口按文件读取。 */
             files?: components["schemas"]["HelmChartFileEntry"][];

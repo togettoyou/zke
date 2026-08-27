@@ -95,7 +95,7 @@ func (service *Service) GetChartFile(
 	if path == "" || len(path) > maxChartFilePathLength {
 		return ChartFileDetail{}, ErrInvalidInput
 	}
-	loaded, resolved, err := service.loadChart(ctx, repositoryID, chartName, version)
+	loaded, resolved, _, err := service.loadChart(ctx, repositoryID, chartName, version)
 	if err != nil {
 		return ChartFileDetail{}, err
 	}

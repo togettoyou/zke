@@ -127,7 +127,7 @@ func (service *Service) Install(
 	ctx context.Context,
 	input InstallInput,
 ) (helmrelease.Report, error) {
-	return service.runWithChart(ctx, agentv1.HelmAction_HELM_ACTION_INSTALL, input, func(
+	return service.runWithChart(ctx, agentv1.HelmAction_HELM_ACTION_INSTALL, input, false, func(
 		request *agentv1.HelmRequest,
 	) {
 		request.CreateNamespace = input.CreateNamespace
@@ -144,12 +144,21 @@ func (service *Service) Upgrade(
 			"reset_values and reuse_values cannot both be set",
 		)
 	}
-	return service.runWithChart(ctx, agentv1.HelmAction_HELM_ACTION_UPGRADE, input.InstallInput, func(
-		request *agentv1.HelmRequest,
-	) {
-		request.ResetValues = input.ResetValues
-		request.ReuseValues = input.ReuseValues
-	})
+	// ReuseValues merges the previous revision's values into these, and this
+	// Server does not read release storage — so the document a schema would be
+	// checked against is not the one in hand. Helm still validates on the Agent,
+	// with the values it has; skipping here loses the earlier failure, not the
+	// check.
+	return service.runWithChart(
+		ctx,
+		agentv1.HelmAction_HELM_ACTION_UPGRADE,
+		input.InstallInput,
+		input.ReuseValues,
+		func(request *agentv1.HelmRequest) {
+			request.ResetValues = input.ResetValues
+			request.ReuseValues = input.ReuseValues
+		},
+	)
 }
 
 // Rollback returns a release to a revision Helm still holds.
@@ -208,6 +217,7 @@ func (service *Service) runWithChart(
 	ctx context.Context,
 	action agentv1.HelmAction,
 	input InstallInput,
+	skipSchema bool,
 	adjust func(*agentv1.HelmRequest),
 ) (helmrelease.Report, error) {
 	request, err := baseHelmRequest(
@@ -228,7 +238,9 @@ func (service *Service) runWithChart(
 	if err != nil {
 		return helmrelease.Report{}, err
 	}
-	archive, _, err := service.fetchChartArchive(
+	// Fetching is also where the repository's signing policy is applied: an
+	// archive that does not verify never becomes a request. See provenance.go.
+	fetched, err := service.fetchChartArchive(
 		ctx,
 		input.RepositoryID,
 		input.Chart,
@@ -237,8 +249,12 @@ func (service *Service) runWithChart(
 	if err != nil {
 		return helmrelease.Report{}, err
 	}
+	archive := fetched.Archive
 	if uint64(len(archive)) > helmrelease.MaxChartBytes {
 		return helmrelease.Report{}, ErrChartTooLarge
+	}
+	if err := service.validateValues(archive, values, skipSchema); err != nil {
+		return helmrelease.Report{}, err
 	}
 	request.DryRun = input.DryRun
 	request.Wait = input.Wait

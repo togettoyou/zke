@@ -8,7 +8,7 @@ import {
   useHelmRepositories,
   useRefreshHelmCharts,
 } from "@/api/queries/helm";
-import type { HelmChartSummary } from "@/api/types";
+import type { HelmChartDetail, HelmChartSummary } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { DetailCard, DetailRow } from "@/components/common/detail";
 import { Markdown } from "@/components/common/markdown";
@@ -236,6 +236,51 @@ function ChartCard({ chart, onOpen }: { chart: HelmChartSummary; onOpen: () => v
  * form: they are what an operator reads to decide, and the form is where they
  * act on the decision.
  */
+/**
+ * What this Server could establish about who produced the archive.
+ *
+ * The index digest says the repository is serving what it published; it says
+ * nothing about who built it. Under a signing policy the archive is checked
+ * against the repository's PGP keys before it can be read here at all — so what
+ * is shown is never a claim to be evaluated, it is the outcome of a check that
+ * already gated this page.
+ */
+function ChartSignatureSummary({
+  signature,
+}: {
+  signature: HelmChartDetail["signature"] | undefined;
+}) {
+  if (!signature || signature.policy === "disabled") {
+    return <span className="text-subtle-foreground">该仓库未开启签名校验</span>;
+  }
+  if (signature.verified) {
+    return (
+      <span className="grid gap-1">
+        <span className="flex flex-wrap items-center gap-2">
+          <Badge tone="success">签名已验证</Badge>
+          <span className="break-all">{signature.signed_by?.join("、") || "—"}</span>
+        </span>
+        <span className="zke-mono text-subtle-foreground text-[11px] break-all">
+          {signature.key_id ? `key ${signature.key_id} · ` : ""}
+          {signature.digest}
+        </span>
+      </span>
+    );
+  }
+  // Only reachable under 「有签名则校验」: a signature that fails verification is
+  // refused upstream of this page, so "unverified" here can only mean "the
+  // repository published none". Saying which is the whole point — the two look
+  // identical otherwise.
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <Badge tone="warning">仓库未发布签名</Badge>
+      <span className="text-subtle-foreground">
+        该仓库配置为「有签名则校验」，此版本没有可校验的来源证明。
+      </span>
+    </span>
+  );
+}
+
 function ChartDetailView({
   repositoryId,
   chart,
@@ -316,6 +361,10 @@ function ChartDetailView({
           <div className="grid gap-3 @2xl:grid-cols-2">
             <DetailCard title="来源">
               <DetailRow label="类型" value={detail.data.type || "application"} />
+              <DetailRow
+                label="来源证明"
+                value={<ChartSignatureSummary signature={detail.data.signature} />}
+              />
               <DetailRow label="主页" value={<ExternalURL url={detail.data.home} />} />
               <DetailRow
                 label="源码"

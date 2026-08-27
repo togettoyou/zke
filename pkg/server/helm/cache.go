@@ -72,6 +72,30 @@ type chartMeta struct {
 	Digest    string    `json:"digest"`
 	Size      int64     `json:"size"`
 	FetchedAt time.Time `json:"fetched_at"`
+	// ProvenanceChecked says the fetch that stored this archive also asked the
+	// repository for the signature beside it. Without it, an archive with no
+	// `.prov` on disk is ambiguous — the repository may publish none, or this
+	// entry may predate the Server that would have asked — and the two have
+	// opposite meanings under a policy that requires one. An entry that was
+	// never asked is treated as a miss the first time a policy needs the answer.
+	//
+	// It does not have to survive a policy change: editing a repository forgets
+	// everything cached under it, so every archive here was fetched under the
+	// policy in force now.
+	ProvenanceChecked bool `json:"provenance_checked"`
+}
+
+// CachedChart is one archive together with what was published beside it, in
+// both directions: it is what a read returns and what a write is given.
+//
+// The two travel as a pair because verifying one without the other is not
+// possible — a provenance file signs a digest, and the digest is of these bytes.
+type CachedChart struct {
+	Archive []byte
+	// Provenance is the `.prov` document, empty when the repository publishes
+	// none. ProvenanceChecked separates that from never having asked.
+	Provenance        []byte
+	ProvenanceChecked bool
 }
 
 const (
@@ -83,6 +107,10 @@ const (
 	// The longest sanitised chart name kept in a filename. Past this the hash
 	// suffix is doing the identifying anyway, and file name limits are real.
 	maxCacheNameLength = 96
+	// The extension Helm gives a chart's detached signature. Kept beside the
+	// archive under the same name, as `helm pull --prov` writes it, so an
+	// operator reading the directory sees the pair the way they expect to.
+	provenanceSuffix = ".prov"
 )
 
 // NewCache prepares the cache directory. An empty directory disables caching
@@ -213,18 +241,18 @@ func (cache *Cache) Chart(
 	chartName string,
 	version string,
 	expectedDigest string,
-) ([]byte, bool) {
+) (CachedChart, bool) {
 	if cache == nil || !isUUID(repositoryID) {
-		return nil, false
+		return CachedChart{}, false
 	}
 	path := cache.chartPath(repositoryID, chartName, version)
 	metaBytes, err := os.ReadFile(path + ".json")
 	if err != nil {
-		return nil, false
+		return CachedChart{}, false
 	}
 	var meta chartMeta
 	if err := json.Unmarshal(metaBytes, &meta); err != nil {
-		return nil, false
+		return CachedChart{}, false
 	}
 	if expected := normalizeDigest(expectedDigest); expected != "" &&
 		expected != normalizeDigest(meta.Digest) {
@@ -232,11 +260,11 @@ func (cache *Cache) Chart(
 		// here rather than leaving it to eviction keeps the next request from
 		// making the same comparison and the same decision.
 		cache.removeChart(repositoryID, path)
-		return nil, false
+		return CachedChart{}, false
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false
+		return CachedChart{}, false
 	}
 	if int64(len(body)) != meta.Size || sha256Hex(body) != normalizeDigest(meta.Digest) {
 		cache.report(
@@ -245,17 +273,35 @@ func (cache *Cache) Chart(
 			fmt.Errorf("%s %s does not match its recorded digest", chartName, version),
 		)
 		cache.removeChart(repositoryID, path)
-		return nil, false
+		return CachedChart{}, false
 	}
+	// A missing file is not an error: it is what a repository that publishes no
+	// signature leaves behind, and ProvenanceChecked is what says whether that
+	// absence was observed or merely never looked for.
+	provenance, _ := os.ReadFile(path + provenanceSuffix)
 	// Reading counts as use. Eviction is by last use, and without this the
 	// chart a platform installs most often would be the first one dropped.
 	now := time.Now()
 	_ = os.Chtimes(path, now, now)
-	return body, true
+	return CachedChart{
+		Archive:           body,
+		Provenance:        provenance,
+		ProvenanceChecked: meta.ProvenanceChecked,
+	}, true
 }
 
-// PutChart stores one chart archive.
-func (cache *Cache) PutChart(repositoryID string, chartName string, version string, body []byte) {
+// PutChart stores one chart archive and the signature published beside it.
+//
+// The two are written together because they are only meaningful together, and
+// an empty provenance removes whatever was there rather than leaving it: a
+// document that signs a digest is wrong the moment the bytes next to it change.
+func (cache *Cache) PutChart(
+	repositoryID string,
+	chartName string,
+	version string,
+	chart CachedChart,
+) {
+	body := chart.Archive
 	if cache == nil || !isUUID(repositoryID) || len(body) == 0 {
 		return
 	}
@@ -271,12 +317,20 @@ func (cache *Cache) PutChart(repositoryID string, chartName string, version stri
 		cache.report("write cached Helm chart", repositoryID, err)
 		return
 	}
+	if len(chart.Provenance) > 0 {
+		if err := writeFileAtomically(path+provenanceSuffix, chart.Provenance); err != nil {
+			cache.report("write cached Helm chart provenance", repositoryID, err)
+		}
+	} else {
+		_ = os.Remove(path + provenanceSuffix)
+	}
 	cache.writeMeta(repositoryID, path+".json", chartMeta{
-		Chart:     chartName,
-		Version:   version,
-		Digest:    "sha256:" + sha256Hex(body),
-		Size:      int64(len(body)),
-		FetchedAt: time.Now().UTC(),
+		Chart:             chartName,
+		Version:           version,
+		Digest:            "sha256:" + sha256Hex(body),
+		Size:              int64(len(body)),
+		FetchedAt:         time.Now().UTC(),
+		ProvenanceChecked: chart.ProvenanceChecked,
 	})
 	cache.evict()
 }
@@ -287,6 +341,7 @@ func (cache *Cache) removeChart(repositoryID string, path string) {
 	defer mutex.Unlock()
 	_ = os.Remove(path)
 	_ = os.Remove(path + ".json")
+	_ = os.Remove(path + provenanceSuffix)
 }
 
 // chartPath names the file one chart version is stored in.
@@ -409,6 +464,7 @@ func (cache *Cache) evict() {
 			continue
 		}
 		_ = os.Remove(candidate.path + ".json")
+		_ = os.Remove(candidate.path + provenanceSuffix)
 		total -= candidate.size
 	}
 }

@@ -76,17 +76,35 @@ type RepositoryStore interface {
 // here and never will be: `HasCredentials` is the whole of what a reader is
 // told about it.
 type Repository struct {
-	ID                    string    `json:"id"`
-	Name                  string    `json:"name"`
-	Description           string    `json:"description"`
-	URL                   string    `json:"url"`
-	Username              string    `json:"username"`
-	HasCredentials        bool      `json:"has_credentials"`
-	CACertificateProvided bool      `json:"ca_certificate_provided"`
-	InsecureSkipTLSVerify bool      `json:"insecure_skip_tls_verify"`
-	Enabled               bool      `json:"enabled"`
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	URL            string `json:"url"`
+	Username       string `json:"username"`
+	HasCredentials bool   `json:"has_credentials"`
+	// CACertificateProvided says one is configured; CACertificatePEM is the
+	// certificate itself. It is returned in full, like the signing keys and
+	// unlike the password, because it is a public certificate and because an
+	// edit form that cannot read it back cannot preserve it: a save would send
+	// an empty field and clear a CA nobody meant to remove.
+	CACertificateProvided bool   `json:"ca_certificate_provided"`
+	CACertificatePEM      string `json:"ca_certificate_pem"`
+	InsecureSkipTLSVerify bool   `json:"insecure_skip_tls_verify"`
+	Enabled               bool   `json:"enabled"`
+	// SignaturePolicy is what this repository requires of a chart's provenance.
+	// See provenance.go.
+	SignaturePolicy SignaturePolicy `json:"signature_policy"`
+	// SigningKeys and PublicKeyring are the same keys twice, for the two things
+	// that are done with them. SigningKeys is what a reader asked for —
+	// fingerprints and identities answer "which keys do we trust here", and an
+	// armor block does not. PublicKeyring is the stored text, returned in full
+	// because an administrator replacing one key of several has to edit what is
+	// there. Neither is a secret: these are public keys, and the routes that
+	// return them are behind the platform administrator gate regardless.
+	SigningKeys   []SigningKey `json:"signing_keys"`
+	PublicKeyring string       `json:"public_keyring"`
+	CreatedAt     time.Time    `json:"created_at"`
+	UpdatedAt     time.Time    `json:"updated_at"`
 }
 
 type RepositoryPage struct {
@@ -104,6 +122,12 @@ type RepositoryInput struct {
 	CACertificatePEM      string  `json:"ca_certificate_pem"`
 	InsecureSkipTLSVerify bool    `json:"insecure_skip_tls_verify"`
 	Enabled               *bool   `json:"enabled"`
+	// SignaturePolicy and PublicKeyring configure chart provenance. Unlike the
+	// password the keyring is sent and returned in full — these are public
+	// keys, and an administrator has to be able to read back what they pasted
+	// in order to replace one of them.
+	SignaturePolicy string `json:"signature_policy"`
+	PublicKeyring   string `json:"public_keyring"`
 }
 
 func (service *Service) ListRepositories(ctx context.Context) (RepositoryPage, error) {
@@ -160,6 +184,8 @@ func (service *Service) CreateRepository(
 		CACertificatePEM:      normalized.CACertificatePEM,
 		InsecureSkipTLSVerify: input.InsecureSkipTLSVerify,
 		Enabled:               enabled,
+		SignaturePolicy:       string(normalized.SignaturePolicy),
+		PublicKeyring:         normalized.PublicKeyring,
 		ActorUserID:           actorUserID,
 		Now:                   time.Now().UTC(),
 	})
@@ -197,6 +223,8 @@ func (service *Service) UpdateRepository(
 		CACertificatePEM:      normalized.CACertificatePEM,
 		InsecureSkipTLSVerify: input.InsecureSkipTLSVerify,
 		Enabled:               enabled,
+		SignaturePolicy:       string(normalized.SignaturePolicy),
+		PublicKeyring:         normalized.PublicKeyring,
 		ActorUserID:           actorUserID,
 		Now:                   time.Now().UTC(),
 	})
@@ -230,8 +258,12 @@ func publicRepository(row store.HelmRepository) Repository {
 		Username:              row.Username,
 		HasCredentials:        row.HasCredentials,
 		CACertificateProvided: row.CACertificatePEM != "",
+		CACertificatePEM:      row.CACertificatePEM,
 		InsecureSkipTLSVerify: row.InsecureSkipTLSVerify,
 		Enabled:               row.Enabled,
+		SignaturePolicy:       storedSignaturePolicy(row.SignaturePolicy),
+		SigningKeys:           describeKeyring(row.PublicKeyring),
+		PublicKeyring:         row.PublicKeyring,
 		CreatedAt:             row.CreatedAt,
 		UpdatedAt:             row.UpdatedAt,
 	}
@@ -243,6 +275,8 @@ type normalizedRepository struct {
 	URL              string
 	Username         string
 	CACertificatePEM string
+	SignaturePolicy  SignaturePolicy
+	PublicKeyring    string
 }
 
 // normalizeRepositoryInput trims and checks what an administrator submitted.
@@ -285,11 +319,49 @@ func normalizeRepositoryInput(input RepositoryInput) (normalizedRepository, erro
 			"repository URL must not embed credentials; use the username and password fields",
 		)
 	}
+	policy, keyring, err := normalizeRepositoryProvenance(input)
+	if err != nil {
+		return normalizedRepository{}, err
+	}
 	return normalizedRepository{
 		Name:             name,
 		Description:      description,
 		URL:              strings.TrimRight(parsed.String(), "/"),
 		Username:         username,
 		CACertificatePEM: certificate,
+		SignaturePolicy:  policy,
+		PublicKeyring:    keyring,
 	}, nil
+}
+
+// normalizeRepositoryProvenance checks the signing policy and the keys it is to
+// be enforced with, together.
+//
+// They are validated as a pair because neither is meaningful alone: a policy
+// with no keys refuses every chart under `required` and — worse — admits every
+// chart under `verify_if_present`, which would read on the page as verification
+// while checking nothing. Keys with no policy are harmless and are kept, so an
+// administrator can load the keyring first and switch the policy on afterwards.
+//
+// The keyring is parsed here rather than only at install time. A key that does
+// not decode is a mistake somebody is in a position to correct while they are
+// looking at the form; discovering it during a deployment is not.
+func normalizeRepositoryProvenance(input RepositoryInput) (SignaturePolicy, string, error) {
+	policy, err := normalizeSignaturePolicy(input.SignaturePolicy)
+	if err != nil {
+		return "", "", err
+	}
+	keyring := strings.TrimSpace(input.PublicKeyring)
+	if keyring != "" {
+		if _, err := parseKeyring(keyring); err != nil {
+			return "", "", err
+		}
+	}
+	if policy != SignatureDisabled && keyring == "" {
+		return "", "", invalid(
+			"signature policy %q requires at least one PGP public key",
+			policy,
+		)
+	}
+	return policy, keyring, nil
 }

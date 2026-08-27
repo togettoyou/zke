@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -110,6 +112,15 @@ type ChartDetail struct {
 	Values string `json:"values"`
 	// README is the chart's README.md if it packages one.
 	README string `json:"readme"`
+	// ValuesSchema is the chart's values.schema.json if it packages one. It is
+	// the chart author's own statement of what a valid values document is, and
+	// the Server checks against it before an install reaches a Cluster — so it
+	// is returned to the editor that has to satisfy it rather than left to be
+	// discovered from a rejection. See values.go.
+	ValuesSchema string `json:"values_schema"`
+	// Signature is what this repository's signing policy concluded about the
+	// archive this detail was read from. See provenance.go.
+	Signature ChartSignature `json:"signature"`
 	// Dependencies names the subcharts this chart pulls in, so an operator can
 	// see that installing one thing installs four.
 	Dependencies []ChartDependency `json:"dependencies"`
@@ -137,6 +148,9 @@ const (
 	// text. Both are meant to be read by a person.
 	maxChartValuesBytes = 512 << 10
 	maxChartREADMEBytes = 512 << 10
+	// The chart's values.schema.json, returned so the Console can show what a
+	// valid configuration looks like beside the editor that produces one.
+	maxChartSchemaBytes = 512 << 10
 	// The largest listing one request returns.
 	maxChartPageSize = 200
 )
@@ -269,7 +283,7 @@ func (service *Service) GetChart(
 	chartName string,
 	version string,
 ) (ChartDetail, error) {
-	loaded, resolved, err := service.loadChart(ctx, repositoryID, chartName, version)
+	loaded, resolved, signature, err := service.loadChart(ctx, repositoryID, chartName, version)
 	if err != nil {
 		return ChartDetail{}, err
 	}
@@ -280,6 +294,8 @@ func (service *Service) GetChart(
 		Version:        resolved,
 		Values:         truncateText(string(chartFile(loaded, "values.yaml")), maxChartValuesBytes),
 		README:         truncateText(string(chartFile(loaded, "README.md")), maxChartREADMEBytes),
+		ValuesSchema:   chartValuesSchema(loaded),
+		Signature:      signature,
 		Files:          files,
 		FileCount:      fileCount,
 		FilesTruncated: fileCount > len(files),
@@ -323,7 +339,7 @@ func (service *Service) loadChart(
 	repositoryID string,
 	chartName string,
 	version string,
-) (*chart.Chart, string, error) {
+) (*chart.Chart, string, ChartSignature, error) {
 	// Resolved before the cache is consulted, so that "newest" and the number
 	// it resolves to are the same cache entry. Without this the chart detail
 	// (which asks for "newest") and the file reads that follow it (which ask
@@ -331,24 +347,29 @@ func (service *Service) loadChart(
 	// downloads of the same archive.
 	resolved, err := service.resolveChartVersion(ctx, repositoryID, chartName, version)
 	if err != nil {
-		return nil, "", err
+		return nil, "", ChartSignature{}, err
+	}
+	// The archive is fetched even on a parse cache hit, because fetching is
+	// where the repository's signing policy is applied: a keyring edited since
+	// the parse was cached has to reach the next read of the chart, and a
+	// parsed chart carries no evidence of what verified it. The fetch itself is
+	// a disk read from data/helm, not a request upstream.
+	fetched, err := service.fetchChartArchive(ctx, repositoryID, chartName, resolved)
+	if err != nil {
+		return nil, "", ChartSignature{}, err
 	}
 	if cached, found := service.charts.get(repositoryID, chartName, resolved); found {
-		return cached, resolved, nil
+		return cached, resolved, fetched.Signature, nil
 	}
-	archive, _, err := service.fetchChartArchive(ctx, repositoryID, chartName, resolved)
+	loaded, err := loader.LoadArchive(bytes.NewReader(fetched.Archive))
 	if err != nil {
-		return nil, "", err
-	}
-	loaded, err := loader.LoadArchive(bytes.NewReader(archive))
-	if err != nil {
-		return nil, "", unreachable(
+		return nil, "", ChartSignature{}, unreachable(
 			"chart archive could not be read: %s",
 			err,
 		)
 	}
 	service.charts.put(repositoryID, chartName, resolved, loaded)
-	return loaded, resolved, nil
+	return loaded, resolved, fetched.Signature, nil
 }
 
 // resolveChartVersion turns a requested version — possibly empty, meaning the
@@ -371,9 +392,23 @@ func (service *Service) resolveChartVersion(
 	return entry.Version, nil
 }
 
-// fetchChartArchive returns the chart archive bytes and the version it resolved
-// to. The bytes are what is sent to the Agent, unmodified: this Server never
-// repacks a chart, so what runs in the Cluster is what the repository published.
+// fetchedChart is one chart archive together with everything this Server has
+// established about it: which version the request resolved to, and what its
+// provenance proved.
+type fetchedChart struct {
+	// Archive is what is sent to the Agent, unmodified. This Server never
+	// repacks a chart, so what runs in the Cluster is what the repository
+	// published — and, under a signing policy, what the publisher signed.
+	Archive []byte
+	Version string
+	// Signature is the outcome of the repository's policy. It is filled in for
+	// every fetch, including a disabled policy, so a caller never has to infer
+	// "not checked" from a zero value.
+	Signature ChartSignature
+}
+
+// fetchChartArchive returns one chart version's archive, verified as far as its
+// repository's policy requires.
 //
 // A published version does not change, so the archive is kept on disk under
 // data/helm and only fetched once. That is what the index's own digest is used
@@ -381,72 +416,236 @@ func (service *Service) resolveChartVersion(
 // file that no longer matches it is not this version any more and is fetched
 // again. A repository that publishes no digest gets the weaker guarantee the
 // cache can still make on its own — that the file is what was written there.
+//
+// The signature check runs on every call, cache hit included. Verification is a
+// hash and one PGP operation over a few kilobytes, and caching its *result*
+// would mean an archive whose trust was decided by a keyring that has since
+// been changed.
 func (service *Service) fetchChartArchive(
 	ctx context.Context,
 	repositoryID string,
 	chartName string,
 	version string,
-) ([]byte, string, error) {
+) (fetchedChart, error) {
 	repository, err := service.enabledRepository(ctx, repositoryID)
 	if err != nil {
-		return nil, "", err
+		return fetchedChart{}, err
 	}
 	index, _, err := service.catalogue.index(ctx, service, repositoryID, false)
 	if err != nil {
-		return nil, "", err
+		return fetchedChart{}, err
 	}
 	entry, err := selectChartVersion(index, chartName, version)
 	if err != nil {
-		return nil, "", err
+		return fetchedChart{}, err
 	}
+	policy := storedSignaturePolicy(repository.SignaturePolicy)
+	reference := chartDownloadURL(entry)
+	archive, provenance, err := service.chartBytes(
+		ctx,
+		repository,
+		chartName,
+		entry,
+		reference,
+		policy != SignatureDisabled,
+	)
+	if err != nil {
+		return fetchedChart{}, err
+	}
+	signature, err := service.verifyChart(
+		policy,
+		repository,
+		chartName,
+		entry.Version,
+		reference,
+		archive,
+		provenance,
+	)
+	if err != nil {
+		return fetchedChart{}, err
+	}
+	return fetchedChart{Archive: archive, Version: entry.Version, Signature: signature}, nil
+}
+
+// chartBytes gets the archive and, when it will be checked, the signature
+// published beside it — from the disk cache if it holds both, otherwise from
+// the repository.
+func (service *Service) chartBytes(
+	ctx context.Context,
+	repository store.HelmRepository,
+	chartName string,
+	entry *repo.ChartVersion,
+	reference string,
+	withProvenance bool,
+) ([]byte, []byte, error) {
 	if cached, found := service.cache.Chart(
-		repositoryID,
+		repository.ID,
 		chartName,
 		entry.Version,
 		entry.Digest,
-	); found {
-		return cached, entry.Version, nil
+	); found && (!withProvenance || cached.ProvenanceChecked) {
+		// An entry stored without ever asking for provenance is passed over
+		// when a policy now needs the answer: "no file on disk" would otherwise
+		// be read as "the repository publishes none", which is the opposite
+		// conclusion. Fetching again settles it and records that it was asked.
+		return cached.Archive, cached.Provenance, nil
 	}
-	reference := chartDownloadURL(entry)
 	if reference == "" {
-		return nil, "", unreachable(
+		return nil, nil, unreachable(
 			"index lists %s %s without a download URL",
 			chartName,
 			entry.Version,
 		)
 	}
-	// A repository may keep publishing an index that names every chart long
-	// after the archives themselves moved into an OCI registry — that is what
-	// Helm 3.8 onwards made ordinary. The index still answers what is published
-	// and at which versions; only the download changes, so the branch is here
-	// and nothing above it has to know.
+	archive, provenance, err := service.downloadChart(
+		ctx,
+		repository,
+		reference,
+		entry.Version,
+		withProvenance,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	service.cache.PutChart(repository.ID, chartName, entry.Version, CachedChart{
+		Archive:           archive,
+		Provenance:        provenance,
+		ProvenanceChecked: withProvenance,
+	})
+	return archive, provenance, nil
+}
+
+// downloadChart reads one archive from the repository, by whichever of the two
+// protocols the index points at.
+//
+// A repository may keep publishing an index that names every chart long after
+// the archives themselves moved into an OCI registry — that is what Helm 3.8
+// onwards made ordinary. The index still answers what is published and at which
+// versions; only the download changes, so the branch is here and nothing above
+// it has to know.
+func (service *Service) downloadChart(
+	ctx context.Context,
+	repository store.HelmRepository,
+	reference string,
+	version string,
+	withProvenance bool,
+) ([]byte, []byte, error) {
 	if isOCIReference(reference) {
-		body, err := service.fetchOCIChartArchive(
+		return service.fetchOCIChartArchive(
 			ctx,
 			repository,
 			reference,
-			entry.Version,
+			version,
 			int64(helmrelease.MaxChartBytes),
+			withProvenance,
 		)
-		if err != nil {
-			return nil, "", err
-		}
-		service.cache.PutChart(repositoryID, chartName, entry.Version, body)
-		return body, entry.Version, nil
 	}
 	target, err := repo.ResolveReferenceURL(repository.URL, reference)
 	if err != nil {
-		return nil, "", unreachable("chart URL in the index is not usable")
+		return nil, nil, unreachable("chart URL in the index is not usable")
 	}
-	body, err := service.get(ctx, repository, target, int64(helmrelease.MaxChartBytes))
+	archive, err := service.get(ctx, repository, target, int64(helmrelease.MaxChartBytes))
 	if errors.Is(err, errUpstreamTooLarge) {
-		return nil, "", ErrChartTooLarge
+		return nil, nil, ErrChartTooLarge
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
-	service.cache.PutChart(repositoryID, chartName, entry.Version, body)
-	return body, entry.Version, nil
+	if !withProvenance {
+		return archive, nil, nil
+	}
+	// Helm publishes the signature at the archive's own URL plus `.prov`, so
+	// there is nothing in the index to consult about it. A repository that
+	// publishes none answers 404, which is an answer rather than a failure —
+	// whether it is an acceptable one is the policy's decision, not this
+	// function's.
+	document, err := service.get(ctx, repository, target+provenanceSuffix, maxProvenanceBytes)
+	switch {
+	case errors.Is(err, ErrChartNotFound):
+		return archive, nil, nil
+	case errors.Is(err, errUpstreamTooLarge):
+		return nil, nil, unreachable(
+			"provenance at %s exceeds %d bytes",
+			target+provenanceSuffix,
+			maxProvenanceBytes,
+		)
+	case err != nil:
+		return nil, nil, err
+	}
+	return archive, document, nil
+}
+
+// verifyChart applies one repository's signing policy to one archive.
+//
+// The names a provenance file may list this archive under are both of the ones
+// it could reasonably carry: `<chart>-<version>.tgz`, which is what `helm
+// package` produces and therefore what `helm sign` writes into the table, and
+// the basename the archive was actually served under, because the index's URL
+// is the repository's to choose. Nothing else is accepted — a digest table is a
+// binding between a name and a hash, and matching on the hash alone would
+// discard half of it.
+func (service *Service) verifyChart(
+	policy SignaturePolicy,
+	repository store.HelmRepository,
+	chartName string,
+	version string,
+	reference string,
+	archive []byte,
+	provenance []byte,
+) (ChartSignature, error) {
+	if policy == SignatureDisabled {
+		return ChartSignature{Policy: policy}, nil
+	}
+	if len(provenance) == 0 {
+		if policy == SignatureRequired {
+			return ChartSignature{}, fmt.Errorf(
+				"%w: %s %s",
+				ErrChartUnsigned,
+				chartName,
+				version,
+			)
+		}
+		return ChartSignature{Policy: policy, Unsigned: true}, nil
+	}
+	signature, err := verifyChartProvenance(
+		repository.PublicKeyring,
+		archive,
+		provenance,
+		[]string{
+			provenanceFileName(chartName, version),
+			referenceBaseName(reference),
+		},
+	)
+	if err != nil {
+		// A signature that does not verify is refused under both policies that
+		// look at one. `verify_if_present` admits a chart with *no* signature;
+		// a chart carrying a signature that fails is not that case, it is a
+		// chart that is not what it says it is.
+		return ChartSignature{}, err
+	}
+	signature.Policy = policy
+	return signature, nil
+}
+
+// referenceBaseName is the file name an index's download URL ends in, which is
+// the second name a provenance table may list the archive under. A reference
+// that is not usable as a name at all contributes nothing rather than failing:
+// the canonical name is still tried.
+func referenceBaseName(reference string) string {
+	trimmed := strings.TrimSpace(reference)
+	if trimmed == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Path != "" {
+		trimmed = parsed.Path
+	}
+	if index := strings.LastIndex(trimmed, "/"); index >= 0 {
+		trimmed = trimmed[index+1:]
+	}
+	if !strings.HasSuffix(trimmed, ".tgz") {
+		return ""
+	}
+	return trimmed
 }
 
 // chartDownloadURL picks the address one chart version is fetched from.

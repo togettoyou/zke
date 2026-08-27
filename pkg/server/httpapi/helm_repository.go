@@ -86,6 +86,12 @@ type helmRepositoryRequest struct {
 	CACertificatePEM      string  `json:"ca_certificate_pem"`
 	InsecureSkipTLSVerify bool    `json:"insecure_skip_tls_verify"`
 	Enabled               *bool   `json:"enabled"`
+	// SignaturePolicy and PublicKeyring say what this repository's charts must
+	// be signed with. Unlike the password these are sent and returned in full —
+	// they are public keys, and an administrator adding one to a keyring of
+	// three has to submit the whole of it.
+	SignaturePolicy string `json:"signature_policy"`
+	PublicKeyring   string `json:"public_keyring"`
 }
 
 func (request helmRepositoryRequest) input() helm.RepositoryInput {
@@ -98,6 +104,8 @@ func (request helmRepositoryRequest) input() helm.RepositoryInput {
 		CACertificatePEM:      request.CACertificatePEM,
 		InsecureSkipTLSVerify: request.InsecureSkipTLSVerify,
 		Enabled:               request.Enabled,
+		SignaturePolicy:       request.SignaturePolicy,
+		PublicKeyring:         request.PublicKeyring,
 	}
 }
 
@@ -458,6 +466,22 @@ func (handler *helmRepositoryHandler) respondRepositoryError(
 			http.StatusRequestEntityTooLarge,
 			"chart_too_large",
 			"chart archive exceeds the transferable size",
+		},
+		// The repository answered and the chart is there; what failed is the
+		// platform's own rule about what it will accept from it. That is a 422
+		// rather than a 502 — nothing upstream is broken, and an operator
+		// should go and look at the signature, not at the server.
+		errorMapping{
+			helm.ErrChartUnsigned,
+			http.StatusUnprocessableEntity,
+			"chart_unsigned",
+			"this repository requires signed charts and this version publishes no signature",
+		},
+		errorMapping{
+			helm.ErrChartSignatureInvalid,
+			http.StatusUnprocessableEntity,
+			"chart_signature_invalid",
+			"chart signature did not verify against this repository's keys",
 		},
 	)
 }

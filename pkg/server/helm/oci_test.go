@@ -44,6 +44,12 @@ type ociRegistryServer struct {
 	// layerSize overstates the chart layer in the manifest when set, so the
 	// size bound can be tested without building a large archive.
 	layerSize int64
+	// provenance is the `.prov` document this registry publishes as a second
+	// layer of the same manifest, if any. Helm pushes it that way, which is why
+	// finding out whether a chart is signed costs nothing here and fetching the
+	// signature is a separate request.
+	provenance []byte
+	provLayer  string
 }
 
 func newOCIRegistryServer(t *testing.T, archive []byte) *ociRegistryServer {
@@ -71,6 +77,18 @@ func newOCIRegistryServer(t *testing.T, archive []byte) *ociRegistryServer {
 		if server.layerSize != 0 {
 			layerSize = server.layerSize
 		}
+		layers := []ocispec.Descriptor{{
+			MediaType: helmregistry.ChartLayerMediaType,
+			Digest:    digest.Digest(sha256Digest(archive)),
+			Size:      layerSize,
+		}}
+		if len(server.provenance) > 0 {
+			layers = append(layers, ocispec.Descriptor{
+				MediaType: helmregistry.ProvLayerMediaType,
+				Digest:    digest.Digest(server.provLayer),
+				Size:      int64(len(server.provenance)),
+			})
+		}
 		manifest, err := json.Marshal(ocispec.Manifest{
 			Versioned: specs.Versioned{SchemaVersion: 2},
 			MediaType: ocispec.MediaTypeImageManifest,
@@ -79,11 +97,7 @@ func newOCIRegistryServer(t *testing.T, archive []byte) *ociRegistryServer {
 				Digest:    digest.Digest(sha256Digest(config)),
 				Size:      int64(len(config)),
 			},
-			Layers: []ocispec.Descriptor{{
-				MediaType: helmregistry.ChartLayerMediaType,
-				Digest:    digest.Digest(sha256Digest(archive)),
-				Size:      layerSize,
-			}},
+			Layers: layers,
 		})
 		if err != nil {
 			t.Error(err)
@@ -113,12 +127,24 @@ entries:
 			writer.Header().Set("Content-Type", "application/octet-stream")
 			writer.Header().Set("Content-Length", fmt.Sprint(len(archive)))
 			_, _ = writer.Write(archive)
+		case len(server.provenance) > 0 &&
+			request.URL.Path == "/v2/charts/moved/blobs/"+server.provLayer:
+			writer.Header().Set("Content-Type", "application/octet-stream")
+			writer.Header().Set("Content-Length", fmt.Sprint(len(server.provenance)))
+			_, _ = writer.Write(server.provenance)
 		default:
 			writer.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+// publishProvenance makes the registry serve a signature alongside the chart,
+// the way `helm push` does when the chart was packaged with one.
+func (server *ociRegistryServer) publishProvenance(document []byte) {
+	server.provenance = document
+	server.provLayer = sha256Digest(document)
 }
 
 func (server *ociRegistryServer) fetched(path string) int {
@@ -276,7 +302,7 @@ func TestOCIReferenceResolution(t *testing.T) {
 
 // The chart is identified by Helm's media type rather than by position: a
 // manifest also carries the config blob and may carry a provenance file.
-func TestChartLayerIsFoundByMediaType(t *testing.T) {
+func TestChartLayersAreFoundByMediaType(t *testing.T) {
 	t.Parallel()
 
 	manifest, err := json.Marshal(ocispec.Manifest{
@@ -289,9 +315,14 @@ func TestChartLayerIsFoundByMediaType(t *testing.T) {
 		t.Fatal(err)
 	}
 	imageManifest := ocispec.Descriptor{MediaType: ocispec.MediaTypeImageManifest}
-	layer, err := chartLayer(imageManifest, manifest, "oci://example.test/demo:1")
+	layer, provenance, err := chartLayers(imageManifest, manifest, "oci://example.test/demo:1")
 	if err != nil || layer.Digest != "sha256:bb" {
-		t.Fatalf("chartLayer() = %+v, %v", layer, err)
+		t.Fatalf("chartLayers() = %+v, %v", layer, err)
+	}
+	// The provenance layer is found the same way and reported alongside, so a
+	// signing policy has something to verify without a second manifest read.
+	if provenance.Digest != "sha256:aa" {
+		t.Fatalf("chartLayers() provenance = %+v", provenance)
 	}
 
 	// An artifact of some other kind is named as such rather than handed to the
@@ -302,17 +333,17 @@ func TestChartLayerIsFoundByMediaType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := chartLayer(imageManifest, other, "oci://example.test/demo:1"); err == nil {
-		t.Fatal("chartLayer() accepted a manifest with no chart layer")
+	if _, _, err := chartLayers(imageManifest, other, "oci://example.test/demo:1"); err == nil {
+		t.Fatal("chartLayers() accepted a manifest with no chart layer")
 	}
 
 	// Charts are not built per platform, so an index is not one of them.
-	if _, err := chartLayer(
+	if _, _, err := chartLayers(
 		ocispec.Descriptor{MediaType: ocispec.MediaTypeImageIndex},
 		manifest,
 		"oci://example.test/demo:1",
 	); err == nil {
-		t.Fatal("chartLayer() accepted a multi-platform index")
+		t.Fatal("chartLayers() accepted a multi-platform index")
 	}
 }
 
@@ -343,14 +374,79 @@ func TestOCIMissingTagIsReportedAsAMissingChart(t *testing.T) {
 	server := newOCIRegistryServer(t, chartArchive(t, "moved", "2.0.0"))
 	service, _ := newTestService(t, ociRepositoryEntry(server.URL))
 
-	_, err := service.fetchOCIChartArchive(
+	_, _, err := service.fetchOCIChartArchive(
 		context.Background(),
 		ociRepositoryEntry(server.URL),
 		"oci://"+strings.TrimPrefix(server.URL, "https://")+"/charts/moved",
 		"7.7.7",
 		1<<20,
+		false,
 	)
 	if !errors.Is(err, ErrChartNotFound) {
 		t.Fatalf("pull of an absent tag = %v, want ErrChartNotFound", err)
+	}
+}
+
+// A chart published to a registry is verified from the provenance layer of the
+// same manifest — the same policy, the same keys and the same refusals as on
+// the HTTP path, because which protocol carried the archive is not a property
+// an operator configured.
+func TestOCIChartProvenanceIsVerified(t *testing.T) {
+	t.Parallel()
+
+	archive := chartArchive(t, "moved", "2.0.0")
+	entity, keyring := signingKey(t, "release-bot")
+	server := newOCIRegistryServer(t, archive)
+	server.publishProvenance(signProvenance(t, entity, "moved-2.0.0.tgz", archiveDigest(archive)))
+
+	repository := ociRepositoryEntry(server.URL)
+	repository.SignaturePolicy = string(SignatureRequired)
+	repository.PublicKeyring = keyring
+	service, _ := newTestService(t, repository)
+
+	detail, err := service.GetChart(context.Background(), testRepositoryID, "moved", "")
+	if err != nil {
+		t.Fatalf("GetChart() = %v", err)
+	}
+	if !detail.Signature.Verified || detail.Signature.FileName != "moved-2.0.0.tgz" {
+		t.Fatalf("signature = %+v, want a verified one", detail.Signature)
+	}
+}
+
+// A registry that publishes no provenance layer is the unsigned case, and under
+// a policy that requires one the chart is refused — without the blob ever being
+// asked for, because the manifest already said there was none.
+func TestOCIChartWithoutProvenanceIsRefusedWhenRequired(t *testing.T) {
+	t.Parallel()
+
+	_, keyring := signingKey(t, "release-bot")
+	server := newOCIRegistryServer(t, chartArchive(t, "moved", "2.0.0"))
+	repository := ociRepositoryEntry(server.URL)
+	repository.SignaturePolicy = string(SignatureRequired)
+	repository.PublicKeyring = keyring
+	service, _ := newTestService(t, repository)
+
+	_, err := service.GetChart(context.Background(), testRepositoryID, "moved", "")
+	if !errors.Is(err, ErrChartUnsigned) {
+		t.Fatalf("GetChart() = %v, want ErrChartUnsigned", err)
+	}
+}
+
+// Nothing is fetched to answer a question nobody asked: with verification off,
+// the provenance layer named by the manifest is left alone.
+func TestOCIProvenanceIsNotFetchedWhenNothingWillCheckIt(t *testing.T) {
+	t.Parallel()
+
+	archive := chartArchive(t, "moved", "2.0.0")
+	entity, _ := signingKey(t, "release-bot")
+	server := newOCIRegistryServer(t, archive)
+	server.publishProvenance(signProvenance(t, entity, "moved-2.0.0.tgz", archiveDigest(archive)))
+	service, _ := newTestService(t, ociRepositoryEntry(server.URL))
+
+	if _, err := service.GetChart(context.Background(), testRepositoryID, "moved", ""); err != nil {
+		t.Fatalf("GetChart() = %v", err)
+	}
+	if pulls := server.fetched("/v2/charts/moved/blobs/" + server.provLayer); pulls != 0 {
+		t.Fatalf("provenance blob was fetched %d times under a disabled policy", pulls)
 	}
 }

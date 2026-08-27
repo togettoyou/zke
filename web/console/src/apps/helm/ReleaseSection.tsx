@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { History, PackageSearch, Trash2, Undo2, Upload } from "lucide-react";
 
 import {
+  fetchHelmRelease,
   useHelmRelease,
   useHelmReleaseRevisions,
   useHelmReleases,
@@ -54,6 +56,36 @@ export function ReleaseSection({
 }) {
   const list = useHelmReleases(access.canRead ? clusterId : null, namespace);
   const [openRelease, setOpenRelease] = useState<string | null>(null);
+  // The three operations that change a release, reachable from the row itself.
+  //
+  // A list of installed applications is where an operator already knows which
+  // one they mean; making them open a detail page first in order to find the
+  // button adds a step to every change and answers nothing they had not already
+  // decided. The confirmations are unchanged — the dialogs below are the same
+  // ones the detail view opens, so the safeguards do not depend on the route
+  // taken to them.
+  const [rollbackTarget, setRollbackTarget] = useState<KubernetesHelmRelease | null>(null);
+  const [uninstallTarget, setUninstallTarget] = useState<string | null>(null);
+  // Upgrading needs the release's values, which a listing does not carry: it
+  // reads labels only, because decompressing every release to draw a table
+  // would be a page of Secrets read for four columns. So the row asks for the
+  // one release it is about, at the moment it is clicked, and opens the form
+  // when it arrives.
+  const queryClient = useQueryClient();
+  const [upgradeTarget, setUpgradeTarget] = useState<string | null>(null);
+  const openUpgrade = useCallback(
+    async (name: string) => {
+      setUpgradeTarget(name);
+      try {
+        onUpgrade(await fetchHelmRelease(queryClient, clusterId, namespace, name));
+      } catch (error) {
+        notifyFailure("读取 Helm 应用", error);
+      } finally {
+        setUpgradeTarget(null);
+      }
+    },
+    [queryClient, clusterId, namespace, onUpgrade],
+  );
 
   const columns = useMemo<ColumnDef<KubernetesHelmRelease, unknown>[]>(
     () => [
@@ -82,8 +114,67 @@ export function ReleaseSection({
           <RelativeTime value={row.original.updated} className="text-muted-foreground" />
         ),
       },
+      // Omitted entirely for a reader with none of the three permissions: an
+      // always-present empty column reserves width for buttons that will never
+      // appear, and pushes the columns that do say something.
+      ...(access.canInstall || access.canUninstall
+        ? [
+            {
+              id: "actions",
+              header: "",
+              size: 210,
+              cell: ({ row }) => (
+                /* The row itself opens the release, so every button here has to
+                   stop the click from reaching it — otherwise confirming a
+                   dialog would leave the detail page open behind it. */
+                <div
+                  className="flex justify-end gap-1"
+                  onClick={(event) => event.stopPropagation()}
+                  role="presentation"
+                >
+                  {access.canInstall && access.canBrowseCharts ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void openUpgrade(row.original.name)}
+                      disabled={upgradeTarget !== null}
+                      aria-label={`升级 ${row.original.name}`}
+                    >
+                      <Upload />
+                      升级
+                    </Button>
+                  ) : null}
+                  {/* A first revision has nothing behind it to go back to, and
+                      Helm would refuse; the button says so by not being there. */}
+                  {access.canInstall && row.original.revision > 1 ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setRollbackTarget(row.original)}
+                      aria-label={`回滚 ${row.original.name}`}
+                    >
+                      <Undo2 />
+                      回滚
+                    </Button>
+                  ) : null}
+                  {access.canUninstall ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setUninstallTarget(row.original.name)}
+                      aria-label={`卸载 ${row.original.name}`}
+                    >
+                      <Trash2 />
+                      卸载
+                    </Button>
+                  ) : null}
+                </div>
+              ),
+            } satisfies ColumnDef<KubernetesHelmRelease, unknown>,
+          ]
+        : []),
     ],
-    [],
+    [access.canBrowseCharts, access.canInstall, access.canUninstall, openUpgrade, upgradeTarget],
   );
 
   if (!access.canRead) {
@@ -132,6 +223,34 @@ export function ReleaseSection({
         rowKey={(release) => release.name}
         emptyTitle="该命名空间没有 Helm 应用"
         emptyDescription={`${namespace} 中没有以 Secret 存储的 Release。使用其他存储驱动（ConfigMap、SQL）的 Release 不会出现在这里。`}
+      />
+      <RollbackDialog
+        open={rollbackTarget !== null}
+        onOpenChange={(open) => setRollbackTarget(open ? rollbackTarget : null)}
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        name={rollbackTarget?.name ?? ""}
+        /* Zero is Helm's own "the revision before this one", which is what a
+           quick rollback from a list means. Choosing a specific revision is a
+           decision made against the history, and that lives in the detail. */
+        revision={0}
+        onDone={() => {
+          setRollbackTarget(null);
+          void list.refetch();
+        }}
+      />
+      <UninstallDialog
+        open={uninstallTarget !== null}
+        onOpenChange={(open) => setUninstallTarget(open ? uninstallTarget : null)}
+        clusterId={clusterId}
+        clusterName={clusterName}
+        namespace={namespace}
+        name={uninstallTarget ?? ""}
+        onDone={() => {
+          setUninstallTarget(null);
+          void list.refetch();
+        }}
       />
     </div>
   );
@@ -402,12 +521,16 @@ function RollbackDialog({
   const rollback = useRollbackHelmRelease();
   const idempotencyKey = useSubmissionKey(open);
   const [wait, setWait] = useState(true);
+  // Zero is Helm's own "the revision before the current one". It is a real
+  // target, but it has no number to show, so the dialog names it rather than
+  // printing "第 0 次修订" — which is a revision that does not exist.
+  const target = revision > 0 ? `第 ${revision} 次修订` : "上一个修订";
 
   return (
     <SensitiveActionDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`回滚 ${name} 到第 ${revision} 次修订`}
+      title={`回滚 ${name} 到${target}`}
       description="回滚会重放该修订记录下来的对象：缺失的重新创建，改变的替换回去。它本身也产生一个新的修订，而不是抹掉中间发生过的事。"
       scopeLines={[
         { label: "集群", name: clusterName, id: clusterId },
@@ -415,7 +538,7 @@ function RollbackDialog({
         { label: "Release", name },
       ]}
       impacts={[
-        `该 Release 拥有的对象会被改回第 ${revision} 次修订的状态`,
+        `该 Release 拥有的对象会被改回${target}的状态`,
         "回滚会写入一个新的修订，修订号继续递增",
         "被回滚覆盖的配置不会自动保留，需要时请先记录当前 values",
       ]}

@@ -28,6 +28,17 @@ const (
 // the catalogue are exercised against something Helm would actually accept
 // rather than against a stub.
 func chartArchive(t *testing.T, name string, version string) []byte {
+	return chartArchiveWith(t, name, version, nil)
+}
+
+// chartArchiveWith is chartArchive plus whatever else a test needs packaged —
+// a values.schema.json, say. The paths are relative to the chart directory.
+func chartArchiveWith(
+	t *testing.T,
+	name string,
+	version string,
+	extra map[string]string,
+) []byte {
 	t.Helper()
 	files := map[string]string{
 		name + "/Chart.yaml": fmt.Sprintf(
@@ -44,6 +55,9 @@ func chartArchive(t *testing.T, name string, version string) []byte {
 		// is not text. The file browser has to notice on the bytes rather than
 		// on the extension, which is why this one is named `.yaml`.
 		name + "/files/logo.yaml": "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
+	}
+	for path, content := range extra {
+		files[name+"/"+path] = content
 	}
 	buffer := &bytes.Buffer{}
 	compressor := gzip.NewWriter(buffer)
@@ -85,6 +99,10 @@ type repositoryServer struct {
 	indexETag   string
 	indexBodies int
 	conditional []string
+	// provenance holds the `.prov` documents this repository publishes, by
+	// path. A path with no entry answers 404, which is what a repository that
+	// signs nothing does.
+	provenance map[string][]byte
 }
 
 func newRepositoryServer(t *testing.T, archive []byte) *repositoryServer {
@@ -98,6 +116,10 @@ func newRepositoryServer(t *testing.T, archive []byte) *repositoryServer {
 		username, password, ok := request.BasicAuth()
 		if ok {
 			server.basicAuth = append(server.basicAuth, username+":"+password)
+		}
+		if document, published := server.provenance[request.URL.Path]; published {
+			_, _ = writer.Write(document)
+			return
 		}
 		switch request.URL.Path {
 		case "/index.yaml":
@@ -269,9 +291,21 @@ func newTestServiceWithCache(
 	directory string,
 ) (*Service, *recordingAgent) {
 	t.Helper()
+	return newTestServiceWithStore(t, &stubRepositoryStore{repository: repository}, directory)
+}
+
+// newTestServiceWithStore hands the test the store itself, for the cases where
+// what changes mid-test is the catalogue entry rather than the repository it
+// points at — a rotated signing key, say.
+func newTestServiceWithStore(
+	t *testing.T,
+	repositories *stubRepositoryStore,
+	directory string,
+) (*Service, *recordingAgent) {
+	t.Helper()
 	agent := &recordingAgent{}
 	service, err := NewService(
-		&stubRepositoryStore{repository: repository},
+		repositories,
 		agent,
 		Options{
 			UserAgent:      "zke-server/test",

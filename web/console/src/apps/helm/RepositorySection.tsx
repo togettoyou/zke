@@ -28,8 +28,52 @@ import {
 } from "@/components/ui/dialog";
 import { CREDENTIAL_MANAGER_IGNORE, Input, Textarea } from "@/components/ui/input";
 import { Alert } from "@/components/ui/misc";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import { Field, FieldGrid, SwitchField } from "./form";
+
+type SignaturePolicy = HelmRepository["signature_policy"];
+
+/**
+ * What a repository requires of a chart's provenance.
+ *
+ * The index digest only says the repository is serving what it published; it
+ * says nothing about who produced the archive. Helm publishes a detached PGP
+ * signature beside each chart, and this is the platform's decision about
+ * whether to insist on one — per repository, because a repository is one
+ * publisher and its keys belong to it.
+ */
+const SIGNATURE_POLICIES: {
+  value: NonNullable<SignaturePolicy>;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "disabled",
+    label: "不校验",
+    hint: "不获取也不校验来源证明。公开仓库通常不签名。",
+  },
+  {
+    value: "verify_if_present",
+    label: "有签名则校验",
+    hint: "仓库发布了 .prov 就校验，没有发布则放行。这是发布方推进签名期间的过渡状态，不是安全边界——能替换归档的一方也能删掉它旁边的文件。",
+  },
+  {
+    value: "required",
+    label: "必须签名",
+    hint: "拒绝一切无法归因到下方密钥的归档。安装与浏览同样适用。",
+  },
+];
+
+function signaturePolicyLabel(policy: SignaturePolicy): string {
+  return SIGNATURE_POLICIES.find((entry) => entry.value === policy)?.label ?? "不校验";
+}
 
 /**
  * The chart catalogue an administrator curates.
@@ -81,6 +125,15 @@ export function RepositorySection({ canManage }: { canManage: boolean }) {
             {row.original.has_credentials ? <Badge tone="info">已配置凭证</Badge> : null}
             {row.original.insecure_skip_tls_verify ? (
               <Badge tone="warning">跳过 TLS 校验</Badge>
+            ) : null}
+            {/* A repository that checks signatures says so here, with how many
+                keys it checks against: "必须签名" and "有签名则校验" are
+                different guarantees, and a keyring is what either rests on. */}
+            {row.original.signature_policy && row.original.signature_policy !== "disabled" ? (
+              <Badge tone={row.original.signature_policy === "required" ? "success" : "info"}>
+                {signaturePolicyLabel(row.original.signature_policy)}·
+                {row.original.signing_keys?.length ?? 0} 把密钥
+              </Badge>
             ) : null}
           </div>
         ),
@@ -238,6 +291,11 @@ function RepositoryDialog({
   const [caCertificate, setCaCertificate] = useState("");
   const [insecure, setInsecure] = useState(false);
   const [enabled, setEnabled] = useState(true);
+  const [signaturePolicy, setSignaturePolicy] = useState<NonNullable<SignaturePolicy>>("disabled");
+  // The keyring is public material and is returned in full, so editing starts
+  // from what is stored: adding one key to three means submitting all four, and
+  // an administrator cannot retype what they were never shown.
+  const [publicKeyring, setPublicKeyring] = useState("");
 
   // Reset during render when the dialog opens, matching how the other forms in
   // this Console clear their fields: a stale value must never be readable, not
@@ -252,9 +310,11 @@ function RepositoryDialog({
       setUsername(repository?.username ?? "");
       setPassword("");
       setReplacePassword(!repository);
-      setCaCertificate("");
+      setCaCertificate(repository?.ca_certificate_pem ?? "");
       setInsecure(repository?.insecure_skip_tls_verify ?? false);
       setEnabled(repository?.enabled ?? true);
+      setSignaturePolicy(repository?.signature_policy ?? "disabled");
+      setPublicKeyring(repository?.public_keyring ?? "");
       mutation.reset();
     }
   }
@@ -271,6 +331,8 @@ function RepositoryDialog({
       ca_certificate_pem: caCertificate.trim(),
       insecure_skip_tls_verify: insecure,
       enabled,
+      signature_policy: signaturePolicy,
+      public_keyring: publicKeyring.trim(),
     };
     const onSettled = {
       onSuccess: onDone,
@@ -412,7 +474,7 @@ function RepositoryDialog({
               htmlFor="helm-repository-ca"
               hint={
                 repository?.ca_certificate_provided
-                  ? "已配置自定义 CA；留空表示保留原值。"
+                  ? "已配置自定义 CA，内容如下；清空并保存表示不再使用它。"
                   : "留空表示使用系统信任库。"
               }
             >
@@ -426,6 +488,73 @@ function RepositoryDialog({
                 placeholder="-----BEGIN CERTIFICATE-----"
               />
             </Field>
+
+            {/*
+             * Chart provenance.
+             *
+             * The two fields are one decision and are shown together: a policy
+             * other than 「不校验」 with no keys behind it is refused by the
+             * Server, because it would reject every chart under 「必须签名」 and
+             * — worse — admit every chart under 「有签名则校验」 while this page
+             * still read as verification.
+             */}
+            <div className="grid gap-3">
+              <Field
+                label="Chart 签名校验"
+                htmlFor="helm-repository-signature-policy"
+                hint={
+                  SIGNATURE_POLICIES.find((entry) => entry.value === signaturePolicy)?.hint ?? ""
+                }
+              >
+                <Select
+                  value={signaturePolicy}
+                  onValueChange={(value) =>
+                    setSignaturePolicy(value as NonNullable<SignaturePolicy>)
+                  }
+                >
+                  <SelectTrigger id="helm-repository-signature-policy" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SIGNATURE_POLICIES.map((entry) => (
+                      <SelectItem key={entry.value} value={entry.value}>
+                        {entry.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              {signaturePolicy === "disabled" ? null : (
+                <Field
+                  label="签名公钥（PGP，ASCII-armored）"
+                  htmlFor="helm-repository-keyring"
+                  hint="该仓库的 Chart 允许由哪些密钥签名。可以粘贴多把密钥；公钥不是机密，会原样返回以便编辑。"
+                >
+                  <Textarea
+                    id="helm-repository-keyring"
+                    value={publicKeyring}
+                    onChange={(event) => setPublicKeyring(event.target.value)}
+                    rows={4}
+                    spellCheck={false}
+                    className="zke-mono text-xs"
+                    placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----"
+                  />
+                </Field>
+              )}
+              {repository?.signing_keys?.length ? (
+                <div className="text-subtle-foreground grid gap-1 text-xs">
+                  {repository.signing_keys.map((key) => (
+                    <div key={key.fingerprint} className="flex flex-wrap items-baseline gap-2">
+                      {/* The fingerprint, because it is the only part of a PGP
+                          key that identifies it — a user ID is free text its
+                          own owner wrote. */}
+                      <span className="zke-mono text-foreground break-all">{key.fingerprint}</span>
+                      <span className="break-all">{key.identities.join("、") || "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
 
             <div className="grid gap-3">
               <SwitchField

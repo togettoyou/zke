@@ -351,6 +351,23 @@ export function ReleaseFormView({
               {chart.data?.deprecated ? (
                 <Alert tone="warning">该 Chart 已被仓库标记为弃用，作者可能不再维护它。</Alert>
               ) : null}
+              {/* Under a signing policy an archive that does not verify never
+                  reaches this form — the catalogue refuses to serve it. So this
+                  is not a claim to weigh, it is the outcome of a check that has
+                  already happened, and it belongs beside the button that will
+                  send the chart to a Cluster. */}
+              {chart.data?.signature?.verified ? (
+                <Alert tone="success">
+                  该 Chart 的来源证明已通过校验，签名者
+                  {chart.data.signature.signed_by?.join("、") || "未署名"}。
+                </Alert>
+              ) : null}
+              {chart.data?.signature?.unsigned ? (
+                <Alert tone="warning">
+                  该仓库配置为「有签名则校验」，但这个版本没有发布来源证明，
+                  因此无法确认它由谁生产。
+                </Alert>
+              ) : null}
               {(chart.data?.dependencies?.length ?? 0) > 0 ? (
                 <Alert tone="info">
                   该 Chart 依赖 {chart.data?.dependencies?.length} 个子
@@ -372,6 +389,17 @@ export function ReleaseFormView({
                 : "初始内容是当前修订使用的 values，提交后将完整替换它们"
           }
         >
+          {/* A chart that packages values.schema.json has said what a valid
+              configuration is, and the Server checks against it before the
+              request reaches a Cluster. Saying so here is the difference
+              between a rejection that looks like a bug and one that was
+              announced. */}
+          {chart.data?.values_schema ? (
+            <Alert tone="info" className="mb-2">
+              该 Chart 自带 values.schema.json，提交前会按它校验；不符合的字段会在这里被指名拒绝，
+              集群不会收到请求。
+            </Alert>
+          ) : null}
           {chart.isLoading ? (
             <LoadingState label="读取 Chart 默认值…" />
           ) : (

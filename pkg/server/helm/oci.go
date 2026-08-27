@@ -51,21 +51,27 @@ func isOCIReference(reference string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(reference)), ociScheme)
 }
 
-// fetchOCIChartArchive pulls one chart archive out of an OCI registry.
+// fetchOCIChartArchive pulls one chart archive out of an OCI registry, and the
+// provenance layer beside it when the repository's policy needs one.
 //
 // The bytes returned are the archive as the registry stores it — the same thing
 // the HTTP path returns — so everything downstream, from the file browser to
 // what an Agent applies, is unchanged by which of the two fetched it.
+//
+// Provenance is a layer of the same manifest here rather than a second URL, so
+// finding out whether one exists costs nothing; only fetching it is a second
+// request, and that is skipped when nothing is going to check it.
 func (service *Service) fetchOCIChartArchive(
 	ctx context.Context,
 	repository store.HelmRepository,
 	reference string,
 	version string,
 	maxBytes int64,
-) ([]byte, error) {
+	withProvenance bool,
+) ([]byte, []byte, error) {
 	target, tag, err := ociRepository(reference, version)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// The same client the HTTP path uses for this repository: its custom CA and
 	// its "skip TLS verification" choice are properties of the repository an
@@ -74,7 +80,7 @@ func (service *Service) fetchOCIChartArchive(
 	// ociCredential.
 	client, err := service.clientFor(repository)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	authorizer := &auth.Client{
 		Client:     client,
@@ -94,26 +100,26 @@ func (service *Service) fetchOCIChartArchive(
 
 	descriptor, manifestReader, err := target.FetchReference(requestContext, tag)
 	if err != nil {
-		return nil, ociError(err, reference)
+		return nil, nil, ociError(err, reference)
 	}
 	manifestBytes, err := content.ReadAll(manifestReader, descriptor)
 	_ = manifestReader.Close()
 	if err != nil {
-		return nil, unreachable("registry manifest for %s could not be read: %s", reference, err)
+		return nil, nil, unreachable("registry manifest for %s could not be read: %s", reference, err)
 	}
-	layer, err := chartLayer(descriptor, manifestBytes, reference)
+	layer, provenance, err := chartLayers(descriptor, manifestBytes, reference)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Checked against the descriptor before a byte is fetched, rather than
 	// while reading: the manifest already states the size, so an archive too
 	// large to send to an Agent is refused without downloading it first.
 	if layer.Size > maxBytes {
-		return nil, ErrChartTooLarge
+		return nil, nil, ErrChartTooLarge
 	}
 	blobReader, err := target.Fetch(requestContext, layer)
 	if err != nil {
-		return nil, ociError(err, reference)
+		return nil, nil, ociError(err, reference)
 	}
 	defer func() { _ = blobReader.Close() }()
 	// ReadAll verifies the bytes against the descriptor's digest and size. That
@@ -122,9 +128,35 @@ func (service *Service) fetchOCIChartArchive(
 	// of what was published.
 	archive, err := content.ReadAll(blobReader, layer)
 	if err != nil {
-		return nil, unreachable("chart layer of %s could not be read: %s", reference, err)
+		return nil, nil, unreachable("chart layer of %s could not be read: %s", reference, err)
 	}
-	return archive, nil
+	if !withProvenance || provenance.Size == 0 {
+		return archive, nil, nil
+	}
+	// A provenance file is a signature and a short digest table. One larger
+	// than the bound is not one, and refusing it here means a registry cannot
+	// turn "verify this chart" into an unbounded read.
+	if provenance.Size > maxProvenanceBytes {
+		return nil, nil, unreachable(
+			"provenance layer of %s exceeds %d bytes",
+			reference,
+			maxProvenanceBytes,
+		)
+	}
+	provenanceReader, err := target.Fetch(requestContext, provenance)
+	if err != nil {
+		return nil, nil, ociError(err, reference)
+	}
+	defer func() { _ = provenanceReader.Close() }()
+	document, err := content.ReadAll(provenanceReader, provenance)
+	if err != nil {
+		return nil, nil, unreachable(
+			"provenance layer of %s could not be read: %s",
+			reference,
+			err,
+		)
+	}
+	return archive, document, nil
 }
 
 // ociRepository turns an index's `oci://` URL into a repository to pull from.
@@ -177,45 +209,58 @@ func ociCredential(repository store.HelmRepository, registryHost string) auth.Cr
 	})
 }
 
-// chartLayer finds the packaged chart among a manifest's layers.
+// chartLayers finds the packaged chart among a manifest's layers, and the
+// provenance file if one is published with it.
 //
-// Helm gives the archive a media type of its own, so the chart is identified by
-// what it is rather than by its position: a manifest also carries the config
-// blob and may carry a provenance file, and taking "the first layer" would
-// eventually hand one of those to the loader.
-func chartLayer(
+// Helm gives each a media type of its own, so both are identified by what they
+// are rather than by their position: a manifest also carries the config blob,
+// and taking "the first layer" would eventually hand one of the others to the
+// loader. A returned provenance descriptor with a zero size means the manifest
+// carries none, which is a normal state and not a failure.
+func chartLayers(
 	descriptor ocispec.Descriptor,
 	manifestBytes []byte,
 	reference string,
-) (ocispec.Descriptor, error) {
+) (ocispec.Descriptor, ocispec.Descriptor, error) {
 	if descriptor.MediaType == ocispec.MediaTypeImageIndex ||
 		descriptor.MediaType == "application/vnd.docker.distribution.manifest.list.v2+json" {
 		// A multi-platform index. Charts are not built per platform, so rather
 		// than picking one arbitrarily this says what was found: an operator
 		// pointed at something that is not a chart.
-		return ocispec.Descriptor{}, unreachable(
+		return ocispec.Descriptor{}, ocispec.Descriptor{}, unreachable(
 			"%s is a multi-platform index rather than a Helm chart",
 			reference,
 		)
 	}
 	var manifest ocispec.Manifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return ocispec.Descriptor{}, unreachable(
+		return ocispec.Descriptor{}, ocispec.Descriptor{}, unreachable(
 			"registry manifest for %s is not readable: %s",
 			reference,
 			err,
 		)
 	}
+	var chart, provenance ocispec.Descriptor
+	var found bool
 	for _, layer := range manifest.Layers {
 		switch layer.MediaType {
 		case helmregistry.ChartLayerMediaType, helmregistry.LegacyChartLayerMediaType:
-			return layer, nil
+			if !found {
+				chart, found = layer, true
+			}
+		case helmregistry.ProvLayerMediaType:
+			if provenance.Size == 0 {
+				provenance = layer
+			}
 		}
 	}
-	return ocispec.Descriptor{}, unreachable(
-		"%s carries no Helm chart layer; it is an artifact of some other kind",
-		reference,
-	)
+	if !found {
+		return ocispec.Descriptor{}, ocispec.Descriptor{}, unreachable(
+			"%s carries no Helm chart layer; it is an artifact of some other kind",
+			reference,
+		)
+	}
+	return chart, provenance, nil
 }
 
 // ociError maps a registry's refusal onto the failures the rest of the

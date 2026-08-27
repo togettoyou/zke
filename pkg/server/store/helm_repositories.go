@@ -45,6 +45,13 @@ type HelmRepository struct {
 	CACertificatePEM      string
 	InsecureSkipTLSVerify bool
 	Enabled               bool
+	// SignaturePolicy is what this repository requires of a chart's provenance:
+	// nothing, a valid signature when one is published, or a valid signature
+	// always. PublicKeyring holds the ASCII-armored PGP public keys it is
+	// verified against — public material, so unlike the password it is read
+	// back, and the API turns it into identities rather than echoing the armor.
+	SignaturePolicy string
+	PublicKeyring   string
 	// HasCredentials reports whether a password is stored, without reporting
 	// what it is. It is what a Console needs in order to say "authenticated"
 	// and to offer "replace the password" rather than "set one".
@@ -67,6 +74,8 @@ const helmRepositoryColumns = `
     ca_certificate_pem,
     insecure_skip_tls_verify,
     enabled,
+    signature_policy,
+    public_keyring,
     password <> '',
     COALESCE(created_by_user_id::text, ''),
     COALESCE(updated_by_user_id::text, ''),
@@ -84,6 +93,8 @@ func scanHelmRepository(row pgx.Row) (HelmRepository, error) {
 		&repository.CACertificatePEM,
 		&repository.InsecureSkipTLSVerify,
 		&repository.Enabled,
+		&repository.SignaturePolicy,
+		&repository.PublicKeyring,
 		&repository.HasCredentials,
 		&repository.CreatedByUserID,
 		&repository.UpdatedByUserID,
@@ -171,6 +182,8 @@ type CreateHelmRepositoryParams struct {
 	CACertificatePEM      string
 	InsecureSkipTLSVerify bool
 	Enabled               bool
+	SignaturePolicy       string
+	PublicKeyring         string
 	ActorUserID           string
 	Now                   time.Time
 }
@@ -183,8 +196,9 @@ func (store *HelmRepositoryStore) CreateHelmRepository(
 INSERT INTO helm_repositories (
     id, name, description, url, username, password,
     ca_certificate_pem, insecure_skip_tls_verify, enabled,
+    signature_policy, public_keyring,
     created_by_user_id, updated_by_user_id, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $11)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $13)
 RETURNING `+helmRepositoryColumns,
 		input.ID,
 		input.Name,
@@ -195,6 +209,8 @@ RETURNING `+helmRepositoryColumns,
 		input.CACertificatePEM,
 		input.InsecureSkipTLSVerify,
 		input.Enabled,
+		input.SignaturePolicy,
+		input.PublicKeyring,
 		input.ActorUserID,
 		input.Now,
 	))
@@ -221,6 +237,8 @@ type UpdateHelmRepositoryParams struct {
 	CACertificatePEM      string
 	InsecureSkipTLSVerify bool
 	Enabled               bool
+	SignaturePolicy       string
+	PublicKeyring         string
 	ActorUserID           string
 	Now                   time.Time
 }
@@ -239,8 +257,10 @@ SET name = $2,
     ca_certificate_pem = $7,
     insecure_skip_tls_verify = $8,
     enabled = $9,
-    updated_by_user_id = $10,
-    updated_at = $11
+    signature_policy = $10,
+    public_keyring = $11,
+    updated_by_user_id = $12,
+    updated_at = $13
 WHERE id = $1
 RETURNING `+helmRepositoryColumns,
 		input.ID,
@@ -252,6 +272,8 @@ RETURNING `+helmRepositoryColumns,
 		input.CACertificatePEM,
 		input.InsecureSkipTLSVerify,
 		input.Enabled,
+		input.SignaturePolicy,
+		input.PublicKeyring,
 		input.ActorUserID,
 		input.Now,
 	))

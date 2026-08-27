@@ -45,6 +45,38 @@ CREATE TABLE helm_repositories (
     -- Skipping verification is a deliberate, visible choice rather than a
     -- silent fallback, so it is a column an auditor can select on.
     insecure_skip_tls_verify boolean NOT NULL DEFAULT false,
+    -- What this repository requires of a chart's provenance.
+    --
+    -- A chart archive is code that will be rendered into a Cluster, and the
+    -- digest in an index only says the repository is serving what the
+    -- repository published. Helm publishes a detached signature beside each
+    -- archive — `<chart>-<version>.tgz.prov`, a clear-signed document naming
+    -- the archive's SHA-256 — and an enterprise that signs its charts wants
+    -- the platform to refuse the ones that do not verify.
+    --
+    -- Trust is per repository because that is where it is decided: a
+    -- repository is one publisher, and the keys it signs with are a property
+    -- of it rather than of the platform.
+    --
+    -- 'disabled'          — provenance is not fetched and not checked.
+    -- 'verify_if_present' — verified when the repository publishes a .prov,
+    --                       admitted when it does not. It is the state a
+    --                       repository passes through while its publisher is
+    --                       still rolling signing out, not a boundary: whoever
+    --                       can replace an archive can remove the file beside
+    --                       it.
+    -- 'required'          — an archive with no valid signature from this
+    --                       repository's keys is not usable, for installing or
+    --                       for reading.
+    signature_policy text NOT NULL DEFAULT 'disabled' CHECK (
+        signature_policy IN ('disabled', 'verify_if_present', 'required')
+    ),
+    -- The ASCII-armored PGP public keys those signatures are verified against.
+    -- Public keys, so unlike the password this column is read back — an
+    -- administrator replacing one key of several has to edit what is there.
+    public_keyring text NOT NULL DEFAULT '' CHECK (
+        octet_length(public_keyring) <= 262144
+    ),
     -- A repository can be turned off without losing its configuration. A
     -- disabled repository is not offered for new installs; releases already
     -- installed from it are unaffected, because a release carries its chart.
@@ -52,7 +84,14 @@ CREATE TABLE helm_repositories (
     created_by_user_id uuid REFERENCES users (id) ON DELETE SET NULL,
     updated_by_user_id uuid REFERENCES users (id) ON DELETE SET NULL,
     created_at timestamptz NOT NULL,
-    updated_at timestamptz NOT NULL
+    updated_at timestamptz NOT NULL,
+    -- A policy other than 'disabled' with no keys to verify against would
+    -- refuse every chart, or — worse, under 'verify_if_present' — admit every
+    -- one while reading on the page as verification. The pair is checked here
+    -- so no code path can store it.
+    CONSTRAINT helm_repositories_signature_keyring_present CHECK (
+        signature_policy = 'disabled' OR public_keyring <> ''
+    )
 );
 
 CREATE UNIQUE INDEX helm_repositories_name_key

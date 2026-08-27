@@ -164,7 +164,7 @@ func TestCacheRefetchesWhenTheIndexDigestMoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := []byte("archive")
-	cache.PutChart(testRepositoryID, "demo", "1.2.0", body)
+	cache.PutChart(testRepositoryID, "demo", "1.2.0", CachedChart{Archive: body})
 
 	if _, found := cache.Chart(testRepositoryID, "demo", "1.2.0", "sha256:"+sha256Hex(body)); !found {
 		t.Fatal("cache refused an archive matching the published digest")
@@ -178,7 +178,7 @@ func TestCacheRefetchesWhenTheIndexDigestMoved(t *testing.T) {
 	}
 	// A repository that publishes no digest still gets the guarantee the cache
 	// can make on its own, so caching is not lost to a missing field.
-	cache.PutChart(testRepositoryID, "demo", "1.2.0", body)
+	cache.PutChart(testRepositoryID, "demo", "1.2.0", CachedChart{Archive: body})
 	if _, found := cache.Chart(testRepositoryID, "demo", "1.2.0", ""); !found {
 		t.Fatal("cache refused an archive because the index carried no digest")
 	}
@@ -258,7 +258,7 @@ func TestCacheEvictsTheLeastRecentlyUsedArchives(t *testing.T) {
 	}
 	cache.PutIndex(testRepositoryID, []byte("apiVersion: v1\n"), IndexMeta{URL: "https://x"})
 	for _, version := range []string{"1.0.0", "2.0.0", "3.0.0"} {
-		cache.PutChart(testRepositoryID, "demo", version, make([]byte, 200))
+		cache.PutChart(testRepositoryID, "demo", version, CachedChart{Archive: make([]byte, 200)})
 		// Distinct modification times, which is what eviction orders by.
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -423,7 +423,7 @@ func TestRefreshReadsTheIndexUnconditionally(t *testing.T) {
 	}
 	// The archives are keyed by version and a version does not change, so
 	// re-reading the index must not throw them away.
-	service.cache.PutChart(testRepositoryID, "demo", "1.2.0", []byte("archive"))
+	service.cache.PutChart(testRepositoryID, "demo", "1.2.0", CachedChart{Archive: []byte("archive")})
 	if _, err := service.RefreshCharts(context.Background(), testRepositoryID, "", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -555,5 +555,37 @@ func TestNewCacheReportsAnUnusableDirectory(t *testing.T) {
 		CacheDirectory: file,
 	}); err == nil {
 		t.Fatal("NewService() started with an unusable cache directory")
+	}
+}
+
+// The signature is stored beside the archive and comes back with it. They are
+// one entry: a document that signs a digest is wrong the moment the bytes next
+// to it change, so a write with no provenance removes whatever was there.
+func TestCachedChartCarriesItsProvenance(t *testing.T) {
+	t.Parallel()
+
+	cache, err := NewCache(t.TempDir(), 1<<20, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("chart archive")
+	cache.PutChart(testRepositoryID, "demo", "1.2.0", CachedChart{
+		Archive:           body,
+		Provenance:        []byte("-----BEGIN PGP SIGNED MESSAGE-----"),
+		ProvenanceChecked: true,
+	})
+	cached, found := cache.Chart(testRepositoryID, "demo", "1.2.0", "")
+	if !found || !cached.ProvenanceChecked ||
+		string(cached.Provenance) != "-----BEGIN PGP SIGNED MESSAGE-----" {
+		t.Fatalf("Chart() = %+v, %v", cached, found)
+	}
+
+	// Re-fetched without a signature — the repository stopped publishing one,
+	// or nobody asked this time. The old document must not survive to be
+	// verified against bytes it never described.
+	cache.PutChart(testRepositoryID, "demo", "1.2.0", CachedChart{Archive: body})
+	cached, found = cache.Chart(testRepositoryID, "demo", "1.2.0", "")
+	if !found || len(cached.Provenance) != 0 || cached.ProvenanceChecked {
+		t.Fatalf("Chart() after an unsigned write = %+v, %v", cached, found)
 	}
 }
