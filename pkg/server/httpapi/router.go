@@ -19,6 +19,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/clusterterminal"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
+	"github.com/togettoyou/zke/pkg/server/helm"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
 	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
@@ -53,6 +54,10 @@ type Dependencies struct {
 	MetricsCollectorService   *metricscollector.Service
 	MetricsQueryService       *metricsquery.Service
 	KubernetesResourceService *kubernetesresource.Service
+	// HelmService is nil when the deployment has no database-backed chart
+	// catalogue configured. The routes stay registered and report that state,
+	// so a Console built against this Server gets an answer rather than a 404.
+	HelmService               *helm.Service
 	PodLogsService            *podlogs.Service
 	PodExecService            *podexec.Service
 	ClusterTerminalService    *clusterterminal.Service
@@ -107,6 +112,8 @@ type handlers struct {
 	kubernetesConfigMap     *kubernetesConfigMapHandler
 	kubernetesSecret        *kubernetesSecretHandler
 	kubernetesHelmRelease   *kubernetesHelmReleaseHandler
+	helmReleaseWrite        *helmReleaseWriteHandler
+	helmRepository          *helmRepositoryHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
 	kubernetesDescribe      *kubernetesDescribeHandler
@@ -380,6 +387,23 @@ func New(
 		kubernetesHelmRelease: newKubernetesHelmReleaseHandler(
 			logger,
 			dependencies.KubernetesResourceService,
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		// Helm writes are the only Cluster route that also needs the RBAC
+		// service directly: whether a chart may create objects no Namespace
+		// contains is a second permission question, asked after the request
+		// body is known and answered before the chart is rendered.
+		helmReleaseWrite: newHelmReleaseWriteHandler(
+			logger,
+			helmServiceOrNil(dependencies.HelmService),
+			clusterAuthorizerOrNil(dependencies.RBACService),
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		helmRepository: newHelmRepositoryHandler(
+			logger,
+			helmRepositoryServiceOrNil(dependencies.HelmService),
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

@@ -128,6 +128,7 @@ const ACTION_GROUP_LABELS: Record<string, string> = {
   project: "项目",
   cluster: "集群",
   kubernetes_resource: "Kubernetes 资源",
+  platform: "平台配置",
   aiops: "AIOps",
   denied: "权限拒绝",
 };
@@ -186,11 +187,14 @@ const PERMISSION_LABELS: Record<string, string> = {
   "cluster.secret.read": "查看 Kubernetes Secret",
   "cluster.secret.manage": "管理 Kubernetes Secret",
   "cluster.connection.revoke": "断开 Agent 连接",
+  "cluster.helm.manage": "安装、升级、回滚和卸载 Helm 应用",
   "user.read": "查看用户",
   "user.manage": "管理用户",
   "user.password.change": "修改自己的密码",
   "rbac.read": "查看角色与绑定",
   "rbac.manage": "管理角色与绑定",
+  "helm.repository.read": "查看 Chart 仓库与 Chart",
+  "helm.repository.manage": "管理 Chart 仓库",
   "audit.read": "查看审计事件",
   "ai.run": "使用 AIOps",
 };
@@ -221,6 +225,14 @@ const PERMISSION_WARNINGS: Record<string, string> = {
   "cluster.system_namespace.manage": "可增删改 default 生命周期及 kube-* 命名空间内的资源",
   "cluster.agent_namespace.manage": "可增删改 Agent 所在命名空间，错误操作可能导致 Agent 离线",
   "rbac.manage": "可创建角色并授予自己已持有的权限",
+  // A chart is a program. What one install writes is not derivable from the
+  // permission's name, and it is not one object either — it is every object the
+  // application owns, created or replaced in one request.
+  "cluster.helm.manage":
+    "一次安装或升级会按 Chart 的内容成批创建和替换对象，并改写 Helm 的修订历史",
+  // The catalogue decides where this Server makes outbound requests. Nothing
+  // else in the permission list has that reach, and the name does not say so.
+  "helm.repository.manage": "可决定 ZKE Server 会向哪些地址拉取 Chart，并为其配置凭证",
   // AIOps reads a Cluster on the operator's behalf and sends what it read to
   // the configured model endpoint. It grants nothing by itself — every read is
   // rechecked against the operator's own permissions — but who reads a Pod log

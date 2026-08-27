@@ -30,7 +30,7 @@ ZKE Server 当前只支持单副本部署。
 - [x] 全集群事件中心，与 Namespace 级事件共用 `cluster.event.read`
 - [x] 容器服务内只读的 Helm Release 清单、修订历史与 values，使用 `cluster.secret.read`
 - [x] 按当前用户权限投影 Kubernetes RBAC 的独立终端 App
-- [ ] 独立的「Helm 应用」App：Chart 仓库、安装与升级、渲染差异、回滚与卸载
+- [x] 独立的「Helm 应用」App：Chart 仓库、安装与升级、渲染差异、回滚与卸载
 
 ## Phase 3：可观测性
 

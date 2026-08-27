@@ -2030,6 +2030,157 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/helm/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出平台上的 Chart 仓库目录。要求 `helm.repository.read`。
+         *
+         *     目录是平台级的：Chart 是软件来源，不是某个 Project 的基础设施，而“能否把某个
+         *     Chart 装进某个 Cluster”由 Cluster 权限决定，与它来自哪个仓库无关。
+         *
+         *     仓库凭证只写不读。任何接口都不会返回口令，读取方只会看到 `has_credentials`
+         *     说明是否配置过。
+         */
+        get: operations["listHelmRepositories"];
+        put?: never;
+        /**
+         * @description 新增一个 Chart 仓库。要求 `helm.repository.manage`。
+         *
+         *     `url` 必须是绝对的 http 或 https 地址，且不得内嵌凭证；私有仓库的用户名与口令走
+         *     独立字段，口令写入后不再返回。审计只记录仓库名与标识，不记录凭证。
+         */
+        post: operations["createHelmRepository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/repositories/{repository_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 读取一个 Chart 仓库的配置，要求 `helm.repository.read`。不返回凭证。 */
+        get: operations["getHelmRepository"];
+        /**
+         * @description 更新一个 Chart 仓库，要求 `helm.repository.manage`。
+         *
+         *     `password` 是三态字段：不传表示保留已存储的口令，传空字符串表示清除，传值表示替换。
+         *     更新后该仓库的索引缓存立即作废，避免改正地址后仍然看到旧结果。
+         */
+        put: operations["updateHelmRepository"];
+        post?: never;
+        /**
+         * @description 删除一个 Chart 仓库，要求 `helm.repository.manage`。
+         *
+         *     没有任何对象引用它：Release 自带安装时使用的 Chart，因此删除仓库不影响已安装的
+         *     Release，只是新的安装不能再从它选择 Chart。
+         */
+        delete: operations["deleteHelmRepository"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/repositories/{repository_id}/charts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出一个仓库发布的 Chart，每个只返回最新版本，要求 `helm.repository.read`。
+         *
+         *     Server 会按需拉取该仓库的 `index.yaml` 并在内存中缓存数分钟，`fetched_at` 说明这
+         *     份目录是什么时候读到的。`total` 是过滤与分页之前的 Chart 总数。
+         */
+        get: operations["listHelmCharts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/repositories/{repository_id}/index-refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 丢弃该仓库索引的服务端缓存，重新拉取一次，并返回刷新后的 Chart 列表。
+         *     要求 `helm.repository.read`。
+         *
+         *     Server 会把每个仓库的 `index.yaml` 在内存中缓存数分钟，因此刚发布的 Chart 不会立刻
+         *     出现。这条接口是显式重读的入口：它不改变任何存储状态，只是丢掉 Server 自己持有的派生
+         *     数据，再发起一次与缓存过期时相同的上游请求，所以要求的是读权限而不是管理权限。
+         *
+         *     参数与 Chart 列表一致，便于刷新之后直接拿到当前搜索条件下的结果。
+         */
+        post: operations["refreshHelmChartIndex"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 下载一个 Chart 版本并返回安装前需要阅读的内容：Chart 自带的 values.yaml 原文、
+         *     README 与元数据，以及它会一并安装的子 Chart。要求 `helm.repository.read`。
+         *
+         *     values 以文本原样返回而不是解析后的对象，因为其中的注释就是一半的文档。省略
+         *     `version` 表示仓库发布的最新版本。
+         */
+        get: operations["getHelmChart"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出一个 Chart 在仓库索引中发布过的全部版本，按版本从新到旧返回。
+         *     要求 `helm.repository.read`。
+         */
+        get: operations["listHelmChartVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases": {
         parameters: {
             query?: never;
@@ -2042,8 +2193,9 @@ export interface paths {
          *     修订，与 `helm list` 的收敛方式一致。
          *
          *     Helm 3 把每次修订存成一个 `helm.sh/release.v1` 类型的 Secret，Release 名、修订号与
-         *     状态在该 Secret 的 label 上，因此列表不解压任何 Release 负载。ZKE 只读取 Helm 的
-         *     存储，不安装、升级、回滚或卸载 Release。
+         *     状态在该 Secret 的 label 上，因此列表不解压任何 Release 负载。安装、升级、回滚与卸载
+         *     是同一路径下的写入接口，权限要求更长一档；渲染与写入由目标集群的 Agent 用 Helm 自己的
+         *     引擎完成，Server 不代写 Release Secret。
          *
          *     该接口读取 Secret，因此同时要求 `cluster.read` 与 `cluster.secret.read`，kube-* 与
          *     Agent Namespace 还需对应的独立 Namespace 权限；每次调用都会写入与 Secret 列表一致的
@@ -2052,7 +2204,23 @@ export interface paths {
          */
         get: operations["listHelmReleases"];
         put?: never;
-        post?: never;
+        /**
+         * @description 在目标 Cluster 的 Namespace 中安装一个 Chart。
+         *
+         *     Chart 由「仓库 + 名称 + 版本」指定，而不是 URL：可安装的来源是管理员维护的目录，
+         *     接口不接受任意地址。渲染与写入由该 Cluster 的 Agent 用 Helm 自己的引擎完成，
+         *     Server 只负责取 Chart、组装 values 与鉴权。
+         *
+         *     权限是一组而不是一个：`cluster.read`、`cluster.helm.manage`、
+         *     `cluster.resource.create`、`cluster.resource.update` 与 `cluster.secret.manage`
+         *     同时要求，kube-* 与 Agent Namespace 另需对应的独立 Namespace 权限。Chart 渲染出的
+         *     对象若指向别的 Namespace 会被 Agent 拒绝；若包含集群级对象（CRD、ClusterRole 等），
+         *     还需要 `cluster.manage`，否则 Agent 会指名拒绝。
+         *
+         *     `dry_run` 只渲染不写入，返回将要应用的 manifest，用于提交前预览；非 dry-run 必须
+         *     显式 `confirm`。两者写入不同的审计动作。
+         */
+        post: operations["installHelmRelease"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2075,8 +2243,46 @@ export interface paths {
          *     并由 `manifest_truncated` 说明。
          */
         get: operations["getHelmRelease"];
-        put?: never;
+        /**
+         * @description 升级一个已安装的 Release：用新的 Chart 版本或新的 values 生成下一个修订。
+         *
+         *     `reset_values` 与 `reuse_values` 互斥，都不设置表示本次提交的 values 完整替换上一次
+         *     的。权限、预演与确认规则与安装一致。
+         */
+        put: operations["upgradeHelmRelease"];
         post?: never;
+        /**
+         * @description 卸载一个 Release，删除它拥有的对象。
+         *
+         *     `keep_history` 决定是否保留修订历史：保留下来的历史正是之后回滚所需要的，
+         *     不保留则连同对象一起删除，之后无法回滚。
+         *
+         *     权限为 `cluster.read`、`cluster.helm.manage`、`cluster.resource.delete` 与
+         *     `cluster.secret.manage`；kube-* 与 Agent Namespace 另需独立 Namespace 权限。
+         */
+        delete: operations["uninstallHelmRelease"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 把一个 Release 回滚到存储中仍然保留的某个修订。`revision` 省略或为 0 表示回到当前
+         *     修订的上一个，与 `helm rollback` 不带参数的行为一致。
+         *
+         *     回滚会重放该修订记录下来的对象，因此与升级答复同一组权限。被 `--history-max` 清理
+         *     掉的修订不存在，接口也不会假装它们还在。
+         */
+        post: operations["rollbackHelmRelease"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2918,7 +3124,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.manage" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "audit.read" | "ai.run")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.manage" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "cluster.helm.manage" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "helm.repository.read" | "helm.repository.manage" | "audit.read" | "ai.run")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -5207,6 +5413,227 @@ export interface components {
             manifest: string;
             manifest_truncated: boolean;
         };
+        HelmRepository: {
+            id: components["schemas"]["UUID"];
+            name: string;
+            description: string;
+            /**
+             * Format: uri
+             * @description 仓库根地址，`index.yaml` 位于其下。只接受 http 与 https。
+             */
+            url: string;
+            username: string;
+            /** @description 是否配置了口令。口令本身任何接口都不返回。 */
+            has_credentials: boolean;
+            /** @description 是否配置了自定义 CA。证书正文不返回。 */
+            ca_certificate_provided: boolean;
+            /** @description 是否跳过 TLS 校验。它是一次明确且可审计的选择，不是静默回退。 */
+            insecure_skip_tls_verify: boolean;
+            /** @description 关闭后不再用于新的安装；已安装的 Release 不受影响。 */
+            enabled: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        HelmRepositoryPage: {
+            repositories: components["schemas"]["HelmRepository"][];
+        };
+        HelmRepositoryRequest: {
+            name: string;
+            description?: string;
+            /**
+             * Format: uri
+             * @description 绝对的 http 或 https 地址，不得内嵌凭证。
+             */
+            url: string;
+            username?: string;
+            /**
+             * Format: password
+             * @description 三态字段：不传保留已存储的口令，传空字符串清除，传值替换。写入后不再返回。
+             */
+            password?: string | null;
+            /** @description 私有仓库使用的自定义 CA，PEM 编码；留空表示使用系统信任库。 */
+            ca_certificate_pem?: string;
+            /** @default false */
+            insecure_skip_tls_verify: boolean;
+            /** @default true */
+            enabled: boolean;
+        };
+        HelmChartSummary: {
+            name: string;
+            version: string;
+            app_version: string;
+            description: string;
+            icon_url: string;
+            keywords?: string[];
+            deprecated: boolean;
+            /** @description 该 Chart 在索引中发布过的版本数量。 */
+            version_count: number;
+        };
+        HelmChartPage: {
+            repository_id: components["schemas"]["UUID"];
+            charts: components["schemas"]["HelmChartSummary"][];
+            /** @description 应用搜索与数量上限之前的 Chart 总数。 */
+            total: number;
+            /**
+             * Format: date-time
+             * @description Server 最后一次读取该仓库索引的时间；索引在内存中缓存数分钟。
+             */
+            fetched_at: string;
+        };
+        HelmChartVersionSummary: {
+            version: string;
+            app_version: string;
+            description: string;
+            /** Format: date-time */
+            created?: string;
+            deprecated: boolean;
+            digest: string;
+        };
+        HelmChartVersionPage: {
+            repository_id: components["schemas"]["UUID"];
+            chart: string;
+            versions: components["schemas"]["HelmChartVersionSummary"][];
+        };
+        HelmChartDependency: {
+            name: string;
+            version: string;
+            repository: string;
+            condition: string;
+        };
+        HelmChartDetail: {
+            repository_id: components["schemas"]["UUID"];
+            name: string;
+            version: string;
+            app_version: string;
+            description: string;
+            icon_url: string;
+            home: string;
+            sources?: string[];
+            keywords?: string[];
+            deprecated: boolean;
+            type: string;
+            /** @description Chart 自带的 values.yaml 原文。以文本返回而不是解析后的对象， 因为其中的注释就是一半的文档。超过上限时被截断。 */
+            values: string;
+            /** @description Chart 打包的 README.md；没有则为空。超过上限时被截断。 */
+            readme: string;
+            dependencies?: components["schemas"]["HelmChartDependency"][];
+        };
+        /** @description Helm 在这次操作之后对该 Release 的说明。dry-run 也会产生一份：其中的字段描述 「将会写入什么」，`manifest` 就是待批准的渲染结果。 */
+        HelmReleaseReport: {
+            name: string;
+            namespace: string;
+            /** Format: int64 */
+            revision: number;
+            status: string;
+            /** @description 该报告描述的是一次未写入的变更。 */
+            dry_run: boolean;
+            description: string;
+            chart_name: string;
+            chart_version: string;
+            app_version: string;
+            chart_description: string;
+            /** Format: date-time */
+            first_deployed?: string;
+            /** Format: date-time */
+            last_deployed?: string;
+            notes: string;
+            /** @description Chart 渲染出的清单；超过上限时被截断。 */
+            manifest: string;
+            manifest_truncated: boolean;
+            notes_truncated: boolean;
+            /** @description 由卸载写入；其余字段描述被移除的那个修订。 */
+            deleted: boolean;
+            /** @description 该修订跳过了 Chart 的 hook。跳过 hook 装出来的 Release 已经不是 Chart 描述的 那个，所以这个事实跟着修订走，而不只跟着请求走。 */
+            hooks_disabled: boolean;
+        };
+        HelmReleaseWriteResult: {
+            release: components["schemas"]["HelmReleaseReport"];
+            dry_run: boolean;
+        };
+        /** @description 安装与升级共同的部分：装什么、用什么 values、以及一次操作如何执行。Release 名不在这里， 因为安装由请求正文给出，升级由 URL 给出；两处都能命名会让「以哪个为准」变成一个必须回答 的问题。 */
+        HelmChartReleaseRequest: {
+            repository_id: components["schemas"]["UUID"];
+            chart: string;
+            /** @description Chart 版本；省略表示仓库发布的最新版本，实际使用的版本在返回中给出。 */
+            version?: string;
+            /** @description 操作者编辑后的 values 文档（YAML）。留空表示使用 Chart 自带默认值。 */
+            values?: string;
+            /** @default false */
+            create_namespace: boolean;
+            /**
+             * @description 等待 Release 拥有的对象就绪后再返回，上限为 timeout_seconds。
+             * @default false
+             */
+            wait: boolean;
+            /**
+             * @description 失败时回滚到操作前的状态。它隐含等待。
+             * @default false
+             */
+            atomic: boolean;
+            /**
+             * @description 跳过 Chart 的 hook。该事实会记录在修订上。
+             * @default false
+             */
+            disable_hooks: boolean;
+            timeout_seconds?: number;
+            max_history?: number;
+            description?: string;
+            /** @default false */
+            dry_run: boolean;
+            /** @description 非 dry-run 时必须为 true。 */
+            confirm?: boolean;
+        };
+        HelmInstallReleaseRequest: components["schemas"]["HelmChartReleaseRequest"] & {
+            /** @description Release 名。Helm 自己的规则：DNS-1123 子域，且不超过 53 个字符。 */
+            name: string;
+        };
+        HelmUpgradeReleaseRequest: components["schemas"]["HelmChartReleaseRequest"] & {
+            /**
+             * @description 丢弃上一次的 values，回到 Chart 默认值再合并本次提交的内容。
+             * @default false
+             */
+            reset_values: boolean;
+            /**
+             * @description 沿用上一次的 values 再合并本次提交的内容。与 reset_values 互斥。
+             * @default false
+             */
+            reuse_values: boolean;
+        };
+        HelmRollbackReleaseRequest: {
+            /**
+             * Format: int64
+             * @description 目标修订号；省略或 0 表示当前修订的上一个。
+             */
+            revision?: number;
+            /** @default false */
+            wait: boolean;
+            /** @default false */
+            disable_hooks: boolean;
+            timeout_seconds?: number;
+            max_history?: number;
+            description?: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm?: boolean;
+        };
+        HelmUninstallReleaseRequest: {
+            /**
+             * @description 删除对象但保留修订历史。保留下来的历史正是之后回滚所需要的。
+             * @default false
+             */
+            keep_history: boolean;
+            /** @default false */
+            wait: boolean;
+            /** @default false */
+            disable_hooks: boolean;
+            timeout_seconds?: number;
+            description?: string;
+            /** @default false */
+            dry_run: boolean;
+            confirm?: boolean;
+        };
         KubernetesCreateSecretRequest: {
             name: string;
             /**
@@ -6789,7 +7216,7 @@ export interface components {
          * @description 写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是 服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的 `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
          * @enum {string}
          */
-        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile" | "ai_session";
+        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile" | "helm_repository" | "ai_session";
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
             pagination: components["schemas"]["Pagination"];
@@ -7127,6 +7554,15 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description 请求本身合法，但目标 Cluster 的 Agent 不具备完成它所需的能力，通常是 Agent 版本过旧。它与「Agent 未连接」不同：后者等一等会好，前者不会。 */
+        FailedDependency: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description 请求正文超过允许大小 */
         PayloadTooLarge: {
             headers: {
@@ -7223,6 +7659,10 @@ export interface components {
         DescribePolicyResource: "resourcequotas" | "poddisruptionbudgets";
         PolicyResourceName: string;
         SecretName: string;
+        /** @description Chart 仓库标识。 */
+        HelmRepositoryID: components["schemas"]["UUID"];
+        /** @description 仓库索引中的 Chart 名。 */
+        HelmChartName: string;
         /** @description Helm Release 名，而不是存储它的 Secret 名。 */
         HelmReleaseName: string;
         ConfigMapName: string;
@@ -12347,6 +12787,326 @@ export interface operations {
             504: components["responses"]["Timeout"];
         };
     };
+    listHelmRepositories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart 仓库列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmRepositoryPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    createHelmRepository: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelmRepositoryRequest"];
+            };
+        };
+        responses: {
+            /** @description 仓库已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmRepository"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getHelmRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart 仓库 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmRepository"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    updateHelmRepository: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelmRepositoryRequest"];
+            };
+        };
+        responses: {
+            /** @description 仓库已更新 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmRepository"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    deleteHelmRepository: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 仓库已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listHelmCharts: {
+        parameters: {
+            query?: {
+                /** @description 按 Chart 名、描述与关键字做不区分大小写的包含匹配。 */
+                search?: string;
+                /** @description 单次返回的 Chart 数量上限，默认与上限均为 200。 */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmChartPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    refreshHelmChartIndex: {
+        parameters: {
+            query?: {
+                /** @description 按 Chart 名、描述与关键字做不区分大小写的包含匹配。 */
+                search?: string;
+                /** @description 单次返回的 Chart 数量上限，默认与上限均为 200。 */
+                limit?: number;
+            };
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 刷新后的 Chart 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmChartPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getHelmChart: {
+        parameters: {
+            query?: {
+                /** @description Chart 版本；省略表示最新版本。 */
+                version?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+                /** @description 仓库索引中的 Chart 名。 */
+                chart_name: components["parameters"]["HelmChartName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart 详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmChartDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listHelmChartVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+                /** @description 仓库索引中的 Chart 名。 */
+                chart_name: components["parameters"]["HelmChartName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart 版本列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmChartVersionPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
     listHelmReleases: {
         parameters: {
             query?: never;
@@ -12375,6 +13135,61 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["InvalidRequest"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    installHelmRelease: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelmInstallReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description 预演结果（dry_run） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmReleaseWriteResult"];
+                    };
+                };
+            };
+            /** @description Release 已安装 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmReleaseWriteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["UnprocessableEntity"];
+            424: components["responses"]["FailedDependency"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
@@ -12413,6 +13228,142 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    upgradeHelmRelease: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                /** @description Helm Release 名，而不是存储它的 Secret 名。 */
+                release_name: components["parameters"]["HelmReleaseName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelmUpgradeReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Release 已升级，或 dry-run 预演结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmReleaseWriteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["UnprocessableEntity"];
+            424: components["responses"]["FailedDependency"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    uninstallHelmRelease: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                /** @description Helm Release 名，而不是存储它的 Secret 名。 */
+                release_name: components["parameters"]["HelmReleaseName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelmUninstallReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Release 已卸载，或 dry-run 预演结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmReleaseWriteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            424: components["responses"]["FailedDependency"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    rollbackHelmRelease: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                /** @description Helm Release 名，而不是存储它的 Secret 名。 */
+                release_name: components["parameters"]["HelmReleaseName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HelmRollbackReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Release 已回滚，或 dry-run 预演结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmReleaseWriteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            424: components["responses"]["FailedDependency"];
             429: components["responses"]["TooManyRequests"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];

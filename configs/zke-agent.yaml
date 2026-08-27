@@ -70,6 +70,11 @@ connection:
   # timeout budgets are independent from Pod logs.
   max_resource_watch_stream_timeout: 30m
   max_concurrent_resource_watch_streams: 16
+  # Helm runs inside this Agent, and one Release change at a time is deliberate:
+  # two concurrent operations on the same Release race over Helm's own storage,
+  # which has no lock to stop them. The timeout bounds a wait for a rollout.
+  max_helm_stream_timeout: 15m
+  max_concurrent_helm_streams: 1
 
 # Collector-facing endpoint for metrics.
 #

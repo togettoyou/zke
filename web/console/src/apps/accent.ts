@@ -24,6 +24,7 @@ const ACCENT_FILL: Record<AppAccent, string> = {
   rose: "bg-linear-to-b from-[var(--app-rose-from)] to-[var(--app-rose-to)]",
   slate: "bg-linear-to-b from-[var(--app-slate-from)] to-[var(--app-slate-to)]",
   steel: "bg-linear-to-b from-[var(--app-steel-from)] to-[var(--app-steel-to)]",
+  teal: "bg-linear-to-b from-[var(--app-teal-from)] to-[var(--app-teal-to)]",
   fuchsia: "bg-linear-to-b from-[var(--app-fuchsia-from)] to-[var(--app-fuchsia-to)]",
 };
 
@@ -41,6 +42,7 @@ const ACCENT_GLOW: Record<AppAccent, string> = {
   rose: "group-hover:drop-shadow-[0_9px_16px_var(--app-rose-glow)]",
   slate: "group-hover:drop-shadow-[0_9px_16px_var(--app-slate-glow)]",
   steel: "group-hover:drop-shadow-[0_9px_16px_var(--app-steel-glow)]",
+  teal: "group-hover:drop-shadow-[0_9px_16px_var(--app-teal-glow)]",
   fuchsia: "group-hover:drop-shadow-[0_9px_16px_var(--app-fuchsia-glow)]",
 };
 

@@ -46,12 +46,22 @@ const (
 	PermissionClusterSecretRead            Permission = permissionname.ClusterSecretRead
 	PermissionClusterSecretManage          Permission = permissionname.ClusterSecretManage
 	PermissionClusterConnectionRevoke      Permission = permissionname.ClusterConnectionRevoke
-	PermissionUserRead                     Permission = permissionname.UserRead
-	PermissionUserManage                   Permission = permissionname.UserManage
-	PermissionUserPasswordChange           Permission = permissionname.UserPasswordChange
-	PermissionRBACRead                     Permission = permissionname.RBACRead
-	PermissionRBACManage                   Permission = permissionname.RBACManage
-	PermissionAuditRead                    Permission = permissionname.AuditRead
+	// PermissionClusterHelmManage is a release write in one Cluster. It is
+	// never sufficient alone: the Helm routes also require the object
+	// permissions the operation spends and the Secret permission Helm's own
+	// storage needs, and the protected-Namespace rules still apply.
+	PermissionClusterHelmManage  Permission = permissionname.ClusterHelmManage
+	PermissionUserRead           Permission = permissionname.UserRead
+	PermissionUserManage         Permission = permissionname.UserManage
+	PermissionUserPasswordChange Permission = permissionname.UserPasswordChange
+	PermissionRBACRead           Permission = permissionname.RBACRead
+	PermissionRBACManage         Permission = permissionname.RBACManage
+	// The chart catalogue is one platform-wide list, so reading and managing
+	// it are global. Neither says anything about which Cluster a chart may be
+	// installed into, which stays with PermissionClusterHelmManage.
+	PermissionHelmRepositoryRead   Permission = permissionname.HelmRepositoryRead
+	PermissionHelmRepositoryManage Permission = permissionname.HelmRepositoryManage
+	PermissionAuditRead            Permission = permissionname.AuditRead
 	// PermissionAIRun opens the AIOps runtime inside the scope where the
 	// binding applies. It grants no Kubernetes read permission by itself: the
 	// runtime rechecks the concrete cluster permission for every piece of

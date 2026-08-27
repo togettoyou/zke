@@ -15,9 +15,11 @@ import { DetailCard, DetailRow } from "@/components/common/detail";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { ErrorState, LoadingState } from "@/components/common/state";
 import { RelativeTime, StatusBadge } from "@/components/common/status";
+import { YamlEditor } from "@/components/common/yaml-editor";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/misc";
 import { formatAbsolute } from "@/lib/time";
+import { stringify as stringifyYaml } from "yaml";
 
 import { canUseProtectedNamespace } from "./namespace-permissions";
 import type { ClusterSectionProps } from "./types";
@@ -240,9 +242,13 @@ function HelmReleaseDetailView({
                 清单超过服务端上限，只展示前一段；完整对象可在「资源对象浏览器」中逐个查看。
               </Alert>
             ) : null}
-            <pre className="zke-mono text-muted-foreground max-h-96 overflow-auto text-xs whitespace-pre">
-              {detail.data.manifest || "（该修订没有渲染出任何对象）"}
-            </pre>
+            <YamlEditor
+              value={detail.data.manifest || "# 该修订没有渲染出任何对象"}
+              onChange={() => {}}
+              readOnly
+              label={`${detail.data.name} 的渲染清单`}
+              className="max-h-96"
+            />
           </DetailCard>
 
           <DetailCard title="修订历史">
@@ -291,9 +297,10 @@ function HelmReleaseDetailView({
 /**
  * The values the release was installed with.
  *
- * Shown as JSON rather than as rows: a chart's values are an arbitrarily nested
- * document, and flattening it into key-value pairs would lose the shape an
- * operator needs to compare against their own values file.
+ * Shown as the YAML document it is rather than as rows: a chart's values are
+ * arbitrarily nested, flattening them into key-value pairs would lose the shape,
+ * and YAML is the notation the operator's own values file is written in — so the
+ * two can be compared without translating one of them first.
  */
 function HelmReleaseValues({ release }: { release: KubernetesHelmReleaseDetail }) {
   const empty = Object.keys(release.values ?? {}).length === 0;
@@ -303,9 +310,13 @@ function HelmReleaseValues({ release }: { release: KubernetesHelmReleaseDetail }
         这些是安装或升级该 Release 时传入的 values，可能包含密码等凭证。查看它需要 Secret
         读取权限，本次查看已写入审计。
       </Alert>
-      <pre className="zke-mono text-muted-foreground max-h-72 overflow-auto text-xs whitespace-pre">
-        {empty ? "（安装时没有覆盖任何默认值）" : JSON.stringify(release.values, null, 2)}
-      </pre>
+      <YamlEditor
+        value={empty ? "# 安装时没有覆盖任何默认值" : stringifyYaml(release.values)}
+        onChange={() => {}}
+        readOnly
+        label={`${release.name} 的 values`}
+        className="max-h-72"
+      />
     </DetailCard>
   );
 }

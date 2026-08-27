@@ -11,6 +11,8 @@ import {
 import { ChevronDown, ChevronRight, Clock, ListTree, Search, Wrench, X } from "lucide-react";
 
 import type { AITrajectoryEntry, AITrajectoryKind } from "@/api/types";
+import { CopyIconButton } from "@/components/common/copy";
+import { Markdown } from "@/components/common/markdown";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +28,6 @@ import { HintTooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 
 import { Evidence } from "./conversation";
-import { CopyIconButton } from "./copy";
 import {
   compactionMethodLabel,
   compactionTriggerLabel,
@@ -51,7 +52,6 @@ import {
   type TimelineRange,
   type TimelineSpan,
 } from "./entries";
-import { Markdown } from "./markdown";
 
 /**
  * The trajectory: what actually ran, in order, with the evidence and the cost.

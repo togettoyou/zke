@@ -366,6 +366,13 @@ type AgentListenerConfig struct {
 	ResourceWatchRequestTimeout time.Duration `yaml:"resource_watch_request_timeout"`
 	MaxResourceWatchStreams     int           `yaml:"max_resource_watch_streams_per_agent"`
 	MaxResourceWatchRequests    int           `yaml:"max_concurrent_resource_watch_requests"`
+	// Helm release changes. The per-Agent default is one because two
+	// operations on the same release race over Helm's own storage, and the
+	// timeout is minutes rather than seconds because an install that waits for
+	// a rollout is doing exactly that.
+	HelmRequestTimeout time.Duration `yaml:"helm_request_timeout"`
+	MaxHelmStreams     int           `yaml:"max_helm_streams_per_agent"`
+	MaxHelmRequests    int           `yaml:"max_concurrent_helm_requests"`
 
 	// TLS is derived from agent_pki, not configured under agent_listener.
 	TLS TLSIdentityConfig `yaml:"-"`
@@ -478,6 +485,9 @@ func DefaultConfig() Config {
 			ResourceWatchRequestTimeout: 30 * time.Minute,
 			MaxResourceWatchStreams:     16,
 			MaxResourceWatchRequests:    512,
+			HelmRequestTimeout:          15 * time.Minute,
+			MaxHelmStreams:              1,
+			MaxHelmRequests:             64,
 		},
 		Observability: ObservabilityConfig{
 			Metrics: MetricsConfig{

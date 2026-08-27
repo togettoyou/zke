@@ -32,6 +32,9 @@ const PlatformApp = lazy(async () => ({
 const ContainerServiceApp = lazy(async () => ({
   default: (await import("./container-service/ContainerServiceApp")).ContainerServiceApp,
 }));
+const HelmApp = lazy(async () => ({
+  default: (await import("./helm/HelmApp")).HelmApp,
+}));
 const TerminalApp = lazy(async () => ({
   default: (await import("./terminal/TerminalApp")).TerminalApp,
 }));
@@ -41,17 +44,16 @@ const ObservabilityApp = lazy(async () => ({
 const AIOpsApp = lazy(async () => ({
   default: (await import("./aiops/AIOpsApp")).AIOpsApp,
 }));
-const PlannedApp = lazy(async () => ({
-  default: (await import("./planned/PlannedApp")).PlannedApp,
-}));
 
 /**
  * Desktop application catalogue.
  *
  * Every application here is backed by real Server APIs. A capability that is
  * not implemented yet is declared as `planned` with its roadmap phase and
- * rendered by `planned/PlannedApp`, so the icon can show the product shape
- * without the window fabricating data.
+ * entered as `planned/PlannedApp`, so the icon can show the product shape
+ * without the window fabricating data. Nothing is declared that way at the
+ * moment — the last one, Helm, now has its Server APIs — and the mechanism
+ * stays for the next capability that is announced before it is built.
  */
 export const APP_MANIFESTS: AppManifest[] = [
   {
@@ -130,28 +132,16 @@ export const APP_MANIFESTS: AppManifest[] = [
     // Helm's own mark is a ship's helm, so the wheel says which tool this is in
     // a way a generic package icon does not.
     icon: ShipWheel,
-    // No accent, as every planned application: an unlit tile on a launcher of
-    // lit ones says "not yet" before the caption under it does.
-    //
-    // Declared with the permission the read-only Helm view in 容器服务 already
-    // requires. A Release is a Secret, and that will not change when this
-    // application gains its writes — those will need permissions of their own,
-    // decided when the design is. Planned applications are shown regardless of
-    // this list, so nothing turns on it today.
+    accent: "teal",
+    // Reading a Release is reading the Secret that stores it, and its values
+    // are that Secret's content — so the icon is gated on the Secret read
+    // permission rather than on the write permissions. An operator who may look
+    // but not change finds the application and its releases; the writes inside
+    // it are gated separately, and the Server refuses either way.
     requiredPermissions: ["cluster.secret.read"],
-    availability: {
-      state: "planned",
-      phase: 2,
-      plannedCapabilities: [
-        "Chart 仓库接入与 Chart 检索",
-        "Release 安装与升级，提交前预览渲染差异",
-        "Release 回滚到保留的历史修订",
-        "Release 卸载，含保留历史与清理资源的选择",
-        "values 编辑与来源追溯",
-      ],
-    },
+    availability: { state: "available" },
     defaultSize: { width: 1_060, height: 680 },
-    entry: PlannedApp,
+    entry: HelmApp,
   },
   {
     id: "terminal",

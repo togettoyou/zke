@@ -12,10 +12,10 @@ const REVISIONS_PATH =
 /**
  * The Helm releases installed in one Namespace, each at its newest revision.
  *
- * Read-only, and read-only on purpose: ZKE reads Helm's own storage and never
- * writes it. Installing, upgrading, rolling back and uninstalling need Helm's
- * rendering engine, and a half-implementation writing release Secrets itself
- * would corrupt the history the real `helm` client depends on.
+ * These three are the reading half. Installing, upgrading, rolling back and
+ * uninstalling live in `helm.ts` together with the chart catalogue: they are
+ * executed by the Cluster's Agent running Helm's own engine, and they answer to
+ * a longer permission stack than a read does.
  *
  * A release lives in a Secret, so every one of these needs `cluster.secret.read`
  * as well as `cluster.read`, and the Server audits them the way it audits a

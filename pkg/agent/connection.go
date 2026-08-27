@@ -199,6 +199,9 @@ func runConnection(
 	if services.metricsCollectorHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityMetricsCollectorV1)
 	}
+	if services.helmHandler != nil {
+		capabilities = append(capabilities, agentprotocol.CapabilityHelmV1)
+	}
 	if err := agentprotocol.WriteFrame(controlStream, &agentv1.ControlFrame{
 		ProtocolVersion: agentprotocol.ProtocolVersion,
 		Message: &agentv1.ControlFrame_ClientHello{
@@ -271,6 +274,11 @@ func runConnection(
 		serverSupportsCapability(serverHello, agentprotocol.CapabilityMetricsCollectorV1)
 	if !metricsCollectorSupported {
 		services.metricsCollectorHandler = nil
+	}
+	helmSupported := services.helmHandler != nil &&
+		serverSupportsCapability(serverHello, agentprotocol.CapabilityHelmV1)
+	if !helmSupported {
+		services.helmHandler = nil
 	}
 	// A Server that does not accept metrics leaves the forwarder detached, so
 	// the collector is told immediately that there is nowhere to send data

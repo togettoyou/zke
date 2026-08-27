@@ -346,6 +346,8 @@ func validAgentConfig() Config {
 			MaxPodAccessPodBytes:              1024 * 1024 * 1024,
 			MaxResourceWatchStreamTimeout:     30 * time.Minute,
 			MaxConcurrentResourceWatchStreams: 16,
+			MaxHelmStreamTimeout:              15 * time.Minute,
+			MaxConcurrentHelmStreams:          1,
 		},
 		LogLevel: "info",
 	}

@@ -81,6 +81,13 @@ const (
 	AgentEndpointProfileUpdate = "agent_endpoint_profile.update"
 	AgentEndpointProfileDelete = "agent_endpoint_profile.delete"
 	PlatformSettingsManage     = "platform.settings.manage"
+	// The chart catalogue is platform configuration: it decides what every
+	// operator on this Server may install anywhere. Adding a repository is
+	// therefore recorded with the other platform changes rather than with the
+	// Cluster ones, and the record names the repository, never its credential.
+	HelmRepositoryCreate = "helm_repository.create"
+	HelmRepositoryUpdate = "helm_repository.update"
+	HelmRepositoryDelete = "helm_repository.delete"
 
 	// AIOps reads a Cluster on an operator behalf, through a model that chose
 	// what to read. Those reads are audited exactly like the ones an operator
@@ -144,6 +151,26 @@ const (
 	// which returns no values at all, and for reading one release.
 	KubernetesHelmReleaseList = "kubernetes_helm_release.list"
 	KubernetesHelmReleaseRead = "kubernetes_helm_release.read"
+	// A release write is not a resource write and is not recorded as one. One
+	// install creates objects across a whole application, rewrites Helm's
+	// history and can replace what a previous revision owned, so reading it out
+	// of a stream of generic create records would mean reassembling the
+	// operation from its parts. The four actions stay apart because the
+	// question asked afterwards is which one happened: an upgrade and a
+	// rollback both produce a new revision and mean opposite things.
+	//
+	// The dry-run twins are recorded too. A preview renders the chart against
+	// the Cluster and returns the manifest it would apply, which is a read of
+	// what the Cluster would accept; it writes nothing, and telling the two
+	// apart in the trail is the whole point of recording them separately.
+	KubernetesHelmReleaseInstall         = "kubernetes_helm_release.install"
+	KubernetesHelmReleaseInstallDryRun   = "kubernetes_helm_release.install.dry_run"
+	KubernetesHelmReleaseUpgrade         = "kubernetes_helm_release.upgrade"
+	KubernetesHelmReleaseUpgradeDryRun   = "kubernetes_helm_release.upgrade.dry_run"
+	KubernetesHelmReleaseRollback        = "kubernetes_helm_release.rollback"
+	KubernetesHelmReleaseRollbackDryRun  = "kubernetes_helm_release.rollback.dry_run"
+	KubernetesHelmReleaseUninstall       = "kubernetes_helm_release.uninstall"
+	KubernetesHelmReleaseUninstallDryRun = "kubernetes_helm_release.uninstall.dry_run"
 
 	// Reading a Secret is recorded because reading it is the whole exposure:
 	// unlike a ConfigMap or a Deployment, one successful GET hands the caller a
@@ -209,6 +236,9 @@ const (
 	DeniedClusterRBACManage                 = permissionname.ClusterRBACManage
 	DeniedClusterSecretRead                 = permissionname.ClusterSecretRead
 	DeniedClusterSecretManage               = permissionname.ClusterSecretManage
+	DeniedClusterHelmManage                 = permissionname.ClusterHelmManage
+	DeniedHelmRepositoryRead                = permissionname.HelmRepositoryRead
+	DeniedHelmRepositoryManage              = permissionname.HelmRepositoryManage
 	DeniedUserRead                          = permissionname.UserRead
 	DeniedUserManage                        = permissionname.UserManage
 	DeniedUserPasswordChange                = permissionname.UserPasswordChange
@@ -265,6 +295,7 @@ const (
 	TargetKubernetesResource   = "kubernetes_resource"
 	TargetPlatformSettings     = "platform_settings"
 	TargetAgentEndpointProfile = "agent_endpoint_profile"
+	TargetHelmRepository       = "helm_repository"
 	TargetAISession            = "ai_session"
 )
 
@@ -283,6 +314,7 @@ var targetTypes = []string{
 	TargetKubernetesResource,
 	TargetPlatformSettings,
 	TargetAgentEndpointProfile,
+	TargetHelmRepository,
 	TargetAISession,
 }
 
@@ -347,6 +379,9 @@ var actions = []Action{
 	{AgentEndpointProfileCreate, GroupPlatform},
 	{AgentEndpointProfileUpdate, GroupPlatform},
 	{AgentEndpointProfileDelete, GroupPlatform},
+	{HelmRepositoryCreate, GroupPlatform},
+	{HelmRepositoryUpdate, GroupPlatform},
+	{HelmRepositoryDelete, GroupPlatform},
 	{PlatformSettingsManage, GroupPlatform},
 
 	{AIToolInvoke, GroupAI},
@@ -393,6 +428,14 @@ var actions = []Action{
 	{KubernetesSecretRead, GroupKubernetes},
 	{KubernetesHelmReleaseList, GroupKubernetes},
 	{KubernetesHelmReleaseRead, GroupKubernetes},
+	{KubernetesHelmReleaseInstall, GroupKubernetes},
+	{KubernetesHelmReleaseInstallDryRun, GroupKubernetes},
+	{KubernetesHelmReleaseUpgrade, GroupKubernetes},
+	{KubernetesHelmReleaseUpgradeDryRun, GroupKubernetes},
+	{KubernetesHelmReleaseRollback, GroupKubernetes},
+	{KubernetesHelmReleaseRollbackDryRun, GroupKubernetes},
+	{KubernetesHelmReleaseUninstall, GroupKubernetes},
+	{KubernetesHelmReleaseUninstallDryRun, GroupKubernetes},
 
 	{DeniedTenantRead, GroupDenied},
 	{DeniedTenantManage, GroupDenied},
@@ -421,6 +464,9 @@ var actions = []Action{
 	{DeniedClusterRBACManage, GroupDenied},
 	{DeniedClusterSecretRead, GroupDenied},
 	{DeniedClusterSecretManage, GroupDenied},
+	{DeniedClusterHelmManage, GroupDenied},
+	{DeniedHelmRepositoryRead, GroupDenied},
+	{DeniedHelmRepositoryManage, GroupDenied},
 	{DeniedClusterEnrollmentRead, GroupDenied},
 	{DeniedUserRead, GroupDenied},
 	{DeniedUserManage, GroupDenied},

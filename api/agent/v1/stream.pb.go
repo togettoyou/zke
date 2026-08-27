@@ -34,6 +34,11 @@ const (
 	// Opened by the Agent, not the Server.
 	StreamKind_STREAM_KIND_METRICS_INGEST    StreamKind = 40
 	StreamKind_STREAM_KIND_METRICS_COLLECTOR StreamKind = 41
+	// Helm release lifecycle. It is its own kind rather than a Resource verb
+	// because the Agent runs Helm's own engine over it: one request renders a
+	// chart, writes many objects and rewrites Helm's release history, which no
+	// single-object Resource request describes.
+	StreamKind_STREAM_KIND_HELM StreamKind = 50
 )
 
 // Enum value maps for StreamKind.
@@ -48,6 +53,7 @@ var (
 		30: "STREAM_KIND_TERMINAL_SESSION",
 		40: "STREAM_KIND_METRICS_INGEST",
 		41: "STREAM_KIND_METRICS_COLLECTOR",
+		50: "STREAM_KIND_HELM",
 	}
 	StreamKind_value = map[string]int32{
 		"STREAM_KIND_UNSPECIFIED":       0,
@@ -59,6 +65,7 @@ var (
 		"STREAM_KIND_TERMINAL_SESSION":  30,
 		"STREAM_KIND_METRICS_INGEST":    40,
 		"STREAM_KIND_METRICS_COLLECTOR": 41,
+		"STREAM_KIND_HELM":              50,
 	}
 )
 
@@ -252,7 +259,7 @@ const file_api_agent_v1_stream_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x03 \x01(\tR\trequestId\x12%\n" +
 	"\x0etimeout_millis\x18\x04 \x01(\x04R\rtimeoutMillis\x12'\n" +
-	"\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKey*\x9e\x02\n" +
+	"\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKey*\xb4\x02\n" +
 	"\n" +
 	"StreamKind\x12\x1b\n" +
 	"\x17STREAM_KIND_UNSPECIFIED\x10\x00\x12\x18\n" +
@@ -264,7 +271,8 @@ const file_api_agent_v1_stream_proto_rawDesc = "" +
 	"\x1cSTREAM_KIND_POD_PORT_FORWARD\x10\x16\x12 \n" +
 	"\x1cSTREAM_KIND_TERMINAL_SESSION\x10\x1e\x12\x1e\n" +
 	"\x1aSTREAM_KIND_METRICS_INGEST\x10(\x12!\n" +
-	"\x1dSTREAM_KIND_METRICS_COLLECTOR\x10)*\xde\x02\n" +
+	"\x1dSTREAM_KIND_METRICS_COLLECTOR\x10)\x12\x14\n" +
+	"\x10STREAM_KIND_HELM\x102*\xde\x02\n" +
 	"\n" +
 	"ResultCode\x12\x1b\n" +
 	"\x17RESULT_CODE_UNSPECIFIED\x10\x00\x12\x12\n" +

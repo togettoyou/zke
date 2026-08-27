@@ -330,7 +330,12 @@ func isNamespaceLifecycleRoute(c *gin.Context) bool {
 func protectedNamespaceRequestNeedsAdditionalGate(c *gin.Context) bool {
 	path := c.FullPath()
 	if c.Request.Method != http.MethodGet {
+		// A release write is a Secret write — Helm's storage is a Secret — and
+		// it writes every object the chart renders into the same Namespace. So
+		// installing into `kube-system` or the Agent's own Namespace needs the
+		// same additional grant that writing a Secret there needs.
 		return strings.Contains(path, "/secrets") ||
+			strings.Contains(path, "/helm-releases") ||
 			strings.Contains(path, "/authorization") ||
 			strings.Contains(path, "/terminal-sessions") ||
 			strings.Contains(path, "/access-sessions")

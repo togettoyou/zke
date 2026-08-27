@@ -67,6 +67,81 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	platformRoutes.PUT("/ai-model", handlers.authMiddleware.RequireCSRF, handlers.aiModelSettings.update)
 	platformRoutes.PATCH("/ai-model/enabled", handlers.authMiddleware.RequireCSRF, handlers.aiModelSettings.setEnabled)
 
+	// The chart catalogue.
+	//
+	// It is its own group rather than part of /platform because it answers to
+	// permissions rather than to the global administrator role: browsing what
+	// may be installed is a read an operator needs, and the operator installing
+	// a chart is rarely the administrator who added the repository it came
+	// from. Managing the catalogue keeps the stronger of the two permissions.
+	//
+	// Fetching a chart or an index makes this Server issue a request to an
+	// address stored in the catalogue. That is why there is no route taking a
+	// URL: the address is always one an administrator holding
+	// `helm.repository.manage` put there.
+	helmCatalogueRoutes := apiV1.Group("/helm")
+	helmCatalogueRoutes.Use(
+		handlers.requestTimeout,
+		handlers.roleBindingCache,
+		handlers.authMiddleware.RequireAuthentication,
+	)
+	helmCatalogueRoutes.GET(
+		"/repositories",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
+		handlers.helmRepository.list,
+	)
+	helmCatalogueRoutes.GET(
+		"/repositories/:repository_id",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
+		handlers.helmRepository.get,
+	)
+	helmCatalogueRoutes.GET(
+		"/repositories/:repository_id/charts",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
+		handlers.helmRepository.charts,
+	)
+	// Re-reading the index is a deliberate action, not a page refresh, so it is
+	// a POST — but it answers to the read permission, because the request it
+	// makes upstream is the same one the cache's own expiry would have made.
+	//
+	// A path of its own rather than a name under `/charts`: everything under
+	// there is a chart name, and a chart really called `refresh` would sit in
+	// the same place.
+	helmCatalogueRoutes.POST(
+		"/repositories/:repository_id/index-refresh",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
+		handlers.helmRepository.refreshCharts,
+	)
+	helmCatalogueRoutes.GET(
+		"/repositories/:repository_id/charts/:chart_name",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
+		handlers.helmRepository.chart,
+	)
+	helmCatalogueRoutes.GET(
+		"/repositories/:repository_id/charts/:chart_name/versions",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
+		handlers.helmRepository.chartVersions,
+	)
+	helmCatalogueRoutes.POST(
+		"/repositories",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryManage),
+		handlers.helmRepository.create,
+	)
+	helmCatalogueRoutes.PUT(
+		"/repositories/:repository_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryManage),
+		handlers.helmRepository.update,
+	)
+	helmCatalogueRoutes.DELETE(
+		"/repositories/:repository_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryManage),
+		handlers.helmRepository.delete,
+	)
+
 	// The connectivity test is authorized exactly like the rest of the platform
 	// group but cannot share its request budget: it waits on somebody else's
 	// inference service for as long as the operator configured. Its own group
@@ -1311,8 +1386,8 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	// required — `cluster.read` because this is a Cluster query like any other,
 	// `cluster.secret.read` because of what it returns — and the
 	// protected-Namespace gate covers these routes for the same reason it covers
-	// `/secrets`. There is no write route: ZKE reads Helm's storage and never
-	// writes it.
+	// `/secrets`. The write routes are further down and require considerably
+	// more than these two.
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/helm-releases",
 		handlers.authorizationMiddleware.RequireCluster(
@@ -1348,6 +1423,77 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 			"cluster_id",
 		),
 		handlers.kubernetesHelmRelease.revisions,
+	)
+	// Helm release writes.
+	//
+	// The permission stack is longer than anywhere else on this Server, and
+	// each of its parts answers a different question about the same request.
+	//
+	//   - `cluster.read`, because this addresses a Cluster like any other
+	//     route here.
+	//   - `cluster.helm.manage`, because changing a release is its own
+	//     capability: one request renders a chart and writes every object an
+	//     application owns, which is not a thing any single-object permission
+	//     was granted for.
+	//   - the object permissions the operation actually spends. An install or
+	//     an upgrade creates and replaces objects; an uninstall deletes them.
+	//     Holding the Helm permission does not conjure the power to write
+	//     objects, and this is where that is checked.
+	//   - `cluster.secret.manage`, because Helm's release storage *is* a
+	//     Secret and the values it holds are its content. A role that may not
+	//     write Secrets may not write releases.
+	//
+	// The protected-Namespace gate on this group covers these routes too — a
+	// release installed into `kube-system` or the Agent's own Namespace needs
+	// the same additional grant a Secret written there does.
+	//
+	// One thing is deliberately *not* here: a chart that renders objects no
+	// Namespace contains needs authorization over the whole Cluster, and which
+	// objects those are is only known once the chart has been rendered. The
+	// handler resolves `cluster.manage` and tells the Agent, which refuses the
+	// rendered manifest by name if the answer was no.
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/helm-releases",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterHelmManage, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceCreate, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceUpdate, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterSecretManage, "cluster_id"),
+		handlers.helmReleaseWrite.install,
+	)
+	clusterRoutes.PUT(
+		"/:cluster_id/namespaces/:namespace_name/helm-releases/:release_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterHelmManage, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceCreate, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceUpdate, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterSecretManage, "cluster_id"),
+		handlers.helmReleaseWrite.upgrade,
+	)
+	// A rollback replays a revision Helm already stored, which means writing
+	// the objects that revision described — creating what is missing and
+	// replacing what changed. It is an upgrade to an older shape, so it
+	// answers to the same permissions.
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/helm-releases/:release_name/rollback",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterHelmManage, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceCreate, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceUpdate, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterSecretManage, "cluster_id"),
+		handlers.helmReleaseWrite.rollback,
+	)
+	clusterRoutes.DELETE(
+		"/:cluster_id/namespaces/:namespace_name/helm-releases/:release_name",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterHelmManage, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterResourceDelete, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterSecretManage, "cluster_id"),
+		handlers.helmReleaseWrite.uninstall,
 	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/configmaps",

@@ -15,13 +15,14 @@ import {
 
 import type { AIEvidence, AISession, AITrajectoryEntry } from "@/api/types";
 import type { AILiveOutput } from "@/api/queries/aiops";
+import { CopyIconButton } from "@/components/common/copy";
+import { Markdown } from "@/components/common/markdown";
 import { Button } from "@/components/ui/button";
 import { HintTooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 
 import { openEvidence } from "../evidence-link";
 
-import { CopyIconButton } from "./copy";
 import { Opening } from "./opening";
 import {
   compactionTriggerLabel,
@@ -34,7 +35,6 @@ import {
   type ConversationBranch,
   type ConversationItem,
 } from "./entries";
-import { Markdown } from "./markdown";
 
 export function Conversation({
   session,

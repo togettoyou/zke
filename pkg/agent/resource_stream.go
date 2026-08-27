@@ -22,6 +22,7 @@ type connectionServices struct {
 	// this Agent opens, so it holds the Connection rather than serving one.
 	metricsForwarder        *metricsIngestForwarder
 	metricsCollectorHandler agentprotocol.MetricsCollectorHandler
+	helmHandler             agentprotocol.HelmHandler
 }
 
 func newBusinessStreamServer(
@@ -103,6 +104,18 @@ func newBusinessStreamServer(
 				),
 			}
 	}
+	if services.helmHandler != nil {
+		handlers[agentv1.StreamKind_STREAM_KIND_HELM] =
+			agentprotocol.StreamHandlerConfig{
+				// One release change at a time. Two Helm operations on the same
+				// release race over Helm's own storage, and Helm has no lock to
+				// stop them; serialising here is what makes a second request
+				// wait rather than corrupt a history.
+				MaxConcurrent: cfg.Connection.MaxConcurrentHelmStreams,
+				MaxTimeout:    cfg.Connection.MaxHelmStreamTimeout,
+				Handle:        agentprotocol.HelmStreamHandler(services.helmHandler),
+			}
+	}
 	if services.terminalSessionHandler != nil {
 		handlers[agentv1.StreamKind_STREAM_KIND_TERMINAL_SESSION] =
 			agentprotocol.StreamHandlerConfig{
@@ -119,6 +132,7 @@ func newBusinessStreamServer(
 			cfg.Connection.MaxPodExecStreamTimeout,
 			cfg.Connection.MaxPodAccessStreamTimeout,
 			cfg.Connection.MaxResourceWatchStreamTimeout,
+			cfg.Connection.MaxHelmStreamTimeout,
 		),
 		Handlers: handlers,
 		OnError: func(header *agentv1.StreamHeader, err error) {

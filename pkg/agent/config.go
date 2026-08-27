@@ -116,6 +116,13 @@ type ConnectionConfig struct {
 	MaxPodAccessPodBytes              uint64
 	MaxResourceWatchStreamTimeout     time.Duration
 	MaxConcurrentResourceWatchStreams int
+	// Helm gets its own budget rather than borrowing the resource one. An
+	// install that waits for a rollout is minutes of work, not the seconds a
+	// single-object write is, and one release change at a time per Cluster is
+	// deliberate: two concurrent operations on the same release race over
+	// Helm's own storage, and Helm has no lock to stop them.
+	MaxHelmStreamTimeout     time.Duration
+	MaxConcurrentHelmStreams int
 }
 
 type fileConfig struct {
@@ -158,6 +165,8 @@ type fileConfig struct {
 		MaxPodAccessPodBytes              *uint64 `yaml:"max_pod_access_pod_bytes"`
 		MaxResourceWatchStreamTimeout     string  `yaml:"max_resource_watch_stream_timeout"`
 		MaxConcurrentResourceWatchStreams *int    `yaml:"max_concurrent_resource_watch_streams"`
+		MaxHelmStreamTimeout              string  `yaml:"max_helm_stream_timeout"`
+		MaxConcurrentHelmStreams          *int    `yaml:"max_concurrent_helm_streams"`
 	} `yaml:"connection"`
 	MetricsIngest struct {
 		Address               string  `yaml:"address"`
@@ -213,6 +222,8 @@ func DefaultConfig() Config {
 			MaxPodAccessPodBytes:              1024 * 1024 * 1024,
 			MaxResourceWatchStreamTimeout:     30 * time.Minute,
 			MaxConcurrentResourceWatchStreams: 16,
+			MaxHelmStreamTimeout:              15 * time.Minute,
+			MaxConcurrentHelmStreams:          1,
 		},
 		MetricsIngest: MetricsIngestConfig{
 			Address:               "0.0.0.0:8429",
@@ -443,6 +454,17 @@ func applyFile(cfg *Config, path string) error {
 		cfg.Connection.MaxConcurrentResourceWatchStreams =
 			*raw.Connection.MaxConcurrentResourceWatchStreams
 	}
+	if err := applyAgentDuration(
+		&cfg.Connection.MaxHelmStreamTimeout,
+		raw.Connection.MaxHelmStreamTimeout,
+		"connection.max_helm_stream_timeout",
+	); err != nil {
+		return err
+	}
+	if raw.Connection.MaxConcurrentHelmStreams != nil {
+		cfg.Connection.MaxConcurrentHelmStreams =
+			*raw.Connection.MaxConcurrentHelmStreams
+	}
 	if raw.MetricsIngest.Address != "" {
 		cfg.MetricsIngest.Address = raw.MetricsIngest.Address
 	}
@@ -615,6 +637,7 @@ func (cfg Config) Validate() error {
 		{cfg.Connection.MaxPodExecStreamTimeout, time.Hour, "Pod Exec Stream timeout"},
 		{cfg.Connection.MaxPodAccessStreamTimeout, time.Hour, "Pod Access Stream timeout"},
 		{cfg.Connection.MaxResourceWatchStreamTimeout, time.Hour, "Resource Watch Stream timeout"},
+		{cfg.Connection.MaxHelmStreamTimeout, time.Hour, "Helm Stream timeout"},
 	} {
 		if item.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", item.name)
@@ -661,6 +684,18 @@ func (cfg Config) Validate() error {
 	if cfg.Connection.StreamHeaderTimeout > cfg.Connection.MaxPodAccessStreamTimeout {
 		return errors.New(
 			"business Stream header timeout must not exceed Pod Access Stream timeout",
+		)
+	}
+	if cfg.Connection.StreamHeaderTimeout > cfg.Connection.MaxHelmStreamTimeout {
+		return errors.New(
+			"business Stream header timeout must not exceed Helm Stream timeout",
+		)
+	}
+	if cfg.Connection.MaxConcurrentHelmStreams < 1 ||
+		int64(cfg.Connection.MaxConcurrentHelmStreams) >
+			cfg.Connection.MaxIncomingStreams {
+		return errors.New(
+			"maximum concurrent Helm Streams must be between 1 and maximum incoming streams",
 		)
 	}
 	if cfg.Connection.MaxConcurrentResourceStreams < 1 ||

@@ -29,6 +29,11 @@ const (
 	CapabilityTerminalSessionV1          = "terminal-session.v1"
 	CapabilityMetricsIngestV1            = "metrics-ingest.v1"
 	CapabilityMetricsCollectorV1         = "metrics-collector.v1"
+	// Helm release lifecycle. Declared separately from the resource write
+	// capability because an Agent that can write objects still cannot run
+	// Helm: a Server upgraded ahead of its Agents must fail the request
+	// rather than fall back to writing release storage itself.
+	CapabilityHelmV1 = "helm.v1"
 
 	CloseNormal              quic.ApplicationErrorCode = 0
 	CloseProtocolError       quic.ApplicationErrorCode = 1

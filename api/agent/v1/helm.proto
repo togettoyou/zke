@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package zke.agent.v1;
+
+import "api/agent/v1/stream.proto";
+
+option go_package = "github.com/togettoyou/zke/api/agent/v1;agentv1";
+
+// Helm release lifecycle, executed inside the target Cluster.
+//
+// The Server never renders a chart and never writes a release Secret. Doing
+// either correctly means running Helm's own engine — the template pipeline, the
+// hook ordering, the history rewrite — and a Server that wrote release storage
+// itself would corrupt the history the real `helm` client depends on. So the
+// Server decides *what* should happen and sends the chart; the Agent, which is
+// the side that has a Kubernetes connection at all, runs Helm.
+//
+// Everything that identifies the operation is in the message. The two variable
+// length inputs — the values document and the chart archive — follow it on the
+// Stream in that order, because a chart is far larger than one protocol frame.
+enum HelmAction {
+  HELM_ACTION_UNSPECIFIED = 0;
+  HELM_ACTION_INSTALL = 1;
+  HELM_ACTION_UPGRADE = 2;
+  HELM_ACTION_ROLLBACK = 3;
+  HELM_ACTION_UNINSTALL = 4;
+}
+
+message HelmRequest {
+  HelmAction action = 1;
+  string namespace = 2;
+  string release_name = 3;
+  // Bytes of the values document, sent first on the Stream. YAML, and may be
+  // empty, which means "the chart's own defaults".
+  uint64 values_size = 4;
+  // Bytes of the chart archive (.tgz), sent after the values. Set for INSTALL
+  // and UPGRADE and zero for the two actions that operate on stored history.
+  uint64 chart_size = 5;
+  // A dry run renders and reports without writing anything: no objects, no
+  // release Secret, no history. It is how a change is previewed before it is
+  // made, so it is accepted for every action rather than for installs alone.
+  bool dry_run = 6;
+  // Create the target Namespace if it does not exist. Install only; an upgrade
+  // whose Namespace has gone is a failure to report rather than to repair.
+  bool create_namespace = 7;
+  // Wait for the objects the release owns to become ready before reporting
+  // success, bounded by timeout_seconds.
+  bool wait = 8;
+  uint32 timeout_seconds = 9;
+  // Roll the release back to where it was if the operation fails. It implies
+  // waiting, and the Agent enables the wait rather than refusing the pair.
+  bool atomic = 10;
+  // Skip the chart's hooks. Recorded and reported, because a release installed
+  // without its hooks is not the release the chart describes.
+  bool disable_hooks = 11;
+  // Upgrade only, and mutually exclusive. Neither set means the values sent
+  // with this request replace the previous ones exactly.
+  bool reset_values = 12;
+  bool reuse_values = 13;
+  // Rollback only: the revision to return to. Zero means the one before the
+  // current release, which is what `helm rollback` does with no argument.
+  int64 revision = 14;
+  // Uninstall only: keep the release history instead of deleting it with the
+  // objects. A kept history is what a later rollback needs.
+  bool keep_history = 15;
+  // How many revisions Helm retains for this release. Zero leaves Helm's own
+  // default in place.
+  uint32 max_history = 16;
+  // Free text recorded on the revision, shown by `helm history`. The Server
+  // fills it with who asked for the change.
+  string description = 17;
+  // Whether the chart may create objects that are not confined to a Namespace
+  // — a CustomResourceDefinition, a ClusterRole, a StorageClass. The Server
+  // sets it only for an operator authorized over the Cluster as a whole,
+  // because a Namespace grant says nothing about an object with no Namespace.
+  // An Agent that predates this field ignores it and applies whatever the
+  // chart renders, which is why the Server also refuses to send the request to
+  // an Agent that does not advertise the Helm capability at all.
+  bool allow_cluster_scoped = 18;
+}
+
+message HelmResponse {
+  ResultCode result = 1;
+  int32 kubernetes_status_code = 2;
+  string reason = 3;
+  string message = 4;
+  // Bytes of the JSON release report that follows the message. Present on
+  // success, including a dry run, whose report carries the rendered manifest
+  // and nothing else changed. Zero for a successful uninstall that kept no
+  // history, which leaves no revision to report.
+  uint64 body_size = 5;
+}

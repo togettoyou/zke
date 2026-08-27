@@ -28,6 +28,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/clusterterminal"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
+	"github.com/togettoyou/zke/pkg/server/helm"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
 	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
@@ -46,6 +47,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/resourcewatch"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/server/store/migrations"
+	"github.com/togettoyou/zke/pkg/shared/buildinfo"
 )
 
 // Most documents one manifest request may carry.
@@ -295,6 +297,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			ResourceWatchRequestTimeout:  cfg.AgentListener.ResourceWatchRequestTimeout,
 			MaxResourceWatchStreams:      cfg.AgentListener.MaxResourceWatchStreams,
 			MaxResourceWatchRequests:     cfg.AgentListener.MaxResourceWatchRequests,
+			HelmRequestTimeout:           cfg.AgentListener.HelmRequestTimeout,
+			MaxHelmStreams:               cfg.AgentListener.MaxHelmStreams,
+			MaxHelmRequests:              cfg.AgentListener.MaxHelmRequests,
 			MetricsIngestTimeout:         cfg.Observability.Metrics.IngestSessionTimeout,
 			MaxMetricsBatchBytes:         cfg.Observability.Metrics.MaxBatchBytes,
 			MaxMetricsIngestStreams:      cfg.Observability.Metrics.MaxIngestStreams,
@@ -315,6 +320,18 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		agentConnectionManager,
 		platformCollectorSettings{service: platformSettingsService},
 		metricsGateway,
+	)
+	if err != nil {
+		return err
+	}
+	// The chart catalogue and the release lifecycle. It needs the connection
+	// manager because a release change is executed by the Cluster's Agent, and
+	// the store because the repositories a chart may come from are platform
+	// configuration rather than something a request may name.
+	helmService, err := helm.NewService(
+		store.NewHelmRepositoryStore(database),
+		agentConnectionManager,
+		"zke-server/"+buildinfo.Version(),
 	)
 	if err != nil {
 		return err
@@ -536,6 +553,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MetricsCollectorService:   metricsCollectorService,
 			MetricsQueryService:       metricsQueryService,
 			KubernetesResourceService: kubernetesResourceService,
+			HelmService:               helmService,
 			PodLogsService:            podLogsService,
 			PodExecService:            podExecService,
 			ClusterTerminalService:    clusterTerminalService,

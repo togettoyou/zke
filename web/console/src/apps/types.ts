@@ -26,7 +26,16 @@ export type AppComponentProps = {
  * under it does.
  */
 export type AppAccent =
-  "blue" | "cyan" | "violet" | "emerald" | "amber" | "rose" | "slate" | "steel" | "fuchsia";
+  | "blue"
+  | "cyan"
+  | "violet"
+  | "emerald"
+  | "amber"
+  | "rose"
+  | "slate"
+  | "steel"
+  | "teal"
+  | "fuchsia";
 
 export type AppManifest = {
   id: string;

@@ -23,6 +23,7 @@ tags:
   - name: Agent Protocol
   - name: Audit
   - name: Platform
+  - name: Helm
   - name: AIOps
   - name: Events
 paths:
@@ -5771,6 +5772,325 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/helm/repositories:
+    get:
+      tags: [Helm]
+      operationId: listHelmRepositories
+      description: |
+        列出平台上的 Chart 仓库目录。要求 `helm.repository.read`。
+
+        目录是平台级的：Chart 是软件来源，不是某个 Project 的基础设施，而“能否把某个
+        Chart 装进某个 Cluster”由 Cluster 权限决定，与它来自哪个仓库无关。
+
+        仓库凭证只写不读。任何接口都不会返回口令，读取方只会看到 `has_credentials`
+        说明是否配置过。
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Chart 仓库列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmRepositoryPage" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    post:
+      tags: [Helm]
+      operationId: createHelmRepository
+      description: |
+        新增一个 Chart 仓库。要求 `helm.repository.manage`。
+
+        `url` 必须是绝对的 http 或 https 地址，且不得内嵌凭证；私有仓库的用户名与口令走
+        独立字段，口令写入后不再返回。审计只记录仓库名与标识，不记录凭证。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmRepositoryRequest" }
+      responses:
+        "201":
+          description: 仓库已创建
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmRepository" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/helm/repositories/{repository_id}:
+    get:
+      tags: [Helm]
+      operationId: getHelmRepository
+      description: 读取一个 Chart 仓库的配置，要求 `helm.repository.read`。不返回凭证。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/HelmRepositoryID"
+      responses:
+        "200":
+          description: Chart 仓库
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmRepository" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    put:
+      tags: [Helm]
+      operationId: updateHelmRepository
+      description: |
+        更新一个 Chart 仓库，要求 `helm.repository.manage`。
+
+        `password` 是三态字段：不传表示保留已存储的口令，传空字符串表示清除，传值表示替换。
+        更新后该仓库的索引缓存立即作废，避免改正地址后仍然看到旧结果。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/HelmRepositoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmRepositoryRequest" }
+      responses:
+        "200":
+          description: 仓库已更新
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmRepository" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Helm]
+      operationId: deleteHelmRepository
+      description: |
+        删除一个 Chart 仓库，要求 `helm.repository.manage`。
+
+        没有任何对象引用它：Release 自带安装时使用的 Chart，因此删除仓库不影响已安装的
+        Release，只是新的安装不能再从它选择 Chart。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/HelmRepositoryID"
+      responses:
+        "204": { description: 仓库已删除 }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/helm/repositories/{repository_id}/charts:
+    get:
+      tags: [Helm]
+      operationId: listHelmCharts
+      description: |
+        列出一个仓库发布的 Chart，每个只返回最新版本，要求 `helm.repository.read`。
+
+        Server 会按需拉取该仓库的 `index.yaml` 并在内存中缓存数分钟，`fetched_at` 说明这
+        份目录是什么时候读到的。`total` 是过滤与分页之前的 Chart 总数。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/HelmRepositoryID"
+        - name: search
+          in: query
+          description: 按 Chart 名、描述与关键字做不区分大小写的包含匹配。
+          schema: { type: string, maxLength: 200 }
+        - name: limit
+          in: query
+          description: 单次返回的 Chart 数量上限，默认与上限均为 200。
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        "200":
+          description: Chart 列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmChartPage" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/helm/repositories/{repository_id}/index-refresh:
+    post:
+      tags: [Helm]
+      operationId: refreshHelmChartIndex
+      description: |
+        丢弃该仓库索引的服务端缓存，重新拉取一次，并返回刷新后的 Chart 列表。
+        要求 `helm.repository.read`。
+
+        Server 会把每个仓库的 `index.yaml` 在内存中缓存数分钟，因此刚发布的 Chart 不会立刻
+        出现。这条接口是显式重读的入口：它不改变任何存储状态，只是丢掉 Server 自己持有的派生
+        数据，再发起一次与缓存过期时相同的上游请求，所以要求的是读权限而不是管理权限。
+
+        参数与 Chart 列表一致，便于刷新之后直接拿到当前搜索条件下的结果。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/HelmRepositoryID"
+        - name: search
+          in: query
+          description: 按 Chart 名、描述与关键字做不区分大小写的包含匹配。
+          schema: { type: string, maxLength: 200 }
+        - name: limit
+          in: query
+          description: 单次返回的 Chart 数量上限，默认与上限均为 200。
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        "200":
+          description: 刷新后的 Chart 列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmChartPage" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/helm/repositories/{repository_id}/charts/{chart_name}:
+    get:
+      tags: [Helm]
+      operationId: getHelmChart
+      description: |
+        下载一个 Chart 版本并返回安装前需要阅读的内容：Chart 自带的 values.yaml 原文、
+        README 与元数据，以及它会一并安装的子 Chart。要求 `helm.repository.read`。
+
+        values 以文本原样返回而不是解析后的对象，因为其中的注释就是一半的文档。省略
+        `version` 表示仓库发布的最新版本。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/HelmRepositoryID"
+        - $ref: "#/components/parameters/HelmChartName"
+        - name: version
+          in: query
+          description: Chart 版本；省略表示最新版本。
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Chart 详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmChartDetail" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/helm/repositories/{repository_id}/charts/{chart_name}/versions:
+    get:
+      tags: [Helm]
+      operationId: listHelmChartVersions
+      description: |
+        列出一个 Chart 在仓库索引中发布过的全部版本，按版本从新到旧返回。
+        要求 `helm.repository.read`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/HelmRepositoryID"
+        - $ref: "#/components/parameters/HelmChartName"
+      responses:
+        "200":
+          description: Chart 版本列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmChartVersionPage" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases:
     get:
       tags: [Resources]
@@ -5780,8 +6100,9 @@ paths:
         修订，与 `helm list` 的收敛方式一致。
 
         Helm 3 把每次修订存成一个 `helm.sh/release.v1` 类型的 Secret，Release 名、修订号与
-        状态在该 Secret 的 label 上，因此列表不解压任何 Release 负载。ZKE 只读取 Helm 的
-        存储，不安装、升级、回滚或卸载 Release。
+        状态在该 Secret 的 label 上，因此列表不解压任何 Release 负载。安装、升级、回滚与卸载
+        是同一路径下的写入接口，权限要求更长一档；渲染与写入由目标集群的 Agent 用 Helm 自己的
+        引擎完成，Server 不代写 Release Secret。
 
         该接口读取 Secret，因此同时要求 `cluster.read` 与 `cluster.secret.read`，kube-* 与
         Agent Namespace 还需对应的独立 Namespace 权限；每次调用都会写入与 Secret 列表一致的
@@ -5823,6 +6144,71 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+    post:
+      tags: [Resources]
+      operationId: installHelmRelease
+      description: |
+        在目标 Cluster 的 Namespace 中安装一个 Chart。
+
+        Chart 由「仓库 + 名称 + 版本」指定，而不是 URL：可安装的来源是管理员维护的目录，
+        接口不接受任意地址。渲染与写入由该 Cluster 的 Agent 用 Helm 自己的引擎完成，
+        Server 只负责取 Chart、组装 values 与鉴权。
+
+        权限是一组而不是一个：`cluster.read`、`cluster.helm.manage`、
+        `cluster.resource.create`、`cluster.resource.update` 与 `cluster.secret.manage`
+        同时要求，kube-* 与 Agent Namespace 另需对应的独立 Namespace 权限。Chart 渲染出的
+        对象若指向别的 Namespace 会被 Agent 拒绝；若包含集群级对象（CRD、ClusterRole 等），
+        还需要 `cluster.manage`，否则 Agent 会指名拒绝。
+
+        `dry_run` 只渲染不写入，返回将要应用的 manifest，用于提交前预览；非 dry-run 必须
+        显式 `confirm`。两者写入不同的审计动作。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmInstallReleaseRequest" }
+      responses:
+        "201":
+          description: Release 已安装
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmReleaseWriteResult" }
+        "200":
+          description: 预演结果（dry_run）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmReleaseWriteResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "424": { $ref: "#/components/responses/FailedDependency" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}:
     get:
       tags: [Resources]
@@ -5876,6 +6262,144 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+    put:
+      tags: [Resources]
+      operationId: upgradeHelmRelease
+      description: |
+        升级一个已安装的 Release：用新的 Chart 版本或新的 values 生成下一个修订。
+
+        `reset_values` 与 `reuse_values` 互斥，都不设置表示本次提交的 values 完整替换上一次
+        的。权限、预演与确认规则与安装一致。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HelmReleaseName"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmUpgradeReleaseRequest" }
+      responses:
+        "200":
+          description: Release 已升级，或 dry-run 预演结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmReleaseWriteResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "424": { $ref: "#/components/responses/FailedDependency" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+    delete:
+      tags: [Resources]
+      operationId: uninstallHelmRelease
+      description: |
+        卸载一个 Release，删除它拥有的对象。
+
+        `keep_history` 决定是否保留修订历史：保留下来的历史正是之后回滚所需要的，
+        不保留则连同对象一起删除，之后无法回滚。
+
+        权限为 `cluster.read`、`cluster.helm.manage`、`cluster.resource.delete` 与
+        `cluster.secret.manage`；kube-* 与 Agent Namespace 另需独立 Namespace 权限。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HelmReleaseName"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmUninstallReleaseRequest" }
+      responses:
+        "200":
+          description: Release 已卸载，或 dry-run 预演结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmReleaseWriteResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "424": { $ref: "#/components/responses/FailedDependency" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}/rollback:
+    post:
+      tags: [Resources]
+      operationId: rollbackHelmRelease
+      description: |
+        把一个 Release 回滚到存储中仍然保留的某个修订。`revision` 省略或为 0 表示回到当前
+        修订的上一个，与 `helm rollback` 不带参数的行为一致。
+
+        回滚会重放该修订记录下来的对象，因此与升级答复同一组权限。被 `--history-max` 清理
+        掉的修订不存在，接口也不会假装它们还在。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/HelmReleaseName"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HelmRollbackReleaseRequest" }
+      responses:
+        "200":
+          description: Release 已回滚，或 dry-run 预演结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmReleaseWriteResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "424": { $ref: "#/components/responses/FailedDependency" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}/revisions:
     get:
       tags: [Resources]
@@ -8236,6 +8760,21 @@ components:
         maxLength: 253
     SecretName:
       name: secret_name
+    HelmRepositoryID:
+      name: repository_id
+      in: path
+      required: true
+      description: Chart 仓库标识。
+      schema: { $ref: "#/components/schemas/UUID" }
+    HelmChartName:
+      name: chart_name
+      in: path
+      required: true
+      description: 仓库索引中的 Chart 名。
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 253
     HelmReleaseName:
       name: release_name
       in: path
@@ -8679,6 +9218,14 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    FailedDependency:
+      description: >-
+        请求本身合法，但目标 Cluster 的 Agent 不具备完成它所需的能力，通常是 Agent
+        版本过旧。它与「Agent 未连接」不同：后者等一等会好，前者不会。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     PayloadTooLarge:
       description: 请求正文超过允许大小
       content:
@@ -8901,11 +9448,14 @@ components:
               - cluster.secret.read
               - cluster.secret.manage
               - cluster.connection.revoke
+              - cluster.helm.manage
               - user.read
               - user.manage
               - user.password.change
               - rbac.read
               - rbac.manage
+              - helm.repository.read
+              - helm.repository.manage
               - audit.read
               - ai.run
     ChangePasswordRequest:
@@ -13172,6 +13722,337 @@ components:
               type: string
               description: Chart 渲染出的清单；超过上限时被截断。
             manifest_truncated: { type: boolean }
+    HelmRepository:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - url
+        - username
+        - has_credentials
+        - ca_certificate_provided
+        - insecure_skip_tls_verify
+        - enabled
+        - created_at
+        - updated_at
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+        url:
+          type: string
+          format: uri
+          description: 仓库根地址，`index.yaml` 位于其下。只接受 http 与 https。
+        username: { type: string, maxLength: 200 }
+        has_credentials:
+          type: boolean
+          description: 是否配置了口令。口令本身任何接口都不返回。
+        ca_certificate_provided:
+          type: boolean
+          description: 是否配置了自定义 CA。证书正文不返回。
+        insecure_skip_tls_verify:
+          type: boolean
+          description: 是否跳过 TLS 校验。它是一次明确且可审计的选择，不是静默回退。
+        enabled:
+          type: boolean
+          description: 关闭后不再用于新的安装；已安装的 Release 不受影响。
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    HelmRepositoryPage:
+      type: object
+      additionalProperties: false
+      required: [repositories]
+      properties:
+        repositories:
+          type: array
+          items: { $ref: "#/components/schemas/HelmRepository" }
+    HelmRepositoryRequest:
+      type: object
+      additionalProperties: false
+      required: [name, url]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+        url:
+          type: string
+          format: uri
+          maxLength: 2000
+          description: 绝对的 http 或 https 地址，不得内嵌凭证。
+        username: { type: string, maxLength: 200 }
+        password:
+          type: string
+          format: password
+          maxLength: 1000
+          nullable: true
+          description: >-
+            三态字段：不传保留已存储的口令，传空字符串清除，传值替换。写入后不再返回。
+        ca_certificate_pem:
+          type: string
+          maxLength: 65536
+          description: 私有仓库使用的自定义 CA，PEM 编码；留空表示使用系统信任库。
+        insecure_skip_tls_verify: { type: boolean, default: false }
+        enabled: { type: boolean, default: true }
+    HelmChartSummary:
+      type: object
+      additionalProperties: false
+      required: [name, version, app_version, description, icon_url, deprecated, version_count]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        app_version: { type: string }
+        description: { type: string }
+        icon_url: { type: string }
+        keywords:
+          type: array
+          items: { type: string }
+        deprecated: { type: boolean }
+        version_count:
+          type: integer
+          description: 该 Chart 在索引中发布过的版本数量。
+    HelmChartPage:
+      type: object
+      additionalProperties: false
+      required: [repository_id, charts, total, fetched_at]
+      properties:
+        repository_id: { $ref: "#/components/schemas/UUID" }
+        charts:
+          type: array
+          items: { $ref: "#/components/schemas/HelmChartSummary" }
+        total:
+          type: integer
+          description: 应用搜索与数量上限之前的 Chart 总数。
+        fetched_at:
+          type: string
+          format: date-time
+          description: Server 最后一次读取该仓库索引的时间；索引在内存中缓存数分钟。
+    HelmChartVersionSummary:
+      type: object
+      additionalProperties: false
+      required: [version, app_version, description, deprecated, digest]
+      properties:
+        version: { type: string }
+        app_version: { type: string }
+        description: { type: string }
+        created: { type: string, format: date-time }
+        deprecated: { type: boolean }
+        digest: { type: string }
+    HelmChartVersionPage:
+      type: object
+      additionalProperties: false
+      required: [repository_id, chart, versions]
+      properties:
+        repository_id: { $ref: "#/components/schemas/UUID" }
+        chart: { type: string }
+        versions:
+          type: array
+          items: { $ref: "#/components/schemas/HelmChartVersionSummary" }
+    HelmChartDependency:
+      type: object
+      additionalProperties: false
+      required: [name, version, repository, condition]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        repository: { type: string }
+        condition: { type: string }
+    HelmChartDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - repository_id
+        - name
+        - version
+        - app_version
+        - description
+        - icon_url
+        - home
+        - deprecated
+        - type
+        - values
+        - readme
+      properties:
+        repository_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string }
+        version: { type: string }
+        app_version: { type: string }
+        description: { type: string }
+        icon_url: { type: string }
+        home: { type: string }
+        sources:
+          type: array
+          items: { type: string }
+        keywords:
+          type: array
+          items: { type: string }
+        deprecated: { type: boolean }
+        type: { type: string }
+        values:
+          type: string
+          description: >-
+            Chart 自带的 values.yaml 原文。以文本返回而不是解析后的对象，
+            因为其中的注释就是一半的文档。超过上限时被截断。
+        readme:
+          type: string
+          description: Chart 打包的 README.md；没有则为空。超过上限时被截断。
+        dependencies:
+          type: array
+          items: { $ref: "#/components/schemas/HelmChartDependency" }
+    HelmReleaseReport:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - namespace
+        - revision
+        - status
+        - dry_run
+        - description
+        - chart_name
+        - chart_version
+        - app_version
+        - chart_description
+        - notes
+        - manifest
+        - manifest_truncated
+        - notes_truncated
+        - deleted
+        - hooks_disabled
+      description: >-
+        Helm 在这次操作之后对该 Release 的说明。dry-run 也会产生一份：其中的字段描述
+        「将会写入什么」，`manifest` 就是待批准的渲染结果。
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        revision: { type: integer, format: int64 }
+        status: { type: string }
+        dry_run:
+          type: boolean
+          description: 该报告描述的是一次未写入的变更。
+        description: { type: string }
+        chart_name: { type: string }
+        chart_version: { type: string }
+        app_version: { type: string }
+        chart_description: { type: string }
+        first_deployed: { type: string, format: date-time }
+        last_deployed: { type: string, format: date-time }
+        notes: { type: string }
+        manifest:
+          type: string
+          description: Chart 渲染出的清单；超过上限时被截断。
+        manifest_truncated: { type: boolean }
+        notes_truncated: { type: boolean }
+        deleted:
+          type: boolean
+          description: 由卸载写入；其余字段描述被移除的那个修订。
+        hooks_disabled:
+          type: boolean
+          description: >-
+            该修订跳过了 Chart 的 hook。跳过 hook 装出来的 Release 已经不是 Chart 描述的
+            那个，所以这个事实跟着修订走，而不只跟着请求走。
+    HelmReleaseWriteResult:
+      type: object
+      additionalProperties: false
+      required: [release, dry_run]
+      properties:
+        release: { $ref: "#/components/schemas/HelmReleaseReport" }
+        dry_run: { type: boolean }
+    HelmChartReleaseRequest:
+      type: object
+      additionalProperties: false
+      required: [repository_id, chart]
+      description: >-
+        安装与升级共同的部分：装什么、用什么 values、以及一次操作如何执行。Release 名不在这里，
+        因为安装由请求正文给出，升级由 URL 给出；两处都能命名会让「以哪个为准」变成一个必须回答
+        的问题。
+      properties:
+        repository_id: { $ref: "#/components/schemas/UUID" }
+        chart: { type: string, minLength: 1, maxLength: 253 }
+        version:
+          type: string
+          maxLength: 128
+          description: Chart 版本；省略表示仓库发布的最新版本，实际使用的版本在返回中给出。
+        values:
+          type: string
+          maxLength: 1048576
+          description: 操作者编辑后的 values 文档（YAML）。留空表示使用 Chart 自带默认值。
+        create_namespace: { type: boolean, default: false }
+        wait:
+          type: boolean
+          default: false
+          description: 等待 Release 拥有的对象就绪后再返回，上限为 timeout_seconds。
+        atomic:
+          type: boolean
+          default: false
+          description: 失败时回滚到操作前的状态。它隐含等待。
+        disable_hooks:
+          type: boolean
+          default: false
+          description: 跳过 Chart 的 hook。该事实会记录在修订上。
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        max_history: { type: integer, minimum: 0, maximum: 100 }
+        description: { type: string, maxLength: 256 }
+        dry_run: { type: boolean, default: false }
+        confirm:
+          type: boolean
+          description: 非 dry-run 时必须为 true。
+    HelmInstallReleaseRequest:
+      allOf:
+        - $ref: "#/components/schemas/HelmChartReleaseRequest"
+        - type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 53
+              description: Release 名。Helm 自己的规则：DNS-1123 子域，且不超过 53 个字符。
+    HelmUpgradeReleaseRequest:
+      allOf:
+        - $ref: "#/components/schemas/HelmChartReleaseRequest"
+        - type: object
+          additionalProperties: false
+          properties:
+            reset_values:
+              type: boolean
+              default: false
+              description: 丢弃上一次的 values，回到 Chart 默认值再合并本次提交的内容。
+            reuse_values:
+              type: boolean
+              default: false
+              description: 沿用上一次的 values 再合并本次提交的内容。与 reset_values 互斥。
+    HelmRollbackReleaseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: 目标修订号；省略或 0 表示当前修订的上一个。
+        wait: { type: boolean, default: false }
+        disable_hooks: { type: boolean, default: false }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        max_history: { type: integer, minimum: 0, maximum: 100 }
+        description: { type: string, maxLength: 256 }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
+    HelmUninstallReleaseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        keep_history:
+          type: boolean
+          default: false
+          description: 删除对象但保留修订历史。保留下来的历史正是之后回滚所需要的。
+        wait: { type: boolean, default: false }
+        disable_hooks: { type: boolean, default: false }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        description: { type: string, maxLength: 256 }
+        dry_run: { type: boolean, default: false }
+        confirm: { type: boolean }
     KubernetesCreateSecretRequest:
       type: object
       additionalProperties: false
@@ -16205,6 +17086,7 @@ components:
         - kubernetes_resource
         - platform_settings
         - agent_endpoint_profile
+        - helm_repository
         - ai_session
     AuditEventPage:
       type: object

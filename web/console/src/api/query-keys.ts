@@ -123,6 +123,17 @@ export const queryKeys = {
     ["helm-release", clusterId, namespace, name, revision] as const,
   helmReleaseRevisions: (clusterId: string, namespace: string, name: string) =>
     ["helm-release-revisions", clusterId, namespace, name] as const,
+  // The chart catalogue is platform-wide, so none of these keys carry a Cluster:
+  // the same chart is the same chart everywhere, and keying it per Cluster would
+  // refetch one index per target an operator switches between.
+  helmRepositories: () => ["helm-repositories"] as const,
+  helmRepository: (repositoryId: string) => ["helm-repository", repositoryId] as const,
+  helmCharts: (repositoryId: string, search: string) =>
+    ["helm-charts", repositoryId, search] as const,
+  helmChart: (repositoryId: string, chart: string, version: string) =>
+    ["helm-chart", repositoryId, chart, version] as const,
+  helmChartVersions: (repositoryId: string, chart: string) =>
+    ["helm-chart-versions", repositoryId, chart] as const,
   secrets: (clusterId: string, namespace: string, params: Record<string, unknown> = {}) =>
     ["secrets", clusterId, namespace, params] as const,
   secret: (clusterId: string, namespace: string, name: string) =>
@@ -227,6 +238,11 @@ export const queryKeyPrefixes = {
   genericResource: ["generic-resource"] as const,
   policyResources: ["policy-resources"] as const,
   policyResource: ["policy-resource"] as const,
+  helmRepositories: ["helm-repositories"] as const,
+  helmRepository: ["helm-repository"] as const,
+  helmReleases: ["helm-releases"] as const,
+  helmRelease: ["helm-release"] as const,
+  helmReleaseRevisions: ["helm-release-revisions"] as const,
   auditEvents: ["audit-events"] as const,
   aiSessions: ["ai-sessions"] as const,
   aiAttachments: ["ai-attachments"] as const,

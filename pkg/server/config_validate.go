@@ -45,6 +45,8 @@ const (
 	maxPendingPodExecSessions     = 100_000
 	maxResourceWatchStreams       = 4096
 	maxResourceWatchRequests      = 100_000
+	maxHelmStreams                = 16
+	maxHelmRequests               = 4096
 	maxPodAccessSessions          = 100_000
 	maxPodAccessConnections       = 100_000
 	maxAIOpsTurnTimeout           = 2 * time.Hour
@@ -655,6 +657,7 @@ func (cfg Config) validateAgentListener() error {
 		{cfg.AgentListener.PodExecRequestTimeout, maxPodLogsTimeout, "Agent Pod Exec request timeout"},
 		{cfg.AgentListener.PodExecSessionTTL, time.Minute, "Pod Exec pending session TTL"},
 		{cfg.AgentListener.ResourceWatchRequestTimeout, maxPodLogsTimeout, "Agent Resource Watch request timeout"},
+		{cfg.AgentListener.HelmRequestTimeout, maxPodLogsTimeout, "Agent Helm request timeout"},
 		{cfg.AgentListener.ConnectionDrainTimeout, maxShutdownTimeout, "Agent Connection drain timeout"},
 	}); err != nil {
 		return err
@@ -783,6 +786,20 @@ func (cfg Config) validateAgentListener() error {
 		return fmt.Errorf(
 			"Server Resource Watch request limit must be between the per-connection limit and %d",
 			maxResourceWatchRequests,
+		)
+	}
+	if cfg.AgentListener.MaxHelmStreams <= 0 ||
+		cfg.AgentListener.MaxHelmStreams > maxHelmStreams {
+		return fmt.Errorf(
+			"Agent per-connection Helm Stream limit must be between 1 and %d",
+			maxHelmStreams,
+		)
+	}
+	if cfg.AgentListener.MaxHelmRequests < cfg.AgentListener.MaxHelmStreams ||
+		cfg.AgentListener.MaxHelmRequests > maxHelmRequests {
+		return fmt.Errorf(
+			"Server Helm request limit must be between the per-connection limit and %d",
+			maxHelmRequests,
 		)
 	}
 	return nil

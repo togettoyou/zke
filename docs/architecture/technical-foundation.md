@@ -798,7 +798,11 @@ Secret 中的 Listener CA 专门用于 QUIC/mTLS 长连接。特殊部署可用 
 两类地址和信任根相互独立，不应隐式派生或混用。配置文件不保存私钥与 Token 正文。
 
 Server 可按配置生成完整的 Agent 安装 Manifest，包括 Token/Trust Secret、ConfigMap、ServiceAccount、
-Role/RoleBinding、Deployment 和指标摄取端点的 ClusterIP Service。仓库的 Helm Chart 用于部署 ZKE Server 与
+Role/RoleBinding、Deployment 和指标摄取端点的 ClusterIP Service。Agent 绑定的 ClusterRole 是一个聚合角色：
+ZKE 自己那份显式权限清单放在 `zke-agent-base` 里并带上 `zke.io/aggregate-to-agent: "true"`，集群管理员可以创建
+自己的 ClusterRole、打上同一个标签来扩展它。这条口子是为 Helm 留的——Chart 会创建它声明的任何类型，而清单
+之外的类型会被 Kubernetes 拒绝；把清单放宽到覆盖一切等于在每个集群里永久发出一份无差别授权，聚合则让这份扩展
+由集群管理员自己做出、写在他们自己的集群里、可以随时收回。仓库的 Helm Chart 用于部署 ZKE Server 与
 PostgreSQL，不替代这份按目标 Cluster 和一次性 Enrollment 动态生成的 Agent 资源包；资源包不创建 PVC 或
 identity Secret。
 

@@ -142,6 +142,19 @@ export type KubernetesSecretDetail = Schemas["KubernetesSecretDetail"];
 export type KubernetesHelmRelease = Schemas["KubernetesHelmRelease"];
 export type KubernetesHelmReleasePage = Schemas["KubernetesHelmReleasePage"];
 export type KubernetesHelmReleaseDetail = Schemas["KubernetesHelmReleaseDetail"];
+// The chart catalogue and the release lifecycle. They are separate from the
+// three above on purpose: those describe what Helm's storage holds, these
+// describe what may be installed and what one operation just did.
+export type HelmRepository = Schemas["HelmRepository"];
+export type HelmRepositoryPage = Schemas["HelmRepositoryPage"];
+export type HelmRepositoryRequest = Schemas["HelmRepositoryRequest"];
+export type HelmChartSummary = Schemas["HelmChartSummary"];
+export type HelmChartPage = Schemas["HelmChartPage"];
+export type HelmChartVersionSummary = Schemas["HelmChartVersionSummary"];
+export type HelmChartVersionPage = Schemas["HelmChartVersionPage"];
+export type HelmChartDetail = Schemas["HelmChartDetail"];
+export type HelmReleaseReport = Schemas["HelmReleaseReport"];
+export type HelmReleaseWriteResult = Schemas["HelmReleaseWriteResult"];
 export type KubernetesNetworkingResource = Schemas["KubernetesNetworkingResource"];
 export type KubernetesNetworkingResourceSummary = Schemas["KubernetesNetworkingResourceSummary"];
 export type KubernetesNetworkingResourceDetail = Schemas["KubernetesNetworkingResourceDetail"];

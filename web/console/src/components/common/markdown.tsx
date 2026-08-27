@@ -5,17 +5,21 @@ import { cn } from "@/lib/cn";
 import { CopyIconButton } from "./copy";
 
 /**
- * A small Markdown renderer for model answers.
+ * A small Markdown renderer.
  *
  * Written here rather than pulled in as a dependency for two reasons. The first
  * is the trust boundary: this builds React nodes and never touches
- * `dangerouslySetInnerHTML`, so a model — or a Pod log a model quoted — cannot
- * put markup, a link scheme or a script into the Console. A general Markdown
- * library would have to be paired with a sanitizer and both kept correct
- * forever. The second is scope: model answers use headings, lists, tables,
- * emphasis, inline code and fenced blocks, and that is the whole grammar
- * implemented below. Anything else renders as the literal text it was, which is
- * the honest failure mode.
+ * `dangerouslySetInnerHTML`, so neither a model — nor a Pod log it quoted, nor a
+ * chart README written by whoever published the chart — can put markup, a link
+ * scheme or a script into the Console. A general Markdown library would have to
+ * be paired with a sanitizer and both kept correct forever. The second is scope:
+ * the documents this renders use headings, lists, tables, emphasis, inline code
+ * and fenced blocks, and that is the whole grammar implemented below. Anything
+ * else renders as the literal text it was, which is the honest failure mode.
+ *
+ * It lives in `components/common` because two applications read Markdown from
+ * outside ZKE: AIOps renders what a model answered, and the Helm catalogue
+ * renders the README a chart ships.
  */
 export function Markdown({ text, className }: { text: string; className?: string }) {
   return (

@@ -30,7 +30,28 @@ const (
 	TrustSecretName      = "zke-agent-trust"
 	IdentitySecretName   = "zke-agent-identity"
 	ServiceAccountName   = "zke-agent"
-	DeploymentName       = "zke-agent"
+	// BaseClusterRoleName holds the permissions ZKE itself decided the Agent
+	// needs. The role the Agent is actually bound to is an aggregate, and this
+	// one is its first member.
+	BaseClusterRoleName = ServiceAccountName + "-base"
+	// AggregationLabel is how a Cluster operator widens what the Agent may do
+	// without ZKE handing out a blanket grant it cannot justify.
+	//
+	// It exists because of Helm. A chart installs whatever kinds it declares,
+	// and the base role below is an explicit allow-list of the kinds ZKE's own
+	// features address — so a chart that ships a CustomResourceDefinition, or
+	// creates an instance of one, is refused by Kubernetes rather than by ZKE.
+	// Widening the base role to cover every chart would mean granting the Agent
+	// everything, permanently, in every Cluster, whether or not anyone installs
+	// a chart.
+	//
+	// The aggregate is the alternative Kubernetes already has for exactly this
+	// question: a Cluster operator creates their own ClusterRole carrying the
+	// kinds their charts need, labels it with this, and Kubernetes merges it in.
+	// The grant is then theirs, written down in their Cluster, visible to
+	// `kubectl get clusterrole -l`, and removable without reinstalling anything.
+	AggregationLabel = "zke.io/aggregate-to-agent"
+	DeploymentName   = "zke-agent"
 )
 
 var (
@@ -278,7 +299,10 @@ func renderManifest(
 			Name:     ServiceAccountName,
 		},
 	}
-	clusterRole := &rbacv1.ClusterRole{
+	// The role the Agent is bound to carries no rules of its own. Kubernetes'
+	// aggregation controller fills it from every ClusterRole labelled below,
+	// starting with the base role that follows.
+	aggregateClusterRole := &rbacv1.ClusterRole{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "rbac.authorization.k8s.io/v1",
 			Kind:       "ClusterRole",
@@ -286,6 +310,26 @@ func renderManifest(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   ServiceAccountName,
 			Labels: labels,
+		},
+		AggregationRule: &rbacv1.AggregationRule{
+			ClusterRoleSelectors: []metav1.LabelSelector{{
+				MatchLabels: map[string]string{AggregationLabel: "true"},
+			}},
+		},
+	}
+	baseClusterRoleLabels := make(map[string]string, len(labels)+1)
+	for key, value := range labels {
+		baseClusterRoleLabels[key] = value
+	}
+	baseClusterRoleLabels[AggregationLabel] = "true"
+	clusterRole := &rbacv1.ClusterRole{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "rbac.authorization.k8s.io/v1",
+			Kind:       "ClusterRole",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   BaseClusterRoleName,
+			Labels: baseClusterRoleLabels,
 		},
 		// Readable resources include watch because temporary Cluster terminal
 		// roles delegate that verb. Kubernetes rejects such role creation unless
@@ -574,6 +618,7 @@ func renderManifest(
 		serviceAccount,
 		role,
 		roleBinding,
+		aggregateClusterRole,
 		clusterRole,
 		clusterRoleBinding,
 		deployment,

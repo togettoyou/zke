@@ -182,6 +182,13 @@ agent_listener:
   resource_watch_request_timeout: 30m
   max_resource_watch_streams_per_agent: 16
   max_concurrent_resource_watch_requests: 512
+  # Helm release changes have their own budgets. One at a time per Agent is
+  # deliberate: two operations on the same Release race over Helm's own storage,
+  # and the timeout is minutes because an install that waits for a rollout is
+  # doing exactly that.
+  helm_request_timeout: 15m
+  max_helm_streams_per_agent: 1
+  max_concurrent_helm_requests: 64
   # How many disconnected Agents keep a last-known status in memory, so that
   # Cluster churn cannot grow the Server heap without bound.
   max_remembered_disconnects: 4096

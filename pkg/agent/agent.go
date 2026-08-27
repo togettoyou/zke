@@ -18,6 +18,7 @@ import (
 	"github.com/togettoyou/zke/pkg/shared/identifier"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
@@ -33,6 +34,13 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		kubernetesConfig.Timeout > cfg.Connection.MaxResourceRequestTimeout {
 		kubernetesConfig.Timeout = cfg.Connection.MaxResourceRequestTimeout
 	}
+	// Helm gets its own copy of the connection, with the per-request timeout
+	// set above replaced by the Helm Stream's. An install that waits for a
+	// rollout keeps one watch open for the whole wait, and the two-minute
+	// resource timeout would end it mid-rollout and report a failure that did
+	// not happen. Helm applies its own timeout inside this bound.
+	helmKubernetesConfig := rest.CopyConfig(kubernetesConfig)
+	helmKubernetesConfig.Timeout = cfg.Connection.MaxHelmStreamTimeout
 	kubernetesClient, err := kubernetes.NewForConfig(kubernetesConfig)
 	if err != nil {
 		return errors.New("create Kubernetes typed client")
@@ -139,6 +147,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 				// takes effect on the very next write rather than on the next poll.
 				metricsCredentials,
 			),
+			helmHandler: newKubernetesHelmHandler(helmHandlerConfig{
+				RESTConfig: helmKubernetesConfig,
+				MaxTimeout: cfg.Connection.MaxHelmStreamTimeout,
+			}),
 		},
 	)
 	logger.Info("agent stopped")

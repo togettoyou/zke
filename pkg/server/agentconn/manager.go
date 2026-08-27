@@ -73,6 +73,13 @@ type Config struct {
 	ResourceWatchRequestTimeout  time.Duration
 	MaxResourceWatchStreams      int
 	MaxResourceWatchRequests     int
+	// Helm has budgets of its own because a release change is not shaped like
+	// a resource request: it takes minutes rather than seconds when it waits
+	// for a rollout, and it must not be able to hold the allowance that every
+	// ordinary read draws on.
+	HelmRequestTimeout time.Duration
+	MaxHelmStreams     int
+	MaxHelmRequests    int
 	// Metrics Ingest is the one business Stream the Agent opens. Its budgets
 	// are separate from every Server-initiated kind so that a Cluster shipping
 	// metrics cannot consume the allowance that resource requests, logs and
@@ -112,6 +119,7 @@ type Manager struct {
 	podExecAdmissions        chan struct{}
 	podPortForwardAdmissions chan struct{}
 	resourceWatchAdmissions  chan struct{}
+	helmAdmissions           chan struct{}
 	metricsIngestAdmissions  chan struct{}
 
 	mutex                sync.Mutex
@@ -179,6 +187,7 @@ type session struct {
 	podExecAdmissions        chan struct{}
 	podPortForwardAdmissions chan struct{}
 	resourceWatchAdmissions  chan struct{}
+	helmAdmissions           chan struct{}
 	businessMu               sync.Mutex
 	businessInFlight         int
 	draining                 bool
@@ -231,6 +240,9 @@ const (
 	defaultMaxPodPortForwardPodBytes    = agentprotocol.MaxPodPortForwardBytes
 	defaultMaxPodPortForwardStreams     = 4
 	defaultMaxPodPortForwardRequests    = 128
+	defaultHelmRequestTimeout           = 15 * time.Minute
+	defaultMaxHelmStreams               = 1
+	defaultMaxHelmRequests              = 64
 	defaultResourceWatchRequestTimeout  = 30 * time.Minute
 	defaultMaxResourceWatchStreams      = 16
 	defaultMaxResourceWatchRequests     = 512
@@ -270,6 +282,8 @@ var (
 	ErrResourceWatchRequestExhausted     = errors.New("Resource Watch Stream request capacity is exhausted")
 	ErrTerminalSessionCapabilityMissing  = errors.New("target Cluster Agent does not support Terminal Session Streams")
 	ErrMetricsCollectorCapabilityMissing = errors.New("target Cluster Agent does not support metrics collector management")
+	ErrHelmCapabilityMissing             = errors.New("target Cluster Agent does not support Helm release management")
+	ErrHelmRequestExhausted              = errors.New("Helm Stream request capacity is exhausted")
 )
 
 func New(
@@ -296,6 +310,15 @@ func New(
 	}
 	if config.MaxResourceRequests <= 0 {
 		config.MaxResourceRequests = defaultMaxResourceRequests
+	}
+	if config.HelmRequestTimeout <= 0 {
+		config.HelmRequestTimeout = defaultHelmRequestTimeout
+	}
+	if config.MaxHelmStreams <= 0 {
+		config.MaxHelmStreams = defaultMaxHelmStreams
+	}
+	if config.MaxHelmRequests <= 0 {
+		config.MaxHelmRequests = defaultMaxHelmRequests
 	}
 	if config.PodLogsRequestTimeout <= 0 {
 		config.PodLogsRequestTimeout = defaultPodLogsRequestTimeout
@@ -378,6 +401,7 @@ func New(
 		podExecAdmissions:        make(chan struct{}, config.MaxPodExecRequests),
 		podPortForwardAdmissions: make(chan struct{}, config.MaxPodPortForwardRequests),
 		resourceWatchAdmissions:  make(chan struct{}, config.MaxResourceWatchRequests),
+		helmAdmissions:           make(chan struct{}, config.MaxHelmRequests),
 		metricsIngestAdmissions:  make(chan struct{}, config.MaxMetricsIngestStreams),
 		connections:              make(map[string]*session),
 		connectionsByCluster:     make(map[string]*session),
@@ -682,6 +706,10 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 			chan struct{},
 			manager.config.MaxResourceWatchStreams,
 		),
+		helmAdmissions: make(
+			chan struct{},
+			manager.config.MaxHelmStreams,
+		),
 	}
 	serverCapabilities := []string{
 		agentprotocol.CapabilityCertificateRenewal,
@@ -750,6 +778,10 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityTerminalCommandV1) {
 		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityTerminalCommandV1)
 		current.capabilities[agentprotocol.CapabilityTerminalCommandV1] = struct{}{}
+	}
+	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityHelmV1) {
+		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityHelmV1)
+		current.capabilities[agentprotocol.CapabilityHelmV1] = struct{}{}
 	}
 	// Managing the collector is offered only when this Server has storage: an
 	// installed collector with nowhere to send data is worse than none.
@@ -1502,6 +1534,76 @@ func (manager *Manager) RequestMetricsCollector(
 			TimeoutMillis:   uint64(max(int64(1), time.Until(deadline).Milliseconds())),
 		},
 		request,
+	)
+}
+
+// RequestHelm asks one Cluster's Agent to run a Helm operation.
+//
+// The Server sends the chart and the values; the Agent runs Helm. An Agent that
+// does not advertise the capability is refused rather than fallen back on:
+// there is no second way to write a release that would not corrupt the history
+// the real `helm` client reads.
+func (manager *Manager) RequestHelm(
+	ctx context.Context,
+	clusterID string,
+	request *agentv1.HelmRequest,
+	values io.Reader,
+	chart io.Reader,
+	report io.Writer,
+	idempotencyKey string,
+) (*agentv1.HelmResponse, error) {
+	if ctx == nil || !validation.IsUUID(clusterID) || request == nil {
+		return nil, errors.New("Helm request is invalid")
+	}
+	if idempotencyKey != "" && !validation.IsIdempotencyKey(idempotencyKey) {
+		return nil, errors.New("Helm idempotency key is invalid")
+	}
+	manager.mutex.Lock()
+	current := manager.connectionsByCluster[clusterID]
+	manager.mutex.Unlock()
+	if current == nil || current.business == nil || !current.beginBusiness() {
+		return nil, ErrAgentNotConnected
+	}
+	defer current.endBusiness()
+	if _, supported := current.capabilities[agentprotocol.CapabilityHelmV1]; !supported {
+		return nil, ErrHelmCapabilityMissing
+	}
+	if !tryAcquire(manager.helmAdmissions) {
+		return nil, ErrHelmRequestExhausted
+	}
+	defer release(manager.helmAdmissions)
+	// The per-Agent bound defaults to one, so a second release change on the
+	// same Cluster is refused while the first is running rather than queued
+	// behind it: the caller is an HTTP request with its own deadline, and
+	// telling it to try again is more useful than holding it open.
+	if !tryAcquire(current.helmAdmissions) {
+		return nil, ErrHelmRequestExhausted
+	}
+	defer release(current.helmAdmissions)
+	requestContext, cancelRequest := context.WithTimeout(
+		ctx,
+		manager.config.HelmRequestTimeout,
+	)
+	defer cancelRequest()
+	deadline, _ := requestContext.Deadline()
+	requestID, err := streamRequestID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return agentprotocol.DoHelm(
+		requestContext,
+		current.business,
+		&agentv1.StreamHeader{
+			ProtocolVersion: agentprotocol.ProtocolVersion,
+			Kind:            agentv1.StreamKind_STREAM_KIND_HELM,
+			RequestId:       requestID,
+			TimeoutMillis:   uint64(max(int64(1), time.Until(deadline).Milliseconds())),
+			IdempotencyKey:  idempotencyKey,
+		},
+		request,
+		values,
+		chart,
+		report,
 	)
 }
 

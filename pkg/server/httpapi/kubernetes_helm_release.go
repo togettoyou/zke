@@ -25,11 +25,12 @@ import (
 // no answer anywhere else in the container service — the resource browser shows
 // the Deployments, never the release that produced them.
 //
-// These endpoints answer it and nothing more. ZKE does not install, upgrade,
-// roll back or uninstall a release: doing that correctly means running Helm's
-// own engine — hooks, ordering, the whole chart rendering pipeline — and a
-// half-implementation that wrote release Secrets itself would corrupt the
-// history the real `helm` client depends on.
+// These endpoints answer it, and only read. Changing a release — installing,
+// upgrading, rolling back, uninstalling — lives next door in
+// `helm_release_write.go`, and is a different kind of operation with a
+// different permission stack: it is executed by the Cluster's Agent running
+// Helm's own engine, because a Server that wrote release Secrets itself would
+// corrupt the history the real `helm` client depends on.
 //
 // The permission follows the storage, not the appearance. Reading a release
 // hands back the values the chart was installed with, which routinely include a

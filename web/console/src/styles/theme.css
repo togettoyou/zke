@@ -98,6 +98,8 @@
   --app-slate-to: #1e293b;
   --app-steel-from: #8c99c1;
   --app-steel-to: #485e9f;
+  --app-teal-from: #33bdb4;
+  --app-teal-to: #0d8a86;
   --app-fuchsia-from: #8fa7ee;
   --app-fuchsia-to: #2656e7;
 
@@ -112,6 +114,7 @@
   --app-rose-glow: rgb(230 26 26 / 0.42);
   --app-slate-glow: rgb(30 41 59 / 0.42);
   --app-steel-glow: rgb(72 94 159 / 0.42);
+  --app-teal-glow: rgb(13 138 134 / 0.42);
   --app-fuchsia-glow: rgb(38 86 231 / 0.42);
   --tile-highlight: rgb(255 255 255 / 0.9);
 

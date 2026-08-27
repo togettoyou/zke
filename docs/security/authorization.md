@@ -347,6 +347,7 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 | 敏感资源 | `cluster.secret.read/manage`、`cluster.rbac.read/manage`、`cluster.event.read` |
 | 节点与 Pod 操作 | `cluster.node.manage`、`cluster.node.drain`、`cluster.pod.logs.read`、`cluster.pod.exec`、`cluster.pod.port_forward`、`cluster.pod.terminal_recording.create/read`、`cluster.terminal.exec` |
 | 可观测性 | `cluster.metrics.read`、`cluster.metrics.manage` |
+| Helm | `cluster.helm.manage`（改变某个集群里的 Release）、`helm.repository.read/manage`（平台级 Chart 仓库目录） |
 | 平台管理 | `user.read/manage`、`user.password.change`、`rbac.read/manage`、`audit.read` |
 | AIOps | `ai.run`（只允许在当前 Project 创建并运行固定 Cluster 会话，不包含任何集群读取权限） |
 
@@ -507,13 +508,31 @@ values、渲染出的清单和 NOTES 都在它的 `release` 取值里。因此 `
 `kubernetes_helm_release.list`；读取某一次修订会返回 values，记为 `kubernetes_helm_release.read`。审计目标名
 沿用 Secret 家族，这样按「谁读了这个命名空间的 Secret」筛选的人不会漏掉这条路径。
 
-**当前没有写入路由。** 安装、升级、回滚与卸载需要 Helm 自己的渲染引擎——模板、Hook、执行顺序——由 ZKE 代写
-Release Secret 会破坏 `helm` 客户端依赖的历史记录，而一个只写对了一半的 Release 比没有这个功能更难收拾。这些
-能力属于规划中的独立「Helm 应用」App，随它一起设计；它们需要的权限也随之决定，不由这三条只读路由预先声明。
 列表按 Release 名归并到存储中最新的一次修订（与 `helm list` 相同），只读 Secret 的 label，不解压任何
 负载；某个 Namespace 的修订 Secret 超过一次盘点上限时返回 `422 helm_release_inventory_truncated`，而不是用
 跨页的部分结果把错误的修订认成最新。解压带上限，超过时按响应过大拒绝：Release 负载是 gzip，重复内容的膨胀
 比远大于 Secret 自身 1 MiB 的限制。只支持 Secret 存储驱动，使用 ConfigMap 或 SQL 驱动的 Release 不会出现。
+
+**写入路由的权限栈更长，每一条回答的是同一个请求的不同问题。** 安装、升级与回滚要求 `cluster.read` +
+`cluster.helm.manage` + `cluster.resource.create` + `cluster.resource.update` + `cluster.secret.manage`；卸载
+把其中的创建与更新换成 `cluster.resource.delete`。`cluster.helm.manage` 说明「可以改 Release」，它单独不够——
+一次安装真正花掉的是写对象的权限，持有 Helm 权限不会凭空变出这项能力；`cluster.secret.manage` 是必需的，因为
+Helm 的 Release 存储本身就是一个 Secret，而它保存的 values 就是这个 Secret 的内容。受保护命名空间的附加判定
+同样覆盖这四条路由：往 `kube-system` 装一个 Release 就是往 `kube-system` 写 Secret 和对象。
+
+渲染与写入由目标集群的 Agent 用 Helm 自己的引擎完成，Server 不渲染 Chart，也不代写 Release Secret——由 ZKE 拼一个
+「差不多」的实现去写 Release Secret 会破坏 `helm` 客户端依赖的历史记录。不具备该能力的 Agent 直接返回
+`424 helm_unsupported`，没有降级路径。
+
+有两件事只有渲染完成之后才知道，因此由 Agent 对**实际渲染结果**判定，而不是由 Server 对请求判定：渲染出的对象
+不得指向 Release 之外的命名空间（`helm_chart_cross_namespace`）；CRD、ClusterRole 这类不属于任何命名空间的对象
+需要该集群的 `cluster.manage`，否则指名拒绝（`helm_chart_cluster_scoped`）。这个允许标记由 Server 从权限推出并
+随请求下发，请求正文里带同名字段会被直接拒绝。
+
+可安装的 Chart 只来自平台级的仓库目录：读目录要求全局 `helm.repository.read`，增删改要求全局
+`helm.repository.manage`，没有任何接受任意地址的路由——否则「装这个 Chart」就成了让 Server 向调用方指定的地址
+发起请求的方式。仓库口令只写不读，任何接口都不返回它。四种写入各有自己的审计动作，预演（`dry_run`）与真正写入
+分开记录；目标名沿用 Secret 家族并附上 Release 名。详见[Helm 应用](../features/helm.md)。
 
 Secret 的 YAML 是一对独立路由，读要求 `cluster.secret.read`，写要求 `cluster.secret.manage`，不经过通用 YAML
 入口——后者对 Secret 的拒绝没有放开。该路由使用 Secret 服务自己的资源访问，其只接受 `core/v1 Secret`，并保留

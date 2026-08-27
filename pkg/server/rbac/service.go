@@ -48,7 +48,12 @@ var permissionScopeFloors = map[Permission]scopeType{
 	PermissionUserPasswordChange: scopeGlobal,
 	PermissionRBACRead:           scopeGlobal,
 	PermissionRBACManage:         scopeGlobal,
-	PermissionProjectCreate:      scopeTenant,
+	// The chart catalogue is one platform-wide list. A binding on a Tenant or
+	// a Project that carried these would grant nothing, because there is no
+	// per-Project catalogue for it to apply to.
+	PermissionHelmRepositoryRead:   scopeGlobal,
+	PermissionHelmRepositoryManage: scopeGlobal,
+	PermissionProjectCreate:        scopeTenant,
 }
 
 // MinimumScope reports the narrowest binding scope that can exercise a
@@ -121,11 +126,14 @@ var allPermissions = []Permission{
 	PermissionClusterSecretRead,
 	PermissionClusterSecretManage,
 	PermissionClusterConnectionRevoke,
+	PermissionClusterHelmManage,
 	PermissionUserRead,
 	PermissionUserManage,
 	PermissionUserPasswordChange,
 	PermissionRBACRead,
 	PermissionRBACManage,
+	PermissionHelmRepositoryRead,
+	PermissionHelmRepositoryManage,
 	PermissionAuditRead,
 	PermissionAIRun,
 }

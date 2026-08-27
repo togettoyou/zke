@@ -9,6 +9,9 @@
 > Phase 3 在此基础上新增了两条 Stream：Metrics Ingest（目前唯一由 Agent 发起的业务 Stream）与
 > Metrics Collector（Server 发起的短请求，用于安装、卸载与查询集群内采集组件）。设计见
 > [Phase 3 可观测性架构设计](observability-phase-3.md)；本文只记录它们在协议层的位置。
+>
+> 独立的「Helm 应用」又新增了一条 Helm Stream：Server 下发请求与 Chart 包，Agent 用 Helm 自己的引擎渲染并
+> 写入。设计见 [Helm 应用](../features/helm.md)。
 
 Agent 注册、证书和 Control Stream 的现有流程参见
 [Agent 注册与连接](agent-enrollment-and-connection.md)。系统级技术约束参见
@@ -81,6 +84,7 @@ Phase 2 使用以下业务 Stream：
 | `TERMINAL_SESSION` | Server | 短请求 | 创建或清理独立终端 App 的会话 Pod 与临时 RBAC       |
 | `METRICS_INGEST`   | Agent  | 长会话 | 集群内采集组件的指标批次回传                        |
 | `METRICS_COLLECTOR` | Server | 短请求 | 集群内采集组件的安装、卸载与状态查询               |
+| `HELM`             | Server | 长请求 | Helm Release 的安装、升级、回滚与卸载                |
 
 Agent 主动上报必须使用独立的、由 Agent 发起的 Stream 类型，不得复用 Server 发起的 Resource Stream。
 `METRICS_INGEST`（取值 40，能力 `metrics-ingest.v1`）是第一个这样的类型：Server 侧由同一个
@@ -88,6 +92,12 @@ Agent 主动上报必须使用独立的、由 Agent 发起的 Stream 类型，�
 
 `METRICS_COLLECTOR`（取值 41，能力 `metrics-collector.v1`）方向相反，由 Server 发起，与终端会话同类：
 Server 下发配置，Agent 按固定形状在自己的 Namespace 里创建或删除对象。
+
+`HELM`（取值 50，能力 `helm.v1`）也由 Server 发起，但它是这里唯一一条「请求本身携带一个大对象」的 Stream：
+Chart 包与 values 文档按消息里声明的大小跟在请求之后按字节流传输，Chart 远大于一个 64 KiB 的协议帧。它记为
+长请求而不是短请求，因为一次等待对象就绪的安装以分钟计——它有自己的超时与并发预算，默认每个 Agent 同时只执行
+一个 Release 变更：两个并发操作会在 Helm 自己的存储上竞争，而 Helm 没有锁可以阻止它们。渲染与写入由 Agent 用
+Helm 引擎完成，Server 不渲染 Chart 也不代写 Release Secret；不声明该能力的 Agent 会被直接拒绝，没有降级路径。
 
 同一条 Stream 内允许出现该业务自身需要的多种消息，例如 Pod Exec 的 stdin、stdout、stderr 和 resize。此时
 可以定义仅属于 `POD_EXEC` 的类型化帧，但这些帧仍属于同一个终端会话，不代表在 Stream 内复用多个请求。
@@ -149,6 +159,7 @@ enum StreamKind {
   STREAM_KIND_TERMINAL_SESSION = 30;
   STREAM_KIND_METRICS_INGEST = 40;
   STREAM_KIND_METRICS_COLLECTOR = 41;
+  STREAM_KIND_HELM = 50;
 }
 ```
 
@@ -182,6 +193,7 @@ pod-port-forward.v1
 terminal-session.v1
 metrics-ingest.v1
 metrics-collector.v1
+helm.v1
 ```
 
 未声明 `resource.v1` 的旧 Agent 仍可维持 Phase 1 Control Stream，Server 不得向其打开 Resource Stream；

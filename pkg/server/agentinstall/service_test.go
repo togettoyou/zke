@@ -215,7 +215,10 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	}
 
 	decoder := k8syaml.NewYAMLOrJSONDecoder(bytes.NewReader(manifest), 4096)
+	// Two ClusterRoles: the one the Agent is bound to, which carries no rules
+	// and aggregates, and the base one that carries what ZKE itself grants.
 	var clusterRole *rbacv1.ClusterRole
+	var aggregateClusterRole *rbacv1.ClusterRole
 	for {
 		var object unstructured.Unstructured
 		if err := decoder.Decode(&object); errors.Is(err, io.EOF) {
@@ -223,20 +226,42 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		}
-		if object.GetKind() != "ClusterRole" ||
-			object.GetName() != ServiceAccountName {
+		if object.GetKind() != "ClusterRole" {
 			continue
 		}
-		clusterRole = &rbacv1.ClusterRole{}
+		decoded := &rbacv1.ClusterRole{}
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(
 			object.Object,
-			clusterRole,
+			decoded,
 		); err != nil {
 			t.Fatal(err)
 		}
+		switch object.GetName() {
+		case BaseClusterRoleName:
+			clusterRole = decoded
+		case ServiceAccountName:
+			aggregateClusterRole = decoded
+		}
 	}
 	if clusterRole == nil {
-		t.Fatal("manifest has no ZKE Agent ClusterRole")
+		t.Fatal("manifest has no ZKE Agent base ClusterRole")
+	}
+	if aggregateClusterRole == nil {
+		t.Fatal("manifest has no ZKE Agent aggregate ClusterRole")
+	}
+	// The bound role must aggregate and must carry nothing itself: rules
+	// written on it would be overwritten by the aggregation controller, so a
+	// permission put there would disappear without anyone noticing.
+	if len(aggregateClusterRole.Rules) != 0 {
+		t.Errorf("aggregate ClusterRole carries %d own rules", len(aggregateClusterRole.Rules))
+	}
+	if aggregateClusterRole.AggregationRule == nil ||
+		len(aggregateClusterRole.AggregationRule.ClusterRoleSelectors) != 1 ||
+		aggregateClusterRole.AggregationRule.ClusterRoleSelectors[0].MatchLabels[AggregationLabel] != "true" {
+		t.Fatal("aggregate ClusterRole does not select the aggregation label")
+	}
+	if clusterRole.Labels[AggregationLabel] != "true" {
+		t.Error("base ClusterRole is not labelled for aggregation")
 	}
 
 	workloadVerbs := []string{"get", "list", "watch", "create", "update", "patch", "delete"}

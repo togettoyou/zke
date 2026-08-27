@@ -23,6 +23,11 @@ enum StreamKind {
   // Opened by the Agent, not the Server.
   STREAM_KIND_METRICS_INGEST = 40;
   STREAM_KIND_METRICS_COLLECTOR = 41;
+  // Helm release lifecycle. It is its own kind rather than a Resource verb
+  // because the Agent runs Helm's own engine over it: one request renders a
+  // chart, writes many objects and rewrites Helm's release history, which no
+  // single-object Resource request describes.
+  STREAM_KIND_HELM = 50;
 }
 
 enum ResultCode {
