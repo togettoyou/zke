@@ -31,34 +31,40 @@ const (
 	maxAgentHeartbeatTimeout      = 15 * time.Minute
 	maxAgentLastSeenWriteInterval = 15 * time.Minute
 	maxAgentPKIValidity           = 30 * 365 * 24 * time.Hour
-	maxDatabaseConnections        = 512
-	maxConcurrentAgents           = 100_000
-	maxRememberedDisconnects      = 1_000_000
-	maxResourceBodyBytes          = 1024 * 1024 * 1024
-	maxBufferedResourceBytes      = 8 * 1024 * 1024 * 1024
-	maxResourceStreams            = 4096
-	maxResourceRequests           = 1_000_000
-	maxPodLogsTimeout             = time.Hour
-	maxPodLogsStreams             = 4096
-	maxPodLogsRequests            = 100_000
-	maxPodAccessSessionTTL        = time.Hour
-	maxPendingPodExecSessions     = 100_000
-	maxResourceWatchStreams       = 4096
-	maxResourceWatchRequests      = 100_000
-	maxHelmStreams                = 16
-	maxHelmRequests               = 4096
-	maxPodAccessSessions          = 100_000
-	maxPodAccessConnections       = 100_000
-	maxAIOpsTurnTimeout           = 2 * time.Hour
-	maxAIOpsApprovalTimeout       = time.Hour
-	maxAIOpsRetryDelay            = 5 * time.Minute
-	maxAIOpsSteps                 = 1_000
-	maxAIOpsToolCalls             = 10_000
-	maxAIOpsParallelToolCalls     = 64
-	maxAIOpsRepeatedCalls         = 100
-	maxAIOpsRetries               = 20
-	maxAIOpsSummaryTokens         = 65_536
-	maxAIOpsToolResultChars       = 1_000_000
+	// An index held for longer than a day stops being a cache and becomes a
+	// snapshot: charts published in between are invisible, and nobody browsing
+	// the catalogue would guess why.
+	maxHelmIndexTTL = 24 * time.Hour
+	// Enough for a handful of the largest archives the Server will transfer.
+	minHelmCacheBytes         = 64 << 20
+	maxDatabaseConnections    = 512
+	maxConcurrentAgents       = 100_000
+	maxRememberedDisconnects  = 1_000_000
+	maxResourceBodyBytes      = 1024 * 1024 * 1024
+	maxBufferedResourceBytes  = 8 * 1024 * 1024 * 1024
+	maxResourceStreams        = 4096
+	maxResourceRequests       = 1_000_000
+	maxPodLogsTimeout         = time.Hour
+	maxPodLogsStreams         = 4096
+	maxPodLogsRequests        = 100_000
+	maxPodAccessSessionTTL    = time.Hour
+	maxPendingPodExecSessions = 100_000
+	maxResourceWatchStreams   = 4096
+	maxResourceWatchRequests  = 100_000
+	maxHelmStreams            = 16
+	maxHelmRequests           = 4096
+	maxPodAccessSessions      = 100_000
+	maxPodAccessConnections   = 100_000
+	maxAIOpsTurnTimeout       = 2 * time.Hour
+	maxAIOpsApprovalTimeout   = time.Hour
+	maxAIOpsRetryDelay        = 5 * time.Minute
+	maxAIOpsSteps             = 1_000
+	maxAIOpsToolCalls         = 10_000
+	maxAIOpsParallelToolCalls = 64
+	maxAIOpsRepeatedCalls     = 100
+	maxAIOpsRetries           = 20
+	maxAIOpsSummaryTokens     = 65_536
+	maxAIOpsToolResultChars   = 1_000_000
 )
 
 // boundedDuration describes a duration that must be positive and capped.
@@ -120,6 +126,7 @@ func (cfg Config) Validate() error {
 		cfg.validateAgentInstall,
 		cfg.validateAgentEnrollment,
 		cfg.validateAgentListener,
+		cfg.validateHelm,
 		cfg.validateObservability,
 		cfg.validateAIOps,
 		cfg.validateRetention,
@@ -129,6 +136,34 @@ func (cfg Config) Validate() error {
 		if err := validate(); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateHelm checks the chart cache. An empty directory is allowed and means
+// the cache is off; anything else has to be usable, because a bound that cannot
+// evict or a TTL that never expires is worse than no cache at all.
+func (cfg Config) validateHelm() error {
+	cache := cfg.Helm.Cache
+	if strings.TrimSpace(cache.Directory) == "" {
+		return nil
+	}
+	if cache.Directory != strings.TrimSpace(cache.Directory) {
+		return errors.New("Helm cache directory must not contain surrounding whitespace")
+	}
+	if cache.IndexTTL <= 0 || cache.IndexTTL > maxHelmIndexTTL {
+		return fmt.Errorf(
+			"Helm cache index TTL must be greater than zero and not exceed %s",
+			maxHelmIndexTTL,
+		)
+	}
+	// Below one chart archive the cache would evict every entry as it wrote it,
+	// which costs a disk write per download and saves nothing.
+	if cache.MaxBytes < minHelmCacheBytes {
+		return fmt.Errorf(
+			"Helm cache size must be at least %d bytes",
+			minHelmCacheBytes,
+		)
 	}
 	return nil
 }

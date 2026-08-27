@@ -331,10 +331,22 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	helmService, err := helm.NewService(
 		store.NewHelmRepositoryStore(database),
 		agentConnectionManager,
-		"zke-server/"+buildinfo.Version(),
+		helm.Options{
+			UserAgent:      "zke-server/" + buildinfo.Version(),
+			CacheDirectory: cfg.Helm.Cache.Directory,
+			MaxCacheBytes:  int64(cfg.Helm.Cache.MaxBytes),
+			IndexTTL:       cfg.Helm.Cache.IndexTTL,
+			Logger:         logger,
+		},
 	)
 	if err != nil {
 		return err
+	}
+	// Repositories deleted while this Server was down left their cached
+	// indexes and archives behind. Reconciling once at startup is where that is
+	// noticed; it costs one directory listing and never blocks the boot.
+	if err := helmService.PruneCache(ctx); err != nil {
+		logger.Warn("could not prune the Helm chart cache", "error", err.Error())
 	}
 	agentManagementService := agentmanagement.NewService(
 		store.NewAgentManagementStore(database),

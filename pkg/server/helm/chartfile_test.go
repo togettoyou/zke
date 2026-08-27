@@ -194,9 +194,12 @@ func TestChartArchiveIsDownloadedOncePerBrowsingSession(t *testing.T) {
 	}
 }
 
-// A release write fetches the bytes it is about to apply rather than a copy the
-// catalogue happened to still be holding.
-func TestReleaseWriteDoesNotUseTheChartCache(t *testing.T) {
+// A release write reuses the archive already on disk.
+//
+// This is the whole point of caching one: installing a chart an operator just
+// read through should not download it a second time, and the version it is
+// installing is the version they were reading.
+func TestReleaseWriteReusesTheCachedArchive(t *testing.T) {
 	t.Parallel()
 
 	server := newRepositoryServer(t, chartArchive(t, "demo", "1.2.0"))
@@ -217,29 +220,7 @@ func TestReleaseWriteDoesNotUseTheChartCache(t *testing.T) {
 	if len(agent.chart) == 0 {
 		t.Fatal("Install() sent no chart archive")
 	}
-	if downloads := chartDownloads(server); downloads != 2 {
-		t.Fatalf("chart was downloaded %d times, want 2", downloads)
-	}
-}
-
-func TestIsTextFile(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]struct {
-		data []byte
-		want bool
-	}{
-		"empty":            {[]byte{}, true},
-		"ascii":            {[]byte("replicaCount: 1\n"), true},
-		"utf8":             {[]byte("描述: 一个 Chart\n"), true},
-		"nul byte":         {[]byte("ok\x00then"), false},
-		"invalid utf8":     {[]byte{0xff, 0xfe, 0xfd}, false},
-		"long utf8":        {[]byte(strings.Repeat("好", 20000)), true},
-		"binary past head": {append([]byte(strings.Repeat("a", 9000)), 0x00), true},
-	}
-	for name, testCase := range cases {
-		if got := isTextFile(testCase.data); got != testCase.want {
-			t.Errorf("isTextFile(%s) = %v, want %v", name, got, testCase.want)
-		}
+	if downloads := chartDownloads(server); downloads != 1 {
+		t.Fatalf("chart was downloaded %d times, want 1", downloads)
 	}
 }

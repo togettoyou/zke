@@ -30,6 +30,7 @@ type Config struct {
 	AgentInstall    AgentInstallConfig    `yaml:"agent_install"`
 	AgentEnrollment AgentEnrollmentConfig `yaml:"agent_enrollment"`
 	AgentListener   AgentListenerConfig   `yaml:"agent_listener"`
+	Helm            HelmConfig            `yaml:"helm"`
 	Observability   ObservabilityConfig   `yaml:"observability"`
 	AIOps           AIOpsConfig           `yaml:"aiops"`
 	Retention       RetentionConfig       `yaml:"retention"`
@@ -210,6 +211,32 @@ type AIOpsToolResultConfig struct {
 	ThresholdChars int `yaml:"threshold_chars"`
 	HeadChars      int `yaml:"head_chars"`
 	TailChars      int `yaml:"tail_chars"`
+}
+
+// HelmConfig owns what the chart catalogue keeps on this Server's disk.
+type HelmConfig struct {
+	Cache HelmCacheConfig `yaml:"cache"`
+}
+
+// HelmCacheConfig is the on-disk copy of what chart repositories published.
+//
+// Without it every catalogue page and every chart opened is a request to the
+// repository, a restart throws away everything, and a repository that is slow
+// or unreachable makes the Console slow or empty. Directory may be left blank
+// to turn the cache off, which is the old behaviour and not recommended.
+type HelmCacheConfig struct {
+	Directory string `yaml:"directory"`
+	// IndexTTL is how long a repository index is used before the repository is
+	// asked about it again — a conditional request, so an index that has not
+	// changed costs a 304 and no re-parse rather than another download. It is
+	// not how long the copy on disk is kept, which is until the repository is
+	// edited or deleted; it is only how long a newly published chart may stay
+	// invisible, and the Console can force the read at any time.
+	IndexTTL time.Duration `yaml:"index_ttl"`
+	// MaxBytes bounds the cached chart archives. Indexes are not counted: they
+	// are small next to the archives, and they are what keeps a catalogue
+	// readable when its repository is not.
+	MaxBytes uint64 `yaml:"max_bytes"`
 }
 
 type AgentInstallConfig struct {
@@ -439,6 +466,13 @@ func DefaultConfig() Config {
 			Monitor: AgentPKIMonitorConfig{
 				WarnBefore:    7 * 24 * time.Hour,
 				CheckInterval: time.Hour,
+			},
+		},
+		Helm: HelmConfig{
+			Cache: HelmCacheConfig{
+				Directory: "data/helm",
+				IndexTTL:  time.Hour,
+				MaxBytes:  2 << 30,
 			},
 		},
 		Retention: RetentionConfig{

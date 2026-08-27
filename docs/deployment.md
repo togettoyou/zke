@@ -184,8 +184,11 @@ ZKE 的配置分两层：Server 启动前必须确定的引导配置，和启动
 
 要改其余字段（例如启用原生 HTTPS、调整会话超时），挂载一份自定义 YAML 覆盖容器内的
 `/etc/zke/zke-server.yaml`，例如 `-v "$(pwd)/zke-server.yaml:/etc/zke/zke-server.yaml:ro"`。未出现在文件中的键
-沿用内置默认值，只写要改的部分即可。Helm Chart 用 ConfigMap 生成同一路径的文件，当前只写入 `agent_pki` 与
-`agent_install`，其余字段尚未通过 values 开放。
+沿用内置默认值，只写要改的部分即可。Helm Chart 用 ConfigMap 生成同一路径的文件，当前只写入 `agent_pki`、
+`helm` 与 `agent_install`，其余字段尚未通过 values 开放。
+
+Server 的数据卷挂在 `/data`，其中 `data/pki` 是 Managed PKI 的材料，丢了会导致启动失败；`data/helm` 是
+Chart 仓库缓存（索引与 Chart 包），随时可以删除，只会让下一次浏览目录重新联网。
 
 平台默认端点由 `agent_install` 的两项配套提供；均为空时使用「本机回环预览」。Server 每次启动都按当前有效配置
 重新同步部署端点，Console 不能修改、删除或另设平台默认端点。

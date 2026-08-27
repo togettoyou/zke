@@ -758,3 +758,50 @@ log_level: debug
 		t.Fatal("LoadConfig() accepted multiple YAML documents")
 	}
 }
+
+// The chart cache is on by default. Its whole purpose is to keep the catalogue
+// off the network, and a default of "off" would mean nobody who did not read
+// the config file ever gets that.
+func TestHelmCacheDefaultsAreUsable(t *testing.T) {
+	t.Parallel()
+
+	cache := DefaultConfig().Helm.Cache
+	if cache.Directory != "data/helm" {
+		t.Fatalf("default cache directory = %q, want data/helm", cache.Directory)
+	}
+	if cache.IndexTTL != time.Hour {
+		t.Fatalf("default index TTL = %s, want 1h", cache.IndexTTL)
+	}
+	if cache.MaxBytes < minHelmCacheBytes {
+		t.Fatalf("default cache size = %d, want at least %d", cache.MaxBytes, minHelmCacheBytes)
+	}
+	if err := DefaultConfig().validateHelm(); err != nil {
+		t.Fatalf("the default cache is invalid: %v", err)
+	}
+}
+
+func TestHelmCacheValidation(t *testing.T) {
+	t.Parallel()
+
+	// Blank turns the cache off, which is a supported choice and not an error.
+	cfg := DefaultConfig()
+	cfg.Helm.Cache.Directory = ""
+	if err := cfg.validateHelm(); err != nil {
+		t.Fatalf("a disabled cache was rejected: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"whitespace directory": func(c *Config) { c.Helm.Cache.Directory = " data/helm " },
+		// A TTL of zero would revalidate on every request; one of a week would
+		// make the catalogue a snapshot nobody could explain.
+		"zero index TTL":  func(c *Config) { c.Helm.Cache.IndexTTL = 0 },
+		"huge index TTL":  func(c *Config) { c.Helm.Cache.IndexTTL = 8 * 24 * time.Hour },
+		"cache too small": func(c *Config) { c.Helm.Cache.MaxBytes = 1 },
+	} {
+		cfg := DefaultConfig()
+		mutate(&cfg)
+		if err := cfg.validateHelm(); err == nil {
+			t.Errorf("validateHelm() accepted %s", name)
+		}
+	}
+}

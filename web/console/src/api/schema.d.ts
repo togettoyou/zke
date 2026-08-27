@@ -2100,8 +2100,10 @@ export interface paths {
         /**
          * @description 列出一个仓库发布的 Chart，每个只返回最新版本，要求 `helm.repository.read`。
          *
-         *     Server 会按需拉取该仓库的 `index.yaml` 并在内存中缓存数分钟，`fetched_at` 说明这
-         *     份目录是什么时候读到的。`total` 是过滤与分页之前的 Chart 总数。
+         *     Server 把每个仓库的 `index.yaml` 存在磁盘上（`data/helm/<repository_id>/`），
+         *     并在内存中保留解析结果；过期后用条件请求向仓库确认，未变更的索引只花一次 304。
+         *     `fetched_at` 是仓库最后一次确认这份索引的时间；仓库读不到时返回磁盘副本并置
+         *     `stale`。`total` 是过滤与分页之前的 Chart 总数。
          */
         get: operations["listHelmCharts"];
         put?: never;
@@ -2125,9 +2127,10 @@ export interface paths {
          * @description 丢弃该仓库索引的服务端缓存，重新拉取一次，并返回刷新后的 Chart 列表。
          *     要求 `helm.repository.read`。
          *
-         *     Server 会把每个仓库的 `index.yaml` 在内存中缓存数分钟，因此刚发布的 Chart 不会立刻
-         *     出现。这条接口是显式重读的入口：它不改变任何存储状态，只是丢掉 Server 自己持有的派生
-         *     数据，再发起一次与缓存过期时相同的上游请求，所以要求的是读权限而不是管理权限。
+         *     Server 会缓存每个仓库的 `index.yaml`，因此刚发布的 Chart 不会立刻出现。这条接口是显式
+         *     重读的入口：它无条件重新拉取索引——不带 If-None-Match，因为发起它的人正是在说不信任
+         *     手上这份，而条件请求会让仓库回 304 并原样留下它。它不改变任何存储状态，也不丢弃已缓存
+         *     的 Chart 包（一个版本的内容不会变），所以要求的是读权限而不是管理权限。
          *
          *     参数与 Chart 列表一致，便于刷新之后直接拿到当前搜索条件下的结果。
          */
@@ -5505,9 +5508,11 @@ export interface components {
             total: number;
             /**
              * Format: date-time
-             * @description Server 最后一次读取该仓库索引的时间；索引在内存中缓存数分钟。
+             * @description 仓库最后一次确认这份索引的时间——无论是发来了新的一份，还是回答它没有变化。
              */
             fetched_at: string;
+            /** @description 该列表来自 Server 的磁盘副本，因为仓库当前读不到。目录仍然可用， 但内容是 `fetched_at` 那一刻的；不说明这一点，「Chart 不见了」与 「这份列表是上周的」在界面上完全一样。 */
+            stale: boolean;
         };
         HelmChartVersionSummary: {
             version: string;

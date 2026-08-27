@@ -110,6 +110,42 @@ agent_pki:
     warn_before: 168h
     check_interval: 1h
 
+helm:
+  # What chart repositories published, kept on this Server's disk. Without it
+  # every catalogue page and every chart opened is a request to the repository,
+  # a restart throws all of it away, and a repository that is slow or
+  # unreachable makes the Console slow or empty.
+  #
+  # The layout follows Helm's own cache, one directory per repository id:
+  #   data/helm/<repository-id>/index.yaml       the index, verbatim
+  #   data/helm/<repository-id>/charts/*.tgz     one file per chart version
+  #
+  # Mount this directory on a PV in a deployment, or accept that a restarted
+  # Pod re-downloads what it had. Nothing here is authoritative and nothing is
+  # secret: it can be deleted at any time and will be fetched again.
+  cache:
+    # Leave blank to turn the cache off entirely.
+    directory: data/helm
+
+    # How long an index is used before the repository is asked about it again.
+    # This is not how long the copy on disk is kept -- that is until the
+    # repository entry is edited or deleted. It is only the staleness window.
+    #
+    # The question is conditional, so a repository that has not published
+    # anything answers 304, sends no body, and the parse already in memory is
+    # reused -- for a public index that is the difference between a few hundred
+    # bytes and tens of megabytes of YAML to re-read. An hour is the default
+    # because repositories publish rarely and the Console can read the index
+    # again on demand; shorten it if charts are published continuously and
+    # someone has to see them without pressing anything.
+    index_ttl: 1h
+
+    # Bound on the cached chart archives, in bytes. Past it the least recently
+    # used archives are dropped. Indexes are not counted and never evicted: they
+    # are small, and they are what keeps a catalogue readable when its
+    # repository is not reachable.
+    max_bytes: 2147483648
+
 # Default endpoint embedded into new Agent enrollment credentials. Configure
 # both values together. Leaving both empty uses the local loopback preset.
 # Environment variables ZKE_AGENT_INSTALL_PUBLIC_HTTP_URL and

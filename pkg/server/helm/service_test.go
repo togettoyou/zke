@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/server/store"
@@ -75,6 +77,14 @@ type repositoryServer struct {
 	*httptest.Server
 	requests  []string
 	basicAuth []string
+	// indexETag, when set, makes the stub behave like a repository that
+	// supports conditional requests. indexBodies counts how many times the
+	// index was actually sent, and conditional records the validators it was
+	// asked with — the difference between revalidating an index and
+	// downloading it again.
+	indexETag   string
+	indexBodies int
+	conditional []string
 }
 
 func newRepositoryServer(t *testing.T, archive []byte) *repositoryServer {
@@ -91,6 +101,18 @@ func newRepositoryServer(t *testing.T, archive []byte) *repositoryServer {
 		}
 		switch request.URL.Path {
 		case "/index.yaml":
+			if match := request.Header.Get("If-None-Match"); match != "" {
+				server.conditional = append(server.conditional, match)
+				if server.indexETag != "" && match == server.indexETag {
+					writer.Header().Set("ETag", server.indexETag)
+					writer.WriteHeader(http.StatusNotModified)
+					return
+				}
+			}
+			if server.indexETag != "" {
+				writer.Header().Set("ETag", server.indexETag)
+			}
+			server.indexBodies++
 			fmt.Fprintf(writer, `apiVersion: v1
 entries:
   demo:
@@ -232,13 +254,32 @@ func (agent *recordingAgent) RequestHelm(
 	}, nil
 }
 
+// newTestService builds a Service with the disk cache pointed at a directory
+// that goes away with the test. It is on rather than off because it is on in
+// every deployment: a test that ran without it would be exercising a
+// configuration nobody uses.
 func newTestService(t *testing.T, repository store.HelmRepository) (*Service, *recordingAgent) {
+	t.Helper()
+	return newTestServiceWithCache(t, repository, t.TempDir())
+}
+
+func newTestServiceWithCache(
+	t *testing.T,
+	repository store.HelmRepository,
+	directory string,
+) (*Service, *recordingAgent) {
 	t.Helper()
 	agent := &recordingAgent{}
 	service, err := NewService(
 		&stubRepositoryStore{repository: repository},
 		agent,
-		"zke-server/test",
+		Options{
+			UserAgent:      "zke-server/test",
+			CacheDirectory: directory,
+			MaxCacheBytes:  64 << 20,
+			IndexTTL:       5 * time.Minute,
+			Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -322,8 +363,10 @@ func TestIndexIsCachedAndInvalidatedOnUpdate(t *testing.T) {
 	if indexReads != 1 {
 		t.Fatalf("index was read %d times, want 1", indexReads)
 	}
-	// Correcting a mistyped URL must not leave the old answer in place.
-	service.catalogue.forget(testRepositoryID)
+	// Correcting a mistyped URL must not leave the old answer in place — not in
+	// memory and not on disk, which is why this is the whole-repository
+	// invalidation rather than the parsed index alone.
+	service.forgetRepository(testRepositoryID)
 	if _, err := service.ListCharts(context.Background(), testRepositoryID, "", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -733,10 +776,10 @@ func TestHelm2IndexIsRefused(t *testing.T) {
 func TestServiceRequiresItsDependencies(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewService(nil, &recordingAgent{}, ""); err == nil {
+	if _, err := NewService(nil, &recordingAgent{}, Options{}); err == nil {
 		t.Fatal("NewService() accepted a nil store")
 	}
-	if _, err := NewService(&stubRepositoryStore{}, nil, ""); err == nil {
+	if _, err := NewService(&stubRepositoryStore{}, nil, Options{}); err == nil {
 		t.Fatal("NewService() accepted a nil Agent access")
 	}
 }

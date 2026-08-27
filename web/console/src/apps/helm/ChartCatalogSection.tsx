@@ -181,6 +181,15 @@ export function ChartCatalogSection({
             共 {charts.data?.total} 个 Chart，已展示 {charts.data?.charts.length} 个 · 索引读取于
             {charts.data ? <RelativeTime value={charts.data.fetched_at} /> : "—"}
           </p>
+          {/* A catalogue that keeps working when its repository does not is the
+              point of caching the index. Saying so is what keeps it honest: a
+              chart published since then is missing from this list, and without
+              this line that looks like the chart not existing. */}
+          {charts.data?.stale ? (
+            <Alert tone="warning">
+              暂时读不到该仓库，以下是 Server 上次读到的目录副本。此后发布的 Chart 不会出现在这里。
+            </Alert>
+          ) : null}
           <div className="min-h-0 flex-1 overflow-auto">
             <div className="grid gap-2 pb-1 @2xl:grid-cols-2 @3xl:grid-cols-3">
               {(charts.data?.charts ?? []).map((chart) => (

@@ -3,17 +3,9 @@ package helm
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/store"
@@ -21,7 +13,6 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/repo"
-	"sigs.k8s.io/yaml"
 )
 
 var (
@@ -47,40 +38,6 @@ var (
 	// charts long after moving the archives themselves into a registry, so the
 	// catalogue lists everything and none of it can be fetched.
 	ErrChartOCIUnsupported = errors.New("chart is published to an OCI registry, which ZKE does not read")
-)
-
-const (
-	// One repository index. Public indexes are large — a repository with a few
-	// hundred charts and their whole version history runs to tens of megabytes
-	// — so the bound is generous, and it is a bound rather than a stream
-	// because the index is parsed whole.
-	maxIndexBytes int64 = 64 << 20
-	// How long a fetched index is reused. Long enough that browsing a
-	// repository does not refetch it for every keystroke, short enough that a
-	// chart published minutes ago appears without an administrator doing
-	// anything.
-	indexCacheTTL = 5 * time.Minute
-	// How many repositories' indexes are held at once. A platform with more
-	// repositories than this still works; the least recently used index is
-	// refetched.
-	maxCachedIndexes = 16
-	// How long a parsed chart is reused. The same window as the index, for the
-	// same reason: a version's contents are meant to be immutable, so this
-	// bounds how long a republished version stays invisible.
-	chartCacheTTL = 5 * time.Minute
-	// How much of one chart's unpacked contents may be held. A chart is
-	// templates and defaults; one larger than this is served to the request
-	// that fetched it and then dropped rather than kept.
-	maxCachedChartBytes = 16 << 20
-	// How much the whole chart cache may hold. It is a byte budget rather than
-	// an entry count because charts differ by orders of magnitude in size, and
-	// an entry count would bound the wrong thing.
-	maxCachedChartsBytes = 32 << 20
-	// Bounds on one upstream request. They apply to the whole exchange, so a
-	// repository that accepts the connection and then never sends a body
-	// cannot hold a Server request open.
-	upstreamRequestTimeout = 60 * time.Second
-	upstreamDialTimeout    = 10 * time.Second
 )
 
 // ChartSummary is one chart as a catalogue listing shows it: the newest version
@@ -109,6 +66,11 @@ type ChartPage struct {
 	// the index is cached, and an operator who just published a chart needs to
 	// know whether they are looking at a moment before that.
 	FetchedAt time.Time `json:"fetched_at"`
+	// Stale says the repository could not be reached and this listing came from
+	// the copy on disk. The catalogue still works — that is the point of
+	// keeping one — but "this chart is missing" and "this list is from Tuesday"
+	// are different problems, and without this they look identical.
+	Stale bool `json:"stale"`
 }
 
 // ChartVersionSummary is one published version of one chart.
@@ -195,8 +157,8 @@ func (service *Service) RefreshCharts(
 	if !isUUID(repositoryID) {
 		return ChartPage{}, ErrInvalidInput
 	}
-	service.forgetRepository(repositoryID)
-	return service.ListCharts(ctx, repositoryID, search, limit)
+	service.forgetIndex(repositoryID)
+	return service.listCharts(ctx, repositoryID, search, limit, true)
 }
 
 // ListCharts reports what one repository publishes, newest version first for
@@ -207,7 +169,17 @@ func (service *Service) ListCharts(
 	search string,
 	limit int,
 ) (ChartPage, error) {
-	index, fetchedAt, err := service.catalogue.index(ctx, service, repositoryID)
+	return service.listCharts(ctx, repositoryID, search, limit, false)
+}
+
+func (service *Service) listCharts(
+	ctx context.Context,
+	repositoryID string,
+	search string,
+	limit int,
+	force bool,
+) (ChartPage, error) {
+	index, state, err := service.catalogue.index(ctx, service, repositoryID, force)
 	if err != nil {
 		return ChartPage{}, err
 	}
@@ -230,7 +202,8 @@ func (service *Service) ListCharts(
 		RepositoryID: repositoryID,
 		Charts:       make([]ChartSummary, 0, min(len(names), limit)),
 		Total:        len(names),
-		FetchedAt:    fetchedAt,
+		FetchedAt:    state.FetchedAt,
+		Stale:        state.Stale,
 	}
 	for _, name := range names {
 		if len(page.Charts) == limit {
@@ -259,7 +232,7 @@ func (service *Service) ListChartVersions(
 	repositoryID string,
 	chartName string,
 ) (ChartVersionPage, error) {
-	index, _, err := service.catalogue.index(ctx, service, repositoryID)
+	index, _, err := service.catalogue.index(ctx, service, repositoryID, false)
 	if err != nil {
 		return ChartVersionPage{}, err
 	}
@@ -339,12 +312,12 @@ func (service *Service) GetChart(
 
 // loadChart resolves a version and parses the archive, for reading.
 //
-// The parse is cached for a few minutes because browsing a chart's files is a
-// sequence of requests about the same archive, and downloading it again for
-// every file opened would put that cost on the repository. A release operation
-// does not come through here: it calls fetchChartArchive directly, so what an
-// Agent applies is the bytes this Server just fetched rather than a copy it
-// happened to still be holding.
+// The parse is cached in memory for a few minutes because browsing a chart's
+// files is a sequence of requests about one archive, and unpacking it again for
+// every file opened is work that has already been done. The archive underneath
+// comes from fetchChartArchive, which is where the disk cache is — so a release
+// operation, which needs the bytes rather than a parse of them, gets the same
+// cached archive without going through here.
 func (service *Service) loadChart(
 	ctx context.Context,
 	repositoryID string,
@@ -387,7 +360,7 @@ func (service *Service) resolveChartVersion(
 	chartName string,
 	version string,
 ) (string, error) {
-	index, _, err := service.catalogue.index(ctx, service, repositoryID)
+	index, _, err := service.catalogue.index(ctx, service, repositoryID, false)
 	if err != nil {
 		return "", err
 	}
@@ -401,6 +374,13 @@ func (service *Service) resolveChartVersion(
 // fetchChartArchive returns the chart archive bytes and the version it resolved
 // to. The bytes are what is sent to the Agent, unmodified: this Server never
 // repacks a chart, so what runs in the Cluster is what the repository published.
+//
+// A published version does not change, so the archive is kept on disk under
+// data/helm and only fetched once. That is what the index's own digest is used
+// for here: it is the repository's statement about this version, so a cached
+// file that no longer matches it is not this version any more and is fetched
+// again. A repository that publishes no digest gets the weaker guarantee the
+// cache can still make on its own — that the file is what was written there.
 func (service *Service) fetchChartArchive(
 	ctx context.Context,
 	repositoryID string,
@@ -411,13 +391,21 @@ func (service *Service) fetchChartArchive(
 	if err != nil {
 		return nil, "", err
 	}
-	index, _, err := service.catalogue.index(ctx, service, repositoryID)
+	index, _, err := service.catalogue.index(ctx, service, repositoryID, false)
 	if err != nil {
 		return nil, "", err
 	}
 	entry, err := selectChartVersion(index, chartName, version)
 	if err != nil {
 		return nil, "", err
+	}
+	if cached, found := service.cache.Chart(
+		repositoryID,
+		chartName,
+		entry.Version,
+		entry.Digest,
+	); found {
+		return cached, entry.Version, nil
 	}
 	reference := chartDownloadURL(entry)
 	if reference == "" {
@@ -443,6 +431,7 @@ func (service *Service) fetchChartArchive(
 		if err != nil {
 			return nil, "", err
 		}
+		service.cache.PutChart(repositoryID, chartName, entry.Version, body)
 		return body, entry.Version, nil
 	}
 	target, err := repo.ResolveReferenceURL(repository.URL, reference)
@@ -456,6 +445,7 @@ func (service *Service) fetchChartArchive(
 	if err != nil {
 		return nil, "", err
 	}
+	service.cache.PutChart(repositoryID, chartName, entry.Version, body)
 	return body, entry.Version, nil
 }
 
@@ -545,450 +535,4 @@ func truncateText(value string, maximum int) string {
 		return value
 	}
 	return value[:maximum]
-}
-
-// indexCache holds parsed repository indexes.
-//
-// It is in memory and per Server process on purpose. An index is derived data
-// with an authoritative upstream, so a replica with a colder cache is slower
-// and never wrong, and nothing here has to be invalidated across replicas when
-// a repository changes — the TTL does that.
-type indexCache struct {
-	mutex   sync.Mutex
-	entries map[string]*cachedIndex
-	// inflight collapses concurrent fetches of the same repository. Without it
-	// a Console opening the chart browser fires one request per panel and each
-	// of them downloads the whole index.
-	inflight map[string]*sync.WaitGroup
-}
-
-type cachedIndex struct {
-	index     *repo.IndexFile
-	fetchedAt time.Time
-	usedAt    time.Time
-}
-
-func newIndexCache() *indexCache {
-	return &indexCache{
-		entries:  make(map[string]*cachedIndex),
-		inflight: make(map[string]*sync.WaitGroup),
-	}
-}
-
-func (cache *indexCache) forget(repositoryID string) {
-	cache.mutex.Lock()
-	defer cache.mutex.Unlock()
-	delete(cache.entries, repositoryID)
-}
-
-func (cache *indexCache) index(
-	ctx context.Context,
-	service *Service,
-	repositoryID string,
-) (*repo.IndexFile, time.Time, error) {
-	if !isUUID(repositoryID) {
-		return nil, time.Time{}, ErrInvalidInput
-	}
-	for {
-		cache.mutex.Lock()
-		if entry, found := cache.entries[repositoryID]; found &&
-			time.Since(entry.fetchedAt) < indexCacheTTL {
-			entry.usedAt = time.Now()
-			index := entry.index
-			fetchedAt := entry.fetchedAt
-			cache.mutex.Unlock()
-			return index, fetchedAt, nil
-		}
-		if waiter, found := cache.inflight[repositoryID]; found {
-			cache.mutex.Unlock()
-			// Someone else is fetching. Wait for them rather than making the
-			// same request, but never past this request's own deadline.
-			done := make(chan struct{})
-			go func() {
-				waiter.Wait()
-				close(done)
-			}()
-			select {
-			case <-done:
-				continue
-			case <-ctx.Done():
-				return nil, time.Time{}, ctx.Err()
-			}
-		}
-		waiter := &sync.WaitGroup{}
-		waiter.Add(1)
-		cache.inflight[repositoryID] = waiter
-		cache.mutex.Unlock()
-
-		index, fetchedAt, err := service.fetchIndex(ctx, repositoryID)
-
-		cache.mutex.Lock()
-		delete(cache.inflight, repositoryID)
-		if err == nil {
-			cache.entries[repositoryID] = &cachedIndex{
-				index:     index,
-				fetchedAt: fetchedAt,
-				usedAt:    time.Now(),
-			}
-			cache.evictLocked()
-		}
-		cache.mutex.Unlock()
-		waiter.Done()
-		return index, fetchedAt, err
-	}
-}
-
-func (cache *indexCache) evictLocked() {
-	for len(cache.entries) > maxCachedIndexes {
-		oldestID := ""
-		var oldest time.Time
-		for id, entry := range cache.entries {
-			if oldestID == "" || entry.usedAt.Before(oldest) {
-				oldestID = id
-				oldest = entry.usedAt
-			}
-		}
-		delete(cache.entries, oldestID)
-	}
-}
-
-// chartCache holds parsed chart archives.
-//
-// It exists because reading a chart is no longer one request. The file browser
-// asks for one file at a time, and without this each of those would download
-// the whole archive from the repository again — turning a reader clicking
-// through templates into sustained traffic against somebody else's server.
-//
-// Like the index cache it is in memory and per process: an archive is derived
-// data with an authoritative upstream, so a replica with a colder cache is
-// slower and never wrong.
-type chartCache struct {
-	mutex   sync.Mutex
-	entries map[string]*cachedChart
-	// bytes is the sum of the entries' sizes, kept alongside them so eviction
-	// does not have to walk the map to know whether it is done.
-	bytes int
-}
-
-type cachedChart struct {
-	repositoryID string
-	chart        *chart.Chart
-	size         int
-	fetchedAt    time.Time
-	usedAt       time.Time
-}
-
-func newChartCache() *chartCache {
-	return &chartCache{entries: make(map[string]*cachedChart)}
-}
-
-// chartCacheKey keys on the resolved version. Callers resolve before they look,
-// so "newest" and the number it resolved to land on one entry.
-func chartCacheKey(repositoryID string, chartName string, version string) string {
-	return repositoryID + "\x00" + chartName + "\x00" + version
-}
-
-func (cache *chartCache) get(
-	repositoryID string,
-	chartName string,
-	version string,
-) (*chart.Chart, bool) {
-	if cache == nil {
-		return nil, false
-	}
-	cache.mutex.Lock()
-	defer cache.mutex.Unlock()
-	entry, found := cache.entries[chartCacheKey(repositoryID, chartName, version)]
-	if !found || time.Since(entry.fetchedAt) >= chartCacheTTL {
-		return nil, false
-	}
-	entry.usedAt = time.Now()
-	return entry.chart, true
-}
-
-func (cache *chartCache) put(
-	repositoryID string,
-	chartName string,
-	version string,
-	loaded *chart.Chart,
-) {
-	if cache == nil || loaded == nil {
-		return
-	}
-	size := chartRawBytes(loaded)
-	if size > maxCachedChartBytes {
-		return
-	}
-	cache.mutex.Lock()
-	defer cache.mutex.Unlock()
-	key := chartCacheKey(repositoryID, chartName, version)
-	if previous, found := cache.entries[key]; found {
-		cache.bytes -= previous.size
-	}
-	now := time.Now()
-	cache.entries[key] = &cachedChart{
-		repositoryID: repositoryID,
-		chart:        loaded,
-		size:         size,
-		fetchedAt:    now,
-		usedAt:       now,
-	}
-	cache.bytes += size
-	cache.evictLocked()
-}
-
-// forget drops every chart read from one repository. A repository that was
-// edited may point somewhere else or authenticate differently, so what it
-// published a moment ago is no longer an answer to the same question.
-func (cache *chartCache) forget(repositoryID string) {
-	if cache == nil {
-		return
-	}
-	cache.mutex.Lock()
-	defer cache.mutex.Unlock()
-	for key, entry := range cache.entries {
-		if entry.repositoryID != repositoryID {
-			continue
-		}
-		cache.bytes -= entry.size
-		delete(cache.entries, key)
-	}
-}
-
-func (cache *chartCache) evictLocked() {
-	for cache.bytes > maxCachedChartsBytes && len(cache.entries) > 0 {
-		oldestKey := ""
-		var oldest time.Time
-		for key, entry := range cache.entries {
-			if oldestKey == "" || entry.usedAt.Before(oldest) {
-				oldestKey = key
-				oldest = entry.usedAt
-			}
-		}
-		cache.bytes -= cache.entries[oldestKey].size
-		delete(cache.entries, oldestKey)
-	}
-}
-
-// chartRawBytes is how much memory holding this chart costs, near enough to
-// budget with: the archive's members are the bulk of it.
-func chartRawBytes(loaded *chart.Chart) int {
-	total := 0
-	for _, file := range loaded.Raw {
-		if file == nil {
-			continue
-		}
-		total += len(file.Name) + len(file.Data)
-	}
-	return total
-}
-
-// fetchIndex downloads and parses one repository's index.yaml.
-func (service *Service) fetchIndex(
-	ctx context.Context,
-	repositoryID string,
-) (*repo.IndexFile, time.Time, error) {
-	repository, err := service.enabledRepository(ctx, repositoryID)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	target := strings.TrimRight(repository.URL, "/") + "/index.yaml"
-	body, err := service.get(ctx, repository, target, maxIndexBytes)
-	if errors.Is(err, errUpstreamTooLarge) {
-		return nil, time.Time{}, unreachable(
-			"index exceeds %d bytes",
-			maxIndexBytes,
-		)
-	}
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	index := &repo.IndexFile{}
-	if err := yaml.Unmarshal(body, index); err != nil {
-		return nil, time.Time{}, unreachable("response is not a Helm repository index")
-	}
-	if index.APIVersion == "" {
-		// Helm 2's index format. It is rejected rather than half-read: its
-		// entries carry a different shape, and guessing would produce a
-		// catalogue whose versions do not resolve.
-		return nil, time.Time{}, unreachable("repository publishes a Helm 2 index, which ZKE does not read")
-	}
-	// Drop entries the index lists without usable metadata before anything
-	// downstream has to keep checking for them.
-	for name, versions := range index.Entries {
-		usable := versions[:0]
-		for _, version := range versions {
-			if version != nil && version.Metadata != nil && version.Version != "" {
-				usable = append(usable, version)
-			}
-		}
-		if len(usable) == 0 {
-			delete(index.Entries, name)
-			continue
-		}
-		index.Entries[name] = usable
-	}
-	index.SortEntries()
-	return index, time.Now().UTC(), nil
-}
-
-var errUpstreamTooLarge = errors.New("upstream response exceeds the allowed size")
-
-// unreachableError is a repository failure whose account is worth returning to
-// the administrator who configured it. The URL is theirs, the status code is
-// the repository's answer, and "could not be read" on its own would send them
-// looking at ZKE rather than at the repository.
-//
-// It implements the HTTP layer's detailed-error interface, so the detail
-// replaces the mapping's fixed message. Nothing built here ever carries a
-// credential: the credential is sent as a header, and redactError removes one
-// that a redirect put into a URL.
-type unreachableError struct {
-	detail string
-}
-
-func (err *unreachableError) Error() string  { return err.detail }
-func (err *unreachableError) Detail() string { return err.detail }
-func (err *unreachableError) Unwrap() error  { return ErrRepositoryUnreachable }
-
-func unreachable(format string, arguments ...any) error {
-	return &unreachableError{detail: fmt.Sprintf(format, arguments...)}
-}
-
-// get performs one bounded HTTP GET against a repository.
-//
-// Everything about the request is decided here rather than by a shared client:
-// the trust store, whether verification is skipped, and the credential are all
-// properties of the one repository being read, and a client shared between
-// repositories would carry one repository's settings into another's request.
-func (service *Service) get(
-	ctx context.Context,
-	repository store.HelmRepository,
-	target string,
-	maxBytes int64,
-) ([]byte, error) {
-	parsed, err := url.Parse(target)
-	if err != nil || parsed.Host == "" ||
-		(parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, unreachable(
-			"%s is not an http or https URL",
-			target,
-		)
-	}
-	client, err := service.clientFor(repository)
-	if err != nil {
-		return nil, err
-	}
-	requestContext, cancel := context.WithTimeout(ctx, upstreamRequestTimeout)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestContext, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, unreachable("%s", err)
-	}
-	request.Header.Set("User-Agent", service.userAgent)
-	request.Header.Set("Accept", "application/octet-stream, text/yaml, */*")
-	if repository.Username != "" || repository.Password != "" {
-		request.SetBasicAuth(repository.Username, repository.Password)
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		// The error carries the URL, which is fine — an administrator entered
-		// it — but never the credential, which is why it is set as a header
-		// rather than embedded in the URL.
-		return nil, unreachable("%s", redactError(err))
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-		_ = response.Body.Close()
-	}()
-	if response.StatusCode == http.StatusNotFound {
-		return nil, ErrChartNotFound
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, unreachable(
-			"repository answered %s",
-			response.Status,
-		)
-	}
-	// One byte past the ceiling on purpose: it is the difference between a body
-	// that just fits and one that does not.
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
-	if err != nil {
-		return nil, unreachable("%s", redactError(err))
-	}
-	if int64(len(body)) > maxBytes {
-		return nil, errUpstreamTooLarge
-	}
-	return body, nil
-}
-
-func (service *Service) clientFor(repository store.HelmRepository) (*http.Client, error) {
-	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   upstreamDialTimeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   upstreamDialTimeout,
-		ResponseHeaderTimeout: upstreamRequestTimeout,
-		ExpectContinueTimeout: time.Second,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConnsPerHost:   2,
-	}
-	if repository.CACertificatePEM != "" || repository.InsecureSkipTLSVerify {
-		tlsConfig := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			//nolint:gosec // Skipping verification is an explicit, stored
-			// choice by a global administrator, reported by every read of the
-			// catalogue rather than assumed.
-			InsecureSkipVerify: repository.InsecureSkipTLSVerify,
-		}
-		if repository.CACertificatePEM != "" {
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM([]byte(repository.CACertificatePEM)) {
-				return nil, unreachable("repository CA certificate is not valid PEM")
-			}
-			tlsConfig.RootCAs = pool
-		}
-		transport.TLSClientConfig = tlsConfig
-	}
-	return &http.Client{
-		Transport: transport,
-		Timeout:   upstreamRequestTimeout,
-		// A repository that redirects is followed, but not into a different
-		// scheme: an https repository whose index redirects to http would hand
-		// the credential to a plaintext hop.
-		CheckRedirect: func(request *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			if len(via) > 0 && via[0].URL.Scheme == "https" &&
-				request.URL.Scheme != "https" {
-				return errors.New("refusing redirect from https to http")
-			}
-			return nil
-		},
-	}, nil
-}
-
-// redactError keeps a credential out of a message. Go's url.Error prints the
-// URL it was given, and the credential is never in the URL — but a repository
-// that redirects can put one there, so the userinfo is removed rather than
-// trusted to be absent.
-func redactError(err error) string {
-	message := err.Error()
-	var urlError *url.Error
-	if errors.As(err, &urlError) && urlError.URL != "" {
-		if parsed, parseErr := url.Parse(urlError.URL); parseErr == nil &&
-			parsed.User != nil {
-			redacted := *parsed
-			redacted.User = url.User("redacted")
-			message = strings.ReplaceAll(message, urlError.URL, redacted.String())
-		}
-	}
-	const maximum = 512
-	if len(message) > maximum {
-		return message[:maximum] + "…"
-	}
-	return message
 }

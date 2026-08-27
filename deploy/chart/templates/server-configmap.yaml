@@ -15,6 +15,9 @@ data:
   zke-server.yaml: |
     agent_pki:
       directory: data/pki
+    helm:
+      cache:
+        directory: data/helm
     agent_install:
       {{- if and (empty $publicHTTPURL) (empty $publicQUICAddress) }}
       public_http_url: {{ printf "http://%s:%v" $serviceHost .Values.server.service.httpPort | quote }}
