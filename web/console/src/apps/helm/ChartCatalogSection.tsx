@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HintTooltip } from "@/components/ui/tooltip";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 import { ChartFileBrowser } from "./ChartFileBrowser";
 import { ChartIcon, Field } from "./form";
@@ -72,7 +73,13 @@ export function ChartCatalogSection({
     ? repositoryId
     : (enabled[0]?.id ?? "");
 
-  const term = search.trim();
+  /*
+   * The typed value reaches the query key only once it settles. Without this
+   * every keystroke was a request, and each one made the Server walk and sort
+   * the whole index — a public one runs to thousands of charts — to produce a
+   * listing that the next keystroke threw away. The input itself is not delayed.
+   */
+  const term = useDebouncedValue(search.trim());
   const charts = useHelmCharts(activeRepository || null, term);
   const refresh = useRefreshHelmCharts();
 

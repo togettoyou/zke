@@ -781,3 +781,40 @@ func TestPruneAppliesTheSizeBound(t *testing.T) {
 		t.Fatalf("%d archives left behind %d sidecars", len(archives), len(sidecars))
 	}
 }
+
+// Eviction has to know how full the cache is, and the only way to find out is
+// to walk the tree. Remembering the answer is what keeps that walk off the path
+// that installs a chart, which is the path it was on before.
+func TestCacheRemembersHowFullItIs(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	cache, err := NewCache(directory, 1<<20, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cache.stored.fits(cache.maxBytes) {
+		t.Fatal("a cache that has never been looked at claimed to know its size")
+	}
+
+	cache.PutChart(testRepositoryID, "demo", "1.0.0", CachedChart{Archive: make([]byte, 4096)})
+	cache.PutChart(testRepositoryID, "demo", "2.0.0", CachedChart{Archive: make([]byte, 4096)})
+	if !cache.stored.fits(cache.maxBytes) {
+		t.Fatal("the running total was not established by storing a chart")
+	}
+	if cache.stored.bytes != 8192 {
+		t.Fatalf("running total = %d, want 8192", cache.stored.bytes)
+	}
+
+	// A removal whose size is known is subtracted; one that takes a whole
+	// directory gives up on the total instead of leaving it wrong in the one
+	// direction that would miss an eviction.
+	cache.removeChart(testRepositoryID, cache.chartPath(testRepositoryID, "demo", "1.0.0"))
+	if cache.stored.bytes != 4096 {
+		t.Fatalf("running total after a removal = %d, want 4096", cache.stored.bytes)
+	}
+	cache.Forget(testRepositoryID)
+	if cache.stored.fits(cache.maxBytes) {
+		t.Fatal("the total was still trusted after a whole repository was removed")
+	}
+}

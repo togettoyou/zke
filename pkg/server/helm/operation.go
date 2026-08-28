@@ -72,7 +72,12 @@ var ErrOperationIdempotencyConflict = errors.New(
 
 // OperationEvent is one line of the account, in the order it happened.
 type OperationEvent struct {
-	At time.Time `json:"at"`
+	// Seq numbers the line within its operation and never repeats. It is what
+	// makes reading the account incremental: a caller says which line it last
+	// saw and is sent what came after it, instead of the whole log again every
+	// time it asks.
+	Seq int64     `json:"seq"`
+	At  time.Time `json:"at"`
 	// Stage is which part of the pipeline produced this line, so the Console
 	// can show it against the step it belongs to rather than as flat text.
 	Stage Stage `json:"stage"`
@@ -110,8 +115,14 @@ type Operation struct {
 	Status       OperationStatus `json:"status"`
 	// Stage is the furthest stage reached, which for a failed operation is the
 	// stage it failed in.
-	Stage           Stage               `json:"stage"`
-	Events          []OperationEvent    `json:"events"`
+	Stage Stage `json:"stage"`
+	// Events is the account, or — when the caller asked for one — the part of
+	// it after the line they already had.
+	Events []OperationEvent `json:"events"`
+	// EventCursor is the newest line this operation has produced, whether or not
+	// it is still held. A caller sends it back as `after` and is answered with
+	// whatever happened since.
+	EventCursor     int64               `json:"event_cursor"`
 	EventsTruncated bool                `json:"events_truncated"`
 	Report          *helmrelease.Report `json:"report,omitempty"`
 	Failure         *OperationFailure   `json:"failure,omitempty"`
@@ -220,7 +231,7 @@ func (operations *Operations) Start(spec OperationSpec) (Operation, bool, error)
 			} else if entry.fingerprint != fingerprint {
 				return Operation{}, false, ErrOperationIdempotencyConflict
 			} else {
-				return entry.operation.clone(), true, nil
+				return entry.operation.clone(0), true, nil
 			}
 		}
 	}
@@ -249,7 +260,7 @@ func (operations *Operations) Start(spec OperationSpec) (Operation, bool, error)
 	if spec.IdempotencyKey != "" {
 		operations.byKey[spec.IdempotencyKey] = identifier
 	}
-	return entry.operation.clone(), false, nil
+	return entry.operation.clone(0), false, nil
 }
 
 // Append adds one line to an operation's account and moves it to that stage.
@@ -318,7 +329,14 @@ func (operations *Operations) Finish(
 	})
 }
 
-// Get returns one operation's whole account, for the operator who started it.
+// Get returns one operation's account, for the operator who started it.
+//
+// `after` is the last line the caller already has. Zero asks for everything,
+// which is what a first read wants; anything else is answered with only what
+// has happened since. That is the difference between a poll that costs a couple
+// of hundred bytes and one that sends the whole log back — once a second, for
+// as long as the operation runs, which for a release that waits out a rollout
+// is minutes.
 //
 // Ownership is the whole access rule here, and it is deliberately narrower than
 // the permissions that started the operation. A rendered manifest can contain a
@@ -327,18 +345,19 @@ func (operations *Operations) Finish(
 // operator who already received exactly this content, from exactly this
 // request, means reading it discloses nothing that was not already disclosed —
 // which is what makes it right to leave unaudited.
-func (operations *Operations) Get(identifier string, actorUserID string) (Operation, bool) {
+func (operations *Operations) Get(
+	identifier string,
+	actorUserID string,
+	after int64,
+) (Operation, bool) {
 	operations.mutex.Lock()
 	defer operations.mutex.Unlock()
 	operations.evictLocked(operations.now())
 	entry := operations.entries[identifier]
-	if entry == nil || !strings.Contains(entry.fingerprint, "\n"+actorUserID) {
+	if entry == nil || !operations.ownedBy(entry, actorUserID) {
 		return Operation{}, false
 	}
-	if !operations.ownedBy(entry, actorUserID) {
-		return Operation{}, false
-	}
-	return entry.operation.clone(), true
+	return entry.operation.clone(after), true
 }
 
 // List summarises this operator's operations in one Namespace, newest first.
@@ -365,8 +384,9 @@ func (operations *Operations) List(
 			!operations.ownedBy(entry, actorUserID) {
 			continue
 		}
-		summary := entry.operation.clone()
-		summary.Events = []OperationEvent{}
+		// Everything after the newest line, which is nothing: a listing is a way
+		// back to an operation, not a way to read one.
+		summary := entry.operation.clone(entry.operation.EventCursor)
 		summary.Report = nil
 		summaries = append(summaries, summary)
 	}
@@ -450,16 +470,29 @@ func (operation *Operation) appendEvent(event OperationEvent) {
 		)
 		operation.EventsTruncated = true
 	}
+	operation.EventCursor++
+	event.Seq = operation.EventCursor
 	operation.Events = append(operation.Events, event)
 }
 
-// clone hands out a copy. Callers read an operation while it is still being
-// written to, and a shared slice header is a data race the moment the log grows.
-func (operation Operation) clone() Operation {
+// clone hands out a copy carrying the lines after `after`.
+//
+// A copy because callers read an operation while it is still being written to,
+// and a shared slice header is a data race the moment the log grows. A partial
+// one because the caller usually already has the rest.
+func (operation Operation) clone(after int64) Operation {
 	copied := operation
-	if operation.Events != nil {
-		copied.Events = make([]OperationEvent, len(operation.Events))
-		copy(copied.Events, operation.Events)
+	copied.Events = []OperationEvent{}
+	// The retained lines are in order, so the ones being asked for are a suffix.
+	// Walking from the end stops at the first line the caller already has, which
+	// on a poll that arrives between two lines is the second comparison.
+	first := len(operation.Events)
+	for first > 0 && operation.Events[first-1].Seq > after {
+		first--
+	}
+	if tail := operation.Events[first:]; len(tail) > 0 {
+		copied.Events = make([]OperationEvent, len(tail))
+		copy(copied.Events, tail)
 	}
 	if operation.Report != nil {
 		report := *operation.Report

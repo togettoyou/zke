@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/togettoyou/zke/pkg/server/helm"
@@ -17,6 +18,12 @@ import (
 // second or two while a deployment runs, and calls the listing once — when a
 // window is opened — to find an operation it started before the page was
 // reloaded and would otherwise have no way back to.
+//
+// The single-operation route reads incrementally: the caller passes the line it
+// last saw as `after` and is answered with what came after it. Without that a
+// deployment that logs five hundred lines is five hundred lines re-encoded and
+// re-sent every second for as long as it runs, which is the one cost this whole
+// design would otherwise have added.
 //
 // Neither is audited, and that is a consequence of who may read them rather
 // than an omission. An operation is readable only by the operator who started
@@ -55,8 +62,16 @@ func (handler *helmOperationHandler) get(c *gin.Context) {
 			"Helm operation ID is not valid")
 		return
 	}
+	// `after` is the newest line the caller already holds, so a poll carries
+	// what has happened since rather than the whole log again. It is bounded
+	// rather than validated: a cursor past the end asks for nothing and gets
+	// nothing, which is the correct answer to it.
+	after, err := strconv.ParseInt(c.Query("after"), 10, 64)
+	if err != nil || after < 0 {
+		after = 0
+	}
 	actor, _ := httpmiddleware.Identity(c)
-	operation, found := handler.operations.Get(identifier, actor.User.ID)
+	operation, found := handler.operations.Get(identifier, actor.User.ID, after)
 	// An operation that belongs to somebody else, one that has expired and one
 	// that never existed are one answer. Telling them apart would say whether
 	// an identity is in use, which is the only thing an identity this handler

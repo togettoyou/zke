@@ -49,6 +49,69 @@ type Cache struct {
 	// arrive together often — a page that opens a chart also lists its files —
 	// and without this they race to rename over each other's temporary file.
 	writes sync.Map
+	// stored is what eviction knows about how full the cache is without going
+	// and looking. See evict.
+	stored storedBytes
+}
+
+// storedBytes is the running size of the cached archives.
+//
+// Eviction has to know the total, and the only way to learn it is to walk the
+// tree — thousands of stat calls on a cache that is holding thousands of charts.
+// Doing that after every download made the walk part of the cost of installing
+// anything, for a question whose answer is almost always "there is plenty of
+// room".
+//
+// So the total is remembered, and the walk happens only when the remembered
+// value says it might matter. The error can only ever run high: bytes are added
+// here when a chart is stored, and every path that removes them either
+// subtracts or gives up on the total entirely. A high estimate costs one walk
+// that corrects it; a low one would miss an eviction, and no path produces one.
+type storedBytes struct {
+	mutex sync.Mutex
+	// known is false until a walk has established the total — at startup, and
+	// again after a removal whose size this cannot account for.
+	known bool
+	bytes int64
+}
+
+func (stored *storedBytes) add(size int64) {
+	stored.mutex.Lock()
+	stored.bytes += size
+	stored.mutex.Unlock()
+}
+
+func (stored *storedBytes) sub(size int64) {
+	stored.mutex.Lock()
+	stored.bytes -= size
+	if stored.bytes < 0 {
+		stored.bytes = 0
+	}
+	stored.mutex.Unlock()
+}
+
+// forget gives up on the total. Called where what was removed cannot be
+// measured — a whole repository directory, say — so that the next check walks
+// rather than trusting a number that is now wrong in the dangerous direction.
+func (stored *storedBytes) forget() {
+	stored.mutex.Lock()
+	stored.known = false
+	stored.mutex.Unlock()
+}
+
+func (stored *storedBytes) set(total int64) {
+	stored.mutex.Lock()
+	stored.bytes = total
+	stored.known = true
+	stored.mutex.Unlock()
+}
+
+// fits reports whether the cache is known to be within the bound, and therefore
+// whether the walk can be skipped.
+func (stored *storedBytes) fits(maxBytes int64) bool {
+	stored.mutex.Lock()
+	defer stored.mutex.Unlock()
+	return stored.known && stored.bytes <= maxBytes
 }
 
 // IndexMeta is what this Server knows about a cached index besides its body.
@@ -325,6 +388,7 @@ func (cache *Cache) PutChart(
 	if !cache.storeChart(repositoryID, chartName, version, chart) {
 		return
 	}
+	cache.stored.add(int64(len(chart.Archive)))
 	// Outside the repository's lock on purpose. Eviction walks the whole cache,
 	// which is a directory tree, and holding a per-repository write lock across
 	// it would make every other write to that repository wait behind a walk of
@@ -374,16 +438,24 @@ func (cache *Cache) removeChart(repositoryID string, path string) {
 	mutex := cache.lock(repositoryID)
 	mutex.Lock()
 	defer mutex.Unlock()
-	removeChartFiles(path)
+	cache.stored.sub(removeChartFiles(path))
 }
 
-// removeChartFiles drops an archive and everything stored beside it. The three
-// are only meaningful together, so they are always removed together — a sidecar
-// left behind describes a file that is not there any more.
-func removeChartFiles(path string) {
-	_ = os.Remove(path)
+// removeChartFiles drops an archive and everything stored beside it, and
+// reports how many bytes of archive went. The three files are only meaningful
+// together, so they are always removed together — a sidecar left behind
+// describes a file that is not there any more.
+func removeChartFiles(path string) int64 {
+	var size int64
+	if info, err := os.Stat(path); err == nil {
+		size = info.Size()
+	}
+	if err := os.Remove(path); err != nil {
+		size = 0
+	}
 	_ = os.Remove(path + metadataSuffix)
 	_ = os.Remove(path + provenanceSuffix)
+	return size
 }
 
 // chartPath names the file one chart version is stored in.
@@ -422,6 +494,10 @@ func (cache *Cache) Forget(repositoryID string) {
 	if err := os.RemoveAll(cache.repositoryDirectory(repositoryID)); err != nil {
 		cache.report("remove Helm cache directory", repositoryID, err)
 	}
+	// A whole directory went and there is no telling how much of it was
+	// archives, so the running total stops being trusted rather than becoming
+	// quietly wrong.
+	cache.stored.forget()
 	// The lock stays in the map. Dropping it here would hand a concurrent
 	// writer a different mutex for the same repository, which is exactly the
 	// moment the two must not be allowed to disagree; the map holds one small
@@ -540,8 +616,14 @@ func (cache *Cache) sweepStrays(now time.Time) {
 // is installed every day should outlive one pulled once last week. Indexes are
 // not candidates — they are small, and they are the difference between a
 // catalogue that degrades when a repository is unreachable and one that empties.
+//
+// Answering "does it fit" is the expensive half, because it means walking the
+// tree. On a cache that is nowhere near its bound — which is the ordinary state
+// of one — that walk is pure cost on the path that installs a chart, so it is
+// skipped whenever the running total already says there is room. See
+// storedBytes for why that total can only err in the harmless direction.
 func (cache *Cache) evict() {
-	if cache.maxBytes <= 0 {
+	if cache.maxBytes <= 0 || cache.stored.fits(cache.maxBytes) {
 		return
 	}
 	type archive struct {
@@ -565,7 +647,13 @@ func (cache *Cache) evict() {
 		total += info.Size()
 		return nil
 	})
-	if err != nil || total <= cache.maxBytes {
+	if err != nil {
+		return
+	}
+	// Whatever the walk found is the truth, so record it whether or not
+	// anything has to go: the point of walking was to stop having to.
+	defer func() { cache.stored.set(total) }()
+	if total <= cache.maxBytes {
 		return
 	}
 	sort.Slice(archives, func(left, right int) bool {

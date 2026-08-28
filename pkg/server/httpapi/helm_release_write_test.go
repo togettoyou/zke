@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -649,5 +650,57 @@ func TestHelmWriteReportsAnUnconfiguredService(t *testing.T) {
 		`{"name":"checkout","repository_id":"3f1d8c5e-9a2b-4c7d-8e6f-1a2b3c4d5e6f","chart":"demo","confirm":true}`))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+// The Console reads a running operation once a second. It sends the line it
+// last saw, and is answered with what came after it rather than with the whole
+// log again — which for a deployment that logs its way through a rollout is the
+// difference between a poll costing a couple of hundred bytes and one costing
+// everything that has happened so far.
+func TestHelmOperationIsReadIncrementally(t *testing.T) {
+	t.Parallel()
+
+	harness := newHelmWriteHarness(t, &fakeHelmReleaseWriteService{}, &stubClusterAuthorizer{})
+	response := httptest.NewRecorder()
+	harness.router.ServeHTTP(response, helmWriteRequest(http.MethodPost, helmWriteURL,
+		`{"name":"checkout","repository_id":"3f1d8c5e-9a2b-4c7d-8e6f-1a2b3c4d5e6f","chart":"demo","confirm":true}`))
+	finished := awaitHelmOperation(t, harness, startedOperation(t, response).ID)
+	if len(finished.Events) == 0 || finished.EventCursor == 0 {
+		t.Fatalf("finished operation = %+v", finished)
+	}
+	for index, event := range finished.Events {
+		if event.Seq != int64(index+1) {
+			t.Fatalf("line %d carries sequence %d", index, event.Seq)
+		}
+	}
+
+	caughtUp := httptest.NewRecorder()
+	harness.router.ServeHTTP(caughtUp, httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("%s/%s?after=%d", helmOperationURL, finished.ID, finished.EventCursor),
+		nil,
+	))
+	if caughtUp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", caughtUp.Code, caughtUp.Body.String())
+	}
+	delta := decodeHelmOperation(t, caughtUp)
+	if len(delta.Events) != 0 {
+		t.Fatalf("a caught-up read carried %d lines", len(delta.Events))
+	}
+	// The operation itself still comes back: its status and its report are what
+	// the caller is watching for.
+	if delta.Status != finished.Status || delta.Report == nil {
+		t.Fatalf("a caught-up read lost the operation: %+v", delta)
+	}
+
+	// A cursor that is not a number is a caller mistake, not a reason to refuse
+	// the read: it asks for everything, which is what no cursor means.
+	whole := httptest.NewRecorder()
+	harness.router.ServeHTTP(whole, httptest.NewRequest(
+		http.MethodGet, helmOperationURL+"/"+finished.ID+"?after=nonsense", nil))
+	if whole.Code != http.StatusOK ||
+		len(decodeHelmOperation(t, whole).Events) != len(finished.Events) {
+		t.Fatalf("status=%d body=%s", whole.Code, whole.Body.String())
 	}
 }

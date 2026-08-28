@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, CircleDashed, LoaderCircle, X } from "lucide-react";
 
 import { useHelmOperation } from "@/api/queries/helm";
@@ -210,7 +210,21 @@ function StepGlyph({ state }: { state: StepState }) {
  * back down would make that impossible.
  */
 function OperationLog({ operation }: { operation: HelmReleaseOperation }) {
-  const lines = operation.events.filter((event) => event.message !== "");
+  // Recomputed only when the account actually grew. A poll that brought no new
+  // lines hands back the same array, so this stays the same array too, and the
+  // rows below are spared a reconcile they would have nothing to show for.
+  const lines = useMemo(
+    () => operation.events.filter((event) => event.message !== ""),
+    [operation.events],
+  );
+  // The rows themselves, memoised on the same array. React compares children by
+  // reference before it compares them element by element, so a second in which
+  // nothing was logged costs nothing here at all — which matters because a wait
+  // is mostly such seconds and this list can hold five hundred rows.
+  const rows = useMemo(
+    () => lines.map((event) => <LogLine key={event.seq} at={event.at} message={event.message} />),
+    [lines],
+  );
   const box = useRef<HTMLDivElement>(null);
   const following = useRef(true);
 
@@ -243,26 +257,31 @@ function OperationLog({ operation }: { operation: HelmReleaseOperation }) {
       {lines.length === 0 ? (
         <p className="text-subtle-foreground text-xs">等待第一条日志…</p>
       ) : (
-        <ol className="grid gap-0.5">
-          {lines.map((event, index) => (
-            <li
-              key={`${event.at}-${index}`}
-              className="zke-mono text-muted-foreground flex gap-2 text-xs leading-relaxed"
-            >
-              <span className="text-subtle-foreground zke-tnum shrink-0">
-                {clockTime(event.at)}
-              </span>
-              {/* `break-all` rather than `truncate`: a Kubernetes error names
-                  the object it is about at the end of the line, which is
-                  exactly the half a truncation would take. */}
-              <span className="min-w-0 break-all">{event.message}</span>
-            </li>
-          ))}
-        </ol>
+        <ol className="grid gap-0.5">{rows}</ol>
       )}
     </div>
   );
 }
+
+/**
+ * One line, memoised on its own text.
+ *
+ * A log this long is redrawn once a second for as long as the deployment runs,
+ * and every line but the newest is the same line it was a second ago. Keyed on
+ * the sequence number — which never repeats and never shifts, even when the
+ * middle of the log is dropped — so React can tell that for itself.
+ */
+const LogLine = memo(function LogLine({ at, message }: { at: string; message: string }) {
+  return (
+    <li className="zke-mono text-muted-foreground flex gap-2 text-xs leading-relaxed">
+      <span className="text-subtle-foreground zke-tnum shrink-0">{clockTime(at)}</span>
+      {/* `break-all` rather than `truncate`: a Kubernetes error names the object
+          it is about at the end of the line, which is exactly the half a
+          truncation would take. */}
+      <span className="min-w-0 break-all">{message}</span>
+    </li>
+  );
+});
 
 /**
  * How long the operation has been going.

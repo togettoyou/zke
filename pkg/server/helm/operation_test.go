@@ -35,7 +35,7 @@ func TestOperationRecordsProgressAndOutcome(t *testing.T) {
 	}
 
 	operations.Append(started.ID, StageResolvingChart, "resolving chart demo@latest")
-	snapshot, _ := operations.Get(started.ID, "alice")
+	snapshot, _ := operations.Get(started.ID, "alice", 0)
 	operations.Append(started.ID, StageExecuting, "creating 6 resource(s)")
 	if len(snapshot.Events) != 1 {
 		t.Fatalf("a snapshot grew after it was handed out: %+v", snapshot.Events)
@@ -46,7 +46,7 @@ func TestOperationRecordsProgressAndOutcome(t *testing.T) {
 		Revision: 3,
 		Manifest: "kind: Deployment\n",
 	}, nil)
-	finished, found := operations.Get(started.ID, "alice")
+	finished, found := operations.Get(started.ID, "alice", 0)
 	if !found || finished.Status != OperationSucceeded {
 		t.Fatalf("finished = %+v found=%v", finished, found)
 	}
@@ -63,7 +63,7 @@ func TestOperationRecordsProgressAndOutcome(t *testing.T) {
 
 	// A line arriving after the answer is dropped rather than reopening it.
 	operations.Append(started.ID, StageExecuting, "too late")
-	reread, _ := operations.Get(started.ID, "alice")
+	reread, _ := operations.Get(started.ID, "alice", 0)
 	if len(reread.Events) != len(finished.Events) {
 		t.Fatalf("the account grew after it was closed: %+v", reread.Events)
 	}
@@ -81,7 +81,7 @@ func TestOperationRecordsFailureWithItsCode(t *testing.T) {
 		Code:    "helm_chart_cross_namespace",
 		Message: `chart renders ConfigMap/stolen into Namespace "kube-system"`,
 	})
-	failed, _ := operations.Get(started.ID, "alice")
+	failed, _ := operations.Get(started.ID, "alice", 0)
 	if failed.Status != OperationFailed || failed.Failure == nil ||
 		failed.Failure.Code != "helm_chart_cross_namespace" {
 		t.Fatalf("failed = %+v", failed)
@@ -135,10 +135,10 @@ func TestOperationIsReadableOnlyByItsOperator(t *testing.T) {
 
 	operations := NewOperations()
 	started, _, _ := operations.Start(installSpec("alice"))
-	if _, found := operations.Get(started.ID, "bob"); found {
+	if _, found := operations.Get(started.ID, "bob", 0); found {
 		t.Fatal("another operator read the operation")
 	}
-	if _, found := operations.Get(started.ID, ""); found {
+	if _, found := operations.Get(started.ID, "", 0); found {
 		t.Fatal("an unidentified caller read the operation")
 	}
 	if listed := operations.List(started.ClusterID, "shop", "bob"); len(listed) != 0 {
@@ -167,7 +167,7 @@ func TestOperationLogKeepsBothEnds(t *testing.T) {
 		operations.Append(started.ID, StageExecuting, "poll "+strings.Repeat("x", index%3))
 	}
 	operations.Append(started.ID, StageExecuting, "last line")
-	account, _ := operations.Get(started.ID, "alice")
+	account, _ := operations.Get(started.ID, "alice", 0)
 	if !account.EventsTruncated {
 		t.Fatal("a log past its bound was not reported as truncated")
 	}
@@ -197,10 +197,10 @@ func TestOperationEvictionSparesWhatIsStillRunning(t *testing.T) {
 	running, _, _ := operations.Start(installSpec("alice"))
 
 	clock = clock.Add(operationRetention + time.Minute)
-	if _, found := operations.Get(done.ID, "alice"); found {
+	if _, found := operations.Get(done.ID, "alice", 0); found {
 		t.Fatal("a finished operation outlived its retention")
 	}
-	if _, found := operations.Get(running.ID, "alice"); !found {
+	if _, found := operations.Get(running.ID, "alice", 0); !found {
 		t.Fatal("a running operation was evicted")
 	}
 
@@ -233,5 +233,71 @@ func TestIsOperationIDAcceptsOnlyWhatIsIssued(t *testing.T) {
 		if IsOperationID(value) {
 			t.Errorf("IsOperationID(%q) = true", value)
 		}
+	}
+}
+
+// A running operation is read once a second for as long as it runs. Sending
+// the whole log back every time is what the cursor exists to avoid: a caller
+// says which line it has and is answered with what came after it.
+func TestOperationIsReadIncrementally(t *testing.T) {
+	t.Parallel()
+
+	operations := NewOperations()
+	started, _, _ := operations.Start(installSpec("alice"))
+	for _, message := range []string{"first", "second", "third"} {
+		operations.Append(started.ID, StageExecuting, message)
+	}
+
+	whole, _ := operations.Get(started.ID, "alice", 0)
+	if len(whole.Events) != 3 || whole.EventCursor != 3 {
+		t.Fatalf("first read = %d events, cursor %d", len(whole.Events), whole.EventCursor)
+	}
+	if whole.Events[0].Seq != 1 || whole.Events[2].Seq != 3 {
+		t.Fatalf("lines are not numbered in order: %+v", whole.Events)
+	}
+
+	// Nothing has happened since, so nothing comes back — but the operation
+	// itself still does, because its status is what the caller is watching.
+	quiet, found := operations.Get(started.ID, "alice", whole.EventCursor)
+	if !found || len(quiet.Events) != 0 || quiet.Status != OperationRunning {
+		t.Fatalf("quiet poll = %+v", quiet)
+	}
+
+	operations.Append(started.ID, StageExecuting, "fourth")
+	delta, _ := operations.Get(started.ID, "alice", whole.EventCursor)
+	if len(delta.Events) != 1 || delta.Events[0].Message != "fourth" ||
+		delta.Events[0].Seq != 4 || delta.EventCursor != 4 {
+		t.Fatalf("delta = %+v cursor=%d", delta.Events, delta.EventCursor)
+	}
+
+	// A cursor past the end asks for nothing and gets nothing, rather than
+	// being treated as an error the caller has to recover from.
+	ahead, found := operations.Get(started.ID, "alice", 9999)
+	if !found || len(ahead.Events) != 0 {
+		t.Fatalf("read past the end = %+v", ahead.Events)
+	}
+}
+
+// Truncation drops from the middle, so the numbering keeps running: a caller
+// that had line 300 is answered with 301 onwards even after the lines around
+// 200 have gone.
+func TestOperationCursorSurvivesTruncation(t *testing.T) {
+	t.Parallel()
+
+	operations := NewOperations()
+	started, _, _ := operations.Start(installSpec("alice"))
+	for range maxOperationEvents + 50 {
+		operations.Append(started.ID, StageExecuting, "line")
+	}
+	account, _ := operations.Get(started.ID, "alice", 0)
+	if account.EventCursor != int64(maxOperationEvents+50) {
+		t.Fatalf("cursor = %d", account.EventCursor)
+	}
+	last := account.Events[len(account.Events)-1].Seq
+	if last != account.EventCursor {
+		t.Fatalf("newest retained line is %d, cursor says %d", last, account.EventCursor)
+	}
+	if delta, _ := operations.Get(started.ID, "alice", last-2); len(delta.Events) != 2 {
+		t.Fatalf("delta after truncation = %d lines, want 2", len(delta.Events))
 	}
 }

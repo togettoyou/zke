@@ -2366,6 +2366,10 @@ export interface paths {
          *     `executing` 阶段的每一行是 Helm 自己的日志原文，由目标集群的 Agent 在操作进行当中
          *     转发回来，因此「正在等待哪些对象就绪」是能看见的，而不是只能等。
          *
+         *     这个接口按增量读取：把上一次响应的 `event_cursor` 作为 `after` 传回，只会拿到这之后
+         *     发生的行。一次部署可能产生几百行日志，而调用方每秒问一次，全量重发是这套设计唯一会
+         *     额外付出的代价，`after` 就是用来不付它的。
+         *
          *     只能读到自己启动的操作；不属于自己的、已经过期的与从不存在的，都回答 404。
          */
         get: operations["getHelmReleaseOperation"];
@@ -5711,6 +5715,11 @@ export interface components {
         HelmReleaseOperationStage: "" | "resolving_chart" | "validating_values" | "executing";
         /** @description 操作账目中的一行，按发生顺序排列。 */
         HelmReleaseOperationEvent: {
+            /**
+             * Format: int64
+             * @description 该行在这次操作里的序号，从 1 开始且不重复。把已经读到的最大序号作为 `after` 传回， 就只会拿到这之后发生的行。
+             */
+            seq: number;
             /** Format: date-time */
             at: string;
             stage: components["schemas"]["HelmReleaseOperationStage"];
@@ -5742,8 +5751,13 @@ export interface components {
             /** @enum {string} */
             status: "running" | "succeeded" | "failed";
             stage: components["schemas"]["HelmReleaseOperationStage"];
-            /** @description 账目本身。列表接口返回的摘要中恒为空数组：回到一次操作只需要身份与状态，完整账目 是另一个请求的事。 */
+            /** @description 账目本身，或者——当请求带了 `after` 时——它之后发生的那部分。列表接口返回的摘要中 恒为空数组：回到一次操作只需要身份与状态，完整账目是另一个请求的事。 */
             events: components["schemas"]["HelmReleaseOperationEvent"][];
+            /**
+             * Format: int64
+             * @description 这次操作到目前为止产生的最大行号，无论那一行是否还被保留。下次请求把它作为 `after` 传回即可只取增量。
+             */
+            event_cursor: number;
             /** @description 账目过长，中间被丢弃了一部分。保留的是开头与结尾——开头说明这次操作要做什么， 结尾说明它做成了没有。 */
             events_truncated: boolean;
             report?: components["schemas"]["HelmReleaseReport"];
@@ -13640,7 +13654,10 @@ export interface operations {
     };
     getHelmReleaseOperation: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 已经读到的最大行号（上一次响应的 `event_cursor`）。只返回它之后发生的行；省略或 0 表示要完整账目。超过末尾的值表示「没有新的」，不是错误。 */
+                after?: number;
+            };
             header?: never;
             path: {
                 cluster_id: components["parameters"]["ClusterID"];

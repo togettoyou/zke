@@ -1,7 +1,11 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { HelmReleaseOperation, HelmRepositoryRequest } from "../types";
+import type {
+  HelmReleaseOperation,
+  HelmReleaseOperationEvent,
+  HelmRepositoryRequest,
+} from "../types";
 import { api, csrfHeaders, idempotentHeaders, unwrap } from "../client";
 import { queryKeyPrefixes, queryKeys } from "../query-keys";
 
@@ -53,8 +57,36 @@ const OPERATION_PATH =
  * costs a map lookup, while pausing would freeze a deployment log at whatever
  * it happened to say when the window went away — and a minimised window is
  * exactly what an operator does while they wait for a rollout.
+ *
+ * What each poll costs is bounded separately, by asking only for the lines that
+ * arrived since the last one — see {@link useHelmOperation}. Without that a
+ * deployment that logs five hundred lines would re-send all five hundred every
+ * second for as long as it ran.
  */
 const OPERATION_POLL_MS = 1_000;
+
+/**
+ * How often the release list asks whether anything is still running.
+ *
+ * Five times slower than the account itself, because it is answering a
+ * different question: the banner it feeds says "something is happening here"
+ * and offers a way into the log. Noticing that five seconds late costs nothing;
+ * polling for it every second alongside the log's own poll is two requests a
+ * second for one deployment.
+ */
+const OPERATIONS_LIST_POLL_MS = 5_000;
+
+/**
+ * The most lines the Console holds for one operation.
+ *
+ * The same bound the Server applies, kept the same way — the beginning says
+ * what the operation set out to do, the end says how it went, and the middle is
+ * a thousand identical wait polls. It is needed on this side too because the
+ * Console accumulates deltas: the Server stops growing at this many, but the
+ * cursor keeps running, so an unbounded client would keep every line the Server
+ * had already let go.
+ */
+const MAX_OPERATION_EVENTS = 500;
 
 export function useHelmRepositories(enabled = true) {
   return useQuery({
@@ -465,10 +497,17 @@ export function useHelmOperation(
   operationId: string | null,
 ) {
   const queryClient = useQueryClient();
+  const queryKey = queryKeys.helmOperation(clusterId ?? "", namespace ?? "", operationId ?? "");
   const query = useQuery({
-    queryKey: queryKeys.helmOperation(clusterId ?? "", namespace ?? "", operationId ?? ""),
-    queryFn: async ({ signal }) =>
-      unwrap(
+    queryKey,
+    queryFn: async ({ signal }) => {
+      // The lines already in hand are not asked for again. The cursor comes out
+      // of the cache rather than out of a ref so that it survives everything
+      // that can remount this hook — the account is the query's data, and where
+      // it got to is part of it.
+      const previous = queryClient.getQueryData<HelmOperationResult>(queryKey);
+      const after = previous?.operation.event_cursor ?? 0;
+      const next = unwrap(
         await api.GET(OPERATION_PATH, {
           params: {
             path: {
@@ -476,10 +515,13 @@ export function useHelmOperation(
               namespace_name: namespace as string,
               operation_id: operationId as string,
             },
+            query: after > 0 ? { after } : {},
           },
           signal,
         }),
-      ),
+      );
+      return { operation: mergeOperationEvents(previous?.operation, next.operation) };
+    },
     enabled: Boolean(clusterId && namespace && operationId),
     refetchInterval: (query) =>
       query.state.data?.operation.status === "running" ? OPERATION_POLL_MS : false,
@@ -538,9 +580,45 @@ export function useHelmOperations(clusterId: string | null, namespace: string | 
     enabled: Boolean(clusterId && namespace),
     refetchInterval: (query) =>
       (query.state.data?.operations ?? []).some((item) => item.status === "running")
-        ? OPERATION_POLL_MS
+        ? OPERATIONS_LIST_POLL_MS
         : false,
   });
+}
+
+/**
+ * Joins a poll's answer onto what the previous ones established.
+ *
+ * The Server sends only the lines after the cursor it was given, so the account
+ * on screen is built here rather than re-received. A cursor that went backwards
+ * means this is not a continuation of what is in hand — a Server that forgot the
+ * operation and a caller holding a stale cache look the same from here — and
+ * what arrived is taken as the whole truth instead.
+ */
+function mergeOperationEvents(
+  previous: HelmReleaseOperation | undefined,
+  next: HelmReleaseOperation,
+): HelmReleaseOperation {
+  if (!previous || next.event_cursor < previous.event_cursor) {
+    return next;
+  }
+  if (next.events.length === 0) {
+    // Nothing new to say. Reusing the array rather than rebuilding an identical
+    // one keeps the log from re-rendering on every quiet second of a wait.
+    return { ...next, events: previous.events };
+  }
+  return { ...next, events: boundEvents([...previous.events, ...next.events]) };
+}
+
+/** Keeps both ends of an over-long log, exactly as the Server does. */
+function boundEvents(events: HelmReleaseOperationEvent[]): HelmReleaseOperationEvent[] {
+  if (events.length <= MAX_OPERATION_EVENTS) {
+    return events;
+  }
+  const head = Math.floor(MAX_OPERATION_EVENTS / 4);
+  // Whenever this trims, the Server has already trimmed too and said so — it
+  // holds the same number of lines and saw them first — so nothing here has to
+  // set `events_truncated` itself.
+  return [...events.slice(0, head), ...events.slice(events.length - (MAX_OPERATION_EVENTS - head))];
 }
 
 async function invalidateCatalogue(queryClient: ReturnType<typeof useQueryClient>) {
