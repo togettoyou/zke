@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Plus } from "lucide-react";
+import { Pencil, Plus } from "lucide-react";
 
 import {
   useCreateHelmRepository,
@@ -143,11 +143,19 @@ export function RepositorySection({ canManage }: { canManage: boolean }) {
             {
               id: "actions",
               header: "",
-              size: 120,
+              size: 88,
               cell: ({ row }) => (
-                <div className="flex justify-end gap-1">
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(row.original)}>
-                    编辑
+                /* Icon only, like every row action in the container service: the
+                   column is narrow and the word repeats down the whole page, so
+                   the label the action needs is the one screen readers get. */
+                <div className="flex justify-end gap-0.5">
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`编辑 ${row.original.name}`}
+                    onClick={() => setEditing(row.original)}
+                  >
+                    <Pencil />
                   </Button>
                   {/* The button opens the confirmation; it does not delete.
                       Wiring it straight to the mutation is one click away from

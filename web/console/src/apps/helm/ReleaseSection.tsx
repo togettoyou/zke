@@ -148,50 +148,59 @@ export function ReleaseSection({
             {
               id: "actions",
               header: "",
-              size: 210,
+              size: 112,
               cell: ({ row }) => (
                 /* The row itself opens the release, so every button here has to
                    stop the click from reaching it — otherwise confirming a
-                   dialog would leave the detail page open behind it. */
+                   dialog would leave the detail page open behind it.
+
+                   Icon only, like every row action in the container service: the
+                   column is narrow, the words repeat down the whole page, and
+                   the label the action needs is the one screen readers get. */
                 <div
-                  className="flex justify-end gap-1"
+                  className="flex justify-end gap-0.5"
                   onClick={(event) => event.stopPropagation()}
                   role="presentation"
                 >
                   {access.canInstall && access.canBrowseCharts ? (
                     <Button
-                      size="sm"
+                      size="icon-sm"
                       variant="ghost"
                       onClick={() => void openUpgrade(row.original.name)}
                       disabled={upgradeTarget !== null}
                       aria-label={`升级 ${row.original.name}`}
                     >
                       <Upload />
-                      升级
                     </Button>
                   ) : null}
                   {/* A first revision has nothing behind it to go back to, and
                       Helm would refuse; the button says so by not being there. */}
                   {access.canInstall && row.original.revision > 1 ? (
                     <Button
-                      size="sm"
+                      size="icon-sm"
                       variant="ghost"
                       onClick={() => setRollbackTarget(row.original)}
                       aria-label={`回滚 ${row.original.name}`}
                     >
                       <Undo2 />
-                      回滚
                     </Button>
                   ) : null}
+                  {/* The same red as every other destructive row action. It is
+                      not a delete — the objects go, the release history goes
+                      with them — but it is the irreversible one in this row, and
+                      a colour that is only remembered in some places is a colour
+                      that is missing from the rest. Tinted rather than filled:
+                      the confirmation dialog is where the operation is
+                      guarded. */}
                   {access.canUninstall ? (
                     <Button
-                      size="sm"
+                      size="icon-sm"
                       variant="ghost"
+                      className="text-danger hover:text-danger"
                       onClick={() => setUninstallTarget(row.original.name)}
                       aria-label={`卸载 ${row.original.name}`}
                     >
                       <Trash2 />
-                      卸载
                     </Button>
                   ) : null}
                 </div>
@@ -349,8 +358,17 @@ function ReleaseDetailView({
                 升级
               </Button>
             ) : null}
+            {/* Tinted rather than filled, the way every destructive action in
+                a detail header is: the confirmation dialog is what guards the
+                operation, and a solid red button in the header only makes the
+                loudest thing on the page the one nobody came here to do. */}
             {access.canUninstall ? (
-              <Button size="sm" variant="danger" onClick={() => setUninstalling(true)}>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="text-danger"
+                onClick={() => setUninstalling(true)}
+              >
                 <Trash2 />
                 卸载
               </Button>
