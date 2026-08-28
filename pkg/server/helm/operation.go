@@ -291,6 +291,13 @@ func (operations *Operations) Finish(
 		return
 	}
 	now := operations.now()
+	// The end of one operation is the moment to release the ones before it. A
+	// finished account holds a rendered manifest — up to a megabyte — and
+	// nothing else in this registry runs on a timer, so retention is enforced
+	// whenever it is touched. The bound that always holds is the entry count;
+	// the retention window is what makes a busy Server give the memory back
+	// long before reaching it.
+	defer operations.evictLocked(now)
 	entry.operation.FinishedAt = &now
 	if failure != nil {
 		entry.operation.Status = OperationFailed

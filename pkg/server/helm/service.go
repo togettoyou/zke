@@ -110,14 +110,14 @@ func NewService(
 	}, nil
 }
 
-// PruneCache removes cached files belonging to repositories that no longer
-// exist.
+// PruneCache reconciles the cache directory with what still exists.
 //
-// Deleting a repository cleans up after itself, but only while this Server is
-// running. An entry removed straight from the database, or while the process
-// was down, would otherwise leave a directory nobody will ever look at again,
-// counting against the cache budget and outliving whatever explained it. This
-// is run once at startup, where noticing costs one directory listing.
+// It is run once at startup because everything it cleans up is the residue of a
+// process that stopped without finishing, or of a change made while none was
+// running: repositories deleted straight from the database, chart writes killed
+// between their temporary file and the rename, sidecars whose archive is gone,
+// and a cache left over whatever size bound this Server is now configured with.
+// See Cache.Prune for what each of those costs if it is left alone.
 func (service *Service) PruneCache(ctx context.Context) error {
 	if service.cache == nil {
 		return nil

@@ -79,8 +79,9 @@ type chartMeta struct {
 	// opposite meanings under a policy that requires one. An entry that was
 	// never asked is treated as a miss the first time a policy needs the answer.
 	//
-	// It does not have to survive a policy change: editing a repository forgets
-	// everything cached under it, so every archive here was fetched under the
+	// It does not have to survive a policy change: changing a repository's
+	// signing policy or its keyring forgets everything cached under it — see
+	// repositorySourceChanged — so every archive here was fetched under the
 	// policy in force now.
 	ProvenanceChecked bool `json:"provenance_checked"`
 }
@@ -111,6 +112,23 @@ const (
 	// archive under the same name, as `helm pull --prov` writes it, so an
 	// operator reading the directory sees the pair the way they expect to.
 	provenanceSuffix = ".prov"
+	// The suffix on an archive's metadata sidecar.
+	metadataSuffix = ".json"
+	// The extension the cached archives carry, and what eviction counts.
+	archiveSuffix = ".tgz"
+	// What a half-finished write is called. It is a fixed prefix rather than
+	// whatever CreateTemp likes because the startup sweep has to be able to
+	// recognise one, and a name it merely guessed at would be a name it could
+	// delete something else by.
+	temporaryFilePrefix = ".tmp-"
+	// How old a temporary file has to be before it is assumed abandoned.
+	//
+	// One only exists between a create and a rename — microseconds — so an hour
+	// is not a guess at how long a write takes, it is a margin wide enough that
+	// no live write can be inside it. The startup sweep is the only caller and
+	// nothing is writing yet when it runs; the margin is there so that a second
+	// Server sharing the directory could not have one deleted underneath it.
+	strayTemporaryAge = time.Hour
 )
 
 // NewCache prepares the cache directory. An empty directory disables caching
@@ -246,7 +264,7 @@ func (cache *Cache) Chart(
 		return CachedChart{}, false
 	}
 	path := cache.chartPath(repositoryID, chartName, version)
-	metaBytes, err := os.ReadFile(path + ".json")
+	metaBytes, err := os.ReadFile(path + metadataSuffix)
 	if err != nil {
 		return CachedChart{}, false
 	}
@@ -301,21 +319,38 @@ func (cache *Cache) PutChart(
 	version string,
 	chart CachedChart,
 ) {
-	body := chart.Archive
-	if cache == nil || !isUUID(repositoryID) || len(body) == 0 {
+	if cache == nil || !isUUID(repositoryID) || len(chart.Archive) == 0 {
 		return
 	}
+	if !cache.storeChart(repositoryID, chartName, version, chart) {
+		return
+	}
+	// Outside the repository's lock on purpose. Eviction walks the whole cache,
+	// which is a directory tree, and holding a per-repository write lock across
+	// it would make every other write to that repository wait behind a walk of
+	// everybody else's files.
+	cache.evict()
+}
+
+// storeChart performs the write itself and reports whether anything landed.
+func (cache *Cache) storeChart(
+	repositoryID string,
+	chartName string,
+	version string,
+	chart CachedChart,
+) bool {
+	body := chart.Archive
 	mutex := cache.lock(repositoryID)
 	mutex.Lock()
 	defer mutex.Unlock()
 	path := cache.chartPath(repositoryID, chartName, version)
 	if err := os.MkdirAll(filepath.Dir(path), cacheDirectoryMode); err != nil {
 		cache.report("create Helm chart cache directory", repositoryID, err)
-		return
+		return false
 	}
 	if err := writeFileAtomically(path, body); err != nil {
 		cache.report("write cached Helm chart", repositoryID, err)
-		return
+		return false
 	}
 	if len(chart.Provenance) > 0 {
 		if err := writeFileAtomically(path+provenanceSuffix, chart.Provenance); err != nil {
@@ -324,7 +359,7 @@ func (cache *Cache) PutChart(
 	} else {
 		_ = os.Remove(path + provenanceSuffix)
 	}
-	cache.writeMeta(repositoryID, path+".json", chartMeta{
+	cache.writeMeta(repositoryID, path+metadataSuffix, chartMeta{
 		Chart:             chartName,
 		Version:           version,
 		Digest:            "sha256:" + sha256Hex(body),
@@ -332,15 +367,22 @@ func (cache *Cache) PutChart(
 		FetchedAt:         time.Now().UTC(),
 		ProvenanceChecked: chart.ProvenanceChecked,
 	})
-	cache.evict()
+	return true
 }
 
 func (cache *Cache) removeChart(repositoryID string, path string) {
 	mutex := cache.lock(repositoryID)
 	mutex.Lock()
 	defer mutex.Unlock()
+	removeChartFiles(path)
+}
+
+// removeChartFiles drops an archive and everything stored beside it. The three
+// are only meaningful together, so they are always removed together — a sidecar
+// left behind describes a file that is not there any more.
+func removeChartFiles(path string) {
 	_ = os.Remove(path)
-	_ = os.Remove(path + ".json")
+	_ = os.Remove(path + metadataSuffix)
 	_ = os.Remove(path + provenanceSuffix)
 }
 
@@ -364,11 +406,12 @@ func (cache *Cache) chartPath(repositoryID string, chartName string, version str
 
 // Forget removes everything cached for one repository.
 //
-// Called when an entry is deleted, and when it is edited: a repository that
-// points somewhere else, or authenticates differently, published none of this.
-// Leaving the files behind would keep an administrator who corrected a mistyped
-// address looking at what the mistake returned, and would leave a deleted
-// repository's charts on disk with nothing left to explain them.
+// Called when an entry is deleted, and when an edit changed where it is read
+// from or on what terms: a repository that points somewhere else, or
+// authenticates differently, published none of this. Leaving the files behind
+// would keep an administrator who corrected a mistyped address looking at what
+// the mistake returned, and would leave a deleted repository's charts on disk
+// with nothing left to explain them.
 func (cache *Cache) Forget(repositoryID string) {
 	if cache == nil || !isUUID(repositoryID) {
 		return
@@ -385,16 +428,40 @@ func (cache *Cache) Forget(repositoryID string) {
 	// entry per repository this process has ever touched.
 }
 
-// Prune removes cache directories for repositories that no longer exist.
+// Prune brings the cache directory back into a state the rest of this file
+// assumes it is in.
 //
-// Deleting an entry cleans up after itself, but only while this Server is
-// running: an entry removed against the database directly, or while the process
-// was down, leaves a directory nobody will ever look at again. Reconciling once
-// at startup is where that is noticed.
+// It runs once at startup, and startup is exactly when it is needed: everything
+// it cleans up is the residue of a process that stopped without finishing, or
+// of a change made while no process was running.
+//
+//   - Directories for repositories that no longer exist. Deleting an entry
+//     cleans up after itself while this Server is running; one removed against
+//     the database directly, or while the process was down, leaves a directory
+//     nobody will ever look at again.
+//   - Half-finished writes. A chart archive is written to a temporary file and
+//     renamed, so a process killed between the two leaves a full-sized file
+//     that nothing else here can see: it is not an archive, so eviction neither
+//     counts nor removes it, and it is not a repository directory, so the
+//     reconcile above never reaches it. Left alone it is a permanent leak of
+//     exactly the largest thing the cache stores.
+//   - Sidecars whose archive is gone. Small, but they describe nothing and
+//     would never be looked at again.
+//
+// It ends by applying the size bound, which is otherwise only applied when a
+// chart is stored — so a cache that grew while `max_bytes` was larger, or that
+// was over the bound when the process died, is brought back under it now rather
+// than at the next download.
 func (cache *Cache) Prune(known []string) {
 	if cache == nil {
 		return
 	}
+	cache.pruneRepositories(known)
+	cache.sweepStrays(time.Now())
+	cache.evict()
+}
+
+func (cache *Cache) pruneRepositories(known []string) {
 	live := make(map[string]struct{}, len(known))
 	for _, id := range known {
 		live[id] = struct{}{}
@@ -419,6 +486,54 @@ func (cache *Cache) Prune(known []string) {
 	}
 }
 
+// sweepStrays removes what no read and no eviction can reach.
+//
+// A walk error on one subtree is never a reason to abandon the sweep; the rest
+// of the tree still has files nothing else will ever remove.
+func (cache *Cache) sweepStrays(now time.Time) {
+	var temporaryFiles, orphanedSidecars int
+	_ = filepath.WalkDir(cache.root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil //nolint:nilerr // see above
+		}
+		name := entry.Name()
+		switch {
+		case strings.HasPrefix(name, temporaryFilePrefix):
+			info, statErr := entry.Info()
+			// Age is what separates abandoned from in flight. Without a
+			// readable timestamp there is no way to tell them apart, so the
+			// file is left where it is.
+			if statErr != nil || now.Sub(info.ModTime()) <= strayTemporaryAge {
+				return nil
+			}
+			if os.Remove(path) == nil {
+				temporaryFiles++
+			}
+		case strings.HasSuffix(name, archiveSuffix+metadataSuffix),
+			strings.HasSuffix(name, archiveSuffix+provenanceSuffix):
+			// Matched on the archive's own extension as well as the sidecar's,
+			// so that index.json — which is not a sidecar and is not derived
+			// from an archive — cannot be mistaken for one.
+			archive := path[:strings.LastIndex(path, archiveSuffix)+len(archiveSuffix)]
+			if _, statErr := os.Stat(archive); statErr == nil {
+				return nil
+			}
+			if os.Remove(path) == nil {
+				orphanedSidecars++
+			}
+		}
+		return nil
+	})
+	if temporaryFiles == 0 && orphanedSidecars == 0 {
+		return
+	}
+	cache.logger.Info(
+		"swept the Helm chart cache",
+		slog.Int("abandoned_writes", temporaryFiles),
+		slog.Int("orphaned_sidecars", orphanedSidecars),
+	)
+}
+
 // evict drops the least recently used chart archives until the cache fits.
 //
 // By last use rather than by age: a chart that was published two years ago and
@@ -437,7 +552,7 @@ func (cache *Cache) evict() {
 	var archives []archive
 	var total int64
 	err := filepath.WalkDir(cache.root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".tgz") {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, archiveSuffix) {
 			// A walk error on one subtree is not a reason to abandon the sweep:
 			// the rest of the cache still needs to be brought under the bound.
 			return nil //nolint:nilerr // see above
@@ -463,7 +578,7 @@ func (cache *Cache) evict() {
 		if removeErr := os.Remove(candidate.path); removeErr != nil {
 			continue
 		}
-		_ = os.Remove(candidate.path + ".json")
+		_ = os.Remove(candidate.path + metadataSuffix)
 		_ = os.Remove(candidate.path + provenanceSuffix)
 		total -= candidate.size
 	}
@@ -487,7 +602,7 @@ func (cache *Cache) report(message string, repositoryID string, err error) {
 // a half-written file. A reader that found one would verify its digest, discard
 // it and fetch again — correct, but the fix is cheaper than the diagnosis.
 func writeFileAtomically(path string, body []byte) error {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	temporary, err := os.CreateTemp(filepath.Dir(path), temporaryFilePrefix+"*")
 	if err != nil {
 		return err
 	}

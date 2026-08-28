@@ -25,7 +25,23 @@ const (
 	// How many repositories' parsed indexes are held at once. A platform with
 	// more repositories than this still works; the least recently used index is
 	// re-read from disk.
+	//
+	// It is a weak bound on memory by itself, which is why it is not the only
+	// one — see indexIdleFactor. A parsed public index is the largest object
+	// this package ever holds: tens of megabytes of YAML become far more than
+	// that as Go objects, and sixteen of them held for a repository nobody has
+	// opened since boot is memory spent on nothing.
 	maxCachedIndexes = 16
+	// How long an unused parsed index is kept, as a multiple of the freshness
+	// window the operator configured.
+	//
+	// An index that nobody has looked at for a whole freshness window is not in
+	// use: anyone who wanted it in that time would have been served it and
+	// refreshed its stamp. Dropping it costs a parse of the copy already on
+	// disk — never a request to the repository — which is the cheapest thing
+	// this package can be made to pay, and it is paid only by a repository that
+	// had stopped being read.
+	indexIdleFactor = 1
 	// How long a parsed chart is reused. The archive underneath it does not
 	// expire — a published version does not change — so this bounds memory
 	// rather than staleness.
@@ -67,6 +83,14 @@ func (cache *indexCache) forget(repositoryID string) {
 	cache.mutex.Lock()
 	defer cache.mutex.Unlock()
 	delete(cache.entries, repositoryID)
+}
+
+// held reports how many parsed indexes are in memory, for the tests that check
+// the idle bound actually releases them.
+func (cache *indexCache) held() int {
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+	return len(cache.entries)
 }
 
 // index returns the parsed index, reading through to the disk cache and the
@@ -143,15 +167,33 @@ func (cache *indexCache) index(
 				state:  state,
 				usedAt: time.Now(),
 			}
-			cache.evictLocked()
 		}
+		// Swept on every load rather than only when the count is exceeded, and
+		// swept whether or not this load succeeded: the indexes worth releasing
+		// belong to repositories that are not being read, and a load of some
+		// other repository is the only moment this cache is reliably awake.
+		cache.evictLocked(time.Now(), service.indexTTL)
 		cache.mutex.Unlock()
 		waiter.Done()
 		return index, state, err
 	}
 }
 
-func (cache *indexCache) evictLocked() {
+// evictLocked releases what is not being used, then what does not fit.
+//
+// The two are different questions and the idle pass answers the one that
+// matters more here. A count bound only reclaims memory when a seventeenth
+// repository is read, which on a platform with three repositories is never; the
+// idle pass reclaims it because nobody is looking.
+func (cache *indexCache) evictLocked(now time.Time, indexTTL time.Duration) {
+	if indexTTL > 0 {
+		idle := indexTTL * indexIdleFactor
+		for id, entry := range cache.entries {
+			if now.Sub(entry.usedAt) > idle {
+				delete(cache.entries, id)
+			}
+		}
+	}
 	for len(cache.entries) > maxCachedIndexes {
 		oldestID := ""
 		var oldest time.Time
@@ -209,14 +251,39 @@ func (cache *chartCache) get(
 	if cache == nil {
 		return nil, false
 	}
+	key := chartCacheKey(repositoryID, chartName, version)
 	cache.mutex.Lock()
 	defer cache.mutex.Unlock()
-	entry, found := cache.entries[chartCacheKey(repositoryID, chartName, version)]
-	if !found || time.Since(entry.fetchedAt) >= chartCacheTTL {
+	entry, found := cache.entries[key]
+	if !found {
+		return nil, false
+	}
+	if time.Since(entry.fetchedAt) >= chartCacheTTL {
+		// Dropped here rather than left to be counted.
+		//
+		// Returning a miss and keeping the entry was the bug this replaces: an
+		// expired chart could never be handed out again, but its bytes still
+		// filled the budget, so the cache eventually held nothing but charts it
+		// would refuse to serve — and evicted live entries to make room for
+		// them.
+		cache.dropLocked(key, entry)
 		return nil, false
 	}
 	entry.usedAt = time.Now()
 	return entry.chart, true
+}
+
+func (cache *chartCache) dropLocked(key string, entry *cachedChart) {
+	cache.bytes -= entry.size
+	delete(cache.entries, key)
+}
+
+// held reports how many parsed charts are in memory and how many bytes they are
+// charged for, so a test can check the two have not drifted apart.
+func (cache *chartCache) held() (int, int) {
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+	return len(cache.entries), cache.bytes
 }
 
 func (cache *chartCache) put(
@@ -232,13 +299,13 @@ func (cache *chartCache) put(
 	if size > maxCachedChartBytes {
 		return
 	}
+	now := time.Now()
 	cache.mutex.Lock()
 	defer cache.mutex.Unlock()
 	key := chartCacheKey(repositoryID, chartName, version)
 	if previous, found := cache.entries[key]; found {
 		cache.bytes -= previous.size
 	}
-	now := time.Now()
 	cache.entries[key] = &cachedChart{
 		repositoryID: repositoryID,
 		chart:        loaded,
@@ -247,7 +314,7 @@ func (cache *chartCache) put(
 		usedAt:       now,
 	}
 	cache.bytes += size
-	cache.evictLocked()
+	cache.evictLocked(now)
 }
 
 // forget drops every chart read from one repository. A repository that was
@@ -263,12 +330,22 @@ func (cache *chartCache) forget(repositoryID string) {
 		if entry.repositoryID != repositoryID {
 			continue
 		}
-		cache.bytes -= entry.size
-		delete(cache.entries, key)
+		cache.dropLocked(key, entry)
 	}
 }
 
-func (cache *chartCache) evictLocked() {
+// evictLocked releases expired entries first and only then the least recently
+// used ones.
+//
+// The order is the point. An expired entry can never be served again, so
+// evicting a live one before it would be spending the budget on the entries
+// least able to earn it back.
+func (cache *chartCache) evictLocked(now time.Time) {
+	for key, entry := range cache.entries {
+		if now.Sub(entry.fetchedAt) >= chartCacheTTL {
+			cache.dropLocked(key, entry)
+		}
+	}
 	for cache.bytes > maxCachedChartsBytes && len(cache.entries) > 0 {
 		oldestKey := ""
 		var oldest time.Time
@@ -278,8 +355,7 @@ func (cache *chartCache) evictLocked() {
 				oldest = entry.usedAt
 			}
 		}
-		cache.bytes -= cache.entries[oldestKey].size
-		delete(cache.entries, oldestKey)
+		cache.dropLocked(oldestKey, cache.entries[oldestKey])
 	}
 }
 

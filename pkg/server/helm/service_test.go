@@ -205,13 +205,18 @@ func (stub *stubRepositoryStore) CreateHelmRepository(
 	input store.CreateHelmRepositoryParams,
 ) (store.HelmRepository, error) {
 	stub.repository = store.HelmRepository{
-		ID:             input.ID,
-		Name:           input.Name,
-		URL:            input.URL,
-		Username:       input.Username,
-		Password:       input.Password,
-		Enabled:        input.Enabled,
-		HasCredentials: input.Password != "",
+		ID:                    input.ID,
+		Name:                  input.Name,
+		Description:           input.Description,
+		URL:                   input.URL,
+		Username:              input.Username,
+		Password:              input.Password,
+		CACertificatePEM:      input.CACertificatePEM,
+		InsecureSkipTLSVerify: input.InsecureSkipTLSVerify,
+		SignaturePolicy:       input.SignaturePolicy,
+		PublicKeyring:         input.PublicKeyring,
+		Enabled:               input.Enabled,
+		HasCredentials:        input.Password != "",
 	}
 	return stub.GetHelmRepository(context.Background(), input.ID)
 }
@@ -223,8 +228,16 @@ func (stub *stubRepositoryStore) UpdateHelmRepository(
 	if input.Password != nil {
 		stub.repository.Password = *input.Password
 	}
+	// Every field the real store writes, because what an edit changed is now a
+	// question the Service asks of the row it gets back.
 	stub.repository.Name = input.Name
+	stub.repository.Description = input.Description
 	stub.repository.URL = input.URL
+	stub.repository.Username = input.Username
+	stub.repository.CACertificatePEM = input.CACertificatePEM
+	stub.repository.InsecureSkipTLSVerify = input.InsecureSkipTLSVerify
+	stub.repository.SignaturePolicy = input.SignaturePolicy
+	stub.repository.PublicKeyring = input.PublicKeyring
 	stub.repository.Enabled = input.Enabled
 	stub.repository.HasCredentials = stub.repository.Password != ""
 	return stub.GetHelmRepository(context.Background(), input.ID)

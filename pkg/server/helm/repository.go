@@ -213,6 +213,10 @@ func (service *Service) UpdateRepository(
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
+	// Read before writing, so that what is thrown away afterwards can be
+	// decided from what actually changed. A read that fails is not a reason to
+	// refuse the edit — it is a reason to assume the worst below.
+	before, beforeErr := service.repositories.GetHelmRepository(ctx, id)
 	row, err := service.repositories.UpdateHelmRepository(ctx, store.UpdateHelmRepositoryParams{
 		ID:                    id,
 		Name:                  normalized.Name,
@@ -231,11 +235,46 @@ func (service *Service) UpdateRepository(
 	if err != nil {
 		return Repository{}, err
 	}
-	// The cached index belonged to the old URL and the old credential. Keeping
-	// it would mean an administrator who corrected a mistyped URL still sees
-	// what the mistake returned.
-	service.forgetRepository(id)
+	// Only an edit that could change what this repository serves, or the terms
+	// on which it was read, invalidates what was cached from it.
+	//
+	// Forgetting on every edit was simpler and was wrong in one direction that
+	// matters: a public index is tens of megabytes and the archives behind it
+	// far more, and renaming an entry or switching it off for an afternoon
+	// threw all of it away and made everyone who opened the catalogue next pay
+	// to fetch it again. A name is not part of what a repository publishes.
+	//
+	// The judgement is deliberately one-sided. Everything that decides which
+	// bytes arrive, or whether they were to be trusted, is here; anything this
+	// cannot establish — including a read that failed — forgets.
+	if beforeErr != nil || repositorySourceChanged(before, row, input.Password != nil) {
+		service.forgetRepository(id)
+	}
 	return publicRepository(row), nil
+}
+
+// repositorySourceChanged reports whether an edit changed where a repository is
+// read from, who it is read as, or what its answers had to prove.
+//
+// A supplied password counts whether or not it differs from the stored one: the
+// stored value is never read back, so "the same password" is not a comparison
+// this Server can make, and treating a submitted one as a change costs a
+// re-fetch rather than a wrong answer.
+func repositorySourceChanged(
+	before store.HelmRepository,
+	after store.HelmRepository,
+	passwordSupplied bool,
+) bool {
+	return passwordSupplied ||
+		before.URL != after.URL ||
+		before.Username != after.Username ||
+		before.CACertificatePEM != after.CACertificatePEM ||
+		before.InsecureSkipTLSVerify != after.InsecureSkipTLSVerify ||
+		// A signing policy decides whether an archive was allowed to be here at
+		// all, and the keyring decides what "verified" meant when it was
+		// written — see chartMeta.ProvenanceChecked, which relies on this.
+		before.SignaturePolicy != after.SignaturePolicy ||
+		before.PublicKeyring != after.PublicKeyring
 }
 
 func (service *Service) DeleteRepository(ctx context.Context, id string) error {

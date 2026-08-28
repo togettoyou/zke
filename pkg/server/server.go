@@ -342,9 +342,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// Repositories deleted while this Server was down left their cached
-	// indexes and archives behind. Reconciling once at startup is where that is
-	// noticed; it costs one directory listing and never blocks the boot.
+	// A stop that was not a clean one leaves residue behind: cached files for
+	// repositories that have since been deleted, chart writes killed between
+	// their temporary file and the rename, and a cache over whatever size bound
+	// is configured now. Reconciling once at startup is where that is noticed;
+	// it costs one walk of the cache directory and never blocks the boot.
 	if err := helmService.PruneCache(ctx); err != nil {
 		logger.Warn("could not prune the Helm chart cache", "error", err.Error())
 	}

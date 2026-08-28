@@ -516,11 +516,14 @@ func TestNormalizeDigest(t *testing.T) {
 
 // Repository writes go through the same invalidation, so a corrected address
 // does not keep answering with what the mistake returned.
+// Pointing an entry somewhere else makes everything cached under it an answer
+// to a different question, so it goes.
 func TestUpdatingARepositoryClearsItsCache(t *testing.T) {
 	t.Parallel()
 
 	directory := t.TempDir()
 	server := newRepositoryServer(t, chartArchive(t, "demo", "1.2.0"))
+	elsewhere := newRepositoryServer(t, chartArchive(t, "demo", "1.2.0"))
 	service, _ := newTestServiceWithCache(t, testRepository(server.URL), directory)
 	if _, err := service.GetChart(context.Background(), testRepositoryID, "demo", ""); err != nil {
 		t.Fatal(err)
@@ -529,13 +532,80 @@ func TestUpdatingARepositoryClearsItsCache(t *testing.T) {
 	enabled := true
 	if _, err := service.UpdateRepository(context.Background(), testRepositoryID, RepositoryInput{
 		Name:    "demo",
-		URL:     server.URL,
+		URL:     elsewhere.URL,
 		Enabled: &enabled,
 	}, "00000000-0000-4000-8000-000000000001"); err != nil {
 		t.Fatalf("UpdateRepository() = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(directory, testRepositoryID)); !os.IsNotExist(err) {
-		t.Fatalf("cache survived a repository update: %v", err)
+		t.Fatalf("cache survived a repository being pointed elsewhere: %v", err)
+	}
+}
+
+// An edit that does not change what the repository serves keeps what it served.
+//
+// A name is not part of what a repository publishes, and neither is being
+// switched off for an afternoon. Throwing away tens of megabytes of index and
+// far more of archives because somebody corrected a description would make
+// everyone who opened the catalogue next pay to fetch it all again.
+func TestRenamingARepositoryKeepsItsCache(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	server := newRepositoryServer(t, chartArchive(t, "demo", "1.2.0"))
+	repository := testRepository(server.URL)
+	// As the store holds it: Create normalises the policy before it is written,
+	// so a stored row always carries one.
+	repository.SignaturePolicy = string(SignatureDisabled)
+	service, _ := newTestServiceWithCache(t, repository, directory)
+	if _, err := service.GetChart(context.Background(), testRepositoryID, "demo", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	disabled := false
+	if _, err := service.UpdateRepository(context.Background(), testRepositoryID, RepositoryInput{
+		Name:        "the same repository, renamed",
+		Description: "and described",
+		URL:         server.URL,
+		Enabled:     &disabled,
+	}, "00000000-0000-4000-8000-000000000001"); err != nil {
+		t.Fatalf("UpdateRepository() = %v", err)
+	}
+
+	if archives := cachedFiles(t, directory, ".tgz"); len(archives) != 1 {
+		t.Fatalf("cached archives = %v, want the archive kept", archives)
+	}
+	if _, err := os.Stat(filepath.Join(directory, testRepositoryID, "index.yaml")); err != nil {
+		t.Fatalf("the cached index was thrown away by a rename: %v", err)
+	}
+}
+
+// Credentials are not read back, so "the same password" is not a comparison
+// this Server can make: a submitted one is treated as a change.
+func TestSupplyingAPasswordClearsTheCache(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	server := newRepositoryServer(t, chartArchive(t, "demo", "1.2.0"))
+	repository := testRepository(server.URL)
+	repository.SignaturePolicy = string(SignatureDisabled)
+	service, _ := newTestServiceWithCache(t, repository, directory)
+	if _, err := service.GetChart(context.Background(), testRepositoryID, "demo", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	password := "correct horse battery staple"
+	enabled := true
+	if _, err := service.UpdateRepository(context.Background(), testRepositoryID, RepositoryInput{
+		Name:     "demo",
+		URL:      server.URL,
+		Password: &password,
+		Enabled:  &enabled,
+	}, "00000000-0000-4000-8000-000000000001"); err != nil {
+		t.Fatalf("UpdateRepository() = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, testRepositoryID)); !os.IsNotExist(err) {
+		t.Fatalf("cache survived a credential change: %v", err)
 	}
 }
 
@@ -587,5 +657,127 @@ func TestCachedChartCarriesItsProvenance(t *testing.T) {
 	cached, found = cache.Chart(testRepositoryID, "demo", "1.2.0", "")
 	if !found || len(cached.Provenance) != 0 || cached.ProvenanceChecked {
 		t.Fatalf("Chart() after an unsigned write = %+v, %v", cached, found)
+	}
+}
+
+// A chart archive is written to a temporary file and renamed. A process killed
+// between the two leaves a full-sized file that nothing else here can see: it
+// is not an archive, so eviction neither counts nor removes it, and it is not a
+// repository directory, so the reconcile never reaches it. Startup is both when
+// it happens and the only moment it can safely be cleaned up.
+func TestPruneRemovesAbandonedWrites(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	cache, err := NewCache(directory, 1<<20, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	charts := filepath.Join(directory, testRepositoryID, "charts")
+	if err := os.MkdirAll(charts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	abandoned := filepath.Join(charts, ".tmp-abandoned")
+	current := filepath.Join(charts, ".tmp-inflight")
+	for _, path := range []string{abandoned, current} {
+		if err := os.WriteFile(path, []byte("half a chart"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale := time.Now().Add(-strayTemporaryAge - time.Minute)
+	if err := os.Chtimes(abandoned, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	cache.Prune([]string{testRepositoryID})
+
+	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
+		t.Fatalf("an abandoned write survived: %v", err)
+	}
+	// A file young enough to still be someone's in-flight write is left alone.
+	if _, err := os.Stat(current); err != nil {
+		t.Fatalf("a write that could still be in flight was removed: %v", err)
+	}
+}
+
+// A sidecar describes an archive. Without one it describes nothing, is never
+// read again, and no other pass removes it — eviction only looks at archives.
+func TestPruneRemovesOrphanedSidecars(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	cache, err := NewCache(directory, 1<<20, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repositoryDirectory := filepath.Join(directory, testRepositoryID)
+	charts := filepath.Join(repositoryDirectory, "charts")
+	if err := os.MkdirAll(charts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	orphans := []string{
+		filepath.Join(charts, "demo-1.0.0-abc.tgz.json"),
+		filepath.Join(charts, "demo-1.0.0-abc.tgz.prov"),
+	}
+	kept := filepath.Join(charts, "live-1.0.0-def.tgz")
+	// The index's own metadata is not a sidecar and is not derived from an
+	// archive; matching on the archive's extension as well as the sidecar's is
+	// what keeps it out of this.
+	indexMeta := filepath.Join(repositoryDirectory, "index.json")
+	for _, path := range append(append([]string{}, orphans...), kept, kept+".json", indexMeta) {
+		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cache.Prune([]string{testRepositoryID})
+
+	for _, path := range orphans {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("orphaned sidecar %s survived: %v", filepath.Base(path), err)
+		}
+	}
+	for _, path := range []string{kept, kept + ".json", indexMeta} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed: %v", filepath.Base(path), err)
+		}
+	}
+}
+
+// The size bound is otherwise only applied when a chart is stored, so a cache
+// that grew while the bound was larger — or that was over it when the process
+// died — would stay over it until the next download.
+func TestPruneAppliesTheSizeBound(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	generous, err := NewCache(directory, 1<<20, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		generous.PutChart(testRepositoryID, "demo", version, CachedChart{
+			Archive: make([]byte, 4096),
+		})
+	}
+	if archives := cachedFiles(t, directory, ".tgz"); len(archives) != 3 {
+		t.Fatalf("cached archives = %d, want 3", len(archives))
+	}
+
+	// The same directory, read by a Server configured with a smaller budget.
+	tightened, err := NewCache(directory, 8192, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tightened.Prune([]string{testRepositoryID})
+
+	archives := cachedFiles(t, directory, ".tgz")
+	if len(archives) > 2 {
+		t.Fatalf("cached archives = %d, want the cache brought under the bound", len(archives))
+	}
+	// Whatever went took its sidecars with it: a sidecar for an archive that is
+	// gone is exactly what the sweep above exists to remove.
+	if sidecars := cachedFiles(t, directory, ".tgz.json"); len(sidecars) != len(archives) {
+		t.Fatalf("%d archives left behind %d sidecars", len(archives), len(sidecars))
 	}
 }
