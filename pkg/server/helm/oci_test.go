@@ -187,8 +187,12 @@ func TestChartsPublishedToAnOCIRegistryArePulled(t *testing.T) {
 	if !strings.Contains(detail.Values, "# how many copies to run") {
 		t.Fatalf("values = %q", detail.Values)
 	}
-	if len(detail.Files) == 0 {
-		t.Fatal("GetChart() listed no files")
+	page, err := service.ListChartFiles(context.Background(), testRepositoryID, "moved", "")
+	if err != nil {
+		t.Fatalf("ListChartFiles() = %v", err)
+	}
+	if len(page.Files) == 0 {
+		t.Fatal("ListChartFiles() listed no files")
 	}
 
 	// The file browser works over a registry-published chart too, and still

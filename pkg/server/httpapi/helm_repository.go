@@ -44,6 +44,7 @@ type helmRepositoryService interface {
 	RefreshCharts(context.Context, string, string, int) (helm.ChartPage, error)
 	ListChartVersions(context.Context, string, string) (helm.ChartVersionPage, error)
 	GetChart(context.Context, string, string, string) (helm.ChartDetail, error)
+	ListChartFiles(context.Context, string, string, string) (helm.ChartFilePage, error)
 	GetChartFile(context.Context, string, string, string, string) (helm.ChartFileDetail, error)
 }
 
@@ -338,13 +339,43 @@ func (handler *helmRepositoryHandler) chart(c *gin.Context) {
 	writeSuccess(c, http.StatusOK, result)
 }
 
+// chartFiles lists what one chart archive holds.
+//
+// A request of its own rather than part of the chart detail: most readers of a
+// chart open the README and never the tree, and deciding what several hundred
+// archive members are is not work that request should be doing for them. The
+// Server holds the parsed archive for a few minutes, so opening the browser
+// after reading the detail costs no second download.
+func (handler *helmRepositoryHandler) chartFiles(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !handler.ready(c, "Helm chart catalogue is unavailable") {
+		return
+	}
+	query := c.Request.URL.Query()
+	if err := validateQueryNames(query, map[string]struct{}{"version": {}}); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid chart file list query")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.ListChartFiles(
+		ctx,
+		c.Param("repository_id"),
+		c.Param("chart_name"),
+		query.Get("version"),
+	)
+	cancel()
+	if handler.respondRepositoryError(c, "list Helm chart files", err) {
+		return
+	}
+	writeSuccess(c, http.StatusOK, result)
+}
+
 // chartFile returns one file out of a chart archive.
 //
-// A request of its own rather than part of the chart detail: the detail already
-// lists what the archive holds, and a chart with a packaged subchart carries
-// hundreds of files that nobody opens. The path is matched against the
-// archive's own member names, so there is nothing here for a caller to traverse
-// with.
+// A request of its own rather than part of the listing: a chart with a packaged
+// subchart carries hundreds of files that nobody opens. The path is matched
+// against the archive's own member names, so there is nothing here for a caller
+// to traverse with.
 func (handler *helmRepositoryHandler) chartFile(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	if !handler.ready(c, "Helm chart catalogue is unavailable") {

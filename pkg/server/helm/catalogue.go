@@ -124,16 +124,10 @@ type ChartDetail struct {
 	// Dependencies names the subcharts this chart pulls in, so an operator can
 	// see that installing one thing installs four.
 	Dependencies []ChartDependency `json:"dependencies"`
-	// Files is every member of the chart archive: templates, subcharts and
-	// whatever else it packages. The listing travels with the detail because
-	// this request already downloaded and parsed the archive — asking for it
-	// separately would download the chart twice to show a tree. Contents are
-	// fetched one file at a time, because most of them are never opened.
-	Files []ChartFileEntry `json:"files"`
-	// FileCount is how many files the archive holds before the listing bound
-	// was applied, and FilesTruncated says the bound applied.
-	FileCount      int  `json:"file_count"`
-	FilesTruncated bool `json:"files_truncated"`
+	// The archive's file listing is not here. It is a request of its own —
+	// see ListChartFiles — because deciding what several hundred archive
+	// members are is work most readers of a chart never use: they read the
+	// README and install.
 }
 
 type ChartDependency struct {
@@ -287,18 +281,14 @@ func (service *Service) GetChart(
 	if err != nil {
 		return ChartDetail{}, err
 	}
-	files, fileCount := chartFileEntries(loaded)
 	detail := ChartDetail{
-		RepositoryID:   repositoryID,
-		Name:           chartName,
-		Version:        resolved,
-		Values:         truncateText(string(chartFile(loaded, "values.yaml")), maxChartValuesBytes),
-		README:         truncateText(string(chartFile(loaded, "README.md")), maxChartREADMEBytes),
-		ValuesSchema:   chartValuesSchema(loaded),
-		Signature:      signature,
-		Files:          files,
-		FileCount:      fileCount,
-		FilesTruncated: fileCount > len(files),
+		RepositoryID: repositoryID,
+		Name:         chartName,
+		Version:      resolved,
+		Values:       truncateText(string(chartFile(loaded, "values.yaml")), maxChartValuesBytes),
+		README:       truncateText(string(chartFile(loaded, "README.md")), maxChartREADMEBytes),
+		ValuesSchema: chartValuesSchema(loaded),
+		Signature:    signature,
 	}
 	if loaded.Metadata != nil {
 		detail.Name = loaded.Metadata.Name

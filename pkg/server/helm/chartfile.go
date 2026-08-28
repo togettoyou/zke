@@ -19,10 +19,12 @@ import (
 // them by downloading the archive somewhere else — which is the one place ZKE
 // has no say over what they get.
 //
-// So the whole archive is browsable, exactly as the repository published it:
-// the file list travels with the chart detail, because that request already
-// downloaded and parsed the archive, and one file's contents are a request of
-// their own, because most of them are never opened.
+// So the whole archive is browsable, exactly as the repository published it.
+// Both the listing and one file's contents are requests of their own, because
+// most readers of a chart never open either: they read the README, decide, and
+// install. Deciding what every member of an archive is — a packaged subchart
+// tree runs to hundreds of them — is work the detail request used to do for
+// everyone in order to serve the few who asked for the tree.
 
 // ErrChartFileNotFound is a path the chart archive does not contain. It is
 // separate from a missing chart: one means the chart is not there, the other
@@ -77,6 +79,55 @@ type ChartFileDetail struct {
 	// Truncated says Content stops before the file does. Size is the file's
 	// real length, so the two together say how much was cut.
 	Truncated bool `json:"truncated"`
+}
+
+// ChartFilePage is one chart archive's listing.
+//
+// It is a request of its own rather than part of the chart detail. The parsed
+// archive is held for a few minutes and the archive itself sits in data/helm,
+// so asking for the tree separately costs neither a download nor a second
+// unpack — it costs the walk over the archive's members, which is exactly the
+// work an operator who only wanted the README should not be paying for.
+type ChartFilePage struct {
+	RepositoryID string           `json:"repository_id"`
+	Chart        string           `json:"chart"`
+	Version      string           `json:"version"`
+	Files        []ChartFileEntry `json:"files"`
+	// FileCount is how many files the archive holds before the listing bound
+	// was applied, and Truncated says the bound applied.
+	FileCount int  `json:"file_count"`
+	Truncated bool `json:"truncated"`
+}
+
+// ListChartFiles reports every member of a chart archive, for the browser.
+//
+// An empty version means the newest one published, and the page reports the
+// version it resolved to so the file reads that follow ask for the same
+// archive this listing came from.
+func (service *Service) ListChartFiles(
+	ctx context.Context,
+	repositoryID string,
+	chartName string,
+	version string,
+) (ChartFilePage, error) {
+	loaded, resolved, _, err := service.loadChart(ctx, repositoryID, chartName, version)
+	if err != nil {
+		return ChartFilePage{}, err
+	}
+	files, fileCount := chartFileEntries(loaded)
+	page := ChartFilePage{
+		RepositoryID: repositoryID,
+		Chart:        chartName,
+		Version:      resolved,
+		Files:        files,
+		FileCount:    fileCount,
+		Truncated:    fileCount > len(files),
+	}
+	if loaded.Metadata != nil {
+		page.Chart = loaded.Metadata.Name
+		page.Version = loaded.Metadata.Version
+	}
+	return page, nil
 }
 
 // GetChartFile returns one file out of a chart archive, verbatim.

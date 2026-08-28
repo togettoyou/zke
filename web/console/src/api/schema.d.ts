@@ -2152,10 +2152,40 @@ export interface paths {
          * @description 下载一个 Chart 版本并返回安装前需要阅读的内容：Chart 自带的 values.yaml 原文、
          *     README 与元数据，以及它会一并安装的子 Chart。要求 `helm.repository.read`。
          *
+         *     归档里有哪些文件不在这里返回，而是单独一条接口（`.../files`）：多数人读完 README
+         *     就去安装，从不打开那棵树，而判定几百个归档成员各是什么不该由这个请求替他们承担。
+         *
          *     values 以文本原样返回而不是解析后的对象，因为其中的注释就是一半的文档。省略
          *     `version` 表示仓库发布的最新版本。
          */
         get: operations["getHelmChart"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出 Chart 归档中的全部文件，含 `charts/` 下的子 Chart，按路径排序。
+         *     要求 `helm.repository.read`。
+         *
+         *     与 Chart 详情分开的原因是代价的归属：多数人打开一个 Chart 只读 README，而列表要
+         *     判定每一个归档成员是不是文本。Server 会把解析后的归档在内存里留几分钟，所以读完详情
+         *     再打开文件浏览器不会多下载一次归档。
+         *
+         *     文件内容不在这里，由 `.../file?path=…` 按文件读取。省略 `version` 表示仓库发布的
+         *     最新版本；返回的 `version` 是实际解析到的版本，后续读取单个文件应当带上它。
+         */
+        get: operations["listHelmChartFiles"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2174,8 +2204,8 @@ export interface paths {
         /**
          * @description 返回 Chart 归档中的一个文件原文，要求 `helm.repository.read`。
          *
-         *     Chart 详情接口已经列出了归档中的全部文件，这条接口是读取其中一个。之所以分开：
-         *     一个带打包子 Chart 的归档可能有数百个文件，把它们的内容都放进详情里，等于为了显示
+         *     `.../files` 已经列出了归档中的全部文件，这条接口是读取其中一个。之所以分开：
+         *     一个带打包子 Chart 的归档可能有数百个文件，把它们的内容都放进列表里，等于为了显示
          *     一棵目录树而把整个归档下载到浏览器。
          *
          *     `path` 与归档自身的成员名精确匹配，不做任何拼接，因此不存在可被穿越的路径。非文本
@@ -5652,12 +5682,18 @@ export interface components {
             values_schema: string;
             signature: components["schemas"]["HelmChartSignature"];
             dependencies?: components["schemas"]["HelmChartDependency"][];
+        };
+        HelmChartFilePage: {
+            repository_id: components["schemas"]["UUID"];
+            chart: string;
+            /** @description 实际解析到的 Chart 版本，读取单个文件时应当带上它。 */
+            version: string;
             /** @description Chart 归档中的全部文件，含 `charts/` 下的子 Chart，按路径排序。 文件内容不在这里：一个带打包子 Chart 的归档可能有数百个文件， 而其中绝大多数不会被打开，因此内容由单独的接口按文件读取。 */
-            files?: components["schemas"]["HelmChartFileEntry"][];
+            files: components["schemas"]["HelmChartFileEntry"][];
             /** @description 归档中的文件总数，即施加列表上限之前的数量。 */
             file_count: number;
             /** @description 文件列表因超过上限而被截断。 */
-            files_truncated: boolean;
+            truncated: boolean;
         };
         HelmChartFileEntry: {
             /** @description 文件在归档中的路径，例如 `templates/deployment.yaml`。 */
@@ -13277,6 +13313,46 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["HelmChartDetail"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    listHelmChartFiles: {
+        parameters: {
+            query?: {
+                /** @description Chart 版本；省略表示最新版本。 */
+                version?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Chart 仓库标识。 */
+                repository_id: components["parameters"]["HelmRepositoryID"];
+                /** @description 仓库索引中的 Chart 名。 */
+                chart_name: components["parameters"]["HelmChartName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chart 文件列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmChartFilePage"];
                     };
                 };
             };

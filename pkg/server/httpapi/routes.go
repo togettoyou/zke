@@ -123,9 +123,17 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
 		handlers.helmRepository.chartVersions,
 	)
-	// One file out of the chart archive. The chart detail already lists what
-	// the archive holds; this is how one of them is read, and it answers to the
-	// same permission because it is the same document by another route.
+	// What the chart archive holds. Separate from the chart detail because the
+	// detail is what an operator reads to decide, and most of them decide
+	// without ever opening the tree.
+	helmCatalogueRoutes.GET(
+		"/repositories/:repository_id/charts/:chart_name/files",
+		handlers.authorizationMiddleware.RequireGlobal(rbac.PermissionHelmRepositoryRead),
+		handlers.helmRepository.chartFiles,
+	)
+	// One file out of the chart archive. The listing above says what is in it;
+	// this is how one of them is read, and it answers to the same permission
+	// because it is the same document by another route.
 	//
 	// The path travels as a query parameter rather than in the URL: it is
 	// matched against the archive's own member names, and a path segment would

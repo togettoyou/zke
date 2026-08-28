@@ -6028,6 +6028,9 @@ paths:
         下载一个 Chart 版本并返回安装前需要阅读的内容：Chart 自带的 values.yaml 原文、
         README 与元数据，以及它会一并安装的子 Chart。要求 `helm.repository.read`。
 
+        归档里有哪些文件不在这里返回，而是单独一条接口（`.../files`）：多数人读完 README
+        就去安装，从不打开那棵树，而判定几百个归档成员各是什么不该由这个请求替他们承担。
+
         values 以文本原样返回而不是解析后的对象，因为其中的注释就是一半的文档。省略
         `version` 表示仓库发布的最新版本。
       security:
@@ -6061,6 +6064,51 @@ paths:
         "502": { $ref: "#/components/responses/BadGateway" }
         "503": { $ref: "#/components/responses/Unavailable" }
         "504": { $ref: "#/components/responses/Timeout" }
+  /api/v1/helm/repositories/{repository_id}/charts/{chart_name}/files:
+    get:
+      tags: [Helm]
+      operationId: listHelmChartFiles
+      description: |
+        列出 Chart 归档中的全部文件，含 `charts/` 下的子 Chart，按路径排序。
+        要求 `helm.repository.read`。
+
+        与 Chart 详情分开的原因是代价的归属：多数人打开一个 Chart 只读 README，而列表要
+        判定每一个归档成员是不是文本。Server 会把解析后的归档在内存里留几分钟，所以读完详情
+        再打开文件浏览器不会多下载一次归档。
+
+        文件内容不在这里，由 `.../file?path=…` 按文件读取。省略 `version` 表示仓库发布的
+        最新版本；返回的 `version` 是实际解析到的版本，后续读取单个文件应当带上它。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/HelmRepositoryID"
+        - $ref: "#/components/parameters/HelmChartName"
+        - name: version
+          in: query
+          description: Chart 版本；省略表示最新版本。
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Chart 文件列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/HelmChartFilePage" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "502": { $ref: "#/components/responses/BadGateway" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
   /api/v1/helm/repositories/{repository_id}/charts/{chart_name}/file:
     get:
       tags: [Helm]
@@ -6068,8 +6116,8 @@ paths:
       description: |
         返回 Chart 归档中的一个文件原文，要求 `helm.repository.read`。
 
-        Chart 详情接口已经列出了归档中的全部文件，这条接口是读取其中一个。之所以分开：
-        一个带打包子 Chart 的归档可能有数百个文件，把它们的内容都放进详情里，等于为了显示
+        `.../files` 已经列出了归档中的全部文件，这条接口是读取其中一个。之所以分开：
+        一个带打包子 Chart 的归档可能有数百个文件，把它们的内容都放进列表里，等于为了显示
         一棵目录树而把整个归档下载到浏览器。
 
         `path` 与归档自身的成员名精确匹配，不做任何拼接，因此不存在可被穿越的路径。非文本
@@ -14097,8 +14145,6 @@ components:
         - readme
         - values_schema
         - signature
-        - file_count
-        - files_truncated
       properties:
         repository_id: { $ref: "#/components/schemas/UUID" }
         name: { type: string }
@@ -14134,6 +14180,16 @@ components:
         dependencies:
           type: array
           items: { $ref: "#/components/schemas/HelmChartDependency" }
+    HelmChartFilePage:
+      type: object
+      additionalProperties: false
+      required: [repository_id, chart, version, files, file_count, truncated]
+      properties:
+        repository_id: { $ref: "#/components/schemas/UUID" }
+        chart: { type: string }
+        version:
+          type: string
+          description: 实际解析到的 Chart 版本，读取单个文件时应当带上它。
         files:
           type: array
           description: >-
@@ -14144,7 +14200,7 @@ components:
         file_count:
           type: integer
           description: 归档中的文件总数，即施加列表上限之前的数量。
-        files_truncated:
+        truncated:
           type: boolean
           description: 文件列表因超过上限而被截断。
     HelmChartFileEntry:

@@ -31,6 +31,7 @@ const CHARTS_PATH = "/api/v1/helm/repositories/{repository_id}/charts";
 const CHART_PATH = "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}";
 const CHART_VERSIONS_PATH =
   "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/versions";
+const CHART_FILES_PATH = "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/files";
 const CHART_FILE_PATH = "/api/v1/helm/repositories/{repository_id}/charts/{chart_name}/file";
 const REFRESH_PATH = "/api/v1/helm/repositories/{repository_id}/index-refresh";
 const RELEASES_PATH = "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases";
@@ -157,6 +158,7 @@ export function useRefreshHelmCharts() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["helm-chart"] }),
         queryClient.invalidateQueries({ queryKey: ["helm-chart-versions"] }),
+        queryClient.invalidateQueries({ queryKey: ["helm-chart-files"] }),
         queryClient.invalidateQueries({ queryKey: ["helm-chart-file"] }),
         queryClient.invalidateQueries({ queryKey: ["helm-charts"] }),
       ]);
@@ -184,7 +186,8 @@ export function useHelmChartVersions(repositoryId: string | null, chart: string 
  * One chart version, with its own values.yaml and README.
  *
  * This downloads the chart on the Server, so it is requested when an operator
- * opens a chart rather than for every row of a listing.
+ * opens a chart rather than for every row of a listing. What the archive holds
+ * is not part of it — see `useHelmChartFiles`.
  */
 export function useHelmChart(repositoryId: string | null, chart: string | null, version: string) {
   return useQuery({
@@ -204,13 +207,48 @@ export function useHelmChart(repositoryId: string | null, chart: string | null, 
 }
 
 /**
+ * What one chart archive holds.
+ *
+ * Requested when the file browser is opened, not when the chart is: most
+ * readers open a chart for its README and never the tree, and this is the
+ * request that makes the Server decide what several hundred archive members
+ * are. The archive it reads is the one the detail already fetched — the Server
+ * keeps the parsed chart for a few minutes — so opening the browser is not a
+ * second download.
+ *
+ * A published version's contents do not change, so the listing is never stale.
+ */
+export function useHelmChartFiles(
+  repositoryId: string | null,
+  chart: string | null,
+  version: string,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: queryKeys.helmChartFiles(repositoryId ?? "", chart ?? "", version),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(CHART_FILES_PATH, {
+          params: {
+            path: { repository_id: repositoryId as string, chart_name: chart as string },
+            ...(version ? { query: { version } } : {}),
+          },
+          signal,
+        }),
+      ),
+    enabled: enabled && Boolean(repositoryId && chart),
+    staleTime: Infinity,
+  });
+}
+
+/**
  * One file out of a chart archive.
  *
- * The chart detail already lists what the archive holds; this reads one of
- * them. Separate requests because a chart with a packaged subchart carries
- * hundreds of files and a reader opens a handful — and because the Server holds
- * the parsed archive for a few minutes, so clicking through a tree costs one
- * download rather than one per file.
+ * The listing says what the archive holds; this reads one of them. Separate
+ * requests because a chart with a packaged subchart carries hundreds of files
+ * and a reader opens a handful — and because the Server holds the parsed
+ * archive for a few minutes, so clicking through a tree costs one download
+ * rather than one per file.
  *
  * A file already read stays read: the contents of a published chart version do
  * not change, so going back to a file is not worth a round trip.
@@ -630,6 +668,7 @@ async function invalidateCatalogue(queryClient: ReturnType<typeof useQueryClient
     queryClient.invalidateQueries({ queryKey: ["helm-charts"] }),
     queryClient.invalidateQueries({ queryKey: ["helm-chart"] }),
     queryClient.invalidateQueries({ queryKey: ["helm-chart-versions"] }),
+    queryClient.invalidateQueries({ queryKey: ["helm-chart-files"] }),
     queryClient.invalidateQueries({ queryKey: ["helm-chart-file"] }),
     queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents }),
   ]);

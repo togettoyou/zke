@@ -17,20 +17,25 @@ func chartDownloads(server *repositoryServer) int {
 	return count
 }
 
-// The file listing travels with the chart detail, because that request already
-// downloaded and parsed the archive.
-func TestGetChartListsEveryFileInTheArchive(t *testing.T) {
+// The listing is its own request, so an operator who only reads the README
+// never pays for deciding what every member of the archive is.
+func TestListChartFilesListsEveryFileInTheArchive(t *testing.T) {
 	t.Parallel()
 
 	server := newRepositoryServer(t, chartArchive(t, "demo", "1.2.0"))
 	service, _ := newTestService(t, testRepository(server.URL))
 
-	detail, err := service.GetChart(context.Background(), testRepositoryID, "demo", "")
+	page, err := service.ListChartFiles(context.Background(), testRepositoryID, "demo", "")
 	if err != nil {
-		t.Fatalf("GetChart() = %v", err)
+		t.Fatalf("ListChartFiles() = %v", err)
 	}
-	paths := make([]string, 0, len(detail.Files))
-	for _, file := range detail.Files {
+	// Reported as it resolved: the file reads that follow have to land on the
+	// archive this listing came from.
+	if page.Version != "1.2.0" {
+		t.Fatalf("version = %q, want 1.2.0", page.Version)
+	}
+	paths := make([]string, 0, len(page.Files))
+	for _, file := range page.Files {
 		paths = append(paths, file.Path)
 	}
 	// Sorted, so the browser's tree does not depend on the order the archive
@@ -46,11 +51,11 @@ func TestGetChartListsEveryFileInTheArchive(t *testing.T) {
 	if strings.Join(paths, ",") != strings.Join(want, ",") {
 		t.Fatalf("files = %v, want %v", paths, want)
 	}
-	if detail.FileCount != len(want) || detail.FilesTruncated {
+	if page.FileCount != len(want) || page.Truncated {
 		t.Fatalf("file count = %d truncated = %v, want %d false",
-			detail.FileCount, detail.FilesTruncated, len(want))
+			page.FileCount, page.Truncated, len(want))
 	}
-	for _, file := range detail.Files {
+	for _, file := range page.Files {
 		// The binary member is named `.yaml`: the decision has to be made on
 		// the bytes, or a chart could hand the browser anything it liked.
 		wantText := file.Path != "files/logo.yaml"
@@ -152,6 +157,11 @@ func TestChartArchiveIsDownloadedOncePerBrowsingSession(t *testing.T) {
 	service, _ := newTestService(t, testRepository(server.URL))
 
 	if _, err := service.GetChart(context.Background(), testRepositoryID, "demo", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ListChartFiles(
+		context.Background(), testRepositoryID, "demo", "",
+	); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{

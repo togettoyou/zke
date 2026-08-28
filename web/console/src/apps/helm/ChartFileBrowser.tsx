@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, File, FileCode2, FileWarning, Folder } from "lucide-react";
 
-import { useHelmChartFile } from "@/api/queries/helm";
+import { useHelmChartFile, useHelmChartFiles } from "@/api/queries/helm";
 import type { HelmChartFileEntry } from "@/api/types";
 import { CopyIconButton } from "@/components/common/copy";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/state";
@@ -18,9 +18,12 @@ import { cn } from "@/lib/cn";
  * place ZKE has no say over what they get. So the whole archive is browsable,
  * exactly as the repository published it.
  *
- * The tree comes with the chart detail, because that request already downloaded
- * and parsed the archive. Contents are one request per file: a chart with a
- * packaged subchart carries hundreds of files and a reader opens a handful.
+ * The tree is requested by this component rather than carried by the chart
+ * detail: most readers of a chart never open it, and the listing is what makes
+ * the Server decide what several hundred archive members are. It reads the
+ * archive the detail already fetched — the parsed chart is held for a few
+ * minutes — so mounting this is not a second download. Contents are one request
+ * per file: a reader opens a handful.
  *
  * This is a viewer, not an editor. What is installed is the archive the
  * repository published; the only document an operator edits is values, and that
@@ -30,39 +33,49 @@ export function ChartFileBrowser({
   repositoryId,
   chart,
   version,
-  files,
-  fileCount,
-  truncated,
 }: {
   repositoryId: string;
   chart: string;
-  /** The version as it resolved, so the file request asks for the same one. */
+  /** The version as it resolved, so the listing and the file reads agree. */
   version: string;
-  files: HelmChartFileEntry[];
-  fileCount: number;
-  truncated: boolean;
 }) {
+  const listing = useHelmChartFiles(repositoryId, chart, version, true);
+  const files = useMemo(() => listing.data?.files ?? [], [listing.data]);
   const tree = useMemo(() => buildTree(files), [files]);
-  const [selected, setSelected] = useState(() => defaultSelection(files));
+  // `null` until the listing arrives, and then the file the archive itself
+  // suggests. Derived rather than stored so it does not need an effect to
+  // reset: an initial state cannot see data that has not been fetched yet.
+  const [chosen, setChosen] = useState<string | null>(null);
+  const selected = chosen ?? defaultSelection(files);
   // Subcharts are folded to start with. A packaged dependency tree is most of
   // the file count and none of what an operator opened the chart to read; the
   // rest is expanded, because a chart's own templates are few enough to show.
-  const [collapsed, setCollapsed] = useState(() => foldedByDefault(tree));
+  const [expanded, setExpanded] = useState<Set<string> | null>(null);
+  const collapsed = expanded ?? foldedByDefault(tree);
 
   const toggle = (path: string) =>
-    setCollapsed((previous) => {
-      const next = new Set(previous);
+    setExpanded((previous) => {
+      const next = new Set(previous ?? collapsed);
       if (!next.delete(path)) {
         next.add(path);
       }
       return next;
     });
 
+  if (listing.error) {
+    return <ErrorState error={listing.error} onRetry={() => void listing.refetch()} />;
+  }
+  if (listing.isLoading) {
+    return <LoadingState label="读取 Chart 归档…" />;
+  }
   if (files.length === 0) {
     return (
       <EmptyState title="没有可浏览的文件" description="该 Chart 的归档中没有可列出的文件。" />
     );
   }
+
+  const fileCount = listing.data?.file_count ?? files.length;
+  const truncated = listing.data?.truncated ?? false;
 
   return (
     <div className="grid min-w-0 gap-2">
@@ -94,7 +107,7 @@ export function ChartFileBrowser({
             depth={0}
             selected={selected}
             collapsed={collapsed}
-            onSelect={setSelected}
+            onSelect={setChosen}
             onToggle={toggle}
           />
         </nav>
@@ -404,8 +417,8 @@ function sortLevel(directory: DirNode) {
 /**
  * What is open when the browser first appears.
  *
- * Chart.yaml rather than values.yaml: the defaults already have a card of their
- * own above this one, and Chart.yaml is the file that says what the thing is.
+ * Chart.yaml rather than values.yaml: the defaults have a view of their own
+ * beside this one, and Chart.yaml is the file that says what the thing is.
  */
 function defaultSelection(files: HelmChartFileEntry[]): string | null {
   for (const preferred of ["Chart.yaml", "values.yaml", "README.md"]) {

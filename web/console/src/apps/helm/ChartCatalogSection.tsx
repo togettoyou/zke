@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HintTooltip } from "@/components/ui/tooltip";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
@@ -431,62 +432,89 @@ function ChartDetailView({
             </DetailCard>
           </div>
 
-          <Card className="grid gap-2 p-4">
-            <CardTitle>默认 values</CardTitle>
-            <p className="text-subtle-foreground text-xs">
-              Chart 自带的 values.yaml 原文，注释即文档。安装时以它为起点编辑。
-            </p>
-            {/* The same read-only editor the container service uses for YAML:
-                line numbers and highlighting, because this is the document an
-                operator is about to copy from and edit. */}
-            <YamlEditor
-              value={detail.data.values || "# 该 Chart 没有 values.yaml"}
-              onChange={() => {}}
-              readOnly
-              label={`${detail.data.name} 默认 values`}
-              // A height, not a cap: the editor paints into absolutely positioned
-              // layers, so a `max-h` alone leaves it with nothing to be capped
-              // against and it collapses to a line. It scrolls inside this.
-              className="h-96"
-            />
-          </Card>
+          {/*
+           * README, values and the archive are three documents about one chart,
+           * and only one of them is read by most people who open this page. So
+           * they are tabs rather than three cards stacked down the page: the
+           * README is on screen at once, and the other two cost nothing until
+           * they are asked for.
+           *
+           * That is not only about scrolling. The values editor is a CodeMirror
+           * instance and the file browser is a request that makes the Server
+           * walk every member of the archive — mounting both for a reader who
+           * came for the README is work nobody asked for. Radix unmounts an
+           * inactive tab, so neither happens until the tab is opened.
+           *
+           * Keyed on the version so switching versions starts them over: the
+           * selected file and the folded directories describe one archive, and
+           * carrying them into another would leave a selection pointing at a
+           * file that may not be in it.
+           */}
+          <Tabs key={`${detail.data.name}@${detail.data.version}`} defaultValue="readme">
+            <TabsList>
+              <TabsTrigger value="readme">README</TabsTrigger>
+              <TabsTrigger value="values">默认 values</TabsTrigger>
+              <TabsTrigger value="files">Chart 文件</TabsTrigger>
+            </TabsList>
 
-          {/* Keyed on the version so switching versions starts the browser over:
-              the selected path and the folded directories describe one
-              archive, and carrying them into another one would leave a
-              selection pointing at a file that may not be in it. */}
-          <Card className="grid min-w-0 gap-2 p-4">
-            <ChartFileBrowser
-              key={`${detail.data.name}@${detail.data.version}`}
-              repositoryId={repositoryId}
-              chart={chart}
-              // The version as it resolved, not as it was asked for: "latest"
-              // is a moving target, and the file requests must land on the same
-              // archive this listing came from.
-              version={detail.data.version}
-              files={detail.data.files ?? []}
-              fileCount={detail.data.file_count}
-              truncated={detail.data.files_truncated}
-            />
-          </Card>
+            <TabsContent value="readme">
+              {/* `min-w-0` so the README's widest code block scrolls inside the
+                  card instead of widening it — a grid item will not shrink
+                  below its content unless it is told it may.
 
-          {detail.data.readme ? (
-            /* `min-w-0` so the README's widest code block scrolls inside the
-               card instead of widening it — a grid item will not shrink below
-               its content unless it is told it may. */
-            <Card className="grid min-w-0 gap-2 p-4">
-              <CardTitle>README</CardTitle>
-              {/* Rendered rather than dumped: a chart README is documentation,
-                  and the renderer builds React nodes instead of injecting HTML,
-                  so nothing the chart author wrote becomes markup here.
-                  
                   No height cap and no scrollbar of its own: the page already
-                  scrolls, and a document boxed inside a scrolling page gives the
-                  reader two scrollbars to choose between and a card whose bottom
-                  edge is never where the text ends. */}
-              <Markdown text={detail.data.readme} />
-            </Card>
-          ) : null}
+                  scrolls, and a document boxed inside a scrolling page gives
+                  the reader two scrollbars to choose between and a card whose
+                  bottom edge is never where the text ends. */}
+              <Card className="grid min-w-0 gap-2 p-4">
+                {detail.data.readme ? (
+                  /* Rendered rather than dumped: a chart README is
+                     documentation, and the renderer builds React nodes instead
+                     of injecting HTML, so nothing the chart author wrote
+                     becomes markup here. */
+                  <Markdown text={detail.data.readme} />
+                ) : (
+                  <p className="text-subtle-foreground text-xs">该 Chart 没有打包 README。</p>
+                )}
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="values">
+              <Card className="grid gap-2 p-4">
+                <CardTitle>默认 values</CardTitle>
+                <p className="text-subtle-foreground text-xs">
+                  Chart 自带的 values.yaml 原文，注释即文档。安装时以它为起点编辑。
+                </p>
+                {/* The same read-only editor the container service uses for
+                    YAML: line numbers and highlighting, because this is the
+                    document an operator is about to copy from and edit. */}
+                <YamlEditor
+                  value={detail.data.values || "# 该 Chart 没有 values.yaml"}
+                  onChange={() => {}}
+                  readOnly
+                  label={`${detail.data.name} 默认 values`}
+                  // A height, not a cap: the editor paints into absolutely
+                  // positioned layers, so a `max-h` alone leaves it with
+                  // nothing to be capped against and it collapses to a line. It
+                  // scrolls inside this.
+                  className="h-96"
+                />
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="files">
+              <Card className="grid min-w-0 gap-2 p-4">
+                <ChartFileBrowser
+                  repositoryId={repositoryId}
+                  chart={chart}
+                  // The version as it resolved, not as it was asked for:
+                  // "latest" is a moving target, and the file requests must
+                  // land on the same archive this detail came from.
+                  version={detail.data.version}
+                />
+              </Card>
+            </TabsContent>
+          </Tabs>
         </div>
       )}
     </div>

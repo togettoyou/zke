@@ -153,6 +153,7 @@ export type HelmChartPage = Schemas["HelmChartPage"];
 export type HelmChartVersionSummary = Schemas["HelmChartVersionSummary"];
 export type HelmChartVersionPage = Schemas["HelmChartVersionPage"];
 export type HelmChartDetail = Schemas["HelmChartDetail"];
+export type HelmChartFilePage = Schemas["HelmChartFilePage"];
 export type HelmChartFileEntry = Schemas["HelmChartFileEntry"];
 export type HelmChartFileDetail = Schemas["HelmChartFileDetail"];
 export type HelmReleaseReport = Schemas["HelmReleaseReport"];
