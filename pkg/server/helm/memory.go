@@ -159,20 +159,28 @@ func (cache *indexCache) index(
 
 		index, state, err := service.loadIndex(ctx, repositoryID, force, held)
 
+		// One clock reading for both the stamp and the sweep below. Taking two
+		// would let an index be swept by the very load that produced it: the
+		// idle bound is a multiple of a freshness window an operator may set to
+		// anything, and a window shorter than the nanoseconds between two calls
+		// to time.Now() would make every load discard its own result and every
+		// revalidation re-parse from disk.
+		now := time.Now()
+
 		cache.mutex.Lock()
 		delete(cache.inflight, repositoryID)
 		if err == nil {
 			cache.entries[repositoryID] = &cachedIndex{
 				index:  index,
 				state:  state,
-				usedAt: time.Now(),
+				usedAt: now,
 			}
 		}
 		// Swept on every load rather than only when the count is exceeded, and
 		// swept whether or not this load succeeded: the indexes worth releasing
 		// belong to repositories that are not being read, and a load of some
 		// other repository is the only moment this cache is reliably awake.
-		cache.evictLocked(time.Now(), service.indexTTL)
+		cache.evictLocked(now, service.indexTTL)
 		cache.mutex.Unlock()
 		waiter.Done()
 		return index, state, err
