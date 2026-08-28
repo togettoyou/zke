@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -33,12 +34,38 @@ func HelmIdempotencyKey(ctx context.Context) string {
 // values document and the chart archive as readers rather than as bytes: a
 // chart is the largest thing this protocol carries, and the Agent streams it
 // straight into Helm's loader.
+//
+// The progress sink is where the handler says what it is doing while it is
+// still doing it. It is never nil, so a handler does not have to check.
 type HelmHandler func(
 	ctx context.Context,
 	request *agentv1.HelmRequest,
 	values io.Reader,
 	chart io.Reader,
+	progress HelmProgressSink,
 ) (*agentv1.HelmResponse, io.Reader, error)
+
+// HelmProgressSink carries one line of an unfinished operation back to the
+// Server.
+//
+// Reporting progress must never be able to fail an operation that is otherwise
+// going fine, so there is nothing to return: a line that cannot be written is
+// dropped, and the response — which is the part that matters — is written on
+// the same Stream afterwards and fails visibly if the Stream is really gone. A
+// sink is safe to call from any goroutine, because Helm's own logging is, and
+// it goes inert once the operation has answered.
+type HelmProgressSink interface {
+	Progress(message string)
+}
+
+// maxHelmProgressLines bounds one operation's progress.
+//
+// Helm logs a line per wait poll, so a release that waits out a long timeout
+// produces a steady trickle for as long as it waits. This is what keeps a slow
+// rollout from becoming an unbounded write on a Stream nobody is reading fast
+// enough; past it the Agent says so once and stops, and the response is
+// unaffected.
+const maxHelmProgressLines = 2000
 
 // HelmStreamHandler serves the release lifecycle Stream.
 //
@@ -69,7 +96,13 @@ func HelmStreamHandler(handler HelmHandler) IncomingStreamHandler {
 			helmContextKey{},
 			header.GetIdempotencyKey(),
 		)
-		response, report, err := handler(handlerContext, request, values, chart)
+		// The sink writes to the Stream the response will be written to, so it
+		// has to be closed before that happens: a progress frame interleaved
+		// with the response would leave the Server reading a message where a
+		// report body should be.
+		progress := newHelmProgressWriter(stream, request.GetStreamProgress())
+		response, report, err := handler(handlerContext, request, values, chart, progress)
+		progress.close()
 		if err != nil {
 			return err
 		}
@@ -94,7 +127,7 @@ func HelmStreamHandler(handler HelmHandler) IncomingStreamHandler {
 		if err := validateHelmResponse(response, report != nil); err != nil {
 			return err
 		}
-		if err := WriteMessage(stream, response); err != nil {
+		if err := writeHelmResponse(stream, response, request.GetStreamProgress()); err != nil {
 			return err
 		}
 		if response.GetBodySize() > 0 {
@@ -115,6 +148,7 @@ func DoHelm(
 	values io.Reader,
 	chart io.Reader,
 	report io.Writer,
+	progress func(*agentv1.HelmProgress),
 ) (*agentv1.HelmResponse, error) {
 	if connection == nil {
 		return nil, errors.New("Agent Connection is required")
@@ -178,8 +212,8 @@ func DoHelm(
 	if err := stream.Close(); err != nil {
 		return nil, fmt.Errorf("finish Agent Helm request: %w", err)
 	}
-	response := &agentv1.HelmResponse{}
-	if err := ReadMessage(stream, response); err != nil {
+	response, err := readHelmResponse(stream, request.GetStreamProgress(), progress)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateHelmResponse(response, true); err != nil {
@@ -275,6 +309,122 @@ func validateHelmResponse(response *agentv1.HelmResponse, hasBody bool) error {
 		return ErrStreamProtocol
 	}
 	return nil
+}
+
+// helmProgressWriter serialises progress frames onto the Stream that will carry
+// the response.
+//
+// Helm calls its log function from whichever goroutine is doing the work —
+// including, during a wait, from one this Agent never started itself — so the
+// mutex is not defensive, it is what makes these writes legal at all. `done` is
+// what keeps a line Helm logs after the action returned out of the middle of
+// the response.
+type helmProgressWriter struct {
+	stream  io.Writer
+	enabled bool
+	mutex   sync.Mutex
+	done    bool
+	written int
+}
+
+func newHelmProgressWriter(stream io.Writer, enabled bool) *helmProgressWriter {
+	return &helmProgressWriter{stream: stream, enabled: enabled}
+}
+
+func (writer *helmProgressWriter) Progress(message string) {
+	message = strings.TrimSpace(message)
+	if writer == nil || !writer.enabled || message == "" {
+		return
+	}
+	if len(message) > maxHelmStringLength {
+		message = message[:maxHelmStringLength]
+	}
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	if writer.done || writer.written >= maxHelmProgressLines {
+		return
+	}
+	writer.written++
+	if writer.written == maxHelmProgressLines {
+		message = "progress log truncated; the operation itself continues"
+	}
+	// Deliberately unchecked, see HelmProgressSink: a Stream that cannot take
+	// this frame cannot take the response either, and that is where the failure
+	// belongs.
+	_ = WriteMessage(writer.stream, &agentv1.HelmEvent{
+		Payload: &agentv1.HelmEvent_Progress{
+			Progress: &agentv1.HelmProgress{
+				AtUnixMillis: time.Now().UnixMilli(),
+				Message:      message,
+			},
+		},
+	})
+}
+
+// close stops the sink before the response goes out on the same Stream.
+func (writer *helmProgressWriter) close() {
+	if writer == nil {
+		return
+	}
+	writer.mutex.Lock()
+	writer.done = true
+	writer.mutex.Unlock()
+}
+
+func writeHelmResponse(
+	stream io.Writer,
+	response *agentv1.HelmResponse,
+	enveloped bool,
+) error {
+	if !enveloped {
+		return WriteMessage(stream, response)
+	}
+	return WriteMessage(stream, &agentv1.HelmEvent{
+		Payload: &agentv1.HelmEvent_Response{Response: response},
+	})
+}
+
+// readHelmResponse reads until the operation answers, handing every progress
+// frame before it to the caller.
+//
+// A Stream that ends without a response is a protocol error rather than a
+// silent success: the Server must not report an operation as finished on the
+// strength of the Agent having stopped talking.
+func readHelmResponse(
+	stream io.Reader,
+	enveloped bool,
+	progress func(*agentv1.HelmProgress),
+) (*agentv1.HelmResponse, error) {
+	if !enveloped {
+		response := &agentv1.HelmResponse{}
+		if err := ReadMessage(stream, response); err != nil {
+			return nil, err
+		}
+		return response, nil
+	}
+	for {
+		event := &agentv1.HelmEvent{}
+		if err := ReadMessage(stream, event); err != nil {
+			return nil, err
+		}
+		switch payload := event.GetPayload().(type) {
+		case *agentv1.HelmEvent_Response:
+			if payload.Response == nil {
+				return nil, ErrStreamProtocol
+			}
+			return payload.Response, nil
+		case *agentv1.HelmEvent_Progress:
+			if payload.Progress == nil ||
+				len(payload.Progress.GetMessage()) > maxHelmStringLength {
+				return nil, ErrStreamProtocol
+			}
+			if progress != nil {
+				progress(payload.Progress)
+			}
+		default:
+			return nil, ErrStreamProtocol
+		}
+	}
 }
 
 // validHelmReleaseName applies Helm's own rule: a release name is a DNS-1123

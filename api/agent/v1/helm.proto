@@ -77,6 +77,47 @@ message HelmRequest {
   // chart renders, which is why the Server also refuses to send the request to
   // an Agent that does not advertise the Helm capability at all.
   bool allow_cluster_scoped = 18;
+  // Report what Helm is doing while it is still doing it.
+  //
+  // A release change is the longest operation this protocol carries — a chart
+  // that waits for a rollout holds the Stream open for minutes — and until the
+  // response arrives the operator has nothing to read. When this is set the
+  // Agent writes HelmEvent frames instead of a bare HelmResponse, so the
+  // account of the operation arrives as it happens rather than after it.
+  //
+  // It changes the wire shape of the answer, so the Server sets it only for an
+  // Agent that advertised `helm-progress.v1`. An Agent that predates the field
+  // ignores it, never advertises the capability, and is never asked.
+  bool stream_progress = 19;
+}
+
+// HelmProgress is one line of an operation that has not finished yet.
+//
+// The text is Helm's own log line, forwarded verbatim rather than classified.
+// Helm says "creating 6 resource(s)" and "beginning wait for 6 resources with
+// timeout of 5m0s"; an Agent that translated those into a phase enum would be
+// guessing at a vocabulary Helm never promised, and the guess would be wrong on
+// the release where it mattered. The Agent adds its own lines for what it does
+// itself — loading the archive, and the outcome — and those read the same way.
+//
+// Progress is advisory. It is written on a best effort basis and dropped when
+// it cannot be, because a Stream that failed to report what it was doing must
+// still report what it did.
+message HelmProgress {
+  int64 at_unix_millis = 1;
+  string message = 2;
+}
+
+// HelmEvent is what a Stream carries back when the request asked for progress.
+//
+// Zero or more progress frames, then exactly one response, then the report body
+// the response sizes. The oneof is what lets the Server tell "still running"
+// from "finished" without a framing layer of its own.
+message HelmEvent {
+  oneof payload {
+    HelmProgress progress = 1;
+    HelmResponse response = 2;
+  }
 }
 
 message HelmResponse {

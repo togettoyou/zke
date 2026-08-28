@@ -34,6 +34,11 @@ const (
 	// Helm: a Server upgraded ahead of its Agents must fail the request
 	// rather than fall back to writing release storage itself.
 	CapabilityHelmV1 = "helm.v1"
+	// Live progress on a Helm Stream. Separate from the Helm capability itself
+	// because it changes the shape of the answer: an Agent that advertises it
+	// writes HelmEvent frames when the request asks for them, and one that does
+	// not is never asked and keeps writing a bare HelmResponse.
+	CapabilityHelmProgressV1 = "helm-progress.v1"
 
 	CloseNormal              quic.ApplicationErrorCode = 0
 	CloseProtocolError       quic.ApplicationErrorCode = 1

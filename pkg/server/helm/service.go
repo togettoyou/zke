@@ -13,6 +13,10 @@ import (
 
 // AgentAccess is the Agent connection surface a release operation needs. The
 // Server sends the chart and the values; the Agent runs Helm.
+//
+// The progress callback is how the Cluster says what it is doing before it is
+// done. It may be nil, and it is called from the goroutine reading the Stream,
+// so an implementation that blocks in it holds the operation up.
 type AgentAccess interface {
 	RequestHelm(
 		ctx context.Context,
@@ -22,6 +26,7 @@ type AgentAccess interface {
 		chart io.Reader,
 		report io.Writer,
 		idempotencyKey string,
+		progress func(*agentv1.HelmProgress),
 	) (*agentv1.HelmResponse, error)
 }
 

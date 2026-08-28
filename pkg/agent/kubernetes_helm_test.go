@@ -297,6 +297,12 @@ func TestHelmDescriptionIsLabelled(t *testing.T) {
 	}
 }
 
+// silentHelmProgress stands in for the Stream's own sink. A handler always has
+// one, so a test that does not care what was reported still has to pass it.
+type silentHelmProgress struct{}
+
+func (silentHelmProgress) Progress(string) {}
+
 // The Agent refuses a malformed request itself rather than trusting that the
 // Stream layer already checked: this is the last point before it changes its
 // own Cluster.
@@ -311,6 +317,7 @@ func TestKubernetesHelmHandlerRefusesInvalidRequests(t *testing.T) {
 		&agentv1.HelmRequest{Action: agentv1.HelmAction_HELM_ACTION_INSTALL},
 		bytes.NewReader(nil),
 		bytes.NewReader(nil),
+		silentHelmProgress{},
 	)
 	if err != nil {
 		t.Fatalf("handler returned a Stream error rather than a response: %v", err)

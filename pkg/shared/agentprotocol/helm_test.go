@@ -1,6 +1,7 @@
 package agentprotocol
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -190,5 +191,130 @@ func TestValidateHelmResponseBoundsTheReport(t *testing.T) {
 	}
 	if err := validateHelmResponse(response, true); !errors.Is(err, ErrStreamBodyTooLarge) {
 		t.Fatalf("validateHelmResponse() = %v, want ErrStreamBodyTooLarge", err)
+	}
+}
+
+// Progress frames and the response travel on one Stream, so the reader has to
+// be able to tell them apart and the writer has to stop before the response
+// goes out. A frame interleaved with the response would leave the Server
+// reading a message where the report body should be.
+func TestHelmProgressFramesPrecedeTheResponse(t *testing.T) {
+	t.Parallel()
+
+	stream := &bytes.Buffer{}
+	writer := newHelmProgressWriter(stream, true)
+	writer.Progress("creating 6 resource(s)")
+	writer.Progress("   ")
+	writer.Progress("beginning wait for 6 resources")
+	writer.close()
+	writer.Progress("logged after the action returned")
+	if err := writeHelmResponse(stream, &agentv1.HelmResponse{
+		Result:   agentv1.ResultCode_RESULT_CODE_OK,
+		BodySize: 0,
+	}, true); err != nil {
+		t.Fatalf("writeHelmResponse() = %v", err)
+	}
+
+	var seen []string
+	response, err := readHelmResponse(stream, true, func(line *agentv1.HelmProgress) {
+		seen = append(seen, line.GetMessage())
+		if line.GetAtUnixMillis() <= 0 {
+			t.Error("a progress line carried no timestamp")
+		}
+	})
+	if err != nil {
+		t.Fatalf("readHelmResponse() = %v", err)
+	}
+	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+		t.Fatalf("response = %+v", response)
+	}
+	want := []string{"creating 6 resource(s)", "beginning wait for 6 resources"}
+	if len(seen) != len(want) {
+		t.Fatalf("progress = %q, want %q", seen, want)
+	}
+	for index, message := range want {
+		if seen[index] != message {
+			t.Fatalf("progress = %q, want %q", seen, want)
+		}
+	}
+}
+
+// An Agent that never advertised progress writes a bare response, and a Server
+// that did not ask for it reads one. The two shapes are chosen by the same
+// field, so neither side can be reading what the other is not writing.
+func TestHelmResponseWithoutProgressKeepsTheBareShape(t *testing.T) {
+	t.Parallel()
+
+	stream := &bytes.Buffer{}
+	writer := newHelmProgressWriter(stream, false)
+	writer.Progress("this Agent was not asked for progress")
+	if stream.Len() != 0 {
+		t.Fatalf("a sink that was not enabled wrote %d bytes", stream.Len())
+	}
+	if err := writeHelmResponse(stream, &agentv1.HelmResponse{
+		Result: agentv1.ResultCode_RESULT_CODE_OK,
+	}, false); err != nil {
+		t.Fatalf("writeHelmResponse() = %v", err)
+	}
+	response, err := readHelmResponse(stream, false, nil)
+	if err != nil || response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+		t.Fatalf("readHelmResponse() = %+v, %v", response, err)
+	}
+}
+
+// Helm logs a line per wait poll, so a release that waits out a long timeout
+// would otherwise write without bound on a Stream nobody is draining. Past the
+// bound the Agent says so once and stops; the response is unaffected.
+func TestHelmProgressIsBounded(t *testing.T) {
+	t.Parallel()
+
+	stream := &bytes.Buffer{}
+	writer := newHelmProgressWriter(stream, true)
+	for range maxHelmProgressLines * 2 {
+		writer.Progress("waiting")
+	}
+	writer.close()
+	if err := writeHelmResponse(stream, &agentv1.HelmResponse{
+		Result: agentv1.ResultCode_RESULT_CODE_OK,
+	}, true); err != nil {
+		t.Fatalf("writeHelmResponse() = %v", err)
+	}
+	lines := 0
+	last := ""
+	if _, err := readHelmResponse(stream, true, func(line *agentv1.HelmProgress) {
+		lines++
+		last = line.GetMessage()
+	}); err != nil {
+		t.Fatalf("readHelmResponse() = %v", err)
+	}
+	if lines != maxHelmProgressLines {
+		t.Fatalf("wrote %d progress lines, want %d", lines, maxHelmProgressLines)
+	}
+	if !strings.Contains(last, "truncated") {
+		t.Fatalf("the bound was reached silently: last line = %q", last)
+	}
+}
+
+// A message longer than the protocol carries is cut rather than refused: a
+// Cluster that logged something enormous must not be able to fail an operation
+// that is otherwise going fine.
+func TestHelmProgressBoundsOneLine(t *testing.T) {
+	t.Parallel()
+
+	stream := &bytes.Buffer{}
+	writer := newHelmProgressWriter(stream, true)
+	writer.Progress(strings.Repeat("x", maxHelmStringLength*2))
+	writer.close()
+	if err := writeHelmResponse(stream, &agentv1.HelmResponse{
+		Result: agentv1.ResultCode_RESULT_CODE_OK,
+	}, true); err != nil {
+		t.Fatalf("writeHelmResponse() = %v", err)
+	}
+	if _, err := readHelmResponse(stream, true, func(line *agentv1.HelmProgress) {
+		if len(line.GetMessage()) != maxHelmStringLength {
+			t.Errorf("line length = %d", len(line.GetMessage()))
+		}
+	}); err != nil {
+		t.Fatalf("readHelmResponse() = %v", err)
 	}
 }

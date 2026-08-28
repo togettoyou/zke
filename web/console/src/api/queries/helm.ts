@@ -1,6 +1,7 @@
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { HelmRepositoryRequest } from "../types";
+import type { HelmReleaseOperation, HelmRepositoryRequest } from "../types";
 import { api, csrfHeaders, idempotentHeaders, unwrap } from "../client";
 import { queryKeyPrefixes, queryKeys } from "../query-keys";
 
@@ -33,6 +34,27 @@ const RELEASE_PATH =
   "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}";
 const ROLLBACK_PATH =
   "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-releases/{release_name}/rollback";
+const OPERATIONS_PATH = "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-operations";
+const OPERATION_PATH =
+  "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-operations/{operation_id}";
+
+/**
+ * How often a running operation is asked what it is doing.
+ *
+ * A second is fast enough that Helm's log reads as it is written and slow
+ * enough that a five-minute rollout costs three hundred requests rather than
+ * three thousand. Polling stops the moment the operation finishes — a finished
+ * account never changes again.
+ *
+ * This is the one polling query in the Console that does not stop while its
+ * window is hidden, and the rule it is breaking is worth restating: polling
+ * pauses because every request is ultimately executed by a Cluster's Agent.
+ * This one is not. The account lives in the Server's own memory and reading it
+ * costs a map lookup, while pausing would freeze a deployment log at whatever
+ * it happened to say when the window went away — and a minimised window is
+ * exactly what an operator does while they wait for a rollout.
+ */
+const OPERATION_POLL_MS = 1_000;
 
 export function useHelmRepositories(enabled = true) {
   return useQuery({
@@ -235,9 +257,14 @@ export function useDeleteHelmRepository() {
  * Everything a release write can carry.
  *
  * `dryRun` is what makes one request a preview: it renders the chart against the
- * Cluster and returns the manifest that would be applied, without writing
+ * Cluster and reports the manifest that would be applied, without writing
  * anything. Every form here submits the same body twice — once to preview, once
  * to apply — so what the operator approved is what gets sent.
+ *
+ * None of the four returns a release. They return an operation: a release
+ * change takes as long as the rollout it waits for, so the Server starts one
+ * and answers with its identity, and what happened is read from
+ * {@link useHelmOperation} while it happens.
  */
 export type HelmReleaseWriteInput = {
   clusterId: string;
@@ -257,8 +284,20 @@ export type HelmReleaseWriteInput = {
   resetValues?: boolean;
   reuseValues?: boolean;
   dryRun: boolean;
+  /**
+   * One key per submission attempt, not one per form.
+   *
+   * The Server claims the key for the operation it starts, so presenting it
+   * again is what makes a retried submission a retry rather than a second
+   * install. Presenting it for a *different* request is refused — which is why
+   * the preview and the apply, whose bodies differ by that one flag, must not
+   * share one.
+   */
   idempotencyKey: string;
 };
+
+/** What every release write answers with: the operation it started. */
+type HelmOperationResult = { operation: HelmReleaseOperation };
 
 function releaseBody(input: HelmReleaseWriteInput) {
   // Every switch is sent explicitly rather than omitted. The Server reads a
@@ -282,8 +321,15 @@ function releaseBody(input: HelmReleaseWriteInput) {
   };
 }
 
+/**
+ * Starting a release change.
+ *
+ * Nothing is invalidated here, because nothing has happened yet: the request
+ * that returns is the one that was accepted, and the objects it will create do
+ * not exist for as long as the rollout takes. What is stale, and when, is
+ * decided by {@link useHelmOperation} when the operation finishes.
+ */
 export function useInstallHelmRelease() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: HelmReleaseWriteInput) =>
       unwrap(
@@ -294,13 +340,11 @@ export function useInstallHelmRelease() {
           },
           body: { name: input.name, ...releaseBody(input) },
         }),
-      ),
-    onSuccess: (_data, variables) => invalidateReleases(queryClient, variables),
+      ) as HelmOperationResult,
   });
 }
 
 export function useUpgradeHelmRelease() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: HelmReleaseWriteInput) =>
       unwrap(
@@ -319,8 +363,7 @@ export function useUpgradeHelmRelease() {
             reuse_values: input.reuseValues ?? false,
           },
         }),
-      ),
-    onSuccess: (_data, variables) => invalidateReleases(queryClient, variables),
+      ) as HelmOperationResult,
   });
 }
 
@@ -338,7 +381,6 @@ export type HelmRollbackInput = {
 };
 
 export function useRollbackHelmRelease() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: HelmRollbackInput) =>
       unwrap(
@@ -361,8 +403,7 @@ export function useRollbackHelmRelease() {
             confirm: !input.dryRun,
           },
         }),
-      ),
-    onSuccess: (_data, variables) => invalidateReleases(queryClient, variables),
+      ) as HelmOperationResult,
   });
 }
 
@@ -380,7 +421,6 @@ export type HelmUninstallInput = {
 };
 
 export function useUninstallHelmRelease() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: HelmUninstallInput) =>
       unwrap(
@@ -403,8 +443,103 @@ export function useUninstallHelmRelease() {
             confirm: !input.dryRun,
           },
         }),
+      ) as HelmOperationResult,
+  });
+}
+
+/**
+ * One release change, watched until it stops.
+ *
+ * This is where a deployment becomes something an operator can see. The Server
+ * writes the account as the change happens — which chart it resolved, what the
+ * Cluster is creating, which objects it is waiting for — and this reads it
+ * every second until the operation finishes, then stops.
+ *
+ * It is also where the rest of the Console finds out that something changed.
+ * The mutation that started the operation could not say so: at the moment it
+ * returned, nothing had happened yet.
+ */
+export function useHelmOperation(
+  clusterId: string | null,
+  namespace: string | null,
+  operationId: string | null,
+) {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: queryKeys.helmOperation(clusterId ?? "", namespace ?? "", operationId ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(OPERATION_PATH, {
+          params: {
+            path: {
+              cluster_id: clusterId as string,
+              namespace_name: namespace as string,
+              operation_id: operationId as string,
+            },
+          },
+          signal,
+        }),
       ),
-    onSuccess: (_data, variables) => invalidateReleases(queryClient, variables),
+    enabled: Boolean(clusterId && namespace && operationId),
+    refetchInterval: (query) =>
+      query.state.data?.operation.status === "running" ? OPERATION_POLL_MS : false,
+    // A finished operation is a historical record: it cannot change again, so
+    // remounting the view that shows it must not cost a round trip.
+    staleTime: Infinity,
+  });
+
+  // Settled once per operation. The query keeps handing back the same finished
+  // account on every render, and invalidating the whole Namespace each time
+  // would put the Console into a refetch loop of its own making.
+  const settled = useRef<string | null>(null);
+  const operation = query.data?.operation;
+  useEffect(() => {
+    if (!operation || operation.status === "running" || settled.current === operation.id) {
+      return;
+    }
+    settled.current = operation.id;
+    void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents });
+    // A dry run changed nothing, and a failed operation may have changed
+    // something — a chart that failed halfway leaves behind what it had already
+    // applied, so what is on screen is stale either way.
+    if (operation.dry_run) {
+      return;
+    }
+    void invalidateReleases(queryClient, {
+      clusterId: operation.cluster_id,
+      namespace: operation.namespace,
+    });
+  }, [operation, queryClient]);
+
+  return query;
+}
+
+/**
+ * This operator's release changes in one Namespace, newest first.
+ *
+ * It answers one question: is something already running here? A Console that
+ * was closed or reloaded mid-deployment has lost the operation's identity, and
+ * without this there would be no way back to it — the deployment would carry on
+ * invisibly and the page would show a release list that quietly changed under
+ * it.
+ */
+export function useHelmOperations(clusterId: string | null, namespace: string | null) {
+  return useQuery({
+    queryKey: queryKeys.helmOperations(clusterId ?? "", namespace ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET(OPERATIONS_PATH, {
+          params: {
+            path: { cluster_id: clusterId as string, namespace_name: namespace as string },
+          },
+          signal,
+        }),
+      ),
+    enabled: Boolean(clusterId && namespace),
+    refetchInterval: (query) =>
+      (query.state.data?.operations ?? []).some((item) => item.status === "running")
+        ? OPERATION_POLL_MS
+        : false,
   });
 }
 
@@ -423,29 +558,23 @@ async function invalidateCatalogue(queryClient: ReturnType<typeof useQueryClient
 }
 
 /**
- * A dry run changed nothing, so it invalidates nothing: refetching the release
- * list after a preview would replace what the operator is reading with the same
- * content, and cost a Cluster round trip to do it.
+ * What a finished release change made stale.
  *
- * A real write invalidates the whole Namespace's releases rather than the one
- * that changed. One chart owns many objects, an uninstall removes a release
- * from the list entirely, and a rollback moves the revision the detail view is
- * pinned to.
+ * The whole Namespace's releases rather than the one that changed: one chart
+ * owns many objects, an uninstall removes a release from the list entirely, and
+ * a rollback moves the revision the detail view is pinned to.
  */
 async function invalidateReleases(
   queryClient: ReturnType<typeof useQueryClient>,
-  variables: { clusterId: string; namespace: string; dryRun: boolean },
+  variables: { clusterId: string; namespace: string },
 ) {
-  await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.auditEvents });
-  if (variables.dryRun) {
-    return;
-  }
   await Promise.all([
     queryClient.invalidateQueries({
       queryKey: [...queryKeyPrefixes.helmReleases, variables.clusterId, variables.namespace],
     }),
     queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.helmRelease }),
     queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.helmReleaseRevisions }),
+    queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.helmOperations }),
     // A chart creates and replaces ordinary Kubernetes objects, so the views
     // that list them are stale too.
     queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.workloads }),

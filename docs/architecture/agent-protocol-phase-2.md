@@ -99,6 +99,14 @@ Chart 包与 values 文档按消息里声明的大小跟在请求之后按字节
 一个 Release 变更：两个并发操作会在 Helm 自己的存储上竞争，而 Helm 没有锁可以阻止它们。渲染与写入由 Agent 用
 Helm 引擎完成，Server 不渲染 Chart 也不代写 Release Secret；不声明该能力的 Agent 会被直接拒绝，没有降级路径。
 
+它也是唯一一条**在应答之前就开始说话**的请求型 Stream。一次等待就绪的安装可以安静好几分钟，而这几分钟里
+Helm 自己是有话说的——它记录正在创建多少个对象、正在等哪些对象、等待为什么结束。声明了 `helm-progress.v1`
+的 Agent 在这种情况下改写应答的形状：先是若干个 `HelmEvent{progress}` 帧，然后才是唯一一个
+`HelmEvent{response}`，再是响应声明大小的报告正文。形状既然会变，就必须双方都同意才行——所以真正决定它的是
+请求里的 `stream_progress`，Server 只对声明了该能力的 Agent 置位，不认识这个字段的旧 Agent 从不会被这样要求，
+继续写裸的 `HelmResponse`。进度是尽力而为的：写不出去就丢掉，因为一条没能报告「正在做什么」的 Stream 仍然
+必须报告「做完了什么」。
+
 同一条 Stream 内允许出现该业务自身需要的多种消息，例如 Pod Exec 的 stdin、stdout、stderr 和 resize。此时
 可以定义仅属于 `POD_EXEC` 的类型化帧，但这些帧仍属于同一个终端会话，不代表在 Stream 内复用多个请求。
 
@@ -194,6 +202,7 @@ terminal-session.v1
 metrics-ingest.v1
 metrics-collector.v1
 helm.v1
+helm-progress.v1
 ```
 
 未声明 `resource.v1` 的旧 Agent 仍可维持 Phase 1 Control Stream，Server 不得向其打开 Resource Stream；

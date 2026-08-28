@@ -1,15 +1,16 @@
 import { useMemo, useState } from "react";
-import { Eye, ShipWheel } from "lucide-react";
+import { ArrowLeft, ShipWheel } from "lucide-react";
 
 import {
   useHelmChart,
   useHelmChartVersions,
+  useHelmOperation,
   useHelmRepositories,
   useInstallHelmRelease,
   useUpgradeHelmRelease,
   type HelmReleaseWriteInput,
 } from "@/api/queries/helm";
-import type { HelmReleaseReport } from "@/api/types";
+import type { HelmReleaseOperation } from "@/api/types";
 import { PageHeader } from "@/apps/AppShell";
 import { ErrorAlert } from "@/components/common/error-alert";
 import { notifyFailure } from "@/components/common/notify";
@@ -29,6 +30,7 @@ import {
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
 import { ChartIcon, Field, FieldGrid, FormSection, SwitchField } from "./form";
+import { OperationProgress } from "./operation";
 
 /**
  * Installing and upgrading a release.
@@ -38,11 +40,20 @@ import { ChartIcon, Field, FieldGrid, FormSection, SwitchField } from "./form";
  * against what is running, and a set of switches whose consequences an operator
  * has to think about. None of that fits a box over a list.
  *
- * The order on the page is the order of the decision. What to install, then with
- * what values, then how to apply it, then — and only then — what it would
- * actually do. The preview is not optional decoration: `dry_run` sends the exact
- * body the apply will send and reports the manifest the Cluster would receive,
- * so approving it is approving the request itself.
+ * The page has three steps and shows one at a time, which is the whole of its
+ * design. It used to have two buttons — 预览 and 安装 — and rendered the preview
+ * below a form long enough that the operator had to know to scroll for it; the
+ * common outcome was pressing 预览, seeing nothing change, and pressing it
+ * again. So there is one button, it moves the page forward, and each step
+ * replaces the one before it:
+ *
+ *   配置 → 确认 → 执行
+ *
+ * 确认 is not decoration. `dry_run` sends the exact body the apply will send and
+ * reports the manifest the Cluster would receive, so approving what is on that
+ * step is approving the request itself. And because both steps are operations
+ * rather than held-open requests, both of them say what they are doing while
+ * they do it — see OperationProgress.
  */
 
 export type ReleaseFormMode = "install" | "upgrade";
@@ -79,7 +90,7 @@ export function ReleaseFormView({
   target: ReleaseFormTarget;
   canInstallClusterScoped: boolean;
   onBack: () => void;
-  onDone: (report: HelmReleaseReport) => void;
+  onDone: (operation: HelmReleaseOperation) => void;
 }) {
   const [repositoryId, setRepositoryId] = useState(target.repositoryId);
   const [version, setVersion] = useState(target.version);
@@ -101,15 +112,13 @@ export function ReleaseFormView({
   const [timeoutSeconds, setTimeoutSeconds] = useState("300");
   const [description, setDescription] = useState("");
   /*
-   * A preview describes exactly one request body. It is kept together with a
-   * signature of that body and shown only while the signature still matches, so
-   * editing anything afterwards retires the preview during the same render
-   * rather than leaving a picture of a request nobody is going to send next to
-   * an Apply button that would send a different one.
+   * The two operations this page can have started. The step it is showing is
+   * derived from them rather than stored: a page with an apply running is on
+   * the 执行 step by definition, and a second source of truth for that is a
+   * second thing that can be wrong.
    */
-  const [preview, setPreview] = useState<{ signature: string; report: HelmReleaseReport } | null>(
-    null,
-  );
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [applyId, setApplyId] = useState<string | null>(null);
 
   const repositories = useHelmRepositories();
   const enabledRepositories = useMemo(
@@ -121,9 +130,26 @@ export function ReleaseFormView({
   const install = useInstallHelmRelease();
   const upgrade = useUpgradeHelmRelease();
   const mutation = mode === "install" ? install : upgrade;
-  // One key for the whole form, so a retry after a lost response is a retry and
-  // not a second install.
-  const idempotencyKey = useSubmissionKey(true);
+
+  /*
+   * One key per attempt, and a preview and its apply are two requests under two
+   * keys.
+   *
+   * The Server claims a key for the operation it starts, so presenting the same
+   * one again is what makes a retried submission a retry. It also refuses a key
+   * presented for a *different* request — which is what the preview and the
+   * apply are, differing by `dry_run` — so they cannot share one. Going back to
+   * the form retires the attempt: whatever comes next is a new request, and
+   * answering it with the previous attempt's account would describe a
+   * configuration nobody is submitting any more.
+   */
+  const submissionKey = useSubmissionKey(true);
+  const [attempt, setAttempt] = useState(0);
+  const previewKey = `${submissionKey}:d${attempt}`;
+  const applyKey = `${submissionKey}:a${attempt}`;
+
+  const preview = useHelmOperation(target.clusterId, target.namespace, previewId);
+  const apply = useHelmOperation(target.clusterId, target.namespace, applyId);
 
   const defaults = chart.data?.values ?? "";
   const values = valuesDraft ?? defaults;
@@ -142,7 +168,7 @@ export function ReleaseFormView({
     (mode === "upgrade" || (trimmedName !== "" && !invalidName)) &&
     !invalidTimeout;
 
-  const body = useMemo<Omit<HelmReleaseWriteInput, "dryRun">>(
+  const body = useMemo<Omit<HelmReleaseWriteInput, "dryRun" | "idempotencyKey">>(
     () => ({
       clusterId: target.clusterId,
       namespace: target.namespace,
@@ -161,14 +187,12 @@ export function ReleaseFormView({
       reuseValues: mode === "upgrade" ? reuseValues : false,
       timeoutSeconds: timeoutSeconds ? seconds : undefined,
       description,
-      idempotencyKey,
     }),
     [
       atomic,
       createNamespace,
       description,
       disableHooks,
-      idempotencyKey,
       mode,
       repositoryId,
       reuseValues,
@@ -182,19 +206,16 @@ export function ReleaseFormView({
     ],
   );
 
-  const signature = JSON.stringify(body);
-  const activePreview = preview?.signature === signature ? preview.report : null;
-
   const submit = (dryRun: boolean) => {
     mutation.mutate(
-      { ...body, dryRun },
+      { ...body, dryRun, idempotencyKey: dryRun ? previewKey : applyKey },
       {
         onSuccess: (result) => {
           if (dryRun) {
-            setPreview({ signature, report: result.release });
+            setPreviewId(result.operation.id);
             return;
           }
-          onDone(result.release);
+          setApplyId(result.operation.id);
         },
         onError: (error) => {
           notifyFailure(
@@ -206,48 +227,72 @@ export function ReleaseFormView({
     );
   };
 
-  const title =
-    mode === "install" ? `安装 ${target.chart}` : `升级 ${target.releaseName ?? target.chart}`;
+  /** Back to the form, retiring everything the previous attempt produced. */
+  const restart = () => {
+    setPreviewId(null);
+    setApplyId(null);
+    setAttempt((value) => value + 1);
+    mutation.reset();
+  };
+
+  const verb = mode === "install" ? "安装" : "升级";
+  const subject = mode === "install" ? target.chart : (target.releaseName ?? target.chart);
+
+  if (applyId) {
+    return (
+      <ApplyStep
+        verb={verb}
+        subject={subject}
+        operation={apply.data?.operation}
+        error={apply.error}
+        onRestart={restart}
+        onDone={onDone}
+      />
+    );
+  }
+
+  if (previewId) {
+    return (
+      <ConfirmStep
+        verb={verb}
+        subject={subject}
+        mode={mode}
+        before={mode === "upgrade" ? (target.currentManifest ?? "") : ""}
+        operation={preview.data?.operation}
+        error={preview.error}
+        submitting={mutation.isPending}
+        submitError={mutation.error}
+        onRestart={restart}
+        onConfirm={() => submit(false)}
+      />
+    );
+  }
 
   return (
     <div className="grid gap-3">
       <PageHeader
-        title={title}
+        title={`${verb} ${target.chart}`}
         onBack={onBack}
         backDisabled={mutation.isPending}
         actions={
-          <>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!ready || mutation.isPending}
-              onClick={() => submit(true)}
-            >
-              <Eye />
-              预览
-            </Button>
-            <Button
-              size="sm"
-              disabled={!ready || mutation.isPending || !activePreview}
-              onClick={() => submit(false)}
-            >
-              <ShipWheel />
-              {mode === "install" ? "安装" : "升级"}
-            </Button>
-          </>
+          /*
+           * One button, and it says what pressing it does. There used to be two
+           * — 预览 then 安装 — and the difference between them was a thing the
+           * operator had to hold in their head while the preview appeared below
+           * a form too long to see the bottom of.
+           */
+          <Button size="sm" disabled={!ready || mutation.isPending} onClick={() => submit(true)}>
+            <ShipWheel />
+            {mutation.isPending ? "正在提交…" : `预览并${verb}`}
+          </Button>
         }
       />
 
       <div className="grid max-w-4xl gap-3">
-        {/* Preview before apply is enforced rather than suggested: a chart is a
-            program, and what it renders is not derivable from the values it was
-            given. */}
-        {activePreview ? null : (
-          <Alert tone="info">
-            先预览再提交。预览会用完全相同的请求在目标集群渲染一次
-            Chart（不写入任何对象），并给出将要应用的清单；只有看过它之后才能提交。
-          </Alert>
-        )}
+        <Alert tone="info">
+          下一步会用完全相同的请求在目标集群渲染一次 Chart（不写入任何对象），
+          并把将要应用的清单摆出来；确认之后才会真正{verb}。
+        </Alert>
 
         <FormSection title="目标" hint={`${target.clusterName} · ${target.namespace}`}>
           <div className="flex items-start gap-3">
@@ -428,7 +473,7 @@ export function ReleaseFormView({
               disabled={atomic}
               onChange={setWait}
               label="等待对象就绪"
-              hint="等到 Chart 创建的对象进入就绪状态再返回，最长等待时间见下方。"
+              hint="等到 Chart 创建的对象进入就绪状态再返回，最长等待时间见下方。等待期间集群会持续报告它在等什么。"
             />
             <SwitchField
               id="helm-atomic"
@@ -481,13 +526,191 @@ export function ReleaseFormView({
         </FormSection>
 
         {mutation.error ? <ErrorAlert error={mutation.error} /> : null}
+      </div>
+    </div>
+  );
+}
 
-        {activePreview ? (
-          <PreviewCard
-            report={activePreview}
-            before={mode === "upgrade" ? (target.currentManifest ?? "") : ""}
-            mode={mode}
-          />
+/**
+ * 确认: what the Cluster said the change would be.
+ *
+ * The rendered manifest is the point of this step and it is the first thing on
+ * it, above everything else — the previous version put it under a form and it
+ * was routinely never seen. While the render is still running this is the
+ * progress account instead; a preview is a real request to a real Cluster and
+ * can take as long as fetching a chart takes.
+ */
+function ConfirmStep({
+  verb,
+  subject,
+  mode,
+  before,
+  operation,
+  error,
+  submitting,
+  submitError,
+  onRestart,
+  onConfirm,
+}: {
+  verb: string;
+  subject: string;
+  mode: ReleaseFormMode;
+  before: string;
+  operation?: HelmReleaseOperation;
+  error: unknown;
+  submitting: boolean;
+  submitError: unknown;
+  onRestart: () => void;
+  onConfirm: () => void;
+}) {
+  const report = operation?.status === "succeeded" ? operation.report : undefined;
+
+  return (
+    <div className="grid gap-3">
+      <PageHeader
+        title={`确认${verb} ${subject}`}
+        onBack={onRestart}
+        backDisabled={submitting}
+        actions={
+          <>
+            <Button size="sm" variant="secondary" disabled={submitting} onClick={onRestart}>
+              <ArrowLeft />
+              返回修改
+            </Button>
+            <Button size="sm" disabled={!report || submitting} onClick={onConfirm}>
+              <ShipWheel />
+              {submitting ? "正在提交…" : `确认${verb}`}
+            </Button>
+          </>
+        }
+      />
+      <div className="grid max-w-4xl gap-3">
+        {error ? <ErrorAlert error={error} /> : null}
+        {submitError ? <ErrorAlert error={submitError} /> : null}
+        {report ? (
+          <Card className="grid min-w-0 gap-2 p-4">
+            <CardTitle>
+              {mode === "install" || !before ? "将要创建的对象" : "与当前修订的差异"}
+            </CardTitle>
+            <p className="text-subtle-foreground text-xs">
+              由目标集群渲染，未写入任何对象。Chart {report.chart_name} {report.chart_version}
+              {report.app_version ? ` · app ${report.app_version}` : ""}。
+            </p>
+            {report.manifest_truncated ? (
+              <Alert tone="info">
+                清单超过服务端上限，只展示前一段；提交本身不受影响，完整对象可在容器服务的「资源对象浏览器」中查看。
+              </Alert>
+            ) : null}
+            {mode === "upgrade" && before ? (
+              <YamlDiff before={before} after={report.manifest} />
+            ) : (
+              <YamlEditor
+                value={report.manifest || "# 该 Chart 没有渲染出任何对象"}
+                onChange={() => {}}
+                readOnly
+                label="将要应用的清单"
+                className="h-[32rem]"
+              />
+            )}
+            {report.notes ? (
+              <>
+                <CardTitle className="mt-1">NOTES</CardTitle>
+                <ReleaseNotes notes={report.notes} />
+              </>
+            ) : null}
+          </Card>
+        ) : null}
+        <Card className="grid min-w-0 gap-2 p-4">
+          <CardTitle>{report ? "预览过程" : "正在预览"}</CardTitle>
+          {operation ? (
+            <OperationProgress operation={operation} />
+          ) : (
+            <LoadingState label="正在提交预览…" />
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 执行: the change itself.
+ *
+ * Nothing can be edited from here and the way back is deliberately not 返回 —
+ * an operation is running in a Cluster and leaving the page does not stop it.
+ * When it ends, the same account stays on screen: the log of a deployment that
+ * went wrong is worth more than the log of one that went right, and this is the
+ * only place it exists.
+ */
+function ApplyStep({
+  verb,
+  subject,
+  operation,
+  error,
+  onRestart,
+  onDone,
+}: {
+  verb: string;
+  subject: string;
+  operation?: HelmReleaseOperation;
+  error: unknown;
+  onRestart: () => void;
+  onDone: (operation: HelmReleaseOperation) => void;
+}) {
+  const finished = operation && operation.status !== "running";
+
+  return (
+    <div className="grid gap-3">
+      <PageHeader
+        title={`${verb} ${subject}`}
+        actions={
+          finished ? (
+            operation.status === "succeeded" ? (
+              <Button size="sm" onClick={() => onDone(operation)}>
+                完成
+              </Button>
+            ) : (
+              <Button size="sm" variant="secondary" onClick={onRestart}>
+                <ArrowLeft />
+                返回修改
+              </Button>
+            )
+          ) : undefined
+        }
+      />
+      <div className="grid max-w-4xl gap-3">
+        {error ? <ErrorAlert error={error} /> : null}
+        {/* The operation is running in a Cluster and does not depend on this
+            page being open. Saying so is the difference between waiting here
+            because it is necessary and waiting here because nobody said it was
+            not. */}
+        {operation && operation.status === "running" ? (
+          <Alert tone="info">
+            可以离开这个页面，操作会在集群里继续；「已安装应用」里能回到它的进展。
+          </Alert>
+        ) : null}
+        {operation?.status === "succeeded" && operation.report ? (
+          <Alert tone="success">
+            {operation.report.name} 现在是第 {operation.report.revision} 次修订
+            {operation.report.chart_version
+              ? `，Chart ${operation.report.chart_name} ${operation.report.chart_version}`
+              : ""}
+            。
+          </Alert>
+        ) : null}
+        <Card className="grid min-w-0 gap-2 p-4">
+          <CardTitle>执行过程</CardTitle>
+          {operation ? (
+            <OperationProgress operation={operation} />
+          ) : (
+            <LoadingState label="正在提交…" />
+          )}
+        </Card>
+        {operation?.status === "succeeded" && operation.report?.notes ? (
+          <Card className="grid min-w-0 gap-2 p-4">
+            <CardTitle>NOTES</CardTitle>
+            <ReleaseNotes notes={operation.report.notes} />
+          </Card>
         ) : null}
       </div>
     </div>
@@ -495,55 +718,16 @@ export function ReleaseFormView({
 }
 
 /**
- * What the Cluster said the change would be.
+ * NOTES.txt as the chart rendered it.
  *
- * An install has nothing to compare against, so it shows the manifest itself.
- * An upgrade shows the difference from what is running, which is the question
- * actually being asked: not "what does this chart render" but "what changes".
+ * Plain text, not YAML and not Markdown: it is whatever the chart's template
+ * produced, and formatting it as either would be a claim about it the chart
+ * never made.
  */
-function PreviewCard({
-  report,
-  before,
-  mode,
-}: {
-  report: HelmReleaseReport;
-  before: string;
-  mode: ReleaseFormMode;
-}) {
+function ReleaseNotes({ notes }: { notes: string }) {
   return (
-    // `min-w-0` for the same reason the README card carries it: the diff and the
-    // manifest scroll inside their own boxes only if this one may shrink below
-    // the widest line in them.
-    <Card className="grid min-w-0 gap-2 p-4">
-      <CardTitle>{mode === "install" ? "将要创建的对象" : "与当前修订的差异"}</CardTitle>
-      <p className="text-subtle-foreground text-xs">
-        由目标集群渲染，未写入任何对象。Chart {report.chart_name} {report.chart_version}
-        {report.app_version ? ` · app ${report.app_version}` : ""}。
-      </p>
-      {report.manifest_truncated ? (
-        <Alert tone="info">
-          清单超过服务端上限，只展示前一段；提交本身不受影响，完整对象可在容器服务的「资源对象浏览器」中查看。
-        </Alert>
-      ) : null}
-      {mode === "upgrade" && before ? (
-        <YamlDiff before={before} after={report.manifest} />
-      ) : (
-        <YamlEditor
-          value={report.manifest || "# 该 Chart 没有渲染出任何对象"}
-          onChange={() => {}}
-          readOnly
-          label="将要应用的清单"
-          className="h-[32rem]"
-        />
-      )}
-      {report.notes ? (
-        <>
-          <CardTitle className="mt-1">NOTES</CardTitle>
-          <pre className="zke-mono text-muted-foreground border-border bg-surface-muted/60 rounded-control border p-2.5 text-xs leading-relaxed whitespace-pre-wrap">
-            {report.notes}
-          </pre>
-        </>
-      ) : null}
-    </Card>
+    <pre className="zke-mono text-muted-foreground border-border bg-surface-muted/60 rounded-control border p-2.5 text-xs leading-relaxed whitespace-pre-wrap">
+      {notes}
+    </pre>
   );
 }

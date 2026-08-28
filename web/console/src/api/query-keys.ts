@@ -123,6 +123,14 @@ export const queryKeys = {
     ["helm-release", clusterId, namespace, name, revision] as const,
   helmReleaseRevisions: (clusterId: string, namespace: string, name: string) =>
     ["helm-release-revisions", clusterId, namespace, name] as const,
+  // A release change in progress, keyed by the identity the Server issued for
+  // it. It is not keyed by what it is changing: two operations against the same
+  // release are two different things happening, and the second one must not be
+  // able to overwrite the first one's account in the cache.
+  helmOperation: (clusterId: string, namespace: string, operationId: string) =>
+    ["helm-operation", clusterId, namespace, operationId] as const,
+  helmOperations: (clusterId: string, namespace: string) =>
+    ["helm-operations", clusterId, namespace] as const,
   // The chart catalogue is platform-wide, so none of these keys carry a Cluster:
   // the same chart is the same chart everywhere, and keying it per Cluster would
   // refetch one index per target an operator switches between.
@@ -245,6 +253,8 @@ export const queryKeyPrefixes = {
   helmReleases: ["helm-releases"] as const,
   helmRelease: ["helm-release"] as const,
   helmReleaseRevisions: ["helm-release-revisions"] as const,
+  helmOperation: ["helm-operation"] as const,
+  helmOperations: ["helm-operations"] as const,
   auditEvents: ["audit-events"] as const,
   aiSessions: ["ai-sessions"] as const,
   aiAttachments: ["ai-attachments"] as const,

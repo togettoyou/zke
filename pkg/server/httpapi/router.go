@@ -113,6 +113,7 @@ type handlers struct {
 	kubernetesSecret        *kubernetesSecretHandler
 	kubernetesHelmRelease   *kubernetesHelmReleaseHandler
 	helmReleaseWrite        *helmReleaseWriteHandler
+	helmOperation           *helmOperationHandler
 	helmRepository          *helmRepositoryHandler
 	kubernetesResource      *kubernetesResourceHandler
 	kubernetesYAML          *kubernetesYAMLHandler
@@ -225,6 +226,11 @@ func New(
 		aiopsFeature,
 		config.Authentication,
 	)
+	// One registry of running release changes for the whole process. A release
+	// change outlives the request that started it, so the account of it cannot
+	// belong to a handler that is about to return — it belongs here, where the
+	// route that starts one and the routes that report on it can both reach it.
+	helmOperations := helm.NewOperations()
 	routeHandlers := handlers{
 		health: newHealthHandler(logger, dependencies.ReadinessCheck),
 		setup:  newSetupHandler(logger, dependencies.AuthService, authRoutesHandler, config.Authentication),
@@ -400,7 +406,12 @@ func New(
 			clusterAuthorizerOrNil(dependencies.RBACService),
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
+			helmOperations,
 		),
+		// The same registry, read by the routes that report what a release
+		// change is doing. One instance for the process: an operation is
+		// started by one request and read by many others.
+		helmOperation: newHelmOperationHandler(logger, helmOperations),
 		helmRepository: newHelmRepositoryHandler(
 			logger,
 			helmRepositoryServiceOrNil(dependencies.HelmService),

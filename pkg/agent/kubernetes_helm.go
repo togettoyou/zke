@@ -99,6 +99,7 @@ func newKubernetesHelmHandler(config helmHandlerConfig) agentprotocol.HelmHandle
 		request *agentv1.HelmRequest,
 		valuesReader io.Reader,
 		chartReader io.Reader,
+		progress agentprotocol.HelmProgressSink,
 	) (*agentv1.HelmResponse, io.Reader, error) {
 		if config.RESTConfig == nil {
 			return helmFailure(
@@ -133,8 +134,15 @@ func newKubernetesHelmHandler(config helmHandlerConfig) agentprotocol.HelmHandle
 		if failure != nil {
 			return failure, nil, nil
 		}
+		progress.Progress(helmOpeningLine(request, loadedChart))
+		// Only the caller that actually runs Helm has anything to report. A
+		// second dispatch of the same request collapses onto the first one's
+		// result rather than running it twice, and inventing progress for it
+		// would describe an execution this Stream is not performing.
+		executed := false
 		execute := func() (helmReplayResult, error) {
-			report, failure := runHelmAction(ctx, config, request, values, loadedChart)
+			executed = true
+			report, failure := runHelmAction(ctx, config, request, values, loadedChart, progress)
 			return helmOutcomeResult(report, failure, request.GetDryRun()), nil
 		}
 		var result helmReplayResult
@@ -163,6 +171,11 @@ func newKubernetesHelmHandler(config helmHandlerConfig) agentprotocol.HelmHandle
 				"IdempotencyConflict",
 				"idempotency key was already used for another Helm request",
 			), nil, nil
+		}
+		if !executed {
+			progress.Progress(
+				"this request had already been performed; replaying its recorded outcome",
+			)
 		}
 		if len(result.body) == 0 {
 			return result.response, nil, nil
@@ -271,8 +284,9 @@ func runHelmAction(
 	request *agentv1.HelmRequest,
 	values helmValues,
 	loadedChart *chart.Chart,
+	progress agentprotocol.HelmProgressSink,
 ) (*helmrelease.Report, *agentv1.HelmResponse) {
-	configuration, guard, failure := newHelmConfiguration(config, request)
+	configuration, guard, failure := newHelmConfiguration(config, request, progress)
 	if failure != nil {
 		return nil, failure
 	}
@@ -412,6 +426,43 @@ func runHelmAction(
 	}
 }
 
+// helmOpeningLine is the first thing the operator reads about an operation that
+// has reached the Cluster.
+//
+// It says what this Agent is about to do, in the Cluster's own terms, so the
+// log starts with the identity of the change rather than with whatever Helm
+// happens to log first.
+func helmOpeningLine(request *agentv1.HelmRequest, loadedChart *chart.Chart) string {
+	verb := "running"
+	switch request.GetAction() {
+	case agentv1.HelmAction_HELM_ACTION_INSTALL:
+		verb = "installing"
+	case agentv1.HelmAction_HELM_ACTION_UPGRADE:
+		verb = "upgrading"
+	case agentv1.HelmAction_HELM_ACTION_ROLLBACK:
+		verb = "rolling back"
+	case agentv1.HelmAction_HELM_ACTION_UNINSTALL:
+		verb = "uninstalling"
+	}
+	line := fmt.Sprintf(
+		"%s %s in namespace %s",
+		verb,
+		request.GetReleaseName(),
+		request.GetNamespace(),
+	)
+	if loadedChart != nil && loadedChart.Metadata != nil {
+		line += fmt.Sprintf(
+			" with chart %s-%s",
+			loadedChart.Metadata.Name,
+			loadedChart.Metadata.Version,
+		)
+	}
+	if request.GetDryRun() {
+		line += " (dry run: nothing will be written)"
+	}
+	return line
+}
+
 // helmValues keeps the parsed document together with the bytes it was parsed
 // from: Helm needs the map, the replay fingerprint needs the exact text.
 type helmValues struct {
@@ -504,6 +555,7 @@ func loadHelmChart(archive []byte) (*chart.Chart, *agentv1.HelmResponse) {
 func newHelmConfiguration(
 	config helmHandlerConfig,
 	request *agentv1.HelmRequest,
+	progress agentprotocol.HelmProgressSink,
 ) (*action.Configuration, *helmManifestGuard, *agentv1.HelmResponse) {
 	getter := &helmRESTClientGetter{
 		config:    config.RESTConfig,
@@ -514,7 +566,14 @@ func newHelmConfiguration(
 		getter,
 		request.GetNamespace(),
 		helmStorageDriver,
-		func(string, ...any) {},
+		// Helm's own account of what it is doing, forwarded rather than
+		// discarded. It is the only view anyone has into the minutes between
+		// "applying" and "applied": Helm reports how many objects it is
+		// creating, which ones it is waiting for, and why a wait ended. The
+		// Server puts these lines in front of the operator as they arrive.
+		func(format string, arguments ...any) {
+			progress.Progress(fmt.Sprintf(format, arguments...))
+		},
 	); err != nil {
 		return nil, nil, helmFailure(
 			agentv1.ResultCode_RESULT_CODE_UNAVAILABLE,

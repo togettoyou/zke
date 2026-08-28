@@ -190,13 +190,14 @@ export function HelmApp({ windowId }: Pick<AppComponentProps, "windowId">) {
           target={form.target}
           canInstallClusterScoped={access.canInstallClusterScoped}
           onBack={() => setForm(null)}
-          onDone={(report) => {
+          onDone={(operation) => {
             setForm(null);
             setSection("releases");
+            const revision = operation.report?.revision ?? 0;
             toast.success(
               form.mode === "install"
-                ? `已安装 ${report.name}，当前修订 ${report.revision}`
-                : `已升级 ${report.name} 到修订 ${report.revision}`,
+                ? `已安装 ${operation.release_name}，当前修订 ${revision}`
+                : `已升级 ${operation.release_name} 到修订 ${revision}`,
             );
           }}
         />

@@ -243,6 +243,9 @@ type recordingAgent struct {
 	report      string
 	failWith    *agentv1.HelmResponse
 	transportEr error
+	// progress is what the Service handed over for the Cluster to report
+	// through. A nil one means this operation had nobody watching it.
+	progress func(*agentv1.HelmProgress)
 }
 
 func (agent *recordingAgent) RequestHelm(
@@ -253,7 +256,9 @@ func (agent *recordingAgent) RequestHelm(
 	chart io.Reader,
 	report io.Writer,
 	_ string,
+	progress func(*agentv1.HelmProgress),
 ) (*agentv1.HelmResponse, error) {
+	agent.progress = progress
 	if agent.transportEr != nil {
 		return nil, agent.transportEr
 	}

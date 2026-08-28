@@ -783,6 +783,13 @@ func (manager *Manager) handleConnection(parent context.Context, connection *qui
 		serverCapabilities = append(serverCapabilities, agentprotocol.CapabilityHelmV1)
 		current.capabilities[agentprotocol.CapabilityHelmV1] = struct{}{}
 	}
+	if hasCapability(hello.GetCapabilities(), agentprotocol.CapabilityHelmProgressV1) {
+		serverCapabilities = append(
+			serverCapabilities,
+			agentprotocol.CapabilityHelmProgressV1,
+		)
+		current.capabilities[agentprotocol.CapabilityHelmProgressV1] = struct{}{}
+	}
 	// Managing the collector is offered only when this Server has storage: an
 	// installed collector with nowhere to send data is worse than none.
 	if manager.config.MetricsSink != nil &&
@@ -1551,6 +1558,7 @@ func (manager *Manager) RequestHelm(
 	chart io.Reader,
 	report io.Writer,
 	idempotencyKey string,
+	progress func(*agentv1.HelmProgress),
 ) (*agentv1.HelmResponse, error) {
 	if ctx == nil || !validation.IsUUID(clusterID) || request == nil {
 		return nil, errors.New("Helm request is invalid")
@@ -1568,6 +1576,12 @@ func (manager *Manager) RequestHelm(
 	if _, supported := current.capabilities[agentprotocol.CapabilityHelmV1]; !supported {
 		return nil, ErrHelmCapabilityMissing
 	}
+	// Asking for progress changes how the answer is framed, so it is asked for
+	// only when this Agent said it understands the question. An Agent that did
+	// not still runs the operation; what is missing is the account of it while
+	// it runs, not the operation.
+	_, streamsProgress := current.capabilities[agentprotocol.CapabilityHelmProgressV1]
+	request.StreamProgress = streamsProgress && progress != nil
 	if !tryAcquire(manager.helmAdmissions) {
 		return nil, ErrHelmRequestExhausted
 	}
@@ -1604,6 +1618,7 @@ func (manager *Manager) RequestHelm(
 		values,
 		chart,
 		report,
+		progress,
 	)
 }
 

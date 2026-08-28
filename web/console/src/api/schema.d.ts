@@ -2247,8 +2247,14 @@ export interface paths {
          *     对象若指向别的 Namespace 会被 Agent 拒绝；若包含集群级对象（CRD、ClusterRole 等），
          *     还需要 `cluster.manage`，否则 Agent 会指名拒绝。
          *
-         *     `dry_run` 只渲染不写入，返回将要应用的 manifest，用于提交前预览；非 dry-run 必须
-         *     显式 `confirm`。两者写入不同的审计动作。
+         *     `dry_run` 只渲染不写入，用于提交前预览；非 dry-run 必须显式 `confirm`。两者写入不同
+         *     的审计动作。
+         *
+         *     接口返回 202 与一个操作身份，而不是等到装完再回答：一次安装要下载 Chart、渲染、写入
+         *     应用拥有的每个对象，并且默认还要等它们就绪，正常情况下就是几分钟。进展、日志与最终
+         *     结果都从 `helm-operations` 读取。重复提交同一个 `Idempotency-Key` 返回已经在跑的那次
+         *     操作，而不是再装一次；同一个 key 用于另一个请求会被拒绝。审计在操作结束时写入，记录的
+         *     是它的结果。
          */
         post: operations["installHelmRelease"];
         delete?: never;
@@ -2313,6 +2319,58 @@ export interface paths {
          *     掉的修订不存在，接口也不会假装它们还在。
          */
         post: operations["rollbackHelmRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出调用者自己在该 Namespace 中启动、且尚未被遗忘的 Release 变更操作，按开始时间从新
+         *     到旧返回。
+         *
+         *     它存在的理由只有一个：Console 被关掉或刷新之后，正在进行的那次部署的身份只存在于那个
+         *     页面的内存里，否则就再也找不回来了。返回的是摘要——身份、状态与阶段——不含账目与报告。
+         *
+         *     只能读到自己启动的操作。操作的报告里带有渲染出的清单，其中可能包含 Chart 生成的
+         *     Secret；限制成「启动它的那个人」意味着这里不会泄露任何它没有在启动时就已经返回过的
+         *     东西，这也是这两个接口不写审计的原因——变更本身由写入接口在结束时记一次。
+         */
+        get: operations["listHelmReleaseOperations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/helm-operations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 读取一次 Release 变更操作的完整账目：它走到了哪个阶段、Server 与集群分别报告了什么、
+         *     以及结束之后的报告或失败原因。Console 在部署进行期间反复读取它。
+         *
+         *     `executing` 阶段的每一行是 Helm 自己的日志原文，由目标集群的 Agent 在操作进行当中
+         *     转发回来，因此「正在等待哪些对象就绪」是能看见的，而不是只能等。
+         *
+         *     只能读到自己启动的操作；不属于自己的、已经过期的与从不存在的，都回答 404。
+         */
+        get: operations["getHelmReleaseOperation"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5646,9 +5704,60 @@ export interface components {
             /** @description 该修订跳过了 Chart 的 hook。跳过 hook 装出来的 Release 已经不是 Chart 描述的 那个，所以这个事实跟着修订走，而不只跟着请求走。 */
             hooks_disabled: boolean;
         };
-        HelmReleaseWriteResult: {
-            release: components["schemas"]["HelmReleaseReport"];
+        /**
+         * @description 操作当前所处的阶段。一次 Release 变更不是一个动作而是一小段流水线：Server 解析并下载 Chart，按 Chart 自带的 values.schema.json 校验 values，然后把整体交给集群渲染与写入。 其中任何一段都可能是慢的那一段，因此阶段是被上报的，而不是由输入推断出来的。空字符串 表示操作刚被接受，还没有进入任何阶段。
+         * @enum {string}
+         */
+        HelmReleaseOperationStage: "" | "resolving_chart" | "validating_values" | "executing";
+        /** @description 操作账目中的一行，按发生顺序排列。 */
+        HelmReleaseOperationEvent: {
+            /** Format: date-time */
+            at: string;
+            stage: components["schemas"]["HelmReleaseOperationStage"];
+            /** @description 这一行的内容。`executing` 阶段的内容是 Helm 自己的日志原文，由 Agent 在操作进行 当中转发回来；空字符串表示该行只是宣布进入了这个阶段。 */
+            message: string;
+        };
+        /** @description 操作没有完成它要做的事的原因。code 与 message 与同步接口会返回的错误一致：一个失败的 操作就是一次迟到的错误响应。 */
+        HelmReleaseOperationFailure: {
+            code: string;
+            message: string;
+        };
+        /**
+         * @description 一次 Release 变更正在发生的全过程。安装、升级、回滚与卸载都不在一次 HTTP 请求里完成： 它们下载 Chart、渲染、写入应用拥有的每个对象，并且通常还要等这些对象就绪，正常情况下 就是几分钟。所以请求只负责启动操作并返回它的身份，这里是它的账目。
+         *     记录保存在 Server 进程内，保留一段时间后丢弃。它的价值只等于它所描述的那次操作：操作 结束并被读取之后，真正留下来的是 Release 本身、它的修订历史与审计记录。Server 重启会 丢失账目，但不会丢失操作——执行它的是 Agent。
+         */
+        HelmReleaseOperation: {
+            /** @description 32 位十六进制字符。 */
+            id: string;
+            cluster_id: components["schemas"]["UUID"];
+            namespace: string;
+            release_name: string;
+            /** @enum {string} */
+            action: "install" | "upgrade" | "rollback" | "uninstall";
+            /** @description 该操作不写入任何东西，只渲染并报告将要应用的内容。 */
             dry_run: boolean;
+            chart?: string;
+            /** @description 请求指定的版本；为空表示「仓库发布的最新版本」，实际解析到的版本在报告里。 */
+            chart_version?: string;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed";
+            stage: components["schemas"]["HelmReleaseOperationStage"];
+            /** @description 账目本身。列表接口返回的摘要中恒为空数组：回到一次操作只需要身份与状态，完整账目 是另一个请求的事。 */
+            events: components["schemas"]["HelmReleaseOperationEvent"][];
+            /** @description 账目过长，中间被丢弃了一部分。保留的是开头与结尾——开头说明这次操作要做什么， 结尾说明它做成了没有。 */
+            events_truncated: boolean;
+            report?: components["schemas"]["HelmReleaseReport"];
+            failure?: components["schemas"]["HelmReleaseOperationFailure"];
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string;
+        };
+        HelmReleaseOperationResult: {
+            operation: components["schemas"]["HelmReleaseOperation"];
+        };
+        HelmReleaseOperationPage: {
+            operations: components["schemas"]["HelmReleaseOperation"][];
         };
         /** @description 安装与升级共同的部分：装什么、用什么 values、以及一次操作如何执行。Release 名不在这里， 因为安装由请求正文给出，升级由 URL 给出；两处都能命名会让「以哪个为准」变成一个必须回答 的问题。 */
         HelmChartReleaseRequest: {
@@ -13300,25 +13409,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 预演结果（dry_run） */
-            200: {
+            /** @description 操作已受理，正在执行；用返回的操作身份读取它的进展与结果。 */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
-                        data: components["schemas"]["HelmReleaseWriteResult"];
-                    };
-                };
-            };
-            /** @description Release 已安装 */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuccessResponse"] & {
-                        data: components["schemas"]["HelmReleaseWriteResult"];
+                        data: components["schemas"]["HelmReleaseOperationResult"];
                     };
                 };
             };
@@ -13395,14 +13493,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Release 已升级，或 dry-run 预演结果 */
-            200: {
+            /** @description 操作已受理，正在执行；用返回的操作身份读取它的进展与结果。 */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
-                        data: components["schemas"]["HelmReleaseWriteResult"];
+                        data: components["schemas"]["HelmReleaseOperationResult"];
                     };
                 };
             };
@@ -13441,14 +13539,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Release 已卸载，或 dry-run 预演结果 */
-            200: {
+            /** @description 操作已受理，正在执行；用返回的操作身份读取它的进展与结果。 */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
-                        data: components["schemas"]["HelmReleaseWriteResult"];
+                        data: components["schemas"]["HelmReleaseOperationResult"];
                     };
                 };
             };
@@ -13486,14 +13584,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Release 已回滚，或 dry-run 预演结果 */
-            200: {
+            /** @description 操作已受理，正在执行；用返回的操作身份读取它的进展与结果。 */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
-                        data: components["schemas"]["HelmReleaseWriteResult"];
+                        data: components["schemas"]["HelmReleaseOperationResult"];
                     };
                 };
             };
@@ -13508,6 +13606,69 @@ export interface operations {
             502: components["responses"]["BadGateway"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];
+        };
+    };
+    listHelmReleaseOperations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 正在进行或刚刚结束的操作 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmReleaseOperationPage"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getHelmReleaseOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                /** @description 写入接口返回的操作身份。 */
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作账目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["HelmReleaseOperationResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["Unavailable"];
         };
     };
     listHelmReleaseRevisions: {

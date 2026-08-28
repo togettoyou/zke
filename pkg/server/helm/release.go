@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
@@ -27,6 +28,47 @@ var (
 	// it, and saying so is better than reporting a failure that did not occur.
 	ErrReportUnreadable = errors.New("Helm release report could not be decoded")
 )
+
+// Stage names the part of a release change that is happening now.
+//
+// A release change is not one action but a short pipeline, and until it is
+// finished the only honest answer to "what is it doing" is which part of that
+// pipeline it is in. The Server resolves and fetches the chart, checks the
+// values against the chart's own schema, and only then hands the whole thing to
+// a Cluster that renders and applies it. Each of those can be the slow one — a
+// chart downloaded from a public repository for the first time, a rollout
+// waited on for minutes — and an operator who is told which is which knows
+// whether to wait or to look for the problem.
+//
+// The stages are reported rather than inferred, because nothing about a
+// pipeline's timing can be derived from its input.
+type Stage string
+
+const (
+	// StageResolvingChart covers the repository index and the archive: which
+	// version "latest" turned out to be, and getting the bytes.
+	StageResolvingChart Stage = "resolving_chart"
+	// StageValidatingValues is the chart's own values.schema.json, applied
+	// before a Cluster is contacted.
+	StageValidatingValues Stage = "validating_values"
+	// StageExecuting is everything the Cluster does: rendering, applying, and
+	// waiting for what was applied. Its messages are Helm's own log lines,
+	// forwarded by the Agent as they happen.
+	StageExecuting Stage = "executing"
+)
+
+// Progress reports one line of an operation that has not finished.
+//
+// A message may be empty, which says only that the operation has reached this
+// stage. It is called from whichever goroutine is doing the work, including the
+// one reading the Agent Stream, so an implementation must not block.
+type Progress func(stage Stage, message string)
+
+func (progress Progress) report(stage Stage, message string) {
+	if progress != nil {
+		progress(stage, message)
+	}
+}
 
 // ReleaseRejection carries the Agent's own words about a refusal, so a handler
 // can pass the Cluster's reason to the operator rather than replacing it with
@@ -78,6 +120,10 @@ type InstallInput struct {
 	// chart that renders an object no Namespace contains.
 	AllowClusterScoped bool
 	IdempotencyKey     string
+	// Progress is optional and carries nothing the caller has to act on. It
+	// exists because this operation can take minutes and the caller is showing
+	// somebody a screen for all of them.
+	Progress Progress
 }
 
 // UpgradeInput changes an existing release. It is an install's twin apart from
@@ -103,6 +149,7 @@ type RollbackInput struct {
 	Description        string
 	AllowClusterScoped bool
 	IdempotencyKey     string
+	Progress           Progress
 }
 
 type UninstallInput struct {
@@ -120,6 +167,7 @@ type UninstallInput struct {
 	Description        string
 	AllowClusterScoped bool
 	IdempotencyKey     string
+	Progress           Progress
 }
 
 // Install renders and installs a chart into one Namespace of one Cluster.
@@ -185,7 +233,15 @@ func (service *Service) Rollback(
 	request.Wait = input.Wait
 	request.DisableHooks = input.DisableHooks
 	request.MaxHistory = input.MaxHistory
-	return service.send(ctx, input.ClusterID, request, nil, nil, input.IdempotencyKey)
+	return service.send(
+		ctx,
+		input.ClusterID,
+		request,
+		nil,
+		nil,
+		input.IdempotencyKey,
+		input.Progress,
+	)
 }
 
 // Uninstall removes a release's objects, and optionally its history with them.
@@ -208,7 +264,15 @@ func (service *Service) Uninstall(
 	request.DryRun = input.DryRun
 	request.Wait = input.Wait
 	request.DisableHooks = input.DisableHooks
-	return service.send(ctx, input.ClusterID, request, nil, nil, input.IdempotencyKey)
+	return service.send(
+		ctx,
+		input.ClusterID,
+		request,
+		nil,
+		nil,
+		input.IdempotencyKey,
+		input.Progress,
+	)
 }
 
 // runWithChart is the shared body of install and upgrade: fetch the chart, hand
@@ -240,6 +304,12 @@ func (service *Service) runWithChart(
 	}
 	// Fetching is also where the repository's signing policy is applied: an
 	// archive that does not verify never becomes a request. See provenance.go.
+	//
+	// It is also, for a chart nobody on this Server has fetched before, the part
+	// that takes the longest — a public index is megabytes and the archive
+	// behind it is a download. Saying so before it starts is the difference
+	// between a slow step and a frozen page.
+	input.Progress.report(StageResolvingChart, chartRequestLine(input))
 	fetched, err := service.fetchChartArchive(
 		ctx,
 		input.RepositoryID,
@@ -253,6 +323,11 @@ func (service *Service) runWithChart(
 	if uint64(len(archive)) > helmrelease.MaxChartBytes {
 		return helmrelease.Report{}, ErrChartTooLarge
 	}
+	input.Progress.report(
+		StageResolvingChart,
+		fetchedChartLine(input.Chart, fetched, len(archive)),
+	)
+	input.Progress.report(StageValidatingValues, "")
 	if err := service.validateValues(archive, values, skipSchema); err != nil {
 		return helmrelease.Report{}, err
 	}
@@ -271,7 +346,36 @@ func (service *Service) runWithChart(
 		values,
 		archive,
 		input.IdempotencyKey,
+		input.Progress,
 	)
+}
+
+// chartRequestLine names what is about to be fetched. An empty version is
+// reported as "latest" rather than as nothing, because that is what it means.
+func chartRequestLine(input InstallInput) string {
+	version := strings.TrimSpace(input.Version)
+	if version == "" {
+		version = "latest"
+	}
+	return fmt.Sprintf("resolving chart %s@%s", input.Chart, version)
+}
+
+// fetchedChartLine reports what the fetch turned out to be. The resolved
+// version is the interesting half: "latest" is a question, and this is the
+// answer the whole operation will be recorded against.
+func fetchedChartLine(name string, fetched fetchedChart, size int) string {
+	version := strings.TrimSpace(fetched.Version)
+	if version == "" {
+		version = "unknown version"
+	}
+	line := fmt.Sprintf("fetched chart %s@%s (%d KiB)", name, version, (size+1023)/1024)
+	switch {
+	case fetched.Signature.Verified:
+		line += "; provenance verified"
+	case fetched.Signature.Unsigned:
+		line += "; published without a provenance file"
+	}
+	return line
 }
 
 // send performs one Agent round trip and decodes the report.
@@ -282,6 +386,7 @@ func (service *Service) send(
 	values []byte,
 	archive []byte,
 	idempotencyKey string,
+	progress Progress,
 ) (helmrelease.Report, error) {
 	if !isUUID(clusterID) {
 		return helmrelease.Report{}, ErrInvalidInput
@@ -292,6 +397,13 @@ func (service *Service) send(
 		return helmrelease.Report{}, invalid("%s", err)
 	}
 	report := &bytes.Buffer{}
+	progress.report(StageExecuting, "")
+	var forward func(*agentv1.HelmProgress)
+	if progress != nil {
+		forward = func(line *agentv1.HelmProgress) {
+			progress(StageExecuting, line.GetMessage())
+		}
+	}
 	response, err := service.agents.RequestHelm(
 		ctx,
 		clusterID,
@@ -300,6 +412,7 @@ func (service *Service) send(
 		bytes.NewReader(archive),
 		report,
 		idempotencyKey,
+		forward,
 	)
 	if err != nil {
 		return helmrelease.Report{}, err

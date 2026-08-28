@@ -201,6 +201,11 @@ func runConnection(
 	}
 	if services.helmHandler != nil {
 		capabilities = append(capabilities, agentprotocol.CapabilityHelmV1)
+		// Advertised beside the Helm capability rather than folded into it: the
+		// Server has to know, before it opens the Stream, whether this Agent
+		// will answer with progress frames or with a bare response, because the
+		// two are read differently.
+		capabilities = append(capabilities, agentprotocol.CapabilityHelmProgressV1)
 	}
 	if err := agentprotocol.WriteFrame(controlStream, &agentv1.ControlFrame{
 		ProtocolVersion: agentprotocol.ProtocolVersion,

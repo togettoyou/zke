@@ -156,7 +156,12 @@ export type HelmChartDetail = Schemas["HelmChartDetail"];
 export type HelmChartFileEntry = Schemas["HelmChartFileEntry"];
 export type HelmChartFileDetail = Schemas["HelmChartFileDetail"];
 export type HelmReleaseReport = Schemas["HelmReleaseReport"];
-export type HelmReleaseWriteResult = Schemas["HelmReleaseWriteResult"];
+// A release change as something that is happening. Installing, upgrading,
+// rolling back and uninstalling all answer with one of these rather than with a
+// release, because at the moment they answer there is not a release yet.
+export type HelmReleaseOperation = Schemas["HelmReleaseOperation"];
+export type HelmReleaseOperationEvent = Schemas["HelmReleaseOperationEvent"];
+export type HelmReleaseOperationStage = Schemas["HelmReleaseOperationStage"];
 export type KubernetesNetworkingResource = Schemas["KubernetesNetworkingResource"];
 export type KubernetesNetworkingResourceSummary = Schemas["KubernetesNetworkingResourceSummary"];
 export type KubernetesNetworkingResourceDetail = Schemas["KubernetesNetworkingResourceDetail"];

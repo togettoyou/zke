@@ -140,8 +140,20 @@ type HelmRequest struct {
 	// chart renders, which is why the Server also refuses to send the request to
 	// an Agent that does not advertise the Helm capability at all.
 	AllowClusterScoped bool `protobuf:"varint,18,opt,name=allow_cluster_scoped,json=allowClusterScoped,proto3" json:"allow_cluster_scoped,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Report what Helm is doing while it is still doing it.
+	//
+	// A release change is the longest operation this protocol carries — a chart
+	// that waits for a rollout holds the Stream open for minutes — and until the
+	// response arrives the operator has nothing to read. When this is set the
+	// Agent writes HelmEvent frames instead of a bare HelmResponse, so the
+	// account of the operation arrives as it happens rather than after it.
+	//
+	// It changes the wire shape of the answer, so the Server sets it only for an
+	// Agent that advertised `helm-progress.v1`. An Agent that predates the field
+	// ignores it, never advertises the capability, and is never asked.
+	StreamProgress bool `protobuf:"varint,19,opt,name=stream_progress,json=streamProgress,proto3" json:"stream_progress,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HelmRequest) Reset() {
@@ -300,6 +312,164 @@ func (x *HelmRequest) GetAllowClusterScoped() bool {
 	return false
 }
 
+func (x *HelmRequest) GetStreamProgress() bool {
+	if x != nil {
+		return x.StreamProgress
+	}
+	return false
+}
+
+// HelmProgress is one line of an operation that has not finished yet.
+//
+// The text is Helm's own log line, forwarded verbatim rather than classified.
+// Helm says "creating 6 resource(s)" and "beginning wait for 6 resources with
+// timeout of 5m0s"; an Agent that translated those into a phase enum would be
+// guessing at a vocabulary Helm never promised, and the guess would be wrong on
+// the release where it mattered. The Agent adds its own lines for what it does
+// itself — loading the archive, and the outcome — and those read the same way.
+//
+// Progress is advisory. It is written on a best effort basis and dropped when
+// it cannot be, because a Stream that failed to report what it was doing must
+// still report what it did.
+type HelmProgress struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AtUnixMillis  int64                  `protobuf:"varint,1,opt,name=at_unix_millis,json=atUnixMillis,proto3" json:"at_unix_millis,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HelmProgress) Reset() {
+	*x = HelmProgress{}
+	mi := &file_api_agent_v1_helm_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HelmProgress) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HelmProgress) ProtoMessage() {}
+
+func (x *HelmProgress) ProtoReflect() protoreflect.Message {
+	mi := &file_api_agent_v1_helm_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HelmProgress.ProtoReflect.Descriptor instead.
+func (*HelmProgress) Descriptor() ([]byte, []int) {
+	return file_api_agent_v1_helm_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *HelmProgress) GetAtUnixMillis() int64 {
+	if x != nil {
+		return x.AtUnixMillis
+	}
+	return 0
+}
+
+func (x *HelmProgress) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// HelmEvent is what a Stream carries back when the request asked for progress.
+//
+// Zero or more progress frames, then exactly one response, then the report body
+// the response sizes. The oneof is what lets the Server tell "still running"
+// from "finished" without a framing layer of its own.
+type HelmEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*HelmEvent_Progress
+	//	*HelmEvent_Response
+	Payload       isHelmEvent_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HelmEvent) Reset() {
+	*x = HelmEvent{}
+	mi := &file_api_agent_v1_helm_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HelmEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HelmEvent) ProtoMessage() {}
+
+func (x *HelmEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_api_agent_v1_helm_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HelmEvent.ProtoReflect.Descriptor instead.
+func (*HelmEvent) Descriptor() ([]byte, []int) {
+	return file_api_agent_v1_helm_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *HelmEvent) GetPayload() isHelmEvent_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *HelmEvent) GetProgress() *HelmProgress {
+	if x != nil {
+		if x, ok := x.Payload.(*HelmEvent_Progress); ok {
+			return x.Progress
+		}
+	}
+	return nil
+}
+
+func (x *HelmEvent) GetResponse() *HelmResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*HelmEvent_Response); ok {
+			return x.Response
+		}
+	}
+	return nil
+}
+
+type isHelmEvent_Payload interface {
+	isHelmEvent_Payload()
+}
+
+type HelmEvent_Progress struct {
+	Progress *HelmProgress `protobuf:"bytes,1,opt,name=progress,proto3,oneof"`
+}
+
+type HelmEvent_Response struct {
+	Response *HelmResponse `protobuf:"bytes,2,opt,name=response,proto3,oneof"`
+}
+
+func (*HelmEvent_Progress) isHelmEvent_Payload() {}
+
+func (*HelmEvent_Response) isHelmEvent_Payload() {}
+
 type HelmResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Result               ResultCode             `protobuf:"varint,1,opt,name=result,proto3,enum=zke.agent.v1.ResultCode" json:"result,omitempty"`
@@ -317,7 +487,7 @@ type HelmResponse struct {
 
 func (x *HelmResponse) Reset() {
 	*x = HelmResponse{}
-	mi := &file_api_agent_v1_helm_proto_msgTypes[1]
+	mi := &file_api_agent_v1_helm_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -329,7 +499,7 @@ func (x *HelmResponse) String() string {
 func (*HelmResponse) ProtoMessage() {}
 
 func (x *HelmResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_agent_v1_helm_proto_msgTypes[1]
+	mi := &file_api_agent_v1_helm_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -342,7 +512,7 @@ func (x *HelmResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HelmResponse.ProtoReflect.Descriptor instead.
 func (*HelmResponse) Descriptor() ([]byte, []int) {
-	return file_api_agent_v1_helm_proto_rawDescGZIP(), []int{1}
+	return file_api_agent_v1_helm_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *HelmResponse) GetResult() ResultCode {
@@ -384,7 +554,7 @@ var File_api_agent_v1_helm_proto protoreflect.FileDescriptor
 
 const file_api_agent_v1_helm_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/agent/v1/helm.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\xf8\x04\n" +
+	"\x17api/agent/v1/helm.proto\x12\fzke.agent.v1\x1a\x19api/agent/v1/stream.proto\"\xa1\x05\n" +
 	"\vHelmRequest\x120\n" +
 	"\x06action\x18\x01 \x01(\x0e2\x18.zke.agent.v1.HelmActionR\x06action\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12!\n" +
@@ -407,7 +577,15 @@ const file_api_agent_v1_helm_proto_rawDesc = "" +
 	"\vmax_history\x18\x10 \x01(\rR\n" +
 	"maxHistory\x12 \n" +
 	"\vdescription\x18\x11 \x01(\tR\vdescription\x120\n" +
-	"\x14allow_cluster_scoped\x18\x12 \x01(\bR\x12allowClusterScoped\"\xc5\x01\n" +
+	"\x14allow_cluster_scoped\x18\x12 \x01(\bR\x12allowClusterScoped\x12'\n" +
+	"\x0fstream_progress\x18\x13 \x01(\bR\x0estreamProgress\"N\n" +
+	"\fHelmProgress\x12$\n" +
+	"\x0eat_unix_millis\x18\x01 \x01(\x03R\fatUnixMillis\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x8a\x01\n" +
+	"\tHelmEvent\x128\n" +
+	"\bprogress\x18\x01 \x01(\v2\x1a.zke.agent.v1.HelmProgressH\x00R\bprogress\x128\n" +
+	"\bresponse\x18\x02 \x01(\v2\x1a.zke.agent.v1.HelmResponseH\x00R\bresponseB\t\n" +
+	"\apayload\"\xc5\x01\n" +
 	"\fHelmResponse\x120\n" +
 	"\x06result\x18\x01 \x01(\x0e2\x18.zke.agent.v1.ResultCodeR\x06result\x124\n" +
 	"\x16kubernetes_status_code\x18\x02 \x01(\x05R\x14kubernetesStatusCode\x12\x16\n" +
@@ -435,21 +613,25 @@ func file_api_agent_v1_helm_proto_rawDescGZIP() []byte {
 }
 
 var file_api_agent_v1_helm_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_agent_v1_helm_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_api_agent_v1_helm_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_api_agent_v1_helm_proto_goTypes = []any{
 	(HelmAction)(0),      // 0: zke.agent.v1.HelmAction
 	(*HelmRequest)(nil),  // 1: zke.agent.v1.HelmRequest
-	(*HelmResponse)(nil), // 2: zke.agent.v1.HelmResponse
-	(ResultCode)(0),      // 3: zke.agent.v1.ResultCode
+	(*HelmProgress)(nil), // 2: zke.agent.v1.HelmProgress
+	(*HelmEvent)(nil),    // 3: zke.agent.v1.HelmEvent
+	(*HelmResponse)(nil), // 4: zke.agent.v1.HelmResponse
+	(ResultCode)(0),      // 5: zke.agent.v1.ResultCode
 }
 var file_api_agent_v1_helm_proto_depIdxs = []int32{
 	0, // 0: zke.agent.v1.HelmRequest.action:type_name -> zke.agent.v1.HelmAction
-	3, // 1: zke.agent.v1.HelmResponse.result:type_name -> zke.agent.v1.ResultCode
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	2, // 1: zke.agent.v1.HelmEvent.progress:type_name -> zke.agent.v1.HelmProgress
+	4, // 2: zke.agent.v1.HelmEvent.response:type_name -> zke.agent.v1.HelmResponse
+	5, // 3: zke.agent.v1.HelmResponse.result:type_name -> zke.agent.v1.ResultCode
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_api_agent_v1_helm_proto_init() }
@@ -458,13 +640,17 @@ func file_api_agent_v1_helm_proto_init() {
 		return
 	}
 	file_api_agent_v1_stream_proto_init()
+	file_api_agent_v1_helm_proto_msgTypes[2].OneofWrappers = []any{
+		(*HelmEvent_Progress)(nil),
+		(*HelmEvent_Response)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_agent_v1_helm_proto_rawDesc), len(file_api_agent_v1_helm_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -1507,6 +1507,30 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterSecretManage, "cluster_id"),
 		handlers.helmReleaseWrite.uninstall,
 	)
+	// The account of a release change that is still happening.
+	//
+	// Each of the four routes above answers 202 and leaves the operation
+	// running, because a release change takes as long as the rollout it waits
+	// for; these are where its progress, its log and finally its outcome are
+	// read. `cluster.helm.manage` rather than the read permissions next door:
+	// this is not a way to read what is installed, it is the other end of a
+	// write, and an operator whose permission to change releases was withdrawn
+	// mid-deployment stops being able to watch one too.
+	//
+	// The record itself is restricted to the operator who started it, which is
+	// what makes it safe to leave these two unaudited — see helm_operation.go.
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/helm-operations",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterHelmManage, "cluster_id"),
+		handlers.helmOperation.list,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/namespaces/:namespace_name/helm-operations/:operation_id",
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterRead, "cluster_id"),
+		handlers.authorizationMiddleware.RequireCluster(rbac.PermissionClusterHelmManage, "cluster_id"),
+		handlers.helmOperation.get,
+	)
 	clusterRoutes.GET(
 		"/:cluster_id/namespaces/:namespace_name/configmaps",
 		handlers.authorizationMiddleware.RequireCluster(

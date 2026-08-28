@@ -9,7 +9,11 @@ import {
   useHelmReleaseRevisions,
   useHelmReleases,
 } from "@/api/queries/helm-releases";
-import { useRollbackHelmRelease, useUninstallHelmRelease } from "@/api/queries/helm";
+import {
+  useHelmOperations,
+  useRollbackHelmRelease,
+  useUninstallHelmRelease,
+} from "@/api/queries/helm";
 import type { KubernetesHelmRelease, KubernetesHelmReleaseDetail } from "@/api/types";
 import { PageHeader, SectionToolbarActions } from "@/apps/AppShell";
 import { DataTable } from "@/components/common/data-table";
@@ -27,7 +31,18 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 import { stringify as stringifyYaml } from "yaml";
 
 import { SwitchField } from "./form";
+import { HELM_ACTION_LABELS } from "./labels";
+import { OperationDialog } from "./operation";
 import type { HelmAccess } from "./permissions";
+
+/**
+ * An operation this view started and is now watching.
+ *
+ * `closesView` is what happens when the account is dismissed: an uninstall
+ * started from a release's own page has removed the thing that page was about,
+ * so closing the account has to leave it. Everything else stays where it was.
+ */
+type WatchedOperation = { id: string; closesView: boolean };
 
 /**
  * What is installed in one Namespace, and the three operations that change it
@@ -66,6 +81,17 @@ export function ReleaseSection({
   // taken to them.
   const [rollbackTarget, setRollbackTarget] = useState<KubernetesHelmRelease | null>(null);
   const [uninstallTarget, setUninstallTarget] = useState<string | null>(null);
+  const [watching, setWatching] = useState<WatchedOperation | null>(null);
+  /*
+   * A release change outlives the page that started it, so a window closed or
+   * reloaded mid-deployment would otherwise lose it: the operation carries on,
+   * the list quietly changes underneath, and there is no way back to the log.
+   * This is that way back.
+   */
+  const operations = useHelmOperations(access.canInstall ? clusterId : null, namespace);
+  const running = (operations.data?.operations ?? []).filter(
+    (operation) => operation.status === "running" && !operation.dry_run,
+  );
   // Upgrading needs the release's values, which a listing does not carry: it
   // reads labels only, because decompressing every release to draw a table
   // would be a page of Secrets read for four columns. So the row asks for the
@@ -212,6 +238,21 @@ export function ReleaseSection({
           </Button>
         ) : null}
       </SectionToolbarActions>
+      {running.map((operation) => (
+        <Alert key={operation.id} tone="info" className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="grow">
+            正在{HELM_ACTION_LABELS[operation.action]} {operation.release_name}
+            ，它仍在这个集群里执行。
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setWatching({ id: operation.id, closesView: false })}
+          >
+            查看进展
+          </Button>
+        </Alert>
+      ))}
       <DataTable
         columns={columns}
         data={list.data?.releases}
@@ -235,9 +276,9 @@ export function ReleaseSection({
            quick rollback from a list means. Choosing a specific revision is a
            decision made against the history, and that lives in the detail. */
         revision={0}
-        onDone={() => {
+        onStarted={(id) => {
           setRollbackTarget(null);
-          void list.refetch();
+          setWatching({ id, closesView: false });
         }}
       />
       <UninstallDialog
@@ -247,10 +288,16 @@ export function ReleaseSection({
         clusterName={clusterName}
         namespace={namespace}
         name={uninstallTarget ?? ""}
-        onDone={() => {
+        onStarted={(id) => {
           setUninstallTarget(null);
-          void list.refetch();
+          setWatching({ id, closesView: false });
         }}
+      />
+      <OperationDialog
+        clusterId={clusterId}
+        namespace={namespace}
+        operationId={watching?.id ?? null}
+        onClose={() => setWatching(null)}
       />
     </div>
   );
@@ -282,6 +329,7 @@ function ReleaseDetailView({
   const history = useHelmReleaseRevisions(clusterId, namespace, name);
   const [rollbackTo, setRollbackTo] = useState<number | null>(null);
   const [uninstalling, setUninstalling] = useState(false);
+  const [watching, setWatching] = useState<WatchedOperation | null>(null);
 
   return (
     <div className="grid gap-3">
@@ -478,9 +526,10 @@ function ReleaseDetailView({
         namespace={namespace}
         name={name}
         revision={rollbackTo ?? 0}
-        onDone={() => {
+        onStarted={(id) => {
           setRollbackTo(null);
           setRevision(undefined);
+          setWatching({ id, closesView: false });
         }}
       />
       <UninstallDialog
@@ -490,15 +539,36 @@ function ReleaseDetailView({
         clusterName={clusterName}
         namespace={namespace}
         name={name}
-        onDone={() => {
+        onStarted={(id) => {
           setUninstalling(false);
-          onUninstalled();
+          setWatching({ id, closesView: true });
+        }}
+      />
+      <OperationDialog
+        clusterId={clusterId}
+        namespace={namespace}
+        operationId={watching?.id ?? null}
+        onClose={() => {
+          const leaving = watching?.closesView ?? false;
+          setWatching(null);
+          if (leaving) {
+            onUninstalled();
+          }
         }}
       />
     </div>
   );
 }
 
+/**
+ * Confirming a rollback, and nothing more.
+ *
+ * The dialog closes as soon as the Server accepts the request, because that is
+ * where its job ends: a rollback replays every object a revision described and
+ * waits for them, which is minutes, and what happens during those minutes is an
+ * account rather than a confirmation. The caller opens that account with the
+ * operation identity this hands back.
+ */
 function RollbackDialog({
   open,
   onOpenChange,
@@ -507,7 +577,7 @@ function RollbackDialog({
   namespace,
   name,
   revision,
-  onDone,
+  onStarted,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -516,7 +586,7 @@ function RollbackDialog({
   namespace: string;
   name: string;
   revision: number;
-  onDone: () => void;
+  onStarted: (operationId: string) => void;
 }) {
   const rollback = useRollbackHelmRelease();
   const idempotencyKey = useSubmissionKey(open);
@@ -558,7 +628,7 @@ function RollbackDialog({
             idempotencyKey,
           },
           {
-            onSuccess: onDone,
+            onSuccess: (result) => onStarted(result.operation.id),
             onError: (error) => notifyFailure("回滚 Helm 应用", error),
           },
         )
@@ -582,7 +652,7 @@ function UninstallDialog({
   clusterName,
   namespace,
   name,
-  onDone,
+  onStarted,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -590,7 +660,7 @@ function UninstallDialog({
   clusterName: string;
   namespace: string;
   name: string;
-  onDone: () => void;
+  onStarted: (operationId: string) => void;
 }) {
   const uninstall = useUninstallHelmRelease();
   const idempotencyKey = useSubmissionKey(open);
@@ -633,7 +703,7 @@ function UninstallDialog({
             idempotencyKey,
           },
           {
-            onSuccess: onDone,
+            onSuccess: (result) => onStarted(result.operation.id),
             onError: (error) => notifyFailure("卸载 Helm 应用", error),
           },
         )
