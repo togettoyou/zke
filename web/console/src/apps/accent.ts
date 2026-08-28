@@ -8,8 +8,9 @@ import type { AppAccent, AppManifest } from "./types";
  * One key per application literally: `blue` is what an application without an
  * accent falls back to, so it is taken as well. The keys are stable identifiers
  * rather than colour names — the values behind several of them have been
- * reassigned since, so `fuchsia` is a blue and `amber` a neutral grey. The hex
- * lives in `theme.css`; nothing here should be read as a claim about the hue.
+ * reassigned since, so `fuchsia` is a blue, `amber` a neutral grey and `teal`
+ * an indigo. The hex lives in `theme.css`; nothing here should be read as a
+ * claim about the hue.
  *
  * Tiles in the same pale tint with the same accent glyph do not read as separate
  * applications — they read as one placeholder repeated, which is the language of
