@@ -313,6 +313,34 @@ WHERE settings.singleton = true
 		)
 	}
 
+	// The catalogue ships with one repository so that the Helm application
+	// opens on something installable rather than on an empty state and a URL
+	// the operator has to already know. It is an ordinary row and can be
+	// removed; what is checked here is that it applied at all, and that it did
+	// not quietly ship a signing policy nobody chose the keys for.
+	var repositoryName, repositoryURL, signaturePolicy string
+	var repositoryEnabled bool
+	err = pool.QueryRow(ctx, `
+SELECT name, url, signature_policy, enabled
+FROM helm_repositories
+WHERE id = '00000000-0000-0000-0000-000000000020'
+`).Scan(&repositoryName, &repositoryURL, &signaturePolicy, &repositoryEnabled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repositoryName != "Bitnami" ||
+		repositoryURL != "https://charts.bitnami.com/bitnami" ||
+		signaturePolicy != "disabled" ||
+		!repositoryEnabled {
+		t.Fatalf(
+			"seeded Helm repository = %q, %q, %q, enabled=%v",
+			repositoryName,
+			repositoryURL,
+			signaturePolicy,
+			repositoryEnabled,
+		)
+	}
+
 	testScopeAndAuditConstraints(t, ctx, pool)
 	testRequiredIndexes(t, ctx, pool)
 }

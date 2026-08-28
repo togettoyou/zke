@@ -96,3 +96,40 @@ CREATE TABLE helm_repositories (
 
 CREATE UNIQUE INDEX helm_repositories_name_key
     ON helm_repositories (lower(name));
+
+-- One repository to start from.
+--
+-- An empty catalogue is a dead end. The application opens on "there are no
+-- chart repositories", and before an operator can look at a single chart they
+-- have to already know a URL by heart and hold `helm.repository.manage` to
+-- enter it. A platform that ships with nothing installable teaches nothing
+-- about what it does.
+--
+-- It is a starting point, not a commitment. This is an ordinary row: an
+-- administrator can rename it, point it somewhere else, switch it off or delete
+-- it, and no code path treats this id as special. Nothing is fetched from it
+-- until somebody opens the catalogue, and a deployment that does not want a
+-- public repository configured removes it in one request.
+--
+-- The signing policy stays 'disabled', which is the honest setting rather than
+-- the weak one. Anything stronger needs the publisher's own keys, and shipping
+-- a keyring nobody in this deployment chose would make ZKE the party vouching
+-- for a third party's charts — the keys have to be brought by whoever decides
+-- to trust them.
+INSERT INTO helm_repositories (
+    id,
+    name,
+    description,
+    url,
+    enabled,
+    created_at,
+    updated_at
+) VALUES (
+    '00000000-0000-0000-0000-000000000020',
+    'Bitnami',
+    'Bitnami 发布的公共 Chart 仓库，作为初始条目提供，可以停用或删除。',
+    'https://charts.bitnami.com/bitnami',
+    true,
+    now(),
+    now()
+);
