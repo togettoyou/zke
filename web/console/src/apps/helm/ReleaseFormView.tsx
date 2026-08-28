@@ -534,11 +534,11 @@ export function ReleaseFormView({
 /**
  * 确认: what the Cluster said the change would be.
  *
- * The rendered manifest is the point of this step and it is the first thing on
- * it, above everything else — the previous version put it under a form and it
- * was routinely never seen. While the render is still running this is the
- * progress account instead; a preview is a real request to a real Cluster and
- * can take as long as fetching a chart takes.
+ * Same shape as 执行 below it: the account of what is happening is at the top,
+ * and what it produced follows. A preview is a real request to a real Cluster
+ * and can take as long as fetching a chart takes, so the operator watches it
+ * there — and when it finishes, the progress does not move out from under them
+ * to the bottom of a page the manifest just made long.
  */
 function ConfirmStep({
   verb,
@@ -587,6 +587,14 @@ function ConfirmStep({
       <div className="grid max-w-4xl gap-3">
         {error ? <ErrorAlert error={error} /> : null}
         {submitError ? <ErrorAlert error={submitError} /> : null}
+        <Card className="grid min-w-0 gap-2 p-4">
+          <CardTitle>{report ? "预览过程" : "正在预览"}</CardTitle>
+          {operation ? (
+            <OperationProgress operation={operation} />
+          ) : (
+            <LoadingState label="正在提交预览…" />
+          )}
+        </Card>
         {report ? (
           <Card className="grid min-w-0 gap-2 p-4">
             <CardTitle>
@@ -620,14 +628,6 @@ function ConfirmStep({
             ) : null}
           </Card>
         ) : null}
-        <Card className="grid min-w-0 gap-2 p-4">
-          <CardTitle>{report ? "预览过程" : "正在预览"}</CardTitle>
-          {operation ? (
-            <OperationProgress operation={operation} />
-          ) : (
-            <LoadingState label="正在提交预览…" />
-          )}
-        </Card>
       </div>
     </div>
   );
