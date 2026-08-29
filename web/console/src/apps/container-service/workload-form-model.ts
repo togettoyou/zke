@@ -382,6 +382,10 @@ export function nameLimit(resource: KubernetesWorkloadResource): number {
   }
 }
 
+export function validWorkloadName(name: string, resource: KubernetesWorkloadResource): boolean {
+  return DNS_SUBDOMAIN.test(name) && name.length <= nameLimit(resource);
+}
+
 /**
  * The section of the form a problem belongs to.
  *
@@ -410,7 +414,7 @@ export function draftProblem(
   resource: KubernetesWorkloadResource,
 ): DraftProblem | null {
   const name = draft.name.trim();
-  if (!DNS_SUBDOMAIN.test(name) || name.length > nameLimit(resource)) {
+  if (!validWorkloadName(name, resource)) {
     return at("basic", `名称必须是合法的 DNS 子域名，最长 ${nameLimit(resource)} 个字符。`);
   }
   // Counted in characters rather than UTF-16 units, so one emoji is one of them.

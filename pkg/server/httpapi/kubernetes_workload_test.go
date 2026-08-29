@@ -26,6 +26,7 @@ type fakeKubernetesWorkloadService struct {
 	getResource  kubernetesresource.WorkloadResource
 	getName      string
 	createInput  kubernetesresource.CreateWorkloadInput
+	cloneInput   kubernetesresource.CloneWorkloadInput
 	updateInput  kubernetesresource.UpdateWorkloadInput
 	scaleInput   kubernetesresource.ScaleWorkloadInput
 	restartInput kubernetesresource.WorkloadMutationInput
@@ -96,6 +97,22 @@ func (service *fakeKubernetesWorkloadService) CreateWorkload(
 	input kubernetesresource.CreateWorkloadInput,
 ) (kubernetesresource.WorkloadDetail, error) {
 	service.createInput = input
+	return fakeWorkloadMutationResult(kubernetesresource.WorkloadMutationInput{
+		ClusterID:      input.ClusterID,
+		Namespace:      input.Namespace,
+		Resource:       input.Resource,
+		Name:           input.Name,
+		DryRun:         input.DryRun,
+		Confirm:        input.Confirm,
+		IdempotencyKey: input.IdempotencyKey,
+	}), nil
+}
+
+func (service *fakeKubernetesWorkloadService) CloneWorkload(
+	_ context.Context,
+	input kubernetesresource.CloneWorkloadInput,
+) (kubernetesresource.WorkloadDetail, error) {
+	service.cloneInput = input
 	return fakeWorkloadMutationResult(kubernetesresource.WorkloadMutationInput{
 		ClusterID:      input.ClusterID,
 		Namespace:      input.Namespace,
@@ -354,6 +371,7 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 	baseRoute := "/clusters/:cluster_id/namespaces/:namespace_name/workloads/" +
 		":workload_resource/:workload_name"
 	router.POST(collectionRoute, handler.create)
+	router.POST(baseRoute+"/clone", handler.clone)
 	router.PUT(baseRoute, handler.update)
 	router.POST(baseRoute+"/scale", handler.scale)
 	router.POST(baseRoute+"/restart", handler.restart)
@@ -390,6 +408,17 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 			method: http.MethodPost,
 			path:   baseURL + "/deployments/inference/scale",
 			body:   `{"replicas":4,"dry_run":false,"confirm":true}`,
+		},
+		{
+			method: http.MethodPost,
+			path:   baseURL + "/deployments/api/clone",
+			body: `{
+				"name":"api-copy",
+				"source_uid":"deployment-uid",
+				"source_resource_version":"12",
+				"dry_run":false,
+				"confirm":true
+			}`,
 		},
 		{
 			method: http.MethodPost,
@@ -449,6 +478,9 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 		if testCase.path == baseURL+"/deployments" {
 			wantStatus = http.StatusCreated
 		}
+		if testCase.path == baseURL+"/deployments/api/clone" {
+			wantStatus = http.StatusCreated
+		}
 		if response.Code != wantStatus {
 			t.Fatalf(
 				"%s %s status=%d body=%s",
@@ -491,6 +523,17 @@ func TestKubernetesWorkloadMutationHandlersPreserveSafetyAndScope(t *testing.T) 
 		!service.updateInput.Confirm ||
 		service.updateInput.IdempotencyKey != idempotencyKey {
 		t.Fatalf("unexpected update input: %+v", service.updateInput)
+	}
+	if service.cloneInput.ClusterID != clusterID ||
+		service.cloneInput.Namespace != "model-serving" ||
+		service.cloneInput.Resource != kubernetesresource.WorkloadDeployments ||
+		service.cloneInput.SourceName != "api" ||
+		service.cloneInput.SourceUID != "deployment-uid" ||
+		service.cloneInput.SourceResourceVersion != "12" ||
+		service.cloneInput.Name != "api-copy" ||
+		!service.cloneInput.Confirm ||
+		service.cloneInput.IdempotencyKey != idempotencyKey {
+		t.Fatalf("unexpected clone input: %+v", service.cloneInput)
 	}
 	if service.scaleInput.ClusterID != clusterID ||
 		service.scaleInput.Namespace != "model-serving" ||
@@ -544,6 +587,7 @@ func TestKubernetesWorkloadMutationHandlersRejectUnsafeRequests(t *testing.T) {
 	baseRoute := "/clusters/:cluster_id/namespaces/:namespace_name/workloads/" +
 		":workload_resource/:workload_name"
 	router.POST(collectionRoute, handler.create)
+	router.POST(baseRoute+"/clone", handler.clone)
 	router.PUT(baseRoute, handler.update)
 	router.POST(baseRoute+"/scale", handler.scale)
 	router.DELETE(baseRoute, handler.delete)
@@ -569,6 +613,14 @@ func TestKubernetesWorkloadMutationHandlersRejectUnsafeRequests(t *testing.T) {
 			method:   http.MethodPost,
 			path:     baseURL + "/scale",
 			body:     `{"replicas":4,"dry_run":false,"confirm":false}`,
+			wantCode: "confirmation_required",
+		},
+		{
+			name:   "clone confirmation required",
+			method: http.MethodPost,
+			path:   baseURL + "/clone",
+			body: `{"name":"inference-copy","source_uid":"deployment-uid",` +
+				`"source_resource_version":"12","dry_run":false,"confirm":false}`,
 			wantCode: "confirmation_required",
 		},
 		{
@@ -622,6 +674,7 @@ func TestKubernetesWorkloadMutationHandlersRejectUnsafeRequests(t *testing.T) {
 		assertErrorCode(t, response, testCase.wantCode)
 	}
 	if service.createInput.ClusterID != "" ||
+		service.cloneInput.ClusterID != "" ||
 		service.scaleInput.ClusterID != "" ||
 		service.deleteInput.ClusterID != "" {
 		t.Fatal("unsafe workload mutation reached service")

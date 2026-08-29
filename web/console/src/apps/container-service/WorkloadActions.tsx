@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { MoreHorizontal, Pause, Pencil, Play, RotateCw, Scaling, Zap } from "lucide-react";
+import { Copy, MoreHorizontal, Pause, Pencil, Play, RotateCw, Scaling, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/api/errors";
 import {
   useDeleteWorkload,
+  useCloneWorkload,
   useRestartWorkload,
   useScaleWorkload,
   useSetCronJobSuspension,
@@ -29,11 +30,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { NumericInput } from "@/components/ui/input";
+import { Input, NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/misc";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 
+import { nameLimit, validWorkloadName } from "./workload-form-model";
 import { kindLabel, supportsRestart, supportsScale, supportsSuspension } from "./workload-catalog";
 
 /** The exact object an action will act on, and where it lives. */
@@ -44,7 +46,7 @@ export type WorkloadTarget = {
   workload: KubernetesWorkloadSummary;
 };
 
-type WorkloadAction = "scale" | "restart" | "suspension" | "trigger" | "delete";
+type WorkloadAction = "clone" | "scale" | "restart" | "suspension" | "trigger" | "delete";
 type ActiveWorkloadAction = {
   type: WorkloadAction;
   // Freeze the object the operator chose. A background refetch must not replace
@@ -77,9 +79,8 @@ export function WorkloadActions({
 }: {
   target: WorkloadTarget;
   /**
-   * Whether the caller may create objects in this Namespace. Only running a
-   * CronJob now needs it: that action creates a Job rather than changing the
-   * CronJob, and the Server gates it on `cluster.resource.create` accordingly.
+   * Whether the caller may create objects in this Namespace. Cloning and
+   * running a CronJob now both create a new object and are gated on it.
    */
   canCreate: boolean;
   canUpdate: boolean;
@@ -103,13 +104,24 @@ export function WorkloadActions({
   // Running a CronJob now is a create, and it names the CronJob by UID, so an
   // object that arrived without one has no run this Console can safely submit.
   const triggerable = canCreate && supportsSuspension(resource) && Boolean(uid);
+  // A clone is bound to this exact source snapshot. Both fields are returned by
+  // list and detail responses, so opening it never needs an unpinned reread.
+  const cloneable = canCreate && Boolean(uid) && Boolean(target.workload.resource_version);
   // The endpoint requires a UID precondition, so an object that somehow arrived
   // without one has no deletion this Console can safely submit.
   const removable = canDelete && Boolean(uid);
 
   const editable = canUpdate && onEdit !== undefined;
 
-  if (!editable && !scalable && !restartable && !suspendable && !triggerable && !removable) {
+  if (
+    !cloneable &&
+    !editable &&
+    !scalable &&
+    !restartable &&
+    !suspendable &&
+    !triggerable &&
+    !removable
+  ) {
     return null;
   }
 
@@ -125,6 +137,9 @@ export function WorkloadActions({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
+            {cloneable ? (
+              <DropdownMenuItem onSelect={() => openAction("clone")}>克隆</DropdownMenuItem>
+            ) : null}
             {editable ? <DropdownMenuItem onSelect={() => onEdit()}>编辑</DropdownMenuItem> : null}
             {scalable ? (
               <DropdownMenuItem onSelect={() => openAction("scale")}>伸缩</DropdownMenuItem>
@@ -154,6 +169,12 @@ export function WorkloadActions({
         </DropdownMenu>
       ) : (
         <>
+          {cloneable ? (
+            <Button size="sm" variant="secondary" onClick={() => openAction("clone")}>
+              <Copy />
+              克隆
+            </Button>
+          ) : null}
           {editable ? (
             <Button size="sm" variant="secondary" onClick={() => onEdit()}>
               <Pencil />
@@ -190,6 +211,9 @@ export function WorkloadActions({
         </>
       )}
 
+      {action?.type === "clone" ? (
+        <CloneDialog target={action.target} onClose={() => setAction(null)} />
+      ) : null}
       {action?.type === "scale" ? (
         <ScaleDialog target={action.target} onClose={() => setAction(null)} />
       ) : null}
@@ -209,6 +233,121 @@ export function WorkloadActions({
           onDeleted={onDeleted}
         />
       ) : null}
+    </>
+  );
+}
+
+/**
+ * Cloning has a deliberately small input surface: the complete raw source
+ * spec is copied server-side, where fields this Console does not model remain
+ * intact. The source identity is frozen in WorkloadTarget and checked again on
+ * both submissions, so the confirmed create is the object the DryRun previewed.
+ */
+function CloneDialog({ target, onClose }: { target: WorkloadTarget; onClose: () => void }) {
+  const clone = useCloneWorkload();
+  const [name, setName] = useState("");
+  const [previewed, setPreviewed] = useState<string | null>(null);
+  const previewKey = useSubmissionKey(true);
+  const applyKey = useSubmissionKey(true);
+  const source = target.workload;
+  const requestedName = name.trim();
+  const valid =
+    requestedName !== "" &&
+    requestedName !== source.name &&
+    validWorkloadName(requestedName, source.resource);
+
+  const submit = (dryRun: boolean, destinationName: string) =>
+    void clone
+      .mutateAsync({
+        clusterId: target.clusterId,
+        namespace: target.namespace,
+        resource: source.resource,
+        sourceName: source.name,
+        sourceUid: source.uid,
+        sourceResourceVersion: source.resource_version,
+        name: destinationName,
+        dryRun,
+        idempotencyKey: dryRun ? previewKey : applyKey,
+      })
+      .then(() => {
+        if (dryRun) {
+          setPreviewed(destinationName);
+          return;
+        }
+        toast.success(`${kindLabel(source.resource)} ${destinationName} 已克隆创建`);
+        onClose();
+      })
+      .catch(() => undefined);
+
+  return (
+    <>
+      <Dialog open={previewed === null} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>克隆 {kindLabel(source.resource)}</DialogTitle>
+            <DialogDescription>
+              复制 {source.name} 的完整配置，在当前命名空间创建一个新对象。第一步只执行 DryRun
+              预检。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="workload-clone-name">新名称</Label>
+            <Input
+              id="workload-clone-name"
+              value={name}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={`${source.name}-copy`}
+              onChange={(event) => setName(event.target.value)}
+            />
+            <span className="text-subtle-foreground text-xs">
+              最长 {nameLimit(source.resource)} 个字符，且必须与源名称不同
+            </span>
+          </div>
+          <Alert tone="info" className="mt-3">
+            源：{target.clusterName} / {target.namespace} / {source.name}
+          </Alert>
+          {clone.error ? (
+            <Alert tone="danger" className="mt-3">
+              {errorMessage(clone.error)}
+            </Alert>
+          ) : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={onClose} disabled={clone.isPending}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              disabled={!valid || clone.isPending}
+              onClick={() => submit(true, requestedName)}
+            >
+              {clone.isPending ? "DryRun 预检中…" : "执行 DryRun 预检"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <SensitiveActionDialog
+        open={previewed !== null}
+        onOpenChange={(open) => !open && onClose()}
+        title={`确认克隆 ${kindLabel(source.resource)}`}
+        description="DryRun 预检已通过。确认后将创建新的工作负载，源对象不会改变。"
+        scopeLines={[
+          { label: "集群", name: target.clusterName, id: target.clusterId },
+          { label: "命名空间", name: target.namespace },
+          { label: "源对象", name: source.name, id: source.uid },
+          { label: `新 ${kindLabel(source.resource)}`, name: previewed ?? requestedName },
+        ]}
+        impacts={[
+          "源工作负载的完整 Spec 将被复制，源对象及其运行中的 Pod 不会改变。",
+          "新对象会获得独立 UID、resourceVersion 和 Selector，不会接管源对象的 Pod。",
+          "新工作负载会按复制的副本数或调度配置创建 Pod，消耗目标集群资源。",
+        ]}
+        confirmLabel="确认克隆创建"
+        pending={clone.isPending}
+        error={clone.error}
+        onConfirm={() => previewed && submit(false, previewed)}
+      />
     </>
   );
 }

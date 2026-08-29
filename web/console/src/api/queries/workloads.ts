@@ -239,6 +239,66 @@ export function useCreateWorkload() {
   });
 }
 
+/**
+ * Clones one fixed workload snapshot into a new object of the same type.
+ *
+ * Unlike rebuilding a create request from the typed detail response, the
+ * Server copies the raw source spec, so Kubernetes fields the Console does not
+ * model are retained. UID and resourceVersion bind both DryRun and the real
+ * create to the source configuration the operator chose.
+ */
+export function useCloneWorkload() {
+  const invalidate = useWorkloadInvalidation();
+  return useMutation({
+    mutationFn: async (input: {
+      clusterId: string;
+      namespace: string;
+      resource: KubernetesWorkloadResource;
+      sourceName: string;
+      sourceUid: string;
+      sourceResourceVersion: string;
+      name: string;
+      dryRun: boolean;
+      idempotencyKey: string;
+    }) =>
+      unwrap(
+        await api.POST(
+          "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/clone",
+          {
+            params: {
+              path: {
+                cluster_id: input.clusterId,
+                namespace_name: input.namespace,
+                workload_resource: input.resource,
+                workload_name: input.sourceName,
+              },
+              header: idempotentHeaders(input.idempotencyKey),
+            },
+            body: {
+              name: input.name,
+              source_uid: input.sourceUid,
+              source_resource_version: input.sourceResourceVersion,
+              dry_run: input.dryRun,
+              confirm: !input.dryRun,
+            },
+          },
+        ),
+      ),
+    onSuccess: (_data, variables) =>
+      invalidate(
+        {
+          clusterId: variables.clusterId,
+          namespace: variables.namespace,
+          resource: variables.resource,
+          name: variables.name,
+          dryRun: variables.dryRun,
+          idempotencyKey: variables.idempotencyKey,
+        },
+        false,
+      ),
+  });
+}
+
 /** The body of an update minus the flags and preconditions this hook owns. */
 export type WorkloadUpdateSpec = Omit<
   KubernetesUpdateWorkloadRequest,

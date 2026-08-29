@@ -1232,6 +1232,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 以路径中的工作负载为源，在同一 Cluster、Namespace 和资源类型下克隆创建新对象。
+         *     Server 直接复制源对象的完整原始 Spec，保留类型化表单尚未建模的 Kubernetes 字段，
+         *     同时移除 UID、resourceVersion、status、ownerReferences、finalizers 等服务端身份，
+         *     并为新对象重建不会选中源 Pod 的 Selector。源 UID 与 resourceVersion 必须和当前
+         *     对象一致；dry_run=true 时执行 Kubernetes 服务端预览，实际创建要求 confirm=true。
+         */
+        post: operations["cloneKubernetesWorkload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/scale": {
         parameters: {
             query?: never;
@@ -3873,6 +3896,18 @@ export interface components {
              * @description 仅 CronJob 可用。
              */
             failed_jobs_history_limit?: number | null;
+            /** @default false */
+            dry_run: boolean;
+            /** @description 实际创建必须为 true；dry-run 可以为 false。 */
+            confirm: boolean;
+        };
+        KubernetesCloneWorkloadRequest: {
+            /** @description 新工作负载名称，必须与源名称不同；Job 最长 63，CronJob 最长 52 个字符。 */
+            name: string;
+            /** @description 打开克隆操作时源对象的 UID；同名重建后返回 409。 */
+            source_uid: string;
+            /** @description 打开克隆操作时源对象的 resourceVersion；源配置变化后返回 409。 */
+            source_resource_version: string;
             /** @default false */
             dry_run: boolean;
             /** @description 实际创建必须为 true；dry-run 可以为 false。 */
@@ -10628,6 +10663,60 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessResponse"] & {
                         data: components["schemas"]["KubernetesDeleteResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    cloneKubernetesWorkload: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+                namespace_name: components["parameters"]["NamespaceName"];
+                workload_resource: components["parameters"]["WorkloadResource"];
+                workload_name: components["parameters"]["WorkloadName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesCloneWorkloadRequest"];
+            };
+        };
+        responses: {
+            /** @description 工作负载克隆 DryRun 结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
+                    };
+                };
+            };
+            /** @description 克隆创建的工作负载 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["KubernetesWorkloadMutationResult"];
                     };
                 };
             };

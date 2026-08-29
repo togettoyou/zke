@@ -3490,6 +3490,74 @@ paths:
           $ref: "#/components/responses/Unavailable"
         "504":
           $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/clone:
+    post:
+      tags: [Resources]
+      operationId: cloneKubernetesWorkload
+      description: |
+        以路径中的工作负载为源，在同一 Cluster、Namespace 和资源类型下克隆创建新对象。
+        Server 直接复制源对象的完整原始 Spec，保留类型化表单尚未建模的 Kubernetes 字段，
+        同时移除 UID、resourceVersion、status、ownerReferences、finalizers 等服务端身份，
+        并为新对象重建不会选中源 Pod 的 Selector。源 UID 与 resourceVersion 必须和当前
+        对象一致；dry_run=true 时执行 Kubernetes 服务端预览，实际创建要求 confirm=true。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+        - $ref: "#/components/parameters/NamespaceName"
+        - $ref: "#/components/parameters/WorkloadResource"
+        - $ref: "#/components/parameters/WorkloadName"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KubernetesCloneWorkloadRequest"
+      responses:
+        "200":
+          description: 工作负载克隆 DryRun 结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "201":
+          description: 克隆创建的工作负载
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KubernetesWorkloadMutationResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
   /api/v1/clusters/{cluster_id}/namespaces/{namespace_name}/workloads/{workload_resource}/{workload_name}/scale:
     post:
       tags: [Resources]
@@ -11040,6 +11108,32 @@ components:
           minimum: 0
           maximum: 2147483647
           description: 仅 CronJob 可用。
+        dry_run:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          description: 实际创建必须为 true；dry-run 可以为 false。
+    KubernetesCloneWorkloadRequest:
+      type: object
+      additionalProperties: false
+      required: [name, source_uid, source_resource_version, confirm]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 253
+          description: 新工作负载名称，必须与源名称不同；Job 最长 63，CronJob 最长 52 个字符。
+        source_uid:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: 打开克隆操作时源对象的 UID；同名重建后返回 409。
+        source_resource_version:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: 打开克隆操作时源对象的 resourceVersion；源配置变化后返回 409。
         dry_run:
           type: boolean
           default: false

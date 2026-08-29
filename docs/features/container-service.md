@@ -1152,9 +1152,9 @@ Console 工作负载页面在目标 Cluster 和 Namespace 内按类型切换 Dep
 CronJob，列表展示状态、副本或 Job/CronJob 进度、镜像和创建时间，可下钻到包含副本或 Job/CronJob 状态、
 配置、容器、Selector、条件、标签和注解的详情页。
 
-列表行和详情页提供与后端一致的变更操作：Deployment 和 StatefulSet 伸缩，Deployment、StatefulSet 和
-DaemonSet 滚动重启，CronJob 暂停、恢复和立即运行，以及五类工作负载删除。伸缩、重启和暂停/恢复需要
-`cluster.resource.update`，立即运行需要 `cluster.resource.create`，删除需要
+列表行和详情页提供与后端一致的变更操作：五类工作负载克隆创建，Deployment 和 StatefulSet 伸缩，Deployment、
+StatefulSet 和 DaemonSet 滚动重启，CronJob 暂停、恢复和立即运行，以及五类工作负载删除。克隆与立即运行需要
+`cluster.resource.create`，伸缩、重启和暂停/恢复需要 `cluster.resource.update`，删除需要
 `cluster.resource.delete`；Console 只在权限和资源类型都允许时展示对应
 菜单项，实际判定仍由 Server 执行。每个操作都先提交一次服务端 DryRun，通过后再在确认弹窗中展示目标集群、
 命名空间、对象 UID 和具体影响，删除还要求输入对象名称。伸缩确认提交的是 DryRun 校验过的副本数，而不是
@@ -1181,6 +1181,15 @@ CronJob 的「立即运行」等价于 `kubectl create job --from=cronjob/<name>
 CronJob 的 Cron 表达式形状和时区，`zke.io/workload-id` 与 `zke.io/description` 作为保留键在表单中被拒绝；最终
 判定仍由 Server 执行。创建同样走 DryRun 预检和确认弹窗，确认弹窗会点出特权容器、主机路径数据卷和容忍调度这三
 类需要注意的配置。
+
+克隆创建不把详情响应重新拼成一份普通创建请求。详情只返回 Console 已建模的字段；若这样做，源对象上的
+ServiceAccount、hostNetwork、hostPort、projected/CSI 卷、gRPC 探针和其余 `securityContext` 会在克隆时静默丢失。
+因此克隆接口由 Server 按源 UID 与 resourceVersion 读取原始对象，复制完整 Spec，移除 UID、resourceVersion、
+generation、status、ownerReferences、finalizers 和控制器生成的运行态标签/注解，再按新名称重建独立 Selector；
+Job 与 CronJob 的 Job Template 还会移除源 Job 控制器身份，让 Kubernetes 为新 Job 分配自己的 Selector。源对象在
+DryRun 或确认创建前发生变化会返回冲突，避免确认的配置和预检不是同一份。克隆只允许同一 Cluster、Namespace 和
+资源类型，新名称必须不同；源对象本身及其 Pod 不会改变。接口同时要求 `cluster.read` 和按目标 Namespace 选择的
+创建权限，防止只有创建权限的调用方借克隆读取不可见工作负载配置。
 
 容器以标签条组织，「添加容器」在同一份 Pod 模板中追加一个；初始化容器不是另一个列表，而是容器自身的一个开关，
 与 Kubernetes 的模型一致——init container 与主容器是同一种模板，区别只在于运行时机；打开这个开关会同时收起并

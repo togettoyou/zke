@@ -430,9 +430,9 @@ Resource 与 YAML 接口照常返回它们。Server 会在类型化、通用 Res
 并以对应的独立权限替代通用资源写权限；资源目录无需通过移除 `create`、`delete`、`patch` 动词隐藏能力。因此具备
 相应权限的调用者可以从任一受支持入口操作 Namespace，同时普通 `cluster.resource.*` 不能成为绕过路径。
 
-#### Pod 驱逐与 CronJob 立即运行：按写入的性质取权限，不按入口取
+#### Pod 驱逐、工作负载克隆与 CronJob 立即运行：按写入的性质取权限，不按入口取
 
-这两个动作都不引入新权限，都按「它实际写了什么」落在既有权限位上。
+这些动作都不引入新权限，都按「它实际写了什么」落在既有权限位上。
 
 **Pod 驱逐**（`POST .../pods/{pod}/eviction`）与删除 Pod 是同一件事的两种做法——Pod 都会消失——因此使用同一个
 `cluster.resource.delete`，也走同一套受保护命名空间替换：路径里有 Namespace，`kube-*` 与 Agent Namespace
@@ -454,6 +454,13 @@ Agent 侧仍只接受 Node Drain 已有的那一种精确请求形状：core/v1 
 的 ownerReference 但不是 controller 引用，因此会被垃圾回收一并清理，又不会被 CronJob 控制器计入
 `concurrencyPolicy` 与历史保留数。审计使用独立的 `kubernetes_cron_job.trigger` / `.dry_run`：从一条通用的对象
 创建记录里反推「这是一次计划外的运行」只能靠猜名字。
+
+**工作负载克隆**（`POST .../workloads/{resource}/{name}/clone`）读取一个源对象并创建同 Namespace、同类型的新对象，
+因此同时要求 `cluster.read` 与按目标 Namespace 选择的 `cluster.resource.create`、系统命名空间管理或 Agent 命名空间
+管理权限。只授予 create 不足以克隆：源对象的完整 Spec 可能包含 Console 详情未展示的安全上下文与引用，不能把克隆
+变成读取不可见配置的旁路。请求固定源 UID 与 resourceVersion，DryRun 和确认提交期间源对象变化时按冲突拒绝；Server
+复制原始 Spec 但移除服务端身份、状态、ownerReferences 与 finalizers，并重建独立 Selector，防止新控制器接管源 Pod。
+实际写入继续要求 CSRF、幂等键与显式确认，审计按新对象记录资源创建或创建 DryRun，不记录复制的 Spec 正文。
 
 Service、Ingress 与 Gateway 类型化接口沿用 `cluster.read` 和 `cluster.resource.create/update/delete`，
 并固定 GVR 与 Namespace，客户端不能改写资源类型。更新要求当前 UID/resourceVersion，删除同时把两者作为

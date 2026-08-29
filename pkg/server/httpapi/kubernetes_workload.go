@@ -35,6 +35,10 @@ type kubernetesWorkloadService interface {
 		context.Context,
 		kubernetesresource.CreateWorkloadInput,
 	) (kubernetesresource.WorkloadDetail, error)
+	CloneWorkload(
+		context.Context,
+		kubernetesresource.CloneWorkloadInput,
+	) (kubernetesresource.WorkloadDetail, error)
 	UpdateWorkload(
 		context.Context,
 		kubernetesresource.UpdateWorkloadInput,
@@ -136,6 +140,14 @@ type createWorkloadRequest struct {
 
 	DryRun  bool `json:"dry_run"`
 	Confirm bool `json:"confirm"`
+}
+
+type cloneWorkloadRequest struct {
+	Name                  string `json:"name"`
+	SourceUID             string `json:"source_uid"`
+	SourceResourceVersion string `json:"source_resource_version"`
+	DryRun                bool   `json:"dry_run"`
+	Confirm               bool   `json:"confirm"`
 }
 
 type updateWorkloadRequest struct {
@@ -364,6 +376,95 @@ func (handler *kubernetesWorkloadHandler) create(c *gin.Context) {
 		handler.recordMutation(c, actor.User.ID, action, target, "failed")
 	}
 	if handler.respondWorkloadError(c, "create Kubernetes workload", err) {
+		return
+	}
+	handler.recordMutation(c, actor.User.ID, action, target, "succeeded")
+	status := http.StatusCreated
+	if request.DryRun {
+		status = http.StatusOK
+	}
+	writeSuccess(c, status, gin.H{
+		"workload": result,
+		"dry_run":  request.DryRun,
+	})
+}
+
+func (handler *kubernetesWorkloadHandler) clone(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	actor, _ := httpmiddleware.Identity(c)
+	resource, valid := kubernetesresource.ParseWorkloadResource(c.Param("workload_resource"))
+	if !valid {
+		handler.recordMutation(
+			c,
+			actor.User.ID,
+			auditaction.KubernetesResourceCreate,
+			c.Param("workload_resource")+" "+c.Param("namespace_name"),
+			"failed",
+		)
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload resource")
+		return
+	}
+	resourceIdentity, _ := kubernetesresource.WorkloadResourceIdentity(resource)
+	target := resourceTargetName(resourceIdentity, c.Param("namespace_name"), "")
+	if len(c.Request.URL.Query()) != 0 {
+		handler.recordMutation(
+			c,
+			actor.User.ID,
+			auditaction.KubernetesResourceCreate,
+			target,
+			"failed",
+		)
+		writeError(c, http.StatusBadRequest, "invalid_request", "workload clone does not accept query parameters")
+		return
+	}
+	var request cloneWorkloadRequest
+	if decodeJSONRequest(c, &request, maxKubernetesWorkloadMutationRequestBytes) != nil {
+		handler.recordMutation(
+			c,
+			actor.User.ID,
+			auditaction.KubernetesResourceCreate,
+			target,
+			"failed",
+		)
+		writeError(c, http.StatusBadRequest, "invalid_request", "invalid workload clone request")
+		return
+	}
+	target = resourceTargetName(resourceIdentity, c.Param("namespace_name"), request.Name)
+	action := kubernetesMutationAuditAction(
+		auditaction.KubernetesResourceCreate,
+		request.DryRun,
+	)
+	if !request.DryRun && !request.Confirm {
+		handler.recordMutation(c, actor.User.ID, action, target, "failed")
+		writeError(c, http.StatusBadRequest, "confirmation_required", "explicit confirmation is required")
+		return
+	}
+	if handler.service == nil {
+		handler.recordMutation(c, actor.User.ID, action, target, "failed")
+		writeError(c, http.StatusServiceUnavailable, "unavailable", "workload mutation is unavailable")
+		return
+	}
+	ctx, cancel := handler.operationContext(c)
+	result, err := handler.service.CloneWorkload(
+		ctx,
+		kubernetesresource.CloneWorkloadInput{
+			ClusterID:             c.Param("cluster_id"),
+			Namespace:             c.Param("namespace_name"),
+			Resource:              resource,
+			SourceName:            c.Param("workload_name"),
+			SourceUID:             request.SourceUID,
+			SourceResourceVersion: request.SourceResourceVersion,
+			Name:                  request.Name,
+			DryRun:                request.DryRun,
+			Confirm:               request.Confirm,
+			IdempotencyKey:        c.GetHeader(idempotencyKeyHeaderName),
+		},
+	)
+	cancel()
+	if err != nil {
+		handler.recordMutation(c, actor.User.ID, action, target, "failed")
+	}
+	if handler.respondWorkloadError(c, "clone Kubernetes workload", err) {
 		return
 	}
 	handler.recordMutation(c, actor.User.ID, action, target, "succeeded")

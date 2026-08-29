@@ -858,6 +858,22 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.kubernetesWorkload.get,
 	)
+	// Cloning reads a fixed snapshot of the source and creates a different
+	// object. It therefore needs both permissions; create alone must not become
+	// a way to read workload configuration the caller cannot otherwise inspect.
+	clusterRoutes.POST(
+		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name/clone",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterRead,
+			"cluster_id",
+		),
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterResourceCreate,
+			"cluster_id",
+		),
+		handlers.kubernetesWorkload.clone,
+	)
 	clusterRoutes.PUT(
 		"/:cluster_id/namespaces/:namespace_name/workloads/:workload_resource/:workload_name",
 		handlers.authMiddleware.RequireCSRF,
