@@ -35,7 +35,15 @@ func terminatedState(
 }
 
 func describedEvent(uid, reason, message, container string) Event {
-	seen := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	return describedEventAt(uid, reason, message, container, describedEventBase)
+}
+
+var describedEventBase = time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+
+// describedEventAt is for the tests that are about which Event is the newest.
+// They have to say so with the timestamp: recency is read from `last_seen`, not
+// from where an Event happens to sit in the slice.
+func describedEventAt(uid, reason, message, container string, seen time.Time) Event {
 	return Event{
 		UID:       uid,
 		Type:      eventTypeWarning,
@@ -269,9 +277,24 @@ func TestUnschedulableFindingFallsBackToTheSchedulerEvent(t *testing.T) {
 			Reason: "Unschedulable",
 		}},
 	}
+	// Newest first, the order the describe hands them over in — so a finding
+	// that reached for the last element rather than the latest timestamp would
+	// quote the stale one and this test would say so.
 	events := []Event{
-		describedEvent("event-a", "FailedScheduling", "0/3 nodes are available", ""),
-		describedEvent("event-b", "FailedScheduling", "0/5 nodes are available: 2 Insufficient nvidia.com/gpu.", ""),
+		describedEventAt(
+			"event-b",
+			"FailedScheduling",
+			"0/5 nodes are available: 2 Insufficient nvidia.com/gpu.",
+			"",
+			describedEventBase.Add(time.Minute),
+		),
+		describedEventAt(
+			"event-a",
+			"FailedScheduling",
+			"0/3 nodes are available",
+			"",
+			describedEventBase,
+		),
 	}
 
 	findings := podFindings(pod, events)

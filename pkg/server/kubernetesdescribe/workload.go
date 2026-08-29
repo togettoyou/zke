@@ -649,13 +649,17 @@ func (service *Service) workloadEvents(
 		merged = append(merged, result.items...)
 		truncated = truncated || result.truncated
 	}
+	// Newest first, for the reason on eventCollector.collected: one timeline
+	// out of several objects is no use if the line about the Pod that is
+	// crashing right now is at the bottom of it.
 	sort.SliceStable(merged, func(left, right int) bool {
-		return eventOrder(merged[left]).Before(eventOrder(merged[right]))
+		return eventOrder(merged[right]).Before(eventOrder(merged[left]))
 	})
 	// The cut is made after merging so the newest lines of the whole story
-	// survive rather than the newest lines of whichever object was read first.
+	// survive rather than the newest lines of whichever object was read first —
+	// which, sorted this way round, means keeping the front of the slice.
 	if uint32(len(merged)) > service.eventLimit {
-		merged = merged[uint32(len(merged))-service.eventLimit:]
+		merged = merged[:service.eventLimit]
 		truncated = true
 	}
 	return Events{Items: merged, Truncated: truncated}, degraded

@@ -903,7 +903,8 @@ join——读对象、按对象 UID 读它自己的 Event、给出两者共同�
 走既有资源服务，Event 走 Event 流用的同一条有界 `resource-watch.v1`，只是关掉 Follow 当快照用。
 
 Event 按 UID 而不是名称过滤：同名重建的 Pod 会留下前一个对象的事件，把它们挂到当前对象上，等于用一场已经
-结束的故障解释眼前的现象。快照默认 50 条，按时间正序返回，超出窗口时以 `truncated` 说明。
+结束的故障解释眼前的现象。快照默认 50 条，按时间倒序返回——最近的一条在最前，与事件页一致；超出窗口时丢弃最旧的一段，并以
+`truncated` 说明。
 
 诊断结论（findings）只报告问题，且只从 Kubernetes 已经报告的状态读出，不做推断：退出码 137 就报成退出码
 137，只有 reason 明确是 `OOMKilled` 时才报成内存超限——137 是 SIGKILL，谁发的信号需要 Kubernetes 自己说。
@@ -1033,7 +1034,8 @@ Console 诊断入口在 Pod、工作负载、Node、PVC、Service、Ingress、Ga
 诊断页内的处理入口形成一条可返回的证据链：CrashLoopBackOff、异常退出和 OOMKilled 可直接打开对应容器的
 上一次日志，探针失败打开当前日志；Pod 日志按钮只在调用者持有 `cluster.pod.logs.read` 时出现，并固定携带诊断
 快照中的 Pod UID，防止同名重建后读到另一个实例。关联 Pod、PVC、Ingress 后端 Service 与 HPA 目标工作负载可
-继续打开各自诊断；每次跳转都叠在当前诊断之上，返回时保留原页面的滚动位置和快照。Condition 证据标签会滚动并
+继续打开各自诊断；每次跳转都叠在当前诊断之上，返回时保留原页面的筛选与快照（滚动位置不保留：外壳把每个
+打开的视图都交在工作区顶部）。Condition 证据标签会滚动并
 短暂高亮对应的原始 Condition，Event 证据标签会定位到时间线中的精确 Event。页头的「精确事件」用对象 UID、
 Kind 和 Name 一起下推到 Event Watch，不会混入同名重建对象；该入口继续要求 `cluster.event.read`。这些前端入口
 只负责可达性，日志、事件和关联 describe 的最终权限检查仍分别由 Server 端对应路由执行。

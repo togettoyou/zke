@@ -1,6 +1,7 @@
 package kubernetesdescribe
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
@@ -946,17 +947,35 @@ func probeFindings(
 	if !found || condition.Status == conditionStatusTrue {
 		return nil
 	}
-	findings := make([]Finding, 0, 1)
-	reported := make(map[string]struct{}, 1)
-	for index := len(events) - 1; index >= 0; index-- {
-		event := events[index]
+	// One finding per container, quoting that container's newest failure —
+	// chosen by timestamp rather than by position, for the reason on
+	// latestEvent. Emitted newest first, so the probe that is failing now leads.
+	latest := make(map[string]Event, 1)
+	for _, event := range events {
 		if event.Reason != unhealthyEventReason {
 			continue
 		}
-		if _, seen := reported[event.Container]; seen {
+		if seen, found := latest[event.Container]; found &&
+			!eventOrder(seen).Before(eventOrder(event)) {
 			continue
 		}
-		reported[event.Container] = struct{}{}
+		latest[event.Container] = event
+	}
+	newest := make([]Event, 0, len(latest))
+	for _, event := range latest {
+		newest = append(newest, event)
+	}
+	// Map iteration is unordered, so the tie between two containers whose last
+	// failure landed in the same second is settled by name rather than left to
+	// come out differently on every request.
+	sort.SliceStable(newest, func(left, right int) bool {
+		if eventOrder(newest[left]).Equal(eventOrder(newest[right])) {
+			return newest[left].Container < newest[right].Container
+		}
+		return eventOrder(newest[right]).Before(eventOrder(newest[left]))
+	})
+	findings := make([]Finding, 0, len(newest))
+	for _, event := range newest {
 		findings = append(findings, Finding{
 			Code:     FindingProbeFailure,
 			Severity: SeverityWarning,
@@ -981,16 +1000,28 @@ func podCondition(
 	return kubernetesresource.PodCondition{}, false
 }
 
-// latestEvent returns the most recent match. Events arrive oldest first, so
-// this walks backwards: the newest FailedScheduling describes the Cluster as it
-// is now, and the ones behind it describe a Cluster that has since changed.
+// latestEvent returns the most recent match: the newest FailedScheduling
+// describes the Cluster as it is now, and the ones behind it describe a Cluster
+// that has since changed.
+//
+// Compared on the timestamp rather than taken from one end of the slice. It
+// used to walk backwards over a list the caller happened to sort oldest first,
+// which made a presentation decision — which end of the timeline a reader sees
+// first — silently load-bearing for the diagnosis: reverse the list for the
+// Console and every finding starts quoting the oldest matching Event instead,
+// with nothing to say it had changed.
 func latestEvent(events []Event, matches func(Event) bool) (Event, bool) {
-	for index := len(events) - 1; index >= 0; index-- {
-		if matches(events[index]) {
-			return events[index], true
+	var latest Event
+	found := false
+	for _, event := range events {
+		if !matches(event) {
+			continue
+		}
+		if !found || eventOrder(latest).Before(eventOrder(event)) {
+			latest, found = event, true
 		}
 	}
-	return Event{}, false
+	return latest, found
 }
 
 func containsReason(reasons map[string]struct{}, reason string) bool {

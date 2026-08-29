@@ -6705,6 +6705,10 @@ export interface components {
             resource_version: string;
         };
         KubernetesDescribeEvents: {
+            /**
+             * @description 按 last_seen（缺失时取 first_seen）倒序，最近的一条在最前。工作负载会把它自身、
+             *     其下控制器与 Pod 的 Event 合并后再排序；超出窗口时丢弃最旧的一段。
+             */
             items: components["schemas"]["KubernetesDescribeEvent"][];
             /** @description 集群中属于该对象的 Event 多于本次窗口。 */
             truncated: boolean;

@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -35,8 +36,10 @@ export type AppNavItem = {
 const ToolbarActionSlot = createContext<HTMLElement | null>(null);
 
 /*
- * A drill-down overlay keeps the view below it mounted so returning can restore
- * filters and scroll position. Portal contributions need a separate visibility
+ * A drill-down overlay keeps the view below it mounted so returning restores its
+ * filters and whatever it had already loaded. Not its scroll position: the work
+ * area is one scroll container shared with the overlay, and a new view is put
+ * back to its top either way. Portal contributions need a separate visibility
  * boundary: CSS hiding the view does not hide nodes portaled into the shell.
  */
 const AppShellContributionEnabled = createContext(true);
@@ -111,7 +114,11 @@ export function PageHeader({
   const { element, scope, register } = useContext(PageHeaderSlot);
   const enabled = useContext(AppShellContributionEnabled);
 
-  useEffect(() => {
+  // Before paint, not after: the shell puts the work area back to the top when
+  // the open view changes, and it learns that a view changed from this
+  // registration. Run late and the new page is painted once at the old page's
+  // scroll offset before it jumps.
+  useLayoutEffect(() => {
     if (!enabled) {
       return;
     }
@@ -210,23 +217,55 @@ export function AppShell({
 
   const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
   const [pageHeaderSlot, setPageHeaderSlot] = useState<HTMLElement | null>(null);
-  const [openPageHeaders, setOpenPageHeaders] = useState(0);
+  /*
+   * The drill-down headers standing on top of the current section, each with an
+   * id of its own rather than counted.
+   *
+   * The count was enough to know whether any is open, which is all the toolbar
+   * needed. It is not enough to know *which* is open, and that is the question
+   * the work area's scroll position turns on: opening a second object from the
+   * first swaps one header for another and leaves a count exactly where it was.
+   */
+  const [pageHeaderStack, setPageHeaderStack] = useState<number[]>([]);
+  const nextPageHeaderId = useRef(0);
   const registerPageHeader = useCallback(() => {
-    let registered = true;
-    setOpenPageHeaders((current) => current + 1);
-    return () => {
-      if (!registered) {
-        return;
-      }
-      registered = false;
-      setOpenPageHeaders((current) => Math.max(0, current - 1));
-    };
+    nextPageHeaderId.current += 1;
+    const id = nextPageHeaderId.current;
+    setPageHeaderStack((current) => (current.includes(id) ? current : [...current, id]));
+    // Removal by id, so a cleanup that runs twice is the same as running once.
+    return () => setPageHeaderStack((current) => current.filter((item) => item !== id));
   }, []);
-  const entered = openPageHeaders > 0;
+  const entered = pageHeaderStack.length > 0;
   const pageHeader = useMemo(
     () => ({ element: pageHeaderSlot, scope, register: registerPageHeader }),
     [pageHeaderSlot, registerPageHeader, scope],
   );
+
+  /*
+   * A new view starts at its top.
+   *
+   * The work area is one scroll container that every section and every object
+   * opened from one is rendered into, so its offset outlives whatever put it
+   * there: read a list to the bottom, open a row, and the object arrives
+   * already scrolled past its own heading — with no way to tell that from a
+   * page that simply begins in the middle. The reader scrolls back up to start
+   * reading, which is the position they should have been handed.
+   *
+   * Keyed on the section plus the drill-down stack, so it fires on every kind
+   * of move between views — rail section, entering an object, returning from
+   * one, and each step of a form that replaces the header as it advances — and
+   * on nothing else. Re-renders within a view, including the ones that arrive
+   * when a query resolves, leave the reader where they were.
+   *
+   * `useLayoutEffect` and an instant jump: this is not a movement to be
+   * followed but the starting position of a page that was not on screen a
+   * moment ago, and animating it would draw the eye to the wrong end of it.
+   */
+  const workArea = useRef<HTMLDivElement | null>(null);
+  const openView = `${activeId}\u0000${pageHeaderStack.join(",")}`;
+  useLayoutEffect(() => {
+    workArea.current?.scrollTo({ top: 0, left: 0 });
+  }, [openView]);
 
   return (
     /*
@@ -395,7 +434,7 @@ export function AppShell({
          * container query resolves against the nearest container ancestor, which
          * is this one for everything an application renders.
          */}
-        <div className="@container min-h-0 flex-1 overflow-auto p-3 @2xl:p-4">
+        <div ref={workArea} className="@container min-h-0 flex-1 overflow-auto p-3 @2xl:p-4">
           <PageHeaderSlot.Provider value={pageHeader}>
             <ToolbarActionSlot.Provider value={actionSlot}>{children}</ToolbarActionSlot.Provider>
           </PageHeaderSlot.Provider>

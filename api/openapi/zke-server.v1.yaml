@@ -16139,6 +16139,9 @@ components:
       properties:
         items:
           type: array
+          description: |
+            按 last_seen（缺失时取 first_seen）倒序，最近的一条在最前。工作负载会把它自身、
+            其下控制器与 Pod 的 Event 合并后再排序；超出窗口时丢弃最旧的一段。
           items:
             $ref: "#/components/schemas/KubernetesDescribeEvent"
         truncated:

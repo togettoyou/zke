@@ -327,7 +327,7 @@ function ChartDetailView({
       ) : detail.isLoading || !detail.data ? (
         <LoadingState label="下载 Chart…" />
       ) : (
-        <div className="grid max-w-4xl gap-3">
+        <div className="grid gap-3">
           {canInstall ? null : (
             <Alert tone="warning">
               你可以浏览这个 Chart，但没有在该命名空间安装它的权限。安装同时需要
@@ -465,8 +465,16 @@ function ChartDetailView({
                   No height cap and no scrollbar of its own: the page already
                   scrolls, and a document boxed inside a scrolling page gives
                   the reader two scrollbars to choose between and a card whose
-                  bottom edge is never where the text ends. */}
-              <Card className="grid min-w-0 gap-2 p-4">
+                  bottom edge is never where the text ends.
+
+                  The width cap is only here. The rest of this page — the cards,
+                  the two-column split, the values editor, the file browser —
+                  reads better the wider the window is, but a paragraph does
+                  not: prose set across a maximised window is measured in how
+                  far the eye has to travel back to find the next line. So the
+                  cap is on the card rather than on the page, and it ends where
+                  the document does instead of leaving an empty half of one. */}
+              <Card className="grid max-w-4xl min-w-0 gap-2 p-4">
                 {detail.data.readme ? (
                   /* Rendered rather than dumped: a chart README is
                      documentation, and the renderer builds React nodes instead

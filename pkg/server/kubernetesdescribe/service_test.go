@@ -304,8 +304,9 @@ func TestDescribePodJoinsTheObjectWithItsOwnEvents(t *testing.T) {
 	newest := clusterEvent("b", "FailedScheduling", "0/5 nodes are available", base.Add(time.Minute))
 	oldest := clusterEvent("a", "Scheduled", "assigned", base)
 	access := &fakeResourceAccess{pod: pod}
-	// Reported newest first, the way a Kubernetes list may return them.
-	events := &fakeEventSource{events: []corev1.Event{newest, oldest}}
+	// Reported oldest first, so the assertion below is about this package
+	// sorting them rather than about the order they happened to arrive in.
+	events := &fakeEventSource{events: []corev1.Event{oldest, newest}}
 	service := NewService(access, events, Config{})
 
 	result, err := service.DescribePod(context.Background(), PodInput{
@@ -334,12 +335,12 @@ func TestDescribePodJoinsTheObjectWithItsOwnEvents(t *testing.T) {
 		t.Fatalf("Events were not scoped to the object: %+v", events.input)
 	}
 	if len(result.Events.Items) != 2 ||
-		result.Events.Items[0].Reason != "Scheduled" ||
-		result.Events.Items[1].Reason != "FailedScheduling" {
-		t.Fatalf("Events are not oldest first: %+v", result.Events.Items)
+		result.Events.Items[0].Reason != "FailedScheduling" ||
+		result.Events.Items[1].Reason != "Scheduled" {
+		t.Fatalf("Events are not newest first: %+v", result.Events.Items)
 	}
-	if result.Events.Items[1].Source != "default-scheduler" {
-		t.Fatalf("unexpected Event source: %+v", result.Events.Items[1])
+	if result.Events.Items[0].Source != "default-scheduler" {
+		t.Fatalf("unexpected Event source: %+v", result.Events.Items[0])
 	}
 	if result.Events.Truncated || result.Events.Omitted != "" {
 		t.Fatalf("unexpected Event section state: %+v", result.Events)

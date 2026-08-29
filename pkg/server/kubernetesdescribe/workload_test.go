@@ -733,3 +733,67 @@ func TestDescribeWorkloadSeparatesTheTwoEventFailures(t *testing.T) {
 			result.Events.Omitted, result.DegradedSections)
 	}
 }
+
+// The merged timeline is newest first, and the cut that bounds it keeps the
+// newest end.
+//
+// Both halves are one decision. The events of several objects are merged and
+// then sorted, and the slice that enforces the limit has to take whichever end
+// of that sort holds the recent lines — a limit applied to the wrong end leaves
+// a diagnosis whose whole timeline predates the failure being diagnosed, with
+// nothing on screen to say so.
+func TestDescribeWorkloadReturnsTheTimelineNewestFirstAndCutsTheOldEnd(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
+	access := &fakeResourceAccess{
+		workload: testWorkloadDetail(),
+		lists: map[string]kubernetesresource.ResourcePage{
+			"replicasets": {Items: []map[string]any{
+				ownedObject("ReplicaSet", "inference-7d9f", replicaSetUID, deploymentUID, nil),
+			}},
+		},
+	}
+	// Interleaved in time across the two objects, and handed over oldest first,
+	// so neither the merge order nor the arrival order can pass for the answer.
+	events := &fakeEventSource{byUID: map[string][]corev1.Event{
+		deploymentUID: {
+			objectEvent("d1", "Deployment", "inference", deploymentUID,
+				"ScalingReplicaSet", "scaled up to 3", base),
+			objectEvent("d2", "Deployment", "inference", deploymentUID,
+				"ScalingReplicaSet", "scaled up to 5", base.Add(2*time.Minute)),
+		},
+		replicaSetUID: {
+			objectEvent("r1", "ReplicaSet", "inference-7d9f", replicaSetUID,
+				"SuccessfulCreate", "created pod-a", base.Add(time.Minute)),
+			objectEvent("r2", "ReplicaSet", "inference-7d9f", replicaSetUID,
+				"FailedCreate", "exceeded quota", base.Add(3*time.Minute)),
+		},
+	}}
+	service := NewService(access, events, Config{EventLimit: 3})
+
+	result, err := service.DescribeWorkload(context.Background(), WorkloadInput{
+		ClusterID: testClusterID,
+		Resource:  kubernetesresource.WorkloadDeployments,
+		Namespace: "model-serving",
+		Name:      "inference",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Events.Truncated {
+		t.Fatalf("a timeline cut to the limit was not reported as truncated: %+v", result.Events)
+	}
+	reasons := make([]string, 0, len(result.Events.Items))
+	for _, event := range result.Events.Items {
+		reasons = append(reasons, event.Reason)
+	}
+	// The oldest line, `scaled up to 3`, is the one the limit drops.
+	want := []string{"FailedCreate", "ScalingReplicaSet", "SuccessfulCreate"}
+	if !slices.Equal(reasons, want) {
+		t.Fatalf("timeline is not newest first with the old end cut: %v", reasons)
+	}
+	if result.Events.Items[1].Message != "scaled up to 5" {
+		t.Fatalf("unexpected middle of the timeline: %+v", result.Events.Items[1])
+	}
+}

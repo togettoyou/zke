@@ -27,8 +27,9 @@ type ResolvedTarget = DiagnosticNavigationTarget & { key: number };
  * A small navigation stack for evidence opened from a diagnosis.
  *
  * The original section stays mounted behind the overlay. Returning therefore
- * restores its scroll position, filters and already-read diagnosis snapshot;
- * nested jumps (Ingress -> Service -> Pod logs) unwind one step at a time.
+ * restores its filters and already-read diagnosis snapshot — not where it was
+ * scrolled to: the shell hands every view it opens the top of the work area.
+ * Nested jumps (Ingress -> Service -> Pod logs) unwind one step at a time.
  */
 export function DiagnosticNavigationProvider({
   clusterId,

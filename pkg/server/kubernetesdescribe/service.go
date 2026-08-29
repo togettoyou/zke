@@ -619,15 +619,22 @@ func (collector *eventCollector) Event(
 	return nil
 }
 
-// collected returns the snapshot oldest first, which is the order the failure
-// happened in and the order kubectl prints.
+// collected returns the snapshot newest first.
+//
+// Not kubectl's order, and deliberately so. `kubectl describe` prints into a
+// terminal that has just scrolled to the end, so its oldest-first list ends on
+// the newest line, right under the cursor. A Console renders the same list into
+// a box that starts at its top: oldest first there means the line explaining
+// what is happening now is the one furthest from the reader, below the fold of
+// a table they have to scroll to reach — and the Namespace Event list next door
+// already answers "what just happened" in its first row.
 func (collector *eventCollector) collected() []Event {
 	items := collector.items
 	if items == nil {
 		items = []Event{}
 	}
 	sort.SliceStable(items, func(first, second int) bool {
-		return eventOrder(items[first]).Before(eventOrder(items[second]))
+		return eventOrder(items[second]).Before(eventOrder(items[first]))
 	})
 	return items
 }

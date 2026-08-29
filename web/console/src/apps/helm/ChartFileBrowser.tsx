@@ -79,13 +79,7 @@ export function ChartFileBrowser({
 
   return (
     <div className="grid min-w-0 gap-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <CardTitle>Chart 文件</CardTitle>
-        <p className="text-subtle-foreground text-xs">
-          共 {fileCount} 个文件
-          {truncated ? `，已列出前 ${files.length} 个` : ""}
-        </p>
-      </div>
+      <CardTitle>Chart 文件</CardTitle>
       <p className="text-subtle-foreground text-xs">
         仓库打包发布的原始文件，含 <code className="zke-mono">charts/</code> 下的子
         Chart。模板未经渲染：<code className="zke-mono">{"{{ }}"}</code>{" "}
@@ -97,20 +91,36 @@ export function ChartFileBrowser({
         </Alert>
       ) : null}
 
+      {/* Two columns of the same shape: a header line, then a framed box of the
+          same height. The tree used to be the box alone, so it started level
+          with the file name beside it and ended a header's worth of pixels
+          short of the editor — the one asymmetry a reader notices without
+          being able to say what it is. */}
       <div className="grid min-w-0 gap-3 @2xl:grid-cols-[15rem_minmax(0,1fr)]">
-        <nav
-          aria-label="Chart 文件"
-          className="border-border rounded-panel bg-surface h-64 overflow-auto p-1 @2xl:h-96"
-        >
-          <TreeLevel
-            nodes={tree}
-            depth={0}
-            selected={selected}
-            collapsed={collapsed}
-            onSelect={setChosen}
-            onToggle={toggle}
-          />
-        </nav>
+        <div className="grid min-w-0 gap-1.5">
+          <div className="flex min-h-8 items-center">
+            {/* The count belongs over the thing it counts, the way the file
+                size sits over the file. */}
+            <span className="text-subtle-foreground min-w-0 flex-1 truncate text-xs">
+              共 {fileCount} 个文件
+            </span>
+          </div>
+          <nav
+            aria-label="Chart 文件"
+            // The same frame the YAML editor draws for itself, so the pair reads
+            // as one control rather than as a box beside a bare list.
+            className="border-border rounded-control bg-surface shadow-e1 h-64 overflow-auto border p-1 @2xl:h-96"
+          >
+            <TreeLevel
+              nodes={tree}
+              depth={0}
+              selected={selected}
+              collapsed={collapsed}
+              onSelect={setChosen}
+              onToggle={toggle}
+            />
+          </nav>
+        </div>
         <FileView
           repositoryId={repositoryId}
           chart={chart}
@@ -140,9 +150,15 @@ function TreeLevel({
 }) {
   return (
     <ul className="grid">
+      {/* `min-w-0` on every row, at every level. A grid item's automatic
+          minimum size is its min-content size, and a file name has no spaces
+          to break at — so one long name sets a floor wider than the pane, the
+          whole tree grows to it, and the right-aligned sizes are carried out
+          past the edge and clipped. The name truncates; the tree should not
+          have to widen for it. */}
       {nodes.map((node) =>
         node.kind === "dir" ? (
-          <li key={node.path}>
+          <li key={node.path} className="min-w-0">
             <TreeRow
               depth={depth}
               icon={
@@ -156,7 +172,7 @@ function TreeLevel({
               expanded={!collapsed.has(node.path)}
             >
               <Folder className="text-subtle-foreground size-3.5 shrink-0" aria-hidden="true" />
-              <span className="truncate">{node.name}</span>
+              <span className="min-w-0 flex-1 truncate">{node.name}</span>
             </TreeRow>
             {collapsed.has(node.path) ? null : (
               <TreeLevel
@@ -170,7 +186,7 @@ function TreeLevel({
             )}
           </li>
         ) : (
-          <li key={node.path}>
+          <li key={node.path} className="min-w-0">
             <TreeRow
               depth={depth}
               // The chevron column is held open for files too, so names line up
@@ -187,8 +203,11 @@ function TreeLevel({
               ) : (
                 <File className="text-subtle-foreground size-3.5 shrink-0" aria-hidden="true" />
               )}
-              <span className="truncate">{node.name}</span>
-              <span className="text-subtle-foreground zke-mono ml-auto pl-2 text-[11px]">
+              <span className="min-w-0 flex-1 truncate">{node.name}</span>
+              {/* `shrink-0`: `1.3 KiB` is two words, and a size left free to
+                  shrink wraps onto a second line, making that one row taller
+                  than every other row in the tree. */}
+              <span className="text-subtle-foreground zke-mono shrink-0 pl-2 text-[11px] whitespace-nowrap">
                 {formatBytes(node.size)}
               </span>
             </TreeRow>
@@ -303,7 +322,8 @@ function FileBody({
 }) {
   // Every state is the same height, so choosing a file does not move the tree
   // beside it or the README below it.
-  const frame = "border-border rounded-panel bg-surface grid h-96 place-items-center p-4";
+  const frame =
+    "border-border rounded-control bg-surface shadow-e1 grid h-96 place-items-center border p-4";
 
   if (!path || !entry) {
     return (

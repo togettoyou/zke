@@ -288,7 +288,7 @@ export function ReleaseFormView({
         }
       />
 
-      <div className="grid max-w-4xl gap-3">
+      <div className="grid gap-3">
         <Alert tone="info">
           下一步会用完全相同的请求在目标集群渲染一次 Chart（不写入任何对象），
           并把将要应用的清单摆出来；确认之后才会真正{verb}。
@@ -584,7 +584,7 @@ function ConfirmStep({
           </>
         }
       />
-      <div className="grid max-w-4xl gap-3">
+      <div className="grid gap-3">
         {error ? <ErrorAlert error={error} /> : null}
         {submitError ? <ErrorAlert error={submitError} /> : null}
         <Card className="grid min-w-0 gap-2 p-4">
@@ -678,7 +678,7 @@ function ApplyStep({
           ) : undefined
         }
       />
-      <div className="grid max-w-4xl gap-3">
+      <div className="grid gap-3">
         {error ? <ErrorAlert error={error} /> : null}
         {/* The operation is running in a Cluster and does not depend on this
             page being open. Saying so is the difference between waiting here
