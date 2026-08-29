@@ -189,9 +189,10 @@ Release 元数据会发送到配置的模型端点。ZKE 自身的 Session Token
 4. 模型自主工具循环、读取工具目录、敏感工具审批等待、流式输出与轨迹时间线（已实现）；
 5. 资源写工具、部署与 Cluster Terminal 非交互命令，复用现有权限、幂等键和敏感操作确认（已实现）；
 6. 随 Server 发布的排查技能与只读并行子任务（已实现）；
-7. Helm Release 接入：读取与 Console 同一组权限（`cluster.read` + `cluster.secret.read`）；安装、升级、回滚与卸载
-   复用 Console 的写入权限栈，按动作解析对象权限，预检快照 + `preview_id` 提交，始终为敏感操作。两者都只返回
-   Release 的身份、形状与受影响对象清单，不返回 values 取值、NOTES.txt 与 Manifest 正文（已实现）；
+7. Helm 接入：Chart 目录读取按全局 `helm.repository.read` 判定；Release 读取与 Console 同一组权限
+   （`cluster.read` + `cluster.secret.read`）；安装、升级、回滚与卸载复用 Console 的写入权限栈，按动作解析对象
+   权限，预检快照 + `preview_id` 提交，始终为敏感操作。Release 侧只返回身份、形状与受影响对象清单，不返回 values
+   取值、NOTES.txt 与 Manifest 正文（已实现）；
 8. 定时巡检与事件触发自动化；
 9. 质量评估、配额、反馈和运行治理。
 

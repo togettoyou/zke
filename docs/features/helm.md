@@ -393,6 +393,7 @@ Helm 的写入是本 Server 上权限栈最长的一组路由，每一条回答�
 | 浏览仓库、Chart 与其文件 | `helm.repository.read`（全局）                                                                                          |
 | 管理仓库与其签名策略     | `helm.repository.manage`（全局）                                                                                        |
 | 查看 Release 与 values   | `cluster.read` + `cluster.secret.read`                                                                                  |
+| AIOps 读取 Chart 目录     | 全局 `helm.repository.read`（与上面第一行同一权限，按全局作用域逐次判定）                                                |
 | AIOps 读取 Release       | `cluster.read` + `cluster.secret.read`（与上一行同一组权限，逐次重验）                                                  |
 | AIOps 变更 Release       | 与上面三行的写入权限完全相同，只是由工具逐次重验而不是由路由中间件一次性检查                                            |
 | 安装 / 升级 / 回滚       | `cluster.read` + `cluster.helm.manage` + `cluster.resource.create` + `cluster.resource.update` + `cluster.secret.manage` |
@@ -463,6 +464,17 @@ Deployment，而 Deployment 上没有指回 Release 的引用，所以「这个�
 
 `get_helm_release` 是敏感工具：它解码 Release 存储的正文，因此在「请求批准」和「帮我批准」两档下会停下来等人。
 两个列表工具只读 Secret 的标签，不解码正文，因此不停。
+
+### Chart 目录
+
+安装和升级要先能找到 Chart，而 `repository_id` 是添加仓库时分配的标识——集群里没有任何地方能推断出它。所以目录侧
+也有四个只读工具：`list_helm_repositories`、`list_helm_charts`、`list_helm_chart_versions` 和 `get_helm_chart`。
+最后一个返回 Chart 自带的 `values.yaml`，因为合法的 values 路径只写在那里；那是 Chart 的公开内容，不是任何 Release
+的配置。
+
+它们读的是平台配置而不是集群内容，因此权限是**全局**的 `helm.repository.read`，并且在每次调用时按全局作用域判定，
+而不是随会话 Cluster 判定：这个权限的作用域下限就是全局，一个按 Project 绑定携带它的角色本来什么都授不出去，按
+Project 判定会让它变得有效。返回的内容也比 Console 少——仓库的用户名、CA 证书与公钥环不会返回，选 Chart 用不到它们。
 
 ### 变更
 

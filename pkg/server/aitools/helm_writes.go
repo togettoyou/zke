@@ -15,6 +15,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/aisession"
 	"github.com/togettoyou/zke/pkg/server/helm"
 	"github.com/togettoyou/zke/pkg/server/rbac"
+	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/helmrelease"
 )
 
@@ -276,7 +277,7 @@ func (catalogue *Catalogue) previewHelmChange(
 		invocation.IdempotencyKey+":dryrun",
 	)
 	if err != nil {
-		if result, handled := helmChangeFailure(err, target); handled {
+		if result, handled := helmChangeFailure(err, change.action, target); handled {
 			return result, nil
 		}
 		return airuntime.ToolResult{}, err
@@ -329,7 +330,7 @@ func (catalogue *Catalogue) applyHelmChange(
 		ctx, invocation.ClusterID, preview.change, true, allowClusterScoped,
 		preview.executionKey+":preflight",
 	); err != nil {
-		if result, handled := helmChangeFailure(err, preview.target); handled {
+		if result, handled := helmChangeFailure(err, preview.change.action, preview.target); handled {
 			return result, nil
 		}
 		return airuntime.ToolResult{}, err
@@ -339,7 +340,7 @@ func (catalogue *Catalogue) applyHelmChange(
 		preview.executionKey,
 	)
 	if err != nil {
-		if result, handled := helmChangeFailure(err, preview.target); handled {
+		if result, handled := helmChangeFailure(err, preview.change.action, preview.target); handled {
 			return result, nil
 		}
 		return airuntime.ToolResult{}, err
@@ -599,12 +600,29 @@ func helmChangeHeadline(
 // with this name already exists" and "the Agent is offline" lead to completely
 // different next steps and the runtime's generic text would report both as the
 // second one.
-func helmChangeFailure(err error, target *aisession.Target) (airuntime.ToolResult, bool) {
+func helmChangeFailure(
+	err error, action helmAction, target *aisession.Target,
+) (airuntime.ToolResult, bool) {
 	result := airuntime.ToolResult{Target: target, Failed: true}
 	var rejection *helm.ReleaseRejection
 	switch {
 	case errors.As(err, &rejection):
 		result.Text = "目标 Cluster 拒绝了这次 Helm 操作：" + helmRejectionText(rejection)
+	// A repository that is not in the catalogue, and a `repository_id` that is
+	// not an identifier at all, both land here. Left to the runtime's generic
+	// text they read as "the Agent may be unreachable", which is wrong twice:
+	// no Agent has been contacted yet, and the fix is to list the catalogue
+	// rather than to retry.
+	case errors.Is(err, store.ErrHelmRepositoryNotFound):
+		result.Text = "没有这个 Chart 仓库。repository_id 是平台目录里的标识，" +
+			"请先调用 list_helm_repositories 取得它。"
+	case errors.Is(err, helm.ErrInvalidInput):
+		if action == helmActionInstall || action == helmActionUpgrade {
+			result.Text = "请求参数不合法：repository_id 必须是 list_helm_repositories 返回的标识（不是仓库名称），" +
+				"Namespace 与 Release 名称必须是合法的 Kubernetes 名称。未执行。"
+			break
+		}
+		result.Text = "请求参数不合法：Namespace 与 Release 名称必须是合法的 Kubernetes 名称。未执行。"
 	case errors.Is(err, helm.ErrValuesRejected):
 		result.Text = "values 不满足该 Chart 自带的 values.schema.json，未执行。请按 Chart 的 values 说明修正。"
 	case errors.Is(err, helm.ErrChartNotFound):

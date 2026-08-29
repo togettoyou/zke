@@ -689,6 +689,19 @@ UID 与 `resourceVersion` 作为前置条件，对象已不存在记为跳过而
 
 无论哪种粒度都不记录 YAML 正文。
 
+#### AIOps 的 Chart 目录读取
+
+安装与升级需要 `repository_id`，而它是平台管理员添加仓库时分配的标识，集群里没有任何地方能推断出来。四个目录工具
+（`list_helm_repositories`、`list_helm_charts`、`list_helm_chart_versions`、`get_helm_chart`）读的是平台配置而不是
+集群内容，因此它们要求全局 `helm.repository.read`，并且在每次调用时按**全局作用域**判定。
+
+这条作用域是刻意的，不是顺手写的：`helm.repository.read` 的作用域下限是全局，一个 Project 绑定携带它本来什么都
+授不出去；而 AIOps 运行时对工具声明的权限一律按会话 Cluster 所属的 Project 判定，把它写进工具声明就会让那个本该
+无效的绑定变得有效，比 Console 的路由更宽松。所以它由工具自己按全局作用域解析，工具声明里只放 `ai.run`。
+
+目录工具只返回仓库的标识、名称、简介和启用状态。仓库的用户名、CA 证书与公钥环不返回——选 Chart 用不到它们，而
+把凭证的一半放进模型上下文不是为了省掉一次提问该付的代价。
+
 #### AIOps 的 Helm Release 变更
 
 安装、升级、回滚与卸载复用 Console 的 Release 写入路径和它的权限栈，逐项校验，缺一项就整次拒绝并把拒绝写进轨迹

@@ -243,6 +243,7 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
 			// preview is submitted, because that is procedure, not authority.
 			Tools: []string{
 				"list_helm_releases", "list_helm_release_revisions", "get_helm_release",
+				"list_helm_repositories", "list_helm_charts", "get_helm_chart",
 				"preview_helm_upgrade", "preview_helm_rollback", "preview_helm_uninstall",
 			},
 			Body: `# Helm Release 的受控变更
@@ -259,6 +260,10 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
    list_helm_release_revisions 给出历史与当前版本。没有这两样就没有回退依据。
 2. 选动作。故障出现在一次升级之后，先考虑 preview_helm_rollback 回到上一个 deployed 的 revision，
    而不是继续往前升级；只是要换 Chart 版本就用 preview_helm_upgrade 并带 reuse_values=true。
+   回滚和卸载不需要 Chart。安装或升级需要 repository_id 和 chart：repository_id 是平台分配的标识，
+   集群里没有任何地方能推断出来，必须先调 list_helm_repositories，再用 list_helm_charts 找到 Chart，
+   要指定版本时再用 list_helm_chart_versions。确实需要改配置时先用 get_helm_chart 读它自带的 values.yaml，
+   合法的 values 路径只写在那里。
 3. 预检。四个 preview_helm_* 都是 Helm 自己的 DryRun，不改变集群，返回将要创建、替换或删除的对象清单和 preview_id。
 4. 把预检结果讲给用户听：动作、Release、Chart 版本变化，以及会影响哪些对象。一次 Release 变更会写入这个应用
    拥有的每一个对象，这一点必须说明白。

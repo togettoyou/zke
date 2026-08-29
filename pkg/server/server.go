@@ -477,8 +477,13 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		// catalogue adds is who may ask, and the permission stack the tools
 		// resolve is the one the Console's release routes require.
 		HelmWrites: helmService,
-		Scopes:     rbacService,
-		Manifests:  aiManifestService,
+		// The chart catalogue is platform configuration rather than Cluster
+		// content, and its permission has a global scope floor — so it travels
+		// with its own resolver instead of riding on the Cluster one.
+		Charts:            helmService,
+		GlobalPermissions: rbacService,
+		Scopes:            rbacService,
+		Manifests:         aiManifestService,
 		ManifestAccess: func(grant kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess {
 			return kubernetesresource.NewManifestAccess(kubernetesResourceService, grant)
 		},

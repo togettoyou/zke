@@ -99,6 +99,7 @@ func fullDependencies() aitools.Dependencies {
 		Resources: stub, Overview: stub, Describe: stub, Logs: stub, Metrics: stub,
 		Workloads: stub, Revisions: stub, Scopes: stub, Manifests: stub,
 		Terminal: stub, Permissions: stub, Helm: stub, HelmWrites: stub,
+		Charts: stub, GlobalPermissions: stub,
 		ManifestAccess: func(kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess {
 			panic("not called")
 		},
@@ -122,6 +123,32 @@ func (unusedDependency) ListHelmReleaseRevisions(
 func (unusedDependency) GetHelmRelease(
 	context.Context, string, string, string, int64,
 ) (kubernetesresource.HelmReleaseDetail, error) {
+	panic("not called")
+}
+
+func (unusedDependency) AuthorizeGlobal(context.Context, string, rbac.Permission) error {
+	panic("not called")
+}
+
+func (unusedDependency) ListRepositories(context.Context) (helm.RepositoryPage, error) {
+	panic("not called")
+}
+
+func (unusedDependency) ListCharts(
+	context.Context, string, string, int,
+) (helm.ChartPage, error) {
+	panic("not called")
+}
+
+func (unusedDependency) ListChartVersions(
+	context.Context, string, string,
+) (helm.ChartVersionPage, error) {
+	panic("not called")
+}
+
+func (unusedDependency) GetChart(
+	context.Context, string, string, string,
+) (helm.ChartDetail, error) {
 	panic("not called")
 }
 

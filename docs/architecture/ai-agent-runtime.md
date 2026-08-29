@@ -69,7 +69,10 @@ sequenceDiagram
     end
 ```
 
-工具目录由 `aitools` 组装，全部复用 ZKE 已有的读取或写入服务，因此经过 Agent 传输、权限与响应上限。读取工具还
+工具目录由 `aitools` 组装，全部复用 ZKE 已有的读取或写入服务，因此经过 Agent 传输、权限与响应上限。有一组例外：
+Chart 目录的四个读取工具不触达任何 Cluster，它们读的是平台配置，权限是全局的 `helm.repository.read` 并按全局作用域
+在工具内判定——运行时把工具声明的权限一律按会话 Cluster 判定，而这个权限的作用域下限是全局，写进声明会比 Console
+的路由更宽松。读取工具还
 包括 Helm Release 的清单、修订历史与单个 revision 详情：Release 不是 Kubernetes 的 Kind，其余工具都答不了它，
 而它由 Helm 存成 Secret，所以三个工具都要求 `cluster.read` 加 `cluster.secret.read`，并且只返回 Chart 身份、
 revision、状态、被覆盖的 values 路径与渲染出的对象清单——values 取值、NOTES.txt 与 Manifest 正文是 Secret 内容，

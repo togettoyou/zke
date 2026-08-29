@@ -79,6 +79,10 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `list_helm_releases` | 某个 Namespace 中安装的 Helm Release：名称、当前 revision、状态与最后写入时间 | `cluster.read` + `cluster.secret.read` |
 | `list_helm_release_revisions` | 一个 Release 的修订历史，并标出当前版本 | `cluster.read` + `cluster.secret.read` |
 | `get_helm_release` | 一个 revision 的 Chart 名称与版本、appVersion、状态说明、部署时间、被覆盖的 values 路径与渲染出的对象清单（敏感） | `cluster.read` + `cluster.secret.read` |
+| `list_helm_repositories` | 平台维护的 Chart 仓库目录：`repository_id`、名称与是否启用 | 全局 `helm.repository.read` |
+| `list_helm_charts` | 某个仓库中可安装的 Chart：名称、最新版本、appVersion 与简介 | 全局 `helm.repository.read` |
+| `list_helm_chart_versions` | 一个 Chart 已发布的版本与发布时间 | 全局 `helm.repository.read` |
+| `get_helm_chart` | 一个 Chart 版本的元信息与它自带的 `values.yaml` 默认值 | 全局 `helm.repository.read` |
 | `preview_helm_install` | 对一次 Helm 安装执行 Helm 自己的 DryRun，返回将创建的对象清单与 `preview_id`，不改变集群 | `cluster.read` + `cluster.helm.manage` + `cluster.secret.manage`，再按 Namespace 选择 create/update 与受保护 Namespace 权限 |
 | `preview_helm_upgrade` | 对一次升级执行 DryRun；只换 Chart 版本时用 `reuse_values` | 同上 |
 | `preview_helm_rollback` | 对指定 revision 的回滚执行 DryRun | 同上 |
@@ -109,6 +113,14 @@ Kind，其余工具都答不了它：资源列表看到的是 Chart 渲染出的
 渲染后的 Manifest 正文属于 Secret 内容，不进入模型上下文，也不进入轨迹。返回的是 Chart 身份、revision、状态、
 部署时间、被覆盖的 values **路径**，以及渲染出的对象清单——后者同时是这次回答引用的证据，点开直接落到对象本身。
 需要看具体取值时，请在 Helm 应用或容器服务的 Helm 分区里用自己的身份打开。
+
+**安装和升级要先能找到 Chart。** `repository_id` 是平台管理员添加仓库时分配的标识，集群里没有任何地方能推断出它，
+所以四个目录工具是写工具的前置：`list_helm_repositories` 给出标识，`list_helm_charts` 找到 Chart，
+`list_helm_chart_versions` 用于固定或降级版本，`get_helm_chart` 读它自带的 `values.yaml`——合法的 values 路径只写在
+那里，凭空撰写的配置会被 Chart 自己的 `values.schema.json` 拒绝。这四个读的是平台配置而不是集群内容，因此它们的
+权限是**全局**的 `helm.repository.read`，在每次调用时按全局作用域判定，而不是随会话 Cluster 判定——这个权限的作用域
+下限就是全局，按 Project 判定会让一个本该无效的绑定变得有效。它们只返回仓库的标识、名称和启用状态，不返回仓库的
+用户名、CA 证书或密钥环。
 
 **Release 变更走的是和 Manifest 一样的“预检 → preview_id → 提交”两步，只是权限栈更长。** 四个 `preview_helm_*`
 执行 Helm 自己的 DryRun：Server 从平台维护的仓库目录取 Chart，目标 Cluster 的 Agent 用 Helm 的引擎渲染，什么都

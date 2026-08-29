@@ -207,20 +207,22 @@ type ManifestWriter interface {
 type ManifestAccessFactory func(kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess
 
 type Dependencies struct {
-	Resources      ResourceReader
-	Overview       OverviewReader
-	Describe       DescribeReader
-	Logs           LogReader
-	Metrics        MetricsReader
-	Helm           HelmReleaseReader
-	HelmWrites     HelmReleaseWriter
-	Workloads      WorkloadWriter
-	Revisions      WorkloadRevisionWriter
-	Scopes         ClusterScopeResolver
-	Manifests      ManifestWriter
-	ManifestAccess ManifestAccessFactory
-	Terminal       TerminalCommander
-	Permissions    ClusterPermissionResolver
+	Resources         ResourceReader
+	Overview          OverviewReader
+	Describe          DescribeReader
+	Logs              LogReader
+	Metrics           MetricsReader
+	Helm              HelmReleaseReader
+	HelmWrites        HelmReleaseWriter
+	Charts            HelmChartReader
+	Workloads         WorkloadWriter
+	Revisions         WorkloadRevisionWriter
+	Scopes            ClusterScopeResolver
+	Manifests         ManifestWriter
+	ManifestAccess    ManifestAccessFactory
+	Terminal          TerminalCommander
+	Permissions       ClusterPermissionResolver
+	GlobalPermissions GlobalPermissionResolver
 }
 
 // Catalogue is the ToolSet the runtime advertises.
@@ -308,6 +310,14 @@ func (catalogue *Catalogue) Invoke(
 		return catalogue.listHelmReleaseRevisions(ctx, invocation)
 	case toolGetHelmRelease:
 		return catalogue.getHelmRelease(ctx, invocation)
+	case toolListHelmRepositories:
+		return catalogue.listHelmRepositories(ctx, invocation)
+	case toolListHelmCharts:
+		return catalogue.listHelmCharts(ctx, invocation)
+	case toolListHelmChartVersions:
+		return catalogue.listHelmChartVersions(ctx, invocation)
+	case toolGetHelmChart:
+		return catalogue.getHelmChart(ctx, invocation)
 	case toolPreviewHelmInstall:
 		return catalogue.previewHelmInstall(ctx, invocation)
 	case toolPreviewHelmUpgrade:
@@ -353,10 +363,14 @@ const (
 	toolPreviewHelmRollback      = "preview_helm_rollback"
 	toolPreviewHelmUninstall     = "preview_helm_uninstall"
 	toolApplyHelmChange          = "apply_helm_release_change"
+	toolListHelmRepositories     = "list_helm_repositories"
+	toolListHelmCharts           = "list_helm_charts"
+	toolListHelmChartVersions    = "list_helm_chart_versions"
+	toolGetHelmChart             = "get_helm_chart"
 )
 
 func (catalogue *Catalogue) build() []airuntime.ToolSpec {
-	specs := make([]airuntime.ToolSpec, 0, 27)
+	specs := make([]airuntime.ToolSpec, 0, 31)
 	if catalogue.dependencies.Overview != nil {
 		specs = append(specs, airuntime.ToolSpec{
 			Name: toolClusterOverview,
@@ -658,6 +672,7 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 			},
 		)
 	}
+	specs = append(specs, catalogue.chartCatalogueSpecs()...)
 	if catalogue.dependencies.HelmWrites != nil && catalogue.dependencies.Scopes != nil {
 		// The three every release change needs whatever it does, rechecked by
 		// the runtime before every call. The rest depend on the action and the
