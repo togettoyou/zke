@@ -5,28 +5,33 @@ import type { AppAccent, AppManifest } from "./types";
 /**
  * A fill and a white glyph, one key per application.
  *
- * One key per application literally: `blue` is what an application without an
- * accent falls back to, so it is taken as well. The keys are stable identifiers
- * rather than colour names — the values behind several of them have been
- * reassigned since, so `fuchsia` is a blue, `amber` a neutral grey and `teal`
- * an indigo. The hex lives in `theme.css`; nothing here should be read as a
- * claim about the hue.
+ * The keys are the applications themselves rather than colour names. They used
+ * to be hues, and the palette was then reassigned without renaming them, which
+ * left `fuchsia` holding a blue and `amber` a neutral grey — a name that has to
+ * be disbelieved is worse than no name. An application's identity outlives its
+ * colour, so the identity is what the key is.
+ *
+ * The hex lives in `theme.css`; this file only says which token each application
+ * wears.
  *
  * Tiles in the same pale tint with the same accent glyph do not read as separate
  * applications — they read as one placeholder repeated, which is the language of
  * a wireframe. Colour is what tells them apart at a glance.
  */
 const ACCENT_FILL: Record<AppAccent, string> = {
-  blue: "bg-linear-to-b from-[var(--app-blue-from)] to-[var(--app-blue-to)]",
-  cyan: "bg-linear-to-b from-[var(--app-cyan-from)] to-[var(--app-cyan-to)]",
-  violet: "bg-linear-to-b from-[var(--app-violet-from)] to-[var(--app-violet-to)]",
-  emerald: "bg-linear-to-b from-[var(--app-emerald-from)] to-[var(--app-emerald-to)]",
-  amber: "bg-linear-to-b from-[var(--app-amber-from)] to-[var(--app-amber-to)]",
-  rose: "bg-linear-to-b from-[var(--app-rose-from)] to-[var(--app-rose-to)]",
-  slate: "bg-linear-to-b from-[var(--app-slate-from)] to-[var(--app-slate-to)]",
-  steel: "bg-linear-to-b from-[var(--app-steel-from)] to-[var(--app-steel-to)]",
-  teal: "bg-linear-to-b from-[var(--app-teal-from)] to-[var(--app-teal-to)]",
-  fuchsia: "bg-linear-to-b from-[var(--app-fuchsia-from)] to-[var(--app-fuchsia-to)]",
+  "cluster-access":
+    "bg-linear-to-b from-[var(--app-cluster-access-from)] to-[var(--app-cluster-access-to)]",
+  "container-service":
+    "bg-linear-to-b from-[var(--app-container-service-from)] to-[var(--app-container-service-to)]",
+  helm: "bg-linear-to-b from-[var(--app-helm-from)] to-[var(--app-helm-to)]",
+  resources: "bg-linear-to-b from-[var(--app-resources-from)] to-[var(--app-resources-to)]",
+  "access-audit":
+    "bg-linear-to-b from-[var(--app-access-audit-from)] to-[var(--app-access-audit-to)]",
+  monitoring: "bg-linear-to-b from-[var(--app-monitoring-from)] to-[var(--app-monitoring-to)]",
+  platform: "bg-linear-to-b from-[var(--app-platform-from)] to-[var(--app-platform-to)]",
+  settings: "bg-linear-to-b from-[var(--app-settings-from)] to-[var(--app-settings-to)]",
+  aiops: "bg-linear-to-b from-[var(--app-aiops-from)] to-[var(--app-aiops-to)]",
+  terminal: "bg-linear-to-b from-[var(--app-terminal-from)] to-[var(--app-terminal-to)]",
 };
 
 /**
@@ -35,16 +40,16 @@ const ACCENT_FILL: Record<AppAccent, string> = {
  * would replace that outright instead of adding to it.
  */
 const ACCENT_GLOW: Record<AppAccent, string> = {
-  blue: "group-hover:drop-shadow-[0_9px_16px_var(--app-blue-glow)]",
-  cyan: "group-hover:drop-shadow-[0_9px_16px_var(--app-cyan-glow)]",
-  violet: "group-hover:drop-shadow-[0_9px_16px_var(--app-violet-glow)]",
-  emerald: "group-hover:drop-shadow-[0_9px_16px_var(--app-emerald-glow)]",
-  amber: "group-hover:drop-shadow-[0_9px_16px_var(--app-amber-glow)]",
-  rose: "group-hover:drop-shadow-[0_9px_16px_var(--app-rose-glow)]",
-  slate: "group-hover:drop-shadow-[0_9px_16px_var(--app-slate-glow)]",
-  steel: "group-hover:drop-shadow-[0_9px_16px_var(--app-steel-glow)]",
-  teal: "group-hover:drop-shadow-[0_9px_16px_var(--app-teal-glow)]",
-  fuchsia: "group-hover:drop-shadow-[0_9px_16px_var(--app-fuchsia-glow)]",
+  "cluster-access": "group-hover:drop-shadow-[0_9px_16px_var(--app-cluster-access-glow)]",
+  "container-service": "group-hover:drop-shadow-[0_9px_16px_var(--app-container-service-glow)]",
+  helm: "group-hover:drop-shadow-[0_9px_16px_var(--app-helm-glow)]",
+  resources: "group-hover:drop-shadow-[0_9px_16px_var(--app-resources-glow)]",
+  "access-audit": "group-hover:drop-shadow-[0_9px_16px_var(--app-access-audit-glow)]",
+  monitoring: "group-hover:drop-shadow-[0_9px_16px_var(--app-monitoring-glow)]",
+  platform: "group-hover:drop-shadow-[0_9px_16px_var(--app-platform-glow)]",
+  settings: "group-hover:drop-shadow-[0_9px_16px_var(--app-settings-glow)]",
+  aiops: "group-hover:drop-shadow-[0_9px_16px_var(--app-aiops-glow)]",
+  terminal: "group-hover:drop-shadow-[0_9px_16px_var(--app-terminal-glow)]",
 };
 
 /**
@@ -60,7 +65,7 @@ export function appFaceClass(manifest: AppManifest): string {
   if (manifest.availability.state === "planned") {
     return "border-border bg-surface-muted/60 text-subtle-foreground border";
   }
-  return cn("text-white", ACCENT_FILL[manifest.accent ?? "blue"]);
+  return cn("text-white", ACCENT_FILL[manifest.accent ?? "cluster-access"]);
 }
 
 /**
@@ -79,6 +84,8 @@ export function appHoverClass(manifest: AppManifest): string {
   return cn(
     "ease-lift transition-[transform,filter] duration-250",
     "group-hover:scale-[1.07] group-active:scale-[0.98]",
-    manifest.availability.state === "planned" ? null : ACCENT_GLOW[manifest.accent ?? "blue"],
+    manifest.availability.state === "planned"
+      ? null
+      : ACCENT_GLOW[manifest.accent ?? "cluster-access"],
   );
 }

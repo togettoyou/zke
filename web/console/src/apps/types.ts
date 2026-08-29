@@ -17,25 +17,32 @@ export type AppComponentProps = {
 };
 
 /**
- * An available application's icon colour. Colour is what makes a launcher read
- * as a row of applications rather than a row of buttons, so it belongs to the
- * application's identity — not to the component that happens to draw it.
+ * An available application's icon colour, named after the application that owns
+ * it rather than after the hue. Colour is what makes a launcher read as a row of
+ * applications rather than a row of buttons, so it belongs to the application's
+ * identity — not to the component that happens to draw it, and not to a hue that
+ * the next retune can invalidate.
+ *
+ * It stays a field of its own instead of being read off `id` because the fill
+ * classes have to exist as literal strings for Tailwind to generate them, and a
+ * declared accent is what makes a missing one a type error rather than an
+ * untinted tile.
  *
  * Planned applications deliberately have none: on a launcher where every real
  * application is saturated, an unlit tile says "not yet" before any caption
  * under it does.
  */
 export type AppAccent =
-  | "blue"
-  | "cyan"
-  | "violet"
-  | "emerald"
-  | "amber"
-  | "rose"
-  | "slate"
-  | "steel"
-  | "teal"
-  | "fuchsia";
+  | "cluster-access"
+  | "container-service"
+  | "helm"
+  | "resources"
+  | "access-audit"
+  | "monitoring"
+  | "platform"
+  | "settings"
+  | "aiops"
+  | "terminal";
 
 export type AppManifest = {
   id: string;

@@ -52,7 +52,7 @@ API Server 或 kubelet。三个采集
 - [x] 抓取目标扩展：kube-state-metrics 与 node-exporter 随采集组件一并安装/卸载，三者镜像与资源预算进入平台配置
 - [x] 深度指标：集群与节点利用率、Namespace 申请量与限制量、工作负载维度（Deployment 两级归属）、Pod 重启、节点文件系统/网络/磁盘 IO
 - [x] 完整可观测性视图：容量与申请占比、节点饱和度与 Pod 密度、磁盘 IOPS 与繁忙度、inode、网络错误丢包、Pod 与节点状态、未就绪副本；Console 拆为总览 / 计算资源 / 存储与网络 / Kubernetes 资源 / 采集质量五个分区，共享时间范围选择、图上拖拽选取区间与光标读数
-- [ ] VictoriaLogs 集成与多集群日志
+- [ ] VictoriaLogs 集成与多集群日志：计划在 Console 中作为独立的「日志」应用，不并入「监控」
 - [ ] 告警中心
 
 可视化由 Console 自建，不集成 Grafana，也不提供通用仪表盘编辑器。

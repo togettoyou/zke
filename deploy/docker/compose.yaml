@@ -22,7 +22,7 @@ services:
       - backend
 
   # Metrics storage, part of the stack so that `docker compose up` produces a
-  # deployment where 可观测性 works rather than one whose every write fails.
+  # deployment where 监控 works rather than one whose every write fails.
   # Not published to the host: it has no authentication of its own.
   victoriametrics:
     image: ${ZKE_METRICS_IMAGE:-victoriametrics/victoria-metrics:v1.149.0}

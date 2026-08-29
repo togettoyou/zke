@@ -579,7 +579,7 @@ export function Evidence({ evidence }: { evidence: AIEvidence[] }) {
               query: item.query,
             })
           }
-          title={`在 ${item.kind === "metric" ? "可观测性" : "容器服务"}中打开 · 集群 ${item.cluster}`}
+          title={`在 ${item.kind === "metric" ? "监控" : "容器服务"}中打开 · 集群 ${item.cluster}`}
         >
           <SquareArrowOutUpRight aria-hidden className="size-3" />
           {evidenceLabel(item)}

@@ -18,7 +18,7 @@ import {
 import { useMetricsScope } from "./metrics-scope";
 
 /** Every chart in the application shares a crosshair. */
-const SYNC_KEY = "zke-observability";
+const SYNC_KEY = "zke-monitoring";
 
 export type ChartPanelProps = {
   panel: Panel;

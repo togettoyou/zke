@@ -23,9 +23,9 @@ Multi-cluster metrics are enabled.
   Storage (query):   {{ include "zke.metrics.queryURL" . }}
 {{- end }}
 
-  Install collection per Cluster in Console under 可观测性 -> 采集接入.
+  Install collection per Cluster in Console under 监控 -> 采集接入.
 {{- else }}
-Multi-cluster metrics are disabled; the Console reports this under 可观测性.
+Multi-cluster metrics are disabled; the Console reports this under 监控.
 {{- end }}
 
 Agent endpoint for new enrollments:

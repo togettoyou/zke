@@ -35,7 +35,7 @@ const queryClient = new QueryClient({
         // A 5xx that is a deployment decision rather than a transient failure.
         // Retrying it spends two more round trips to be told the same thing,
         // and the view that explains it only appears after the last one — which
-        // is what made opening 可观测性 on a Server without metrics storage sit
+        // is what made opening 监控 on a Server without metrics storage sit
         // on a spinner through three 503s.
         if (isApiError(error) && TERMINAL_ERROR_CODES.has(error.code)) {
           return false;

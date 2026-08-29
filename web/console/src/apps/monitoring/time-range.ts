@@ -1,5 +1,5 @@
 /**
- * The window every chart in the observability application draws.
+ * The window every chart in the monitoring application draws.
  *
  * One model for both ways of asking: a relative range that follows the clock,
  * and an absolute one that does not. Dragging across a chart produces the

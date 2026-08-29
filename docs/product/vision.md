@@ -21,7 +21,7 @@ ZKE 不是 Linux 发行版，不是 Kubernetes 的替代品，也不负责托管
 | 内核与驱动 | ZKE Server 与每个集群里的 Agent；Server 不直连任何集群的 Kubernetes API Server |
 | 系统调用 | 携带明确 Cluster、Namespace 与资源身份的具名操作，逐次判权并写入审计 |
 | 桌面与窗口 | Console 的窗口、Dock 与多应用并行工作区 |
-| 应用 | 集群接入、组织与资源、容器服务、终端、可观测性、访问与审计、平台配置、AIOps |
+| 应用 | 集群接入、组织与资源、容器服务、终端、监控、访问与审计、平台配置、AIOps |
 | Shell | Cluster Terminal 与 Pod 终端，按当前用户权限投影 Kubernetes RBAC |
 | 用户与权限 | Tenant、Project、RBAC 三层作用域与细粒度操作权限 |
 | 系统日志 | 审计事件，以及 AIOps 的 append-only 轨迹 |

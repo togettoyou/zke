@@ -1,5 +1,5 @@
 /**
- * What the observability application draws, and how each number reads.
+ * What the monitoring application draws, and how each number reads.
  *
  * The Server owns the queries; this owns the arrangement. Keeping the two
  * apart is what lets a panel put usage, requests and allocatable capacity on

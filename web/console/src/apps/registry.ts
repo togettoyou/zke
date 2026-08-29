@@ -38,8 +38,8 @@ const HelmApp = lazy(async () => ({
 const TerminalApp = lazy(async () => ({
   default: (await import("./terminal/TerminalApp")).TerminalApp,
 }));
-const ObservabilityApp = lazy(async () => ({
-  default: (await import("./observability/ObservabilityApp")).ObservabilityApp,
+const MonitoringApp = lazy(async () => ({
+  default: (await import("./monitoring/MonitoringApp")).MonitoringApp,
 }));
 const AIOpsApp = lazy(async () => ({
   default: (await import("./aiops/AIOpsApp")).AIOpsApp,
@@ -61,7 +61,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "集群接入管理",
     description: "接入、查看和管理 Kubernetes 集群与其连接状态",
     icon: Server,
-    accent: "cyan",
+    accent: "cluster-access",
     requiredPermissions: ["cluster.read", "cluster.enrollment.read", "cluster.enrollment.create"],
     availability: { state: "available" },
     defaultSize: { width: 1_020, height: 660 },
@@ -72,7 +72,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "组织与资源",
     description: "管理租户、项目及其生命周期",
     icon: Layers,
-    accent: "violet",
+    accent: "resources",
     requiredPermissions: ["tenant.read", "project.read"],
     availability: { state: "available" },
     defaultSize: { width: 900, height: 600 },
@@ -83,7 +83,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "访问与审计",
     description: "用户、角色绑定与审计事件",
     icon: ShieldCheck,
-    accent: "emerald",
+    accent: "access-audit",
     requiredPermissions: ["user.read", "rbac.read", "audit.read"],
     availability: { state: "available" },
     defaultSize: { width: 1_060, height: 640 },
@@ -94,7 +94,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "平台配置",
     description: "Agent 接入端点、镜像与集群终端的部署级默认值",
     icon: SlidersHorizontal,
-    accent: "rose",
+    accent: "platform",
     // Guarded by role rather than permission: the Server puts every /platform
     // route behind RequireGlobalAdministrator.
     requiredPermissions: [],
@@ -108,7 +108,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "系统设置",
     description: "当前身份、权限能力、密码与桌面偏好",
     icon: Settings,
-    accent: "amber",
+    accent: "settings",
     requiredPermissions: [],
     availability: { state: "available" },
     defaultSize: { width: 780, height: 600 },
@@ -119,7 +119,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "容器服务",
     description: "在所选集群中管理节点、命名空间与工作负载",
     icon: Boxes,
-    accent: "blue",
+    accent: "container-service",
     requiredPermissions: ["cluster.read"],
     availability: { state: "available" },
     defaultSize: { width: 1_060, height: 680 },
@@ -132,7 +132,7 @@ export const APP_MANIFESTS: AppManifest[] = [
     // Helm's own mark is a ship's helm, so the wheel says which tool this is in
     // a way a generic package icon does not.
     icon: ShipWheel,
-    accent: "teal",
+    accent: "helm",
     // Reading a Release is reading the Secret that stores it, and its values
     // are that Secret's content — so the icon is gated on the Secret read
     // permission rather than on the write permissions. An operator who may look
@@ -148,18 +148,18 @@ export const APP_MANIFESTS: AppManifest[] = [
     title: "终端",
     description: "在所选集群中使用按当前角色授权的 kubectl",
     icon: SquareTerminal,
-    accent: "slate",
+    accent: "terminal",
     requiredPermissions: ["cluster.terminal.exec"],
     availability: { state: "available" },
     defaultSize: { width: 1_060, height: 680 },
     entry: TerminalApp,
   },
   {
-    id: "observability",
-    title: "可观测性",
-    description: "跨集群指标与采集接入",
+    id: "monitoring",
+    title: "监控",
+    description: "所选集群的指标图表与采集接入",
     icon: Activity,
-    accent: "steel",
+    accent: "monitoring",
     // Reading metrics is the application's purpose; installing collection is a
     // second permission checked inside it. Gating the icon on the read
     // permission alone keeps an operator who may only look from finding no
@@ -178,14 +178,14 @@ export const APP_MANIFESTS: AppManifest[] = [
     // top before the plots get their share, and a plot too short to separate
     // two series is a picture of nothing.
     defaultSize: { width: 1_200, height: 900 },
-    entry: ObservabilityApp,
+    entry: MonitoringApp,
   },
   {
     id: "aiops",
     title: "AIOps",
     description: "以目标集群为工作区的运维 Agent：自主查证、可复核轨迹",
     icon: Sparkles,
-    accent: "fuchsia",
+    accent: "aiops",
     requiredPermissions: ["ai.run"],
     // The one application the deployment can switch off: without a model
     // endpoint there is nothing behind the icon, so it is left off the desktop

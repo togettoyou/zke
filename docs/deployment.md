@@ -210,10 +210,10 @@ Compose 在 `.env` 中设置同名变量；Helm 使用 `server.metrics.enabled`�
 `server.metrics.storageQueryURL`，后两项必须同时提供。给出外部地址后 Chart 不再部署自带存储；自带存储的
 镜像、保留期与容量在 `metrics.*` 下调整。ZKE 不管理外部存储的生命周期、容量与保留期。
 
-关闭时 Server 不向 Agent 提供摄取能力，集群侧不部署任何采集组件，Console 的「可观测性」会说明本部署未启用
+关闭时 Server 不向 Agent 提供摄取能力，集群侧不部署任何采集组件，Console 的「监控」会说明本部署未启用
 指标存储。
 
-集群侧的采集组件不随部署下发：接入集群后在「可观测性 → 采集接入」中一键安装，三个组件一并安装、一并卸载。
+集群侧的采集组件不随部署下发：接入集群后在「监控 → 采集接入」中一键安装，三个组件一并安装、一并卸载。
 其中 node-exporter 需要 host 网络与 hostPath，`baseline` 或 `restricted` Pod Security 级别的 Namespace 会
 拒绝它——其余组件照常工作，要启用它需要自行把 Agent Namespace 的 `pod-security.kubernetes.io/enforce` 设为
 `privileged`。组件清单、权限边界与视图能力见[可观测性平台](features/observability.md)，容量估算与每集群

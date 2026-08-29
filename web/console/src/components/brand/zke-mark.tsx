@@ -14,8 +14,9 @@ import { cn } from "@/lib/cn";
  *
  * Built the way an application face is built — a tinted tile carrying a white
  * glyph, see `appFaceClass` — so the product's own identity speaks the same
- * language as the icons on its desktop, in `--app-blue`, and like every face it
- * is identical in both themes.
+ * language as the icons on its desktop, and like every face it is identical in
+ * both themes. Its blue is its own token rather than an application's: the
+ * desktop fills are keyed to the applications now, and the mark is not one.
  *
  * Decorative by design: every place the mark is drawn either names the product
  * beside it or sits in a bar that deliberately names nothing, so announcing a
@@ -29,7 +30,7 @@ export function ZkeMark({ className }: { className?: string }) {
       aria-hidden
       className={cn(
         "block shrink-0 text-white",
-        "bg-linear-to-b from-[var(--app-blue-from)] to-[var(--app-blue-to)]",
+        "bg-linear-to-b from-[var(--brand-mark-from)] to-[var(--brand-mark-to)]",
         className,
       )}
     >

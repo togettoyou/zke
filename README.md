@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/f06f2229-48c2-4911-8e72-8cf60975d28f
 | 内核与驱动 | ZKE Server 加每个集群里的 Agent；Server 不直连任何集群的 Kubernetes API Server |
 | 系统调用 | 携带明确 Cluster、Namespace 与资源身份的具名操作，逐次判权并写入审计 |
 | 桌面与窗口 | Console 的窗口、Dock 与多应用并行工作区 |
-| 应用 | 集群接入、组织与资源、容器服务、Helm 应用、终端、可观测性、访问与审计、平台配置、AIOps |
+| 应用 | 集群接入、组织与资源、容器服务、Helm 应用、终端、监控、访问与审计、平台配置、AIOps |
 | Shell | Cluster Terminal 与 Pod 终端，按当前用户权限投影 Kubernetes RBAC |
 | 用户与权限 | Tenant、Project、RBAC 三层作用域与细粒度操作权限 |
 | 系统日志 | 审计事件，以及 AIOps 的 append-only 轨迹 |
@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/f06f2229-48c2-4911-8e72-8cf60975d28f
   Kubernetes API Server 入口，适合具有独立网络边界的数据中心、私有云、混合云和边缘集群。
 - **多集群视图容易点错对象？** 全局视图只负责观察，所有查询和操作都携带明确的 Cluster、Namespace 与资源身份，
   执行始终定域到目标集群。
-- **在多个终端和面板之间反复切换？** 集群管理、容器服务、Helm 应用、终端、可观测性与 AIOps 以窗口和 Dock 组织，可以在同一
+- **在多个终端和面板之间反复切换？** 集群管理、容器服务、Helm 应用、终端、监控与 AIOps 以窗口和 Dock 组织，可以在同一
   个工作空间里并行打开。
 - **不敢把变更权限放给一线，更不敢放给模型？** Tenant、Project 和 RBAC 限定范围，DryRun 差异、二次确认、幂等
   保护与审计日志覆盖敏感操作；模型走同一套约束。
@@ -110,7 +110,7 @@ docker run -d --name zke \
 >
 > **数据：** 请务必保留 `zke-data`，它保存 Server Managed PKI，丢失后已接入的 Agent 无法继续连接。
 >
-> **指标：** 指标默认启用，接入集群后在「可观测性 → 采集接入」中一键安装三个采集组件即可看到曲线。
+> **指标：** 指标默认启用，接入集群后在「监控 → 采集接入」中一键安装三个采集组件即可看到曲线。
 > 用 `-e ZKE_OBSERVABILITY_METRICS_ENABLED=false` 关闭。
 >
 > **AIOps：** 在「平台配置 → AI 模型」中填写 OpenAI Responses 或 Chat Completions 兼容端点并启用，再把

@@ -41,7 +41,7 @@ export const METRICS_EVIDENCE_QUERY_KEY = "zke.ai-evidence.metrics-query";
  * checking a claim, not starting an upgrade.
  */
 export function evidenceAppId(kind: EvidenceTarget["kind"]): string {
-  return kind === "metric" ? "observability" : "container-service";
+  return kind === "metric" ? "monitoring" : "container-service";
 }
 
 /** Stores what the receiving application should open with. */
@@ -69,7 +69,7 @@ export function stashEvidenceTarget(input: {
         }),
       );
     }
-    if (input.appId === "observability") {
+    if (input.appId === "monitoring") {
       sessionStorage.setItem(METRICS_EVIDENCE_CLUSTER_KEY, input.clusterId);
       if (input.query) sessionStorage.setItem(METRICS_EVIDENCE_QUERY_KEY, input.query);
     }

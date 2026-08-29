@@ -78,7 +78,7 @@ function evidenceSection(query: string): string {
 }
 
 /**
- * Observability is a single-Cluster application: it opens inside the selected
+ * Monitoring is a single-Cluster application: it opens inside the selected
  * Project and every chart under it describes the one Cluster picked in the
  * toolbar.
  *
@@ -96,7 +96,7 @@ function evidenceSection(query: string): string {
  * refuses the request either way — but an entry that only ever answers 403 is
  * worse than no entry.
  */
-export function ObservabilityApp(_props: AppComponentProps) {
+export function MonitoringApp(_props: AppComponentProps) {
   const [initialQuery] = useState(() => sessionStorage.getItem(METRICS_EVIDENCE_QUERY_KEY) ?? "");
   useEffect(() => {
     sessionStorage.removeItem(METRICS_EVIDENCE_QUERY_KEY);
@@ -130,7 +130,7 @@ export function ObservabilityApp(_props: AppComponentProps) {
     if (catalog.isPending) {
       return <LoadingState />;
     }
-    // A Server without metrics storage answers every observability route with
+    // A Server without metrics storage answers every metrics route with
     // the same explicit state. Saying so once, here, is clearer than each
     // panel failing on its own.
     if (catalog.error) {

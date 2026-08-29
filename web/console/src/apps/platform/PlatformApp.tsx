@@ -523,7 +523,7 @@ function MetricsCollectionSection({
         <p className="text-muted-foreground text-xs leading-relaxed">
           三个组件由目标集群的 Agent 一并装进它自己的 Agent Namespace，也一并卸载：没人抓取的
           导出器是浪费，而抓取一个从未安装的目标只会产生持续失败的 job。这里的取值在安装时读取，
-          修改后对下一次安装生效；已安装的集群需要在「可观测性 → 采集接入」中重新安装才会更换。
+          修改后对下一次安装生效；已安装的集群需要在「监控 → 采集接入」中重新安装才会更换。
         </p>
       </section>
       {SECTIONS["metrics-collection"].workloads.map((component) => (
