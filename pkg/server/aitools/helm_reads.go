@@ -253,17 +253,7 @@ func helmReleaseDigest(
 	objects, objectsPartial := helmManifestObjects(detail.Manifest)
 	rendered := make([]string, 0, len(objects))
 	for _, object := range objects {
-		// Written the way kubectl names an object rather than as the slashed
-		// GVK the evidence carries: this line is read by a person as often as
-		// by the model, and `apps/v1/Deployment web/shop` reads as three path
-		// segments rather than as a kind and an object.
-		if object.namespace != "" {
-			rendered = append(rendered, fmt.Sprintf(
-				"%s %s %s/%s", object.apiVersion, object.kind, object.namespace, object.name))
-			continue
-		}
-		rendered = append(rendered, fmt.Sprintf(
-			"%s %s %s", object.apiVersion, object.kind, object.name))
+		rendered = append(rendered, renderedObjectLine(object))
 	}
 	digest := map[string]any{
 		"namespace":         detail.Namespace,

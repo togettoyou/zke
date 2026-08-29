@@ -55,7 +55,7 @@ func (catalogue *Catalogue) scaleWorkload(
 		return airuntime.ToolResult{}, err
 	}
 	if missing != "" {
-		return deniedWorkloadMutation(missing, target), nil
+		return deniedClusterMutation(missing, target), nil
 	}
 
 	input := kubernetesresource.ScaleWorkloadInput{

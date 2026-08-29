@@ -69,6 +69,7 @@ AIOps 是运行在 ZKE 云端的 Codex 式运维 App：它跟随 Console 当前 
 已落地模型端点配置、跟随桌面 Tenant/Project 并按 Cluster 工作区隔离的会话与轨迹存储、后台运行时、模型自主
 工具循环与读取工具目录、敏感工具审批等待、流式输出，以及使用对话/轨迹 Tab 的 AIOps App。受控资源写入已支持
 Deployment/StatefulSet 副本数伸缩、工作负载回滚，以及多文档 Manifest 的 DryRun、差异、Apply 与 Delete。
+Helm Release 也已接入：只读的清单、历史与详情，以及安装、升级、回滚、卸载的预检与受控提交。
 随 Server 发布的排查技能（Playbook）与只读并行子任务也已落地：技能只规定用哪些既有工具、按什么顺序取证，
 子任务只有只读工具、有独立预算、写回同一条轨迹。
 
@@ -79,6 +80,6 @@ Deployment/StatefulSet 副本数伸缩、工作负载回滚，以及多文档 Ma
 - [x] 资源写操作：YAML/DryRun/有界差异、Manifest 部署与删除、工作负载历史读取与回滚、预检快照、逐目标权限重验
 - [x] Cluster Terminal 的 AIOps 受控命令执行：Turn 级终端复用、冻结权限快照、敏感审批、有界输出与自动清理
 - [x] 技能与并行子任务：随 Server 发布、按需加载的排查 Playbook；只读、有界、可回收并写回同一轨迹的并行取证分支
-- [x] Helm Release 只读接入：Release 清单、修订历史与单个 revision 详情；权限与 Console 一致（`cluster.read` + `cluster.secret.read`），只返回身份与形状，不返回 values 取值、NOTES.txt 与 Manifest 正文
-- [ ] 扩展能力：图表/资源就地唤起、Helm Release 变更、定时巡检和事件触发自动化
+- [x] Helm Release 接入：清单、修订历史与 revision 详情的读取，以及安装 / 升级 / 回滚 / 卸载的预检与受控提交；权限与 Console 的 Release 路由一致并按动作解析，提交始终为敏感操作；两侧都不返回 values 取值、NOTES.txt 与 Manifest 正文
+- [ ] 扩展能力：图表/资源就地唤起、定时巡检和事件触发自动化
 - [ ] 配额、诊断效果评估与用户反馈

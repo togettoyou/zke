@@ -110,7 +110,7 @@ func (catalogue *Catalogue) previewWorkloadRollback(
 	}
 	target := workloadRevisionTarget(invocation.Arguments)
 	if missing != "" {
-		return deniedWorkloadMutation(missing, target), nil
+		return deniedClusterMutation(missing, target), nil
 	}
 	input := rollbackInput(invocation.ClusterID, invocation.IdempotencyKey, resource, arguments, true)
 	result, err := catalogue.dependencies.Revisions.RollbackWorkload(ctx, input)
@@ -155,7 +155,7 @@ func (catalogue *Catalogue) rollbackWorkload(
 		return airuntime.ToolResult{}, err
 	}
 	if missing != "" {
-		return deniedWorkloadMutation(missing, preview.target), nil
+		return deniedClusterMutation(missing, preview.target), nil
 	}
 	resource, _ := revisionWorkloadResource(preview.arguments.Kind)
 	preflight := rollbackInput(invocation.ClusterID, preview.executionKey+":preflight", resource, preview.arguments, true)
@@ -222,7 +222,13 @@ func (catalogue *Catalogue) authorizeWorkloadMutation(
 	return sensitive, "", err
 }
 
-func deniedWorkloadMutation(
+// deniedClusterMutation is the answer to a write the operator may not make.
+//
+// It is a result rather than an error: the model is told which grant is
+// missing so it can say so, and the audit row records the same thing. Shared
+// by every write tool here, because "which permission was missing" is the same
+// question whether the write was a workload scale or a Helm release change.
+func deniedClusterMutation(
 	permission rbac.Permission,
 	target *aisession.Target,
 ) airuntime.ToolResult {

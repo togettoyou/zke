@@ -11,12 +11,14 @@ import (
 	"github.com/togettoyou/zke/pkg/server/aitools"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/clusterterminal"
+	"github.com/togettoyou/zke/pkg/server/helm"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
 	"github.com/togettoyou/zke/pkg/server/kubernetesmanifest"
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/metricsquery"
 	"github.com/togettoyou/zke/pkg/server/podlogs"
 	"github.com/togettoyou/zke/pkg/server/rbac"
+	"github.com/togettoyou/zke/pkg/shared/helmrelease"
 	"github.com/togettoyou/zke/pkg/shared/kubernetescatalog"
 )
 
@@ -96,7 +98,7 @@ func fullDependencies() aitools.Dependencies {
 	return aitools.Dependencies{
 		Resources: stub, Overview: stub, Describe: stub, Logs: stub, Metrics: stub,
 		Workloads: stub, Revisions: stub, Scopes: stub, Manifests: stub,
-		Terminal: stub, Permissions: stub,
+		Terminal: stub, Permissions: stub, Helm: stub, HelmWrites: stub,
 		ManifestAccess: func(kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess {
 			panic("not called")
 		},
@@ -104,6 +106,48 @@ func fullDependencies() aitools.Dependencies {
 }
 
 type unusedDependency struct{}
+
+func (unusedDependency) ListHelmReleases(
+	context.Context, kubernetesresource.ListHelmReleasesInput,
+) (kubernetesresource.HelmReleasePage, error) {
+	panic("not called")
+}
+
+func (unusedDependency) ListHelmReleaseRevisions(
+	context.Context, string, string, string,
+) (kubernetesresource.HelmReleasePage, error) {
+	panic("not called")
+}
+
+func (unusedDependency) GetHelmRelease(
+	context.Context, string, string, string, int64,
+) (kubernetesresource.HelmReleaseDetail, error) {
+	panic("not called")
+}
+
+func (unusedDependency) Install(
+	context.Context, helm.InstallInput,
+) (helmrelease.Report, error) {
+	panic("not called")
+}
+
+func (unusedDependency) Upgrade(
+	context.Context, helm.UpgradeInput,
+) (helmrelease.Report, error) {
+	panic("not called")
+}
+
+func (unusedDependency) Rollback(
+	context.Context, helm.RollbackInput,
+) (helmrelease.Report, error) {
+	panic("not called")
+}
+
+func (unusedDependency) Uninstall(
+	context.Context, helm.UninstallInput,
+) (helmrelease.Report, error) {
+	panic("not called")
+}
 
 func (unusedDependency) DiscoverResources(context.Context, string) (kubernetescatalog.Catalog, error) {
 	panic("not called")

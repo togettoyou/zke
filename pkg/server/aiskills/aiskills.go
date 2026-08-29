@@ -222,6 +222,7 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
 2. 再预检。伸缩用 preview_workload_scale；Manifest 用 preview_manifest_apply / preview_manifest_delete；
    回滚用 list_workload_revisions 选定 revision 后 preview_workload_rollback。
    预检是服务端 DryRun，不改变集群，也是你唯一能在提交前看到差异的地方。
+   目标对象由 Helm 管理时不要直接改它——Helm 会在下一次升级把改动覆盖回去；改 Release 本身，见 helm-release-change。
 3. 把预检结果讲给用户听：会创建/更新/删除哪些对象、哪些字段会变、有没有被判定为敏感。
 4. 再提交。Manifest 与回滚只接受预检返回的 preview_id，不要自己构造或修改它，也不要在提交时换一份 YAML。
 5. 提交后验证。重新读目标对象与它的 Event，确认变更真的生效；不要把「提交成功」直接说成「问题已解决」。
@@ -231,6 +232,46 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
 - 不要提交 Secret 清单。AIOps 会拒绝，Secret 只能从 ZKE 的 Secret 专用入口修改。
 - 被用户拒绝的调用不是失败：说明为什么建议它，然后在不执行的前提下继续或停下。
 - 结论里要写明回退方式：伸缩回原副本数、回滚到原 revision，或删除刚创建的对象。`,
+		},
+		{
+			ID:      "helm-release-change",
+			Title:   "Helm Release 的受控变更",
+			Summary: "改动 Helm 管理的应用：先读 Release 与历史，再预检，再按 preview_id 提交。",
+			// Only the reads and the previews, like every other skill: a playbook
+			// that named the submitting tool would carry a change past the point
+			// where a person decides to make one. The body still says how a
+			// preview is submitted, because that is procedure, not authority.
+			Tools: []string{
+				"list_helm_releases", "list_helm_release_revisions", "get_helm_release",
+				"preview_helm_upgrade", "preview_helm_rollback", "preview_helm_uninstall",
+			},
+			Body: `# Helm Release 的受控变更
+
+## 何时使用
+要改动的对象由 Helm 管理，或用户直接要求安装、升级、回滚、卸载一个应用。
+
+先判断这一点：Helm 渲染出的 Deployment 上没有指回 Release 的引用，所以用 list_helm_releases 看目标 Namespace
+里有哪些 Release，再用 get_helm_release 的 rendered_objects 确认要改的对象属于哪一个。直接改 Helm 管理的对象
+不是修复：下一次升级会把它覆盖回去。
+
+## 固定顺序
+1. 读现状。get_helm_release 给出 Chart 名称与版本、状态、被覆盖的 values 路径和渲染出的对象清单；
+   list_helm_release_revisions 给出历史与当前版本。没有这两样就没有回退依据。
+2. 选动作。故障出现在一次升级之后，先考虑 preview_helm_rollback 回到上一个 deployed 的 revision，
+   而不是继续往前升级；只是要换 Chart 版本就用 preview_helm_upgrade 并带 reuse_values=true。
+3. 预检。四个 preview_helm_* 都是 Helm 自己的 DryRun，不改变集群，返回将要创建、替换或删除的对象清单和 preview_id。
+4. 把预检结果讲给用户听：动作、Release、Chart 版本变化，以及会影响哪些对象。一次 Release 变更会写入这个应用
+   拥有的每一个对象，这一点必须说明白。
+5. 提交。apply_helm_release_change 只接受 preview_id。它始终是敏感操作，会停下来等用户批准。
+6. 验证。重新读 Release 的 revision 与状态，必要时再看具体对象和它的 Event。「提交成功」不等于「应用已经正常」。
+
+## 边界
+- 不要自己编写包含密码、Token 或证书的 values。它会进入轨迹并发送到模型端点；需要凭证的安装让用户在 ZKE 的
+  Helm 应用里做。
+- values 只在确实要改配置时提交；只换版本就用 reuse_values。
+- 卸载前先确认用户要不要保留历史：keep_history=false 之后就没有可回滚的 revision 了。
+- 一个集群同一时刻只能跑一个 Helm 操作；被告知繁忙时是等待，不是重试到成功。
+- Release 的 values 取值、NOTES.txt 与 Manifest 正文读不到，那是 Secret 内容。需要逐字核对时让用户在 Helm 应用里看。`,
 		},
 	}
 }

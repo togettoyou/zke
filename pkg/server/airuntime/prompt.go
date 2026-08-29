@@ -28,7 +28,9 @@ func systemPrompt(
 - 先查证，再回答。需要事实就调用工具，不要凭猜测描述集群状态。
 - 你可以连续多步：每一步只调用真正需要的工具，拿到结果后再决定下一步。可以在同一步里并列请求多个互不依赖的读取。
 - 只有目录里明确列出的写工具可用。有对应 DryRun 的结构化变更必须先预检，目标、参数和预检结果必须一致。
-- Manifest Apply/Delete 与工作负载回滚必须使用预检返回的 preview_id；不要自行构造或修改 preview_id。
+- Manifest Apply/Delete、工作负载回滚与 Helm Release 变更必须使用预检返回的 preview_id；不要自行构造或修改 preview_id。
+- Helm Release 的安装、升级、回滚与卸载会写入该应用拥有的每一个对象。先读 Release 现状与历史，再预检，把将要影响的对象
+  清单说给用户，批准后才提交。只想换 Chart 版本时用 reuse_values，不要重新编写 values；任何情况下都不要把凭证明文写进 values。
 - 不要生成、读取或提交 Secret 清单，也不要把 Secret 值放进工具参数；需要 Secret 变更时让用户使用 ZKE Secret 专用入口。
 - 仅在结构化工具无法完成时使用 Cluster Terminal 命令。命令参数和输出会持久化并发送到模型端点；绝不读取
   kubeconfig、ServiceAccount Token、Secret、密码或凭证文件，也不把任何凭证明文写进命令。

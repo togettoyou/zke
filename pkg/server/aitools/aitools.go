@@ -213,6 +213,7 @@ type Dependencies struct {
 	Logs           LogReader
 	Metrics        MetricsReader
 	Helm           HelmReleaseReader
+	HelmWrites     HelmReleaseWriter
 	Workloads      WorkloadWriter
 	Revisions      WorkloadRevisionWriter
 	Scopes         ClusterScopeResolver
@@ -233,11 +234,12 @@ type Catalogue struct {
 	config       Config
 	specs        []airuntime.ToolSpec
 
-	mu        sync.Mutex
-	catalog   map[string]catalogEntry
-	previews  map[string]*writePreview
-	rollbacks map[string]*rollbackPreview
-	terminals map[string]*terminalTurn
+	mu          sync.Mutex
+	catalog     map[string]catalogEntry
+	previews    map[string]*writePreview
+	rollbacks   map[string]*rollbackPreview
+	helmChanges map[string]*helmPreview
+	terminals   map[string]*terminalTurn
 }
 
 type catalogEntry struct {
@@ -248,10 +250,11 @@ type catalogEntry struct {
 func New(dependencies Dependencies, config Config) *Catalogue {
 	catalogue := &Catalogue{
 		dependencies: dependencies, config: config.normalized(),
-		catalog:   make(map[string]catalogEntry),
-		previews:  make(map[string]*writePreview),
-		rollbacks: make(map[string]*rollbackPreview),
-		terminals: make(map[string]*terminalTurn),
+		catalog:     make(map[string]catalogEntry),
+		previews:    make(map[string]*writePreview),
+		rollbacks:   make(map[string]*rollbackPreview),
+		helmChanges: make(map[string]*helmPreview),
+		terminals:   make(map[string]*terminalTurn),
 	}
 	catalogue.specs = catalogue.build()
 	return catalogue
@@ -305,6 +308,16 @@ func (catalogue *Catalogue) Invoke(
 		return catalogue.listHelmReleaseRevisions(ctx, invocation)
 	case toolGetHelmRelease:
 		return catalogue.getHelmRelease(ctx, invocation)
+	case toolPreviewHelmInstall:
+		return catalogue.previewHelmInstall(ctx, invocation)
+	case toolPreviewHelmUpgrade:
+		return catalogue.previewHelmUpgrade(ctx, invocation)
+	case toolPreviewHelmRollback:
+		return catalogue.previewHelmRollback(ctx, invocation)
+	case toolPreviewHelmUninstall:
+		return catalogue.previewHelmUninstall(ctx, invocation)
+	case toolApplyHelmChange:
+		return catalogue.applyHelmChange(ctx, invocation)
 	case toolRunTerminalCommand:
 		return catalogue.runTerminalCommand(ctx, invocation)
 	default:
@@ -335,10 +348,15 @@ const (
 	toolListHelmReleases         = "list_helm_releases"
 	toolListHelmReleaseRevisions = "list_helm_release_revisions"
 	toolGetHelmRelease           = "get_helm_release"
+	toolPreviewHelmInstall       = "preview_helm_install"
+	toolPreviewHelmUpgrade       = "preview_helm_upgrade"
+	toolPreviewHelmRollback      = "preview_helm_rollback"
+	toolPreviewHelmUninstall     = "preview_helm_uninstall"
+	toolApplyHelmChange          = "apply_helm_release_change"
 )
 
 func (catalogue *Catalogue) build() []airuntime.ToolSpec {
-	specs := make([]airuntime.ToolSpec, 0, 22)
+	specs := make([]airuntime.ToolSpec, 0, 27)
 	if catalogue.dependencies.Overview != nil {
 		specs = append(specs, airuntime.ToolSpec{
 			Name: toolClusterOverview,
@@ -637,6 +655,124 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 				Target:      helmReleaseTarget,
 				Permissions: helmPermissions,
 				Sensitive:   true,
+			},
+		)
+	}
+	if catalogue.dependencies.HelmWrites != nil && catalogue.dependencies.Scopes != nil {
+		// The three every release change needs whatever it does, rechecked by
+		// the runtime before every call. The rest depend on the action and the
+		// target Namespace and are resolved inside the tool — see
+		// helm_writes.go — so they are advertised as candidates rather than as
+		// a set the operator must hold all of.
+		helmWritePermissions := []rbac.Permission{
+			rbac.PermissionClusterRead,
+			rbac.PermissionClusterHelmManage,
+			rbac.PermissionClusterSecretManage,
+		}
+		helmConditionalPermissions := []rbac.Permission{
+			rbac.PermissionClusterResourceCreate,
+			rbac.PermissionClusterResourceUpdate,
+			rbac.PermissionClusterResourceDelete,
+			rbac.PermissionClusterSystemNamespaceManage,
+			rbac.PermissionClusterAgentNamespaceManage,
+			rbac.PermissionClusterManage,
+		}
+		namespaceProperty := stringProperty("Release 所在的 Namespace。")
+		nameProperty := stringProperty("Release 名称。")
+		waitProperty := booleanProperty(
+			"是否等待对象就绪；等待会占用本轮的时间预算，默认不等待。")
+		timeoutProperty := positiveIntegerProperty(
+			"等待秒数，仅在 wait=true 时有效；默认 300，最大 600。")
+		valuesProperty := stringProperty(
+			"values YAML 文档，最多 3 KiB；留空表示使用 Chart 自带默认值。" +
+				"绝不能包含密码、Token、证书或其他凭证明文——它会进入 AIOps 轨迹并发送到模型端点；" +
+				"需要凭证或更长配置的 Chart 请让用户在 ZKE 的 Helm 应用中完成。")
+		repositoryProperty := stringProperty(
+			"Chart 仓库 ID，来自平台维护的仓库目录；不接受任意地址。")
+		chartProperty := stringProperty("Chart 名称。")
+		versionProperty := stringProperty("Chart 版本；留空表示该仓库发布的最新版本。")
+		specs = append(specs,
+			airuntime.ToolSpec{
+				Name: toolPreviewHelmInstall,
+				Description: "对一次 Helm 安装执行 Helm 自己的 DryRun：渲染 Chart、逐对象校验，返回将要创建的对象清单和 preview_id。" +
+					"不改变集群。Chart 只能来自平台维护的仓库目录。",
+				Schema: objectSchema(map[string]any{
+					"namespace":        namespaceProperty,
+					"name":             nameProperty,
+					"repository_id":    repositoryProperty,
+					"chart":            chartProperty,
+					"version":          versionProperty,
+					"values":           valuesProperty,
+					"create_namespace": booleanProperty("Namespace 不存在时是否创建。"),
+					"wait":             waitProperty,
+					"timeout_seconds":  timeoutProperty,
+				}, []string{"namespace", "name", "repository_id", "chart"}),
+				Target:                 helmInstallTarget,
+				Permissions:            helmWritePermissions,
+				ConditionalPermissions: helmConditionalPermissions,
+			},
+			airuntime.ToolSpec{
+				Name: toolPreviewHelmUpgrade,
+				Description: "对一次 Helm 升级执行 DryRun，返回将要创建或替换的对象清单和 preview_id；不改变集群。" +
+					"只想换 Chart 版本、保留现有配置时用 reuse_values=true，不要重新提交 values。",
+				Schema: objectSchema(map[string]any{
+					"namespace":       namespaceProperty,
+					"name":            nameProperty,
+					"repository_id":   repositoryProperty,
+					"chart":           chartProperty,
+					"version":         versionProperty,
+					"values":          valuesProperty,
+					"reuse_values":    booleanProperty("沿用上一个 revision 的 values；与 values 互斥。"),
+					"wait":            waitProperty,
+					"timeout_seconds": timeoutProperty,
+				}, []string{"namespace", "name", "repository_id", "chart"}),
+				Target:                 helmUpgradeTarget,
+				Permissions:            helmWritePermissions,
+				ConditionalPermissions: helmConditionalPermissions,
+			},
+			airuntime.ToolSpec{
+				Name: toolPreviewHelmRollback,
+				Description: "对一次 Helm 回滚执行 DryRun，返回目标 revision 将要恢复的对象清单和 preview_id；不改变集群。" +
+					"先用 list_helm_release_revisions 选择一个 current=false 的 revision。",
+				Schema: objectSchema(map[string]any{
+					"namespace":       namespaceProperty,
+					"name":            nameProperty,
+					"revision":        positiveIntegerProperty("要回到的历史版本号。"),
+					"wait":            waitProperty,
+					"timeout_seconds": timeoutProperty,
+				}, []string{"namespace", "name", "revision"}),
+				Target:                 helmRollbackTarget,
+				Permissions:            helmWritePermissions,
+				ConditionalPermissions: helmConditionalPermissions,
+			},
+			airuntime.ToolSpec{
+				Name: toolPreviewHelmUninstall,
+				Description: "对一次 Helm 卸载执行 DryRun，返回将要删除的对象清单和 preview_id；不改变集群。" +
+					"keep_history=true 会保留修订历史，这是之后还想回滚的前提。",
+				Schema: objectSchema(map[string]any{
+					"namespace":       namespaceProperty,
+					"name":            nameProperty,
+					"keep_history":    booleanProperty("删除对象后保留 Release 的修订历史。"),
+					"wait":            waitProperty,
+					"timeout_seconds": timeoutProperty,
+				}, []string{"namespace", "name"}),
+				Target:                 helmUninstallTarget,
+				Permissions:            helmWritePermissions,
+				ConditionalPermissions: helmConditionalPermissions,
+			},
+			airuntime.ToolSpec{
+				Name: toolApplyHelmChange,
+				Description: "提交一次已预检的 Helm Release 变更（安装、升级、回滚或卸载）。只接受 preview_id，" +
+					"不能提交新的 Chart、values 或 revision；批准后重新判权并再次 DryRun。" +
+					"一次变更会写入该应用拥有的每一个对象，因此始终按敏感操作处理。",
+				Schema: objectSchema(map[string]any{
+					"preview_id": stringProperty("对应预检返回的服务端快照 ID。"),
+				}, []string{"preview_id"}),
+				Target:                 catalogue.helmChangeTarget,
+				Permissions:            helmWritePermissions,
+				ConditionalPermissions: helmConditionalPermissions,
+				Mutating:               true,
+				Sensitive:              true,
 			},
 		)
 	}

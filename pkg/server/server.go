@@ -469,9 +469,16 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		// read path. The tools it backs are read-only and return no values —
 		// see aitools/helm_reads.go — but they still answer to
 		// `cluster.secret.read`, because that is what the storage is.
-		Helm:      kubernetesResourceService,
-		Scopes:    rbacService,
-		Manifests: aiManifestService,
+		Helm: kubernetesResourceService,
+		// Release changes go through the same service the Helm application
+		// uses, so the Server still fetches the chart from the curated
+		// catalogue and the target Cluster's Agent still renders and applies it
+		// with Helm's own engine. AIOps opens no second write path; what the
+		// catalogue adds is who may ask, and the permission stack the tools
+		// resolve is the one the Console's release routes require.
+		HelmWrites: helmService,
+		Scopes:     rbacService,
+		Manifests:  aiManifestService,
 		ManifestAccess: func(grant kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess {
 			return kubernetesresource.NewManifestAccess(kubernetesResourceService, grant)
 		},

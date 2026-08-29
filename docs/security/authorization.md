@@ -42,13 +42,14 @@ AIOps 的只读 Agent 循环已经实现。AIOps 与容器服务一样跟随 Con
 重新读取账户和 RBAC。定时巡检和
 事件触发任务必须使用显式委派，限制所有者、Project、Cluster、权限、审批策略与有效期；该机制落地前不开放无人值守写操作。
 
-三档审批模式已经生效：请求批准 / 帮我批准 / 完全访问只改变何时等待人工确认，不改变权限上限。当前只读目录中
-被标记为敏感的是 Pod 日志读取、Helm Release 详情读取和 Cluster Terminal 命令，前两档会停下来等待用户在对话中批准或拒绝；拒绝不是运行失败，模型收到明确说明
+三档审批模式已经生效：请求批准 / 帮我批准 / 完全访问只改变何时等待人工确认，不改变权限上限。当前被标记为敏感的读取是
+Pod 日志读取与 Helm Release 详情读取，敏感写入是 Cluster Terminal 命令、Manifest 删除与全部 Helm Release 变更；前两档会停下来等待用户在对话中批准或拒绝；拒绝不是运行失败，模型收到明确说明
 后继续，无人答复超时才结束本轮。批准只对该次调用生效，不改变账户权限，并与请求一起写入轨迹。
 
-资源写工具支持 Deployment/StatefulSet 伸缩、工作负载历史读取与回滚，以及 Manifest DryRun/差异/Apply/Delete。
-它们遵守会话审批模式、确认、幂等与审计边界；Manifest 与回滚以服务端预检快照固定待批准内容，提交前重新判权并
-再次 DryRun。Cluster Terminal 命令使用 Turn 级终端 Pod 和冻结的当前权限快照；所有调用经目标 Agent 定域执行，不在
+资源写工具支持 Deployment/StatefulSet 伸缩、工作负载历史读取与回滚、Manifest DryRun/差异/Apply/Delete，以及
+Helm Release 的安装、升级、回滚与卸载。
+它们遵守会话审批模式、确认、幂等与审计边界；Manifest、回滚与 Helm Release 变更以服务端预检快照固定待批准内容，
+提交前重新判权并再次 DryRun。Cluster Terminal 命令使用 Turn 级终端 Pod 和冻结的当前权限快照；所有调用经目标 Agent 定域执行，不在
 Server 主机执行，也不给模型 kubeconfig。
 
 历史读取需要重新检查当前权限。用户自己的问题和系统状态可以保留；已无权访问的集群正文、工具结果和证据由
@@ -56,14 +57,12 @@ Server 主机执行，也不给模型 kubeconfig。
 作用域或授权判定。当前工具目录不提供读取 Secret 明文的工具：`cluster.secret.read` 不会因为 AIOps 而变成一条把
 凭证送进模型上下文的路径。
 
-Helm Release 读取是这条边界上唯一需要单独说明的地方。Release 由 Helm 存成 `helm.sh/release.v1` 类型的 Secret，
-所以三个 Helm 工具与 Console 的 Release 路由要求同一组权限：`cluster.read` 加 `cluster.secret.read`，逐次重验，
+Helm Release 是这条边界上唯一需要单独说明的地方。Release 由 Helm 存成 `helm.sh/release.v1` 类型的 Secret，
+所以三个读取工具与 Console 的 Release 路由要求同一组权限：`cluster.read` 加 `cluster.secret.read`，逐次重验，
 缺一项就不执行；同一份数据不会因为换一道门而降到更低的权限。但要求 `cluster.secret.read` 不等于返回 Secret 内容：
 工具只回答 Release 是什么——Chart 名称与版本、revision、状态、部署时间、被覆盖的 values **路径**，以及该 Chart
 渲染出的对象清单；values 取值、NOTES.txt 与 Manifest 正文一律不返回。只给路径不给取值是一条规则而不是一个过滤器：
-任何试图判断 `image.tag` 安全而 `auth.rootPassword` 危险的启发式，都会在某张 Chart 上判断错误。AIOps 目前不提供
-Helm 的安装、升级、回滚与卸载工具——那些操作要求 `cluster.secret.manage`，而 AIOps 既不接受 Secret 清单也不向终端
-投射 Secret 权限；Release 变更仍在 Helm 应用中由人完成。
+任何试图判断 `image.tag` 安全而 `auth.rootPassword` 危险的启发式，都会在某张 Chart 上判断错误。
 
 完整设计见 [Phase 4 AIOps：架构设计](../architecture/ai-phase-4.md)。
 
@@ -689,6 +688,28 @@ UID 与 `resourceVersion` 作为前置条件，对象已不存在记为跳过而
   停下的执行走到了哪里，正是审计要回答的问题。删除时对象本就不存在的文档不记录：没有向集群发出任何请求。
 
 无论哪种粒度都不记录 YAML 正文。
+
+#### AIOps 的 Helm Release 变更
+
+安装、升级、回滚与卸载复用 Console 的 Release 写入路径和它的权限栈，逐项校验，缺一项就整次拒绝并把拒绝写进轨迹
+和审计：
+
+- `cluster.read`、`cluster.helm.manage` 与 `cluster.secret.manage` 对四种动作都必需，由运行时在每一次调用前重验；
+- 动作真正花掉的对象权限在工具内解析：安装、升级、回滚要 `cluster.resource.create` 与 `cluster.resource.update`，
+  卸载要 `cluster.resource.delete`。持有 Helm 权限不会凭空变出写对象的能力，这些不取并集；
+- Release 位于 Agent 自己的 Namespace 或 `kube-` 开头的 Namespace 时，再叠加对应的独立管理权限。与 Console 的
+  Release 路由一致，`default` 在这里不算受保护 Namespace；
+- Chart 能否渲染出不属于任何 Namespace 的对象，由操作者的 `cluster.manage` 决定，永远不从工具参数里取；没有它时
+  Agent 会按对象名逐个拒绝，因此拒绝会说明是哪个对象造成的。
+
+整套判定在预检时算一次——这样拒绝发生在还没有人被要求批准之前——并在提交时再算一次，因为权限可能在等待审批期间
+被收回。提交只接受预检返回的 `preview_id`，无法在批准之后替换 Chart、values 或 revision；`preview_id` 前缀带着
+动作，因为审批时人能看到的就是这一个字符串。提交**始终**按敏感操作处理：一次 Release 变更会写入这个应用拥有的
+每一个对象。
+
+模型可以撰写 values，但受两条约束：长度限制在轨迹能完整保存的范围内（一份存不全的 values 等于一次事后无法完整
+复核的变更），以及与 Cluster Terminal 命令相同的“不得写入凭证明文”规则——两者都会进入持久轨迹并发送到模型端点。
+需要凭证或更长配置的安装仍然由人在 Helm 应用中完成。变更报告与读取一样不返回 Manifest 正文与 NOTES.txt。
 
 #### AIOps 资源写入：预检快照与动态权限
 

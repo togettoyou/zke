@@ -1,8 +1,8 @@
 # AIOps
 
 > 当前已完成模型配置、跟随桌面 Tenant/Project 并按 Cluster 隔离的会话与轨迹存储、模型自主工具循环
-> （读取工具目录、Helm Release 只读读取、工作负载伸缩/回滚和 Manifest 写操作）、敏感工具的审批等待、流式输出、
-> 轨迹时间线、Cluster Terminal 受控非交互命令，以及随 Server 发布的排查技能与只读并行子任务；Helm Release 变更、
+> （读取工具目录、Helm Release 读取与受控变更、工作负载伸缩/回滚和 Manifest 写操作）、敏感工具的审批等待、
+> 流式输出、轨迹时间线、Cluster Terminal 受控非交互命令，以及随 Server 发布的排查技能与只读并行子任务；
 > 定时巡检与事件触发自动化仍在规划中。
 
 AIOps 是 ZKE 中的云端 Codex 式运维 App：一个把目标 Cluster 当作工作区的 Agent。用户用自然语言提出问题，模型
@@ -79,6 +79,11 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `list_helm_releases` | 某个 Namespace 中安装的 Helm Release：名称、当前 revision、状态与最后写入时间 | `cluster.read` + `cluster.secret.read` |
 | `list_helm_release_revisions` | 一个 Release 的修订历史，并标出当前版本 | `cluster.read` + `cluster.secret.read` |
 | `get_helm_release` | 一个 revision 的 Chart 名称与版本、appVersion、状态说明、部署时间、被覆盖的 values 路径与渲染出的对象清单（敏感） | `cluster.read` + `cluster.secret.read` |
+| `preview_helm_install` | 对一次 Helm 安装执行 Helm 自己的 DryRun，返回将创建的对象清单与 `preview_id`，不改变集群 | `cluster.read` + `cluster.helm.manage` + `cluster.secret.manage`，再按 Namespace 选择 create/update 与受保护 Namespace 权限 |
+| `preview_helm_upgrade` | 对一次升级执行 DryRun；只换 Chart 版本时用 `reuse_values` | 同上 |
+| `preview_helm_rollback` | 对指定 revision 的回滚执行 DryRun | 同上 |
+| `preview_helm_uninstall` | 对一次卸载执行 DryRun，返回将删除的对象清单 | `cluster.read` + `cluster.helm.manage` + `cluster.secret.manage` + `cluster.resource.delete`，受保护 Namespace 再叠加 |
+| `apply_helm_release_change` | 使用 `preview_id` 提交已预检的安装 / 升级 / 回滚 / 卸载；批准后重新判权并再次 DryRun | 同对应预检；始终按敏感操作处理 |
 | `run_terminal_command` | 在本 Turn 复用的 Cluster Terminal 中执行一条非交互 Shell 命令，可使用 kubectl、BusyBox、curl 与 jq | `cluster.terminal.exec`；命令内 Kubernetes 操作再由本 Turn 冻结的权限快照决定，`kubectl exec` 还需 `cluster.pod.exec` |
 | `load_skill` | 读取一份 ZKE 发布的排查流程；只说明用哪些既有工具、按什么顺序取证 | `ai.run`（它不读取任何集群内容） |
 | `run_subtasks` | 派发最多 3 个只读并行取证分支，汇总各自的结论、证据与失败分类 | `ai.run`；分支内的每次读取仍按该工具自己的权限逐次校验 |
@@ -105,9 +110,31 @@ Kind，其余工具都答不了它：资源列表看到的是 Chart 渲染出的
 部署时间、被覆盖的 values **路径**，以及渲染出的对象清单——后者同时是这次回答引用的证据，点开直接落到对象本身。
 需要看具体取值时，请在 Helm 应用或容器服务的 Helm 分区里用自己的身份打开。
 
-AIOps 不提供 Helm 的安装、升级、回滚与卸载。这不是还没做完：一次 Release 变更要求 `cluster.secret.manage`，
-而 AIOps 既拒绝 Secret 清单，也不向 Cluster Terminal 投射 Secret 读写权限；同时安装与升级的输入正是 values，
-把它交给模型等于把凭证写进工具参数。Release 变更仍然在 Helm 应用中由人完成，AIOps 负责说清该改什么、为什么。
+**Release 变更走的是和 Manifest 一样的“预检 → preview_id → 提交”两步，只是权限栈更长。** 四个 `preview_helm_*`
+执行 Helm 自己的 DryRun：Server 从平台维护的仓库目录取 Chart，目标 Cluster 的 Agent 用 Helm 的引擎渲染，什么都
+不写，返回将要创建、替换或删除的对象清单和一个绑定当前用户与 Cluster 的服务端快照。`apply_helm_release_change`
+只接受 `preview_id`，不能在提交时换一份 Chart、values 或 revision；批准后它重新判权、再跑一次 DryRun，然后才提交。
+同一个快照第二次提交返回第一次的结果，而不是再改一次集群。
+
+四种动作都由 `apply_helm_release_change` 提交，因为提交这一步对四者是同一件事——重放快照。`preview_id` 里带着
+动作（`helm_uninstall_…`、`helm_upgrade_…`），因为审批弹窗上能看到的就是这一个字符串，而“批准一次卸载”和
+“批准一次升级”不是同一个决定。它**始终**是敏感操作：一次 Release 变更会写入这个应用拥有的每一个对象，没有哪种
+Release 写入算例行操作。
+
+权限按动作分开算，不取并集：安装、升级、回滚花掉 `cluster.resource.create` 与 `cluster.resource.update`，
+卸载花掉 `cluster.resource.delete`；三项公共权限（`cluster.read`、`cluster.helm.manage`、`cluster.secret.manage`）
+由运行时逐次重验，其余在工具内按动作和目标 Namespace 解析，并在批准之后再解析一次——权限可能在等待审批期间被收回。
+Chart 是否可以渲染出不属于任何 Namespace 的对象，由操作者的 `cluster.manage` 决定，永远不从工具参数里取；
+没有它，Agent 会按对象名逐个拒绝。
+
+values 是模型唯一可以自由撰写的字段，因此它被限制在 3 KiB：工具调用的参数在轨迹里就是按这个量级保存的，
+一份存不全的 values 等于一次事后无法完整复核的变更。**任何情况下都不要把凭证明文写进 values**——它会进入轨迹
+并发送到模型端点，这与 `run_terminal_command` 的命令是同一条规则。只想换 Chart 版本时用 `reuse_values=true`，
+不必也不应该重新撰写配置。更长或含凭证的配置留给 Helm 应用里的人来做。
+
+三个不暴露给模型的开关：`atomic`（失败后自动回滚，那是一次没有人批准的第二次写入）、`disable_hooks`
+（跳过 Hook 的 Release 不是 Chart 描述的那个 Release）、`max_history`（它会悄悄删掉将来可用的回滚目标）。
+等待就绪是可选的，并且最长 600 秒——一次工具调用跑在一个 Turn 里，而 Turn 不会等一小时。
 
 `ai.run` 只负责打开 AIOps，不替代上表中的任何权限。固定权限由运行时逐次重验；Manifest 和回滚再按实际文档、动作与
 Namespace 选择一项有效权限，少一项就整次拒绝并把拒绝写进轨迹和审计。工具目录 API 用 `conditional_permissions`
@@ -117,7 +144,8 @@ Namespace 选择一项有效权限，少一项就整次拒绝并把拒绝写进�
 
 技能是 ZKE 随 Server 发布的排查流程（Playbook）：一份技能规定这一类问题该用目录里的哪些工具、按什么顺序取证、
 以什么标准下结论、以及不该做什么。当前提供 Pod 反复重启、工作负载不就绪、Pod Pending 与节点压力、Service 与
-Ingress 不通、PVC 与卷挂载、资源饱和度评估、受控变更与回滚七份。
+Ingress 不通、PVC 与卷挂载、资源饱和度评估、受控变更与回滚、Helm Release 的受控变更八份。技能只列出读取和预检
+工具，不列出提交类工具——一份能把变更带过“由人决定要不要改”这一步的流程，就不再只是流程了。
 
 技能不是能力：它不新增工具，不放大权限，不改变审批模式，也不能指向别的 Cluster。模型在系统提示词里只看到技能 ID
 和一句话摘要，判断用得上时再用 `load_skill` 读取正文；技能里的每一步仍按工具目录逐次重验权限、按当前审批模式停下
