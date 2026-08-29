@@ -27,6 +27,14 @@ import type { ClusterSectionProps } from "./types";
 type HelmReleaseSectionProps = ClusterSectionProps & {
   /** The Namespace every query in this section is scoped to. */
   namespace: string;
+  /**
+   * The release an AIOps citation asked for, opened straight to its detail.
+   *
+   * Only the initial value: once the operator navigates, the choice is this
+   * section's own state, and reapplying the citation would drag them back to
+   * the release they had just left.
+   */
+  initialRelease?: string | null;
   /** Opens the standalone Helm application, where the writes live. */
   onOpenHelmApp: () => void;
 };
@@ -54,6 +62,7 @@ export function HelmReleaseSection({
   namespace,
   tenantId,
   projectId,
+  initialRelease,
   onOpenHelmApp,
 }: HelmReleaseSectionProps) {
   const { permissions } = useSessionContext();
@@ -69,7 +78,7 @@ export function HelmReleaseSection({
   // shown why rather than an empty list.
   const canRead = protectedAccess && permissions.can("cluster.secret.read", projectScope);
   const list = useHelmReleases(canRead ? clusterId : null, namespace);
-  const [detailName, setDetailName] = useState<string | null>(null);
+  const [detailName, setDetailName] = useState<string | null>(initialRelease ?? null);
 
   const columns = useMemo<ColumnDef<KubernetesHelmRelease, unknown>[]>(
     () => [

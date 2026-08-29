@@ -401,7 +401,7 @@ func (compaction *Compaction) valid() bool {
 		compaction.ThresholdTokens > 0
 }
 
-// EvidenceKind separates the four things a conclusion can point at. Each one
+// EvidenceKind separates the things a conclusion can point at. Each one
 // resolves to a view ZKE already has, which is what "click through and check it
 // yourself" means in practice.
 type EvidenceKind string
@@ -411,11 +411,18 @@ const (
 	EvidenceEvent    EvidenceKind = "event"
 	EvidenceMetric   EvidenceKind = "metric"
 	EvidenceLog      EvidenceKind = "log"
+	// EvidenceHelmRelease is a Helm release, which is not a Kubernetes object
+	// and so cannot be a resource reference: it has no GVK, and it is read out
+	// of a Secret rather than out of the resource path. Its own kind is also
+	// what lets the permission recheck ask the right question — a release
+	// reference answers to `cluster.secret.read`, and rechecking it as a
+	// resource would re-open it on `cluster.read` alone.
+	EvidenceHelmRelease EvidenceKind = "helm_release"
 )
 
 // Evidence is one reference to something that really happened.
 //
-// The fields are a union across the four kinds: a resource reference carries
+// The fields are a union across the kinds: a resource reference carries
 // the object and the resourceVersion it was read at, a metric reference carries
 // a catalogue query and its parameters so the chart can be replayed exactly,
 // and a log reference carries the container and the window it was taken from.

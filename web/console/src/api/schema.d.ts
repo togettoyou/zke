@@ -7119,7 +7119,7 @@ export interface components {
         };
         AIEvidence: {
             /** @enum {string} */
-            kind: "resource" | "event" | "metric" | "log";
+            kind: "resource" | "event" | "metric" | "log" | "helm_release";
             /** @description 必须等于所属会话固定的 cluster_id。 */
             cluster: components["schemas"]["UUID"];
             /** @description Server 根据 Cluster 解析的证据深链导航提示，不参与授权。 */

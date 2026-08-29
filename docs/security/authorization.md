@@ -28,7 +28,8 @@ AIOps 的只读 Agent 循环已经实现。AIOps 与容器服务一样跟随 Con
 工作区；切换 Cluster 后只能看到该 Cluster 的会话。会话创建后不可切换目标，也不会跨 Cluster 查询或操作。
 会话持久化 `tenant_id`、`project_id` 和 `cluster_id` 但不设置外键，每次访问都重新解析当前归属。Cluster 选择不新增授权层级。`ai.run` 是独立
 前置权限且不进入内置 `viewer`；后台每个 Step 重新检查账户有效、Project 和会话 Cluster 权限，结构化证据还必须属于
-同一 Cluster，并检查当前资源、Event、指标或 Pod 日志读取权限。
+同一 Cluster，并按证据类型检查当前资源、Event、指标、Pod 日志或 Helm Release 读取权限——Helm Release 证据按
+`cluster.secret.read` 重验，因为 Release 存在 Secret 里，把它当作普通资源证据会让它以 `cluster.read` 重新打开。
 
 模型每次工具调用都是一次独立授权：工具声明它需要的权限集合，运行时针对当前用户在会话固定 Cluster 上逐项校验，
 缺一项就不执行，并把这个判定写入 `tool_call`。`ai.run` 从不替代其中任何一项，因此只有 `ai.run` 的账户在 AIOps 里
@@ -42,7 +43,7 @@ AIOps 的只读 Agent 循环已经实现。AIOps 与容器服务一样跟随 Con
 事件触发任务必须使用显式委派，限制所有者、Project、Cluster、权限、审批策略与有效期；该机制落地前不开放无人值守写操作。
 
 三档审批模式已经生效：请求批准 / 帮我批准 / 完全访问只改变何时等待人工确认，不改变权限上限。当前只读目录中
-被标记为敏感的是 Pod 日志读取和 Cluster Terminal 命令，前两档会停下来等待用户在对话中批准或拒绝；拒绝不是运行失败，模型收到明确说明
+被标记为敏感的是 Pod 日志读取、Helm Release 详情读取和 Cluster Terminal 命令，前两档会停下来等待用户在对话中批准或拒绝；拒绝不是运行失败，模型收到明确说明
 后继续，无人答复超时才结束本轮。批准只对该次调用生效，不改变账户权限，并与请求一起写入轨迹。
 
 资源写工具支持 Deployment/StatefulSet 伸缩、工作负载历史读取与回滚，以及 Manifest DryRun/差异/Apply/Delete。
@@ -54,6 +55,15 @@ Server 主机执行，也不给模型 kubeconfig。
 服务端脱敏。Pod 日志、Event、annotation、ConfigMap、Secret 和终端输出均作为不可信数据，不能改变工具白名单、
 作用域或授权判定。当前工具目录不提供读取 Secret 明文的工具：`cluster.secret.read` 不会因为 AIOps 而变成一条把
 凭证送进模型上下文的路径。
+
+Helm Release 读取是这条边界上唯一需要单独说明的地方。Release 由 Helm 存成 `helm.sh/release.v1` 类型的 Secret，
+所以三个 Helm 工具与 Console 的 Release 路由要求同一组权限：`cluster.read` 加 `cluster.secret.read`，逐次重验，
+缺一项就不执行；同一份数据不会因为换一道门而降到更低的权限。但要求 `cluster.secret.read` 不等于返回 Secret 内容：
+工具只回答 Release 是什么——Chart 名称与版本、revision、状态、部署时间、被覆盖的 values **路径**，以及该 Chart
+渲染出的对象清单；values 取值、NOTES.txt 与 Manifest 正文一律不返回。只给路径不给取值是一条规则而不是一个过滤器：
+任何试图判断 `image.tag` 安全而 `auth.rootPassword` 危险的启发式，都会在某张 Chart 上判断错误。AIOps 目前不提供
+Helm 的安装、升级、回滚与卸载工具——那些操作要求 `cluster.secret.manage`，而 AIOps 既不接受 Secret 清单也不向终端
+投射 Secret 权限；Release 变更仍在 Helm 应用中由人完成。
 
 完整设计见 [Phase 4 AIOps：架构设计](../architecture/ai-phase-4.md)。
 

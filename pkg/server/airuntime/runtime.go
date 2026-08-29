@@ -1502,6 +1502,8 @@ func (runtime *Runtime) authorizeEvidence(
 			permission = rbac.PermissionClusterMetricsRead
 		case aisession.EvidenceLog:
 			permission = rbac.PermissionClusterPodLogsRead
+		case aisession.EvidenceHelmRelease:
+			permission = rbac.PermissionClusterSecretRead
 		case aisession.EvidenceResource:
 		default:
 			return ErrInvalidInput

@@ -166,6 +166,25 @@ type WorkloadRevisionWriter interface {
 	RollbackWorkload(context.Context, kubernetesresource.RollbackWorkloadInput) (kubernetesresource.WorkloadDetail, error)
 }
 
+// HelmReleaseReader is Helm's own storage, read-only.
+//
+// It is separate from ResourceReader because a release is not a Kubernetes
+// kind and answers to a different permission: it lives in a Secret, so reading
+// one requires `cluster.secret.read` as well as `cluster.read`. See
+// helm_reads.go for what is returned and, more importantly, what is not.
+type HelmReleaseReader interface {
+	ListHelmReleases(
+		context.Context,
+		kubernetesresource.ListHelmReleasesInput,
+	) (kubernetesresource.HelmReleasePage, error)
+	ListHelmReleaseRevisions(
+		context.Context, string, string, string,
+	) (kubernetesresource.HelmReleasePage, error)
+	GetHelmRelease(
+		context.Context, string, string, string, int64,
+	) (kubernetesresource.HelmReleaseDetail, error)
+}
+
 type ClusterScopeResolver interface {
 	ResolveClusterScope(context.Context, string) (rbac.ResolvedScope, error)
 	AuthorizeResolvedCluster(context.Context, string, rbac.Permission, rbac.ResolvedScope) error
@@ -193,6 +212,7 @@ type Dependencies struct {
 	Describe       DescribeReader
 	Logs           LogReader
 	Metrics        MetricsReader
+	Helm           HelmReleaseReader
 	Workloads      WorkloadWriter
 	Revisions      WorkloadRevisionWriter
 	Scopes         ClusterScopeResolver
@@ -279,6 +299,12 @@ func (catalogue *Catalogue) Invoke(
 		return catalogue.previewWorkloadRollback(ctx, invocation)
 	case toolRollbackWorkload:
 		return catalogue.rollbackWorkload(ctx, invocation)
+	case toolListHelmReleases:
+		return catalogue.listHelmReleases(ctx, invocation)
+	case toolListHelmReleaseRevisions:
+		return catalogue.listHelmReleaseRevisions(ctx, invocation)
+	case toolGetHelmRelease:
+		return catalogue.getHelmRelease(ctx, invocation)
 	case toolRunTerminalCommand:
 		return catalogue.runTerminalCommand(ctx, invocation)
 	default:
@@ -287,29 +313,32 @@ func (catalogue *Catalogue) Invoke(
 }
 
 const (
-	toolClusterOverview         = "cluster_overview"
-	toolListAPIResources        = "list_api_resources"
-	toolListResources           = "list_resources"
-	toolGetResource             = "get_resource"
-	toolDescribeResource        = "describe_resource"
-	toolListNodes               = "list_nodes"
-	toolPodLogs                 = "get_pod_logs"
-	toolListMetricQueries       = "list_metric_queries"
-	toolQueryMetrics            = "query_metrics"
-	toolPreviewWorkloadScale    = "preview_workload_scale"
-	toolScaleWorkload           = "scale_workload"
-	toolPreviewManifestApply    = "preview_manifest_apply"
-	toolApplyManifest           = "apply_manifest"
-	toolPreviewManifestDelete   = "preview_manifest_delete"
-	toolDeleteManifest          = "delete_manifest"
-	toolListWorkloadRevisions   = "list_workload_revisions"
-	toolPreviewWorkloadRollback = "preview_workload_rollback"
-	toolRollbackWorkload        = "rollback_workload"
-	toolRunTerminalCommand      = "run_terminal_command"
+	toolClusterOverview          = "cluster_overview"
+	toolListAPIResources         = "list_api_resources"
+	toolListResources            = "list_resources"
+	toolGetResource              = "get_resource"
+	toolDescribeResource         = "describe_resource"
+	toolListNodes                = "list_nodes"
+	toolPodLogs                  = "get_pod_logs"
+	toolListMetricQueries        = "list_metric_queries"
+	toolQueryMetrics             = "query_metrics"
+	toolPreviewWorkloadScale     = "preview_workload_scale"
+	toolScaleWorkload            = "scale_workload"
+	toolPreviewManifestApply     = "preview_manifest_apply"
+	toolApplyManifest            = "apply_manifest"
+	toolPreviewManifestDelete    = "preview_manifest_delete"
+	toolDeleteManifest           = "delete_manifest"
+	toolListWorkloadRevisions    = "list_workload_revisions"
+	toolPreviewWorkloadRollback  = "preview_workload_rollback"
+	toolRollbackWorkload         = "rollback_workload"
+	toolRunTerminalCommand       = "run_terminal_command"
+	toolListHelmReleases         = "list_helm_releases"
+	toolListHelmReleaseRevisions = "list_helm_release_revisions"
+	toolGetHelmRelease           = "get_helm_release"
 )
 
 func (catalogue *Catalogue) build() []airuntime.ToolSpec {
-	specs := make([]airuntime.ToolSpec, 0, 19)
+	specs := make([]airuntime.ToolSpec, 0, 22)
 	if catalogue.dependencies.Overview != nil {
 		specs = append(specs, airuntime.ToolSpec{
 			Name: toolClusterOverview,
@@ -560,6 +589,54 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 				Permissions: []rbac.Permission{rbac.PermissionClusterRead}, Mutating: true,
 				ConditionalPermissions: workloadWritePermissions,
 				SensitiveWhen:          catalogue.previewSensitive,
+			},
+		)
+	}
+	if catalogue.dependencies.Helm != nil {
+		// Both permissions on every entry, and both rechecked before every call.
+		// `cluster.read` because this addresses a Cluster like any other read,
+		// `cluster.secret.read` because a Helm release *is* a Secret — the same
+		// pair the Console's release routes require. Neither stands in for the
+		// other.
+		helmPermissions := []rbac.Permission{
+			rbac.PermissionClusterRead, rbac.PermissionClusterSecretRead,
+		}
+		namespaceProperty := stringProperty("Release 安装到的 Namespace。")
+		nameProperty := stringProperty("Release 名称，不是它渲染出的工作负载名称。")
+		listSchema := map[string]any{"namespace": namespaceProperty}
+		releaseSchema := map[string]any{
+			"namespace": namespaceProperty, "name": nameProperty,
+		}
+		revisionSchema := map[string]any{
+			"namespace": namespaceProperty, "name": nameProperty,
+			"revision": positiveIntegerProperty(
+				"要读取的历史版本号；省略表示存储中保留的最新版本。"),
+		}
+		specs = append(specs,
+			airuntime.ToolSpec{
+				Name: toolListHelmReleases,
+				Description: "列出某个 Namespace 中安装的 Helm Release：名称、当前 revision、状态与最后写入时间。" +
+					"想知道某个工作负载属于哪个应用、或者它是不是被 Helm 管理时使用；不返回 values。",
+				Schema:      objectSchema(listSchema, []string{"namespace"}),
+				Permissions: helmPermissions,
+			},
+			airuntime.ToolSpec{
+				Name: toolListHelmReleaseRevisions,
+				Description: "读取一个 Release 的修订历史：每个 revision 的版本号、状态、写入时间，并标出当前版本。" +
+					"判断“最近是不是升级过”“上一个可用版本是哪个”时使用；不返回 values。",
+				Schema:      objectSchema(releaseSchema, []string{"namespace", "name"}),
+				Target:      helmReleaseTarget,
+				Permissions: helmPermissions,
+			},
+			airuntime.ToolSpec{
+				Name: toolGetHelmRelease,
+				Description: "读取一个 Release 某个 revision 的详情：Chart 名称与版本、appVersion、状态说明、部署时间、" +
+					"被覆盖的 values 路径，以及该 Chart 渲染出的对象清单。" +
+					"values 取值、NOTES.txt 与 Manifest 正文属于 Secret 内容，不会返回。",
+				Schema:      objectSchema(revisionSchema, []string{"namespace", "name"}),
+				Target:      helmReleaseTarget,
+				Permissions: helmPermissions,
+				Sensitive:   true,
 			},
 		)
 	}

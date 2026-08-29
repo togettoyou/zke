@@ -393,6 +393,7 @@ Helm 的写入是本 Server 上权限栈最长的一组路由，每一条回答�
 | 浏览仓库、Chart 与其文件 | `helm.repository.read`（全局）                                                                                          |
 | 管理仓库与其签名策略     | `helm.repository.manage`（全局）                                                                                        |
 | 查看 Release 与 values   | `cluster.read` + `cluster.secret.read`                                                                                  |
+| AIOps 读取 Release       | `cluster.read` + `cluster.secret.read`（与上一行同一组权限，逐次重验）                                                  |
 | 安装 / 升级 / 回滚       | `cluster.read` + `cluster.helm.manage` + `cluster.resource.create` + `cluster.resource.update` + `cluster.secret.manage` |
 | 卸载                     | `cluster.read` + `cluster.helm.manage` + `cluster.resource.delete` + `cluster.secret.manage`                            |
 
@@ -441,6 +442,28 @@ rules:
 
 这样授权是集群管理员做出的、写在他们自己集群里的、`kubectl get clusterrole -l` 能看见的，也能在不重装 Agent
 的情况下收回；ZKE 不会替他们决定发一份覆盖一切的权限。
+
+## AIOps 能读到什么
+
+AIOps 有三个只读的 Helm 工具：`list_helm_releases`、`list_helm_release_revisions` 和 `get_helm_release`。它们存在
+的理由和容器服务里那个只读区块一样——Release 不是 Kubernetes 的 Kind，模型用资源列表看到的是 Chart 渲染出的
+Deployment，而 Deployment 上没有指回 Release 的引用，所以「这个工作负载属于哪个应用、Chart 是哪个版本、最近是不是
+升级过」在别处无解。
+
+权限与上表的「查看 Release」完全相同：`cluster.read` 加 `cluster.secret.read`，在每一次调用前重验，缺一项就不执行。
+同一份数据不会因为换成模型来问就降到更低的权限。
+
+内容上则比 Console 少：**values 取值、NOTES.txt 与渲染后的 Manifest 正文不会返回**。工具回答的是 Release 的身份与
+形状——Chart 名称与版本、appVersion、revision、状态与说明、部署时间、被覆盖的 values **路径**，以及该 Chart 渲染出
+的对象清单。只给路径不给取值是一条规则，不是一个过滤器：任何试图区分「`image.tag` 无害、`auth.rootPassword` 危险」
+的启发式都会在某张 Chart 上判断错误。渲染出的对象同时是这次回答引用的证据，点开会在容器服务里落到对象本身。
+
+`get_helm_release` 是敏感工具：它解码 Release 存储的正文，因此在「请求批准」和「帮我批准」两档下会停下来等人。
+两个列表工具只读 Secret 的标签，不解码正文，因此不停。
+
+AIOps 没有安装、升级、回滚与卸载工具，而且这不是排期问题。一次 Release 变更要求 `cluster.secret.manage`，而 AIOps
+既拒绝 Secret 清单，也不向它的 Cluster Terminal 投射 Secret 读写权限；安装与升级的输入本身就是 values，交给模型
+等于把凭证写进工具参数并存进轨迹。Release 变更留在本应用里由人完成，AIOps 负责说清该改什么、依据是什么。
 
 ## 审计
 
@@ -510,3 +533,5 @@ renderer 在应用之前运行）。其余一律按「可能已经写入」处�
 - 一次操作的等待时间有上限（默认 15 分钟，见 `agent_listener.helm_request_timeout` 与 Agent 的
   `connection.max_helm_stream_timeout`）。
 - 渲染出的清单超过上限时会被截断并明确标注；提交本身不受影响。
+- AIOps 只读 Release，且不返回 values 取值、NOTES.txt 与渲染后的 Manifest 正文；Release 的安装、升级、回滚与
+  卸载没有对应的 AIOps 工具。

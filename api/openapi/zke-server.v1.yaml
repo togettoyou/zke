@@ -16906,7 +16906,7 @@ components:
       additionalProperties: false
       required: [kind, cluster]
       properties:
-        kind: { type: string, enum: [resource, event, metric, log] }
+        kind: { type: string, enum: [resource, event, metric, log, helm_release] }
         cluster:
           allOf: [{ $ref: "#/components/schemas/UUID" }]
           description: 必须等于所属会话固定的 cluster_id。

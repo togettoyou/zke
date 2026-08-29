@@ -176,6 +176,10 @@ export function ContainerServiceApp({
   const [section, setSection] = useState(() => {
     if (evidenceTarget?.evidenceKind === "event") return "events";
     if (evidenceTarget?.evidenceKind === "log") return "pods";
+    // Before the browser check below: a release citation carries a name but no
+    // GVK, and the resource browser has nothing to show for it — a release is
+    // not a Kubernetes kind.
+    if (evidenceTarget?.evidenceKind === "helm_release") return "helm";
     if (evidenceTarget?.gvk || evidenceTarget?.resource) return "browser";
     return "overview";
   });
@@ -542,6 +546,9 @@ export function ContainerServiceApp({
             namespace={namespace}
             tenantId={scope.tenantId}
             projectId={scope.projectId}
+            initialRelease={
+              evidenceTarget?.evidenceKind === "helm_release" ? evidenceTarget.resource : undefined
+            }
             onOpenHelmApp={() => openApp("helm")}
           />
         ) : activeSection === "authorization" ? (

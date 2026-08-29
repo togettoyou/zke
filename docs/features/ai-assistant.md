@@ -1,8 +1,9 @@
 # AIOps
 
 > 当前已完成模型配置、跟随桌面 Tenant/Project 并按 Cluster 隔离的会话与轨迹存储、模型自主工具循环
-> （读取工具目录、工作负载伸缩/回滚和 Manifest 写操作）、敏感工具的审批等待、流式输出、轨迹时间线、Cluster
-> Terminal 受控非交互命令，以及随 Server 发布的排查技能与只读并行子任务；定时巡检与事件触发自动化仍在规划中。
+> （读取工具目录、Helm Release 只读读取、工作负载伸缩/回滚和 Manifest 写操作）、敏感工具的审批等待、流式输出、
+> 轨迹时间线、Cluster Terminal 受控非交互命令，以及随 Server 发布的排查技能与只读并行子任务；Helm Release 变更、
+> 定时巡检与事件触发自动化仍在规划中。
 
 AIOps 是 ZKE 中的云端 Codex 式运维 App：一个把目标 Cluster 当作工作区的 Agent。用户用自然语言提出问题，模型
 自己决定读取哪些对象、Event、日志和指标，按什么顺序读取，读到什么程度算够；每一次调用、授权判断和返回结果都
@@ -75,6 +76,9 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `apply_manifest` | 使用 `preview_id` 提交原始 Manifest；批准后重新逐文档判权和 DryRun | 同预检；RBAC、受保护 Namespace 或 force 属于敏感操作 |
 | `preview_manifest_delete` | 逐文档判权并 DryRun 预检删除 | `cluster.read` + 按文档选择 delete/Namespace/Node/RBAC/受保护 Namespace 权限 |
 | `delete_manifest` | 使用 `preview_id` 删除预检中的对象 | 同预检；始终为敏感操作 |
+| `list_helm_releases` | 某个 Namespace 中安装的 Helm Release：名称、当前 revision、状态与最后写入时间 | `cluster.read` + `cluster.secret.read` |
+| `list_helm_release_revisions` | 一个 Release 的修订历史，并标出当前版本 | `cluster.read` + `cluster.secret.read` |
+| `get_helm_release` | 一个 revision 的 Chart 名称与版本、appVersion、状态说明、部署时间、被覆盖的 values 路径与渲染出的对象清单（敏感） | `cluster.read` + `cluster.secret.read` |
 | `run_terminal_command` | 在本 Turn 复用的 Cluster Terminal 中执行一条非交互 Shell 命令，可使用 kubectl、BusyBox、curl 与 jq | `cluster.terminal.exec`；命令内 Kubernetes 操作再由本 Turn 冻结的权限快照决定，`kubectl exec` 还需 `cluster.pod.exec` |
 | `load_skill` | 读取一份 ZKE 发布的排查流程；只说明用哪些既有工具、按什么顺序取证 | `ai.run`（它不读取任何集群内容） |
 | `run_subtasks` | 派发最多 3 个只读并行取证分支，汇总各自的结论、证据与失败分类 | `ai.run`；分支内的每次读取仍按该工具自己的权限逐次校验 |
@@ -91,6 +95,19 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 AIOps 读到的就是 Console 图表读的那一份目录：查询目录由 Server 现场枚举，新增查询不需要在 AIOps 侧登记，
 权限也仍然是 `cluster.metrics.read` 按目标 Cluster 逐次校验。模型引用的每条指标都会作为证据落进轨迹，
 点开时在 Console 中打开对应的图表分区。
+
+**Helm Release 是目录里唯一一个只回答“是什么”、不回答“里面是什么”的读取。** Release 不是 Kubernetes 的一种
+Kind，其余工具都答不了它：资源列表看到的是 Chart 渲染出的 Deployment，而 Deployment 上没有任何指回 Release 的
+引用——所以“这个工作负载属于哪个应用、Chart 是哪个版本、最近是不是升级过”在别处无解，而两小时前坏掉的滚动更新
+往往就是两小时前的一次 Helm 升级。Helm 把 Release 存成 Secret，这决定了两件事：权限上，三个工具都要求
+`cluster.read` 加 `cluster.secret.read`，与 Console 的 Release 路由完全一致；内容上，values 取值、NOTES.txt 与
+渲染后的 Manifest 正文属于 Secret 内容，不进入模型上下文，也不进入轨迹。返回的是 Chart 身份、revision、状态、
+部署时间、被覆盖的 values **路径**，以及渲染出的对象清单——后者同时是这次回答引用的证据，点开直接落到对象本身。
+需要看具体取值时，请在 Helm 应用或容器服务的 Helm 分区里用自己的身份打开。
+
+AIOps 不提供 Helm 的安装、升级、回滚与卸载。这不是还没做完：一次 Release 变更要求 `cluster.secret.manage`，
+而 AIOps 既拒绝 Secret 清单，也不向 Cluster Terminal 投射 Secret 读写权限；同时安装与升级的输入正是 values，
+把它交给模型等于把凭证写进工具参数。Release 变更仍然在 Helm 应用中由人完成，AIOps 负责说清该改什么、为什么。
 
 `ai.run` 只负责打开 AIOps，不替代上表中的任何权限。固定权限由运行时逐次重验；Manifest 和回滚再按实际文档、动作与
 Namespace 选择一项有效权限，少一项就整次拒绝并把拒绝写进轨迹和审计。工具目录 API 用 `conditional_permissions`

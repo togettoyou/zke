@@ -1,8 +1,8 @@
 # AIOps Agent 运行时与上下文设计
 
 > 状态：事件溯源会话、后台运行、SSE 续传与流式增量、可重建的摘要压缩、模型自主工具循环、受控资源写入及
-> 敏感工具审批等待、受控 Cluster Terminal 命令、随 Server 发布的排查技能与只读并行子任务已经实现；
-> 定时巡检与事件触发自动化仍在规划中。
+> 敏感工具审批等待、受控 Cluster Terminal 命令、Helm Release 只读读取、随 Server 发布的排查技能与只读并行子任务
+> 已经实现；Helm Release 变更、定时巡检与事件触发自动化仍在规划中。
 
 本文描述 AIOps 从“单次模型对话”演进为受控运维 Agent 的运行时边界。产品总览见
 [Phase 4 AIOps 架构](ai-phase-4.md)，用户可见行为见 [AIOps](../features/ai-assistant.md)。
@@ -69,7 +69,11 @@ sequenceDiagram
     end
 ```
 
-工具目录由 `aitools` 组装，全部复用 ZKE 已有的读取或写入服务，因此经过 Agent 传输、权限与响应上限。资源写工具包括
+工具目录由 `aitools` 组装，全部复用 ZKE 已有的读取或写入服务，因此经过 Agent 传输、权限与响应上限。读取工具还
+包括 Helm Release 的清单、修订历史与单个 revision 详情：Release 不是 Kubernetes 的 Kind，其余工具都答不了它，
+而它由 Helm 存成 Secret，所以三个工具都要求 `cluster.read` 加 `cluster.secret.read`，并且只返回 Chart 身份、
+revision、状态、被覆盖的 values 路径与渲染出的对象清单——values 取值、NOTES.txt 与 Manifest 正文是 Secret 内容，
+不进入模型上下文或轨迹。资源写工具包括
 工作负载伸缩、历史读取与回滚，多文档 Manifest 的 DryRun、差异、Apply 和 Delete，以及 AIOps Turn 级 Cluster
 Terminal 命令会话。Manifest 与回滚的预检结果由
 Server 保存为 15 分钟有效、绑定用户和 Cluster 的不可替换快照；实际工具只接受 `preview_id`，批准后重验权限并再次
@@ -293,7 +297,8 @@ Console 的输入框旁显示这一读数（占比、绝对值与系统提示词
 - `ai.run` 只允许启动 AIOps，不替代 `cluster.read`、日志、Event、指标或写权限；工具声明的权限逐项校验，缺一不执行；
 - 每个外部步骤重验账户和 RBAC，权限撤销后不再继续；
 - 集群正文、附件和模型输出都不是授权依据；
-- Secret、Session Token、模型 API Key、Agent 证书和 kubeconfig 不进入模型上下文或轨迹；
+- Secret、Session Token、模型 API Key、Agent 证书和 kubeconfig 不进入模型上下文或轨迹；Helm Release 读取要求
+  `cluster.secret.read` 但只返回 Release 的身份与形状，不返回它存的取值；
 - 轨迹是有界事件记录，不是 Pod 日志、指标或完整对象的副本仓库；
 - 技能只改变取证顺序，不改变工具目录、权限、审批模式或作用域；
 - 子任务只有只读工具、不可再派生、不跨 Turn 存活，其每一步都带分支标记写回同一条轨迹。

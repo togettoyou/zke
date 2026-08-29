@@ -79,5 +79,6 @@ Deployment/StatefulSet 副本数伸缩、工作负载回滚，以及多文档 Ma
 - [x] 资源写操作：YAML/DryRun/有界差异、Manifest 部署与删除、工作负载历史读取与回滚、预检快照、逐目标权限重验
 - [x] Cluster Terminal 的 AIOps 受控命令执行：Turn 级终端复用、冻结权限快照、敏感审批、有界输出与自动清理
 - [x] 技能与并行子任务：随 Server 发布、按需加载的排查 Playbook；只读、有界、可回收并写回同一轨迹的并行取证分支
-- [ ] 扩展能力：图表/资源就地唤起、定时巡检和事件触发自动化
+- [x] Helm Release 只读接入：Release 清单、修订历史与单个 revision 详情；权限与 Console 一致（`cluster.read` + `cluster.secret.read`），只返回身份与形状，不返回 values 取值、NOTES.txt 与 Manifest 正文
+- [ ] 扩展能力：图表/资源就地唤起、Helm Release 变更、定时巡检和事件触发自动化
 - [ ] 配额、诊断效果评估与用户反馈

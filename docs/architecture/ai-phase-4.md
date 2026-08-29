@@ -176,9 +176,10 @@ Namespace 与强制字段接管按预检快照动态升级为敏感。“请求�
 Pod 日志、Event、annotation、ConfigMap、镜像输出和终端 stdout 都是数据，不是指令。工具白名单、目标作用域、
 审批和权限由 Server 状态决定，不能被这些文本改写。
 
-启用 AIOps 后，用户问题、文本附件、显式引用的证据，以及模型自主调用工具读取到的资源、Event、日志和指标结果会
-发送到配置的模型端点。ZKE 自身的 Session Token、Agent 证书、模型 API Key 和 kubeconfig
-永不进入模型上下文、轨迹或审计正文。
+启用 AIOps 后，用户问题、文本附件、显式引用的证据，以及模型自主调用工具读取到的资源、Event、日志、指标和 Helm
+Release 元数据会发送到配置的模型端点。ZKE 自身的 Session Token、Agent 证书、模型 API Key 和 kubeconfig
+永不进入模型上下文、轨迹或审计正文。Helm Release 的 values 取值、NOTES.txt 与渲染后的 Manifest 正文同样不进入：
+它们是 Release Secret 的内容，工具只返回 Chart 身份、revision、状态、被覆盖的 values 路径与渲染出的对象清单。
 
 ## 落地顺序
 
@@ -188,8 +189,10 @@ Pod 日志、Event、annotation、ConfigMap、镜像输出和终端 stdout 都�
 4. 模型自主工具循环、读取工具目录、敏感工具审批等待、流式输出与轨迹时间线（已实现）；
 5. 资源写工具、部署与 Cluster Terminal 非交互命令，复用现有权限、幂等键和敏感操作确认（已实现）；
 6. 随 Server 发布的排查技能与只读并行子任务（已实现）；
-7. 定时巡检与事件触发自动化；
-8. 质量评估、配额、反馈和运行治理。
+7. Helm Release 只读接入：与 Console 同一组权限（`cluster.read` + `cluster.secret.read`），只返回 Release 的身份与
+   形状，不返回 values 取值、NOTES.txt 与 Manifest 正文（已实现）；
+8. 定时巡检与事件触发自动化；
+9. 质量评估、配额、反馈和运行治理。
 
 ## 非目标
 

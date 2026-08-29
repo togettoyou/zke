@@ -17,7 +17,7 @@ import { useScopeStore } from "@/scope/scope-store";
  * drift apart.
  */
 export type EvidenceTarget = {
-  kind: "resource" | "event" | "metric" | "log";
+  kind: "resource" | "event" | "metric" | "log" | "helm_release";
   cluster: string;
   tenantId?: string | null;
   projectId?: string | null;
@@ -31,6 +31,15 @@ export const CONTAINER_EVIDENCE_KEY = "zke.ai-evidence.container-target";
 export const METRICS_EVIDENCE_CLUSTER_KEY = "zke.ai-evidence.metrics-cluster";
 export const METRICS_EVIDENCE_QUERY_KEY = "zke.ai-evidence.metrics-query";
 
+/*
+ * Which application shows one kind of evidence.
+ *
+ * A Helm release goes to the container service rather than to the Helm
+ * application: the release view there is the read-only one, scoped to the same
+ * Cluster and Namespace the rest of the evidence uses, while the Helm
+ * application is a workspace for changing releases. Following a citation is
+ * checking a claim, not starting an upgrade.
+ */
 export function evidenceAppId(kind: EvidenceTarget["kind"]): string {
   return kind === "metric" ? "observability" : "container-service";
 }

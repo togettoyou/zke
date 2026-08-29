@@ -465,6 +465,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		// remain properties of one path rather than AIOps-specific conventions.
 		Workloads: kubernetesResourceService,
 		Revisions: kubernetesResourceService,
+		// Helm releases come from the same service, through its Secret-aware
+		// read path. The tools it backs are read-only and return no values —
+		// see aitools/helm_reads.go — but they still answer to
+		// `cluster.secret.read`, because that is what the storage is.
+		Helm:      kubernetesResourceService,
 		Scopes:    rbacService,
 		Manifests: aiManifestService,
 		ManifestAccess: func(grant kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess {

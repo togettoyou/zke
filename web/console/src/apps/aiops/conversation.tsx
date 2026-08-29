@@ -598,6 +598,12 @@ function evidenceLabel(evidence: AIEvidence): string {
     const kind = evidence.gvk?.split("/").pop();
     return kind ? `${kind} 列表` : "Cluster 概览";
   }
-  const prefix = { resource: "", event: "Event ", metric: "指标 ", log: "日志 " }[evidence.kind];
+  const prefix = {
+    resource: "",
+    event: "Event ",
+    metric: "指标 ",
+    log: "日志 ",
+    helm_release: "Helm ",
+  }[evidence.kind];
   return `${prefix}${evidence.name ?? evidence.query ?? "证据"}`;
 }
