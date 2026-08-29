@@ -348,24 +348,30 @@ export function OperationDialog({
 }) {
   const query = useHelmOperation(clusterId, namespace, operationId);
   const operation = query.data?.operation;
-  const running = !operation || operation.status === "running";
+  // Unknown counts as running while the account is still loading, but not once
+  // the read itself has failed: there is nothing left to wait for then.
+  const running = operation ? operation.status === "running" : !query.error;
 
+  /*
+   * It closes at any time, including mid-operation.
+   *
+   * The operation belongs to the Server, not to this dialog: closing stops the
+   * polling and nothing else, and the account — stages, elapsed time and the
+   * whole log — is still there afterwards. The list keeps a banner for every
+   * running operation in the namespace, so there is always a way back into it.
+   * Holding the dialog open until the deployment finished only pinned the
+   * operator to a wait that can last minutes and blocked the rest of the
+   * Console behind it.
+   */
   return (
-    <Dialog
-      open={operationId !== null}
-      onOpenChange={(open) => {
-        // Closing while it runs would leave the operation with nowhere to
-        // report; the list behind this dialog will show the result either way,
-        // but the log would be gone for good.
-        if (!open && !running) {
-          onClose();
-        }
-      }}
-    >
+    <Dialog open={operationId !== null} onOpenChange={(open) => open || onClose()}>
       <DialogContent
         className="w-[min(680px,calc(100vw-2rem))]"
-        showClose={!running}
-        onEscapeKeyDown={(event) => {
+        /* Leaving is a decision, so it takes the close button, Esc or the
+           footer. A running deployment is watched for minutes, and a stray
+           click on the window behind it is not someone saying they are done
+           reading the log. */
+        onPointerDownOutside={(event) => {
           if (running) {
             event.preventDefault();
           }
@@ -385,7 +391,12 @@ export function OperationDialog({
           </div>
         )}
         <DialogFooter>
-          <Button variant="secondary" disabled={running} onClick={onClose}>
+          {running ? (
+            <span className="text-subtle-foreground mr-auto self-center text-xs">
+              关闭不会中断它，操作会在集群里继续执行；从列表的提醒可以回到这里。
+            </span>
+          ) : null}
+          <Button variant="secondary" onClick={onClose}>
             关闭
           </Button>
         </DialogFooter>
