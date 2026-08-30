@@ -304,6 +304,45 @@ EndpointSlice 的名字带控制器生成的后缀、会随重建变化，因此
 以及抓到了还是没抓到。没等到一个抓取周期就不要下「已接入」的结论。`,
 		},
 		{
+			ID:      "change-timeline-verification",
+			Title:   "变更时间线与变更后验证",
+			Summary: "关联审计变更、对象健康、Event 与指标，判断一次变更后是否已经收敛或出现退化。",
+			Tools: []string{
+				"list_cluster_changes", "verify_resource_change", "list_metric_queries",
+				"query_metrics", "query_custom_metrics",
+			},
+			Body: `# 变更时间线与变更后验证
+
+## 何时使用
+用户问「刚才改了什么」「是不是某次发布导致」「变更有没有成功」「升级后是否正常」，或者任何写工具提交完成后。
+
+## 固定顺序
+1. list_cluster_changes 读取覆盖问题发生时刻的窗口。默认只看真实成功提交；排查失败尝试时才设 include_failed=true。
+   时间线合并普通 Kubernetes/Helm/集群变更与 AIOps 自己的写工具调用，DryRun 不在其中。
+2. 用时间、目标和 request_id 关联，而不是只看动作名字。两个变更靠得很近时必须分别验证，不能默认最后一个就是原因。
+3. 对明确的 Kubernetes 对象调用 verify_resource_change，把时间线中的 occurred_at 原样传给 changed_at。它检查：
+   - 当前对象与关联对象是否健康；
+   - 变更后是否出现 Warning Event；
+   - 工作负载 observedGeneration 是否追上 generation；
+   - desired / ready / available / unavailable 副本是否收敛。
+4. verify_resource_change 的 passed 只表示当前 Kubernetes 状态与可见 Event 没发现问题，不表示业务没有退化。
+   目标是工作负载且部署启用了指标时，继续用 list_metric_queries 找到副本不可用、Pod 重启、CPU、内存以及用户明确
+   关心的业务查询；minutes 至少覆盖变更前一小段和变更后的观察窗口。目录不能回答时才用 query_custom_metrics。
+5. 指标返回 partial 或 issues、Event 窗口被截断、对象类型没有健康规则、观察不足一分钟时，结论必须是
+   inconclusive，写清缺失的证据，不能写成「验证通过」。
+
+## 结论格式
+- 变更：时间、发起者、动作、目标、request_id；
+- Kubernetes 验证：passed / warning / inconclusive，以及 generation、副本、Finding 和变更后 Warning Event；
+- 指标验证：具体查询、时间窗口、最新值与峰值，是否 partial；
+- 总结：已收敛、发现退化或证据不足，并列出下一步。
+
+## 边界
+- 时间相邻只说明相关性，不证明因果；发现异常后要继续读取对象、Event 和指标。
+- 这是只读验证流程，不会自动回滚。需要回退时转到「受控变更与回滚」或「Helm Release 的受控变更」，重新预检并审批。
+- 删除后的对象可能已经无法 describe；如实报告对象已不存在，再用审计目标、Helm revision 和同 Namespace 的指标取证。`,
+		},
+		{
 			ID:      "controlled-change",
 			Title:   "受控变更与回滚",
 			Summary: "需要改变集群时的固定顺序：先取证、再预检、再按预检结果提交，并说明影响与回退方式。",

@@ -360,6 +360,11 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 | 平台管理 | `user.read/manage`、`user.password.change`、`rbac.read/manage`、`audit.read` |
 | AIOps | `ai.run`（只允许在当前 Project 创建并运行固定 Cluster 会话，不包含任何集群读取权限） |
 
+AIOps 的变更时间线也不由 `ai.run` 放大权限：`list_cluster_changes` 额外要求调用者在会话 Cluster 所属作用域持有
+`audit.read`，并继续通过审计服务的 Global/Tenant/Project 可见范围过滤。`verify_resource_change` 读取对象及其 Event，
+因此同时要求 `cluster.read` 与 `cluster.event.read`；后续指标验证再独立要求 `cluster.metrics.read`。任何一项缺失都只会
+拒绝对应工具，不会因同一轮已经读过其他证据而沿用授权结果。
+
 所有变更要求有效 Session 和 CSRF Token；创建
 Enrollment、重新接入和 Kubernetes 写操作还要求 `Idempotency-Key`。Project、Cluster 的归属由 Server 查询，
 不接受调用方覆盖。

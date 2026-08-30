@@ -121,7 +121,14 @@ type ListAuditRecordsParams struct {
 	TenantID      string
 	ProjectID     string
 	ClusterID     string
-	Page          pagination.Request
+	// Actions narrows the query to an exact set. The public HTTP API still uses
+	// Action for its one-value filter; AIOps change correlation uses this set so
+	// one bounded query can cover every mutation action without reading and
+	// discarding the much larger stream of ordinary reads.
+	Actions        []string
+	Since          time.Time
+	DetailContains map[string]string
+	Page           pagination.Request
 }
 
 func NewAuditStore(pool *pgxpool.Pool) *AuditStore {

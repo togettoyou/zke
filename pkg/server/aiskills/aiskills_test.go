@@ -9,6 +9,7 @@ import (
 
 	"github.com/togettoyou/zke/pkg/server/airuntime"
 	"github.com/togettoyou/zke/pkg/server/aitools"
+	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/clusterterminal"
 	"github.com/togettoyou/zke/pkg/server/helm"
@@ -100,10 +101,19 @@ func fullDependencies() aitools.Dependencies {
 		Workloads: stub, Revisions: stub, Scopes: stub, Manifests: stub,
 		Terminal: stub, Permissions: stub, Helm: stub, HelmWrites: stub,
 		Charts: stub, GlobalPermissions: stub,
+		Changes: unusedChangeDependency{},
 		ManifestAccess: func(kubernetesresource.ManifestGrant) kubernetesmanifest.ResourceAccess {
 			panic("not called")
 		},
 	}
+}
+
+type unusedChangeDependency struct{}
+
+func (unusedChangeDependency) Query(
+	context.Context, audit.QueryInput,
+) (audit.QueryResult, error) {
+	panic("not called")
 }
 
 type unusedDependency struct{}

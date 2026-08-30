@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/togettoyou/zke/pkg/server/auditaction"
 	"github.com/togettoyou/zke/pkg/server/rbac"
 	"github.com/togettoyou/zke/pkg/server/store"
 	"github.com/togettoyou/zke/pkg/shared/pagination"
@@ -137,6 +138,43 @@ func TestQueryPushesVisibilityIntoTheStore(t *testing.T) {
 	}
 	if result.Page.Total != 42 {
 		t.Fatalf("page total = %d, want 42", result.Page.Total)
+	}
+}
+
+func TestQueryPassesInternalChangeCorrelationFilters(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeAuditStore{}
+	service := newQueryService(fake, []store.RoleBinding{
+		{Role: "admin", ScopeType: "global"},
+	})
+	since := time.Now().UTC().Add(-time.Hour)
+	_, err := service.Query(context.Background(), QueryInput{
+		UserID: queryUserID, ClusterID: "00000000-0000-4000-8000-000000000003",
+		Actions: []string{auditaction.KubernetesResourcePatch}, Since: since,
+		DetailContains: map[string]string{"mutating": "true"},
+		Page:           pagination.Request{Limit: pagination.DefaultLimit},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.params.Actions) != 1 || fake.params.Actions[0] != auditaction.KubernetesResourcePatch ||
+		!fake.params.Since.Equal(since) || fake.params.DetailContains["mutating"] != "true" {
+		t.Fatalf("store params = %+v", fake.params)
+	}
+	// Query owns its copy: a caller changing its map after return must not be
+	// able to alter a store request retained for logging or tests.
+	inputDetail := map[string]string{"mutating": "true"}
+	_, err = service.Query(context.Background(), QueryInput{
+		UserID: queryUserID, DetailContains: inputDetail,
+		Page: pagination.Request{Limit: pagination.DefaultLimit},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputDetail["mutating"] = "false"
+	if fake.params.DetailContains["mutating"] != "true" {
+		t.Fatalf("detail filter was not cloned: %+v", fake.params.DetailContains)
 	}
 }
 

@@ -141,7 +141,7 @@ Docker Compose、Helm 等其他部署方式，以及完整的配置、升级与�
 | 多集群指标 | 集群内三组件一体采集、经 Agent 回传、六个维度的用量与利用率、申请与限制、CPU 限流、节点磁盘与网络、持久卷、容器状态原因、每集群摄取预算（默认启用）；预置面板之外可自己书写 MetricsQL 表达式，目标集群由 Server 强制注入每一个选择器 |
 | 权限模型 | Tenant、Project、RBAC 与细粒度操作权限 |
 | 安全与审计 | 敏感操作确认、DryRun 差异、并发身份保护、审计日志 |
-| AIOps | 固定 Cluster 的自主取证（含预置与自定义 MetricsQL 查询）、受控资源写入与 Cluster Terminal 命令，Manifest DryRun/差异/Apply/Delete、工作负载伸缩与回滚、审批、轨迹和证据深链 |
+| AIOps | 固定 Cluster 的自主取证（含预置与自定义 MetricsQL 查询）、变更时间线与变更后验证、受控资源写入与 Cluster Terminal 命令，Manifest DryRun/差异/Apply/Delete、工作负载伸缩与回滚、审批、轨迹和证据深链 |
 
 各项能力的具体边界和已知限制以 [Roadmap](docs/roadmap.md) 与功能文档为准。
 

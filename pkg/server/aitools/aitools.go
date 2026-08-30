@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/togettoyou/zke/pkg/server/airuntime"
+	"github.com/togettoyou/zke/pkg/server/audit"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/clusterterminal"
 	"github.com/togettoyou/zke/pkg/server/kubernetesdescribe"
@@ -151,6 +152,13 @@ type MetricsReader interface {
 	Explore(context.Context, metricsquery.ExploreInput) (metricsquery.ExploreResult, error)
 }
 
+// ChangeReader is the deployment audit trail viewed through its authorization
+// service. AIOps never reads the store directly: audit.read visibility must be
+// resolved for the calling user before a Cluster timeline is returned.
+type ChangeReader interface {
+	Query(context.Context, audit.QueryInput) (audit.QueryResult, error)
+}
+
 // WorkloadWriter is the existing Kubernetes workload mutation path narrowed to
 // the first AIOps write: scaling a Deployment or StatefulSet. The service
 // implementation still enforces DryRun, confirmation and Agent idempotency;
@@ -213,6 +221,7 @@ type Dependencies struct {
 	Describe          DescribeReader
 	Logs              LogReader
 	Metrics           MetricsReader
+	Changes           ChangeReader
 	Helm              HelmReleaseReader
 	HelmWrites        HelmReleaseWriter
 	Charts            HelmChartReader
@@ -289,6 +298,10 @@ func (catalogue *Catalogue) Invoke(
 		return catalogue.queryMetrics(ctx, invocation)
 	case toolQueryCustomMetrics:
 		return catalogue.queryCustomMetrics(ctx, invocation)
+	case toolListClusterChanges:
+		return catalogue.listClusterChanges(ctx, invocation)
+	case toolVerifyResourceChange:
+		return catalogue.verifyResourceChange(ctx, invocation)
 	case toolPreviewWorkloadScale:
 		return catalogue.scaleWorkload(ctx, invocation, true)
 	case toolScaleWorkload:
@@ -349,6 +362,8 @@ const (
 	toolListMetricQueries        = "list_metric_queries"
 	toolQueryMetrics             = "query_metrics"
 	toolQueryCustomMetrics       = "query_custom_metrics"
+	toolListClusterChanges       = "list_cluster_changes"
+	toolVerifyResourceChange     = "verify_resource_change"
 	toolPreviewWorkloadScale     = "preview_workload_scale"
 	toolScaleWorkload            = "scale_workload"
 	toolPreviewManifestApply     = "preview_manifest_apply"
@@ -374,7 +389,21 @@ const (
 )
 
 func (catalogue *Catalogue) build() []airuntime.ToolSpec {
-	specs := make([]airuntime.ToolSpec, 0, 31)
+	specs := make([]airuntime.ToolSpec, 0, 33)
+	if catalogue.dependencies.Changes != nil {
+		specs = append(specs, airuntime.ToolSpec{
+			Name: toolListClusterChanges,
+			Description: "读取当前会话固定 Cluster 的变更时间线：合并普通 Kubernetes/Helm/集群变更与 AIOps 自身的写工具调用，" +
+				"按时间倒序返回发起者、动作、目标、结果和请求 ID。只返回真实提交，不把 DryRun 当成变更。" +
+				"排查变更相关故障或选择变更后验证起点时先调用它。",
+			Schema: objectSchema(map[string]any{
+				"minutes":        integerProperty("回看窗口分钟数，默认 120，最大 10080（7 天）。"),
+				"limit":          integerProperty("返回上限，默认 50，最大 100。"),
+				"include_failed": booleanProperty("是否同时返回失败的变更尝试；默认只返回成功变更。"),
+			}, nil),
+			Permissions: []rbac.Permission{rbac.PermissionAuditRead},
+		})
+	}
 	if catalogue.dependencies.Overview != nil {
 		specs = append(specs, airuntime.ToolSpec{
 			Name: toolClusterOverview,
@@ -448,6 +477,25 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 				rbac.PermissionClusterRead, rbac.PermissionClusterEventRead,
 			},
 		})
+		if catalogue.dependencies.Resources != nil {
+			specs = append(specs, airuntime.ToolSpec{
+				Name: toolVerifyResourceChange,
+				Description: "对一次已经发生的对象变更做只读验证：检查当前对象健康、变更后的 Warning Event、" +
+					"工作负载 generation/副本是否收敛和关联对象是否就绪，返回 passed、warning 或 inconclusive。" +
+					"它只验证当前 Kubernetes 状态与 Event；需要判断资源或业务指标是否退化时继续调用指标工具。",
+				Schema: objectSchema(map[string]any{
+					"api_version": stringProperty("对象的 apiVersion。"),
+					"kind":        stringProperty("对象的 Kind。"),
+					"namespace":   stringProperty("对象所在 Namespace，集群级对象留空。"),
+					"name":        stringProperty("对象名称。"),
+					"changed_at":  stringProperty("变更发生时间（RFC3339）；省略时按最近 15 分钟验证。"),
+				}, []string{"api_version", "kind", "name"}),
+				Target: verifyResourceChangeTarget,
+				Permissions: []rbac.Permission{
+					rbac.PermissionClusterRead, rbac.PermissionClusterEventRead,
+				},
+			})
+		}
 	}
 	if catalogue.dependencies.Logs != nil {
 		specs = append(specs, airuntime.ToolSpec{

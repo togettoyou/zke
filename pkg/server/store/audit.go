@@ -33,6 +33,9 @@ WHERE (
   AND ($9 = '' OR tenant_id = $9::uuid)
   AND ($10 = '' OR project_id = $10::uuid)
   AND ($11 = '' OR cluster_id = $11::uuid)
+  AND ($12::timestamptz IS NULL OR created_at >= $12::timestamptz)
+  AND (COALESCE(cardinality($13::text[]), 0) = 0 OR action = ANY($13::text[]))
+  AND ($14::jsonb = '{}'::jsonb OR detail @> $14::jsonb)
 `
 
 // ListRecords pages audit events with the same offset contract as every other
@@ -43,6 +46,18 @@ func (store *AuditStore) ListRecords(
 	ctx context.Context,
 	input ListAuditRecordsParams,
 ) ([]AuditRecord, int, error) {
+	detailContains := []byte(`{}`)
+	if len(input.DetailContains) > 0 {
+		var err error
+		detailContains, err = json.Marshal(input.DetailContains)
+		if err != nil {
+			return nil, 0, fmt.Errorf("encode audit detail filter: %w", err)
+		}
+	}
+	var since any
+	if !input.Since.IsZero() {
+		since = input.Since
+	}
 	return queryPage(
 		ctx,
 		store.pool,
@@ -72,7 +87,7 @@ SELECT
     created_at
 `+auditFilterSQL+`
 ORDER BY created_at DESC, id DESC
-LIMIT $12 OFFSET $13
+LIMIT $15 OFFSET $16
 `,
 		[]any{
 			input.GlobalVisible,
@@ -86,6 +101,9 @@ LIMIT $12 OFFSET $13
 			input.TenantID,
 			input.ProjectID,
 			input.ClusterID,
+			since,
+			input.Actions,
+			detailContains,
 		},
 		input.Page,
 		scanAuditRecord,

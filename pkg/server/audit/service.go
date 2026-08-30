@@ -54,7 +54,14 @@ type QueryInput struct {
 	TenantID   string
 	ProjectID  string
 	ClusterID  string
-	Page       pagination.Request
+	// Actions, Since and DetailContains are internal correlation filters. The
+	// HTTP audit list deliberately remains an exact one-action filter; AIOps
+	// needs a closed mutation set plus the `mutating=true` marker on its own tool
+	// audit rows without pulling unrelated reads into model context.
+	Actions        []string
+	Since          time.Time
+	DetailContains map[string]string
+	Page           pagination.Request
 }
 
 type QueryResult struct {
@@ -153,7 +160,8 @@ func (service *Service) Query(
 		!validOptionalUUID(input.ProjectID) ||
 		!validOptionalUUID(input.ClusterID) ||
 		!validAuditEnum(input.ActorType, "", "user", "agent", "system") ||
-		!validAuditEnum(input.Result, "", "succeeded", "failed", "denied") {
+		!validAuditEnum(input.Result, "", "succeeded", "failed", "denied") ||
+		!validAuditActions(input.Actions) || len(input.DetailContains) > 16 {
 		return QueryResult{}, ErrInvalidQuery
 	}
 	visibility, err := service.authorization.ResolveVisibility(
@@ -168,18 +176,21 @@ func (service *Service) Query(
 		return QueryResult{}, rbac.ErrDenied
 	}
 	records, total, err := service.store.ListRecords(ctx, store.ListAuditRecordsParams{
-		GlobalVisible: visibility.IsGlobal(),
-		TenantIDs:     visibility.TenantIDs(),
-		ProjectIDs:    visibility.ProjectIDs(),
-		ActorType:     input.ActorType,
-		Result:        input.Result,
-		Action:        input.Action,
-		TargetType:    input.TargetType,
-		RequestID:     input.RequestID,
-		TenantID:      input.TenantID,
-		ProjectID:     input.ProjectID,
-		ClusterID:     input.ClusterID,
-		Page:          input.Page,
+		GlobalVisible:  visibility.IsGlobal(),
+		TenantIDs:      visibility.TenantIDs(),
+		ProjectIDs:     visibility.ProjectIDs(),
+		ActorType:      input.ActorType,
+		Result:         input.Result,
+		Action:         input.Action,
+		TargetType:     input.TargetType,
+		RequestID:      input.RequestID,
+		TenantID:       input.TenantID,
+		ProjectID:      input.ProjectID,
+		ClusterID:      input.ClusterID,
+		Actions:        append([]string{}, input.Actions...),
+		Since:          input.Since,
+		DetailContains: cloneDetail(input.DetailContains),
+		Page:           input.Page,
 	})
 	if err != nil {
 		return QueryResult{}, err
@@ -192,6 +203,29 @@ func (service *Service) Query(
 		Events: events,
 		Page:   pagination.NewResult(input.Page, total, len(events)),
 	}, nil
+}
+
+func validAuditActions(actions []string) bool {
+	if len(actions) > 64 {
+		return false
+	}
+	for _, action := range actions {
+		if !auditaction.Known(action) {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneDetail(detail map[string]string) map[string]string {
+	if len(detail) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(detail))
+	for key, value := range detail {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func validOptionalUUID(value string) bool {

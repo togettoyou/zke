@@ -2,7 +2,7 @@
 
 > 当前已完成模型配置、跟随桌面 Tenant/Project 并按 Cluster 隔离的会话与轨迹存储、模型自主工具循环
 > （读取工具目录、Helm Release 读取与受控变更、工作负载伸缩/回滚和 Manifest 写操作）、敏感工具的审批等待、
-> 流式输出、轨迹时间线、Cluster Terminal 受控非交互命令、随 Server 发布的排查技能、只读并行子任务，
+> 流式输出、轨迹时间线、Cluster Terminal 受控非交互命令、变更时间线与变更后验证、随 Server 发布的排查技能、只读并行子任务，
 > 以及由模型自行判断的主动打开桌面应用；
 > 定时巡检与事件触发自动化仍在规划中。
 
@@ -71,6 +71,8 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `list_metric_queries` | 可用的指标查询目录，每行一个查询：查询名、标题、单位与参数标记 | `cluster.metrics.read` |
 | `query_metrics` | 执行目录中的一个查询，返回每条曲线的最新值、峰值与均值 | `cluster.metrics.read` |
 | `query_custom_metrics` | 执行一条自定义 MetricsQL；Server 把会话 Cluster 强制注入每个选择器，模型不提供 Cluster ID | `cluster.metrics.read` |
+| `list_cluster_changes` | 当前 Cluster 的变更时间线：合并普通提交与 AIOps 写工具调用，不把 DryRun 当作变更 | `audit.read` |
+| `verify_resource_change` | 验证对象当前健康、变更后 Warning Event、工作负载 generation 与副本收敛，返回三态结论 | `cluster.read` + `cluster.event.read` |
 | `preview_workload_scale` | 对 Deployment/StatefulSet 目标副本数执行 Kubernetes 服务端 DryRun，不改变集群 | 普通 Namespace 使用 `cluster.resource.update`，受保护 Namespace 改用 system/agent manage |
 | `scale_workload` | 实际调整 Deployment/StatefulSet 副本数；提交前内部再次执行同参数 DryRun | 同预检；实际伸缩始终按敏感操作处理 |
 | `list_workload_revisions` | 读取 Deployment/StatefulSet/DaemonSet 历史版本及回滚并发前置条件 | `cluster.read` |
@@ -111,6 +113,29 @@ AIOps 读到的就是 Console 图表读的那一份目录：查询目录由 Serv
 书写一条 MetricsQL；工具 Schema 不接受 Cluster ID，Server 复用监控「数据探索」的查询服务，把表达式里已有的
 `zke_cluster_id` 条件替换为会话固定 Cluster，并再次强制注入存储请求。模型引用的每条指标都会作为证据落进轨迹；
 具名查询点开对应图表分区，自定义表达式点开「数据探索」并带回原表达式。
+
+## 变更时间线与变更后验证
+
+`list_cluster_changes` 从部署审计中读取会话固定 Cluster 的真实变更，默认回看 120 分钟、最多回看 7 天，按时间倒序返回
+发起者、动作、目标、结果和 request ID。时间线包含普通 Kubernetes 资源写入、Helm 安装/升级/回滚/卸载、节点排空、
+Pod 驱逐、采集组件安装/卸载等动作；AIOps 不经过 HTTP 写路由，因此它自己的写入从 `ai_tool.invoke` 审计记录中按
+`mutating=true` 单独选出，再与普通变更合并。DryRun 和只读工具调用都不进入时间线。默认只返回成功提交，操作者明确
+排查失败尝试时才包含失败记录。
+
+时间线要求当前用户对该 Cluster 所属作用域具有 `audit.read`。工具仍通过审计服务解析调用者的 Global/Tenant/Project
+可见范围，不直接读取数据库；`ai.run` 或 `cluster.read` 都不能替代 `audit.read`。
+
+`verify_resource_change` 接收明确的 apiVersion、Kind、Namespace、名称与变更时间，复用对象诊断链路读取当前对象、
+关联对象和指向它们的 Event，给出以下三种结果：
+
+- `passed`：已建模对象的当前健康规则没有 Finding，变更后没有 Warning Event，工作负载 generation 与副本已经收敛；
+- `warning`：发现当前 Finding、变更后 Warning Event、未观察到最新 generation、未收敛副本或未就绪关联对象；
+- `inconclusive`：对象类型没有健康规则、Event/关联对象窗口不完整、部分诊断读取失败，或观察时间不足一分钟。
+
+`passed` 只说明**当前 Kubernetes 状态与可见 Event 未发现问题**，不表示业务延迟、错误率或资源用量没有退化。随 Server
+发布的「变更时间线与变更后验证」技能会继续调用指标目录与指标查询，用覆盖变更前后的小窗口检查副本不可用、Pod 重启、
+CPU、内存和可用的业务指标；指标返回 `partial`/`issues` 时同样不能下“验证通过”的结论。该流程只读，不会自动回滚；
+需要回退时仍进入受控变更流程，重新 DryRun、审批和提交。
 
 **Helm Release 是目录里唯一一个只回答“是什么”、不回答“里面是什么”的读取。** Release 不是 Kubernetes 的一种
 Kind，其余工具都答不了它：资源列表看到的是 Chart 渲染出的 Deployment，而 Deployment 上没有任何指回 Release 的
@@ -197,7 +222,8 @@ AIOps 可以自己打开桌面上的其他应用来展示结论：说「看看�
 
 技能是 ZKE 随 Server 发布的排查流程（Playbook）：一份技能规定这一类问题该用目录里的哪些工具、按什么顺序取证、
 以什么标准下结论、以及不该做什么。当前提供 Pod 反复重启、工作负载不就绪、Pod Pending 与节点压力、Service 与
-Ingress 不通、PVC 与卷挂载、资源饱和度评估、接入自定义指标采集、受控变更与回滚、Helm Release 的受控变更九份。
+Ingress 不通、PVC 与卷挂载、资源饱和度评估、接入自定义指标采集、变更时间线与变更后验证、受控变更与回滚、
+Helm Release 的受控变更十份。
 技能只列出读取和预检工具，不列出提交类工具——一份能把变更带过“由人决定要不要改”这一步的流程，就不再只是流程了。
 
 技能不是能力：它不新增工具，不放大权限，不改变审批模式，也不能指向别的 Cluster。模型在系统提示词里只看到技能 ID
@@ -294,7 +320,8 @@ API Key、Secret 明文和 kubeconfig 不会进入模型上下文或轨迹。
 3. 模型自主工具循环、读取工具目录、敏感工具审批、流式输出与轨迹时间线（已实现）；
 4. 资源写工具与 Cluster Terminal：DryRun 差异、预检快照、幂等键、审计闭环、三档审批及受控命令（已实现）；
 5. 随 Server 发布的排查技能与只读并行子任务（已实现）；
-6. 定时巡检与事件触发自动化。
+6. 审计变更时间线、对象变更后验证及指标验证 Playbook（已实现）；
+7. 定时巡检与事件触发自动化。
 
 详细约束见 [Phase 4 AIOps 架构](../architecture/ai-phase-4.md) 与
 [AIOps Agent 运行时与上下文设计](../architecture/ai-agent-runtime.md)。

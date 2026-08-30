@@ -68,7 +68,10 @@ Server 直连 Kubernetes API Server。
 单 Cluster 定域、审批、幂等和审计这些必须长期成立的约束，做成可插拔就等于把安全边界做成可插拔。
 
 已实现的只读工具：Cluster 概览、API 资源目录、对象列表与详情、对象诊断（含指向它的 Event）、Node 列表、
-Pod 日志（敏感）、指标查询目录、具名查询与自定义 MetricsQL 查询。自定义表达式不接收模型组装的 Cluster ID，
+Pod 日志（敏感）、指标查询目录、具名查询与自定义 MetricsQL 查询，以及审计变更时间线与对象变更后验证。
+变更时间线在数据库侧按固定变更动作、时间窗口和 AIOps `mutating=true` 审计标记过滤，排除 DryRun 与普通读取；
+对象验证复用 describe 链路检查当前 Finding、变更后 Warning Event、工作负载代际与副本收敛，并把证据不足显式归类为
+`inconclusive`，不把“没有读到”当成“没有问题”。自定义表达式不接收模型组装的 Cluster ID，
 而是复用监控查询服务，由 Server 把会话固定 Cluster 强制写入每个选择器。每个工具声明自己需要的权限集合，运行时在
 每次调用前逐项重验；
 参数按 Schema 解码，未声明字段一律拒绝；目标 Cluster 由运行时填入，模型无法在参数里改写。完整目录与权限对照见
@@ -195,8 +198,10 @@ Release 元数据会发送到配置的模型端点。ZKE 自身的 Session Token
    （`cluster.read` + `cluster.secret.read`）；安装、升级、回滚与卸载复用 Console 的写入权限栈，按动作解析对象
    权限，预检快照 + `preview_id` 提交，始终为敏感操作。Release 侧只返回身份、形状与受影响对象清单，不返回 values
    取值、NOTES.txt 与 Manifest 正文（已实现）；
-8. 定时巡检与事件触发自动化；
-9. 质量评估、配额、反馈和运行治理。
+8. 变更时间线与变更后验证：合并部署审计中的普通变更与 AIOps 写调用；按明确对象检查状态、Event 和工作负载收敛，
+   再由 Playbook 追加指标验证（已实现）；
+9. 定时巡检与事件触发自动化；
+10. 质量评估、配额、反馈和运行治理。
 
 ## 非目标
 

@@ -507,6 +507,10 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		// all. Leaving the field nil removes those tools from the catalogue,
 		// rather than advertising a tool that fails on every call.
 		Metrics: optionalMetricsReader(metricsQueryService),
+		// Change correlation reads the deployment audit trail through its
+		// visibility-aware service. The tool still declares audit.read and the
+		// service independently confines the result to the caller's bindings.
+		Changes: auditService,
 	}, aitools.Config{
 		ResultThresholdRunes: cfg.AIOps.ToolResult.ThresholdChars,
 		ResultHeadRunes:      cfg.AIOps.ToolResult.HeadChars,

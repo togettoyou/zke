@@ -83,5 +83,7 @@ Helm 也已接入：Chart 仓库目录与 Chart 内容的读取，Release 的清
 - [x] Cluster Terminal 的 AIOps 受控命令执行：Turn 级终端复用、冻结权限快照、敏感审批、有界输出与自动清理
 - [x] 技能与并行子任务：随 Server 发布、按需加载的排查 Playbook；只读、有界、可回收并写回同一轨迹的并行取证分支
 - [x] Helm 接入：Chart 仓库目录、Chart 与版本、Chart 自带 values.yaml 的读取（全局 `helm.repository.read`，按全局作用域判定）；Release 清单、修订历史与 revision 详情的读取；安装 / 升级 / 回滚 / 卸载的预检与受控提交，权限与 Console 的 Release 路由一致并按动作解析，提交始终为敏感操作；Release 侧不返回 values 取值、NOTES.txt 与 Manifest 正文
-- [ ] 扩展能力：图表/资源就地唤起、定时巡检和事件触发自动化
+- [x] 图表/资源就地唤起：模型按场景主动打开监控或容器服务，意图写入轨迹，Console 只在操作者正查看当前会话时自动执行
+- [x] 变更时间线与变更后验证：按 Cluster 关联普通审计变更与 AIOps 写调用；检查对象健康、变更后 Event、工作负载代际与副本收敛，并由 Playbook 追加指标验证
+- [ ] 定时巡检和事件触发自动化
 - [ ] 配额、诊断效果评估与用户反馈
