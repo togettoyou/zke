@@ -298,6 +298,16 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 				t.Fatal(err)
 			}
 			config := configMap.Data[observability.CollectorConfigKey]
+			// Annotation discovery ships with every install: opting a Service
+			// in is an annotation on that Service, not a re-install of the
+			// collector. Its jobs carry relabel rules of their own, so the
+			// built-in assertions below read the section before them.
+			if !strings.Contains(config, "job_name: "+annotatedEndpointJobName) {
+				t.Fatalf("scrape configuration is missing annotation discovery:\n%s", config)
+			}
+			builtIn, discovery, _ := strings.Cut(
+				config, "  - job_name: "+annotatedEndpointJobName+"\n",
+			)
 			for _, job := range testCase.jobs {
 				if !strings.Contains(config, "job_name: "+job) {
 					t.Fatalf("scrape configuration is missing job %q:\n%s", job, config)
@@ -311,8 +321,14 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 			// The scope labels are dropped in every job, not only the first: the
 			// Server replaces them anyway, and a job that forgot would ship a
 			// Cluster's own idea of its identity.
-			if strings.Count(config, "regex: ^zke_.*$") != len(testCase.jobs) {
+			if strings.Count(builtIn, "regex: ^zke_.*$") != len(testCase.jobs) {
 				t.Fatalf("not every job drops reserved scope labels:\n%s", config)
+			}
+			// The discovery jobs drop the same reserved prefix, together with
+			// the temporary labels the annotation relabeling stages through.
+			// Four jobs partition the targets by authentication and TLS mode.
+			if strings.Count(discovery, "regex: ^(__tmp_zke_.*|zke_.*)$") != 4 {
+				t.Fatalf("annotation discovery keeps working labels:\n%s", discovery)
 			}
 			// The two large kubelet endpoints are taken through an allow list.
 			// Without it a single install multiplies what every Cluster ships
@@ -328,7 +344,7 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 					t.Fatalf("scrape configuration does not keep %q:\n%s", family, config)
 				}
 			}
-			if strings.Count(config, "action: keep") != 2 {
+			if strings.Count(builtIn, "action: keep") != 2 {
 				t.Fatalf("cAdvisor and volume statistics must be filtered:\n%s", config)
 			}
 			// Container state reasons are filtered where they are produced. A

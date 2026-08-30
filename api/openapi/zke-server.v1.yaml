@@ -1954,8 +1954,8 @@ paths:
         重要的是那里现在跑着什么，Server 侧的标记会在有人手工删除 Deployment 后失真。
 
         采集组件安装在该集群的 Agent Namespace 内，由 Agent 自身创建与删除，
-        摄取凭证也由 Agent 生成，从不经过 Server。要求 `cluster.metrics.manage`；
-        读取指标是另一个权限，只能看图表的人无法改变集群里运行的东西。
+        摄取凭证也由 Agent 生成，从不经过 Server。要求 `cluster.metrics.read`；
+        安装和删除仍分别由 POST、DELETE 以 `cluster.metrics.manage` 保护。
       security:
         - sessionCookie: []
       parameters:
@@ -2041,6 +2041,48 @@ paths:
       responses:
         "200":
           description: 移除后的采集组件状态
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsCollectorState"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/clusters/{cluster_id}/metrics-collector/jobs:
+    get:
+      tags: [Resources]
+      operationId: getClusterMetricsCollectorJobs
+      description: |
+        按需读取目标集群当前的采集 Job。除内置 kubelet、kube-state-metrics 与
+        node-exporter Job 外，还会列出由 `zke-metrics-collector.io/scrape=true`
+        发现的 Service 或 Endpoints、最终 scheme/path/port/认证模式与就绪目标。
+
+        该调用会经 Agent 列出集群内 Service 与 Endpoints，因此只在进入详情页时
+        执行，不参与采集接入列表轮询。要求 `cluster.metrics.read`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ClusterID"
+      responses:
+        "200":
+          description: 采集组件状态与当前 Job
           content:
             application/json:
               schema:
@@ -15771,6 +15813,8 @@ components:
         - active_series
         - max_active_series
         - components
+        - scrape_jobs
+        - scrape_jobs_truncated
       properties:
         cluster_id:
           $ref: "#/components/schemas/UUID"
@@ -15864,6 +15908,61 @@ components:
               unavailable_message:
                 type: string
                 description: ZKE 自己撰写的说明，不回显集群的原始错误。
+        scrape_jobs:
+          type: array
+          description: |
+            仅详情接口填充；列表状态接口返回空数组。认证只报告模式，不返回凭证。
+          items:
+            $ref: "#/components/schemas/MetricsScrapeJob"
+        scrape_jobs_truncated:
+          type: boolean
+          description: Job 数量超过详情接口的有界响应时为 true。
+    MetricsScrapeJob:
+      type: object
+      additionalProperties: false
+      required:
+        - job_name
+        - source_kind
+        - namespace
+        - source_name
+        - scheme
+        - metrics_path
+        - port
+        - authentication
+        - insecure_skip_verify
+        - targets
+        - targets_truncated
+      properties:
+        job_name:
+          type: string
+        source_kind:
+          type: string
+          enum: [Builtin, Service, Endpoints]
+        namespace:
+          type: string
+        source_name:
+          type: string
+        scheme:
+          type: string
+          enum: [http, https]
+        metrics_path:
+          type: string
+        port:
+          type: string
+          description: 注解未指定且使用 Endpoints 原始端口时为空。
+        authentication:
+          type: string
+          enum: [none, service-account]
+          description: 仅认证模式；不会返回 Token。service-account 只允许 HTTPS。
+        insecure_skip_verify:
+          type: boolean
+        targets:
+          type: array
+          items: { type: string }
+          description: 当前就绪的 Endpoints 地址；内置动态 Node Job 可为空。
+        targets_truncated:
+          type: boolean
+          description: 该 Job 的目标超过有界响应时为 true。
     KubernetesClusterOverview:
       type: object
       additionalProperties: false

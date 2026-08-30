@@ -66,6 +66,7 @@ export type MetricsSavedQueryVisibility = MetricsSavedQuery["visibility"];
 export type MetricsSavedQueryRequest = Schemas["MetricsSavedQueryRequest"];
 export type MetricsCollectorState = Schemas["MetricsCollectorState"];
 export type MetricsComponentState = MetricsCollectorState["components"][number];
+export type MetricsScrapeJob = MetricsCollectorState["scrape_jobs"][number];
 export type KubernetesClusterOverview = Schemas["KubernetesClusterOverview"];
 export type KubernetesClusterOverviewIssue = Schemas["KubernetesClusterOverviewIssue"];
 export type KubernetesOverviewStatusCounts = Schemas["KubernetesOverviewStatusCounts"];

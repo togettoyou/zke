@@ -17,6 +17,7 @@ import (
 
 type metricsCollectorService interface {
 	Status(context.Context, string) (metricscollector.State, error)
+	Details(context.Context, string) (metricscollector.State, error)
 	Install(context.Context, string) (metricscollector.State, error)
 	Uninstall(context.Context, string) (metricscollector.State, error)
 }
@@ -72,7 +73,23 @@ type metricsCollectorStateResponse struct {
 	MaxActiveSeries int `json:"max_active_series"`
 	// One entry per workload the install puts into the Cluster, the collector
 	// included. An Agent too old to report them answers with an empty list.
-	Components []metricsComponentStateResponse `json:"components"`
+	Components          []metricsComponentStateResponse `json:"components"`
+	ScrapeJobs          []metricsScrapeJobResponse      `json:"scrape_jobs"`
+	ScrapeJobsTruncated bool                            `json:"scrape_jobs_truncated"`
+}
+
+type metricsScrapeJobResponse struct {
+	JobName            string   `json:"job_name"`
+	SourceKind         string   `json:"source_kind"`
+	Namespace          string   `json:"namespace"`
+	SourceName         string   `json:"source_name"`
+	Scheme             string   `json:"scheme"`
+	MetricsPath        string   `json:"metrics_path"`
+	Port               string   `json:"port"`
+	Authentication     string   `json:"authentication"`
+	InsecureSkipVerify bool     `json:"insecure_skip_verify"`
+	Targets            []string `json:"targets"`
+	TargetsTruncated   bool     `json:"targets_truncated"`
 }
 
 type metricsComponentStateResponse struct {
@@ -97,6 +114,12 @@ type metricsComponentStateResponse struct {
 func (handler *metricsCollectorHandler) status(c *gin.Context) {
 	handler.respond(c, "", func(ctx context.Context, clusterID string) (metricscollector.State, error) {
 		return handler.service.Status(ctx, clusterID)
+	})
+}
+
+func (handler *metricsCollectorHandler) details(c *gin.Context) {
+	handler.respond(c, "", func(ctx context.Context, clusterID string) (metricscollector.State, error) {
+		return handler.service.Details(ctx, clusterID)
 	})
 }
 
@@ -200,22 +223,44 @@ func (handler *metricsCollectorHandler) respond(
 		handler.recordCollectorOperation(c, action, identity.User.ID, clusterID, "succeeded", "")
 	}
 	writeSuccess(c, http.StatusOK, metricsCollectorStateResponse{
-		ClusterID:       state.ClusterID,
-		Installed:       state.Installed,
-		Namespace:       state.Namespace,
-		Image:           state.Image,
-		DesiredImage:    state.DesiredImage,
-		DesiredReplicas: state.DesiredReplicas,
-		ReadyReplicas:   state.ReadyReplicas,
-		CredentialReady: state.CredentialReady,
-		Throttled:       state.Throttled,
-		ThrottleReason:  state.ThrottleReason,
-		ThrottledSince:  optionalTime(state.ThrottledSince),
-		LastThrottledAt: optionalTime(state.LastThrottledAt),
-		ActiveSeries:    state.ActiveSeries,
-		MaxActiveSeries: state.MaxActiveSeries,
-		Components:      componentStatesResponse(state.Components),
+		ClusterID:           state.ClusterID,
+		Installed:           state.Installed,
+		Namespace:           state.Namespace,
+		Image:               state.Image,
+		DesiredImage:        state.DesiredImage,
+		DesiredReplicas:     state.DesiredReplicas,
+		ReadyReplicas:       state.ReadyReplicas,
+		CredentialReady:     state.CredentialReady,
+		Throttled:           state.Throttled,
+		ThrottleReason:      state.ThrottleReason,
+		ThrottledSince:      optionalTime(state.ThrottledSince),
+		LastThrottledAt:     optionalTime(state.LastThrottledAt),
+		ActiveSeries:        state.ActiveSeries,
+		MaxActiveSeries:     state.MaxActiveSeries,
+		Components:          componentStatesResponse(state.Components),
+		ScrapeJobs:          scrapeJobsResponse(state.ScrapeJobs),
+		ScrapeJobsTruncated: state.ScrapeJobsTruncated,
 	})
+}
+
+func scrapeJobsResponse(jobs []metricscollector.ScrapeJob) []metricsScrapeJobResponse {
+	result := make([]metricsScrapeJobResponse, 0, len(jobs))
+	for _, job := range jobs {
+		result = append(result, metricsScrapeJobResponse{
+			JobName:            job.JobName,
+			SourceKind:         job.SourceKind,
+			Namespace:          job.Namespace,
+			SourceName:         job.SourceName,
+			Scheme:             job.Scheme,
+			MetricsPath:        job.MetricsPath,
+			Port:               job.Port,
+			Authentication:     job.Authentication,
+			InsecureSkipVerify: job.InsecureSkipVerify,
+			Targets:            append([]string(nil), job.Targets...),
+			TargetsTruncated:   job.TargetsTruncated,
+		})
+	}
+	return result
 }
 
 func componentStatesResponse(

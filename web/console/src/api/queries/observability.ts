@@ -195,6 +195,24 @@ export function useMetricsCollector(
 }
 
 /**
+ * The expensive cluster-wide discovery inventory is separate from status so
+ * the fleet list never lists every Service and Endpoints object on each poll.
+ */
+export function useMetricsCollectorJobs(clusterId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.metricsCollectorJobs(clusterId ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET("/api/v1/clusters/{cluster_id}/metrics-collector/jobs", {
+          params: { path: { cluster_id: clusterId as string } },
+          signal,
+        }),
+      ),
+    enabled: Boolean(clusterId),
+  });
+}
+
+/**
  * The same answer for a whole list of Clusters, one request each.
  *
  * There is no batch route on purpose: each answer comes from that Cluster's own

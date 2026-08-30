@@ -99,6 +99,8 @@ func newKubernetesMetricsCollectorHandler(
 		switch request.GetAction() {
 		case agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_STATUS:
 			return collectorStatus(ctx, client, namespace)
+		case agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_DETAILS:
+			return collectorDetails(ctx, client, namespace)
 		case agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_INSTALL:
 			ingestURL, err := placement.ingestURL()
 			if err != nil {
@@ -368,6 +370,15 @@ func installMetricsCollector(
 				APIGroups: []string{""},
 				Resources: []string{"nodes/metrics"},
 				Verbs:     []string{"get"},
+			},
+			{
+				// vmagent watches only discovery metadata and endpoint addresses.
+				// Secrets and ConfigMaps are intentionally absent: scrape
+				// authentication is limited to the collector's own projected
+				// ServiceAccount credential, never arbitrary cluster credentials.
+				APIGroups: []string{""},
+				Resources: []string{"services", "endpoints", "pods"},
+				Verbs:     []string{"get", "list", "watch"},
 			},
 		},
 	}
@@ -1097,6 +1108,7 @@ scrape_configs:
 	if nodeExporterInstalled {
 		config += renderNodeExporterScrapeJob()
 	}
+	config += renderAnnotatedEndpointScrapeJobs()
 	return config
 }
 

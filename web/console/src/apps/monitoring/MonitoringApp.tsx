@@ -34,9 +34,9 @@ import {
  * until its collector is installed, so an operator opening this application on
  * a fresh deployment lands on the only screen that has anything for them to do.
  *
- * It is also the one section that changes what runs inside somebody's Cluster,
- * so it is hidden from an operator who only holds the read permission — and
- * then this is not where they land. DEFAULT_CHART_SECTION is.
+ * Its list and Job detail explain where the charts come from, so metrics-read
+ * users can always open it. Only the install and remove controls are hidden
+ * without manage permission.
  */
 const COLLECTION_SECTION = "collection";
 
@@ -114,12 +114,9 @@ function evidenceSection(query: string, expression: string): string {
  * application in the Console answers this the same way — the shell does not
  * open until there is a scope for it to work in.
  *
- * The two permissions split the rail. Reading charts is `cluster.metrics.read`;
- * installing and removing collectors is `cluster.metrics.manage`, and it is the
- * only thing here that changes what runs inside somebody's Cluster. Hiding the
- * entry an operator cannot use is presentation, not enforcement — the Server
- * refuses the request either way — but an entry that only ever answers 403 is
- * worse than no entry.
+ * Reading charts, collector state and discovered Jobs is
+ * `cluster.metrics.read`; installing and removing collectors is
+ * `cluster.metrics.manage`. The Server enforces the same split.
  */
 export function MonitoringApp(_props: AppComponentProps) {
   const [initialQuery] = useState(() => sessionStorage.getItem(METRICS_EVIDENCE_QUERY_KEY) ?? "");
@@ -141,12 +138,11 @@ export function MonitoringApp(_props: AppComponentProps) {
     tenantId: scope.tenantId,
     projectId,
   };
-  const canManageCollection = permissions.can("cluster.metrics.manage", projectScope);
   const canReadMetrics = permissions.can("cluster.metrics.read", projectScope);
 
   const nav = NAV.map((item) => ({
     ...item,
-    hidden: item.id === COLLECTION_SECTION ? !canManageCollection : !canReadMetrics,
+    hidden: !canReadMetrics,
   }));
   // A section that has just been hidden — the scope changed under a window that
   // was already open — falls back to the landing section rather than rendering

@@ -30,6 +30,19 @@ const (
 	CollectorConfigKey     = "scrape.yaml"
 	CollectorContainerName = "vmagent"
 
+	// ScrapeAnnotation opts a Service or Endpoints object into the collector's
+	// Kubernetes service discovery. The remaining annotations customize the
+	// target without allowing an annotation to inject arbitrary vmagent YAML.
+	ScrapeAnnotation            = "zke-metrics-collector.io/scrape"
+	ScrapeSchemeAnnotation      = "zke-metrics-collector.io/scheme"
+	ScrapePathAnnotation        = "zke-metrics-collector.io/path"
+	ScrapePortAnnotation        = "zke-metrics-collector.io/port"
+	ScrapeAuthAnnotation        = "zke-metrics-collector.io/auth"
+	ScrapeInsecureTLSAnnotation = "zke-metrics-collector.io/tls-insecure-skip-verify"
+
+	ScrapeAuthNone           = "none"
+	ScrapeAuthServiceAccount = "service-account"
+
 	// The two additional scrape targets. They are installed and removed with
 	// the collector rather than separately: a target nothing scrapes is waste,
 	// and a scrape configuration pointing at something that was never installed

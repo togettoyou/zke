@@ -82,6 +82,11 @@ const (
 	MetricsCollectorAction_METRICS_COLLECTOR_ACTION_STATUS      MetricsCollectorAction = 1
 	MetricsCollectorAction_METRICS_COLLECTOR_ACTION_INSTALL     MetricsCollectorAction = 2
 	MetricsCollectorAction_METRICS_COLLECTOR_ACTION_UNINSTALL   MetricsCollectorAction = 3
+	// DETAILS is separate from STATUS because discovering annotated Services
+	// and Endpoints lists cluster-wide objects. The Console only asks for it
+	// after somebody opens one Cluster's detail page; the fleet list keeps its
+	// lightweight status poll.
+	MetricsCollectorAction_METRICS_COLLECTOR_ACTION_DETAILS MetricsCollectorAction = 4
 )
 
 // Enum value maps for MetricsCollectorAction.
@@ -91,12 +96,14 @@ var (
 		1: "METRICS_COLLECTOR_ACTION_STATUS",
 		2: "METRICS_COLLECTOR_ACTION_INSTALL",
 		3: "METRICS_COLLECTOR_ACTION_UNINSTALL",
+		4: "METRICS_COLLECTOR_ACTION_DETAILS",
 	}
 	MetricsCollectorAction_value = map[string]int32{
 		"METRICS_COLLECTOR_ACTION_UNSPECIFIED": 0,
 		"METRICS_COLLECTOR_ACTION_STATUS":      1,
 		"METRICS_COLLECTOR_ACTION_INSTALL":     2,
 		"METRICS_COLLECTOR_ACTION_UNINSTALL":   3,
+		"METRICS_COLLECTOR_ACTION_DETAILS":     4,
 	}
 )
 
@@ -560,9 +567,12 @@ type MetricsCollectorState struct {
 	// One entry per component the Agent knows about, including the collector
 	// itself. The three fields above stay for the collector so an older Server
 	// reading this response still sees what it expects.
-	Components    []*MetricsComponentState `protobuf:"bytes,7,rep,name=components,proto3" json:"components,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Components []*MetricsComponentState `protobuf:"bytes,7,rep,name=components,proto3" json:"components,omitempty"`
+	// Present on a DETAILS response. STATUS deliberately leaves it empty.
+	ScrapeJobs          []*MetricsScrapeJob `protobuf:"bytes,8,rep,name=scrape_jobs,json=scrapeJobs,proto3" json:"scrape_jobs,omitempty"`
+	ScrapeJobsTruncated bool                `protobuf:"varint,9,opt,name=scrape_jobs_truncated,json=scrapeJobsTruncated,proto3" json:"scrape_jobs_truncated,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *MetricsCollectorState) Reset() {
@@ -644,6 +654,147 @@ func (x *MetricsCollectorState) GetComponents() []*MetricsComponentState {
 	return nil
 }
 
+func (x *MetricsCollectorState) GetScrapeJobs() []*MetricsScrapeJob {
+	if x != nil {
+		return x.ScrapeJobs
+	}
+	return nil
+}
+
+func (x *MetricsCollectorState) GetScrapeJobsTruncated() bool {
+	if x != nil {
+		return x.ScrapeJobsTruncated
+	}
+	return false
+}
+
+// MetricsScrapeJob is one effective job shown in collector details. Built-in
+// jobs have source_kind "Builtin" and no Kubernetes identity; annotated jobs
+// name the Service or Endpoints object that opted its ready endpoints in.
+type MetricsScrapeJob struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	JobName            string                 `protobuf:"bytes,1,opt,name=job_name,json=jobName,proto3" json:"job_name,omitempty"`
+	SourceKind         string                 `protobuf:"bytes,2,opt,name=source_kind,json=sourceKind,proto3" json:"source_kind,omitempty"`
+	Namespace          string                 `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	SourceName         string                 `protobuf:"bytes,4,opt,name=source_name,json=sourceName,proto3" json:"source_name,omitempty"`
+	Scheme             string                 `protobuf:"bytes,5,opt,name=scheme,proto3" json:"scheme,omitempty"`
+	MetricsPath        string                 `protobuf:"bytes,6,opt,name=metrics_path,json=metricsPath,proto3" json:"metrics_path,omitempty"`
+	Port               string                 `protobuf:"bytes,7,opt,name=port,proto3" json:"port,omitempty"`
+	Authentication     string                 `protobuf:"bytes,8,opt,name=authentication,proto3" json:"authentication,omitempty"`
+	InsecureSkipVerify bool                   `protobuf:"varint,9,opt,name=insecure_skip_verify,json=insecureSkipVerify,proto3" json:"insecure_skip_verify,omitempty"`
+	Targets            []string               `protobuf:"bytes,10,rep,name=targets,proto3" json:"targets,omitempty"`
+	TargetsTruncated   bool                   `protobuf:"varint,11,opt,name=targets_truncated,json=targetsTruncated,proto3" json:"targets_truncated,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *MetricsScrapeJob) Reset() {
+	*x = MetricsScrapeJob{}
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricsScrapeJob) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricsScrapeJob) ProtoMessage() {}
+
+func (x *MetricsScrapeJob) ProtoReflect() protoreflect.Message {
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricsScrapeJob.ProtoReflect.Descriptor instead.
+func (*MetricsScrapeJob) Descriptor() ([]byte, []int) {
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *MetricsScrapeJob) GetJobName() string {
+	if x != nil {
+		return x.JobName
+	}
+	return ""
+}
+
+func (x *MetricsScrapeJob) GetSourceKind() string {
+	if x != nil {
+		return x.SourceKind
+	}
+	return ""
+}
+
+func (x *MetricsScrapeJob) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *MetricsScrapeJob) GetSourceName() string {
+	if x != nil {
+		return x.SourceName
+	}
+	return ""
+}
+
+func (x *MetricsScrapeJob) GetScheme() string {
+	if x != nil {
+		return x.Scheme
+	}
+	return ""
+}
+
+func (x *MetricsScrapeJob) GetMetricsPath() string {
+	if x != nil {
+		return x.MetricsPath
+	}
+	return ""
+}
+
+func (x *MetricsScrapeJob) GetPort() string {
+	if x != nil {
+		return x.Port
+	}
+	return ""
+}
+
+func (x *MetricsScrapeJob) GetAuthentication() string {
+	if x != nil {
+		return x.Authentication
+	}
+	return ""
+}
+
+func (x *MetricsScrapeJob) GetInsecureSkipVerify() bool {
+	if x != nil {
+		return x.InsecureSkipVerify
+	}
+	return false
+}
+
+func (x *MetricsScrapeJob) GetTargets() []string {
+	if x != nil {
+		return x.Targets
+	}
+	return nil
+}
+
+func (x *MetricsScrapeJob) GetTargetsTruncated() bool {
+	if x != nil {
+		return x.TargetsTruncated
+	}
+	return false
+}
+
 type MetricsComponentState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Component is one of the identifiers in pkg/shared/observability.
@@ -666,7 +817,7 @@ type MetricsComponentState struct {
 
 func (x *MetricsComponentState) Reset() {
 	*x = MetricsComponentState{}
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[6]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -678,7 +829,7 @@ func (x *MetricsComponentState) String() string {
 func (*MetricsComponentState) ProtoMessage() {}
 
 func (x *MetricsComponentState) ProtoReflect() protoreflect.Message {
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[6]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -691,7 +842,7 @@ func (x *MetricsComponentState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsComponentState.ProtoReflect.Descriptor instead.
 func (*MetricsComponentState) Descriptor() ([]byte, []int) {
-	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{6}
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *MetricsComponentState) GetComponent() string {
@@ -756,7 +907,7 @@ type MetricsCollectorResponse struct {
 
 func (x *MetricsCollectorResponse) Reset() {
 	*x = MetricsCollectorResponse{}
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[7]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -768,7 +919,7 @@ func (x *MetricsCollectorResponse) String() string {
 func (*MetricsCollectorResponse) ProtoMessage() {}
 
 func (x *MetricsCollectorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[7]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -781,7 +932,7 @@ func (x *MetricsCollectorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsCollectorResponse.ProtoReflect.Descriptor instead.
 func (*MetricsCollectorResponse) Descriptor() ([]byte, []int) {
-	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{7}
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *MetricsCollectorResponse) GetResult() ResultCode {
@@ -835,7 +986,7 @@ type MetricsIngestAck struct {
 
 func (x *MetricsIngestAck) Reset() {
 	*x = MetricsIngestAck{}
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[8]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -847,7 +998,7 @@ func (x *MetricsIngestAck) String() string {
 func (*MetricsIngestAck) ProtoMessage() {}
 
 func (x *MetricsIngestAck) ProtoReflect() protoreflect.Message {
-	mi := &file_api_agent_v1_metrics_proto_msgTypes[8]
+	mi := &file_api_agent_v1_metrics_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -860,7 +1011,7 @@ func (x *MetricsIngestAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsIngestAck.ProtoReflect.Descriptor instead.
 func (*MetricsIngestAck) Descriptor() ([]byte, []int) {
-	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{8}
+	return file_api_agent_v1_metrics_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *MetricsIngestAck) GetBatchId() uint64 {
@@ -938,7 +1089,7 @@ const file_api_agent_v1_metrics_proto_rawDesc = "" +
 	"cpuRequest\x12%\n" +
 	"\x0ememory_request\x18\x04 \x01(\tR\rmemoryRequest\x12\x1b\n" +
 	"\tcpu_limit\x18\x05 \x01(\tR\bcpuLimit\x12!\n" +
-	"\fmemory_limit\x18\x06 \x01(\tR\vmemoryLimit\"\xab\x02\n" +
+	"\fmemory_limit\x18\x06 \x01(\tR\vmemoryLimit\"\xa0\x03\n" +
 	"\x15MetricsCollectorState\x12\x1c\n" +
 	"\tinstalled\x18\x01 \x01(\bR\tinstalled\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x14\n" +
@@ -948,7 +1099,25 @@ const file_api_agent_v1_metrics_proto_rawDesc = "" +
 	"\x10credential_ready\x18\x06 \x01(\bR\x0fcredentialReady\x12C\n" +
 	"\n" +
 	"components\x18\a \x03(\v2#.zke.agent.v1.MetricsComponentStateR\n" +
-	"components\"\x9b\x02\n" +
+	"components\x12?\n" +
+	"\vscrape_jobs\x18\b \x03(\v2\x1e.zke.agent.v1.MetricsScrapeJobR\n" +
+	"scrapeJobs\x122\n" +
+	"\x15scrape_jobs_truncated\x18\t \x01(\bR\x13scrapeJobsTruncated\"\xfd\x02\n" +
+	"\x10MetricsScrapeJob\x12\x19\n" +
+	"\bjob_name\x18\x01 \x01(\tR\ajobName\x12\x1f\n" +
+	"\vsource_kind\x18\x02 \x01(\tR\n" +
+	"sourceKind\x12\x1c\n" +
+	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x1f\n" +
+	"\vsource_name\x18\x04 \x01(\tR\n" +
+	"sourceName\x12\x16\n" +
+	"\x06scheme\x18\x05 \x01(\tR\x06scheme\x12!\n" +
+	"\fmetrics_path\x18\x06 \x01(\tR\vmetricsPath\x12\x12\n" +
+	"\x04port\x18\a \x01(\tR\x04port\x12&\n" +
+	"\x0eauthentication\x18\b \x01(\tR\x0eauthentication\x120\n" +
+	"\x14insecure_skip_verify\x18\t \x01(\bR\x12insecureSkipVerify\x12\x18\n" +
+	"\atargets\x18\n" +
+	" \x03(\tR\atargets\x12+\n" +
+	"\x11targets_truncated\x18\v \x01(\bR\x10targetsTruncated\"\x9b\x02\n" +
 	"\x15MetricsComponentState\x12\x1c\n" +
 	"\tcomponent\x18\x01 \x01(\tR\tcomponent\x12\x1c\n" +
 	"\tinstalled\x18\x02 \x01(\bR\tinstalled\x12\x14\n" +
@@ -971,12 +1140,13 @@ const file_api_agent_v1_metrics_proto_rawDesc = "" +
 	"\x12retry_after_millis\x18\x05 \x01(\x04R\x10retryAfterMillis*\x7f\n" +
 	"\x16MetricsPayloadEncoding\x12(\n" +
 	"$METRICS_PAYLOAD_ENCODING_UNSPECIFIED\x10\x00\x12;\n" +
-	"7METRICS_PAYLOAD_ENCODING_PROMETHEUS_REMOTE_WRITE_SNAPPY\x10\x01*\xb5\x01\n" +
+	"7METRICS_PAYLOAD_ENCODING_PROMETHEUS_REMOTE_WRITE_SNAPPY\x10\x01*\xdb\x01\n" +
 	"\x16MetricsCollectorAction\x12(\n" +
 	"$METRICS_COLLECTOR_ACTION_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fMETRICS_COLLECTOR_ACTION_STATUS\x10\x01\x12$\n" +
 	" METRICS_COLLECTOR_ACTION_INSTALL\x10\x02\x12&\n" +
-	"\"METRICS_COLLECTOR_ACTION_UNINSTALL\x10\x03B0Z.github.com/togettoyou/zke/api/agent/v1;agentv1b\x06proto3"
+	"\"METRICS_COLLECTOR_ACTION_UNINSTALL\x10\x03\x12$\n" +
+	" METRICS_COLLECTOR_ACTION_DETAILS\x10\x04B0Z.github.com/togettoyou/zke/api/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_api_agent_v1_metrics_proto_rawDescOnce sync.Once
@@ -991,7 +1161,7 @@ func file_api_agent_v1_metrics_proto_rawDescGZIP() []byte {
 }
 
 var file_api_agent_v1_metrics_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_api_agent_v1_metrics_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_api_agent_v1_metrics_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_api_agent_v1_metrics_proto_goTypes = []any{
 	(MetricsPayloadEncoding)(0),       // 0: zke.agent.v1.MetricsPayloadEncoding
 	(MetricsCollectorAction)(0),       // 1: zke.agent.v1.MetricsCollectorAction
@@ -1001,26 +1171,28 @@ var file_api_agent_v1_metrics_proto_goTypes = []any{
 	(*MetricsCollectorRequest)(nil),   // 5: zke.agent.v1.MetricsCollectorRequest
 	(*MetricsCollectorComponent)(nil), // 6: zke.agent.v1.MetricsCollectorComponent
 	(*MetricsCollectorState)(nil),     // 7: zke.agent.v1.MetricsCollectorState
-	(*MetricsComponentState)(nil),     // 8: zke.agent.v1.MetricsComponentState
-	(*MetricsCollectorResponse)(nil),  // 9: zke.agent.v1.MetricsCollectorResponse
-	(*MetricsIngestAck)(nil),          // 10: zke.agent.v1.MetricsIngestAck
-	(ResultCode)(0),                   // 11: zke.agent.v1.ResultCode
+	(*MetricsScrapeJob)(nil),          // 8: zke.agent.v1.MetricsScrapeJob
+	(*MetricsComponentState)(nil),     // 9: zke.agent.v1.MetricsComponentState
+	(*MetricsCollectorResponse)(nil),  // 10: zke.agent.v1.MetricsCollectorResponse
+	(*MetricsIngestAck)(nil),          // 11: zke.agent.v1.MetricsIngestAck
+	(ResultCode)(0),                   // 12: zke.agent.v1.ResultCode
 }
 var file_api_agent_v1_metrics_proto_depIdxs = []int32{
 	0,  // 0: zke.agent.v1.MetricsIngestHello.payload_encoding:type_name -> zke.agent.v1.MetricsPayloadEncoding
-	11, // 1: zke.agent.v1.MetricsIngestReady.result:type_name -> zke.agent.v1.ResultCode
+	12, // 1: zke.agent.v1.MetricsIngestReady.result:type_name -> zke.agent.v1.ResultCode
 	1,  // 2: zke.agent.v1.MetricsCollectorRequest.action:type_name -> zke.agent.v1.MetricsCollectorAction
 	6,  // 3: zke.agent.v1.MetricsCollectorRequest.kube_state_metrics:type_name -> zke.agent.v1.MetricsCollectorComponent
 	6,  // 4: zke.agent.v1.MetricsCollectorRequest.node_exporter:type_name -> zke.agent.v1.MetricsCollectorComponent
-	8,  // 5: zke.agent.v1.MetricsCollectorState.components:type_name -> zke.agent.v1.MetricsComponentState
-	11, // 6: zke.agent.v1.MetricsCollectorResponse.result:type_name -> zke.agent.v1.ResultCode
-	7,  // 7: zke.agent.v1.MetricsCollectorResponse.state:type_name -> zke.agent.v1.MetricsCollectorState
-	11, // 8: zke.agent.v1.MetricsIngestAck.result:type_name -> zke.agent.v1.ResultCode
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	9,  // 5: zke.agent.v1.MetricsCollectorState.components:type_name -> zke.agent.v1.MetricsComponentState
+	8,  // 6: zke.agent.v1.MetricsCollectorState.scrape_jobs:type_name -> zke.agent.v1.MetricsScrapeJob
+	12, // 7: zke.agent.v1.MetricsCollectorResponse.result:type_name -> zke.agent.v1.ResultCode
+	7,  // 8: zke.agent.v1.MetricsCollectorResponse.state:type_name -> zke.agent.v1.MetricsCollectorState
+	12, // 9: zke.agent.v1.MetricsIngestAck.result:type_name -> zke.agent.v1.ResultCode
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_api_agent_v1_metrics_proto_init() }
@@ -1035,7 +1207,7 @@ func file_api_agent_v1_metrics_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_agent_v1_metrics_proto_rawDesc), len(file_api_agent_v1_metrics_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

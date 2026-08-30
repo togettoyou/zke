@@ -731,8 +731,8 @@ export interface paths {
          *     重要的是那里现在跑着什么，Server 侧的标记会在有人手工删除 Deployment 后失真。
          *
          *     采集组件安装在该集群的 Agent Namespace 内，由 Agent 自身创建与删除，
-         *     摄取凭证也由 Agent 生成，从不经过 Server。要求 `cluster.metrics.manage`；
-         *     读取指标是另一个权限，只能看图表的人无法改变集群里运行的东西。
+         *     摄取凭证也由 Agent 生成，从不经过 Server。要求 `cluster.metrics.read`；
+         *     安装和删除仍分别由 POST、DELETE 以 `cluster.metrics.manage` 保护。
          */
         get: operations["getClusterMetricsCollector"];
         put?: never;
@@ -750,6 +750,30 @@ export interface paths {
          *     不留下一个没有采集组件仍然可用的令牌。同名但不由 ZKE 管理的对象会被拒绝。
          */
         delete: operations["uninstallClusterMetricsCollector"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/clusters/{cluster_id}/metrics-collector/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 按需读取目标集群当前的采集 Job。除内置 kubelet、kube-state-metrics 与
+         *     node-exporter Job 外，还会列出由 `zke-metrics-collector.io/scrape=true`
+         *     发现的 Service 或 Endpoints、最终 scheme/path/port/认证模式与就绪目标。
+         *
+         *     该调用会经 Agent 列出集群内 Service 与 Endpoints，因此只在进入详情页时
+         *     执行，不参与采集接入列表轮询。要求 `cluster.metrics.read`。
+         */
+        get: operations["getClusterMetricsCollectorJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6611,6 +6635,32 @@ export interface components {
                 /** @description ZKE 自己撰写的说明，不回显集群的原始错误。 */
                 unavailable_message: string;
             }[];
+            /** @description 仅详情接口填充；列表状态接口返回空数组。认证只报告模式，不返回凭证。 */
+            scrape_jobs: components["schemas"]["MetricsScrapeJob"][];
+            /** @description Job 数量超过详情接口的有界响应时为 true。 */
+            scrape_jobs_truncated: boolean;
+        };
+        MetricsScrapeJob: {
+            job_name: string;
+            /** @enum {string} */
+            source_kind: "Builtin" | "Service" | "Endpoints";
+            namespace: string;
+            source_name: string;
+            /** @enum {string} */
+            scheme: "http" | "https";
+            metrics_path: string;
+            /** @description 注解未指定且使用 Endpoints 原始端口时为空。 */
+            port: string;
+            /**
+             * @description 仅认证模式；不会返回 Token。service-account 只允许 HTTPS。
+             * @enum {string}
+             */
+            authentication: "none" | "service-account";
+            insecure_skip_verify: boolean;
+            /** @description 当前就绪的 Endpoints 地址；内置动态 Node Job 可为空。 */
+            targets: string[];
+            /** @description 该 Job 的目标超过有界响应时为 true。 */
+            targets_truncated: boolean;
         };
         KubernetesClusterOverview: {
             generated_at: components["schemas"]["Timestamp"];
@@ -9952,6 +10002,37 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description 移除后的采集组件状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsCollectorState"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    getClusterMetricsCollectorJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cluster_id: components["parameters"]["ClusterID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 采集组件状态与当前 Job */
             200: {
                 headers: {
                     [name: string]: unknown;

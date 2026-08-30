@@ -132,7 +132,10 @@ QUIC 连接转发给 Server。这也让"断线期间数据不丢"由 vmagent 的
   变成"持 `cluster.metrics.manage` 就能往 Agent Namespace 里跑任意工作负载"；
 - 安装的对象是 vmagent 的 Deployment、ServiceAccount、ClusterRole/ClusterRoleBinding 与抓取配置
   ConfigMap，全部位于该集群的 Agent Namespace（`identity.namespace`）。采集组件的 RBAC 只有 `nodes` 的
-  读取和 `nodes/metrics` 的 `get`：比 `nodes/proxy` 窄，后者可以访问 kubelet 的任意路径；
+  读取和 `nodes/metrics` 的 `get`：比 `nodes/proxy` 窄，后者可以访问 kubelet 的任意路径；再加上
+  Service、Endpoints 与 Pod 的 `get`/`list`/`watch`——Kubernetes 服务发现要读的元数据，注解接入的目标
+  集合由它保持最新。Secret 与 ConfigMap 不在其中：注解只能选择「不认证」或「携带采集组件自己的
+  ServiceAccount Token」，不能引用集群里的任何凭证，否则一个指标注解就成了集群凭证读取器；
 - ZKE Agent 的 ClusterRole 因此需要持有 `nodes/metrics` 的 `get`——Kubernetes 拒绝创建一个包含创建者本身
   没有的权限的 ClusterRole。Agent 自己从不抓取 kubelet，持有它只是为了能够授予；
 - 安装是幂等的：重复安装不会替换已有的摄取凭证，运行中的采集不会因此中断。同名但不带 ZKE 管理标签的
@@ -909,7 +912,10 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
    维度（含 Deployment 的两级归属）、Pod 重启，以及节点文件系统、网络与磁盘 IO；查询目录声明依赖组件，
    Console 在缺少组件时说明而不是呈现空图。此后在同一形状上补齐了 kubelet 的另外两个端点（容器 CPU 限流、
    Pod 网络、PVC 使用率与 inode）、容器维度用量、容器等待与退出原因、Namespace 配额，以及节点的连接跟踪、
-   TCP 重传与 PSI 压力停顿——都没有引入第四个采集组件。
+   TCP 重传与 PSI 压力停顿——都没有引入第四个采集组件。集群内自己的工作负载则通过
+   `zke-metrics-collector.io/*` 注解接入：Service 或 Endpoints 打上注解即被服务发现纳入，scheme、path、
+   port、认证模式与 TLS 校验都在这套受限词汇里表达，注解本身不能成为抓取配置；采集接入的集群详情按同一套
+   取值规则列出当前生效的 Job 与就绪目标，因此界面说的和集群在抓的是同一件事。
 4. **日志链路**：VictoriaLogs 与日志采集，复用同一条回传通道与作用域改写机制；正文体量、保留期与
    敏感内容过滤需要独立设计。
 5. **告警**：告警规则、评估位置（Server 侧集中评估与集群侧就地评估的取舍）、告警记录与通知，

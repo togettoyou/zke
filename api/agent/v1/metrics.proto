@@ -45,6 +45,11 @@ enum MetricsCollectorAction {
   METRICS_COLLECTOR_ACTION_STATUS = 1;
   METRICS_COLLECTOR_ACTION_INSTALL = 2;
   METRICS_COLLECTOR_ACTION_UNINSTALL = 3;
+  // DETAILS is separate from STATUS because discovering annotated Services
+  // and Endpoints lists cluster-wide objects. The Console only asks for it
+  // after somebody opens one Cluster's detail page; the fleet list keeps its
+  // lightweight status poll.
+  METRICS_COLLECTOR_ACTION_DETAILS = 4;
 }
 
 // The collector is installed by the Agent inside its own Cluster rather than by
@@ -105,6 +110,26 @@ message MetricsCollectorState {
   // itself. The three fields above stay for the collector so an older Server
   // reading this response still sees what it expects.
   repeated MetricsComponentState components = 7;
+  // Present on a DETAILS response. STATUS deliberately leaves it empty.
+  repeated MetricsScrapeJob scrape_jobs = 8;
+  bool scrape_jobs_truncated = 9;
+}
+
+// MetricsScrapeJob is one effective job shown in collector details. Built-in
+// jobs have source_kind "Builtin" and no Kubernetes identity; annotated jobs
+// name the Service or Endpoints object that opted its ready endpoints in.
+message MetricsScrapeJob {
+  string job_name = 1;
+  string source_kind = 2;
+  string namespace = 3;
+  string source_name = 4;
+  string scheme = 5;
+  string metrics_path = 6;
+  string port = 7;
+  string authentication = 8;
+  bool insecure_skip_verify = 9;
+  repeated string targets = 10;
+  bool targets_truncated = 11;
 }
 
 message MetricsComponentState {

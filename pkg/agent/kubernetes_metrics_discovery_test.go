@@ -1,0 +1,278 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+
+	agentv1 "github.com/togettoyou/zke/api/agent/v1"
+	"github.com/togettoyou/zke/pkg/shared/observability"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+)
+
+func annotatedService(
+	namespace string,
+	name string,
+	annotations map[string]string,
+) *corev1.Service {
+	return &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Namespace: namespace, Name: name, Annotations: annotations,
+	}}
+}
+
+func annotatedEndpoints(
+	namespace string,
+	name string,
+	annotations map[string]string,
+	subsets []corev1.EndpointSubset,
+) *corev1.Endpoints {
+	return &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace, Name: name, Annotations: annotations,
+		},
+		Subsets: subsets,
+	}
+}
+
+func detailsRequest() *agentv1.MetricsCollectorRequest {
+	return &agentv1.MetricsCollectorRequest{
+		Action: agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_DETAILS,
+	}
+}
+
+func jobByName(state *agentv1.MetricsCollectorState, name string) *agentv1.MetricsScrapeJob {
+	for _, job := range state.GetScrapeJobs() {
+		if job.GetJobName() == name {
+			return job
+		}
+	}
+	return nil
+}
+
+// The detail response has to describe the same targets the scrape configuration
+// keeps. Reporting a job the collector never scrapes — or hiding one it does —
+// turns this screen into a second, wrong source of truth about a Cluster.
+func TestCollectorDetailsReportsBuiltInAndAnnotatedJobs(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewClientset(
+		annotatedService("shop", "api", map[string]string{
+			observability.ScrapeAnnotation:     "true",
+			observability.ScrapePortAnnotation: "9102",
+			observability.ScrapePathAnnotation: "/actuator/prometheus",
+		}),
+		annotatedEndpoints("shop", "api", nil, []corev1.EndpointSubset{{
+			Addresses:         []corev1.EndpointAddress{{IP: "10.1.0.4"}, {IP: "10.1.0.5"}},
+			NotReadyAddresses: []corev1.EndpointAddress{{IP: "10.1.0.6"}},
+			Ports:             []corev1.EndpointPort{{Port: 8080}},
+		}}),
+		// Opted in on the Endpoints object alone: an externally managed
+		// backend has no Service annotation to inherit.
+		annotatedEndpoints("shop", "legacy", map[string]string{
+			observability.ScrapeAnnotation:       "true",
+			observability.ScrapeSchemeAnnotation: "https",
+			observability.ScrapeAuthAnnotation:   observability.ScrapeAuthServiceAccount,
+		}, []corev1.EndpointSubset{{
+			Addresses: []corev1.EndpointAddress{{IP: "10.1.0.9"}},
+			Ports:     []corev1.EndpointPort{{Port: 9090}},
+		}}),
+		annotatedService("shop", "quiet", nil),
+	)
+	handler := collectorHandler(client)
+	if _, err := handler(bundleRequest()); err != nil {
+		t.Fatal(err)
+	}
+	response, err := handler(detailsRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetResult() != agentv1.ResultCode_RESULT_CODE_OK {
+		t.Fatalf("details response = %+v", response)
+	}
+	state := response.GetState()
+	if state.GetScrapeJobsTruncated() {
+		t.Fatal("a four-object Cluster reported a truncated job list")
+	}
+	for _, name := range []string{"kubelet", "kube-state-metrics", "node-exporter"} {
+		job := jobByName(state, name)
+		if job == nil || job.GetSourceKind() != "Builtin" {
+			t.Fatalf("built-in job %q missing from details: %+v", name, state.GetScrapeJobs())
+		}
+	}
+
+	api := jobByName(state, "shop/api")
+	if api == nil {
+		t.Fatalf("annotated Service missing from details: %+v", state.GetScrapeJobs())
+	}
+	// The annotated port replaces the Endpoints port, and unready addresses are
+	// not scraped, so neither may appear as a target.
+	if api.GetSourceKind() != "Service" || api.GetScheme() != "http" ||
+		api.GetMetricsPath() != "/actuator/prometheus" || api.GetPort() != "9102" ||
+		api.GetAuthentication() != observability.ScrapeAuthNone ||
+		len(api.GetTargets()) != 2 ||
+		api.GetTargets()[0] != "10.1.0.4:9102" || api.GetTargets()[1] != "10.1.0.5:9102" {
+		t.Fatalf("annotated Service job = %+v", api)
+	}
+
+	legacy := jobByName(state, "shop/legacy")
+	if legacy == nil || legacy.GetSourceKind() != "Endpoints" ||
+		legacy.GetScheme() != "https" ||
+		legacy.GetAuthentication() != observability.ScrapeAuthServiceAccount ||
+		len(legacy.GetTargets()) != 1 || legacy.GetTargets()[0] != "10.1.0.9:9090" {
+		t.Fatalf("annotated Endpoints job = %+v", legacy)
+	}
+
+	if jobByName(state, "shop/quiet") != nil {
+		t.Fatalf("an unannotated Service was reported: %+v", state.GetScrapeJobs())
+	}
+	// The fleet list polls STATUS, and it must not pay for a cluster-wide
+	// listing of every Service and Endpoints object.
+	status, err := handler(&agentv1.MetricsCollectorRequest{
+		Action: agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_STATUS,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.GetState().GetScrapeJobs()) != 0 {
+		t.Fatalf("status carried discovery results: %+v", status.GetState().GetScrapeJobs())
+	}
+}
+
+// The Endpoints object is the more specific one, so its annotations win over
+// the same annotation on the Service — which is exactly what the relabel rules
+// do, and the two have to agree.
+func TestCollectorDetailsPrefersEndpointAnnotations(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewClientset(
+		annotatedService("shop", "api", map[string]string{
+			observability.ScrapeAnnotation:       "true",
+			observability.ScrapeSchemeAnnotation: "http",
+			observability.ScrapePathAnnotation:   "/metrics",
+		}),
+		annotatedEndpoints("shop", "api", map[string]string{
+			observability.ScrapeSchemeAnnotation:      "https",
+			observability.ScrapePathAnnotation:        "/telemetry",
+			observability.ScrapeInsecureTLSAnnotation: "true",
+		}, []corev1.EndpointSubset{{
+			Addresses: []corev1.EndpointAddress{{IP: "10.1.0.4"}},
+			Ports:     []corev1.EndpointPort{{Port: 8443}},
+		}}),
+	)
+	handler := collectorHandler(client)
+	if _, err := handler(installRequest()); err != nil {
+		t.Fatal(err)
+	}
+	response, err := handler(detailsRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := jobByName(response.GetState(), "shop/api")
+	if job == nil || job.GetScheme() != "https" || job.GetMetricsPath() != "/telemetry" ||
+		!job.GetInsecureSkipVerify() || len(job.GetTargets()) != 1 ||
+		job.GetTargets()[0] != "10.1.0.4:8443" {
+		t.Fatalf("effective job = %+v", job)
+	}
+}
+
+// Annotation values are Cluster input. A combination the scrape configuration
+// refuses must not be reported as if something were collecting it.
+func TestCollectorDetailsSkipsUnsupportedAnnotations(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewClientset(
+		// A bearer token over cleartext would put the collector's own
+		// ServiceAccount credential on the wire.
+		annotatedService("shop", "plaintext-token", map[string]string{
+			observability.ScrapeAnnotation:     "true",
+			observability.ScrapeAuthAnnotation: observability.ScrapeAuthServiceAccount,
+		}),
+		annotatedService("shop", "unknown-auth", map[string]string{
+			observability.ScrapeAnnotation:     "true",
+			observability.ScrapeAuthAnnotation: "basic",
+		}),
+		// Skipping verification only means anything over TLS, and accepting it
+		// over http would report a guarantee the scrape never made.
+		annotatedService("shop", "insecure-plaintext", map[string]string{
+			observability.ScrapeAnnotation:            "true",
+			observability.ScrapeInsecureTLSAnnotation: "true",
+		}),
+		annotatedService("shop", "bad-scheme", map[string]string{
+			observability.ScrapeAnnotation:       "true",
+			observability.ScrapeSchemeAnnotation: "file",
+		}),
+		annotatedService("shop", "bad-path", map[string]string{
+			observability.ScrapeAnnotation:     "true",
+			observability.ScrapePathAnnotation: "metrics",
+		}),
+		annotatedService("shop", "bad-port", map[string]string{
+			observability.ScrapeAnnotation:     "true",
+			observability.ScrapePortAnnotation: "70000",
+		}),
+	)
+	handler := collectorHandler(client)
+	if _, err := handler(installRequest()); err != nil {
+		t.Fatal(err)
+	}
+	response, err := handler(detailsRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, job := range response.GetState().GetScrapeJobs() {
+		if job.GetSourceKind() != "Builtin" {
+			t.Fatalf("an unsupported annotation was reported as a job: %+v", job)
+		}
+	}
+}
+
+// The scrape configuration and the detail report read the same annotations, so
+// they have to accept the same values. A value one of them takes and the other
+// refuses is a Cluster whose screen contradicts what it is collecting.
+func TestAnnotationGrammarIsSharedByScrapeConfigAndDetails(t *testing.T) {
+	t.Parallel()
+
+	config := renderAnnotatedEndpointScrapeJobs()
+	for _, pattern := range []string{
+		scrapeSchemePattern, scrapePathPattern, scrapePortPattern,
+	} {
+		if !strings.Contains(config, `regex: "(`+pattern+`)"`) {
+			t.Fatalf("scrape configuration does not enforce %q:\n%s", pattern, config)
+		}
+	}
+	for value, accepted := range map[string]bool{
+		"":      true,
+		"1":     true,
+		"80":    true,
+		"8080":  true,
+		"10250": true,
+		"65535": true,
+		// Leading zeros and signs are refused rather than normalized: the two
+		// sides would otherwise have to agree on how to normalize them.
+		"080":   false,
+		"+80":   false,
+		"0":     false,
+		"65536": false,
+		"70000": false,
+		"http":  false,
+	} {
+		if scrapePortExpression.MatchString(value) != accepted {
+			t.Fatalf("port %q acceptance = %v", value, !accepted)
+		}
+	}
+	for value, accepted := range map[string]bool{
+		"": true, "http": true, "https": true, "HTTP": false, "file": false, "httpx": false,
+	} {
+		if scrapeSchemeExpression.MatchString(value) != accepted {
+			t.Fatalf("scheme %q acceptance = %v", value, !accepted)
+		}
+	}
+	for value, accepted := range map[string]bool{
+		"": true, "/metrics": true, "/actuator/prometheus": true,
+		"metrics": false, "http://host/metrics": false, "/a\nb": false,
+	} {
+		if scrapePathExpression.MatchString(value) != accepted {
+			t.Fatalf("path %q acceptance = %v", value, !accepted)
+		}
+	}
+}

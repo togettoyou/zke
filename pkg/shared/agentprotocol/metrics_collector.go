@@ -137,6 +137,7 @@ func ValidateMetricsCollectorRequest(
 	}
 	switch request.GetAction() {
 	case agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_STATUS,
+		agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_DETAILS,
 		agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_UNINSTALL:
 		// Neither reads the desired configuration, so carrying any is a sign
 		// the two sides disagree about what is being asked.
@@ -280,6 +281,16 @@ func validateMetricsCollectorResponse(
 	if state.GetDesiredReplicas() < 0 || state.GetReadyReplicas() < 0 ||
 		state.GetReadyReplicas() > state.GetDesiredReplicas() {
 		return ErrStreamProtocol
+	}
+	if len(state.GetScrapeJobs()) > 500 {
+		return ErrStreamProtocol
+	}
+	for _, job := range state.GetScrapeJobs() {
+		if job.GetJobName() == "" || job.GetSourceKind() == "" ||
+			job.GetScheme() == "" || job.GetMetricsPath() == "" ||
+			len(job.GetTargets()) > 200 {
+			return ErrStreamProtocol
+		}
 	}
 	return nil
 }

@@ -598,16 +598,23 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.clusterOverview.get,
 	)
-	// One permission covers installing and removing the collector; reading
-	// metrics is a different one, so an operator who may look at charts cannot
-	// change what runs in a Cluster.
+	// Collector state and discovered jobs explain the charts, so they use the
+	// same read permission. Only the two mutations require manage.
 	clusterRoutes.GET(
 		"/:cluster_id/metrics-collector",
 		handlers.authorizationMiddleware.RequireCluster(
-			rbac.PermissionClusterMetricsManage,
+			rbac.PermissionClusterMetricsRead,
 			"cluster_id",
 		),
 		handlers.metricsCollector.status,
+	)
+	clusterRoutes.GET(
+		"/:cluster_id/metrics-collector/jobs",
+		handlers.authorizationMiddleware.RequireCluster(
+			rbac.PermissionClusterMetricsRead,
+			"cluster_id",
+		),
+		handlers.metricsCollector.details,
 	)
 	clusterRoutes.POST(
 		"/:cluster_id/metrics-collector",

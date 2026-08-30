@@ -8,6 +8,7 @@ import { isApiError } from "@/api/errors";
 import { useClusters } from "@/api/queries/clusters";
 import {
   useInstallMetricsCollector,
+  useMetricsCollectorJobs,
   useMetricsCollectorStates,
   useUninstallMetricsCollector,
 } from "@/api/queries/observability";
@@ -17,15 +18,19 @@ import {
   type ClusterAggregate,
   type MetricsCollectorState,
   type MetricsComponentState,
+  type MetricsScrapeJob,
 } from "@/api/types";
-import { SectionTitle } from "@/apps/AppShell";
+import { PageHeader, SectionTitle } from "@/apps/AppShell";
 import { useSessionContext } from "@/auth/session-context";
 import { DataTable } from "@/components/common/data-table";
 import { RowDeleteAction } from "@/components/common/delete-action";
+import { DetailCard, DetailRow } from "@/components/common/detail";
 import { RefreshAction } from "@/components/common/refresh-action";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { EmptyState, ErrorState, LoadingState } from "@/components/common/state";
 import { RelativeTime, StatusBadge } from "@/components/common/status";
 import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/misc";
 import { useWindowVisible } from "@/desktop/window-visibility";
 import { useScopeStore } from "@/scope/scope-store";
 
@@ -70,6 +75,7 @@ export function CollectionSection() {
   const uninstall = useUninstallMetricsCollector();
   const [removalTarget, setRemovalTarget] = useState<ClusterAggregate | null>(null);
   const [installTarget, setInstallTarget] = useState<ClusterAggregate | null>(null);
+  const [detailTarget, setDetailTarget] = useState<ClusterAggregate | null>(null);
 
   const canManage = permissions.can("cluster.metrics.manage", {
     type: "project",
@@ -273,6 +279,16 @@ export function CollectionSection() {
     [byCluster, canManage, install.isPending, openInstall, openRemoval, uninstall.isPending],
   );
 
+  if (detailTarget) {
+    return (
+      <CollectionDetailView
+        cluster={detailTarget}
+        canManage={canManage}
+        onBack={() => setDetailTarget(null)}
+      />
+    );
+  }
+
   // No scope guard here: the application does not open its shell without a
   // Project, so this section only ever renders with one.
   return (
@@ -298,6 +314,7 @@ export function CollectionSection() {
         error={clusters.error}
         onRetry={() => void clusters.refetch()}
         rowKey={(cluster) => cluster.id}
+        onRowClick={setDetailTarget}
         emptyTitle="该项目下没有已接入的集群"
         emptyDescription="先在「集群接入管理」中接入集群，再为其启用指标采集。"
         pagination={{ value: clusters.data?.pagination, onOffsetChange: setOffset }}
@@ -396,6 +413,172 @@ export function CollectionSection() {
           });
         }}
       />
+    </div>
+  );
+}
+
+function CollectionDetailView({
+  cluster,
+  canManage,
+  onBack,
+}: {
+  cluster: ClusterAggregate;
+  canManage: boolean;
+  onBack: () => void;
+}) {
+  const details = useMetricsCollectorJobs(cluster.id);
+  const state = details.data;
+  const columns = useMemo<ColumnDef<MetricsScrapeJob, unknown>[]>(
+    () => [
+      {
+        header: "Job",
+        size: 210,
+        cell: ({ row }) => (
+          <div className="flex flex-col gap-0.5">
+            <span className="zke-mono text-foreground text-xs">{row.original.job_name}</span>
+            <span className="text-subtle-foreground text-[11px]">{sourceLabel(row.original)}</span>
+          </div>
+        ),
+      },
+      {
+        header: "抓取地址",
+        size: 250,
+        cell: ({ row }) => (
+          <span className="zke-mono text-muted-foreground text-xs break-all">
+            {scrapeAddress(row.original)}
+          </span>
+        ),
+      },
+      {
+        header: "认证 / TLS",
+        size: 170,
+        cell: ({ row }) => (
+          <div className="flex flex-col gap-0.5 text-xs">
+            <span className="text-foreground">
+              {row.original.authentication === "service-account"
+                ? "ServiceAccount Bearer Token"
+                : "无认证"}
+            </span>
+            <span
+              className={
+                row.original.insecure_skip_verify ? "text-warning" : "text-subtle-foreground"
+              }
+            >
+              {row.original.scheme === "https"
+                ? row.original.insecure_skip_verify
+                  ? "HTTPS · 跳过证书校验"
+                  : "HTTPS · 校验证书"
+                : "HTTP"}
+            </span>
+          </div>
+        ),
+      },
+      {
+        header: "当前目标",
+        size: 260,
+        cell: ({ row }) => <JobTargets job={row.original} />,
+      },
+    ],
+    [],
+  );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <PageHeader
+        title={`${cluster.name} · 采集详情`}
+        onBack={onBack}
+        actions={
+          <RefreshAction isFetching={details.isFetching} onRefresh={() => void details.refetch()} />
+        }
+      />
+      {details.error ? (
+        <ErrorState error={details.error} onRetry={() => void details.refetch()} />
+      ) : details.isLoading || !state ? (
+        <LoadingState label="读取采集 Job…" />
+      ) : !state.installed ? (
+        <EmptyState
+          title="该集群尚未安装采集组件"
+          description={
+            canManage
+              ? "返回采集接入列表后安装 vmagent，安装完成后这里会显示当前 Job。"
+              : "你可以查看采集接入，但没有部署采集组件的权限。"
+          }
+        />
+      ) : (
+        <>
+          {!canManage ? (
+            <Alert tone="info">
+              你可以查看采集状态与 Job，但没有部署、重新安装或卸载采集组件的权限。
+            </Alert>
+          ) : null}
+          <div className="grid gap-3 @md:grid-cols-2">
+            <DetailCard title="采集组件">
+              <DetailRow label="Namespace" value={state.namespace} />
+              <DetailRow
+                label="就绪副本"
+                value={`${state.ready_replicas}/${state.desired_replicas}`}
+              />
+              <DetailRow label="当前镜像" value={state.image || "—"} />
+              <DetailRow label="Job 数" value={state.scrape_jobs.length} />
+            </DetailCard>
+            <DetailCard title="注解发现">
+              <DetailRow label="启用" value="zke-metrics-collector.io/scrape=true" />
+              <DetailRow
+                label="可选配置"
+                value="scheme、path、port、auth、tls-insecure-skip-verify"
+              />
+              <DetailRow label="认证" value="none；service-account（仅允许 HTTPS，不返回 Token）" />
+              <DetailRow label="对象" value="Service 或 Endpoints；Endpoints 注解优先" />
+            </DetailCard>
+          </div>
+          {state.scrape_jobs_truncated ? (
+            <Alert tone="warning">Job 数量超过详情响应上限，当前仅显示前 500 条。</Alert>
+          ) : null}
+          <div className="min-h-0 flex-1">
+            <DataTable
+              columns={columns}
+              data={state.scrape_jobs}
+              rowKey={(job) => `${job.source_kind}:${job.namespace}:${job.job_name}`}
+              emptyTitle="当前没有采集 Job"
+              emptyDescription="重新安装采集组件以应用当前版本的抓取配置。"
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function sourceLabel(job: MetricsScrapeJob): string {
+  if (job.source_kind === "Builtin") {
+    return "ZKE 内置";
+  }
+  return `${job.source_kind} · ${job.namespace}/${job.source_name}`;
+}
+
+function scrapeAddress(job: MetricsScrapeJob): string {
+  const port = job.port ? `:${job.port}` : "";
+  return `${job.scheme}://<target>${port}${job.metrics_path}`;
+}
+
+function JobTargets({ job }: { job: MetricsScrapeJob }) {
+  if (job.targets.length === 0) {
+    return (
+      <span className="text-subtle-foreground text-xs">
+        {job.source_kind === "Builtin" ? "由 Kubernetes 动态发现" : "暂无就绪 Endpoint"}
+      </span>
+    );
+  }
+  return (
+    <div className="grid max-h-28 gap-0.5 overflow-auto">
+      {job.targets.map((target) => (
+        <span key={target} className="zke-mono text-muted-foreground text-[11px] break-all">
+          {target}
+        </span>
+      ))}
+      {job.targets_truncated ? (
+        <span className="text-warning text-[11px]">目标超过 200 个，其余已省略</span>
+      ) : null}
     </div>
   );
 }

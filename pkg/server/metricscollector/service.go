@@ -161,6 +161,27 @@ type State struct {
 	// budget state for the Cluster at all.
 	ActiveSeries    int
 	MaxActiveSeries int
+	// ScrapeJobs is populated only by Details. Keeping the fleet Status light
+	// avoids listing every Service and Endpoints object on every polling tick.
+	ScrapeJobs          []ScrapeJob
+	ScrapeJobsTruncated bool
+}
+
+// ScrapeJob describes one effective built-in or annotation-discovered job.
+// Authentication reports only the mode; credentials never cross the Agent
+// connection.
+type ScrapeJob struct {
+	JobName            string
+	SourceKind         string
+	Namespace          string
+	SourceName         string
+	Scheme             string
+	MetricsPath        string
+	Port               string
+	Authentication     string
+	InsecureSkipVerify bool
+	Targets            []string
+	TargetsTruncated   bool
 }
 
 // ComponentState is one installed workload as the Cluster reports it.
@@ -186,6 +207,16 @@ func (service *Service) Status(ctx context.Context, clusterID string) (State, er
 		clusterID,
 		&agentv1.MetricsCollectorRequest{
 			Action: agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_STATUS,
+		},
+	)
+}
+
+func (service *Service) Details(ctx context.Context, clusterID string) (State, error) {
+	return service.exchange(
+		ctx,
+		clusterID,
+		&agentv1.MetricsCollectorRequest{
+			Action: agentv1.MetricsCollectorAction_METRICS_COLLECTOR_ACTION_DETAILS,
 		},
 	)
 }
@@ -313,15 +344,17 @@ func (service *Service) exchange(
 		return State{}, err
 	}
 	result := State{
-		ClusterID:       clusterID,
-		Installed:       state.GetInstalled(),
-		Namespace:       state.GetNamespace(),
-		Image:           state.GetImage(),
-		DesiredReplicas: state.GetDesiredReplicas(),
-		ReadyReplicas:   state.GetReadyReplicas(),
-		CredentialReady: state.GetCredentialReady(),
-		DesiredImage:    desired.Collector.Image,
-		Components:      componentStates(state, desired),
+		ClusterID:           clusterID,
+		Installed:           state.GetInstalled(),
+		Namespace:           state.GetNamespace(),
+		Image:               state.GetImage(),
+		DesiredReplicas:     state.GetDesiredReplicas(),
+		ReadyReplicas:       state.GetReadyReplicas(),
+		CredentialReady:     state.GetCredentialReady(),
+		DesiredImage:        desired.Collector.Image,
+		Components:          componentStates(state, desired),
+		ScrapeJobs:          scrapeJobs(state.GetScrapeJobs()),
+		ScrapeJobsTruncated: state.GetScrapeJobsTruncated(),
 	}
 	if service.budget != nil {
 		if budget, known := service.budget.ClusterState(clusterID); known {
@@ -334,4 +367,24 @@ func (service *Service) exchange(
 		}
 	}
 	return result, nil
+}
+
+func scrapeJobs(items []*agentv1.MetricsScrapeJob) []ScrapeJob {
+	jobs := make([]ScrapeJob, 0, len(items))
+	for _, item := range items {
+		jobs = append(jobs, ScrapeJob{
+			JobName:            item.GetJobName(),
+			SourceKind:         item.GetSourceKind(),
+			Namespace:          item.GetNamespace(),
+			SourceName:         item.GetSourceName(),
+			Scheme:             item.GetScheme(),
+			MetricsPath:        item.GetMetricsPath(),
+			Port:               item.GetPort(),
+			Authentication:     item.GetAuthentication(),
+			InsecureSkipVerify: item.GetInsecureSkipVerify(),
+			Targets:            append([]string(nil), item.GetTargets()...),
+			TargetsTruncated:   item.GetTargetsTruncated(),
+		})
+	}
+	return jobs
 }
