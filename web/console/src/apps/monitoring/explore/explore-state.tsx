@@ -224,8 +224,25 @@ export function ExploreProvider({
     if (!pendingAutoRun.current || !enabled || !clusterId) {
       return;
     }
-    pendingAutoRun.current = false;
-    runRef.current();
+    // Scheduled rather than called from inside the effect, and cancelled if
+    // this effect is torn down before it fires.
+    //
+    // TanStack Query's mutation observer detaches itself from an in-flight
+    // mutation as soon as it has no subscribers, and nothing re-attaches it
+    // when a subscriber comes back. A run started during the mount pass starts
+    // before React has finished that pass, and the immediate unmount/remount
+    // React performs in development drops the only subscriber the request had:
+    // the answer arrived with nobody listening, so `执行中…` never cleared and
+    // no result and no failure ever reached the screen. That is why an
+    // expression AIOps opened this window on hung while the same expression
+    // typed in by hand ran fine — a button press happens long after the
+    // subscription has settled. Waiting a turn puts the automatic run in that
+    // same position.
+    const timer = window.setTimeout(() => {
+      pendingAutoRun.current = false;
+      runRef.current();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [clusterId, enabled]);
 
   // The question moved out from under the answer: a new range, the refresh
