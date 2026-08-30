@@ -341,6 +341,17 @@
   --code-punctuation: #8b94a1;
   --code-meta: #9a5b06;
 
+  /* Find-and-replace highlight.
+   *
+   * Deliberately not `--selection`: a match and the caret's own selection are
+   * shown at the same time, and two blues would leave an operator unable to
+   * tell "what I am about to replace" from "what the browser has selected".
+   * Amber for the other matches, a saturated orange for the one navigation is
+   * currently on. Both translucent, so the syntax colour underneath survives
+   * being highlighted. */
+  --code-match: rgb(224 168 32 / 0.32);
+  --code-match-active: rgb(232 116 20 / 0.5);
+
   /* Selection gets its own value rather than reusing `--primary-surface`: that
      token is tuned to sit quietly behind a badge, which is the wrong weight for
      a highlight the user is meant to catch at a glance. Kept translucent so it
@@ -501,6 +512,11 @@
   --code-punctuation: #7f8b9c;
   --code-meta: #f0c274;
 
+  /* More alpha on the graphite surface, for the same reason the selection
+     carries more of it there. */
+  --code-match: rgb(240 194 116 / 0.3);
+  --code-match-active: rgb(245 146 56 / 0.55);
+
   /* Dark surfaces swallow a tint, so the highlight carries more of it. */
   --selection: rgb(143 164 247 / 0.36);
 
@@ -576,6 +592,8 @@
   --color-code-comment: var(--code-comment);
   --color-code-punctuation: var(--code-punctuation);
   --color-code-meta: var(--code-meta);
+  --color-code-match: var(--code-match);
+  --color-code-match-active: var(--code-match-active);
 
   /* Lift and settle. The default curve eases in as well as out, which on a 4px
      travel reads as a nudge rather than a rise; this leaves at once and arrives
