@@ -274,7 +274,7 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 	assertPolicyRule(t, clusterRole.Rules, "batch", []string{
 		"jobs", "cronjobs",
 	}, workloadVerbs)
-	assertPolicyRule(t, clusterRole.Rules, "", []string{"services"}, workloadVerbs)
+	assertPolicyRule(t, clusterRole.Rules, "", []string{"services", "endpoints"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"configmaps"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{
 		"persistentvolumes", "persistentvolumeclaims",

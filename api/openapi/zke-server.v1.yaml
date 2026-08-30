@@ -4206,7 +4206,7 @@ paths:
       tags: [Resources]
       operationId: listKubernetesNetworkingResources
       description: |
-        在明确的 Cluster 和 Namespace 中查询 Service、Ingress、Gateway 或协议型 Route。
+        在明确的 Cluster 和 Namespace 中查询 Service、Endpoints、Ingress、Gateway 或协议型 Route。
         Gateway/HTTPRoute/GRPCRoute/TLSRoute 使用 `gateway.networking.k8s.io/v1`，
         TCPRoute/UDPRoute 使用 `v1alpha2`；目标集群未提供路径指定的资源与版本时返回
         409 `gateway_api_unavailable`。ZKE 不安装 CRD。分页使用 Kubernetes continuation token。
@@ -4253,8 +4253,8 @@ paths:
       tags: [Resources]
       operationId: createKubernetesNetworkingResource
       description: |
-        创建路径指定的 Service、Ingress、Gateway 或 Gateway API Route。请求必须只携带与路径类型对应的
-        `service`、`ingress`、`gateway` 或 `gateway_route` 配置。Route 的 `spec` 使用
+        创建路径指定的 Service、Endpoints、Ingress、Gateway 或 Gateway API Route。请求必须只携带与路径类型对应的
+        `service`、`endpoint`、`ingress`、`gateway` 或 `gateway_route` 配置。Route 的 `spec` 使用
         Kubernetes 原生 camelCase 字段并按路径类型严格解码，未知字段会被拒绝。实际创建要求显式确认；dry-run 使用
         Kubernetes 服务端校验，不会持久化对象。Gateway API 不由 ZKE 自动安装。
       security:
@@ -4306,7 +4306,7 @@ paths:
     get:
       tags: [Resources]
       operationId: getKubernetesNetworkingResource
-      description: 查询一个 Service、Ingress、Gateway 或 Gateway API Route 的类型化详情和状态。
+      description: 查询一个 Service、Endpoints、Ingress、Gateway 或 Gateway API Route 的类型化详情和状态。
       security:
         - sessionCookie: []
       parameters:
@@ -11988,7 +11988,7 @@ components:
               minimum: 0
     KubernetesNetworkingResource:
       type: string
-      enum: [services, ingresses, gateways, httproutes, grpcroutes, tlsroutes, tcproutes, udproutes]
+      enum: [services, endpoints, ingresses, gateways, httproutes, grpcroutes, tlsroutes, tcproutes, udproutes]
     KubernetesServicePort:
       type: object
       additionalProperties: false
@@ -12086,6 +12086,58 @@ components:
         internal_traffic_policy: { type: string, enum: ["", Cluster, Local] }
         publish_not_ready_addresses: { type: boolean }
         allocate_load_balancer_node_ports: { type: boolean }
+    KubernetesEndpointAddress:
+      type: object
+      additionalProperties: false
+      required: [ip, hostname, node_name]
+      properties:
+        ip: { type: string, minLength: 1, maxLength: 45 }
+        hostname: { type: string, maxLength: 253 }
+        node_name: { type: string, maxLength: 253 }
+    KubernetesEndpointPort:
+      type: object
+      additionalProperties: false
+      required: [name, port, protocol, app_protocol]
+      properties:
+        name: { type: string, maxLength: 15 }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        protocol: { type: string, enum: ["", TCP, UDP, SCTP] }
+        app_protocol: { type: string, maxLength: 253 }
+    KubernetesEndpointSubset:
+      type: object
+      additionalProperties: false
+      required: [addresses, not_ready_addresses, ports]
+      properties:
+        addresses:
+          type: array
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/KubernetesEndpointAddress" }
+        not_ready_addresses:
+          type: array
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/KubernetesEndpointAddress" }
+        ports:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/KubernetesEndpointPort" }
+    KubernetesEndpointSpec:
+      type: object
+      additionalProperties: false
+      required: [subsets]
+      properties:
+        subsets:
+          type: array
+          maxItems: 100
+          description: 每个子集表示地址与端口的笛卡尔积；所有子集合计最多 1000 个地址和 100 个端口。
+          items: { $ref: "#/components/schemas/KubernetesEndpointSubset" }
+    KubernetesEndpointSpecInput:
+      $ref: "#/components/schemas/KubernetesEndpointSpec"
+    KubernetesEndpointView:
+      type: object
+      additionalProperties: false
+      required: [spec]
+      properties:
+        spec: { $ref: "#/components/schemas/KubernetesEndpointSpec" }
     KubernetesIngressServiceBackend:
       type: object
       additionalProperties: false
@@ -12460,7 +12512,7 @@ components:
       properties:
         resource: { $ref: "#/components/schemas/KubernetesNetworkingResource" }
         api_version: { type: string }
-        kind: { type: string, enum: [Service, Ingress, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute] }
+        kind: { type: string, enum: [Service, Endpoints, Ingress, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute] }
         namespace: { type: string, minLength: 1, maxLength: 63 }
         name: { type: string, minLength: 1, maxLength: 253 }
         uid: { type: string }
@@ -12470,6 +12522,7 @@ components:
           type: object
           additionalProperties: { type: string }
         service: { $ref: "#/components/schemas/KubernetesServiceView" }
+        endpoint: { $ref: "#/components/schemas/KubernetesEndpointView" }
         ingress: { $ref: "#/components/schemas/KubernetesIngressView" }
         gateway: { $ref: "#/components/schemas/KubernetesGatewayView" }
         gateway_route: { $ref: "#/components/schemas/KubernetesGatewayRouteView" }
@@ -12507,6 +12560,7 @@ components:
           type: object
           additionalProperties: { type: string }
         service: { $ref: "#/components/schemas/KubernetesServiceSpecInput" }
+        endpoint: { $ref: "#/components/schemas/KubernetesEndpointSpecInput" }
         ingress: { $ref: "#/components/schemas/KubernetesIngressSpecInput" }
         gateway: { $ref: "#/components/schemas/KubernetesGatewaySpecInput" }
         gateway_route: { $ref: "#/components/schemas/KubernetesGatewayRouteSpecInput" }
@@ -12514,6 +12568,7 @@ components:
         confirm: { type: boolean }
       oneOf:
         - required: [service]
+        - required: [endpoint]
         - required: [ingress]
         - required: [gateway]
         - required: [gateway_route]
@@ -12525,6 +12580,7 @@ components:
         uid: { type: string, minLength: 1, maxLength: 128 }
         resource_version: { type: string, minLength: 1, maxLength: 256 }
         service: { $ref: "#/components/schemas/KubernetesServiceSpecInput" }
+        endpoint: { $ref: "#/components/schemas/KubernetesEndpointSpecInput" }
         ingress: { $ref: "#/components/schemas/KubernetesIngressSpecInput" }
         gateway: { $ref: "#/components/schemas/KubernetesGatewaySpecInput" }
         gateway_route: { $ref: "#/components/schemas/KubernetesGatewayRouteSpecInput" }
@@ -12532,6 +12588,7 @@ components:
         confirm: { type: boolean }
       oneOf:
         - required: [service]
+        - required: [endpoint]
         - required: [ingress]
         - required: [gateway]
         - required: [gateway_route]

@@ -1,6 +1,7 @@
 import type { NetworkingSummary, NetworkingSpecInput } from "@/api/queries/networking";
 import type {
   KubernetesGatewaySpecInput,
+  KubernetesEndpointSpecInput,
   KubernetesIngressSpecInput,
   KubernetesNetworkingResource,
   KubernetesServiceSpecInput,
@@ -88,6 +89,7 @@ export function nodePortWarnings(draft: ServiceDraft): string[] {
 export type NetworkingSectionKey =
   | "basic"
   | "service"
+  | "endpoint"
   | "ports"
   | "selector"
   | "ingress"
@@ -138,6 +140,20 @@ export type ServiceDraft = {
   ports: PortDraft[];
 };
 
+export type EndpointAddressDraft = { ip: string; hostname: string; nodeName: string };
+export type EndpointPortDraft = {
+  name: string;
+  port: string;
+  protocol: string;
+  appProtocol: string;
+};
+export type EndpointSubsetDraft = {
+  addresses: EndpointAddressDraft[];
+  notReadyAddresses: EndpointAddressDraft[];
+  ports: EndpointPortDraft[];
+};
+export type EndpointDraft = { subsets: EndpointSubsetDraft[] };
+
 export type IngressDraft = {
   className: string;
   defaultBackend: DefaultBackendDraft;
@@ -160,6 +176,7 @@ export type GatewayDraft = {
 export type NetworkingDraft = {
   name: string;
   service: ServiceDraft;
+  endpoint: EndpointDraft;
   ingress: IngressDraft;
   gateway: GatewayDraft;
   gatewayRoute: GatewayRouteDraft;
@@ -171,6 +188,22 @@ export function emptyPort(): PortDraft {
 
 export function emptyPath(): PathDraft {
   return { path: "/", pathType: "Prefix", backendName: "", backendPort: "" };
+}
+
+export function emptyEndpointAddress(): EndpointAddressDraft {
+  return { ip: "", hostname: "", nodeName: "" };
+}
+
+export function emptyEndpointPort(): EndpointPortDraft {
+  return { name: "", port: "", protocol: DEFAULT_OPTION, appProtocol: "" };
+}
+
+export function emptyEndpointSubset(): EndpointSubsetDraft {
+  return {
+    addresses: [emptyEndpointAddress()],
+    notReadyAddresses: [],
+    ports: [emptyEndpointPort()],
+  };
 }
 
 export function emptyRule(): RuleDraft {
@@ -197,6 +230,7 @@ export function emptyListener(): ListenerDraft {
 /** The draft a form opens with: the existing object when editing, blank when creating. */
 export function initialDraft(existing: NetworkingSummary | null): NetworkingDraft {
   const service = existing?.service;
+  const endpoint = existing?.endpoint;
   const ingress = existing?.ingress;
   const gateway = existing?.gateway;
   const defaultBackend = ingress?.spec.default_backend;
@@ -218,6 +252,26 @@ export function initialDraft(existing: NetworkingSummary | null): NetworkingDraf
         targetPort: port.target_port,
         protocol: port.protocol || DEFAULT_OPTION,
         nodePort: port.node_port ? String(port.node_port) : "",
+      })),
+    },
+    endpoint: {
+      subsets: (endpoint?.spec.subsets ?? []).map((subset) => ({
+        addresses: subset.addresses.map((address) => ({
+          ip: address.ip,
+          hostname: address.hostname,
+          nodeName: address.node_name,
+        })),
+        notReadyAddresses: subset.not_ready_addresses.map((address) => ({
+          ip: address.ip,
+          hostname: address.hostname,
+          nodeName: address.node_name,
+        })),
+        ports: subset.ports.map((port) => ({
+          name: port.name,
+          port: String(port.port),
+          protocol: port.protocol || DEFAULT_OPTION,
+          appProtocol: port.app_protocol,
+        })),
       })),
     },
     ingress: {
@@ -271,6 +325,9 @@ export function createDraft(resource: KubernetesNetworkingResource): NetworkingD
   if (resource === "services") {
     return { ...draft, service: { ...draft.service, ports: [emptyPort()] } };
   }
+  if (resource === "endpoints") {
+    return { ...draft, endpoint: { subsets: [emptyEndpointSubset()] } };
+  }
   if (resource === "ingresses") {
     return { ...draft, ingress: { ...draft.ingress, rules: [emptyRule()] } };
   }
@@ -309,6 +366,9 @@ export function networkingProblem(
   if (resource === "services") {
     return serviceProblem(draft.service);
   }
+  if (resource === "endpoints") {
+    return endpointProblem(draft.endpoint);
+  }
   if (resource === "ingresses") {
     return ingressProblem(draft.ingress);
   }
@@ -317,6 +377,71 @@ export function networkingProblem(
   }
   const routeProblem = gatewayRouteDraftProblem(draft.gatewayRoute, resource);
   return routeProblem ? at("route", routeProblem) : null;
+}
+
+function endpointProblem(draft: EndpointDraft): NetworkingProblem | null {
+  if (draft.subsets.length > 100) {
+    return at("endpoint", "Endpoint 子集不能超过 100 个。");
+  }
+  let addressCount = 0;
+  let portCount = 0;
+  for (const [subsetIndex, subset] of draft.subsets.entries()) {
+    const subsetLabel = `第 ${subsetIndex + 1} 个子集`;
+    addressCount += subset.addresses.length + subset.notReadyAddresses.length;
+    portCount += subset.ports.length;
+    if (addressCount > 1000) {
+      return at("endpoint", "所有子集合计不能超过 1000 个地址。");
+    }
+    if (portCount > 100) {
+      return at("endpoint", "所有子集合计不能超过 100 个端口。");
+    }
+    for (const [addressIndex, address] of [
+      ...subset.addresses.map((value) => ({ value, readiness: "就绪" })),
+      ...subset.notReadyAddresses.map((value) => ({ value, readiness: "未就绪" })),
+    ].entries()) {
+      const label = `${subsetLabel}的第 ${addressIndex + 1} 个${address.readiness}地址`;
+      if (!validIPAddress(address.value.ip.trim())) {
+        return at("endpoint", `${label}必须是合法的 IPv4 或 IPv6 地址。`);
+      }
+      for (const [field, value] of [
+        ["主机名", address.value.hostname],
+        ["节点名", address.value.nodeName],
+      ] as const) {
+        const trimmed = value.trim();
+        if (trimmed && (!DNS_SUBDOMAIN.test(trimmed) || trimmed.length > MAX_SUBDOMAIN_LENGTH)) {
+          return at("endpoint", `${label}的${field}必须是合法的 DNS 子域名。`);
+        }
+      }
+    }
+    const keys = new Set<string>();
+    for (const [portIndex, port] of subset.ports.entries()) {
+      const label = `${subsetLabel}的第 ${portIndex + 1} 个端口`;
+      if (!validPortNumber(port.port)) {
+        return at("endpoint", `${label}必须是 ${PORT_RANGE} 之间的数字。`);
+      }
+      if (port.name.trim() && !validPortName(port.name)) {
+        return at("endpoint", `${label}的名称不合法：${PORT_NAME_RULE}`);
+      }
+      if (port.appProtocol.trim() && !qualifiedName(port.appProtocol.trim())) {
+        return at("endpoint", `${label}的 AppProtocol 必须是合法的 Kubernetes 限定名称。`);
+      }
+      const protocol = port.protocol === DEFAULT_OPTION ? "TCP" : port.protocol;
+      const key = `${protocol}/${port.port.trim()}`;
+      if (keys.has(key)) {
+        return at("endpoint", `${subsetLabel}中的端口 ${port.port.trim()}/${protocol} 重复。`);
+      }
+      keys.add(key);
+    }
+  }
+  return null;
+}
+
+function validIPAddress(value: string): boolean {
+  const ipv4 = value.split(".");
+  if (ipv4.length === 4 && ipv4.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) {
+    return true;
+  }
+  return value.includes(":") && /^[0-9a-f:.]+$/i.test(value);
 }
 
 function serviceProblem(draft: ServiceDraft): NetworkingProblem | null {
@@ -652,6 +777,9 @@ export function buildNetworkingSpec(
   if (resource === "services") {
     return { service: buildServiceSpec(draft.service, existing) };
   }
+  if (resource === "endpoints") {
+    return { endpoint: buildEndpointSpec(draft.endpoint) };
+  }
   if (resource === "ingresses") {
     return { ingress: buildIngressSpec(draft.ingress) };
   }
@@ -660,6 +788,27 @@ export function buildNetworkingSpec(
   }
   return {
     gateway_route: { spec: buildGatewayRouteSpec(draft.gatewayRoute, resource) },
+  };
+}
+
+function buildEndpointSpec(draft: EndpointDraft): KubernetesEndpointSpecInput {
+  const address = (value: EndpointAddressDraft) => ({
+    ip: value.ip.trim(),
+    hostname: value.hostname.trim(),
+    node_name: value.nodeName.trim(),
+  });
+  return {
+    subsets: draft.subsets.map((subset) => ({
+      addresses: subset.addresses.map(address),
+      not_ready_addresses: subset.notReadyAddresses.map(address),
+      ports: subset.ports.map((port) => ({
+        name: port.name.trim(),
+        port: Number(port.port.trim()),
+        protocol: (port.protocol === DEFAULT_OPTION ? "TCP" : port.protocol) as
+          "TCP" | "UDP" | "SCTP",
+        app_protocol: port.appProtocol.trim(),
+      })),
+    })),
   };
 }
 

@@ -33,6 +33,7 @@ type kubernetesNetworkingHandler struct {
 
 type networkingConfigurationRequest struct {
 	Service      *kubernetesresource.ServiceSpec      `json:"service"`
+	Endpoint     *kubernetesresource.EndpointSpec     `json:"endpoint"`
 	Ingress      *kubernetesresource.IngressSpec      `json:"ingress"`
 	Gateway      *kubernetesresource.GatewaySpec      `json:"gateway"`
 	GatewayRoute *kubernetesresource.GatewayRouteSpec `json:"gateway_route"`
@@ -154,7 +155,7 @@ func (handler *kubernetesNetworkingHandler) create(c *gin.Context) {
 	result, err := handler.service.CreateNetworkingResource(ctx, kubernetesresource.CreateNetworkingResourceInput{
 		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"), Resource: resourceName,
 		Name: request.Name, Labels: request.Labels, Annotations: request.Annotations,
-		Service: request.Service, Ingress: request.Ingress, Gateway: request.Gateway,
+		Service: request.Service, Endpoint: request.Endpoint, Ingress: request.Ingress, Gateway: request.Gateway,
 		GatewayRoute: request.GatewayRoute,
 		DryRun:       request.DryRun, Confirm: request.Confirm,
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),
@@ -200,7 +201,7 @@ func (handler *kubernetesNetworkingHandler) update(c *gin.Context) {
 	result, err := handler.service.UpdateNetworkingResource(ctx, kubernetesresource.UpdateNetworkingResourceInput{
 		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"), Resource: resourceName,
 		Name: c.Param("network_name"), UID: request.UID, ResourceVersion: request.ResourceVersion,
-		Service: request.Service, Ingress: request.Ingress, Gateway: request.Gateway,
+		Service: request.Service, Endpoint: request.Endpoint, Ingress: request.Ingress, Gateway: request.Gateway,
 		GatewayRoute: request.GatewayRoute,
 		DryRun:       request.DryRun, Confirm: request.Confirm,
 		IdempotencyKey: c.GetHeader(idempotencyKeyHeaderName),

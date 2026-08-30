@@ -123,6 +123,11 @@ func (handler *kubernetesDescribeHandler) networkingResource(c *gin.Context) {
 			"invalid networking resource")
 		return
 	}
+	if resource == kubernetesresource.NetworkingEndpoints {
+		writeError(c, http.StatusBadRequest, "invalid_request",
+			"Endpoints does not support networking describe")
+		return
+	}
 	if len(c.Request.URL.Query()) != 0 {
 		writeError(c, http.StatusBadRequest, "invalid_request",
 			"networking describe does not accept query parameters")

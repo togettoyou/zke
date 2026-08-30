@@ -15,7 +15,7 @@
 | 工作负载 | Deployment、StatefulSet、DaemonSet、Job、CronJob 的类型化 CRUD、伸缩、滚动重启、CronJob 暂停/恢复与立即运行、修订历史与回滚 |
 | Pod | List/Detail/Delete/驱逐、日志、Web Terminal 与输出录制、Pod Access、诊断 |
 | 资源用量 | 经 Agent 读取 `metrics.k8s.io/v1beta1` 的 Node 与 Pod 实时用量 |
-| 服务与路由 | Service、Ingress、Gateway 与五种 Gateway API Route |
+| 服务与路由 | Service、Endpoints、Ingress、Gateway 与五种 Gateway API Route |
 | 配置管理 | ConfigMap 与 Secret，Secret 使用独立权限和专用路由 |
 | 存储 | PersistentVolume、PersistentVolumeClaim、StorageClass |
 | 自动伸缩 | HorizontalPodAutoscaler，以及可选的 VerticalPodAutoscaler 与 KEDA ScaledObject |
@@ -340,11 +340,13 @@ NodeAffinity/taint 纳入策略与动态标签键。Server 对每类集合设 50
 1–100 权重、拓扑键和 `minDomains` 的硬约束语义。容器端口限制为每容器 100 项、1–65535，协议为 TCP/UDP/SCTP，
 端口名在容器内唯一。`hostPort`/`hostIP` 会占用节点网络，`securityContext` 的其余字段仍通过 YAML 管理。
 
-服务与路由后端固定使用 `core/v1 Service`、`networking.k8s.io/v1 Ingress`、Gateway API 的 Gateway 与五种
+服务与路由后端固定使用 `core/v1 Service`、`core/v1 Endpoints`、`networking.k8s.io/v1 Ingress`、Gateway API 的 Gateway 与五种
 协议型 Route，不会接受调用方覆盖 GVR。Service 支持 ClusterIP、NodePort、
 LoadBalancer、ExternalName 与 headless 语义，更新时保留 Kubernetes 分配的 ClusterIP、IP family 和适用的
 health check NodePort，并拒绝通过类型化接口切换不可变的 headless 身份。Ingress 支持 class、默认后端、
 Host/Path、Service backend 和 TLS Secret 名称；接口只返回 Secret 引用名称，不读取 Secret 正文。
+Endpoints 按子集管理就绪地址、未就绪地址与端口；更新未改变的地址时保留 Kubernetes 对象中的 TargetRef，Console
+不展示或修改该引用。由 Controller 管理的对象可能在人工变更后被重新协调，删除确认会明确提示这一点。
 
 Gateway API 是目标集群的可选 CRD 能力。每一种资源操作都先通过 Discovery 独立确认目标 GVR 存在：Gateway、
 HTTPRoute、GRPCRoute、TLSRoute 使用 `gateway.networking.k8s.io/v1`，TCPRoute 与 UDPRoute 使用实验通道的
@@ -359,8 +361,9 @@ metadata 与 status；跨 Namespace ParentRef/BackendRef 可以表达，但 ZKE 
 命名空间，授权与解析结果以 Controller 写入的 `Accepted`、`ResolvedRefs` Condition 为准。Gateway 的 TLS 同样只传递
 证书引用，不读取证书 Secret。
 
-Console 服务与路由页面按 Service、Ingress、Gateway 和五种 Route 标签页组织。各类型形状不同，因此列表列和详情卡片
-各自独立，而不是压成一张只显示共有字段的表：Service 展示类型、ClusterIP 与端口映射，Ingress 展示
+Console 服务与路由页面按 Service、Endpoint、Ingress、Gateway 和五种 Route 标签页组织。各类型形状不同，因此列表列和详情卡片
+各自独立，而不是压成一张只显示共有字段的表：Service 展示类型、ClusterIP 与端口映射，Endpoint 展示就绪/未就绪
+地址数量与端口，Ingress 展示
 IngressClass、主机与已分配地址，Gateway 展示 GatewayClass、监听器与地址。Route 详情按父级引用、协议匹配、后端
 目标和高级配置分类展示，不直接输出 JSON；详情页仍提供 YAML 入口，用于查看和修改表单未建模字段的完整原生内容。
 

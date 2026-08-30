@@ -1550,7 +1550,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * @description 在明确的 Cluster 和 Namespace 中查询 Service、Ingress、Gateway 或协议型 Route。
+         * @description 在明确的 Cluster 和 Namespace 中查询 Service、Endpoints、Ingress、Gateway 或协议型 Route。
          *     Gateway/HTTPRoute/GRPCRoute/TLSRoute 使用 `gateway.networking.k8s.io/v1`，
          *     TCPRoute/UDPRoute 使用 `v1alpha2`；目标集群未提供路径指定的资源与版本时返回
          *     409 `gateway_api_unavailable`。ZKE 不安装 CRD。分页使用 Kubernetes continuation token。
@@ -1558,8 +1558,8 @@ export interface paths {
         get: operations["listKubernetesNetworkingResources"];
         put?: never;
         /**
-         * @description 创建路径指定的 Service、Ingress、Gateway 或 Gateway API Route。请求必须只携带与路径类型对应的
-         *     `service`、`ingress`、`gateway` 或 `gateway_route` 配置。Route 的 `spec` 使用
+         * @description 创建路径指定的 Service、Endpoints、Ingress、Gateway 或 Gateway API Route。请求必须只携带与路径类型对应的
+         *     `service`、`endpoint`、`ingress`、`gateway` 或 `gateway_route` 配置。Route 的 `spec` 使用
          *     Kubernetes 原生 camelCase 字段并按路径类型严格解码，未知字段会被拒绝。实际创建要求显式确认；dry-run 使用
          *     Kubernetes 服务端校验，不会持久化对象。Gateway API 不由 ZKE 自动安装。
          */
@@ -1577,7 +1577,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description 查询一个 Service、Ingress、Gateway 或 Gateway API Route 的类型化详情和状态。 */
+        /** @description 查询一个 Service、Endpoints、Ingress、Gateway 或 Gateway API Route 的类型化详情和状态。 */
         get: operations["getKubernetesNetworkingResource"];
         /**
          * @description 更新类型化配置。必须携带当前 UID 和 resourceVersion；Server 在写入前重新读取对象，
@@ -4295,7 +4295,7 @@ export interface components {
             failed_jobs_history_limit?: number;
         };
         /** @enum {string} */
-        KubernetesNetworkingResource: "services" | "ingresses" | "gateways" | "httproutes" | "grpcroutes" | "tlsroutes" | "tcproutes" | "udproutes";
+        KubernetesNetworkingResource: "services" | "endpoints" | "ingresses" | "gateways" | "httproutes" | "grpcroutes" | "tlsroutes" | "tcproutes" | "udproutes";
         KubernetesServicePort: {
             name: string;
             /** @enum {string} */
@@ -4363,6 +4363,31 @@ export interface components {
             internal_traffic_policy?: "" | "Cluster" | "Local";
             publish_not_ready_addresses?: boolean;
             allocate_load_balancer_node_ports?: boolean;
+        };
+        KubernetesEndpointAddress: {
+            ip: string;
+            hostname: string;
+            node_name: string;
+        };
+        KubernetesEndpointPort: {
+            name: string;
+            port: number;
+            /** @enum {string} */
+            protocol: "" | "TCP" | "UDP" | "SCTP";
+            app_protocol: string;
+        };
+        KubernetesEndpointSubset: {
+            addresses: components["schemas"]["KubernetesEndpointAddress"][];
+            not_ready_addresses: components["schemas"]["KubernetesEndpointAddress"][];
+            ports: components["schemas"]["KubernetesEndpointPort"][];
+        };
+        KubernetesEndpointSpec: {
+            /** @description 每个子集表示地址与端口的笛卡尔积；所有子集合计最多 1000 个地址和 100 个端口。 */
+            subsets: components["schemas"]["KubernetesEndpointSubset"][];
+        };
+        KubernetesEndpointSpecInput: components["schemas"]["KubernetesEndpointSpec"];
+        KubernetesEndpointView: {
+            spec: components["schemas"]["KubernetesEndpointSpec"];
         };
         KubernetesIngressServiceBackend: {
             name: string;
@@ -4565,7 +4590,7 @@ export interface components {
             resource: components["schemas"]["KubernetesNetworkingResource"];
             api_version: string;
             /** @enum {string} */
-            kind: "Service" | "Ingress" | "Gateway" | "HTTPRoute" | "GRPCRoute" | "TLSRoute" | "TCPRoute" | "UDPRoute";
+            kind: "Service" | "Endpoints" | "Ingress" | "Gateway" | "HTTPRoute" | "GRPCRoute" | "TLSRoute" | "TCPRoute" | "UDPRoute";
             namespace: string;
             name: string;
             uid: string;
@@ -4575,6 +4600,7 @@ export interface components {
                 [key: string]: string;
             };
             service?: components["schemas"]["KubernetesServiceView"];
+            endpoint?: components["schemas"]["KubernetesEndpointView"];
             ingress?: components["schemas"]["KubernetesIngressView"];
             gateway?: components["schemas"]["KubernetesGatewayView"];
             gateway_route?: components["schemas"]["KubernetesGatewayRouteView"];
@@ -4599,24 +4625,26 @@ export interface components {
                 [key: string]: string;
             };
             service?: components["schemas"]["KubernetesServiceSpecInput"];
+            endpoint?: components["schemas"]["KubernetesEndpointSpecInput"];
             ingress?: components["schemas"]["KubernetesIngressSpecInput"];
             gateway?: components["schemas"]["KubernetesGatewaySpecInput"];
             gateway_route?: components["schemas"]["KubernetesGatewayRouteSpecInput"];
             /** @default false */
             dry_run: boolean;
             confirm: boolean;
-        } & (unknown | unknown | unknown | unknown);
+        } & (unknown | unknown | unknown | unknown | unknown);
         KubernetesUpdateNetworkingResourceRequest: {
             uid: string;
             resource_version: string;
             service?: components["schemas"]["KubernetesServiceSpecInput"];
+            endpoint?: components["schemas"]["KubernetesEndpointSpecInput"];
             ingress?: components["schemas"]["KubernetesIngressSpecInput"];
             gateway?: components["schemas"]["KubernetesGatewaySpecInput"];
             gateway_route?: components["schemas"]["KubernetesGatewayRouteSpecInput"];
             /** @default false */
             dry_run: boolean;
             confirm: boolean;
-        } & (unknown | unknown | unknown | unknown);
+        } & (unknown | unknown | unknown | unknown | unknown);
         KubernetesDeleteNetworkingResourceRequest: {
             uid: string;
             resource_version: string;

@@ -8,6 +8,7 @@ import type { KubernetesNetworkingResource } from "@/api/types";
  */
 export const NETWORKING_TYPES: { resource: KubernetesNetworkingResource; label: string }[] = [
   { resource: "services", label: "Service" },
+  { resource: "endpoints", label: "Endpoint" },
   { resource: "ingresses", label: "Ingress" },
   { resource: "gateways", label: "Gateway" },
   { resource: "httproutes", label: "HTTPRoute" },
@@ -30,6 +31,8 @@ export function networkingIdentity(resource: KubernetesNetworkingResource): {
   switch (resource) {
     case "services":
       return { group: "", version: "v1", resource: "services" };
+    case "endpoints":
+      return { group: "", version: "v1", resource: "endpoints" };
     case "ingresses":
       return { group: "networking.k8s.io", version: "v1", resource: "ingresses" };
     case "gateways":

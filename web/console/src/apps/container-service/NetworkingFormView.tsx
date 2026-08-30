@@ -31,6 +31,9 @@ import {
   buildNetworkingSpec,
   createDraft,
   DEFAULT_OPTION,
+  emptyEndpointAddress,
+  emptyEndpointPort,
+  emptyEndpointSubset,
   emptyListener,
   emptyPath,
   emptyPort,
@@ -43,6 +46,8 @@ import {
   PORT_RANGE,
   USUAL_NODE_PORT_RANGE,
   type GatewayDraft,
+  type EndpointDraft,
+  type EndpointAddressDraft,
   type IngressDraft,
   type ListenerDraft,
   type NetworkingDraft,
@@ -55,6 +60,7 @@ import {
 const SECTION_LABELS: Record<NetworkingSectionKey, string> = {
   basic: "基本信息",
   service: "Service",
+  endpoint: "Endpoint",
   ports: "端口",
   selector: "选择器",
   ingress: "Ingress",
@@ -189,6 +195,13 @@ export function NetworkingFormView({
             problemIn={problemIn}
           />
         ) : null}
+        {resource === "endpoints" ? (
+          <EndpointFields
+            draft={draft.endpoint}
+            onChange={(endpoint) => patch({ endpoint })}
+            problemIn={problemIn}
+          />
+        ) : null}
         {resource === "ingresses" ? (
           <IngressFields
             draft={draft.ingress}
@@ -273,6 +286,151 @@ export function NetworkingFormView({
 }
 
 type ProblemLookup = (section: NetworkingSectionKey) => string | undefined;
+
+function EndpointFields({
+  draft,
+  onChange,
+  problemIn,
+}: {
+  draft: EndpointDraft;
+  onChange: (draft: EndpointDraft) => void;
+  problemIn: ProblemLookup;
+}) {
+  return (
+    <FormSection
+      title={SECTION_LABELS.endpoint}
+      hint="每个子集表示一组地址与端口的组合；通常与同名且无 selector 的 Service 配合使用"
+      problem={problemIn("endpoint")}
+    >
+      <RowList
+        rows={draft.subsets}
+        onChange={(subsets) => onChange({ subsets })}
+        addLabel="添加子集"
+        create={emptyEndpointSubset}
+        render={(subset, subsetIndex, updateSubset) => (
+          <div className="border-border/60 rounded-control grid gap-3 border p-3">
+            <EndpointAddressList
+              label="就绪地址"
+              rows={subset.addresses}
+              subsetIndex={subsetIndex}
+              onChange={(addresses) => updateSubset({ addresses })}
+            />
+            <EndpointAddressList
+              label="未就绪地址"
+              rows={subset.notReadyAddresses}
+              subsetIndex={subsetIndex}
+              onChange={(notReadyAddresses) => updateSubset({ notReadyAddresses })}
+            />
+            <div className="grid gap-1.5">
+              <Label>端口</Label>
+              <RowList
+                rows={subset.ports}
+                onChange={(ports) => updateSubset({ ports })}
+                addLabel="添加端口"
+                create={emptyEndpointPort}
+                render={(port, portIndex, updatePort) => (
+                  <div className="grid gap-2 @md:grid-cols-[1fr_7rem_7rem_1fr]">
+                    <Input
+                      value={port.name}
+                      aria-label={`子集 ${subsetIndex + 1} 端口 ${portIndex + 1} 名称`}
+                      placeholder="名称"
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) => updatePort({ name: event.target.value })}
+                    />
+                    <NumericInput
+                      value={port.port}
+                      aria-label={`子集 ${subsetIndex + 1} 端口 ${portIndex + 1}`}
+                      placeholder="端口"
+                      maxLength={PORT_DIGITS}
+                      onValueChange={(value) => updatePort({ port: value })}
+                    />
+                    <Select
+                      value={port.protocol}
+                      onValueChange={(protocol) => updatePort({ protocol })}
+                    >
+                      <SelectTrigger
+                        aria-label={`子集 ${subsetIndex + 1} 端口 ${portIndex + 1} 协议`}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={DEFAULT_OPTION}>默认 TCP</SelectItem>
+                        <SelectItem value="TCP">TCP</SelectItem>
+                        <SelectItem value="UDP">UDP</SelectItem>
+                        <SelectItem value="SCTP">SCTP</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={port.appProtocol}
+                      aria-label={`子集 ${subsetIndex + 1} 端口 ${portIndex + 1} AppProtocol`}
+                      placeholder="AppProtocol（可选）"
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) => updatePort({ appProtocol: event.target.value })}
+                    />
+                  </div>
+                )}
+              />
+            </div>
+          </div>
+        )}
+      />
+    </FormSection>
+  );
+}
+
+function EndpointAddressList({
+  label,
+  rows,
+  subsetIndex,
+  onChange,
+}: {
+  label: string;
+  rows: EndpointAddressDraft[];
+  subsetIndex: number;
+  onChange: (rows: EndpointAddressDraft[]) => void;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <Label>{label}</Label>
+      <RowList
+        rows={rows}
+        onChange={onChange}
+        addLabel={`添加${label}`}
+        create={emptyEndpointAddress}
+        render={(address, addressIndex, updateAddress) => (
+          <div className="grid gap-2 @md:grid-cols-3">
+            <Input
+              value={address.ip}
+              aria-label={`子集 ${subsetIndex + 1} ${label} ${addressIndex + 1} IP`}
+              placeholder="IP 地址"
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => updateAddress({ ip: event.target.value })}
+            />
+            <Input
+              value={address.hostname}
+              aria-label={`子集 ${subsetIndex + 1} ${label} ${addressIndex + 1} 主机名`}
+              placeholder="主机名（可选）"
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => updateAddress({ hostname: event.target.value })}
+            />
+            <Input
+              value={address.nodeName}
+              aria-label={`子集 ${subsetIndex + 1} ${label} ${addressIndex + 1} 节点名`}
+              placeholder="节点名（可选）"
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => updateAddress({ nodeName: event.target.value })}
+            />
+          </div>
+        )}
+      />
+    </div>
+  );
+}
 
 function ServiceFields({
   draft,

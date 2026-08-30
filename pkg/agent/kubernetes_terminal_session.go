@@ -479,7 +479,7 @@ func terminalNamespacePolicyRules(permissions []string, protectedPermission stri
 	rules := make([]rbacv1.PolicyRule, 0, 12)
 	if len(verbs) > 0 {
 		rules = append(rules,
-			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods", "services", "configmaps", "persistentvolumeclaims", "resourcequotas", "limitranges"}, Verbs: verbs},
+			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods", "services", "endpoints", "configmaps", "persistentvolumeclaims", "resourcequotas", "limitranges"}, Verbs: verbs},
 			rbacv1.PolicyRule{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "daemonsets"}, Verbs: verbs},
 			rbacv1.PolicyRule{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: verbs},
 			rbacv1.PolicyRule{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: verbs},
@@ -593,7 +593,7 @@ func terminalNamespacedReadPolicyRules(permissions []string) []rbacv1.PolicyRule
 	readVerbs := []string{"get", "list", "watch"}
 	if held[permissionname.ClusterRead] {
 		rules = append(rules,
-			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods", "services", "configmaps", "persistentvolumeclaims", "resourcequotas", "limitranges"}, Verbs: readVerbs},
+			rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods", "services", "endpoints", "configmaps", "persistentvolumeclaims", "resourcequotas", "limitranges"}, Verbs: readVerbs},
 			rbacv1.PolicyRule{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "daemonsets", "replicasets", "controllerrevisions"}, Verbs: readVerbs},
 			rbacv1.PolicyRule{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: readVerbs},
 			rbacv1.PolicyRule{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: readVerbs},

@@ -423,7 +423,7 @@ func renderManifest(
 			},
 			{
 				APIGroups: []string{""},
-				Resources: []string{"services"},
+				Resources: []string{"services", "endpoints"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{

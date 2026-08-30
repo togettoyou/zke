@@ -88,6 +88,80 @@ func TestCreateNetworkingObjectsCoversServiceIngressAndGateway(t *testing.T) {
 	}
 }
 
+func TestEndpointCreateDetailAndUpdatePreserveTargetReference(t *testing.T) {
+	t.Parallel()
+
+	input := &EndpointSpec{Subsets: []EndpointSubset{{
+		Addresses:         []EndpointAddress{{IP: "10.0.0.10", Hostname: "api-0", NodeName: "worker-1"}},
+		NotReadyAddresses: []EndpointAddress{{IP: "10.0.0.11"}},
+		Ports:             []EndpointPort{{Name: "http", Port: 8080, Protocol: "TCP", AppProtocol: "http"}},
+	}}}
+	object, err := createNetworkingObject(CreateNetworkingResourceInput{
+		Namespace: "default", Resource: NetworkingEndpoints, Name: "api", Endpoint: input,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var endpoints corev1.Endpoints
+	if runtime.DefaultUnstructuredConverter.FromUnstructured(object, &endpoints) != nil ||
+		len(endpoints.Subsets) != 1 || endpoints.Subsets[0].Addresses[0].IP != "10.0.0.10" ||
+		endpoints.Subsets[0].Ports[0].Port != 8080 {
+		t.Fatalf("unexpected Endpoints object: %+v", endpoints)
+	}
+	endpoints.UID = types.UID("endpoint-uid")
+	endpoints.ResourceVersion = "7"
+	endpoints.Subsets[0].Addresses[0].TargetRef = &corev1.ObjectReference{
+		APIVersion: "v1", Kind: "Pod", Namespace: "default", Name: "api-0",
+	}
+	object, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := networkingResourceDetail(object, NetworkingEndpoints, "default", "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Endpoint == nil || detail.Endpoint.Spec.Subsets[0].Addresses[0].NodeName != "worker-1" ||
+		detail.Endpoint.Spec.Subsets[0].Ports[0].AppProtocol != "http" {
+		t.Fatalf("unexpected Endpoints detail: %+v", detail.Endpoint)
+	}
+	updated, err := updateNetworkingObject(object, UpdateNetworkingResourceInput{
+		Resource: NetworkingEndpoints, Endpoint: input,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var updatedEndpoints corev1.Endpoints
+	if runtime.DefaultUnstructuredConverter.FromUnstructured(updated, &updatedEndpoints) != nil ||
+		updatedEndpoints.Subsets[0].Addresses[0].TargetRef == nil ||
+		updatedEndpoints.Subsets[0].Addresses[0].TargetRef.Name != "api-0" {
+		t.Fatalf("Endpoint update dropped its target reference: %+v", updatedEndpoints.Subsets)
+	}
+}
+
+func TestEndpointSpecRejectsInvalidAddressesAndPorts(t *testing.T) {
+	t.Parallel()
+
+	for name, spec := range map[string]EndpointSpec{
+		"invalid address": {Subsets: []EndpointSubset{{
+			Addresses: []EndpointAddress{{IP: "not-an-ip"}},
+			Ports:     []EndpointPort{{Port: 80}},
+		}}},
+		"invalid port": {Subsets: []EndpointSubset{{
+			Addresses: []EndpointAddress{{IP: "10.0.0.10"}},
+			Ports:     []EndpointPort{{Port: 70000}},
+		}}},
+	} {
+		spec := spec
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if validEndpointSpec(spec) {
+				t.Fatalf("invalid Endpoint spec accepted: %+v", spec)
+			}
+		})
+	}
+}
+
 func TestGatewayRouteCreateDetailAndUpdatePreserveObjectState(t *testing.T) {
 	t.Parallel()
 	input := &GatewayRouteSpec{Spec: map[string]any{

@@ -28,6 +28,7 @@ type NetworkingResource string
 
 const (
 	NetworkingServices   NetworkingResource = "services"
+	NetworkingEndpoints  NetworkingResource = "endpoints"
 	NetworkingIngresses  NetworkingResource = "ingresses"
 	NetworkingGateways   NetworkingResource = "gateways"
 	NetworkingHTTPRoutes NetworkingResource = "httproutes"
@@ -37,6 +38,8 @@ const (
 	NetworkingUDPRoutes  NetworkingResource = "udproutes"
 
 	maxNetworkingPorts        = 100
+	maxEndpointSubsets        = 100
+	maxEndpointAddresses      = 1000
 	maxIngressRules           = 256
 	maxIngressPaths           = 256
 	maxGatewayListeners       = 64
@@ -50,6 +53,7 @@ var ErrGatewayAPIUnavailable = errors.New("requested Gateway API resource is not
 
 var networkingResourceIdentities = map[NetworkingResource]ResourceIdentity{
 	NetworkingServices:   {Version: "v1", Resource: "services"},
+	NetworkingEndpoints:  {Version: "v1", Resource: "endpoints"},
 	NetworkingIngresses:  {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
 	NetworkingGateways:   {Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gateways"},
 	NetworkingHTTPRoutes: {Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"},
@@ -93,6 +97,7 @@ type NetworkingResourceSummary struct {
 	CreationTimestamp time.Time          `json:"creation_timestamp"`
 	Labels            map[string]string  `json:"labels"`
 	Service           *ServiceView       `json:"service,omitempty"`
+	Endpoint          *EndpointView      `json:"endpoint,omitempty"`
 	Ingress           *IngressView       `json:"ingress,omitempty"`
 	Gateway           *GatewayView       `json:"gateway,omitempty"`
 	GatewayRoute      *GatewayRouteView  `json:"gateway_route,omitempty"`
@@ -139,6 +144,33 @@ type ServiceView struct {
 	IPFamilies          []string              `json:"ip_families"`
 	IPFamilyPolicy      string                `json:"ip_family_policy"`
 	LoadBalancerIngress []LoadBalancerAddress `json:"load_balancer_ingress"`
+}
+
+type EndpointAddress struct {
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
+	NodeName string `json:"node_name"`
+}
+
+type EndpointPort struct {
+	Name        string `json:"name"`
+	Port        int32  `json:"port"`
+	Protocol    string `json:"protocol"`
+	AppProtocol string `json:"app_protocol"`
+}
+
+type EndpointSubset struct {
+	Addresses         []EndpointAddress `json:"addresses"`
+	NotReadyAddresses []EndpointAddress `json:"not_ready_addresses"`
+	Ports             []EndpointPort    `json:"ports"`
+}
+
+type EndpointSpec struct {
+	Subsets []EndpointSubset `json:"subsets"`
+}
+
+type EndpointView struct {
+	Spec EndpointSpec `json:"spec"`
 }
 
 type IngressServiceBackend struct {
@@ -284,6 +316,7 @@ type CreateNetworkingResourceInput struct {
 	Labels         map[string]string
 	Annotations    map[string]string
 	Service        *ServiceSpec
+	Endpoint       *EndpointSpec
 	Ingress        *IngressSpec
 	Gateway        *GatewaySpec
 	GatewayRoute   *GatewayRouteSpec
@@ -300,6 +333,7 @@ type UpdateNetworkingResourceInput struct {
 	UID             string
 	ResourceVersion string
 	Service         *ServiceSpec
+	Endpoint        *EndpointSpec
 	Ingress         *IngressSpec
 	Gateway         *GatewaySpec
 	GatewayRoute    *GatewayRouteSpec
@@ -412,7 +446,7 @@ func (service *Service) UpdateNetworkingResource(
 ) (NetworkingResourceDetail, error) {
 	identity, err := service.networkingIdentity(ctx, input.ClusterID, input.Resource)
 	if err != nil || !validNetworkingMutationIdentity(input.Namespace, input.Name, input.UID, input.ResourceVersion) ||
-		!validNetworkingSpec(input.Resource, input.Service, input.Ingress, input.Gateway, input.GatewayRoute) {
+		!validNetworkingSpec(input.Resource, input.Service, input.Endpoint, input.Ingress, input.Gateway, input.GatewayRoute) {
 		return NetworkingResourceDetail{}, firstNetworkingError(err)
 	}
 	existing, err := service.GetResource(ctx, GetResourceInput{
@@ -542,21 +576,55 @@ func validNetworkingMetadata(namespace, name string, labels, annotations map[str
 func validNetworkingSpec(
 	resourceName NetworkingResource,
 	serviceSpec *ServiceSpec,
+	endpointSpec *EndpointSpec,
 	ingressSpec *IngressSpec,
 	gatewaySpec *GatewaySpec,
 	gatewayRouteSpec *GatewayRouteSpec,
 ) bool {
 	switch resourceName {
 	case NetworkingServices:
-		return serviceSpec != nil && ingressSpec == nil && gatewaySpec == nil && gatewayRouteSpec == nil && validServiceSpec(*serviceSpec)
+		return serviceSpec != nil && endpointSpec == nil && ingressSpec == nil && gatewaySpec == nil && gatewayRouteSpec == nil && validServiceSpec(*serviceSpec)
+	case NetworkingEndpoints:
+		return serviceSpec == nil && endpointSpec != nil && ingressSpec == nil && gatewaySpec == nil && gatewayRouteSpec == nil && validEndpointSpec(*endpointSpec)
 	case NetworkingIngresses:
-		return serviceSpec == nil && ingressSpec != nil && gatewaySpec == nil && gatewayRouteSpec == nil && validIngressSpec(*ingressSpec)
+		return serviceSpec == nil && endpointSpec == nil && ingressSpec != nil && gatewaySpec == nil && gatewayRouteSpec == nil && validIngressSpec(*ingressSpec)
 	case NetworkingGateways:
-		return serviceSpec == nil && ingressSpec == nil && gatewaySpec != nil && gatewayRouteSpec == nil && validGatewaySpec(*gatewaySpec)
+		return serviceSpec == nil && endpointSpec == nil && ingressSpec == nil && gatewaySpec != nil && gatewayRouteSpec == nil && validGatewaySpec(*gatewaySpec)
 	default:
-		return serviceSpec == nil && ingressSpec == nil && gatewaySpec == nil &&
+		return serviceSpec == nil && endpointSpec == nil && ingressSpec == nil && gatewaySpec == nil &&
 			gatewayRouteSpec != nil && validGatewayRouteSpec(resourceName, *gatewayRouteSpec)
 	}
+}
+
+func validEndpointSpec(input EndpointSpec) bool {
+	if len(input.Subsets) > maxEndpointSubsets {
+		return false
+	}
+	addressCount := 0
+	portCount := 0
+	for _, subset := range input.Subsets {
+		addressCount += len(subset.Addresses) + len(subset.NotReadyAddresses)
+		portCount += len(subset.Ports)
+		if addressCount > maxEndpointAddresses || portCount > maxNetworkingPorts {
+			return false
+		}
+		for _, address := range append(append([]EndpointAddress{}, subset.Addresses...), subset.NotReadyAddresses...) {
+			if net.ParseIP(address.IP) == nil ||
+				(address.Hostname != "" && len(k8svalidation.IsDNS1123Subdomain(address.Hostname)) != 0) ||
+				(address.NodeName != "" && len(k8svalidation.IsDNS1123Subdomain(address.NodeName)) != 0) {
+				return false
+			}
+		}
+		for _, port := range subset.Ports {
+			if port.Port < 1 || port.Port > 65535 ||
+				(port.Name != "" && len(k8svalidation.IsValidPortName(port.Name)) != 0) ||
+				(port.Protocol != "" && port.Protocol != "TCP" && port.Protocol != "UDP" && port.Protocol != "SCTP") ||
+				(port.AppProtocol != "" && len(k8svalidation.IsQualifiedName(port.AppProtocol)) != 0) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validGatewayRouteSpec(resourceName NetworkingResource, input GatewayRouteSpec) bool {
@@ -957,7 +1025,7 @@ func validGatewayAllowedRoutes(routes GatewayAllowedRoutes) bool {
 
 func createNetworkingObject(input CreateNetworkingResourceInput) (map[string]any, error) {
 	if !validNetworkingMetadata(input.Namespace, input.Name, input.Labels, input.Annotations) ||
-		!validNetworkingSpec(input.Resource, input.Service, input.Ingress, input.Gateway, input.GatewayRoute) ||
+		!validNetworkingSpec(input.Resource, input.Service, input.Endpoint, input.Ingress, input.Gateway, input.GatewayRoute) ||
 		input.Resource == NetworkingServices && len(k8svalidation.IsDNS1035Label(input.Name)) != 0 {
 		return nil, ErrInvalidInput
 	}
@@ -969,6 +1037,8 @@ func createNetworkingObject(input CreateNetworkingResourceInput) (map[string]any
 	switch input.Resource {
 	case NetworkingServices:
 		object = &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metadata, Spec: serviceKubernetesSpec(*input.Service, nil)}
+	case NetworkingEndpoints:
+		object = &corev1.Endpoints{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Endpoints"}, ObjectMeta: metadata, Subsets: endpointKubernetesSubsets(*input.Endpoint, nil)}
 	case NetworkingIngresses:
 		object = &networkingv1.Ingress{TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"}, ObjectMeta: metadata, Spec: ingressKubernetesSpec(*input.Ingress)}
 	case NetworkingGateways:
@@ -1013,6 +1083,13 @@ func updateNetworkingObject(existing map[string]any, input UpdateNetworkingResou
 			return nil, ErrInvalidInput
 		}
 		object.Spec = serviceKubernetesSpec(*input.Service, &object.Spec)
+		return runtime.DefaultUnstructuredConverter.ToUnstructured(&object)
+	case NetworkingEndpoints:
+		var object corev1.Endpoints
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(existing, &object) != nil {
+			return nil, ErrInvalidResponse
+		}
+		object.Subsets = endpointKubernetesSubsets(*input.Endpoint, object.Subsets)
 		return runtime.DefaultUnstructuredConverter.ToUnstructured(&object)
 	case NetworkingIngresses:
 		var object networkingv1.Ingress
@@ -1105,6 +1182,70 @@ func serviceKubernetesSpec(input ServiceSpec, current *corev1.ServiceSpec) corev
 		}
 	}
 	return result
+}
+
+func endpointKubernetesSubsets(input EndpointSpec, current []corev1.EndpointSubset) []corev1.EndpointSubset {
+	result := make([]corev1.EndpointSubset, 0, len(input.Subsets))
+	for index, subset := range input.Subsets {
+		var existing corev1.EndpointSubset
+		if index < len(current) {
+			existing = current[index]
+		}
+		ports := make([]corev1.EndpointPort, 0, len(subset.Ports))
+		for _, port := range subset.Ports {
+			protocol := corev1.Protocol(port.Protocol)
+			if protocol == "" {
+				protocol = corev1.ProtocolTCP
+			}
+			var appProtocol *string
+			if port.AppProtocol != "" {
+				value := port.AppProtocol
+				appProtocol = &value
+			}
+			ports = append(ports, corev1.EndpointPort{
+				Name: port.Name, Port: port.Port, Protocol: protocol, AppProtocol: appProtocol,
+			})
+		}
+		result = append(result, corev1.EndpointSubset{
+			Addresses: endpointKubernetesAddresses(subset.Addresses, existing.Addresses),
+			NotReadyAddresses: endpointKubernetesAddresses(
+				subset.NotReadyAddresses, existing.NotReadyAddresses,
+			),
+			Ports: ports,
+		})
+	}
+	return result
+}
+
+func endpointKubernetesAddresses(input []EndpointAddress, current []corev1.EndpointAddress) []corev1.EndpointAddress {
+	existing := make(map[string]*corev1.ObjectReference, len(current))
+	for _, address := range current {
+		existing[endpointAddressKey(address.IP, address.Hostname, pointerValue(address.NodeName))] = address.TargetRef
+	}
+	result := make([]corev1.EndpointAddress, 0, len(input))
+	for _, address := range input {
+		var nodeName *string
+		if address.NodeName != "" {
+			value := address.NodeName
+			nodeName = &value
+		}
+		result = append(result, corev1.EndpointAddress{
+			IP: address.IP, Hostname: address.Hostname, NodeName: nodeName,
+			TargetRef: existing[endpointAddressKey(address.IP, address.Hostname, address.NodeName)],
+		})
+	}
+	return result
+}
+
+func endpointAddressKey(ip, hostname, nodeName string) string {
+	return ip + "\x00" + hostname + "\x00" + nodeName
+}
+
+func pointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func preserveServiceNodePorts(result, current []corev1.ServicePort) {
@@ -1207,6 +1348,14 @@ func networkingResourceDetail(
 		}
 		view := serviceView(value)
 		summary.Service = &view
+	case NetworkingEndpoints:
+		var value corev1.Endpoints
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(object, &value) != nil ||
+			value.APIVersion != "v1" || value.Kind != "Endpoints" {
+			return NetworkingResourceDetail{}, ErrInvalidResponse
+		}
+		view := endpointView(value)
+		summary.Endpoint = &view
 	case NetworkingIngresses:
 		var value networkingv1.Ingress
 		if runtime.DefaultUnstructuredConverter.FromUnstructured(object, &value) != nil ||
@@ -1270,6 +1419,38 @@ func serviceView(value corev1.Service) ServiceView {
 		view.LoadBalancerIngress = append(view.LoadBalancerIngress, LoadBalancerAddress{IP: address.IP, Hostname: address.Hostname})
 	}
 	return view
+}
+
+func endpointView(value corev1.Endpoints) EndpointView {
+	subsets := make([]EndpointSubset, 0, len(value.Subsets))
+	for _, subset := range value.Subsets {
+		ports := make([]EndpointPort, 0, len(subset.Ports))
+		for _, port := range subset.Ports {
+			appProtocol := ""
+			if port.AppProtocol != nil {
+				appProtocol = *port.AppProtocol
+			}
+			ports = append(ports, EndpointPort{
+				Name: port.Name, Port: port.Port, Protocol: string(port.Protocol), AppProtocol: appProtocol,
+			})
+		}
+		subsets = append(subsets, EndpointSubset{
+			Addresses:         endpointAddressesView(subset.Addresses),
+			NotReadyAddresses: endpointAddressesView(subset.NotReadyAddresses),
+			Ports:             ports,
+		})
+	}
+	return EndpointView{Spec: EndpointSpec{Subsets: subsets}}
+}
+
+func endpointAddressesView(input []corev1.EndpointAddress) []EndpointAddress {
+	result := make([]EndpointAddress, 0, len(input))
+	for _, address := range input {
+		result = append(result, EndpointAddress{
+			IP: address.IP, Hostname: address.Hostname, NodeName: pointerValue(address.NodeName),
+		})
+	}
+	return result
 }
 
 func ingressView(value networkingv1.Ingress) IngressView {

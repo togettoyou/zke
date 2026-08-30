@@ -5,6 +5,7 @@ import { queryKeys, queryKeyPrefixes } from "../query-keys";
 import type {
   KubernetesGatewaySpecInput,
   KubernetesGatewayRouteSpecInput,
+  KubernetesEndpointSpecInput,
   KubernetesIngressSpecInput,
   KubernetesNetworkingResource,
   KubernetesNetworkingResourceDetail,
@@ -27,6 +28,7 @@ export type NetworkingListParams = {
 /** The one type-specific block a create or update request carries. */
 export type NetworkingSpecInput = {
   service?: KubernetesServiceSpecInput;
+  endpoint?: KubernetesEndpointSpecInput;
   ingress?: KubernetesIngressSpecInput;
   gateway?: KubernetesGatewaySpecInput;
   gateway_route?: KubernetesGatewayRouteSpecInput;

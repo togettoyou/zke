@@ -115,7 +115,8 @@ export function NetworkingSection({
     namespaceMutationPermission({ namespace, agentNamespace }, "cluster.resource.delete"),
     projectScope,
   );
-  const canDescribe = permissions.can("cluster.event.read", projectScope);
+  const canDescribe =
+    resource !== "endpoints" && permissions.can("cluster.event.read", projectScope);
 
   // Both the row action and the detail view open the same confirmation, so it is
   // one callback rather than two copies of the reset sequence.
@@ -403,6 +404,13 @@ function deleteImpacts(resource: KubernetesNetworkingResource): string[] {
       ...shared,
     ];
   }
+  if (resource === "endpoints") {
+    return [
+      "删除后依赖这个对象的同名无 selector Service 将失去手工维护的后端地址。",
+      "由 Controller 管理的 Endpoints 可能会被重新创建；请先确认该对象的所有者。",
+      ...shared,
+    ];
+  }
   if (resource === "ingresses") {
     return ["删除后 Ingress Controller 会撤销对应的对外路由规则。", ...shared];
   }
@@ -454,6 +462,36 @@ function typeColumns(
                   `${port.port}${port.node_port ? `:${port.node_port}` : ""}/${port.protocol || "TCP"}`,
               )
               .join(" · ") || "—"}
+          </span>
+        ),
+      },
+    ];
+  }
+  if (resource === "endpoints") {
+    return [
+      {
+        header: "就绪地址",
+        size: 110,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-xs">
+            {endpointAddressCount(row.original, false)}
+          </span>
+        ),
+      },
+      {
+        header: "未就绪地址",
+        size: 110,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-xs">
+            {endpointAddressCount(row.original, true)}
+          </span>
+        ),
+      },
+      {
+        header: "端口",
+        cell: ({ row }) => (
+          <span className="zke-mono text-muted-foreground text-xs break-all">
+            {endpointPortLabels(row.original).join(" · ") || "—"}
           </span>
         ),
       },
@@ -573,6 +611,24 @@ function addressValues(entries: { ip: string; hostname: string }[] | undefined):
   return (entries ?? []).map((entry) => entry.ip || entry.hostname).filter(Boolean);
 }
 
+function endpointAddressCount(item: NetworkingSummary, notReady: boolean): number {
+  return (item.endpoint?.spec.subsets ?? []).reduce(
+    (total, subset) =>
+      total + (notReady ? subset.not_ready_addresses.length : subset.addresses.length),
+    0,
+  );
+}
+
+function endpointPortLabels(item: NetworkingSummary): string[] {
+  const labels = new Set<string>();
+  for (const subset of item.endpoint?.spec.subsets ?? []) {
+    for (const port of subset.ports) {
+      labels.add(`${port.name ? `${port.name}:` : ""}${port.port}/${port.protocol || "TCP"}`);
+    }
+  }
+  return [...labels];
+}
+
 function NetworkingDetailView({
   clusterId,
   namespace,
@@ -663,6 +719,7 @@ function NetworkingDetailView({
           </DetailCard>
 
           {item.service ? <ServiceCards view={item.service} /> : null}
+          {item.endpoint ? <EndpointCards view={item.endpoint} /> : null}
           {item.ingress ? <IngressCards view={item.ingress} /> : null}
           {item.gateway ? <GatewayCards view={item.gateway} /> : null}
           {item.gateway_route ? (
@@ -995,6 +1052,73 @@ function ServiceCards({ view }: { view: NonNullable<NetworkingSummary["service"]
         <DetailKeyValues entries={view.spec.selector} />
       </DetailCard>
     </>
+  );
+}
+
+function EndpointCards({ view }: { view: NonNullable<NetworkingSummary["endpoint"]> }) {
+  return (
+    <div className="@md:col-span-2">
+      <DetailCard title="Endpoint 子集">
+        {view.spec.subsets.length === 0 ? (
+          <DetailRow label="子集" value="—" />
+        ) : (
+          <div className="grid gap-3">
+            {view.spec.subsets.map((subset, index) => (
+              <div
+                key={index}
+                className="border-border/70 bg-surface-muted/30 rounded-control grid gap-2 border p-3"
+              >
+                <DetailRow
+                  label={`子集 ${index + 1}`}
+                  value={
+                    <span className="text-subtle-foreground text-xs">
+                      {subset.addresses.length} 个就绪地址 · {subset.not_ready_addresses.length}{" "}
+                      个未就绪地址 · {subset.ports.length} 个端口
+                    </span>
+                  }
+                />
+                <DetailRow
+                  label="就绪地址"
+                  value={<EndpointAddressLines addresses={subset.addresses} />}
+                />
+                <DetailRow
+                  label="未就绪地址"
+                  value={<EndpointAddressLines addresses={subset.not_ready_addresses} />}
+                />
+                <DetailRow
+                  label="端口"
+                  value={
+                    <MatchLines
+                      lines={subset.ports.map(
+                        (port) =>
+                          `${port.name ? `${port.name} · ` : ""}${port.port}/${port.protocol || "TCP"}${port.app_protocol ? ` · ${port.app_protocol}` : ""}`,
+                      )}
+                      empty="—"
+                    />
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </DetailCard>
+    </div>
+  );
+}
+
+function EndpointAddressLines({
+  addresses,
+}: {
+  addresses: NonNullable<NetworkingSummary["endpoint"]>["spec"]["subsets"][number]["addresses"];
+}) {
+  return (
+    <MatchLines
+      lines={addresses.map(
+        (address) =>
+          `${address.ip}${address.hostname ? ` · ${address.hostname}` : ""}${address.node_name ? ` · 节点 ${address.node_name}` : ""}`,
+      )}
+      empty="—"
+    />
   );
 }
 

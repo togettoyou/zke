@@ -176,6 +176,7 @@ export type KubernetesNetworkingResourceDetail = Schemas["KubernetesNetworkingRe
 export type KubernetesNetworkingResourcePage = Schemas["KubernetesNetworkingResourcePage"];
 export type KubernetesServiceView = Schemas["KubernetesServiceView"];
 export type KubernetesServiceSpecInput = Schemas["KubernetesServiceSpecInput"];
+export type KubernetesEndpointSpecInput = Schemas["KubernetesEndpointSpecInput"];
 export type KubernetesIngressView = Schemas["KubernetesIngressView"];
 export type KubernetesIngressSpecInput = Schemas["KubernetesIngressSpecInput"];
 export type KubernetesGatewayView = Schemas["KubernetesGatewayView"];
