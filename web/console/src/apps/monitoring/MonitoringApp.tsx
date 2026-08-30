@@ -1,13 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  Activity,
-  Boxes,
-  Cpu,
-  HardDrive,
-  LayoutDashboard,
-  PlugZap,
-  SearchCode,
-} from "lucide-react";
+import { Activity, Cpu, HardDrive, LayoutDashboard, PlugZap, SearchCode } from "lucide-react";
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
@@ -23,7 +15,6 @@ import { CollectionQualitySection } from "./CollectionQualitySection";
 import { CollectionSection } from "./CollectionSection";
 import { ComputeSection } from "./ComputeSection";
 import { ExploreSection } from "./ExploreSection";
-import { KubernetesSection } from "./KubernetesSection";
 import { MetricsToolbar } from "./MetricsToolbar";
 import { OverviewSection } from "./OverviewSection";
 import { StorageNetworkSection } from "./StorageNetworkSection";
@@ -72,14 +63,14 @@ const DEFAULT_CHART_SECTION = "overview";
  * The chart sections, split by the question rather than by the metric.
  *
  * One 指标总览 holding everything was the wrong shape twice over: it could not
- * fit the catalogue, and the catalogue does not answer one question. Capacity,
- * device saturation and object state are asked at different times by different
- * people, and each of them wants its own set of panels open — not a select at
- * the top of a single screen.
+ * fit the catalogue, and the catalogue does not answer one question. Capacity
+ * and device saturation remain separate tasks here; object state is the health
+ * drill-down of 集群总览 rather than another peer with an implementation-shaped
+ * name.
  */
 const NAV: AppNavItem[] = [
   { id: COLLECTION_SECTION, label: "采集接入", icon: PlugZap },
-  // Second, directly under 采集接入 and above the dashboards. The four sections
+  // Second, directly under 采集接入 and above the dashboards. The three sections
   // below answer the questions somebody wrote a panel for; this one answers the
   // rest, which during an incident is most of them. Putting it after the
   // dashboards would file the general tool behind the specific ones.
@@ -87,9 +78,8 @@ const NAV: AppNavItem[] = [
   { id: "overview", label: "集群总览", icon: LayoutDashboard },
   { id: "compute", label: "计算资源", icon: Cpu },
   { id: "storage", label: "存储与网络", icon: HardDrive },
-  { id: "kubernetes", label: "Kubernetes 资源", icon: Boxes },
   // Last, and a chart section rather than part of 采集接入 above: it answers
-  // why the other four are empty, and it has to be reachable by an operator who
+  // why the other three are empty, and it has to be reachable by an operator who
   // holds only the read permission.
   { id: "collection-quality", label: "采集质量", icon: Activity },
 ];
@@ -103,10 +93,10 @@ function viewsContainQuery(views: readonly MetricsView[], query: string): boolea
 function evidenceSection(query: string): string {
   if (OVERVIEW_PANELS.some((panel) => panel.queries.some((item) => item.name === query)))
     return "overview";
+  if (viewsContainQuery(KUBERNETES_VIEWS, query)) return "overview";
   if (COMPUTE_DIMENSIONS.some((dimension) => viewsContainQuery(dimension.views, query)))
     return "compute";
   if (viewsContainQuery(STORAGE_VIEWS, query)) return "storage";
-  if (viewsContainQuery(KUBERNETES_VIEWS, query)) return "kubernetes";
   if (viewsContainQuery(COLLECTION_QUALITY_VIEWS, query)) return "collection-quality";
   return COLLECTION_SECTION;
 }
@@ -185,7 +175,7 @@ export function MonitoringApp(_props: AppComponentProps) {
       case "overview":
         return (
           <MetricsGate>
-            <OverviewSection />
+            <OverviewSection initialQuery={initialQuery} />
           </MetricsGate>
         );
       case "compute":
@@ -198,12 +188,6 @@ export function MonitoringApp(_props: AppComponentProps) {
         return (
           <MetricsGate>
             <StorageNetworkSection initialQuery={initialQuery} />
-          </MetricsGate>
-        );
-      case "kubernetes":
-        return (
-          <MetricsGate>
-            <KubernetesSection initialQuery={initialQuery} />
           </MetricsGate>
         );
       case EXPLORE_SECTION:

@@ -1187,7 +1187,7 @@ export const STORAGE_VIEWS: MetricsViews = [
   },
 ];
 
-/* ── Kubernetes 资源 ──────────────────────────────────────────────────── */
+/* ── 集群总览 · 对象健康 ─────────────────────────────────────────────── */
 
 export const KUBERNETES_VIEWS: MetricsViews = [
   {

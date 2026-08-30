@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { useMetricsQuery } from "@/api/queries/observability";
 import { isForbidden } from "@/api/errors";
@@ -7,19 +7,50 @@ import { Skeleton } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
 
 import { ChartPanel, IssueNotice } from "./ChartPanel";
-import { OVERVIEW_PANELS } from "./metrics-catalog";
+import { SegmentedTabs, ViewPanels } from "./MetricsViews";
+import { KUBERNETES_VIEWS, OVERVIEW_PANELS } from "./metrics-catalog";
 import { useMetricsScope } from "./metrics-scope";
 
+const SUMMARY_VIEW = { id: "summary", label: "整体" } as const;
+const OVERVIEW_VIEWS = [SUMMARY_VIEW, ...KUBERNETES_VIEWS] as const;
+
 /**
- * The headline row and the four curves behind it.
+ * The Cluster landing view and the Kubernetes object health views behind it.
  *
- * A landing screen answers one question — is anything wrong right now — and
- * then says where to look. So the tiles are counts of things that are either
- * healthy or not, and the charts under them are the four series whose shape
- * explains a tile that reads badly: two utilisations, what the Pods are doing,
- * and whether containers are restarting.
+ * Kubernetes 资源 used to be a peer of 集群总览 in the application rail, even
+ * though its Pod and restart charts overlapped the landing screen and the label
+ * described an implementation domain rather than an operator's task. Keeping
+ * the concrete resource choices inside the overview makes this one place for
+ * answering whether the Cluster is healthy without loading every panel at once.
  */
-export function OverviewSection() {
+export function OverviewSection({ initialQuery }: { initialQuery?: string }) {
+  const [viewId, setViewId] = useState(
+    () =>
+      KUBERNETES_VIEWS.find((view) =>
+        view.panels.some((panel) => panel.queries.some((query) => query.name === initialQuery)),
+      )?.id ?? SUMMARY_VIEW.id,
+  );
+  const resourceView = KUBERNETES_VIEWS.find((view) => view.id === viewId);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <SegmentedTabs
+          items={OVERVIEW_VIEWS}
+          activeId={resourceView?.id ?? SUMMARY_VIEW.id}
+          onSelect={setViewId}
+          label="集群总览视角"
+        />
+      </div>
+      {resourceView ? <ViewPanels key={resourceView.id} view={resourceView} /> : <SummaryPanels />}
+    </div>
+  );
+}
+
+/**
+ * The headline row and the curves that explain a headline count that reads badly.
+ */
+function SummaryPanels() {
   const { clusterId, windowKey, readWindow, live } = useMetricsScope();
   const inventory = useMetricsQuery(
     {
@@ -58,7 +89,7 @@ export function OverviewSection() {
   const failed = counts.get("pod_failed") ?? 0;
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       {inventory.error ? (
         <ErrorState
           error={inventory.error}
@@ -114,7 +145,7 @@ export function OverviewSection() {
           ))}
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
