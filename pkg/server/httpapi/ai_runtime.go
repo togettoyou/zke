@@ -65,6 +65,7 @@ type aiEvidenceRequest struct {
 	Name            string    `json:"name"`
 	ResourceVersion string    `json:"resource_version"`
 	Query           string    `json:"query"`
+	Expression      string    `json:"expression"`
 	Parameters      string    `json:"parameters"`
 	Container       string    `json:"container"`
 	From            time.Time `json:"from"`
@@ -358,6 +359,7 @@ func (handler *aiRuntimeHandler) startTurn(c *gin.Context) {
 			Kind: aisession.EvidenceKind(item.Kind), Cluster: item.Cluster,
 			Namespace: item.Namespace, GVK: item.GVK, Name: item.Name,
 			ResourceVersion: item.ResourceVersion, Query: item.Query,
+			Expression: item.Expression,
 			Parameters: item.Parameters, Container: item.Container, From: item.From, To: item.To,
 		})
 	}

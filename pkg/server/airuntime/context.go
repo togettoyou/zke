@@ -209,7 +209,7 @@ func turnEvidence(entries []aisession.Entry, turn int32) []aisession.Evidence {
 func evidenceKey(evidence aisession.Evidence) string {
 	return strings.Join([]string{
 		string(evidence.Kind), evidence.Cluster, evidence.Namespace,
-		evidence.GVK, evidence.Name, evidence.Container, evidence.Query,
+		evidence.GVK, evidence.Name, evidence.Container, evidence.Query, evidence.Expression,
 	}, "\x00")
 }
 

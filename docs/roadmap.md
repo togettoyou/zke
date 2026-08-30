@@ -77,7 +77,7 @@ Helm 也已接入：Chart 仓库目录与 Chart 内容的读取，Release 的清
 
 - [x] 运行时底座：`ai.run`、后台任务、SSE/重连、权限重验、按比例触发的检查点压缩、模型失败分类与退避重试、证据引用
 - [x] AIOps App：随当前 Tenant/Project 和 Cluster 工作区切换的会话、对话/轨迹 Tab、轨迹时间线与详情、附件、搜索、归档、删除、导出和证据深链
-- [x] Agent 循环：多 Step 工具调用、同一 Step 内有界并发读取、读取工具目录（概览、资源、诊断、Event、Pod 日志、指标）、逐次权限重验、敏感工具审批、收敛与预算保护、流式增量与运行统计
+- [x] Agent 循环：多 Step 工具调用、同一 Step 内有界并发读取、读取工具目录（概览、资源、诊断、Event、Pod 日志、预置与自定义 MetricsQL）、逐次权限重验、敏感工具审批、收敛与预算保护、流式增量与运行统计
 - [x] 首个受控写操作：Deployment/StatefulSet 副本数 DryRun 预检与实际伸缩、稳定幂等键、写入批次顺序执行和三档审批
 - [x] 资源写操作：YAML/DryRun/有界差异、Manifest 部署与删除、工作负载历史读取与回滚、预检快照、逐目标权限重验
 - [x] Cluster Terminal 的 AIOps 受控命令执行：Turn 级终端复用、冻结权限快照、敏感审批、有界输出与自动清理

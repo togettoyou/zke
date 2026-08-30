@@ -7432,6 +7432,8 @@ export interface components {
             name?: string;
             resource_version?: string;
             query?: string;
+            /** @description AIOps 执行过的自定义 MetricsQL 表达式；与具名查询 query 二选一，用于打开监控数据探索。 */
+            expression?: string;
             parameters?: string;
             container?: string;
             from?: components["schemas"]["Timestamp"];

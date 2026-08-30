@@ -440,9 +440,11 @@ type Evidence struct {
 	// ResourceVersion is the version an object was read at, so a later reader
 	// can tell whether they are looking at the same thing the turn saw.
 	ResourceVersion string `json:"resource_version,omitempty"`
-	// Query is a metrics catalogue query ID, never an expression: AIOps has no
-	// more access to free PromQL than a chart does.
+	// Query is a metrics catalogue query ID. Expression is an operator-authored
+	// MetricsQL expression whose Cluster selector was enforced by the Server.
+	// They are separate so a deep link can open the matching monitoring view.
 	Query      string    `json:"query,omitempty"`
+	Expression string    `json:"expression,omitempty"`
 	Parameters string    `json:"parameters,omitempty"`
 	Container  string    `json:"container,omitempty"`
 	From       time.Time `json:"from,omitzero"`

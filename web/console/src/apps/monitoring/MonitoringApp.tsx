@@ -3,7 +3,7 @@ import { Activity, Cpu, HardDrive, LayoutDashboard, PlugZap, SearchCode } from "
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
-import { METRICS_EVIDENCE_QUERY_KEY } from "@/apps/evidence-link";
+import { METRICS_EVIDENCE_EXPRESSION_KEY, METRICS_EVIDENCE_QUERY_KEY } from "@/apps/evidence-link";
 import type { AppComponentProps } from "@/apps/types";
 import { isApiError } from "@/api/errors";
 import { useSessionContext } from "@/auth/session-context";
@@ -90,7 +90,8 @@ function viewsContainQuery(views: readonly MetricsView[], query: string): boolea
   );
 }
 
-function evidenceSection(query: string): string {
+function evidenceSection(query: string, expression: string): string {
+  if (expression) return EXPLORE_SECTION;
   if (OVERVIEW_PANELS.some((panel) => panel.queries.some((item) => item.name === query)))
     return "overview";
   if (viewsContainQuery(KUBERNETES_VIEWS, query)) return "overview";
@@ -122,10 +123,14 @@ function evidenceSection(query: string): string {
  */
 export function MonitoringApp(_props: AppComponentProps) {
   const [initialQuery] = useState(() => sessionStorage.getItem(METRICS_EVIDENCE_QUERY_KEY) ?? "");
+  const [initialExpression] = useState(
+    () => sessionStorage.getItem(METRICS_EVIDENCE_EXPRESSION_KEY) ?? "",
+  );
   useEffect(() => {
     sessionStorage.removeItem(METRICS_EVIDENCE_QUERY_KEY);
+    sessionStorage.removeItem(METRICS_EVIDENCE_EXPRESSION_KEY);
   }, []);
-  const [section, setSection] = useState(() => evidenceSection(initialQuery));
+  const [section, setSection] = useState(() => evidenceSection(initialQuery, initialExpression));
   const scope = useScopeStore((state) => state.scope);
   const projectId = scope.projectId;
   const { permissions } = useSessionContext();
@@ -229,7 +234,7 @@ export function MonitoringApp(_props: AppComponentProps) {
       {/* Outside the shell rather than inside the section: the rail unmounts
           whichever section is not open, and the expressions an operator is in
           the middle of writing have to survive a look at another one. */}
-      <ExploreProvider enabled={activeId === EXPLORE_SECTION}>
+      <ExploreProvider enabled={activeId === EXPLORE_SECTION} initialExpression={initialExpression}>
         <AppShell
           nav={nav}
           activeId={activeId}

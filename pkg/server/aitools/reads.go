@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -437,6 +438,12 @@ type queryMetricsArguments struct {
 	Top       int    `json:"top"`
 }
 
+type queryCustomMetricsArguments struct {
+	Expression string `json:"expression"`
+	Kind       string `json:"kind"`
+	Minutes    int    `json:"minutes"`
+}
+
 func (catalogue *Catalogue) queryMetrics(
 	ctx context.Context, invocation airuntime.ToolInvocation,
 ) (airuntime.ToolResult, error) {
@@ -467,6 +474,64 @@ func (catalogue *Catalogue) queryMetrics(
 			Kind: aisession.EvidenceMetric, Cluster: invocation.ClusterID,
 			Namespace: arguments.Namespace, Query: arguments.Query,
 			Parameters: string(parameters), From: start, To: end,
+		}},
+	}, nil
+}
+
+func (catalogue *Catalogue) queryCustomMetrics(
+	ctx context.Context, invocation airuntime.ToolInvocation,
+) (airuntime.ToolResult, error) {
+	var arguments queryCustomMetricsArguments
+	if err := decode(invocation.Arguments, &arguments); err != nil {
+		return airuntime.ToolResult{}, err
+	}
+	kind := metricsquery.Kind(strings.TrimSpace(arguments.Kind))
+	if kind == "" {
+		kind = metricsquery.KindRange
+	}
+	if kind != metricsquery.KindRange && kind != metricsquery.KindInstant {
+		return airuntime.ToolResult{}, fmt.Errorf(
+			"%w: kind 必须是 range 或 instant", airuntime.ErrInvalidInput,
+		)
+	}
+	minutes := bound(arguments.Minutes, 60, 1440)
+	end := time.Now().UTC()
+	start := end.Add(-time.Duration(minutes) * time.Minute)
+	step := time.Duration(minutes) * time.Minute / 120
+	if step < 30*time.Second {
+		step = 30 * time.Second
+	}
+	if kind == metricsquery.KindInstant {
+		start = time.Time{}
+		step = 0
+	}
+	result, err := catalogue.dependencies.Metrics.Explore(ctx, metricsquery.ExploreInput{
+		UserID: invocation.UserID, ClusterID: invocation.ClusterID, Kind: kind,
+		Start: start, End: end, Step: step,
+		Queries: []metricsquery.ExploreQuery{{
+			RefID: "A", Expression: arguments.Expression,
+		}},
+	})
+	if err != nil {
+		return airuntime.ToolResult{}, err
+	}
+	if len(result.Queries) != 1 {
+		return airuntime.ToolResult{}, errors.New("custom metrics query returned no outcome")
+	}
+	outcome := result.Queries[0]
+	digest := customMetricsDigest(result, outcome, minutes)
+	if outcome.Error != nil {
+		return airuntime.ToolResult{Text: catalogue.encode(digest), Failed: true}, nil
+	}
+	parameters, _ := json.Marshal(map[string]any{
+		"kind": kind, "minutes": minutes,
+	})
+	return airuntime.ToolResult{
+		Text: catalogue.encode(digest),
+		Evidence: []aisession.Evidence{{
+			Kind: aisession.EvidenceMetric, Cluster: invocation.ClusterID,
+			Expression: arguments.Expression, Parameters: string(parameters),
+			From: result.Start, To: result.End,
 		}},
 	}, nil
 }
@@ -700,8 +765,45 @@ func describeDigest(result kubernetesdescribe.Result) map[string]any {
 // series that matters to a diagnosis is its latest value, its peak and its
 // average.
 func metricsDigest(result metricsquery.Result, minutes int) map[string]any {
-	series := make([]map[string]any, 0, len(result.Series))
-	for _, item := range result.Series {
+	digest := map[string]any{
+		"query": result.Query, "title": result.Title, "unit": result.Unit,
+		"window_minutes": minutes, "series": metricSeriesDigest(result.Series),
+		"partial": result.Partial,
+	}
+	if len(result.Issues) > 0 {
+		digest["issues"] = result.Issues
+	}
+	return digest
+}
+
+func customMetricsDigest(
+	result metricsquery.ExploreResult,
+	outcome metricsquery.ExploreOutcome,
+	minutes int,
+) map[string]any {
+	digest := map[string]any{
+		"expression": outcome.Expression, "effective_expression": outcome.EffectiveExpression,
+		"kind": result.Kind, "series": metricSeriesDigest(outcome.Series),
+		"truncated": outcome.Truncated,
+	}
+	if result.Kind == metricsquery.KindRange {
+		digest["window_minutes"] = minutes
+	}
+	if outcome.Warning != "" {
+		digest["warning"] = outcome.Warning
+	}
+	if outcome.Error != nil {
+		digest["error"] = outcome.Error
+	}
+	if len(result.Issues) > 0 {
+		digest["issues"] = result.Issues
+	}
+	return digest
+}
+
+func metricSeriesDigest(items []metricsquery.Series) []map[string]any {
+	series := make([]map[string]any, 0, len(items))
+	for _, item := range items {
 		var sum, peak float64
 		var samples int
 		var latest *float64
@@ -711,10 +813,10 @@ func metricsDigest(result metricsquery.Result, minutes int) map[string]any {
 			}
 			value := *point.Value
 			sum += value
-			samples++
-			if value > peak {
+			if samples == 0 || value > peak {
 				peak = value
 			}
+			samples++
 			latest = point.Value
 		}
 		entry := map[string]any{"labels": item.Labels, "samples": samples}
@@ -725,14 +827,7 @@ func metricsDigest(result metricsquery.Result, minutes int) map[string]any {
 		}
 		series = append(series, entry)
 	}
-	digest := map[string]any{
-		"query": result.Query, "title": result.Title, "unit": result.Unit,
-		"window_minutes": minutes, "series": series, "partial": result.Partial,
-	}
-	if len(result.Issues) > 0 {
-		digest["issues"] = result.Issues
-	}
-	return digest
+	return series
 }
 
 // stripNoise removes the two fields that are large, machine-written, and never

@@ -67,6 +67,7 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `get_pod_logs` | Pod 容器日志尾部（敏感），按 Pod 实例身份读取；单容器 Pod 可以省略容器名 | `cluster.pod.logs.read` |
 | `list_metric_queries` | 可用的指标查询目录，每行一个查询：查询名、标题、单位与参数标记 | `cluster.metrics.read` |
 | `query_metrics` | 执行目录中的一个查询，返回每条曲线的最新值、峰值与均值 | `cluster.metrics.read` |
+| `query_custom_metrics` | 执行一条自定义 MetricsQL；Server 把会话 Cluster 强制注入每个选择器，模型不提供 Cluster ID | `cluster.metrics.read` |
 | `preview_workload_scale` | 对 Deployment/StatefulSet 目标副本数执行 Kubernetes 服务端 DryRun，不改变集群 | 普通 Namespace 使用 `cluster.resource.update`，受保护 Namespace 改用 system/agent manage |
 | `scale_workload` | 实际调整 Deployment/StatefulSet 副本数；提交前内部再次执行同参数 DryRun | 同预检；实际伸缩始终按敏感操作处理 |
 | `list_workload_revisions` | 读取 Deployment/StatefulSet/DaemonSet 历史版本及回滚并发前置条件 | `cluster.read` |
@@ -102,8 +103,10 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 逐个拼成 JSON。目录会继续变长，因此「整份放得进一次工具结果」由一个单元测试守着，而不是靠人记得。
 
 AIOps 读到的就是 Console 图表读的那一份目录：查询目录由 Server 现场枚举，新增查询不需要在 AIOps 侧登记，
-权限也仍然是 `cluster.metrics.read` 按目标 Cluster 逐次校验。模型引用的每条指标都会作为证据落进轨迹，
-点开时在 Console 中打开对应的图表分区。
+权限也仍然是 `cluster.metrics.read` 按目标 Cluster 逐次校验。目录无法回答的问题可以调用 `query_custom_metrics`
+书写一条 MetricsQL；工具 Schema 不接受 Cluster ID，Server 复用监控「数据探索」的查询服务，把表达式里已有的
+`zke_cluster_id` 条件替换为会话固定 Cluster，并再次强制注入存储请求。模型引用的每条指标都会作为证据落进轨迹；
+具名查询点开对应图表分区，自定义表达式点开「数据探索」并带回原表达式。
 
 **Helm Release 是目录里唯一一个只回答“是什么”、不回答“里面是什么”的读取。** Release 不是 Kubernetes 的一种
 Kind，其余工具都答不了它：资源列表看到的是 Chart 渲染出的 Deployment，而 Deployment 上没有任何指回 Release 的

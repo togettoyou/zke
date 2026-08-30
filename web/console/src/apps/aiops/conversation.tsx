@@ -564,7 +564,7 @@ export function Evidence({ evidence }: { evidence: AIEvidence[] }) {
     <div className="mt-2 flex flex-wrap gap-1.5">
       {evidence.map((item, index) => (
         <button
-          key={`${item.kind}-${item.cluster}-${item.name ?? item.query ?? index}`}
+          key={`${item.kind}-${item.cluster}-${item.name ?? item.query ?? item.expression ?? index}`}
           type="button"
           className="zke-focus border-border bg-surface-muted text-primary rounded-control inline-flex items-center gap-1 border px-2 py-1 text-[11px] hover:underline"
           onClick={() =>
@@ -577,6 +577,7 @@ export function Evidence({ evidence }: { evidence: AIEvidence[] }) {
               gvk: item.gvk,
               name: item.name,
               query: item.query,
+              expression: item.expression,
             })
           }
           title={`在 ${item.kind === "metric" ? "监控" : "容器服务"}中打开 · 集群 ${item.cluster}`}
@@ -605,5 +606,7 @@ function evidenceLabel(evidence: AIEvidence): string {
     log: "日志 ",
     helm_release: "Helm ",
   }[evidence.kind];
-  return `${prefix}${evidence.name ?? evidence.query ?? "证据"}`;
+  const target = evidence.name ?? evidence.query ?? evidence.expression ?? "证据";
+  const label = target.length > 56 ? `${target.slice(0, 53)}…` : target;
+  return `${prefix}${label}`;
 }

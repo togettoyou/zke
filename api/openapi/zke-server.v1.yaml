@@ -17528,6 +17528,10 @@ components:
         name: { type: string, maxLength: 253 }
         resource_version: { type: string, maxLength: 128 }
         query: { type: string, maxLength: 256 }
+        expression:
+          type: string
+          maxLength: 4096
+          description: AIOps 执行过的自定义 MetricsQL 表达式；与具名查询 query 二选一，用于打开监控数据探索。
         parameters: { type: string, maxLength: 4096 }
         container: { type: string, maxLength: 253 }
         from: { $ref: "#/components/schemas/Timestamp" }

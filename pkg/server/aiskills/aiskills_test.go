@@ -228,6 +228,12 @@ func (unusedDependency) Query(
 	panic("not called")
 }
 
+func (unusedDependency) Explore(
+	context.Context, metricsquery.ExploreInput,
+) (metricsquery.ExploreResult, error) {
+	panic("not called")
+}
+
 func (unusedDependency) ScaleWorkload(
 	context.Context, kubernetesresource.ScaleWorkloadInput,
 ) (kubernetesresource.WorkloadDetail, error) {

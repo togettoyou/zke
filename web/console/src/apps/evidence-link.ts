@@ -25,11 +25,13 @@ export type EvidenceTarget = {
   gvk?: string | null;
   name?: string | null;
   query?: string | null;
+  expression?: string | null;
 };
 
 export const CONTAINER_EVIDENCE_KEY = "zke.ai-evidence.container-target";
 export const METRICS_EVIDENCE_CLUSTER_KEY = "zke.ai-evidence.metrics-cluster";
 export const METRICS_EVIDENCE_QUERY_KEY = "zke.ai-evidence.metrics-query";
+export const METRICS_EVIDENCE_EXPRESSION_KEY = "zke.ai-evidence.metrics-expression";
 
 /*
  * Which application shows one kind of evidence.
@@ -54,6 +56,7 @@ export function stashEvidenceTarget(input: {
   gvk?: string | null;
   resource?: string | null;
   query?: string | null;
+  expression?: string | null;
 }): void {
   try {
     if (input.appId === "container-service") {
@@ -71,7 +74,16 @@ export function stashEvidenceTarget(input: {
     }
     if (input.appId === "monitoring") {
       sessionStorage.setItem(METRICS_EVIDENCE_CLUSTER_KEY, input.clusterId);
-      if (input.query) sessionStorage.setItem(METRICS_EVIDENCE_QUERY_KEY, input.query);
+      if (input.query) {
+        sessionStorage.setItem(METRICS_EVIDENCE_QUERY_KEY, input.query);
+      } else {
+        sessionStorage.removeItem(METRICS_EVIDENCE_QUERY_KEY);
+      }
+      if (input.expression) {
+        sessionStorage.setItem(METRICS_EVIDENCE_EXPRESSION_KEY, input.expression);
+      } else {
+        sessionStorage.removeItem(METRICS_EVIDENCE_EXPRESSION_KEY);
+      }
     }
   } catch {
     // Session storage may be unavailable; the window still opens, on whatever
@@ -107,6 +119,7 @@ export function openEvidence(target: EvidenceTarget): void {
       gvk: target.gvk,
       resource: target.name,
       query: target.query,
+      expression: target.expression,
     });
   }
   useWindowStore.getState().openWindow(appId, { restart: true });

@@ -182,7 +182,8 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
 			Title:   "资源用量与饱和度评估",
 			Summary: "用指标目录判断集群、节点、Namespace 或工作负载是否真的资源不足，而不是只看一次快照。",
 			Tools: []string{
-				"list_metric_queries", "query_metrics", "cluster_overview", "list_nodes",
+				"list_metric_queries", "query_metrics", "query_custom_metrics",
+				"cluster_overview", "list_nodes",
 			},
 			Body: `# 资源用量与饱和度评估
 
@@ -190,8 +191,9 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
 需要回答「是不是资源不够」「哪个 Namespace/工作负载吃掉了资源」「这次异常前后用量有没有变化」。
 
 ## 取证顺序
-1. list_metric_queries 先看目录。ZKE 不接受任意 PromQL，只能调用目录里的查询；
-   目录同时说明每个查询支持哪些参数（namespace、top、回看窗口）。不要凭记忆构造查询名。
+1. list_metric_queries 先看目录。目录同时说明每个查询支持哪些参数（namespace、top、回看窗口）。
+   优先调用目录查询；只有目录无法回答问题时才用 query_custom_metrics 书写 MetricsQL 表达式。
+   自定义表达式不需要也不应组装 Cluster ID，Server 会把会话 Cluster 强制注入每个选择器。
 2. 从宽到窄：先查集群或节点维度确认是否存在整体压力，再用 top 参数查 Namespace 或 Pod 维度定位来源。
 3. 回看窗口要覆盖问题发生的时间。默认窗口只有一小时，排查昨天的事故必须显式放大 minutes。
 4. 用量结论必须和申请量/限制量一起看：使用率高但远低于 limit 是正常工作，使用率贴着 limit 才是瓶颈。

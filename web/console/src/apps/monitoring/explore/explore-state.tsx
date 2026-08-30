@@ -47,6 +47,7 @@ function signatureOf(rows: ExpressionRow[], kind: ExploreKind): string {
  */
 export function ExploreProvider({
   enabled,
+  initialExpression = "",
   children,
 }: {
   /**
@@ -58,11 +59,13 @@ export function ExploreProvider({
    * every Cluster shares, for an answer no one will read.
    */
   enabled: boolean;
+  /** Expression carried by an AIOps evidence deep link. It is loaded but not run automatically. */
+  initialExpression?: string;
   children: ReactNode;
 }) {
   const { clusterId, readWindow, refreshToken } = useMetricsScope();
   const [rows, setRows] = useState<ExpressionRow[]>(() => [
-    { ref: EXPRESSION_REFS[0], expression: "", hidden: false },
+    { ref: EXPRESSION_REFS[0], expression: initialExpression, hidden: false },
   ]);
   const [kind, setKind] = useState<ExploreKind>("range");
   const [activeRef, setActiveRef] = useState<string>(EXPRESSION_REFS[0]);

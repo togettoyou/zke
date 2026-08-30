@@ -148,6 +148,7 @@ type LogReader interface {
 type MetricsReader interface {
 	Catalog() []metricsquery.Definition
 	Query(context.Context, metricsquery.Input) (metricsquery.Result, error)
+	Explore(context.Context, metricsquery.ExploreInput) (metricsquery.ExploreResult, error)
 }
 
 // WorkloadWriter is the existing Kubernetes workload mutation path narrowed to
@@ -286,6 +287,8 @@ func (catalogue *Catalogue) Invoke(
 		return catalogue.listMetricQueries(ctx, invocation)
 	case toolQueryMetrics:
 		return catalogue.queryMetrics(ctx, invocation)
+	case toolQueryCustomMetrics:
+		return catalogue.queryCustomMetrics(ctx, invocation)
 	case toolPreviewWorkloadScale:
 		return catalogue.scaleWorkload(ctx, invocation, true)
 	case toolScaleWorkload:
@@ -345,6 +348,7 @@ const (
 	toolPodLogs                  = "get_pod_logs"
 	toolListMetricQueries        = "list_metric_queries"
 	toolQueryMetrics             = "query_metrics"
+	toolQueryCustomMetrics       = "query_custom_metrics"
 	toolPreviewWorkloadScale     = "preview_workload_scale"
 	toolScaleWorkload            = "scale_workload"
 	toolPreviewManifestApply     = "preview_manifest_apply"
@@ -465,8 +469,8 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 		specs = append(specs,
 			airuntime.ToolSpec{
 				Name: toolListMetricQueries,
-				Description: "列出可用的指标查询目录。ZKE 不接受任意 PromQL，只能调用目录里的查询，" +
-					"因此先用它确认查询名与它支持的参数。",
+				Description: "列出预置指标查询目录。优先用目录中成本已知的查询；" +
+					"需要自定义 MetricsQL 时改用 query_custom_metrics。先用它确认查询名与支持的参数。",
 				Schema:      objectSchema(nil, nil),
 				Permissions: []rbac.Permission{rbac.PermissionClusterMetricsRead},
 			},
@@ -480,6 +484,18 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 					"minutes":   integerProperty("回看窗口分钟数，默认 60，最大 1440。"),
 					"top":       integerProperty("Top N，仅当该查询支持或要求时可用。"),
 				}, []string{"query"}),
+				Permissions: []rbac.Permission{rbac.PermissionClusterMetricsRead},
+			},
+			airuntime.ToolSpec{
+				Name: toolQueryCustomMetrics,
+				Description: "执行一条自定义 MetricsQL 表达式，返回每条曲线的最新值、最大值与平均值摘要。" +
+					"目标 Cluster 由 Server 从当前 AIOps 会话强制注入每个选择器；不要在表达式里组装 Cluster ID。" +
+					"预置目录无法回答问题时使用。",
+				Schema: objectSchema(map[string]any{
+					"expression": stringProperty("MetricsQL 表达式。Server 会替换其中已有的 Cluster 条件，并强制注入当前会话 Cluster。"),
+					"kind":       enumStringProperty("range 返回时间序列；instant 返回当前值。默认 range。", "range", "instant"),
+					"minutes":    integerProperty("range 的回看窗口分钟数，默认 60，最大 1440；instant 会忽略此参数。"),
+				}, []string{"expression"}),
 				Permissions: []rbac.Permission{rbac.PermissionClusterMetricsRead},
 			},
 		)
