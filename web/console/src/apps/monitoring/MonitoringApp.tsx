@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Boxes, Cpu, HardDrive, LayoutDashboard, PlugZap } from "lucide-react";
+import {
+  Activity,
+  Boxes,
+  Cpu,
+  HardDrive,
+  LayoutDashboard,
+  PlugZap,
+  SearchCode,
+} from "lucide-react";
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
@@ -14,11 +22,13 @@ import { useScopeStore } from "@/scope/scope-store";
 import { CollectionQualitySection } from "./CollectionQualitySection";
 import { CollectionSection } from "./CollectionSection";
 import { ComputeSection } from "./ComputeSection";
+import { ExploreSection } from "./ExploreSection";
 import { KubernetesSection } from "./KubernetesSection";
 import { MetricsToolbar } from "./MetricsToolbar";
 import { OverviewSection } from "./OverviewSection";
 import { StorageNetworkSection } from "./StorageNetworkSection";
 import { MetricsGate, MetricsScopeProvider } from "./MetricsScopeProvider";
+import { ExploreProvider } from "./explore/explore-state";
 import {
   COLLECTION_QUALITY_VIEWS,
   COMPUTE_DIMENSIONS,
@@ -35,9 +45,28 @@ import {
  *
  * It is also the one section that changes what runs inside somebody's Cluster,
  * so it is hidden from an operator who only holds the read permission — and
- * then this is not where they land. The first visible section is.
+ * then this is not where they land. DEFAULT_CHART_SECTION is.
  */
 const COLLECTION_SECTION = "collection";
+
+/**
+ * Ad-hoc queries. Named so the shell can tell the Explore state provider
+ * whether the screen it holds the expressions for is the one on screen: it
+ * stays mounted across a section change on purpose, and something has to stop
+ * it re-running those expressions on every tick of a clock nobody is watching.
+ */
+const EXPLORE_SECTION = "explore";
+
+/**
+ * Where an operator lands when the section they asked for is not open to them.
+ *
+ * Not simply the first entry of the rail any more. 数据探索 sits second, and it
+ * opens on an empty expression box — a worse first screen than the dashboard
+ * for somebody who holds only the read permission and therefore never sees
+ * 采集接入 above it. The rail is ordered for reaching a tool; this is ordered
+ * for arriving somewhere.
+ */
+const DEFAULT_CHART_SECTION = "overview";
 
 /**
  * The chart sections, split by the question rather than by the metric.
@@ -50,7 +79,12 @@ const COLLECTION_SECTION = "collection";
  */
 const NAV: AppNavItem[] = [
   { id: COLLECTION_SECTION, label: "采集接入", icon: PlugZap },
-  { id: "overview", label: "总览", icon: LayoutDashboard },
+  // Second, directly under 采集接入 and above the dashboards. The four sections
+  // below answer the questions somebody wrote a panel for; this one answers the
+  // rest, which during an incident is most of them. Putting it after the
+  // dashboards would file the general tool behind the specific ones.
+  { id: EXPLORE_SECTION, label: "数据探索", icon: SearchCode },
+  { id: "overview", label: "集群总览", icon: LayoutDashboard },
   { id: "compute", label: "计算资源", icon: Cpu },
   { id: "storage", label: "存储与网络", icon: HardDrive },
   { id: "kubernetes", label: "Kubernetes 资源", icon: Boxes },
@@ -119,11 +153,14 @@ export function MonitoringApp(_props: AppComponentProps) {
     ...item,
     hidden: item.id === COLLECTION_SECTION ? !canManageCollection : !canReadMetrics,
   }));
-  const firstVisible = nav.find((item) => !item.hidden)?.id;
   // A section that has just been hidden — the scope changed under a window that
-  // was already open — falls back to the first one that is not, rather than
-  // rendering behind a rail that no longer offers it.
-  const activeId = nav.find((item) => item.id === section && !item.hidden) ? section : firstVisible;
+  // was already open — falls back to the landing section rather than rendering
+  // behind a rail that no longer offers it. Undefined only when the rail is
+  // empty, which is the state the warning below covers.
+  const landing =
+    nav.find((item) => item.id === DEFAULT_CHART_SECTION && !item.hidden)?.id ??
+    nav.find((item) => !item.hidden)?.id;
+  const activeId = nav.find((item) => item.id === section && !item.hidden) ? section : landing;
   const charts = Boolean(activeId) && activeId !== COLLECTION_SECTION;
 
   const content = useMemo(() => {
@@ -169,6 +206,12 @@ export function MonitoringApp(_props: AppComponentProps) {
             <KubernetesSection initialQuery={initialQuery} />
           </MetricsGate>
         );
+      case EXPLORE_SECTION:
+        return (
+          <MetricsGate>
+            <ExploreSection />
+          </MetricsGate>
+        );
       case "collection-quality":
         return (
           <MetricsGate>
@@ -184,7 +227,7 @@ export function MonitoringApp(_props: AppComponentProps) {
     return <ScopeRequired />;
   }
 
-  if (!firstVisible || !activeId) {
+  if (!landing || !activeId) {
     return (
       <div className="p-4">
         <Alert tone="warning">
@@ -199,14 +242,19 @@ export function MonitoringApp(_props: AppComponentProps) {
     // The scope provider wraps the shell rather than the sections: the toolbar
     // is the thing that sets it, and it is rendered by the shell.
     <MetricsScopeProvider enabled={charts}>
-      <AppShell
-        nav={nav}
-        activeId={activeId}
-        onNavigate={setSection}
-        toolbar={charts ? <MetricsToolbar /> : undefined}
-      >
-        {content}
-      </AppShell>
+      {/* Outside the shell rather than inside the section: the rail unmounts
+          whichever section is not open, and the expressions an operator is in
+          the middle of writing have to survive a look at another one. */}
+      <ExploreProvider enabled={activeId === EXPLORE_SECTION}>
+        <AppShell
+          nav={nav}
+          activeId={activeId}
+          onNavigate={setSection}
+          toolbar={charts ? <MetricsToolbar /> : undefined}
+        >
+          {content}
+        </AppShell>
+      </ExploreProvider>
     </MetricsScopeProvider>
   );
 }

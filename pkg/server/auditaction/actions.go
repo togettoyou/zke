@@ -89,6 +89,21 @@ const (
 	HelmRepositoryUpdate = "helm_repository.update"
 	HelmRepositoryDelete = "helm_repository.delete"
 
+	// A saved MetricsQL expression belongs to one Project, so it is recorded
+	// there rather than with the platform changes above.
+	//
+	// Writes only. Running an ad-hoc expression is a read of metrics, which
+	// this Server does not audit any more than it audits opening a chart:
+	// samples carry no payload, every read is already confined to a Cluster
+	// the caller may read, and a record per Execute would bury the events that
+	// matter under a keystroke log. Sharing an expression into a Project is a
+	// different act — it changes what everybody else sees in the picker — and
+	// the record names the entry and its visibility, never the expression
+	// text.
+	MetricsSavedQueryCreate = "metrics_saved_query.create"
+	MetricsSavedQueryUpdate = "metrics_saved_query.update"
+	MetricsSavedQueryDelete = "metrics_saved_query.delete"
+
 	// AIOps reads a Cluster on an operator behalf, through a model that chose
 	// what to read. Those reads are audited exactly like the ones an operator
 	// makes by hand: otherwise AIOps would be a way to read Pod logs without
@@ -296,6 +311,7 @@ const (
 	TargetPlatformSettings     = "platform_settings"
 	TargetAgentEndpointProfile = "agent_endpoint_profile"
 	TargetHelmRepository       = "helm_repository"
+	TargetMetricsSavedQuery    = "metrics_saved_query"
 	TargetAISession            = "ai_session"
 )
 
@@ -315,6 +331,7 @@ var targetTypes = []string{
 	TargetPlatformSettings,
 	TargetAgentEndpointProfile,
 	TargetHelmRepository,
+	TargetMetricsSavedQuery,
 	TargetAISession,
 }
 
@@ -371,6 +388,9 @@ var actions = []Action{
 	{ProjectSuspend, GroupProject},
 	{ProjectResume, GroupProject},
 	{ProjectDelete, GroupProject},
+	{MetricsSavedQueryCreate, GroupProject},
+	{MetricsSavedQueryUpdate, GroupProject},
+	{MetricsSavedQueryDelete, GroupProject},
 
 	{PlatformSettingsUpdate, GroupPlatform},
 	{AIModelSettingsUpdate, GroupPlatform},

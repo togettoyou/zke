@@ -1462,7 +1462,7 @@ export const COLLECTION_QUALITY_VIEWS: MetricsViews = [
   },
 ];
 
-/* ── 总览 ─────────────────────────────────────────────────────────────── */
+/* ── 集群总览 ─────────────────────────────────────────────────────────── */
 
 export const OVERVIEW_PANELS: readonly Panel[] = [
   // Usage first, and from the kubelet alone. Every other panel on this screen

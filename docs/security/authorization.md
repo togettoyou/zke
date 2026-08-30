@@ -355,7 +355,7 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 | 命名空间 | `cluster.namespace.manage`、`cluster.system_namespace.manage`、`cluster.agent_namespace.manage` |
 | 敏感资源 | `cluster.secret.read/manage`、`cluster.rbac.read/manage`、`cluster.event.read` |
 | 节点与 Pod 操作 | `cluster.node.manage`、`cluster.node.drain`、`cluster.pod.logs.read`、`cluster.pod.exec`、`cluster.pod.port_forward`、`cluster.pod.terminal_recording.create/read`、`cluster.terminal.exec` |
-| 监控 | `cluster.metrics.read`、`cluster.metrics.manage` |
+| 监控 | `cluster.metrics.read`（查图表、执行自定义表达式、保存自己的表达式）、`cluster.metrics.manage`（安装/卸载采集组件、把表达式共享进项目） |
 | Helm | `cluster.helm.manage`（改变某个集群里的 Release）、`helm.repository.read/manage`（平台级 Chart 仓库目录） |
 | 平台管理 | `user.read/manage`、`user.password.change`、`rbac.read/manage`、`audit.read` |
 | AIOps | `ai.run`（只允许在当前 Project 创建并运行固定 Cluster 会话，不包含任何集群读取权限） |

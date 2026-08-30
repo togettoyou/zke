@@ -39,6 +39,7 @@ var serviceAuthorizedRoutes = map[string]string{
 	"GET /api/v1/tenants/:tenant_id/projects":                           "project.read visibility is resolved and pushed into the query",
 	"GET /api/v1/observability/metrics/queries":                         "the closed query vocabulary this Server offers; describes the system's shape, holds no tenant data",
 	"GET /api/v1/observability/metrics/query":                           "cluster.metrics.read visibility is resolved and becomes the scope filter the query runs with",
+	"POST /api/v1/observability/metrics/explore":                        "cluster.metrics.read visibility is resolved for the named Cluster, and every selector in every expression is rewritten to that Cluster before it reaches storage",
 	"GET /api/v1/ai/tools":                                              "the tool catalogue describes the runtime itself and reads no Cluster, so authentication is the whole check",
 	"GET /api/v1/ai/sessions":                                           "ai.run is resolved for the current tenant, project and selected cluster workspace",
 	"POST /api/v1/ai/sessions":                                          "ai.run is resolved against the requested cluster and its current project before creation",

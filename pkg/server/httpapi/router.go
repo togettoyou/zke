@@ -26,6 +26,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/kubernetesyaml"
 	"github.com/togettoyou/zke/pkg/server/metricscollector"
+	"github.com/togettoyou/zke/pkg/server/metricslibrary"
 	"github.com/togettoyou/zke/pkg/server/metricsquery"
 	"github.com/togettoyou/zke/pkg/server/platformsettings"
 	"github.com/togettoyou/zke/pkg/server/podaccess"
@@ -51,8 +52,12 @@ type Dependencies struct {
 	// MetricsCollectorService is nil when the deployment stores no metrics.
 	// The handler reports that state rather than the route disappearing, so a
 	// Console built against this Server always gets a meaningful answer.
-	MetricsCollectorService   *metricscollector.Service
-	MetricsQueryService       *metricsquery.Service
+	MetricsCollectorService *metricscollector.Service
+	MetricsQueryService     *metricsquery.Service
+	// MetricsSavedQueryService is nil for the same reason: without metrics
+	// storage there is nothing for a saved expression to run against, and the
+	// routes report that state rather than disappearing.
+	MetricsSavedQueryService  *metricslibrary.Service
 	KubernetesResourceService *kubernetesresource.Service
 	// HelmService is nil when the deployment has no database-backed chart
 	// catalogue configured. The routes stay registered and report that state,
@@ -94,6 +99,7 @@ type handlers struct {
 	clusterOverview         *clusterOverviewHandler
 	metricsCollector        *metricsCollectorHandler
 	observabilityMetrics    *observabilityMetricsHandler
+	metricsSavedQuery       *metricsSavedQueryHandler
 	kubernetesNode          *kubernetesNodeHandler
 	kubernetesMetrics       *kubernetesMetricsHandler
 	kubernetesNamespace     *kubernetesNamespaceHandler
@@ -274,6 +280,12 @@ func New(
 		observabilityMetrics: newObservabilityMetricsHandler(
 			logger,
 			metricsQueryServiceOrNil(dependencies.MetricsQueryService),
+			config.Authentication.OperationTimeout,
+		),
+		metricsSavedQuery: newMetricsSavedQueryHandler(
+			logger,
+			metricsSavedQueryServiceOrNil(dependencies.MetricsSavedQueryService),
+			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),
 		metricsCollector: newMetricsCollectorHandler(

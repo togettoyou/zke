@@ -27,7 +27,8 @@ flowchart TB
 
 指标的第一条链路已实现，一体镜像、Compose 与 Helm 都自带存储并默认启用：集群内 vmagent 采集，经该集群
 Agent 已有的 QUIC 连接回传，Server 在摄取时按连接身份强制写入 `zke_cluster_id` 后存入 VictoriaMetrics，
-查询只经 Server 的具名查询目录、每次针对一个目标集群，可视化由 Console 自建，不集成 Grafana。日志与告警
+查询只经 Server：具名查询目录，或由 Server 解析并把目标集群强制改写进每一个选择器的自定义表达式；两者
+每次都只针对一个目标集群。可视化由 Console 自建，不集成 Grafana。日志与告警
 仍在规划中。
 详见 [Phase 3 可观测性架构设计](observability-phase-3.md)。
 

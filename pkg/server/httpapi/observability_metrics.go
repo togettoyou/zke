@@ -18,6 +18,7 @@ const maxStepSeconds = 24 * 60 * 60
 type metricsQueryService interface {
 	Catalog() []metricsquery.Definition
 	Query(context.Context, metricsquery.Input) (metricsquery.Result, error)
+	Explore(context.Context, metricsquery.ExploreInput) (metricsquery.ExploreResult, error)
 }
 
 type observabilityMetricsHandler struct {
@@ -198,8 +199,29 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 		return
 	}
 
-	series := make([]metricsQuerySeriesResponse, 0, len(result.Series))
-	for _, item := range result.Series {
+	writeSuccess(c, http.StatusOK, metricsQueryResponse{
+		Query:       result.Query,
+		Title:       result.Title,
+		Kind:        string(result.Kind),
+		Unit:        string(result.Unit),
+		Start:       result.Start,
+		End:         result.End,
+		StepSeconds: result.StepSeconds,
+		ClusterID:   result.ClusterID,
+		ClusterName: result.ClusterName,
+		Series:      metricsSeriesResponse(result.Series),
+		Truncated:   result.Truncated,
+		Partial:     result.Partial,
+		Issues:      metricsIssuesResponse(result.Issues),
+	})
+}
+
+// metricsSeriesResponse renders series for the wire. Shared by the catalogue
+// and by Explore: a chart drawn from one has to be drawn the same way as a
+// chart drawn from the other, gaps included.
+func metricsSeriesResponse(items []metricsquery.Series) []metricsQuerySeriesResponse {
+	series := make([]metricsQuerySeriesResponse, 0, len(items))
+	for _, item := range items {
 		points := make([][2]any, 0, len(item.Points))
 		for _, point := range item.Points {
 			if point.Value == nil {
@@ -219,8 +241,12 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 			Points:      points,
 		})
 	}
-	issues := make([]metricsQueryIssueResponse, 0, len(result.Issues))
-	for _, issue := range result.Issues {
+	return series
+}
+
+func metricsIssuesResponse(items []metricsquery.Issue) []metricsQueryIssueResponse {
+	issues := make([]metricsQueryIssueResponse, 0, len(items))
+	for _, issue := range items {
 		issues = append(issues, metricsQueryIssueResponse{
 			ClusterID:   issue.ClusterID,
 			ClusterName: issue.ClusterName,
@@ -228,21 +254,7 @@ func (handler *observabilityMetricsHandler) query(c *gin.Context) {
 			Detail:      issue.Detail,
 		})
 	}
-	writeSuccess(c, http.StatusOK, metricsQueryResponse{
-		Query:       result.Query,
-		Title:       result.Title,
-		Kind:        string(result.Kind),
-		Unit:        string(result.Unit),
-		Start:       result.Start,
-		End:         result.End,
-		StepSeconds: result.StepSeconds,
-		ClusterID:   result.ClusterID,
-		ClusterName: result.ClusterName,
-		Series:      series,
-		Truncated:   result.Truncated,
-		Partial:     result.Partial,
-		Issues:      issues,
-	})
+	return issues
 }
 
 // parseMetricsQuery validates transport-level shape only. Whether the caller

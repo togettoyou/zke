@@ -221,6 +221,12 @@ FOR UPDATE
 	}{
 		{"DELETE FROM user_sessions WHERE user_id = $1", "managed user sessions"},
 		{"DELETE FROM role_bindings WHERE subject_id = $1", "managed user role bindings"},
+		// Only the private ones. A saved metrics query shared into a Project
+		// belongs to that Project's library from the moment it was shared, and
+		// its foreign key sets the owner to null so it survives its author;
+		// one nobody else could ever see has nothing to survive for.
+		{`DELETE FROM metrics_saved_queries
+WHERE owner_user_id = $1 AND visibility = 'private'`, "managed user saved metrics queries"},
 		{"DELETE FROM users WHERE id = $1", "managed user"},
 	} {
 		if _, err := transaction.Exec(ctx, statement.sql, input.UserID); err != nil {

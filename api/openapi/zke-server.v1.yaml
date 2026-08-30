@@ -1414,6 +1414,158 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/projects/{project_id}/metrics/saved-queries:
+    get:
+      tags: [Resources]
+      operationId: listMetricsSavedQueries
+      description: |
+        列出该 Project 下调用方可见的已保存 MetricsQL 表达式：项目内共享的全部，加上
+        调用方自己的私有条目。别人的私有条目由 SQL 本身排除，而不是读出来之后再过滤。
+
+        条目只保存名称、说明与表达式文本，不保存集群、时间范围，也不携带任何权限。运行时
+        由 Console 当前选定的目标集群决定读哪个集群，Server 再把该集群改写进每一个选择器
+        ——所以一个人写下、另一个人运行的表达式，描述的始终是运行者本来就可以读的集群。
+
+        要求 `cluster.metrics.read`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: 已保存的查询
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsSavedQueryList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [Resources]
+      operationId: createMetricsSavedQuery
+      description: |
+        保存一条表达式。
+
+        `visibility` 为 `private` 时只需 `cluster.metrics.read`；为 `project` 时还需要
+        `cluster.metrics.manage`——共享会改变项目里所有人看到的列表，属于策展而不是访问。
+
+        表达式在保存时就要通过与执行时相同的改写校验，否则错误只会在别人第一次从选择器里
+        点开它时出现，而那里没有任何东西能解释它。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetricsSavedQueryRequest"
+      responses:
+        "201":
+          description: 已保存
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsSavedQuery"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/projects/{project_id}/metrics/saved-queries/{saved_query_id}:
+    put:
+      tags: [Resources]
+      operationId: updateMetricsSavedQuery
+      description: |
+        整体替换一条已保存的表达式。
+
+        私有条目只有作者本人可以改；共享条目需要 `cluster.metrics.manage`。改变可见范围
+        时，改变前与改变后的状态都必须是调用方可写的——只校验其中一侧，就等于允许在同一个
+        请求里把共享条目改成私有后再编辑，或者反过来把私有条目发布出去。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/MetricsSavedQueryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetricsSavedQueryRequest"
+      responses:
+        "200":
+          description: 已更新
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsSavedQuery"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [Resources]
+      operationId: deleteMetricsSavedQuery
+      description: |
+        删除一条已保存的表达式。权限与更新相同：私有条目属于作者，共享条目属于
+        `cluster.metrics.manage`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/MetricsSavedQueryID"
+      responses:
+        "204":
+          description: 已删除
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /api/v1/projects/{project_id}/clusters:
     get:
       tags: [Resources]
@@ -1729,6 +1881,66 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+  /api/v1/observability/metrics/explore:
+    post:
+      tags: [Resources]
+      operationId: exploreObservabilityMetrics
+      description: |
+        执行调用方自己书写的 MetricsQL 表达式，一次请求最多 5 条。
+
+        与具名查询不同，表达式由用户书写；作用域因此不是模板的一部分，而是由 Server
+        改写出来的。Server 用 VictoriaMetrics 自己的解析器解析表达式，把其中每一个
+        序列选择器都改写为携带 `zke_cluster_id="<cluster_id>"`，并且删除调用方自己写
+        在表达式里的同名条件——是替换而不是求交：把别人的表达式连同过滤条件一起粘过来
+        的人，应该看到自己集群的结果，而不是一张需要解释十分钟的空图。改写后的表达式会
+        原样返回（`effective_expression`），因为这是 Server 唯一一处重写用户查询的地方，
+        看不到的改写就是无法核对的改写。
+
+        改写不是唯一一道防线。请求同时把同一个条件作为 `extra_label` 交给存储，由存储对
+        它解析出的每一个选择器再施加一次；改写后的表达式还会被重新解析校验，任何一个选择
+        器没有携带该条件都会被拒绝执行。
+
+        目标集群必填，Server 校验调用方在 `cluster.metrics.read` 上确实可以读取它，与
+        具名查询同一条判权路径。表达式只决定读哪些序列，永远不能决定读哪个集群。
+
+        成本与具名查询用同一套边界：时间范围、步长、点数上限、序列上限完全一致，另外限制
+        单次请求的表达式条数与同一调用方的并发请求数，超出时返回 429。
+
+        单条表达式的失败（语法错误、存储拒绝、超时）写在该条自己的 `error` 中，其余表达式
+        照常返回结果：第二行的笔误不应该让第一行的图变空。
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetricsExploreRequest"
+      responses:
+        "200":
+          description: 查询结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MetricsExploreResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/Unavailable"
         "504":
@@ -8812,6 +9024,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/UUID"
+    MetricsSavedQueryID:
+      name: saved_query_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
     ClusterID:
       name: cluster_id
       in: path
@@ -15187,6 +15405,296 @@ components:
                     oneOf:
                       - type: number
                       - type: "null"
+    MetricsExploreRequest:
+      type: object
+      additionalProperties: false
+      required: [cluster_id, queries]
+      properties:
+        cluster_id:
+          allOf:
+            - $ref: "#/components/schemas/UUID"
+          description: |
+            目标集群。表达式只决定读哪些序列，集群始终由这里决定，并由 Server 强制写进
+            每一个选择器。
+        kind:
+          type: string
+          enum: [range, instant]
+          default: range
+          description: 区间查询还是瞬时查询。瞬时查询忽略 `start` 与 `step_seconds`。
+        start:
+          type: string
+          format: date-time
+          description: >-
+            区间查询的起点。会向前对齐到 step_seconds 的整数倍，与指标存储回答范围查询所用的网格一致；
+            响应中的 start 是实际生效的起点。
+        end:
+          type: string
+          format: date-time
+        step_seconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+        queries:
+          type: array
+          minItems: 1
+          maxItems: 5
+          description: |
+            要执行的表达式。上限存在的原因有两个：一条表达式的成本无法从文本预测，
+            而共享坐标轴上超过几条曲线之后图本身也不再可读。
+          items:
+            type: object
+            additionalProperties: false
+            required: [ref_id, expression]
+            properties:
+              ref_id:
+                type: string
+                minLength: 1
+                maxLength: 16
+                description: |
+                  调用方给这一行起的标识，会原样回显，用来把结果对回发起它的那一行，
+                  而不依赖数组顺序。同一请求内必须唯一。
+              expression:
+                type: string
+                minLength: 1
+                maxLength: 4096
+                description: |
+                  MetricsQL 表达式，语法见 VictoriaMetrics 文档。写在其中的
+                  `zke_cluster_id` 条件会被 Server 删除并替换为当前目标集群。
+    MetricsExploreResult:
+      type: object
+      additionalProperties: false
+      required:
+        - cluster_id
+        - cluster_name
+        - kind
+        - start
+        - end
+        - step_seconds
+        - queries
+        - issues
+      properties:
+        cluster_id:
+          allOf:
+            - $ref: "#/components/schemas/UUID"
+          description: 本次查询描述的集群，原样回显。
+        cluster_name:
+          type: string
+          description: 展示属性，不能替代 `cluster_id` 作为数据身份。
+        kind:
+          type: string
+          enum: [range, instant]
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        step_seconds:
+          type: integer
+          description: 瞬时查询为 0。
+        issues:
+          type: array
+          description: |
+            与单条表达式无关、属于目标集群本身的问题。目前只有 `throttled`：
+            Server 正在拒绝该集群的上报时，下面每张图里的空洞都是 Server 造成的。
+          items:
+            type: object
+            additionalProperties: false
+            required: [cluster_id, cluster_name, reason, detail]
+            properties:
+              cluster_id:
+                type: string
+              cluster_name:
+                type: string
+              reason:
+                type: string
+                enum: [no_data, throttled, series_truncated]
+              detail:
+                type: string
+        queries:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - ref_id
+              - expression
+              - effective_expression
+              - result_type
+              - series
+              - truncated
+              - duration_ms
+              - warning
+              - error
+            properties:
+              ref_id:
+                type: string
+              expression:
+                type: string
+                description: 调用方书写的表达式，原样回显。
+              effective_expression:
+                type: string
+                description: |
+                  实际执行的表达式，即注入集群过滤条件之后的形式，由 VictoriaMetrics
+                  的解析器重新输出，因此是规范化的写法而不是逐字节的原文。表达式被拒绝
+                  时为空。它只会提到调用方刚刚通过鉴权的那个集群。
+              result_type:
+                type: string
+                enum: ["", matrix, vector, scalar, string]
+              truncated:
+                type: boolean
+                description: 序列数超过上限而被截断。
+              duration_ms:
+                type: integer
+                description: 该条表达式在存储侧的往返耗时。
+              warning:
+                type: string
+                enum: ["", likely_invalid]
+                description: |
+                  `likely_invalid` 表示 VictoriaMetrics 认为该表达式含有几乎总是写错的
+                  隐式转换（例如 `rate(sum(x))`）。查询照常执行，只是结果多半不是作者
+                  想问的那个。
+              error:
+                description: |
+                  该条表达式失败的原因；成功时为 `null`。其余表达式不受影响：
+                  第二行的笔误不应该让第一行的图变空。
+                oneOf:
+                  - type: "null"
+                  - type: object
+                    additionalProperties: false
+                    required: [code, detail]
+                    properties:
+                      code:
+                        type: string
+                        enum:
+                          [
+                            invalid_expression,
+                            rejected,
+                            storage_unavailable,
+                            timeout,
+                          ]
+                      detail:
+                        type: string
+                        description: |
+                          可以展示给作者的说明。`invalid_expression` 是 Server 对调用方
+                          自己那段文本的解释，`rejected` 是存储对同一段文本的解释；两者都
+                          不会携带 Server 内部信息。其余取值没有 detail。
+              series:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [cluster_id, cluster_name, labels, points]
+                  properties:
+                    cluster_id:
+                      type: string
+                    cluster_name:
+                      type: string
+                    labels:
+                      type: object
+                      description: |
+                        存储返回的全部标签，包含 `__name__`。与具名查询不同，这里不做
+                        投影：分组方式由作者决定，丢掉标签会让表格里两行看起来完全一样。
+                      additionalProperties:
+                        type: string
+                    points:
+                      type: array
+                      description: |
+                        `[unix_seconds, value]` 数组，`value` 为 `null` 表示该步长没有采样。
+                        客户端必须按断点绘制，不得跨空洞连线。
+                      items:
+                        type: array
+                        minItems: 2
+                        maxItems: 2
+                        items:
+                          oneOf:
+                            - type: number
+                            - type: "null"
+    MetricsSavedQuery:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - project_id
+        - owner_user_id
+        - owner_display_name
+        - visibility
+        - name
+        - description
+        - expression
+        - editable
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        project_id:
+          $ref: "#/components/schemas/UUID"
+        owner_user_id:
+          type: string
+          description: 作者。作者账号被删除后，共享条目会保留但这里为空。
+        owner_display_name:
+          type: string
+          description: 展示属性；作者账号已删除时为空。
+        visibility:
+          type: string
+          enum: [private, project]
+        name:
+          type: string
+        description:
+          type: string
+        expression:
+          type: string
+        editable:
+          type: boolean
+          description: |
+            当前调用方是否可以修改或删除该条目。用于隐藏一个只会被拒绝的入口，
+            而不是用来决定权限：每条写路径都会重新判定。
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MetricsSavedQueryList:
+      type: object
+      additionalProperties: false
+      required: [queries, limit]
+      properties:
+        queries:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricsSavedQuery"
+        limit:
+          type: integer
+          description: 单个 Project 可保存的条目总数上限。
+    MetricsSavedQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [name, expression, visibility]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: |
+            在选择器里显示的名称。共享条目在 Project 内不区分大小写地唯一，私有条目在
+            作者自己的范围内唯一——两个人各自保留一个「内存用量」并不冲突，因为谁也看不到
+            对方的。
+        description:
+          type: string
+          maxLength: 500
+        expression:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: MetricsQL 表达式。保存时按执行时的同一套规则校验。
+        visibility:
+          type: string
+          enum: [private, project]
+          description: |
+            `private` 只有作者可见；`project` 对该 Project 内所有可读指标的人可见，
+            写入需要 `cluster.metrics.manage`。
     MetricsCollectorState:
       type: object
       additionalProperties: false
@@ -17627,6 +18135,7 @@ components:
         - platform_settings
         - agent_endpoint_profile
         - helm_repository
+        - metrics_saved_query
         - ai_session
     AuditEventPage:
       type: object

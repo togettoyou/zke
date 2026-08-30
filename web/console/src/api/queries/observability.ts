@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 
 import { api, csrfHeaders, unwrap } from "../client";
 import { queryKeys } from "../query-keys";
+import type { MetricsExploreRequest, MetricsSavedQueryRequest } from "../types";
 
 /**
  * How often an open metrics view re-reads its window.
@@ -253,5 +254,100 @@ export function useUninstallMetricsCollector() {
       ),
     onSuccess: async (_data, clusterId) =>
       queryClient.invalidateQueries({ queryKey: queryKeys.metricsCollector(clusterId) }),
+  });
+}
+
+/**
+ * One run of the Explore expressions.
+ *
+ * A mutation rather than a query, because it is not a cached read: the operator
+ * decides when it runs by pressing 执行, and the answer is about the window that
+ * was on screen at that moment. Caching it under a key would mean an edited
+ * expression silently re-showing the previous answer, and invalidating that key
+ * would mean re-running an expression whose cost nobody can predict.
+ *
+ * The request is a single round trip for every visible expression. The Server
+ * runs them with bounded concurrency and returns one outcome each, so a typo in
+ * the second row leaves the first row's chart alone.
+ */
+export function useMetricsExplore() {
+  return useMutation({
+    mutationFn: async (request: MetricsExploreRequest) =>
+      unwrap(
+        await api.POST("/api/v1/observability/metrics/explore", {
+          body: request,
+          headers: csrfHeaders(),
+        }),
+      ),
+  });
+}
+
+/**
+ * The Project's saved expressions: everything shared into it, plus the reader's
+ * own.
+ *
+ * Long-lived in the cache because it is a picker rather than a reading of
+ * anything live — it changes when somebody saves a query, and the mutations
+ * below invalidate it when they do.
+ */
+export function useMetricsSavedQueries(projectId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.metricsSavedQueries(projectId ?? ""),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET("/api/v1/projects/{project_id}/metrics/saved-queries", {
+          params: { path: { project_id: projectId as string } },
+          signal,
+        }),
+      ),
+    enabled: Boolean(projectId),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateMetricsSavedQuery(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: MetricsSavedQueryRequest) =>
+      unwrap(
+        await api.POST("/api/v1/projects/{project_id}/metrics/saved-queries", {
+          params: { path: { project_id: projectId } },
+          body,
+          headers: csrfHeaders(),
+        }),
+      ),
+    onSuccess: async () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.metricsSavedQueries(projectId) }),
+  });
+}
+
+export function useUpdateMetricsSavedQuery(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: MetricsSavedQueryRequest }) =>
+      unwrap(
+        await api.PUT("/api/v1/projects/{project_id}/metrics/saved-queries/{saved_query_id}", {
+          params: { path: { project_id: projectId, saved_query_id: id } },
+          body,
+          headers: csrfHeaders(),
+        }),
+      ),
+    onSuccess: async () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.metricsSavedQueries(projectId) }),
+  });
+}
+
+export function useDeleteMetricsSavedQuery(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) =>
+      unwrap(
+        await api.DELETE("/api/v1/projects/{project_id}/metrics/saved-queries/{saved_query_id}", {
+          params: { path: { project_id: projectId, saved_query_id: id } },
+          headers: csrfHeaders(),
+        }),
+      ),
+    onSuccess: async () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.metricsSavedQueries(projectId) }),
   });
 }

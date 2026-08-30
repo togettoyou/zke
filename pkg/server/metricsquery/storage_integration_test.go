@@ -1150,3 +1150,166 @@ func series(labels map[string]string, value float64, timestampMS int64) []byte {
 	request := protowire.AppendTag(nil, 1, protowire.BytesType)
 	return protowire.AppendBytes(request, encoded)
 }
+
+// Explore against a real backend.
+//
+// The unit tests prove the guard rewrites the expression and that the rewritten
+// text is what leaves this process. What they cannot prove is that
+// VictoriaMetrics agrees: that it parses what the guard prints, that
+// `extra_label` really does narrow a selector server-side, and — the claim the
+// whole feature rests on — that an expression naming somebody else's Cluster
+// comes back describing this one rather than theirs.
+//
+// Point ZKE_TEST_METRICS_STORAGE_URL at a disposable instance, as above.
+func TestExploreRunsAgainstRealStorage(t *testing.T) {
+	base := strings.TrimRight(os.Getenv("ZKE_TEST_METRICS_STORAGE_URL"), "/")
+	if base == "" {
+		t.Skip("ZKE_TEST_METRICS_STORAGE_URL is not configured")
+	}
+	// Two Clusters with samples, only one of which the caller asks about. The
+	// second exists so "the answer describes the target" is a claim with a way
+	// of being false.
+	target := "00000000-0000-4000-8000-0000000000e1"
+	neighbour := "00000000-0000-4000-8000-0000000000e2"
+	seedKubeletSamples(t, base, target)
+	seedKubeletSamples(t, base, neighbour)
+
+	service, err := NewService(
+		Config{QueryURL: base + "/prometheus", MinStep: 15 * time.Second},
+		stubVisibility{visibility: Visibility{Global: true}},
+		stubClusters{scopes: []store.ClusterScope{
+			{ClusterID: target, ClusterName: "target", Status: "active"},
+			{ClusterID: neighbour, ClusterName: "neighbour", Status: "active"},
+		}},
+		slog.New(slog.DiscardHandler),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := time.Now().UTC().Truncate(time.Minute)
+	waitForSeed(t, service, target, end)
+	waitForSeed(t, service, neighbour, end)
+
+	run := func(t *testing.T, kind Kind, expressions ...string) []ExploreOutcome {
+		t.Helper()
+		input := ExploreInput{
+			UserID:    userID,
+			ClusterID: target,
+			Kind:      kind,
+			End:       end,
+		}
+		if kind == KindRange {
+			input.Start = end.Add(-10 * time.Minute)
+			input.Step = time.Minute
+		}
+		for index, expression := range expressions {
+			input.Queries = append(input.Queries, ExploreQuery{
+				RefID:      string(rune('A' + index)),
+				Expression: expression,
+			})
+		}
+		result, err := service.Explore(context.Background(), input)
+		if err != nil {
+			t.Fatalf("Explore() error = %v", err)
+		}
+		for _, outcome := range result.Queries {
+			if outcome.Error != nil {
+				t.Fatalf("%q failed: %s %s",
+					outcome.Expression, outcome.Error.Code, outcome.Error.Detail)
+			}
+		}
+		return result.Queries
+	}
+
+	// Every shape of expression an operator is likely to type, evaluated by the
+	// real parser. A guard that printed something VictoriaMetrics reads
+	// differently would fail here and nowhere else.
+	t.Run("expressions the backend accepts", func(t *testing.T) {
+		outcomes := run(t, KindRange,
+			`node_memory_working_set_bytes`,
+			`sum by (zke_cluster_id) (node_memory_working_set_bytes)`,
+			`rate(node_cpu_usage_seconds_total[5m]) * 1000`,
+			`{__name__="node_memory_working_set_bytes"}`,
+			`max_over_time(node_memory_working_set_bytes[5m]) keep_metric_names`,
+		)
+		for _, outcome := range outcomes {
+			if len(outcome.Series) == 0 {
+				t.Errorf("%q returned nothing", outcome.Expression)
+			}
+			if outcome.ResultType != "matrix" {
+				t.Errorf("%q result type = %q", outcome.Expression, outcome.ResultType)
+			}
+		}
+	})
+
+	// The claim: whatever Cluster the author names, the answer describes the
+	// one the Server resolved.
+	t.Run("an expression naming another Cluster still answers about the target", func(t *testing.T) {
+		outcomes := run(t, KindInstant,
+			`node_memory_working_set_bytes`,
+			`node_memory_working_set_bytes{zke_cluster_id="`+neighbour+`"}`,
+			`node_memory_working_set_bytes{zke_cluster_id=~".*"}`,
+			`node_memory_working_set_bytes{zke_cluster_id!="`+target+`"}`,
+		)
+		for _, outcome := range outcomes {
+			if len(outcome.Series) == 0 {
+				t.Fatalf("%q returned nothing, so it proves nothing", outcome.Expression)
+			}
+			for _, series := range outcome.Series {
+				if series.Labels[metricsingest.ClusterLabel] != target {
+					t.Fatalf("%q returned a series from %q",
+						outcome.Expression, series.Labels[metricsingest.ClusterLabel])
+				}
+			}
+		}
+	})
+
+	// A scalar has no series to filter, and must still be a usable answer.
+	t.Run("scalar", func(t *testing.T) {
+		outcomes := run(t, KindInstant, `1 + 1`)
+		if len(outcomes[0].Series) != 1 || len(outcomes[0].Series[0].Points) != 1 {
+			t.Fatalf("scalar outcome = %+v", outcomes[0])
+		}
+		if value := outcomes[0].Series[0].Points[0].Value; value == nil || *value != 2 {
+			t.Fatalf("scalar value = %v", value)
+		}
+	})
+
+	// A backend refusal reaches the author as the backend's own account of
+	// their expression.
+	t.Run("a rejected expression carries the backend's reason", func(t *testing.T) {
+		result, err := service.Explore(context.Background(), ExploreInput{
+			UserID:    userID,
+			ClusterID: target,
+			Kind:      KindInstant,
+			End:       end,
+			Queries: []ExploreQuery{{
+				RefID: "A",
+				// Parses, and then fails while running: the guard's job is the
+				// scope filter, not deciding whether a regular expression
+				// compiles, so this is exactly the kind of failure that has to
+				// come back from the backend rather than from here.
+				Expression: `label_replace(node_memory_working_set_bytes, "dst", "$1", "node", "(")`,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("Explore() error = %v", err)
+		}
+		outcome := result.Queries[0]
+		if outcome.Error == nil || outcome.Error.Code != ExploreErrorRejected {
+			t.Fatalf("Error = %+v, want a rejection", outcome.Error)
+		}
+		if outcome.Error.Detail == "" {
+			t.Error("a rejection carried nothing the author can act on")
+		}
+	})
+
+	// The implicit-conversion warning is the backend's own judgement, carried
+	// alongside an answer rather than instead of one.
+	t.Run("a likely-invalid expression is warned about, not refused", func(t *testing.T) {
+		outcomes := run(t, KindInstant, `rate(sum(node_cpu_usage_seconds_total))`)
+		if outcomes[0].Warning != ExploreWarningLikelyInvalid {
+			t.Errorf("Warning = %q, want %q", outcomes[0].Warning, ExploreWarningLikelyInvalid)
+		}
+	})
+}

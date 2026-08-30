@@ -35,6 +35,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/kubernetesresource"
 	"github.com/togettoyou/zke/pkg/server/metricscollector"
 	"github.com/togettoyou/zke/pkg/server/metricsingest"
+	"github.com/togettoyou/zke/pkg/server/metricslibrary"
 	"github.com/togettoyou/zke/pkg/server/metricsquery"
 	"github.com/togettoyou/zke/pkg/server/pki"
 	"github.com/togettoyou/zke/pkg/server/platformsettings"
@@ -250,6 +251,19 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	)
 	if err != nil {
 		return err
+	}
+	// The Project's saved expressions. Nil for the same reason the query
+	// service is: without metrics storage there is nothing for a saved
+	// expression to run against.
+	var metricsSavedQueryService *metricslibrary.Service
+	if metricsQueryService != nil {
+		metricsSavedQueryService, err = metricslibrary.NewService(
+			store.NewMetricsSavedQueryStore(database),
+			metricslibrary.RBACCuration{Service: rbacService},
+		)
+		if err != nil {
+			return err
+		}
 	}
 	agentConnectionStore := store.NewAgentConnectionStore(database)
 	// A typed nil pointer in an interface is not nil, and the connection manager
@@ -583,6 +597,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			ClusterOverviewService:    clusterOverviewService,
 			MetricsCollectorService:   metricsCollectorService,
 			MetricsQueryService:       metricsQueryService,
+			MetricsSavedQueryService:  metricsSavedQueryService,
 			KubernetesResourceService: kubernetesResourceService,
 			HelmService:               helmService,
 			PodLogsService:            podLogsService,

@@ -34,15 +34,18 @@ const (
 	UnitSeconds Unit = "seconds"
 )
 
-// Definition is one query the Console may ask for.
+// Definition is one named query, and the shape every chart in the Console asks
+// for.
 //
-// The catalogue exists instead of accepting PromQL from the browser. Two
-// reasons, and the second is the load-bearing one: an expression from outside
-// would have to be parsed and rewritten before a scope filter could be
-// injected, and any flaw in that rewriting is a cross-tenant data leak; and
-// the cost of an arbitrary expression cannot be predicted, so one query could
-// exhaust the storage a single-instance Server depends on. Here the filter is
-// part of the template, and every template's shape is known before it runs.
+// A template rather than an expression from the browser, for two reasons that
+// still hold: the scope filter is part of the template instead of something
+// spliced into somebody else's text, and the cost of every query here is known
+// before it runs. That is what makes this the path the dashboards use.
+//
+// It is no longer the only path. Explore accepts an expression an operator
+// wrote and rewrites it — see the metricsqlguard package, which buys back both
+// properties a different way and is deliberately a separate, heavily tested
+// boundary rather than a relaxation of this one.
 type Definition struct {
 	Name  string
 	Title string

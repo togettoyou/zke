@@ -51,11 +51,13 @@ API Server 或 kubelet。三个采集
 - [x] 指标深化：Namespace 与 Pod 维度、Top N 与 Namespace 过滤、每集群摄取预算与限流状态呈现、查询响应的 `partial` 与 `issues`、容量与保留期运维文档
 - [x] 抓取目标扩展：kube-state-metrics 与 node-exporter 随采集组件一并安装/卸载，三者镜像与资源预算进入平台配置
 - [x] 深度指标：集群与节点利用率、Namespace 申请量与限制量、工作负载维度（Deployment 两级归属）、Pod 重启、节点文件系统/网络/磁盘 IO
-- [x] 完整可观测性视图：容量与申请占比、节点饱和度与 Pod 密度、磁盘 IOPS 与繁忙度、inode、网络错误丢包、Pod 与节点状态、未就绪副本；Console 拆为总览 / 计算资源 / 存储与网络 / Kubernetes 资源 / 采集质量五个分区，共享时间范围选择、图上拖拽选取区间与光标读数
+- [x] 完整可观测性视图：容量与申请占比、节点饱和度与 Pod 密度、磁盘 IOPS 与繁忙度、inode、网络错误丢包、Pod 与节点状态、未就绪副本；Console 拆为集群总览 / 计算资源 / 存储与网络 / Kubernetes 资源 / 采集质量五个分区，共享时间范围选择、图上拖拽选取区间与光标读数
+- [x] 数据探索：Console 中自己书写 MetricsQL 表达式（多条同时执行、可隐藏、图表 / 表格 / JSON 三种读法），排在「采集接入」之后、四个仪表分区之前，Server 用 VictoriaMetrics 自己的解析器把目标集群强制改写进每一个序列选择器，并按项目保存可共享的具名表达式
 - [ ] VictoriaLogs 集成与多集群日志：计划在 Console 中作为独立的「日志」应用，不并入「监控」
 - [ ] 告警中心
 
-可视化由 Console 自建，不集成 Grafana，也不提供通用仪表盘编辑器。
+可视化由 Console 自建，不集成 Grafana。自定义的是查询表达式，不是仪表盘布局：「数据探索」开放表达式并强制
+改写作用域，但不提供通用仪表盘编辑器。
 
 ## Phase 4：AIOps
 

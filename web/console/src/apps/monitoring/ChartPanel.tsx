@@ -6,8 +6,10 @@ import { isForbidden } from "@/api/errors";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/state";
 import { cn } from "@/lib/cn";
 
-import { TimeSeriesChart, type ChartSeries } from "./TimeSeriesChart";
+import { ChartLegend, type LegendSeries } from "./ChartLegend";
+import { TimeSeriesChart } from "./TimeSeriesChart";
 import { seriesColor, seriesDash, useChartPalette } from "./chart-palette";
+import { summarise } from "./series-stats";
 import {
   COMPONENT_LABELS,
   axisFormatterFor,
@@ -27,9 +29,7 @@ export type ChartPanelProps = {
   namespace?: string;
 };
 
-type PanelSeries = ChartSeries & {
-  stats: { last: number | null; mean: number | null; max: number | null };
-};
+type PanelSeries = LegendSeries;
 
 /**
  * One chart, with everything the Server can answer kept distinct.
@@ -176,84 +176,6 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
 }
 
 /**
- * The legend, which is also the values without a pointer.
- *
- * Three summary numbers per curve rather than a colour chip and a name: the
- * question a chart is opened with is usually "which one is the highest" or
- * "which one moved", and both are answered here without hovering anything. It
- * is also what keeps identity off colour alone — several palette steps sit
- * below 3:1 against the light surface, which is only acceptable while every
- * series is named in text beside its value.
- */
-function ChartLegend({
-  series,
-  hidden,
-  onToggle,
-  formatValue,
-  colorAt,
-  dashAt,
-}: {
-  series: PanelSeries[];
-  hidden: ReadonlySet<string>;
-  onToggle: (id: string) => void;
-  formatValue: (value: number) => string;
-  colorAt: (index: number) => string;
-  dashAt: (index: number) => number[] | undefined;
-}) {
-  return (
-    <div className="mt-3">
-      <div className="text-subtle-foreground grid grid-cols-[minmax(0,1fr)_4.25rem_4.25rem_4.25rem] gap-x-3 px-1 pb-1 text-[11px]">
-        <span>序列</span>
-        <span className="text-right">最新</span>
-        <span className="text-right">平均</span>
-        <span className="text-right">最大</span>
-      </div>
-      <ul className="max-h-36 overflow-y-auto">
-        {series.map((item, index) => {
-          const off = hidden.has(item.id);
-          const dash = dashAt(index);
-          return (
-            <li key={item.id}>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={!off}
-                onClick={() => onToggle(item.id)}
-                className={cn(
-                  "zke-focus rounded-control hover:bg-surface-muted grid w-full grid-cols-[minmax(0,1fr)_4.25rem_4.25rem_4.25rem] items-center gap-x-3 px-1 py-0.5 text-left text-xs transition-colors",
-                  off && "opacity-45",
-                )}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span
-                    aria-hidden
-                    className="h-0 w-3.5 shrink-0 border-t-2"
-                    style={{
-                      borderColor: colorAt(index),
-                      borderTopStyle: dash ? "dashed" : "solid",
-                    }}
-                  />
-                  <span className="text-muted-foreground truncate">{item.label}</span>
-                </span>
-                <span className="zke-tnum text-foreground text-right font-medium">
-                  {item.stats.last === null ? "—" : formatValue(item.stats.last)}
-                </span>
-                <span className="zke-tnum text-muted-foreground text-right">
-                  {item.stats.mean === null ? "—" : formatValue(item.stats.mean)}
-                </span>
-                <span className="zke-tnum text-muted-foreground text-right">
-                  {item.stats.max === null ? "—" : formatValue(item.stats.max)}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
-/**
  * Why an answer does not describe the whole scope.
  *
  * The three reasons lead somewhere different — install a collector, reduce what
@@ -377,23 +299,6 @@ function alignValues(item: MetricsQuerySeries, timestamps: number[]): (number | 
     byTimestamp.set(Number(point[0]), values[index] ?? null);
   });
   return timestamps.map((at) => byTimestamp.get(at) ?? null);
-}
-
-function summarise(values: (number | null)[]): PanelSeries["stats"] {
-  let last: number | null = null;
-  let max: number | null = null;
-  let total = 0;
-  let counted = 0;
-  for (const value of values) {
-    if (value === null || !Number.isFinite(value)) {
-      continue;
-    }
-    last = value;
-    max = max === null ? value : Math.max(max, value);
-    total += value;
-    counted += 1;
-  }
-  return { last, mean: counted === 0 ? null : total / counted, max };
 }
 
 /**

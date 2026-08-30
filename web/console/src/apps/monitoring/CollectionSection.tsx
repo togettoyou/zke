@@ -341,7 +341,7 @@ export function CollectionSection() {
                 "对象指标导出器只读取 Node、Pod、Namespace 与工作负载对象，不包含 Secret",
                 "节点指标导出器以 DaemonSet 运行在每个节点上，需要 host 网络与 hostPath；运行在 baseline 或 restricted Pod Security 级别的 Namespace 会拒绝它，此时其余组件照常安装并在列表中说明原因",
                 "摄取凭证由 Agent 在集群内生成，不经过 Server，也不会出现在浏览器里",
-                "组件会在一个采集周期内开始上报，指标随即出现在「总览」等图表分区中",
+                "组件会在一个采集周期内开始上报，指标随即出现在「集群总览」等图表分区中",
               ]
         }
         confirmLabel={installState?.installed ? "重新安装" : "安装"}

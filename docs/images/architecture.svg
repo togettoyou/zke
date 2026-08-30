@@ -81,7 +81,7 @@
   <text class="t-c ink" x="70" y="213">摄取网关：按 mTLS 身份强制写入 zke_cluster_id</text>
 
   <rect class="chip" x="58" y="226" width="344" height="28" rx="6"/>
-  <text class="t-c ink" x="70" y="245">具名查询目录（不开放自由 PromQL）</text>
+  <text class="t-c ink" x="70" y="245">查询：具名目录 / 表达式强制注入集群条件</text>
 
   <path class="line" marker-end="url(#a)" d="M101 280 V308"/>
   <path class="line" marker-end="url(#a)" d="M230 280 V308"/>

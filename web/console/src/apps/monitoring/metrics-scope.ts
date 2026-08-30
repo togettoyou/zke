@@ -67,6 +67,17 @@ export type MetricsScopeValue = {
   refreshSeconds: number | null;
   setRefreshSeconds: (value: number | null) => void;
   refresh: () => void;
+  /**
+   * Increments every time the window moves — a new range, the refresh button,
+   * a tick of the auto-refresh interval.
+   *
+   * The chart panels do not need it: they are cached queries, and moving the
+   * window invalidates them. Explore is not a cached query — it is a mutation
+   * the operator triggers — so without a signal it would go on showing the
+   * answer to a window that is no longer on screen while every panel beside it
+   * had moved on.
+   */
+  refreshToken: number;
   live: boolean;
 };
 

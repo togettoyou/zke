@@ -89,6 +89,10 @@ export function MetricsScopeProvider({
   const [range, setRangeState] = useState<TimeRange>(DEFAULT_RANGE);
   const [refreshSeconds, setRefreshSeconds] = useState<number | null>(60);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // Counted rather than derived from nowMs: a view that re-runs on this must
+  // re-run for "refresh" too, and refreshing an already-current relative range
+  // resolves to the same window and therefore to the same clock reading.
+  const [refreshToken, setRefreshToken] = useState(0);
 
   const chartWindow = useMemo(() => resolveWindow(range, nowMs), [range, nowMs]);
   const windowKey = useMemo(() => windowKeyFor(range, chartWindow), [range, chartWindow]);
@@ -120,6 +124,7 @@ export function MetricsScopeProvider({
     windowRef.current = resolveWindow(next, at);
     setRangeState(next);
     setNowMs(at);
+    setRefreshToken((token) => token + 1);
   }, []);
 
   // The clock only advances for a relative range: an absolute one is a window
@@ -229,6 +234,7 @@ export function MetricsScopeProvider({
       refreshSeconds,
       setRefreshSeconds,
       refresh,
+      refreshToken,
       live,
     }),
     [
@@ -242,6 +248,7 @@ export function MetricsScopeProvider({
       readWindow,
       refresh,
       refreshSeconds,
+      refreshToken,
       selectRange,
       top,
       windowKey,

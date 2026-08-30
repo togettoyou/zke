@@ -129,6 +129,10 @@ type Service struct {
 	client        *http.Client
 	logger        *slog.Logger
 	now           func() time.Time
+	// explore bounds how many ad-hoc queries are running. Catalogue queries
+	// are not counted: their cost is known from their template, and the panels
+	// that issue them are already bounded by how many fit on a screen.
+	explore *admission
 }
 
 func NewService(
@@ -181,6 +185,7 @@ func NewService(
 		client:        client,
 		logger:        logger,
 		now:           now,
+		explore:       newAdmission(maxExploreInFlight, maxExploreInFlightPerUser),
 	}, nil
 }
 
@@ -298,11 +303,17 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 	if input.Namespace == "" && definition.RequiresNamespace {
 		return Result{}, fmt.Errorf("%w: query requires namespace", ErrInvalidInput)
 	}
-	window, err := service.resolveWindow(definition, &input)
+	resolved, err := service.resolveWindow(
+		definition.Kind,
+		input.Start,
+		input.End,
+		input.Step,
+	)
 	if err != nil {
 		return Result{}, err
 	}
-	scope, err := service.resolveCluster(ctx, input)
+	input.Start, input.End, input.Step = resolved.Start, resolved.End, resolved.Step
+	scope, err := service.resolveCluster(ctx, input.UserID, input.ClusterID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -324,11 +335,30 @@ func (service *Service) Query(ctx context.Context, input Input) (Result, error) 
 	expression := definition.build(matcher, buildParams{
 		Namespace: input.Namespace,
 		Top:       input.Top,
-		Window:    window,
+		Window:    resolved.Rate,
 	})
 
-	samples, err := service.execute(ctx, definition, expression, input)
+	samples, _, err := service.execute(ctx, storageRequest{
+		Name:       definition.Name,
+		Expression: expression,
+		Kind:       definition.Kind,
+		ClusterID:  scope.ClusterID,
+		Window:     resolved,
+	})
 	if err != nil {
+		var rejected *QueryRejected
+		if errors.As(err, &rejected) {
+			// A catalogue query the storage refuses is a defect in this
+			// Server, not in the request: the expression came from a template
+			// nobody outside this process can influence. The caller is told
+			// the storage is unavailable, and the reason is in the log.
+			service.logger.Warn(
+				"metrics storage rejected a catalogue query",
+				slog.String("query", definition.Name),
+				slog.String("error_type", rejected.Type),
+			)
+			return Result{}, ErrUnavailable
+		}
 		return Result{}, err
 	}
 	names := map[string]string{scope.ClusterID: scope.ClusterName}
@@ -394,47 +424,61 @@ func (service *Service) collectIssues(
 	return issues, partial
 }
 
-// resolveWindow validates the time parameters and reports the rate window to
-// use. An instant query has no range, so its parameters are ignored rather
-// than rejected: the caller asks for a named query, not for a shape.
+// window is a validated time range plus the rate window a query over it should
+// use. It is the only place the range rules live, so an ad-hoc expression and a
+// catalogue query are bounded by exactly the same arithmetic.
+type window struct {
+	Start time.Time
+	End   time.Time
+	Step  time.Duration
+	// Rate is the lookbehind a rate() over this window needs, formatted the way
+	// an expression writes it. It is only meaningful to the catalogue, whose
+	// templates ask for it; an ad-hoc expression carries its own.
+	Rate string
+}
+
+// resolveWindow validates the time parameters and reports the window to ask
+// for. An instant query has no range, so its parameters are ignored rather
+// than rejected: the caller asks for a point in time, not for a shape.
 func (service *Service) resolveWindow(
-	definition Definition,
-	input *Input,
-) (string, error) {
-	if definition.Kind == KindInstant {
-		if input.End.IsZero() {
-			input.End = service.now()
-		}
-		input.Start = input.End
-		input.Step = 0
-		return formatWindow(service.config.RateWindow), nil
+	kind Kind,
+	start time.Time,
+	end time.Time,
+	step time.Duration,
+) (window, error) {
+	if end.IsZero() {
+		end = service.now()
 	}
-	if input.End.IsZero() {
-		input.End = service.now()
+	if kind == KindInstant {
+		return window{
+			Start: end,
+			End:   end,
+			Rate:  formatWindow(service.config.RateWindow),
+		}, nil
 	}
-	if input.Start.IsZero() || !input.End.After(input.Start) {
-		return "", fmt.Errorf("%w: time range is empty", ErrInvalidInput)
+	if start.IsZero() || !end.After(start) {
+		return window{}, fmt.Errorf("%w: time range is empty", ErrInvalidInput)
 	}
-	span := input.End.Sub(input.Start)
+	span := end.Sub(start)
 	if span > service.config.MaxRange {
-		return "", fmt.Errorf(
+		return window{}, fmt.Errorf(
 			"%w: time range exceeds %s",
 			ErrInvalidInput,
 			service.config.MaxRange,
 		)
 	}
-	if input.Step <= 0 {
-		input.Step = service.config.MinStep
+	if step <= 0 {
+		step = service.config.MinStep
 	}
-	if input.Step < service.config.MinStep {
-		return "", fmt.Errorf(
+	if step < service.config.MinStep {
+		return window{}, fmt.Errorf(
 			"%w: step is below %s",
 			ErrInvalidInput,
 			service.config.MinStep,
 		)
 	}
-	if input.Step%time.Second != 0 {
-		return "", fmt.Errorf("%w: step must be whole seconds", ErrInvalidInput)
+	if step%time.Second != 0 {
+		return window{}, fmt.Errorf("%w: step must be whole seconds", ErrInvalidInput)
 	}
 	// Storage answers a range query on its own grid — multiples of the step
 	// counted from the Unix epoch — and moves an unaligned start onto it as
@@ -451,15 +495,12 @@ func (service *Service) resolveWindow(
 	//
 	// Down, never up: a window that grew forwards would report samples from
 	// after the end the caller named.
-	if aligned := alignDown(
-		input.Start.Unix(),
-		int64(input.Step/time.Second),
-	); aligned != input.Start.Unix() {
-		input.Start = time.Unix(aligned, 0).UTC()
-		span = input.End.Sub(input.Start)
+	if aligned := alignDown(start.Unix(), int64(step/time.Second)); aligned != start.Unix() {
+		start = time.Unix(aligned, 0).UTC()
+		span = end.Sub(start)
 	}
-	if int(span/input.Step)+1 > service.config.MaxPoints {
-		return "", fmt.Errorf(
+	if int(span/step)+1 > service.config.MaxPoints {
+		return window{}, fmt.Errorf(
 			"%w: range and step would return more than %d points",
 			ErrInvalidInput,
 			service.config.MaxPoints,
@@ -468,18 +509,19 @@ func (service *Service) resolveWindow(
 	// A rate window shorter than the step samples less than the interval it
 	// reports on; one step is the smallest window that covers the whole
 	// interval, and the configured window is the floor.
-	window := service.config.RateWindow
-	if input.Step > window {
-		window = input.Step
+	rate := service.config.RateWindow
+	if step > rate {
+		rate = step
 	}
-	return formatWindow(window), nil
+	return window{Start: start, End: end, Step: step, Rate: formatWindow(rate)}, nil
 }
 
 func (service *Service) resolveCluster(
 	ctx context.Context,
-	input Input,
+	userID string,
+	clusterID string,
 ) (store.ClusterScope, error) {
-	if !validation.IsUUID(input.ClusterID) {
+	if !validation.IsUUID(clusterID) {
 		return store.ClusterScope{}, fmt.Errorf(
 			"%w: a Cluster identifier is required",
 			ErrInvalidInput,
@@ -487,7 +529,7 @@ func (service *Service) resolveCluster(
 	}
 	visibility, err := service.authorization.ResolveMetricsVisibility(
 		ctx,
-		input.UserID,
+		userID,
 	)
 	if err != nil {
 		return store.ClusterScope{}, err
@@ -502,7 +544,7 @@ func (service *Service) resolveCluster(
 			TenantIDs:  visibility.TenantIDs,
 			ProjectIDs: visibility.ProjectIDs,
 		},
-		input.ClusterID,
+		clusterID,
 	)
 	if errors.Is(err, store.ErrClusterNotVisible) {
 		// One answer for "no such Cluster" and "not yours". Separating them
@@ -520,97 +562,214 @@ type promResponse struct {
 	Status string `json:"status"`
 	Data   struct {
 		ResultType string `json:"resultType"`
-		Result     []struct {
-			Metric map[string]string `json:"metric"`
-			Value  []json.RawMessage `json:"value"`
-			Values [][]json.RawMessage
-		} `json:"result"`
+		// Result is left undecoded because its shape depends on resultType: a
+		// matrix and a vector are lists of labelled series, while a scalar and
+		// a string are one bare `[timestamp, "value"]` pair. Decoding it into
+		// the series shape unconditionally would turn `time()` — a perfectly
+		// good expression for Explore — into an unreadable response.
+		Result json.RawMessage `json:"result"`
 	} `json:"data"`
 	ErrorType string `json:"errorType"`
 	Error     string `json:"error"`
 }
 
+type promSeries struct {
+	Metric map[string]string   `json:"metric"`
+	Value  []json.RawMessage   `json:"value"`
+	Values [][]json.RawMessage `json:"values"`
+}
+
+// labelledSeries decodes the matrix and vector shapes. Anything else — a
+// scalar, a string — has no series in it and returns none, which is the honest
+// answer rather than an error: the query succeeded, it just did not describe
+// any series.
+func (response *promResponse) labelledSeries() []promSeries {
+	if response.Data.ResultType != "matrix" && response.Data.ResultType != "vector" {
+		return nil
+	}
+	var decoded []promSeries
+	if err := json.Unmarshal(response.Data.Result, &decoded); err != nil {
+		return nil
+	}
+	return decoded
+}
+
+// scalarPoint decodes the one-value shapes into a single point, so a scalar
+// answer can be drawn and tabulated like any other.
+func (response *promResponse) scalarPoint() ([]Point, bool) {
+	if response.Data.ResultType != "scalar" && response.Data.ResultType != "string" {
+		return nil, false
+	}
+	var raw []json.RawMessage
+	if err := json.Unmarshal(response.Data.Result, &raw); err != nil {
+		return nil, false
+	}
+	point, ok := decodePoint(raw)
+	if !ok {
+		return nil, false
+	}
+	return []Point{point}, true
+}
+
+// QueryRejected is an answer the storage refused on the query's merits: a
+// parse failure, a limit the expression walked into, a cardinality ceiling.
+//
+// It is distinct from ErrUnavailable, which means the storage could not be
+// reached or did not answer. The difference is the whole point for Explore: one
+// of them is something the author can fix by editing what they wrote, and the
+// other is not about them at all.
+type QueryRejected struct {
+	Type    string
+	Message string
+}
+
+func (err *QueryRejected) Error() string {
+	if err.Message == "" {
+		return "metrics storage rejected the query"
+	}
+	return "metrics storage rejected the query: " + err.Message
+}
+
+// maxRejectionMessageBytes bounds what is carried back from the storage. Its
+// message quotes the expression, which for Explore is the author's own text —
+// but it is still a string from another process, and a chart panel is not the
+// place for a kilobyte of it.
+const maxRejectionMessageBytes = 512
+
+// storageRequest is one call to the storage backend.
+type storageRequest struct {
+	// Name identifies the request in the log. It is a catalogue query name or
+	// the Explore reference, never the expression itself.
+	Name       string
+	Expression string
+	Kind       Kind
+	// ClusterID is the scope the storage is told to apply on its own, in
+	// addition to the filter already present in Expression.
+	ClusterID string
+	Window    window
+}
+
 func (service *Service) execute(
 	ctx context.Context,
-	definition Definition,
-	expression string,
-	input Input,
-) (*promResponse, error) {
+	request storageRequest,
+) (*promResponse, time.Duration, error) {
 	values := url.Values{}
-	values.Set("query", expression)
+	values.Set("query", request.Expression)
+	// The same scope filter again, this time applied by the storage to every
+	// selector it parses.
+	//
+	// For a catalogue query this is redundant: the filter is part of the
+	// template. For Explore it is the second of the two independent barriers
+	// between a caller and another Cluster's samples — the guard rewrites the
+	// expression, and this makes the storage narrow whatever it actually
+	// parsed. A selector the guard somehow failed to reach still matches
+	// nothing here, and the cost is one form field.
+	if request.ClusterID != "" {
+		values.Set(
+			"extra_label",
+			metricsingest.ClusterLabel+"="+request.ClusterID,
+		)
+	}
 	endpoint := service.config.QueryURL + "/api/v1/query"
-	if definition.Kind == KindRange {
+	if request.Kind == KindRange {
 		endpoint = service.config.QueryURL + "/api/v1/query_range"
-		values.Set("start", strconv.FormatInt(input.Start.Unix(), 10))
-		values.Set("end", strconv.FormatInt(input.End.Unix(), 10))
-		values.Set("step", strconv.FormatInt(int64(input.Step/time.Second), 10))
+		values.Set("start", strconv.FormatInt(request.Window.Start.Unix(), 10))
+		values.Set("end", strconv.FormatInt(request.Window.End.Unix(), 10))
+		values.Set("step", strconv.FormatInt(int64(request.Window.Step/time.Second), 10))
 	} else {
-		values.Set("time", strconv.FormatInt(input.End.Unix(), 10))
+		values.Set("time", strconv.FormatInt(request.Window.End.Unix(), 10))
 	}
 
 	queryContext, cancel := context.WithTimeout(ctx, service.config.QueryTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(
+	started := time.Now()
+	httpRequest, err := http.NewRequestWithContext(
 		queryContext,
 		http.MethodPost,
 		endpoint,
 		strings.NewReader(values.Encode()),
 	)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// POST rather than GET: the expression plus a long Cluster matcher can
 	// exceed what an intermediary allows in a URL.
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("Accept", "application/json")
-	response, err := service.client.Do(request)
+	httpRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	httpRequest.Header.Set("Accept", "application/json")
+	response, err := service.client.Do(httpRequest)
 	if err != nil {
+		elapsed := time.Since(started)
 		if queryContext.Err() != nil && ctx.Err() == nil {
-			return nil, ErrTimeout
+			return nil, elapsed, ErrTimeout
 		}
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, elapsed, ctx.Err()
 		}
 		service.logger.Warn(
 			"metrics storage query failed",
-			slog.String("query", definition.Name),
+			slog.String("query", request.Name),
 			slog.String("error", err.Error()),
 		)
-		return nil, ErrUnavailable
+		return nil, elapsed, ErrUnavailable
 	}
 	defer func() {
 		_, _ = io.CopyN(io.Discard, response.Body, 4096)
 		_ = response.Body.Close()
 	}()
+	decoded := &promResponse{}
+	decodeErr := json.NewDecoder(
+		io.LimitReader(response.Body, maxResponseBytes),
+	).Decode(decoded)
+	elapsed := time.Since(started)
+
 	if response.StatusCode != http.StatusOK {
+		// A rejected query answers with a status the storage chose and a body
+		// explaining why. Reading that body is what lets Explore say "this
+		// expression asks for too many series" instead of "storage is
+		// unavailable", which would send the operator to look at a healthy
+		// process.
+		if decodeErr == nil && decoded.Status == "error" {
+			return nil, elapsed, rejection(decoded)
+		}
 		service.logger.Warn(
 			"metrics storage rejected a query",
-			slog.String("query", definition.Name),
+			slog.String("query", request.Name),
 			slog.Int("status", response.StatusCode),
 		)
-		return nil, ErrUnavailable
+		return nil, elapsed, ErrUnavailable
 	}
-	decoded := &promResponse{}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, maxResponseBytes))
-	if err := decoder.Decode(decoded); err != nil {
+	if decodeErr != nil {
 		service.logger.Warn(
 			"metrics storage returned an unreadable response",
-			slog.String("query", definition.Name),
-			slog.String("error", err.Error()),
+			slog.String("query", request.Name),
+			slog.String("error", decodeErr.Error()),
 		)
-		return nil, ErrUnavailable
+		return nil, elapsed, ErrUnavailable
 	}
 	if decoded.Status != "success" {
-		// The backend's own message is not returned: it can quote the
-		// expression, which is Server-internal.
-		service.logger.Warn(
-			"metrics storage reported a query error",
-			slog.String("query", definition.Name),
-			slog.String("error_type", decoded.ErrorType),
-		)
-		return nil, ErrUnavailable
+		return nil, elapsed, rejection(decoded)
 	}
-	return decoded, nil
+	return decoded, elapsed, nil
+}
+
+// rejection turns the storage's error body into an error this Server is willing
+// to repeat. Control characters go, because the message ends up in a log line
+// and in a panel, and the length is capped.
+func rejection(decoded *promResponse) *QueryRejected {
+	message := strings.Map(func(character rune) rune {
+		if character == '\n' || character == '\t' {
+			return ' '
+		}
+		if character < 0x20 || character == 0x7f {
+			return -1
+		}
+		return character
+	}, decoded.Error)
+	message = strings.TrimSpace(message)
+	if len(message) > maxRejectionMessageBytes {
+		message = message[:maxRejectionMessageBytes] + "…"
+	}
+	return &QueryRejected{Type: decoded.ErrorType, Message: message}
 }
 
 func (service *Service) buildSeries(
@@ -620,7 +779,7 @@ func (service *Service) buildSeries(
 	input Input,
 ) ([]Series, bool) {
 	truncated := false
-	results := response.Data.Result
+	results := response.labelledSeries()
 	if len(results) > service.config.MaxSeries {
 		results = results[:service.config.MaxSeries]
 		truncated = true

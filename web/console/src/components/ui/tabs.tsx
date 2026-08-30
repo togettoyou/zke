@@ -24,9 +24,17 @@ export function TabsTrigger({
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        "zke-focus text-muted-foreground rounded-control border border-transparent px-3 py-1 text-[13px] font-medium transition-colors",
+        // inline-flex rather than the default inline-block: a trigger that
+        // carries an icon beside its label needs the two on one line, and a
+        // `gap-*` on an inline-block box does nothing at all — the icon wraps
+        // above the text instead, which is how it looked before.
+        "zke-focus text-muted-foreground rounded-control inline-flex items-center gap-1.5 border border-transparent px-3 py-1 text-[13px] font-medium whitespace-nowrap transition-colors",
         "hover:text-foreground",
         "data-[state=active]:border-border data-[state=active]:bg-surface data-[state=active]:text-foreground data-[state=active]:shadow-e1",
+        // A tab that cannot be opened has to look like it: without this it
+        // stays fully legible and simply ignores the click, which reads as a
+        // broken control rather than an unavailable one.
+        "disabled:text-subtle-foreground disabled:pointer-events-none disabled:opacity-55",
         className,
       )}
       {...props}

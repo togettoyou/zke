@@ -481,6 +481,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/metrics/saved-queries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出该 Project 下调用方可见的已保存 MetricsQL 表达式：项目内共享的全部，加上
+         *     调用方自己的私有条目。别人的私有条目由 SQL 本身排除，而不是读出来之后再过滤。
+         *
+         *     条目只保存名称、说明与表达式文本，不保存集群、时间范围，也不携带任何权限。运行时
+         *     由 Console 当前选定的目标集群决定读哪个集群，Server 再把该集群改写进每一个选择器
+         *     ——所以一个人写下、另一个人运行的表达式，描述的始终是运行者本来就可以读的集群。
+         *
+         *     要求 `cluster.metrics.read`。
+         */
+        get: operations["listMetricsSavedQueries"];
+        put?: never;
+        /**
+         * @description 保存一条表达式。
+         *
+         *     `visibility` 为 `private` 时只需 `cluster.metrics.read`；为 `project` 时还需要
+         *     `cluster.metrics.manage`——共享会改变项目里所有人看到的列表，属于策展而不是访问。
+         *
+         *     表达式在保存时就要通过与执行时相同的改写校验，否则错误只会在别人第一次从选择器里
+         *     点开它时出现，而那里没有任何东西能解释它。
+         */
+        post: operations["createMetricsSavedQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/metrics/saved-queries/{saved_query_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * @description 整体替换一条已保存的表达式。
+         *
+         *     私有条目只有作者本人可以改；共享条目需要 `cluster.metrics.manage`。改变可见范围
+         *     时，改变前与改变后的状态都必须是调用方可写的——只校验其中一侧，就等于允许在同一个
+         *     请求里把共享条目改成私有后再编辑，或者反过来把私有条目发布出去。
+         */
+        put: operations["updateMetricsSavedQuery"];
+        post?: never;
+        /**
+         * @description 删除一条已保存的表达式。权限与更新相同：私有条目属于作者，共享条目属于
+         *     `cluster.metrics.manage`。
+         */
+        delete: operations["deleteMetricsSavedQuery"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/clusters": {
         parameters: {
             query?: never;
@@ -611,6 +673,46 @@ export interface paths {
         get: operations["runObservabilityMetricsQuery"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/observability/metrics/explore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 执行调用方自己书写的 MetricsQL 表达式，一次请求最多 5 条。
+         *
+         *     与具名查询不同，表达式由用户书写；作用域因此不是模板的一部分，而是由 Server
+         *     改写出来的。Server 用 VictoriaMetrics 自己的解析器解析表达式，把其中每一个
+         *     序列选择器都改写为携带 `zke_cluster_id="<cluster_id>"`，并且删除调用方自己写
+         *     在表达式里的同名条件——是替换而不是求交：把别人的表达式连同过滤条件一起粘过来
+         *     的人，应该看到自己集群的结果，而不是一张需要解释十分钟的空图。改写后的表达式会
+         *     原样返回（`effective_expression`），因为这是 Server 唯一一处重写用户查询的地方，
+         *     看不到的改写就是无法核对的改写。
+         *
+         *     改写不是唯一一道防线。请求同时把同一个条件作为 `extra_label` 交给存储，由存储对
+         *     它解析出的每一个选择器再施加一次；改写后的表达式还会被重新解析校验，任何一个选择
+         *     器没有携带该条件都会被拒绝执行。
+         *
+         *     目标集群必填，Server 校验调用方在 `cluster.metrics.read` 上确实可以读取它，与
+         *     具名查询同一条判权路径。表达式只决定读哪些序列，永远不能决定读哪个集群。
+         *
+         *     成本与具名查询用同一套边界：时间范围、步长、点数上限、序列上限完全一致，另外限制
+         *     单次请求的表达式条数与同一调用方的并发请求数，超出时返回 429。
+         *
+         *     单条表达式的失败（语法错误、存储拒绝、超时）写在该条自己的 `error` 中，其余表达式
+         *     照常返回结果：第二行的笔误不应该让第一行的图变空。
+         */
+        post: operations["exploreObservabilityMetrics"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6254,6 +6356,166 @@ export interface components {
                 points: (number | null)[][];
             }[];
         };
+        MetricsExploreRequest: {
+            /**
+             * @description 目标集群。表达式只决定读哪些序列，集群始终由这里决定，并由 Server 强制写进
+             *     每一个选择器。
+             */
+            cluster_id: components["schemas"]["UUID"];
+            /**
+             * @description 区间查询还是瞬时查询。瞬时查询忽略 `start` 与 `step_seconds`。
+             * @default range
+             * @enum {string}
+             */
+            kind: "range" | "instant";
+            /**
+             * Format: date-time
+             * @description 区间查询的起点。会向前对齐到 step_seconds 的整数倍，与指标存储回答范围查询所用的网格一致； 响应中的 start 是实际生效的起点。
+             */
+            start?: string;
+            /** Format: date-time */
+            end?: string;
+            step_seconds?: number;
+            /**
+             * @description 要执行的表达式。上限存在的原因有两个：一条表达式的成本无法从文本预测，
+             *     而共享坐标轴上超过几条曲线之后图本身也不再可读。
+             */
+            queries: {
+                /**
+                 * @description 调用方给这一行起的标识，会原样回显，用来把结果对回发起它的那一行，
+                 *     而不依赖数组顺序。同一请求内必须唯一。
+                 */
+                ref_id: string;
+                /**
+                 * @description MetricsQL 表达式，语法见 VictoriaMetrics 文档。写在其中的
+                 *     `zke_cluster_id` 条件会被 Server 删除并替换为当前目标集群。
+                 */
+                expression: string;
+            }[];
+        };
+        MetricsExploreResult: {
+            /** @description 本次查询描述的集群，原样回显。 */
+            cluster_id: components["schemas"]["UUID"];
+            /** @description 展示属性，不能替代 `cluster_id` 作为数据身份。 */
+            cluster_name: string;
+            /** @enum {string} */
+            kind: "range" | "instant";
+            /** Format: date-time */
+            start: string;
+            /** Format: date-time */
+            end: string;
+            /** @description 瞬时查询为 0。 */
+            step_seconds: number;
+            /**
+             * @description 与单条表达式无关、属于目标集群本身的问题。目前只有 `throttled`：
+             *     Server 正在拒绝该集群的上报时，下面每张图里的空洞都是 Server 造成的。
+             */
+            issues: {
+                cluster_id: string;
+                cluster_name: string;
+                /** @enum {string} */
+                reason: "no_data" | "throttled" | "series_truncated";
+                detail: string;
+            }[];
+            queries: {
+                ref_id: string;
+                /** @description 调用方书写的表达式，原样回显。 */
+                expression: string;
+                /**
+                 * @description 实际执行的表达式，即注入集群过滤条件之后的形式，由 VictoriaMetrics
+                 *     的解析器重新输出，因此是规范化的写法而不是逐字节的原文。表达式被拒绝
+                 *     时为空。它只会提到调用方刚刚通过鉴权的那个集群。
+                 */
+                effective_expression: string;
+                /** @enum {string} */
+                result_type: "" | "matrix" | "vector" | "scalar" | "string";
+                /** @description 序列数超过上限而被截断。 */
+                truncated: boolean;
+                /** @description 该条表达式在存储侧的往返耗时。 */
+                duration_ms: number;
+                /**
+                 * @description `likely_invalid` 表示 VictoriaMetrics 认为该表达式含有几乎总是写错的
+                 *     隐式转换（例如 `rate(sum(x))`）。查询照常执行，只是结果多半不是作者
+                 *     想问的那个。
+                 * @enum {string}
+                 */
+                warning: "" | "likely_invalid";
+                /**
+                 * @description 该条表达式失败的原因；成功时为 `null`。其余表达式不受影响：
+                 *     第二行的笔误不应该让第一行的图变空。
+                 */
+                error: null | {
+                    /** @enum {string} */
+                    code: "invalid_expression" | "rejected" | "storage_unavailable" | "timeout";
+                    /**
+                     * @description 可以展示给作者的说明。`invalid_expression` 是 Server 对调用方
+                     *     自己那段文本的解释，`rejected` 是存储对同一段文本的解释；两者都
+                     *     不会携带 Server 内部信息。其余取值没有 detail。
+                     */
+                    detail: string;
+                };
+                series: {
+                    cluster_id: string;
+                    cluster_name: string;
+                    /**
+                     * @description 存储返回的全部标签，包含 `__name__`。与具名查询不同，这里不做
+                     *     投影：分组方式由作者决定，丢掉标签会让表格里两行看起来完全一样。
+                     */
+                    labels: {
+                        [key: string]: string;
+                    };
+                    /**
+                     * @description `[unix_seconds, value]` 数组，`value` 为 `null` 表示该步长没有采样。
+                     *     客户端必须按断点绘制，不得跨空洞连线。
+                     */
+                    points: (number | null)[][];
+                }[];
+            }[];
+        };
+        MetricsSavedQuery: {
+            id: components["schemas"]["UUID"];
+            project_id: components["schemas"]["UUID"];
+            /** @description 作者。作者账号被删除后，共享条目会保留但这里为空。 */
+            owner_user_id: string;
+            /** @description 展示属性；作者账号已删除时为空。 */
+            owner_display_name: string;
+            /** @enum {string} */
+            visibility: "private" | "project";
+            name: string;
+            description: string;
+            expression: string;
+            /**
+             * @description 当前调用方是否可以修改或删除该条目。用于隐藏一个只会被拒绝的入口，
+             *     而不是用来决定权限：每条写路径都会重新判定。
+             */
+            editable: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        MetricsSavedQueryList: {
+            queries: components["schemas"]["MetricsSavedQuery"][];
+            /** @description 单个 Project 可保存的条目总数上限。 */
+            limit: number;
+        };
+        MetricsSavedQueryRequest: {
+            /**
+             * @description 在选择器里显示的名称。共享条目在 Project 内不区分大小写地唯一，私有条目在
+             *     作者自己的范围内唯一——两个人各自保留一个「内存用量」并不冲突，因为谁也看不到
+             *     对方的。
+             */
+            name: string;
+            description?: string;
+            /** @description MetricsQL 表达式。保存时按执行时的同一套规则校验。 */
+            expression: string;
+            /**
+             * @description `private` 只有作者可见；`project` 对该 Project 内所有可读指标的人可见，
+             *     写入需要 `cluster.metrics.manage`。
+             * @enum {string}
+             */
+            visibility: "private" | "project";
+        };
         MetricsCollectorState: {
             cluster_id: components["schemas"]["UUID"];
             /** @description 集群中存在由 ZKE 管理的采集组件。同名但不由 ZKE 管理的对象报告为未安装。 */
@@ -7512,7 +7774,7 @@ export interface components {
          * @description 写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是 服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的 `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
          * @enum {string}
          */
-        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile" | "helm_repository" | "ai_session";
+        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile" | "helm_repository" | "metrics_saved_query" | "ai_session";
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
             pagination: components["schemas"]["Pagination"];
@@ -7923,6 +8185,7 @@ export interface components {
         RoleBindingID: components["schemas"]["UUID"];
         TenantID: components["schemas"]["UUID"];
         ProjectID: components["schemas"]["UUID"];
+        MetricsSavedQueryID: components["schemas"]["UUID"];
         ClusterID: components["schemas"]["UUID"];
         AISessionID: components["schemas"]["UUID"];
         NodeName: string;
@@ -9210,6 +9473,128 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    listMetricsSavedQueries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已保存的查询 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsSavedQueryList"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createMetricsSavedQuery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricsSavedQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description 已保存 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsSavedQuery"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    updateMetricsSavedQuery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+                saved_query_id: components["parameters"]["MetricsSavedQueryID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricsSavedQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description 已更新 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsSavedQuery"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    deleteMetricsSavedQuery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+                saved_query_id: components["parameters"]["MetricsSavedQueryID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     listClusters: {
         parameters: {
             query?: {
@@ -9427,6 +9812,38 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+            504: components["responses"]["Timeout"];
+        };
+    };
+    exploreObservabilityMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MetricsExploreRequest"];
+            };
+        };
+        responses: {
+            /** @description 查询结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["MetricsExploreResult"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
             503: components["responses"]["Unavailable"];
             504: components["responses"]["Timeout"];
         };

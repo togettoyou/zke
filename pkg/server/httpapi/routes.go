@@ -381,6 +381,18 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		"/metrics/query",
 		handlers.observabilityMetrics.query,
 	)
+	// Explore takes expressions in a body rather than a name in the URL, so it
+	// is a POST and carries the CSRF requirement every POST here carries. It
+	// changes nothing: the method is about where the request fits, not about
+	// what it does. Scope is resolved by the service exactly as it is for the
+	// catalogue query above — one `cluster.metrics.read` check against the
+	// named Cluster — and every selector in every expression is rewritten to
+	// name that Cluster before it reaches storage.
+	observabilityRoutes.POST(
+		"/metrics/explore",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.observabilityMetrics.explore,
+	)
 
 	tenantRoutes := apiV1.Group("/tenants")
 	tenantRoutes.Use(
@@ -492,6 +504,50 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.agentInstallation.create,
 	)
+	// The Project's saved MetricsQL expressions.
+	//
+	// One permission opens all four routes: an expression names series, not
+	// data, and anybody who may read this Project's metrics may read the list
+	// and keep their own entries in it. Who may write the *shared* list is a
+	// second question — `cluster.metrics.manage` — and it is answered by the
+	// service rather than here, because it depends on the visibility of the row
+	// being written and not on the route being called.
+	projectRoutes.GET(
+		"/:project_id/metrics/saved-queries",
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionClusterMetricsRead,
+			"project_id",
+		),
+		handlers.metricsSavedQuery.list,
+	)
+	projectRoutes.POST(
+		"/:project_id/metrics/saved-queries",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionClusterMetricsRead,
+			"project_id",
+		),
+		handlers.metricsSavedQuery.create,
+	)
+	projectRoutes.PUT(
+		"/:project_id/metrics/saved-queries/:saved_query_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionClusterMetricsRead,
+			"project_id",
+		),
+		handlers.metricsSavedQuery.update,
+	)
+	projectRoutes.DELETE(
+		"/:project_id/metrics/saved-queries/:saved_query_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionClusterMetricsRead,
+			"project_id",
+		),
+		handlers.metricsSavedQuery.remove,
+	)
+
 	projectRoutes.GET(
 		"/:project_id",
 		handlers.authorizationMiddleware.RequireProject(

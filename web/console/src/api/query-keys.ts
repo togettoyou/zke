@@ -33,6 +33,10 @@ export const queryKeys = {
   // window while today's is still loading.
   metricsQuery: (params: Record<string, unknown>) => ["metrics-query", params] as const,
   metricsCollector: (clusterId: string) => ["metrics-collector", clusterId] as const,
+  // The Project's saved expressions. Keyed by Project alone: the list one
+  // person sees is the Project's shared entries plus their own, and a session
+  // is one person, so there is nothing else to vary by.
+  metricsSavedQueries: (projectId: string) => ["metrics-saved-queries", projectId] as const,
   nodes: (clusterId: string, params: Record<string, unknown> = {}) =>
     ["nodes", clusterId, params] as const,
   node: (clusterId: string, name: string) => ["node", clusterId, name] as const,
