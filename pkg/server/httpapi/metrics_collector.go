@@ -256,11 +256,20 @@ func scrapeJobsResponse(jobs []metricscollector.ScrapeJob) []metricsScrapeJobRes
 			Port:               job.Port,
 			Authentication:     job.Authentication,
 			InsecureSkipVerify: job.InsecureSkipVerify,
-			Targets:            append([]string(nil), job.Targets...),
+			Targets:            scrapeTargetsResponse(job.Targets),
 			TargetsTruncated:   job.TargetsTruncated,
 		})
 	}
 	return result
+}
+
+// A built-in Node job has no fixed target list, and an annotated Service with
+// no ready backend has none yet. The contract declares targets as an array, so
+// both have to serialize as [] — copying with append onto a nil slice would
+// leave nil there, and the Console reads its length.
+func scrapeTargetsResponse(targets []string) []string {
+	result := make([]string, 0, len(targets))
+	return append(result, targets...)
 }
 
 func componentStatesResponse(

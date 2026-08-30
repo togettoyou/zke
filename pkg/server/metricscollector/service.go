@@ -382,7 +382,7 @@ func scrapeJobs(items []*agentv1.MetricsScrapeJob) []ScrapeJob {
 			Port:               item.GetPort(),
 			Authentication:     item.GetAuthentication(),
 			InsecureSkipVerify: item.GetInsecureSkipVerify(),
-			Targets:            append([]string(nil), item.GetTargets()...),
+			Targets:            append(make([]string, 0, len(item.GetTargets())), item.GetTargets()...),
 			TargetsTruncated:   item.GetTargetsTruncated(),
 		})
 	}
