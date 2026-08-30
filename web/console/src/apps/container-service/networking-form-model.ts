@@ -1,4 +1,8 @@
-import type { NetworkingSummary, NetworkingSpecInput } from "@/api/queries/networking";
+import type {
+  NetworkingDetail,
+  NetworkingSummary,
+  NetworkingSpecInput,
+} from "@/api/queries/networking";
 import type {
   KubernetesGatewaySpecInput,
   KubernetesEndpointSpecInput,
@@ -6,6 +10,8 @@ import type {
   KubernetesNetworkingResource,
   KubernetesServiceSpecInput,
 } from "@/api/types";
+
+import { SCRAPE_ANNOTATION_QUICK_FILL } from "@/lib/scrape-annotations";
 
 import {
   buildGatewayRouteSpec,
@@ -37,6 +43,8 @@ const MAX_RULES = 256;
 const MAX_PATHS = 256;
 const MAX_LISTENERS = 64;
 const MAX_CERTIFICATE_REFS = 64;
+/** Annotation values are only bounded in total size, the way the Server bounds them. */
+const MAX_ANNOTATION_BYTES = 256 * 1024;
 
 export const MIN_PORT = 1;
 export const MAX_PORT = 65535;
@@ -88,6 +96,7 @@ export function nodePortWarnings(draft: ServiceDraft): string[] {
 
 export type NetworkingSectionKey =
   | "basic"
+  | "metadata"
   | "service"
   | "endpoint"
   | "ports"
@@ -175,6 +184,8 @@ export type GatewayDraft = {
  */
 export type NetworkingDraft = {
   name: string;
+  labels: PairDraft[];
+  annotations: PairDraft[];
   service: ServiceDraft;
   endpoint: EndpointDraft;
   ingress: IngressDraft;
@@ -228,7 +239,9 @@ export function emptyListener(): ListenerDraft {
 }
 
 /** The draft a form opens with: the existing object when editing, blank when creating. */
-export function initialDraft(existing: NetworkingSummary | null): NetworkingDraft {
+export function initialDraft(
+  existing: NetworkingDetail | NetworkingSummary | null,
+): NetworkingDraft {
   const service = existing?.service;
   const endpoint = existing?.endpoint;
   const ingress = existing?.ingress;
@@ -236,6 +249,13 @@ export function initialDraft(existing: NetworkingSummary | null): NetworkingDraf
   const defaultBackend = ingress?.spec.default_backend;
   return {
     name: existing?.name ?? "",
+    labels: pairDrafts(existing?.labels),
+    // Only a detail carries annotations. A summary is the list row, and a form
+    // opened from one would submit an empty map over metadata it never read —
+    // which is why the form waits for the detail before it offers this section.
+    annotations: pairDrafts(
+      existing && "annotations" in existing ? existing.annotations : undefined,
+    ),
     service: {
       type: service?.spec.type || "ClusterIP",
       headless: service?.spec.headless ?? false,
@@ -320,6 +340,29 @@ export function initialDraft(existing: NetworkingSummary | null): NetworkingDraf
 }
 
 /** Creating a Service starts with one port row; an empty list can never be valid. */
+function pairDrafts(entries: Record<string, string> | undefined): PairDraft[] {
+  return Object.entries(entries ?? {}).map(([key, value]) => ({ key, value }));
+}
+
+/**
+ * Whether this kind of object is one the metrics collector discovers targets
+ * from. Offering the annotations anywhere else would put a key on an object
+ * nothing reads it from, which reads as collection that is not happening.
+ */
+export function supportsScrapeAnnotations(resource: KubernetesNetworkingResource): boolean {
+  return resource === "services" || resource === "endpoints";
+}
+
+/** Adds the metrics annotations that are not already on the object. */
+export function withScrapeAnnotations(rows: PairDraft[]): PairDraft[] {
+  const present = new Set(rows.map((row) => row.key.trim()));
+  const blank = rows.every((row) => row.key.trim() === "" && row.value.trim() === "");
+  return [
+    ...(blank ? [] : rows),
+    ...SCRAPE_ANNOTATION_QUICK_FILL.filter((entry) => !present.has(entry.key)),
+  ];
+}
+
 export function createDraft(resource: KubernetesNetworkingResource): NetworkingDraft {
   const draft = initialDraft(null);
   if (resource === "services") {
@@ -363,6 +406,11 @@ export function networkingProblem(
       return at("basic", `名称必须是合法的 DNS 子域名，最长 ${MAX_SUBDOMAIN_LENGTH} 个字符。`);
     }
   }
+  const metadataProblem =
+    pairsProblem(draft.labels, "标签", "label") ?? pairsProblem(draft.annotations, "注解", "text");
+  if (metadataProblem) {
+    return at("metadata", metadataProblem);
+  }
   if (resource === "services") {
     return serviceProblem(draft.service);
   }
@@ -377,6 +425,51 @@ export function networkingProblem(
   }
   const routeProblem = gatewayRouteDraftProblem(draft.gatewayRoute, resource);
   return routeProblem ? at("route", routeProblem) : null;
+}
+
+/**
+ * The rules the Server applies to metadata, applied here so the form says which
+ * row is wrong instead of the request coming back as a flat 400.
+ *
+ * Label values are constrained to what Kubernetes accepts as a label value;
+ * annotation values are free text and only bounded in total size.
+ */
+function pairsProblem(rows: PairDraft[], label: string, values: "label" | "text"): string | null {
+  const keys = new Set<string>();
+  let total = 0;
+  for (const row of rows) {
+    const key = row.key.trim();
+    const value = values === "label" ? row.value.trim() : row.value;
+    if (key === "" && value === "") {
+      continue;
+    }
+    if (key === "") {
+      return `${label}的键不能为空。`;
+    }
+    if (!qualifiedName(key)) {
+      return `${label}键 ${key} 不是合法的 Kubernetes 键名。`;
+    }
+    if (keys.has(key)) {
+      return `${label}键 ${key} 重复。`;
+    }
+    keys.add(key);
+    if (values === "label") {
+      if (!LABEL_VALUE.test(value) || value.length > MAX_LABEL_VALUE_LENGTH) {
+        return `${label} ${key} 的值必须是最长 ${MAX_LABEL_VALUE_LENGTH} 个字符的字母、数字、-、_ 或 .。`;
+      }
+      continue;
+    }
+    total += byteLength(key) + byteLength(value);
+    if (total > MAX_ANNOTATION_BYTES) {
+      return `${label}的总长度不能超过 ${MAX_ANNOTATION_BYTES / 1024} KiB。`;
+    }
+  }
+  return null;
+}
+
+/** Annotations are bounded in bytes, and Chinese text is three of them a character. */
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
 }
 
 function endpointProblem(draft: EndpointDraft): NetworkingProblem | null {
@@ -767,6 +860,32 @@ export function splitCommaList(value: string): string[] {
 /** A backend port is either a number or a Service port name; the API takes them apart. */
 function backendInput(name: string, port: string) {
   return /^\d+$/.test(port) ? { name, port_number: Number(port) } : { name, port_name: port };
+}
+
+/**
+ * The metadata a create or update carries beside the typed spec.
+ *
+ * Always both maps, never omitted: the form showed every row the object has, so
+ * an empty one is somebody having removed them rather than a caller that never
+ * looked. The Server tells those two apart, and this is the side that means the
+ * first one.
+ */
+export function buildNetworkingMetadata(draft: NetworkingDraft): {
+  labels: Record<string, string>;
+  annotations: Record<string, string>;
+} {
+  return { labels: pairRecord(draft.labels), annotations: pairRecord(draft.annotations) };
+}
+
+function pairRecord(rows: PairDraft[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (key !== "") {
+      result[key] = row.value;
+    }
+  }
+  return result;
 }
 
 export function buildNetworkingSpec(

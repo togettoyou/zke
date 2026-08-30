@@ -34,6 +34,8 @@ import { Alert } from "@/components/ui/misc";
 import { useWindowVisible } from "@/desktop/window-visibility";
 import { useScopeStore } from "@/scope/scope-store";
 
+import { ScrapeAnnotationHelp } from "./ScrapeAnnotationHelp";
+
 /** What one row knows about its Cluster's collector. */
 type CollectorRow = {
   /** Absent while the Cluster is still being asked, or when it refused. */
@@ -299,10 +301,13 @@ export function CollectionSection() {
       <SectionTitle
         description="三个采集组件由每个集群自己的 Agent 一并安装到其 Agent Namespace，也一并卸载；数据经 Agent 已有的连接回传，摄取凭证在集群内生成，不经过 Server。"
         actions={
-          <RefreshAction
-            isFetching={clusters.isFetching || collectors.some((query) => query.isFetching)}
-            onRefresh={refresh}
-          />
+          <>
+            <ScrapeAnnotationHelp />
+            <RefreshAction
+              isFetching={clusters.isFetching || collectors.some((query) => query.isFetching)}
+              onRefresh={refresh}
+            />
+          </>
         }
       />
 
@@ -488,7 +493,13 @@ function CollectionDetailView({
         title={`${cluster.name} · 采集详情`}
         onBack={onBack}
         actions={
-          <RefreshAction isFetching={details.isFetching} onRefresh={() => void details.refetch()} />
+          <>
+            <ScrapeAnnotationHelp />
+            <RefreshAction
+              isFetching={details.isFetching}
+              onRefresh={() => void details.refetch()}
+            />
+          </>
         }
       />
       {details.error ? (
@@ -519,16 +530,18 @@ function CollectionDetailView({
                 value={`${state.ready_replicas}/${state.desired_replicas}`}
               />
               <DetailRow label="当前镜像" value={state.image || "—"} />
-              <DetailRow label="Job 数" value={state.scrape_jobs.length} />
             </DetailCard>
-            <DetailCard title="注解发现">
-              <DetailRow label="启用" value="zke-metrics-collector.io/scrape=true" />
+            {/* This Cluster's own numbers rather than the annotation contract:
+                the vocabulary is the same everywhere and lives behind the help
+                icon, while what an operator opened this page for is how much of
+                what runs here is actually being collected. */}
+            <DetailCard title="采集 Job">
+              <DetailRow label="内置 Job" value={builtInJobCount(state.scrape_jobs)} />
               <DetailRow
-                label="可选配置"
-                value="scheme、path、port、auth、tls-insecure-skip-verify"
+                label="注解接入"
+                value={state.scrape_jobs.length - builtInJobCount(state.scrape_jobs)}
               />
-              <DetailRow label="认证" value="none；service-account（仅允许 HTTPS，不返回 Token）" />
-              <DetailRow label="对象" value="Service 或 Endpoints；Endpoints 注解优先" />
+              <DetailRow label="就绪目标" value={readyTargetCount(state.scrape_jobs)} />
             </DetailCard>
           </div>
           {state.scrape_jobs_truncated ? (
@@ -546,6 +559,22 @@ function CollectionDetailView({
         </>
       )}
     </div>
+  );
+}
+
+function builtInJobCount(jobs: MetricsScrapeJob[]): number {
+  return jobs.filter((job) => job.source_kind === "Builtin").length;
+}
+
+/**
+ * Targets the annotated Jobs report. Built-in Jobs are left out on purpose:
+ * their target set is discovered per Node and is not reported, so adding a zero
+ * for them would read as "nothing is being scraped".
+ */
+function readyTargetCount(jobs: MetricsScrapeJob[]): number {
+  return jobs.reduce(
+    (total, job) => (job.source_kind === "Builtin" ? total : total + job.targets.length),
+    0,
   );
 }
 

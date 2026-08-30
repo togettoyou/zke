@@ -1606,7 +1606,9 @@ export interface paths {
         /**
          * @description 更新类型化配置。必须携带当前 UID 和 resourceVersion；Server 在写入前重新读取对象，
          *     拒绝同名重建或陈旧版本。Service 的 ClusterIP、IP family 和 healthCheckNodePort 等
-         *     Kubernetes 分配字段由 Server 保留。实际写入要求显式确认并支持 dry-run。
+         *     Kubernetes 分配字段由 Server 保留。`labels` 与 `annotations` 是可选的：省略时保持对象
+         *     现有值，给出时整体替换，因此调用方应先读取该对象的当前 metadata。
+         *     实际写入要求显式确认并支持 dry-run。
          */
         put: operations["updateKubernetesNetworkingResource"];
         post?: never;
@@ -4660,6 +4662,14 @@ export interface components {
         KubernetesUpdateNetworkingResourceRequest: {
             uid: string;
             resource_version: string;
+            /** @description 省略表示保持对象现有 labels；给出则整体替换。 */
+            labels?: {
+                [key: string]: string;
+            };
+            /** @description 省略表示保持对象现有 annotations；给出则整体替换，空对象表示清空。 */
+            annotations?: {
+                [key: string]: string;
+            };
             service?: components["schemas"]["KubernetesServiceSpecInput"];
             endpoint?: components["schemas"]["KubernetesEndpointSpecInput"];
             ingress?: components["schemas"]["KubernetesIngressSpecInput"];

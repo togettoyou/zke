@@ -51,6 +51,10 @@ type createNetworkingResourceRequest struct {
 type updateNetworkingResourceRequest struct {
 	UID             string `json:"uid"`
 	ResourceVersion string `json:"resource_version"`
+	// Absent leaves what the object has. Present replaces it, which is why the
+	// Console reads the object's own metadata before it offers the form.
+	Labels      map[string]string `json:"labels"`
+	Annotations map[string]string `json:"annotations"`
 	networkingConfigurationRequest
 	DryRun  bool `json:"dry_run"`
 	Confirm bool `json:"confirm"`
@@ -201,6 +205,7 @@ func (handler *kubernetesNetworkingHandler) update(c *gin.Context) {
 	result, err := handler.service.UpdateNetworkingResource(ctx, kubernetesresource.UpdateNetworkingResourceInput{
 		ClusterID: c.Param("cluster_id"), Namespace: c.Param("namespace_name"), Resource: resourceName,
 		Name: c.Param("network_name"), UID: request.UID, ResourceVersion: request.ResourceVersion,
+		Labels: request.Labels, Annotations: request.Annotations,
 		Service: request.Service, Endpoint: request.Endpoint, Ingress: request.Ingress, Gateway: request.Gateway,
 		GatewayRoute: request.GatewayRoute,
 		DryRun:       request.DryRun, Confirm: request.Confirm,

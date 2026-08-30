@@ -5,13 +5,16 @@ import { toast } from "sonner";
 import { errorMessage } from "@/api/errors";
 import {
   useCreateNetworkingResource,
+  useNetworkingResource,
   useUpdateNetworkingResource,
+  type NetworkingDetail,
   type NetworkingSummary,
   type NetworkingSpecInput,
 } from "@/api/queries/networking";
 import type { KubernetesNetworkingResource } from "@/api/types";
 import { PageHeader } from "@/apps/AppShell";
 import { SensitiveActionDialog } from "@/components/common/sensitive-action-dialog";
+import { ErrorState, LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
 import { Input, NumericInput } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +31,7 @@ import { useSubmissionKey } from "@/lib/use-submission-key";
 import { isGatewayRouteResource, networkingKindLabel } from "./networking-catalog";
 import { GatewayRouteEditor } from "./GatewayRouteEditor";
 import {
+  buildNetworkingMetadata,
   buildNetworkingSpec,
   createDraft,
   DEFAULT_OPTION,
@@ -42,6 +46,8 @@ import {
   initialDraft,
   networkingProblem,
   nodePortWarnings,
+  supportsScrapeAnnotations,
+  withScrapeAnnotations,
   PORT_DIGITS,
   PORT_RANGE,
   USUAL_NODE_PORT_RANGE,
@@ -59,6 +65,7 @@ import {
 /** The titles the sections are rendered with, to point at one from elsewhere. */
 const SECTION_LABELS: Record<NetworkingSectionKey, string> = {
   basic: "基本信息",
+  metadata: "标签与注解",
   service: "Service",
   endpoint: "Endpoint",
   ports: "端口",
@@ -98,13 +105,66 @@ export function NetworkingFormView({
   clusterName: string;
   namespace: string;
   resource: KubernetesNetworkingResource;
-  /**
-   * Set when editing; absent when creating. A summary is enough — the form
-   * needs the identity and the typed spec, not the annotations.
-   */
+  /** Set when editing; absent when creating. The list row, for its identity. */
   existing: NetworkingSummary | null;
   onClose: () => void;
 }) {
+  // An edit reads the object before it offers a form. The list row does not
+  // carry annotations, and a form that submitted a metadata block built from
+  // one would delete every annotation it never showed.
+  const detail = useNetworkingResource(
+    clusterId,
+    namespace,
+    resource,
+    existing ? existing.name : null,
+  );
+  const kind = networkingKindLabel(resource);
+  if (existing && !detail.data) {
+    return (
+      <div className="grid gap-3">
+        <PageHeader title={`编辑 ${kind} · ${existing.name}`} onBack={onClose} />
+        {detail.error ? (
+          <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
+        ) : (
+          <LoadingState label={`读取 ${kind} ${existing.name}…`} />
+        )}
+      </div>
+    );
+  }
+  return (
+    <NetworkingForm
+      key={existing?.uid ?? "create"}
+      clusterId={clusterId}
+      clusterName={clusterName}
+      namespace={namespace}
+      resource={resource}
+      existing={existing ? (detail.data ?? null) : null}
+      onClose={onClose}
+    />
+  );
+}
+
+function NetworkingForm({
+  clusterId,
+  clusterName,
+  namespace,
+  resource,
+  existing: loaded,
+  onClose,
+}: {
+  clusterId: string;
+  clusterName: string;
+  namespace: string;
+  resource: KubernetesNetworkingResource;
+  existing: NetworkingDetail | null;
+  onClose: () => void;
+}) {
+  // Frozen at mount, together with the draft built from it. The Server refuses
+  // an edit whose resourceVersion is no longer the object's, and that check is
+  // what makes this form safe; letting a background refetch quietly raise it
+  // would turn "your view is stale" into an edit applied over whatever changed
+  // underneath it.
+  const [existing] = useState(loaded);
   const create = useCreateNetworkingResource();
   const update = useUpdateNetworkingResource();
   const mutation = existing ? update : create;
@@ -128,6 +188,7 @@ export function NetworkingFormView({
       namespace,
       resource,
       spec,
+      ...buildNetworkingMetadata(draft),
       dryRun,
       idempotencyKey: dryRun ? previewKey : applyKey,
     };
@@ -186,6 +247,14 @@ export function NetworkingFormView({
             </div>
           </FormSection>
         )}
+
+        <MetadataFields
+          labels={draft.labels}
+          annotations={draft.annotations}
+          resource={resource}
+          onChange={patch}
+          problem={problemIn("metadata")}
+        />
 
         {resource === "services" ? (
           <ServiceFields
@@ -286,6 +355,77 @@ export function NetworkingFormView({
 }
 
 type ProblemLookup = (section: NetworkingSectionKey) => string | undefined;
+
+/**
+ * The object's own labels and annotations.
+ *
+ * Both replace what the object has rather than merging into it, which is only
+ * safe because this form was opened on a fresh read and shows every row that is
+ * there — including the ones a controller wrote. Removing a row here removes it
+ * on the object.
+ */
+function MetadataFields({
+  labels,
+  annotations,
+  resource,
+  onChange,
+  problem,
+}: {
+  labels: PairDraft[];
+  annotations: PairDraft[];
+  resource: KubernetesNetworkingResource;
+  onChange: (changes: { labels?: PairDraft[]; annotations?: PairDraft[] }) => void;
+  problem: string | undefined;
+}) {
+  return (
+    <FormSection
+      title={SECTION_LABELS.metadata}
+      hint="提交时整体替换对象上的 labels 与 annotations；这里列出的就是它当前的全部内容"
+      problem={problem}
+    >
+      <div className="grid gap-3">
+        <div className="grid gap-1.5">
+          <Label>标签</Label>
+          <PairList
+            rows={labels}
+            onChange={(rows) => onChange({ labels: rows })}
+            addLabel="添加标签"
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label>注解</Label>
+            {/* Only where the collector actually discovers targets. On an
+                Ingress or a Route the same keys would sit on an object nothing
+                reads them from, which reads as collection that is not
+                happening. */}
+            {supportsScrapeAnnotations(resource) ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => onChange({ annotations: withScrapeAnnotations(annotations) })}
+              >
+                <Plus />
+                填入指标采集注解
+              </Button>
+            ) : null}
+          </div>
+          {supportsScrapeAnnotations(resource) ? (
+            <span className="text-subtle-foreground text-xs">
+              一键填入 scrape、scheme 与 path，按需再加 port、auth 与
+              tls-insecure-skip-verify；采集组件会在下一个发现周期把该对象的就绪端点纳入抓取，不需要重装。
+            </span>
+          ) : null}
+          <PairList
+            rows={annotations}
+            onChange={(rows) => onChange({ annotations: rows })}
+            addLabel="添加注解"
+          />
+        </div>
+      </div>
+    </FormSection>
+  );
+}
 
 function EndpointFields({
   draft,

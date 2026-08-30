@@ -139,6 +139,85 @@ func TestEndpointCreateDetailAndUpdatePreserveTargetReference(t *testing.T) {
 	}
 }
 
+// Labels and annotations are optional on an update, and the two spellings mean
+// different things. Absent leaves what the object has, because a caller editing
+// only a spec never saw the metadata and must not strip it; an empty map is
+// somebody clearing a form that showed them every row, and does remove it.
+func TestNetworkingUpdateReplacesMetadataOnlyWhenItIsSent(t *testing.T) {
+	t.Parallel()
+
+	service := corev1.Service{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default", Name: "api",
+			Labels:      map[string]string{"app": "api"},
+			Annotations: map[string]string{"team": "payments"},
+		},
+		Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP},
+	}
+	existing, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := &ServiceSpec{Type: "ClusterIP"}
+
+	untouched, err := updateNetworkingObject(existing, UpdateNetworkingResourceInput{
+		Resource: NetworkingServices, Service: spec,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := &unstructured.Unstructured{Object: untouched}
+	if metadata.GetLabels()["app"] != "api" || metadata.GetAnnotations()["team"] != "payments" {
+		t.Fatalf("a spec-only update changed metadata: %+v", metadata.Object)
+	}
+
+	replaced, err := updateNetworkingObject(existing, UpdateNetworkingResourceInput{
+		Resource: NetworkingServices, Service: spec,
+		Labels: map[string]string{"app": "api", "tier": "edge"},
+		Annotations: map[string]string{
+			"zke-metrics-collector.io/scrape": "true",
+			"zke-metrics-collector.io/path":   "/metrics",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata = &unstructured.Unstructured{Object: replaced}
+	if metadata.GetLabels()["tier"] != "edge" ||
+		metadata.GetAnnotations()["zke-metrics-collector.io/scrape"] != "true" ||
+		metadata.GetAnnotations()["team"] != "" {
+		t.Fatalf("metadata was not replaced: %+v", metadata.Object)
+	}
+
+	cleared, err := updateNetworkingObject(existing, UpdateNetworkingResourceInput{
+		Resource: NetworkingServices, Service: spec,
+		Annotations: map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata = &unstructured.Unstructured{Object: cleared}
+	if len(metadata.GetAnnotations()) != 0 || metadata.GetLabels()["app"] != "api" {
+		t.Fatalf("an empty annotation map did not clear exactly the annotations: %+v", metadata.Object)
+	}
+}
+
+// The same rules the create path applies, so a key an operator cannot create
+// cannot arrive through an edit either.
+func TestNetworkingUpdateRejectsInvalidMetadata(t *testing.T) {
+	t.Parallel()
+
+	if validNetworkingMetadata("default", "api", nil, map[string]string{"not a key": "x"}) {
+		t.Fatal("an annotation key that is not a qualified name was accepted")
+	}
+	if !validNetworkingMetadata("default", "api", nil, map[string]string{
+		"zke-metrics-collector.io/scrape": "true",
+	}) {
+		t.Fatal("the collector scrape annotation was rejected")
+	}
+}
+
 func TestEndpointSpecRejectsInvalidAddressesAndPorts(t *testing.T) {
 	t.Parallel()
 

@@ -219,6 +219,8 @@ Endpoints 可以独立接入。
 采集组件为此需要的额外权限是 Service、Endpoints 与 Pod 的 `get`/`list`/`watch`——服务发现要读的元数据，
 仅此而已，没有任何写权限。
 
+Console 两处都指向这套注解：「采集接入」的帮助入口列出完整词汇与约束，
+[容器服务](container-service.md)的服务与路由在编辑 Service 或 Endpoint 时可以一键填入。
 AIOps 随 Server 发布了「接入自定义指标采集」技能，写明这套注解词汇、写错时的表现，以及接入之后用哪条查询
 验证目标是否真的被抓到；见 [AIOps 智能运维](ai-assistant.md#技能)。
 

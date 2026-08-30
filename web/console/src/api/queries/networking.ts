@@ -200,6 +200,13 @@ export function useUpdateNetworkingResource() {
         name: string;
         uid: string;
         resourceVersion: string;
+        /**
+         * Omitted leaves the object's own metadata; given replaces it. The form
+         * reads the object first and always sends both, so an operator who
+         * removed the last row removes it on the object too.
+         */
+        labels?: Record<string, string>;
+        annotations?: Record<string, string>;
         spec: NetworkingSpecInput;
       },
     ) =>
@@ -217,6 +224,8 @@ export function useUpdateNetworkingResource() {
           body: {
             uid: input.uid,
             resource_version: input.resourceVersion,
+            ...(input.labels ? { labels: input.labels } : {}),
+            ...(input.annotations ? { annotations: input.annotations } : {}),
             ...input.spec,
             dry_run: input.dryRun,
             confirm: !input.dryRun,

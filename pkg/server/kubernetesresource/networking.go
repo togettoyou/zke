@@ -332,14 +332,19 @@ type UpdateNetworkingResourceInput struct {
 	Name            string
 	UID             string
 	ResourceVersion string
-	Service         *ServiceSpec
-	Endpoint        *EndpointSpec
-	Ingress         *IngressSpec
-	Gateway         *GatewaySpec
-	GatewayRoute    *GatewayRouteSpec
-	DryRun          bool
-	Confirm         bool
-	IdempotencyKey  string
+	// Absent rather than empty when the request carried no metadata at all. A
+	// caller that only edits a spec must keep the labels and annotations the
+	// object already has; an empty map is a deliberate "remove them all".
+	Labels         map[string]string
+	Annotations    map[string]string
+	Service        *ServiceSpec
+	Endpoint       *EndpointSpec
+	Ingress        *IngressSpec
+	Gateway        *GatewaySpec
+	GatewayRoute   *GatewayRouteSpec
+	DryRun         bool
+	Confirm        bool
+	IdempotencyKey string
 }
 
 type DeleteNetworkingResourceInput struct {
@@ -446,6 +451,7 @@ func (service *Service) UpdateNetworkingResource(
 ) (NetworkingResourceDetail, error) {
 	identity, err := service.networkingIdentity(ctx, input.ClusterID, input.Resource)
 	if err != nil || !validNetworkingMutationIdentity(input.Namespace, input.Name, input.UID, input.ResourceVersion) ||
+		!validNetworkingMetadata(input.Namespace, input.Name, input.Labels, input.Annotations) ||
 		!validNetworkingSpec(input.Resource, input.Service, input.Endpoint, input.Ingress, input.Gateway, input.GatewayRoute) {
 		return NetworkingResourceDetail{}, firstNetworkingError(err)
 	}
@@ -1067,6 +1073,32 @@ func createNetworkingObject(input CreateNetworkingResourceInput) (map[string]any
 }
 
 func updateNetworkingObject(existing map[string]any, input UpdateNetworkingResourceInput) (map[string]any, error) {
+	object, err := updateNetworkingSpecObject(existing, input)
+	if err != nil {
+		return nil, err
+	}
+	applyNetworkingMetadata(object, input)
+	return object, nil
+}
+
+// applyNetworkingMetadata writes the submitted labels and annotations onto the
+// object that is about to be sent.
+//
+// A nil map is the request not carrying that field, and leaves what the object
+// already has: an update that only edits a spec must not strip metadata the
+// caller never saw. An empty map is somebody clearing the last row in a form
+// that showed them all of it, which is a different thing and does remove them.
+func applyNetworkingMetadata(object map[string]any, input UpdateNetworkingResourceInput) {
+	target := &unstructured.Unstructured{Object: object}
+	if input.Labels != nil {
+		target.SetLabels(maps.Clone(input.Labels))
+	}
+	if input.Annotations != nil {
+		target.SetAnnotations(maps.Clone(input.Annotations))
+	}
+}
+
+func updateNetworkingSpecObject(existing map[string]any, input UpdateNetworkingResourceInput) (map[string]any, error) {
 	switch input.Resource {
 	case NetworkingServices:
 		var object corev1.Service

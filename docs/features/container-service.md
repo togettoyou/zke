@@ -367,6 +367,15 @@ Console 服务与路由页面按 Service、Endpoint、Ingress、Gateway 和五�
 IngressClass、主机与已分配地址，Gateway 展示 GatewayClass、监听器与地址。Route 详情按父级引用、协议匹配、后端
 目标和高级配置分类展示，不直接输出 JSON；详情页仍提供 YAML 入口，用于查看和修改表单未建模字段的完整原生内容。
 
+创建与编辑表单都带「标签与注解」，提交时整体替换对象上的 labels 与 annotations。因此编辑表单在打开前会先读取
+该对象本身，把它现有的每一条都列出来——包括控制器写入的那些：一个只显示部分内容却整体替换的表单，会静默删掉
+使用者从未看见的注解。请求中省略这两个字段仍然表示保持原值，只有显式给出才替换，空对象才是清空。
+
+Service 与 Endpoint 的注解表单提供一键填入指标采集注解（`zke-metrics-collector.io/scrape` 及其 scheme、path），
+把工作负载自己的指标端点接入采集，不需要重装采集组件；详见[可观测性平台](observability.md)。
+Ingress、Gateway 与 Route 上没有这个入口：采集组件的服务发现只读 Service 与 Endpoints，
+把同一组键放在别的对象上只会让人以为已经在采集。
+
 Service 端口点击复制的是「地址:端口」，因为那才是被粘贴出去的整体；headless Service 没有地址，只复制端口号，
 也不替它拼一个 `svc.cluster.local` 域名——集群域名由集群自身配置决定，接口并不携带它。NodePort 单独可复制。
 
