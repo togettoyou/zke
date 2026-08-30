@@ -10,14 +10,24 @@ import {
   ShieldQuestion,
   Sparkles,
   SquareArrowOutUpRight,
+  ThumbsDown,
+  ThumbsUp,
   Wrench,
 } from "lucide-react";
 
-import type { AIEvidence, AISession, AITrajectoryEntry, AIViewIntent } from "@/api/types";
-import type { AILiveOutput } from "@/api/queries/aiops";
+import type {
+  AIEvidence,
+  AISession,
+  AITrajectoryEntry,
+  AITurnFeedbackUpdate,
+  AIViewIntent,
+} from "@/api/types";
+import { useAITurnFeedback, useSaveAITurnFeedback, type AILiveOutput } from "@/api/queries/aiops";
 import { CopyIconButton } from "@/components/common/copy";
 import { Markdown } from "@/components/common/markdown";
+import { notifyFailure } from "@/components/common/notify";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/input";
 import { HintTooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 
@@ -119,6 +129,7 @@ export function Conversation({
             <ConversationRow
               key={item.id}
               item={item}
+              sessionId={session.id}
               opened={opened}
               onDecide={onDecide}
               deciding={deciding}
@@ -167,12 +178,14 @@ const BOTTOM_SLACK = 80;
 
 function ConversationRow({
   item,
+  sessionId,
   opened,
   onDecide,
   deciding,
   working,
 }: {
   item: ConversationItem;
+  sessionId: string;
   opened: readonly number[];
   onDecide: (callId: string, decision: "approved" | "denied") => void;
   deciding: boolean;
@@ -196,7 +209,7 @@ function ConversationRow({
         />
       );
     case "answer":
-      return <Answer entry={item.entry} />;
+      return <Answer sessionId={sessionId} entry={item.entry} />;
     case "narration":
       return <Narration entry={item.entry} />;
     case "note":
@@ -232,7 +245,7 @@ function Question({ entry }: { entry: AITrajectoryEntry }) {
   );
 }
 
-function Answer({ entry }: { entry: AITrajectoryEntry }) {
+function Answer({ sessionId, entry }: { sessionId: string; entry: AITrajectoryEntry }) {
   const text = entryText(entry);
   return (
     <article className="flex gap-3">
@@ -245,13 +258,176 @@ function Answer({ entry }: { entry: AITrajectoryEntry }) {
             only appears on hover is one an operator has to already know is
             there. What lands on the clipboard is the Markdown the model wrote,
             not the rendered text — it is going somewhere that renders it. */}
-        <div className="mt-1 -ml-1.5 flex items-center">
+        <div className="mt-1 -ml-1.5 flex items-start">
           <CopyIconButton value={text} label="复制这条回答" />
+          <TurnFeedback sessionId={sessionId} turn={entry.turn} />
         </div>
       </div>
     </article>
   );
 }
+
+function TurnFeedback({ sessionId, turn }: { sessionId: string; turn: number }) {
+  const query = useAITurnFeedback(sessionId, turn);
+  const save = useSaveAITurnFeedback();
+  const [open, setOpen] = useState(false);
+  const [rating, setRating] = useState<"helpful" | "not_helpful">("helpful");
+  const [outcome, setOutcome] = useState<"resolved" | "unresolved" | "unsure">("unsure");
+  const [reasons, setReasons] = useState<NonNullable<AITurnFeedbackUpdate["reasons"]>>([]);
+  const [comment, setComment] = useState("");
+
+  const submit = () =>
+    void save
+      .mutateAsync({ sessionId, turn, feedback: { rating, outcome, reasons, comment } })
+      .then(() => setOpen(false))
+      .catch((error) => notifyFailure("提交 AIOps 反馈失败", error));
+
+  return (
+    <div className="flex flex-col items-start">
+      <HintTooltip label={query.data ? "查看或修改反馈" : "评价这次回答"}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={query.data ? "查看或修改反馈" : "评价这次回答"}
+          aria-expanded={open}
+          disabled={query.isPending}
+          onClick={() => {
+            if (!open && query.data) {
+              setRating(query.data.rating);
+              setOutcome(query.data.outcome);
+              setReasons(query.data.reasons ?? []);
+              setComment(query.data.comment ?? "");
+            }
+            setOpen((current) => !current);
+          }}
+          className={query.data ? "text-primary" : undefined}
+        >
+          {query.data?.rating === "not_helpful" ? (
+            <ThumbsDown aria-hidden />
+          ) : (
+            <ThumbsUp aria-hidden />
+          )}
+        </Button>
+      </HintTooltip>
+      {open ? (
+        <div className="border-border bg-surface-overlay rounded-panel mt-1 w-[min(360px,calc(100vw-3rem))] space-y-3 border p-3">
+          <div>
+            <p className="text-foreground text-xs font-medium">这次回答有帮助吗？</p>
+            <div className="mt-2 flex gap-2">
+              <Choice active={rating === "helpful"} onClick={() => setRating("helpful")}>
+                有帮助
+              </Choice>
+              <Choice active={rating === "not_helpful"} onClick={() => setRating("not_helpful")}>
+                没帮助
+              </Choice>
+            </div>
+          </div>
+          <div>
+            <p className="text-foreground text-xs font-medium">问题解决了吗？</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(
+                [
+                  ["resolved", "已解决"],
+                  ["unresolved", "未解决"],
+                  ["unsure", "不确定"],
+                ] as const
+              ).map(([value, label]) => (
+                <Choice key={value} active={outcome === value} onClick={() => setOutcome(value)}>
+                  {label}
+                </Choice>
+              ))}
+            </div>
+          </div>
+          {rating === "not_helpful" ? (
+            <div>
+              <p className="text-foreground text-xs font-medium">哪里需要改进？</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {feedbackReasonValues.map((value) => (
+                  <Choice
+                    key={value}
+                    active={reasons.includes(value)}
+                    onClick={() =>
+                      setReasons((current) =>
+                        current.includes(value)
+                          ? current.filter((item) => item !== value)
+                          : [...current, value],
+                      )
+                    }
+                  >
+                    {feedbackReasons[value]}
+                  </Choice>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <Textarea
+            value={comment}
+            maxLength={1000}
+            placeholder="补充说明（可选）"
+            aria-label="反馈说明"
+            onChange={(event) => setComment(event.target.value)}
+            className="min-h-16 text-[13px]"
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              disabled={save.isPending}
+              onClick={submit}
+            >
+              保存反馈
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Choice({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant={active ? "primary" : "secondary"}
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+}
+
+const feedbackReasons: Record<string, string> = {
+  inaccurate: "结论不准确",
+  insufficient_evidence: "证据不足",
+  incomplete: "诊断不完整",
+  unsafe: "建议风险过高",
+  hard_to_follow: "难以执行",
+  other: "其他",
+};
+
+const feedbackReasonValues = [
+  "inaccurate",
+  "insufficient_evidence",
+  "incomplete",
+  "unsafe",
+  "hard_to_follow",
+  "other",
+] as const;
 
 /**
  * One tool call and what it returned, folded into a single line.

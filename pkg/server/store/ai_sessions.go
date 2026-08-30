@@ -27,6 +27,9 @@ var (
 	// Archiving is the explicit first step and keeps accidental deletion out of
 	// the normal session view.
 	ErrAISessionNotArchived = errors.New("AIOps session must be archived before deletion")
+	// ErrAIQuotaExceeded is returned before opening a new turn. The model call
+	// has not started and no input entry has been appended when this is seen.
+	ErrAIQuotaExceeded = errors.New("AIOps daily quota exceeded")
 )
 
 // AISession is one session's row. Entries live in their own table and are never
@@ -82,10 +85,15 @@ type CreateAISessionParams struct {
 // StartAITurnParams opens a turn and writes its first entry in one statement.
 // The two are one act: a turn with no question in it is not a turn.
 type StartAITurnParams struct {
-	SessionID  string
-	Content    []byte
-	Truncated  bool
-	OccurredAt time.Time
+	SessionID       string
+	InitiatorUserID string
+	TenantID        string
+	ProjectID       string
+	Content         []byte
+	Truncated       bool
+	OccurredAt      time.Time
+	TurnLimit       int64
+	TokenLimit      int64
 }
 
 type AppendAISessionEventParams struct {
@@ -141,6 +149,59 @@ type CreateAISessionAttachmentParams struct {
 	Content         string
 	CreatedAt       time.Time
 	RetentionCutoff time.Time
+}
+
+type AIUsage struct {
+	PeriodStart  time.Time
+	PeriodEnd    time.Time
+	Turns        int64
+	InputTokens  int64
+	OutputTokens int64
+}
+
+type AITurnFeedback struct {
+	SessionID string
+	Turn      int32
+	Rating    string
+	Outcome   string
+	Reasons   []string
+	Comment   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type UpsertAITurnFeedbackParams struct {
+	SessionID       string
+	Turn            int32
+	InitiatorUserID string
+	Rating          string
+	Outcome         string
+	Reasons         []string
+	Comment         string
+	Now             time.Time
+}
+
+type AIEvaluationQuery struct {
+	InitiatorUserID string
+	TenantID        string
+	ProjectID       string
+	ClusterID       string
+	From            time.Time
+	To              time.Time
+}
+
+type AIEvaluation struct {
+	Turns         int64
+	Succeeded     int64
+	Failed        int64
+	Canceled      int64
+	Rated         int64
+	Helpful       int64
+	Resolved      int64
+	ToolCalls     int64
+	Duration      time.Duration
+	FailureCounts map[string]int64
+	ReasonCounts  map[string]int64
 }
 
 type AISessionStore struct {
@@ -282,8 +343,33 @@ func (store *AISessionStore) StartAITurn(
 	ctx context.Context,
 	input StartAITurnParams,
 ) (AISessionEvent, error) {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return AISessionEvent{}, fmt.Errorf("begin AIOps turn: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if input.TurnLimit > 0 || input.TokenLimit > 0 {
+		periodStart := input.OccurredAt.UTC().Truncate(24 * time.Hour)
+		// Admission for one user and Project is serialized. Otherwise two
+		// sessions can both observe the last remaining turn and spend it.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			input.InitiatorUserID+":"+input.ProjectID+":"+periodStart.Format(time.DateOnly)); err != nil {
+			return AISessionEvent{}, fmt.Errorf("lock AIOps quota: %w", err)
+		}
+		usage, usageErr := queryAIUsage(ctx, tx, input.InitiatorUserID, input.TenantID,
+			input.ProjectID, periodStart, periodStart.Add(24*time.Hour))
+		if usageErr != nil {
+			return AISessionEvent{}, usageErr
+		}
+		if (input.TurnLimit > 0 && usage.Turns >= input.TurnLimit) ||
+			(input.TokenLimit > 0 && usage.InputTokens+usage.OutputTokens >= input.TokenLimit) {
+			return AISessionEvent{}, ErrAIQuotaExceeded
+		}
+	}
+
 	var event AISessionEvent
-	err := store.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 WITH opened AS (
     UPDATE ai_sessions
     SET status = 'working',
@@ -292,19 +378,30 @@ WITH opened AS (
         last_turn_status = '',
         last_turn_failure = '',
         last_activity_at = $4
-    WHERE id = $1::uuid AND status = 'idle' AND archived_at IS NULL
+    WHERE id = $1::uuid
+      AND initiator_user_id = $5::uuid
+      AND tenant_id = $6::uuid
+      AND project_id = $7::uuid
+      AND status = 'idle' AND archived_at IS NULL
     RETURNING current_turn AS turn, next_sequence - 1 AS sequence
+), recorded AS (
+    INSERT INTO ai_turn_runs (session_id, turn, started_at, status)
+    SELECT $1::uuid, opened.turn, $4, 'running' FROM opened
+    RETURNING turn
 )
 INSERT INTO ai_session_events (
     session_id, sequence, turn, kind, content, truncated, occurred_at
 )
 SELECT $1::uuid, opened.sequence, opened.turn, 'input', $2::jsonb, $3, $4
-FROM opened
+FROM opened JOIN recorded USING (turn)
 RETURNING sequence, turn`,
 		input.SessionID,
 		input.Content,
 		input.Truncated,
 		input.OccurredAt,
+		input.InitiatorUserID,
+		input.TenantID,
+		input.ProjectID,
 	).Scan(&event.Sequence, &event.Turn)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AISessionEvent{}, store.classifyMissingSession(ctx, input.SessionID, ErrAISessionBusy)
@@ -316,6 +413,9 @@ RETURNING sequence, turn`,
 	event.Content = input.Content
 	event.Truncated = input.Truncated
 	event.OccurredAt = input.OccurredAt
+	if err := tx.Commit(ctx); err != nil {
+		return AISessionEvent{}, fmt.Errorf("commit AIOps turn: %w", err)
+	}
 	return event, nil
 }
 
@@ -369,12 +469,23 @@ func (store *AISessionStore) FinishAITurn(
 	input FinishAITurnParams,
 ) (AISession, error) {
 	session, err := scanAISession(store.pool.QueryRow(ctx, `
+WITH finished AS (
+    UPDATE ai_turn_runs AS turn
+    SET status = $2, failure = $3, finished_at = $4
+    FROM ai_sessions AS session
+    WHERE turn.session_id = $1::uuid
+      AND turn.session_id = session.id
+      AND turn.turn = session.current_turn
+      AND turn.status = 'running'
+    RETURNING turn.session_id
+)
 UPDATE ai_sessions
 SET status = 'idle',
     last_turn_status = $2,
     last_turn_failure = $3,
     last_activity_at = $4
 WHERE id = $1::uuid AND status = 'working'
+  AND EXISTS (SELECT 1 FROM finished WHERE finished.session_id = ai_sessions.id)
 RETURNING `+aiSessionColumns,
 		input.SessionID,
 		input.Status,
@@ -640,6 +751,213 @@ WHERE attachment.id = $2::uuid AND attachment.session_id = $1::uuid
 	return nil
 }
 
+type aiUsageQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func queryAIUsage(
+	ctx context.Context,
+	querier aiUsageQuerier,
+	initiatorUserID, tenantID, projectID string,
+	periodStart, periodEnd time.Time,
+) (AIUsage, error) {
+	usage := AIUsage{PeriodStart: periodStart, PeriodEnd: periodEnd}
+	err := querier.QueryRow(ctx, `
+SELECT COUNT(DISTINCT (turn.session_id, turn.turn)),
+       COALESCE(SUM(
+           CASE WHEN event.kind = 'model'
+               THEN COALESCE(NULLIF(event.content #>> '{tokens,input}', ''), '0')::bigint
+               ELSE 0 END
+       ), 0),
+       COALESCE(SUM(
+           CASE WHEN event.kind = 'model'
+               THEN COALESCE(NULLIF(event.content #>> '{tokens,output}', ''), '0')::bigint
+               ELSE 0 END
+       ), 0)
+FROM ai_turn_runs AS turn
+JOIN ai_sessions AS session ON session.id = turn.session_id
+LEFT JOIN ai_session_events AS event
+  ON event.session_id = turn.session_id AND event.turn = turn.turn
+WHERE session.initiator_user_id = $1::uuid
+  AND session.tenant_id = $2::uuid
+  AND session.project_id = $3::uuid
+  AND turn.started_at >= $4 AND turn.started_at < $5`,
+		initiatorUserID, tenantID, projectID, periodStart, periodEnd,
+	).Scan(&usage.Turns, &usage.InputTokens, &usage.OutputTokens)
+	if err != nil {
+		return AIUsage{}, fmt.Errorf("read AIOps quota usage: %w", err)
+	}
+	return usage, nil
+}
+
+func (store *AISessionStore) GetAIUsage(
+	ctx context.Context,
+	initiatorUserID, tenantID, projectID string,
+	periodStart, periodEnd time.Time,
+) (AIUsage, error) {
+	return queryAIUsage(ctx, store.pool, initiatorUserID, tenantID, projectID, periodStart, periodEnd)
+}
+
+func (store *AISessionStore) UpsertAITurnFeedback(
+	ctx context.Context,
+	input UpsertAITurnFeedbackParams,
+) (AITurnFeedback, error) {
+	var feedback AITurnFeedback
+	err := store.pool.QueryRow(ctx, `
+INSERT INTO ai_turn_feedback (
+    session_id, turn, initiator_user_id, rating, outcome, reasons, comment,
+    created_at, updated_at
+)
+SELECT $1::uuid, $2, $3::uuid, $4, $5, $6::text[], $7, $8, $8
+FROM ai_sessions AS session
+JOIN ai_turn_runs AS turn ON turn.session_id = session.id AND turn.turn = $2
+WHERE session.id = $1::uuid
+  AND session.initiator_user_id = $3::uuid
+  AND turn.status = 'succeeded'
+ON CONFLICT (session_id, turn) DO UPDATE
+SET rating = EXCLUDED.rating,
+    outcome = EXCLUDED.outcome,
+    reasons = EXCLUDED.reasons,
+    comment = EXCLUDED.comment,
+    updated_at = EXCLUDED.updated_at
+RETURNING session_id::text, turn, rating, outcome, reasons, comment, created_at, updated_at`,
+		input.SessionID, input.Turn, input.InitiatorUserID, input.Rating,
+		input.Outcome, input.Reasons, input.Comment, input.Now,
+	).Scan(&feedback.SessionID, &feedback.Turn, &feedback.Rating, &feedback.Outcome,
+		&feedback.Reasons, &feedback.Comment, &feedback.CreatedAt, &feedback.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AITurnFeedback{}, ErrAISessionNotFound
+	}
+	if err != nil {
+		return AITurnFeedback{}, fmt.Errorf("save AIOps turn feedback: %w", err)
+	}
+	return feedback, nil
+}
+
+func (store *AISessionStore) GetAITurnFeedback(
+	ctx context.Context,
+	sessionID string,
+	turn int32,
+	initiatorUserID string,
+) (AITurnFeedback, error) {
+	var feedback AITurnFeedback
+	err := store.pool.QueryRow(ctx, `
+SELECT feedback.session_id::text, feedback.turn, feedback.rating,
+       feedback.outcome, feedback.reasons, feedback.comment,
+       feedback.created_at, feedback.updated_at
+FROM ai_turn_feedback AS feedback
+JOIN ai_sessions AS session ON session.id = feedback.session_id
+WHERE feedback.session_id = $1::uuid AND feedback.turn = $2
+  AND session.initiator_user_id = $3::uuid`,
+		sessionID, turn, initiatorUserID,
+	).Scan(&feedback.SessionID, &feedback.Turn, &feedback.Rating, &feedback.Outcome,
+		&feedback.Reasons, &feedback.Comment, &feedback.CreatedAt, &feedback.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AITurnFeedback{}, ErrAISessionNotFound
+	}
+	if err != nil {
+		return AITurnFeedback{}, fmt.Errorf("read AIOps turn feedback: %w", err)
+	}
+	return feedback, nil
+}
+
+func (store *AISessionStore) EvaluateAI(
+	ctx context.Context,
+	query AIEvaluationQuery,
+) (AIEvaluation, error) {
+	result := AIEvaluation{FailureCounts: map[string]int64{}, ReasonCounts: map[string]int64{}}
+	var durationMilliseconds int64
+	err := store.pool.QueryRow(ctx, `
+SELECT COUNT(*),
+       COUNT(*) FILTER (WHERE turn.status = 'succeeded'),
+       COUNT(*) FILTER (WHERE turn.status = 'failed'),
+       COUNT(*) FILTER (WHERE turn.status = 'canceled'),
+       COUNT(feedback.turn),
+       COUNT(*) FILTER (WHERE feedback.rating = 'helpful'),
+       COUNT(*) FILTER (WHERE feedback.outcome = 'resolved'),
+       COALESCE(SUM(stats.tool_calls), 0),
+       COALESCE(SUM(stats.duration_ms), 0)
+FROM ai_turn_runs AS turn
+JOIN ai_sessions AS session ON session.id = turn.session_id
+LEFT JOIN ai_turn_feedback AS feedback
+  ON feedback.session_id = turn.session_id AND feedback.turn = turn.turn
+LEFT JOIN LATERAL (
+    SELECT COUNT(*) FILTER (WHERE event.kind = 'tool_call') AS tool_calls,
+           COALESCE(SUM(event.duration_ms), 0) AS duration_ms
+    FROM ai_session_events AS event
+    WHERE event.session_id = turn.session_id AND event.turn = turn.turn
+) AS stats ON TRUE
+WHERE session.initiator_user_id = $1::uuid
+  AND session.tenant_id = $2::uuid
+  AND session.project_id = $3::uuid
+  AND session.cluster_id = $4::uuid
+  AND turn.started_at >= $5 AND turn.started_at < $6
+  AND turn.status <> 'running'`, query.InitiatorUserID, query.TenantID,
+		query.ProjectID, query.ClusterID, query.From, query.To,
+	).Scan(&result.Turns, &result.Succeeded, &result.Failed, &result.Canceled,
+		&result.Rated, &result.Helpful, &result.Resolved, &result.ToolCalls, &durationMilliseconds)
+	if err != nil {
+		return AIEvaluation{}, fmt.Errorf("evaluate AIOps turns: %w", err)
+	}
+	result.Duration = time.Duration(durationMilliseconds) * time.Millisecond
+
+	failureRows, err := store.pool.Query(ctx, `
+SELECT turn.failure, COUNT(*)
+FROM ai_turn_runs AS turn
+JOIN ai_sessions AS session ON session.id = turn.session_id
+WHERE session.initiator_user_id = $1::uuid
+  AND session.tenant_id = $2::uuid AND session.project_id = $3::uuid
+  AND session.cluster_id = $4::uuid
+  AND turn.started_at >= $5 AND turn.started_at < $6
+  AND turn.failure <> ''
+GROUP BY turn.failure`, query.InitiatorUserID, query.TenantID, query.ProjectID,
+		query.ClusterID, query.From, query.To)
+	if err != nil {
+		return AIEvaluation{}, fmt.Errorf("read AIOps failure evaluation: %w", err)
+	}
+	defer failureRows.Close()
+	for failureRows.Next() {
+		var name string
+		var count int64
+		if err := failureRows.Scan(&name, &count); err != nil {
+			return AIEvaluation{}, fmt.Errorf("scan AIOps failure evaluation: %w", err)
+		}
+		result.FailureCounts[name] = count
+	}
+	if err := failureRows.Err(); err != nil {
+		return AIEvaluation{}, fmt.Errorf("iterate AIOps failure evaluation: %w", err)
+	}
+
+	reasonRows, err := store.pool.Query(ctx, `
+SELECT reason, COUNT(*)
+FROM ai_turn_feedback AS feedback
+JOIN ai_sessions AS session ON session.id = feedback.session_id
+JOIN ai_turn_runs AS turn ON turn.session_id = feedback.session_id AND turn.turn = feedback.turn
+CROSS JOIN LATERAL unnest(feedback.reasons) AS reason
+WHERE session.initiator_user_id = $1::uuid
+  AND session.tenant_id = $2::uuid AND session.project_id = $3::uuid
+  AND session.cluster_id = $4::uuid
+  AND turn.started_at >= $5 AND turn.started_at < $6
+GROUP BY reason`, query.InitiatorUserID, query.TenantID, query.ProjectID,
+		query.ClusterID, query.From, query.To)
+	if err != nil {
+		return AIEvaluation{}, fmt.Errorf("read AIOps feedback reasons: %w", err)
+	}
+	defer reasonRows.Close()
+	for reasonRows.Next() {
+		var name string
+		var count int64
+		if err := reasonRows.Scan(&name, &count); err != nil {
+			return AIEvaluation{}, fmt.Errorf("scan AIOps feedback reason: %w", err)
+		}
+		result.ReasonCounts[name] = count
+	}
+	if err := reasonRows.Err(); err != nil {
+		return AIEvaluation{}, fmt.Errorf("iterate AIOps feedback reasons: %w", err)
+	}
+	return result, nil
+}
+
 // ListAISessionEventsForInitiator reads a trail in order, starting after a
 // sequence the caller already has.
 //
@@ -714,12 +1032,20 @@ WITH interrupted AS (
         last_activity_at = $2
     WHERE status = 'working'
     RETURNING id, current_turn AS turn, next_sequence - 1 AS sequence
+), finished AS (
+    UPDATE ai_turn_runs AS turn
+    SET status = 'failed', failure = $1, finished_at = $2
+    FROM interrupted
+    WHERE turn.session_id = interrupted.id AND turn.turn = interrupted.turn
+      AND turn.status = 'running'
+    RETURNING turn.session_id, turn.turn
 )
 INSERT INTO ai_session_events (
     session_id, sequence, turn, kind, content, occurred_at
 )
 SELECT interrupted.id, interrupted.sequence, interrupted.turn, 'error', $3::jsonb, $2
-FROM interrupted`,
+FROM interrupted
+JOIN finished ON finished.session_id = interrupted.id AND finished.turn = interrupted.turn`,
 		input.Failure,
 		input.Now,
 		input.Content,

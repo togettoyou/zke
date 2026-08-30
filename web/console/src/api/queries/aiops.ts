@@ -6,10 +6,14 @@ import { queryKeys, queryKeyPrefixes } from "../query-keys";
 import type {
   AIAttachment,
   AIContextUsage,
+  AIEvaluation,
   AIEvidence,
+  AIQuota,
   AISession,
   AISkill,
   AITool,
+  AITurnFeedback,
+  AITurnFeedbackUpdate,
   AITrajectoryEntry,
 } from "../types";
 
@@ -35,6 +39,85 @@ export function useAITools() {
     queryKey: queryKeys.aiTools(),
     queryFn: async ({ signal }) => unwrap(await api.GET("/api/v1/ai/tools", { signal })) as Tools,
     staleTime: 5 * 60 * 1_000,
+  });
+}
+
+export function useAIQuota(
+  tenantId: string | null,
+  projectId: string | null,
+  clusterId: string | null,
+  revision: string,
+) {
+  return useQuery({
+    queryKey: [...queryKeys.aiQuota(tenantId ?? "", projectId ?? ""), revision],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET("/api/v1/ai/quota", {
+          params: {
+            query: {
+              tenant_id: tenantId as string,
+              project_id: projectId as string,
+              cluster_id: clusterId as string,
+            },
+          },
+          signal,
+        }),
+      ) as AIQuota,
+    enabled: Boolean(tenantId && projectId && clusterId),
+  });
+}
+
+export function useAIEvaluation(tenantId: string, projectId: string, clusterId: string, days = 30) {
+  return useQuery({
+    queryKey: queryKeys.aiEvaluation(tenantId, projectId, clusterId, days),
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await api.GET("/api/v1/ai/evaluation", {
+          params: {
+            query: { tenant_id: tenantId, project_id: projectId, cluster_id: clusterId, days },
+          },
+          signal,
+        }),
+      ) as AIEvaluation,
+  });
+}
+
+export function useAITurnFeedback(sessionId: string, turn: number) {
+  return useQuery({
+    queryKey: queryKeys.aiFeedback(sessionId, turn),
+    queryFn: async ({ signal }) => {
+      const result = unwrap(
+        await api.GET("/api/v1/ai/sessions/{session_id}/turns/{turn}/feedback", {
+          params: { path: { session_id: sessionId, turn } },
+          signal,
+        }),
+      ) as { feedback?: AITurnFeedback | null };
+      return result.feedback ?? null;
+    },
+  });
+}
+
+export function useSaveAITurnFeedback() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      sessionId: string;
+      turn: number;
+      feedback: AITurnFeedbackUpdate;
+    }) =>
+      unwrap(
+        await api.PUT("/api/v1/ai/sessions/{session_id}/turns/{turn}/feedback", {
+          params: {
+            path: { session_id: input.sessionId, turn: input.turn },
+            header: csrfHeaders(),
+          },
+          body: input.feedback,
+        }),
+      ) as AITurnFeedback,
+    onSuccess: async (feedback) => {
+      queryClient.setQueryData(queryKeys.aiFeedback(feedback.session_id, feedback.turn), feedback);
+      await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiEvaluation });
+    },
   });
 }
 
@@ -86,7 +169,10 @@ export function useCreateAISession() {
         }),
       ) as AISession,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiSessions });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiSessions }),
+        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiQuota }),
+      ]);
     },
   });
 }
@@ -132,7 +218,10 @@ export function useDeleteAISession() {
       queryClient.removeQueries({ queryKey: queryKeys.aiSession(sessionId) });
       queryClient.removeQueries({ queryKey: queryKeys.aiTrajectory(sessionId) });
       queryClient.removeQueries({ queryKey: queryKeys.aiAttachments(sessionId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiSessions });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiSessions }),
+        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiQuota }),
+      ]);
     },
   });
 }
@@ -208,7 +297,10 @@ export function useStartAITurn() {
       queryClient.setQueryData<Trajectory>(queryKeys.aiTrajectory(input.sessionId), (current) => ({
         entries: mergeEntries(current?.entries ?? [], [entry]),
       }));
-      await queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiSessions });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiSessions }),
+        queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiQuota }),
+      ]);
     },
   });
 }
@@ -395,6 +487,10 @@ export function useAIEventStream(sessionId: string | null, enabled: boolean): AI
           const session = JSON.parse((event as MessageEvent<string>).data) as AISession;
           queryClient.setQueryData<AISession>(queryKeys.aiSession(session.id), session);
           void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiSessions });
+          if (session.status === "idle") {
+            void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiQuota });
+            void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiEvaluation });
+          }
         } catch {
           // A malformed frame is repaired by the next list refetch.
         }

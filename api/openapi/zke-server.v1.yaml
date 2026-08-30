@@ -8130,6 +8130,60 @@ paths:
                               每一步仍按同一套逐次权限校验和审批模式执行。所需工具没有全部组装的技能不会出现在这里。
                             items: { $ref: "#/components/schemas/AISkill" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
+  /api/v1/ai/quota:
+    get:
+      tags: [AIOps]
+      operationId: getAIQuota
+      description: >-
+        当前用户在指定 Project 的 UTC 当日 AIOps Turn 与模型 token 用量。cluster_id 只用于重新校验
+        当前工作区的 ai.run；用量覆盖同一 Project 内该用户的全部 Cluster。限制为 0 表示不限制。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: tenant_id, in: query, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+        - { name: project_id, in: query, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+        - { name: cluster_id, in: query, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+      responses:
+        "200":
+          description: 当前 UTC 日的配额与用量
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AIQuota" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ai/evaluation:
+    get:
+      tags: [AIOps]
+      operationId: getAIEvaluation
+      description: >-
+        汇总当前用户在指定 Cluster 的 AIOps Turn 结果与用户反馈。它是可核验的运行与反馈统计，
+        不让模型评价自己的答案，也不读取其他用户的会话。最大窗口为 90 天。
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: tenant_id, in: query, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+        - { name: project_id, in: query, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+        - { name: cluster_id, in: query, required: true, schema: { $ref: "#/components/schemas/UUID" } }
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 90, default: 30 } }
+      responses:
+        "200":
+          description: AIOps 诊断效果统计
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AIEvaluation" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/ai/sessions:
     get:
       tags: [AIOps]
@@ -8272,7 +8326,8 @@ paths:
     post:
       tags: [AIOps]
       operationId: startAITurn
-      description: 持久化问题后返回 202；模型任务在后台继续，并在每个外部步骤重新检查账户与 RBAC。
+      description: >-
+        在 UTC 日配额允许时持久化问题并返回 202；模型任务在后台继续，并在每个外部步骤重新检查账户与 RBAC。
       security: [{ sessionCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
       requestBody:
@@ -8297,6 +8352,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
   /api/v1/ai/sessions/{session_id}/turns/current:
     parameters:
       - $ref: "#/components/parameters/AISessionID"
@@ -8321,6 +8377,67 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ai/sessions/{session_id}/turns/{turn}/feedback:
+    parameters:
+      - $ref: "#/components/parameters/AISessionID"
+      - name: turn
+        in: path
+        required: true
+        schema: { type: integer, format: int32, minimum: 1 }
+    get:
+      tags: [AIOps]
+      operationId: getAITurnFeedback
+      description: 读取当前用户对本人会话中一个成功 Turn 的反馈；尚未反馈时 data.feedback 为 null。
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200":
+          description: 用户反馈或空值
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [feedback]
+                        properties:
+                          feedback:
+                            oneOf:
+                              - $ref: "#/components/schemas/AITurnFeedback"
+                              - type: "null"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [AIOps]
+      operationId: saveAITurnFeedback
+      description: 新建或替换当前用户对本人一个成功 Turn 的反馈；不修改 append-only 轨迹。
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CSRFToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AITurnFeedbackUpdate" }
+      responses:
+        "200":
+          description: 已保存的反馈
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data: { $ref: "#/components/schemas/AITurnFeedback" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/ai/sessions/{session_id}/approvals:
     parameters:
       - $ref: "#/components/parameters/AISessionID"
@@ -17732,6 +17849,80 @@ components:
           maxLength: 256
           description: approval_request 轨迹事件中的 call_id。
         decision: { type: string, enum: [approved, denied] }
+    AIQuota:
+      type: object
+      additionalProperties: false
+      required: [period_start, period_end, turns_used, turns_limit, input_tokens, output_tokens, tokens_used, tokens_limit, exhausted]
+      properties:
+        period_start: { $ref: "#/components/schemas/Timestamp" }
+        period_end: { $ref: "#/components/schemas/Timestamp" }
+        turns_used: { type: integer, format: int64, minimum: 0 }
+        turns_limit:
+          type: integer
+          format: int64
+          minimum: 0
+          description: 0 表示不限制。
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        tokens_used: { type: integer, format: int64, minimum: 0 }
+        tokens_limit:
+          type: integer
+          format: int64
+          minimum: 0
+          description: 0 表示不限制。
+        exhausted: { type: boolean }
+    AITurnFeedbackUpdate:
+      type: object
+      additionalProperties: false
+      required: [rating, outcome]
+      properties:
+        rating: { type: string, enum: [helpful, not_helpful] }
+        outcome: { type: string, enum: [resolved, unresolved, unsure] }
+        reasons:
+          type: array
+          maxItems: 6
+          uniqueItems: true
+          items:
+            type: string
+            enum: [inaccurate, insufficient_evidence, incomplete, unsafe, hard_to_follow, other]
+        comment: { type: string, maxLength: 1000 }
+    AITurnFeedback:
+      allOf:
+        - $ref: "#/components/schemas/AITurnFeedbackUpdate"
+        - type: object
+          additionalProperties: false
+          required: [session_id, turn, reasons, comment, created_at, updated_at]
+          properties:
+            session_id: { $ref: "#/components/schemas/UUID" }
+            turn: { type: integer, format: int32, minimum: 1 }
+            reasons:
+              type: array
+              items: { type: string }
+            comment: { type: string }
+            created_at: { $ref: "#/components/schemas/Timestamp" }
+            updated_at: { $ref: "#/components/schemas/Timestamp" }
+    AIEvaluation:
+      type: object
+      additionalProperties: false
+      required: [from, to, turns, succeeded, failed, canceled, rated, helpful, resolved, tool_calls, duration_ms, failure_counts, reason_counts]
+      properties:
+        from: { $ref: "#/components/schemas/Timestamp" }
+        to: { $ref: "#/components/schemas/Timestamp" }
+        turns: { type: integer, format: int64, minimum: 0 }
+        succeeded: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        canceled: { type: integer, format: int64, minimum: 0 }
+        rated: { type: integer, format: int64, minimum: 0 }
+        helpful: { type: integer, format: int64, minimum: 0 }
+        resolved: { type: integer, format: int64, minimum: 0 }
+        tool_calls: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        failure_counts:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        reason_counts:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
     AITool:
       type: object
       additionalProperties: false

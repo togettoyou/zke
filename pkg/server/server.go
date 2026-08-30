@@ -156,7 +156,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	// marked working belongs to a process that is gone. Ending them here,
 	// before anything can open a new turn, keeps the history from showing a
 	// turn that never advances and never ends.
-	aiSessionService := aisession.NewService(store.NewAISessionStore(database), aisession.Config{})
+	aiSessionService := aisession.NewService(store.NewAISessionStore(database), aisession.Config{
+		DailyTurnLimit: cfg.AIOps.Quota.DailyTurns, DailyTokenLimit: cfg.AIOps.Quota.DailyTokens,
+	})
 	interruptedTurns, err := aiSessionService.RecoverInterrupted(ctx, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("recover interrupted AIOps turns: %w", err)

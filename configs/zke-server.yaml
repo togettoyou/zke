@@ -388,5 +388,13 @@ aiops:
     max_tool_calls: 24
     timeout: 5m
 
+  # One user's model-consumption gate inside one Project, reset at 00:00 UTC.
+  # A zero value leaves that dimension unlimited. Token usage is taken from
+  # endpoint-reported input and output usage; a turn already in progress is
+  # allowed to finish, then the next turn is refused once the limit is reached.
+  quota:
+    daily_turns: 0
+    daily_tokens: 0
+
 shutdown_timeout: 10s
 log_level: info

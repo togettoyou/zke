@@ -2947,6 +2947,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 当前用户在指定 Project 的 UTC 当日 AIOps Turn 与模型 token 用量。cluster_id 只用于重新校验 当前工作区的 ai.run；用量覆盖同一 Project 内该用户的全部 Cluster。限制为 0 表示不限制。 */
+        get: operations["getAIQuota"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/evaluation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 汇总当前用户在指定 Cluster 的 AIOps Turn 结果与用户反馈。它是可核验的运行与反馈统计， 不让模型评价自己的答案，也不读取其他用户的会话。最大窗口为 90 天。 */
+        get: operations["getAIEvaluation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ai/sessions": {
         parameters: {
             query?: never;
@@ -2993,7 +3027,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description 持久化问题后返回 202；模型任务在后台继续，并在每个外部步骤重新检查账户与 RBAC。 */
+        /** @description 在 UTC 日配额允许时持久化问题并返回 202；模型任务在后台继续，并在每个外部步骤重新检查账户与 RBAC。 */
         post: operations["startAITurn"];
         delete?: never;
         options?: never;
@@ -3014,6 +3048,27 @@ export interface paths {
         put?: never;
         post?: never;
         delete: operations["cancelAITurn"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/sessions/{session_id}/turns/{turn}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+                turn: number;
+            };
+            cookie?: never;
+        };
+        /** @description 读取当前用户对本人会话中一个成功 Turn 的反馈；尚未反馈时 data.feedback 为 null。 */
+        get: operations["getAITurnFeedback"];
+        /** @description 新建或替换当前用户对本人一个成功 Turn 的反馈；不修改 append-only 轨迹。 */
+        put: operations["saveAITurnFeedback"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -7541,6 +7596,74 @@ export interface components {
             call_id: string;
             /** @enum {string} */
             decision: "approved" | "denied";
+        };
+        AIQuota: {
+            period_start: components["schemas"]["Timestamp"];
+            period_end: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            turns_used: number;
+            /**
+             * Format: int64
+             * @description 0 表示不限制。
+             */
+            turns_limit: number;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: int64 */
+            tokens_used: number;
+            /**
+             * Format: int64
+             * @description 0 表示不限制。
+             */
+            tokens_limit: number;
+            exhausted: boolean;
+        };
+        AITurnFeedbackUpdate: {
+            /** @enum {string} */
+            rating: "helpful" | "not_helpful";
+            /** @enum {string} */
+            outcome: "resolved" | "unresolved" | "unsure";
+            reasons?: ("inaccurate" | "insufficient_evidence" | "incomplete" | "unsafe" | "hard_to_follow" | "other")[];
+            comment?: string;
+        };
+        AITurnFeedback: components["schemas"]["AITurnFeedbackUpdate"] & {
+            session_id: components["schemas"]["UUID"];
+            /** Format: int32 */
+            turn: number;
+            reasons: string[];
+            comment: string;
+            created_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+        };
+        AIEvaluation: {
+            from: components["schemas"]["Timestamp"];
+            to: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            turns: number;
+            /** Format: int64 */
+            succeeded: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            canceled: number;
+            /** Format: int64 */
+            rated: number;
+            /** Format: int64 */
+            helpful: number;
+            /** Format: int64 */
+            resolved: number;
+            /** Format: int64 */
+            tool_calls: number;
+            /** Format: int64 */
+            duration_ms: number;
+            failure_counts: {
+                [key: string]: number;
+            };
+            reason_counts: {
+                [key: string]: number;
+            };
         };
         AITool: {
             name: string;
@@ -15412,6 +15535,64 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
         };
     };
+    getAIQuota: {
+        parameters: {
+            query: {
+                tenant_id: components["schemas"]["UUID"];
+                project_id: components["schemas"]["UUID"];
+                cluster_id: components["schemas"]["UUID"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前 UTC 日的配额与用量 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AIQuota"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAIEvaluation: {
+        parameters: {
+            query: {
+                tenant_id: components["schemas"]["UUID"];
+                project_id: components["schemas"]["UUID"];
+                cluster_id: components["schemas"]["UUID"];
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AIOps 诊断效果统计 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AIEvaluation"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     listAISessions: {
         parameters: {
             query: {
@@ -15600,6 +15781,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     cancelAITurn: {
@@ -15630,6 +15812,71 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    getAITurnFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+                turn: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 用户反馈或空值 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: {
+                            feedback: components["schemas"]["AITurnFeedback"] | null;
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    saveAITurnFeedback: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                session_id: components["parameters"]["AISessionID"];
+                turn: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AITurnFeedbackUpdate"];
+            };
+        };
+        responses: {
+            /** @description 已保存的反馈 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["AITurnFeedback"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     decideAIApproval: {

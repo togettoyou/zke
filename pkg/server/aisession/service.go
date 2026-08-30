@@ -25,7 +25,8 @@ var (
 	ErrIdle = errors.New("AIOps session has no turn running")
 	// ErrNotArchived is returned when deletion is attempted before the explicit
 	// archive step.
-	ErrNotArchived = errors.New("AIOps session must be archived before deletion")
+	ErrNotArchived   = errors.New("AIOps session must be archived before deletion")
+	ErrQuotaExceeded = errors.New("AIOps daily quota exceeded")
 )
 
 // defaultRetention is how long a session stays readable after its last use.
@@ -69,10 +70,21 @@ type AppStore interface {
 	DeleteAISessionAttachmentForInitiator(context.Context, string, string, string) error
 }
 
+type QualityStore interface {
+	GetAIUsage(context.Context, string, string, string, time.Time, time.Time) (store.AIUsage, error)
+	UpsertAITurnFeedback(context.Context, store.UpsertAITurnFeedbackParams) (store.AITurnFeedback, error)
+	GetAITurnFeedback(context.Context, string, int32, string) (store.AITurnFeedback, error)
+	EvaluateAI(context.Context, store.AIEvaluationQuery) (store.AIEvaluation, error)
+}
+
 type Config struct {
 	// Retention is how long a session stays readable after its last activity.
 	// Zero takes the package default.
 	Retention time.Duration
+	// DailyTurnLimit and DailyTokenLimit apply to one user in one Project and
+	// reset at UTC midnight. Zero preserves unlimited existing deployments.
+	DailyTurnLimit  int64
+	DailyTokenLimit int64
 }
 
 type Service struct {
@@ -106,9 +118,12 @@ type CreateInput struct {
 // StartTurnInput opens a turn with the question that opened it. The question
 // and the turn are one act: a turn with nothing asked in it is not a turn.
 type StartTurnInput struct {
-	SessionID string
-	Content   Content
-	Now       time.Time
+	SessionID       string
+	InitiatorUserID string
+	TenantID        string
+	ProjectID       string
+	Content         Content
+	Now             time.Time
 }
 
 type AppendInput struct {
@@ -166,6 +181,65 @@ type AttachmentInput struct {
 	MediaType       string
 	Content         string
 	Now             time.Time
+}
+
+type Quota struct {
+	PeriodStart  time.Time `json:"period_start"`
+	PeriodEnd    time.Time `json:"period_end"`
+	TurnsUsed    int64     `json:"turns_used"`
+	TurnsLimit   int64     `json:"turns_limit"`
+	InputTokens  int64     `json:"input_tokens"`
+	OutputTokens int64     `json:"output_tokens"`
+	TokensUsed   int64     `json:"tokens_used"`
+	TokensLimit  int64     `json:"tokens_limit"`
+	Exhausted    bool      `json:"exhausted"`
+}
+
+type Feedback struct {
+	SessionID string    `json:"session_id"`
+	Turn      int32     `json:"turn"`
+	Rating    string    `json:"rating"`
+	Outcome   string    `json:"outcome"`
+	Reasons   []string  `json:"reasons"`
+	Comment   string    `json:"comment"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type FeedbackInput struct {
+	SessionID       string
+	Turn            int32
+	InitiatorUserID string
+	Rating          string
+	Outcome         string
+	Reasons         []string
+	Comment         string
+	Now             time.Time
+}
+
+type EvaluationInput struct {
+	InitiatorUserID string
+	TenantID        string
+	ProjectID       string
+	ClusterID       string
+	From            time.Time
+	To              time.Time
+}
+
+type Evaluation struct {
+	From          time.Time        `json:"from"`
+	To            time.Time        `json:"to"`
+	Turns         int64            `json:"turns"`
+	Succeeded     int64            `json:"succeeded"`
+	Failed        int64            `json:"failed"`
+	Canceled      int64            `json:"canceled"`
+	Rated         int64            `json:"rated"`
+	Helpful       int64            `json:"helpful"`
+	Resolved      int64            `json:"resolved"`
+	ToolCalls     int64            `json:"tool_calls"`
+	DurationMS    int64            `json:"duration_ms"`
+	FailureCounts map[string]int64 `json:"failure_counts"`
+	ReasonCounts  map[string]int64 `json:"reason_counts"`
 }
 
 // Create opens a session with no turns in it yet.
@@ -244,7 +318,8 @@ func (service *Service) SetApprovalMode(
 // StartTurn opens the next turn and records the question. Everything the turn
 // then does is appended to it until FinishTurn closes it.
 func (service *Service) StartTurn(ctx context.Context, input StartTurnInput) (Entry, error) {
-	if !validation.IsUUID(input.SessionID) || input.Now.IsZero() {
+	if !validation.IsUUID(input.SessionID) || !validation.IsUUID(input.InitiatorUserID) ||
+		!validation.IsUUID(input.TenantID) || !validation.IsUUID(input.ProjectID) || input.Now.IsZero() {
 		return Entry{}, ErrInvalidInput
 	}
 	if err := validateContent(KindInput, input.Content); err != nil {
@@ -257,10 +332,10 @@ func (service *Service) StartTurn(ctx context.Context, input StartTurnInput) (En
 		return Entry{}, fmt.Errorf("encode AIOps question: %w", err)
 	}
 	opened, err := service.store.StartAITurn(ctx, store.StartAITurnParams{
-		SessionID:  input.SessionID,
-		Content:    encoded,
-		Truncated:  truncated,
-		OccurredAt: input.Now,
+		SessionID: input.SessionID, InitiatorUserID: input.InitiatorUserID,
+		TenantID: input.TenantID, ProjectID: input.ProjectID,
+		Content: encoded, Truncated: truncated, OccurredAt: input.Now,
+		TurnLimit: service.config.DailyTurnLimit, TokenLimit: service.config.DailyTokenLimit,
 	})
 	if err != nil {
 		return Entry{}, translateStoreError(err)
@@ -525,6 +600,113 @@ func (service *Service) DeleteAttachment(
 	))
 }
 
+func (service *Service) Quota(
+	ctx context.Context,
+	initiatorUserID, tenantID, projectID string,
+	now time.Time,
+) (Quota, error) {
+	if !validation.IsUUID(initiatorUserID) || !validation.IsUUID(tenantID) ||
+		!validation.IsUUID(projectID) || now.IsZero() {
+		return Quota{}, ErrInvalidInput
+	}
+	qualityStore, ok := service.store.(QualityStore)
+	if !ok {
+		return Quota{}, errors.New("AIOps quality store is unavailable")
+	}
+	periodStart := now.UTC().Truncate(24 * time.Hour)
+	usage, err := qualityStore.GetAIUsage(ctx, initiatorUserID, tenantID, projectID,
+		periodStart, periodStart.Add(24*time.Hour))
+	if err != nil {
+		return Quota{}, err
+	}
+	tokensUsed := usage.InputTokens + usage.OutputTokens
+	return Quota{
+		PeriodStart: usage.PeriodStart, PeriodEnd: usage.PeriodEnd,
+		TurnsUsed: usage.Turns, TurnsLimit: service.config.DailyTurnLimit,
+		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+		TokensUsed: tokensUsed, TokensLimit: service.config.DailyTokenLimit,
+		Exhausted: (service.config.DailyTurnLimit > 0 && usage.Turns >= service.config.DailyTurnLimit) ||
+			(service.config.DailyTokenLimit > 0 && tokensUsed >= service.config.DailyTokenLimit),
+	}, nil
+}
+
+func (service *Service) SaveFeedback(ctx context.Context, input FeedbackInput) (Feedback, error) {
+	comment := strings.TrimSpace(input.Comment)
+	if !validation.IsUUID(input.SessionID) || !validation.IsUUID(input.InitiatorUserID) ||
+		input.Turn < 1 || input.Now.IsZero() || len(comment) > 1000 ||
+		!validFeedbackRating(input.Rating) || !validFeedbackOutcome(input.Outcome) ||
+		len(input.Reasons) > 6 {
+		return Feedback{}, ErrInvalidInput
+	}
+	seen := make(map[string]struct{}, len(input.Reasons))
+	for _, reason := range input.Reasons {
+		if !validFeedbackReason(reason) {
+			return Feedback{}, ErrInvalidInput
+		}
+		if _, duplicate := seen[reason]; duplicate {
+			return Feedback{}, ErrInvalidInput
+		}
+		seen[reason] = struct{}{}
+	}
+	qualityStore, ok := service.store.(QualityStore)
+	if !ok {
+		return Feedback{}, errors.New("AIOps quality store is unavailable")
+	}
+	stored, err := qualityStore.UpsertAITurnFeedback(ctx, store.UpsertAITurnFeedbackParams{
+		SessionID: input.SessionID, Turn: input.Turn, InitiatorUserID: input.InitiatorUserID,
+		Rating: input.Rating, Outcome: input.Outcome, Reasons: input.Reasons,
+		Comment: comment, Now: input.Now,
+	})
+	if err != nil {
+		return Feedback{}, translateStoreError(err)
+	}
+	return feedbackFromStore(stored), nil
+}
+
+func (service *Service) Feedback(
+	ctx context.Context, sessionID string, turn int32, initiatorUserID string,
+) (Feedback, error) {
+	if !validation.IsUUID(sessionID) || !validation.IsUUID(initiatorUserID) || turn < 1 {
+		return Feedback{}, ErrInvalidInput
+	}
+	qualityStore, ok := service.store.(QualityStore)
+	if !ok {
+		return Feedback{}, errors.New("AIOps quality store is unavailable")
+	}
+	stored, err := qualityStore.GetAITurnFeedback(ctx, sessionID, turn, initiatorUserID)
+	if err != nil {
+		return Feedback{}, translateStoreError(err)
+	}
+	return feedbackFromStore(stored), nil
+}
+
+func (service *Service) Evaluate(ctx context.Context, input EvaluationInput) (Evaluation, error) {
+	if !validation.IsUUID(input.InitiatorUserID) || !validation.IsUUID(input.TenantID) ||
+		!validation.IsUUID(input.ProjectID) || !validation.IsUUID(input.ClusterID) ||
+		input.From.IsZero() || input.To.IsZero() || !input.From.Before(input.To) ||
+		input.To.Sub(input.From) > 90*24*time.Hour {
+		return Evaluation{}, ErrInvalidInput
+	}
+	qualityStore, ok := service.store.(QualityStore)
+	if !ok {
+		return Evaluation{}, errors.New("AIOps quality store is unavailable")
+	}
+	stored, err := qualityStore.EvaluateAI(ctx, store.AIEvaluationQuery{
+		InitiatorUserID: input.InitiatorUserID, TenantID: input.TenantID,
+		ProjectID: input.ProjectID, ClusterID: input.ClusterID, From: input.From, To: input.To,
+	})
+	if err != nil {
+		return Evaluation{}, err
+	}
+	return Evaluation{
+		From: input.From, To: input.To, Turns: stored.Turns, Succeeded: stored.Succeeded,
+		Failed: stored.Failed, Canceled: stored.Canceled, Rated: stored.Rated,
+		Helpful: stored.Helpful, Resolved: stored.Resolved, ToolCalls: stored.ToolCalls,
+		DurationMS: stored.Duration.Milliseconds(), FailureCounts: stored.FailureCounts,
+		ReasonCounts: stored.ReasonCounts,
+	}, nil
+}
+
 // Trajectory reads a session's entries in order.
 //
 // A session the caller may not read produces an empty page rather than an
@@ -641,6 +823,8 @@ func translateStoreError(err error) error {
 		return ErrIdle
 	case errors.Is(err, store.ErrAISessionNotArchived):
 		return ErrNotArchived
+	case errors.Is(err, store.ErrAIQuotaExceeded):
+		return ErrQuotaExceeded
 	default:
 		return err
 	}
@@ -699,4 +883,27 @@ func validAttachmentMediaType(value string) bool {
 func attachmentFromStore(item store.AISessionAttachment) Attachment {
 	return Attachment{ID: item.ID, SessionID: item.SessionID, Name: item.Name,
 		MediaType: item.MediaType, Content: item.Content, CreatedAt: item.CreatedAt}
+}
+
+func feedbackFromStore(item store.AITurnFeedback) Feedback {
+	return Feedback{SessionID: item.SessionID, Turn: item.Turn, Rating: item.Rating,
+		Outcome: item.Outcome, Reasons: item.Reasons, Comment: item.Comment,
+		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+}
+
+func validFeedbackRating(value string) bool {
+	return value == "helpful" || value == "not_helpful"
+}
+
+func validFeedbackOutcome(value string) bool {
+	return value == "resolved" || value == "unresolved" || value == "unsure"
+}
+
+func validFeedbackReason(value string) bool {
+	switch value {
+	case "inaccurate", "insufficient_evidence", "incomplete", "unsafe", "hard_to_follow", "other":
+		return true
+	default:
+		return false
+	}
 }

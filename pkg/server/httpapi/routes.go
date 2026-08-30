@@ -184,6 +184,8 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		handlers.authMiddleware.RequireAuthentication,
 	)
 	aiRoutes.GET("/tools", handlers.aiRuntime.tools)
+	aiRoutes.GET("/quota", handlers.aiRuntime.quota)
+	aiRoutes.GET("/evaluation", handlers.aiRuntime.evaluation)
 	aiRoutes.GET("/sessions", handlers.aiRuntime.listSessions)
 	aiRoutes.POST("/sessions", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.createSession)
 	aiRoutes.GET("/sessions/:session_id", handlers.aiRuntime.getSession)
@@ -194,6 +196,8 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 	aiRoutes.POST("/sessions/:session_id/approvals", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.decideApproval)
 	aiRoutes.GET("/sessions/:session_id/trajectory", handlers.aiRuntime.trajectory)
 	aiRoutes.GET("/sessions/:session_id/context", handlers.aiRuntime.contextUsage)
+	aiRoutes.GET("/sessions/:session_id/turns/:turn/feedback", handlers.aiRuntime.feedback)
+	aiRoutes.PUT("/sessions/:session_id/turns/:turn/feedback", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.saveFeedback)
 	aiRoutes.GET("/sessions/:session_id/events", handlers.aiRuntime.events)
 	aiRoutes.GET("/sessions/:session_id/attachments", handlers.aiRuntime.listAttachments)
 	aiRoutes.POST("/sessions/:session_id/attachments", handlers.authMiddleware.RequireCSRF, handlers.aiRuntime.createAttachment)

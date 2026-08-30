@@ -95,6 +95,13 @@ type aiAttachmentRequest struct {
 	Content   string `json:"content"`
 }
 
+type aiFeedbackRequest struct {
+	Rating  string   `json:"rating"`
+	Outcome string   `json:"outcome"`
+	Reasons []string `json:"reasons"`
+	Comment string   `json:"comment"`
+}
+
 func newAIRuntimeHandler(
 	logger *slog.Logger,
 	runtime *airuntime.Runtime,
@@ -563,6 +570,96 @@ func (handler *aiRuntimeHandler) contextUsage(c *gin.Context) {
 	})
 }
 
+func (handler *aiRuntimeHandler) quota(c *gin.Context) {
+	identity, _ := httpmiddleware.Identity(c)
+	tenantID, projectID, clusterID := c.Query("tenant_id"), c.Query("project_id"), c.Query("cluster_id")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), handler.operationLimit)
+	defer cancel()
+	if err := handler.runtime.AuthorizeTarget(ctx, identity.User.ID, tenantID, projectID, clusterID); handler.respondError(c, "authorize AIOps quota", err) {
+		return
+	}
+	quota, err := handler.sessions.Quota(ctx, identity.User.ID, tenantID, projectID, time.Now().UTC())
+	if handler.respondError(c, "read AIOps quota", err) {
+		return
+	}
+	writeSuccess(c, http.StatusOK, quota)
+}
+
+func (handler *aiRuntimeHandler) feedback(c *gin.Context) {
+	identity, _ := httpmiddleware.Identity(c)
+	turn, err := strconv.ParseInt(c.Param("turn"), 10, 32)
+	if err != nil || turn < 1 {
+		writeError(c, http.StatusBadRequest, "invalid_ai_input", "invalid AIOps feedback turn")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), handler.operationLimit)
+	defer cancel()
+	if _, err := handler.runtime.Get(ctx, c.Param("session_id"), identity.User.ID, time.Now().UTC()); handler.respondError(c, "authorize AIOps feedback", err) {
+		return
+	}
+	feedback, err := handler.sessions.Feedback(ctx, c.Param("session_id"), int32(turn), identity.User.ID)
+	if errors.Is(err, aisession.ErrNotFound) {
+		writeSuccess(c, http.StatusOK, gin.H{"feedback": nil})
+		return
+	}
+	if handler.respondError(c, "read AIOps feedback", err) {
+		return
+	}
+	writeSuccess(c, http.StatusOK, gin.H{"feedback": feedback})
+}
+
+func (handler *aiRuntimeHandler) saveFeedback(c *gin.Context) {
+	identity, _ := httpmiddleware.Identity(c)
+	turn, err := strconv.ParseInt(c.Param("turn"), 10, 32)
+	if err != nil || turn < 1 {
+		writeError(c, http.StatusBadRequest, "invalid_ai_input", "invalid AIOps feedback turn")
+		return
+	}
+	var request aiFeedbackRequest
+	if decodeJSONRequest(c, &request, maxAIRuntimeRequestBytes) != nil {
+		writeError(c, http.StatusBadRequest, "invalid_ai_input", "invalid AIOps feedback")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), handler.operationLimit)
+	defer cancel()
+	if _, err := handler.runtime.Get(ctx, c.Param("session_id"), identity.User.ID, time.Now().UTC()); handler.respondError(c, "authorize AIOps feedback update", err) {
+		return
+	}
+	feedback, err := handler.sessions.SaveFeedback(ctx, aisession.FeedbackInput{
+		SessionID: c.Param("session_id"), Turn: int32(turn), InitiatorUserID: identity.User.ID,
+		Rating: request.Rating, Outcome: request.Outcome, Reasons: request.Reasons,
+		Comment: request.Comment, Now: time.Now().UTC(),
+	})
+	if handler.respondError(c, "save AIOps feedback", err) {
+		return
+	}
+	writeSuccess(c, http.StatusOK, feedback)
+}
+
+func (handler *aiRuntimeHandler) evaluation(c *gin.Context) {
+	identity, _ := httpmiddleware.Identity(c)
+	tenantID, projectID, clusterID := c.Query("tenant_id"), c.Query("project_id"), c.Query("cluster_id")
+	days, _ := strconv.Atoi(c.DefaultQuery("days", "30"))
+	if days < 1 || days > 90 {
+		writeError(c, http.StatusBadRequest, "invalid_ai_input", "AIOps evaluation range must be 1 to 90 days")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), handler.operationLimit)
+	defer cancel()
+	if err := handler.runtime.AuthorizeTarget(ctx, identity.User.ID, tenantID, projectID, clusterID); handler.respondError(c, "authorize AIOps evaluation", err) {
+		return
+	}
+	to := time.Now().UTC()
+	evaluation, err := handler.sessions.Evaluate(ctx, aisession.EvaluationInput{
+		InitiatorUserID: identity.User.ID, TenantID: tenantID, ProjectID: projectID,
+		ClusterID: clusterID, From: to.Add(-time.Duration(days) * 24 * time.Hour), To: to,
+	})
+	if handler.respondError(c, "evaluate AIOps diagnostics", err) {
+		return
+	}
+	writeSuccess(c, http.StatusOK, evaluation)
+}
+
 // events streams one session to a watcher.
 //
 // Two sources, and the difference between them is the whole design. Durable
@@ -789,6 +886,8 @@ func (handler *aiRuntimeHandler) respondError(c *gin.Context, operation string, 
 			"AIOps approval request is no longer pending")
 	case errors.Is(err, aisession.ErrNotArchived):
 		writeError(c, http.StatusConflict, "ai_session_not_archived", "archive the AIOps session before deleting it")
+	case errors.Is(err, aisession.ErrQuotaExceeded):
+		writeError(c, http.StatusTooManyRequests, "ai_quota_exceeded", "AIOps daily quota has been reached")
 	case errors.Is(err, aimodel.ErrDisabled), errors.Is(err, aimodel.ErrNotConfigured), errors.Is(err, airuntime.ErrModelNotReady):
 		writeError(c, http.StatusServiceUnavailable, "ai_model_not_ready", "AIOps model is not ready")
 	default:

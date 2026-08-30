@@ -149,6 +149,15 @@ type AIOpsConfig struct {
 	Compaction      AIOpsCompactionConfig `yaml:"compaction"`
 	ToolResult      AIOpsToolResultConfig `yaml:"tool_result"`
 	Subtask         AIOpsSubtaskConfig    `yaml:"subtask"`
+	Quota           AIOpsQuotaConfig      `yaml:"quota"`
+}
+
+// AIOpsQuotaConfig caps model consumption for one user in one Project. The
+// accounting day is UTC so every Server instance makes the same decision.
+// Zero keeps that dimension unlimited.
+type AIOpsQuotaConfig struct {
+	DailyTurns  int64 `yaml:"daily_turns"`
+	DailyTokens int64 `yaml:"daily_tokens"`
 }
 
 // AIOpsSubtaskConfig bounds delegated investigation branches.

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import {
   downloadAISession,
+  useAIQuota,
   useAISessions,
   useAITools,
   useCreateAISession,
@@ -110,6 +111,12 @@ export function AIOpsApp({ windowId }: AppComponentProps) {
   const toolsQuery = useAITools();
   const tools = toolsQuery.data?.tools ?? [];
   const skills = toolsQuery.data?.skills ?? [];
+  const quotaQuery = useAIQuota(
+    canRun ? scope.tenantId : null,
+    canRun ? scope.projectId : null,
+    clusterId || null,
+    String(sessions.reduce((total, session) => total + session.current_turn, 0)),
+  );
 
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
   const createSession = useCreateAISession();
@@ -287,6 +294,7 @@ export function AIOpsApp({ windowId }: AppComponentProps) {
             tools={tools}
             skills={skills}
             approvalMode={nextApprovalMode}
+            quotaExhausted={Boolean(quotaQuery.data?.exhausted)}
             onApprovalMode={setNextApprovalMode}
             onAsk={(question) => void openSession(question)}
           />
@@ -355,6 +363,7 @@ function Welcome({
   tools,
   skills,
   approvalMode,
+  quotaExhausted,
   onApprovalMode,
   onAsk,
 }: {
@@ -364,6 +373,7 @@ function Welcome({
   tools: AITool[];
   skills: AISkill[];
   approvalMode: AISession["approval_mode"];
+  quotaExhausted: boolean;
   onApprovalMode: (mode: AISession["approval_mode"]) => void;
   onAsk: (question: string) => void;
 }) {
@@ -386,12 +396,16 @@ function Welcome({
         working={false}
         tools={tools}
         skills={skills}
-        disabled={!ready}
+        disabled={!ready || quotaExhausted}
         pending={busy}
         draft={draft}
         onDraft={setDraft}
         inputRef={field}
-        disabledPlaceholder="先让当前项目里的某个 Cluster 上线，再开始提问。"
+        disabledPlaceholder={
+          quotaExhausted
+            ? "今日 AIOps 配额已用尽，UTC 次日恢复。"
+            : "先让当前项目里的某个 Cluster 上线，再开始提问。"
+        }
         onSend={onAsk}
         onApprovalMode={onApprovalMode}
       />

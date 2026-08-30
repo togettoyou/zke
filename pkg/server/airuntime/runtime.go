@@ -287,9 +287,10 @@ func (runtime *Runtime) Start(ctx context.Context, input StartInput) (aisession.
 		return aisession.Entry{}, err
 	}
 	entry, err := runtime.sessions.StartTurn(ctx, aisession.StartTurnInput{
-		SessionID: input.SessionID,
-		Content:   aisession.Content{Text: strings.TrimSpace(input.Text), Evidence: input.Evidence},
-		Now:       input.Now,
+		SessionID: input.SessionID, InitiatorUserID: input.UserID,
+		TenantID: session.TenantID, ProjectID: session.ProjectID,
+		Content: aisession.Content{Text: strings.TrimSpace(input.Text), Evidence: input.Evidence},
+		Now:     input.Now,
 	})
 	if errors.Is(err, aisession.ErrBusy) {
 		return aisession.Entry{}, ErrAlreadyRunning

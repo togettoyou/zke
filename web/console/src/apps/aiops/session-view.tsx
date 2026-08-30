@@ -4,6 +4,7 @@ import {
   useAIAttachments,
   useAIContextUsage,
   useAIEventStream,
+  useAIQuota,
   useAITrajectory,
   useCancelAITurn,
   useCreateAIAttachment,
@@ -19,6 +20,7 @@ import { cn } from "@/lib/cn";
 
 import { Composer } from "./composer";
 import { Conversation } from "./conversation";
+import { Evaluation } from "./evaluation";
 import { pendingApprovals, streamLabel } from "./entries";
 import { Trajectory } from "./trajectory";
 import { useViewIntents } from "./view-intents";
@@ -77,6 +79,12 @@ export function SessionView({
     session.id,
     session.status === "working" ? "working" : String(entries.at(-1)?.sequence ?? 0),
   );
+  const quota = useAIQuota(
+    session.tenant_id,
+    session.project_id,
+    session.cluster_id,
+    session.status === "working" ? "working" : String(entries.at(-1)?.sequence ?? 0),
+  );
   const attachmentsQuery = useAIAttachments(session.id);
   const attachments = attachmentsQuery.data?.attachments ?? [];
   const createAttachment = useCreateAIAttachment();
@@ -85,7 +93,7 @@ export function SessionView({
   const cancelTurn = useCancelAITurn();
   const decide = useDecideAIApproval();
 
-  const [view, setView] = useState<"conversation" | "trajectory">("conversation");
+  const [view, setView] = useState<"conversation" | "trajectory" | "evaluation">("conversation");
   // The draft lives here rather than in the composer because the empty
   // conversation's suggestions write into it: picking one is a way to start
   // typing a question, not a way to send one.
@@ -147,6 +155,8 @@ export function SessionView({
               )}
             />
             <span className="shrink-0">实时流 {streamLabel(stream.state)}</span>
+            <span aria-hidden>·</span>
+            <span className="shrink-0">{quotaLabel(quota.data)}</span>
           </p>
         </div>
 
@@ -163,6 +173,9 @@ export function SessionView({
               轨迹
               <span className="text-subtle-foreground ml-1.5 text-[11px]">{entries.length}</span>
             </TabsTrigger>
+            <TabsTrigger value="evaluation" className="h-7 px-3 text-xs">
+              效果
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </header>
@@ -175,6 +188,15 @@ export function SessionView({
           {waiting.length === 1
             ? `运行已暂停，等待你批准 ${waiting[0]?.content.tool}。`
             : `运行已暂停，有 ${waiting.length} 个调用等待你批准。`}
+        </div>
+      ) : null}
+
+      {quota.data?.exhausted ? (
+        <div
+          role="status"
+          className="border-warning/40 bg-warning-surface text-warning shrink-0 border-b px-4 py-1.5 text-xs"
+        >
+          今日 AIOps 配额已用尽；现有轨迹与效果评估仍可查看，UTC 次日恢复。
         </div>
       ) : null}
 
@@ -213,6 +235,14 @@ export function SessionView({
         />
       </div>
 
+      <div className={cn("min-h-0 flex-1", view !== "evaluation" && "hidden")}>
+        <Evaluation
+          tenantId={session.tenant_id}
+          projectId={session.project_id}
+          clusterId={session.cluster_id}
+        />
+      </div>
+
       {/* The composer belongs to the conversation. The trajectory is a record
           of what already ran, and it needs every row of height it can get: a
           box asking for the next question under a timeline is both cramped and
@@ -229,7 +259,7 @@ export function SessionView({
           tools={tools}
           skills={skills}
           context={context.data}
-          disabled={archived}
+          disabled={archived || Boolean(quota.data?.exhausted)}
           pending={startTurn.isPending}
           onSend={send}
           onStop={() =>
@@ -247,6 +277,24 @@ export function SessionView({
         />
       </div>
     </>
+  );
+}
+
+function quotaLabel(quota: ReturnType<typeof useAIQuota>["data"]): string {
+  if (!quota) return "配额读取中";
+  if (quota.turns_limit === 0 && quota.tokens_limit === 0) return "配额不限";
+  const turns =
+    quota.turns_limit > 0 ? `${quota.turns_used}/${quota.turns_limit} Turn` : "Turn 不限";
+  const tokens =
+    quota.tokens_limit > 0
+      ? `${compact(quota.tokens_used)}/${compact(quota.tokens_limit)} token`
+      : "token 不限";
+  return `${turns} · ${tokens}`;
+}
+
+function compact(value: number): string {
+  return new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(
+    value,
   );
 }
 

@@ -65,9 +65,9 @@ func startAITurn(
 	t.Helper()
 
 	event, err := sessionStore.StartAITurn(ctx, store.StartAITurnParams{
-		SessionID:  sessionID,
-		Content:    []byte(`{"text":"这是什么情况"}`),
-		OccurredAt: now,
+		SessionID: sessionID, InitiatorUserID: aiSessionUserID,
+		TenantID: aiSessionTenantID, ProjectID: aiSessionProjectID,
+		Content: []byte(`{"text":"这是什么情况"}`), OccurredAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -419,7 +419,9 @@ func TestAISessionStateGuardsWrites(t *testing.T) {
 
 	startAITurn(t, ctx, sessionStore, aiSessionID, now)
 	if _, err := sessionStore.StartAITurn(ctx, store.StartAITurnParams{
-		SessionID: aiSessionID, Content: []byte(`{"text":"插一句"}`), OccurredAt: now,
+		SessionID: aiSessionID, InitiatorUserID: aiSessionUserID,
+		TenantID: aiSessionTenantID, ProjectID: aiSessionProjectID,
+		Content: []byte(`{"text":"插一句"}`), OccurredAt: now,
 	}); !errors.Is(err, store.ErrAISessionBusy) {
 		t.Fatalf("expected ErrAISessionBusy, got %v", err)
 	}
@@ -451,7 +453,9 @@ func TestAISessionUnknownSessionIsNotAStateError(t *testing.T) {
 	now := time.Now().UTC()
 
 	if _, err := sessionStore.StartAITurn(ctx, store.StartAITurnParams{
-		SessionID: missing, Content: []byte(`{"text":"问题"}`), OccurredAt: now,
+		SessionID: missing, InitiatorUserID: aiSessionUserID,
+		TenantID: aiSessionTenantID, ProjectID: aiSessionProjectID,
+		Content: []byte(`{"text":"问题"}`), OccurredAt: now,
 	}); !errors.Is(err, store.ErrAISessionNotFound) {
 		t.Fatalf("expected ErrAISessionNotFound, got %v", err)
 	}
@@ -460,6 +464,89 @@ func TestAISessionUnknownSessionIsNotAStateError(t *testing.T) {
 		Content: []byte(`{"text":"结论"}`), OccurredAt: now,
 	}); !errors.Is(err, store.ErrAISessionNotFound) {
 		t.Fatalf("expected ErrAISessionNotFound, got %v", err)
+	}
+}
+
+func TestAIQuotaFeedbackAndEvaluationRoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sessionStore := openAISessionStore(t, ctx)
+	now := time.Now().UTC().Truncate(time.Second)
+	createAISession(t, ctx, sessionStore, aiSessionID, aiSessionUserID, now)
+
+	opened, err := sessionStore.StartAITurn(ctx, store.StartAITurnParams{
+		SessionID: aiSessionID, InitiatorUserID: aiSessionUserID,
+		TenantID: aiSessionTenantID, ProjectID: aiSessionProjectID,
+		Content: []byte(`{"text":"诊断问题"}`), OccurredAt: now, TurnLimit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessionStore.AppendAISessionEvent(ctx, store.AppendAISessionEventParams{
+		SessionID: aiSessionID, Kind: "model",
+		Content:    []byte(`{"text":"分析","tokens":{"input":120,"output":30,"context":120}}`),
+		OccurredAt: now.Add(time.Second), Duration: 2 * time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessionStore.AppendAISessionEvent(ctx, store.AppendAISessionEventParams{
+		SessionID: aiSessionID, Kind: "tool_call", Content: []byte(`{"tool":"describe_resource"}`),
+		OccurredAt: now.Add(2 * time.Second), Duration: time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessionStore.AppendAISessionEvent(ctx, store.AppendAISessionEventParams{
+		SessionID: aiSessionID, Kind: "conclusion", Content: []byte(`{"text":"结论"}`),
+		OccurredAt: now.Add(3 * time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sessionStore.FinishAITurn(ctx, store.FinishAITurnParams{
+		SessionID: aiSessionID, Status: "succeeded", Now: now.Add(4 * time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	usage, err := sessionStore.GetAIUsage(ctx, aiSessionUserID, aiSessionTenantID,
+		aiSessionProjectID, now.Truncate(24*time.Hour), now.Truncate(24*time.Hour).Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.Turns != 1 || usage.InputTokens != 120 || usage.OutputTokens != 30 {
+		t.Fatalf("unexpected usage: %+v", usage)
+	}
+	if _, err := sessionStore.StartAITurn(ctx, store.StartAITurnParams{
+		SessionID: aiSessionID, InitiatorUserID: aiSessionUserID,
+		TenantID: aiSessionTenantID, ProjectID: aiSessionProjectID,
+		Content: []byte(`{"text":"再问一次"}`), OccurredAt: now.Add(5 * time.Second), TurnLimit: 1,
+	}); !errors.Is(err, store.ErrAIQuotaExceeded) {
+		t.Fatalf("quota error = %v", err)
+	}
+
+	feedback, err := sessionStore.UpsertAITurnFeedback(ctx, store.UpsertAITurnFeedbackParams{
+		SessionID: aiSessionID, Turn: opened.Turn, InitiatorUserID: aiSessionUserID,
+		Rating: "helpful", Outcome: "resolved", Reasons: []string{}, Comment: "有效",
+		Now: now.Add(6 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if feedback.Rating != "helpful" || feedback.Outcome != "resolved" {
+		t.Fatalf("unexpected feedback: %+v", feedback)
+	}
+	evaluation, err := sessionStore.EvaluateAI(ctx, store.AIEvaluationQuery{
+		InitiatorUserID: aiSessionUserID, TenantID: aiSessionTenantID,
+		ProjectID: aiSessionProjectID, ClusterID: aiSessionClusterID,
+		From: now.Add(-time.Hour), To: now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluation.Turns != 1 || evaluation.Succeeded != 1 || evaluation.Rated != 1 ||
+		evaluation.Helpful != 1 || evaluation.Resolved != 1 || evaluation.ToolCalls != 1 ||
+		evaluation.Duration != 3*time.Second {
+		t.Fatalf("unexpected evaluation: %+v", evaluation)
 	}
 }
 

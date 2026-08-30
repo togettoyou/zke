@@ -51,6 +51,10 @@ export type AIContextUsage = {
   message_tokens: number;
   measured: boolean;
 };
+export type AIQuota = Schemas["AIQuota"];
+export type AITurnFeedback = Schemas["AITurnFeedback"];
+export type AITurnFeedbackUpdate = Schemas["AITurnFeedbackUpdate"];
+export type AIEvaluation = Schemas["AIEvaluation"];
 export type AITrajectoryKind = NonNullable<AITrajectoryEntry["kind"]>;
 export type ClusterConnectionRevocation = Schemas["ClusterConnectionRevocation"];
 export type MetricsQueryCatalog = Schemas["MetricsQueryCatalog"];

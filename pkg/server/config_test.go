@@ -688,7 +688,9 @@ func TestConfigRejectsUnworkableAIOpsPolicy(t *testing.T) {
 		"工具首尾之和不小于阈值": func(aiops *AIOpsConfig) {
 			aiops.ToolResult.HeadChars = aiops.ToolResult.ThresholdChars
 		},
-		"Turn 时长为零": func(aiops *AIOpsConfig) { aiops.TurnTimeout = 0 },
+		"Turn 时长为零":     func(aiops *AIOpsConfig) { aiops.TurnTimeout = 0 },
+		"每日 Turn 配额为负":  func(aiops *AIOpsConfig) { aiops.Quota.DailyTurns = -1 },
+		"每日 Token 配额为负": func(aiops *AIOpsConfig) { aiops.Quota.DailyTokens = -1 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

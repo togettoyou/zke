@@ -24,23 +24,27 @@ const (
 // care about: entries belong to a running turn, and a session runs one turn at
 // a time.
 type fakeStore struct {
-	created     store.CreateAISessionParams
-	appended    []store.AppendAISessionEventParams
-	started     []store.StartAITurnParams
-	finished    store.FinishAITurnParams
-	working     bool
-	turn        int32
-	sequence    int32
-	interrupted store.InterruptAITurnsParams
-	events      []store.AISessionEvent
-	notFound    bool
-	mode        string
-	modeNote    []byte
-	searched    store.SearchAISessionsParams
-	title       string
-	archived    bool
-	deleted     bool
-	attachments []store.AISessionAttachment
+	created       store.CreateAISessionParams
+	appended      []store.AppendAISessionEventParams
+	started       []store.StartAITurnParams
+	finished      store.FinishAITurnParams
+	working       bool
+	turn          int32
+	sequence      int32
+	interrupted   store.InterruptAITurnsParams
+	events        []store.AISessionEvent
+	notFound      bool
+	mode          string
+	modeNote      []byte
+	searched      store.SearchAISessionsParams
+	title         string
+	archived      bool
+	deleted       bool
+	attachments   []store.AISessionAttachment
+	usage         store.AIUsage
+	feedback      store.AITurnFeedback
+	evaluation    store.AIEvaluation
+	quotaExceeded bool
 }
 
 func newFakeStore() *fakeStore {
@@ -87,6 +91,9 @@ func (fake *fakeStore) StartAITurn(
 	_ context.Context,
 	input store.StartAITurnParams,
 ) (store.AISessionEvent, error) {
+	if fake.quotaExceeded {
+		return store.AISessionEvent{}, store.ErrAIQuotaExceeded
+	}
 	if fake.working {
 		return store.AISessionEvent{}, store.ErrAISessionBusy
 	}
@@ -97,6 +104,42 @@ func (fake *fakeStore) StartAITurn(
 		Sequence: fake.next(), Turn: fake.turn, Kind: string(KindInput),
 		Content: input.Content, Truncated: input.Truncated, OccurredAt: input.OccurredAt,
 	}, nil
+}
+
+func (fake *fakeStore) GetAIUsage(
+	_ context.Context, _, _, _ string, from, to time.Time,
+) (store.AIUsage, error) {
+	fake.usage.PeriodStart = from
+	fake.usage.PeriodEnd = to
+	return fake.usage, nil
+}
+
+func (fake *fakeStore) UpsertAITurnFeedback(
+	_ context.Context, input store.UpsertAITurnFeedbackParams,
+) (store.AITurnFeedback, error) {
+	createdAt := fake.feedback.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = input.Now
+	}
+	fake.feedback = store.AITurnFeedback{SessionID: input.SessionID, Turn: input.Turn,
+		Rating: input.Rating, Outcome: input.Outcome, Reasons: input.Reasons,
+		Comment: input.Comment, CreatedAt: createdAt, UpdatedAt: input.Now}
+	return fake.feedback, nil
+}
+
+func (fake *fakeStore) GetAITurnFeedback(
+	_ context.Context, _ string, _ int32, _ string,
+) (store.AITurnFeedback, error) {
+	if fake.feedback.SessionID == "" {
+		return store.AITurnFeedback{}, store.ErrAISessionNotFound
+	}
+	return fake.feedback, nil
+}
+
+func (fake *fakeStore) EvaluateAI(
+	_ context.Context, _ store.AIEvaluationQuery,
+) (store.AIEvaluation, error) {
+	return fake.evaluation, nil
 }
 
 func (fake *fakeStore) AppendAISessionEvent(
@@ -281,9 +324,9 @@ func startTurn(t *testing.T, service *Service, question string) Entry {
 	t.Helper()
 
 	entry, err := service.StartTurn(context.Background(), StartTurnInput{
-		SessionID: testSessionID,
-		Content:   Content{Text: question},
-		Now:       time.Now().UTC(),
+		SessionID: testSessionID, InitiatorUserID: testUserID,
+		TenantID: testTenantID, ProjectID: testProjectID,
+		Content: Content{Text: question}, Now: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -496,10 +539,81 @@ func TestSecondQuestionWhileWorkingIsRefused(t *testing.T) {
 	startTurn(t, service, "第一个问题")
 
 	_, err := service.StartTurn(context.Background(), StartTurnInput{
-		SessionID: testSessionID, Content: Content{Text: "插一句"}, Now: time.Now().UTC(),
+		SessionID: testSessionID, InitiatorUserID: testUserID,
+		TenantID: testTenantID, ProjectID: testProjectID,
+		Content: Content{Text: "插一句"}, Now: time.Now().UTC(),
 	})
 	if !errors.Is(err, ErrBusy) {
 		t.Fatalf("expected ErrBusy, got %v", err)
+	}
+}
+
+func TestDailyQuotaIsReportedAndBlocksBeforeTurnStarts(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeStore()
+	fake.usage = store.AIUsage{Turns: 5, InputTokens: 700, OutputTokens: 300}
+	service := NewService(fake, Config{DailyTurnLimit: 5, DailyTokenLimit: 2_000})
+	now := time.Date(2026, 8, 30, 15, 0, 0, 0, time.FixedZone("test", 8*60*60))
+	quota, err := service.Quota(context.Background(), testUserID, testTenantID, testProjectID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quota.Exhausted || quota.TurnsUsed != 5 || quota.TokensUsed != 1_000 ||
+		quota.PeriodStart.Hour() != 0 || quota.PeriodStart.Location() != time.UTC {
+		t.Fatalf("unexpected quota: %+v", quota)
+	}
+
+	fake.quotaExceeded = true
+	_, err = service.StartTurn(context.Background(), StartTurnInput{
+		SessionID: testSessionID, InitiatorUserID: testUserID,
+		TenantID: testTenantID, ProjectID: testProjectID,
+		Content: Content{Text: "继续诊断"}, Now: now,
+	})
+	if !errors.Is(err, ErrQuotaExceeded) || len(fake.started) != 0 {
+		t.Fatalf("quota start error = %v, started = %d", err, len(fake.started))
+	}
+}
+
+func TestFeedbackIsBoundedAndEvaluationUsesStoredFacts(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeStore()
+	service := newTestService(fake)
+	now := time.Now().UTC()
+	feedback, err := service.SaveFeedback(context.Background(), FeedbackInput{
+		SessionID: testSessionID, Turn: 2, InitiatorUserID: testUserID,
+		Rating: "not_helpful", Outcome: "unresolved",
+		Reasons: []string{"insufficient_evidence", "incomplete"}, Comment: " 缺少变更前指标 ", Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if feedback.Comment != "缺少变更前指标" || feedback.Turn != 2 {
+		t.Fatalf("unexpected feedback: %+v", feedback)
+	}
+	if _, err := service.SaveFeedback(context.Background(), FeedbackInput{
+		SessionID: testSessionID, Turn: 2, InitiatorUserID: testUserID,
+		Rating: "not_helpful", Outcome: "unresolved",
+		Reasons: []string{"incomplete", "incomplete"}, Now: now,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("duplicate feedback reasons error = %v", err)
+	}
+
+	fake.evaluation = store.AIEvaluation{Turns: 4, Succeeded: 3, Failed: 1,
+		Rated: 2, Helpful: 1, Resolved: 1, ToolCalls: 8, Duration: 12 * time.Second,
+		FailureCounts: map[string]int64{"model_timeout": 1},
+		ReasonCounts:  map[string]int64{"incomplete": 1}}
+	evaluation, err := service.Evaluate(context.Background(), EvaluationInput{
+		InitiatorUserID: testUserID, TenantID: testTenantID, ProjectID: testProjectID,
+		ClusterID: testClusterID, From: now.Add(-30 * 24 * time.Hour), To: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluation.DurationMS != 12_000 || evaluation.Helpful != 1 ||
+		evaluation.FailureCounts["model_timeout"] != 1 {
+		t.Fatalf("unexpected evaluation: %+v", evaluation)
 	}
 }
 

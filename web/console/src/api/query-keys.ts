@@ -211,6 +211,10 @@ export const queryKeys = {
   auditEvents: (params: Record<string, unknown> = {}) => ["audit-events", params] as const,
   auditActions: () => ["audit-actions"] as const,
   aiTools: () => ["ai-tools"] as const,
+  aiQuota: (tenantId: string, projectId: string) => ["ai-quota", tenantId, projectId] as const,
+  aiEvaluation: (tenantId: string, projectId: string, clusterId: string, days: number) =>
+    ["ai-evaluation", tenantId, projectId, clusterId, days] as const,
+  aiFeedback: (sessionId: string, turn: number) => ["ai-feedback", sessionId, turn] as const,
   aiSessions: (params: Record<string, unknown> = {}) => ["ai-sessions", params] as const,
   aiSession: (sessionId: string) => ["ai-session", sessionId] as const,
   aiTrajectory: (sessionId: string) => ["ai-trajectory", sessionId] as const,
@@ -265,4 +269,6 @@ export const queryKeyPrefixes = {
   auditEvents: ["audit-events"] as const,
   aiSessions: ["ai-sessions"] as const,
   aiAttachments: ["ai-attachments"] as const,
+  aiQuota: ["ai-quota"] as const,
+  aiEvaluation: ["ai-evaluation"] as const,
 } as const;

@@ -559,6 +559,9 @@ func (cfg Config) validateAgentPKIMonitor() error {
 // point where somebody is waiting for an answer.
 func (cfg Config) validateAIOps() error {
 	aiops := cfg.AIOps
+	if aiops.Quota.DailyTurns < 0 || aiops.Quota.DailyTokens < 0 {
+		return errors.New("AIOps quotas must not be negative")
+	}
 	if err := validateDurations([]boundedDuration{
 		{aiops.TurnTimeout, maxAIOpsTurnTimeout, "AIOps turn timeout"},
 		{aiops.ApprovalTimeout, maxAIOpsApprovalTimeout, "AIOps approval timeout"},
