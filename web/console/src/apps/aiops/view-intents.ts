@@ -67,6 +67,21 @@ export function useViewIntents(
   sessionId: string,
   entries: AITrajectoryEntry[],
   windowId: string,
+  /**
+   * Whether `entries` is the conversation's trail rather than a placeholder.
+   *
+   * The watermark below is the whole of rule 1, and it is only a watermark if
+   * it is taken against what the conversation actually holds. Switching to a
+   * conversation whose trail is not in the cache mounts this hook with an empty
+   * array for as long as the request takes; priming on that settles nothing,
+   * and every intent in the trail that then arrives — an investigation from
+   * last week, replayed — reads as one that just happened and takes the
+   * operator's screen. So nothing is decided until the trail has been read
+   * once, which is also why this is the loaded flag and not `entries.length`:
+   * a conversation with no entries at all is a legitimate starting point, and
+   * it has to be primed rather than waited on forever.
+   */
+  loaded: boolean,
 ): readonly number[] {
   const autoOpen = useAgentOpenStore((state) => state.autoOpen);
   const minimized = useWindowStore((state) => state.windows[windowId]?.mode === "minimized");
@@ -79,6 +94,9 @@ export function useViewIntents(
   const openedTurn = useRef<number | null>(null);
 
   useEffect(() => {
+    if (!loaded) {
+      return;
+    }
     if (!primed.current) {
       primed.current = true;
       for (const entry of entries) {
@@ -98,7 +116,7 @@ export function useViewIntents(
       openConsoleView(view);
       markFollowed(sessionId, entry.sequence);
     }
-  }, [autoOpen, entries, markFollowed, minimized, sessionId]);
+  }, [autoOpen, entries, loaded, markFollowed, minimized, sessionId]);
 
   return followed ?? NONE;
 }

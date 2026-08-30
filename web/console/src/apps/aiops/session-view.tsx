@@ -58,7 +58,16 @@ export function SessionView({
   const trajectory = useAITrajectory(session.id);
   const entries = trajectory.data?.entries ?? [];
   const stream = useAIEventStream(session.id, true);
-  const openedViews = useViewIntents(session.id, entries, windowId);
+  // `isSuccess` rather than "not pending": a failed read leaves the entries
+  // empty too, and priming on that would hand every intent in the trail to the
+  // desktop the moment a retry succeeds. `!isFetching` on top of it covers the
+  // conversation whose trail is cached but stale — the entries on screen at
+  // mount are then a prefix of the real trail, and the rest of it, including
+  // whatever ran while the operator was reading another conversation, lands a
+  // moment later. Live entries arrive through the stream's `setQueryData`
+  // rather than a fetch, so waiting for a quiet query never delays one.
+  const trailRead = trajectory.isSuccess && !trajectory.isFetching;
+  const openedViews = useViewIntents(session.id, entries, windowId, trailRead);
   // Measured once while a turn runs and once when it settles, rather than after
   // every appended entry: the Server replays the whole trajectory to answer,
   // and the reading nobody watches mid-step is not worth a request per tool
