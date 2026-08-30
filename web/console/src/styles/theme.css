@@ -83,45 +83,51 @@
    * An application's identity outlives its colour, so the identity is what the
    * token is keyed on.
    *
-   * The hues are grouped by what the applications do, which is why several sit
-   * in the same family rather than as far apart as possible: cluster access and
-   * the container service are one blue pair, monitoring and the reserved log
-   * fill are one cyan-green pair, and the two administrative applications are
-   * the only warm ones on the desktop. Within a family the two fills are pulled
-   * apart in value, so neighbouring icons stay separable at Dock size.
+   * The hues are spread, not grouped. Grouping them by what the applications do
+   * put access audit, monitoring and the reserved log fill inside 21 degrees of
+   * each other and cluster access within 17 of Helm, and tiles that close
+   * together are one colour at Dock size — which is the size the Dock draws
+   * them at. Every fill is generated on one ring in OKLCH instead: identical
+   * lightness and identical chroma throughout, 30 degrees apart at the
+   * narrowest, so no application is louder than its neighbour and none of them
+   * runs into it.
    *
-   * Every pair is tuned so white on the gradient's midpoint clears 4:1 — the
-   * previous cyan and emerald sat at 2.7 and 2.5, where a 1.75px glyph starts
-   * to dissolve into its own tile. The terminal is the deliberate exception in
-   * the other direction: graphite is not a hue, it is the absence of one, and it
-   * is what says this application is a shell rather than a view.
+   * The chroma is deliberately short of what that ring allows. Ten fully
+   * saturated tiles filling the launcher is a colour chart rather than a
+   * desktop, and pulling all of them back by the same amount keeps the hues
+   * legible while leaving the windows above them to be the loud thing. It costs
+   * nothing to read: white on the gradient's midpoint clears 4.3:1 everywhere,
+   * above the 4:1 the previous palette was tuned to. The terminal is the
+   * deliberate exception in the other direction: graphite is not a hue, it is
+   * the absence of one, and it is what says this application is a shell rather
+   * than a view.
    */
-  --app-cluster-access-from: #537ff0;
-  --app-cluster-access-to: #2e4db7;
-  --app-container-service-from: #1997c1;
-  --app-container-service-to: #0d607e;
-  --app-helm-from: #7268dd;
-  --app-helm-to: #4538aa;
-  --app-resources-from: #af5dda;
-  --app-resources-to: #782fa3;
-  --app-access-audit-from: #21a177;
-  --app-access-audit-to: #11684d;
-  --app-monitoring-from: #16a298;
-  --app-monitoring-to: #0c665e;
-  --app-platform-from: #df6b3e;
-  --app-platform-to: #9a3b1c;
-  --app-settings-from: #c58a25;
-  --app-settings-to: #795312;
-  --app-aiops-from: #d45191;
-  --app-aiops-to: #922a5e;
-  --app-terminal-from: #4f5d70;
-  --app-terminal-to: #222b37;
-  /* Reserved for the planned log application, so its place in the family is
+  --app-cluster-access-from: #6692d2;
+  --app-cluster-access-to: #335c98;
+  --app-container-service-from: #2e9fc0;
+  --app-container-service-to: #00677f;
+  --app-helm-from: #8e86cf;
+  --app-helm-to: #5a5095;
+  --app-resources-from: #ac7bbb;
+  --app-resources-to: #754783;
+  --app-access-audit-from: #59a46f;
+  --app-access-audit-to: #1f6d3c;
+  --app-monitoring-from: #1fa69d;
+  --app-monitoring-to: #026b65;
+  --app-platform-from: #c8795b;
+  --app-platform-to: #8d4426;
+  --app-settings-from: #b18a3a;
+  --app-settings-to: #775600;
+  --app-aiops-from: #c1749c;
+  --app-aiops-to: #874067;
+  --app-terminal-from: #5e636e;
+  --app-terminal-to: #2d333e;
+  /* Reserved for the planned log application, so its place on the ring is
      decided with the rest of the palette rather than picked in isolation on the
      day it ships. Nothing reads it yet — `accent.ts` has no key for it, because
      an application that does not exist cannot have an icon. */
-  --app-logs-from: #1eb692;
-  --app-logs-to: #126658;
+  --app-logs-from: #929743;
+  --app-logs-to: #5e6100;
 
   /*
    * The product mark's own tile. It wore the container service's blue while the
@@ -135,17 +141,17 @@
   /* What an icon does under the pointer: its own colour blooms beneath it. The
      hue is the application's, so the response is the application's too — a
      neutral grey shadow under a saturated face would only look like dirt. */
-  --app-cluster-access-glow: rgb(46 77 183 / 0.42);
-  --app-container-service-glow: rgb(13 96 126 / 0.42);
-  --app-helm-glow: rgb(69 56 170 / 0.42);
-  --app-resources-glow: rgb(120 47 163 / 0.42);
-  --app-access-audit-glow: rgb(17 104 77 / 0.42);
-  --app-monitoring-glow: rgb(12 102 94 / 0.42);
-  --app-platform-glow: rgb(154 59 28 / 0.42);
-  --app-settings-glow: rgb(121 83 18 / 0.42);
-  --app-aiops-glow: rgb(146 42 94 / 0.42);
-  --app-terminal-glow: rgb(34 43 55 / 0.42);
-  --app-logs-glow: rgb(18 102 88 / 0.42);
+  --app-cluster-access-glow: rgb(51 92 152 / 0.42);
+  --app-container-service-glow: rgb(0 103 127 / 0.42);
+  --app-helm-glow: rgb(90 80 149 / 0.42);
+  --app-resources-glow: rgb(117 71 131 / 0.42);
+  --app-access-audit-glow: rgb(31 109 60 / 0.42);
+  --app-monitoring-glow: rgb(2 107 101 / 0.42);
+  --app-platform-glow: rgb(141 68 38 / 0.42);
+  --app-settings-glow: rgb(119 86 0 / 0.42);
+  --app-aiops-glow: rgb(135 64 103 / 0.42);
+  --app-terminal-glow: rgb(45 51 62 / 0.42);
+  --app-logs-glow: rgb(94 97 0 / 0.42);
   --tile-highlight: rgb(255 255 255 / 0.9);
 
   /* Ink for the sign-in dot field. The desktop deliberately does not share it:
