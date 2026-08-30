@@ -137,11 +137,14 @@ Pod 停在 Pending、Event 里出现 FailedScheduling，或怀疑节点资源不
 
 ## 取证顺序（从后往前，比从前往后收敛快）
 1. get_resource 读 Service，记下 selector、ports 与 targetPort、type。
-2. list_resources 读同名 Endpoints（v1/Endpoints）或 discovery.k8s.io/v1/EndpointSlice。
-   没有任何地址就说明 Service 选不到就绪 Pod，问题在第 3 步；有地址则问题在入口或端口。
+2. list_resources 读该 Service 的 EndpointSlice（discovery.k8s.io/v1/EndpointSlice，
+   label_selector kubernetes.io/service-name=<服务名>）。EndpointSlice 才是后端的权威来源；
+   v1/Endpoints 在 1.33+ 已弃用，未来的合规集群可能根本不再生成它，读到空不代表真的没有后端。
+   没有任何 ready 端点就说明 Service 选不到就绪 Pod，问题在第 3 步；有端点则问题在入口或端口。
 3. 没有后端时：用 Service 的 selector 作为 label_selector 去 list_resources 列 Pod。
    - 一个都没有：selector 与 Pod 标签不匹配；
-   - 有 Pod 但不在 Endpoints 里：Pod 未就绪，转「Pod 反复重启与启动失败」或看 readinessProbe。
+   - 有 Pod 但不在 EndpointSlice 里、或 conditions.ready 为 false：Pod 未就绪，
+     转「Pod 反复重启与启动失败」或看 readinessProbe。
 4. 有后端但仍不通时：核对 targetPort 与容器 containerPort/名称是否一致，协议（TCP/UDP）是否一致。
 5. 入口侧：get_resource 读 Ingress 或 Gateway/HTTPRoute，核对 host、path、pathType、backend 指向的 Service 名与端口，
    以及 ingressClassName/parentRefs 是否指向真实存在且就绪的控制器。describe_resource 读入口对象的 Event 与 status。
@@ -233,7 +236,11 @@ query_custom_metrics，或者已经加了注解却查不到数据。
 AIOps 没有安装或卸载采集组件的工具，这一步只能由持 cluster.metrics.manage 的人在 Console 里做。
 
 ## 注解契约
-给 Service 或 Endpoints 打注解，vmagent 的 Kubernetes 服务发现会在下一个发现周期把它的**就绪**端点纳入抓取：
+给 Service 或 Endpoints 打注解，vmagent 的 Kubernetes 服务发现会在下一个发现周期把它的**就绪**端点纳入抓取。
+
+采集组件读的是 EndpointSlice，不是已弃用的 v1 Endpoints。这对使用者是透明的：手工维护的 Endpoints 上的注解由
+Kubernetes 的 mirroring controller 复制到它的 EndpointSlice 上。但你要知道这一点，因为采集详情里这类 Job 的来源
+会显示成 EndpointSlice，而 list_resources 读 v1/Endpoints 看到的对象名和 EndpointSlice 的名字不是一回事。
 
 | 注解 | 作用 | 取值 |
 | --- | --- | --- |
@@ -246,7 +253,8 @@ AIOps 没有安装或卸载采集组件的工具，这一步只能由持 cluster
 
 规则，写错会直接导致抓不到而不是报错：
 - 同名 Service 与 Endpoints 上的同一个注解以 **Endpoints 为准**，Endpoints 没写的沿用 Service 的值。
-  没有 Service 的 Endpoints（指向集群外后端）可以独立接入；
+  但写在 Endpoints 上只对**没有 selector 的 Service** 生效：mirroring controller 只镜像这一类 Endpoints 的注解。
+  有 selector 的 Service 一律注解 Service 本身，它的 Endpoints 由控制器拥有，改了也会被覆盖；
 - **看不懂的值直接丢弃这个目标，不会回退到默认值**。path 写成 metrics 不会去抓 /metrics，
   port 写成 70000 不会被接受，scheme 只认 http 与 https；
 - **service-account 只允许配 https**，否则整个目标被丢弃——用明文发 Bearer Token 等于把它交给链路上的任何人。
@@ -258,8 +266,10 @@ AIOps 没有安装或卸载采集组件的工具，这一步只能由持 cluster
 
 ## 取证与实施顺序
 1. get_resource 读目标 Service：确认 selector 选得到 Pod、ports 与 targetPort，以及现在有没有这组注解。
-2. list_resources 读同名 Endpoints（v1/Endpoints），确认它有就绪地址。没有地址就先解决就绪问题，
-   注解加了也不会产生任何目标。
+2. list_resources 读该 Service 的 EndpointSlice（discovery.k8s.io/v1/EndpointSlice，
+   用 label_selector kubernetes.io/service-name=<服务名>），确认它有 ready 的端点。
+   没有 ready 端点就先解决就绪问题，注解加了也不会产生任何目标。
+   一个 Service 可能有多个 EndpointSlice，它们同属一个 Job。
 3. 确认指标端点本身：get_resource 读 Pod 或工作负载，核对容器暴露的 containerPort 与实际的指标路径。
    AIOps 不能发起网络请求，不要声称自己访问过 /metrics。
 4. 需要加注解时，这是一次普通的对象变更：用 preview_manifest_apply 预检，然后按「受控变更与回滚」提交。
@@ -268,16 +278,20 @@ AIOps 没有安装或卸载采集组件的工具，这一步只能由持 cluster
 5. 等一个抓取周期（默认 30s，取决于平台配置的抓取间隔），再验证。
 
 ## 验证抓没抓到
-抓取后每个目标带上这几个标签：job 是 <namespace>/<对象名>，另外还有 namespace、service、endpoint。
+抓取后每个目标带上这几个标签：job 是 <namespace>/<服务名>，另外还有 namespace 与 service。
+EndpointSlice 的名字带控制器生成的后缀、会随重建变化，因此刻意没有做成标签，不要用它来筛选序列。
 
 1. list_metric_queries 找到 collection_target_health（采集目标健康度，按 job 维度），
    query_metrics 调用它并放大 minutes 覆盖加注解之后的时间。值为 1 表示抓取成功，0 表示目标存在但抓不通。
-2. 目标压根没出现在 job 列表里，说明注解没有生效：注解写错、Endpoints 没有就绪地址，或采集组件是旧版本安装。
+2. 目标压根没出现在 job 列表里，说明注解没有生效。按这个顺序排除：注解值写错（看不懂的值会丢弃整个目标）、
+   EndpointSlice 没有 ready 的端点、没有带 kubernetes.io/service-name 标签指回该 Service 的 EndpointSlice，
+   或采集组件是旧版本安装、需要重新安装。
 3. 抓通之后再用 query_custom_metrics 查用户关心的指标本身，例如 instant 查询
    up{namespace="ns", service="svc"} 或该指标的名字，确认序列真的落库。
    表达式里不要写任何 Cluster 条件，Server 会把会话 Cluster 强制注入每个选择器。
 4. 需要逐条核对最终生效的 scheme、path、port、认证模式与当前就绪目标时，让用户打开
    「监控 → 采集接入」并点进该集群——那份 Job 清单直接来自集群，AIOps 没有对应的工具。
+   「采集接入」标题栏的问号里有完整的注解取值表，可以直接让用户看那里。
 
 ## 成本
 每个接入的端点都要花该集群的摄取预算：样本数是每次抓取要付的，新增序列是整个保留期要付的。

@@ -29,7 +29,8 @@ Agent 提供摄取能力，集群侧也不部署采集组件，Console 会直接
   Console 中一次操作即可，不需要使用者自己执行 `kubectl apply`；未安装采集的集群行为不变；
 - 集群内自己的工作负载通过注解接入：给 Service 或 Endpoints 打上
   `zke-metrics-collector.io/scrape=true` 即可被 vmagent 的 Kubernetes 服务发现抓取，
-  scheme、path、port、认证与 TLS 校验用同一组注解描述，不需要重新安装采集组件；
+  scheme、path、port、认证与 TLS 校验用同一组注解描述，不需要重新安装采集组件。
+  服务发现读的是 `discovery.k8s.io/v1 EndpointSlice` 而不是已弃用的 `v1 Endpoints`；
 - 采集数据经该集群 ZKE Agent 已有的 QUIC/mTLS 出向连接回传，不新增网络开通要求；
 - Server 侧集中存储在 VictoriaMetrics（指标）与后续的 VictoriaLogs（日志）；三个组件各自的镜像、拉取策略与
   资源请求/限制都在「平台配置 → 指标采集」中管理，默认 `victoriametrics/vmagent:v1.149.0`、
@@ -191,6 +192,12 @@ Agent 提供摄取能力，集群侧也不部署采集组件，Console 会直接
 更不该需要把一段抓取配置交给平台去下发。因此接入方式是注解：给 Service 或 Endpoints 打上注解，vmagent 的
 Kubernetes 服务发现会在下一个发现周期里把它的**就绪**端点纳入抓取，不重启、不重新安装。
 
+发现读的是 `discovery.k8s.io/v1 EndpointSlice`。`v1 Endpoints` 自 Kubernetes 1.33 起弃用，API 本身不会被移除，
+但**生成 Endpoints 对象的控制器正在退出 Kubernetes 一致性要求**——将来会存在 Endpoints 读得到、却一个对象都
+没有的合规集群，而那种失效不报错，只会让采集悄悄变空。对使用者这层是透明的：手工维护的 Endpoints 上的注解由
+Kubernetes 的 mirroring controller 复制到它的 EndpointSlice 上，因此注解仍然写在 Service 或 Endpoints 上，
+只是「采集接入」详情里这类 Job 的来源显示为 EndpointSlice。
+
 | 注解 | 作用 | 取值 |
 | --- | --- | --- |
 | `zke-metrics-collector.io/scrape` | 唯一的开关，其余注解只在它为 `true` 时有意义 | `true` |
@@ -201,8 +208,12 @@ Kubernetes 服务发现会在下一个发现周期里把它的**就绪**端点�
 | `zke-metrics-collector.io/tls-insecure-skip-verify` | 是否跳过服务端证书校验 | 留空或 `false`；`true` 仅在 `https` 下有效 |
 
 同名 Service 与 Endpoints 上的同一个注解以 **Endpoints 为准**：它是更具体的那个对象，也是外部后端唯一能
-打注解的地方；Endpoints 没写的注解沿用 Service 的值。开关本身也遵循这个规则，因此没有 Service 的
+打注解的地方；Endpoints 没写的注解沿用 Service 的值。开关本身也遵循这个规则，因此指向集群外后端的
 Endpoints 可以独立接入。
+
+写在 Endpoints 上的注解只对**没有 selector 的 Service** 生效——mirroring controller 只镜像这一类 Endpoints，
+有 selector 的 Service 的 Endpoints 由控制器自己生成和拥有。这不是限制：那种 Service 的注解本来就该写在
+Service 上，写在被控制器拥有的对象上迟早会被覆盖。
 
 这里刻意受限，因为注解是集群内任何能改 Service 的人都能写的输入：
 
@@ -216,8 +227,12 @@ Endpoints 可以独立接入。
   一个界面上说着在采集、实际却在抓别的东西的集群，比两者都没有更难排查；
 - **只抓就绪端点**，未就绪地址不会被抓取，也不会出现在详情页的目标列表里。
 
-采集组件为此需要的额外权限是 Service、Endpoints 与 Pod 的 `get`/`list`/`watch`——服务发现要读的元数据，
-仅此而已，没有任何写权限。
+采集组件为此需要的额外权限是 Service 与 Pod 的 `get`/`list`/`watch`，以及 `discovery.k8s.io` 下 EndpointSlice
+的同样三个动词——服务发现要读的元数据，仅此而已，没有任何写权限。
+
+抓取出来的序列带 `namespace` 与 `service` 两个标签，`job` 是 `<namespace>/<服务名>`。EndpointSlice 自身的名字
+带控制器生成的后缀、会随重建变化，因此刻意没有做成标签：样本数是每次抓取要付的，序列 churn 是整个保留期都要
+付的。
 
 Console 两处都指向这套注解：「采集接入」的帮助入口列出完整词汇与约束，
 [容器服务](container-service.md)的服务与路由在编辑 Service 或 Endpoint 时可以一键填入。

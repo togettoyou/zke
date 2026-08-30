@@ -2072,9 +2072,9 @@ paths:
       description: |
         按需读取目标集群当前的采集 Job。除内置 kubelet、kube-state-metrics 与
         node-exporter Job 外，还会列出由 `zke-metrics-collector.io/scrape=true`
-        发现的 Service 或 Endpoints、最终 scheme/path/port/认证模式与就绪目标。
+        发现的 Service、最终 scheme/path/port/认证模式与就绪目标。
 
-        该调用会经 Agent 列出集群内 Service 与 Endpoints，因此只在进入详情页时
+        该调用会经 Agent 列出集群内 Service 与 EndpointSlice，因此只在进入详情页时
         执行，不参与采集接入列表轮询。要求 `cluster.metrics.read`。
       security:
         - sessionCookie: []
@@ -15947,7 +15947,10 @@ components:
           type: string
         source_kind:
           type: string
-          enum: [Builtin, Service, Endpoints]
+          enum: [Builtin, Service, EndpointSlice]
+          description: |
+            标注这个 Job 的开关写在哪个对象上。EndpointSlice 表示写在该 Service 的
+            EndpointSlice 上——手工维护的 Endpoints 由 mirroring controller 把注解复制过去。
         namespace:
           type: string
         source_name:
@@ -15969,7 +15972,7 @@ components:
         targets:
           type: array
           items: { type: string }
-          description: 当前就绪的 Endpoints 地址；内置动态 Node Job 可为空。
+          description: 当前就绪的 EndpointSlice 地址；内置动态 Node Job 可为空。
         targets_truncated:
           type: boolean
           description: 该 Job 的目标超过有界响应时为 true。

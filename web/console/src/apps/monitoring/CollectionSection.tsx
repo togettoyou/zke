@@ -594,7 +594,7 @@ function JobTargets({ job }: { job: MetricsScrapeJob }) {
   if (job.targets.length === 0) {
     return (
       <span className="text-subtle-foreground text-xs">
-        {job.source_kind === "Builtin" ? "由 Kubernetes 动态发现" : "暂无就绪 Endpoint"}
+        {job.source_kind === "Builtin" ? "由 Kubernetes 动态发现" : "暂无就绪端点"}
       </span>
     );
   }

@@ -115,10 +115,11 @@ func TestCollectorInstallCreatesEverythingItNeedsAndNothingElse(t *testing.T) {
 		for _, resource := range rule.Resources {
 			switch resource {
 			// The Node endpoints, plus the discovery metadata Kubernetes
-			// service discovery reads for annotated targets. Secrets and
-			// ConfigMaps stay out: a scrape annotation must never become a way
-			// to read Cluster credentials.
-			case "nodes", "nodes/metrics", "services", "endpoints", "pods":
+			// service discovery reads for annotated targets — EndpointSlices
+			// rather than the deprecated v1 Endpoints. Secrets and ConfigMaps
+			// stay out: a scrape annotation must never become a way to read
+			// Cluster credentials.
+			case "nodes", "nodes/metrics", "services", "endpointslices", "pods":
 			default:
 				t.Fatalf("collector ClusterRole grants %q", resource)
 			}

@@ -29,7 +29,7 @@ export function ScrapeAnnotationHelp() {
           </Button>
         </PopoverTrigger>
       </HintTooltip>
-      <PopoverContent align="end" className="w-96 max-w-[calc(100vw-2rem)]">
+      <PopoverContent align="end" className="w-96">
         <div className="grid gap-2.5">
           <div className="grid gap-1">
             <h4 className="text-foreground text-xs font-semibold">采集自定义应用的指标</h4>
@@ -73,7 +73,8 @@ export function ScrapeAnnotationHelp() {
               时，注解表单里可以一键填入这组注解。
             </li>
             <li>
-              同名 Service 与 Endpoint 上的同一个注解以 Endpoint 为准；只有
+              同名 Service 与 Endpoint 上的同一个注解以 Endpoint 为准，但那只对没有 selector 的
+              Service 生效；有 selector 的一律注解 Service 本身。只有
               <strong className="text-foreground font-medium">就绪</strong>端点会被抓取。
             </li>
             <li>
@@ -84,7 +85,10 @@ export function ScrapeAnnotationHelp() {
               <span className="zke-mono">auth=service-account</span> 只允许配合
               https，携带的是采集组件自己的 Token；注解不支持引用 Secret。
             </li>
-            <li>点进本页任一集群，可以看到它当前生效的采集 Job 与就绪目标。</li>
+            <li>
+              点进本页任一集群，可以看到它当前生效的采集 Job 与就绪目标。采集组件读的是
+              EndpointSlice，所以写在 Endpoint 上的注解会以 EndpointSlice 的身份出现在那份清单里。
+            </li>
             <li>每个接入的端点都会消耗该集群的摄取预算，高基数标签会让整个集群被限流。</li>
           </ul>
         </div>

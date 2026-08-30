@@ -372,12 +372,22 @@ func installMetricsCollector(
 				Verbs:     []string{"get"},
 			},
 			{
-				// vmagent watches only discovery metadata and endpoint addresses.
-				// Secrets and ConfigMaps are intentionally absent: scrape
-				// authentication is limited to the collector's own projected
-				// ServiceAccount credential, never arbitrary cluster credentials.
+				// vmagent watches only discovery metadata. Secrets and ConfigMaps
+				// are intentionally absent: scrape authentication is limited to
+				// the collector's own projected ServiceAccount credential, never
+				// arbitrary cluster credentials.
 				APIGroups: []string{""},
-				Resources: []string{"services", "endpoints", "pods"},
+				Resources: []string{"services", "pods"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				// Endpoint addresses, read as EndpointSlices rather than as the
+				// deprecated v1 Endpoints: Kubernetes is dropping the Endpoints
+				// controller from its Conformance criteria, and a Cluster that
+				// stops generating those objects would leave this collector
+				// scraping nothing without reporting an error.
+				APIGroups: []string{"discovery.k8s.io"},
+				Resources: []string{"endpointslices"},
 				Verbs:     []string{"get", "list", "watch"},
 			},
 		},

@@ -373,8 +373,9 @@ IngressClass、主机与已分配地址，Gateway 展示 GatewayClass、监听�
 
 Service 与 Endpoint 的注解表单提供一键填入指标采集注解（`zke-metrics-collector.io/scrape` 及其 scheme、path），
 把工作负载自己的指标端点接入采集，不需要重装采集组件；详见[可观测性平台](observability.md)。
-Ingress、Gateway 与 Route 上没有这个入口：采集组件的服务发现只读 Service 与 Endpoints，
-把同一组键放在别的对象上只会让人以为已经在采集。
+Ingress、Gateway 与 Route 上没有这个入口：采集组件的服务发现只读 Service 与 EndpointSlice，
+把同一组键放在别的对象上只会让人以为已经在采集。写在 Endpoint 上的注解由 Kubernetes 的 mirroring controller
+复制到 EndpointSlice，因此只对没有 selector 的 Service 生效；有 selector 的 Service 请注解 Service 本身。
 
 Service 端口点击复制的是「地址:端口」，因为那才是被粘贴出去的整体；headless Service 没有地址，只复制端口号，
 也不替它拼一个 `svc.cluster.local` 域名——集群域名由集群自身配置决定，接口并不携带它。NodePort 单独可复制。

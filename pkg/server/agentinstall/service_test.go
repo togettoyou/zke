@@ -275,6 +275,11 @@ func TestRenderManifestGrantsOnlyEnabledClusterResources(t *testing.T) {
 		"jobs", "cronjobs",
 	}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"services", "endpoints"}, workloadVerbs)
+	// EndpointSlice is read-only: it is where a Service's backends are
+	// authoritative, and the Agent also has to hold it to be able to grant it
+	// to the metrics collector.
+	assertPolicyRule(t, clusterRole.Rules, "discovery.k8s.io", []string{"endpointslices"},
+		[]string{"get", "list", "watch"})
 	assertPolicyRule(t, clusterRole.Rules, "", []string{"configmaps"}, workloadVerbs)
 	assertPolicyRule(t, clusterRole.Rules, "", []string{
 		"persistentvolumes", "persistentvolumeclaims",

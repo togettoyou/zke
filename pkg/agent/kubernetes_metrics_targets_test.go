@@ -330,6 +330,25 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 			if strings.Count(discovery, "regex: ^(__tmp_zke_.*|zke_.*)$") != 4 {
 				t.Fatalf("annotation discovery keeps working labels:\n%s", discovery)
 			}
+			// EndpointSlice, not the deprecated v1 Endpoints: Kubernetes is
+			// dropping the Endpoints controller from Conformance, and a Cluster
+			// that stops generating those objects would leave this collector
+			// scraping nothing without reporting an error.
+			if strings.Contains(config, "role: endpoints\n") ||
+				strings.Contains(config, "__meta_kubernetes_endpoints_") ||
+				strings.Contains(config, "__meta_kubernetes_endpoint_ready") {
+				t.Fatalf("scrape configuration still reads the Endpoints API:\n%s", discovery)
+			}
+			if strings.Count(discovery, "role: endpointslice") != 4 {
+				t.Fatalf("not every discovery job uses EndpointSlice:\n%s", discovery)
+			}
+			// A slice name carries a generated suffix and is replaced whenever
+			// the controller regenerates it, so it must not become a label: the
+			// churn would be paid for over the whole retention window.
+			if strings.Contains(discovery, "target_label: endpoint\n") ||
+				strings.Contains(discovery, "__meta_kubernetes_endpointslice_name") {
+				t.Fatalf("a generated slice name reaches the series labels:\n%s", discovery)
+			}
 			// The two large kubelet endpoints are taken through an allow list.
 			// Without it a single install multiplies what every Cluster ships
 			// into storage they all share, which is the failure this pipeline

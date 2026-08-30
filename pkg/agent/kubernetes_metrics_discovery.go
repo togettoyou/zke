@@ -12,6 +12,7 @@ import (
 	agentv1 "github.com/togettoyou/zke/api/agent/v1"
 	"github.com/togettoyou/zke/pkg/shared/observability"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -72,7 +73,11 @@ func renderAnnotatedEndpointScrapeJobs() string {
 
 func renderAnnotatedEndpointScrapeJob(jobName string, auth string, insecure bool) string {
 	serviceMeta := "__meta_kubernetes_service_annotation_zke_metrics_collector_io_"
-	endpointMeta := "__meta_kubernetes_endpoints_annotation_zke_metrics_collector_io_"
+	sliceMeta := "__meta_kubernetes_endpointslice_annotation_zke_metrics_collector_io_"
+	// How a slice says which Service it backs. It is present on every slice a
+	// controller writes and required on a hand-written one, which makes it a
+	// safer key than the Service object: a slice can outlive its Service.
+	sliceServiceName := "__meta_kubernetes_endpointslice_label_kubernetes_io_service_name"
 	config := fmt.Sprintf(`  - job_name: %s
     scheme: http
     metrics_path: /metrics
@@ -93,10 +98,13 @@ func renderAnnotatedEndpointScrapeJob(jobName string, auth string, insecure bool
 `
 	}
 	config += fmt.Sprintf(`    kubernetes_sd_configs:
-      - role: endpoints
+      - role: endpointslice
     relabel_configs:
-      # Endpoints annotations override the same annotation inherited from its
-      # Service. A missing override leaves the Service value in place.
+      # EndpointSlice annotations override the same annotation inherited from
+      # the Service. A missing override leaves the Service value in place. The
+      # mirroring controller copies a hand-maintained Endpoints object's
+      # annotations onto its slices, so a selectorless Service is annotated the
+      # same way it always was.
       - source_labels: [%sscrape]
         regex: (.+)
         target_label: __tmp_zke_scrape
@@ -149,16 +157,16 @@ func renderAnnotatedEndpointScrapeJob(jobName string, auth string, insecure bool
       - source_labels: [__tmp_zke_port]
         regex: "(%s)"
         action: keep
-      - source_labels: [__meta_kubernetes_endpoint_ready]
+      - source_labels: [__meta_kubernetes_endpointslice_endpoint_conditions_ready]
         regex: "true"
         action: keep
 `,
-		serviceMeta, endpointMeta,
-		serviceMeta, endpointMeta,
-		serviceMeta, endpointMeta,
-		serviceMeta, endpointMeta,
-		serviceMeta, endpointMeta,
-		serviceMeta, endpointMeta,
+		serviceMeta, sliceMeta,
+		serviceMeta, sliceMeta,
+		serviceMeta, sliceMeta,
+		serviceMeta, sliceMeta,
+		serviceMeta, sliceMeta,
+		serviceMeta, sliceMeta,
 		scrapeSchemePattern, scrapePathPattern, scrapePortPattern,
 	)
 	if auth == observability.ScrapeAuthServiceAccount {
@@ -189,7 +197,11 @@ func renderAnnotatedEndpointScrapeJob(jobName string, auth string, insecure bool
         action: keep
 `
 	}
-	return config + `      - source_labels: [__tmp_zke_scheme]
+	// The slice's own name is deliberately not a label. It carries a generated
+	// suffix and is replaced whenever the controller regenerates it, so keeping
+	// it would start a new series on every regeneration — the one cost the
+	// Cluster pays for the whole retention window rather than per scrape.
+	return config + fmt.Sprintf(`      - source_labels: [__tmp_zke_scheme]
         regex: (https?)
         target_label: __scheme__
       - source_labels: [__tmp_zke_path]
@@ -201,16 +213,14 @@ func renderAnnotatedEndpointScrapeJob(jobName string, auth string, insecure bool
         target_label: __address__
       - source_labels: [__meta_kubernetes_namespace]
         target_label: namespace
-      - source_labels: [__meta_kubernetes_service_name]
+      - source_labels: [%s]
         target_label: service
-      - source_labels: [__meta_kubernetes_endpoints_name]
-        target_label: endpoint
-      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_endpoints_name]
+      - source_labels: [__meta_kubernetes_namespace, %s]
         separator: /
         target_label: job
       - regex: ^(__tmp_zke_.*|zke_.*)$
         action: labeldrop
-`
+`, sliceServiceName, sliceServiceName)
 }
 
 // collectorDetails adds the expensive cluster-wide discovery inventory to the
@@ -278,9 +288,18 @@ func builtInScrapeJobDetails(namespace string, config string) []*agentv1.Metrics
 	return jobs
 }
 
+// annotatedSource is one collected job's worth of objects: the Service that
+// names it and the EndpointSlices that back it.
+//
+// Keyed by Service rather than by slice because slice names are generated and
+// a Service is split across several of them once it grows. Putting a slice name
+// on a series would churn it on every regeneration, which is the cost the
+// collector's own budget is least able to absorb.
 type annotatedSource struct {
-	service  *corev1.Service
-	endpoint *corev1.Endpoints
+	namespace string
+	name      string
+	service   *corev1.Service
+	slices    []*discoveryv1.EndpointSlice
 }
 
 func discoverAnnotatedEndpointJobs(
@@ -291,58 +310,61 @@ func discoverAnnotatedEndpointJobs(
 	if err != nil {
 		return nil, false, err
 	}
-	endpoints, err := client.CoreV1().Endpoints(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	slices, err := client.DiscoveryV1().EndpointSlices(metav1.NamespaceAll).List(
+		ctx, metav1.ListOptions{},
+	)
 	if err != nil {
 		return nil, false, err
 	}
-	serviceByKey := make(map[string]*corev1.Service, len(services.Items))
+	sources := make(map[string]*annotatedSource, len(services.Items))
+	source := func(namespace, name string) *annotatedSource {
+		key := objectKey(namespace, name)
+		if existing, found := sources[key]; found {
+			return existing
+		}
+		created := &annotatedSource{namespace: namespace, name: name}
+		sources[key] = created
+		return created
+	}
 	for index := range services.Items {
 		service := &services.Items[index]
-		serviceByKey[objectKey(service.Namespace, service.Name)] = service
+		source(service.Namespace, service.Name).service = service
 	}
-	endpointByKey := make(map[string]*corev1.Endpoints, len(endpoints.Items))
-	for index := range endpoints.Items {
-		endpoint := &endpoints.Items[index]
-		endpointByKey[objectKey(endpoint.Namespace, endpoint.Name)] = endpoint
-	}
-
-	sources := make([]annotatedSource, 0)
-	seen := make(map[string]struct{})
-	for key, service := range serviceByKey {
-		endpoint := endpointByKey[key]
-		if sourceEnabled(service, endpoint) {
-			sources = append(sources, annotatedSource{service: service, endpoint: endpoint})
-			seen[key] = struct{}{}
-		}
-	}
-	for key, endpoint := range endpointByKey {
-		if _, ok := seen[key]; ok {
+	for index := range slices.Items {
+		slice := &slices.Items[index]
+		// The label is how a slice says which Service it backs, and it is what
+		// the scrape configuration keys its job on. A slice without it cannot be
+		// attributed to anything an operator would recognise.
+		serviceName := slice.Labels[discoveryv1.LabelServiceName]
+		if serviceName == "" {
 			continue
 		}
-		if sourceEnabled(nil, endpoint) {
-			sources = append(sources, annotatedSource{endpoint: endpoint})
+		owner := source(slice.Namespace, serviceName)
+		owner.slices = append(owner.slices, slice)
+	}
+
+	enabled := make([]*annotatedSource, 0, len(sources))
+	for _, candidate := range sources {
+		sort.Slice(candidate.slices, func(i, j int) bool {
+			return candidate.slices[i].Name < candidate.slices[j].Name
+		})
+		if sourceEnabled(candidate) {
+			enabled = append(enabled, candidate)
 		}
 	}
-	sort.Slice(sources, func(i, j int) bool {
-		left := sources[i].endpoint
-		right := sources[j].endpoint
-		if left == nil {
-			left = &corev1.Endpoints{ObjectMeta: sources[i].service.ObjectMeta}
-		}
-		if right == nil {
-			right = &corev1.Endpoints{ObjectMeta: sources[j].service.ObjectMeta}
-		}
-		return objectKey(left.Namespace, left.Name) < objectKey(right.Namespace, right.Name)
+	sort.Slice(enabled, func(i, j int) bool {
+		return objectKey(enabled[i].namespace, enabled[i].name) <
+			objectKey(enabled[j].namespace, enabled[j].name)
 	})
 
-	jobs := make([]*agentv1.MetricsScrapeJob, 0, min(len(sources), maxReportedScrapeJobs))
+	jobs := make([]*agentv1.MetricsScrapeJob, 0, min(len(enabled), maxReportedScrapeJobs))
 	truncated := false
-	for _, source := range sources {
+	for _, candidate := range enabled {
 		if len(jobs) >= maxReportedScrapeJobs {
 			truncated = true
 			break
 		}
-		job, ok := annotatedSourceJob(source)
+		job, ok := annotatedSourceJob(candidate)
 		if ok {
 			jobs = append(jobs, job)
 		}
@@ -350,8 +372,8 @@ func discoverAnnotatedEndpointJobs(
 	return jobs, truncated, nil
 }
 
-func sourceEnabled(service *corev1.Service, endpoint *corev1.Endpoints) bool {
-	annotations := effectiveScrapeAnnotations(service, endpoint)
+func sourceEnabled(source *annotatedSource) bool {
+	annotations := effectiveScrapeAnnotations(source)
 	if annotations[observability.ScrapeAnnotation] != "true" {
 		return false
 	}
@@ -369,8 +391,8 @@ func sourceEnabled(service *corev1.Service, endpoint *corev1.Endpoints) bool {
 		(insecure == "true" && annotations[observability.ScrapeSchemeAnnotation] == "https")
 }
 
-func annotatedSourceJob(source annotatedSource) (*agentv1.MetricsScrapeJob, bool) {
-	annotations := effectiveScrapeAnnotations(source.service, source.endpoint)
+func annotatedSourceJob(source *annotatedSource) (*agentv1.MetricsScrapeJob, bool) {
+	annotations := effectiveScrapeAnnotations(source)
 	scheme := annotations[observability.ScrapeSchemeAnnotation]
 	path := annotations[observability.ScrapePathAnnotation]
 	port := annotations[observability.ScrapePortAnnotation]
@@ -391,21 +413,12 @@ func annotatedSourceJob(source annotatedSource) (*agentv1.MetricsScrapeJob, bool
 	if auth == "" {
 		auth = observability.ScrapeAuthNone
 	}
-	name, namespace, kind := "", "", "Service"
-	if source.service != nil {
-		name, namespace = source.service.Name, source.service.Namespace
-	}
-	if source.endpoint != nil && source.endpoint.Annotations[observability.ScrapeAnnotation] != "" {
-		name, namespace, kind = source.endpoint.Name, source.endpoint.Namespace, "Endpoints"
-	} else if name == "" && source.endpoint != nil {
-		name, namespace, kind = source.endpoint.Name, source.endpoint.Namespace, "Endpoints"
-	}
-	targets, targetsTruncated := endpointTargets(source.endpoint, port)
+	targets, targetsTruncated := endpointSliceTargets(source.slices, port)
 	return &agentv1.MetricsScrapeJob{
-		JobName:            namespace + "/" + name,
-		SourceKind:         kind,
-		Namespace:          namespace,
-		SourceName:         name,
+		JobName:            source.namespace + "/" + source.name,
+		SourceKind:         scrapeSourceKind(source),
+		Namespace:          source.namespace,
+		SourceName:         source.name,
 		Scheme:             scheme,
 		MetricsPath:        path,
 		Port:               port,
@@ -416,37 +429,70 @@ func annotatedSourceJob(source annotatedSource) (*agentv1.MetricsScrapeJob, bool
 	}, true
 }
 
-func effectiveScrapeAnnotations(
-	service *corev1.Service,
-	endpoint *corev1.Endpoints,
-) map[string]string {
+// scrapeSourceKind names the object that opted this job in, which is the one an
+// operator has to edit to change or stop it. A Service's annotations are
+// mirrored onto the slices of a selectorless Service, so a slice carrying the
+// switch itself is the case where the Service is not where it was written.
+func scrapeSourceKind(source *annotatedSource) string {
+	for _, slice := range source.slices {
+		if slice.Annotations[observability.ScrapeAnnotation] != "" {
+			return "EndpointSlice"
+		}
+	}
+	if source.service != nil {
+		return "Service"
+	}
+	return "EndpointSlice"
+}
+
+// effectiveScrapeAnnotations resolves the Service's annotations against the
+// slices', the way the relabel rules resolve them: the more specific object
+// wins, and an annotation it does not set leaves the Service's value in place.
+//
+// Slices are read in name order so a Service split across several of them
+// resolves the same way every time. In practice they agree: the mirroring
+// controller copies one Endpoints object's annotations onto all of them, and
+// controller-generated slices carry none at all.
+func effectiveScrapeAnnotations(source *annotatedSource) map[string]string {
 	result := make(map[string]string)
-	if service != nil {
-		for key, value := range service.Annotations {
+	if source.service != nil {
+		for key, value := range source.service.Annotations {
 			result[key] = strings.TrimSpace(value)
 		}
 	}
-	if endpoint != nil {
-		for key, value := range endpoint.Annotations {
+	for _, slice := range source.slices {
+		for key, value := range slice.Annotations {
 			result[key] = strings.TrimSpace(value)
 		}
 	}
 	return result
 }
 
-func endpointTargets(endpoint *corev1.Endpoints, overridePort string) ([]string, bool) {
-	if endpoint == nil {
-		return nil, false
-	}
+// endpointSliceTargets is what the collector will actually scrape.
+//
+// A nil `ready` condition counts as not ready, which is stricter than the
+// Kubernetes default of treating it as ready. It is what vmagent does — it
+// renders the condition with strconv.FormatBool over a non-pointer bool, so an
+// unset one reaches the relabel rules as "false" — and this list has to say
+// what is being scraped rather than what ought to be.
+func endpointSliceTargets(slices []*discoveryv1.EndpointSlice, overridePort string) ([]string, bool) {
 	unique := make(map[string]struct{})
-	for _, subset := range endpoint.Subsets {
-		for _, address := range subset.Addresses {
-			if overridePort != "" {
-				unique[net.JoinHostPort(address.IP, overridePort)] = struct{}{}
+	for _, slice := range slices {
+		for _, endpoint := range slice.Endpoints {
+			if endpoint.Conditions.Ready == nil || !*endpoint.Conditions.Ready {
 				continue
 			}
-			for _, port := range subset.Ports {
-				unique[net.JoinHostPort(address.IP, strconv.Itoa(int(port.Port)))] = struct{}{}
+			for _, address := range endpoint.Addresses {
+				if overridePort != "" {
+					unique[net.JoinHostPort(address, overridePort)] = struct{}{}
+					continue
+				}
+				for _, port := range slice.Ports {
+					if port.Port == nil {
+						continue
+					}
+					unique[net.JoinHostPort(address, strconv.Itoa(int(*port.Port)))] = struct{}{}
+				}
 			}
 		}
 	}

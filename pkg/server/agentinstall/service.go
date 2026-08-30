@@ -427,6 +427,19 @@ func renderManifest(
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
+				// Read-only, and for reads only: EndpointSlice is where a
+				// Service's backends are authoritative, so Service describe and
+				// the metrics collector's target discovery both read it. Writes
+				// stay on the Endpoints objects a person actually maintains —
+				// slices are generated, including the ones mirrored from those.
+				// The Agent also has to hold this to be able to grant it to the
+				// collector: Kubernetes refuses to create a ClusterRole carrying
+				// a permission its creator does not have.
+				APIGroups: []string{"discovery.k8s.io"},
+				Resources: []string{"endpointslices"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
 				APIGroups: []string{""},
 				Resources: []string{"configmaps"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
