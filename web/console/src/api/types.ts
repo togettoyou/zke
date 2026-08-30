@@ -41,6 +41,7 @@ export type AIAttachment = Schemas["AIAttachment"];
 export type AITool = Schemas["AITool"];
 export type AISkill = Schemas["AISkill"];
 export type AISubtask = Schemas["AISubtask"];
+export type AIViewIntent = Schemas["AIViewIntent"];
 export type AIContextUsage = {
   used_tokens: number;
   context_window_tokens: number;

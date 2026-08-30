@@ -3,7 +3,11 @@ import { Activity, Cpu, HardDrive, LayoutDashboard, PlugZap, SearchCode } from "
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
-import { METRICS_EVIDENCE_EXPRESSION_KEY, METRICS_EVIDENCE_QUERY_KEY } from "@/apps/evidence-link";
+import {
+  METRICS_EVIDENCE_EXPRESSION_KEY,
+  METRICS_EVIDENCE_QUERY_KEY,
+  METRICS_EVIDENCE_RUN_KEY,
+} from "@/apps/evidence-link";
 import type { AppComponentProps } from "@/apps/types";
 import { isApiError } from "@/api/errors";
 import { useSessionContext } from "@/auth/session-context";
@@ -123,9 +127,13 @@ export function MonitoringApp(_props: AppComponentProps) {
   const [initialExpression] = useState(
     () => sessionStorage.getItem(METRICS_EVIDENCE_EXPRESSION_KEY) ?? "",
   );
+  // Read alongside the expression and cleared with it: whoever handed this
+  // window its question also said whether the answer was the point.
+  const [initialRun] = useState(() => sessionStorage.getItem(METRICS_EVIDENCE_RUN_KEY) === "1");
   useEffect(() => {
     sessionStorage.removeItem(METRICS_EVIDENCE_QUERY_KEY);
     sessionStorage.removeItem(METRICS_EVIDENCE_EXPRESSION_KEY);
+    sessionStorage.removeItem(METRICS_EVIDENCE_RUN_KEY);
   }, []);
   const [section, setSection] = useState(() => evidenceSection(initialQuery, initialExpression));
   const scope = useScopeStore((state) => state.scope);
@@ -230,7 +238,11 @@ export function MonitoringApp(_props: AppComponentProps) {
       {/* Outside the shell rather than inside the section: the rail unmounts
           whichever section is not open, and the expressions an operator is in
           the middle of writing have to survive a look at another one. */}
-      <ExploreProvider enabled={activeId === EXPLORE_SECTION} initialExpression={initialExpression}>
+      <ExploreProvider
+        enabled={activeId === EXPLORE_SECTION}
+        initialExpression={initialExpression}
+        initialRun={initialRun}
+      >
         <AppShell
           nav={nav}
           activeId={activeId}

@@ -98,7 +98,10 @@ func runSubtasksSpec(maxParallel int) ToolSpec {
 func delegableSpecs(specs []ToolSpec) []ToolSpec {
 	delegable := make([]ToolSpec, 0, len(specs))
 	for _, spec := range specs {
-		if spec.Mutating || spec.Name == toolRunSubtasks {
+		// A branch answers to another model, not to a person: it has no screen
+		// to move, and the turn's one desktop move belongs to the main line that
+		// is actually talking to the operator.
+		if spec.Mutating || spec.Name == toolRunSubtasks || spec.Name == toolOpenConsoleView {
 			continue
 		}
 		delegable = append(delegable, spec)

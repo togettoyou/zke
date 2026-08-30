@@ -7673,6 +7673,16 @@ export interface components {
             untrusted?: boolean;
             /** @description 该事件属于某个并行子任务分支。主线事件没有这个字段，Console 据此把分支折叠在派发它的那次工具调用下面。 */
             subtask?: components["schemas"]["AISubtask"];
+            /** @description AIOps 请求 Console 在操作者桌面上打开的视图，只出现在 open_console_view 的 tool_result 上。 读取轨迹时按目标类型重新校验权限，失权后该字段不再返回。 */
+            view?: components["schemas"]["AIViewIntent"];
+        };
+        AIViewIntent: {
+            /** @description 要展示的对象或指标，与证据深链使用同一套引用与权限。 */
+            target: components["schemas"]["AIEvidence"];
+            /** @description 接收方应在打开后立即执行所带查询，而不只是把它写进编辑器。只有指标目标会带这个标记。 */
+            run?: boolean;
+            /** @description 模型给出的一句话说明，Console 原样显示，是操作者对这次非自己发起的打开动作的唯一说明。 */
+            reason: string;
         };
         AISubtask: {
             /** @description 分支在本会话内的唯一标识。 */

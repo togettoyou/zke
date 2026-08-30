@@ -138,6 +138,8 @@ export type ConversationItem =
   | { id: string; type: "note"; entry: AITrajectoryEntry }
   | { id: string; type: "error"; entry: AITrajectoryEntry }
   | { id: string; type: "approval"; entry: AITrajectoryEntry; decided: string | null }
+  /** A view AIOps opened, or offered to open, on the operator's desktop. */
+  | { id: string; type: "view"; entry: AITrajectoryEntry }
   | {
       id: string;
       type: "activity";
@@ -209,15 +211,29 @@ export function conversationItems(entries: AITrajectoryEntry[]): ConversationIte
           decided: decisionsByCall.get(entry.content.call_id ?? "") ?? null,
         });
         break;
-      case "tool_call":
+      case "tool_result":
+        // Results are otherwise folded into the call above them. A view intent
+        // is the exception because it is not a reading: it is something that
+        // happened on the operator's own screen, and an account of that cannot
+        // sit behind a disclosure triangle nobody opened.
+        if (entry.content.view) items.push({ id, type: "view", entry });
+        break;
+      case "tool_call": {
+        const result = resultsByCall.get(entry.content.call_id ?? "") ?? null;
+        // The card below carries the call, the target and the reason for it.
+        // Drawing the generic tool line as well would say the same thing twice,
+        // less clearly. A refused open — no permission, or the turn's one move
+        // already spent — carries no view and stays an ordinary tool line.
+        if (result?.content.view) break;
         items.push({
           id,
           type: "activity",
           call: entry,
-          result: resultsByCall.get(entry.content.call_id ?? "") ?? null,
+          result,
           branches: branchesByCall.get(entry.content.call_id ?? "") ?? [],
         });
         break;
+      }
       default:
         break;
     }

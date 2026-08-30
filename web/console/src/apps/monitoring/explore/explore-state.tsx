@@ -48,6 +48,7 @@ function signatureOf(rows: ExpressionRow[], kind: ExploreKind): string {
 export function ExploreProvider({
   enabled,
   initialExpression = "",
+  initialRun = false,
   children,
 }: {
   /**
@@ -59,8 +60,18 @@ export function ExploreProvider({
    * every Cluster shares, for an answer no one will read.
    */
   enabled: boolean;
-  /** Expression carried by an AIOps evidence deep link. It is loaded but not run automatically. */
+  /** Expression carried into this window by a deep link or by AIOps. */
   initialExpression?: string;
+  /**
+   * Whether that expression is a question already asked.
+   *
+   * An evidence chip an operator clicked hands over a starting point, and the
+   * editor opening with it written in is the whole of what was asked for. An
+   * agent that decided to show somebody a chart is asking for something else:
+   * a window that opens on an unrun expression has answered "here is what you
+   * could type", which is exactly the last step it was supposed to take.
+   */
+  initialRun?: boolean;
   children: ReactNode;
 }) {
   const { clusterId, readWindow, refreshToken } = useMetricsScope();
@@ -199,6 +210,23 @@ export function ExploreProvider({
   // Only once something has been run: opening the view must not fire a query
   // for an empty editor, and neither should the first tick of the clock.
   const hasRun = ranSignature !== null;
+
+  // The one query this screen asks without being pressed.
+  //
+  // It waits for a Cluster: the target arrives through session storage and the
+  // scope provider resolves it a moment after mount, so running on mount would
+  // ask the previous Cluster or nothing at all. It fires once — the flag is
+  // consumed rather than watched — because everything after it is an ordinary
+  // edit, and a second automatic run would be this window disagreeing with the
+  // operator about what is being asked.
+  const pendingAutoRun = useRef(initialRun && initialExpression.trim() !== "");
+  useEffect(() => {
+    if (!pendingAutoRun.current || !enabled || !clusterId) {
+      return;
+    }
+    pendingAutoRun.current = false;
+    runRef.current();
+  }, [clusterId, enabled]);
 
   // The question moved out from under the answer: a new range, the refresh
   // button, a tick of the auto refresh, a different target Cluster, or the

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FieldHint, Label } from "@/components/ui/label";
 import { Alert, Switch } from "@/components/ui/misc";
+import { useAgentOpenStore } from "@/desktop/agent-open-store";
 import { clearDesktopState } from "@/desktop/persistence";
 import { useWindowStore } from "@/desktop/window-store";
 import { useScopeStore } from "@/scope/scope-store";
@@ -277,6 +278,8 @@ function PasswordSection() {
 function DesktopSection() {
   const theme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
+  const autoOpen = useAgentOpenStore((state) => state.autoOpen);
+  const setAutoOpen = useAgentOpenStore((state) => state.setAutoOpen);
   const closeAll = useWindowStore((state) => state.closeAll);
   const resetScope = useScopeStore((state) => state.reset);
   const { session } = useSessionContext();
@@ -288,6 +291,16 @@ function DesktopSection() {
           checked={theme === "dark"}
           onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
           aria-label="深色主题"
+        />
+      </Row>
+      <Row
+        label="允许 AIOps 主动打开应用"
+        hint="关闭后 AIOps 不会切换你的画面，需要展示的视图仍会作为入口留在对话里"
+      >
+        <Switch
+          checked={autoOpen}
+          onCheckedChange={setAutoOpen}
+          aria-label="允许 AIOps 主动打开应用"
         />
       </Row>
       <Row label="重置桌面布局" hint="关闭全部窗口，清除本地保存的窗口位置与作用域选择">

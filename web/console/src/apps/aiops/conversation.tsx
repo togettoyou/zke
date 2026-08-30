@@ -13,7 +13,7 @@ import {
   Wrench,
 } from "lucide-react";
 
-import type { AIEvidence, AISession, AITrajectoryEntry } from "@/api/types";
+import type { AIEvidence, AISession, AITrajectoryEntry, AIViewIntent } from "@/api/types";
 import type { AILiveOutput } from "@/api/queries/aiops";
 import { CopyIconButton } from "@/components/common/copy";
 import { Markdown } from "@/components/common/markdown";
@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { HintTooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 
-import { openEvidence } from "../evidence-link";
+import { openConsoleView, openEvidence } from "../evidence-link";
 
 import { Opening } from "./opening";
 import {
@@ -41,6 +41,7 @@ export function Conversation({
   clusterName,
   entries,
   live,
+  opened,
   onDecide,
   onPick,
   deciding,
@@ -49,6 +50,15 @@ export function Conversation({
   clusterName: string;
   entries: AITrajectoryEntry[];
   live: AILiveOutput;
+  /**
+   * The view intents this desktop actually followed, by entry sequence.
+   *
+   * Passed in rather than derived: whether a window opened depends on where the
+   * operator was looking at that moment, which the trail does not record and
+   * must not be guessed at. A card that claims the screen moved when it did not
+   * is worse than one that only offers.
+   */
+  opened: readonly number[];
   onDecide: (callId: string, decision: "approved" | "denied") => void;
   /** Writes a suggested question into the composer's draft. */
   onPick: (prompt: string) => void;
@@ -109,6 +119,7 @@ export function Conversation({
             <ConversationRow
               key={item.id}
               item={item}
+              opened={opened}
               onDecide={onDecide}
               deciding={deciding}
               working={session.status === "working"}
@@ -156,11 +167,13 @@ const BOTTOM_SLACK = 80;
 
 function ConversationRow({
   item,
+  opened,
   onDecide,
   deciding,
   working,
 }: {
   item: ConversationItem;
+  opened: readonly number[];
   onDecide: (callId: string, decision: "approved" | "denied") => void;
   deciding: boolean;
   working: boolean;
@@ -190,6 +203,13 @@ function ConversationRow({
       return <Note entry={item.entry} />;
     case "error":
       return <Failure entry={item.entry} />;
+    case "view":
+      return item.entry.content.view ? (
+        <OpenedView
+          view={item.entry.content.view}
+          followed={opened.includes(item.entry.sequence)}
+        />
+      ) : null;
     default:
       return null;
   }
@@ -586,6 +606,46 @@ export function Evidence({ evidence }: { evidence: AIEvidence[] }) {
           {evidenceLabel(item)}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A window AIOps opened, or offered to open, on this desktop.
+ *
+ * Drawn as its own line in the conversation rather than folded into the tool
+ * call that produced it: an operator whose screen just changed under them is
+ * owed a sentence saying what changed and why, in the place they are already
+ * reading. The reason is the model's own — the tool refuses to run without one
+ * — because "AIOps 打开了监控" answers the wrong question.
+ *
+ * The button is here whether or not the desktop followed the intent, and it is
+ * the whole fallback: an operator who has the preference off, or who was
+ * looking elsewhere when it arrived, loses nothing but the automatic part.
+ */
+function OpenedView({ view, followed }: { view: AIViewIntent; followed: boolean }) {
+  const application = view.target.kind === "metric" ? "监控" : "容器服务";
+  return (
+    <div className="border-primary/25 bg-primary-surface rounded-panel flex items-start gap-2.5 border px-3 py-2.5">
+      <SquareArrowOutUpRight aria-hidden className="text-primary mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p className="text-foreground text-[13px] leading-relaxed">
+          {followed ? `已在${application}中打开 ` : `建议在${application}中打开 `}
+          <span className="font-medium">{evidenceLabel(view.target)}</span>
+          {view.run ? "，并执行了这条查询" : null}
+        </p>
+        {view.reason ? (
+          <p className="text-muted-foreground mt-0.5 text-[11px] leading-relaxed">{view.reason}</p>
+        ) : null}
+      </div>
+      <Button
+        size="sm"
+        variant="secondary"
+        className="shrink-0"
+        onClick={() => openConsoleView(view)}
+      >
+        {followed ? "重新打开" : "打开"}
+      </Button>
     </div>
   );
 }

@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -138,13 +139,16 @@ func New(
 	// A built-in is advertised only when it can do something. A skill tool with
 	// an empty library and a delegation tool a deployment switched off are both
 	// tools that would cost a slot in every request and fail every call.
-	builtins := make([]ToolSpec, 0, 2)
+	builtins := make([]ToolSpec, 0, 3)
 	if len(skills) > 0 {
 		builtins = append(builtins, loadSkillSpec(skills))
 	}
 	if config.Subtask.MaxParallel > 0 && len(delegableSpecs(catalogue)) > 0 {
 		builtins = append(builtins, runSubtasksSpec(config.Subtask.MaxParallel))
 	}
+	// Always available: it needs nothing composed into the deployment, because
+	// what it opens is the Console the operator is already looking at.
+	builtins = append(builtins, openConsoleViewSpec())
 	return &Runtime{
 		base: base, sessions: sessions, model: model, authorizer: authorizer, users: users,
 		tools: config.Tools, audit: config.Audit, skills: skills, builtins: builtins,
@@ -303,6 +307,7 @@ func (runtime *Runtime) Start(ctx context.Context, input StartInput) (aisession.
 		sessionID: input.SessionID, userID: input.UserID, tenantID: session.TenantID,
 		projectID: session.ProjectID, clusterID: session.ClusterID, turn: entry.Turn,
 		title: session.Title, question: entry.Content.Text, attachments: input.Attachments,
+		opened: new(atomic.Bool),
 	})
 	return entry, nil
 }
@@ -339,6 +344,24 @@ func (runtime *Runtime) Trajectory(
 	}
 	for index := range entries {
 		content := &entries[index].Content
+		// A view intent is a reference like any other, and it is re-checked on
+		// the way out for the same reason: the operator may have lost the
+		// permission since the turn ran, and an entry that still offered to open
+		// the window would be an offer the Server refuses.
+		if content.View != nil {
+			if runtime.authorizeEvidence(ctx, query.InitiatorUserID, session.TenantID,
+				session.ProjectID, session.ClusterID,
+				[]aisession.Evidence{content.View.Target}) == nil {
+				if scope, scopeErr := runtime.authorizer.ResolveClusterScope(
+					ctx, content.View.Target.Cluster,
+				); scopeErr == nil {
+					content.View.Target.TenantID = scope.TenantID
+					content.View.Target.ProjectID = scope.ProjectID
+				}
+			} else {
+				content.View = nil
+			}
+		}
 		if len(content.Evidence) == 0 {
 			continue
 		}
@@ -384,6 +407,12 @@ type turnJob struct {
 	// keeps one append-only trail readable when several branches write into it
 	// at once — and what keeps a branch from being mistaken for the turn.
 	subtask *aisession.Subtask
+	// opened records that this turn has already moved the operator's desktop.
+	//
+	// A pointer because branches copy the job and the bound is the turn's, not
+	// each branch's: one answer may take the screen once, however many places
+	// inside the run decided it should.
+	opened *atomic.Bool
 }
 
 func (runtime *Runtime) run(ctx context.Context, job turnJob) {
@@ -989,6 +1018,7 @@ func (runtime *Runtime) invoke(ctx context.Context, job turnJob, item *plannedCa
 			auditResult = auditResultFailed
 		}
 		content.Evidence = runtime.visibleEvidence(ctx, job, result.Evidence)
+		content.View = runtime.visibleView(ctx, job, result.View)
 		if result.Target != nil {
 			result.Target.Cluster = job.clusterID
 			content.Target = result.Target
@@ -1037,6 +1067,8 @@ func (runtime *Runtime) perform(
 		return runtime.loadSkill(item.arguments)
 	case toolRunSubtasks:
 		return runtime.runSubtasks(ctx, job, item)
+	case toolOpenConsoleView:
+		return runtime.openConsoleView(ctx, job, item.arguments)
 	}
 	if runtime.tools == nil {
 		return ToolResult{}, ErrInvalidInput

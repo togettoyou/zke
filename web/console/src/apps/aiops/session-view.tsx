@@ -21,6 +21,7 @@ import { Composer } from "./composer";
 import { Conversation } from "./conversation";
 import { pendingApprovals, streamLabel } from "./entries";
 import { Trajectory } from "./trajectory";
+import { useViewIntents } from "./view-intents";
 
 /**
  * One session: the conversation, its trajectory, and the composer that drives it.
@@ -37,12 +38,15 @@ import { Trajectory } from "./trajectory";
 export function SessionView({
   session,
   clusterName,
+  windowId,
   tools,
   skills,
   onUpdate,
 }: {
   session: AISession;
   clusterName: string;
+  /** Which window this conversation is in, so an intent can ask whether the operator is looking at it. */
+  windowId: string;
   tools: AITool[];
   skills: AISkill[];
   onUpdate: (input: {
@@ -54,6 +58,7 @@ export function SessionView({
   const trajectory = useAITrajectory(session.id);
   const entries = trajectory.data?.entries ?? [];
   const stream = useAIEventStream(session.id, true);
+  const openedViews = useViewIntents(session.id, entries, windowId);
   // Measured once while a turn runs and once when it settles, rather than after
   // every appended entry: the Server replays the whole trajectory to answer,
   // and the reading nobody watches mid-step is not worth a request per tool
@@ -175,6 +180,7 @@ export function SessionView({
             clusterName={clusterName}
             entries={entries}
             live={stream.live}
+            opened={openedViews}
             deciding={decide.isPending}
             onPick={(prompt) => {
               setDraft(prompt);

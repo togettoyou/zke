@@ -288,6 +288,9 @@ type Content struct {
 	// main line of a turn, which is what makes "the turn itself" and "one of
 	// its branches" distinguishable in a single append-only list.
 	Subtask *Subtask `json:"subtask,omitempty"`
+	// View is an application AIOps asked the Console to open on the operator's
+	// desktop, carried on the tool result of the call that asked for it.
+	View *View `json:"view,omitempty"`
 }
 
 // Subtask identifies one delegated investigation branch inside a turn.
@@ -451,6 +454,41 @@ type Evidence struct {
 	To         time.Time `json:"to,omitzero"`
 }
 
+// View is one ZKE application AIOps asked the Console to open, pointed at
+// something the operator can then look at themselves.
+//
+// It is an Evidence plus the intent to act on it now. That is the whole
+// difference, and it is deliberate: a conclusion already cites the views that
+// back it, and a citation an operator clicks is the same navigation as a
+// citation the desktop follows for them. Reusing the reference keeps one
+// permission table, one deep-link contract and one set of receiving screens —
+// a second, view-only addressing scheme would be a second way to name a Cluster
+// object, able to disagree with the first.
+//
+// Opening a window grants nothing. The application that comes forward
+// re-authorizes every request it makes as the operator, exactly as it does when
+// they open it from the Dock; what this decides is which screen they are
+// looking at, not what they may read on it.
+type View struct {
+	// Target is what to show. Its Cluster is the session workspace, set by the
+	// runtime and never taken from the model.
+	Target Evidence `json:"target"`
+	// Run asks the receiving application to execute the query it was handed
+	// rather than only write it into the editor.
+	//
+	// Only a metric target can carry it, and only because a chart is the answer
+	// rather than a starting point: an expression the operator has to press a
+	// button to see is a window that opened to say "type this in". A resource
+	// view has no equivalent — it is already showing the object when it mounts.
+	Run bool `json:"run,omitempty"`
+	// Reason is the one line the Console shows for why the desktop moved.
+	//
+	// Written by the model, so it is bounded here as well as by the tool schema.
+	// It is the operator's only account of an action they did not take, which is
+	// why the tool requires it rather than defaulting it to the tool name.
+	Reason string `json:"reason,omitempty"`
+}
+
 // What one entry may carry. The database refuses a whole entry above 64 KiB;
 // these cut each part well below that and mark the entry, so the constraint is
 // a backstop rather than the thing operators meet.
@@ -470,6 +508,10 @@ const (
 	// Server-generated. The goal is written by the model, so it is bounded here
 	// as well as by the tool schema rather than trusted to arrive short.
 	maxSubtaskGoalBytes = 1024
+	// maxViewReasonBytes bounds the model's account of why it opened an
+	// application. Same reason as the subtask goal: it is model text, and the
+	// schema is not the only place that has to hold.
+	maxViewReasonBytes = 512
 	// maxTitleBytes mirrors the column. A title is a label in a list, not a
 	// summary.
 	maxTitleBytes = 200
@@ -521,6 +563,11 @@ func (content *Content) normalize(kind Kind) bool {
 	if content.Subtask != nil {
 		if goal, cut := bound(content.Subtask.Goal, maxSubtaskGoalBytes); cut {
 			content.Subtask.Goal, truncated = goal, true
+		}
+	}
+	if content.View != nil {
+		if reason, cut := bound(content.View.Reason, maxViewReasonBytes); cut {
+			content.View.Reason, truncated = reason, true
 		}
 	}
 	// Cluster content is untrusted by construction, not by whoever remembered

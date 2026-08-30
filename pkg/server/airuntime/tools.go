@@ -105,6 +105,10 @@ type ToolResult struct {
 	// approval modes are protecting. The default is the safe one: a result says
 	// nothing and is recorded as untrusted.
 	Trusted bool
+	// View is an application the tool asked the Console to open on the
+	// operator's desktop. It is written onto the durable tool result, so a
+	// desktop that moved is part of the record rather than a live-only nudge.
+	View *aisession.View
 }
 
 type ToolAuditTarget struct {

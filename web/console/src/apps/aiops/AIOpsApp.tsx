@@ -39,7 +39,7 @@ import type { AppComponentProps } from "../types";
  * owned here rather than by the open session, because the rail offers those on
  * every row and most of those rows are not the open one.
  */
-export function AIOpsApp(_props: AppComponentProps) {
+export function AIOpsApp({ windowId }: AppComponentProps) {
   const { permissions } = useSessionContext();
   const scope = useScopeStore((state) => state.scope);
   const clustersQuery = useClusters(scope.projectId, { limit: 100, status: "active" });
@@ -274,6 +274,7 @@ export function AIOpsApp(_props: AppComponentProps) {
             key={selected.id}
             session={selected}
             clusterName={clusterName}
+            windowId={windowId}
             tools={tools}
             skills={skills}
             onUpdate={(input) => update({ ...input, sessionId: selected.id })}

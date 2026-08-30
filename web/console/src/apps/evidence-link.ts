@@ -1,3 +1,4 @@
+import type { AIViewIntent } from "@/api/types";
 import { useWindowStore } from "@/desktop/window-store";
 import { useScopeStore } from "@/scope/scope-store";
 
@@ -32,6 +33,16 @@ export const CONTAINER_EVIDENCE_KEY = "zke.ai-evidence.container-target";
 export const METRICS_EVIDENCE_CLUSTER_KEY = "zke.ai-evidence.metrics-cluster";
 export const METRICS_EVIDENCE_QUERY_KEY = "zke.ai-evidence.metrics-query";
 export const METRICS_EVIDENCE_EXPRESSION_KEY = "zke.ai-evidence.metrics-expression";
+/**
+ * Whether the monitoring application should run the expression it was handed.
+ *
+ * A separate key rather than a flag folded into the expression: a link that
+ * carries an expression is a starting point, and a link that carries one and
+ * says to run it is an answer. Only the second is worth taking the operator's
+ * screen for, and the two have to stay distinguishable at the receiving end —
+ * the deep link from outside the Console still only prefills.
+ */
+export const METRICS_EVIDENCE_RUN_KEY = "zke.ai-evidence.metrics-run";
 
 /*
  * Which application shows one kind of evidence.
@@ -57,6 +68,7 @@ export function stashEvidenceTarget(input: {
   resource?: string | null;
   query?: string | null;
   expression?: string | null;
+  run?: boolean;
 }): void {
   try {
     if (input.appId === "container-service") {
@@ -84,6 +96,11 @@ export function stashEvidenceTarget(input: {
       } else {
         sessionStorage.removeItem(METRICS_EVIDENCE_EXPRESSION_KEY);
       }
+      if (input.run) {
+        sessionStorage.setItem(METRICS_EVIDENCE_RUN_KEY, "1");
+      } else {
+        sessionStorage.removeItem(METRICS_EVIDENCE_RUN_KEY);
+      }
     }
   } catch {
     // Session storage may be unavailable; the window still opens, on whatever
@@ -99,7 +116,7 @@ export function stashEvidenceTarget(input: {
  * would otherwise come forward showing something else entirely — which is worse
  * than not following the link, because it looks like it worked.
  */
-export function openEvidence(target: EvidenceTarget): void {
+export function openEvidence(target: EvidenceTarget, options: { run?: boolean } = {}): void {
   const scope = useScopeStore.getState().scope;
   const tenantId = target.tenantId ?? scope.tenantId;
   const projectId = target.projectId ?? scope.projectId;
@@ -120,7 +137,37 @@ export function openEvidence(target: EvidenceTarget): void {
       resource: target.name,
       query: target.query,
       expression: target.expression,
+      run: options.run,
     });
   }
   useWindowStore.getState().openWindow(appId, { restart: true });
+}
+
+/**
+ * Opening the view AIOps asked for, rather than the one an operator clicked.
+ *
+ * The same navigation as an evidence chip, deliberately: an intent is a
+ * reference plus the decision to follow it now, so it resolves through the
+ * function above rather than through a second path that could send the same
+ * reference somewhere else. What it adds is `run` — the difference between a
+ * window that opened with the question typed into it and one that opened with
+ * the answer already on screen, which is the whole point of the agent writing
+ * the expression in the first place.
+ */
+export function openConsoleView(view: AIViewIntent): void {
+  const target = view.target;
+  openEvidence(
+    {
+      kind: target.kind,
+      cluster: target.cluster,
+      tenantId: target.tenant_id,
+      projectId: target.project_id,
+      namespace: target.namespace,
+      gvk: target.gvk,
+      name: target.name,
+      query: target.query,
+      expression: target.expression,
+    },
+    { run: view.run ?? false },
+  );
 }
