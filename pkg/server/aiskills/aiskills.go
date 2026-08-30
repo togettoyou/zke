@@ -206,6 +206,90 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
 没有指标数据时直接说明这个部署没有安装多集群指标或该窗口没有样本，不要用一次 describe 的快照冒充趋势。`,
 		},
 		{
+			ID:      "custom-metrics-collection",
+			Title:   "接入自定义指标采集",
+			Summary: "把工作负载的指标端点用注解接入采集，并验证是否真的抓到了。",
+			// The reads that establish what is annotated now, the preview that
+			// proposes the annotation, and the queries that prove the target is
+			// actually being scraped. Installing the collector is not here: it
+			// is not a tool, it is 「采集接入」 and a different permission.
+			Tools: []string{
+				"list_resources", "get_resource", "describe_resource",
+				"preview_manifest_apply", "list_metric_queries", "query_metrics",
+				"query_custom_metrics",
+			},
+			Body: `# 接入自定义指标采集
+
+## 何时使用
+用户想让自己工作负载暴露的指标（业务指标、中间件 exporter、Sidecar exporter）进入 ZKE 的图表与
+query_custom_metrics，或者已经加了注解却查不到数据。
+
+内置的 kubelet、kube-state-metrics 与 node-exporter 只回答集群自身的问题，不会抓业务端点。
+
+## 前提
+接入不需要重装采集组件，但集群必须已经安装采集组件，且这次安装带有注解发现。
+判断方式：先按下面的步骤加注解并等一个抓取周期，如果 up 序列始终不出现、而其他内置 job 的数据正常，
+就说明这个集群的采集组件是旧版本安装的，需要用户在「监控 → 采集接入」里重新安装一次。
+AIOps 没有安装或卸载采集组件的工具，这一步只能由持 cluster.metrics.manage 的人在 Console 里做。
+
+## 注解契约
+给 Service 或 Endpoints 打注解，vmagent 的 Kubernetes 服务发现会在下一个发现周期把它的**就绪**端点纳入抓取：
+
+| 注解 | 作用 | 取值 |
+| --- | --- | --- |
+| zke-metrics-collector.io/scrape | 唯一的开关 | true |
+| zke-metrics-collector.io/scheme | 抓取协议 | 省略（默认 http）、http、https |
+| zke-metrics-collector.io/path | 指标路径 | 省略（默认 /metrics）或以 / 开头 |
+| zke-metrics-collector.io/port | 覆盖端口 | 1-65535 |
+| zke-metrics-collector.io/auth | 认证模式 | 省略或 none；service-account |
+| zke-metrics-collector.io/tls-insecure-skip-verify | 跳过证书校验 | 省略或 false；true |
+
+规则，写错会直接导致抓不到而不是报错：
+- 同名 Service 与 Endpoints 上的同一个注解以 **Endpoints 为准**，Endpoints 没写的沿用 Service 的值。
+  没有 Service 的 Endpoints（指向集群外后端）可以独立接入；
+- **看不懂的值直接丢弃这个目标，不会回退到默认值**。path 写成 metrics 不会去抓 /metrics，
+  port 写成 70000 不会被接受，scheme 只认 http 与 https；
+- **service-account 只允许配 https**，否则整个目标被丢弃——用明文发 Bearer Token 等于把它交给链路上的任何人。
+  注解不支持引用 Secret，需要自定义凭证的端点接不进来，不要建议用户把 Token 写进注解；
+- tls-insecure-skip-verify=true 只在 https 下有意义；
+- 省略 port 时，Service 的**每一个**端口都会被当成抓取目标。多端口 Service 必须显式写 port，
+  否则会对不暴露指标的端口反复发起抓取；
+- 只抓就绪端点。Pod 没通过 readinessProbe 就不会被抓，先按「Pod 反复重启与启动失败」查就绪。
+
+## 取证与实施顺序
+1. get_resource 读目标 Service：确认 selector 选得到 Pod、ports 与 targetPort，以及现在有没有这组注解。
+2. list_resources 读同名 Endpoints（v1/Endpoints），确认它有就绪地址。没有地址就先解决就绪问题，
+   注解加了也不会产生任何目标。
+3. 确认指标端点本身：get_resource 读 Pod 或工作负载，核对容器暴露的 containerPort 与实际的指标路径。
+   AIOps 不能发起网络请求，不要声称自己访问过 /metrics。
+4. 需要加注解时，这是一次普通的对象变更：用 preview_manifest_apply 预检，然后按「受控变更与回滚」提交。
+   注解写在 Service 的 metadata.annotations 上，不要改 spec。目标由 Helm 管理时改 Release 的 values，
+   见「Helm Release 的受控变更」，直接改对象会在下一次升级被覆盖。
+5. 等一个抓取周期（默认 30s，取决于平台配置的抓取间隔），再验证。
+
+## 验证抓没抓到
+抓取后每个目标带上这几个标签：job 是 <namespace>/<对象名>，另外还有 namespace、service、endpoint。
+
+1. list_metric_queries 找到 collection_target_health（采集目标健康度，按 job 维度），
+   query_metrics 调用它并放大 minutes 覆盖加注解之后的时间。值为 1 表示抓取成功，0 表示目标存在但抓不通。
+2. 目标压根没出现在 job 列表里，说明注解没有生效：注解写错、Endpoints 没有就绪地址，或采集组件是旧版本安装。
+3. 抓通之后再用 query_custom_metrics 查用户关心的指标本身，例如 instant 查询
+   up{namespace="ns", service="svc"} 或该指标的名字，确认序列真的落库。
+   表达式里不要写任何 Cluster 条件，Server 会把会话 Cluster 强制注入每个选择器。
+4. 需要逐条核对最终生效的 scheme、path、port、认证模式与当前就绪目标时，让用户打开
+   「监控 → 采集接入」并点进该集群——那份 Job 清单直接来自集群，AIOps 没有对应的工具。
+
+## 成本
+每个接入的端点都要花该集群的摄取预算：样本数是每次抓取要付的，新增序列是整个保留期要付的。
+高基数标签（把请求 ID、Pod IP 之类写进标签）会让一个端点吃掉整个集群的配额，之后所有图表都会出现空洞。
+接入之后用 query_metrics 看 collection_samples 与 collection_series_added，
+并在结论里说明这次接入带来了多少额外开销；集群已经被限流时先减少基数，而不是继续接入。
+
+## 结论要求
+写清接了哪个对象、最终生效的 scheme/path/port/认证是什么、验证用的是哪条查询与哪个时间窗口、
+以及抓到了还是没抓到。没等到一个抓取周期就不要下「已接入」的结论。`,
+		},
+		{
 			ID:      "controlled-change",
 			Title:   "受控变更与回滚",
 			Summary: "需要改变集群时的固定顺序：先取证、再预检、再按预检结果提交，并说明影响与回退方式。",
