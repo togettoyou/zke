@@ -4,6 +4,7 @@ package customapplications
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -26,9 +27,15 @@ var (
 const MaxPerProject = store.MaxCustomApplicationsPerProject
 
 const (
-	maxNameBytes        = 80
-	maxDescriptionBytes = 500
-	maxURLBytes         = 2048
+	maxNameBytes          = 80
+	maxDescriptionBytes   = 500
+	maxURLBytes           = 2048
+	maxLogoDataURLBytes   = 64 * 1024
+	logoDataURLJPEGPrefix = "data:image/jpeg;base64,"
+	logoDataURLPNGPrefix  = "data:image/png;base64,"
+	logoDataURLWebPPrefix = "data:image/webp;base64,"
+	logoDataURLGIFPrefix  = "data:image/gif;base64,"
+	logoDataURLAVIFPrefix = "data:image/avif;base64,"
 )
 
 type InputError struct{ reason string }
@@ -185,13 +192,49 @@ func normalize(input Input, requireIdempotency bool) (Input, error) {
 	if err := validateHTTPURL(input.URL, "应用 URL", false); err != nil {
 		return Input{}, err
 	}
-	if err := validateHTTPURL(input.LogoURL, "Logo URL", true); err != nil {
+	if err := validateLogoURL(input.LogoURL); err != nil {
 		return Input{}, err
 	}
 	if requireIdempotency && !validation.IsIdempotencyKey(input.IdempotencyKey) {
 		return Input{}, invalid("Idempotency-Key 必须为 16–128 个字符")
 	}
 	return input, nil
+}
+
+func validateLogoURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if !strings.HasPrefix(strings.ToLower(raw), "data:") {
+		return validateHTTPURL(raw, "Logo URL", true)
+	}
+	if len(raw) > maxLogoDataURLBytes {
+		return invalid("Logo Data URL 不能超过 %d KiB", maxLogoDataURLBytes/1024)
+	}
+
+	metadata, payload, found := strings.Cut(raw, ",")
+	if !found || payload == "" || !isAllowedLogoDataURLMetadata(strings.ToLower(metadata)) {
+		return invalid("Logo Data URL 仅支持 JPEG、PNG、WebP、GIF 或 AVIF 的 Base64 图片")
+	}
+	if _, err := base64.StdEncoding.DecodeString(payload); err != nil {
+		if _, rawErr := base64.RawStdEncoding.DecodeString(payload); rawErr != nil {
+			return invalid("Logo Data URL 必须包含有效的 Base64 数据")
+		}
+	}
+	return nil
+}
+
+func isAllowedLogoDataURLMetadata(metadata string) bool {
+	switch metadata + "," {
+	case logoDataURLJPEGPrefix,
+		logoDataURLPNGPrefix,
+		logoDataURLWebPPrefix,
+		logoDataURLGIFPrefix,
+		logoDataURLAVIFPrefix:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateHTTPURL(raw string, label string, optional bool) error {

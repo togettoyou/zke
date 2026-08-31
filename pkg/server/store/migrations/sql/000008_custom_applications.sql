@@ -17,7 +17,7 @@ CREATE TABLE custom_applications (
         url = btrim(url) AND octet_length(url) BETWEEN 1 AND 2048
     ),
     logo_url text NOT NULL DEFAULT '' CHECK (
-        logo_url = btrim(logo_url) AND octet_length(logo_url) <= 2048
+        logo_url = btrim(logo_url) AND octet_length(logo_url) <= 65536
     ),
     idempotency_key text NOT NULL CHECK (
         idempotency_key = btrim(idempotency_key)

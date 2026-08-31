@@ -32,6 +32,8 @@ import { useScopeStore } from "@/scope/scope-store";
 
 const NAV = [{ id: "applications", label: "自定义应用", icon: LayoutGrid }];
 const APPLICATION_EDITOR_FORM_ID = "custom-application-editor-form";
+const MAX_LOGO_DATA_URL_BYTES = 64 * 1024;
+const LOGO_DATA_URL_PATTERN = /^data:image\/(?:jpeg|png|webp|gif|avif);base64,([a-z\d+/]+={0,2})$/i;
 
 type EditorState = { mode: "create" } | { mode: "edit"; application: CustomApplication };
 
@@ -333,15 +335,19 @@ function ApplicationEditor({
                 Token。
               </FieldHint>
             </Field>
-            <Field label="Logo URL" htmlFor="custom-app-logo-url">
+            <Field label="Logo URL / Data URL" htmlFor="custom-app-logo-url">
               <Input
                 id="custom-app-logo-url"
-                type="url"
+                type="text"
+                inputMode="url"
                 value={logoURL}
-                placeholder="https://example.com/logo.svg"
+                maxLength={MAX_LOGO_DATA_URL_BYTES}
+                placeholder="https://example.com/logo.svg 或 data:image/jpeg;base64,…"
                 onChange={(event) => setLogoURL(event.target.value)}
               />
-              <FieldHint>可选。图片由浏览器直接加载，Server 不会抓取该地址。</FieldHint>
+              <FieldHint>
+                可选。外链限 2048 字节；JPEG、PNG、WebP、GIF、AVIF 的 Base64 Data URL 限 64 KiB。
+              </FieldHint>
             </Field>
           </div>
           <Card className="flex min-h-44 flex-col items-center justify-center gap-3 text-center">
@@ -395,24 +401,43 @@ function validateApplication(input: CustomApplicationRequest): string | null {
   if (!input.name) return "请输入应用名称";
   if (byteLength(input.name) > 80) return "应用名称不能超过 80 字节";
   if (byteLength(input.description ?? "") > 500) return "应用说明不能超过 500 字节";
-  for (const [label, raw, optional] of [
-    ["应用 URL", input.url, false],
-    ["Logo URL", input.logo_url ?? "", true],
-  ] as const) {
-    if (!raw && optional) continue;
-    if (byteLength(raw) > 2048) return `${label} 不能超过 2048 字节`;
-    try {
-      const parsed = new URL(raw);
-      if (
-        !(["http:", "https:"] as string[]).includes(parsed.protocol) ||
-        parsed.username ||
-        parsed.password
-      ) {
-        return `${label} 必须是无用户凭证的绝对 HTTP(S) 地址`;
-      }
-    } catch {
-      return `${label} 必须是有效的绝对地址`;
+  const invalidApplicationURL = validateHTTPURL(input.url, "应用 URL");
+  if (invalidApplicationURL) return invalidApplicationURL;
+  const invalidLogoURL = validateLogoURL(input.logo_url ?? "");
+  if (invalidLogoURL) return invalidLogoURL;
+  return null;
+}
+
+function validateLogoURL(raw: string): string | null {
+  if (!raw) return null;
+  if (!raw.toLowerCase().startsWith("data:")) return validateHTTPURL(raw, "Logo URL");
+  if (byteLength(raw) > MAX_LOGO_DATA_URL_BYTES) return "Logo Data URL 不能超过 64 KiB";
+
+  const match = LOGO_DATA_URL_PATTERN.exec(raw);
+  if (!match) return "Logo Data URL 仅支持 JPEG、PNG、WebP、GIF 或 AVIF 的 Base64 图片";
+  const payload = match[1];
+  if (!payload) return "Logo Data URL 必须包含有效的 Base64 数据";
+  try {
+    atob(payload);
+  } catch {
+    return "Logo Data URL 必须包含有效的 Base64 数据";
+  }
+  return null;
+}
+
+function validateHTTPURL(raw: string, label: string): string | null {
+  if (byteLength(raw) > 2048) return `${label} 不能超过 2048 字节`;
+  try {
+    const parsed = new URL(raw);
+    if (
+      !(["http:", "https:"] as string[]).includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password
+    ) {
+      return `${label} 必须是无用户凭证的绝对 HTTP(S) 地址`;
     }
+  } catch {
+    return `${label} 必须是有效的绝对地址`;
   }
   return null;
 }

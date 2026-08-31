@@ -28,7 +28,7 @@
 | `name`        | 1–80 字节，在 Project 内忽略大小写唯一        |
 | `description` | 可选，最多 500 字节                           |
 | `url`         | 无用户凭证的绝对 HTTP(S) 地址，最多 2048 字节 |
-| `logo_url`    | 可选，约束同 URL                              |
+| `logo_url`    | 可选；外链约束同 URL，或 JPEG、PNG、WebP、GIF、AVIF 的 Base64 Data URL（最多 64 KiB） |
 
 项目最多保存 100 个自定义应用。创建请求使用 `Idempotency-Key`，相同操作者、Project 和 Key 的重试返回原对象；同一
 Key 携带不同内容会被拒绝。
@@ -45,8 +45,8 @@ DELETE /api/v1/projects/{project_id}/custom-applications/{application_id}
 
 ## 加载与安全边界
 
-Server 只保存元数据，不主动访问应用 URL 或 Logo URL，因此这些字段不会成为 Server 侧 SSRF 入口。Logo 由浏览器直接
-加载，并使用 `no-referrer`。
+Server 只保存元数据，不主动访问应用 URL 或外链 Logo URL，因此这些字段不会成为 Server 侧 SSRF 入口。外链 Logo 由浏览器直接
+加载，并使用 `no-referrer`；Base64 Data URL 会随应用元数据保存，Server 只校验其格式和大小。
 
 应用默认在统一的 ZKE 窗口内通过受限 iframe 打开，同时始终提供“新标签页打开”：
 

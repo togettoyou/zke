@@ -14,7 +14,7 @@ import (
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
 )
 
-const maxCustomApplicationRequestBytes = 16 * 1024
+const maxCustomApplicationRequestBytes = 80 * 1024
 
 type customApplicationService interface {
 	List(context.Context, string) ([]customapplications.Application, error)

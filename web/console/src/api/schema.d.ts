@@ -6683,7 +6683,7 @@ export interface components {
             description: string;
             /** Format: uri */
             url: string;
-            /** @description 为空时 Console 使用统一的回退图标。 */
+            /** @description 可选的 HTTP(S) Logo 地址或受支持的 Base64 栅格图片 Data URL；为空时 Console 使用统一的回退图标。 */
             logo_url: string;
             /** Format: date-time */
             created_at: string;
@@ -6700,7 +6700,7 @@ export interface components {
             description?: string;
             /** Format: uri */
             url: string;
-            /** @description 可选的绝对 HTTP(S) Logo 地址；Server 不主动请求该地址。 */
+            /** @description 可选。绝对 HTTP(S) Logo 地址最多 2048 字节；JPEG、PNG、WebP、GIF 或 AVIF 的 Base64 Data URL 最多 64 KiB。Server 不主动请求外链地址。 */
             logo_url?: string;
         };
         MetricsCollectorState: {
