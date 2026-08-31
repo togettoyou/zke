@@ -589,6 +589,7 @@ func (runtime *Runtime) think(
 		}
 		if !runtime.compact(
 			ctx, job, entries, budget, aisession.CompactionTriggerOverflow, step, specs,
+			system, definitions,
 		) {
 			return aimodel.Completion{}, nil, Pressure{}, ErrContextBudget
 		}
@@ -702,6 +703,7 @@ func (runtime *Runtime) prepare(
 	if pressure.TotalTokens >= budget.thresholdTokens {
 		if runtime.compact(
 			ctx, job, entries, budget, aisession.CompactionTriggerPressure, step, specs,
+			system, definitions,
 		) {
 			if entries, err = runtime.loadHistory(ctx, job.sessionID, job.userID); err != nil {
 				return nil, nil, Pressure{}, err

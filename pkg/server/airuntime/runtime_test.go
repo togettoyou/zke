@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1111,7 +1112,7 @@ func TestCompactionPlanKeepsARecentTailVerbatim(t *testing.T) {
 		{Sequence: 4, Kind: aisession.KindModel, Content: aisession.Content{Text: strings.Repeat("最近结论", 200)}},
 	}
 
-	plan, planned := planCompaction(entries, 1_000)
+	plan, planned := planCompaction(entries, 1_000, 10_000)
 
 	if !planned {
 		t.Fatal("planCompaction() found nothing to compact")
@@ -1140,7 +1141,7 @@ func TestCompactionPlanDoesNotSplitAStepFromItsResults(t *testing.T) {
 		}},
 	}
 
-	plan, planned := planCompaction(entries, 400)
+	plan, planned := planCompaction(entries, 400, 10_000)
 
 	if !planned {
 		t.Fatal("planCompaction() found nothing to compact")
@@ -1148,6 +1149,141 @@ func TestCompactionPlanDoesNotSplitAStepFromItsResults(t *testing.T) {
 	if plan.shadowed[len(plan.shadowed)-1].Sequence != 1 {
 		t.Fatalf("shadowed span ends at %d, want the whole step retained",
 			plan.shadowed[len(plan.shadowed)-1].Sequence)
+	}
+}
+
+func TestCompactionPlanSummarizesAtomicTailThatCannotFit(t *testing.T) {
+	t.Parallel()
+	entries := []aisession.Entry{
+		{Sequence: 1, Kind: aisession.KindInput, Content: aisession.Content{Text: "测试所有工具"}},
+		{Sequence: 2, Kind: aisession.KindModel, Content: aisession.Content{Text: "开始读取", Step: 1}},
+		{Sequence: 3, Kind: aisession.KindToolCall, Content: aisession.Content{
+			Tool: "list_nodes", CallID: "call_1", Arguments: "{}", Step: 1,
+		}},
+		{Sequence: 4, Kind: aisession.KindToolResult, Content: aisession.Content{
+			Tool: "list_nodes", CallID: "call_1", Text: strings.Repeat("节点状态", 300), Step: 1,
+		}},
+	}
+
+	plan, planned := planCompaction(entries, 400, 200)
+
+	if !planned {
+		t.Fatal("planCompaction() found nothing to compact")
+	}
+	if plan.retainedTokens != 0 || len(plan.shadowed) != len(entries) {
+		t.Fatalf("plan = %+v, want the oversized atomic tail summarized in full", plan)
+	}
+}
+
+func TestCompactionFitsSmallWindowAfterFixedRequestCosts(t *testing.T) {
+	t.Parallel()
+	entries := []aisession.Entry{
+		{Sequence: 1, Turn: 1, Kind: aisession.KindInput, Content: aisession.Content{Text: "测试所有工具"}},
+		{Sequence: 2, Turn: 1, Kind: aisession.KindModel, Content: aisession.Content{
+			Text: strings.Repeat("状态", 2_150), Step: 1,
+		}},
+	}
+	sessions := &memorySessions{
+		session: aisession.Session{
+			ID: testSessionID, InitiatorUserID: testUserID, ClusterID: testClusterID,
+			Status: aisession.StatusWorking, CurrentTurn: 1,
+		},
+		entries: entries,
+	}
+	model := &scriptedModel{steps: []aimodel.Completion{answering("保留目标、进展与证据的检查点")}}
+	runtime := New(context.Background(), sessions, model, allowAuthorizer{}, activeUsers{true}, Config{})
+	signals, unsubscribe := runtime.Subscribe(testSessionID)
+	defer unsubscribe()
+	budget := contextBudget{
+		contextWindowTokens: 26_384,
+		maxOutputTokens:     10_000,
+		thresholdTokens:     16_384,
+		retainTokens:        4_221,
+	}
+	system := strings.Repeat("系统", 2_200)
+	definitions := []aimodel.ToolDefinition{{
+		Name: "large_catalogue", Parameters: json.RawMessage(`{"type":"object","description":"` +
+			strings.Repeat("x", 32_000) + `"}`),
+	}}
+
+	compacted := runtime.compact(
+		context.Background(), turnJob{
+			sessionID: testSessionID, userID: testUserID, clusterID: testClusterID, turn: 1,
+		},
+		entries, budget, aisession.CompactionTriggerPressure, 2, nil, system, definitions,
+	)
+
+	if !compacted {
+		t.Fatal("compact() = false, want the small-window request reduced")
+	}
+	pressure := measure(sessions.entries, system, definitions)
+	if pressure.TotalTokens+budget.maxOutputTokens >= budget.contextWindowTokens {
+		t.Fatalf("compacted request still exceeds window: input=%d output=%d window=%d",
+			pressure.TotalTokens, budget.maxOutputTokens, budget.contextWindowTokens)
+	}
+	signalTypes := make([]string, 0, 3)
+	for {
+		select {
+		case signal := <-signals:
+			signalTypes = append(signalTypes, signal.Type)
+		default:
+			if !slices.Contains(signalTypes, StreamCompaction) ||
+				!slices.Contains(signalTypes, StreamCompactionDone) {
+				t.Fatalf("compaction signals = %v, want start and finish", signalTypes)
+			}
+			return
+		}
+	}
+}
+
+func TestLaterCompactionCarriesForwardPreviousCheckpointAndEvidence(t *testing.T) {
+	t.Parallel()
+	oldEvidence := aisession.Evidence{
+		Kind: aisession.EvidenceResource, Cluster: testClusterID, Name: "old-pod",
+	}
+	entries := []aisession.Entry{
+		{Sequence: 1, Kind: aisession.KindInput, Content: aisession.Content{Text: "旧问题"}},
+		{Sequence: 2, Kind: aisession.KindCompaction, Content: aisession.Content{
+			Text: "已经确认旧 Pod 异常", Evidence: []aisession.Evidence{oldEvidence},
+			Compaction: &aisession.Compaction{ShadowedFrom: 1, ShadowedTo: 1},
+		}},
+		{Sequence: 3, Kind: aisession.KindInput, Content: aisession.Content{Text: "继续检查节点"}},
+		{Sequence: 4, Kind: aisession.KindModel, Content: aisession.Content{Text: "节点正常"}},
+	}
+	plan, planned := planCompaction(entries, 2_000, 2_000)
+	if !planned || plan.checkpoint == nil {
+		t.Fatalf("planCompaction() = %+v, %v, want the previous checkpoint", plan, planned)
+	}
+	model := &scriptedModel{steps: []aimodel.Completion{answering("合并后的检查点")}}
+	runtime := New(context.Background(), &memorySessions{}, model, allowAuthorizer{}, activeUsers{true}, Config{})
+	summary, _ := runtime.summarize(context.Background(), turnJob{clusterID: testClusterID}, plan, nil, 1_024)
+	if summary != "合并后的检查点" {
+		t.Fatalf("summary = %q", summary)
+	}
+	joined := ""
+	for _, message := range model.requested[0].Messages {
+		joined += message.Text + "\n"
+	}
+	if !strings.Contains(joined, "已经确认旧 Pod 异常") || !strings.Contains(joined, "继续检查节点") {
+		t.Fatalf("summary request omitted prior context: %q", joined)
+	}
+	evidence := planEvidence(plan)
+	if len(evidence) != 1 || evidence[0].Name != oldEvidence.Name {
+		t.Fatalf("planEvidence() = %+v, want prior checkpoint evidence", evidence)
+	}
+}
+
+func TestFitSummaryPreservesHeadAndTailWithinBudget(t *testing.T) {
+	t.Parallel()
+	summary := "目标在开头\n" + strings.Repeat("中间事实", 200) + "\n下一步在结尾"
+
+	fitted := fitSummary(summary, 120)
+
+	if estimateTokens(fitted) > 120 {
+		t.Fatalf("fitSummary() uses %d tokens, want at most 120", estimateTokens(fitted))
+	}
+	if !strings.Contains(fitted, "目标在开头") || !strings.Contains(fitted, "下一步在结尾") {
+		t.Fatalf("fitSummary() lost the head or tail: %q", fitted)
 	}
 }
 

@@ -91,7 +91,7 @@ export function Conversation({
     if (!node) return;
     if (pinned.current) node.scrollTop = node.scrollHeight;
     setAtBottom(node.scrollHeight - node.scrollTop - node.clientHeight < BOTTOM_SLACK);
-  }, [items.length, live.text, live.reasoning]);
+  }, [items.length, live.text, live.reasoning, live.status]);
 
   const toBottom = () => {
     const node = scroller.current;
@@ -117,7 +117,11 @@ export function Conversation({
           an empty conversation can centre its opening prompt, but a fixed
           height would let flex shrink real messages to fit instead. */}
         <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4">
-          {items.length === 0 && !live.text && !live.reasoning && session.status !== "working" ? (
+          {items.length === 0 &&
+          !live.text &&
+          !live.reasoning &&
+          !live.status &&
+          session.status !== "working" ? (
             <Opening
               clusterName={clusterName}
               ready
@@ -136,13 +140,14 @@ export function Conversation({
               working={session.status === "working"}
             />
           ))}
-          {live.text || live.reasoning ? <LiveOutput live={live} /> : null}
+          {live.text || live.reasoning || live.status ? <LiveOutput live={live} /> : null}
           {/* Only when nothing else already says the turn is busy. A tool card
             with its own spinner plus a second "working on it" line reads as two
             things happening when there is one. */}
           {session.status === "working" &&
           !live.text &&
           !live.reasoning &&
+          !live.status &&
           !items.some((item) => item.type === "activity" && !item.result) &&
           !items.some((item) => item.type === "approval" && !item.decided) ? (
             <Thinking />
@@ -673,8 +678,15 @@ function Failure({ entry }: { entry: AITrajectoryEntry }) {
 function LiveOutput({ live }: { live: AILiveOutput }) {
   return (
     <article className="flex gap-3">
-      <Sparkles aria-hidden className="text-primary mt-0.5 size-4 shrink-0 animate-pulse" />
+      {live.status && !live.text && !live.reasoning ? (
+        <LoaderCircle aria-hidden className="text-primary mt-0.5 size-4 shrink-0 animate-spin" />
+      ) : (
+        <Sparkles aria-hidden className="text-primary mt-0.5 size-4 shrink-0 animate-pulse" />
+      )}
       <div className="min-w-0 flex-1 space-y-2">
+        {live.status ? (
+          <p className="text-subtle-foreground text-xs leading-relaxed">{live.status}</p>
+        ) : null}
         {live.reasoning ? (
           <p className="text-subtle-foreground text-xs leading-relaxed whitespace-pre-wrap">
             {live.reasoning}

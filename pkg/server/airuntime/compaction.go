@@ -10,6 +10,11 @@ import (
 	"github.com/togettoyou/zke/pkg/server/aisession"
 )
 
+// minimumCheckpointSummaryTokens is the headroom protected from a verbatim
+// tail when the request has enough space. The actual limit may be smaller in a
+// deliberately tiny window and may grow to MaxSummaryTokens in a normal one.
+const minimumCheckpointSummaryTokens = 1_024
+
 // Compaction is how one conversation keeps fitting into a context window that
 // does not grow.
 //
@@ -34,22 +39,28 @@ type compactionPlan struct {
 	retainedTokens int
 	// beforeTokens is the surface as the next request would have carried it.
 	beforeTokens int
+	// checkpoint is the previous durable summary. A later compaction has to
+	// merge it into the replacement checkpoint or the oldest confirmed facts
+	// disappear when buildMessages selects the newest checkpoint.
+	checkpoint *aisession.Entry
 }
 
 // planCompaction chooses what to replace, or reports that nothing can be.
 //
 // The tail is grown from the end until it is worth at least retainTokens, then
 // pushed back to a step boundary so an assistant message keeps the results of
-// the calls it made. A plan that would shadow nothing is no plan: a single
-// oversized step cannot be repaired by moving the boundary, and saying so is
-// better than writing a checkpoint that frees no space.
-func planCompaction(entries []aisession.Entry, retainTokens int) (compactionPlan, bool) {
-	surface, _ := surfaceOf(entries)
+// the calls it made. A plan that would shadow nothing is no plan. When the
+// newest atomic step is itself larger than the space available to the tail,
+// the whole step is summarized instead of being split into an invalid request.
+func planCompaction(
+	entries []aisession.Entry, retainTokens, maxRetainedTokens int,
+) (compactionPlan, bool) {
+	surface, checkpoint := surfaceOf(entries)
 	if len(surface) == 0 {
 		return compactionPlan{}, false
 	}
 	messages, _ := buildMessages(entries, "")
-	plan := compactionPlan{beforeTokens: messagesTokens(messages)}
+	plan := compactionPlan{beforeTokens: messagesTokens(messages), checkpoint: checkpoint}
 	keepFrom := len(surface)
 	for index := len(surface) - 1; index >= 0; index-- {
 		if plan.retainedTokens >= retainTokens {
@@ -60,12 +71,30 @@ func planCompaction(entries []aisession.Entry, retainTokens int) (compactionPlan
 	}
 	keepFrom = stepBoundary(surface, keepFrom)
 	if keepFrom <= 0 {
-		return compactionPlan{}, false
+		// The surface by itself may be smaller than the desired tail while the
+		// previous checkpoint plus that surface is already too large. Merging
+		// both into a new checkpoint is then the only reduction available. The
+		// same fallback repairs a first oversized atomic step that the boundary
+		// cannot split.
+		if checkpoint == nil && plan.retainedTokens <= maxRetainedTokens {
+			return compactionPlan{}, false
+		}
+		plan.shadowed = surface
+		plan.retainedTokens = 0
+		return plan, true
 	}
 	plan.shadowed = surface[:keepFrom]
 	plan.retainedTokens = 0
 	for _, entry := range surface[keepFrom:] {
 		plan.retainedTokens += entryTokens(entry)
+	}
+	if plan.retainedTokens > maxRetainedTokens {
+		// The newest model step is atomic: keeping one result means keeping the
+		// assistant call and all sibling results. If that whole step cannot fit,
+		// summarize it too instead of preserving an oversized tail and then
+		// reporting a budget failure after compaction already triggered.
+		plan.shadowed = surface
+		plan.retainedTokens = 0
 	}
 	return plan, true
 }
@@ -78,6 +107,9 @@ func planCompaction(entries []aisession.Entry, retainTokens int) (compactionPlan
 // only ever keeps more verbatim, so the retained tail is never smaller than the
 // budget asked for.
 func stepBoundary(surface []aisession.Entry, keepFrom int) int {
+	if keepFrom >= len(surface) {
+		return len(surface)
+	}
 	for keepFrom > 0 {
 		switch surface[keepFrom].Kind {
 		case aisession.KindToolCall, aisession.KindToolResult,
@@ -105,16 +137,42 @@ func (runtime *Runtime) compact(
 	trigger string,
 	step int,
 	specs []ToolSpec,
+	system string,
+	definitions []aimodel.ToolDefinition,
 ) bool {
-	plan, planned := planCompaction(entries, runtime.retainFor(entries, budget, trigger))
+	messageCapacity := budget.messageCapacity(system, definitions)
+	preambleTokens := estimateTokens(checkpointPreamble+"\n\n") + roleOverheadTokens
+	available := messageCapacity - preambleTokens
+	if available <= 0 {
+		return false
+	}
+	// Always leave enough room for a useful checkpoint. On a normal model this
+	// does not change the configured tail; it only matters when a small window,
+	// a large tool catalogue or a large output reserve has consumed most of the
+	// nominal context window.
+	summaryReserve := min(runtime.compaction.MaxSummaryTokens, available, minimumCheckpointSummaryTokens)
+	maxRetained := available - summaryReserve
+	retainTokens := min(runtime.retainFor(entries, budget, trigger), maxRetained)
+	plan, planned := planCompaction(entries, retainTokens, maxRetained)
 	if !planned {
 		return false
 	}
-	summary, method := runtime.summarize(ctx, job, plan, specs)
+	runtime.stream.publish(job.sessionID, StreamEvent{
+		Type: StreamCompaction, Turn: job.turn, Step: step,
+		Text: fmt.Sprintf("正在压缩上下文（%d tokens）…", plan.beforeTokens),
+	})
+	defer func() {
+		runtime.stream.publish(job.sessionID, StreamEvent{
+			Type: StreamCompactionDone, Turn: job.turn, Step: step,
+		})
+	}()
+	summaryTokens := min(runtime.compaction.MaxSummaryTokens, available-plan.retainedTokens)
+	summary, method := runtime.summarize(ctx, job, plan, specs, summaryTokens)
 	if strings.TrimSpace(summary) == "" {
 		return false
 	}
-	shadowedEvidence := planEvidence(plan.shadowed)
+	summary = fitSummary(summary, summaryTokens)
+	shadowedEvidence := planEvidence(plan)
 	after := estimateTokens(checkpointPreamble+"\n\n"+summary) + roleOverheadTokens + plan.retainedTokens
 	if after >= plan.beforeTokens {
 		// A checkpoint that costs more than what it replaced is not a
@@ -178,8 +236,15 @@ func (runtime *Runtime) summarize(
 	job turnJob,
 	plan compactionPlan,
 	specs []ToolSpec,
+	maxSummaryTokens int,
 ) (string, string) {
 	messages, _ := buildMessages(plan.shadowed, "")
+	if plan.checkpoint != nil {
+		messages = append([]aimodel.Message{{
+			Role: aimodel.RoleUser,
+			Text: checkpointPreamble + "\n\n" + plan.checkpoint.Content.Text,
+		}}, messages...)
+	}
 	if len(messages) == 0 {
 		return "", ""
 	}
@@ -193,7 +258,7 @@ func (runtime *Runtime) summarize(
 		completion, _, err := runtime.model.Complete(ctx, aimodel.CompletionInput{
 			System:          systemPrompt(job.clusterID, aisession.ApprovalAsk, specs, runtime.skills),
 			Messages:        request,
-			MaxOutputTokens: runtime.compaction.MaxSummaryTokens,
+			MaxOutputTokens: maxSummaryTokens,
 		})
 		if err == nil && strings.TrimSpace(completion.Text) != "" {
 			return strings.TrimSpace(completion.Text), aisession.CompactionModelSummary
@@ -236,10 +301,14 @@ func mechanicalSummary(messages []aimodel.Message) string {
 // A checkpoint that summarizes away ten reads must not also take away the links
 // back to what was read: the references are how a reader checks a conclusion
 // that now rests on a summary.
-func planEvidence(shadowed []aisession.Entry) []aisession.Evidence {
+func planEvidence(plan compactionPlan) []aisession.Evidence {
 	seen := make(map[string]struct{})
 	result := make([]aisession.Evidence, 0, 8)
-	for _, entry := range shadowed {
+	entries := plan.shadowed
+	if plan.checkpoint != nil {
+		entries = append([]aisession.Entry{*plan.checkpoint}, entries...)
+	}
+	for _, entry := range entries {
 		for _, item := range entry.Content.Evidence {
 			key := evidenceKey(item)
 			if _, duplicate := seen[key]; duplicate {
@@ -252,6 +321,63 @@ func planEvidence(shadowed []aisession.Entry) []aisession.Evidence {
 	return result
 }
 
+// fitSummary keeps a provider or the mechanical fallback inside the exact
+// space the next main request has for its checkpoint. Providers normally obey
+// MaxOutputTokens, but the local estimator and the provider tokenizer are not
+// identical, and the fallback has no provider-side limit at all.
+func fitSummary(value string, maxTokens int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || maxTokens <= 0 {
+		return ""
+	}
+	if estimateTokens(value) <= maxTokens {
+		return value
+	}
+	const marker = "\n\n[检查点中段因上下文预算受限而省略]\n\n"
+	markerTokens := estimateTokens(marker)
+	if markerTokens >= maxTokens {
+		return prefixWithinTokens(value, maxTokens)
+	}
+	runes := []rune(value)
+	contentTokens := maxTokens - markerTokens
+	head := prefixWithinTokens(value, contentTokens*2/3)
+	tail := suffixWithinTokens(runes, contentTokens-estimateTokens(head))
+	result := head + marker + tail
+	for estimateTokens(result) > maxTokens && len(tail) > 0 {
+		tailRunes := []rune(tail)
+		tail = string(tailRunes[1:])
+		result = head + marker + tail
+	}
+	return strings.TrimSpace(result)
+}
+
+func prefixWithinTokens(value string, maxTokens int) string {
+	runes := []rune(value)
+	low, high := 0, len(runes)
+	for low < high {
+		middle := (low + high + 1) / 2
+		if estimateTokens(string(runes[:middle])) <= maxTokens {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	return string(runes[:low])
+}
+
+func suffixWithinTokens(runes []rune, maxTokens int) string {
+	low, high := 0, len(runes)
+	for low < high {
+		middle := (low + high + 1) / 2
+		if estimateTokens(string(runes[len(runes)-middle:])) <= maxTokens {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	return string(runes[len(runes)-low:])
+}
+
 // contextBudget is the endpoint's window resolved against this deployment's
 // compaction policy, recomputed per step rather than stored.
 type contextBudget struct {
@@ -259,6 +385,15 @@ type contextBudget struct {
 	maxOutputTokens     int
 	thresholdTokens     int
 	retainTokens        int
+}
+
+func (budget contextBudget) messageCapacity(
+	system string, tools []aimodel.ToolDefinition,
+) int {
+	fixed := estimateTokens(system) + roleOverheadTokens + toolDefinitionTokens(tools)
+	// prepare rejects equality because a request that consumes the whole window
+	// leaves no valid output slot. Keep the compacted request one token below it.
+	return max(0, budget.contextWindowTokens-budget.maxOutputTokens-fixed-1)
 }
 
 func (runtime *Runtime) budgetFor(settings aimodel.Settings) contextBudget {

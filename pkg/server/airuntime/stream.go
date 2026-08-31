@@ -13,9 +13,10 @@ import "sync"
 // from.
 type StreamEvent struct {
 	// Type is "entries" for a wake, "delta" for streamed answer text,
-	// "reasoning" for streamed reasoning summary text, and "reset" for a step
-	// whose partial output must be discarded because the request is being sent
-	// again.
+	// "reasoning" for streamed reasoning summary text, "compaction" and
+	// "compaction_done" for the transient checkpoint phase, and "reset" for a
+	// step whose partial output must be discarded because the request is being
+	// sent again.
 	Type string
 	Turn int32
 	Step int
@@ -26,6 +27,12 @@ const (
 	StreamEntries   = "entries"
 	StreamDelta     = "delta"
 	StreamReasoning = "reasoning"
+	// Compaction is visible while the auxiliary summary call is in flight, but
+	// only the durable compaction entry is a record. The paired end signal also
+	// clears the status when no entry was written because the summary did not
+	// reduce the request.
+	StreamCompaction     = "compaction"
+	StreamCompactionDone = "compaction_done"
 	// StreamReset tells a watcher to drop what it has of the current step.
 	//
 	// A retried model call starts its answer over, and text from the attempt

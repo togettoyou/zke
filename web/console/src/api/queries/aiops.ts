@@ -426,9 +426,10 @@ export type AILiveOutput = {
   step: number;
   text: string;
   reasoning: string;
+  status: string;
 };
 
-const emptyLiveOutput: AILiveOutput = { turn: 0, step: 0, text: "", reasoning: "" };
+const emptyLiveOutput: AILiveOutput = { turn: 0, step: 0, text: "", reasoning: "", status: "" };
 
 export type AIStream = {
   state: AIStreamState;
@@ -472,7 +473,12 @@ export function useAIEventStream(sessionId: string | null, enabled: boolean): AI
           queryClient.setQueryData<Trajectory>(queryKeys.aiTrajectory(sessionId), (current) => ({
             entries: mergeEntries(current?.entries ?? [], [entry]),
           }));
-          if (entry.kind === "model" || entry.kind === "error" || entry.kind === "conclusion") {
+          if (
+            entry.kind === "model" ||
+            entry.kind === "compaction" ||
+            entry.kind === "error" ||
+            entry.kind === "conclusion"
+          ) {
             clearLive(entry.kind === "model" ? (entry.content.step ?? 0) : 0);
           }
           void queryClient.invalidateQueries({ queryKey: queryKeyPrefixes.aiSessions });
@@ -498,7 +504,7 @@ export function useAIEventStream(sessionId: string | null, enabled: boolean): AI
       source.addEventListener("delta", (event) => {
         try {
           const delta = JSON.parse((event as MessageEvent<string>).data) as {
-            kind: "delta" | "reasoning" | "reset";
+            kind: "delta" | "reasoning" | "reset" | "compaction" | "compaction_done";
             turn: number;
             step: number;
             text: string;
@@ -514,11 +520,20 @@ export function useAIEventStream(sessionId: string | null, enabled: boolean): AI
             );
             return;
           }
+          if (delta.kind === "compaction_done") {
+            setLive((current) =>
+              current.step === delta.step && current.turn === delta.turn
+                ? { ...current, status: "" }
+                : current,
+            );
+            return;
+          }
           setLive((current) => {
             const fresh = current.step === delta.step && current.turn === delta.turn;
             const base = fresh
               ? current
               : { ...emptyLiveOutput, turn: delta.turn, step: delta.step };
+            if (delta.kind === "compaction") return { ...base, status: delta.text };
             return delta.kind === "reasoning"
               ? { ...base, reasoning: base.reasoning + delta.text }
               : { ...base, text: base.text + delta.text };
