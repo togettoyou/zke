@@ -32,6 +32,7 @@ const ACCENT_FILL: Record<AppAccent, string> = {
   settings: "bg-linear-to-b from-[var(--app-settings-from)] to-[var(--app-settings-to)]",
   aiops: "bg-linear-to-b from-[var(--app-aiops-from)] to-[var(--app-aiops-to)]",
   terminal: "bg-linear-to-b from-[var(--app-terminal-from)] to-[var(--app-terminal-to)]",
+  "custom-apps": "bg-linear-to-b from-[var(--app-custom-apps-from)] to-[var(--app-custom-apps-to)]",
 };
 
 /**
@@ -50,6 +51,7 @@ const ACCENT_GLOW: Record<AppAccent, string> = {
   settings: "group-hover:drop-shadow-[0_9px_16px_var(--app-settings-glow)]",
   aiops: "group-hover:drop-shadow-[0_9px_16px_var(--app-aiops-glow)]",
   terminal: "group-hover:drop-shadow-[0_9px_16px_var(--app-terminal-glow)]",
+  "custom-apps": "group-hover:drop-shadow-[0_9px_16px_var(--app-custom-apps-glow)]",
 };
 
 /**
@@ -64,6 +66,9 @@ const ACCENT_GLOW: Record<AppAccent, string> = {
 export function appFaceClass(manifest: AppManifest): string {
   if (manifest.availability.state === "planned") {
     return "border-border bg-surface-muted/60 text-subtle-foreground border";
+  }
+  if (manifest.customApplication?.logo_url) {
+    return "border-border bg-surface border";
   }
   return cn("text-white", ACCENT_FILL[manifest.accent ?? "cluster-access"]);
 }

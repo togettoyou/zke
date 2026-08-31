@@ -1,7 +1,8 @@
 import { memo, Suspense, useCallback, useMemo } from "react";
 import { Maximize2, Minus, Minimize2, X } from "lucide-react";
 
-import { findAppManifest } from "@/apps/registry";
+import { AppGlyph } from "@/apps/AppGlyph";
+import type { AppManifest } from "@/apps/types";
 import { AppErrorBoundary } from "@/components/common/error-boundary";
 import { LoadingState } from "@/components/common/state";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ export const Window = memo(function Window({
   stackIndex,
   revealed,
   parked,
+  manifest,
 }: {
   instance: WindowInstance;
   focused: boolean;
@@ -54,6 +56,7 @@ export const Window = memo(function Window({
   revealed: boolean;
   /** Not drawn, but kept mounted so live application state survives switching. */
   parked: boolean;
+  manifest?: AppManifest;
 }) {
   const bounds = useWindowStore((state) => state.bounds);
   const viewport = useWindowStore((state) => state.viewport);
@@ -63,8 +66,6 @@ export const Window = memo(function Window({
   const toggleMaximize = useWindowStore((state) => state.toggleMaximize);
   const setWindowRect = useWindowStore((state) => state.setWindowRect);
   const openWindow = useWindowStore((state) => state.openWindow);
-
-  const manifest = findAppManifest(instance.appId);
 
   const interaction = useWindowInteraction({
     rect: instance.rect,
@@ -146,7 +147,6 @@ export const Window = memo(function Window({
    */
   const dragged = interaction.isDragging ? interaction.previewRect : null;
   const rect = dragged ? instance.rect : (interaction.previewRect ?? instance.rect);
-  const Icon = manifest.icon;
   const titleId = `window-title-${instance.id}`;
 
   const geometry = stacked
@@ -239,13 +239,12 @@ export const Window = memo(function Window({
           {/* The one spot of colour in the frame, and it follows focus: on a
               desktop of open windows, which one is live should be readable from
               the title bar alone. */}
-          <Icon
+          <AppGlyph
+            manifest={manifest}
             className={cn(
               "size-4 shrink-0 transition-colors duration-150",
               focused ? "text-primary" : "text-subtle-foreground",
             )}
-            strokeWidth={1.75}
-            aria-hidden
           />
           <h2 id={titleId} className="text-foreground shrink-0 text-[13px] font-medium">
             {instance.title}

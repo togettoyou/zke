@@ -524,6 +524,49 @@ func registerRoutes(router *gin.Engine, handlers handlers) {
 		),
 		handlers.metricsSavedQuery.list,
 	)
+	projectRoutes.GET(
+		"/:project_id/custom-applications",
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionProjectRead,
+			"project_id",
+		),
+		handlers.customApplication.list,
+	)
+	projectRoutes.GET(
+		"/:project_id/custom-applications/:application_id",
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionProjectRead,
+			"project_id",
+		),
+		handlers.customApplication.get,
+	)
+	projectRoutes.POST(
+		"/:project_id/custom-applications",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionApplicationManage,
+			"project_id",
+		),
+		handlers.customApplication.create,
+	)
+	projectRoutes.PUT(
+		"/:project_id/custom-applications/:application_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionApplicationManage,
+			"project_id",
+		),
+		handlers.customApplication.update,
+	)
+	projectRoutes.DELETE(
+		"/:project_id/custom-applications/:application_id",
+		handlers.authMiddleware.RequireCSRF,
+		handlers.authorizationMiddleware.RequireProject(
+			rbac.PermissionApplicationManage,
+			"project_id",
+		),
+		handlers.customApplication.remove,
+	)
 	projectRoutes.POST(
 		"/:project_id/metrics/saved-queries",
 		handlers.authMiddleware.RequireCSRF,

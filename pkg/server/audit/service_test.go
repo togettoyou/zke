@@ -81,6 +81,32 @@ func TestRecordProjectEventPreservesEnrollmentTarget(t *testing.T) {
 	}
 }
 
+func TestRecordProjectEventPreservesSuccessfulProjectMutation(t *testing.T) {
+	t.Parallel()
+
+	recording := &recordingAuditStore{}
+	service := NewService(recording, nil)
+	err := service.RecordProjectEvent(context.Background(), ProjectEventInput{
+		ActorUserID: "00000000-0000-4000-8000-000000000001",
+		ProjectID:   "00000000-0000-4000-8000-000000000002",
+		Action:      auditaction.CustomApplicationCreate,
+		TargetType:  auditaction.TargetCustomApplication,
+		TargetID:    "00000000-0000-4000-8000-000000000003",
+		TargetName:  "Grafana",
+		Result:      "succeeded",
+		RequestID:   "request-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recording.projectEvent.Result != "succeeded" ||
+		recording.projectEvent.Action != auditaction.CustomApplicationCreate ||
+		recording.projectEvent.TargetType != auditaction.TargetCustomApplication ||
+		recording.projectEvent.TargetName != "Grafana" {
+		t.Fatalf("unexpected Project audit event: %+v", recording.projectEvent)
+	}
+}
+
 func TestRecordGlobalEventOmitsMalformedTargetID(t *testing.T) {
 	t.Parallel()
 

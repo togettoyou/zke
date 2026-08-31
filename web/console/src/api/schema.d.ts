@@ -481,6 +481,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/custom-applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 列出该 Project 配置的自定义桌面应用。要求 `project.read`；列表对 Project
+         *     内所有拥有该权限的用户一致。Server 只返回元数据，不会请求应用或 Logo URL。
+         */
+        get: operations["listCustomApplications"];
+        put?: never;
+        /**
+         * @description 为 Project 创建自定义桌面应用。要求 `application.manage`。应用与 Logo URL 只允许
+         *     无用户凭证的绝对 HTTP(S) 地址；Server 保存但不访问它们。
+         */
+        post: operations["createCustomApplication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/custom-applications/{application_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 读取该 Project 的一个自定义应用。要求 `project.read`。 */
+        get: operations["getCustomApplication"];
+        /** @description 整体替换一个自定义应用的展示信息与目标地址。要求 `application.manage`。 */
+        put: operations["updateCustomApplication"];
+        post?: never;
+        /** @description 删除 ZKE 中的自定义应用入口，不访问或修改目标系统。要求 `application.manage`。 */
+        delete: operations["deleteCustomApplication"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/metrics/saved-queries": {
         parameters: {
             query?: never;
@@ -3452,7 +3495,7 @@ export interface components {
             scope_type: "global" | "tenant" | "project";
             tenant_id?: components["schemas"]["UUID"];
             project_id?: components["schemas"]["UUID"];
-            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.manage" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "cluster.helm.manage" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "helm.repository.read" | "helm.repository.manage" | "audit.read" | "ai.run")[];
+            permissions: ("tenant.create" | "tenant.read" | "tenant.manage" | "project.create" | "project.read" | "project.manage" | "application.manage" | "cluster.enrollment.create" | "cluster.enrollment.read" | "cluster.enrollment.revoke" | "cluster.read" | "cluster.pod.logs.read" | "cluster.pod.exec" | "cluster.terminal.exec" | "cluster.pod.terminal_recording.create" | "cluster.pod.terminal_recording.read" | "cluster.pod.port_forward" | "cluster.node.manage" | "cluster.node.drain" | "cluster.event.read" | "cluster.metrics.read" | "cluster.metrics.manage" | "cluster.manage" | "cluster.namespace.manage" | "cluster.system_namespace.manage" | "cluster.agent_namespace.manage" | "cluster.resource.create" | "cluster.resource.update" | "cluster.resource.delete" | "cluster.rbac.read" | "cluster.rbac.manage" | "cluster.secret.read" | "cluster.secret.manage" | "cluster.connection.revoke" | "cluster.helm.manage" | "user.read" | "user.manage" | "user.password.change" | "rbac.read" | "rbac.manage" | "helm.repository.read" | "helm.repository.manage" | "audit.read" | "ai.run")[];
         };
         ChangePasswordRequest: {
             /** Format: password */
@@ -6633,6 +6676,33 @@ export interface components {
              */
             visibility: "private" | "project";
         };
+        CustomApplication: {
+            id: components["schemas"]["UUID"];
+            project_id: components["schemas"]["UUID"];
+            name: string;
+            description: string;
+            /** Format: uri */
+            url: string;
+            /** @description 为空时 Console 使用统一的回退图标。 */
+            logo_url: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CustomApplicationList: {
+            applications: components["schemas"]["CustomApplication"][];
+            /** @description 单个 Project 可配置的自定义应用总数上限。 */
+            limit: number;
+        };
+        CustomApplicationRequest: {
+            name: string;
+            description?: string;
+            /** Format: uri */
+            url: string;
+            /** @description 可选的绝对 HTTP(S) Logo 地址；Server 不主动请求该地址。 */
+            logo_url?: string;
+        };
         MetricsCollectorState: {
             cluster_id: components["schemas"]["UUID"];
             /** @description 集群中存在由 ZKE 管理的采集组件。同名但不由 ZKE 管理的对象报告为未安装。 */
@@ -8001,7 +8071,7 @@ export interface components {
          * @description 写入审计事件 `target_type` 字段的取值，可直接用作过滤条件。与 `action` 一样是 服务端拥有的封闭词表，客户端不应自行枚举。它描述事件针对的对象类型，与事件所属的 `scope_type` 不同：`cluster.enrollment.create` 定域于 Project，目标却是 Enrollment。
          * @enum {string}
          */
-        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile" | "helm_repository" | "metrics_saved_query" | "ai_session";
+        AuditTargetType: "user" | "session" | "role" | "role_binding" | "tenant" | "project" | "cluster" | "agent" | "agent_credential" | "enrollment" | "audit_event" | "kubernetes_resource" | "platform_settings" | "agent_endpoint_profile" | "helm_repository" | "metrics_saved_query" | "custom_application" | "ai_session";
         AuditEventPage: {
             audit_events: components["schemas"]["AuditEvent"][];
             pagination: components["schemas"]["Pagination"];
@@ -8412,6 +8482,7 @@ export interface components {
         RoleBindingID: components["schemas"]["UUID"];
         TenantID: components["schemas"]["UUID"];
         ProjectID: components["schemas"]["UUID"];
+        CustomApplicationID: components["schemas"]["UUID"];
         MetricsSavedQueryID: components["schemas"]["UUID"];
         ClusterID: components["schemas"]["UUID"];
         AISessionID: components["schemas"]["UUID"];
@@ -9698,6 +9769,160 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listCustomApplications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 自定义应用列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["CustomApplicationList"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createCustomApplication: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomApplicationRequest"];
+            };
+        };
+        responses: {
+            /** @description 已创建或幂等恢复 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["CustomApplication"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getCustomApplication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+                application_id: components["parameters"]["CustomApplicationID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 自定义应用 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["CustomApplication"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateCustomApplication: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+                application_id: components["parameters"]["CustomApplicationID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomApplicationRequest"];
+            };
+        };
+        responses: {
+            /** @description 已更新 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessResponse"] & {
+                        data: components["schemas"]["CustomApplication"];
+                    };
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteCustomApplication: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+                application_id: components["parameters"]["CustomApplicationID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     listMetricsSavedQueries: {

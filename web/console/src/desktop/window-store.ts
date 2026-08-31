@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { findAppManifest } from "@/apps/registry";
+import { findAppManifest, isCustomApplicationManifestId } from "@/apps/registry";
 import { randomUuid } from "@/lib/uuid";
 
 import {
@@ -36,6 +36,7 @@ export type WindowInstance = {
 
 export type OpenWindowOptions = {
   title?: string;
+  defaultSize?: { width: number; height: number };
   /**
    * Start the application over rather than only bringing its window forward.
    *
@@ -125,7 +126,7 @@ export const useWindowStore = create<WindowState>((set, get) => ({
 
   openWindow: (appId, options = {}) => {
     const manifest = findAppManifest(appId);
-    if (!manifest) {
+    if (!manifest && !isCustomApplicationManifestId(appId)) {
       throw new Error(`unknown application: ${appId}`);
     }
 
@@ -162,14 +163,14 @@ export const useWindowStore = create<WindowState>((set, get) => ({
     const rect = cascadeRect(
       state.bounds,
       state.order.length,
-      manifest.defaultSize,
+      options.defaultSize ?? manifest?.defaultSize ?? { width: 1_060, height: 720 },
       state.viewport,
     );
 
     const instance: WindowInstance = {
       id,
       appId,
-      title: options.title ?? manifest.title,
+      title: options.title ?? manifest?.title ?? "自定义应用",
       rect,
       restoreRect: rect,
       mode: "normal",
@@ -368,7 +369,7 @@ export const useWindowStore = create<WindowState>((set, get) => ({
       const seenApps = new Set<string>();
       let zIndex = 1;
       for (const persisted of snapshot.windows) {
-        if (!findAppManifest(persisted.appId)) {
+        if (!findAppManifest(persisted.appId) && !isCustomApplicationManifestId(persisted.appId)) {
           // Applications can disappear between releases; skip unknown ids.
           continue;
         }

@@ -1,7 +1,7 @@
 import type { ComponentType, LazyExoticComponent } from "react";
 import type { LucideIcon } from "lucide-react";
 
-import type { Permission } from "@/api/types";
+import type { CustomApplication, Permission } from "@/api/types";
 
 export type AppAvailability =
   { state: "available" } | { state: "planned"; phase: number; plannedCapabilities: string[] };
@@ -42,7 +42,8 @@ export type AppAccent =
   | "platform"
   | "settings"
   | "aiops"
-  | "terminal";
+  | "terminal"
+  | "custom-apps";
 
 export type AppManifest = {
   id: string;
@@ -75,4 +76,6 @@ export type AppManifest = {
   availability: AppAvailability;
   defaultSize: { width: number; height: number };
   entry: LazyExoticComponent<ComponentType<AppComponentProps>>;
+  /** Present only for a Project-provided application. */
+  customApplication?: CustomApplication;
 };

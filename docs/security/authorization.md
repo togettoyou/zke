@@ -285,9 +285,13 @@ Session 和绑定均不发生变化。调用者重置自己的密码不受此限
 `project.create` 是唯一一项 Tenant 下限，它的存在正是这里从「是否仅全局」改为「下限是哪一档」的原因：一个只含
 `project.create` 的角色绑到 Project 上授予的恰好是零，而一个布尔标记会把它报成不受限。
 
-其余权限都在与其名字相符的作用域校验：`project.read`、`project.manage` 在 Project，`cluster.*` 在
+其余权限都在与其名字相符的作用域校验：`project.read`、`project.manage`、`application.manage` 在 Project，`cluster.*` 在
 Cluster（经所属 Project 解析，因此等同 Project 作用域），`tenant.read` 与 `audit.read` 没有固定作用域路由，
 改为在服务层按调用者的可见范围过滤。
+
+自定义应用沿用这条 Project 边界：列表和详情要求 `project.read`，创建、修改和删除要求独立的 `application.manage`。Server
+只保存应用元数据，不代用户访问外部 URL；写操作记录 Project 级审计，URL 只保留 Origin，避免路径或查询参数中的
+敏感信息进入审计。
 
 **只有整个角色都由该作用域无法行使的权限组成时，绑定才会被拒绝**，返回 `400 role_unreachable_at_scope` 并列出
 权限名——那样的绑定不授予任何权限，读起来却像一次授权，除了「写错了」没有别的解释。
@@ -354,6 +358,7 @@ RBAC 已接入 Tenant、Project、Cluster 的管理生命周期和 Cluster 聚�
 | 族 | 权限 |
 | --- | --- |
 | 组织与资源 | `tenant.create/read/manage`、`project.create/read/manage`、`cluster.read`、`cluster.manage` |
+| 应用入口 | `application.manage` |
 | 集群接入 | `cluster.enrollment.create/read/revoke`、`cluster.connection.revoke` |
 | Kubernetes 资源 | `cluster.resource.create/update/delete` |
 | 命名空间 | `cluster.namespace.manage`、`cluster.system_namespace.manage`、`cluster.agent_namespace.manage` |

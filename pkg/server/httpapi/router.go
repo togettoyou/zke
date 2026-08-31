@@ -18,6 +18,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/clusterterminal"
+	"github.com/togettoyou/zke/pkg/server/customapplications"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/helm"
 	httpmiddleware "github.com/togettoyou/zke/pkg/server/httpapi/middleware"
@@ -58,6 +59,7 @@ type Dependencies struct {
 	// storage there is nothing for a saved expression to run against, and the
 	// routes report that state rather than disappearing.
 	MetricsSavedQueryService  *metricslibrary.Service
+	CustomApplicationService  *customapplications.Service
 	KubernetesResourceService *kubernetesresource.Service
 	// HelmService is nil when the deployment has no database-backed chart
 	// catalogue configured. The routes stay registered and report that state,
@@ -100,6 +102,7 @@ type handlers struct {
 	metricsCollector        *metricsCollectorHandler
 	observabilityMetrics    *observabilityMetricsHandler
 	metricsSavedQuery       *metricsSavedQueryHandler
+	customApplication       *customApplicationHandler
 	kubernetesNode          *kubernetesNodeHandler
 	kubernetesMetrics       *kubernetesMetricsHandler
 	kubernetesNamespace     *kubernetesNamespaceHandler
@@ -285,6 +288,12 @@ func New(
 		metricsSavedQuery: newMetricsSavedQueryHandler(
 			logger,
 			metricsSavedQueryServiceOrNil(dependencies.MetricsSavedQueryService),
+			dependencies.AuditService,
+			config.Authentication.OperationTimeout,
+		),
+		customApplication: newCustomApplicationHandler(
+			logger,
+			dependencies.CustomApplicationService,
 			dependencies.AuditService,
 			config.Authentication.OperationTimeout,
 		),

@@ -336,10 +336,12 @@ func (service *Service) RecordProjectEvent(
 	ctx context.Context,
 	input ProjectEventInput,
 ) error {
-	if !validation.IsUUID(input.ActorUserID) ||
-		strings.TrimSpace(input.Action) == "" ||
-		strings.TrimSpace(input.RequestID) == "" ||
-		(input.Result != "failed" && input.Result != "denied") {
+	if !validBaseEvent(
+		input.ActorUserID,
+		input.Action,
+		input.Result,
+		input.RequestID,
+	) {
 		return errors.New("audit event fields are invalid")
 	}
 	targetType := input.TargetType

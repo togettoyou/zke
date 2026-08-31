@@ -129,6 +129,10 @@ func TestBuiltinRoleAndScopeRules(t *testing.T) {
 		builtinRoleGrants("viewer", PermissionProjectCreate) {
 		t.Fatal("viewer role granted resource creation permissions")
 	}
+	if !builtinRoleGrants("admin", PermissionApplicationManage) ||
+		builtinRoleGrants("viewer", PermissionApplicationManage) {
+		t.Fatal("application.manage must be restricted to admin by default")
+	}
 	for _, permission := range []Permission{
 		PermissionUserRead,
 		PermissionUserManage,

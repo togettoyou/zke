@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { useClusterEvents } from "@/api/events";
+import { useCustomApplications } from "@/api/queries/custom-applications";
 import { stashEvidenceTarget } from "@/apps/evidence-link";
+import {
+  APP_MANIFESTS,
+  createCustomApplicationManifest,
+  customApplicationProjectId,
+} from "@/apps/registry";
 import { useSessionContext } from "@/auth/session-context";
 import { cn } from "@/lib/cn";
 import { SCOPE_ATTENTION_MS, useScopeStore } from "@/scope/scope-store";
@@ -38,6 +44,8 @@ export function Desktop() {
   const toggleDesktopReveal = useWindowStore((state) => state.toggleDesktopReveal);
   const desktopRevealed = useWindowStore((state) => state.desktopRevealed);
   const cycleFocus = useWindowStore((state) => state.cycleFocus);
+  const closeWindow = useWindowStore((state) => state.closeWindow);
+  const setWindowTitle = useWindowStore((state) => state.setWindowTitle);
   const hydrate = useWindowStore((state) => state.hydrate);
   const closeAll = useWindowStore((state) => state.closeAll);
   const windows = useWindowStore((state) => state.windows);
@@ -48,6 +56,24 @@ export function Desktop() {
   const setScope = useScopeStore((state) => state.setScope);
   const hydrateScope = useScopeStore((state) => state.hydrate);
   const resetScope = useScopeStore((state) => state.reset);
+  const canReadSelectedProject = permissions.can("project.read", {
+    type: "project",
+    tenantId: globalScope.tenantId,
+    projectId: globalScope.projectId,
+  });
+  const customApplicationsQuery = useCustomApplications(
+    globalScope.projectId,
+    canReadSelectedProject,
+  );
+  const customManifests = useMemo(
+    () => (customApplicationsQuery.data?.applications ?? []).map(createCustomApplicationManifest),
+    [customApplicationsQuery.data?.applications],
+  );
+  const manifests = useMemo(
+    () =>
+      new Map([...APP_MANIFESTS, ...customManifests].map((manifest) => [manifest.id, manifest])),
+    [customManifests],
+  );
 
   const [stacked, setStacked] = useState(
     () => typeof window !== "undefined" && isStackedViewport(window.innerWidth),
@@ -226,7 +252,48 @@ export function Desktop() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [cycleFocus]);
 
-  const handleOpenApp = useCallback((appId: string) => openWindow(appId), [openWindow]);
+  const handleOpenApp = useCallback(
+    (appId: string) => {
+      const manifest = manifests.get(appId);
+      openWindow(appId, {
+        title: manifest?.title,
+        defaultSize: manifest?.defaultSize,
+      });
+    },
+    [manifests, openWindow],
+  );
+
+  // A custom application belongs to the selected Project. Switching Project or
+  // deleting an entry closes its window so a hidden, stale frame cannot keep an
+  // old Project's external session mounted behind the new desktop.
+  useEffect(() => {
+    const available = new Set(customManifests.map((manifest) => manifest.id));
+    for (const instance of Object.values(windows)) {
+      const projectId = customApplicationProjectId(instance.appId);
+      if (
+        projectId &&
+        (projectId !== globalScope.projectId ||
+          !canReadSelectedProject ||
+          (customApplicationsQuery.data && !available.has(instance.appId)))
+      ) {
+        closeWindow(instance.id);
+        continue;
+      }
+      const manifest = manifests.get(instance.appId);
+      if (projectId && manifest && instance.title !== manifest.title) {
+        setWindowTitle(instance.id, manifest.title);
+      }
+    }
+  }, [
+    closeWindow,
+    canReadSelectedProject,
+    customApplicationsQuery.data,
+    customManifests,
+    globalScope.projectId,
+    manifests,
+    setWindowTitle,
+    windows,
+  ]);
 
   /*
    * Clicking bare desktop sweeps the windows aside; clicking it again brings
@@ -319,7 +386,7 @@ export function Desktop() {
         onClick={handleDesktopClick}
       >
         <div className="mx-auto max-w-3xl px-4 pt-[9vh] pb-10">
-          <IconGrid onOpen={handleOpenApp} />
+          <IconGrid onOpen={handleOpenApp} customManifests={customManifests} />
         </div>
       </div>
 
@@ -335,11 +402,12 @@ export function Desktop() {
             stackIndex={stackIndexById.get(instance.id) ?? 0}
             revealed={desktopRevealed}
             parked={instance.mode === "minimized" || (stacked && instance.id !== topStackedId)}
+            manifest={manifests.get(instance.appId)}
           />
         ))}
       </main>
 
-      <Dock visible={dockVisible} onToggleVisible={toggleDock} />
+      <Dock visible={dockVisible} onToggleVisible={toggleDock} manifests={manifests} />
     </div>
   );
 }

@@ -208,7 +208,7 @@ func (store *AuditStore) RecordProjectEvent(
 		strings.TrimSpace(input.Action) == "" ||
 		strings.TrimSpace(input.TargetType) == "" ||
 		strings.TrimSpace(input.RequestID) == "" ||
-		(input.Result != "failed" && input.Result != "denied") {
+		(input.Result != "succeeded" && input.Result != "failed" && input.Result != "denied") {
 		return errors.New("project audit event fields are invalid")
 	}
 

@@ -99,6 +99,7 @@ var allPermissions = []Permission{
 	PermissionProjectCreate,
 	PermissionProjectRead,
 	PermissionProjectManage,
+	PermissionApplicationManage,
 	PermissionClusterEnrollmentCreate,
 	PermissionClusterEnrollmentRead,
 	PermissionClusterEnrollmentRevoke,

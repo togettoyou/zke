@@ -27,6 +27,7 @@ import (
 	"github.com/togettoyou/zke/pkg/server/auth"
 	"github.com/togettoyou/zke/pkg/server/clusteroverview"
 	"github.com/togettoyou/zke/pkg/server/clusterterminal"
+	"github.com/togettoyou/zke/pkg/server/customapplications"
 	"github.com/togettoyou/zke/pkg/server/enrollment"
 	"github.com/togettoyou/zke/pkg/server/helm"
 	"github.com/togettoyou/zke/pkg/server/httpapi"
@@ -266,6 +267,12 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+	}
+	customApplicationService, err := customapplications.NewService(
+		store.NewCustomApplicationStore(database),
+	)
+	if err != nil {
+		return err
 	}
 	agentConnectionStore := store.NewAgentConnectionStore(database)
 	// A typed nil pointer in an interface is not nil, and the connection manager
@@ -604,6 +611,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			MetricsCollectorService:   metricsCollectorService,
 			MetricsQueryService:       metricsQueryService,
 			MetricsSavedQueryService:  metricsSavedQueryService,
+			CustomApplicationService:  customApplicationService,
 			KubernetesResourceService: kubernetesResourceService,
 			HelmService:               helmService,
 			PodLogsService:            podLogsService,

@@ -11,6 +11,7 @@ const (
 	PermissionProjectCreate                     Permission = permissionname.ProjectCreate
 	PermissionProjectRead                       Permission = permissionname.ProjectRead
 	PermissionProjectManage                     Permission = permissionname.ProjectManage
+	PermissionApplicationManage                 Permission = permissionname.ApplicationManage
 	PermissionClusterEnrollmentCreate           Permission = permissionname.ClusterEnrollmentCreate
 	PermissionClusterEnrollmentRead             Permission = permissionname.ClusterEnrollmentRead
 	PermissionClusterEnrollmentRevoke           Permission = permissionname.ClusterEnrollmentRevoke

@@ -122,6 +122,8 @@
   --app-aiops-to: #874067;
   --app-terminal-from: #5e636e;
   --app-terminal-to: #2d333e;
+  --app-custom-apps-from: #718ad0;
+  --app-custom-apps-to: #405996;
   /* Reserved for the planned log application, so its place on the ring is
      decided with the rest of the palette rather than picked in isolation on the
      day it ships. Nothing reads it yet — `accent.ts` has no key for it, because
@@ -151,6 +153,7 @@
   --app-settings-glow: rgb(119 86 0 / 0.42);
   --app-aiops-glow: rgb(135 64 103 / 0.42);
   --app-terminal-glow: rgb(45 51 62 / 0.42);
+  --app-custom-apps-glow: rgb(64 89 150 / 0.42);
   --app-logs-glow: rgb(94 97 0 / 0.42);
   --tile-highlight: rgb(255 255 255 / 0.9);
 
@@ -804,6 +807,14 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Cross-origin frames do not expose byte-level progress. This moving segment
+     reports the honest state — still loading — until the iframe load event
+     arrives, instead of inventing a percentage the browser cannot know. */
+  .zke-iframe-loading-bar {
+    animation: zke-iframe-loading 1.2s var(--ease-lift) infinite;
+    will-change: transform;
+  }
+
   /*
    * The single focus treatment for interactive controls: the border picks up the
    * accent and a 3px halo sits directly against it. No outline, no offset, so
@@ -1226,6 +1237,16 @@
 
   to {
     opacity: 1;
+  }
+}
+
+@keyframes zke-iframe-loading {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(400%);
   }
 }
 

@@ -9,6 +9,7 @@ ZKE Server 当前只支持单副本部署。
 - [x] 首个管理员引导、本地登录、Session、CSRF、账户与密码生命周期
 - [x] 固定权限词表、内置与自定义角色、Global/Tenant/Project RoleBinding 和提权防护
 - [x] Tenant、Project、Cluster 生命周期与权限定域审计
+- [x] Project 自定义应用：名称、说明、Logo、URL、统一桌面入口与独立的 `application.manage` 管理边界
 - [x] Cluster Enrollment、一次性 Token、安装 Manifest、撤销和重新接入
 - [x] Agent identity Secret、QUIC/mTLS、心跳、重连和客户端证书续期
 - [x] Managed Agent PKI、Cluster 状态 SSE、OpenAPI 3.1 与管理 Console

@@ -2,7 +2,8 @@ import { memo, useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 import { appFaceClass, appHoverClass } from "@/apps/accent";
-import { findAppManifest } from "@/apps/registry";
+import { AppGlyph } from "@/apps/AppGlyph";
+import type { AppManifest } from "@/apps/types";
 import { HintTooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 
@@ -23,9 +24,11 @@ import { useWindowStore, type WindowInstance } from "./window-store";
 export const Dock = memo(function Dock({
   visible,
   onToggleVisible,
+  manifests,
 }: {
   visible: boolean;
   onToggleVisible: () => void;
+  manifests: ReadonlyMap<string, AppManifest>;
 }) {
   const windows = useWindowStore((state) => state.windows);
   const order = useWindowStore((state) => state.order);
@@ -97,11 +100,10 @@ export const Dock = memo(function Dock({
           className="zke-dock zke-pointer-layer flex max-w-[calc(100vw-2rem)] items-center gap-1 overflow-x-auto rounded-[18px] border p-2"
         >
           {items.map((instance) => {
-            const manifest = findAppManifest(instance.appId);
+            const manifest = manifests.get(instance.appId);
             if (!manifest) {
               return null;
             }
-            const Icon = manifest.icon;
             const focused = instance.id === focusedId;
             const minimized = instance.mode === "minimized";
 
@@ -148,7 +150,7 @@ export const Dock = memo(function Dock({
                       minimized && "opacity-55",
                     )}
                   >
-                    <Icon className="size-5" strokeWidth={1.75} aria-hidden />
+                    <AppGlyph manifest={manifest} className="size-5" />
                   </span>
 
                   {/* Three states in one mark: put away, open, and the one being

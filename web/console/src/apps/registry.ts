@@ -3,6 +3,8 @@ import {
   Activity,
   Boxes,
   Layers,
+  LayoutGrid,
+  Globe2,
   Server,
   Settings,
   ShieldCheck,
@@ -13,6 +15,7 @@ import {
 } from "lucide-react";
 
 import type { AppManifest } from "./types";
+import type { CustomApplication } from "@/api/types";
 
 const ClusterAccessApp = lazy(async () => ({
   default: (await import("./cluster-access/ClusterAccessApp")).ClusterAccessApp,
@@ -44,6 +47,44 @@ const MonitoringApp = lazy(async () => ({
 const AIOpsApp = lazy(async () => ({
   default: (await import("./aiops/AIOpsApp")).AIOpsApp,
 }));
+const CustomApplicationsApp = lazy(async () => ({
+  default: (await import("./custom-applications/CustomApplicationsApp")).CustomApplicationsApp,
+}));
+const CustomApplicationFrame = lazy(async () => ({
+  default: (await import("./custom-applications/CustomApplicationFrame")).CustomApplicationFrame,
+}));
+
+const CUSTOM_APPLICATION_PREFIX = "custom-application:";
+
+export function customApplicationManifestId(projectId: string, applicationId: string): string {
+  return `${CUSTOM_APPLICATION_PREFIX}${projectId}:${applicationId}`;
+}
+
+export function isCustomApplicationManifestId(appId: string): boolean {
+  return appId.startsWith(CUSTOM_APPLICATION_PREFIX);
+}
+
+export function customApplicationProjectId(appId: string): string | null {
+  if (!isCustomApplicationManifestId(appId)) {
+    return null;
+  }
+  return appId.slice(CUSTOM_APPLICATION_PREFIX.length).split(":", 1)[0] ?? null;
+}
+
+export function createCustomApplicationManifest(application: CustomApplication): AppManifest {
+  return {
+    id: customApplicationManifestId(application.project_id, application.id),
+    title: application.name,
+    description: application.description || application.url,
+    icon: Globe2,
+    accent: "custom-apps",
+    requiredPermissions: ["project.read"],
+    availability: { state: "available" },
+    defaultSize: { width: 1_060, height: 720 },
+    entry: CustomApplicationFrame,
+    customApplication: application,
+  };
+}
 
 /**
  * Desktop application catalogue.
@@ -77,6 +118,17 @@ export const APP_MANIFESTS: AppManifest[] = [
     availability: { state: "available" },
     defaultSize: { width: 900, height: 600 },
     entry: ResourcesApp,
+  },
+  {
+    id: "custom-applications",
+    title: "应用中心",
+    description: "查看和管理当前项目的自定义应用入口",
+    icon: LayoutGrid,
+    accent: "custom-apps",
+    requiredPermissions: ["project.read"],
+    availability: { state: "available" },
+    defaultSize: { width: 920, height: 640 },
+    entry: CustomApplicationsApp,
   },
   {
     id: "access-audit",

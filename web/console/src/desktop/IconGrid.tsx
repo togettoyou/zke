@@ -1,6 +1,7 @@
 import { memo } from "react";
 
 import { appFaceClass, appHoverClass } from "@/apps/accent";
+import { AppGlyph } from "@/apps/AppGlyph";
 import { APP_MANIFESTS } from "@/apps/registry";
 import type { AppManifest } from "@/apps/types";
 import { useSessionContext } from "@/auth/session-context";
@@ -40,7 +41,13 @@ import { cn } from "@/lib/cn";
  * Memoized for the same reason the windows are: the Cluster event stream lands
  * on the Desktop above, and the launcher has nothing to do with it.
  */
-export const IconGrid = memo(function IconGrid({ onOpen }: { onOpen: (appId: string) => void }) {
+export const IconGrid = memo(function IconGrid({
+  onOpen,
+  customManifests,
+}: {
+  onOpen: (appId: string) => void;
+  customManifests: AppManifest[];
+}) {
   const { session, permissions } = useSessionContext();
 
   const visible = APP_MANIFESTS.filter((manifest) => {
@@ -54,7 +61,7 @@ export const IconGrid = memo(function IconGrid({ onOpen }: { onOpen: (appId: str
       return true;
     }
     return manifest.requiredPermissions.some((permission) => permissions.canAnywhere(permission));
-  });
+  }).concat(customManifests);
 
   return (
     <ul
@@ -71,7 +78,6 @@ export const IconGrid = memo(function IconGrid({ onOpen }: { onOpen: (appId: str
 });
 
 function AppIcon({ manifest, onOpen }: { manifest: AppManifest; onOpen: () => void }) {
-  const Icon = manifest.icon;
   const planned = manifest.availability.state === "planned";
 
   return (
@@ -89,7 +95,10 @@ function AppIcon({ manifest, onOpen }: { manifest: AppManifest; onOpen: () => vo
           !planned && "zke-tile",
         )}
       >
-        <Icon className="size-7" strokeWidth={1.75} aria-hidden />
+        <AppGlyph
+          manifest={manifest}
+          className={manifest.customApplication ? "size-10" : "size-7"}
+        />
       </span>
 
       <span className="flex w-full min-w-0 flex-col items-center gap-0.5">

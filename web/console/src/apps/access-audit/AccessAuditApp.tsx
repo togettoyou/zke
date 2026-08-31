@@ -160,6 +160,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   "project.create": "创建项目",
   "project.read": "查看项目",
   "project.manage": "管理项目",
+  "application.manage": "管理应用",
   "cluster.enrollment.create": "创建集群注册凭证",
   "cluster.enrollment.read": "查看集群注册凭证",
   "cluster.enrollment.revoke": "吊销集群注册凭证",
@@ -211,6 +212,7 @@ function permissionLabel(name: string): string {
  * operator is least likely to reconstruct from the name alone.
  */
 const PERMISSION_WARNINGS: Record<string, string> = {
+  "application.manage": "可配置会在项目成员浏览器中加载或打开的外部地址",
   "cluster.secret.read": "可读取 Secret 明文取值",
   "cluster.secret.manage": "可修改和删除 Secret",
   "cluster.pod.exec": "可进入容器终端",

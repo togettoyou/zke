@@ -22,6 +22,7 @@ export const queryKeys = {
   projects: (tenantId: string, params: ProjectListParams = {}) =>
     ["projects", tenantId, params] as const,
   project: (projectId: string) => ["project", projectId] as const,
+  customApplications: (projectId: string) => ["custom-applications", projectId] as const,
 
   clusters: (projectId: string, params: ClusterListParams = {}) =>
     ["clusters", projectId, params] as const,
@@ -227,6 +228,7 @@ export const queryKeyPrefixes = {
   metricsQuery: ["metrics-query"] as const,
   tenants: ["tenants"] as const,
   projects: ["projects"] as const,
+  customApplications: ["custom-applications"] as const,
   clusters: ["clusters"] as const,
   nodes: ["nodes"] as const,
   node: ["node"] as const,

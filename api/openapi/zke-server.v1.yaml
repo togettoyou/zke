@@ -1414,6 +1414,166 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/projects/{project_id}/custom-applications:
+    get:
+      tags: [Resources]
+      operationId: listCustomApplications
+      description: |
+        列出该 Project 配置的自定义桌面应用。要求 `project.read`；列表对 Project
+        内所有拥有该权限的用户一致。Server 只返回元数据，不会请求应用或 Logo URL。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: 自定义应用列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CustomApplicationList"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Resources]
+      operationId: createCustomApplication
+      description: |
+        为 Project 创建自定义桌面应用。要求 `application.manage`。应用与 Logo URL 只允许
+        无用户凭证的绝对 HTTP(S) 地址；Server 保存但不访问它们。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/CSRFToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomApplicationRequest"
+      responses:
+        "201":
+          description: 已创建或幂等恢复
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CustomApplication"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/projects/{project_id}/custom-applications/{application_id}:
+    get:
+      tags: [Resources]
+      operationId: getCustomApplication
+      description: 读取该 Project 的一个自定义应用。要求 `project.read`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/CustomApplicationID"
+      responses:
+        "200":
+          description: 自定义应用
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CustomApplication"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Resources]
+      operationId: updateCustomApplication
+      description: 整体替换一个自定义应用的展示信息与目标地址。要求 `application.manage`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/CustomApplicationID"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomApplicationRequest"
+      responses:
+        "200":
+          description: 已更新
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CustomApplication"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Resources]
+      operationId: deleteCustomApplication
+      description: 删除 ZKE 中的自定义应用入口，不访问或修改目标系统。要求 `application.manage`。
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/CustomApplicationID"
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: 已删除
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/projects/{project_id}/metrics/saved-queries:
     get:
       tags: [Resources]
@@ -9187,6 +9347,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/UUID"
+    CustomApplicationID:
+      name: application_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/UUID"
     MetricsSavedQueryID:
       name: saved_query_id
       in: path
@@ -10053,6 +10219,7 @@ components:
               - project.create
               - project.read
               - project.manage
+              - application.manage
               - cluster.enrollment.create
               - cluster.enrollment.read
               - cluster.enrollment.revoke
@@ -15923,6 +16090,71 @@ components:
           description: |
             `private` 只有作者可见；`project` 对该 Project 内所有可读指标的人可见，
             写入需要 `cluster.metrics.manage`。
+    CustomApplication:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - project_id
+        - name
+        - description
+        - url
+        - logo_url
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        project_id:
+          $ref: "#/components/schemas/UUID"
+        name:
+          type: string
+        description:
+          type: string
+        url:
+          type: string
+          format: uri
+        logo_url:
+          type: string
+          description: 为空时 Console 使用统一的回退图标。
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CustomApplicationList:
+      type: object
+      additionalProperties: false
+      required: [applications, limit]
+      properties:
+        applications:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomApplication"
+        limit:
+          type: integer
+          description: 单个 Project 可配置的自定义应用总数上限。
+    CustomApplicationRequest:
+      type: object
+      additionalProperties: false
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        description:
+          type: string
+          maxLength: 500
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+        logo_url:
+          type: string
+          maxLength: 2048
+          description: 可选的绝对 HTTP(S) Logo 地址；Server 不主动请求该地址。
     MetricsCollectorState:
       type: object
       additionalProperties: false
@@ -18524,6 +18756,7 @@ components:
         - agent_endpoint_profile
         - helm_repository
         - metrics_saved_query
+        - custom_application
         - ai_session
     AuditEventPage:
       type: object

@@ -31,6 +31,7 @@ ZKE 是 AI 原生的 Kubernetes 云操作环境：Server + Agent 连接各处集
 - [集群接入管理](features/agent-management.md)
 - [容器服务](features/container-service.md)
 - [Helm 应用](features/helm.md)
+- [自定义应用](features/custom-applications.md)
 - [终端](features/terminal.md)
 - [平台配置](features/platform-settings.md)
 - [可观测性平台](features/observability.md)

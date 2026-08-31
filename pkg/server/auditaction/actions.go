@@ -103,6 +103,9 @@ const (
 	MetricsSavedQueryCreate = "metrics_saved_query.create"
 	MetricsSavedQueryUpdate = "metrics_saved_query.update"
 	MetricsSavedQueryDelete = "metrics_saved_query.delete"
+	CustomApplicationCreate = "custom_application.create"
+	CustomApplicationUpdate = "custom_application.update"
+	CustomApplicationDelete = "custom_application.delete"
 
 	// AIOps reads a Cluster on an operator behalf, through a model that chose
 	// what to read. Those reads are audited exactly like the ones an operator
@@ -227,6 +230,7 @@ const (
 	DeniedTenantManage                      = permissionname.TenantManage
 	DeniedProjectRead                       = permissionname.ProjectRead
 	DeniedProjectManage                     = permissionname.ProjectManage
+	DeniedApplicationManage                 = permissionname.ApplicationManage
 	DeniedClusterEnrollmentRead             = permissionname.ClusterEnrollmentRead
 	DeniedClusterRead                       = permissionname.ClusterRead
 	DeniedClusterPodLogsRead                = permissionname.ClusterPodLogsRead
@@ -312,6 +316,7 @@ const (
 	TargetAgentEndpointProfile = "agent_endpoint_profile"
 	TargetHelmRepository       = "helm_repository"
 	TargetMetricsSavedQuery    = "metrics_saved_query"
+	TargetCustomApplication    = "custom_application"
 	TargetAISession            = "ai_session"
 )
 
@@ -332,6 +337,7 @@ var targetTypes = []string{
 	TargetAgentEndpointProfile,
 	TargetHelmRepository,
 	TargetMetricsSavedQuery,
+	TargetCustomApplication,
 	TargetAISession,
 }
 
@@ -391,6 +397,9 @@ var actions = []Action{
 	{MetricsSavedQueryCreate, GroupProject},
 	{MetricsSavedQueryUpdate, GroupProject},
 	{MetricsSavedQueryDelete, GroupProject},
+	{CustomApplicationCreate, GroupProject},
+	{CustomApplicationUpdate, GroupProject},
+	{CustomApplicationDelete, GroupProject},
 
 	{PlatformSettingsUpdate, GroupPlatform},
 	{AIModelSettingsUpdate, GroupPlatform},
@@ -461,6 +470,7 @@ var actions = []Action{
 	{DeniedTenantManage, GroupDenied},
 	{DeniedProjectRead, GroupDenied},
 	{DeniedProjectManage, GroupDenied},
+	{DeniedApplicationManage, GroupDenied},
 	{DeniedClusterRead, GroupDenied},
 	{DeniedClusterPodLogsRead, GroupDenied},
 	{DeniedClusterPodExec, GroupDenied},

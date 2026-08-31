@@ -13,6 +13,8 @@ const (
 	ProjectRead   = "project.read"
 	ProjectManage = "project.manage"
 
+	ApplicationManage = "application.manage"
+
 	ClusterEnrollmentCreate = "cluster.enrollment.create"
 	ClusterEnrollmentRead   = "cluster.enrollment.read"
 	ClusterEnrollmentRevoke = "cluster.enrollment.revoke"
