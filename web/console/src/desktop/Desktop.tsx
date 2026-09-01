@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useClusterEvents } from "@/api/events";
 import { useCustomApplications } from "@/api/queries/custom-applications";
+import { projectListQueryOptions, tenantListQueryOptions } from "@/api/queries/resources";
 import { stashEvidenceTarget } from "@/apps/evidence-link";
 import {
   APP_MANIFESTS,
@@ -30,6 +32,7 @@ const PERSIST_DEBOUNCE_MS = 400;
  * make multi-window work practical.
  */
 export function Desktop() {
+  const queryClient = useQueryClient();
   const { session, permissions } = useSessionContext();
   const userId = session?.user.id ?? null;
   // The Server refuses the event stream to a caller who can observe no Cluster
@@ -175,6 +178,11 @@ export function Desktop() {
     if (stored) {
       hydrateScope(stored.scope);
       hydrate(stored.desktop);
+    } else {
+      // The scope store outlives the authenticated desktop. Without resetting
+      // it, a second user in the same browser session could inherit the first
+      // user's Project before their own saved state is considered.
+      resetScope();
     }
 
     const params = new URLSearchParams(window.location.search);
@@ -207,6 +215,44 @@ export function Desktop() {
       }
     }
 
+    const restoredProjectId = tenantId && projectId ? projectId : stored?.scope.projectId;
+    let cancelled = false;
+    if (!restoredProjectId) {
+      void (async () => {
+        try {
+          const tenants = await queryClient.fetchQuery(
+            tenantListQueryOptions({ limit: 1, offset: 0, status: "active" }),
+          );
+          const tenant = tenants.tenants[0];
+          if (!tenant || cancelled) {
+            return;
+          }
+          const projects = await queryClient.fetchQuery(
+            projectListQueryOptions(tenant.id, {
+              limit: 1,
+              offset: 0,
+              status: "active",
+            }),
+          );
+          const project = projects.projects[0];
+          // The operator may choose a Project while these requests are in
+          // flight. Their explicit choice must win over the login default.
+          if (cancelled || !project || useScopeStore.getState().scope.projectId) {
+            return;
+          }
+          setScope({
+            tenantId: tenant.id,
+            tenantName: tenant.name,
+            projectId: project.id,
+            projectName: project.name,
+          });
+        } catch {
+          // The desktop and its picker remain usable when default resolution
+          // fails; normal query error handling will apply when the picker opens.
+        }
+      })();
+    }
+
     if (appId) {
       try {
         openWindow(appId);
@@ -217,7 +263,13 @@ export function Desktop() {
     if (appId || (tenantId && projectId)) {
       window.history.replaceState(null, "", window.location.pathname);
     }
-  }, [hydrate, hydrateScope, openWindow, setScope, userId]);
+    return () => {
+      cancelled = true;
+      if (hydratedFor.current === userId) {
+        hydratedFor.current = null;
+      }
+    };
+  }, [hydrate, hydrateScope, openWindow, queryClient, resetScope, setScope, userId]);
 
   // Debounced layout persistence.
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, csrfHeaders, idempotentHeaders, unwrap } from "../client";
 import { queryKeys, queryKeyPrefixes } from "../query-keys";
@@ -9,11 +9,17 @@ export type ProjectListResult = { projects: Project[]; pagination: Pagination };
 
 type ResourceListParams = ListParams & { status?: ResourceStatus };
 
-export function useTenants(params: ResourceListParams = {}, enabled = true) {
-  return useQuery({
+export function tenantListQueryOptions(params: ResourceListParams = {}) {
+  return queryOptions({
     queryKey: queryKeys.tenants(params),
     queryFn: async ({ signal }) =>
       unwrap(await api.GET("/api/v1/tenants", { params: { query: params }, signal })),
+  });
+}
+
+export function useTenants(params: ResourceListParams = {}, enabled = true) {
+  return useQuery({
+    ...tenantListQueryOptions(params),
     enabled,
     placeholderData: (previous) => previous,
   });
@@ -91,16 +97,22 @@ export function useDeleteTenant() {
   });
 }
 
-export function useProjects(tenantId: string | null, params: ResourceListParams = {}) {
-  return useQuery({
-    queryKey: queryKeys.projects(tenantId ?? "", params),
+export function projectListQueryOptions(tenantId: string, params: ResourceListParams = {}) {
+  return queryOptions({
+    queryKey: queryKeys.projects(tenantId, params),
     queryFn: async ({ signal }) =>
       unwrap(
         await api.GET("/api/v1/tenants/{tenant_id}/projects", {
-          params: { path: { tenant_id: tenantId as string }, query: params },
+          params: { path: { tenant_id: tenantId }, query: params },
           signal,
         }),
       ),
+  });
+}
+
+export function useProjects(tenantId: string | null, params: ResourceListParams = {}) {
+  return useQuery({
+    ...projectListQueryOptions(tenantId ?? "", params),
     enabled: Boolean(tenantId),
     placeholderData: (previous) => previous,
   });
