@@ -68,7 +68,7 @@ export function appFaceClass(manifest: AppManifest): string {
     return "border-border bg-surface-muted/60 text-subtle-foreground border";
   }
   if (manifest.customApplication?.logo_url) {
-    return "border-border bg-surface border";
+    return "border-app-logo-border bg-app-logo-surface border";
   }
   return cn("text-white", ACCENT_FILL[manifest.accent ?? "cluster-access"]);
 }
@@ -91,6 +91,8 @@ export function appHoverClass(manifest: AppManifest): string {
     "group-hover:scale-[1.07] group-active:scale-[0.98]",
     manifest.availability.state === "planned"
       ? null
-      : ACCENT_GLOW[manifest.accent ?? "cluster-access"],
+      : manifest.customApplication?.logo_url
+        ? "group-hover:drop-shadow-[0_9px_16px_var(--app-logo-glow)]"
+        : ACCENT_GLOW[manifest.accent ?? "cluster-access"],
   );
 }

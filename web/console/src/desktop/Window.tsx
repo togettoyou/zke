@@ -1,5 +1,5 @@
 import { memo, Suspense, useCallback, useMemo } from "react";
-import { Maximize2, Minus, Minimize2, X } from "lucide-react";
+import { ExternalLink, Maximize2, Minus, Minimize2, X } from "lucide-react";
 
 import { AppGlyph } from "@/apps/AppGlyph";
 import type { AppManifest } from "@/apps/types";
@@ -246,14 +246,31 @@ export const Window = memo(function Window({
               focused ? "text-primary" : "text-subtle-foreground",
             )}
           />
-          <h2 id={titleId} className="text-foreground shrink-0 text-[13px] font-medium">
+          <h2
+            id={titleId}
+            className="text-foreground min-w-0 flex-1 truncate text-[13px] font-medium"
+          >
             {instance.title}
           </h2>
 
           <div
-            className="ml-auto flex shrink-0 items-center gap-0.5"
+            className="flex shrink-0 items-center gap-0.5"
             onPointerDown={(event) => event.stopPropagation()}
           >
+            {manifest.customApplication ? (
+              <Button
+                asChild
+                size="icon-sm"
+                variant="ghost"
+                className="text-subtle-foreground"
+                aria-label={`在新标签页打开 ${manifest.title}`}
+                title="新标签页打开"
+              >
+                <a href={manifest.customApplication.url} target="_blank" rel="noreferrer">
+                  <ExternalLink />
+                </a>
+              </Button>
+            ) : null}
             {/* Frame controls sit back until they are wanted: at rest they are
                 the faintest ink in the bar, and hover is what brings them up. */}
             <Button

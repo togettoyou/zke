@@ -10,6 +10,7 @@ import {
 } from "@/api/queries/custom-applications";
 import type { CustomApplication, CustomApplicationRequest } from "@/api/types";
 import { AppGlyph } from "@/apps/AppGlyph";
+import { appFaceClass } from "@/apps/accent";
 import {
   AppShell,
   PageHeader,
@@ -27,6 +28,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { FieldError, FieldHint, Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/misc";
 import { useSessionContext } from "@/auth/session-context";
+import { cn } from "@/lib/cn";
 import { useSubmissionKey } from "@/lib/use-submission-key";
 import { useScopeStore } from "@/scope/scope-store";
 
@@ -124,7 +126,13 @@ export function CustomApplicationsApp({ openApp }: AppComponentProps) {
                 return (
                   <Card key={application.id} className="flex min-w-0 flex-col gap-3">
                     <div className="flex min-w-0 items-start gap-3">
-                      <span className="border-border bg-surface-muted grid size-12 shrink-0 place-items-center rounded-[15px] border">
+                      <span
+                        className={cn(
+                          "grid size-12 shrink-0 place-items-center rounded-[15px]",
+                          appFaceClass(appManifest),
+                          "zke-tile",
+                        )}
+                      >
                         <AppGlyph manifest={appManifest} className="size-8" />
                       </span>
                       <div className="min-w-0 flex-1">
@@ -351,7 +359,15 @@ function ApplicationEditor({
             </Field>
           </div>
           <Card className="flex min-h-44 flex-col items-center justify-center gap-3 text-center">
-            <AppGlyph manifest={createCustomApplicationManifest(preview)} className="size-16" />
+            <span
+              className={cn(
+                "grid size-20 place-items-center rounded-[25px]",
+                appFaceClass(createCustomApplicationManifest(preview)),
+                "zke-tile",
+              )}
+            >
+              <AppGlyph manifest={createCustomApplicationManifest(preview)} className="size-12" />
+            </span>
             <p className="text-foreground max-w-full truncate text-[13px] font-medium">
               {name.trim() || "应用预览"}
             </p>

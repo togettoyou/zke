@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { ExternalLink, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 
 import type { AppComponentProps } from "@/apps/types";
 import { Alert } from "@/components/ui/misc";
-import { Button } from "@/components/ui/button";
 
 export function CustomApplicationFrame({ manifest }: AppComponentProps) {
   const application = manifest.customApplication;
@@ -18,19 +17,6 @@ export function CustomApplicationFrame({ manifest }: AppComponentProps) {
 
   return (
     <div className="bg-surface flex h-full min-h-0 flex-col">
-      <div className="border-border bg-surface-muted/30 flex shrink-0 flex-wrap items-center gap-3 border-b px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <p className="text-foreground truncate text-[13px] font-medium">{application.name}</p>
-          <p className="text-subtle-foreground truncate text-xs">{target.host}</p>
-        </div>
-        <Button asChild size="sm" variant="secondary">
-          <a href={application.url} target="_blank" rel="noreferrer">
-            <ExternalLink aria-hidden />
-            新标签页打开
-          </a>
-        </Button>
-      </div>
-
       {loading ? (
         <div
           className="bg-surface-muted relative h-0.5 shrink-0 overflow-hidden"
@@ -68,9 +54,6 @@ export function CustomApplicationFrame({ manifest }: AppComponentProps) {
             sandbox="allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
             onLoad={() => setLoadedURL(application.url)}
           />
-          <p className="border-border text-subtle-foreground shrink-0 border-t px-3 py-1.5 text-xs">
-            若目标站点禁止嵌入而显示空白，请在新标签页中打开。
-          </p>
         </>
       )}
     </div>

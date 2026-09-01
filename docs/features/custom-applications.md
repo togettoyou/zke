@@ -48,7 +48,7 @@ DELETE /api/v1/projects/{project_id}/custom-applications/{application_id}
 Server 只保存元数据，不主动访问应用 URL 或外链 Logo URL，因此这些字段不会成为 Server 侧 SSRF 入口。外链 Logo 由浏览器直接
 加载，并使用 `no-referrer`；Base64 Data URL 会随应用元数据保存，Server 只校验其格式和大小。
 
-应用默认在统一的 ZKE 窗口内通过受限 iframe 打开，同时始终提供“新标签页打开”：
+应用默认在统一的 ZKE 窗口内通过受限 iframe 打开，同时在窗口标题栏始终提供“新标签页打开”快捷按钮：
 
 - iframe 不允许顶层导航；
 - iframe 使用兼容嵌入模式，授予 `same-origin` 与脚本能力，使 Harbor 等使用 ES Module、Cookie 或浏览器存储的应用能够正常运行；

@@ -155,6 +155,12 @@
   --app-terminal-glow: rgb(45 51 62 / 0.42);
   --app-custom-apps-glow: rgb(64 89 150 / 0.42);
   --app-logs-glow: rgb(94 97 0 / 0.42);
+  /* Custom logos bring their own palette and often depend on a white canvas.
+     Keep that canvas stable across themes so transparent dark marks remain
+     legible and the logo's silhouette does not change at night. */
+  --app-logo-surface: #ffffff;
+  --app-logo-border: rgb(24 33 56 / 0.12);
+  --app-logo-glow: rgb(24 33 56 / 0.2);
   --tile-highlight: rgb(255 255 255 / 0.9);
 
   /* Ink for the sign-in dot field. The desktop deliberately does not share it:
@@ -424,6 +430,8 @@
   --desktop-vignette: rgb(0 0 0 / 0.26);
   --desktop-ring: rgb(226 234 250 / 0.055);
   --desktop-ray: rgb(226 234 250 / 0.032);
+  --app-logo-border: rgb(226 234 250 / 0.2);
+  --app-logo-glow: rgb(0 0 0 / 0.38);
   --tile-highlight: rgb(255 255 255 / 0.08);
 
   --surface-dot: rgb(226 234 250 / 0.1);
@@ -553,6 +561,8 @@
   --color-surface-muted: var(--surface-muted);
   --color-surface-raised: var(--surface-raised);
   --color-surface-overlay: var(--surface-overlay);
+  --color-app-logo-surface: var(--app-logo-surface);
+  --color-app-logo-border: var(--app-logo-border);
 
   --color-foreground: var(--foreground);
   --color-muted-foreground: var(--muted-foreground);
