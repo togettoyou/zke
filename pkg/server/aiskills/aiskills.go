@@ -194,7 +194,7 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
 需要回答「是不是资源不够」「哪个 Namespace/工作负载吃掉了资源」「这次异常前后用量有没有变化」。
 
 ## 取证顺序
-1. list_metric_queries 先看目录。目录同时说明每个查询支持哪些参数（namespace、top、回看窗口）。
+1. list_metric_queries 先按问题关键词搜索目录；需要浏览时按返回的 offset 翻页。目录同时说明每个查询支持哪些参数（namespace、top、回看窗口）。
    优先调用目录查询；只有目录无法回答问题时才用 query_custom_metrics 书写 MetricsQL 表达式。
    自定义表达式不需要也不应组装 Cluster ID，Server 会把会话 Cluster 强制注入每个选择器。
 2. 从宽到窄：先查集群或节点维度确认是否存在整体压力，再用 top 参数查 Namespace 或 Pod 维度定位来源。
@@ -227,7 +227,8 @@ WaitForFirstConsumer 造成的 Pending 要说明它是预期行为，并转去�
 用户想让自己工作负载暴露的指标（业务指标、中间件 exporter、Sidecar exporter）进入 ZKE 的图表与
 query_custom_metrics，或者已经加了注解却查不到数据。
 
-内置的 kubelet、kube-state-metrics 与 node-exporter 只回答集群自身的问题，不会抓业务端点。
+内置采集会读取 kubelet、kube-state-metrics、node-exporter，并自动发现标准控制面、CoreDNS、kube-proxy 与
+已有 DCGM Exporter；除此之外的业务指标端点仍需用下面的注解显式接入。
 
 ## 前提
 接入不需要重装采集组件，但集群必须已经安装采集组件，且这次安装带有注解发现。
@@ -281,7 +282,7 @@ Kubernetes 的 mirroring controller 复制到它的 EndpointSlice 上。但你�
 抓取后每个目标带上这几个标签：job 是 <namespace>/<服务名>，另外还有 namespace 与 service。
 EndpointSlice 的名字带控制器生成的后缀、会随重建变化，因此刻意没有做成标签，不要用它来筛选序列。
 
-1. list_metric_queries 找到 collection_target_health（采集目标健康度，按 job 维度），
+1. list_metric_queries 搜索 collection_target_health（采集目标健康度，按 job 维度），
    query_metrics 调用它并放大 minutes 覆盖加注解之后的时间。值为 1 表示抓取成功，0 表示目标存在但抓不通。
 2. 目标压根没出现在 job 列表里，说明注解没有生效。按这个顺序排除：注解值写错（看不懂的值会丢弃整个目标）、
    EndpointSlice 没有 ready 的端点、没有带 kubernetes.io/service-name 标签指回该 Service 的 EndpointSlice，

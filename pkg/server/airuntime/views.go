@@ -135,6 +135,15 @@ func (runtime *Runtime) openConsoleView(
 	if err != nil {
 		return ToolResult{}, err
 	}
+	if target.Kind == aisession.EvidenceMetric && target.Query != "" {
+		validator, available := runtime.tools.(MetricViewValidator)
+		if !available || !validator.HasMetricQuery(target.Query) {
+			return ToolResult{}, fmt.Errorf(
+				"%w: 指标查询 %q 不在当前目录中，请先用 list_metric_queries 搜索确认",
+				ErrInvalidInput, target.Query,
+			)
+		}
+	}
 	target.Cluster = job.clusterID
 	reason := strings.TrimSpace(request.Reason)
 	if reason == "" {

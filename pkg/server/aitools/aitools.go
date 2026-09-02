@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -274,6 +275,22 @@ func New(dependencies Dependencies, config Config) *Catalogue {
 
 func (catalogue *Catalogue) Specs() []airuntime.ToolSpec { return catalogue.specs }
 
+// HasMetricQuery backs the runtime's open_console_view validation. It checks
+// the same live catalogue query_metrics uses, so a renamed or unavailable
+// panel cannot become a durable desktop intent that opens onto nothing.
+func (catalogue *Catalogue) HasMetricQuery(name string) bool {
+	if catalogue.dependencies.Metrics == nil {
+		return false
+	}
+	name = strings.TrimSpace(name)
+	for _, definition := range catalogue.dependencies.Metrics.Catalog() {
+		if definition.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (catalogue *Catalogue) Invoke(
 	ctx context.Context, invocation airuntime.ToolInvocation,
 ) (airuntime.ToolResult, error) {
@@ -517,9 +534,14 @@ func (catalogue *Catalogue) build() []airuntime.ToolSpec {
 		specs = append(specs,
 			airuntime.ToolSpec{
 				Name: toolListMetricQueries,
-				Description: "列出预置指标查询目录。优先用目录中成本已知的查询；" +
+				Description: "分页列出或搜索预置指标查询目录。优先用目录中成本已知的查询；" +
+					"按问题关键词（例如控制面、CoreDNS、工作负载网络、GPU）搜索，或者按返回的 next offset 翻页。" +
 					"需要自定义 MetricsQL 时改用 query_custom_metrics。先用它确认查询名与支持的参数。",
-				Schema:      objectSchema(nil, nil),
+				Schema: objectSchema(map[string]any{
+					"search": stringProperty("按查询名、中文标题、单位、依赖或参数标记筛选；可省略。"),
+					"offset": nonNegativeIntegerProperty("分页偏移，默认 0；使用上一页提示的 offset 继续。"),
+					"limit":  integerProperty("每页数量，默认 40，最大 50。"),
+				}, nil),
 				Permissions: []rbac.Permission{rbac.PermissionClusterMetricsRead},
 			},
 			airuntime.ToolSpec{

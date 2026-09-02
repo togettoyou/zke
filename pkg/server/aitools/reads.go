@@ -360,24 +360,88 @@ func soleContainer(pod *unstructured.Unstructured) (string, error) {
 // MetricsCatalogueLegend heads the query listing and explains its columns.
 //
 // The listing is a table rather than the indented JSON every other read tool
-// returns, and the reason is the size cap those tools share: one object per
-// query, with nine keys spelled out, is four times what a tool result may carry
-// — and a pruned answer would silently drop the middle of the catalogue. Every
-// other tool can be re-read against a narrower selector; this one cannot, so it
-// has to fit whole. `metricsCatalogueFitsOneResult` holds it to that.
+// returns. It is paged and searchable: the catalogue is deliberately broad,
+// and silently pruning its middle would make those queries undiscoverable.
 const MetricsCatalogueLegend = "指标查询目录。每行：查询名 | 标题 | 单位 | 标记。\n" +
 	"标记：ns 可按 Namespace 收窄；ns! 必须给 Namespace；top 可给 Top N；top! 必须给 Top N；" +
 	"instant 只返回当前值而不是曲线；ksm 需要集群已安装 kube-state-metrics；" +
 	"node 需要已安装 node-exporter。没有标记表示都不需要。"
 
+const (
+	defaultMetricsCataloguePage = 40
+	maxMetricsCataloguePage     = 50
+)
+
+type listMetricQueriesArguments struct {
+	Search string `json:"search"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+}
+
 func (catalogue *Catalogue) listMetricQueries(
 	ctx context.Context, invocation airuntime.ToolInvocation,
 ) (airuntime.ToolResult, error) {
 	_ = ctx
-	_ = invocation
+	var arguments listMetricQueriesArguments
+	if err := decode(invocation.Arguments, &arguments); err != nil {
+		return airuntime.ToolResult{}, err
+	}
+	if arguments.Offset < 0 {
+		return airuntime.ToolResult{}, fmt.Errorf(
+			"%w: offset 不能小于 0", airuntime.ErrInvalidInput,
+		)
+	}
+	definitions := filterMetricQueries(
+		catalogue.dependencies.Metrics.Catalog(), arguments.Search,
+	)
+	limit := bound(arguments.Limit, defaultMetricsCataloguePage, maxMetricsCataloguePage)
+	start := min(arguments.Offset, len(definitions))
+	end := min(start+limit, len(definitions))
+	header := fmt.Sprintf("匹配 %d 条查询；本页返回 %d-%d。", len(definitions), start, end)
+	if end < len(definitions) {
+		header += fmt.Sprintf(" 继续调用时设置 offset=%d。", end)
+	}
 	return airuntime.ToolResult{
-		Text: catalogue.prune(MetricsCatalogueListing(catalogue.dependencies.Metrics.Catalog())),
+		Text: catalogue.prune(header + "\n" + MetricsCatalogueListing(definitions[start:end])),
 	}, nil
+}
+
+func filterMetricQueries(definitions []metricsquery.Definition, search string) []metricsquery.Definition {
+	search = strings.ToLower(strings.TrimSpace(search))
+	if search == "" {
+		return definitions
+	}
+	filtered := make([]metricsquery.Definition, 0, len(definitions))
+	for _, definition := range definitions {
+		haystack := strings.ToLower(strings.Join([]string{
+			definition.Name,
+			definition.Title,
+			metricQuerySearchAliases(definition.Name),
+			string(definition.Unit),
+			definition.RequiresComponent,
+			metricQueryFlags(definition),
+		}, " "))
+		if strings.Contains(haystack, search) {
+			filtered = append(filtered, definition)
+		}
+	}
+	return filtered
+}
+
+func metricQuerySearchAliases(name string) string {
+	switch {
+	case strings.HasPrefix(name, "control_plane_"), strings.HasPrefix(name, "apiserver_"),
+		strings.HasPrefix(name, "scheduler_"), strings.HasPrefix(name, "kubelet_"):
+		return "控制面 核心组件"
+	case strings.HasPrefix(name, "coredns_"):
+		return "CoreDNS DNS 网络"
+	case strings.HasPrefix(name, "workload_network_"):
+		return "工作负载网络 应用网络"
+	case strings.HasPrefix(name, "gpu_"):
+		return "GPU 显卡 加速器"
+	default:
+		return ""
+	}
 }
 
 // MetricsCatalogueListing renders the catalogue as one line per query.

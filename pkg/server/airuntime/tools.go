@@ -127,6 +127,13 @@ type ToolSet interface {
 	Invoke(context.Context, ToolInvocation) (ToolResult, error)
 }
 
+// MetricViewValidator lets the built-in desktop navigation tool verify that a
+// named metrics panel exists before it interrupts the operator with a window.
+// The Kubernetes tool catalogue implements it when metrics are composed.
+type MetricViewValidator interface {
+	HasMetricQuery(string) bool
+}
+
 // TurnScopedToolSet owns resources that may be reused by multiple calls in one
 // AIOps turn. The runtime calls CloseTurn exactly once when that turn ends,
 // including cancellation and failure paths. Implementations must make cleanup

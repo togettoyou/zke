@@ -1,36 +1,37 @@
 package aitools
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/togettoyou/zke/pkg/server/airuntime"
 	"github.com/togettoyou/zke/pkg/server/metricsquery"
 )
 
-// The query listing is the only tool result that cannot be re-read in a
-// narrower form.
-//
-// Every other read tool answers about something the caller named — a Namespace,
-// a selector, a limit — so a pruned answer is recoverable by asking for less.
-// This one is the index itself: an AIOps session that cannot see a query's name
-// cannot ask for it, and the prune keeps the head and the tail, so what
-// disappears is the middle of the catalogue rather than the end of it. Nothing
-// reports that; the model simply behaves as though those metrics do not exist.
-//
-// The listing therefore has to fit in one result whole, and this is the test
-// that says so — the catalogue grows, and the failure it protects against is
-// invisible from the outside.
-func TestMetricsCatalogueListingFitsOneToolResult(t *testing.T) {
+type catalogueMetricsStub struct {
+	customMetricsStub
+	definitions []metricsquery.Definition
+}
+
+func (stub *catalogueMetricsStub) Catalog() []metricsquery.Definition { return stub.definitions }
+
+// Every page must fit whole. Pagination makes a broad catalogue discoverable;
+// pruning one page would still hide arbitrary query names without saying so.
+func TestMetricsCataloguePagesFitOneToolResult(t *testing.T) {
 	t.Parallel()
 
-	listing := MetricsCatalogueListing(metricsquery.Catalog())
-	if size := len([]rune(listing)); size >= DefaultResultThresholdRunes {
-		t.Fatalf(
-			"catalogue listing is %d runes, which the default prune threshold of %d cuts; "+
-				"either shorten the listing or raise the threshold deliberately",
-			size,
-			DefaultResultThresholdRunes,
-		)
+	definitions := metricsquery.Catalog()
+	for offset := 0; offset < len(definitions); offset += maxMetricsCataloguePage {
+		end := min(offset+maxMetricsCataloguePage, len(definitions))
+		listing := MetricsCatalogueListing(definitions[offset:end])
+		if size := len([]rune(listing)); size >= DefaultResultThresholdRunes {
+			t.Fatalf(
+				"catalogue page %d-%d is %d runes, which the default threshold of %d cuts",
+				offset, end, size, DefaultResultThresholdRunes,
+			)
+		}
 	}
 }
 
@@ -76,5 +77,50 @@ func TestMetricsCatalogueListingNamesEveryQueryAndItsParameters(t *testing.T) {
 			t.Fatalf("%s depends on %s but the listing does not say so: %q",
 				definition.Name, definition.RequiresComponent, line)
 		}
+	}
+}
+
+func TestMetricsCatalogueSearchFindsExpandedMonitoringAreas(t *testing.T) {
+	t.Parallel()
+
+	for search, want := range map[string]string{
+		"CoreDNS":            "coredns_requests",
+		"控制面":                "control_plane_up",
+		"工作负载网络":             "workload_network_receive",
+		"GPU":                "gpu_utilization",
+		"kube-state-metrics": "cluster_cpu_requests",
+	} {
+		matched := filterMetricQueries(metricsquery.Catalog(), search)
+		found := false
+		for _, definition := range matched {
+			if definition.Name == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("search %q did not find %q", search, want)
+		}
+	}
+}
+
+func TestListMetricQueriesReturnsExplicitSearchPagination(t *testing.T) {
+	t.Parallel()
+
+	stub := &catalogueMetricsStub{definitions: metricsquery.Catalog()}
+	catalogue := New(Dependencies{Metrics: stub}, Config{})
+	result, err := catalogue.Invoke(context.Background(), airuntime.ToolInvocation{
+		Name: toolListMetricQueries, Arguments: json.RawMessage(`{"search":"GPU","limit":2}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "gpu_utilization") ||
+		!strings.Contains(result.Text, "offset=2") ||
+		strings.Contains(result.Text, "结果中间已省略") {
+		t.Fatalf("paged search result = %q", result.Text)
+	}
+	if !catalogue.HasMetricQuery("gpu_utilization") || catalogue.HasMetricQuery("gpu_missing") {
+		t.Fatal("metric view validation does not use the query catalogue")
 	}
 }

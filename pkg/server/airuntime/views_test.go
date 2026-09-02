@@ -256,3 +256,41 @@ func TestViewTargetRefusesTargetsNoScreenCanShow(t *testing.T) {
 		t.Fatalf("viewTarget() = %+v, %v", target, err)
 	}
 }
+
+func TestNamedMetricViewMustExistInTheComposedCatalogue(t *testing.T) {
+	t.Parallel()
+
+	for name, queries := range map[string]map[string]bool{
+		"known":   {"gpu_utilization": true},
+		"unknown": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sessions := &memorySessions{session: idleSession(aisession.ApprovalFull)}
+			tools := readOnlyTools()
+			tools.metricQueries = queries
+			model := &scriptedModel{steps: []aimodel.Completion{
+				opening(map[string]any{
+					"show": "metric", "reason": "打开 GPU 曲线。", "query": "gpu_utilization",
+				}),
+				answering("完成。"),
+			}}
+			runtime := New(context.Background(), sessions, model, allowAuthorizer{}, activeUsers{true}, Config{Tools: tools})
+			if _, err := runtime.Start(context.Background(), StartInput{
+				SessionID: testSessionID, UserID: testUserID, Text: "打开 GPU", Now: time.Now().UTC(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			runtime.Wait()
+			result := mainLineResult(sessions, toolOpenConsoleView)
+			if result == nil {
+				t.Fatalf("no tool result recorded: %v", entryKinds(sessions))
+			}
+			if name == "known" && result.Content.View == nil {
+				t.Fatal("known metric query was refused")
+			}
+			if name == "unknown" && !result.Content.Failed {
+				t.Fatal("unknown metric query was not refused")
+			}
+		})
+	}
+}

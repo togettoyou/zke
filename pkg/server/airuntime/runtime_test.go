@@ -284,13 +284,14 @@ func calling(name, arguments string) aimodel.Completion {
 // scriptedTools is a catalogue with one tool, so a test can say what the tool
 // is allowed to need and observe exactly what reached it.
 type scriptedTools struct {
-	mu      sync.Mutex
-	spec    ToolSpec
-	text    string
-	err     error
-	result  *ToolResult
-	invoked []ToolInvocation
-	closed  []string
+	mu            sync.Mutex
+	spec          ToolSpec
+	text          string
+	err           error
+	result        *ToolResult
+	invoked       []ToolInvocation
+	closed        []string
+	metricQueries map[string]bool
 }
 
 type blockingCloseTools struct {
@@ -309,6 +310,10 @@ func (tools *blockingCloseTools) CloseTurn(_ context.Context, turnID string) err
 }
 
 func (tools *scriptedTools) Specs() []ToolSpec { return []ToolSpec{tools.spec} }
+
+func (tools *scriptedTools) HasMetricQuery(name string) bool {
+	return tools.metricQueries[name]
+}
 
 func (tools *scriptedTools) Invoke(
 	_ context.Context, invocation ToolInvocation,

@@ -68,7 +68,7 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `describe_resource` | 对象的关键状态、ZKE 归纳的问题点和指向它的 Event | `cluster.read` + `cluster.event.read` |
 | `list_nodes` | Node 状态、可调度性、容量与 kubelet 版本 | `cluster.read` |
 | `get_pod_logs` | Pod 容器日志尾部（敏感），按 Pod 实例身份读取；单容器 Pod 可以省略容器名 | `cluster.pod.logs.read` |
-| `list_metric_queries` | 可用的指标查询目录，每行一个查询：查询名、标题、单位与参数标记 | `cluster.metrics.read` |
+| `list_metric_queries` | 分页列出或按关键词搜索 190 个可用指标查询；每行包含查询名、标题、单位与参数标记 | `cluster.metrics.read` |
 | `query_metrics` | 执行目录中的一个查询，返回每条曲线的最新值、峰值与均值 | `cluster.metrics.read` |
 | `query_custom_metrics` | 执行一条自定义 MetricsQL；Server 把会话 Cluster 强制注入每个选择器，模型不提供 Cluster ID | `cluster.metrics.read` |
 | `list_cluster_changes` | 当前 Cluster 的变更时间线：合并普通提交与 AIOps 写工具调用，不把 DryRun 当作变更 | `audit.read` |
@@ -99,14 +99,17 @@ AIOps 与容器服务一样使用 Console 当前 Tenant 和 Project，并在 App
 | `run_subtasks` | 派发最多 3 个只读并行取证分支，汇总各自的结论、证据与失败分类 | `ai.run`；分支内的每次读取仍按该工具自己的权限逐次校验 |
 | `open_console_view` | 在操作者当前桌面上打开一个 ZKE 应用并定位到指定视图，指标可在打开后直接执行查询 | `ai.run`（它不读取集群内容）；打开的视图按目标类型再校验 `cluster.read` / `cluster.event.read` / `cluster.metrics.read` / `cluster.pod.logs.read` / `cluster.secret.read` |
 
+指标目录扩大后不会被工具结果上限从中间裁掉：`list_metric_queries` 默认返回 40 条、最多 50 条，并明确给出下一页
+`offset`；也可直接用“控制面”“CoreDNS”“工作负载网络”“GPU”等关键词搜索。`query_metrics`、指标证据和
+`open_console_view` 共用同一份目录；主动打开具名图表前 Server 会校验查询名，避免拼写错误把操作者带到空页面。
+
 部署没有安装多集群指标时，指标工具不会出现在目录里，而不是出现后每次调用都失败。工具输出经过摘要与截断，
 超出单次上限时会明确告知模型，让它缩小范围重读，而不是把截断当成完整事实。
 
-**指标目录是唯一一个必须完整返回的工具输出。** 其余读取工具回答的都是调用方指名的东西——某个 Namespace、
-某个选择器、某个条数上限——因此被截断之后可以问得更窄再读一次；而这一个是索引本身：看不见名字的查询就没法
-被调用，截断保留的又是首尾，消失的正是目录中间那一段，且没有任何地方会报告这件事。所以它按每行一个查询
-渲染，并且只写出调用方必须照做的标记（`ns`/`ns!`/`top`/`top!`/`instant`/`ksm`/`node`），而不是把九个字段
-逐个拼成 JSON。目录会继续变长，因此「整份放得进一次工具结果」由一个单元测试守着，而不是靠人记得。
+**指标目录的每一页都必须完整返回。** 其余读取工具回答的都是调用方指名的东西——某个 Namespace、某个选择器、
+某个条数上限——被截断之后可以问得更窄再读一次；指标目录则是索引本身，看不见名字的查询就没法调用。因此目录
+支持搜索和显式分页，每页按行渲染查询名与调用方必须照做的标记
+（`ns`/`ns!`/`top`/`top!`/`instant`/`ksm`/`node`）。单元测试遍历全部分页并保证任一页都不会触发裁剪。
 
 AIOps 读到的就是 Console 图表读的那一份目录：查询目录由 Server 现场枚举，新增查询不需要在 AIOps 侧登记，
 权限也仍然是 `cluster.metrics.read` 按目标 Cluster 逐次校验。目录无法回答的问题可以调用 `query_custom_metrics`
