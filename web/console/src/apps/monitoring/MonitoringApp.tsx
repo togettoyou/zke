@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Cpu, HardDrive, LayoutDashboard, PlugZap, SearchCode } from "lucide-react";
+import {
+  Activity,
+  Boxes,
+  CircuitBoard,
+  Cpu,
+  Database,
+  Gauge,
+  LayoutDashboard,
+  Network,
+  PlugZap,
+  SearchCode,
+} from "lucide-react";
 
 import { useMetricsQueryCatalog } from "@/api/queries/observability";
 import { AppShell, ScopeRequired, type AppNavItem } from "@/apps/AppShell";
@@ -17,19 +28,23 @@ import { useScopeStore } from "@/scope/scope-store";
 
 import { CollectionQualitySection } from "./CollectionQualitySection";
 import { CollectionSection } from "./CollectionSection";
+import { CatalogueSection } from "./CatalogueSection";
 import { ComputeSection } from "./ComputeSection";
 import { ExploreSection } from "./ExploreSection";
 import { MetricsToolbar } from "./MetricsToolbar";
 import { OverviewSection } from "./OverviewSection";
-import { StorageNetworkSection } from "./StorageNetworkSection";
 import { MetricsGate, MetricsScopeProvider } from "./MetricsScopeProvider";
 import { ExploreProvider } from "./explore/explore-state";
 import {
   COLLECTION_QUALITY_VIEWS,
+  APPLICATION_VIEWS,
+  COMPONENT_VIEWS,
   COMPUTE_DIMENSIONS,
+  GPU_VIEWS,
   KUBERNETES_VIEWS,
+  NETWORK_VIEWS,
   OVERVIEW_PANELS,
-  STORAGE_VIEWS,
+  STORAGE_ONLY_VIEWS,
   type MetricsView,
 } from "./metrics-catalog";
 
@@ -80,8 +95,12 @@ const NAV: AppNavItem[] = [
   // dashboards would file the general tool behind the specific ones.
   { id: EXPLORE_SECTION, label: "数据探索", icon: SearchCode },
   { id: "overview", label: "集群总览", icon: LayoutDashboard },
-  { id: "compute", label: "计算资源", icon: Cpu },
-  { id: "storage", label: "存储与网络", icon: HardDrive },
+  { id: "components", label: "核心组件", icon: CircuitBoard },
+  { id: "compute", label: "资源监控", icon: Cpu },
+  { id: "applications", label: "应用监控", icon: Boxes },
+  { id: "network", label: "网络监控", icon: Network },
+  { id: "storage", label: "存储监控", icon: Database },
+  { id: "gpu", label: "GPU 监控", icon: Gauge },
   // Last, and a chart section rather than part of 采集接入 above: it answers
   // why the other three are empty, and it has to be reachable by an operator who
   // holds only the read permission.
@@ -101,7 +120,11 @@ function evidenceSection(query: string, expression: string): string {
   if (viewsContainQuery(KUBERNETES_VIEWS, query)) return "overview";
   if (COMPUTE_DIMENSIONS.some((dimension) => viewsContainQuery(dimension.views, query)))
     return "compute";
-  if (viewsContainQuery(STORAGE_VIEWS, query)) return "storage";
+  if (viewsContainQuery(COMPONENT_VIEWS, query)) return "components";
+  if (viewsContainQuery(APPLICATION_VIEWS, query)) return "applications";
+  if (viewsContainQuery(NETWORK_VIEWS, query)) return "network";
+  if (viewsContainQuery(STORAGE_ONLY_VIEWS, query)) return "storage";
+  if (viewsContainQuery(GPU_VIEWS, query)) return "gpu";
   if (viewsContainQuery(COLLECTION_QUALITY_VIEWS, query)) return "collection-quality";
   return COLLECTION_SECTION;
 }
@@ -193,10 +216,46 @@ export function MonitoringApp(_props: AppComponentProps) {
             <ComputeSection initialQuery={initialQuery} />
           </MetricsGate>
         );
+      case "components":
+        return (
+          <MetricsGate>
+            <CatalogueSection
+              views={COMPONENT_VIEWS}
+              label="核心组件"
+              initialQuery={initialQuery}
+            />
+          </MetricsGate>
+        );
+      case "applications":
+        return (
+          <MetricsGate>
+            <CatalogueSection
+              views={APPLICATION_VIEWS}
+              label="应用监控"
+              initialQuery={initialQuery}
+            />
+          </MetricsGate>
+        );
+      case "network":
+        return (
+          <MetricsGate>
+            <CatalogueSection views={NETWORK_VIEWS} label="网络监控" initialQuery={initialQuery} />
+          </MetricsGate>
+        );
       case "storage":
         return (
           <MetricsGate>
-            <StorageNetworkSection initialQuery={initialQuery} />
+            <CatalogueSection
+              views={STORAGE_ONLY_VIEWS}
+              label="存储监控"
+              initialQuery={initialQuery}
+            />
+          </MetricsGate>
+        );
+      case "gpu":
+        return (
+          <MetricsGate>
+            <CatalogueSection views={GPU_VIEWS} label="GPU 监控" initialQuery={initialQuery} />
           </MetricsGate>
         );
       case EXPLORE_SECTION:

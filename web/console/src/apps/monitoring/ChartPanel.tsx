@@ -1,9 +1,18 @@
 import { useMemo, useState } from "react";
+import { Maximize2 } from "lucide-react";
 
 import { useMetricsQueries } from "@/api/queries/observability";
 import type { MetricsQueryIssue, MetricsQuerySeries } from "@/api/types";
 import { isForbidden } from "@/api/errors";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/state";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/cn";
 
 import { ChartLegend, type LegendSeries } from "./ChartLegend";
@@ -42,6 +51,7 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
   const { clusterId, windowKey, readWindow, live, selectRange } = useMetricsScope();
   const palette = useChartPalette();
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const [expanded, setExpanded] = useState(false);
 
   const results = useMetricsQueries(
     panel.queries.map((query) => ({
@@ -97,81 +107,131 @@ export function ChartPanel({ panel, top, namespace }: ChartPanelProps) {
     });
 
   return (
-    <section className="border-border bg-surface rounded-panel flex min-w-0 flex-col border p-4">
-      <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="text-foreground text-[13px] font-semibold tracking-tight">
-            {panel.title}
-          </h3>
-          {panel.description ? (
-            <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
-              {panel.description}
-            </p>
-          ) : null}
-        </div>
-        {/* A quiet mark rather than a spinner over the chart: the previous
+    <>
+      <section className="border-border bg-surface rounded-panel flex min-w-0 flex-col border p-4">
+        <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-foreground text-[13px] font-semibold tracking-tight">
+              {panel.title}
+            </h3>
+            {panel.description ? (
+              <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
+                {panel.description}
+              </p>
+            ) : null}
+          </div>
+          {/* A quiet mark rather than a spinner over the chart: the previous
             answer stays on screen while the next one loads, and something has
             to say that it is the previous one.
 
             Always mounted and faded, never conditionally rendered: appearing
             and disappearing changes the width left to the title beside it, and
             a heading that reflows once a minute is its own kind of flicker. */}
-        <span
-          aria-hidden={!(fetching && !pending)}
-          className={cn(
-            "text-subtle-foreground shrink-0 text-[11px] transition-opacity duration-200",
-            fetching && !pending ? "opacity-100" : "opacity-0",
-          )}
-        >
-          更新中…
-        </span>
-      </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <span
+              aria-hidden={!(fetching && !pending)}
+              className={cn(
+                "text-subtle-foreground text-[11px] transition-opacity duration-200",
+                fetching && !pending ? "opacity-100" : "opacity-0",
+              )}
+            >
+              更新中…
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`展开查看${panel.title}`}
+              title="展开查看"
+              onClick={() => setExpanded(true)}
+            >
+              <Maximize2 />
+            </Button>
+          </div>
+        </div>
 
-      {pending ? <LoadingState /> : null}
-      {!pending && failed?.error ? (
-        <ErrorState
-          error={failed.error}
-          onRetry={isForbidden(failed.error) ? undefined : () => void failed.refetch()}
-        />
-      ) : null}
-      {!pending && !failed && chart.series.length === 0 ? (
-        <EmptyState title="暂无指标数据" description={emptyDescription(panel, namespace)} />
-      ) : null}
-      {/* The chart is not dimmed while the next answer loads.
+        {pending ? <LoadingState /> : null}
+        {!pending && failed?.error ? (
+          <ErrorState
+            error={failed.error}
+            onRetry={isForbidden(failed.error) ? undefined : () => void failed.refetch()}
+          />
+        ) : null}
+        {!pending && !failed && chart.series.length === 0 ? (
+          <EmptyState title="暂无指标数据" description={emptyDescription(panel, namespace)} />
+        ) : null}
+        {/* The chart is not dimmed while the next answer loads.
           uPlot redraws in place through `setData`, so a refresh moves the
           curves and nothing else — but fading the whole panel to 60% and back
           on every poll turned that quiet update into a blink across every chart
           on screen at once, which reads as a full redraw. The 更新中… mark in
           the header is what says the answer on screen is the previous one, and
           it costs no ink on the data itself. */}
-      {!failed && chart.series.length > 0 ? (
-        <div>
-          <TimeSeriesChart
-            timestamps={chart.timestamps}
-            series={chart.series}
-            palette={palette}
-            formatValue={formatValue}
-            formatAxis={formatAxis}
-            ariaLabel={panel.title}
-            hidden={hidden}
-            fullScale={panel.fullScale}
-            stacked={panel.stack}
-            reference={panel.reference}
-            onSelectRange={selectRange}
-            syncKey={SYNC_KEY}
-          />
-          <ChartLegend
-            series={chart.series}
-            hidden={hidden}
-            onToggle={toggle}
-            formatValue={formatValue}
-            colorAt={(index) => seriesColor(palette, index)}
-            dashAt={seriesDash}
-          />
-        </div>
-      ) : null}
-      <IssueNotice issues={issues} />
-    </section>
+        {!failed && chart.series.length > 0 ? (
+          <div>
+            <TimeSeriesChart
+              timestamps={chart.timestamps}
+              series={chart.series}
+              palette={palette}
+              formatValue={formatValue}
+              formatAxis={formatAxis}
+              ariaLabel={panel.title}
+              hidden={hidden}
+              fullScale={panel.fullScale}
+              stacked={panel.stack}
+              reference={panel.reference}
+              onSelectRange={selectRange}
+              syncKey={SYNC_KEY}
+            />
+            <ChartLegend
+              series={chart.series}
+              hidden={hidden}
+              onToggle={toggle}
+              formatValue={formatValue}
+              colorAt={(index) => seriesColor(palette, index)}
+              dashAt={seriesDash}
+            />
+          </div>
+        ) : null}
+        <IssueNotice issues={issues} />
+      </section>
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent aria-describedby={undefined} className="w-[min(1120px,calc(100vw-2rem))]">
+          <DialogHeader>
+            <DialogTitle>{panel.title}</DialogTitle>
+            {panel.description ? <DialogDescription>{panel.description}</DialogDescription> : null}
+          </DialogHeader>
+          {chart.series.length > 0 ? (
+            <div className="min-h-[420px]">
+              <TimeSeriesChart
+                timestamps={chart.timestamps}
+                series={chart.series}
+                palette={palette}
+                formatValue={formatValue}
+                formatAxis={formatAxis}
+                ariaLabel={`${panel.title}详细视图`}
+                hidden={hidden}
+                fullScale={panel.fullScale}
+                stacked={panel.stack}
+                reference={panel.reference}
+                onSelectRange={selectRange}
+                syncKey={`${SYNC_KEY}-expanded`}
+              />
+              <ChartLegend
+                series={chart.series}
+                hidden={hidden}
+                onToggle={toggle}
+                formatValue={formatValue}
+                colorAt={(index) => seriesColor(palette, index)}
+                dashAt={seriesDash}
+              />
+            </div>
+          ) : (
+            <EmptyState title="暂无指标数据" description={emptyDescription(panel, namespace)} />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

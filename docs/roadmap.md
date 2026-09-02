@@ -36,9 +36,10 @@ ZKE Server 当前只支持单副本部署。
 ## Phase 3：可观测性
 
 数据通路与安全边界见 [Phase 3 可观测性架构设计](architecture/observability-phase-3.md)。指标、日志与告警
-按切片推进，后一项依赖前一项就绪。全部 119 个查询对着真实的 VictoriaMetrics 验证过，并且要求每一条都
-真的选到数据——指标族齐备的种子加上「每个目录条目至少返回一条序列」的断言，堵住了「模板能编译但选不到
-任何东西」这一类静默空图。查询读取的 kubelet resource、cAdvisor 与**全部** node-exporter 指标名，都在真实
+按切片推进，后一项依赖前一项就绪。基础 119 个查询对着真实的 VictoriaMetrics 验证过，并要求每一条都真的选到
+数据——指标族齐备的种子加上「每个基础目录条目至少返回一条序列」的断言，堵住了「模板能编译但选不到任何东西」
+这一类静默空图。扩展后的 190 个目录查询全部经过表达式构建、唯一性与作用域测试；新加入的控制面、CoreDNS、
+容器细分和 GPU 查询仍需要在暴露对应端点的真实集群逐项核对。基础查询读取的 kubelet resource、cAdvisor 与**全部** node-exporter 指标名，都在真实
 kubelet（v1.31.1）与真实 node-exporter（v1.12.1，使用 ZKE 下发的同一组 collector 参数）上核对过，采集质量
 视图读的抓取元信息也在真实 vmagent（v1.149.0）上核对过；kube-state-metrics 新增的封锁与就绪与 Job 与
 PVC/PV 状态、kubelet 自身健康、cAdvisor 的容器磁盘与 OOM **还没有做这一步核对**，它们需要真实的
@@ -52,7 +53,7 @@ API Server 或 kubelet。三个采集
 - [x] 指标深化：Namespace 与 Pod 维度、Top N 与 Namespace 过滤、每集群摄取预算与限流状态呈现、查询响应的 `partial` 与 `issues`、容量与保留期运维文档
 - [x] 抓取目标扩展：kube-state-metrics 与 node-exporter 随采集组件一并安装/卸载，三者镜像与资源预算进入平台配置
 - [x] 深度指标：集群与节点利用率、Namespace 申请量与限制量、工作负载维度（Deployment 两级归属）、Pod 重启、节点文件系统/网络/磁盘 IO
-- [x] 完整可观测性视图：容量与申请占比、节点饱和度与 Pod 密度、磁盘 IOPS 与繁忙度、inode、网络错误丢包、Pod 与节点状态、未就绪副本；Console 拆为集群总览 / 计算资源 / 存储与网络 / 采集质量四个图表分区，Kubernetes 对象健康作为集群总览内的资源视角，共享时间范围选择、图上拖拽选取区间与光标读数
+- [x] 完整可观测性视图：190 个具名查询覆盖集群、控制面、Kubelet、CoreDNS、节点、Namespace、工作负载、Pod、容器、网络、存储与可选 GPU；Console 按场景拆分视图，共享时间范围、图上拖拽选区、光标读数，并支持每张图展开查看
 - [x] 数据探索：Console 中自己书写 MetricsQL 表达式（多条同时执行、可隐藏、图表 / 表格 / JSON 三种读法），排在「采集接入」之后、三个仪表分区之前，Server 用 VictoriaMetrics 自己的解析器把目标集群强制改写进每一个序列选择器，并按项目保存可共享的具名表达式
 - [ ] VictoriaLogs 集成与多集群日志：计划在 Console 中作为独立的「日志」应用，不并入「监控」
 - [ ] 告警中心

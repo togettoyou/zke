@@ -90,7 +90,7 @@ type buildParams struct {
 // nothing queries is pure cardinality in storage every Cluster shares. Adding a
 // target means adding queries deliberately, not discovering them.
 func catalog() []Definition {
-	return []Definition{
+	definitions := []Definition{
 		{
 			Name:  "cluster_cpu_usage",
 			Title: "集群 CPU 用量",
@@ -2369,6 +2369,7 @@ func catalog() []Definition {
 			},
 		},
 	}
+	return append(definitions, referenceCatalog()...)
 }
 
 // waitingReasons and terminatedReasons bound the container state charts to the

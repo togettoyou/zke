@@ -1118,6 +1118,7 @@ scrape_configs:
 	if nodeExporterInstalled {
 		config += renderNodeExporterScrapeJob()
 	}
+	config += renderPlatformScrapeJobs()
 	config += renderAnnotatedEndpointScrapeJobs()
 	return config
 }
@@ -1162,8 +1163,25 @@ var kubeletScrapeJobs = []kubeletScrapeJob{
 		path: "/metrics/cadvisor",
 		keep: "container_cpu_cfs_periods_total|" +
 			"container_cpu_cfs_throttled_periods_total|" +
+			"container_cpu_cfs_throttled_seconds_total|" +
+			"container_cpu_load_average_10s|" +
+			"container_cpu_system_seconds_total|" +
+			"container_cpu_user_seconds_total|" +
+			"container_memory_cache|" +
+			"container_memory_failcnt|" +
+			"container_memory_rss|" +
+			"container_memory_swap|" +
+			"container_memory_usage_bytes|" +
+			"container_processes|" +
+			"container_sockets|" +
+			"container_spec_cpu_quota|" +
+			"container_spec_memory_limit_bytes|" +
 			"container_network_receive_bytes_total|" +
 			"container_network_transmit_bytes_total|" +
+			"container_network_receive_errors_total|" +
+			"container_network_transmit_errors_total|" +
+			"container_network_receive_packets_total|" +
+			"container_network_transmit_packets_total|" +
 			// Packets the Pod's own interface never delivered. A dropped packet
 			// is invisible in the byte counters beside it: the traffic that
 			// fails is the traffic that was never carried.
@@ -1206,12 +1224,29 @@ var kubeletScrapeJobs = []kubeletScrapeJob{
 		// Neither is read by any query, and a family nothing queries is
 		// cardinality in storage every Cluster shares.
 		keep: "kubelet_volume_stats_capacity_bytes|" +
+			"kubelet_volume_stats_available_bytes|" +
 			"kubelet_volume_stats_used_bytes|" +
 			"kubelet_volume_stats_inodes|" +
 			"kubelet_volume_stats_inodes_used|" +
 			"kubelet_running_pods|" +
 			"kubelet_running_containers|" +
+			"kubelet_node_config_error|" +
+			"kubelet_cgroup_manager_duration_seconds_bucket|" +
+			"kubelet_cgroup_manager_duration_seconds_count|" +
+			"kubelet_runtime_operations_total|" +
 			"kubelet_runtime_operations_errors_total|" +
+			"kubelet_runtime_operations_duration_seconds_bucket|" +
+			"kubelet_pod_start_duration_seconds_count|" +
+			"kubelet_pod_worker_duration_seconds_bucket|" +
+			"kubelet_pleg_relist_interval_seconds_bucket|" +
+			"kubelet_pleg_relist_duration_seconds_bucket|" +
+			"storage_operation_duration_seconds_bucket|" +
+			"storage_operation_duration_seconds_count|" +
+			"storage_operation_errors_total|" +
+			"volume_manager_total_volumes|" +
+			"go_goroutines|" +
+			"process_cpu_seconds_total|" +
+			"process_resident_memory_bytes|" +
 			// The relist loop's sum and count, not its buckets: the average is
 			// the signal an operator acts on, and the histogram costs a dozen
 			// series per Node for a quantile nothing here would draw.

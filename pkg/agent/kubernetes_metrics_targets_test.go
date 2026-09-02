@@ -321,8 +321,17 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 			// The scope labels are dropped in every job, not only the first: the
 			// Server replaces them anyway, and a job that forgot would ship a
 			// Cluster's own idea of its identity.
-			if strings.Count(builtIn, "regex: ^zke_.*$") != len(testCase.jobs) {
+			// Six optional platform-discovery jobs ship in addition to the
+			// collector-owned targets. They discover workloads already present in
+			// the Cluster and each applies the same reserved-label boundary.
+			const platformDiscoveryJobs = 6
+			if strings.Count(builtIn, "regex: ^zke_.*$") != len(testCase.jobs)+platformDiscoveryJobs {
 				t.Fatalf("not every job drops reserved scope labels:\n%s", config)
+			}
+			for _, job := range []string{"coredns", "kube-apiserver", "kube-controller-manager", "kube-scheduler", "kube-proxy", "dcgm-exporter"} {
+				if !strings.Contains(builtIn, "job_name: "+job) {
+					t.Fatalf("scrape configuration is missing platform discovery job %q:\n%s", job, config)
+				}
 			}
 			// The discovery jobs drop the same reserved prefix, together with
 			// the temporary labels the annotation relabeling stages through.
@@ -363,7 +372,8 @@ func TestScrapeConfigCoversExactlyTheInstalledTargets(t *testing.T) {
 					t.Fatalf("scrape configuration does not keep %q:\n%s", family, config)
 				}
 			}
-			if strings.Count(builtIn, "action: keep") != 2 {
+			collectorOwned, _, _ := strings.Cut(builtIn, "  - job_name: coredns\n")
+			if strings.Count(collectorOwned, "action: keep") != 2 {
 				t.Fatalf("cAdvisor and volume statistics must be filtered:\n%s", config)
 			}
 			// Container state reasons are filtered where they are produced. A

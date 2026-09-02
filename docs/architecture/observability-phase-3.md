@@ -6,7 +6,7 @@
 > 状态：前三个切片已实现（见 §13）。协议层（`STREAM_KIND_METRICS_INGEST`、`STREAM_KIND_METRICS_COLLECTOR`
 > 与两个对应能力）、Agent 摄取端点与转发、Agent 侧**三个采集组件**（vmagent、kube-state-metrics、
 > node-exporter）的一体安装与卸载、Server 摄取网关与作用域改写、每集群的速率与基数预算、存储写入、
-> 119 个固定查询（用量、利用率、申请与限制与可分配量、节点饱和度与 Pod 密度、工作负载用量与副本状态、
+> 190 个固定查询（用量、利用率、申请与限制与可分配量、节点饱和度与 Pod 密度、工作负载用量与副本状态、
 > 容器用量与 CPU 限流、Pod 网络、PVC 使用率与 inode、容器等待与退出原因、Namespace 配额、Pod 重启、
 > Pod 与节点状态、节点磁盘 IO 与网络、连接跟踪与 TCP 重传、PSI 压力停顿，加 CPU 模式分布与被抢占、
 > 三档负载与进程队列、上下文切换与中断、内存承诺/内核内存/Swap/主缺页/节点 OOM、文件描述符、运行时长与
@@ -21,8 +21,8 @@
 > 已验证：
 >
 > - 摄取网关与查询目录对着真实的 VictoriaMetrics v1.149.0 跑通——写入的样本可查回，集群侧伪造的
->   `zke_cluster_id` 被替换为连接身份，目录中全部 119 个具名查询都能在真实存储上执行（用例直接遍历目录
->   本身，因此新增查询不会漏测），其中工作负载的两级归属（Deployment 而非 ReplicaSet）、未就绪副本的
+>   `zke_cluster_id` 被替换为连接身份，基础目录中的 119 个具名查询都能在真实存储上执行；扩展目录经过表达式构建与作用域验证。
+>   用例直接遍历目录本身，因此新增查询不会漏过语法构建检查。其中工作负载的两级归属（Deployment 而非 ReplicaSet）、未就绪副本的
 >   三控制器归一、Pod 密度的两族 join、对象概览并集的分支数与利用率的数值都做了断言
 >   （`ZKE_TEST_METRICS_STORAGE_URL=http://127.0.0.1:8428 go test ./pkg/server/metricsingest ./pkg/server/metricsquery`）；
 > - Agent 在真实集群中安装采集组件：三个组件一并安装，对象被 API Server 接受、vmagent 启动并就绪，卸载后
@@ -550,7 +550,8 @@ Server 已有的安全立场是"不做透明 Kubernetes 代理"，查询侧沿�
 作者。VictoriaMetrics 的输出转义在极少数非 ASCII 标识符上无法被它自己读回，这类表达式由上面的重新解析检查
 拒绝——失败是关闭的方向。
 
-已实现的查询目录（119 个）：
+已实现的查询目录（190 个；下表列出基础目录，控制面、CoreDNS、工作负载网络、Pod 细分与 GPU 扩展见
+[容器监控指标覆盖](../features/observability-metric-coverage.md)）：
 
 | 查询 | 维度 | 依赖组件 | Namespace | Top N |
 | --- | --- | --- | --- | --- |
@@ -975,7 +976,7 @@ Phase 3 按可独立验证的切片推进，每个切片结束时链路端到端
 - 工作负载归属：Deployment 的 Pod 归到 Deployment 而不是 ReplicaSet；利用率的除法两侧都能通过 join。
 
 已执行：上述条目由 `pkg/server/metricsingest`、`pkg/server/metricsquery` 与 `pkg/agent` 的单元测试覆盖
-（含并发摄取的 `-race` 用例，以及用 reactor 模拟 Pod Security 拒绝的用例）；目录中全部 119 个查询在真实的
+（含并发摄取的 `-race` 用例，以及用 reactor 模拟 Pod Security 拒绝的用例）；基础目录 119 个查询在真实的
 VictoriaMetrics v1.149.0 上执行通过，其中工作负载两级归属与利用率的数值都做了断言。
 
 查询目录的集成测试现在还要求**每一个条目都真的选到序列**。此前它只断言查询不报 PromQL 错误，而一个引用了
